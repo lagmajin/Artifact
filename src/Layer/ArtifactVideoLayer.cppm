@@ -10,6 +10,7 @@ module;
 #include <QFileInfo>
 #include <QVariant>
 #include <QLoggingCategory>
+#include <QMetaObject>
 #include <QThread>
 #include <QFuture>
 #include <QFutureWatcher>
@@ -423,6 +424,45 @@ private:
 // ============================================================================
 class ArtifactVideoLayer::Impl {
 public:
+    enum class FrameStage {
+        Idle,
+        Requested,
+        Decoding,
+        DecodedRam,
+        RenderQueued,
+        Presented,
+        Late,
+        Failed
+    };
+
+    struct FrameTicket {
+        int64_t timelineFrame = -1;
+        int64_t sourceFrame = -1;
+        FrameStage stage = FrameStage::Idle;
+        QString source = QStringLiteral("none");
+        std::chrono::steady_clock::time_point requestedAt;
+        std::chrono::steady_clock::time_point decodeStartedAt;
+        double budgetMs = 0.0;
+        double decodeMs = 0.0;
+        double readyMs = 0.0;
+        double renderQueuedMs = 0.0;
+        double presentedMs = 0.0;
+        double renderToPresentMs = 0.0;
+        double gpuFrameEstimateMs = 0.0;
+        int gpuSampleAgeFrames = 1;
+        QString presentStatus = QStringLiteral("unknown");
+        QString bottleneck = QStringLiteral("none");
+        bool repeatedLastGood = false;
+        double lateByMs = 0.0;
+    };
+
+    struct FrameOutcome {
+        bool late = false;
+        bool repeatedLastGood = false;
+        double decodeMs = 0.0;
+        double presentedMs = 0.0;
+    };
+
     struct AsyncOpenResult {
         bool success = false;
         QString normalizedPath;
@@ -478,6 +518,9 @@ public:
     QString lastDecodeState_ = QStringLiteral("idle");
     bool vulkanDeviceConfigured_ = false;
     std::atomic<uint32_t> decodeGeneration_{0};
+    mutable std::mutex frameTicketMutex_;
+    FrameTicket frameTicket_;
+    std::deque<FrameOutcome> recentFrameOutcomes_;
 
     Impl() : playbackController_(std::make_shared<ArtifactCore::MediaPlaybackController>()), frameCache_(120) {}
     ~Impl() {
@@ -493,6 +536,183 @@ public:
         }
         decodeTargetFrame_ = -1;
         decodeFuture_ = QFuture<ArtifactCore::ImageF32x4_RGBA>();
+    }
+
+    double frameBudgetMs() const {
+        return streamInfo_.frameRate > 0.0 ? 1000.0 / streamInfo_.frameRate
+                                           : 1000.0 / 30.0;
+    }
+
+    static QString frameStageName(FrameStage stage) {
+        switch (stage) {
+        case FrameStage::Requested: return QStringLiteral("requested");
+        case FrameStage::Decoding: return QStringLiteral("decoding");
+        case FrameStage::DecodedRam: return QStringLiteral("decoded-ram");
+        case FrameStage::RenderQueued: return QStringLiteral("render-queued");
+        case FrameStage::Presented: return QStringLiteral("presented");
+        case FrameStage::Late: return QStringLiteral("late");
+        case FrameStage::Failed: return QStringLiteral("failed");
+        case FrameStage::Idle:
+        default: return QStringLiteral("idle");
+        }
+    }
+
+    void beginFrameTicket(int64_t timelineFrame, int64_t sourceFrame,
+                          const QString& source) {
+        std::lock_guard<std::mutex> lock(frameTicketMutex_);
+        frameTicket_ = FrameTicket{};
+        frameTicket_.timelineFrame = timelineFrame;
+        frameTicket_.sourceFrame = sourceFrame;
+        frameTicket_.stage = FrameStage::Requested;
+        frameTicket_.source = source;
+        frameTicket_.requestedAt = std::chrono::steady_clock::now();
+        frameTicket_.budgetMs = frameBudgetMs();
+    }
+
+    void markDecodeStarted(int64_t sourceFrame) {
+        std::lock_guard<std::mutex> lock(frameTicketMutex_);
+        if (frameTicket_.sourceFrame != sourceFrame) {
+            return;
+        }
+        frameTicket_.stage = FrameStage::Decoding;
+        frameTicket_.decodeStartedAt = std::chrono::steady_clock::now();
+    }
+
+    void markDecodeFinished(int64_t sourceFrame, bool success) {
+        const auto now = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lock(frameTicketMutex_);
+        if (frameTicket_.sourceFrame != sourceFrame) {
+            return;
+        }
+        frameTicket_.decodeMs =
+            std::chrono::duration<double, std::milli>(
+                now - frameTicket_.decodeStartedAt).count();
+        frameTicket_.readyMs =
+            std::chrono::duration<double, std::milli>(
+                now - frameTicket_.requestedAt).count();
+        frameTicket_.lateByMs =
+            std::max(0.0, frameTicket_.readyMs - frameTicket_.budgetMs);
+        frameTicket_.stage = !success
+            ? FrameStage::Failed
+            : (frameTicket_.lateByMs > 0.0 ? FrameStage::Late
+                                           : FrameStage::DecodedRam);
+    }
+
+    void markRenderQueued(int64_t timelineFrame, bool repeatedLastGood) {
+        const auto now = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lock(frameTicketMutex_);
+        if (frameTicket_.timelineFrame != timelineFrame ||
+            frameTicket_.stage == FrameStage::Failed) {
+            return;
+        }
+        frameTicket_.renderQueuedMs =
+            std::chrono::duration<double, std::milli>(
+                now - frameTicket_.requestedAt).count();
+        frameTicket_.repeatedLastGood = repeatedLastGood;
+        frameTicket_.stage = FrameStage::RenderQueued;
+    }
+
+    void markPresented(int64_t timelineFrame, double gpuFrameEstimateMs,
+                       const QString& presentStatus) {
+        const auto now = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lock(frameTicketMutex_);
+        if (frameTicket_.timelineFrame != timelineFrame ||
+            frameTicket_.stage != FrameStage::RenderQueued) {
+            return;
+        }
+        frameTicket_.presentedMs =
+            std::chrono::duration<double, std::milli>(
+                now - frameTicket_.requestedAt).count();
+        frameTicket_.renderToPresentMs =
+            std::max(0.0, frameTicket_.presentedMs -
+                              frameTicket_.renderQueuedMs);
+        frameTicket_.gpuFrameEstimateMs =
+            std::max(0.0, gpuFrameEstimateMs);
+        frameTicket_.presentStatus = presentStatus;
+        frameTicket_.lateByMs =
+            std::max(0.0, frameTicket_.presentedMs - frameTicket_.budgetMs);
+        if (presentStatus != QStringLiteral("ok")) {
+            frameTicket_.bottleneck = QStringLiteral("present");
+        } else if (frameTicket_.decodeMs > frameTicket_.budgetMs) {
+            frameTicket_.bottleneck = QStringLiteral("decode");
+        } else if (frameTicket_.gpuFrameEstimateMs >
+                   frameTicket_.budgetMs) {
+            frameTicket_.bottleneck = QStringLiteral("gpu-estimate");
+        } else if (frameTicket_.renderToPresentMs > frameTicket_.budgetMs) {
+            frameTicket_.bottleneck = QStringLiteral("render-to-present");
+        } else {
+            frameTicket_.bottleneck = QStringLiteral("none");
+        }
+        frameTicket_.stage = frameTicket_.lateByMs > 0.0
+            ? FrameStage::Late
+            : FrameStage::Presented;
+        recentFrameOutcomes_.push_back(
+            FrameOutcome{frameTicket_.lateByMs > 0.0,
+                         frameTicket_.repeatedLastGood,
+                         frameTicket_.decodeMs,
+                         frameTicket_.presentedMs});
+        constexpr std::size_t kOutcomeWindow = 120;
+        while (recentFrameOutcomes_.size() > kOutcomeWindow) {
+            recentFrameOutcomes_.pop_front();
+        }
+    }
+
+    QString frameTicketSummary() const {
+        std::lock_guard<std::mutex> lock(frameTicketMutex_);
+        int lateCount = 0;
+        int repeatedCount = 0;
+        double decodeTotalMs = 0.0;
+        double presentedTotalMs = 0.0;
+        for (const auto& outcome : recentFrameOutcomes_) {
+            lateCount += outcome.late ? 1 : 0;
+            repeatedCount += outcome.repeatedLastGood ? 1 : 0;
+            decodeTotalMs += outcome.decodeMs;
+            presentedTotalMs += outcome.presentedMs;
+        }
+        const double windowSize =
+            static_cast<double>(recentFrameOutcomes_.size());
+        const double onTimePercent = windowSize > 0.0
+            ? 100.0 * static_cast<double>(
+                  recentFrameOutcomes_.size() - lateCount) / windowSize
+            : 100.0;
+        return QStringLiteral(
+                   "ticketFrame=%1 sourceFrame=%2 stage=%3 source=%4 "
+                   "budgetMs=%5 decodeMs=%6 readyMs=%7 renderQueuedMs=%8 "
+                   "presentedMs=%9 renderToPresentMs=%10 "
+                   "gpuFrameEstimateMs=%11 gpuSampleAgeFrames=%12 "
+                   "gpuTiming=%13 presentStatus=%14 bottleneck=%15 "
+                   "fallback=%16 lateByMs=%17 windowFrames=%18 "
+                   "onTimePct=%19 lateFrames=%20 repeatedFrames=%21 "
+                   "avgDecodeMs=%22 avgPresentedMs=%23")
+            .arg(frameTicket_.timelineFrame)
+            .arg(frameTicket_.sourceFrame)
+            .arg(frameStageName(frameTicket_.stage))
+            .arg(frameTicket_.source)
+            .arg(frameTicket_.budgetMs, 0, 'f', 2)
+            .arg(frameTicket_.decodeMs, 0, 'f', 2)
+            .arg(frameTicket_.readyMs, 0, 'f', 2)
+            .arg(frameTicket_.renderQueuedMs, 0, 'f', 2)
+            .arg(frameTicket_.presentedMs, 0, 'f', 2)
+            .arg(frameTicket_.renderToPresentMs, 0, 'f', 2)
+            .arg(frameTicket_.gpuFrameEstimateMs, 0, 'f', 2)
+            .arg(frameTicket_.gpuSampleAgeFrames)
+            .arg(frameTicket_.gpuFrameEstimateMs > 0.0
+                     ? QStringLiteral("available")
+                     : QStringLiteral("unavailable"))
+            .arg(frameTicket_.presentStatus)
+            .arg(frameTicket_.bottleneck)
+            .arg(frameTicket_.repeatedLastGood
+                     ? QStringLiteral("repeat-last-good")
+                     : QStringLiteral("none"))
+            .arg(frameTicket_.lateByMs, 0, 'f', 2)
+            .arg(recentFrameOutcomes_.size())
+            .arg(onTimePercent, 0, 'f', 1)
+            .arg(lateCount)
+            .arg(repeatedCount)
+            .arg(windowSize > 0.0 ? decodeTotalMs / windowSize : 0.0,
+                 0, 'f', 2)
+            .arg(windowSize > 0.0 ? presentedTotalMs / windowSize : 0.0,
+                 0, 'f', 2);
     }
 
     std::optional<DecodeRequest> prepareDecodeRequest(ArtifactVideoLayer* layer) {
@@ -543,6 +763,11 @@ public:
                 hasCurrentFrameBuffer_ = true;
                 lastDecodedFrame_ = sourceFrame;
             }
+            beginFrameTicket(timelineFrame, sourceFrame, QStringLiteral("ram-cache"));
+            {
+                std::lock_guard<std::mutex> lock(frameTicketMutex_);
+                frameTicket_.stage = FrameStage::DecodedRam;
+            }
             lastDecodeState_ = QStringLiteral("cached");
             return std::nullopt;
         }
@@ -551,8 +776,12 @@ public:
             || (decodeTargetFrame_ >= 0 && !decodeFuture_.isFinished());
         if (inFlight) {
             if (decodeTargetFrame_ != sourceFrame) {
-                cancelPendingDecode();
-                lastDecodeState_ = QStringLiteral("decode-preempted");
+                // Do not launch another request against the same decoder while
+                // the current request is still running.  Logical cancellation
+                // cannot stop QtConcurrent work and used to let multiple seeks
+                // race inside MediaPlaybackController.
+                lastDecodeState_ = QStringLiteral("decode-pending-retain-frame");
+                return std::nullopt;
             } else {
                 lastDecodeState_ = QStringLiteral("decode-pending");
                 return std::nullopt;
@@ -572,6 +801,7 @@ public:
         request.hasCurrentBuffer = hasBufferForLog;
         request.backendName = decoderBackendName(playbackController_.get());
         request.generation = decodeGeneration_.load(std::memory_order_acquire);
+        beginFrameTicket(timelineFrame, sourceFrame, QStringLiteral("decoder"));
         return request;
     }
 
@@ -910,7 +1140,7 @@ QString ArtifactVideoLayer::decodeState() const
         lastDecodedFrame = impl_->lastDecodedFrame_;
         hasCurrentFrameBuffer = impl_->hasCurrentFrameBuffer_;
     }
-    return QStringLiteral("state=%1 loaded=%2 opening=%3 decoding=%4 source=%5 target=%6 last=%7 hasBuffer=%8 syncOk=%9 backend=%10 err=%11")
+    return QStringLiteral("state=%1 loaded=%2 opening=%3 decoding=%4 source=%5 target=%6 last=%7 hasBuffer=%8 syncOk=%9 backend=%10 err=%11 %12")
         .arg(impl_ ? impl_->lastDecodeState_ : QStringLiteral("idle"))
         .arg(impl_ && impl_->isLoaded_ ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->opening_.load() ? QStringLiteral("true") : QStringLiteral("false"))
@@ -921,7 +1151,41 @@ QString ArtifactVideoLayer::decodeState() const
         .arg(hasCurrentFrameBuffer ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->lastSyncFallbackSucceeded_ ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(decoderBackendName(controller))
-        .arg(controller ? controller->getLastError() : QStringLiteral("<no controller>"));
+        .arg(controller ? controller->getLastError() : QStringLiteral("<no controller>"))
+        .arg(impl_ ? impl_->frameTicketSummary() : QStringLiteral("ticket=none"));
+}
+
+void ArtifactVideoLayer::markFrameRenderQueued(int64_t timelineFrame,
+                                               bool repeatedLastGood)
+{
+    if (impl_) {
+        impl_->markRenderQueued(timelineFrame, repeatedLastGood);
+    }
+}
+
+void ArtifactVideoLayer::markFrameCompositionCacheReady(int64_t timelineFrame,
+                                                        bool fromDisk)
+{
+    if (!impl_) {
+        return;
+    }
+    impl_->beginFrameTicket(
+        timelineFrame,
+        timelineFrameToSourceFrame(this, timelineFrame),
+        fromDisk ? QStringLiteral("composition-disk")
+                 : QStringLiteral("composition-ram"));
+    std::lock_guard<std::mutex> lock(impl_->frameTicketMutex_);
+    impl_->frameTicket_.stage = Impl::FrameStage::DecodedRam;
+}
+
+void ArtifactVideoLayer::markFramePresented(int64_t timelineFrame,
+                                            double gpuFrameEstimateMs,
+                                            const QString& presentStatus)
+{
+    if (impl_) {
+        impl_->markPresented(timelineFrame, gpuFrameEstimateMs,
+                             presentStatus);
+    }
 }
 
 // === Playback Control ===
@@ -968,8 +1232,9 @@ void ArtifactVideoLayer::seekToFrame(int64_t frame)
     }
 
     if (shouldDecode && impl_->playbackController_) {
-        impl_->cancelPendingDecode();
-        impl_->playbackController_->seekToFrame(sourceFrame);
+        // getVideoFrameAtFrameDirectRaw() performs the exact-frame request.
+        // Avoid a separate controller seek here: it can race an in-flight
+        // background decode during timeline playback.
         decodeCurrentFrame();
     }
 }
@@ -980,12 +1245,10 @@ void ArtifactVideoLayer::stop()
         return;
     }
 
-    impl_->cancelPendingDecode();
     {
         std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
-        impl_->currentFrameBuffer_ = ArtifactCore::ImageF32x4_RGBA();
-        impl_->hasCurrentFrameBuffer_ = false;
-        impl_->lastDecodedFrame_ = -1;
+        // Keep the last successfully presented frame until the new stop
+        // position has decoded. Clearing it here caused a visible black flash.
         impl_->lastDecodeState_ = QStringLiteral("stopped");
     }
     {
@@ -1080,6 +1343,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
         [ctrl, timelineFrame, sourceFrame, backendName, decodeGeneration,
          this]() -> ArtifactCore::ImageF32x4_RGBA {
         ArtifactCore::ScopedThreadName threadName(QStringLiteral("VideoLayer/decode"));
+        impl_->markDecodeStarted(sourceFrame);
         const ArtifactCore::DecodedVideoFrame rawDecoded =
             ctrl->getVideoFrameAtFrameDirectRaw(sourceFrame);
         const ArtifactCore::ImageF32x4_RGBA decoded =
@@ -1088,6 +1352,9 @@ void ArtifactVideoLayer::decodeCurrentFrame()
             impl_->decodeGeneration_.load(std::memory_order_acquire)) {
             return ArtifactCore::ImageF32x4_RGBA();
         }
+        impl_->markDecodeFinished(
+            sourceFrame,
+            !decoded.isEmpty() || decodedVideoFrameHasGpuPayload(rawDecoded));
         if (!decoded.isEmpty()) {
             impl_->frameCache_.put(sourceFrame, decoded);
             {
@@ -1102,6 +1369,15 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                                    << "source=" << sourceFrame
                                    << "size=" << decoded.width() << "x" << decoded.height()
                                    << threadIdTag();
+            QMetaObject::invokeMethod(
+                this,
+                [this, decodeGeneration]() {
+                    if (decodeGeneration ==
+                        impl_->decodeGeneration_.load(std::memory_order_acquire)) {
+                        publishVideoLayerModified(this);
+                    }
+                },
+                Qt::QueuedConnection);
         } else if (decodedVideoFrameHasGpuPayload(rawDecoded)) {
             impl_->lastDecodeState_ = QStringLiteral("gpu-ready");
         } else {

@@ -4879,6 +4879,7 @@ public:
     QLabel* syncStateLabel = nullptr;
     QLabel* projectHealthLabel = nullptr;
     QLabel* selectionSummaryLabel = nullptr;
+    QLabel* selectionStateLabel = nullptr;
     QLabel* selectionDetailLabel = nullptr;
     QPushButton* openSelectionButton = nullptr;
     QPushButton* revealSelectionButton = nullptr;
@@ -5551,31 +5552,37 @@ public:
     }
 
     QString selectionSummaryText() const {
-        const int selectedCount = projectView_ && projectView_->selectionModel()
-            ? projectView_->selectionModel()->selectedRows(0).size()
-            : 0;
-        const int selectedCompositionCountValue = selectedCompositionCount();
         const QString searchText = searchBar ? searchBar->text().trimmed() : QString();
         const QString typeText = typeFilterBox ? typeFilterBox->currentText() : QStringLiteral("All");
         const QString unusedText = unusedOnlyCheck && unusedOnlyCheck->isChecked()
             ? QStringLiteral("Unused only")
             : QStringLiteral("All items");
-        const QString proxyText = proxySummaryForSelectedFootage();
-        const QString proxyPart = proxyText.isEmpty() ? QString() : QStringLiteral(" | %1").arg(proxyText);
         const QString viewModeText = projectView_ && projectView_->presentationMode() == ArtifactProjectView::PresentationMode::Tile
             ? QStringLiteral("Tile")
             : QStringLiteral("List");
-        const QString compositionPart = selectedCompositionCountValue > 0
-            ? QStringLiteral(" | Comps: %1").arg(selectedCompositionCountValue)
-            : QString();
-        return QStringLiteral("Recent: - | Selected: %1 | View: %2 / %3 / %4 | Search: %5%6%7")
-            .arg(selectedCount)
+        return QStringLiteral("View: %1 | Type: %2 | Scope: %3 | Search: %4")
             .arg(viewModeText)
             .arg(typeText)
             .arg(unusedText)
-            .arg(searchText.isEmpty() ? QStringLiteral("-") : searchText)
-            .arg(proxyPart)
-            .arg(compositionPart);
+            .arg(searchText.isEmpty() ? QStringLiteral("-") : searchText);
+    }
+
+    QString selectionStateText() const {
+        const int selectedCount = projectView_ && projectView_->selectionModel()
+            ? projectView_->selectionModel()->selectedRows(0).size()
+            : 0;
+        const int selectedCompositionCountValue = selectedCompositionCount();
+        const int resultCount = proxyModel_ ? proxyModel_->visibleRowCount() : 0;
+        const QString proxyText = proxySummaryForSelectedFootage();
+        const QString proxyPart = proxyText.isEmpty() ? QString() : QStringLiteral(" | %1").arg(proxyText);
+        const QString compositionPart = selectedCompositionCountValue > 0
+            ? QStringLiteral(" | Comps: %1").arg(selectedCompositionCountValue)
+            : QString();
+        return QStringLiteral("Results: %1 | Selected: %2%3%4")
+            .arg(resultCount)
+            .arg(selectedCount)
+            .arg(compositionPart)
+            .arg(proxyPart);
     }
 
     QString syncStateText() const {
@@ -5609,12 +5616,14 @@ public:
             projectHealthLabel->setText(projectHealthText());
         }
         if (selectionSummaryLabel) {
-            const int resultCount = proxyModel_ ? proxyModel_->visibleRowCount() : 0;
-            selectionSummaryLabel->setText(QStringLiteral("%1 | Results: %2")
-                                               .arg(selectionSummaryText())
-                                               .arg(resultCount));
+            selectionSummaryLabel->setText(selectionSummaryText());
             selectionSummaryLabel->setToolTip(
-                QStringLiteral("Current selection count, active filter, search text, and filtered result count."));
+                QStringLiteral("Current view mode, active filter scope, and search text."));
+        }
+        if (selectionStateLabel) {
+            selectionStateLabel->setText(selectionStateText());
+            selectionStateLabel->setToolTip(
+                QStringLiteral("Filtered result count and selection-specific state."));
         }
         refreshCompositionEditor();
         ProjectItem* item = currentSelectedItem();
@@ -6248,10 +6257,10 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     auto* selectionChromeLayout = new QVBoxLayout(selectionChrome);
     selectionChromeLayout->setContentsMargins(8, 0, 8, 5);
     selectionChromeLayout->setSpacing(2);
-    impl_->selectionSummaryLabel = new QLabel(QStringLiteral("Recent: - | Selection: 0 items | Status: All / All items | Search: -"), selectionChrome);
+    impl_->selectionSummaryLabel = new QLabel(QStringLiteral("View: List | Type: All | Scope: All items | Search: -"), selectionChrome);
     impl_->selectionSummaryLabel->setWordWrap(true);
-    impl_->selectionSummaryLabel->setMaximumHeight(42);
-    impl_->selectionSummaryLabel->setToolTip(QStringLiteral("Current filters and selection count."));
+    impl_->selectionSummaryLabel->setMaximumHeight(40);
+    impl_->selectionSummaryLabel->setToolTip(QStringLiteral("Current view mode, active filter scope, and search text."));
     {
         QFont f = impl_->selectionSummaryLabel->font();
         f.setPointSize(10);
@@ -6261,6 +6270,19 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->selectionSummaryLabel->setPalette(pal);
     }
     selectionChromeLayout->addWidget(impl_->selectionSummaryLabel);
+    impl_->selectionStateLabel = new QLabel(QStringLiteral("Results: 0 | Selected: 0"), selectionChrome);
+    impl_->selectionStateLabel->setWordWrap(true);
+    impl_->selectionStateLabel->setMaximumHeight(40);
+    impl_->selectionStateLabel->setToolTip(QStringLiteral("Filtered result count and selection-specific state."));
+    {
+        QFont f = impl_->selectionStateLabel->font();
+        f.setPointSize(10);
+        impl_->selectionStateLabel->setFont(f);
+        QPalette pal = impl_->selectionStateLabel->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(122));
+        impl_->selectionStateLabel->setPalette(pal);
+    }
+    selectionChromeLayout->addWidget(impl_->selectionStateLabel);
     auto* selectionDetailLabel = new ProjectActionLabel(QStringLiteral("Open a project or search to inspect details | Select an item to inspect details"), selectionChrome);
     impl_->selectionDetailLabel = selectionDetailLabel;
     impl_->selectionDetailLabel->setWordWrap(true);
@@ -6596,6 +6618,10 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     filterBar->addStretch();
     filterBar->addWidget(impl_->proxyQueueProgress, 1);
     chromeLayout->addWidget(filterBarHost);
+    chromeLayout->removeWidget(selectionChrome);
+    chromeLayout->removeWidget(impl_->compositionEditorPanel);
+    chromeLayout->addWidget(selectionChrome);
+    chromeLayout->addWidget(impl_->compositionEditorPanel);
     mainLayout->addWidget(chromePanel);
 
     impl_->projectView_ = new ArtifactProjectView(this);

@@ -55,6 +55,8 @@ file(GLOB_RECURSE POTENTIAL_SOURCES
 if(NOT ARTIFACT_FEATURE_COMMAND_PALETTE)
     list(FILTER POTENTIAL_SOURCES EXCLUDE REGEX "/Widgets/CommandPalette/")
 endif()
+# Exclude worker process sources from the main application target
+list(FILTER POTENTIAL_SOURCES EXCLUDE REGEX "/src/Worker/")
 
 set(APP_MODULES "")
 set(APP_IMPL "")
@@ -198,6 +200,31 @@ foreach(glow_variant IN ITEMS LiquidGlow ResidualGlow)
     endif()
 endforeach()
 
+# New creative effect modules (Kaleidoscope, Dithering, Kuwahara) — explicitly pinned
+foreach(_new_effect IN ITEMS Kaleidoscope Dithering Kuwahara)
+    list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/${_new_effect}/${_new_effect}Effect.ixx" _new_effect_module_idx)
+    if(_new_effect_module_idx EQUAL -1)
+        list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/${_new_effect}/${_new_effect}Effect.ixx")
+    endif()
+    list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_new_effect}/${_new_effect}Effect.cppm" _new_effect_impl_idx)
+    if(_new_effect_impl_idx EQUAL -1)
+        list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_new_effect}/${_new_effect}Effect.cppm")
+    endif()
+endforeach()
+
+# Distort pack additions are pinned explicitly so new modules do not depend on
+# recursive glob discovery or content scanning behavior.
+foreach(_distort_effect IN ITEMS TimeDisplacement)
+    list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/${_distort_effect}Effect.ixx" _distort_effect_module_idx)
+    if(_distort_effect_module_idx EQUAL -1)
+        list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/${_distort_effect}Effect.ixx")
+    endif()
+    list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_distort_effect}/${_distort_effect}Effect.cppm" _distort_effect_impl_idx)
+    if(_distort_effect_impl_idx EQUAL -1)
+        list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_distort_effect}/${_distort_effect}Effect.cppm")
+    endif()
+endforeach()
+
 # ---------------------------------------------------------------------------
 # ターゲット定義
 # ---------------------------------------------------------------------------
@@ -214,6 +241,7 @@ set_target_properties(Artifact PROPERTIES
 
 # Version compile definitions
 option(ARTIFACT_FEATURE_COMMAND_PALETTE "Enable experimental command palette widget (shell only, no real action registration yet)" OFF)
+option(ARTIFACT_FEATURE_FARM_WORKER "Build out-of-process render farm worker binary (Phase 4)" OFF)
 
 target_compile_definitions(Artifact PRIVATE
     ARTIFACT_VERSION_STRING="${ARTIFACT_VERSION}"
@@ -459,6 +487,23 @@ if(WIN32)
         ole32
         advapi32
     )
+endif()
+
+# ---------------------------------------------------------------------------
+# Out-of-process render farm worker (Phase 4)
+# ---------------------------------------------------------------------------
+if(ARTIFACT_FEATURE_FARM_WORKER)
+    add_executable(ArtifactWorker)
+    set_target_properties(ArtifactWorker PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    )
+    target_sources(ArtifactWorker
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/Worker/FarmWorkerMain.cppm"
+    )
+    target_link_libraries(ArtifactWorker PRIVATE ArtifactCore Qt6::Core Qt6::Network)
 endif()
 
 # ---------------------------------------------------------------------------

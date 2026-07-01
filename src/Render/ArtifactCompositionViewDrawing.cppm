@@ -37,6 +37,7 @@ import Artifact.Layer.FormParticle;
 import Artifact.Layer.Composition;
 import Artifact.Layer.AdjustableLayer;
 import Artifact.Effect.Abstract;
+import Artifact.Effect.Context;
 import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
 import Layer.Matte;
@@ -77,6 +78,50 @@ export void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                         const std::vector<ArtifactCore::Light>* sceneLights = nullptr);
 
 namespace {
+
+EffectContext makeLayerEffectContext(ArtifactAbstractLayer* layer,
+                                     const QRectF& roi = QRectF())
+{
+  EffectContext ctx;
+  ctx.roi = roi;
+  ctx.isInteractive = true;
+  ctx.layerFrame = layer ? layer->currentFrame() : 0;
+  if (auto* composition =
+          layer ? dynamic_cast<ArtifactAbstractComposition*>(
+                      layer->compositionObject())
+                : nullptr) {
+    ctx.compositionFrame = composition->framePosition().framePosition();
+    ctx.frameRate = std::max(
+        1.0f, static_cast<float>(composition->frameRate().framerate()));
+  } else {
+    ctx.compositionFrame = ctx.layerFrame;
+    ctx.frameRate = 30.0;
+  }
+  ctx.timeSeconds = ctx.frameRate > 0.0
+                        ? static_cast<double>(ctx.compositionFrame) / ctx.frameRate
+                        : 0.0;
+  return ctx;
+}
+
+EffectContext makeCompositionEffectContext(ArtifactAbstractComposition* composition,
+                                           const QRectF& roi = QRectF())
+{
+  EffectContext ctx;
+  ctx.roi = roi;
+  ctx.isInteractive = true;
+  ctx.compositionFrame =
+      composition ? composition->framePosition().framePosition() : 0;
+  ctx.layerFrame = ctx.compositionFrame;
+  ctx.frameRate = composition
+                      ? std::max(
+                            1.0f,
+                            static_cast<float>(composition->frameRate().framerate()))
+                      : 30.0;
+  ctx.timeSeconds = ctx.frameRate > 0.0
+                        ? static_cast<double>(ctx.compositionFrame) / ctx.frameRate
+                        : 0.0;
+  return ctx;
+}
 
 float lodScale(DetailLevel lod)
 {
@@ -343,6 +388,10 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
       }
 
       ArtifactCore::ImageF32x4RGBAWithCache next;
+      effect->setContext(makeLayerEffectContext(
+          targetLayer,
+          QRectF(0.0, 0.0, static_cast<qreal>(current.width()),
+                 static_cast<qreal>(current.height()))));
       effect->applyConfigured(current, next);
       current = next;
     }
@@ -577,6 +626,10 @@ bool applyCompositionFinalEffectsToImage(ArtifactAbstractComposition* compositio
       continue;
     }
     ArtifactCore::ImageF32x4RGBAWithCache next;
+    effect->setContext(makeCompositionEffectContext(
+        composition,
+        QRectF(0.0, 0.0, static_cast<qreal>(current.width()),
+               static_cast<qreal>(current.height()))));
     effect->applyConfigured(current, next);
     current = next;
   }

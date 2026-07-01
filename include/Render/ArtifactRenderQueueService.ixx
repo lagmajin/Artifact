@@ -44,6 +44,7 @@ import Core.Diagnostics.ProjectDiagnostic;
 import Core.Diagnostics.SessionLedger;
 import Artifact.Render.Queue.Presets;
 import Frame.Debug;
+import Render.Farm.Types;
 
 export namespace Artifact {
 // Forward declarations
@@ -218,6 +219,21 @@ public:
   // Session Ledger access
   ArtifactCore::SessionLedger& sessionLedger();
   const ArtifactCore::SessionLedger& sessionLedger() const;
+
+  // Render Farm configuration (Phase 1-3: in-process workers only)
+  void setFarmWorkerCount(int count);
+  int farmWorkerCount() const;
+  void setFarmEnabled(bool enabled);
+  bool farmEnabled() const;
+  void setFarmRetryPolicy(const ArtifactCore::RetryPolicy& policy);
+  ArtifactCore::RetryPolicy farmRetryPolicy() const;
+
+  // Render Farm out-of-process (Phase 4)
+  void startFarmRpcServer(unsigned short port = 0);
+  void stopFarmRpcServer();
+  bool isFarmRpcServerRunning() const;
+  void setFarmAllowRemoteWorkers(bool allow);
+  bool farmAllowRemoteWorkers() const;
 };
 
 }; // namespace Artifact

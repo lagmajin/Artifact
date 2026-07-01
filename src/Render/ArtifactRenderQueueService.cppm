@@ -109,10 +109,24 @@ import Artifact.Layer.Procedural3D;
 import Layer.Blend;
 import Color.Float;
 import Composition.TemplateLock;
+import Render.Farm.Master;
+import Render.Farm.Types;
+import Render.Farm.Progress;
+import Render.Farm.Log;
+import Application.AppSettings;
 
 namespace Artifact
 {
     namespace {
+        struct EffectiveRenderFrameRange {
+            int startFrame = 0;
+            int endFrame = 100;
+
+            int count() const {
+                return std::max(0, endFrame - startFrame);
+            }
+        };
+
         QString resolveFfmpegExePath()
         {
             const QString executableName = QStringLiteral("ffmpeg.exe");
@@ -210,20 +224,22 @@ namespace Artifact
             return info.dir().filePath(QStringLiteral("%1.__audio_tmp__.wav").arg(baseName));
         }
 
-        FrameRange effectiveRenderRangeForComposition(const ArtifactCompositionPtr& composition)
+        EffectiveRenderFrameRange effectiveRenderRangeForComposition(
+            const ArtifactCompositionPtr& composition)
         {
             if (!composition) {
-                return FrameRange(0, 100);
+                return {};
             }
-
-            FrameRange range = composition->workAreaRange();
-            if (!range.isValid() || range.isEmpty()) {
-                range = composition->frameRange();
+            const auto totalRange = composition->frameRange();
+            if (totalRange.duration() <= 0) {
+                return {};
             }
-            if (!range.isValid() || range.isEmpty()) {
-                range = FrameRange(0, 100);
-            }
-            return range.normalized();
+            return {
+                static_cast<int>(std::max<int64_t>(0, totalRange.start())),
+                static_cast<int>(std::max<int64_t>(
+                    std::max<int64_t>(0, totalRange.start() + 1),
+                    totalRange.end()))
+            };
         }
 
         bool writeAudioSegmentAsWav(const QString& filePath,
@@ -2116,6 +2132,13 @@ namespace Artifact
             std::atomic<bool>& success,
             QString& failureReason);
 
+        // Render Farm configuration
+        int farmWorkerCount_ = 0;          // 0 = use CPU count default
+        bool farmEnabled_ = true;          // use farm for multi-frame CPU jobs
+        bool farmAllowRemote_ = false;     // accept remote workers (Phase 4)
+        unsigned short farmRpcPort_ = 0;   // 0 = default (9876)
+        ArtifactCore::RetryPolicy farmRetryPolicy_;
+
         // M-RD-13 Phase 2: Multi-Frame Scheduler
         int maxInFlightFrames_ = 4;
 
@@ -3028,6 +3051,14 @@ namespace Artifact
     ArtifactRenderQueueService::ArtifactRenderQueueService(QObject* parent /*= nullptr*/)
         : QObject(parent), impl_(new Impl) {
         impl_->owner_ = this;
+        auto* as = ArtifactCore::ArtifactAppSettings::instance();
+        impl_->farmEnabled_ = as->farmEnabled();
+        impl_->farmWorkerCount_ = as->farmWorkerCount();
+        impl_->farmRetryPolicy_.maxAttempts = as->farmRetryMaxAttempts();
+        impl_->farmRetryPolicy_.initialBackoffMs = as->farmRetryInitialBackoffMs();
+        impl_->farmRetryPolicy_.maxBackoffMs = as->farmRetryMaxBackoffMs();
+        impl_->farmRpcPort_ = as->farmRpcPort();
+        impl_->farmAllowRemote_ = as->farmAllowRemote();
     }
 
     ArtifactRenderQueueService::~ArtifactRenderQueueService() {
@@ -3092,15 +3123,15 @@ namespace Artifact
             if (const auto comp = found.ptr.lock()) {
                 const auto totalRange = comp->frameRange();
                 const auto effectiveRange = effectiveRenderRangeForComposition(comp);
-                job.startFrame = static_cast<int>(std::max<int64_t>(0, effectiveRange.start()));
-                job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, effectiveRange.end()));
+                job.startFrame = std::max(0, effectiveRange.startFrame);
+                job.endFrame = std::max(job.startFrame + 1, effectiveRange.endFrame);
                 job.frameRate = comp->frameRate().framerate();
                 const QSize size = comp->effectiveCompositionSize();
                 if (size.width() > 0 && size.height() > 0) {
                     job.resolutionWidth = size.width();
                     job.resolutionHeight = size.height();
                 }
-                if ((!totalRange.isValid() || totalRange.duration() <= 0) && (!effectiveRange.isValid() || effectiveRange.duration() <= 0)) {
+                if (totalRange.duration() <= 0 && effectiveRange.count() <= 0) {
                     job.startFrame = 0;
                     job.endFrame = 100;
                 }
@@ -3162,15 +3193,15 @@ namespace Artifact
             if (const auto comp = found.ptr.lock()) {
                 const auto totalRange = comp->frameRange();
                 const auto effectiveRange = effectiveRenderRangeForComposition(comp);
-                job.startFrame = static_cast<int>(std::max<int64_t>(0, effectiveRange.start()));
-                job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, effectiveRange.end()));
+                job.startFrame = std::max(0, effectiveRange.startFrame);
+                job.endFrame = std::max(job.startFrame + 1, effectiveRange.endFrame);
                 job.frameRate = comp->frameRate().framerate();
                 const QSize size = comp->effectiveCompositionSize();
                 if (size.width() > 0 && size.height() > 0) {
                     job.resolutionWidth = size.width();
                     job.resolutionHeight = size.height();
                 }
-                if ((!totalRange.isValid() || totalRange.duration() <= 0) && (!effectiveRange.isValid() || effectiveRange.duration() <= 0)) {
+                if (totalRange.duration() <= 0 && effectiveRange.count() <= 0) {
                     job.startFrame = 0;
                     job.endFrame = 100;
                 }
@@ -3789,60 +3820,222 @@ namespace Artifact
         std::atomic<bool> anyWorkerFailed{false};
         QStringList workerFailureReasons;
 
-        auto renderWorker = [&]() {
-            while (!anyWorkerFailed.load(std::memory_order_relaxed)) {
-                const int f = nextFrameToRender.fetch_add(1, std::memory_order_relaxed);
-                if (f >= endF) {
-                    break;
-                }
-                if (shutdownRequested_.load(std::memory_order_acquire)) {
-                    anyWorkerFailed.store(true, std::memory_order_relaxed);
-                    break;
-                }
+        // Shared: render a single frame, return true on success.
+        // Does NOT set anyWorkerFailed — caller (renderFrame) owns retry/failure logic.
+        auto renderOneFrame = [&](int f) -> bool {
+            if (shutdownRequested_.load(std::memory_order_acquire))
+                return false;
 
-                {
-                    std::unique_lock<std::mutex> lock(outputBufferMutex);
-                    bufferSpaceCv.wait(lock, [&]() {
-                        return anyWorkerFailed.load(std::memory_order_relaxed) ||
-                            (static_cast<int>(outputBuffer.size()) < maxOutputBufferFrames_ &&
-                             outputBufferMemory.load(std::memory_order_relaxed) < maxOutputBufferMemoryBytes_);
-                    });
-                    if (anyWorkerFailed.load(std::memory_order_relaxed)) {
-                        break;
-                    }
-                }
-
-                FrameRenderSnapshot snap = baseSnap;
-                snap.frameNumber = f;
-                QImage frameImage;
-                QString frameError;
-                const bool ok = renderSingleFrame(snap, frameImage, frameError);
-
-                {
-                    std::lock_guard<std::mutex> lock(outputBufferMutex);
-                    if (ok) {
-                        const size_t frameBytes = static_cast<size_t>(frameImage.width()) *
-                            static_cast<size_t>(frameImage.height()) * 4;
-                        outputBufferMemory.fetch_add(frameBytes, std::memory_order_relaxed);
-                    }
-                    outputBuffer[f] = ok ? std::move(frameImage) : QImage();
-                    if (!ok) {
-                        anyWorkerFailed.store(true, std::memory_order_relaxed);
-                        workerFailureReasons.push_back(
-                            QStringLiteral("Frame %1: %2").arg(f).arg(frameError));
-                    }
-                }
-
-                outputBufferCv.notify_one();
+            {
+                std::unique_lock<std::mutex> lock(outputBufferMutex);
+                bufferSpaceCv.wait(lock, [&]() {
+                    return shutdownRequested_.load(std::memory_order_acquire) ||
+                        (static_cast<int>(outputBuffer.size()) < maxOutputBufferFrames_ &&
+                         outputBufferMemory.load(std::memory_order_relaxed) < maxOutputBufferMemoryBytes_);
+                });
             }
+            if (shutdownRequested_)
+                return false;
+
+            FrameRenderSnapshot snap = baseSnap;
+            snap.frameNumber = f;
+            QImage frameImage;
+            QString frameError;
+            bool ok = false;
+            try {
+                ok = renderSingleFrame(snap, frameImage, frameError);
+            } catch (const std::exception& e) {
+                frameError = QString::fromUtf8(e.what());
+            } catch (...) {
+                frameError = QStringLiteral("Unknown exception during frame render");
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(outputBufferMutex);
+                if (ok) {
+                    const size_t frameBytes = static_cast<size_t>(frameImage.width()) *
+                        static_cast<size_t>(frameImage.height()) * 4;
+                    outputBufferMemory.fetch_add(frameBytes, std::memory_order_relaxed);
+                }
+                // Always write to buffer so consumer can proceed
+                outputBuffer[f] = ok ? std::move(frameImage) : QImage();
+                if (!ok && !anyWorkerFailed.load(std::memory_order_relaxed)) {
+                    // First failure for this frame — log it
+                    workerFailureReasons.push_back(
+                        QStringLiteral("Frame %1: %2").arg(f).arg(frameError));
+                }
+            }
+            outputBufferCv.notify_one();
+            return ok;
         };
 
+        // Determine whether to use the farm path
+        const bool useFarm = farmEnabled_ && useMfr;
+
+        // Checkpoint-aware start frame (farm path only)
+        int consumerStartF = startF;
+
+        // Record render start in session ledger (both farm and legacy paths)
+        sessionLedger_.recordRenderStarted(jobIndex, job.compositionName);
+
+        // Farm diagnostics: keep in scope for the consumer loop and async callbacks
+        ArtifactCore::LogCollector farmLog;
+        ArtifactCore::ProgressAggregator farmProgress;
+
+        // Legacy: raw thread pool for frame-at-a-time dispatch
         std::vector<std::thread> renderWorkers;
-        for (int w = 0; w < numWorkers; ++w) {
-            renderWorkers.emplace_back(renderWorker);
+        std::atomic<int> nextFrameCounter{startF};
+
+        if (useFarm) {
+            auto& farmMaster = ArtifactCore::RenderFarmMaster::instance();
+            int wc = farmWorkerCount_ > 0 ? farmWorkerCount_ : numWorkers;
+            farmMaster.setWorkerCount(wc);
+            // Enable checkpoint every 30 frames for crash recovery
+            farmMaster.setCheckpointPolicy(
+                { ArtifactCore::CheckpointPolicy::Mode::EveryNFrames, 30 });
+
+            // Persistent log directory (temp root, same as checkpoint default)
+            const QString farmLogDir = QDir::tempPath() + QStringLiteral("/ArtifactStudio/farm/logs");
+            farmLog.setLogDirectory(farmLogDir);
+            farmLog.logInfo(QStringLiteral("service"),
+                QStringLiteral("Farm job start: comp=%1 range=[%2,%3] workers=%4")
+                    .arg(job.compositionName).arg(startF).arg(endF).arg(wc));
+
+            // Set checkpoint store base path to match log location
+            const QString farmCheckpointDir = QDir::tempPath() + QStringLiteral("/ArtifactStudio/farm/checkpoints");
+            if (auto* cs = farmMaster.checkpointStore()) {
+                cs->setBasePath(farmCheckpointDir);
+            }
+
+            // Deterministic job ID for checkpoint recovery
+            const QString farmJobId = QStringLiteral("queue-%1-%2-to-%3")
+                .arg(job.compositionId.toString())
+                .arg(startF).arg(endF);
+
+            // Check for existing checkpoint and adjust start
+            if (auto* cs = farmMaster.checkpointStore()) {
+                auto cp = cs->load(farmJobId);
+                if (cp && cp->completedUpToFrame > consumerStartF) {
+                    consumerStartF = cp->completedUpToFrame;
+                    int restored = consumerStartF - startF;
+                    farmLog.logInfo(QStringLiteral("service"),
+                        QStringLiteral("Checkpoint restore: skipping %1 frames").arg(restored));
+                }
+                if (consumerStartF >= endF) {
+                    farmLog.logInfo(QStringLiteral("service"),
+                        QStringLiteral("Job already complete per checkpoint"));
+                }
+            }
+
+            // Route progress from farm back to queue manager
+            std::atomic<bool> farmCompleted{false};
+            farmMaster.setOnProgress([&](const ArtifactCore::RenderJobProgress& p) {
+                int pct = p.totalFrames > 0 ? (p.completedFrames * 100 / p.totalFrames) : 0;
+                QMetaObject::invokeMethod(service, [this, jobIndex, pct]() {
+                    queueManager.setJobProgress(jobIndex, pct);
+                }, Qt::QueuedConnection);
+            });
+
+            farmMaster.setOnCompleted([&](const ArtifactCore::RenderJobResult& r) {
+                farmCompleted = true;
+                if (!r.success && r.failedFrames > 0) {
+                    anyWorkerFailed.store(true, std::memory_order_relaxed);
+                    QString reason = QStringLiteral("Farm completed with %1 failed frames").arg(r.failedFrames);
+                    workerFailureReasons.push_back(reason);
+                    farmLog.logError(QStringLiteral("master"),
+                        QStringLiteral("Farm job failed: %1 errors").arg(r.failedFrames));
+                    sessionLedger_.recordRenderFailed(jobIndex, reason);
+                } else {
+                    sessionLedger_.recordRenderCompleted(jobIndex, job.outputPath);
+                }
+                farmLog.logInfo(QStringLiteral("master"),
+                    QStringLiteral("Farm job done: %1 rendered, %2 failed, %3 held")
+                        .arg(r.renderedFrames).arg(r.failedFrames).arg(r.failures.heldCount()));
+                farmLog.flush();
+            });
+
+            // Per-worker aggregator for diagnostics
+            farmProgress.registerWorker(QStringLiteral("master"), true, totalFrames);
+
+            ArtifactCore::RenderJobRequest farmReq;
+            farmReq.jobId = farmJobId;
+            farmReq.compositionId = job.compositionId;
+            farmReq.compositionName = job.compositionName;
+            farmReq.range.startFrame = startF;   // full range; master internally skips via checkpoint
+            farmReq.range.endFrame = endF;
+            farmReq.range.step = 1;
+            farmReq.renderFrame = [&](int frame) {
+                // Inline retry loop: each attempt calls renderOneFrame which writes to
+                // outputBuffer and signals the consumer. On failure we wait with
+                // exponential backoff before retrying. After max attempts the frame
+                // is permanently failed.
+                static const int kFarmMaxRetries = 3;
+                farmLog.logDebug(QStringLiteral("worker"),
+                    QStringLiteral("Frame %1 start").arg(frame), frame);
+                for (int attempt = 0; attempt < kFarmMaxRetries; ++attempt) {
+                    if (shutdownRequested_ || anyWorkerFailed) break;
+
+                    if (attempt > 0) {
+                        int backoff = std::min(2000 * (1 << (attempt - 1)), 30000);
+                        farmLog.logWarning(QStringLiteral("worker"),
+                            QStringLiteral("Frame %1 retry %2/%3 (backoff=%4ms)")
+                                .arg(frame).arg(attempt + 1).arg(kFarmMaxRetries).arg(backoff),
+                            frame);
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(backoff));
+                    }
+
+                    if (renderOneFrame(frame)) {
+                        // Success
+                        farmProgress.reportFrameCompleted(
+                            QStringLiteral("master"), frame);
+                        farmLog.logDebug(QStringLiteral("worker"),
+                            QStringLiteral("Frame %1 done").arg(frame), frame);
+                        return;
+                    }
+                }
+                // All retries exhausted: permanent failure
+                anyWorkerFailed.store(true, std::memory_order_relaxed);
+                farmLog.logError(QStringLiteral("worker"),
+                    QStringLiteral("Frame %1 failed after %2 attempts")
+                        .arg(frame).arg(kFarmMaxRetries), frame);
+            };
+
+            // Apply retry policy from service config
+            farmMaster.setRetryPolicy(farmRetryPolicy_);
+
+            // Skip submit if already complete
+            if (consumerStartF < endF) {
+                farmLog.logInfo(QStringLiteral("service"),
+                    QStringLiteral("Submitting farm job range=[%1,%2]")
+                        .arg(consumerStartF).arg(endF));
+                farmMaster.submitJob(farmReq);
+            } else {
+                farmLog.logInfo(QStringLiteral("service"),
+                    QStringLiteral("Skipping submit: job already complete"));
+                farmCompleted = true;
+            }
+        } else {
+            // Legacy path: worker threads pull from atomic counter
+            auto renderWorker = [&]() {
+                while (!anyWorkerFailed.load(std::memory_order_relaxed)) {
+                    const int f = nextFrameCounter.fetch_add(1, std::memory_order_relaxed);
+                    if (f >= endF) break;
+                    if (shutdownRequested_.load(std::memory_order_acquire)) {
+                        anyWorkerFailed.store(true, std::memory_order_relaxed);
+                        break;
+                    }
+                    renderOneFrame(f);
+                }
+            };
+
+            for (int w = 0; w < numWorkers; ++w) {
+                renderWorkers.emplace_back(renderWorker);
+            }
         }
 
-        for (int f = startF; f < endF; ++f) {
+        // Consumer loop (shared by both paths; start may be checkpoint-adjusted)
+        for (int f = consumerStartF; f < endF; ++f) {
             QImage qimg;
             {
                 std::unique_lock<std::mutex> lock(outputBufferMutex);
@@ -3881,9 +4074,38 @@ namespace Artifact
             }
 
             if (qimg.isNull()) {
-                success.store(false, std::memory_order_relaxed);
-                failureReason = QStringLiteral("Rendered frame is null (frame %1)").arg(f);
-                break;
+                if (useFarm) {
+                    // Farm path: retries might be in progress.
+                    // Poll for up to ~60s total for the retried frame to arrive.
+                    auto& farmMaster = ArtifactCore::RenderFarmMaster::instance();
+                    bool resolved = false;
+                    for (int w = 0; w < 120 && farmMaster.isBusy() && !shutdownRequested_; ++w) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                        std::lock_guard<std::mutex> lock(outputBufferMutex);
+                        auto it = outputBuffer.find(f);
+                        if (it != outputBuffer.end()) {
+                            qimg = std::move(it->second);
+                            outputBuffer.erase(it);
+                            if (!qimg.isNull()) {
+                                resolved = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!resolved) {
+                        farmLog.logError(QStringLiteral("consumer"),
+                            QStringLiteral("Frame %1 null after retries, giving up").arg(f), f);
+                        success.store(false, std::memory_order_relaxed);
+                        failureReason = QStringLiteral("Frame %1: render failed after retries").arg(f);
+                        break;
+                    }
+                    // If resolved, fall through to process the image
+                } else {
+                    // Legacy path: single-shot, no retries
+                    success.store(false, std::memory_order_relaxed);
+                    failureReason = QStringLiteral("Rendered frame is null (frame %1)").arg(f);
+                    break;
+                }
             }
 
             {
@@ -3959,16 +4181,32 @@ namespace Artifact
                 }
             }
 
-            const int rendered = ++framesRendered;
-            const int progress = static_cast<int>((static_cast<float>(rendered) / totalFrames) * 100);
-            QMetaObject::invokeMethod(service, [this, jobIndex, progress]() {
-                queueManager.setJobProgress(jobIndex, progress);
+            ++framesRendered;
+            // Include restored frames in progress calculation
+            int restoredOffset = consumerStartF - startF;
+            int totalRendered = restoredOffset + framesRendered.load();
+            const int pct = static_cast<int>((static_cast<float>(totalRendered) / totalFrames) * 100);
+            QMetaObject::invokeMethod(service, [this, jobIndex, pct]() {
+                queueManager.setJobProgress(jobIndex, pct);
             }, Qt::QueuedConnection);
         }
 
-        for (auto& worker : renderWorkers) {
-            if (worker.joinable()) {
-                worker.join();
+        // Teardown: join legacy workers / cancel farm
+        if (useFarm) {
+            auto& farmMaster = ArtifactCore::RenderFarmMaster::instance();
+            if (anyWorkerFailed.load(std::memory_order_relaxed) ||
+                shutdownRequested_.load(std::memory_order_acquire)) {
+                farmMaster.cancelAll();
+            }
+            // Let farm master finish post-processing (checkpoint, etc.)
+            while (farmMaster.isBusy()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        } else {
+            for (auto& worker : renderWorkers) {
+                if (worker.joinable()) {
+                    worker.join();
+                }
             }
         }
 
@@ -3977,6 +4215,14 @@ namespace Artifact
             failureReason = workerFailureReasons.isEmpty()
                 ? QStringLiteral("Render worker failed")
                 : workerFailureReasons.first();
+        }
+
+        // Record render completion or failure in session ledger
+        if (success.load()) {
+            sessionLedger_.recordRenderCompleted(jobIndex, job.outputPath);
+        } else if (!shutdownRequested_ &&
+                   !workerFailureReasons.isEmpty()) {
+            sessionLedger_.recordRenderFailed(jobIndex, failureReason);
         }
     }
 
@@ -4440,8 +4686,8 @@ namespace Artifact
             job.frameRate = comp->frameRate().framerate();
             job.bitrate = 8000;
             const auto range = effectiveRenderRangeForComposition(comp);
-            job.startFrame = static_cast<int>(std::max<int64_t>(0, range.start()));
-            job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, range.end()));
+            job.startFrame = std::max(0, range.startFrame);
+            job.endFrame = std::max(job.startFrame + 1, range.endFrame);
 
             const QString safeName = item->name.toQString().trimmed().isEmpty()
                 ? QStringLiteral("Composition_%1").arg(added + 1)
@@ -4483,8 +4729,8 @@ namespace Artifact
             job.frameRate = comp->frameRate().framerate();
             job.bitrate = 8000;
             const auto range = effectiveRenderRangeForComposition(comp);
-            job.startFrame = static_cast<int>(std::max<int64_t>(0, range.start()));
-            job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, range.end()));
+            job.startFrame = std::max(0, range.startFrame);
+            job.endFrame = std::max(job.startFrame + 1, range.endFrame);
 
             const QString safeName = job.compositionName.trimmed().isEmpty()
                 ? QStringLiteral("Composition_%1").arg(added + 1)
@@ -4599,6 +4845,62 @@ namespace Artifact
 
     ArtifactCore::SessionLedger& ArtifactRenderQueueService::sessionLedger() {
         return impl_->sessionLedger_;
+    }
+
+    void ArtifactRenderQueueService::setFarmWorkerCount(int count) {
+        impl_->farmWorkerCount_ = std::max(0, count);
+        ArtifactCore::ArtifactAppSettings::instance()->setFarmWorkerCount(impl_->farmWorkerCount_);
+    }
+
+    int ArtifactRenderQueueService::farmWorkerCount() const {
+        return impl_->farmWorkerCount_;
+    }
+
+    void ArtifactRenderQueueService::setFarmEnabled(bool enabled) {
+        impl_->farmEnabled_ = enabled;
+        ArtifactCore::ArtifactAppSettings::instance()->setFarmEnabled(impl_->farmEnabled_);
+    }
+
+    bool ArtifactRenderQueueService::farmEnabled() const {
+        return impl_->farmEnabled_;
+    }
+
+    void ArtifactRenderQueueService::setFarmRetryPolicy(const ArtifactCore::RetryPolicy& policy) {
+        impl_->farmRetryPolicy_ = policy;
+        auto* as = ArtifactCore::ArtifactAppSettings::instance();
+        as->setFarmRetryMaxAttempts(impl_->farmRetryPolicy_.maxAttempts);
+        as->setFarmRetryInitialBackoffMs(impl_->farmRetryPolicy_.initialBackoffMs);
+        as->setFarmRetryMaxBackoffMs(impl_->farmRetryPolicy_.maxBackoffMs);
+    }
+
+    ArtifactCore::RetryPolicy ArtifactRenderQueueService::farmRetryPolicy() const {
+        return impl_->farmRetryPolicy_;
+    }
+
+    // -- Phase 4: RPC Server --
+
+    void ArtifactRenderQueueService::startFarmRpcServer(unsigned short port) {
+        impl_->farmRpcPort_ = port;
+        ArtifactCore::ArtifactAppSettings::instance()->setFarmRpcPort(port);
+        ArtifactCore::RenderFarmMaster::instance().startRpcServer(port);
+    }
+
+    void ArtifactRenderQueueService::stopFarmRpcServer() {
+        ArtifactCore::RenderFarmMaster::instance().stopRpcServer();
+    }
+
+    bool ArtifactRenderQueueService::isFarmRpcServerRunning() const {
+        return ArtifactCore::RenderFarmMaster::instance().isRpcServerRunning();
+    }
+
+    void ArtifactRenderQueueService::setFarmAllowRemoteWorkers(bool allow) {
+        impl_->farmAllowRemote_ = allow;
+        ArtifactCore::ArtifactAppSettings::instance()->setFarmAllowRemote(allow);
+        ArtifactCore::RenderFarmMaster::instance().setAllowRemoteWorkers(allow);
+    }
+
+    bool ArtifactRenderQueueService::farmAllowRemoteWorkers() const {
+        return impl_->farmAllowRemote_;
     }
 
 }

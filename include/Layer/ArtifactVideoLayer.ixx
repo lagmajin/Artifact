@@ -125,6 +125,14 @@ public:
     /// Short status string for render-path logs
     QString decodeState() const;
 
+    /// Record the render/present phases for the current frame ticket.
+    /// These calls are diagnostics only and never trigger decoding.
+    void markFrameCompositionCacheReady(int64_t timelineFrame, bool fromDisk);
+    void markFrameRenderQueued(int64_t timelineFrame,
+                               bool repeatedLastGood = false);
+    void markFramePresented(int64_t timelineFrame, double gpuFrameEstimateMs,
+                            const QString& presentStatus);
+
     // === Playback Control ===
     
     /// Seek to specific frame

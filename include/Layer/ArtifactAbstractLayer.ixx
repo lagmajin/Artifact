@@ -493,6 +493,9 @@ public:
   std::vector<LayerComponentDescriptor> layerComponents() const;
   std::vector<LayerComponentDescriptor>
   enabledLayerComponents(LayerComponentPhase phase) const;
+  std::vector<LayerGeneratorDescriptor> layerGenerators() const;
+  std::vector<LayerFieldDescriptor> layerFields() const;
+  std::vector<LayerModifierDescriptor> layerCloneModifiers() const;
   std::vector<LayerComponentValidationIssue>
   validateLayerComponents() const;
   /*Components*/

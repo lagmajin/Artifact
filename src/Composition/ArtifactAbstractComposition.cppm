@@ -19,6 +19,7 @@ module;
 #include <QUuid>
 #include <QPointF>
 #include <QRectF>
+#include <QTransform>
 
 module Artifact.Composition.Abstract;
 
@@ -305,6 +306,116 @@ QString uniqueEffectIdForComposition(
   return uniqueId;
 }
 
+bool layerBooleanProperty(const ArtifactAbstractLayerPtr& layer,
+                          const QString& propertyPath,
+                          bool fallback = false)
+{
+  if (!layer) {
+    return fallback;
+  }
+  const auto property = layer->getProperty(propertyPath);
+  return property ? property->getValue().toBool() : fallback;
+}
+
+int layerIntProperty(const ArtifactAbstractLayerPtr& layer,
+                     const QString& propertyPath,
+                     int fallback = 0)
+{
+  if (!layer) {
+    return fallback;
+  }
+  const auto property = layer->getProperty(propertyPath);
+  return property ? property->getValue().toInt() : fallback;
+}
+
+float layerFloatProperty(const ArtifactAbstractLayerPtr& layer,
+                         const QString& propertyPath,
+                         float fallback = 0.0f)
+{
+  if (!layer) {
+    return fallback;
+  }
+  const auto property = layer->getProperty(propertyPath);
+  return property ? property->getValue().toFloat() : fallback;
+}
+
+QRectF compositionCollisionLocalBounds(const ArtifactAbstractLayerPtr& layer)
+{
+  if (!layer) {
+    return QRectF();
+  }
+
+  const QRectF localBounds = layer->localBounds();
+  if (!localBounds.isValid()) {
+    return QRectF();
+  }
+
+  const int shape = layerIntProperty(
+      layer, QStringLiteral("component.collision.shape"), 0);
+  const float width = std::max(
+      0.0f, layerFloatProperty(
+                layer, QStringLiteral("component.collision.width"), 0.0f));
+  const float height = std::max(
+      0.0f, layerFloatProperty(
+                layer, QStringLiteral("component.collision.height"), 0.0f));
+  const float radius = std::max(
+      0.0f, layerFloatProperty(
+                layer, QStringLiteral("component.collision.radius"), 0.0f));
+  const float offsetX = layerFloatProperty(
+      layer, QStringLiteral("component.collision.offsetX"), 0.0f);
+  const float offsetY = layerFloatProperty(
+      layer, QStringLiteral("component.collision.offsetY"), 0.0f);
+  const QPointF center = localBounds.center() +
+                         QPointF(static_cast<qreal>(offsetX),
+                                 static_cast<qreal>(offsetY));
+
+  if (shape == 1) {
+    const qreal boxWidth = width > 0.0f ? static_cast<qreal>(width)
+                                        : localBounds.width();
+    const qreal boxHeight = height > 0.0f ? static_cast<qreal>(height)
+                                          : localBounds.height();
+    return QRectF(center.x() - boxWidth * 0.5, center.y() - boxHeight * 0.5,
+                  boxWidth, boxHeight);
+  }
+
+  if (shape == 2) {
+    const qreal circleRadius =
+        radius > 0.0f
+            ? static_cast<qreal>(radius)
+            : static_cast<qreal>(
+                  std::max(localBounds.width(), localBounds.height()) * 0.5);
+    return QRectF(center.x() - circleRadius, center.y() - circleRadius,
+                  circleRadius * 2.0, circleRadius * 2.0);
+  }
+
+  return localBounds.translated(static_cast<qreal>(offsetX),
+                                static_cast<qreal>(offsetY));
+}
+
+QRectF compositionCollisionBounds(const ArtifactAbstractLayerPtr& layer)
+{
+  if (!layer) {
+    return QRectF();
+  }
+  const QRectF localBounds = compositionCollisionLocalBounds(layer);
+  if (!localBounds.isValid()) {
+    return QRectF();
+  }
+  return layer->getGlobalTransform().mapRect(localBounds);
+}
+
+QString collisionPairKey(const ArtifactAbstractLayerPtr& a,
+                         const ArtifactAbstractLayerPtr& b)
+{
+  if (!a || !b) {
+    return QString();
+  }
+  const QString idA = a->id().toString();
+  const QString idB = b->id().toString();
+  return idA <= idB ? QStringLiteral("%1|%2").arg(idA, idB)
+                    : QStringLiteral("%1|%2").arg(idB, idA);
+}
+
 QJsonObject serializeEffect(const std::shared_ptr<ArtifactAbstractEffect>& effect)
 {
   QJsonObject eobj;
@@ -505,9 +616,11 @@ class ArtifactAbstractComposition::Impl {
    int effectCount() const;
 
     bool isPlaying_ = false;
+    QSet<QString> activeCollisionPairs_;
 
     // Asset usage tracking
     QVector<ArtifactCore::AssetID> getUsedAssets() const;
+    void evaluateLayerCollisionPairs();
   };
 
  ArtifactAbstractComposition::Impl::Impl(ArtifactAbstractComposition* owner) : owner_(owner)
@@ -649,7 +762,66 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     for (auto& layer : layerMultiIndex_) {
         if (layer) layer->goToFrame(frame);
     }
+    evaluateLayerCollisionPairs();
   }
+
+void ArtifactAbstractComposition::Impl::evaluateLayerCollisionPairs()
+{
+  QSet<QString> nextPairs;
+  std::vector<ArtifactAbstractLayerPtr> collisionLayers;
+  collisionLayers.reserve(static_cast<std::size_t>(layerMultiIndex_.all().size()));
+
+  for (const auto& layer : layerMultiIndex_) {
+    if (!layer || !layer->isActiveAt(position_)) {
+      continue;
+    }
+    if (!layerBooleanProperty(
+            layer, QStringLiteral("component.collision.enabled"), false)) {
+      continue;
+    }
+    collisionLayers.push_back(layer);
+  }
+
+  for (std::size_t i = 0; i < collisionLayers.size(); ++i) {
+    const auto& first = collisionLayers[i];
+    const QRectF firstBounds = compositionCollisionBounds(first);
+    if (!firstBounds.isValid()) {
+      continue;
+    }
+    for (std::size_t j = i + 1; j < collisionLayers.size(); ++j) {
+      const auto& second = collisionLayers[j];
+      const QRectF secondBounds = compositionCollisionBounds(second);
+      if (!secondBounds.isValid() || !firstBounds.intersects(secondBounds)) {
+        continue;
+      }
+
+      const QString pairKey = collisionPairKey(first, second);
+      if (pairKey.isEmpty()) {
+        continue;
+      }
+      nextPairs.insert(pairKey);
+      if (activeCollisionPairs_.contains(pairKey)) {
+        continue;
+      }
+
+      const QRectF overlap = firstBounds.intersected(secondBounds);
+      const QPointF center = overlap.center();
+      const float overlapExtent = static_cast<float>(
+          std::max(overlap.width(), overlap.height()));
+
+      FractureImpact impact;
+      impact.impulse = std::max(0.1f, overlapExtent / 64.0f);
+      impact.speed = overlapExtent;
+      impact.stress = impact.impulse;
+      impact.area = std::max(1.0f, static_cast<float>(overlap.width() * overlap.height()));
+
+      first->applyFractureImpact(impact);
+      second->applyFractureImpact(impact);
+    }
+  }
+
+  activeCollisionPairs_ = std::move(nextPairs);
+}
 
  QList<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayer() const
  {

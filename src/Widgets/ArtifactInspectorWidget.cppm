@@ -11,6 +11,7 @@ module;
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QFileDialog>
@@ -18,6 +19,8 @@ module;
 #include <QMenu>
 #include <QMessageBox>
 #include <QMetaObject>
+#include <QModelIndex>
+#include <QMouseEvent>
 #include <QFileInfo>
 #include <QObject>
 #include <QPalette>
@@ -107,6 +110,8 @@ import HueAndSaturation;
 import ColorWheelsEffect;
 import CurvesEffect;
 import Artifact.Effect.WhiteBalance;
+import Artifact.Effect.Distort.DisplacementMap;
+import Artifact.Effect.Distort.TimeDisplacement;
 import PhotoFilterEffect;
 import GradientRampEffect;
 import FillEffect;
@@ -655,6 +660,86 @@ protected:
 private:
   ArtifactAbstractLayerPtr layer_;
 };
+
+class InspectorActionButton final : public QPushButton {
+public:
+  using QPushButton::QPushButton;
+
+  void setAction(std::function<void()> action) {
+    action_ = std::move(action);
+  }
+
+protected:
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    const bool activate =
+        event && event->button() == Qt::LeftButton && isEnabled() &&
+        isDown() && rect().contains(event->position().toPoint());
+    QPushButton::mouseReleaseEvent(event);
+    if (activate && action_) {
+      action_();
+    }
+  }
+
+  void keyReleaseEvent(QKeyEvent *event) override {
+    const bool activate =
+        event && isEnabled() &&
+        (event->key() == Qt::Key_Space || event->key() == Qt::Key_Return ||
+         event->key() == Qt::Key_Enter);
+    QPushButton::keyReleaseEvent(event);
+    if (activate && action_) {
+      action_();
+    }
+  }
+
+private:
+  std::function<void()> action_;
+};
+
+class InspectorSelectionList final : public QListWidget {
+public:
+  using QListWidget::QListWidget;
+
+  void setSelectionAction(
+      std::function<void(QListWidgetItem *)> action) {
+    action_ = std::move(action);
+  }
+
+  void setSelectionActionEnabled(bool enabled) {
+    selectionActionEnabled_ = enabled;
+  }
+
+protected:
+  void currentChanged(const QModelIndex &current,
+                      const QModelIndex &previous) override {
+    QListWidget::currentChanged(current, previous);
+    if (selectionActionEnabled_ && action_) {
+      action_(currentItem());
+    }
+  }
+
+private:
+  bool selectionActionEnabled_ = true;
+  std::function<void(QListWidgetItem *)> action_;
+};
+
+class SelectionActionBlocker final {
+public:
+  explicit SelectionActionBlocker(InspectorSelectionList *list)
+      : list_(list) {
+    if (list_) {
+      list_->setSelectionActionEnabled(false);
+    }
+  }
+
+  ~SelectionActionBlocker() {
+    if (list_) {
+      list_->setSelectionActionEnabled(true);
+    }
+  }
+
+private:
+  InspectorSelectionList *list_ = nullptr;
+};
 } // namespace
 
 W_OBJECT_IMPL(ArtifactInspectorWidget)
@@ -678,11 +763,27 @@ public:
   ProxyInfoLabel *proxyInfoLabel = nullptr;
   QGroupBox *componentsGroup = nullptr;
   QLabel *componentsSummaryLabel = nullptr;
-  QPushButton *physicsComponentButton = nullptr;
-  QPushButton *scriptComponentButton = nullptr;
-  QPushButton *layoutComponentButton = nullptr;
-  QPushButton *cloneComponentButton = nullptr;
-  QPushButton *openScriptButton = nullptr;
+  InspectorActionButton *physicsComponentButton = nullptr;
+  InspectorActionButton *scriptComponentButton = nullptr;
+  InspectorActionButton *layoutComponentButton = nullptr;
+  InspectorActionButton *cloneComponentButton = nullptr;
+  InspectorActionButton *fluidComponentButton = nullptr;
+  InspectorActionButton *generatorComponentButton = nullptr;
+  InspectorActionButton *removeGeneratorComponentButton = nullptr;
+  InspectorActionButton *generatorMoveUpButton = nullptr;
+  InspectorActionButton *generatorMoveDownButton = nullptr;
+  InspectorSelectionList *generatorListWidget = nullptr;
+  InspectorActionButton *fieldComponentButton = nullptr;
+  InspectorActionButton *removeFieldComponentButton = nullptr;
+  InspectorActionButton *fieldMoveUpButton = nullptr;
+  InspectorActionButton *fieldMoveDownButton = nullptr;
+  InspectorSelectionList *fieldListWidget = nullptr;
+  InspectorActionButton *cloneModifierButton = nullptr;
+  InspectorActionButton *removeCloneModifierButton = nullptr;
+  InspectorActionButton *cloneModifierMoveUpButton = nullptr;
+  InspectorActionButton *cloneModifierMoveDownButton = nullptr;
+  InspectorSelectionList *cloneModifierListWidget = nullptr;
+  InspectorActionButton *openScriptButton = nullptr;
   ArtifactPropertyWidget *componentPropertyWidget = nullptr;
   QLabel *statusLabel = nullptr;
 
@@ -1057,7 +1158,7 @@ QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
         "physics.enabled|component.script.enabled|"
         "component.layout.enabled|component.cloner.enabled|"
         "component.collision.enabled|component.crowd.enabled|"
-        "component.particleEmitter.enabled");
+        "component.particleEmitter.enabled|component.fluid.enabled");
   }
   QStringList filters = {
       QStringLiteral("physics.enabled"),
@@ -1067,6 +1168,7 @@ QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
       QStringLiteral("component.collision.enabled"),
       QStringLiteral("component.crowd.enabled"),
       QStringLiteral("component.particleEmitter.enabled"),
+      QStringLiteral("component.fluid.enabled"),
   };
 
   if (layerBooleanProperty(layer, QStringLiteral("physics.enabled"))) {
@@ -1091,9 +1193,52 @@ QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
           layer, QStringLiteral("component.particleEmitter.enabled"))) {
     filters.push_back(QStringLiteral("component.particleEmitter."));
   }
+  if (layerBooleanProperty(layer, QStringLiteral("component.fluid.enabled"))) {
+    filters.push_back(QStringLiteral("component.fluid."));
+  }
 
   filters.removeDuplicates();
   return filters.join(QStringLiteral("|"));
+}
+
+QString generatorItemFilterText(const QListWidgetItem *item) {
+  if (!item) {
+    return {};
+  }
+  return item->data(Qt::UserRole + 1).toString().trimmed();
+}
+
+bool generatorItemSupportsReorder(const QListWidgetItem *item) {
+  return item && item->data(Qt::UserRole + 2).toBool();
+}
+
+QString fieldItemFilterText(const QListWidgetItem *item) {
+  if (!item) {
+    return {};
+  }
+  return item->data(Qt::UserRole + 1).toString().trimmed();
+}
+
+QString cloneModifierItemFilterText(const QListWidgetItem *item) {
+  if (!item) {
+    return {};
+  }
+  return item->data(Qt::UserRole + 1).toString().trimmed();
+}
+
+QString componentTypeDisplayName(const QString &typeId) {
+  QString name = typeId.section(QLatin1Char('.'), -1);
+  name.replace(QLatin1Char('-'), QLatin1Char(' '));
+  const QStringList words = name.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+  QStringList displayWords;
+  displayWords.reserve(words.size());
+  for (QString word : words) {
+    if (!word.isEmpty()) {
+      word[0] = word[0].toUpper();
+    }
+    displayWords.push_back(word);
+  }
+  return displayWords.join(QLatin1Char(' '));
 }
 
 void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString &text,
@@ -1165,6 +1310,16 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   const bool particleEmitterEnabled =
       hasLayer && layerBooleanProperty(
                       layer, QStringLiteral("component.particleEmitter.enabled"));
+  const bool fluidEnabled =
+      hasLayer && layerBooleanProperty(
+                      layer, QStringLiteral("component.fluid.enabled"));
+  const int generatorCount =
+      hasLayer ? static_cast<int>(layer->layerGenerators().size()) : 0;
+  const int fieldCount =
+      hasLayer ? static_cast<int>(layer->layerFields().size()) : 0;
+  const int cloneModifierCount =
+      hasLayer ? static_cast<int>(layer->layerCloneModifiers().size()) : 0;
+  const int extraCloneModifierCount = std::max(0, cloneModifierCount - 2);
   const auto validationIssues = hasLayer ? layer->validateLayerComponents()
                                          : std::vector<LayerComponentValidationIssue>{};
 
@@ -1203,6 +1358,273 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
         canEditComponents ? QStringLiteral("Toggle the layer Cloner component.")
                           : QStringLiteral("Select a layer inside a composition to add Cloner."));
   }
+  if (fluidComponentButton) {
+    fluidComponentButton->setEnabled(canEditComponents);
+    fluidComponentButton->setText(fluidEnabled ? QStringLiteral("Fluid On")
+                                               : QStringLiteral("+ Fluid"));
+    fluidComponentButton->setToolTip(
+        canEditComponents ? QStringLiteral("Toggle the layer Fluid component.")
+                          : QStringLiteral("Select a layer inside a composition to add Fluid."));
+  }
+  if (generatorComponentButton) {
+    generatorComponentButton->setEnabled(canEditComponents);
+    generatorComponentButton->setText(
+        generatorCount > 1 ? QStringLiteral("+ Generator (%1)").arg(generatorCount)
+                           : QStringLiteral("+ Generator"));
+    generatorComponentButton->setToolTip(
+        canEditComponents
+            ? QStringLiteral("Add an extra generator to this layer.")
+            : QStringLiteral("Select a layer inside a composition to add Generators."));
+  }
+  if (fieldComponentButton) {
+    fieldComponentButton->setEnabled(canEditComponents);
+    fieldComponentButton->setText(
+        fieldCount > 0 ? QStringLiteral("+ Field (%1)").arg(fieldCount)
+                       : QStringLiteral("+ Field"));
+    fieldComponentButton->setToolTip(
+        canEditComponents
+            ? QStringLiteral("Add a field to this layer.")
+            : QStringLiteral("Select a layer inside a composition to add Fields."));
+  }
+  if (cloneModifierButton) {
+    cloneModifierButton->setEnabled(canEditComponents);
+    cloneModifierButton->setText(
+        extraCloneModifierCount > 0
+            ? QStringLiteral("+ Clone Mod (%1)").arg(extraCloneModifierCount)
+            : QStringLiteral("+ Clone Mod"));
+    cloneModifierButton->setToolTip(
+        canEditComponents
+            ? QStringLiteral("Add a clone modifier to this layer.")
+            : QStringLiteral("Select a layer inside a composition to add Clone Modifiers."));
+  }
+  if (removeGeneratorComponentButton) {
+    const bool hasExtraGenerators = generatorCount > 1;
+    removeGeneratorComponentButton->setEnabled(
+        canEditComponents && hasExtraGenerators);
+    removeGeneratorComponentButton->setToolTip(
+        canEditComponents
+            ? QStringLiteral("Remove the selected extra generator.")
+            : QStringLiteral("Select a layer inside a composition to remove Generators."));
+  }
+  if (generatorMoveUpButton) {
+    generatorMoveUpButton->setEnabled(false);
+  }
+  if (generatorMoveDownButton) {
+    generatorMoveDownButton->setEnabled(false);
+  }
+  if (removeFieldComponentButton) {
+    removeFieldComponentButton->setEnabled(false);
+    removeFieldComponentButton->setToolTip(
+        canEditComponents
+            ? QStringLiteral("Remove the selected field.")
+            : QStringLiteral("Select a layer inside a composition to remove Fields."));
+  }
+  if (fieldMoveUpButton) {
+    fieldMoveUpButton->setEnabled(false);
+  }
+  if (fieldMoveDownButton) {
+    fieldMoveDownButton->setEnabled(false);
+  }
+  if (removeCloneModifierButton) {
+    removeCloneModifierButton->setEnabled(false);
+    removeCloneModifierButton->setToolTip(
+        canEditComponents
+            ? QStringLiteral("Remove the selected extra clone modifier.")
+            : QStringLiteral("Select a layer inside a composition to remove Clone Modifiers."));
+  }
+  if (cloneModifierMoveUpButton) {
+    cloneModifierMoveUpButton->setEnabled(false);
+  }
+  if (cloneModifierMoveDownButton) {
+    cloneModifierMoveDownButton->setEnabled(false);
+  }
+  if (generatorListWidget) {
+    SelectionActionBlocker blocker(generatorListWidget);
+    const QString selectedGeneratorId =
+        generatorListWidget->currentItem()
+            ? generatorListWidget->currentItem()->data(Qt::UserRole).toString()
+            : QString();
+    generatorListWidget->clear();
+    if (hasLayer) {
+      const auto generators = layer->layerGenerators();
+      int restoredRow = -1;
+      int fallbackRow = -1;
+      int extraGeneratorIndex = 0;
+      for (int row = 0; row < static_cast<int>(generators.size()); ++row) {
+        const auto& generator = generators[static_cast<std::size_t>(row)];
+        auto* item = new QListWidgetItem(
+            componentTypeDisplayName(generator.typeId),
+            generatorListWidget);
+        item->setData(Qt::UserRole, generator.generatorId);
+        item->setToolTip(
+            QStringLiteral("%1\n%2").arg(generator.generatorId, generator.typeId));
+        if (generator.generatorId ==
+            QStringLiteral("generator.compat.cloner.0")) {
+          item->setData(Qt::UserRole + 1, QStringLiteral("component.cloner."));
+          item->setData(Qt::UserRole + 2, false);
+          item->setToolTip(QStringLiteral("Compatibility generator from the legacy single cloner."));
+        } else {
+          item->setData(
+              Qt::UserRole + 1,
+              QStringLiteral("component.generators.%1.")
+                  .arg(extraGeneratorIndex));
+          item->setData(Qt::UserRole + 2, true);
+          ++extraGeneratorIndex;
+          fallbackRow = row;
+        }
+        if (!selectedGeneratorId.isEmpty() &&
+            generator.generatorId == selectedGeneratorId) {
+          restoredRow = row;
+        }
+      }
+      if (generatorListWidget->count() > 0) {
+        if (restoredRow >= 0) {
+          generatorListWidget->setCurrentRow(restoredRow);
+        } else if (fallbackRow >= 0) {
+          generatorListWidget->setCurrentRow(fallbackRow);
+        } else {
+          generatorListWidget->setCurrentRow(0);
+        }
+      }
+    }
+    generatorListWidget->setVisible(generatorListWidget->count() > 0);
+    const auto* currentItem = generatorListWidget->currentItem();
+    const bool currentIsExtra =
+        canEditComponents && generatorItemSupportsReorder(currentItem);
+    if (removeGeneratorComponentButton) {
+      removeGeneratorComponentButton->setEnabled(currentIsExtra);
+    }
+    if (generatorMoveUpButton) {
+      generatorMoveUpButton->setEnabled(
+          currentIsExtra && generatorListWidget->currentRow() > 1);
+    }
+    if (generatorMoveDownButton) {
+      generatorMoveDownButton->setEnabled(
+          currentIsExtra &&
+          generatorListWidget->currentRow() >= 1 &&
+          generatorListWidget->currentRow() < generatorListWidget->count() - 1);
+    }
+  }
+  if (fieldListWidget) {
+    SelectionActionBlocker blocker(fieldListWidget);
+    const QString selectedFieldId =
+        fieldListWidget->currentItem()
+            ? fieldListWidget->currentItem()->data(Qt::UserRole).toString()
+            : QString();
+    fieldListWidget->clear();
+    if (hasLayer) {
+      const auto fields = layer->layerFields();
+      int restoredRow = -1;
+      for (int row = 0; row < static_cast<int>(fields.size()); ++row) {
+        const auto& field = fields[static_cast<std::size_t>(row)];
+        auto* item = new QListWidgetItem(
+            componentTypeDisplayName(field.typeId),
+            fieldListWidget);
+        item->setData(Qt::UserRole, field.fieldId);
+        item->setToolTip(
+            QStringLiteral("%1\n%2").arg(field.fieldId, field.typeId));
+        item->setData(
+            Qt::UserRole + 1,
+            QStringLiteral("component.fields.%1.").arg(row));
+        if (!selectedFieldId.isEmpty() && field.fieldId == selectedFieldId) {
+          restoredRow = row;
+        }
+      }
+      if (fieldListWidget->count() > 0) {
+        fieldListWidget->setCurrentRow(restoredRow >= 0 ? restoredRow
+                                                        : fieldListWidget->count() - 1);
+      }
+    }
+    fieldListWidget->setVisible(fieldListWidget->count() > 0);
+    const bool hasSelectedField = canEditComponents && fieldListWidget->currentItem();
+    if (removeFieldComponentButton) {
+      removeFieldComponentButton->setEnabled(hasSelectedField);
+    }
+    if (fieldMoveUpButton) {
+      fieldMoveUpButton->setEnabled(
+          hasSelectedField && fieldListWidget->currentRow() > 0);
+    }
+    if (fieldMoveDownButton) {
+      fieldMoveDownButton->setEnabled(
+          hasSelectedField &&
+          fieldListWidget->currentRow() >= 0 &&
+          fieldListWidget->currentRow() < fieldListWidget->count() - 1);
+    }
+  }
+  if (cloneModifierListWidget) {
+    SelectionActionBlocker blocker(cloneModifierListWidget);
+    const QString selectedModifierId =
+        cloneModifierListWidget->currentItem()
+            ? cloneModifierListWidget->currentItem()->data(Qt::UserRole).toString()
+            : QString();
+    cloneModifierListWidget->clear();
+    if (hasLayer) {
+      const auto modifiers = layer->layerCloneModifiers();
+      int restoredRow = -1;
+      int fallbackRow = -1;
+      int extraModifierIndex = 0;
+      for (int row = 0; row < static_cast<int>(modifiers.size()); ++row) {
+        const auto& modifier = modifiers[static_cast<std::size_t>(row)];
+        auto* item = new QListWidgetItem(
+            componentTypeDisplayName(modifier.typeId),
+            cloneModifierListWidget);
+        item->setData(Qt::UserRole, modifier.modifierId);
+        item->setToolTip(
+            QStringLiteral("%1\n%2").arg(modifier.modifierId, modifier.typeId));
+        if (modifier.modifierId.startsWith(QStringLiteral("modifier.compat."))) {
+          if (modifier.typeId == QStringLiteral("artifact.modifier.time-offset")) {
+            item->setData(
+                Qt::UserRole + 1,
+                QStringLiteral("component.cloner.modifiers.compat.timeOffset."));
+          } else {
+            item->setData(
+                Qt::UserRole + 1,
+                QStringLiteral("component.cloner.modifiers.compat.sequence."));
+          }
+          item->setData(Qt::UserRole + 2, false);
+        } else {
+          item->setData(
+              Qt::UserRole + 1,
+              QStringLiteral("component.cloneModifiers.%1.").arg(extraModifierIndex));
+          item->setData(Qt::UserRole + 2, true);
+          ++extraModifierIndex;
+          fallbackRow = row;
+        }
+        if (!selectedModifierId.isEmpty() &&
+            modifier.modifierId == selectedModifierId) {
+          restoredRow = row;
+        }
+      }
+      if (cloneModifierListWidget->count() > 0) {
+        if (restoredRow >= 0) {
+          cloneModifierListWidget->setCurrentRow(restoredRow);
+        } else if (fallbackRow >= 0) {
+          cloneModifierListWidget->setCurrentRow(fallbackRow);
+        } else {
+          cloneModifierListWidget->setCurrentRow(0);
+        }
+      }
+    }
+    cloneModifierListWidget->setVisible(
+        cloneModifierListWidget->count() > 0);
+    const auto* currentItem = cloneModifierListWidget->currentItem();
+    const bool currentIsExtra =
+        canEditComponents && currentItem &&
+        currentItem->data(Qt::UserRole + 2).toBool();
+    if (removeCloneModifierButton) {
+      removeCloneModifierButton->setEnabled(currentIsExtra);
+    }
+    if (cloneModifierMoveUpButton) {
+      cloneModifierMoveUpButton->setEnabled(
+          currentIsExtra && cloneModifierListWidget->currentRow() > 2);
+    }
+    if (cloneModifierMoveDownButton) {
+      cloneModifierMoveDownButton->setEnabled(
+          currentIsExtra &&
+          cloneModifierListWidget->currentRow() >= 2 &&
+          cloneModifierListWidget->currentRow() < cloneModifierListWidget->count() - 1);
+    }
+  }
   if (componentsSummaryLabel) {
     QStringList active;
     if (physicsEnabled) {
@@ -1226,7 +1648,9 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
     if (particleEmitterEnabled) {
       active.push_back(QStringLiteral("Particle Emitter"));
     }
-
+    if (fluidEnabled) {
+      active.push_back(QStringLiteral("Fluid"));
+    }
     QString summaryText =
         hasLayer ? (active.isEmpty()
                         ? QStringLiteral("Components: none")
@@ -1254,6 +1678,27 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
                                  .arg(componentLabel, issue.message));
       }
       componentsSummaryLabel->setToolTip(issueLines.join(QStringLiteral("\n")));
+    } else if (hasLayer &&
+               (generatorCount > 0 || fieldCount > 0 || cloneModifierCount > 0)) {
+      QStringList generatorLines;
+      const auto generators = layer->layerGenerators();
+      for (const auto& generator : generators) {
+        generatorLines.push_back(
+            QStringLiteral("%1: %2")
+                .arg(generator.generatorId, generator.typeId));
+      }
+      const auto fields = layer->layerFields();
+      for (const auto& field : fields) {
+        generatorLines.push_back(
+            QStringLiteral("%1: %2").arg(field.fieldId, field.typeId));
+      }
+      const auto modifiers = layer->layerCloneModifiers();
+      for (const auto& modifier : modifiers) {
+        generatorLines.push_back(
+            QStringLiteral("%1: %2")
+                .arg(modifier.modifierId, modifier.typeId));
+      }
+      componentsSummaryLabel->setToolTip(generatorLines.join(QStringLiteral("\n")));
     } else {
       componentsSummaryLabel->setToolTip({});
     }
@@ -2705,6 +3150,18 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
       effect->setDisplayName(ArtifactCore::UniString("Lens Distortion"));
       addAndRefresh(effect);
     });
+    effectMenu.addAction("Displacement Map", [addAndRefresh]() {
+      auto effect = std::make_shared<DisplacementMapEffect>();
+      effect->setEffectID(ArtifactCore::UniString("displacement_map"));
+      effect->setDisplayName(ArtifactCore::UniString("Displacement Map"));
+      addAndRefresh(effect);
+    });
+    effectMenu.addAction("Time Displacement", [addAndRefresh]() {
+      auto effect = std::make_shared<TimeDisplacementEffect>();
+      effect->setEffectID(ArtifactCore::UniString("time_displacement"));
+      effect->setDisplayName(ArtifactCore::UniString("Time Displacement"));
+      addAndRefresh(effect);
+    });
     effectMenu.addSeparator();
     effectMenu.addAction("Chroma Key", [addAndRefresh]() {
       auto effect = std::make_shared<ChromaKeyEffect>();
@@ -2906,16 +3363,41 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   applyInspectorLabelPalette(impl_->componentsSummaryLabel, true);
   componentsLayout->addWidget(impl_->componentsSummaryLabel);
 
-  auto componentsButtonLayout = new QHBoxLayout();
-  impl_->physicsComponentButton = new QPushButton("+ Physics");
-  impl_->scriptComponentButton = new QPushButton("+ Script");
-  impl_->layoutComponentButton = new QPushButton("+ Layout");
-  impl_->cloneComponentButton = new QPushButton("+ Cloner");
-  impl_->openScriptButton = new QPushButton("Open Script");
+  impl_->physicsComponentButton = new InspectorActionButton("+ Physics");
+  impl_->scriptComponentButton = new InspectorActionButton("+ Script");
+  impl_->layoutComponentButton = new InspectorActionButton("+ Layout");
+  impl_->cloneComponentButton = new InspectorActionButton("+ Cloner");
+  impl_->fluidComponentButton = new InspectorActionButton("+ Fluid");
+  impl_->generatorComponentButton = new InspectorActionButton("+ Generator");
+  impl_->removeGeneratorComponentButton = new InspectorActionButton("Remove");
+  impl_->generatorMoveUpButton = new InspectorActionButton("Up");
+  impl_->generatorMoveDownButton = new InspectorActionButton("Down");
+  impl_->fieldComponentButton = new InspectorActionButton("+ Field");
+  impl_->removeFieldComponentButton = new InspectorActionButton("Remove Field");
+  impl_->fieldMoveUpButton = new InspectorActionButton("Field Up");
+  impl_->fieldMoveDownButton = new InspectorActionButton("Field Down");
+  impl_->cloneModifierButton = new InspectorActionButton("+ Clone Mod");
+  impl_->removeCloneModifierButton = new InspectorActionButton("Remove Mod");
+  impl_->cloneModifierMoveUpButton = new InspectorActionButton("Mod Up");
+  impl_->cloneModifierMoveDownButton = new InspectorActionButton("Mod Down");
+  impl_->openScriptButton = new InspectorActionButton("Open Script");
   applyInspectorButton(impl_->physicsComponentButton, true);
   applyInspectorButton(impl_->scriptComponentButton, false);
   applyInspectorButton(impl_->layoutComponentButton, false);
   applyInspectorButton(impl_->cloneComponentButton, false);
+  applyInspectorButton(impl_->fluidComponentButton, false);
+  applyInspectorButton(impl_->generatorComponentButton, false);
+  applyInspectorButton(impl_->removeGeneratorComponentButton, false);
+  applyInspectorButton(impl_->generatorMoveUpButton, false);
+  applyInspectorButton(impl_->generatorMoveDownButton, false);
+  applyInspectorButton(impl_->fieldComponentButton, false);
+  applyInspectorButton(impl_->removeFieldComponentButton, false);
+  applyInspectorButton(impl_->fieldMoveUpButton, false);
+  applyInspectorButton(impl_->fieldMoveDownButton, false);
+  applyInspectorButton(impl_->cloneModifierButton, false);
+  applyInspectorButton(impl_->removeCloneModifierButton, false);
+  applyInspectorButton(impl_->cloneModifierMoveUpButton, false);
+  applyInspectorButton(impl_->cloneModifierMoveDownButton, false);
   applyInspectorButton(impl_->openScriptButton, false);
   impl_->physicsComponentButton->setToolTip(
       QStringLiteral("Toggle the layer physics component."));
@@ -2925,17 +3407,90 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       QStringLiteral("Toggle the layer Layout component."));
   impl_->cloneComponentButton->setToolTip(
       QStringLiteral("Toggle the layer Cloner component."));
+  impl_->fluidComponentButton->setToolTip(
+      QStringLiteral("Toggle the layer Fluid component."));
+  impl_->generatorComponentButton->setToolTip(
+      QStringLiteral("Add an extra generator to the layer."));
+  impl_->removeGeneratorComponentButton->setToolTip(
+      QStringLiteral("Remove the selected extra generator."));
+  impl_->generatorMoveUpButton->setToolTip(
+      QStringLiteral("Move the selected extra generator up."));
+  impl_->generatorMoveDownButton->setToolTip(
+      QStringLiteral("Move the selected extra generator down."));
+  impl_->fieldComponentButton->setToolTip(
+      QStringLiteral("Add a field to the layer."));
+  impl_->removeFieldComponentButton->setToolTip(
+      QStringLiteral("Remove the selected field."));
+  impl_->fieldMoveUpButton->setToolTip(
+      QStringLiteral("Move the selected field up."));
+  impl_->fieldMoveDownButton->setToolTip(
+      QStringLiteral("Move the selected field down."));
+  impl_->cloneModifierButton->setToolTip(
+      QStringLiteral("Add a clone modifier to the layer."));
+  impl_->removeCloneModifierButton->setToolTip(
+      QStringLiteral("Remove the selected clone modifier."));
+  impl_->cloneModifierMoveUpButton->setToolTip(
+      QStringLiteral("Move the selected clone modifier up."));
+  impl_->cloneModifierMoveDownButton->setToolTip(
+      QStringLiteral("Move the selected clone modifier down."));
   impl_->openScriptButton->setToolTip(
       QStringLiteral("Open the script file linked to this layer."));
-  componentsButtonLayout->addWidget(impl_->physicsComponentButton);
-  componentsButtonLayout->addWidget(impl_->scriptComponentButton);
-  componentsButtonLayout->addWidget(impl_->layoutComponentButton);
-  componentsButtonLayout->addWidget(impl_->cloneComponentButton);
-  componentsButtonLayout->addWidget(impl_->openScriptButton);
-  componentsLayout->addLayout(componentsButtonLayout);
+  auto primaryComponentLayout = new QHBoxLayout();
+  primaryComponentLayout->addWidget(impl_->physicsComponentButton);
+  primaryComponentLayout->addWidget(impl_->scriptComponentButton);
+  primaryComponentLayout->addWidget(impl_->layoutComponentButton);
+  componentsLayout->addLayout(primaryComponentLayout);
+  auto secondaryComponentLayout = new QHBoxLayout();
+  secondaryComponentLayout->addWidget(impl_->cloneComponentButton);
+  secondaryComponentLayout->addWidget(impl_->fluidComponentButton);
+  secondaryComponentLayout->addWidget(impl_->openScriptButton);
+  componentsLayout->addLayout(secondaryComponentLayout);
+
+  auto generatorHeaderLayout = new QHBoxLayout();
+  generatorHeaderLayout->addWidget(new QLabel(QStringLiteral("Generators")), 1);
+  generatorHeaderLayout->addWidget(impl_->generatorComponentButton);
+  generatorHeaderLayout->addWidget(impl_->generatorMoveUpButton);
+  generatorHeaderLayout->addWidget(impl_->generatorMoveDownButton);
+  generatorHeaderLayout->addWidget(impl_->removeGeneratorComponentButton);
+  componentsLayout->addLayout(generatorHeaderLayout);
+  impl_->generatorListWidget = new InspectorSelectionList();
+  impl_->generatorListWidget->setVisible(false);
+  impl_->generatorListWidget->setMaximumHeight(96);
+  impl_->generatorListWidget->setSelectionMode(
+      QAbstractItemView::SingleSelection);
+  componentsLayout->addWidget(impl_->generatorListWidget);
+
+  auto fieldHeaderLayout = new QHBoxLayout();
+  fieldHeaderLayout->addWidget(new QLabel(QStringLiteral("Fields")), 1);
+  fieldHeaderLayout->addWidget(impl_->fieldComponentButton);
+  fieldHeaderLayout->addWidget(impl_->fieldMoveUpButton);
+  fieldHeaderLayout->addWidget(impl_->fieldMoveDownButton);
+  fieldHeaderLayout->addWidget(impl_->removeFieldComponentButton);
+  componentsLayout->addLayout(fieldHeaderLayout);
+  impl_->fieldListWidget = new InspectorSelectionList();
+  impl_->fieldListWidget->setVisible(false);
+  impl_->fieldListWidget->setMaximumHeight(96);
+  impl_->fieldListWidget->setSelectionMode(
+      QAbstractItemView::SingleSelection);
+  componentsLayout->addWidget(impl_->fieldListWidget);
+
+  auto cloneModifierHeaderLayout = new QHBoxLayout();
+  cloneModifierHeaderLayout->addWidget(
+      new QLabel(QStringLiteral("Clone Modifiers")), 1);
+  cloneModifierHeaderLayout->addWidget(impl_->cloneModifierButton);
+  cloneModifierHeaderLayout->addWidget(impl_->cloneModifierMoveUpButton);
+  cloneModifierHeaderLayout->addWidget(impl_->cloneModifierMoveDownButton);
+  cloneModifierHeaderLayout->addWidget(impl_->removeCloneModifierButton);
+  componentsLayout->addLayout(cloneModifierHeaderLayout);
+  impl_->cloneModifierListWidget = new InspectorSelectionList();
+  impl_->cloneModifierListWidget->setVisible(false);
+  impl_->cloneModifierListWidget->setMaximumHeight(96);
+  impl_->cloneModifierListWidget->setSelectionMode(
+      QAbstractItemView::SingleSelection);
+  componentsLayout->addWidget(impl_->cloneModifierListWidget);
   impl_->componentPropertyWidget = new ArtifactPropertyWidget();
   impl_->componentPropertyWidget->setVisible(false);
-  impl_->componentPropertyWidget->setMinimumHeight(220);
+  impl_->componentPropertyWidget->setMinimumHeight(120);
   impl_->componentPropertyWidget->setFilterText(
       QStringLiteral("physics|script|layout|cloner"));
   componentsLayout->addWidget(impl_->componentPropertyWidget);
@@ -2992,28 +3547,604 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       }
     }
   };
-  QObject::connect(impl_->physicsComponentButton, &QPushButton::clicked, this,
-                   [toggleComponent]() {
+  impl_->physicsComponentButton->setAction([toggleComponent]() {
                      toggleComponent(QStringLiteral("physics.enabled"),
                                      QStringLiteral("Physics"));
                    });
-  QObject::connect(impl_->scriptComponentButton, &QPushButton::clicked, this,
-                   [toggleComponent]() {
+  impl_->scriptComponentButton->setAction([toggleComponent]() {
                      toggleComponent(QStringLiteral("component.script.enabled"),
                                      QStringLiteral("Script"));
                    });
-  QObject::connect(impl_->layoutComponentButton, &QPushButton::clicked, this,
-                   [toggleComponent]() {
+  impl_->layoutComponentButton->setAction([toggleComponent]() {
                      toggleComponent(QStringLiteral("component.layout.enabled"),
                                      QStringLiteral("Layout"));
                    });
-  QObject::connect(impl_->cloneComponentButton, &QPushButton::clicked, this,
-                   [toggleComponent]() {
+  impl_->cloneComponentButton->setAction([toggleComponent]() {
                      toggleComponent(QStringLiteral("component.cloner.enabled"),
                                      QStringLiteral("Cloner"));
                    });
-  QObject::connect(impl_->openScriptButton, &QPushButton::clicked, this,
-                   [this]() {
+  impl_->fluidComponentButton->setAction([toggleComponent]() {
+                     toggleComponent(QStringLiteral("component.fluid.enabled"),
+                                     QStringLiteral("Fluid"));
+                   });
+  impl_->generatorComponentButton->setAction([this]() {
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     const QStringList generatorChoices = {
+                         QStringLiteral("grid"),
+                         QStringLiteral("radial"),
+                     };
+                     bool accepted = false;
+                     const QString generatorChoice = QInputDialog::getItem(
+                         this, QStringLiteral("Add Generator"),
+                         QStringLiteral("Generator Type"),
+                         generatorChoices, 0, false, &accepted);
+                     if (!accepted || generatorChoice.trimmed().isEmpty()) {
+                       return;
+                     }
+                     if (layer->setLayerPropertyValue(
+                             QStringLiteral("component.generators.add"),
+                             generatorChoice)) {
+                       impl_->updateComponentControls(layer);
+                       impl_->focusComponentProperties(
+                           layer,
+                           generatorItemFilterText(
+                               impl_->generatorListWidget
+                                   ? impl_->generatorListWidget->currentItem()
+                                   : nullptr));
+                       impl_->lastLayerInfoSignature_.clear();
+                       impl_->scheduleRefresh(
+                           ArtifactInspectorWidget::Impl::LayerInfoDirty |
+                           ArtifactInspectorWidget::Impl::EffectsDirty);
+                       if (impl_->statusLabel) {
+                         impl_->statusLabel->setText(
+                             QStringLiteral(
+                                 "Status: extra generator added"));
+                       }
+                     }
+                   });
+  impl_->removeGeneratorComponentButton->setAction([this]() {
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     QString generatorId;
+                     if (impl_->generatorListWidget &&
+                         impl_->generatorListWidget->currentItem()) {
+                       generatorId = impl_->generatorListWidget->currentItem()
+                                         ->data(Qt::UserRole)
+                                         .toString();
+                     }
+                     if (layer->setLayerPropertyValue(
+                             QStringLiteral("component.generators.remove"),
+                             generatorId)) {
+                       impl_->updateComponentControls(layer);
+                       impl_->focusComponentProperties(
+                           layer,
+                           generatorItemFilterText(
+                               impl_->generatorListWidget
+                                   ? impl_->generatorListWidget->currentItem()
+                                   : nullptr));
+                       impl_->lastLayerInfoSignature_.clear();
+                       impl_->scheduleRefresh(
+                           ArtifactInspectorWidget::Impl::LayerInfoDirty |
+                           ArtifactInspectorWidget::Impl::EffectsDirty);
+                       if (impl_->statusLabel) {
+                         impl_->statusLabel->setText(
+                             QStringLiteral(
+                                 "Status: extra generator removed"));
+                       }
+                     }
+                   });
+  impl_->generatorMoveUpButton->setAction([this]() {
+                     if (!impl_->generatorListWidget ||
+                         !impl_->generatorListWidget->currentItem()) {
+                       return;
+                     }
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     const QString generatorId = impl_->generatorListWidget
+                                                     ->currentItem()
+                                                     ->data(Qt::UserRole)
+                                                     .toString();
+                     if (layer->setLayerPropertyValue(
+                             QStringLiteral("component.generators.moveUp"),
+                             generatorId)) {
+                       impl_->updateComponentControls(layer);
+                       impl_->focusComponentProperties(
+                           layer,
+                           generatorItemFilterText(
+                               impl_->generatorListWidget->currentItem()));
+                     }
+                   });
+  impl_->generatorMoveDownButton->setAction([this]() {
+                     if (!impl_->generatorListWidget ||
+                         !impl_->generatorListWidget->currentItem()) {
+                       return;
+                     }
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     const QString generatorId = impl_->generatorListWidget
+                                                     ->currentItem()
+                                                     ->data(Qt::UserRole)
+                                                     .toString();
+                     if (layer->setLayerPropertyValue(
+                             QStringLiteral("component.generators.moveDown"),
+                             generatorId)) {
+                       impl_->updateComponentControls(layer);
+                       impl_->focusComponentProperties(
+                           layer,
+                           generatorItemFilterText(
+                               impl_->generatorListWidget->currentItem()));
+                     }
+                   });
+  impl_->generatorListWidget->setSelectionAction(
+      [this](QListWidgetItem *current) {
+        if (impl_->currentCompositionId_.isNil() || impl_->currentLayerId_.isNil()) {
+          return;
+        }
+        auto projectService = ArtifactProjectService::instance();
+        if (!projectService) {
+          return;
+        }
+        auto findResult =
+            projectService->findComposition(impl_->currentCompositionId_);
+        if (!findResult.success) {
+          return;
+        }
+        auto comp = findResult.ptr.lock();
+        if (!comp) {
+          return;
+        }
+        auto layer = comp->layerById(impl_->currentLayerId_);
+        if (!layer) {
+          return;
+        }
+        const QString filterText = generatorItemFilterText(current);
+        impl_->updateComponentControls(layer);
+        impl_->focusComponentProperties(layer, filterText);
+      });
+  impl_->fieldComponentButton->setAction([this]() {
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     const QStringList fieldChoices = {
+                         QStringLiteral("solid"), QStringLiteral("sphere"),
+                         QStringLiteral("box"),   QStringLiteral("linear"),
+                         QStringLiteral("radial"), QStringLiteral("noise"),
+                     };
+                     bool accepted = false;
+                     const QString fieldChoice = QInputDialog::getItem(
+                         this, QStringLiteral("Add Field"),
+                         QStringLiteral("Field Type"), fieldChoices, 0, false,
+                         &accepted);
+                     if (!accepted || fieldChoice.trimmed().isEmpty()) {
+                       return;
+                     }
+                     if (layer->setLayerPropertyValue(
+                             QStringLiteral("component.fields.add"),
+                             fieldChoice)) {
+                       impl_->updateComponentControls(layer);
+                       impl_->focusComponentProperties(
+                           layer, fieldItemFilterText(
+                                      impl_->fieldListWidget
+                                          ? impl_->fieldListWidget->currentItem()
+                                          : nullptr));
+                     }
+                   });
+  impl_->removeFieldComponentButton->setAction([this]() {
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer || !impl_->fieldListWidget ||
+                         !impl_->fieldListWidget->currentItem()) {
+                       return;
+                     }
+                     const QString fieldId =
+                         impl_->fieldListWidget->currentItem()
+                             ->data(Qt::UserRole)
+                             .toString();
+                     if (layer->setLayerPropertyValue(
+                             QStringLiteral("component.fields.remove"),
+                             fieldId)) {
+                       impl_->updateComponentControls(layer);
+                       impl_->focusComponentProperties(
+                           layer, fieldItemFilterText(
+                                      impl_->fieldListWidget->currentItem()));
+                     }
+                   });
+  impl_->fieldMoveUpButton->setAction([this]() {
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil() || !impl_->fieldListWidget ||
+                         !impl_->fieldListWidget->currentItem()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     const QString fieldId =
+                         impl_->fieldListWidget->currentItem()
+                             ->data(Qt::UserRole)
+                             .toString();
+                     if (layer->setLayerPropertyValue(
+                             QStringLiteral("component.fields.moveUp"),
+                             fieldId)) {
+                       impl_->updateComponentControls(layer);
+                       impl_->focusComponentProperties(
+                           layer, fieldItemFilterText(
+                                      impl_->fieldListWidget->currentItem()));
+                     }
+                   });
+  impl_->fieldMoveDownButton->setAction([this]() {
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil() || !impl_->fieldListWidget ||
+                         !impl_->fieldListWidget->currentItem()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     const QString fieldId =
+                         impl_->fieldListWidget->currentItem()
+                             ->data(Qt::UserRole)
+                             .toString();
+                     if (layer->setLayerPropertyValue(
+                             QStringLiteral("component.fields.moveDown"),
+                             fieldId)) {
+                       impl_->updateComponentControls(layer);
+                       impl_->focusComponentProperties(
+                           layer, fieldItemFilterText(
+                                      impl_->fieldListWidget->currentItem()));
+                     }
+                   });
+  impl_->fieldListWidget->setSelectionAction(
+      [this](QListWidgetItem *current) {
+        if (impl_->currentCompositionId_.isNil() || impl_->currentLayerId_.isNil()) {
+          return;
+        }
+        auto projectService = ArtifactProjectService::instance();
+        if (!projectService) {
+          return;
+        }
+        auto findResult =
+            projectService->findComposition(impl_->currentCompositionId_);
+        if (!findResult.success) {
+          return;
+        }
+        auto comp = findResult.ptr.lock();
+        if (!comp) {
+          return;
+        }
+        auto layer = comp->layerById(impl_->currentLayerId_);
+        if (!layer) {
+          return;
+        }
+        const QString filterText = fieldItemFilterText(current);
+        impl_->updateComponentControls(layer);
+        impl_->focusComponentProperties(layer, filterText);
+      });
+  impl_->cloneModifierButton->setAction([this]() {
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     const QStringList modifierChoices = {
+                         QStringLiteral("time-offset"),
+                         QStringLiteral("sequence"),
+                     };
+                     bool accepted = false;
+                     const QString modifierChoice = QInputDialog::getItem(
+                         this, QStringLiteral("Add Clone Modifier"),
+                         QStringLiteral("Modifier Type"), modifierChoices, 0,
+                         false, &accepted);
+                     if (!accepted || modifierChoice.trimmed().isEmpty()) {
+                       return;
+                     }
+                     if (layer->setLayerPropertyValue(
+                             QStringLiteral("component.cloneModifiers.add"),
+                             modifierChoice)) {
+                       impl_->updateComponentControls(layer);
+                       impl_->focusComponentProperties(
+                           layer,
+                           cloneModifierItemFilterText(
+                               impl_->cloneModifierListWidget
+                                   ? impl_->cloneModifierListWidget->currentItem()
+                                   : nullptr));
+                     }
+                   });
+  impl_->removeCloneModifierButton->setAction([this]() {
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil() ||
+                         !impl_->cloneModifierListWidget ||
+                         !impl_->cloneModifierListWidget->currentItem()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     const QString modifierId =
+                         impl_->cloneModifierListWidget->currentItem()
+                             ->data(Qt::UserRole)
+                             .toString();
+                     if (layer->setLayerPropertyValue(
+                             QStringLiteral("component.cloneModifiers.remove"),
+                             modifierId)) {
+                       impl_->updateComponentControls(layer);
+                       impl_->focusComponentProperties(
+                           layer,
+                           cloneModifierItemFilterText(
+                               impl_->cloneModifierListWidget->currentItem()));
+                     }
+                   });
+  impl_->cloneModifierMoveUpButton->setAction([this]() {
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil() ||
+                         !impl_->cloneModifierListWidget ||
+                         !impl_->cloneModifierListWidget->currentItem()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     const QString modifierId =
+                         impl_->cloneModifierListWidget->currentItem()
+                             ->data(Qt::UserRole)
+                             .toString();
+                     if (layer->setLayerPropertyValue(
+                             QStringLiteral("component.cloneModifiers.moveUp"),
+                             modifierId)) {
+                       impl_->updateComponentControls(layer);
+                       impl_->focusComponentProperties(
+                           layer,
+                           cloneModifierItemFilterText(
+                               impl_->cloneModifierListWidget->currentItem()));
+                     }
+                   });
+  impl_->cloneModifierMoveDownButton->setAction([this]() {
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil() ||
+                         !impl_->cloneModifierListWidget ||
+                         !impl_->cloneModifierListWidget->currentItem()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     const QString modifierId =
+                         impl_->cloneModifierListWidget->currentItem()
+                             ->data(Qt::UserRole)
+                             .toString();
+                     if (layer->setLayerPropertyValue(
+                             QStringLiteral("component.cloneModifiers.moveDown"),
+                             modifierId)) {
+                       impl_->updateComponentControls(layer);
+                       impl_->focusComponentProperties(
+                           layer,
+                           cloneModifierItemFilterText(
+                               impl_->cloneModifierListWidget->currentItem()));
+                     }
+                   });
+  impl_->cloneModifierListWidget->setSelectionAction(
+      [this](QListWidgetItem *current) {
+        if (impl_->currentCompositionId_.isNil() || impl_->currentLayerId_.isNil()) {
+          return;
+        }
+        auto projectService = ArtifactProjectService::instance();
+        if (!projectService) {
+          return;
+        }
+        auto findResult =
+            projectService->findComposition(impl_->currentCompositionId_);
+        if (!findResult.success) {
+          return;
+        }
+        auto comp = findResult.ptr.lock();
+        if (!comp) {
+          return;
+        }
+        auto layer = comp->layerById(impl_->currentLayerId_);
+        if (!layer) {
+          return;
+        }
+        const QString filterText = cloneModifierItemFilterText(current);
+        impl_->updateComponentControls(layer);
+        impl_->focusComponentProperties(layer, filterText);
+      });
+  impl_->openScriptButton->setAction([this]() {
                      if (impl_->currentCompositionId_.isNil() ||
                          impl_->currentLayerId_.isNil()) {
                        return;

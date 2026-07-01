@@ -171,6 +171,8 @@ public:
         audioTargetBufferedFrames_ = 0;
 
         if (workerThread_ && workerThread_->isRunning()) {
+            // The finished handler restarts the worker if play() wins a rapid
+            // stop -> play race while this quit request is still pending.
             workerThread_->quit();
         }
     }
@@ -608,6 +610,17 @@ public slots:
     
     void onThreadFinished() {
         qDebug() << "[PlaybackEngine] Worker thread finished";
+        // A rapid stop -> play can set Playing while the previous worker is
+        // finishing. Restart after QThread has fully transitioned to stopped.
+        QMetaObject::invokeMethod(owner_, [this]() {
+            if (state_.load() == PlaybackState::Playing &&
+                workerThread_ && !workerThread_->isRunning()) {
+                playbackStartTime_ = std::chrono::steady_clock::now();
+                playbackStartFrame_ = currentFrame_.load();
+                audioNextFrame_ = currentFrame_.load();
+                workerThread_->start(QThread::TimeCriticalPriority);
+            }
+        }, Qt::QueuedConnection);
     }
 };
 

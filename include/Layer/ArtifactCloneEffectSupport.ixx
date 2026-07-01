@@ -9,6 +9,7 @@ module;
 #include <vector>
 #include <Graphics/InstanceData.h>
 #include <QMatrix4x4>
+#include <QJsonArray>
 #include <QPointF>
 #include <QRectF>
 #include <QSizeF>
@@ -30,6 +31,7 @@ class ArtifactAbstractLayer;
 struct CloneRenderInstance {
     QMatrix4x4 transform;
     float weight = 1.0f;
+    float timeOffset = 0.0f;
     std::array<QPointF, 4> canvasCorners{};
     QRectF canvasBounds;
 };
@@ -81,11 +83,76 @@ int cloneComponentIntProperty(const ArtifactAbstractLayer* layer,
 float cloneComponentFloatProperty(const ArtifactAbstractLayer* layer,
                                     const QString& propertyPath,
                                     float fallback);
+bool generatorSettingBool(const QJsonObject& settings,
+                          const QString& key,
+                          bool fallback);
+int generatorSettingInt(const QJsonObject& settings,
+                        const QString& key,
+                        int fallback);
+float generatorSettingFloat(const QJsonObject& settings,
+                            const QString& key,
+                            float fallback);
+
+inline QRectF collisionLocalBounds(const ArtifactAbstractLayer* layer)
+{
+    if (!layer) {
+        return QRectF();
+    }
+
+    const QRectF localBounds = layer->localBounds();
+    if (!localBounds.isValid()) {
+        return QRectF();
+    }
+
+    const int shape = cloneComponentIntProperty(
+        layer, QStringLiteral("component.collision.shape"), 0);
+    const float width = std::max(
+        0.0f, cloneComponentFloatProperty(
+                  layer, QStringLiteral("component.collision.width"), 0.0f));
+    const float height = std::max(
+        0.0f, cloneComponentFloatProperty(
+                  layer, QStringLiteral("component.collision.height"), 0.0f));
+    const float radius = std::max(
+        0.0f, cloneComponentFloatProperty(
+                  layer, QStringLiteral("component.collision.radius"), 0.0f));
+    const float offsetX = cloneComponentFloatProperty(
+        layer, QStringLiteral("component.collision.offsetX"), 0.0f);
+    const float offsetY = cloneComponentFloatProperty(
+        layer, QStringLiteral("component.collision.offsetY"), 0.0f);
+    const QPointF center = localBounds.center() +
+                           QPointF(static_cast<qreal>(offsetX),
+                                   static_cast<qreal>(offsetY));
+
+    if (shape == 1) {
+        const qreal boxWidth = width > 0.0f ? static_cast<qreal>(width)
+                                            : localBounds.width();
+        const qreal boxHeight = height > 0.0f ? static_cast<qreal>(height)
+                                              : localBounds.height();
+        return QRectF(center.x() - boxWidth * 0.5, center.y() - boxHeight * 0.5,
+                      boxWidth, boxHeight);
+    }
+
+    if (shape == 2) {
+        const qreal circleRadius =
+            radius > 0.0f
+                ? static_cast<qreal>(radius)
+                : static_cast<qreal>(
+                      std::max(localBounds.width(), localBounds.height()) * 0.5);
+        return QRectF(center.x() - circleRadius, center.y() - circleRadius,
+                      circleRadius * 2.0, circleRadius * 2.0);
+    }
+
+    return localBounds.translated(static_cast<qreal>(offsetX),
+                                  static_cast<qreal>(offsetY));
+}
 
 inline void applyLayoutComponent(
     const ArtifactAbstractLayer* layer,
     std::vector<CloneRenderInstance>& instances)
 {
+    // Layout is an authoring-stage arrangement pass: it seeds an initial
+    // placement for instances, but it is not the authoritative dynamics
+    // solver for collision or long-lived simulation state.
     if (!layer || instances.size() < 2 ||
         !cloneComponentBoolProperty(
             layer, QStringLiteral("component.layout.enabled"))) {
@@ -129,6 +196,10 @@ inline void applyCrowdComponent(
     const ArtifactAbstractLayer* layer,
     std::vector<CloneRenderInstance>& instances)
 {
+    // This preview path applies immediate steering-like offsets so editor
+    // feedback stays responsive. The long-term contract is that crowd logic
+    // produces motion intent, while authoritative transforms come from the
+    // dynamics/simulation path.
     if (!layer || instances.size() < 2 ||
         !cloneComponentBoolProperty(
             layer, QStringLiteral("component.crowd.enabled"))) {
@@ -201,13 +272,16 @@ inline void applyInstanceCollisionComponent(
     const ArtifactAbstractLayer* layer,
     std::vector<CloneRenderInstance>& instances)
 {
+    // This is a lightweight preview-only fallback that prevents obvious clone
+    // overlap in the editor. Composition-wide collision ownership belongs to
+    // the authoritative dynamics/simulation path.
     if (!layer || instances.empty() ||
         !cloneComponentBoolProperty(
             layer, QStringLiteral("component.collision.enabled"))) {
         return;
     }
     const QSizeF compositionSize = layer->compositionSizeHint();
-    const QRectF localBounds = layer->localBounds();
+    const QRectF localBounds = collisionLocalBounds(layer);
     if (!compositionSize.isValid() || compositionSize.height() <= 0.0 ||
         !localBounds.isValid()) {
         return;
@@ -366,6 +440,81 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
 ArtifactCore::InstanceData cloneRenderInstanceToInstanceData(
     const CloneRenderInstance& instance);
 
+inline float clonerSequenceWeight(const ArtifactAbstractLayer* layer,
+                                  const QJsonObject& settings,
+                                  int cloneIndex)
+{
+    if (!layer || !generatorSettingBool(
+                      settings, QStringLiteral("sequenceEnabled"), false)) {
+        return 1.0f;
+    }
+
+    const float rate = std::max(
+        0.01f, generatorSettingFloat(
+                   settings, QStringLiteral("sequenceRate"), 8.0f));
+    const float softness = std::max(
+        0.01f, generatorSettingFloat(
+                   settings, QStringLiteral("sequenceSoftness"), 1.0f));
+    const float timeSeconds =
+        static_cast<float>(layer->currentFrame()) / 30.0f;
+    const float head = timeSeconds * rate;
+    const float ramp = (head - static_cast<float>(cloneIndex)) / softness;
+    return std::clamp(ramp, 0.0f, 1.0f);
+}
+
+inline float cloneModifierSequenceWeight(
+    const ArtifactAbstractLayer* layer,
+    const std::vector<LayerModifierDescriptor>& modifiers,
+    const QJsonObject& fallbackSettings,
+    int cloneIndex)
+{
+    for (const auto& modifier : modifiers) {
+        if (!modifier.enabled ||
+            modifier.typeId != QStringLiteral("artifact.modifier.sequence")) {
+            continue;
+        }
+        const bool enabled =
+            modifier.settings.value(QStringLiteral("enabled")).toBool(true);
+        if (!enabled || !layer) {
+            continue;
+        }
+        const float rate = std::max(
+            0.01f, static_cast<float>(
+                       modifier.settings.value(QStringLiteral("rate"))
+                           .toDouble(8.0)));
+        const float softness = std::max(
+            0.01f, static_cast<float>(
+                       modifier.settings.value(QStringLiteral("softness"))
+                           .toDouble(1.0)));
+        const float timeSeconds =
+            static_cast<float>(layer->currentFrame()) / 30.0f;
+        const float head = timeSeconds * rate;
+        const float ramp =
+            (head - static_cast<float>(cloneIndex)) / softness;
+        return std::clamp(ramp, 0.0f, 1.0f);
+    }
+    return clonerSequenceWeight(layer, fallbackSettings, cloneIndex);
+}
+
+inline float cloneModifierTimeOffset(
+    const std::vector<LayerModifierDescriptor>& modifiers,
+    const QJsonObject& fallbackSettings,
+    int cloneIndex)
+{
+    for (const auto& modifier : modifiers) {
+        if (!modifier.enabled ||
+            modifier.typeId != QStringLiteral("artifact.modifier.time-offset")) {
+            continue;
+        }
+        const float step = static_cast<float>(
+            modifier.settings.value(QStringLiteral("step")).toDouble(0.0));
+        return step * static_cast<float>(cloneIndex);
+    }
+    const float timeOffsetStep = generatorSettingFloat(
+        fallbackSettings, QStringLiteral("timeOffsetStep"), 0.0f);
+    return timeOffsetStep * static_cast<float>(cloneIndex);
+}
+
 export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstractLayer* layer,
                                                              const QMatrix4x4& baseTransform)
 {
@@ -465,7 +614,7 @@ ArtifactCore::InstanceData cloneRenderInstanceToInstanceData(
     gpuInstance.color[2] = 1.0f;
     gpuInstance.color[3] = 1.0f;
     gpuInstance.weight = std::clamp(instance.weight, 0.0f, 1.0f);
-    gpuInstance.timeOffset = 0.0f;
+    gpuInstance.timeOffset = instance.timeOffset;
     gpuInstance.padding[0] = 0.0f;
     gpuInstance.padding[1] = 0.0f;
     return gpuInstance;
@@ -503,9 +652,65 @@ float cloneComponentFloatProperty(const ArtifactAbstractLayer* layer,
       return property ? property->getValue().toFloat() : fallback;
   }
 
+bool generatorSettingBool(const QJsonObject& settings,
+                          const QString& key,
+                          bool fallback)
+{
+    return settings.value(key).toBool(fallback);
+}
+
+int generatorSettingInt(const QJsonObject& settings,
+                        const QString& key,
+                        int fallback)
+{
+    return settings.value(key).toInt(fallback);
+}
+
+float generatorSettingFloat(const QJsonObject& settings,
+                            const QString& key,
+                            float fallback)
+{
+    return static_cast<float>(settings.value(key).toDouble(fallback));
+}
+
 int cloneComponentMode(const ArtifactAbstractLayer* layer)
 {
     return cloneComponentIntProperty(layer, QStringLiteral("component.cloner.mode"), 0);
+}
+
+inline void applyGeneratorTransformStack(const QJsonObject& settings,
+                                         QMatrix4x4& cloneTransform)
+{
+    const auto transformArray =
+        settings.value(QStringLiteral("transformStack")).toArray();
+    for (const auto& transformValue : transformArray) {
+        if (!transformValue.isObject()) {
+            continue;
+        }
+        const auto transformObject = transformValue.toObject();
+        if (!transformObject.value(QStringLiteral("enabled")).toBool(true)) {
+            continue;
+        }
+        cloneTransform.translate(
+            static_cast<float>(
+                transformObject.value(QStringLiteral("positionX")).toDouble()),
+            static_cast<float>(
+                transformObject.value(QStringLiteral("positionY")).toDouble()),
+            static_cast<float>(
+                transformObject.value(QStringLiteral("positionZ")).toDouble()));
+        const float rotationZ = static_cast<float>(
+            transformObject.value(QStringLiteral("rotationZ")).toDouble());
+        if (rotationZ != 0.0f) {
+            cloneTransform.rotate(rotationZ, 0.0f, 0.0f, 1.0f);
+        }
+        cloneTransform.scale(
+            static_cast<float>(
+                transformObject.value(QStringLiteral("scaleX")).toDouble(1.0)),
+            static_cast<float>(
+                transformObject.value(QStringLiteral("scaleY")).toDouble(1.0)),
+            static_cast<float>(
+                transformObject.value(QStringLiteral("scaleZ")).toDouble(1.0)));
+    }
 }
 
 std::vector<CloneRenderInstance> clonerComponentInstances(
@@ -513,120 +718,157 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
       const QMatrix4x4& baseTransform)
   {
     std::vector<CloneRenderInstance> instances;
-    if (!cloneComponentBoolProperty(
-            layer, QStringLiteral("component.cloner.enabled"))) {
+    if (!layer) {
         return instances;
     }
 
-    instances.push_back(CloneRenderInstance{baseTransform, 1.0f});
-    const auto appendCloneInstance = [&](const QMatrix4x4& cloneTransform,
-                                         float weight) {
+    const auto generators = layer->layerGenerators();
+    const auto modifiers = layer->layerCloneModifiers();
+    if (generators.empty()) {
+        return instances;
+    }
+
+    instances.push_back(CloneRenderInstance{baseTransform, 1.0f, 0.0f});
+    const auto appendCloneInstance = [&](const QJsonObject& settings,
+                                         const QMatrix4x4& cloneTransform,
+                                         float weight,
+                                         int cloneIndex) {
         if (cloneTransform.isIdentity()) {
             return;
         }
+        const float sequenceWeight =
+            cloneModifierSequenceWeight(layer, modifiers, settings, cloneIndex);
         instances.push_back(CloneRenderInstance{
             baseTransform * cloneTransform,
-            std::clamp(weight, 0.0f, 1.0f)});
+            std::clamp(weight * sequenceWeight, 0.0f, 1.0f),
+            cloneModifierTimeOffset(modifiers, settings, cloneIndex)});
     };
 
-    const int mode = cloneComponentMode(layer);
-    if (mode == 5) {
-        const int cols = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.cloner.columns"), 3));
-        const int rows = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.cloner.rows"), 3));
-        const int depth = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.cloner.depth"), 1));
-        const float spacingX = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.spacingX"), 160.0f);
-        const float spacingY = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.spacingY"), 48.0f);
-        const float spacingZ = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.spacingZ"), 0.0f);
-        const int total = cols * rows * depth;
-        instances.reserve(static_cast<size_t>(total) + 1U);
-        const QVector3D startPos(
-            -((cols - 1) * spacingX) * 0.5f,
-            -((rows - 1) * spacingY) * 0.5f,
-            -((depth - 1) * spacingZ) * 0.5f);
-        for (int z = 0; z < depth; ++z) {
-          for (int y = 0; y < rows; ++y) {
-            for (int x = 0; x < cols; ++x) {
-              QMatrix4x4 cloneTransform;
-              cloneTransform.setToIdentity();
-              cloneTransform.translate(startPos.x() + spacingX * x,
-                                       startPos.y() + spacingY * y,
-                                       startPos.z() + spacingZ * z);
-              applyClonerComponentTransform(layer, cloneTransform);
-              appendCloneInstance(cloneTransform, 1.0f);
+    for (const auto& generator : generators) {
+        if (!generator.enabled) {
+            continue;
+        }
+
+        const auto& settings = generator.settings;
+        if (generator.typeId ==
+            QStringLiteral("artifact.generator.cloner.grid")) {
+            const int cols = std::max(
+                1, generatorSettingInt(settings, QStringLiteral("columns"), 3));
+            const int rows = std::max(
+                1, generatorSettingInt(settings, QStringLiteral("rows"), 3));
+            const int depth = std::max(
+                1, generatorSettingInt(settings, QStringLiteral("depth"), 1));
+            const float spacingX = generatorSettingFloat(
+                settings, QStringLiteral("spacingX"), 160.0f);
+            const float spacingY = generatorSettingFloat(
+                settings, QStringLiteral("spacingY"), 48.0f);
+            const float spacingZ = generatorSettingFloat(
+                settings, QStringLiteral("spacingZ"), 0.0f);
+            const QVector3D startPos(
+                -((cols - 1) * spacingX) * 0.5f,
+                -((rows - 1) * spacingY) * 0.5f,
+                -((depth - 1) * spacingZ) * 0.5f);
+            for (int z = 0; z < depth; ++z) {
+                for (int y = 0; y < rows; ++y) {
+                    for (int x = 0; x < cols; ++x) {
+                        QMatrix4x4 cloneTransform;
+                        cloneTransform.setToIdentity();
+                        cloneTransform.translate(startPos.x() + spacingX * x,
+                                                 startPos.y() + spacingY * y,
+                                                 startPos.z() + spacingZ * z);
+                        applyGeneratorTransformStack(settings, cloneTransform);
+                        const int cloneIndex = z * (rows * cols) + y * cols + x;
+                        appendCloneInstance(
+                            settings, cloneTransform, 1.0f, cloneIndex);
+                    }
+                }
             }
-          }
+            continue;
         }
-    } else if (mode == 6) {
-        const int count = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.cloner.radialCount"), 8));
-        const float radius = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.radius"), 160.0f);
-        const float startAngle = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.startAngle"), 0.0f);
-        const float endAngle = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.endAngle"), 360.0f);
-        const float rotationStep = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.rotationStep"), 0.0f);
-        const float opacityDecay = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.opacityDecay"), 0.0f);
-        const float angleStep = count > 1 ? (endAngle - startAngle) / static_cast<float>(count - 1) : 0.0f;
-        instances.reserve(static_cast<size_t>(count) + 1U);
-        for (int i = 0; i < count; ++i) {
-          const float angle = startAngle + angleStep * static_cast<float>(i);
-          const float rad = angle * 3.1415926535f / 180.0f;
-          QMatrix4x4 cloneTransform;
-          cloneTransform.setToIdentity();
-          cloneTransform.translate(std::cos(rad) * radius, std::sin(rad) * radius, 0.0f);
-          cloneTransform.rotate(angle + rotationStep * static_cast<float>(i), 0.0f, 0.0f, 1.0f);
-          applyClonerComponentTransform(layer, cloneTransform);
-          appendCloneInstance(cloneTransform,
-                              1.0f - opacityDecay * static_cast<float>(i));
+
+        if (generator.typeId ==
+            QStringLiteral("artifact.generator.cloner.radial")) {
+            const int count = std::max(
+                1, generatorSettingInt(settings, QStringLiteral("radialCount"), 8));
+            const float radius = generatorSettingFloat(
+                settings, QStringLiteral("radius"), 160.0f);
+            const float startAngle = generatorSettingFloat(
+                settings, QStringLiteral("startAngle"), 0.0f);
+            const float endAngle = generatorSettingFloat(
+                settings, QStringLiteral("endAngle"), 360.0f);
+            const float rotationStep = generatorSettingFloat(
+                settings, QStringLiteral("rotationStep"), 0.0f);
+            const float opacityDecay = generatorSettingFloat(
+                settings, QStringLiteral("opacityDecay"), 0.0f);
+            const float angleStep = count > 1
+                                        ? (endAngle - startAngle) /
+                                              static_cast<float>(count - 1)
+                                        : 0.0f;
+            for (int i = 0; i < count; ++i) {
+                const float angle = startAngle + angleStep * static_cast<float>(i);
+                const float rad = angle * 3.1415926535f / 180.0f;
+                QMatrix4x4 cloneTransform;
+                cloneTransform.setToIdentity();
+                cloneTransform.translate(std::cos(rad) * radius,
+                                         std::sin(rad) * radius, 0.0f);
+                cloneTransform.rotate(angle + rotationStep * static_cast<float>(i),
+                                      0.0f, 0.0f, 1.0f);
+                applyGeneratorTransformStack(settings, cloneTransform);
+                appendCloneInstance(
+                    settings, cloneTransform,
+                    1.0f - opacityDecay * static_cast<float>(i), i);
+            }
+            continue;
         }
-    } else if (mode == 3) {
-        const int count = std::max(1, cloneComponentIntProperty(
-               layer, QStringLiteral("component.cloner.cloneCount"), 3));
-        const float offsetX = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.offsetX"), 160.0f);
-        const float offsetY = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.offsetY"), 48.0f);
-        const float offsetZ = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.offsetZ"), 0.0f);
-        const float jitterX = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.jitterX"), 24.0f);
-        const float jitterY = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.jitterY"), 24.0f);
-        const float jitterZ = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.jitterZ"), 0.0f);
-        const int seed = cloneComponentIntProperty(layer, QStringLiteral("component.cloner.seed"), 1);
-        const float rotationStep = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.rotationStep"), 0.0f);
-        const float opacityDecay = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.opacityDecay"), 0.0f);
-        std::mt19937 rng(static_cast<uint32_t>(seed));
-        std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
-        instances.reserve(static_cast<size_t>(count) + 1U);
-        for (int i = 0; i < count; ++i) {
-            QMatrix4x4 cloneTransform;
-            cloneTransform.setToIdentity();
-            const float mix = std::pow(static_cast<float>(i + 1) / static_cast<float>(count + 1), 0.65f);
-            cloneTransform.translate(
-                offsetX * static_cast<float>(i) + unit(rng) * jitterX * mix,
-                offsetY * static_cast<float>(i) + unit(rng) * jitterY * mix,
-                offsetZ * static_cast<float>(i) + unit(rng) * jitterZ * mix);
-            cloneTransform.rotate(rotationStep * static_cast<float>(i) + unit(rng) * 30.0f * mix,
-                                  0.0f, 0.0f, 1.0f);
-            applyClonerComponentTransform(layer, cloneTransform);
-            appendCloneInstance(cloneTransform,
-                                1.0f - opacityDecay * static_cast<float>(i));
+
+        const int legacyMode =
+            generatorSettingInt(settings, QStringLiteral("legacyMode"), 0);
+        const int count = std::max(
+            1, generatorSettingInt(settings, QStringLiteral("count"), 3));
+        const float offsetX = generatorSettingFloat(
+            settings, QStringLiteral("offsetX"), 160.0f);
+        const float offsetY = generatorSettingFloat(
+            settings, QStringLiteral("offsetY"), 48.0f);
+        const float offsetZ = generatorSettingFloat(
+            settings, QStringLiteral("offsetZ"), 0.0f);
+        const float rotationStep = generatorSettingFloat(
+            settings, QStringLiteral("rotationStep"), 0.0f);
+        const float opacityDecay = generatorSettingFloat(
+            settings, QStringLiteral("opacityDecay"), 0.0f);
+
+        if (legacyMode == 3) {
+            const float jitterX = generatorSettingFloat(
+                settings, QStringLiteral("jitterX"), 24.0f);
+            const float jitterY = generatorSettingFloat(
+                settings, QStringLiteral("jitterY"), 24.0f);
+            const float jitterZ = generatorSettingFloat(
+                settings, QStringLiteral("jitterZ"), 0.0f);
+            const int seed =
+                generatorSettingInt(settings, QStringLiteral("seed"), 1);
+            std::mt19937 rng(static_cast<uint32_t>(seed));
+            std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
+            for (int i = 0; i < count; ++i) {
+                QMatrix4x4 cloneTransform;
+                cloneTransform.setToIdentity();
+                const float mix = std::pow(
+                    static_cast<float>(i + 1) / static_cast<float>(count + 1),
+                    0.65f);
+                cloneTransform.translate(
+                    offsetX * static_cast<float>(i) + unit(rng) * jitterX * mix,
+                    offsetY * static_cast<float>(i) + unit(rng) * jitterY * mix,
+                    offsetZ * static_cast<float>(i) + unit(rng) * jitterZ * mix);
+                cloneTransform.rotate(
+                    rotationStep * static_cast<float>(i) +
+                        unit(rng) * 30.0f * mix,
+                    0.0f, 0.0f, 1.0f);
+                applyGeneratorTransformStack(settings, cloneTransform);
+                appendCloneInstance(
+                    settings, cloneTransform,
+                    1.0f - opacityDecay * static_cast<float>(i), i);
+            }
+            continue;
         }
-    } else {
-        const int count = std::max(1, cloneComponentIntProperty(
-               layer, QStringLiteral("component.cloner.cloneCount"), 3));
-        const float offsetX = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.offsetX"), 160.0f);
-        const float offsetY = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.offsetY"), 48.0f);
-        const float offsetZ = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.offsetZ"), 0.0f);
-        const float rotationStep = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.rotationStep"), 0.0f);
-        const float opacityDecay = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.cloner.opacityDecay"), 0.0f);
-        instances.reserve(static_cast<size_t>(count) + 1U);
+
         for (int i = 1; i <= count; ++i) {
             const int cloneIndex = i - 1;
             QMatrix4x4 cloneTransform;
@@ -635,11 +877,14 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
                                      offsetY * static_cast<float>(i),
                                      offsetZ * static_cast<float>(i));
             if (rotationStep != 0.0f) {
-              cloneTransform.rotate(rotationStep * static_cast<float>(i), 0.0f, 0.0f, 1.0f);
+                cloneTransform.rotate(rotationStep * static_cast<float>(i), 0.0f,
+                                      0.0f, 1.0f);
             }
-            applyClonerComponentTransform(layer, cloneTransform);
-            appendCloneInstance(cloneTransform,
-                                1.0f - opacityDecay * static_cast<float>(cloneIndex));
+            applyGeneratorTransformStack(settings, cloneTransform);
+            appendCloneInstance(
+                settings, cloneTransform,
+                1.0f - opacityDecay * static_cast<float>(cloneIndex),
+                cloneIndex);
         }
     }
     return instances;

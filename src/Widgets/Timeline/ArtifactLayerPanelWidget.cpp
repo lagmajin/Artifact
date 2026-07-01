@@ -6395,35 +6395,14 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
   p.restore();
 
-  const int selectedCount = static_cast<int>(selectedLayerIdsSnapshot().size());
-  if (selectedCount > 0) {
-    const QString badgeText = QStringLiteral("%1 selected").arg(selectedCount);
-    const QFontMetrics fm(p.font());
-    const int badgePadX = 10;
-    const int badgePadY = 5;
-    const int badgeH = fm.height() + badgePadY * 2;
-    const int badgeW = fm.horizontalAdvance(badgeText) + badgePadX * 2;
-    const int badgeX = std::max(8, width() - badgeW - 10);
-    const QRect badgeRect(badgeX, 8, badgeW, badgeH);
-    QColor badgeBg = mixColor(background, accent, 0.52);
-    badgeBg.setAlpha(230);
-    QColor badgeBorder = mixColor(badgeBg, border, 0.40);
-    QColor badgeTextColor = themeColor(theme.textColor, QColor(QStringLiteral("#F5F2E8")));
-
-    p.setPen(QPen(badgeBorder, 1.0));
-    p.setBrush(badgeBg);
-    p.drawRoundedRect(badgeRect, 9, 9);
-    p.setPen(badgeTextColor);
-    p.drawText(badgeRect.adjusted(badgePadX, 0, -badgePadX, 0),
-                Qt::AlignVCenter | Qt::AlignLeft,
-                badgeText);
-   }
-
    // P: ステータスバー（下部に常時表示）
    {
     constexpr int kStatusH = 22;
-    auto comp = safeCompositionLookup(impl_->compositionId);
-    const int totalLayers = comp ? static_cast<int>(comp->allLayer().size()) : 0;
+   auto comp = safeCompositionLookup(impl_->compositionId);
+   const int totalLayers = comp ? static_cast<int>(comp->allLayer().size()) : 0;
+    const int selectedCount = currentLayerSelectionManager()
+                                  ? static_cast<int>(currentLayerSelectionManager()->selectedLayers().size())
+                                  : 0;
     int maskCount = 0;
     if (comp) {
       for (const auto& l : comp->allLayer()) {

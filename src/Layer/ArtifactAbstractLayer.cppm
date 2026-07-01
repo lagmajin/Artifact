@@ -45,6 +45,7 @@ import Artifact.Layer.Component.System;
 import Artifact.Layer.Modifier;
 import Artifact.Layer.Matte;
 import Geometry.Fracture;
+import Physics.Fluid;
 import Physics.System;
 import Layer.Matte;
 import Artifact.Composition.Abstract;
@@ -53,6 +54,7 @@ import Artifact.Effect.ImplBase;
 import Artifact.Effect.Generator.Cloner;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
+import Container.NamedVector;
 import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;
 import Graphics.ParticleData;
@@ -369,6 +371,69 @@ QString maskPathPropertyPrefix(const int maskIndex, const int pathIndex) {
   return QStringLiteral("mask.%1.path.%2").arg(maskIndex).arg(pathIndex);
 }
 
+QRectF layerCollisionLocalBounds(const ArtifactAbstractLayer* layer) {
+  if (!layer) {
+    return QRectF();
+  }
+
+  const QRectF localBounds = layer->localBounds();
+  if (!localBounds.isValid()) {
+    return QRectF();
+  }
+
+  const auto collisionIntProperty = [layer](const QString& propertyPath,
+                                            int fallback) {
+    const auto property = layer->getProperty(propertyPath);
+    return property ? property->getValue().toInt() : fallback;
+  };
+  const auto collisionFloatProperty = [layer](const QString& propertyPath,
+                                              float fallback) {
+    const auto property = layer->getProperty(propertyPath);
+    return property ? property->getValue().toFloat() : fallback;
+  };
+
+  const int shape = collisionIntProperty(
+      QStringLiteral("component.collision.shape"), 0);
+  const float width = std::max(
+      0.0f, collisionFloatProperty(
+                QStringLiteral("component.collision.width"), 0.0f));
+  const float height = std::max(
+      0.0f, collisionFloatProperty(
+                QStringLiteral("component.collision.height"), 0.0f));
+  const float radius = std::max(
+      0.0f, collisionFloatProperty(
+                QStringLiteral("component.collision.radius"), 0.0f));
+  const float offsetX = collisionFloatProperty(
+      QStringLiteral("component.collision.offsetX"), 0.0f);
+  const float offsetY = collisionFloatProperty(
+      QStringLiteral("component.collision.offsetY"), 0.0f);
+  const QPointF center = localBounds.center() +
+                         QPointF(static_cast<qreal>(offsetX),
+                                 static_cast<qreal>(offsetY));
+
+  if (shape == 1) {
+    const qreal boxWidth = width > 0.0f ? static_cast<qreal>(width)
+                                        : localBounds.width();
+    const qreal boxHeight = height > 0.0f ? static_cast<qreal>(height)
+                                          : localBounds.height();
+    return QRectF(center.x() - boxWidth * 0.5, center.y() - boxHeight * 0.5,
+                  boxWidth, boxHeight);
+  }
+
+  if (shape == 2) {
+    const qreal circleRadius =
+        radius > 0.0f
+            ? static_cast<qreal>(radius)
+            : static_cast<qreal>(
+                  std::max(localBounds.width(), localBounds.height()) * 0.5);
+    return QRectF(center.x() - circleRadius, center.y() - circleRadius,
+                  circleRadius * 2.0, circleRadius * 2.0);
+  }
+
+  return localBounds.translated(static_cast<qreal>(offsetX),
+                                static_cast<qreal>(offsetY));
+}
+
 void applyMaskPropertyState(const ArtifactAbstractLayer *layer,
                             const int maskIndex, LayerMask &mask) {
   if (!layer) {
@@ -544,6 +609,12 @@ public:
     bool layoutComponentEnabled_ = false;
     bool collisionComponentEnabled_ = false;
     bool collisionOwnsPhysicsEnable_ = false;
+    int collisionShape_ = 0;
+    float collisionWidth_ = 0.0f;
+    float collisionHeight_ = 0.0f;
+    float collisionRadius_ = 0.0f;
+    float collisionOffsetX_ = 0.0f;
+    float collisionOffsetY_ = 0.0f;
     bool crowdComponentEnabled_ = false;
     float crowdCohesion_ = 0.5f;
     float crowdSeparation_ = 0.5f;
@@ -554,6 +625,17 @@ public:
     int particleEmitterCount_ = 16;
     float particleEmitterSpeed_ = 120.0f;
     float particleEmitterLifetime_ = 1.0f;
+    bool fluidComponentEnabled_ = false;
+    int fluidGridWidth_ = 128;
+    int fluidGridHeight_ = 128;
+    float fluidViscosity_ = 0.00001f;
+    float fluidDiffusion_ = 0.00001f;
+    float fluidBuoyancy_ = 0.05f;
+    float fluidVorticity_ = 0.1f;
+    int fluidSolverIterations_ = 20;
+    std::unique_ptr<ArtifactCore::FluidSolver2D> fluidSolver_;
+    std::vector<ArtifactCore::ParticleVertex> fluidPreviewParticles_;
+    mutable int64_t fluidLastFrame_ = std::numeric_limits<int64_t>::min();
     std::vector<ArtifactCore::ParticleVertex> componentParticles_;
     mutable int64_t componentParticlesLastFrame_ =
         std::numeric_limits<int64_t>::min();
@@ -573,6 +655,10 @@ public:
     int layoutMaxPerRow_ = 0;
     int clonerMode_ = 0;
     int clonerCloneCount_ = 3;
+    float clonerTimeOffsetStep_ = 0.0f;
+    bool clonerSequenceEnabled_ = false;
+    float clonerSequenceRate_ = 8.0f;
+    float clonerSequenceSoftness_ = 1.0f;
     float clonerOffsetX_ = 160.0f;
     float clonerOffsetY_ = 48.0f;
     float clonerOffsetZ_ = 0.0f;
@@ -593,6 +679,12 @@ public:
     float clonerRotationStep_ = 0.0f;
     float clonerOpacityDecay_ = 0.0f;
     std::vector<ClonerTransformOperation> clonerTransforms_;
+    NamedVector<LayerGeneratorDescriptor> extraGeneratorDescriptors_{
+        ContainerName{"Layer.ExtraGenerators"}};
+    NamedVector<LayerFieldDescriptor> extraFieldDescriptors_{
+        ContainerName{"Layer.ExtraFields"}};
+    NamedVector<LayerModifierDescriptor> extraCloneModifierDescriptors_{
+        ContainerName{"Layer.ExtraCloneModifiers"}};
     QJsonObject scriptBinding_;
 
   // Matte components (Asset-based track mattes)
@@ -703,6 +795,14 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
   cloner.settings[QStringLiteral("mode")] = clonerMode_;
   cloner.settings[QStringLiteral("count")] = clonerCloneCount_;
   cloner.settings[QStringLiteral("seed")] = clonerSeed_;
+  cloner.settings[QStringLiteral("timeOffsetStep")] =
+      static_cast<double>(clonerTimeOffsetStep_);
+  cloner.settings[QStringLiteral("sequenceEnabled")] =
+      clonerSequenceEnabled_;
+  cloner.settings[QStringLiteral("sequenceRate")] =
+      static_cast<double>(clonerSequenceRate_);
+  cloner.settings[QStringLiteral("sequenceSoftness")] =
+      static_cast<double>(clonerSequenceSoftness_);
   componentHost_.upsert(std::move(cloner));
 
   auto layout = makeLayoutComponentDescriptor(layoutComponentEnabled_);
@@ -735,6 +835,17 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
 
   auto collision =
       makeCollisionComponentDescriptor(collisionComponentEnabled_);
+  collision.settings[QStringLiteral("shape")] = collisionShape_;
+  collision.settings[QStringLiteral("width")] =
+      static_cast<double>(collisionWidth_);
+  collision.settings[QStringLiteral("height")] =
+      static_cast<double>(collisionHeight_);
+  collision.settings[QStringLiteral("radius")] =
+      static_cast<double>(collisionRadius_);
+  collision.settings[QStringLiteral("offsetX")] =
+      static_cast<double>(collisionOffsetX_);
+  collision.settings[QStringLiteral("offsetY")] =
+      static_cast<double>(collisionOffsetY_);
   componentHost_.upsert(std::move(collision));
 
   auto fracture = makeFractureComponentDescriptor(fractureEnabled_);
@@ -754,6 +865,20 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
   emitter.settings[QStringLiteral("lifetime")] =
       static_cast<double>(particleEmitterLifetime_);
   componentHost_.upsert(std::move(emitter));
+
+  auto fluid = makeFluidComponentDescriptor(fluidComponentEnabled_);
+  fluid.settings[QStringLiteral("gridWidth")] = fluidGridWidth_;
+  fluid.settings[QStringLiteral("gridHeight")] = fluidGridHeight_;
+  fluid.settings[QStringLiteral("viscosity")] =
+      static_cast<double>(fluidViscosity_);
+  fluid.settings[QStringLiteral("diffusion")] =
+      static_cast<double>(fluidDiffusion_);
+  fluid.settings[QStringLiteral("buoyancy")] =
+      static_cast<double>(fluidBuoyancy_);
+  fluid.settings[QStringLiteral("vorticity")] =
+      static_cast<double>(fluidVorticity_);
+  fluid.settings[QStringLiteral("solverIterations")] = fluidSolverIterations_;
+  componentHost_.upsert(std::move(fluid));
 }
 
 void ArtifactAbstractLayer::Impl::goToStartFrame() {}
@@ -1306,10 +1431,11 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
                   impl_->composition_.data())) {
         const auto compositionSize =
             composition->settings().compositionSize();
+        const QRectF collisionBounds = layerCollisionLocalBounds(this);
         impl_->physicsComponent_.settings().floorY =
             static_cast<float>(compositionSize.height()) -
             static_cast<float>(std::max<qreal>(
-                0.0, localBounds().height()));
+                0.0, collisionBounds.bottom()));
       }
     }
     const double fps2 = effectiveLayerFrameRate(this);
@@ -1562,10 +1688,11 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
                   impl_->composition_.data())) {
         const auto compositionSize =
             composition->settings().compositionSize();
+        const QRectF collisionBounds = layerCollisionLocalBounds(this);
         impl_->physicsComponent_.settings().floorY =
             static_cast<float>(compositionSize.height()) -
             static_cast<float>(std::max<qreal>(
-                0.0, localBounds().height()));
+                0.0, collisionBounds.bottom()));
       }
     }
     const double fps = effectiveLayerFrameRate(this);
@@ -1642,6 +1769,119 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
   Q_UNUSED(sourceSize);
 
   const int64_t frame = currentTimelineFrame(this);
+  if (impl_->fluidComponentEnabled_) {
+    const double fps = std::max(1.0, effectiveLayerFrameRate(this));
+    const bool solverMismatch =
+        !impl_->fluidSolver_ ||
+        impl_->fluidSolver_->width() != impl_->fluidGridWidth_ ||
+        impl_->fluidSolver_->height() != impl_->fluidGridHeight_;
+    if (solverMismatch) {
+      impl_->fluidSolver_ = std::make_unique<ArtifactCore::FluidSolver2D>(
+          impl_->fluidGridWidth_, impl_->fluidGridHeight_);
+      impl_->fluidLastFrame_ = std::numeric_limits<int64_t>::min();
+      impl_->fluidPreviewParticles_.clear();
+    }
+    if (impl_->fluidSolver_) {
+      impl_->fluidSolver_->setViscosity(impl_->fluidViscosity_);
+      impl_->fluidSolver_->setDiffusion(impl_->fluidDiffusion_);
+      impl_->fluidSolver_->setBuoyancy(impl_->fluidBuoyancy_);
+      impl_->fluidSolver_->setVorticity(impl_->fluidVorticity_);
+      impl_->fluidSolver_->setSolverIterations(impl_->fluidSolverIterations_);
+
+      if (impl_->fluidLastFrame_ == std::numeric_limits<int64_t>::min() ||
+          frame < impl_->fluidLastFrame_ ||
+          frame - impl_->fluidLastFrame_ > 10) {
+        impl_->fluidSolver_->reset();
+        impl_->fluidLastFrame_ = frame;
+      } else if (frame > impl_->fluidLastFrame_) {
+        const int stepCount =
+            std::min<int64_t>(frame - impl_->fluidLastFrame_, 8);
+        const float dt = 1.0f / static_cast<float>(fps);
+        for (int step = 0; step < stepCount; ++step) {
+          const int centerX = impl_->fluidGridWidth_ / 2;
+          const int centerY = std::max(1, impl_->fluidGridHeight_ - 3);
+          const float phase = static_cast<float>(impl_->fluidLastFrame_ + step) *
+                              0.07f;
+          const float swirlX = std::sin(phase) * 0.85f;
+          const float injectDensity =
+              1.0f + std::max(0, impl_->particleEmitterCount_) / 24.0f;
+          const float injectVelocity =
+              std::max(40.0f, impl_->particleEmitterSpeed_) * 0.02f;
+          impl_->fluidSolver_->addDensity(centerX, centerY, injectDensity);
+          impl_->fluidSolver_->addVelocity(
+              centerX, centerY, swirlX, -injectVelocity);
+          impl_->fluidSolver_->update(dt);
+        }
+        impl_->fluidLastFrame_ = frame;
+      }
+
+      const QRectF bounds = localBounds();
+      impl_->fluidPreviewParticles_.clear();
+      if (bounds.isValid() && bounds.width() > 0.0 && bounds.height() > 0.0) {
+        const int strideX = std::max(1, impl_->fluidGridWidth_ / 28);
+        const int strideY = std::max(1, impl_->fluidGridHeight_ / 28);
+        for (int gy = 0; gy < impl_->fluidGridHeight_; gy += strideY) {
+          for (int gx = 0; gx < impl_->fluidGridWidth_; gx += strideX) {
+            const float density = impl_->fluidSolver_->getDensity(gx, gy);
+            if (density < 0.025f) {
+              continue;
+            }
+            ArtifactCore::ParticleVertex particle{};
+            const float u = static_cast<float>(gx) /
+                            static_cast<float>(std::max(1, impl_->fluidGridWidth_ - 1));
+            const float v = static_cast<float>(gy) /
+                            static_cast<float>(std::max(1, impl_->fluidGridHeight_ - 1));
+            particle.px = static_cast<float>(bounds.left() + u * bounds.width());
+            particle.py =
+                static_cast<float>(bounds.top() + v * bounds.height());
+            particle.pz = 0.0f;
+            float vx = 0.0f;
+            float vy = 0.0f;
+            impl_->fluidSolver_->getVelocity(gx, gy, vx, vy);
+            particle.vx = vx * 24.0f;
+            particle.vy = vy * 24.0f;
+            particle.vz = 0.0f;
+            particle.r = 0.42f;
+            particle.g = 0.72f;
+            particle.b = 1.0f;
+            particle.a = std::clamp(density * 0.45f, 0.04f, 0.65f);
+            particle.size = 2.0f + density * 9.0f;
+            particle.stretch = 1.0f + std::min(std::sqrt(vx * vx + vy * vy), 2.5f);
+            particle.rotation = std::atan2(vy, vx);
+            particle.age = 0.0f;
+            particle.lifetime = 1.0f;
+            impl_->fluidPreviewParticles_.push_back(particle);
+          }
+        }
+      }
+
+      if (!impl_->fluidPreviewParticles_.empty()) {
+        ArtifactCore::ParticleRenderData renderData;
+        renderData.frameNumber = frame;
+        renderData.options.blend =
+            ArtifactCore::ParticleBlendPolicy::Additive;
+        renderData.options.billboard =
+            ArtifactCore::ParticleBillboardPolicy::VelocityAligned;
+        renderData.particles.reserve(impl_->fluidPreviewParticles_.size());
+        for (const auto& sourceParticle : impl_->fluidPreviewParticles_) {
+          auto particle = sourceParticle;
+          const QVector3D mapped = baseTransform.map(
+              QVector3D(particle.px, particle.py, particle.pz));
+          particle.px = mapped.x();
+          particle.py = mapped.y();
+          particle.pz = mapped.z();
+          particle.a *= std::clamp(opacityScale, 0.0f, 1.0f);
+          renderData.particles.push_back(particle);
+        }
+        renderer->drawParticles(renderData);
+      }
+    }
+  } else {
+    impl_->fluidSolver_.reset();
+    impl_->fluidPreviewParticles_.clear();
+    impl_->fluidLastFrame_ = std::numeric_limits<int64_t>::min();
+  }
+
   if (impl_->particleEmitterComponentEnabled_ &&
       !impl_->componentParticles_.empty()) {
     const double fps = std::max(1.0, effectiveLayerFrameRate(this));
@@ -2686,6 +2926,17 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   componentsObj["clonerEnabled"] = impl_->clonerComponentEnabled_;
   componentsObj["layoutEnabled"] = impl_->layoutComponentEnabled_;
   componentsObj["collisionEnabled"] = impl_->collisionComponentEnabled_;
+  componentsObj["collisionShape"] = impl_->collisionShape_;
+  componentsObj["collisionWidth"] =
+      static_cast<double>(impl_->collisionWidth_);
+  componentsObj["collisionHeight"] =
+      static_cast<double>(impl_->collisionHeight_);
+  componentsObj["collisionRadius"] =
+      static_cast<double>(impl_->collisionRadius_);
+  componentsObj["collisionOffsetX"] =
+      static_cast<double>(impl_->collisionOffsetX_);
+  componentsObj["collisionOffsetY"] =
+      static_cast<double>(impl_->collisionOffsetY_);
   componentsObj["crowdEnabled"] = impl_->crowdComponentEnabled_;
   componentsObj["crowdCohesion"] =
       static_cast<double>(impl_->crowdCohesion_);
@@ -2704,6 +2955,14 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
       static_cast<double>(impl_->particleEmitterSpeed_);
   componentsObj["particleEmitterLifetime"] =
       static_cast<double>(impl_->particleEmitterLifetime_);
+  componentsObj["fluidEnabled"] = impl_->fluidComponentEnabled_;
+  componentsObj["fluidGridWidth"] = impl_->fluidGridWidth_;
+  componentsObj["fluidGridHeight"] = impl_->fluidGridHeight_;
+  componentsObj["fluidViscosity"] = static_cast<double>(impl_->fluidViscosity_);
+  componentsObj["fluidDiffusion"] = static_cast<double>(impl_->fluidDiffusion_);
+  componentsObj["fluidBuoyancy"] = static_cast<double>(impl_->fluidBuoyancy_);
+  componentsObj["fluidVorticity"] = static_cast<double>(impl_->fluidVorticity_);
+  componentsObj["fluidSolverIterations"] = impl_->fluidSolverIterations_;
   componentsObj["layoutMode"] = impl_->layoutMode_;
   componentsObj["layoutAnchorMode"] = impl_->layoutAnchorMode_;
   componentsObj["layoutHorizontalPin"] = impl_->layoutHorizontalPin_;
@@ -2753,6 +3012,27 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
     clonerTransformsArr.append(transformObj);
   }
   componentsObj["clonerTransforms"] = clonerTransformsArr;
+  if (!impl_->extraGeneratorDescriptors_.isEmpty()) {
+    QJsonArray generatorsArr;
+    for (const auto& generator : impl_->extraGeneratorDescriptors_) {
+      generatorsArr.append(toJsonObject(generator));
+    }
+    componentsObj["generators"] = generatorsArr;
+  }
+  if (!impl_->extraFieldDescriptors_.isEmpty()) {
+    QJsonArray fieldsArr;
+    for (const auto& field : impl_->extraFieldDescriptors_) {
+      fieldsArr.append(toJsonObject(field));
+    }
+    componentsObj["fields"] = fieldsArr;
+  }
+  if (!impl_->extraCloneModifierDescriptors_.isEmpty()) {
+    QJsonArray modifiersArr;
+    for (const auto& modifier : impl_->extraCloneModifierDescriptors_) {
+      modifiersArr.append(toJsonObject(modifier));
+    }
+    componentsObj["cloneModifiers"] = modifiersArr;
+  }
   if (!impl_->scriptBinding_.isEmpty()) {
     componentsObj["scriptBinding"] = impl_->scriptBinding_;
   }
@@ -3093,6 +3373,24 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             componentsObj.value(QStringLiteral("layoutEnabled")).toBool(false);
         impl_->collisionComponentEnabled_ =
             componentsObj.value(QStringLiteral("collisionEnabled")).toBool(false);
+        impl_->collisionShape_ = std::clamp(
+            componentsObj.value(QStringLiteral("collisionShape")).toInt(0), 0,
+            2);
+        impl_->collisionWidth_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("collisionWidth")).toDouble(0.0),
+            0.0, 100000.0));
+        impl_->collisionHeight_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("collisionHeight")).toDouble(0.0),
+            0.0, 100000.0));
+        impl_->collisionRadius_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("collisionRadius")).toDouble(0.0),
+            0.0, 100000.0));
+        impl_->collisionOffsetX_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("collisionOffsetX")).toDouble(0.0),
+            -100000.0, 100000.0));
+        impl_->collisionOffsetY_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("collisionOffsetY")).toDouble(0.0),
+            -100000.0, 100000.0));
         impl_->crowdComponentEnabled_ =
             componentsObj.value(QStringLiteral("crowdEnabled")).toBool(false);
         impl_->crowdCohesion_ = static_cast<float>(std::clamp(
@@ -3124,6 +3422,33 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             componentsObj.value(QStringLiteral("particleEmitterLifetime"))
                 .toDouble(1.0),
             0.01, 3600.0));
+        impl_->fluidComponentEnabled_ =
+            componentsObj.value(QStringLiteral("fluidEnabled")).toBool(false);
+        impl_->fluidGridWidth_ = std::clamp(
+            componentsObj.value(QStringLiteral("fluidGridWidth")).toInt(128),
+            8, 4096);
+        impl_->fluidGridHeight_ = std::clamp(
+            componentsObj.value(QStringLiteral("fluidGridHeight")).toInt(128),
+            8, 4096);
+        impl_->fluidViscosity_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("fluidViscosity"))
+                .toDouble(0.00001),
+            0.0, 1.0));
+        impl_->fluidDiffusion_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("fluidDiffusion"))
+                .toDouble(0.00001),
+            0.0, 1.0));
+        impl_->fluidBuoyancy_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("fluidBuoyancy"))
+                .toDouble(0.05),
+            -2.0, 2.0));
+        impl_->fluidVorticity_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("fluidVorticity"))
+                .toDouble(0.1),
+            0.0, 10.0));
+        impl_->fluidSolverIterations_ = std::clamp(
+            componentsObj.value(QStringLiteral("fluidSolverIterations")).toInt(20),
+            1, 256);
         impl_->layoutMode_ =
             componentsObj.value(QStringLiteral("layoutMode")).toInt(0);
         impl_->layoutAnchorMode_ =
@@ -3257,6 +3582,60 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             op.scale.setZ(static_cast<float>(
                 componentsObj.value(QStringLiteral("clonerTransformScaleZ")).toDouble(1.0)));
             impl_->clonerTransforms_.push_back(op);
+          }
+        }
+        impl_->extraGeneratorDescriptors_.clear();
+        if (componentsObj.contains(QStringLiteral("generators")) &&
+            componentsObj.value(QStringLiteral("generators")).isArray()) {
+          const auto generatorsArr =
+              componentsObj.value(QStringLiteral("generators")).toArray();
+          impl_->extraGeneratorDescriptors_.reserve(
+              static_cast<size_t>(generatorsArr.size()));
+          for (const auto& generatorValue : generatorsArr) {
+            if (!generatorValue.isObject()) {
+              continue;
+            }
+            const auto descriptor =
+                layerGeneratorDescriptorFromJson(generatorValue.toObject());
+            if (descriptor.has_value()) {
+              impl_->extraGeneratorDescriptors_.add(*descriptor);
+            }
+          }
+        }
+        impl_->extraFieldDescriptors_.clear();
+        if (componentsObj.contains(QStringLiteral("fields")) &&
+            componentsObj.value(QStringLiteral("fields")).isArray()) {
+          const auto fieldsArr =
+              componentsObj.value(QStringLiteral("fields")).toArray();
+          impl_->extraFieldDescriptors_.reserve(
+              static_cast<size_t>(fieldsArr.size()));
+          for (const auto& fieldValue : fieldsArr) {
+            if (!fieldValue.isObject()) {
+              continue;
+            }
+            const auto descriptor =
+                layerFieldDescriptorFromJson(fieldValue.toObject());
+            if (descriptor.has_value()) {
+              impl_->extraFieldDescriptors_.add(*descriptor);
+            }
+          }
+        }
+        impl_->extraCloneModifierDescriptors_.clear();
+        if (componentsObj.contains(QStringLiteral("cloneModifiers")) &&
+            componentsObj.value(QStringLiteral("cloneModifiers")).isArray()) {
+          const auto modifiersArr =
+              componentsObj.value(QStringLiteral("cloneModifiers")).toArray();
+          impl_->extraCloneModifierDescriptors_.reserve(
+              static_cast<size_t>(modifiersArr.size()));
+          for (const auto& modifierValue : modifiersArr) {
+            if (!modifierValue.isObject()) {
+              continue;
+            }
+            const auto descriptor =
+                layerModifierDescriptorFromJson(modifierValue.toObject());
+            if (descriptor.has_value()) {
+              impl_->extraCloneModifierDescriptors_.add(*descriptor);
+            }
           }
         }
         impl_->scriptBinding_ = componentsObj.value(QStringLiteral("scriptBinding")).toObject();
@@ -3573,6 +3952,159 @@ ArtifactAbstractLayer::enabledLayerComponents(
     const LayerComponentPhase phase) const {
   impl_->syncBuiltinComponentDescriptors();
   return impl_->componentHost_.enabledForPhase(phase);
+}
+
+std::vector<LayerGeneratorDescriptor>
+ArtifactAbstractLayer::layerGenerators() const {
+  impl_->syncBuiltinComponentDescriptors();
+
+  std::vector<LayerGeneratorDescriptor> generators;
+  const auto* cloner =
+      impl_->componentHost_.find(QStringLiteral("builtin.cloner"));
+  if (!cloner || !cloner->enabled) {
+    return generators;
+  }
+
+  LayerGeneratorDescriptor generator;
+  generator.generatorId = QStringLiteral("generator.compat.cloner.0");
+  generator.version = cloner->version;
+  generator.enabled = cloner->enabled;
+  generator.order = cloner->order;
+
+  const int clonerMode = cloner->settings
+                             .value(QStringLiteral("mode"))
+                             .toInt(impl_->clonerMode_);
+  switch (clonerMode) {
+  case 5:
+    generator.typeId = QStringLiteral("artifact.generator.cloner.grid");
+    break;
+  case 6:
+    generator.typeId = QStringLiteral("artifact.generator.cloner.radial");
+    break;
+  default:
+    generator.typeId = QStringLiteral("artifact.generator.cloner.linear");
+    break;
+  }
+
+  generator.settings = cloner->settings;
+  generator.settings[QStringLiteral("legacySourceComponentId")] =
+      cloner->componentId;
+  generator.settings[QStringLiteral("legacyMode")] = clonerMode;
+  generator.settings[QStringLiteral("timeOffsetStep")] =
+      static_cast<double>(impl_->clonerTimeOffsetStep_);
+  generator.settings[QStringLiteral("sequenceEnabled")] =
+      impl_->clonerSequenceEnabled_;
+  generator.settings[QStringLiteral("sequenceRate")] =
+      static_cast<double>(impl_->clonerSequenceRate_);
+  generator.settings[QStringLiteral("sequenceSoftness")] =
+      static_cast<double>(impl_->clonerSequenceSoftness_);
+
+  if (!impl_->clonerTransforms_.empty()) {
+    QJsonArray transformArray;
+    for (const auto& op : impl_->clonerTransforms_) {
+      QJsonObject transformObj;
+      transformObj[QStringLiteral("name")] = op.name;
+      transformObj[QStringLiteral("enabled")] = op.enabled;
+      transformObj[QStringLiteral("positionX")] =
+          static_cast<double>(op.position.x());
+      transformObj[QStringLiteral("positionY")] =
+          static_cast<double>(op.position.y());
+      transformObj[QStringLiteral("positionZ")] =
+          static_cast<double>(op.position.z());
+      transformObj[QStringLiteral("rotationX")] =
+          static_cast<double>(op.rotation.x());
+      transformObj[QStringLiteral("rotationY")] =
+          static_cast<double>(op.rotation.y());
+      transformObj[QStringLiteral("rotationZ")] =
+          static_cast<double>(op.rotation.z());
+      transformObj[QStringLiteral("scaleX")] =
+          static_cast<double>(op.scale.x());
+      transformObj[QStringLiteral("scaleY")] =
+          static_cast<double>(op.scale.y());
+      transformObj[QStringLiteral("scaleZ")] =
+          static_cast<double>(op.scale.z());
+      transformArray.append(transformObj);
+    }
+    generator.settings[QStringLiteral("transformStack")] = transformArray;
+  }
+
+  generators.push_back(std::move(generator));
+  for (const auto& extraGenerator : impl_->extraGeneratorDescriptors_) {
+    if (!extraGenerator.enabled) {
+      continue;
+    }
+    generators.push_back(extraGenerator);
+  }
+  std::stable_sort(
+      generators.begin(), generators.end(),
+      [](const LayerGeneratorDescriptor& a, const LayerGeneratorDescriptor& b) {
+        if (a.order != b.order) {
+          return a.order < b.order;
+        }
+        return a.generatorId < b.generatorId;
+      });
+  return generators;
+}
+
+std::vector<LayerFieldDescriptor>
+ArtifactAbstractLayer::layerFields() const {
+  std::vector<LayerFieldDescriptor> fields;
+  fields.reserve(impl_->extraFieldDescriptors_.count());
+  for (const auto& extraField : impl_->extraFieldDescriptors_) {
+    if (!extraField.enabled) {
+      continue;
+    }
+    fields.push_back(extraField);
+  }
+  std::stable_sort(
+      fields.begin(), fields.end(),
+      [](const LayerFieldDescriptor& lhs, const LayerFieldDescriptor& rhs) {
+        if (lhs.order != rhs.order) {
+          return lhs.order < rhs.order;
+        }
+        return lhs.fieldId < rhs.fieldId;
+      });
+  return fields;
+}
+
+std::vector<LayerModifierDescriptor>
+ArtifactAbstractLayer::layerCloneModifiers() const {
+  std::vector<LayerModifierDescriptor> modifiers;
+
+  LayerModifierDescriptor timeOffsetModifier;
+  timeOffsetModifier.modifierId = QStringLiteral("modifier.compat.timeOffset.0");
+  timeOffsetModifier.typeId = QStringLiteral("artifact.modifier.time-offset");
+  timeOffsetModifier.enabled = true;
+  timeOffsetModifier.order = 0;
+  timeOffsetModifier.settings[QStringLiteral("step")] = impl_->clonerTimeOffsetStep_;
+  modifiers.push_back(std::move(timeOffsetModifier));
+
+  LayerModifierDescriptor sequenceModifier;
+  sequenceModifier.modifierId = QStringLiteral("modifier.compat.sequence.0");
+  sequenceModifier.typeId = QStringLiteral("artifact.modifier.sequence");
+  sequenceModifier.enabled = impl_->clonerSequenceEnabled_;
+  sequenceModifier.order = 10;
+  sequenceModifier.settings[QStringLiteral("enabled")] = impl_->clonerSequenceEnabled_;
+  sequenceModifier.settings[QStringLiteral("rate")] = impl_->clonerSequenceRate_;
+  sequenceModifier.settings[QStringLiteral("softness")] = impl_->clonerSequenceSoftness_;
+  modifiers.push_back(std::move(sequenceModifier));
+
+  for (const auto& extraModifier : impl_->extraCloneModifierDescriptors_) {
+    if (!extraModifier.enabled) {
+      continue;
+    }
+    modifiers.push_back(extraModifier);
+  }
+
+  std::stable_sort(
+      modifiers.begin(), modifiers.end(),
+      [](const LayerModifierDescriptor& lhs, const LayerModifierDescriptor& rhs) {
+        if (lhs.order != rhs.order) {
+          return lhs.order < rhs.order;
+        }
+        return lhs.modifierId < rhs.modifierId;
+      });
+  return modifiers;
 }
 
 std::vector<LayerComponentValidationIssue>
@@ -4017,6 +4549,56 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   collisionComponentEnabledProp->setDisplayLabel(
       QStringLiteral("Collision Enabled"));
   componentGroup.addProperty(collisionComponentEnabledProp);
+  PropertyGroup collisionGroup(QStringLiteral("Collision"));
+  auto collisionShapeProp =
+      makeProp(QStringLiteral("component.collision.shape"),
+               PropertyType::Integer, impl_->collisionShape_, -88);
+  collisionShapeProp->setDisplayLabel(QStringLiteral("Shape"));
+  collisionShapeProp->setTooltip(
+      QStringLiteral("0=Auto Bounds, 1=Box, 2=Circle."));
+  collisionShapeProp->setHardRange(0.0, 2.0);
+  collisionShapeProp->setSoftRange(0.0, 2.0);
+  collisionGroup.addProperty(collisionShapeProp);
+  auto collisionWidthProp =
+      makeProp(QStringLiteral("component.collision.width"),
+               PropertyType::Float,
+               static_cast<double>(impl_->collisionWidth_), -87);
+  collisionWidthProp->setDisplayLabel(QStringLiteral("Width"));
+  collisionWidthProp->setHardRange(0.0, 100000.0);
+  collisionWidthProp->setSoftRange(0.0, 4096.0);
+  collisionGroup.addProperty(collisionWidthProp);
+  auto collisionHeightProp =
+      makeProp(QStringLiteral("component.collision.height"),
+               PropertyType::Float,
+               static_cast<double>(impl_->collisionHeight_), -86);
+  collisionHeightProp->setDisplayLabel(QStringLiteral("Height"));
+  collisionHeightProp->setHardRange(0.0, 100000.0);
+  collisionHeightProp->setSoftRange(0.0, 4096.0);
+  collisionGroup.addProperty(collisionHeightProp);
+  auto collisionRadiusProp =
+      makeProp(QStringLiteral("component.collision.radius"),
+               PropertyType::Float,
+               static_cast<double>(impl_->collisionRadius_), -85);
+  collisionRadiusProp->setDisplayLabel(QStringLiteral("Radius"));
+  collisionRadiusProp->setHardRange(0.0, 100000.0);
+  collisionRadiusProp->setSoftRange(0.0, 2048.0);
+  collisionGroup.addProperty(collisionRadiusProp);
+  auto collisionOffsetXProp =
+      makeProp(QStringLiteral("component.collision.offsetX"),
+               PropertyType::Float,
+               static_cast<double>(impl_->collisionOffsetX_), -84);
+  collisionOffsetXProp->setDisplayLabel(QStringLiteral("Offset X"));
+  collisionOffsetXProp->setHardRange(-100000.0, 100000.0);
+  collisionOffsetXProp->setSoftRange(-4096.0, 4096.0);
+  collisionGroup.addProperty(collisionOffsetXProp);
+  auto collisionOffsetYProp =
+      makeProp(QStringLiteral("component.collision.offsetY"),
+               PropertyType::Float,
+               static_cast<double>(impl_->collisionOffsetY_), -83);
+  collisionOffsetYProp->setDisplayLabel(QStringLiteral("Offset Y"));
+  collisionOffsetYProp->setHardRange(-100000.0, 100000.0);
+  collisionOffsetYProp->setSoftRange(-4096.0, 4096.0);
+  collisionGroup.addProperty(collisionOffsetYProp);
   auto crowdComponentEnabledProp =
       makeProp(QStringLiteral("component.crowd.enabled"),
                PropertyType::Boolean, impl_->crowdComponentEnabled_, -88);
@@ -4029,10 +4611,16 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   particleEmitterComponentEnabledProp->setDisplayLabel(
       QStringLiteral("Particle Emitter Enabled"));
   componentGroup.addProperty(particleEmitterComponentEnabledProp);
+  auto fluidComponentEnabledProp =
+      makeProp(QStringLiteral("component.fluid.enabled"),
+               PropertyType::Boolean, impl_->fluidComponentEnabled_, -86);
+  fluidComponentEnabledProp->setDisplayLabel(QStringLiteral("Fluid Enabled"));
+  componentGroup.addProperty(fluidComponentEnabledProp);
   PropertyGroup layoutGroup(QStringLiteral("Layout"));
   PropertyGroup clonerGroup(QStringLiteral("Cloner"));
   PropertyGroup crowdGroup(QStringLiteral("Crowd"));
   PropertyGroup particleEmitterGroup(QStringLiteral("Particle Emitter"));
+  PropertyGroup fluidGroup(QStringLiteral("Fluid"));
 
   auto addCrowdFloat = [&](const QString& name, const QString& label,
                            float value, double hardMax, int order) {
@@ -4081,6 +4669,56 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   particleLifetimeProp->setHardRange(0.01, 3600.0);
   particleLifetimeProp->setSoftRange(0.1, 30.0);
   particleEmitterGroup.addProperty(particleLifetimeProp);
+  auto fluidGridWidthProp =
+      makeProp(QStringLiteral("component.fluid.gridWidth"),
+               PropertyType::Integer, impl_->fluidGridWidth_, -78);
+  fluidGridWidthProp->setDisplayLabel(QStringLiteral("Grid Width"));
+  fluidGridWidthProp->setHardRange(8.0, 4096.0);
+  fluidGridWidthProp->setSoftRange(16.0, 512.0);
+  fluidGroup.addProperty(fluidGridWidthProp);
+  auto fluidGridHeightProp =
+      makeProp(QStringLiteral("component.fluid.gridHeight"),
+               PropertyType::Integer, impl_->fluidGridHeight_, -77);
+  fluidGridHeightProp->setDisplayLabel(QStringLiteral("Grid Height"));
+  fluidGridHeightProp->setHardRange(8.0, 4096.0);
+  fluidGridHeightProp->setSoftRange(16.0, 512.0);
+  fluidGroup.addProperty(fluidGridHeightProp);
+  auto fluidViscosityProp =
+      makeProp(QStringLiteral("component.fluid.viscosity"),
+               PropertyType::Float,
+               static_cast<double>(impl_->fluidViscosity_), -76);
+  fluidViscosityProp->setDisplayLabel(QStringLiteral("Viscosity"));
+  fluidViscosityProp->setSoftRange(0.0, 1.0);
+  fluidGroup.addProperty(fluidViscosityProp);
+  auto fluidDiffusionProp =
+      makeProp(QStringLiteral("component.fluid.diffusion"),
+               PropertyType::Float,
+               static_cast<double>(impl_->fluidDiffusion_), -75);
+  fluidDiffusionProp->setDisplayLabel(QStringLiteral("Diffusion"));
+  fluidDiffusionProp->setSoftRange(0.0, 1.0);
+  fluidGroup.addProperty(fluidDiffusionProp);
+  auto fluidBuoyancyProp =
+      makeProp(QStringLiteral("component.fluid.buoyancy"),
+               PropertyType::Float,
+               static_cast<double>(impl_->fluidBuoyancy_), -74);
+  fluidBuoyancyProp->setDisplayLabel(QStringLiteral("Buoyancy"));
+  fluidBuoyancyProp->setSoftRange(-2.0, 2.0);
+  fluidGroup.addProperty(fluidBuoyancyProp);
+  auto fluidVorticityProp =
+      makeProp(QStringLiteral("component.fluid.vorticity"),
+               PropertyType::Float,
+               static_cast<double>(impl_->fluidVorticity_), -73);
+  fluidVorticityProp->setDisplayLabel(QStringLiteral("Vorticity"));
+  fluidVorticityProp->setSoftRange(0.0, 10.0);
+  fluidGroup.addProperty(fluidVorticityProp);
+  auto fluidSolverIterationsProp =
+      makeProp(QStringLiteral("component.fluid.solverIterations"),
+               PropertyType::Integer, impl_->fluidSolverIterations_, -72);
+  fluidSolverIterationsProp->setDisplayLabel(
+      QStringLiteral("Solver Iterations"));
+  fluidSolverIterationsProp->setHardRange(1.0, 256.0);
+  fluidSolverIterationsProp->setSoftRange(1.0, 64.0);
+  fluidGroup.addProperty(fluidSolverIterationsProp);
   auto layoutComponentEnabledProp =
       makeProp(QStringLiteral("component.layout.enabled"),
                PropertyType::Boolean, impl_->layoutComponentEnabled_, -89);
@@ -4134,6 +4772,33 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   clonerCloneCountProp->setHardRange(1.0, 256.0);
   clonerCloneCountProp->setSoftRange(1.0, 32.0);
   clonerGroup.addProperty(clonerCloneCountProp);
+  auto clonerTimeOffsetStepProp =
+      makeProp(QStringLiteral("component.cloner.timeOffsetStep"),
+               PropertyType::Float,
+               static_cast<double>(impl_->clonerTimeOffsetStep_), -79);
+  clonerTimeOffsetStepProp->setDisplayLabel(QStringLiteral("Time Offset Step"));
+  clonerTimeOffsetStepProp->setUnit(QStringLiteral("s"));
+  clonerTimeOffsetStepProp->setSoftRange(-5.0, 5.0);
+  clonerGroup.addProperty(clonerTimeOffsetStepProp);
+  auto clonerSequenceEnabledProp =
+      makeProp(QStringLiteral("component.cloner.sequenceEnabled"),
+               PropertyType::Boolean, impl_->clonerSequenceEnabled_, -78);
+  clonerSequenceEnabledProp->setDisplayLabel(QStringLiteral("Sequence Enabled"));
+  clonerGroup.addProperty(clonerSequenceEnabledProp);
+  auto clonerSequenceRateProp =
+      makeProp(QStringLiteral("component.cloner.sequenceRate"),
+               PropertyType::Float,
+               static_cast<double>(impl_->clonerSequenceRate_), -77);
+  clonerSequenceRateProp->setDisplayLabel(QStringLiteral("Sequence Rate"));
+  clonerSequenceRateProp->setSoftRange(0.1, 60.0);
+  clonerGroup.addProperty(clonerSequenceRateProp);
+  auto clonerSequenceSoftnessProp =
+      makeProp(QStringLiteral("component.cloner.sequenceSoftness"),
+               PropertyType::Float,
+               static_cast<double>(impl_->clonerSequenceSoftness_), -76);
+  clonerSequenceSoftnessProp->setDisplayLabel(QStringLiteral("Sequence Softness"));
+  clonerSequenceSoftnessProp->setSoftRange(0.1, 16.0);
+  clonerGroup.addProperty(clonerSequenceSoftnessProp);
   auto clonerOffsetXProp =
       makeProp(QStringLiteral("component.cloner.offsetX"),
                PropertyType::Float,
@@ -4233,6 +4898,370 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                static_cast<double>(impl_->clonerOpacityDecay_), -43);
   clonerOpacityDecayProp->setDisplayLabel(QStringLiteral("Opacity Decay"));
   clonerGroup.addProperty(clonerOpacityDecayProp);
+
+  std::vector<PropertyGroup> generatorGroups;
+  generatorGroups.reserve(impl_->extraGeneratorDescriptors_.count());
+  for (std::size_t generatorIndex = 0;
+       generatorIndex < impl_->extraGeneratorDescriptors_.count();
+       ++generatorIndex) {
+    const auto* descriptor = impl_->extraGeneratorDescriptors_.at(generatorIndex);
+    if (!descriptor) {
+      continue;
+    }
+    const int orderBase = -120 - static_cast<int>(generatorIndex) * 20;
+    const QString generatorPrefix =
+        QStringLiteral("component.generators.%1.")
+            .arg(static_cast<int>(generatorIndex));
+    PropertyGroup generatorGroup(
+        QStringLiteral("Generator %1").arg(static_cast<int>(generatorIndex) + 1));
+
+    auto enabledProp =
+        makeProp(generatorPrefix + QStringLiteral("enabled"),
+                 PropertyType::Boolean, descriptor->enabled, orderBase);
+    enabledProp->setDisplayLabel(QStringLiteral("Enabled"));
+    generatorGroup.addProperty(enabledProp);
+
+    auto timeOffsetStepProp =
+        makeProp(generatorPrefix + QStringLiteral("timeOffsetStep"),
+                 PropertyType::Float,
+                 descriptor->settings.value(QStringLiteral("timeOffsetStep"))
+                     .toDouble(0.0),
+                 orderBase + 1);
+    timeOffsetStepProp->setDisplayLabel(QStringLiteral("Time Offset Step"));
+    timeOffsetStepProp->setUnit(QStringLiteral("s"));
+    timeOffsetStepProp->setSoftRange(-5.0, 5.0);
+    generatorGroup.addProperty(timeOffsetStepProp);
+
+    auto sequenceEnabledProp =
+        makeProp(generatorPrefix + QStringLiteral("sequenceEnabled"),
+                 PropertyType::Boolean,
+                 descriptor->settings.value(QStringLiteral("sequenceEnabled"))
+                     .toBool(),
+                 orderBase + 2);
+    sequenceEnabledProp->setDisplayLabel(QStringLiteral("Sequence Enabled"));
+    generatorGroup.addProperty(sequenceEnabledProp);
+
+    auto sequenceRateProp =
+        makeProp(generatorPrefix + QStringLiteral("sequenceRate"),
+                 PropertyType::Float,
+                 descriptor->settings.value(QStringLiteral("sequenceRate"))
+                     .toDouble(8.0),
+                 orderBase + 3);
+    sequenceRateProp->setDisplayLabel(QStringLiteral("Sequence Rate"));
+    sequenceRateProp->setSoftRange(0.1, 60.0);
+    generatorGroup.addProperty(sequenceRateProp);
+
+    auto sequenceSoftnessProp =
+        makeProp(generatorPrefix + QStringLiteral("sequenceSoftness"),
+                 PropertyType::Float,
+                 descriptor->settings.value(QStringLiteral("sequenceSoftness"))
+                     .toDouble(1.0),
+                 orderBase + 4);
+    sequenceSoftnessProp->setDisplayLabel(QStringLiteral("Sequence Softness"));
+    sequenceSoftnessProp->setSoftRange(0.1, 16.0);
+    generatorGroup.addProperty(sequenceSoftnessProp);
+
+    if (descriptor->typeId ==
+        QStringLiteral("artifact.generator.cloner.radial")) {
+      auto radialCountProp =
+          makeProp(generatorPrefix + QStringLiteral("radialCount"),
+                   PropertyType::Integer,
+                       descriptor->settings.value(QStringLiteral("radialCount"))
+                           .toInt(8),
+                   orderBase + 5);
+      radialCountProp->setDisplayLabel(QStringLiteral("Count"));
+      radialCountProp->setHardRange(1.0, 2048.0);
+      radialCountProp->setSoftRange(1.0, 64.0);
+      generatorGroup.addProperty(radialCountProp);
+
+      auto radiusProp =
+          makeProp(generatorPrefix + QStringLiteral("radius"),
+                   PropertyType::Float,
+                       descriptor->settings.value(QStringLiteral("radius"))
+                           .toDouble(160.0),
+                   orderBase + 6);
+      radiusProp->setDisplayLabel(QStringLiteral("Radius"));
+      radiusProp->setSoftRange(0.0, 2000.0);
+      generatorGroup.addProperty(radiusProp);
+
+      auto startAngleProp =
+          makeProp(generatorPrefix + QStringLiteral("startAngle"),
+                   PropertyType::Float,
+                       descriptor->settings.value(QStringLiteral("startAngle"))
+                           .toDouble(0.0),
+                   orderBase + 7);
+      startAngleProp->setDisplayLabel(QStringLiteral("Start Angle"));
+      startAngleProp->setSoftRange(-360.0, 360.0);
+      generatorGroup.addProperty(startAngleProp);
+
+      auto endAngleProp =
+          makeProp(generatorPrefix + QStringLiteral("endAngle"),
+                   PropertyType::Float,
+                       descriptor->settings.value(QStringLiteral("endAngle"))
+                           .toDouble(360.0),
+                   orderBase + 8);
+      endAngleProp->setDisplayLabel(QStringLiteral("End Angle"));
+      endAngleProp->setSoftRange(-360.0, 720.0);
+      generatorGroup.addProperty(endAngleProp);
+    } else {
+      auto columnsProp =
+          makeProp(generatorPrefix + QStringLiteral("columns"),
+                   PropertyType::Integer,
+                       descriptor->settings.value(QStringLiteral("columns"))
+                           .toInt(3),
+                   orderBase + 5);
+      columnsProp->setDisplayLabel(QStringLiteral("Columns"));
+      columnsProp->setHardRange(1.0, 256.0);
+      columnsProp->setSoftRange(1.0, 16.0);
+      generatorGroup.addProperty(columnsProp);
+
+      auto rowsProp =
+          makeProp(generatorPrefix + QStringLiteral("rows"),
+                   PropertyType::Integer,
+                       descriptor->settings.value(QStringLiteral("rows"))
+                           .toInt(3),
+                   orderBase + 6);
+      rowsProp->setDisplayLabel(QStringLiteral("Rows"));
+      rowsProp->setHardRange(1.0, 256.0);
+      rowsProp->setSoftRange(1.0, 16.0);
+      generatorGroup.addProperty(rowsProp);
+
+      auto depthProp =
+          makeProp(generatorPrefix + QStringLiteral("depth"),
+                   PropertyType::Integer,
+                       descriptor->settings.value(QStringLiteral("depth"))
+                           .toInt(1),
+                   orderBase + 7);
+      depthProp->setDisplayLabel(QStringLiteral("Depth"));
+      depthProp->setHardRange(1.0, 256.0);
+      depthProp->setSoftRange(1.0, 8.0);
+      generatorGroup.addProperty(depthProp);
+
+      auto spacingXProp =
+          makeProp(generatorPrefix + QStringLiteral("spacingX"),
+                   PropertyType::Float,
+                       descriptor->settings.value(QStringLiteral("spacingX"))
+                           .toDouble(160.0),
+                   orderBase + 8);
+      spacingXProp->setDisplayLabel(QStringLiteral("Spacing X"));
+      spacingXProp->setSoftRange(-2000.0, 2000.0);
+      generatorGroup.addProperty(spacingXProp);
+
+      auto spacingYProp =
+          makeProp(generatorPrefix + QStringLiteral("spacingY"),
+                   PropertyType::Float,
+                       descriptor->settings.value(QStringLiteral("spacingY"))
+                           .toDouble(48.0),
+                   orderBase + 9);
+      spacingYProp->setDisplayLabel(QStringLiteral("Spacing Y"));
+      spacingYProp->setSoftRange(-2000.0, 2000.0);
+      generatorGroup.addProperty(spacingYProp);
+
+      auto spacingZProp =
+          makeProp(generatorPrefix + QStringLiteral("spacingZ"),
+                   PropertyType::Float,
+                       descriptor->settings.value(QStringLiteral("spacingZ"))
+                           .toDouble(0.0),
+                   orderBase + 10);
+      spacingZProp->setDisplayLabel(QStringLiteral("Spacing Z"));
+      spacingZProp->setSoftRange(-2000.0, 2000.0);
+      generatorGroup.addProperty(spacingZProp);
+    }
+
+    generatorGroups.push_back(std::move(generatorGroup));
+  }
+
+  std::vector<PropertyGroup> fieldGroups;
+  fieldGroups.reserve(impl_->extraFieldDescriptors_.count());
+  for (std::size_t fieldIndex = 0;
+       fieldIndex < impl_->extraFieldDescriptors_.count(); ++fieldIndex) {
+    const auto* descriptor = impl_->extraFieldDescriptors_.at(fieldIndex);
+    if (!descriptor) {
+      continue;
+    }
+    const int orderBase = -320 - static_cast<int>(fieldIndex) * 20;
+    const QString fieldPrefix =
+        QStringLiteral("component.fields.%1.")
+            .arg(static_cast<int>(fieldIndex));
+    PropertyGroup fieldGroup(
+        QStringLiteral("Field %1").arg(static_cast<int>(fieldIndex) + 1));
+
+    auto enabledProp =
+        makeProp(fieldPrefix + QStringLiteral("enabled"), PropertyType::Boolean,
+                 descriptor->enabled, orderBase);
+    enabledProp->setDisplayLabel(QStringLiteral("Enabled"));
+    fieldGroup.addProperty(enabledProp);
+
+    auto strengthProp =
+        makeProp(fieldPrefix + QStringLiteral("strength"), PropertyType::Float,
+                 static_cast<double>(descriptor->strength), orderBase + 1);
+    strengthProp->setDisplayLabel(QStringLiteral("Strength"));
+    strengthProp->setSoftRange(0.0, 2.0);
+    fieldGroup.addProperty(strengthProp);
+
+    auto invertProp =
+        makeProp(fieldPrefix + QStringLiteral("invert"), PropertyType::Boolean,
+                 descriptor->invert, orderBase + 2);
+    invertProp->setDisplayLabel(QStringLiteral("Invert"));
+    fieldGroup.addProperty(invertProp);
+
+    if (descriptor->typeId == QStringLiteral("artifact.field.solid")) {
+      auto valueProp =
+          makeProp(fieldPrefix + QStringLiteral("value"), PropertyType::Float,
+                   descriptor->settings.value(QStringLiteral("value")).toDouble(1.0),
+                   orderBase + 3);
+      valueProp->setDisplayLabel(QStringLiteral("Value"));
+      valueProp->setSoftRange(0.0, 1.0);
+      fieldGroup.addProperty(valueProp);
+    } else if (descriptor->typeId == QStringLiteral("artifact.field.sphere")) {
+      auto radiusProp =
+          makeProp(fieldPrefix + QStringLiteral("radius"), PropertyType::Float,
+                   descriptor->settings.value(QStringLiteral("radius")).toDouble(160.0),
+                   orderBase + 3);
+      radiusProp->setDisplayLabel(QStringLiteral("Radius"));
+      radiusProp->setSoftRange(0.0, 2000.0);
+      fieldGroup.addProperty(radiusProp);
+
+      auto falloffProp =
+          makeProp(fieldPrefix + QStringLiteral("falloffWidth"), PropertyType::Float,
+                   descriptor->settings.value(QStringLiteral("falloffWidth")).toDouble(40.0),
+                   orderBase + 4);
+      falloffProp->setDisplayLabel(QStringLiteral("Falloff Width"));
+      falloffProp->setSoftRange(0.0, 1000.0);
+      fieldGroup.addProperty(falloffProp);
+    } else if (descriptor->typeId == QStringLiteral("artifact.field.box")) {
+      auto halfXProp =
+          makeProp(fieldPrefix + QStringLiteral("halfX"), PropertyType::Float,
+                   descriptor->settings.value(QStringLiteral("halfX")).toDouble(120.0),
+                   orderBase + 3);
+      halfXProp->setDisplayLabel(QStringLiteral("Half X"));
+      fieldGroup.addProperty(halfXProp);
+      auto halfYProp =
+          makeProp(fieldPrefix + QStringLiteral("halfY"), PropertyType::Float,
+                   descriptor->settings.value(QStringLiteral("halfY")).toDouble(120.0),
+                   orderBase + 4);
+      halfYProp->setDisplayLabel(QStringLiteral("Half Y"));
+      fieldGroup.addProperty(halfYProp);
+      auto halfZProp =
+          makeProp(fieldPrefix + QStringLiteral("halfZ"), PropertyType::Float,
+                   descriptor->settings.value(QStringLiteral("halfZ")).toDouble(120.0),
+                   orderBase + 5);
+      halfZProp->setDisplayLabel(QStringLiteral("Half Z"));
+      fieldGroup.addProperty(halfZProp);
+      auto falloffProp =
+          makeProp(fieldPrefix + QStringLiteral("falloffWidth"), PropertyType::Float,
+                   descriptor->settings.value(QStringLiteral("falloffWidth")).toDouble(40.0),
+                   orderBase + 6);
+      falloffProp->setDisplayLabel(QStringLiteral("Falloff Width"));
+      fieldGroup.addProperty(falloffProp);
+    } else if (descriptor->typeId == QStringLiteral("artifact.field.linear")) {
+      auto lengthProp =
+          makeProp(fieldPrefix + QStringLiteral("length"), PropertyType::Float,
+                   descriptor->settings.value(QStringLiteral("length")).toDouble(320.0),
+                   orderBase + 3);
+      lengthProp->setDisplayLabel(QStringLiteral("Length"));
+      lengthProp->setSoftRange(1.0, 4000.0);
+      fieldGroup.addProperty(lengthProp);
+      auto smoothProp =
+          makeProp(fieldPrefix + QStringLiteral("useSmoothstep"),
+                   PropertyType::Boolean,
+                   descriptor->settings.value(QStringLiteral("useSmoothstep")).toBool(true),
+                   orderBase + 4);
+      smoothProp->setDisplayLabel(QStringLiteral("Smoothstep"));
+      fieldGroup.addProperty(smoothProp);
+    } else if (descriptor->typeId == QStringLiteral("artifact.field.radial")) {
+      auto innerProp =
+          makeProp(fieldPrefix + QStringLiteral("innerRadius"), PropertyType::Float,
+                   descriptor->settings.value(QStringLiteral("innerRadius")).toDouble(0.0),
+                   orderBase + 3);
+      innerProp->setDisplayLabel(QStringLiteral("Inner Radius"));
+      fieldGroup.addProperty(innerProp);
+      auto outerProp =
+          makeProp(fieldPrefix + QStringLiteral("outerRadius"), PropertyType::Float,
+                   descriptor->settings.value(QStringLiteral("outerRadius")).toDouble(160.0),
+                   orderBase + 4);
+      outerProp->setDisplayLabel(QStringLiteral("Outer Radius"));
+      fieldGroup.addProperty(outerProp);
+    } else if (descriptor->typeId == QStringLiteral("artifact.field.noise")) {
+      auto scaleProp =
+          makeProp(fieldPrefix + QStringLiteral("scale"), PropertyType::Float,
+                   descriptor->settings.value(QStringLiteral("scale")).toDouble(120.0),
+                   orderBase + 3);
+      scaleProp->setDisplayLabel(QStringLiteral("Scale"));
+      fieldGroup.addProperty(scaleProp);
+      auto amplitudeProp =
+          makeProp(fieldPrefix + QStringLiteral("amplitude"), PropertyType::Float,
+                   descriptor->settings.value(QStringLiteral("amplitude")).toDouble(1.0),
+                   orderBase + 4);
+      amplitudeProp->setDisplayLabel(QStringLiteral("Amplitude"));
+      fieldGroup.addProperty(amplitudeProp);
+      auto octavesProp =
+          makeProp(fieldPrefix + QStringLiteral("octaves"), PropertyType::Integer,
+                   descriptor->settings.value(QStringLiteral("octaves")).toInt(3),
+                   orderBase + 5);
+      octavesProp->setDisplayLabel(QStringLiteral("Octaves"));
+      fieldGroup.addProperty(octavesProp);
+    }
+
+    fieldGroups.push_back(std::move(fieldGroup));
+  }
+
+  std::vector<PropertyGroup> cloneModifierGroups;
+  const auto cloneModifiers = layerCloneModifiers();
+  cloneModifierGroups.reserve(cloneModifiers.size());
+  for (std::size_t modifierIndex = 0; modifierIndex < cloneModifiers.size();
+       ++modifierIndex) {
+    const auto& descriptor = cloneModifiers[modifierIndex];
+    const int orderBase = -420 - static_cast<int>(modifierIndex) * 20;
+    const bool isCompatModifier =
+        descriptor.modifierId.startsWith(QStringLiteral("modifier.compat."));
+    const QString modifierPrefix = isCompatModifier
+        ? (descriptor.typeId == QStringLiteral("artifact.modifier.time-offset")
+               ? QStringLiteral("component.cloner.modifiers.compat.timeOffset.")
+               : QStringLiteral("component.cloner.modifiers.compat.sequence."))
+        : QStringLiteral("component.cloneModifiers.%1.")
+              .arg(static_cast<int>(modifierIndex) - 2);
+
+    PropertyGroup modifierGroup(
+        QStringLiteral("Clone Modifier %1")
+            .arg(static_cast<int>(modifierIndex) + 1));
+
+    auto enabledProp =
+        makeProp(modifierPrefix + QStringLiteral("enabled"),
+                 PropertyType::Boolean, descriptor.enabled, orderBase);
+    enabledProp->setDisplayLabel(QStringLiteral("Enabled"));
+    modifierGroup.addProperty(enabledProp);
+
+    if (descriptor.typeId == QStringLiteral("artifact.modifier.time-offset")) {
+      auto stepProp =
+          makeProp(modifierPrefix + QStringLiteral("step"), PropertyType::Float,
+                   descriptor.settings.value(QStringLiteral("step")).toDouble(0.0),
+                   orderBase + 1);
+      stepProp->setDisplayLabel(QStringLiteral("Step"));
+      stepProp->setUnit(QStringLiteral("s"));
+      stepProp->setSoftRange(-5.0, 5.0);
+      modifierGroup.addProperty(stepProp);
+    } else if (descriptor.typeId ==
+               QStringLiteral("artifact.modifier.sequence")) {
+      auto rateProp =
+          makeProp(modifierPrefix + QStringLiteral("rate"), PropertyType::Float,
+                   descriptor.settings.value(QStringLiteral("rate")).toDouble(8.0),
+                   orderBase + 1);
+      rateProp->setDisplayLabel(QStringLiteral("Rate"));
+      rateProp->setSoftRange(0.1, 60.0);
+      modifierGroup.addProperty(rateProp);
+
+      auto softnessProp = makeProp(
+          modifierPrefix + QStringLiteral("softness"), PropertyType::Float,
+          descriptor.settings.value(QStringLiteral("softness")).toDouble(1.0),
+          orderBase + 2);
+      softnessProp->setDisplayLabel(QStringLiteral("Softness"));
+      softnessProp->setSoftRange(0.1, 16.0);
+      modifierGroup.addProperty(softnessProp);
+    }
+
+    cloneModifierGroups.push_back(std::move(modifierGroup));
+  }
   for (int transformIndex = 0;
        transformIndex < static_cast<int>(impl_->clonerTransforms_.size());
        ++transformIndex) {
@@ -4442,10 +5471,21 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   groups.push_back(std::move(motionGroup));
   groups.push_back(std::move(fractureGroup));
   groups.push_back(std::move(componentGroup));
+  groups.push_back(std::move(collisionGroup));
   groups.push_back(std::move(layoutGroup));
   groups.push_back(std::move(clonerGroup));
+  for (auto &group : generatorGroups) {
+    groups.push_back(std::move(group));
+  }
+  for (auto &group : fieldGroups) {
+    groups.push_back(std::move(group));
+  }
+  for (auto &group : cloneModifierGroups) {
+    groups.push_back(std::move(group));
+  }
   groups.push_back(std::move(crowdGroup));
   groups.push_back(std::move(particleEmitterGroup));
+  groups.push_back(std::move(fluidGroup));
   groups.push_back(std::move(layerGroup));
   for (auto &group : maskGroups) {
     groups.push_back(std::move(group));
@@ -4726,6 +5766,468 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     Q_EMIT changed();
     return true;
   }
+    if (propertyPath == QStringLiteral("component.generators.add")) {
+      const QString requestedType = value.toString().trimmed().toLower();
+      LayerGeneratorDescriptor descriptor;
+      const int nextIndex =
+          static_cast<int>(impl_->extraGeneratorDescriptors_.count()) + 1;
+      descriptor.generatorId =
+          QStringLiteral("generator.extra.%1").arg(nextIndex);
+      descriptor.enabled = true;
+      descriptor.order = 1000 + nextIndex * 10;
+      if (requestedType == QStringLiteral("radial")) {
+        descriptor.typeId = QStringLiteral("artifact.generator.cloner.radial");
+        descriptor.settings[QStringLiteral("radialCount")] = 8;
+        descriptor.settings[QStringLiteral("radius")] = 160.0;
+        descriptor.settings[QStringLiteral("startAngle")] = 0.0;
+        descriptor.settings[QStringLiteral("endAngle")] = 360.0;
+      } else {
+        descriptor.typeId = QStringLiteral("artifact.generator.cloner.grid");
+        descriptor.settings[QStringLiteral("columns")] = 3;
+        descriptor.settings[QStringLiteral("rows")] = 3;
+        descriptor.settings[QStringLiteral("depth")] = 1;
+        descriptor.settings[QStringLiteral("spacingX")] = 160.0;
+        descriptor.settings[QStringLiteral("spacingY")] = 48.0;
+        descriptor.settings[QStringLiteral("spacingZ")] = 0.0;
+      }
+      descriptor.settings[QStringLiteral("timeOffsetStep")] = 0.0;
+      descriptor.settings[QStringLiteral("sequenceEnabled")] = false;
+      descriptor.settings[QStringLiteral("sequenceRate")] = 8.0;
+      descriptor.settings[QStringLiteral("sequenceSoftness")] = 1.0;
+      impl_->extraGeneratorDescriptors_.add(std::move(descriptor));
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.generators.removeLast")) {
+      if (impl_->extraGeneratorDescriptors_.isEmpty()) {
+        return false;
+      }
+      impl_->extraGeneratorDescriptors_.takeLast();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.generators.remove")) {
+      const QString generatorId = value.toString().trimmed();
+      if (generatorId.isEmpty() ||
+          generatorId == QStringLiteral("generator.compat.cloner.0")) {
+        return false;
+      }
+      for (std::size_t i = 0; i < impl_->extraGeneratorDescriptors_.count(); ++i) {
+        const auto* generator = impl_->extraGeneratorDescriptors_.at(i);
+        if (!generator || generator->generatorId != generatorId) {
+          continue;
+        }
+        impl_->extraGeneratorDescriptors_.removeAt(i);
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+    if (propertyPath == QStringLiteral("component.generators.moveUp")) {
+      const QString generatorId = value.toString().trimmed();
+      for (std::size_t i = 1; i < impl_->extraGeneratorDescriptors_.count(); ++i) {
+        auto* current = impl_->extraGeneratorDescriptors_.at(i);
+        auto* previous = impl_->extraGeneratorDescriptors_.at(i - 1);
+        if (!current || !previous || current->generatorId != generatorId) {
+          continue;
+        }
+        std::swap(*current, *previous);
+        previous->order = 1000 + static_cast<int>((i - 1) + 1) * 10;
+        current->order = 1000 + static_cast<int>(i + 1) * 10;
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+    if (propertyPath == QStringLiteral("component.generators.moveDown")) {
+      if (impl_->extraGeneratorDescriptors_.count() < 2) {
+        return false;
+      }
+      const QString generatorId = value.toString().trimmed();
+      for (std::size_t i = 0; i + 1 < impl_->extraGeneratorDescriptors_.count(); ++i) {
+        auto* current = impl_->extraGeneratorDescriptors_.at(i);
+        auto* next = impl_->extraGeneratorDescriptors_.at(i + 1);
+        if (!current || !next || current->generatorId != generatorId) {
+          continue;
+        }
+        std::swap(*current, *next);
+        current->order = 1000 + static_cast<int>(i + 1) * 10;
+        next->order = 1000 + static_cast<int>((i + 1) + 1) * 10;
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+    if (propertyPath.startsWith(QStringLiteral("component.generators."))) {
+      const QStringList parts = propertyPath.split(QLatin1Char('.'));
+      if (parts.size() == 4) {
+        bool ok = false;
+        const int generatorIndex = parts[2].toInt(&ok);
+        if (!ok || generatorIndex < 0 ||
+            generatorIndex >=
+                static_cast<int>(impl_->extraGeneratorDescriptors_.count())) {
+          return false;
+        }
+        auto* descriptor = impl_->extraGeneratorDescriptors_.at(
+            static_cast<std::size_t>(generatorIndex));
+        if (!descriptor) {
+          return false;
+        }
+        const QString field = parts[3];
+        auto setSetting = [&](const QString& key, const QJsonValue& settingValue) {
+          descriptor->settings.insert(key, settingValue);
+          notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                              LayerDirtyReason::PropertyChanged);
+          return true;
+        };
+        if (field == QStringLiteral("enabled")) {
+          descriptor->enabled = value.toBool();
+          notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                              LayerDirtyReason::PropertyChanged);
+          return true;
+        }
+        if (field == QStringLiteral("type")) {
+          return false;
+        }
+        if (field == QStringLiteral("timeOffsetStep")) {
+          return setSetting(field, value.toDouble());
+        }
+        if (field == QStringLiteral("sequenceEnabled")) {
+          return setSetting(field, value.toBool());
+        }
+        if (field == QStringLiteral("sequenceRate")) {
+          return setSetting(field, std::clamp(value.toDouble(), 0.1, 240.0));
+        }
+        if (field == QStringLiteral("sequenceSoftness")) {
+          return setSetting(field, std::clamp(value.toDouble(), 0.1, 32.0));
+        }
+        if (field == QStringLiteral("columns") ||
+            field == QStringLiteral("rows") ||
+            field == QStringLiteral("depth") ||
+            field == QStringLiteral("radialCount")) {
+          return setSetting(field, std::max(1, value.toInt()));
+        }
+        if (field == QStringLiteral("spacingX") ||
+            field == QStringLiteral("spacingY") ||
+            field == QStringLiteral("spacingZ") ||
+            field == QStringLiteral("radius") ||
+            field == QStringLiteral("startAngle") ||
+            field == QStringLiteral("endAngle")) {
+          return setSetting(field, value.toDouble());
+        }
+      }
+      return false;
+    }
+    if (propertyPath == QStringLiteral("component.fields.add")) {
+      const QString requestedType = value.toString().trimmed().toLower();
+      LayerFieldDescriptor descriptor;
+      const int nextIndex =
+          static_cast<int>(impl_->extraFieldDescriptors_.count()) + 1;
+      descriptor.fieldId = QStringLiteral("field.extra.%1").arg(nextIndex);
+      descriptor.enabled = true;
+      descriptor.order = 1000 + nextIndex * 10;
+      descriptor.blendMode = QStringLiteral("normal");
+      descriptor.strength = 1.0f;
+      descriptor.invert = false;
+      if (requestedType == QStringLiteral("sphere")) {
+        descriptor.typeId = QStringLiteral("artifact.field.sphere");
+        descriptor.settings[QStringLiteral("radius")] = 160.0;
+        descriptor.settings[QStringLiteral("falloffWidth")] = 40.0;
+      } else if (requestedType == QStringLiteral("box")) {
+        descriptor.typeId = QStringLiteral("artifact.field.box");
+        descriptor.settings[QStringLiteral("halfX")] = 120.0;
+        descriptor.settings[QStringLiteral("halfY")] = 120.0;
+        descriptor.settings[QStringLiteral("halfZ")] = 120.0;
+        descriptor.settings[QStringLiteral("falloffWidth")] = 40.0;
+      } else if (requestedType == QStringLiteral("linear")) {
+        descriptor.typeId = QStringLiteral("artifact.field.linear");
+        descriptor.settings[QStringLiteral("length")] = 320.0;
+        descriptor.settings[QStringLiteral("useSmoothstep")] = true;
+      } else if (requestedType == QStringLiteral("radial")) {
+        descriptor.typeId = QStringLiteral("artifact.field.radial");
+        descriptor.settings[QStringLiteral("innerRadius")] = 0.0;
+        descriptor.settings[QStringLiteral("outerRadius")] = 160.0;
+      } else if (requestedType == QStringLiteral("noise")) {
+        descriptor.typeId = QStringLiteral("artifact.field.noise");
+        descriptor.settings[QStringLiteral("scale")] = 120.0;
+        descriptor.settings[QStringLiteral("amplitude")] = 1.0;
+        descriptor.settings[QStringLiteral("octaves")] = 3;
+      } else {
+        descriptor.typeId = QStringLiteral("artifact.field.solid");
+        descriptor.settings[QStringLiteral("value")] = 1.0;
+      }
+      impl_->extraFieldDescriptors_.add(std::move(descriptor));
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fields.remove")) {
+      const QString fieldId = value.toString().trimmed();
+      for (std::size_t i = 0; i < impl_->extraFieldDescriptors_.count(); ++i) {
+        const auto* field = impl_->extraFieldDescriptors_.at(i);
+        if (!field || field->fieldId != fieldId) {
+          continue;
+        }
+        impl_->extraFieldDescriptors_.removeAt(i);
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+    if (propertyPath == QStringLiteral("component.fields.moveUp")) {
+      const QString fieldId = value.toString().trimmed();
+      for (std::size_t i = 1; i < impl_->extraFieldDescriptors_.count(); ++i) {
+        auto* current = impl_->extraFieldDescriptors_.at(i);
+        auto* previous = impl_->extraFieldDescriptors_.at(i - 1);
+        if (!current || !previous || current->fieldId != fieldId) {
+          continue;
+        }
+        std::swap(*current, *previous);
+        previous->order = 1000 + static_cast<int>((i - 1) + 1) * 10;
+        current->order = 1000 + static_cast<int>(i + 1) * 10;
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+    if (propertyPath == QStringLiteral("component.fields.moveDown")) {
+      if (impl_->extraFieldDescriptors_.count() < 2) {
+        return false;
+      }
+      const QString fieldId = value.toString().trimmed();
+      for (std::size_t i = 0; i + 1 < impl_->extraFieldDescriptors_.count(); ++i) {
+        auto* current = impl_->extraFieldDescriptors_.at(i);
+        auto* next = impl_->extraFieldDescriptors_.at(i + 1);
+        if (!current || !next || current->fieldId != fieldId) {
+          continue;
+        }
+        std::swap(*current, *next);
+        current->order = 1000 + static_cast<int>(i + 1) * 10;
+        next->order = 1000 + static_cast<int>((i + 1) + 1) * 10;
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+    if (propertyPath.startsWith(QStringLiteral("component.fields."))) {
+      const QStringList parts = propertyPath.split(QLatin1Char('.'));
+      if (parts.size() == 4) {
+        bool ok = false;
+        const int fieldIndex = parts[2].toInt(&ok);
+        if (!ok || fieldIndex < 0 ||
+            fieldIndex >= static_cast<int>(impl_->extraFieldDescriptors_.count())) {
+          return false;
+        }
+        auto* descriptor =
+            impl_->extraFieldDescriptors_.at(static_cast<std::size_t>(fieldIndex));
+        if (!descriptor) {
+          return false;
+        }
+        const QString fieldName = parts[3];
+        auto setSetting = [&](const QString& key, const QJsonValue& settingValue) {
+          descriptor->settings.insert(key, settingValue);
+          notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                              LayerDirtyReason::PropertyChanged);
+          return true;
+        };
+        if (fieldName == QStringLiteral("enabled")) {
+          descriptor->enabled = value.toBool();
+        } else if (fieldName == QStringLiteral("strength")) {
+          descriptor->strength =
+              static_cast<float>(std::clamp(value.toDouble(), -4.0, 4.0));
+        } else if (fieldName == QStringLiteral("invert")) {
+          descriptor->invert = value.toBool();
+        } else if (fieldName == QStringLiteral("value") ||
+                   fieldName == QStringLiteral("radius") ||
+                   fieldName == QStringLiteral("falloffWidth") ||
+                   fieldName == QStringLiteral("halfX") ||
+                   fieldName == QStringLiteral("halfY") ||
+                   fieldName == QStringLiteral("halfZ") ||
+                   fieldName == QStringLiteral("length") ||
+                   fieldName == QStringLiteral("innerRadius") ||
+                   fieldName == QStringLiteral("outerRadius") ||
+                   fieldName == QStringLiteral("scale") ||
+                   fieldName == QStringLiteral("amplitude")) {
+          return setSetting(fieldName, value.toDouble());
+        } else if (fieldName == QStringLiteral("octaves")) {
+          return setSetting(fieldName, std::max(1, value.toInt()));
+        } else if (fieldName == QStringLiteral("useSmoothstep")) {
+          return setSetting(fieldName, value.toBool());
+        } else {
+          return false;
+        }
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+    if (propertyPath == QStringLiteral("component.cloneModifiers.add")) {
+      const QString requestedType = value.toString().trimmed().toLower();
+      LayerModifierDescriptor descriptor;
+      const int nextIndex =
+          static_cast<int>(impl_->extraCloneModifierDescriptors_.count()) + 1;
+      descriptor.modifierId =
+          QStringLiteral("modifier.extra.%1").arg(nextIndex);
+      descriptor.enabled = true;
+      descriptor.order = 1000 + nextIndex * 10;
+      if (requestedType == QStringLiteral("sequence")) {
+        descriptor.typeId = QStringLiteral("artifact.modifier.sequence");
+        descriptor.settings[QStringLiteral("rate")] = 8.0;
+        descriptor.settings[QStringLiteral("softness")] = 1.0;
+      } else {
+        descriptor.typeId = QStringLiteral("artifact.modifier.time-offset");
+        descriptor.settings[QStringLiteral("step")] = 0.0;
+      }
+      impl_->extraCloneModifierDescriptors_.add(std::move(descriptor));
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloneModifiers.remove")) {
+      const QString modifierId = value.toString().trimmed();
+      for (std::size_t i = 0; i < impl_->extraCloneModifierDescriptors_.count(); ++i) {
+        const auto* modifier = impl_->extraCloneModifierDescriptors_.at(i);
+        if (!modifier || modifier->modifierId != modifierId) {
+          continue;
+        }
+        impl_->extraCloneModifierDescriptors_.removeAt(i);
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+    if (propertyPath == QStringLiteral("component.cloneModifiers.moveUp")) {
+      const QString modifierId = value.toString().trimmed();
+      for (std::size_t i = 1; i < impl_->extraCloneModifierDescriptors_.count(); ++i) {
+        auto* current = impl_->extraCloneModifierDescriptors_.at(i);
+        auto* previous = impl_->extraCloneModifierDescriptors_.at(i - 1);
+        if (!current || !previous || current->modifierId != modifierId) {
+          continue;
+        }
+        std::swap(*current, *previous);
+        previous->order = 1000 + static_cast<int>((i - 1) + 1) * 10;
+        current->order = 1000 + static_cast<int>(i + 1) * 10;
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+    if (propertyPath == QStringLiteral("component.cloneModifiers.moveDown")) {
+      if (impl_->extraCloneModifierDescriptors_.count() < 2) {
+        return false;
+      }
+      const QString modifierId = value.toString().trimmed();
+      for (std::size_t i = 0; i + 1 < impl_->extraCloneModifierDescriptors_.count(); ++i) {
+        auto* current = impl_->extraCloneModifierDescriptors_.at(i);
+        auto* next = impl_->extraCloneModifierDescriptors_.at(i + 1);
+        if (!current || !next || current->modifierId != modifierId) {
+          continue;
+        }
+        std::swap(*current, *next);
+        current->order = 1000 + static_cast<int>(i + 1) * 10;
+        next->order = 1000 + static_cast<int>((i + 1) + 1) * 10;
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+    if (propertyPath.startsWith(
+            QStringLiteral("component.cloner.modifiers.compat.timeOffset."))) {
+      const QString field =
+          propertyPath.mid(QStringLiteral(
+                               "component.cloner.modifiers.compat.timeOffset.")
+                               .size());
+      if (field == QStringLiteral("enabled")) {
+        return true;
+      }
+      if (field == QStringLiteral("step")) {
+        impl_->clonerTimeOffsetStep_ = static_cast<float>(value.toDouble());
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+    if (propertyPath.startsWith(
+            QStringLiteral("component.cloner.modifiers.compat.sequence."))) {
+      const QString field =
+          propertyPath.mid(QStringLiteral(
+                               "component.cloner.modifiers.compat.sequence.")
+                               .size());
+      if (field == QStringLiteral("enabled")) {
+        impl_->clonerSequenceEnabled_ = value.toBool();
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      if (field == QStringLiteral("rate")) {
+        impl_->clonerSequenceRate_ =
+            static_cast<float>(std::clamp(value.toDouble(), 0.1, 240.0));
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      if (field == QStringLiteral("softness")) {
+        impl_->clonerSequenceSoftness_ =
+            static_cast<float>(std::clamp(value.toDouble(), 0.1, 32.0));
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+    if (propertyPath.startsWith(QStringLiteral("component.cloneModifiers."))) {
+      const QStringList parts = propertyPath.split(QLatin1Char('.'));
+      if (parts.size() == 4) {
+        bool ok = false;
+        const int modifierIndex = parts[2].toInt(&ok);
+        if (!ok || modifierIndex < 0 ||
+            modifierIndex >=
+                static_cast<int>(impl_->extraCloneModifierDescriptors_.count())) {
+          return false;
+        }
+        auto* descriptor = impl_->extraCloneModifierDescriptors_.at(
+            static_cast<std::size_t>(modifierIndex));
+        if (!descriptor) {
+          return false;
+        }
+        const QString field = parts[3];
+        auto setSetting = [&](const QString& key, const QJsonValue& settingValue) {
+          descriptor->settings.insert(key, settingValue);
+          notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                              LayerDirtyReason::PropertyChanged);
+          return true;
+        };
+        if (field == QStringLiteral("enabled")) {
+          descriptor->enabled = value.toBool();
+          notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                              LayerDirtyReason::PropertyChanged);
+          return true;
+        }
+        if (field == QStringLiteral("step")) {
+          return setSetting(field, value.toDouble());
+        }
+        if (field == QStringLiteral("rate")) {
+          return setSetting(field, std::clamp(value.toDouble(), 0.1, 240.0));
+        }
+        if (field == QStringLiteral("softness")) {
+          return setSetting(field, std::clamp(value.toDouble(), 0.1, 32.0));
+        }
+      }
+      return false;
+    }
     if (propertyPath == QStringLiteral("component.cloner.transforms.add")) {
       ClonerTransformOperation op;
       op.name = QStringLiteral("Transform %1")
@@ -4832,6 +6334,65 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
+    if (propertyPath == QStringLiteral("component.collision.shape")) {
+      impl_->collisionShape_ = std::clamp(value.toInt(), 0, 2);
+      impl_->lastCollisionImpactFrame_ =
+          std::numeric_limits<int64_t>::min();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.collision.width")) {
+      impl_->collisionWidth_ = static_cast<float>(
+          std::clamp(value.toDouble(), 0.0, 100000.0));
+      impl_->lastCollisionImpactFrame_ =
+          std::numeric_limits<int64_t>::min();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.collision.height")) {
+      impl_->collisionHeight_ = static_cast<float>(
+          std::clamp(value.toDouble(), 0.0, 100000.0));
+      impl_->lastCollisionImpactFrame_ =
+          std::numeric_limits<int64_t>::min();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.collision.radius")) {
+      impl_->collisionRadius_ = static_cast<float>(
+          std::clamp(value.toDouble(), 0.0, 100000.0));
+      impl_->lastCollisionImpactFrame_ =
+          std::numeric_limits<int64_t>::min();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.collision.offsetX")) {
+      impl_->collisionOffsetX_ = static_cast<float>(
+          std::clamp(value.toDouble(), -100000.0, 100000.0));
+      impl_->lastCollisionImpactFrame_ =
+          std::numeric_limits<int64_t>::min();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.collision.offsetY")) {
+      impl_->collisionOffsetY_ = static_cast<float>(
+          std::clamp(value.toDouble(), -100000.0, 100000.0));
+      impl_->lastCollisionImpactFrame_ =
+          std::numeric_limits<int64_t>::min();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
     if (propertyPath == QStringLiteral("component.crowd.enabled")) {
       impl_->crowdComponentEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
@@ -4916,6 +6477,70 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
+    if (propertyPath == QStringLiteral("component.fluid.enabled")) {
+      impl_->fluidComponentEnabled_ = value.toBool();
+      if (!impl_->fluidComponentEnabled_) {
+        impl_->fluidSolver_.reset();
+        impl_->fluidPreviewParticles_.clear();
+        impl_->fluidLastFrame_ = std::numeric_limits<int64_t>::min();
+      }
+      impl_->syncBuiltinComponentDescriptors();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.gridWidth")) {
+      impl_->fluidGridWidth_ = std::clamp(value.toInt(), 8, 4096);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.gridHeight")) {
+      impl_->fluidGridHeight_ = std::clamp(value.toInt(), 8, 4096);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.viscosity")) {
+      impl_->fluidViscosity_ =
+          static_cast<float>(std::clamp(value.toDouble(), 0.0, 1.0));
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.diffusion")) {
+      impl_->fluidDiffusion_ =
+          static_cast<float>(std::clamp(value.toDouble(), 0.0, 1.0));
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.buoyancy")) {
+      impl_->fluidBuoyancy_ =
+          static_cast<float>(std::clamp(value.toDouble(), -2.0, 2.0));
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.vorticity")) {
+      impl_->fluidVorticity_ =
+          static_cast<float>(std::clamp(value.toDouble(), 0.0, 10.0));
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.solverIterations")) {
+      impl_->fluidSolverIterations_ = std::clamp(value.toInt(), 1, 256);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
     if (propertyPath == QStringLiteral("component.layout.enabled")) {
       impl_->layoutComponentEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
@@ -4992,6 +6617,32 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
     if (propertyPath == QStringLiteral("component.cloner.cloneCount")) {
       impl_->clonerCloneCount_ = std::max(1, value.toInt());
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloner.timeOffsetStep")) {
+      impl_->clonerTimeOffsetStep_ = static_cast<float>(value.toDouble());
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloner.sequenceEnabled")) {
+      impl_->clonerSequenceEnabled_ = value.toBool();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloner.sequenceRate")) {
+      impl_->clonerSequenceRate_ =
+          std::max(0.01f, static_cast<float>(value.toDouble()));
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloner.sequenceSoftness")) {
+      impl_->clonerSequenceSoftness_ =
+          std::max(0.01f, static_cast<float>(value.toDouble()));
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;

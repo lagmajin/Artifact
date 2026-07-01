@@ -69,6 +69,7 @@ import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
 import Core.Light;
 import Artifact.Effect.Abstract;
+import Artifact.Effect.Context;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
@@ -135,6 +136,32 @@ bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer);
 
 namespace {
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview")
+
+EffectContext makeControllerEffectContext(ArtifactAbstractLayer* layer, const QRectF& roi = QRectF()) {
+  EffectContext ctx;
+  ctx.roi = roi;
+  ctx.isInteractive = true;
+  if (!layer) {
+    return ctx;
+  }
+
+  if (auto* composition =
+          static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+    const auto compositionFrame = composition->framePosition().framePosition();
+    ctx.compositionFrame = compositionFrame;
+    ctx.layerFrame = compositionFrame - layer->inPoint().framePosition() +
+                     layer->startTime().framePosition();
+    ctx.frameRate = composition->frameRate().framerate();
+    if (ctx.frameRate > 0.0) {
+      ctx.timeSeconds = static_cast<double>(compositionFrame) / ctx.frameRate;
+    }
+  } else {
+    ctx.layerFrame = layer->currentFrame();
+    ctx.compositionFrame = ctx.layerFrame;
+  }
+
+  return ctx;
+}
 
 QImage ensurePreviewImage(const QImage& image) {
   if (image.isNull()) {
@@ -1276,6 +1303,10 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
       }
 
       ArtifactCore::ImageF32x4RGBAWithCache next;
+      effect->setContext(makeControllerEffectContext(
+          targetLayer,
+          QRectF(0.0, 0.0, static_cast<qreal>(current.width()),
+                 static_cast<qreal>(current.height()))));
       effect->applyConfigured(current, next);
       current = next;
     }
@@ -2944,7 +2975,9 @@ void drawLayerForCompositionView(
                                .arg(ip.framePosition())
                                .arg(op.framePosition())
                                .arg(layer->currentFrame());
+          *videoDebugOut += QStringLiteral(" ") + videoLayer->decodeState();
         }
+        videoLayer->markFrameRenderQueued(layer->currentFrame());
         drawWithClonerEffect(
             layer, globalTransform4x4,
             [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
@@ -2964,46 +2997,6 @@ void drawLayerForCompositionView(
     bool usedSyncFallback = false;
     bool usedBufferFallback = false;
     QString reason;
-    if (!hasRasterizer && gpuTextureCacheManager) {
-      const ArtifactCore::GpuVideoFrame gpuFrame =
-          videoLayer->decodeFrameToGpuFrame(layer->currentFrame());
-      if (gpuFrame.isValid()) {
-        const QString gpuCacheSignature =
-            QStringLiteral("video-gpu:%1").arg(layer->currentFrame());
-        const auto handle = gpuTextureCacheManager->acquireOrCreate(
-            layer->id().toString(), gpuCacheSignature, gpuFrame);
-        const auto binding = gpuTextureCacheManager->bindingRecord(handle);
-        if (binding.isValid()) {
-          const float baseOpacity =
-              (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
-          if (videoDebugOut) {
-            *videoDebugOut = QStringLiteral(
-                                 "[Video] branch=gpu-frame loaded=%1 "
-                                 "hasBuffer=%2 rasterizer=%3 active=%4 "
-                                 "frameReady=%5 range=[%6,%7] curFrame=%8")
-                                 .arg(loaded)
-                                 .arg(hasBuffer)
-                                 .arg(hasRasterizer)
-                                 .arg(active)
-                                 .arg(currentFrameReady)
-                                 .arg(ip.framePosition())
-                                 .arg(op.framePosition())
-                                 .arg(layer->currentFrame());
-          }
-          drawWithClonerEffect(
-              layer, globalTransform4x4,
-              [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
-                renderer->drawSpriteTransformed(
-                    static_cast<float>(localRect.x()),
-                    static_cast<float>(localRect.y()),
-                    static_cast<float>(localRect.width()),
-                    static_cast<float>(localRect.height()), instanceTransform,
-                    binding.srv, baseOpacity * instanceWeight);
-              });
-          return;
-        }
-      }
-    }
     if (loaded) {
       frameBuffer = videoLayer->cachedFrameImageBuffer(layer->currentFrame());
       usedBufferFallback = !frameBuffer.isEmpty();
@@ -3011,8 +3004,11 @@ void drawLayerForCompositionView(
       reason = QStringLiteral("notLoaded");
     }
     if (frameBuffer.isEmpty() && loaded) {
-      frameBuffer = videoLayer->decodeFrameToImageBuffer(layer->currentFrame());
-      usedSyncFallback = !frameBuffer.isEmpty();
+      // Rendering must never wait for a decoder. This starts or observes the
+      // asynchronous request and retains the last good frame until the exact
+      // frame reaches the RAM cache.
+      frameBuffer = videoLayer->currentFrameImageBuffer();
+      usedBufferFallback = !frameBuffer.isEmpty();
     }
     if (videoDebugOut) {
       if (reason.isEmpty()) {
@@ -3021,7 +3017,8 @@ void drawLayerForCompositionView(
         } else if (usedSyncFallback) {
           reason = QStringLiteral("syncDecode");
         } else if (usedBufferFallback) {
-          reason = QStringLiteral("bufferFallback");
+          reason = currentFrameReady ? QStringLiteral("bufferFallback")
+                                     : QStringLiteral("repeatLastGood");
         } else if (frameBuffer.isEmpty()) {
           reason = hasBuffer ? QStringLiteral("decodeNull")
                              : QStringLiteral("noBuffer");
@@ -3045,11 +3042,14 @@ void drawLayerForCompositionView(
                           .arg(ip.framePosition())
                           .arg(op.framePosition())
                           .arg(layer->currentFrame());
+      *videoDebugOut += QStringLiteral(" ") + videoLayer->decodeState();
     }
     if (!frameBuffer.isEmpty() && !hasRasterizer &&
         layer->matteReferences().empty()) {
       const float baseOpacity =
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      videoLayer->markFrameRenderQueued(
+          layer->currentFrame(), !currentFrameReady);
       drawWithClonerEffect(
           layer, globalTransform4x4,
           [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
@@ -3066,6 +3066,8 @@ void drawLayerForCompositionView(
       frame = frameBuffer.toQImage();
     }
     if (!frame.isNull()) {
+      videoLayer->markFrameRenderQueued(
+          layer->currentFrame(), !currentFrameReady);
       applySurfaceAndDraw(frame, localRect, true);
       return;
     }
@@ -3301,10 +3303,17 @@ public:
   std::unique_ptr<ArtifactCore::LayerBlendPipeline> blendPipeline_;
   static constexpr int kPreviewRenderPipelineSlotCount = 2;
   struct PreviewRenderPipelineSlot {
+    enum class State {
+      Free,
+      Retirable,
+      Ready,
+      Submitted,
+    };
     RenderPipeline pipeline;
     void* depthTargetView = nullptr;
     QSize depthTargetSize;
     quint64 lastSubmittedFrame = 0;
+    State state = State::Free;
   };
   struct PreviewFrameRequest {
     qint64 framePos = 0;
@@ -3319,6 +3328,16 @@ public:
   std::array<PreviewRenderPipelineSlot, kPreviewRenderPipelineSlotCount>
       previewRenderPipelineSlots_;
   int activePreviewRenderPipelineSlot_ = 0;
+  QString lastPreviewRenderPipelineSlotAcquireReason_ =
+      QStringLiteral("initial");
+  bool lastPreviewRenderPipelineAcquireHazard_ = false;
+  quint64 previewRenderPipelineAcquireCount_ = 0;
+  quint64 previewRenderPipelineFreeAcquireCount_ = 0;
+  quint64 previewRenderPipelineReuseRetirableCount_ = 0;
+  quint64 previewRenderPipelineReuseReadyCount_ = 0;
+  quint64 previewRenderPipelineReuseSubmittedCount_ = 0;
+  quint64 previewRenderPipelineConsecutiveReuseCount_ = 0;
+  quint64 previewRenderPipelineMaxConsecutiveReuseCount_ = 0;
   bool initialized_ = false;
   bool running_ = false;
   float devicePixelRatio_ = 1.0f;
@@ -3451,12 +3470,247 @@ public:
   QSize lastDispatchWarningSize_;
 
   PreviewRenderPipelineSlot &acquirePreviewRenderPipelineSlot() {
-    activePreviewRenderPipelineSlot_ =
-        (activePreviewRenderPipelineSlot_ + 1) %
-        kPreviewRenderPipelineSlotCount;
+    ++previewRenderPipelineAcquireCount_;
+    lastPreviewRenderPipelineAcquireHazard_ = false;
+    int selectedIndex = -1;
+    for (int i = 0; i < kPreviewRenderPipelineSlotCount; ++i) {
+      if (previewRenderPipelineSlots_[i].state ==
+          PreviewRenderPipelineSlot::State::Free) {
+        selectedIndex = i;
+        lastPreviewRenderPipelineSlotAcquireReason_ =
+            QStringLiteral("free-slot");
+        ++previewRenderPipelineFreeAcquireCount_;
+        previewRenderPipelineConsecutiveReuseCount_ = 0;
+        break;
+      }
+    }
+
+    if (selectedIndex < 0) {
+      for (int i = 0; i < kPreviewRenderPipelineSlotCount; ++i) {
+        const auto& slot = previewRenderPipelineSlots_[i];
+        if (slot.state == PreviewRenderPipelineSlot::State::Retirable) {
+          if (selectedIndex < 0 ||
+              slot.lastSubmittedFrame <
+                  previewRenderPipelineSlots_[selectedIndex].lastSubmittedFrame) {
+            selectedIndex = i;
+          }
+        }
+      }
+    }
+
+    if (selectedIndex < 0) {
+      for (int i = 0; i < kPreviewRenderPipelineSlotCount; ++i) {
+        const auto& slot = previewRenderPipelineSlots_[i];
+        if (slot.state == PreviewRenderPipelineSlot::State::Ready) {
+          if (selectedIndex < 0 ||
+              slot.lastSubmittedFrame <
+                  previewRenderPipelineSlots_[selectedIndex].lastSubmittedFrame) {
+            selectedIndex = i;
+          }
+        }
+      }
+    }
+
+    if (selectedIndex < 0) {
+      quint64 oldestFrame = std::numeric_limits<quint64>::max();
+      for (int i = 0; i < kPreviewRenderPipelineSlotCount; ++i) {
+        const auto& slot = previewRenderPipelineSlots_[i];
+        if (slot.lastSubmittedFrame < oldestFrame) {
+          oldestFrame = slot.lastSubmittedFrame;
+          selectedIndex = i;
+        }
+      }
+    }
+
+    if (selectedIndex < 0) {
+      selectedIndex = 0;
+    }
+
+    if (lastPreviewRenderPipelineSlotAcquireReason_ !=
+        QStringLiteral("free-slot")) {
+      const auto reusedState =
+          previewRenderPipelineSlots_[selectedIndex].state;
+      lastPreviewRenderPipelineSlotAcquireReason_ =
+          reusedState == PreviewRenderPipelineSlot::State::Retirable
+              ? QStringLiteral("reuse-retirable-slot")
+          : reusedState == PreviewRenderPipelineSlot::State::Ready
+              ? QStringLiteral("reuse-ready-slot")
+              : QStringLiteral("reuse-submitted-slot");
+      if (reusedState == PreviewRenderPipelineSlot::State::Retirable) {
+        ++previewRenderPipelineReuseRetirableCount_;
+      } else if (reusedState == PreviewRenderPipelineSlot::State::Ready) {
+        ++previewRenderPipelineReuseReadyCount_;
+      } else {
+        ++previewRenderPipelineReuseSubmittedCount_;
+        lastPreviewRenderPipelineAcquireHazard_ = true;
+      }
+      ++previewRenderPipelineConsecutiveReuseCount_;
+      previewRenderPipelineMaxConsecutiveReuseCount_ =
+          std::max(previewRenderPipelineMaxConsecutiveReuseCount_,
+                   previewRenderPipelineConsecutiveReuseCount_);
+    }
+
+    activePreviewRenderPipelineSlot_ = selectedIndex;
     auto &slot = previewRenderPipelineSlots_[activePreviewRenderPipelineSlot_];
     slot.lastSubmittedFrame = renderFrameCounter_;
+    slot.state = PreviewRenderPipelineSlot::State::Submitted;
     return slot;
+  }
+
+  static QString previewRenderPipelineSlotStateText(
+      const PreviewRenderPipelineSlot& slot) {
+    switch (slot.state) {
+    case PreviewRenderPipelineSlot::State::Free:
+      return QStringLiteral("free");
+    case PreviewRenderPipelineSlot::State::Retirable:
+      return QStringLiteral("retirable");
+    case PreviewRenderPipelineSlot::State::Ready:
+      return QStringLiteral("ready");
+    case PreviewRenderPipelineSlot::State::Submitted:
+      return QStringLiteral("submitted");
+    }
+    return QStringLiteral("unknown");
+  }
+
+  static quint64 estimatePreviewRenderPipelineSlotBytes(
+      const PreviewRenderPipelineSlot& slot) {
+    const int width = std::max(
+        static_cast<int>(slot.pipeline.width()),
+        slot.depthTargetSize.width());
+    const int height = std::max(
+        static_cast<int>(slot.pipeline.height()),
+        slot.depthTargetSize.height());
+    if (width <= 0 || height <= 0) {
+      return 0;
+    }
+
+    constexpr quint64 kRgba16fBytesPerPixel = 8;
+    constexpr quint64 kRgba8BytesPerPixel = 4;
+    constexpr quint64 kDepth32BytesPerPixel = 4;
+    constexpr quint64 kPreviewPipelineColorTargetCount = 4;
+    const quint64 pixelCount =
+        static_cast<quint64>(width) * static_cast<quint64>(height);
+    return pixelCount *
+           ((kRgba16fBytesPerPixel * kPreviewPipelineColorTargetCount) +
+            kRgba8BytesPerPixel + kDepth32BytesPerPixel);
+  }
+
+  QString previewRenderPipelineSlotsSummary() const {
+    QStringList slotNotes;
+    slotNotes.reserve(kPreviewRenderPipelineSlotCount);
+    for (int i = 0; i < kPreviewRenderPipelineSlotCount; ++i) {
+      const auto& slot = previewRenderPipelineSlots_[i];
+      const QSize pipelineSize(slot.pipeline.width(), slot.pipeline.height());
+      const QSize slotSize = pipelineSize.isValid() ? pipelineSize
+                                                    : slot.depthTargetSize;
+      slotNotes << QStringLiteral("#%1:%2:%3x%4:depth=%5:frame=%6")
+                       .arg(i)
+                       .arg(previewRenderPipelineSlotStateText(slot))
+                       .arg(std::max(0, slotSize.width()))
+                       .arg(std::max(0, slotSize.height()))
+                       .arg(slot.depthTargetView ? 1 : 0)
+                       .arg(slot.lastSubmittedFrame);
+    }
+    return slotNotes.join(QStringLiteral(","));
+  }
+
+  quint64 previewRenderPipelineEstimatedBytes() const {
+    quint64 total = 0;
+    for (const auto& slot : previewRenderPipelineSlots_) {
+      total += estimatePreviewRenderPipelineSlotBytes(slot);
+    }
+    return total;
+  }
+
+  QString previewRenderPipelinePressureSummary() const {
+    return QStringLiteral("acq=%1 free=%2 reuseRetirable=%3 reuseReady=%4 "
+                          "reuseSubmitted=%5 reuseStreak=%6 reuseStreakMax=%7")
+        .arg(previewRenderPipelineAcquireCount_)
+        .arg(previewRenderPipelineFreeAcquireCount_)
+        .arg(previewRenderPipelineReuseRetirableCount_)
+        .arg(previewRenderPipelineReuseReadyCount_)
+        .arg(previewRenderPipelineReuseSubmittedCount_)
+        .arg(previewRenderPipelineConsecutiveReuseCount_)
+        .arg(previewRenderPipelineMaxConsecutiveReuseCount_);
+  }
+
+  int previewRenderPipelineSlotCountByState(
+      const PreviewRenderPipelineSlot::State state) const {
+    int count = 0;
+    for (const auto& slot : previewRenderPipelineSlots_) {
+      if (slot.state == state) {
+        ++count;
+      }
+    }
+    return count;
+  }
+
+  QString previewRenderPipelineAcquirePolicySummary() const {
+    const int freeCount = previewRenderPipelineSlotCountByState(
+        PreviewRenderPipelineSlot::State::Free);
+    const int retirableCount = previewRenderPipelineSlotCountByState(
+        PreviewRenderPipelineSlot::State::Retirable);
+    const int readyCount = previewRenderPipelineSlotCountByState(
+        PreviewRenderPipelineSlot::State::Ready);
+    const int submittedCount = previewRenderPipelineSlotCountByState(
+        PreviewRenderPipelineSlot::State::Submitted);
+    QString risk = QStringLiteral("safe");
+    if (submittedCount == kPreviewRenderPipelineSlotCount) {
+      risk = QStringLiteral("submitted-only");
+    } else if (submittedCount > 0 && freeCount == 0 && retirableCount == 0) {
+      risk = QStringLiteral("submitted-pressure");
+    } else if (freeCount == 0 && retirableCount == 0) {
+      risk = QStringLiteral("ready-pressure");
+    } else if (freeCount == 0) {
+      risk = QStringLiteral("reuse-preferred");
+    }
+
+    return QStringLiteral("risk=%1 free=%2 retirable=%3 ready=%4 submitted=%5")
+        .arg(risk)
+        .arg(freeCount)
+        .arg(retirableCount)
+        .arg(readyCount)
+        .arg(submittedCount);
+  }
+
+  static QString multiFramePreviewFallbackReason(
+      const bool gpuBlendEnabled,
+      const bool blendPipelineReady,
+      const bool hasGpuBlendJustification,
+      const bool hasGpuBlendBlocker,
+      const bool gpuBlendPathRequested,
+      const bool renderPipelineReady,
+      const bool hasDepthSlot,
+      const bool acquireHazard,
+      const bool transparentCompositionBackgroundRequested) {
+    if (!gpuBlendEnabled) {
+      return QStringLiteral("gpu-blend-disabled");
+    }
+    if (!blendPipelineReady) {
+      return QStringLiteral("blend-pipeline-not-ready");
+    }
+    if (!hasGpuBlendJustification) {
+      return QStringLiteral("no-multi-layer-blend-work");
+    }
+    if (hasGpuBlendBlocker) {
+      return QStringLiteral("cpu-rasterizer-layer-present");
+    }
+    if (!gpuBlendPathRequested) {
+      return QStringLiteral("gpu-path-not-requested");
+    }
+    if (!renderPipelineReady) {
+      return QStringLiteral("render-pipeline-not-ready");
+    }
+    if (!hasDepthSlot) {
+      return QStringLiteral("depth-slot-unavailable");
+    }
+    if (acquireHazard) {
+      return QStringLiteral("submitted-slot-hazard");
+    }
+    if (transparentCompositionBackgroundRequested) {
+      return QStringLiteral("transparent-background");
+    }
+    return QStringLiteral("eligible");
   }
 
   bool ensurePreviewRenderPipelineDepthSlot(
@@ -5666,9 +5920,13 @@ CompositionRenderController::frameDebugSnapshot() const {
     videoResource.type = QStringLiteral("video");
     videoResource.relation = QStringLiteral("decode");
     videoResource.cacheHit =
-        !impl_->lastVideoDebug_.contains(QStringLiteral("syncFallback=miss"));
+        impl_->lastVideoDebug_.contains(QStringLiteral("source=ram-cache")) ||
+        impl_->lastVideoDebug_.contains(QStringLiteral("frameReady=1"));
     videoResource.stale =
-        impl_->lastVideoDebug_.contains(QStringLiteral("decoding=true"));
+        impl_->lastVideoDebug_.contains(QStringLiteral("repeatLastGood")) ||
+        impl_->lastVideoDebug_.contains(QStringLiteral("decoding=true")) ||
+        impl_->lastVideoDebug_.contains(QStringLiteral("stage=requested")) ||
+        impl_->lastVideoDebug_.contains(QStringLiteral("stage=decoding"));
     videoResource.note = impl_->lastVideoDebug_;
     snapshot.resources.push_back(videoResource);
   }
@@ -8327,10 +8585,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     const bool transparentCompositionBackgroundRequested =
         currentBgColor.a() < 0.999f;
+    const bool previewRenderSlotAcquireHazard =
+        lastPreviewRenderPipelineAcquireHazard_;
     const bool pipelineEnabled =
         gpuBlendPathRequested && renderPipeline.ready() &&
         previewRenderSlot.depthTargetView != nullptr &&
+        !previewRenderSlotAcquireHazard &&
         !transparentCompositionBackgroundRequested;
+    previewRenderSlot.state = pipelineEnabled
+                                  ? PreviewRenderPipelineSlot::State::Ready
+                                  : PreviewRenderPipelineSlot::State::Free;
+    const QString multiFrameReason = multiFramePreviewFallbackReason(
+        gpuBlendEnabled_, blendPipelineReady_, hasGpuBlendJustification,
+        hasGpuBlendBlocker, gpuBlendPathRequested, renderPipeline.ready(),
+        previewRenderSlot.depthTargetView != nullptr,
+        previewRenderSlotAcquireHazard,
+        transparentCompositionBackgroundRequested);
     const int pipelineStateMask = (gpuBlendEnabled_ ? 0x1 : 0x0) |
                                   (renderPipeline.ready() ? 0x2 : 0x0) |
                                   (blendPipelineReady_ ? 0x4 : 0x0);
@@ -8346,6 +8616,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       qCDebug(compositionViewLog)
           << "[CompositionView] transparent composition background forces fallback path"
           << "alpha=" << currentBgColor.a();
+    } else if (previewRenderSlotAcquireHazard && gpuBlendPathRequested &&
+               renderPipeline.ready()) {
+      qCDebug(compositionViewLog)
+          << "[CompositionView] submitted slot hazard forces fallback path"
+          << "slot=" << activePreviewRenderPipelineSlot_
+          << "acquire=" << lastPreviewRenderPipelineSlotAcquireReason_;
     }
     if (pipelineStateMask != lastPipelineStateMask_) {
       lastPipelineStateMask_ = pipelineStateMask;
@@ -9961,6 +10237,47 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           "Present", ArtifactCore::ProfileCategory::Render);
       renderCrashTrace("render-present-begin", renderFrameCounter_);
       renderer_->present();
+      const double presentedGpuFrameMs = renderer_->lastFrameGpuTimeMs();
+      const QString presentedStatus = renderer_->lastPresentStatus();
+      QString presentedVideoDebug;
+      for (const auto& layer : layers) {
+        if (auto* videoLayer =
+                dynamic_cast<ArtifactVideoLayer*>(layer.get())) {
+          if (useRamPreviewFallback &&
+              isLayerEffectivelyVisible(layer) &&
+              layer->isActiveAt(currentFrame)) {
+            videoLayer->markFrameCompositionCacheReady(
+                layer->currentFrame(), playbackPreviewState.onDisk);
+            videoLayer->markFrameRenderQueued(layer->currentFrame());
+          }
+          videoLayer->markFramePresented(
+              layer->currentFrame(), presentedGpuFrameMs, presentedStatus);
+          if (presentedVideoDebug.isEmpty() &&
+              isLayerEffectivelyVisible(layer) &&
+              layer->isActiveAt(currentFrame)) {
+            presentedVideoDebug =
+                QStringLiteral("[Video] phase=present compositionCache=%1 "
+                               "compositionCacheReason=%2 ")
+                    .arg(useRamPreviewFallback
+                             ? (playbackPreviewState.onDisk
+                                    ? QStringLiteral("disk-hydrated-ram")
+                                    : QStringLiteral("ram"))
+                             : QStringLiteral("live"))
+                    .arg(ramPreviewFallbackReason) +
+                videoLayer->decodeState();
+          }
+        }
+      }
+      if (!presentedVideoDebug.isEmpty() &&
+          presentedVideoDebug != lastEmittedVideoDebug_) {
+        lastVideoDebug_ = presentedVideoDebug;
+        lastEmittedVideoDebug_ = presentedVideoDebug;
+        qDebug() << presentedVideoDebug;
+        Q_EMIT owner->videoDebugMessage(presentedVideoDebug);
+      }
+      if (pipelineEnabled) {
+        previewRenderSlot.state = PreviewRenderPipelineSlot::State::Retirable;
+      }
       renderCrashTrace("render-present-end", renderFrameCounter_);
     }
 
@@ -10065,6 +10382,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const auto textureCacheStats = gpuTextureCacheManager_
                                        ? gpuTextureCacheManager_->stats()
                                        : GPUTextureCacheStats{};
+    const QString mfrpSlotsSummary = previewRenderPipelineSlotsSummary();
+    const QString mfrpPressureSummary = previewRenderPipelinePressureSummary();
+    const QString mfrpPolicySummary = previewRenderPipelineAcquirePolicySummary();
+    const qulonglong mfrpEstimatedBytes =
+        static_cast<qulonglong>(previewRenderPipelineEstimatedBytes());
     lastRenderPathSummary_ =
         QStringLiteral(
             "path=%1 gpuBlendEnabled=%2 gpuBlendReady=%3 layersTotal=%4 "
@@ -10073,7 +10395,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
              "viewportInteracting=%11 cacheEntries=%12 cacheBytes=%13 "
              "presentStatus=%14 presentOk=%15 presentFail=%16 presentSkip=%17 "
              "ramPreviewFallback=%18 ramPreviewFallbackReason=%19 "
-             "rayTracing={%20}")
+             "mfrpEligible=%20 mfrpReason=%21 mfrpSlot=%22 mfrpSlotState=%23 "
+             "mfrpDepthReady=%24 mfrpLastSubmitFrame=%25 "
+             "mfrpSlotAcquire=%26 mfrpEstimatedBytes=%27 mfrpSlots={%28} "
+             "mfrpPressure={%29} mfrpPolicy={%30} rayTracing={%31}")
             .arg(pipelineEnabled ? QStringLiteral("gpu-blend")
                                  : QStringLiteral("fallback"))
             .arg(gpuBlendEnabled_)
@@ -10094,6 +10419,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             .arg(static_cast<qulonglong>(renderer_->presentSkippedCount()))
             .arg(useRamPreviewFallback ? 1 : 0)
             .arg(ramPreviewFallbackReason)
+            .arg(multiFrameReason == QStringLiteral("eligible") ? 1 : 0)
+            .arg(multiFrameReason)
+            .arg(activePreviewRenderPipelineSlot_)
+            .arg(previewRenderPipelineSlotStateText(previewRenderSlot))
+            .arg(previewRenderSlot.depthTargetView ? 1 : 0)
+            .arg(previewRenderSlot.lastSubmittedFrame)
+            .arg(lastPreviewRenderPipelineSlotAcquireReason_)
+            .arg(mfrpEstimatedBytes)
+            .arg(mfrpSlotsSummary)
+            .arg(mfrpPressureSummary)
+            .arg(mfrpPolicySummary)
             .arg(renderer_->rayTracingDebugState());
     const QString visibilityState =
         frameOutOfRange

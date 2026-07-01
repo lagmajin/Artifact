@@ -53,6 +53,131 @@ struct LayerComponentValidationIssue {
     bool error = false;
 };
 
+struct LayerGeneratorDescriptor {
+    QString generatorId;
+    QString typeId;
+    std::uint32_t version = 1;
+    bool enabled = true;
+    int order = 0;
+    QJsonObject settings;
+};
+
+struct LayerFieldDescriptor {
+    QString fieldId;
+    QString typeId;
+    std::uint32_t version = 1;
+    bool enabled = true;
+    int order = 0;
+    QString blendMode = QStringLiteral("normal");
+    float strength = 1.0f;
+    bool invert = false;
+    QJsonObject settings;
+};
+
+struct LayerModifierDescriptor {
+    QString modifierId;
+    QString typeId;
+    std::uint32_t version = 1;
+    bool enabled = true;
+    int order = 0;
+    QJsonObject settings;
+};
+
+inline QJsonObject toJsonObject(const LayerGeneratorDescriptor& descriptor) {
+    QJsonObject obj;
+    obj[QStringLiteral("generatorId")] = descriptor.generatorId;
+    obj[QStringLiteral("typeId")] = descriptor.typeId;
+    obj[QStringLiteral("version")] = static_cast<qint64>(descriptor.version);
+    obj[QStringLiteral("enabled")] = descriptor.enabled;
+    obj[QStringLiteral("order")] = descriptor.order;
+    obj[QStringLiteral("settings")] = descriptor.settings;
+    return obj;
+}
+
+inline std::optional<LayerGeneratorDescriptor>
+layerGeneratorDescriptorFromJson(const QJsonObject& obj) {
+    LayerGeneratorDescriptor descriptor;
+    descriptor.generatorId =
+        obj.value(QStringLiteral("generatorId")).toString().trimmed();
+    descriptor.typeId =
+        obj.value(QStringLiteral("typeId")).toString().trimmed();
+    if (descriptor.generatorId.isEmpty() || descriptor.typeId.isEmpty()) {
+        return std::nullopt;
+    }
+    descriptor.version = static_cast<std::uint32_t>(
+        std::max<qint64>(1, obj.value(QStringLiteral("version")).toInteger(1)));
+    descriptor.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
+    descriptor.order = obj.value(QStringLiteral("order")).toInt(0);
+    descriptor.settings = obj.value(QStringLiteral("settings")).toObject();
+    return descriptor;
+}
+
+inline QJsonObject toJsonObject(const LayerFieldDescriptor& descriptor) {
+    QJsonObject obj;
+    obj[QStringLiteral("fieldId")] = descriptor.fieldId;
+    obj[QStringLiteral("typeId")] = descriptor.typeId;
+    obj[QStringLiteral("version")] = static_cast<qint64>(descriptor.version);
+    obj[QStringLiteral("enabled")] = descriptor.enabled;
+    obj[QStringLiteral("order")] = descriptor.order;
+    obj[QStringLiteral("blendMode")] = descriptor.blendMode;
+    obj[QStringLiteral("strength")] = descriptor.strength;
+    obj[QStringLiteral("invert")] = descriptor.invert;
+    obj[QStringLiteral("settings")] = descriptor.settings;
+    return obj;
+}
+
+inline std::optional<LayerFieldDescriptor>
+layerFieldDescriptorFromJson(const QJsonObject& obj) {
+    LayerFieldDescriptor descriptor;
+    descriptor.fieldId =
+        obj.value(QStringLiteral("fieldId")).toString().trimmed();
+    descriptor.typeId =
+        obj.value(QStringLiteral("typeId")).toString().trimmed();
+    if (descriptor.fieldId.isEmpty() || descriptor.typeId.isEmpty()) {
+        return std::nullopt;
+    }
+    descriptor.version = static_cast<std::uint32_t>(
+        std::max<qint64>(1, obj.value(QStringLiteral("version")).toInteger(1)));
+    descriptor.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
+    descriptor.order = obj.value(QStringLiteral("order")).toInt(0);
+    descriptor.blendMode =
+        obj.value(QStringLiteral("blendMode")).toString(QStringLiteral("normal"));
+    descriptor.strength =
+        static_cast<float>(obj.value(QStringLiteral("strength")).toDouble(1.0));
+    descriptor.invert = obj.value(QStringLiteral("invert")).toBool(false);
+    descriptor.settings = obj.value(QStringLiteral("settings")).toObject();
+    return descriptor;
+}
+
+inline QJsonObject toJsonObject(const LayerModifierDescriptor& descriptor) {
+    QJsonObject obj;
+    obj[QStringLiteral("modifierId")] = descriptor.modifierId;
+    obj[QStringLiteral("typeId")] = descriptor.typeId;
+    obj[QStringLiteral("version")] = static_cast<qint64>(descriptor.version);
+    obj[QStringLiteral("enabled")] = descriptor.enabled;
+    obj[QStringLiteral("order")] = descriptor.order;
+    obj[QStringLiteral("settings")] = descriptor.settings;
+    return obj;
+}
+
+inline std::optional<LayerModifierDescriptor>
+layerModifierDescriptorFromJson(const QJsonObject& obj) {
+    LayerModifierDescriptor descriptor;
+    descriptor.modifierId =
+        obj.value(QStringLiteral("modifierId")).toString().trimmed();
+    descriptor.typeId =
+        obj.value(QStringLiteral("typeId")).toString().trimmed();
+    if (descriptor.modifierId.isEmpty() || descriptor.typeId.isEmpty()) {
+        return std::nullopt;
+    }
+    descriptor.version = static_cast<std::uint32_t>(
+        std::max<qint64>(1, obj.value(QStringLiteral("version")).toInteger(1)));
+    descriptor.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
+    descriptor.order = obj.value(QStringLiteral("order")).toInt(0);
+    descriptor.settings = obj.value(QStringLiteral("settings")).toObject();
+    return descriptor;
+}
+
 class LayerComponentHost {
 public:
     bool upsert(LayerComponentDescriptor descriptor);
@@ -319,6 +444,9 @@ LayerComponentHost::validate() const {
     std::vector<LayerComponentValidationIssue> issues;
     for (std::size_t i = 0; i < components_.size(); ++i) {
         const auto& descriptor = components_[i];
+        const QString componentLabel = descriptor.componentId.trimmed().isEmpty()
+                                           ? descriptor.typeId.trimmed()
+                                           : descriptor.componentId.trimmed();
         if (descriptor.componentId.trimmed().isEmpty() ||
             descriptor.typeId.trimmed().isEmpty()) {
             issues.push_back(
@@ -340,16 +468,26 @@ LayerComponentHost::validate() const {
             if (!dependency) {
                 issues.push_back(
                     {descriptor.componentId,
-                     QStringLiteral("Missing required component type: %1")
-                         .arg(requiredTypeId),
+                     QStringLiteral(
+                         "%1 requires %2, but that component is missing.")
+                         .arg(componentLabel, requiredTypeId),
+                     true});
+            } else if (descriptor.enabled && !dependency->enabled) {
+                issues.push_back(
+                    {descriptor.componentId,
+                     QStringLiteral(
+                         "%1 requires %2 to be enabled first.")
+                         .arg(componentLabel, requiredTypeId),
                      true});
             } else if (static_cast<int>(dependency->phase) >
                        static_cast<int>(descriptor.phase)) {
                 issues.push_back(
                     {descriptor.componentId,
                      QStringLiteral(
-                         "Required component %1 evaluates in a later phase.")
-                         .arg(requiredTypeId),
+                         "%1 depends on %2, but %2 evaluates later (%3 -> %4).")
+                         .arg(componentLabel, requiredTypeId,
+                              layerComponentPhaseName(descriptor.phase),
+                              layerComponentPhaseName(dependency->phase)),
                      true});
             }
         }
@@ -441,7 +579,7 @@ inline LayerComponentDescriptor makeLayoutComponentDescriptor(bool enabled) {
         LayerComponentPhase::Arrange,
         LayerComponentScope::InstanceSet,
         200,
-        {},
+        {QStringLiteral("artifact.component.cloner")},
         {},
     };
 }
@@ -455,7 +593,7 @@ inline LayerComponentDescriptor makeCrowdComponentDescriptor(bool enabled) {
         LayerComponentPhase::Intent,
         LayerComponentScope::InstanceSet,
         300,
-        {},
+        {QStringLiteral("artifact.component.cloner")},
         {},
     };
 }
@@ -484,7 +622,7 @@ inline LayerComponentDescriptor makeCollisionComponentDescriptor(bool enabled) {
         LayerComponentPhase::Dynamics,
         LayerComponentScope::Composition,
         500,
-        {},
+        {QStringLiteral("artifact.component.cloner")},
         {},
     };
 }
@@ -498,7 +636,7 @@ inline LayerComponentDescriptor makeFractureComponentDescriptor(bool enabled) {
         LayerComponentPhase::Topology,
         LayerComponentScope::InstanceSet,
         600,
-        {},
+        {QStringLiteral("artifact.component.collision")},
         {},
     };
 }
@@ -513,6 +651,20 @@ inline LayerComponentDescriptor makeParticleEmitterComponentDescriptor(
         LayerComponentPhase::Emit,
         LayerComponentScope::InstanceSet,
         700,
+        {QStringLiteral("artifact.component.cloner")},
+        {},
+    };
+}
+
+inline LayerComponentDescriptor makeFluidComponentDescriptor(bool enabled) {
+    return {
+        QStringLiteral("builtin.fluid"),
+        QStringLiteral("artifact.component.fluid"),
+        1,
+        enabled,
+        LayerComponentPhase::Dynamics,
+        LayerComponentScope::Composition,
+        750,
         {},
         {},
     };

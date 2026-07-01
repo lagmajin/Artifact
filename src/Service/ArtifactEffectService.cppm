@@ -67,8 +67,12 @@ import SelectiveColorEffect;
 import ColorWheelsEffect;
 import CurvesEffect;
 import Artifact.Effect.Distort.DisplacementMap;
+import Artifact.Effect.Distort.TimeDisplacement;
 import Artifact.Effect.Generate.RadioWaves;
 import Artifact.Effect.Liquify;
+import Artifact.Effect.Kaleidoscope;
+import Artifact.Effect.Dithering;
+import Artifact.Effect.Kuwahara;
 
 namespace Artifact
 {
@@ -428,6 +432,13 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Displacement Map"));
    return effect;
   }
+  if (effectId == QStringLiteral("time_displacement") ||
+      effectId == QStringLiteral("effect.distort.timedisplacement")) {
+   auto effect = std::make_unique<TimeDisplacementEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Time Displacement"));
+   return effect;
+  }
   if (effectId == QStringLiteral("radio_waves") ||
       effectId == QStringLiteral("effect.generate.radiowaves")) {
    auto effect = std::make_unique<RadioWavesEffect>();
@@ -440,6 +451,27 @@ W_OBJECT_IMPL(ArtifactEffectService)
    auto effect = std::make_unique<LiquifyEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
    effect->setDisplayName(QStringLiteral("Liquify"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("kaleidoscope") ||
+      effectId == QStringLiteral("effect.stylize.kaleidoscope")) {
+   auto effect = std::make_unique<KaleidoscopeEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Kaleidoscope"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("dithering") ||
+      effectId == QStringLiteral("effect.stylize.dithering")) {
+   auto effect = std::make_unique<DitheringEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Dithering"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("kuwahara") ||
+      effectId == QStringLiteral("effect.stylize.kuwahara")) {
+   auto effect = std::make_unique<KuwaharaEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Kuwahara"));
    return effect;
   }
   if (effectId.startsWith(QStringLiteral("ofx."))) {
@@ -517,8 +549,12 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("bevel"), "Bevel"});
   effects.push_back({EffectID("linear_wipe"), "Linear Wipe"});
   effects.push_back({EffectID("displacement_map"), "Displacement Map"});
+  effects.push_back({EffectID("time_displacement"), "Time Displacement"});
   effects.push_back({EffectID("liquify"), "Liquify"});
   effects.push_back({EffectID("radio_waves"), "Radio Waves"});
+  effects.push_back({EffectID("kaleidoscope"), "Kaleidoscope"});
+  effects.push_back({EffectID("dithering"), "Dithering"});
+  effects.push_back({EffectID("kuwahara"), "Kuwahara"});
 
   Artifact::Ofx::ArtifactOfxHost::instance().initialize();
   for (const auto& plugin : Artifact::Ofx::ArtifactOfxHost::instance().getLoadedPlugins()) {

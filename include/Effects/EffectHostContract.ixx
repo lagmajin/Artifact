@@ -27,12 +27,68 @@ enum class EffectChannelRequirement {
     Custom
 };
 
+enum class EffectSourceKind {
+    UpstreamColor,
+    OriginalLayerSource,
+    PreviousStageColor,
+    AuxiliaryMap,
+    TemporalSample,
+    Custom
+};
+
+enum class EffectTemporalSampleMode {
+    None,
+    PreviousFrame,
+    RelativeFrameOffset,
+    AbsoluteFrame,
+    PerPixelDisplacedFrame
+};
+
 struct EffectInputRequest {
+    QString inputId = QStringLiteral("primary");
     QRectF roi = {};
     EffectChannelRequirement channels = EffectChannelRequirement::RGBA;
+    EffectSourceKind sourceKind = EffectSourceKind::UpstreamColor;
     bool requiresOriginalSource = false;
     bool requiresPreviousFrame = false;
     int temporalLookback = 0;
+    EffectTemporalSampleMode temporalSampleMode =
+        EffectTemporalSampleMode::None;
+    std::int64_t relativeFrameOffset = 0;
+    std::int64_t absoluteFrame = 0;
+    bool allowPerPixelTemporalSampling = false;
+    bool requiresFrameCache = false;
+};
+
+struct EffectInputSurface {
+    QString inputId = QStringLiteral("primary");
+    ImageF32x4RGBAWithCache* image = nullptr;
+    QRectF roi = {};
+    std::int64_t compositionFrame = 0;
+};
+
+struct EffectInputBundle {
+    std::vector<EffectInputSurface> surfaces;
+
+    EffectInputSurface* findSurface(const QString& inputId)
+    {
+        for (auto& surface : surfaces) {
+            if (surface.inputId == inputId) {
+                return &surface;
+            }
+        }
+        return nullptr;
+    }
+
+    const EffectInputSurface* findSurface(const QString& inputId) const
+    {
+        for (const auto& surface : surfaces) {
+            if (surface.inputId == inputId) {
+                return &surface;
+            }
+        }
+        return nullptr;
+    }
 };
 
 struct EffectOutputSurface {
@@ -45,6 +101,8 @@ struct EffectCapabilityDescriptor {
     bool supportsGPU = false;
     bool supportsPartialEvaluation = false;
     bool supportsTemporalProcessing = false;
+    bool supportsPerPixelTemporalSampling = false;
+    bool requiresDeterministicFrameCache = false;
     bool isGenerator = false;
     EffectPipelineStage pipelineStage = EffectPipelineStage::MaterialRender;
     float roiExpansionHint = 0.0f;
@@ -100,6 +158,20 @@ public:
     virtual void render(const EffectHostContext& context,
                         const EffectInputRequest& input,
                         EffectOutputSurface& output) = 0;
+
+    virtual void renderBundle(const EffectHostContext& context,
+                              const EffectInputBundle& inputs,
+                              EffectOutputSurface& output)
+    {
+        const auto* primary = inputs.findSurface(QStringLiteral("primary"));
+        if (!primary) {
+            return;
+        }
+        EffectInputRequest request;
+        request.inputId = primary->inputId;
+        request.roi = primary->roi;
+        render(context, request, output);
+    }
 };
 
 class LegacyEffectAdapter : public IEffectHostAdapter {
@@ -138,20 +210,48 @@ public:
         }
 
         EffectContext legacyCtx;
+        legacyCtx.roi = input.roi;
+        legacyCtx.isInteractive = context.isInteractive();
+        legacyCtx.compositionFrame = context.snapshot().currentFrame;
+        legacyCtx.layerFrame = context.snapshot().currentFrame;
+        legacyCtx.frameRate = context.snapshot().frameRate;
+        legacyCtx.timeSeconds = context.timeSeconds();
+        legacyCtx.resolutionScale = context.resolutionScale();
+        legacyCtx.sampler = frameSampler_;
+        effect_->setContext(legacyCtx);
         effect_->applyConfigured(*inputSource_, *output.image);
 
         output.writtenROI = input.roi;
         output.fullyWritten = true;
     }
 
+    void renderBundle(const EffectHostContext& context,
+                      const EffectInputBundle& inputs,
+                      EffectOutputSurface& output) override
+    {
+        const auto* primary = inputs.findSurface(QStringLiteral("primary"));
+        if (!primary || !primary->image) {
+            return;
+        }
+
+        setInputSource(primary->image);
+
+        EffectInputRequest request = inputRequest_;
+        request.inputId = primary->inputId;
+        request.roi = primary->roi;
+        render(context, request, output);
+    }
+
     void setInputSource(const ImageF32x4RGBAWithCache* src) { inputSource_ = src; }
     void setHostContext(const EffectHostContext& ctx) { hostContext_ = ctx; }
     void setInputRequest(const EffectInputRequest& req) { inputRequest_ = req; }
     void setOutputSurface(const EffectOutputSurface& surf) { outputSurface_ = surf; }
+    void setFrameSampler(IEffectFrameSampler* sampler) { frameSampler_ = sampler; }
 
 private:
     ArtifactAbstractEffect* effect_ = nullptr;
     const ImageF32x4RGBAWithCache* inputSource_ = nullptr;
+    IEffectFrameSampler* frameSampler_ = nullptr;
     EffectHostContext hostContext_;
     EffectInputRequest inputRequest_;
     EffectOutputSurface outputSurface_;
