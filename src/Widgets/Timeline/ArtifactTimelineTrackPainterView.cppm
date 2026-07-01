@@ -3921,6 +3921,13 @@ public:
   double dragAreaOrigStartFrame_ = 0.0;
   double dragAreaOrigEndFrame_ = 0.0;
   QString dragMarkerSnapLabel_;
+
+  // Waveform render cache: keyed by clipId, stores rendered QImage + rect size
+  struct WaveformRenderEntry {
+    QImage image;
+    QSizeF size;
+  };
+  QHash<QString, WaveformRenderEntry> waveformRenderCache_;
   QString dragAreaSnapLabel_;
   QVector<int> dragMarkerSelectionIndices_;
   QVector<double> dragMarkerSelectionOrigFrames_;
@@ -5437,10 +5444,6 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
 
     if (!clip.waveformPeaks.isEmpty() &&
         clipRect.width() > 20.0 && clipRect.height() > 10.0) {
-      const QColor waveformColor = isSelected ? theme.background.darker(140)
-                                              : theme.text.lighter(110);
-      QColor waveformSoft = waveformColor;
-      waveformSoft.setAlpha(90);
       const qreal innerTop = clipRect.top() + 5.0;
       const qreal innerBottom = clipRect.bottom() - 5.0;
       const qreal centerY = (innerTop + innerBottom) * 0.5;
@@ -5451,22 +5454,33 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         const qreal innerLeft = clipRect.left() + 4.0;
         const qreal innerRight = clipRect.right() - 4.0;
         const qreal span = std::max<qreal>(1.0, innerRight - innerLeft);
+
+        // Batch-build all bars into a single QPainterPath for faster rasterization
+        QPainterPath peakPath;
+        QPainterPath rmsPath;
+        peakPath.setFillRule(Qt::WindingFill);
         for (int bar = 0; bar < binCount; ++bar) {
           const qreal t = binCount > 1 ? static_cast<qreal>(bar) / static_cast<qreal>(binCount - 1) : 0.0;
           const qreal x = innerLeft + t * span;
           const qreal peak = std::clamp(static_cast<qreal>(clip.waveformPeaks[bar]), 0.0, 1.0);
           const qreal top = centerY - halfSpan * peak;
           const qreal bottom = centerY + halfSpan * peak;
+          peakPath.moveTo(x, top);
+          peakPath.lineTo(x, bottom);
           if (hasRms) {
             const qreal rms = std::clamp(static_cast<qreal>(clip.waveformRms[bar]), 0.0, 1.0);
-            const qreal rmsTop = centerY - halfSpan * rms;
-            const qreal rmsBottom = centerY + halfSpan * rms;
-            p.setPen(QPen(waveformSoft, 1.0));
-            p.drawLine(QPointF(x, rmsTop), QPointF(x, rmsBottom));
+            rmsPath.moveTo(x, centerY - halfSpan * rms);
+            rmsPath.lineTo(x, centerY + halfSpan * rms);
           }
-          p.setPen(QPen((bar % 3 == 0) ? waveformColor : waveformSoft, 1.0));
-          p.drawLine(QPointF(x, top), QPointF(x, bottom));
         }
+        const QColor waveformColor = isSelected ? theme.background.darker(140)
+                                                : theme.text.lighter(110);
+        if (hasRms && !rmsPath.isEmpty()) {
+          QColor rmsColor = waveformColor;
+          rmsColor.setAlpha(90);
+          p.strokePath(rmsPath, QPen(rmsColor, 1.0));
+        }
+        p.strokePath(peakPath, QPen(waveformColor, 1.0));
       } else {
         const int barCount = std::max(8, static_cast<int>(clipRect.width() / 10.0));
         const quint32 hashSeed = qHash(clip.clipId) ^ qHash(clip.title) ^

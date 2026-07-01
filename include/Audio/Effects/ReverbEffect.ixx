@@ -1,41 +1,10 @@
 ﻿module;
+#include <cmath>
 #include <vector>
 #include <string>
 #include <memory>
-#include <cmath>
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
 #include <array>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 export module Artifact.Audio.Effects.Reverb;
-
-
 
 
 import Audio.Segment;
@@ -46,87 +15,98 @@ import Audio.DSP.LFO;
 
 export namespace Artifact {
 
-/**
- * @brief High-end Dattorro Plate Reverb.
- * Based on Jon Dattorro's "Effect Design, Part 1: Reverberator and Other Filters" (1997).
- * Features modulated all-pass diffusers, absorptive low-pass filters in the tank,
- * and cross-coupled delay lines for a lush, wide stereo image.
- */
-class ReverbEffect {
+enum class ReverbAlgorithm {
+    DattorroPlate = 0,
+    FDNHall = 1,
+    Hybrid = 2
+};
+
+class ReverbEffect final : public ArtifactAbstractAudioEffect {
 public:
     ReverbEffect();
-    ~ReverbEffect() = default;
+    ~ReverbEffect() override = default;
 
-    // Audio processing
-    void process(float* buffer, int samples, int channels);
-    std::string name() const { return "Dattorro Plate Reverb"; }
-    std::string getDescription() const { 
-        return "High-end algorithmic plate reverb with modulated diffusion";
-    }
+    void process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain = nullptr) override;
+    std::string getName() const override { return "Reverb"; }
+    std::string getDescription() const override;
 
-    std::vector<AudioEffectParameter> getParameters() const;
-    void setParameter(const std::string& name, float value);
-    float getParameter(const std::string& name) const;
-
-    void setSampleRate(int sampleRate);
+    std::vector<AudioEffectParameter> getParameters() const override;
+    void setParameter(const std::string& name, float value) override;
+    float getParameter(const std::string& name) const override;
+    void setSampleRate(int sampleRate) override;
 
 private:
-    // === Input Diffusion Stage ===
-    // 4 series all-pass filters to smear the input into a dense cloud
-    ArtifactCore::Audio::DSP::AllPassFilter inputDiffusion1_[2];
-    ArtifactCore::Audio::DSP::AllPassFilter inputDiffusion2_[2];
+    void initEngine();
+    void initDattorro();
+    void initFDN();
+    void processDattorroSample(float inL, float inR, float& outL, float& outR);
+    void processFDNSample(float inL, float inR, float& outL, float& outR);
+    void processHybridSample(float inL, float inR, float& outL, float& outR);
+    float scaleDelay(float refSamples) const;
+    static void fwht8(float* x);
 
-    // === Tank (Reverb Tail) ===
-    // Two cross-coupled delay lines with modulated all-pass + damping
+    // Algorithm selection
+    ReverbAlgorithm algorithm_ = ReverbAlgorithm::DattorroPlate;
+
+    // Common parameters
+    float preDelayMs_  = 20.0f;
+    float decay_       = 0.75f;
+    float decayLFMult_ = 1.0f;
+    float decayHF_     = 0.5f;
+    float dampingFreq_ = 8000.0f;
+    float diffusion_   = 0.75f;
+    float density_     = 0.7f;
+    float modDepth_    = 0.5f;
+    float modRate_     = 0.8f;
+    float size_        = 1.0f;
+    float stereoWidth_ = 1.0f;
+    float erLevel_     = 0.3f;
+    float erDelay_     = 0.5f;
+    float wetLevel_    = 0.35f;
+    float dryLevel_    = 0.65f;
+
+    // Dattorro: input diffusers (2 x 2-ch)
+    ArtifactCore::Audio::DSP::AllPassFilter inputDiff1_[2];
+    ArtifactCore::Audio::DSP::AllPassFilter inputDiff2_[2];
+    // Dattorro: tank delays + all-passes
     ArtifactCore::Audio::DSP::FractionalDelayLine tankDelay_[2];
-    ArtifactCore::Audio::DSP::AllPassFilter tankAllPass_[2];
-    ArtifactCore::Audio::DSP::LFO tankLFO_[2];
-
+    ArtifactCore::Audio::DSP::AllPassFilter tankAP_[2];
     // Pre-delay line
     ArtifactCore::Audio::DSP::FractionalDelayLine preDelay_;
-
-    // One-pole low-pass for tank damping (simple inline)
+    // Tank LFO phases
+    float lfoPhase_[2] = {0.0f, 0.0f};
+    // Tank state accumulators (cross-coupling)
+    float tankAccum_[2] = {0.0f, 0.0f};
+    // Damping one-pole state
     float dampState_[2] = {0.0f, 0.0f};
 
-    // === Parameters ===
-    float decay_      = 0.75f;   // 0.0 .. 1.0  (reverb tail length)
-    float preDelayMs_ = 20.0f;   // 0 .. 200 ms
-    float damping_    = 0.5f;    // 0.0 .. 1.0  (high-freq absorption)
-    float diffusion_  = 0.75f;   // 0.0 .. 1.0  (input smear amount)
-    float modDepth_   = 0.5f;    // 0.0 .. 1.0  (chorus inside tank)
-    float modRate_    = 0.8f;    // Hz (LFO speed for tank modulation)
-    float wetLevel_   = 0.35f;
-    float dryLevel_   = 0.65f;
-    float size_       = 1.0f;    // 0.5 .. 2.0  (scale all delay times)
-    float sampleRate_ = 44100.0f; // Current sample rate
+    // FDN: 8 delay lines
+    static constexpr int kNumFDNLines = 8;
+    struct FDNLine {
+        std::vector<float> buffer;
+        int writeIndex = 0;
+        int length = 2048;
+        float fbGain = 0.7f;
+        float dampCoeff = 0.5f;
+        float state = 0.0f;
+    };
+    FDNLine fdnLines_[kNumFDNLines];
+    float fdnInputMix_[kNumFDNLines];
+    float fdnOutputMix_[kNumFDNLines];
+    float erTaps_[kNumFDNLines];
 
-    // Internal state
-    float tankAccumL_ = 0.0f;
-    float tankAccumR_ = 0.0f;
-
-    void initializeEngine();
-
-    // Dattorro-style delay lengths in samples (at 29761 Hz reference rate, scaled to actual rate)
+    // Reference rate for Dattorro delay scaling
     static constexpr float kRefSampleRate = 29761.0f;
-
-    // Input diffusion delay times (in samples at reference rate)
-    static constexpr float kInputDiff1a = 142.0f;
-    static constexpr float kInputDiff1b = 107.0f;
-    static constexpr float kInputDiff2a = 379.0f;
-    static constexpr float kInputDiff2b = 277.0f;
-
-    // Tank delay times
+    static constexpr float kInDiff1a = 142.0f;
+    static constexpr float kInDiff1b = 107.0f;
+    static constexpr float kInDiff2a = 379.0f;
+    static constexpr float kInDiff2b = 277.0f;
     static constexpr float kTankDelay1 = 672.0f;
     static constexpr float kTankDelay2 = 908.0f;
     static constexpr float kTankAP1 = 908.0f;
     static constexpr float kTankAP2 = 672.0f;
-
-    float scaleDelay(float refSamples) const {
-        return refSamples * (static_cast<float>(sampleRate_) / kRefSampleRate) * size_;
-    }
 };
 
-// ファクトリー関数
 std::unique_ptr<ArtifactAbstractAudioEffect> createReverbEffect();
 
 } // namespace Artifact

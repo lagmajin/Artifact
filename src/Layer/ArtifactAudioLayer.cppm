@@ -40,11 +40,13 @@ namespace Artifact
    qint64 totalFrames_ = 0;
 
    // 最終デコード結果のキャッシュ（シークバック・ループ時にリサンプリングを回避）
-   struct ResampledCache {
-       qint64 startSample = -1;
-       int sampleRate = 0;
-       ArtifactCore::AudioSegment segment;
-   };
+    struct ResampledCache {
+        qint64 startSample = -1;
+        int sampleRate = 0;
+        float volume = 1.0f;
+        float pan = 0.0f;
+        ArtifactCore::AudioSegment segment;
+    };
    ResampledCache resampledCache_;
 
    Impl() = default;
@@ -459,6 +461,7 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
   // リサンプリング結果キャッシュを確認
   auto& rc = impl_->resampledCache_;
   if (rc.startSample == startSample && rc.sampleRate == sampleRate &&
+      rc.volume == impl_->volume_ && rc.pan == impl_->pan_ &&
       rc.segment.frameCount() >= frameCount) {
     for (int ch = 0; ch < 2; ++ch) {
       std::copy_n(rc.segment.channelData[ch].data(), frameCount,
@@ -511,6 +514,8 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     // キャッシュを更新（リサンプリング結果を保存）
     rc.startSample = startSample;
     rc.sampleRate = sampleRate;
+    rc.volume = impl_->volume_;
+    rc.pan = impl_->pan_;
     rc.segment.sampleRate = sampleRate;
     rc.segment.layout = ArtifactCore::AudioChannelLayout::Stereo;
     rc.segment.channelData.resize(2);

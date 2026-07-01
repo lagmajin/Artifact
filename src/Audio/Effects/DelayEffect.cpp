@@ -16,66 +16,52 @@ DelayEffect::DelayEffect() {
 
 void DelayEffect::initializeDelays() {
     float sr = static_cast<float>(sampleRate_);
-    // Max 2 seconds of delay
     delayL_.initialize(2.0f, sr);
     delayR_.initialize(2.0f, sr);
     fbFilterStateL_ = 0.0f;
     fbFilterStateR_ = 0.0f;
 }
 
-ArtifactCore::AudioSegment DelayEffect::process(const ArtifactCore::AudioSegment& input) {
-    if (!enabled_ || input.channelData.isEmpty()) {
-        return input;
-    }
+void DelayEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment*) {
+    if (!enabled_ || segment.channelData.isEmpty()) return;
 
-    ArtifactCore::AudioSegment output = input;
     float sr = static_cast<float>(sampleRate_);
-
-    int numChannels = static_cast<int>(output.channelData.size());
-    int numSamples  = (numChannels > 0) ? static_cast<int>(output.channelData[0].size()) : 0;
-    if (numSamples == 0) return output;
+    int numChannels = static_cast<int>(segment.channelData.size());
+    int numSamples  = (numChannels > 0) ? static_cast<int>(segment.channelData[0].size()) : 0;
+    if (numSamples == 0) return;
 
     float delaySamplesL = delayTimeL_ * 0.001f * sr;
     float delaySamplesR = delayTimeR_ * 0.001f * sr;
-    float dampCoeff = highCut_ * 0.6f; // Maps 0..1 -> 0..0.6
+    float dampCoeff = highCut_ * 0.6f;
 
     for (int i = 0; i < numSamples; ++i) {
-        // Get input (mono for single channel, stereo for 2+)
-        float inL = input.channelData[0][i];
-        float inR = (numChannels > 1) ? input.channelData[1][i] : inL;
+        float inL = segment.channelData[0][i];
+        float inR = (numChannels > 1) ? segment.channelData[1][i] : inL;
 
-        // Read from delay lines
         float delayedL = delayL_.read(delaySamplesL);
         float delayedR = delayR_.read(delaySamplesR);
 
-        // Apply high-cut filter in feedback path (one-pole LPF)
         fbFilterStateL_ = fbFilterStateL_ + dampCoeff * (delayedL - fbFilterStateL_);
         fbFilterStateR_ = fbFilterStateR_ + dampCoeff * (delayedR - fbFilterStateR_);
 
         float filteredFbL = delayedL - fbFilterStateL_ * dampCoeff;
         float filteredFbR = delayedR - fbFilterStateR_ * dampCoeff;
 
-        // Write to delay lines with feedback
         if (pingPong_) {
-            // Ping-pong: L feeds R, R feeds L
             delayL_.write(inL + filteredFbR * feedback_);
             delayR_.write(inR + filteredFbL * feedback_);
         } else {
-            // Normal stereo delay
             delayL_.write(inL + filteredFbL * feedback_);
             delayR_.write(inR + filteredFbR * feedback_);
         }
 
-        // Mix output
         if (numChannels >= 2) {
-            output.channelData[0][i] = inL * dryLevel_ + delayedL * wetLevel_;
-            output.channelData[1][i] = inR * dryLevel_ + delayedR * wetLevel_;
+            segment.channelData[0][i] = inL * dryLevel_ + delayedL * wetLevel_;
+            segment.channelData[1][i] = inR * dryLevel_ + delayedR * wetLevel_;
         } else {
-            output.channelData[0][i] = inL * dryLevel_ + (delayedL + delayedR) * 0.5f * wetLevel_;
+            segment.channelData[0][i] = inL * dryLevel_ + (delayedL + delayedR) * 0.5f * wetLevel_;
         }
     }
-
-    return output;
 }
 
 std::vector<AudioEffectParameter> DelayEffect::getParameters() const {

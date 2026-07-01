@@ -27,22 +27,17 @@ void LimiterEffect::initializeEngine() {
     lookaheadSamples_ = static_cast<int>(0.005f * sr);
     if (lookaheadSamples_ < 1) lookaheadSamples_ = 1;
     if (lookaheadSamples_ > kMaxLookahead) lookaheadSamples_ = kMaxLookahead;
-
     lookaheadWritePos_ = 0;
     currentGain_ = 1.0f;
 }
 
-ArtifactCore::AudioSegment LimiterEffect::process(const ArtifactCore::AudioSegment& input) {
-    if (!enabled_ || input.channelData.isEmpty()) {
-        return input;
-    }
+void LimiterEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment*) {
+    if (!enabled_ || segment.channelData.isEmpty()) return;
 
-    ArtifactCore::AudioSegment output = input;
     float sr = static_cast<float>(sampleRate_);
-
-    int numChannels = static_cast<int>(output.channelData.size());
-    int numSamples  = (numChannels > 0) ? static_cast<int>(output.channelData[0].size()) : 0;
-    if (numSamples == 0) return output;
+    int numChannels = static_cast<int>(segment.channelData.size());
+    int numSamples  = (numChannels > 0) ? static_cast<int>(segment.channelData[0].size()) : 0;
+    if (numSamples == 0) return;
 
     float ceilingLinear = dbToLinear(ceiling_);
     float inputGainLinear = dbToLinear(inputGain_);
@@ -52,7 +47,7 @@ ArtifactCore::AudioSegment LimiterEffect::process(const ArtifactCore::AudioSegme
     for (int i = 0; i < numSamples; ++i) {
         float peak = 0.0f;
         for (int ch = 0; ch < numChannels; ++ch) {
-            float val = std::fabs(input.channelData[ch][i] * inputGainLinear);
+            float val = std::fabs(segment.channelData[ch][i] * inputGainLinear);
             if (val > peak) peak = val;
         }
         peakLevels[i] = peak;
@@ -85,11 +80,9 @@ ArtifactCore::AudioSegment LimiterEffect::process(const ArtifactCore::AudioSegme
 
         float totalGain = inputGainLinear * currentGain_;
         for (int ch = 0; ch < numChannels; ++ch) {
-            output.channelData[ch][i] = input.channelData[ch][i] * totalGain;
+            segment.channelData[ch][i] *= totalGain;
         }
     }
-
-    return output;
 }
 
 std::vector<AudioEffectParameter> LimiterEffect::getParameters() const {

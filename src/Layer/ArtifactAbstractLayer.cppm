@@ -1734,6 +1734,19 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
     }
   }
 
+  if (hasRigidBodyPhysics()) {
+    if (auto world = ArtifactCore::PhysicsSystem::instance().getRigidWorld(id())) {
+      const auto bodies = world->getBodies();
+      if (!bodies.empty() && bodies.front()) {
+        const auto body = bodies.front();
+        const QVector2D bodyPos = body->position();
+        positionX = bodyPos.x();
+        positionY = bodyPos.y();
+        rotation = body->angle();
+      }
+    }
+  }
+
   const QTransform local2D = impl_->modifiers_.apply(
       makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
                            anchorX, anchorY),
@@ -1749,6 +1762,10 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
 
 bool ArtifactAbstractLayer::hasSoftBodyPhysics() const {
   return static_cast<bool>(ArtifactCore::PhysicsSystem::instance().getSoftBody(id()));
+}
+
+bool ArtifactAbstractLayer::hasRigidBodyPhysics() const {
+  return static_cast<bool>(ArtifactCore::PhysicsSystem::instance().getRigidWorld(id()));
 }
 
 const FractureState& ArtifactAbstractLayer::fractureState() const {
@@ -2127,6 +2144,18 @@ void ArtifactAbstractLayer::disableSoftBodyPhysics() {
   ArtifactCore::PhysicsSystem::instance().unregisterSoftBody(id());
 }
 
+void ArtifactAbstractLayer::enableRigidBodyPhysics() {
+  auto& physics = ArtifactCore::PhysicsSystem::instance();
+  if (!physics.getRigidWorld(id())) {
+    physics.createRigidWorld(id());
+  }
+  syncRigidBodyPhysicsToBounds();
+}
+
+void ArtifactAbstractLayer::disableRigidBodyPhysics() {
+  ArtifactCore::PhysicsSystem::instance().unregisterRigidWorld(id());
+}
+
 void ArtifactAbstractLayer::syncSoftBodyPhysicsColliderToBounds() {
   auto& physics = ArtifactCore::PhysicsSystem::instance();
   auto solver = physics.getSoftBody(id());
@@ -2151,6 +2180,42 @@ void ArtifactAbstractLayer::syncSoftBodyPhysicsColliderToBounds() {
   collider.friction = 0.15f;
   physics.registerSoftBodyCollider(id(), collider);
   Q_UNUSED(solver);
+}
+
+void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
+  auto& physics = ArtifactCore::PhysicsSystem::instance();
+  auto world = physics.getRigidWorld(id());
+  if (!world) {
+    world = physics.createRigidWorld(id());
+  }
+
+  const QRectF bounds = localBounds();
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+    return;
+  }
+
+  const float cx = static_cast<float>(bounds.center().x());
+  const float cy = static_cast<float>(bounds.center().y());
+  const float w = static_cast<float>(bounds.width());
+  const float h = static_cast<float>(bounds.height());
+  auto bodies = world->getBodies();
+  std::shared_ptr<ArtifactCore::RigidBody2D> body;
+  if (!bodies.empty()) {
+    body = bodies.front();
+    if (body) {
+      body->setTransform({cx, cy}, body->angle());
+      body->setLinearVelocity({0.0f, 0.0f});
+      body->setAngularVelocity(0.0f);
+    }
+  }
+  if (!body) {
+    body = world->addDynamicBox(cx, cy, w, h, 1.0f, 0.3f, 0.25f);
+  }
+  if (body) {
+    body->setLinearDamping(0.02f);
+    body->setAngularDamping(0.02f);
+    body->setFixedRotation(false);
+  }
 }
 
 QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4() const {
@@ -2782,6 +2847,9 @@ void ArtifactAbstractLayer::setPosition3D(const QVector3D &pos) {
   impl_->transform_.setPosition(time, pos.x(), pos.y());
   impl_->transform_.setPositionZ(time, pos.z());
   changed();
+  if (hasRigidBodyPhysics()) {
+    syncRigidBodyPhysicsToBounds();
+  }
 }
 
 QVector3D ArtifactAbstractLayer::rotation3D() const {
@@ -2794,6 +2862,9 @@ void ArtifactAbstractLayer::setRotation3D(const QVector3D &rot) {
   const auto time = currentTimelineTime(this);
   impl_->transform_.setRotation(time, rot.x());
   changed();
+  if (hasRigidBodyPhysics()) {
+    syncRigidBodyPhysicsToBounds();
+  }
 }
 
 QJsonObject ArtifactAbstractLayer::toJson() const {

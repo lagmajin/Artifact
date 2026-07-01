@@ -9,96 +9,61 @@ import Audio.Segment;
 
 namespace Artifact {
 
-// ============================
-// Waveshaping Functions
-// ============================
-
 float DistortionEffect::softClip(float x) {
-    // Tanh soft saturation - warm, musical clipping
     return std::tanh(x);
 }
 
 float DistortionEffect::hardClip(float x) {
-    // Digital hard clip at +/- 1.0
     if (x > 1.0f) return 1.0f;
     if (x < -1.0f) return -1.0f;
     return x;
 }
 
 float DistortionEffect::tubeSaturate(float x) {
-    // Asymmetric tube-style saturation
-    // Positive half: soft saturation, Negative half: harder compression
     if (x >= 0.0f) {
-        // Soft positive clip (tube glow)
         return 1.0f - std::exp(-x);
     } else {
-        // Harder negative clip (tube bias)
         float absX = -x;
         float sat = 1.0f - std::exp(-absX * 1.5f);
-        return -sat * 0.8f; // Asymmetric: negative side is slightly quieter
+        return -sat * 0.8f;
     }
 }
 
 float DistortionEffect::foldback(float x) {
-    // Wavefolding: folds the signal back when it exceeds +/- 1.0
-    // Creates complex harmonics, great for sound design
     while (x > 1.0f || x < -1.0f) {
-        if (x > 1.0f) {
-            x = 2.0f - x;
-        }
-        if (x < -1.0f) {
-            x = -2.0f - x;
-        }
+        if (x > 1.0f) { x = 2.0f - x; }
+        if (x < -1.0f) { x = -2.0f - x; }
     }
     return x;
 }
 
-float DistortionEffect::bitcrush(float x, float& holdState) {
-    // Bit-depth reduction
+float DistortionEffect::bitcrush(float x, float& /*holdState*/) {
     float levels = std::pow(2.0f, bitDepth_);
-    float crushed = std::round(x * levels) / levels;
-    return crushed;
+    return std::round(x * levels) / levels;
 }
 
-// ============================
-// Main Processing
-// ============================
+void DistortionEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment*) {
+    if (!enabled_ || segment.channelData.isEmpty()) return;
 
-ArtifactCore::AudioSegment DistortionEffect::process(const ArtifactCore::AudioSegment& input) {
-    if (!enabled_ || input.channelData.isEmpty()) {
-        return input;
-    }
-
-    ArtifactCore::AudioSegment output = input;
-
-    int numChannels = static_cast<int>(output.channelData.size());
-    int numSamples  = (numChannels > 0) ? static_cast<int>(output.channelData[0].size()) : 0;
-    if (numSamples == 0) return output;
+    int numChannels = static_cast<int>(segment.channelData.size());
+    int numSamples  = (numChannels > 0) ? static_cast<int>(segment.channelData[0].size()) : 0;
+    if (numSamples == 0) return;
 
     float outputGainLinear = std::pow(10.0f, outputGain_ / 20.0f);
-    float toneCoeff = tone_ * 0.8f; // Map 0..1 to LP amount (0 = bright, 1 = dark)
+    float toneCoeff = tone_ * 0.8f;
 
     for (int i = 0; i < numSamples; ++i) {
         for (int ch = 0; ch < numChannels; ++ch) {
-            float dry = input.channelData[ch][i];
+            float dry = segment.channelData[ch][i];
             float driven = dry * drive_;
             float shaped;
 
             switch (mode_) {
-                case Mode::SoftClip:
-                    shaped = softClip(driven);
-                    break;
-                case Mode::HardClip:
-                    shaped = hardClip(driven);
-                    break;
-                case Mode::Tube:
-                    shaped = tubeSaturate(driven);
-                    break;
-                case Mode::Foldback:
-                    shaped = foldback(driven);
-                    break;
+                case Mode::SoftClip: shaped = softClip(driven); break;
+                case Mode::HardClip: shaped = hardClip(driven); break;
+                case Mode::Tube:     shaped = tubeSaturate(driven); break;
+                case Mode::Foldback: shaped = foldback(driven); break;
                 case Mode::Bitcrush: {
-                    // Sample-rate reduction via sample-and-hold
                     holdCounter_ += 1.0f;
                     if (holdCounter_ >= downsample_) {
                         holdCounter_ = 0.0f;
@@ -108,27 +73,16 @@ ArtifactCore::AudioSegment DistortionEffect::process(const ArtifactCore::AudioSe
                     shaped = (ch == 0) ? holdL_ : holdR_;
                     break;
                 }
-                default:
-                    shaped = softClip(driven);
-                    break;
+                default: shaped = softClip(driven); break;
             }
 
-            // Post-distortion tone filter (one-pole LPF)
             float& toneState = (ch == 0) ? toneStateL_ : toneStateR_;
             toneState = toneState + toneCoeff * (shaped - toneState);
-            float toned = shaped - toneCoeff * toneState; // High-pass blend
-
-            // When tone = 0: bright (no filtering), tone = 1: dark (filtered)
             float filtered = shaped * (1.0f - tone_) + toneState * tone_;
 
-            // Dry/wet mix + output gain
-            float result = (dry * (1.0f - mix_) + filtered * mix_) * outputGainLinear;
-
-            output.channelData[ch][i] = result;
+            segment.channelData[ch][i] = (dry * (1.0f - mix_) + filtered * mix_) * outputGainLinear;
         }
     }
-
-    return output;
 }
 
 std::vector<AudioEffectParameter> DistortionEffect::getParameters() const {

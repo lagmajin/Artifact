@@ -440,7 +440,7 @@ public:
 
     void refreshPlaybackLevels(float leftRms, float rightRms) const
     {
-        // Distribute real-time levels to channel strips proportionally
+        // Per-strip: show local volume‑relative level (master bus gets real RMS)
         for (const auto& pair : channelStrips_) {
             auto* strip = pair.second.get();
             if (!strip) continue;
@@ -448,10 +448,9 @@ public:
                 strip->updateLevels(-60.0f, -60.0f);
                 continue;
             }
-            const float gain = volumeToMeterDb(strip->volume(), false);
-            strip->updateLevels(
-                std::clamp(leftRms + gain, -60.0f, 6.02f),
-                std::clamp(rightRms + gain, -60.0f, 6.02f));
+            // Map local volume [0..2] → dB; this is a reference level, not real RMS
+            const float ref = volumeToMeterDb(strip->volume(), false);
+            strip->updateLevels(ref, ref);
         }
 
         if (!masterBus_) {
@@ -461,6 +460,7 @@ public:
             masterBus_->updateLevels(-60.0f, -60.0f);
             return;
         }
+        // Master bus gets the actual renderer‑side measurement
         masterBus_->updateLevels(leftRms, rightRms);
     }
 };
@@ -551,12 +551,12 @@ void AudioMixer::clearChannelStrips()
     for (const auto& pair : impl_->channelStrips_) {
         removedIds.push_back(pair.first);
     }
-    impl_->channelStrips_.clear();
-    impl_->manualMuted_.clear();
-    impl_->soloMuted_.clear();
     for (const auto& id : removedIds) {
         Q_EMIT channelStripRemoved(id);
     }
+    impl_->channelStrips_.clear();
+    impl_->manualMuted_.clear();
+    impl_->soloMuted_.clear();
 }
 
 void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)

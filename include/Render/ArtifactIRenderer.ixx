@@ -344,6 +344,15 @@ public:
                            Diligent::ITextureView *outUAV,
                            Diligent::Uint32 width,
                            Diligent::Uint32 height) const;
+  bool applyTrackMatte(ArtifactCore::LayerBlendPipeline *pipeline,
+                       Diligent::ITextureView *layerSRV,
+                       Diligent::ITextureView *matteSrc0SRV,
+                       Diligent::ITextureView *matteSrc1SRV,
+                       Diligent::ITextureView *matteSrc2SRV,
+                       Diligent::ITextureView *outUAV,
+                       const ArtifactCore::MatteTrackParams &params,
+                       Diligent::Uint32 width,
+                       Diligent::Uint32 height) const;
 
   Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device() const;
   Diligent::RefCntAutoPtr<Diligent::IDeviceContext> immediateContext() const;

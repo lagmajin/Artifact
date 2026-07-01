@@ -234,6 +234,14 @@ export namespace Artifact {
   void setGeometry(FixedGeometry3D geometry);
  };
 
+ class ArtifactParametricCompositionLayerInitParams : public ArtifactLayerInitParams {
+ private:
+
+ public:
+  ArtifactParametricCompositionLayerInitParams();
+  ~ArtifactParametricCompositionLayerInitParams();
+ };
+
 };
 
 W_REGISTER_ARGTYPE(Artifact::ArtifactSolidLayerInitParams)

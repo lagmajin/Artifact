@@ -20,6 +20,8 @@ module;
 #include <QPointF>
 #include <QRectF>
 #include <QTransform>
+#include <cmath>
+#include <vector>
 
 module Artifact.Composition.Abstract;
 
@@ -530,22 +532,112 @@ Artifact::ResponsiveLayoutVariant makeDefaultResponsiveLayoutVariant(const QSize
    return layout;
  }
 
- float limiterGainForSegment(const AudioSegment& segment)
- {
-   constexpr float ceiling = 0.995f;
-   float peak = 0.0f;
-   for (const auto& channel : segment.channelData) {
-     for (const float sample : channel) {
-       peak = std::max(peak, std::abs(sample));
-       if (peak >= ceiling) {
-         break;
-       }
-     }
-   }
-   return peak > ceiling ? ceiling / peak : 1.0f;
- }
+  // Safety net: soft-clipper with Pade [2/2] tanh approximation
+  static void softClip(AudioSegment& segment) {
+    constexpr float knee = 0.85f;
+    constexpr float ceiling = 0.98f;
+    constexpr float invRange = 1.0f / (1.0f - knee);
+    for (auto& channel : segment.channelData) {
+      for (float& sample : channel) {
+        float absVal = std::abs(sample);
+        if (absVal > knee) {
+          float t = (absVal - knee) * invRange;
+          float t2 = t * t;
+          float fastTanh = t * (27.0f + t2) / (27.0f + 9.0f * t2);
+          sample = (sample >= 0.0f ? 1.0f : -1.0f) * (knee + (ceiling - knee) * fastTanh);
+        }
+      }
+    }
+  }
 
-} // namespace
+} // anonymous namespace
+
+// AudioLimiter (module-linkage, used by Impl for per-composition limiting state)
+// Look-ahead: delays the signal by lookAheadMs_ to let gain reduction start
+// before the transient reaches the output.
+class AudioLimiter {
+public:
+  AudioLimiter() : lookAheadMs_(3.0f) {}
+
+  void process(AudioSegment& segment, int sampleRate) {
+    if (sampleRate != sampleRate_) {
+      const int prevSR = sampleRate_;
+      sampleRate_ = sampleRate;
+      attackCoeff_ = 1.0f - std::exp(-1.0f / (attackMs_ * 0.001f * sampleRate_));
+      releaseCoeff_ = 1.0f - std::exp(-1.0f / (releaseMs_ * 0.001f * sampleRate_));
+      if (lookAheadMs_ > 0.0f) {
+        delaySize_ = std::max(1, static_cast<int>(lookAheadMs_ * 0.001f * sampleRate_));
+      } else {
+        delaySize_ = 0;
+      }
+      if (prevSR != sampleRate_) {
+        delayBuf_.clear();
+        delayPos_ = 0;
+      }
+    }
+    const int channels = segment.channelCount();
+    const int frames = segment.frameCount();
+
+    // Ensure delay buffer has per-channel storage
+    if (delaySize_ > 0 && static_cast<int>(delayBuf_.size()) < channels) {
+      delayBuf_.resize(channels);
+      for (auto& buf : delayBuf_) buf.assign(delaySize_, 0.0f);
+      delayPos_ = 0;
+    }
+
+    for (int i = 0; i < frames; ++i) {
+      // 1) Peak-detect from the FUTURE (current) sample
+      float peak = 0.0f;
+      for (int ch = 0; ch < channels; ++ch) {
+        peak = std::max(peak, std::abs(segment.channelData[ch][i]));
+      }
+
+      // 2) Compute desired gain, smooth envelope
+      const float desiredGain = (peak > threshold_) ? threshold_ / peak : 1.0f;
+      if (desiredGain < envelope_) {
+        envelope_ = envelope_ + (desiredGain - envelope_) * attackCoeff_;
+      } else {
+        envelope_ = envelope_ + (desiredGain - envelope_) * releaseCoeff_;
+      }
+
+      // 3) Delay line: write current sample, read delayed sample, apply gain
+      if (delaySize_ > 0 && !delayBuf_.empty()) {
+        for (int ch = 0; ch < channels && ch < static_cast<int>(delayBuf_.size()); ++ch) {
+          float cur = segment.channelData[ch][i];
+          float delayed = delayBuf_[ch][delayPos_];
+          segment.channelData[ch][i] = delayed * envelope_;
+          delayBuf_[ch][delayPos_] = cur;
+        }
+        delayPos_ = (delayPos_ + 1) % delaySize_;
+      } else {
+        for (int ch = 0; ch < channels; ++ch) {
+          segment.channelData[ch][i] *= envelope_;
+        }
+      }
+    }
+  }
+
+  void reset() {
+    envelope_ = 1.0f;
+    for (auto& buf : delayBuf_) {
+      std::fill(buf.begin(), buf.end(), 0.0f);
+    }
+    delayPos_ = 0;
+  }
+
+private:
+  int sampleRate_ = 0;
+  float threshold_ = 0.9f;
+  float lookAheadMs_ = 3.0f;
+  float attackMs_ = 1.0f;
+  float releaseMs_ = 100.0f;
+  float envelope_ = 1.0f;
+  float attackCoeff_ = 1.0f;
+  float releaseCoeff_ = 0.0f;
+  int delaySize_ = 0;
+  int delayPos_ = 0;
+  std::vector<std::vector<float>> delayBuf_;
+};
 
 void ArtifactAbstractComposition::changed()
 {
@@ -577,6 +669,7 @@ class ArtifactAbstractComposition::Impl {
   ResponsiveLayoutSet responsiveLayout_;
   bool looping_ = false;
   float playbackSpeed_ = 1.0f;
+  AudioLimiter limiter_;
   CompositionID id_;
   QString compositionNote_;
   FloatColor backgroundColor_ = { 0.47f, 0.47f, 0.47f, 1.0f };
@@ -1280,6 +1373,7 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                 for (int ch = 0; ch < chCount; ++ch) {
                     float* outData = outSegment.channelData[ch].data();
                     const float* layerData = layerSegment.channelData[ch].constData();
+                    __pragma(loop(ivdep))
                     for (int i = 0; i < fCount; ++i) {
                         outData[i] += layerData[i];
                     }
@@ -1299,14 +1393,8 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
     }
 
     if (hasAnyAudio) {
-        const float gain = limiterGainForSegment(outSegment);
-        if (gain < 1.0f) {
-            for (auto& channel : outSegment.channelData) {
-                for (float& sample : channel) {
-                    sample *= gain;
-                }
-            }
-        }
+        impl_->limiter_.process(outSegment, sampleRate);
+        softClip(outSegment);
     }
 
     return hasAnyAudio;

@@ -48,6 +48,9 @@ import ExposureEffect;
 import GrayscaleEffect;
 import Artifact.Effect.Rasterizer.Blur;
 import Artifact.Effect.Rasterizer.DropShadow;
+import Artifact.Effect.Rasterizer.InnerShadow;
+import Artifact.Effect.Rasterizer.Stroke;
+import Artifact.Effect.Rasterizer.Satin;
 import Artifact.Effect.Render.PBRMaterial;
 import Artifact.Effect.Spherize;
 import Artifact.Effect.Transform.Bend;
@@ -256,6 +259,24 @@ W_OBJECT_IMPL(ArtifactEffectService)
    auto effect = std::make_unique<DropShadowEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
    effect->setDisplayName(QStringLiteral("Drop Shadow"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("inner_shadow")) {
+   auto effect = std::make_unique<InnerShadowEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Inner Shadow"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("stroke")) {
+   auto effect = std::make_unique<StrokeEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Stroke"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("satin")) {
+   auto effect = std::make_unique<SatinEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Satin"));
    return effect;
   }
   if (effectId == QStringLiteral("glow")) {
@@ -521,6 +542,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("effect.colorcorrection.selectivecolor"), "Selective Color"});
   effects.push_back({EffectID("chroma_key"), "Chroma Key"});
   effects.push_back({EffectID("drop_shadow"), "Drop Shadow"});
+  effects.push_back({EffectID("inner_shadow"), "Inner Shadow"});
+  effects.push_back({EffectID("stroke"), "Stroke"});
+  effects.push_back({EffectID("satin"), "Satin"});
   effects.push_back({EffectID("directional_glow"), "Directional Glow / Streaks"});
   effects.push_back({EffectID("glow"), "Glow"});
   effects.push_back({EffectID("edge_bloom"), "Edge Bloom"});

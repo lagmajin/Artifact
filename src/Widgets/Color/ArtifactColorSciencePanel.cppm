@@ -36,6 +36,8 @@ module Artifact.Widgets.ColorSciencePanel;
 import Color.ScienceManager;
 import Color.LUT;
 import Artifact.Color.Palette;
+import Artifact.Color.OCIOManager;
+import Color.LUTWriter;
 namespace Artifact {
 
 class ArtifactColorSciencePanel::Impl {
@@ -61,6 +63,13 @@ public:
   QComboBox *inputSpaceCombo_ = nullptr;
   QComboBox *workingSpaceCombo_ = nullptr;
   QComboBox *outputSpaceCombo_ = nullptr;
+  // OCIO controls
+  QGroupBox *ocioGroup_ = nullptr;
+  QComboBox *ocioPresetCombo_ = nullptr;
+  QComboBox *ocioDisplayCombo_ = nullptr;
+  QComboBox *ocioViewCombo_ = nullptr;
+  QLabel *ocioStatusLabel_ = nullptr;
+  QPushButton *loadConfigBtn_ = nullptr;
   QLineEdit *lutFilterEdit_ = nullptr;
   QListWidget *lutList_ = nullptr;
   QLabel *lutPreviewLabel_ = nullptr;
@@ -182,6 +191,53 @@ void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
   lutLayout->addLayout(lutButtonsLayout);
 
   layout->addWidget(lutGroup);
+
+  // OCIO Config Group
+  auto *ocioGroup = new QGroupBox("OCIO Color Management");
+  ocioGroup_ = ocioGroup;
+  auto *ocioLayout = new QFormLayout(ocioGroup);
+
+  ocioPresetCombo_ = new QComboBox();
+  ocioLayout->addRow("Config Preset:", ocioPresetCombo_);
+
+  ocioDisplayCombo_ = new QComboBox();
+  ocioLayout->addRow("Display:", ocioDisplayCombo_);
+
+  ocioViewCombo_ = new QComboBox();
+  ocioLayout->addRow("View:", ocioViewCombo_);
+
+  loadConfigBtn_ = new QPushButton("Load OCIO Config...");
+  ocioLayout->addRow("", loadConfigBtn_);
+
+  ocioStatusLabel_ = new QLabel("No OCIO config loaded");
+  ocioStatusLabel_->setWordWrap(true);
+  ocioLayout->addRow("Status:", ocioStatusLabel_);
+
+  auto *exportLUTBtn = new QPushButton("Export LUT as .cube...");
+  ocioLayout->addRow("", exportLUTBtn);
+
+  QObject::connect(exportLUTBtn, &QPushButton::clicked, this, [this]() {
+    const auto* lut = impl_->manager_->currentLUT();
+    if (!lut || !lut->isValid()) {
+      return;
+    }
+    const QString path = QFileDialog::getSaveFileName(this, "Export LUT",
+        QString(), "Cube LUT (*.cube);;Discreet 3DL (*.3dl);;All Files (*)");
+    if (path.isEmpty()) return;
+
+    LUTFormat format = path.endsWith(".3dl", Qt::CaseInsensitive)
+        ? LUTFormat::Discreet3DL : LUTFormat::Cube;
+
+    QString error;
+    // Use rawData() + size().dimX from ColorLUT
+    if (!writeLUTToFile(path, lut->rawData(), lut->size().dimX, format, &error)) {
+      ocioStatusLabel_->setText(QStringLiteral("Export failed: %1").arg(error));
+    } else {
+      ocioStatusLabel_->setText(QStringLiteral("LUT exported to: %1").arg(path));
+    }
+  });
+
+  layout->addWidget(ocioGroup);
 
   // HDR Group
   auto *hdrGroup = new QGroupBox("HDR");
@@ -391,6 +447,49 @@ void ArtifactColorSciencePanel::Impl::updateUI() {
   seedDefaultConstraintPalette(paletteManager_);
 
   refreshLUTBrowser();
+
+  // OCIO section
+  auto* ocio = ArtifactOCIOManager::instance();
+  if (ocioPresetCombo_) {
+    ocioPresetCombo_->blockSignals(true);
+    const QString currentPreset = ocio ? ocio->activePresetName() : QString();
+    ocioPresetCombo_->clear();
+    if (ocio) {
+      ocioPresetCombo_->addItems(ocio->availablePresets());
+    }
+    if (!currentPreset.isEmpty()) {
+      ocioPresetCombo_->setCurrentText(currentPreset);
+    }
+    ocioPresetCombo_->blockSignals(false);
+  }
+  if (ocioDisplayCombo_ && ocio) {
+    ocioDisplayCombo_->blockSignals(true);
+    const QString currentDisplay = ocio->display();
+    ocioDisplayCombo_->clear();
+    ocioDisplayCombo_->addItems(ocio->availableDisplays());
+    if (!currentDisplay.isEmpty()) {
+      ocioDisplayCombo_->setCurrentText(currentDisplay);
+    }
+    ocioDisplayCombo_->blockSignals(false);
+  }
+  if (ocioViewCombo_ && ocio) {
+    ocioViewCombo_->blockSignals(true);
+    const QString currentView = ocio->view();
+    ocioViewCombo_->clear();
+    ocioViewCombo_->addItems(ocio->availableViews(ocio->display()));
+    if (!currentView.isEmpty()) {
+      ocioViewCombo_->setCurrentText(currentView);
+    }
+    ocioViewCombo_->blockSignals(false);
+  }
+  if (ocioStatusLabel_) {
+    if (ocio && ocio->hasActiveConfig()) {
+      ocioStatusLabel_->setText(QString("Active: %1 | Working: %2")
+          .arg(ocio->activePresetName(), ocio->workingSpace()));
+    } else {
+      ocioStatusLabel_->setText("No OCIO config loaded");
+    }
+  }
 }
 
 void ArtifactColorSciencePanel::Impl::connectSignals() {
@@ -519,6 +618,43 @@ void ArtifactColorSciencePanel::Impl::connectSignals() {
     snapResultLabel_->setText(
         QString("Snapped %1 -> %2").arg(input.name(QColor::HexArgb), snapped.name(QColor::HexArgb)));
   });
+
+  // OCIO connections
+  connect(ocioPresetCombo_, &QComboBox::currentTextChanged, this, [this](const QString& preset) {
+    if (auto* ocio = ArtifactOCIOManager::instance()) {
+      ocio->setActivePreset(preset);
+      ocio->syncToColorScienceManager(manager_);
+      updateUI();
+    }
+  });
+  connect(ocioDisplayCombo_, &QComboBox::currentTextChanged, this, [this](const QString& display) {
+    if (auto* ocio = ArtifactOCIOManager::instance()) {
+      ocio->setDisplay(display);
+    }
+  });
+  connect(ocioViewCombo_, &QComboBox::currentTextChanged, this, [this](const QString& view) {
+    if (auto* ocio = ArtifactOCIOManager::instance()) {
+      ocio->setView(view);
+    }
+  });
+  connect(loadConfigBtn_, &QPushButton::clicked, this, [this]() {
+    const QString path = QFileDialog::getOpenFileName(this, "Load OCIO Config",
+        QString(), "OCIO Config (*.ocio *.json);;All Files (*)");
+    if (!path.isEmpty()) {
+      if (auto* ocio = ArtifactOCIOManager::instance()) {
+        ocio->loadConfigFile(path);
+        ocio->syncToColorScienceManager(manager_);
+        updateUI();
+      }
+    }
+  });
+
+  // Listen for OCIO config changes
+  if (auto* ocio = ArtifactOCIOManager::instance()) {
+    connect(ocio, &ArtifactOCIOManager::configChanged, this, [this]() {
+      updateUI();
+    });
+  }
 }
 
 ArtifactColorScienceManager *

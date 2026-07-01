@@ -3,11 +3,13 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
+#include <array>
 export module Artifact.Render.FinalPostProcess;
 
 import Core.Composition.FinalEffect;
 import Graphics.GPUcomputeContext;
 import Graphics.Compute.LUT3DComputer;
+import Color.ColorSpace;
 
 export namespace Artifact {
 
@@ -28,6 +30,11 @@ public:
 
     /// Clear the active LUT.
     void clearLUT();
+
+    // OCIO view transform
+    void setViewTransformEnabled(bool enabled);
+    bool isViewTransformEnabled() const;
+    void setWorkingToDisplayMatrix(const float* matrix4x4); // 4x4 row-major matrix
 
     /// Apply post-processing to srcSRV, writing to dstUAV.
     /// If no LUT is active, this is a no-op (returns false).

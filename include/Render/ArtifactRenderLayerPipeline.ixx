@@ -50,6 +50,12 @@ export namespace Artifact
   ITextureView* layerRTV() const;
   ITextureView* layerFloatSRV() const;
   ITextureView* layerFloatUAV() const;
+  ITextureView* matteSourceSRV() const;
+  bool updateMatteSourceFromData(IDeviceContext* ctx,
+                                  const void* data,
+                                  Uint32 width,
+                                  Uint32 height,
+                                  Uint32 rowStride);
   Uint32 width() const;
   Uint32 height() const;
 

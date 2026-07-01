@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QApplication>
 #include <QMessageBox>
 #include <QScreen>
@@ -15,6 +15,7 @@ import Artifact.Layer.Light;
 import Artifact.Layer.Image;
 import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
+import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -144,6 +145,15 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.propertySummaryTitle = QStringLiteral("Summary · Precomp Layer");
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Precomp Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Nested Composition");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Container;
+    return descriptor;
+  }
+  if (dynamic_cast<ArtifactParametricCompositionLayer*>(layer.get())) {
+    descriptor.typeText = QStringLiteral("Parametric Comp Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Parametric");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Parametric Comp Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Parametric Comp Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Slot-based Composition");
     descriptor.badgeTone = LayerPresentationBadgeTone::Container;
     return descriptor;
   }

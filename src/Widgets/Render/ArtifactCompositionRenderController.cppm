@@ -8881,6 +8881,32 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       auto layerFloatSRV = renderPipeline.layerFloatSRV();
       auto layerFloatUAV = renderPipeline.layerFloatUAV();
 
+      // Pre-render matte source layers for GPU track matte
+      QHash<ArtifactCore::Id, QImage> matteSourceImages;
+      {
+        const int matteTW = static_cast<int>(std::ceil(rcw));
+        const int matteTH = static_cast<int>(std::ceil(rch));
+        for (const auto &layerForMatte : layers) {
+          if (!layerForMatte || !isLayerEffectivelyVisible(layerForMatte) ||
+              !layerForMatte->isActiveAt(currentFrame))
+            continue;
+          auto mattes = layerForMatte->matteReferences();
+          if (mattes.empty()) continue;
+          for (const auto &matteRef : mattes) {
+            if (!matteRef.enabled || matteRef.sourceLayerId.isNil()) continue;
+            if (matteSourceImages.contains(matteRef.sourceLayerId)) continue;
+            QImage matteImg = matteResolver(matteRef.sourceLayerId);
+            if (matteImg.isNull()) continue;
+            if (matteImg.size() != QSize(matteTW, matteTH)) {
+              matteImg = matteImg.scaled(matteTW, matteTH,
+                  Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            }
+            matteSourceImages.insert(matteRef.sourceLayerId,
+                matteImg.convertToFormat(QImage::Format_RGBA8888));
+          }
+        }
+      }
+
       // ==== オフスクリーン描画前の状態保存 ====
       const float origZoom = renderer_->getZoom();
       const FloatColor origClearColor = renderer_->getClearColor();
@@ -9105,6 +9131,74 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               convertedLayerToFloat ? layerFloatSRV : layerSRV;
           if (convertedLayerToFloat) {
             ++layerToFloatConvertCount;
+
+            // GPU Track Matte: apply matte to float layer before blend
+            auto mattes = layer->matteReferences();
+            if (!mattes.empty()) {
+              auto devCtx = renderer_->immediateContext();
+              bool allMatted = true;
+              for (const auto &matteRef : mattes) {
+                if (!matteRef.enabled || matteRef.sourceLayerId.isNil()) continue;
+                auto matteIt = matteSourceImages.constFind(matteRef.sourceLayerId);
+                if (matteIt == matteSourceImages.constEnd()) { allMatted = false; continue; }
+                const QImage &matteSrc = matteIt.value();
+                if (matteSrc.isNull()) { allMatted = false; continue; }
+
+                // Upload matte source QImage → GPU matteSource texture
+                const auto mw = static_cast<Diligent::Uint32>(matteSrc.width());
+                const auto mh = static_cast<Diligent::Uint32>(matteSrc.height());
+                const bool uploaded = renderPipeline.updateMatteSourceFromData(
+                    devCtx.RawPtr(), matteSrc.constBits(), mw, mh,
+                    static_cast<Diligent::Uint32>(matteSrc.bytesPerLine()));
+                if (!uploaded) { allMatted = false; continue; }
+
+                // Map ref.type + ref.invert → shader matte mode
+                // 0=Alpha, 1=Luma, 2=AlphaInverted, 3=LumaInverted
+                Diligent::Uint32 shaderMode = 0;
+                switch (matteRef.type) {
+                  case MatteType::Alpha:
+                    shaderMode = matteRef.invert ? 2u : 0u; break;
+                  case MatteType::Luma:
+                    shaderMode = matteRef.invert ? 3u : 1u; break;
+                  case MatteType::InverseAlpha:
+                    shaderMode = matteRef.invert ? 0u : 2u; break;
+                  case MatteType::InverseLuma:
+                    shaderMode = matteRef.invert ? 1u : 3u; break;
+                }
+
+                ArtifactCore::MatteTrackParams mtParams;
+                mtParams.matteCount = 1;
+                mtParams.matteMode0 = shaderMode;
+                mtParams.stackMode = 0;  // Add (single-matte case, unused)
+                mtParams.lumaMode = 0;   // Rec.601
+                mtParams.opacity = 1.0f;
+
+                const bool matteOk = renderer_->applyTrackMatte(
+                    blendPipeline_.get(),
+                    layerFloatSRV,
+                    renderPipeline.matteSourceSRV(),
+                    nullptr, nullptr,
+                    tempUAV,
+                    mtParams,
+                    renderPipeline.width(),
+                    renderPipeline.height());
+                if (!matteOk) { allMatted = false; continue; }
+
+                // Copy matted result from temp → layerFloat for blend
+                Diligent::CopyTextureAttribs copyAttrs = {};
+                copyAttrs.pSrcTexture = tempUAV->GetTexture();
+                copyAttrs.SrcTextureTransitionMode =
+                    Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+                copyAttrs.pDstTexture = layerFloatUAV->GetTexture();
+                copyAttrs.DstTextureTransitionMode =
+                    Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+                devCtx->CopyTexture(copyAttrs);
+              }
+              if (!allMatted) {
+                qWarning() << "[CompositionView] GPU track matte partial/failure for"
+                           << layer->layerName();
+              }
+            }
           }
           if (!convertedLayerToFloat) {
             qWarning() << "[CompositionView] layer-to-float conversion failed; "

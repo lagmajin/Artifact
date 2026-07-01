@@ -2671,6 +2671,25 @@ bool ArtifactIRenderer::convertLayerToFloat(
  }
  return pipeline->convertLayerToFloat(ctx, srcSRV, outUAV, width, height);
 }
+bool ArtifactIRenderer::applyTrackMatte(
+    ArtifactCore::LayerBlendPipeline *pipeline,
+    Diligent::ITextureView *layerSRV,
+    Diligent::ITextureView *matteSrc0SRV,
+    Diligent::ITextureView *matteSrc1SRV,
+    Diligent::ITextureView *matteSrc2SRV,
+    Diligent::ITextureView *outUAV,
+    const ArtifactCore::MatteTrackParams &params,
+    Diligent::Uint32 width,
+    Diligent::Uint32 height) const
+{
+ auto ctx = impl_->deviceManager_.immediateContext();
+ if (!pipeline || !ctx) {
+  return false;
+ }
+ return pipeline->applyTrackMatte(ctx, layerSRV, matteSrc0SRV,
+                                  matteSrc1SRV, matteSrc2SRV,
+                                  outUAV, params, width, height);
+}
  Diligent::RefCntAutoPtr<Diligent::IRenderDevice> ArtifactIRenderer::device() const
  { return impl_->deviceManager_.device(); }
  Diligent::RefCntAutoPtr<Diligent::IDeviceContext> ArtifactIRenderer::immediateContext() const

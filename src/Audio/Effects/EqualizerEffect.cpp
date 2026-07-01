@@ -13,62 +13,56 @@ import Artifact.Audio.Effects.Base;
 namespace Artifact {
 
 EqualizerEffect::EqualizerEffect() : sampleRate_(44100.0f) {
-    // デフォルトのバンド設定
     bands_ = {
-        {60.0f, 0.0f, 1.0f},    // Low
-        {250.0f, 0.0f, 1.0f},   // Low-Mid
-        {1000.0f, 0.0f, 1.0f},  // Mid
-        {4000.0f, 0.0f, 1.0f},  // High-Mid
-        {10000.0f, 0.0f, 1.0f}  // High
+        {60.0f, 0.0f, 1.0f},
+        {250.0f, 0.0f, 1.0f},
+        {1000.0f, 0.0f, 1.0f},
+        {4000.0f, 0.0f, 1.0f},
+        {10000.0f, 0.0f, 1.0f}
     };
 }
 
-void EqualizerEffect::process(float* buffer, int samples, int channels) {
-    if (!buffer || samples <= 0 || channels <= 0) {
-        return;
-    }
+void EqualizerEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment*) {
+    if (!enabled_) return;
 
-    // Channel processing
+    int channels = segment.channelCount();
+    int frames = segment.frameCount();
+    if (frames <= 0 || channels <= 0) return;
+
     for (int ch = 0; ch < channels; ++ch) {
-        std::vector<float> channelData(samples);
+        if (ch >= static_cast<int>(segment.channelData.size())) break;
+        auto& channelData = segment.channelData[ch];
 
-        // Extract channel data
-        for (int i = 0; i < samples; ++i) {
-            channelData[i] = buffer[i * channels + ch];
-        }
-
-        // 各バンドのフィルタを適用
         for (const auto& band : bands_) {
             if (std::abs(band.gain) > 0.001f) {
-                applyBandFilter(channelData, band);
-            }
-        }
+                float a0, a1, a2, b0, b1, b2;
+                calculateBiquadCoefficients(band.frequency, band.gain, band.q,
+                                           a0, a1, a2, b0, b1, b2);
 
-        // Write back channel data
-        for (int i = 0; i < samples; ++i) {
-            buffer[i * channels + ch] = channelData[i];
+                float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
+                for (int i = 0; i < frames; ++i) {
+                    float x0 = channelData[i];
+                    float y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+                    channelData[i] = y0;
+                    x2 = x1; x1 = x0;
+                    y2 = y1; y1 = y0;
+                }
+            }
         }
     }
 }
 
 std::vector<AudioEffectParameter> EqualizerEffect::getParameters() const {
     std::vector<AudioEffectParameter> params;
-
-    const std::vector<std::string> bandNames = {
-        "Low", "LowMid", "Mid", "HighMid", "High"
-    };
-
+    const std::vector<std::string> bandNames = {"Low", "LowMid", "Mid", "HighMid", "High"};
     for (size_t i = 0; i < bands_.size() && i < bandNames.size(); ++i) {
-        AudioEffectParameter param;
-        param.name = "gain_" + bandNames[i];
-        param.displayName = bandNames[i] + " Gain";
-        param.type = AudioEffectParameterType::Float;
-        param.minValue = -12.0f;
-        param.maxValue = 12.0f;
-        param.defaultValue = 0.0f;
-        params.push_back(param);
+        params.push_back({
+            "gain_" + bandNames[i],
+            bandNames[i] + " Gain",
+            AudioEffectParameterType::Float,
+            -12.0f, 12.0f, 0.0f
+        });
     }
-    
     return params;
 }
 
@@ -89,55 +83,8 @@ float EqualizerEffect::getParameter(const std::string& name) const {
     return 0.0f;
 }
 
-void EqualizerEffect::applyBandFilter(std::vector<float>& channelData, const Band& band) {
-    if (channelData.empty() || std::abs(band.gain) < 0.001f) {
-        return;
-    }
-
-    float a0, a1, a2, b0, b1, b2;
-    calculateBiquadCoefficients(band.frequency, band.gain, band.q, 
-                               a0, a1, a2, b0, b1, b2);
-
-    // バイクアッドフィルタの適用
-    float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
-    
-    for (size_t i = 0; i < channelData.size(); ++i) {
-        float x0 = channelData[i];
-        float y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-        
-        channelData[i] = y0;
-        
-        x2 = x1;
-        x1 = x0;
-        y2 = y1;
-        y1 = y0;
-    }
+std::unique_ptr<ArtifactAbstractAudioEffect> createEqualizerEffect() {
+    return std::make_unique<EqualizerEffect>();
 }
-
-void EqualizerEffect::calculateBiquadCoefficients(float frequency, float gain, float q,
-                                                float& a0, float& a1, float& a2,
-                                                float& b0, float& b1, float& b2) {
-    const float sampleRate = static_cast<float>(sampleRate_);
-    const float omega = 2.0f * M_PI * frequency / sampleRate;
-    const float sinOmega = std::sin(omega);
-    const float cosOmega = std::cos(omega);
-    const float alpha = sinOmega / (2.0f * q);
-    
-    const float A = std::pow(10.0f, gain / 40.0f);
-    
-    b0 = 1.0f + alpha * A;
-    b1 = -2.0f * cosOmega;
-    b2 = 1.0f - alpha * A;
-    a0 = 1.0f + alpha / A;
-    a1 = -2.0f * cosOmega;
-    a2 = 1.0f - alpha / A;
-    
-    // 正規化
-    b0 /= a0;
-    b1 /= a0;
-         b2 /= a0;
-         a1 /= a0;
-         a2 /= a0;
-    }
 
 } // namespace Artifact

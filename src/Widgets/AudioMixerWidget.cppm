@@ -16,6 +16,13 @@ module;
 #include <QFont>
 #include <QPalette>
 #include <QColor>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QDoubleSpinBox>
+#include <QComboBox>
+#include <QJsonObject>
+#include <QJsonDocument>
 #include <cmath>
 #include <wobjectimpl.h>
 
@@ -25,6 +32,8 @@ import Audio.Bus;
 import Audio.Mixer;
 import Artifact.VST.Effect;
 import Artifact.VST.Host;
+import Artifact.Audio.Effects.Manager;
+import Artifact.Audio.Effects.Base;
 
 namespace Artifact {
 W_OBJECT_IMPL(AudioEffectSlotWidget)
@@ -66,39 +75,141 @@ void AudioEffectSlotWidget::paintEvent(QPaintEvent* event) {
     painter.drawText(rect().adjusted(5, 0, -5, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
 }
 
-void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton) {
-        QMenu menu(this);
-        
-        bool hasEffect = (bus_ && slotIndex_ < bus_->getEffectCount());
+// Helper: build parameter editor dialog
+static QDialog* createParameterEditor(const std::string& effectName,
+    std::shared_ptr<ArtifactCore::AudioEffect> effect, QWidget* parent) {
 
-        if (!hasEffect) {
-            menu.addAction("Insert VST Effect...", [this]() {
-                // ここではデバッグ用に簡易的な VSTEffect を追加するロジック
-                auto vst = std::make_shared<Artifact::VSTEffect>();
-                // 本来はファイルダイアログ等で path を選択
-                bus_->addEffect(vst);
-                update();
+    auto* dlg = new QDialog(parent);
+    dlg->setWindowTitle(QString::fromStdString(effectName) + " Parameters");
+    dlg->setMinimumWidth(320);
+
+    auto* layout = new QVBoxLayout(dlg);
+    auto* form = new QFormLayout();
+
+    // Try new ArtifactAbstractAudioEffect interface first
+    auto absEffect = dynamic_cast<Artifact::ArtifactAbstractAudioEffect*>(effect.get());
+    if (absEffect) {
+        auto newParams = absEffect->getParameters();
+        for (const auto& p : newParams) {
+            std::string pName = p.name;
+            std::string pDisplay = p.displayName;
+            if (p.type == Artifact::AudioEffectParameterType::Bool) {
+                auto* cb = new QComboBox();
+                cb->addItem("Off");
+                cb->addItem("On");
+                cb->setCurrentIndex(absEffect->getParameter(pName) > 0.5f ? 1 : 0);
+                QObject::connect(cb, &QComboBox::currentIndexChanged, [effect = absEffect, pName](int idx) {
+                    effect->setParameter(pName, idx > 0 ? 1.0f : 0.0f);
+                });
+                form->addRow(QString::fromStdString(pDisplay), cb);
+            } else {
+                auto* spin = new QDoubleSpinBox();
+                spin->setRange(p.minValue, p.maxValue);
+                spin->setDecimals(1);
+                spin->setValue(absEffect->getParameter(pName));
+                QObject::connect(spin, &QDoubleSpinBox::valueChanged, [effect = absEffect, pName](double val) {
+                    effect->setParameter(pName, static_cast<float>(val));
+                });
+                form->addRow(QString::fromStdString(pDisplay), spin);
+            }
+        }
+    } else {
+        // Fall back to legacy EffectParameter interface
+        auto legacyParams = effect->getParameters();
+        for (const auto& p : legacyParams) {
+            std::string pId = p.id;
+            std::string pDisplay = p.displayName;
+            auto* spin = new QDoubleSpinBox();
+            spin->setRange(p.minValue, p.maxValue);
+            spin->setDecimals(1);
+            spin->setValue(p.value);
+            QObject::connect(spin, &QDoubleSpinBox::valueChanged, [effect, pId](double val) {
+                effect->setParameterValue(pId, static_cast<float>(val));
             });
+            form->addRow(QString::fromStdString(pDisplay), spin);
+        }
+    }
+
+    layout->addLayout(form);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::close);
+    layout->addWidget(buttons);
+
+    return dlg;
+}
+
+void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
+    if (event->button() != Qt::LeftButton) return;
+
+    QMenu menu(this);
+    bool hasEffect = (bus_ && slotIndex_ < bus_->getEffectCount());
+
+    if (!hasEffect) {
+        // Submenu: Native Effects (from Manager)
+        QMenu* nativeMenu = menu.addMenu("Insert Native Effect");
+        auto& mgr = Artifact::ArtifactAudioEffectManager::instance();
+        auto available = mgr.getAvailableEffects();
+        if (available.empty()) {
+            nativeMenu->addAction("(no effects registered)")->setEnabled(false);
         } else {
-            auto effect = bus_->getEffect(slotIndex_);
-            menu.addAction(effect->isBypassed() ? "Enable" : "Bypass", [this, effect]() {
-                effect->setBypass(!effect->isBypassed());
-                update();
-            });
-            menu.addAction("Remove", [this]() {
-                bus_->removeEffect(slotIndex_);
-                update();
-            });
-            if (auto vst = std::dynamic_pointer_cast<Artifact::VSTEffect>(effect)) {
-                menu.addAction("Open Editor", [this, vst]() {
-                    vst->openEditor(nullptr); // 実装に応じて親ウィンドウを渡す
+            for (const auto& id : available) {
+                // Create a temporary effect just to get the display name
+                auto tempEffect = mgr.createEffect(id);
+                QString displayName = tempEffect
+                    ? QString::fromStdString(tempEffect->getName())
+                    : QString::fromStdString(id);
+                nativeMenu->addAction(displayName, [this, idCopy = id]() {
+                    auto effect = Artifact::ArtifactAudioEffectManager::instance().createEffect(idCopy);
+                    if (effect) {
+                        std::shared_ptr<ArtifactCore::AudioEffect> shared = std::move(effect);
+                        bus_->addEffect(shared);
+                        update();
+                    }
                 });
             }
         }
-        
-        menu.exec(mapToGlobal(event->pos()));
+
+        menu.addAction("Insert VST Effect...", [this]() {
+            auto vst = std::make_shared<Artifact::VSTEffect>();
+            bus_->addEffect(vst);
+            update();
+        });
+    } else {
+        auto effect = bus_->getEffect(slotIndex_);
+        menu.addAction(effect->isBypassed() ? "Enable" : "Bypass", [this, effect]() {
+            effect->setBypass(!effect->isBypassed());
+            update();
+        });
+        menu.addAction("Remove", [this]() {
+            bus_->removeEffect(slotIndex_);
+            update();
+        });
+
+        // Parameter editor (available for both legacy and new effects)
+        bool hasParams = false;
+        if (dynamic_cast<Artifact::ArtifactAbstractAudioEffect*>(effect.get())) {
+            hasParams = true;
+        } else if (!effect->getParameters().empty()) {
+            hasParams = true;
+        }
+
+        if (hasParams) {
+            menu.addAction("Edit Parameters...", [this, effect]() {
+                auto* dlg = createParameterEditor(effect->getName(), effect, this);
+                dlg->setAttribute(Qt::WA_DeleteOnClose);
+                dlg->show();
+            });
+        }
+
+        if (auto vst = std::dynamic_pointer_cast<Artifact::VSTEffect>(effect)) {
+            menu.addAction("Open Editor", [this, vst]() {
+                vst->openEditor(nullptr);
+            });
+        }
     }
+
+    menu.exec(mapToGlobal(event->pos()));
 }
 
 // ============================================================================

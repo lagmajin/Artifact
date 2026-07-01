@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 #include <QJsonObject>
 #include <QList>
@@ -34,6 +34,7 @@ import Artifact.Layers.Model3D;
 import Artifact.Layer.Composition;
 import Artifact.Layer.MaterialContainer;
 import Artifact.Layer.SandSim2D;
+import Artifact.Layer.ParametricComposition;
 //import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -178,6 +179,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
     break;
   case LayerType::SDF:
    ptr = ArtifactAbstractLayerPtr(new ArtifactSDFLayer());
+   break;
+  case LayerType::ParametricComposition:
+   ptr = ArtifactAbstractLayerPtr(new ArtifactParametricCompositionLayer());
    break;
   case LayerType::Construction:
    ptr = ArtifactAbstractLayerPtr(new ArtifactConstructionLayer());

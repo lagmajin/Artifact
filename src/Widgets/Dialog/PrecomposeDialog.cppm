@@ -127,7 +127,7 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
             pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
             lbl->setPalette(pal);
         }
-        lbl->setFixedWidth(145);
+        lbl->setMinimumWidth(100);
         impl_->nameEdit = new QLineEdit(u8"プリコンプ 1", row);
         rl->addWidget(lbl);
         rl->addWidget(impl_->nameEdit, 1);

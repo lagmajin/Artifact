@@ -99,6 +99,7 @@ namespace Artifact
   TextureBundle temp_;
   TextureBundle layer_;
   TextureBundle layerFloat_;
+  TextureBundle matteSource_;
   Uint32 width_ = 0;
   Uint32 height_ = 0;
   TEXTURE_FORMAT format_ = TEX_FORMAT_UNKNOWN;
@@ -178,6 +179,7 @@ namespace Artifact
   impl_->temp_ = {};
   impl_->layer_ = {};
   impl_->layerFloat_ = {};
+  impl_->matteSource_ = {};
   impl_->width_ = 0;
   impl_->height_ = 0;
   impl_->format_ = TEX_FORMAT_UNKNOWN;
@@ -188,11 +190,12 @@ namespace Artifact
  {
  return impl_->device_ != nullptr && impl_->width_ > 0 && impl_->height_ > 0 &&
          impl_->accum_.texture && impl_->temp_.texture && impl_->layer_.texture &&
-         impl_->layerFloat_.texture &&
+         impl_->layerFloat_.texture && impl_->matteSource_.texture &&
          impl_->accum_.srv && impl_->accum_.uav && impl_->accum_.rtv &&
          impl_->temp_.srv && impl_->temp_.uav && impl_->temp_.rtv &&
          impl_->layer_.srv && impl_->layer_.rtv &&
-         impl_->layerFloat_.srv && impl_->layerFloat_.uav;
+         impl_->layerFloat_.srv && impl_->layerFloat_.uav &&
+         impl_->matteSource_.srv;
  }
 
  bool RenderPipeline::renderComposition(
@@ -227,6 +230,42 @@ namespace Artifact
  ITextureView* RenderPipeline::layerRTV() const { return impl_->layer_.rtv; }
  ITextureView* RenderPipeline::layerFloatSRV() const { return impl_->layerFloat_.srv; }
  ITextureView* RenderPipeline::layerFloatUAV() const { return impl_->layerFloat_.uav; }
+ ITextureView* RenderPipeline::matteSourceSRV() const { return impl_->matteSource_.srv; }
+ bool RenderPipeline::updateMatteSourceFromData(IDeviceContext* ctx,
+                                                 const void* data,
+                                                 Uint32 width,
+                                                 Uint32 height,
+                                                 Uint32 rowStride)
+ {
+  if (!ctx || !data || !impl_->matteSource_.texture) return false;
+  if (width == 0 || height == 0) return false;
+
+  const auto& texDesc = impl_->matteSource_.texture->GetDesc();
+  if (texDesc.Width != width || texDesc.Height != height) {
+   if (!createTextureBundle(impl_->device_, width, height,
+                            RenderConfig::MainRTVFormat,
+                            BIND_SHADER_RESOURCE,
+                            "RenderPipeline.MatteSource", impl_->matteSource_))
+   {
+    qWarning() << "[RenderPipeline] Matte source reallocation failed";
+    return false;
+   }
+  }
+
+  Box dstBox = {};
+  dstBox.MinX = 0; dstBox.MaxX = width;
+  dstBox.MinY = 0; dstBox.MaxY = height;
+  dstBox.MinZ = 0; dstBox.MaxZ = 1;
+
+  TextureSubResData subRes = {};
+  subRes.pData = data;
+  subRes.Stride = rowStride;
+
+  ctx->UpdateTexture(impl_->matteSource_.texture, 0, 0, dstBox, subRes,
+                     RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                     RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  return true;
+ }
  Uint32 RenderPipeline::width() const { return impl_->width_; }
  Uint32 RenderPipeline::height() const { return impl_->height_; }
 
@@ -261,6 +300,15 @@ namespace Artifact
   if (!createTextureBundle(device, width, height, format,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
                            "RenderPipeline.LayerFloat", impl_->layerFloat_))
+  {
+   return false;
+  }
+
+  // Matte source: 8-bit RGBA (non-sRGB) for CPU-uploaded matte source layer content.
+  // Non-sRGB format preserves QImage byte values as-is for correct luma calculation.
+  if (!createTextureBundle(device, width, height, TEX_FORMAT_RGBA8_UNORM,
+                           BIND_SHADER_RESOURCE,
+                           "RenderPipeline.MatteSource", impl_->matteSource_))
   {
    return false;
   }

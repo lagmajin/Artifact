@@ -561,20 +561,31 @@ public:
 
         double currentEngineTime = static_cast<double>(currentFrame) / safeFrameRate;
         double diff = audioTime - currentEngineTime;
-        
-        // 33ms 以上ずれていたら「ベース時間」自体を書き換えて、滑らかに追従させる
-        // これにより、毎ループ +1 フレームするのではなく、絶対時間へ収束させる
-        if (std::abs(diff) > 0.033) {
-            ++audioClockCorrectionCount_;
-            qWarning() << "[PlaybackEngine][AudioClock] correcting engine timeline"
-                       << "count=" << audioClockCorrectionCount_
-                       << "audioTime=" << audioTime
-                       << "engineTime=" << currentEngineTime
-                       << "diff=" << diff
-                       << "currentFrame=" << currentFrame;
-            auto now = std::chrono::steady_clock::now();
-            playbackStartTime_ = now;
-            playbackStartFrame_ = static_cast<int64_t>(std::round(audioTime * safeFrameRate));
+
+        // Small drift (1–33 ms): shift playbackStartFrame_ gradually so the engine
+        // timeline converges to audio time without audible jumps.
+        // Large drift (>33 ms): snap to audio time immediately.
+        if (std::abs(diff) > 0.001) {
+            if (std::abs(diff) > 0.033) {
+                ++audioClockCorrectionCount_;
+                qWarning() << "[PlaybackEngine][AudioClock] hard-correcting engine timeline"
+                           << "count=" << audioClockCorrectionCount_
+                           << "audioTime=" << audioTime
+                           << "engineTime=" << currentEngineTime
+                           << "diff=" << diff
+                           << "currentFrame=" << currentFrame;
+                auto now = std::chrono::steady_clock::now();
+                playbackStartTime_ = now;
+                playbackStartFrame_ = static_cast<int64_t>(std::round(audioTime * safeFrameRate));
+            } else {
+                // Gradual correction: shift start frame by a fraction of the drift
+                // to converge over ~10 refresh cycles (≈100 ms).
+                constexpr double correctionGain = 0.1;
+                int64_t shift = static_cast<int64_t>(std::round(diff * safeFrameRate * correctionGain));
+                if (shift != 0) {
+                    playbackStartFrame_ += shift;
+                }
+            }
         }
     }
     

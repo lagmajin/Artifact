@@ -457,7 +457,8 @@ private slots:
                 int chunkSize = std::min(available, 512);
                 chunk.channelData.resize(seg.channelData.size());
                 for (int ch = 0; ch < static_cast<int>(seg.channelData.size()); ++ch) {
-                    chunk.channelData[ch] = seg.channelData[ch].mid(currentSegmentOffset_, chunkSize);
+                    const auto& srcVec = seg.channelData[ch];
+                chunk.channelData[ch] = QVector<float>(srcVec.constData() + currentSegmentOffset_, chunkSize);
                 }
                 renderer_->enqueue(chunk);
             }

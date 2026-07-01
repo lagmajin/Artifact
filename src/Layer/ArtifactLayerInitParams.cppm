@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 
 
@@ -303,6 +303,16 @@ LayerType ArtifactLayerInitParams::layerType() const
  }
 
  ArtifactCompositionBackgroundLayerInitParams::~ArtifactCompositionBackgroundLayerInitParams()
+ {
+
+ }
+ ArtifactParametricCompositionLayerInitParams::ArtifactParametricCompositionLayerInitParams()
+     :ArtifactLayerInitParams(UniString("Parametric Composition"), LayerType::ParametricComposition)
+ {
+
+ }
+
+ ArtifactParametricCompositionLayerInitParams::~ArtifactParametricCompositionLayerInitParams()
  {
 
  }

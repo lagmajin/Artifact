@@ -1691,10 +1691,6 @@ private:
 
   void updateVolumePresentation(const float volume) {
     volumeValueLabel_->setText(volumeToDisplayText(volume));
-    if (draggingVolume_ && meterWidget_) {
-      const float db = volumeToMeterDb(volume);
-      meterWidget_->setLevels(db, db);
-    }
   }
 
   void commitPendingVolume() {

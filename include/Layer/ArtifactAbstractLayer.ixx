@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 #include <memory>
 #include <typeindex>
@@ -124,7 +124,8 @@ enum class LayerType {
   MaterialContainer = 21,     // 複数素材を保持する配列型レイヤー
   FormParticle = 22,          // 独立した Form 風グリッド粒子レイヤー
   Procedural3D = 23,          // Terrain / Path Tube procedural source
-  SandSim2D = 24              // 2D falling-sand cellular automaton
+  SandSim2D = 24,              // 2D falling-sand cellular automaton
+  ParametricComposition = 25   // Parametric composition with slots
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -340,10 +341,14 @@ public:
   QMatrix4x4 getGlobalTransform4x4() const;
   QMatrix4x4 getLocalTransform4x4() const;
   bool hasSoftBodyPhysics() const;
+  bool hasRigidBodyPhysics() const;
   void enableSoftBodyPhysics();
   void enableSoftBodyPhysicsGrid(int columns = 6, int rows = 6, float stiffness = 1.0f);
   void disableSoftBodyPhysics();
   void syncSoftBodyPhysicsColliderToBounds();
+  void enableRigidBodyPhysics();
+  void disableRigidBodyPhysics();
+  void syncRigidBodyPhysicsToBounds();
   const ArtifactCore::FractureState& fractureState() const;
   const std::vector<ArtifactCore::FractureShardMotion>& fractureShardMotions() const;
   void resetFractureState();

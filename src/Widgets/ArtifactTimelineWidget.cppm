@@ -454,12 +454,12 @@ QString audioWaveformSignatureForLayer(const ArtifactAbstractLayer &layer,
 std::optional<CachedAudioWaveform> buildAudioWaveformForLayer(
     ArtifactAbstractLayer &layer,
     const double fps,
-    const int waveformBins = 128) {
+    const int waveformBins = 512) {
   if (!layer.hasAudio() || fps <= 0.0) {
     return std::nullopt;
   }
 
-  const int bins = std::clamp(waveformBins, 64, 256);
+  const int bins = std::clamp(waveformBins, 16, 4096);
   CachedAudioWaveform cached;
   cached.signature = audioWaveformSignatureForLayer(layer, fps);
 
@@ -569,10 +569,10 @@ bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
 
         const auto keyframes = property->getKeyFrames();
         if (keyframes.empty()) {
-          continue;
+          // No keyframes yet - will show flat line from current value
+        } else {
+          property->clearKeyFrames();
         }
-
-        property->clearKeyFrames();
         for (const auto &keyframe : keyframes) {
           const int64_t oldFrame = keyframe.time.rescaledTo(frameScale);
           const int64_t newFrame =
@@ -2669,9 +2669,7 @@ CurveEditorPayload collectCurveEditorPayload(
         }
 
         const auto keyframes = property->getKeyFrames();
-        if (keyframes.empty()) {
-          continue;
-        }
+        const bool hasKeyframes = !keyframes.empty();
 
         CurveTrack track;
         track.name = QStringLiteral("%1 / %2")
@@ -2691,6 +2689,18 @@ CurveEditorPayload collectCurveEditorPayload(
         interpolations.reserve(static_cast<int>(keyframes.size()));
 
         bool anyNumeric = false;
+        if (!hasKeyframes) {
+          // Show flat line at current value
+          const QVariant curVal = property->value();
+          if (curVal.canConvert<double>()) {
+            const qint64 startFrame = composition->frameRange().start().framePosition();
+            const qint64 endFrame = composition->frameRange().end().framePosition();
+            const double val = curVal.toDouble();
+            frames.push_back(startFrame); values.push_back(val); interpolations.push_back(ArtifactCore::InterpolationType::Linear);
+            frames.push_back(endFrame); values.push_back(val); interpolations.push_back(ArtifactCore::InterpolationType::Linear);
+            anyNumeric = true;
+          }
+        }
         for (const auto& keyframe : keyframes) {
           const qint64 frame = keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)));
           const QVariant value = keyframe.value;
@@ -2713,9 +2723,9 @@ CurveEditorPayload collectCurveEditorPayload(
           curveKey.frame = frames[i];
           curveKey.value = static_cast<float>(values[i]);
           curveKey.smooth = interpolations[i] == ArtifactCore::InterpolationType::Bezier;
-          const auto& sourceKeyframe = keyframes[static_cast<size_t>(i)];
+          const auto& sourceKeyframe = hasKeyframes ? keyframes[static_cast<size_t>(i)] : ArtifactCore::KeyFrame();
 
-          if (i > 0 && keyframes[static_cast<size_t>(i - 1)].interpolation ==
+          if (hasKeyframes && i > 0 && keyframes[static_cast<size_t>(i - 1)].interpolation ==
                            ArtifactCore::InterpolationType::Bezier) {
             const auto& prevKeyframe = keyframes[static_cast<size_t>(i - 1)];
             const double dt = std::max(

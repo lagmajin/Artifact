@@ -56,6 +56,14 @@ public:
                ITextureView* dstUAV,
                int width, int height)
     {
+        // Apply working-to-display view transform (pre-LUT)
+        if (viewTransformEnabled_ && srcSRV && dstUAV) {
+            // For now, this is a metadata pass. The actual matrix-based conversion
+            // is applied in the composition render controller's CPU path.
+            // GPU shader-based view transform will be added in a later phase.
+            if (!hasLUT_) return true;
+        }
+
         if (!hasLUT_ || !pContext || !srcSRV || !dstUAV) {
             return false;
         }
@@ -66,10 +74,20 @@ public:
 
     bool hasActiveLUT() const { return hasLUT_; }
 
+    void setViewTransformEnabled(bool enabled) { viewTransformEnabled_ = enabled; }
+    bool isViewTransformEnabled() const { return viewTransformEnabled_; }
+    void setWorkingToDisplayMatrix(const float* m) {
+        if (m) std::memcpy(workingToDisplayMatrix_.data(), m, 16 * sizeof(float));
+    }
+
 private:
     GpuContext& context_;
     LUT3DGPUComputer lutComputer_;
     bool hasLUT_ = false;
+    bool viewTransformEnabled_ = false;
+    std::array<float, 16> workingToDisplayMatrix_ = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    ColorSpace workingSpace_ = ColorSpace::Linear;
+    ColorSpace displaySpace_ = ColorSpace::sRGB;
 };
 
 ArtifactFinalPostProcess::ArtifactFinalPostProcess(GpuContext& ctx)
@@ -105,6 +123,21 @@ bool ArtifactFinalPostProcess::apply(IDeviceContext* pContext,
 bool ArtifactFinalPostProcess::hasActiveLUT() const
 {
     return impl_->hasActiveLUT();
+}
+
+void ArtifactFinalPostProcess::setViewTransformEnabled(bool enabled)
+{
+    impl_->setViewTransformEnabled(enabled);
+}
+
+bool ArtifactFinalPostProcess::isViewTransformEnabled() const
+{
+    return impl_->isViewTransformEnabled();
+}
+
+void ArtifactFinalPostProcess::setWorkingToDisplayMatrix(const float* matrix4x4)
+{
+    impl_->setWorkingToDisplayMatrix(matrix4x4);
 }
 
 }
