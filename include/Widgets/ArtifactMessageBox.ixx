@@ -1,17 +1,12 @@
 module;
-#include <utility>
 
-#include <QString>
-#include <QWidget>
 export module Artifact.Widgets.AppDialogs;
+
+import Widgets.Dialog.MessageBox;
 
 export namespace Artifact {
 
-class ArtifactMessageBox {
-public:
-    static bool confirmDelete(QWidget* parent, const QString& title, const QString& text);
-    static bool confirmOverwrite(QWidget* parent, const QString& title, const QString& text);
-    static bool confirmAction(QWidget* parent, const QString& title, const QString& text);
-};
+using ArtifactMessageBox = ArtifactWidgets::ArtifactMessageBox;
+using MessageBoxSpec = ArtifactWidgets::MessageBoxSpec;
 
 } // namespace Artifact
