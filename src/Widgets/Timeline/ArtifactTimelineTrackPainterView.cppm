@@ -5448,6 +5448,10 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       const qreal innerBottom = clipRect.bottom() - 5.0;
       const qreal centerY = (innerTop + innerBottom) * 0.5;
       const qreal halfSpan = std::max<qreal>(2.0, (innerBottom - innerTop) * 0.42);
+      const QColor waveformColor = isSelected ? theme.background.darker(140)
+                                              : theme.text.lighter(110);
+      QColor waveformSoft = waveformColor;
+      waveformSoft.setAlpha(90);
       if (!clip.waveformPeaks.isEmpty()) {
         const int binCount = clip.waveformPeaks.size();
         const bool hasRms = clip.waveformRms.size() == binCount;
@@ -5473,8 +5477,6 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
             rmsPath.lineTo(x, centerY + halfSpan * rms);
           }
         }
-        const QColor waveformColor = isSelected ? theme.background.darker(140)
-                                                : theme.text.lighter(110);
         if (hasRms && !rmsPath.isEmpty()) {
           QColor rmsColor = waveformColor;
           rmsColor.setAlpha(90);

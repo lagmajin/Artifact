@@ -19,6 +19,6 @@ export namespace Artifact {
 /// Build a default input resolver that connects to the Artifact project service.
 /// The resolver looks up SourceLayer bindings by layer ID and renders them to images.
 /// Image/Matte bindings use the embedded image data directly.
-ParametricCompositionInputResolver buildParametricCompositionInputResolver();
+ArtifactCore::ParametricCompositionInputResolver buildParametricCompositionInputResolver();
 
 } // namespace Artifact

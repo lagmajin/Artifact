@@ -2691,10 +2691,10 @@ CurveEditorPayload collectCurveEditorPayload(
         bool anyNumeric = false;
         if (!hasKeyframes) {
           // Show flat line at current value
-          const QVariant curVal = property->value();
+          const QVariant curVal = property->getValue();
           if (curVal.canConvert<double>()) {
-            const qint64 startFrame = composition->frameRange().start().framePosition();
-            const qint64 endFrame = composition->frameRange().end().framePosition();
+            const qint64 startFrame = composition->frameRange().start();
+            const qint64 endFrame = composition->frameRange().end();
             const double val = curVal.toDouble();
             frames.push_back(startFrame); values.push_back(val); interpolations.push_back(ArtifactCore::InterpolationType::Linear);
             frames.push_back(endFrame); values.push_back(val); interpolations.push_back(ArtifactCore::InterpolationType::Linear);

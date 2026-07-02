@@ -43,6 +43,7 @@ public:
             return ArtifactCore::ColorSpace::ACES_AP0;
         return ArtifactCore::ColorSpace::Linear;
     }
+};
 
 ArtifactOCIOManager* ArtifactOCIOManager::instance()
 {
@@ -99,6 +100,12 @@ bool ArtifactOCIOManager::setActivePreset(const QString& presetName)
             impl_->view_ = impl_->config_.activeView();
             if (impl_->view_.isEmpty()) {
                 impl_->view_ = views.first();
+            }
+        }
+    }
+    configChanged();
+    return true;
+}
 bool ArtifactOCIOManager::loadConfigFile(const QString& path)
 {
     if (!impl_->config_.loadFromFile(path)) {
@@ -275,10 +282,12 @@ void ArtifactOCIOManager::syncToColorScienceManager(ArtifactColorScienceManager*
             settings.outputSpace = ArtifactCore::ColorSpace::P3;
         }
     }
+    mgr->setSettings(settings);
+}
 
 void ArtifactOCIOManager::applyViewTransformToImage(ArtifactCore::ImageF32x4_RGBA& image) const
 {
-    if (!impl_->config_.isValid() || !image.data()) return;
+    if (!impl_->config_.isValid() || !image.rgba32fData()) return;
 
     const auto workingCS = Impl::mapOCIOColorSpaceToEnum(impl_->workingSpace_);
     const auto displayCS = Impl::mapOCIOColorSpaceToEnum(impl_->display_);
@@ -291,18 +300,20 @@ void ArtifactOCIOManager::applyViewTransformToImage(ArtifactCore::ImageF32x4_RGB
     const int h = image.height();
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
-            float r = image.getPixel(x, y, 0);
-            float g = image.getPixel(x, y, 1);
-            float b = image.getPixel(x, y, 2);
-            float a = image.getPixel(x, y, 3);
+            auto pixel = image.getPixel(x, y);
+            const float r = pixel.r();
+            const float g = pixel.g();
+            const float b = pixel.b();
+            const float a = pixel.a();
 
             float outR = matrix[0] * r + matrix[1] * g + matrix[2] * b + matrix[3] * a;
             float outG = matrix[4] * r + matrix[5] * g + matrix[6] * b + matrix[7] * a;
             float outB = matrix[8] * r + matrix[9] * g + matrix[10] * b + matrix[11] * a;
 
-            image.setPixel(x, y, 0, std::clamp(outR, 0.0f, 1.0f));
-            image.setPixel(x, y, 1, std::clamp(outG, 0.0f, 1.0f));
-            image.setPixel(x, y, 2, std::clamp(outB, 0.0f, 1.0f));
+            pixel.setRed(std::clamp(outR, 0.0f, 1.0f));
+            pixel.setGreen(std::clamp(outG, 0.0f, 1.0f));
+            pixel.setBlue(std::clamp(outB, 0.0f, 1.0f));
+            image.setPixel(x, y, pixel);
         }
     }
 }

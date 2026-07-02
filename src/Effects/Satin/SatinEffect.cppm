@@ -106,6 +106,10 @@ public:
             for (int x = 0; x < W; ++x) {
                 const float a = std::clamp(aRow[x] * so * opac, 0.0f, 1.0f);
                 // OpenCV internal order: B, G, R, A
+                lRow[x] = cv::Vec4f(sb, sg, sr, a);
+            }
+        }
+
         // ── 6. 合成: Satin OVER src (ブレンドモードは Multiply 風が一般的) ──
         dst = src.DeepCopy();
         float* dstData = dst.image().rgba32fData();
@@ -243,7 +247,7 @@ std::vector<AbstractProperty> SatinEffect::getProperties() const {
 
     auto& invertProp = props.emplace_back();
     invertProp.setName("Invert");
-    invertProp.setType(PropertyType::Bool);
+    invertProp.setType(PropertyType::Boolean);
     invertProp.setValue(invert_);
 
     return props;
@@ -281,4 +285,3 @@ void SatinEffect::syncImpls() {
 }
 
 } // namespace Artifact
-

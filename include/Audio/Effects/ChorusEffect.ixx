@@ -24,7 +24,7 @@ public:
         return "Rich stereo chorus with multiple modulated voices";
     }
 
-    std::vector<AudioEffectParameter> getParameters() const override;
+    std::vector<AudioEffectParameter> getUiParameters() const override;
     void setParameter(const std::string& name, float value) override;
     float getParameter(const std::string& name) const override;
     void setSampleRate(int sampleRate) override;

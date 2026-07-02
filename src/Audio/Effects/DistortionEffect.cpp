@@ -85,7 +85,7 @@ void DistortionEffect::process(ArtifactCore::AudioSegment& segment, const Artifa
     }
 }
 
-std::vector<AudioEffectParameter> DistortionEffect::getParameters() const {
+std::vector<AudioEffectParameter> DistortionEffect::getUiParameters() const {
     return {
         {"mode",        "Mode",             AudioEffectParameterType::Enum,  0.0f, 4.0f,  0.0f,
             {"Soft Clip", "Hard Clip", "Tube", "Foldback", "Bitcrush"}},

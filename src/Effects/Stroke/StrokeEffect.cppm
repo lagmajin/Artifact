@@ -92,6 +92,10 @@ public:
             for (int x = 0; x < W; ++x) {
                 const float a = std::clamp(aRow[x] * so * opac, 0.0f, 1.0f);
                 // OpenCV internal order: B, G, R, A
+                lRow[x] = cv::Vec4f(sb, sg, sr, a);
+            }
+        }
+
         // ── 5. 合成: Stroke OVER src ──────────────────────────────────────
         dst = src.DeepCopy();
         float* dstData = dst.image().rgba32fData();
@@ -220,4 +224,3 @@ void StrokeEffect::syncImpls() {
 }
 
 } // namespace Artifact
-

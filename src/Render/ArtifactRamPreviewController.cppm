@@ -7,10 +7,13 @@ module;
 #include <memory>
 #include <queue>
 #include <vector>
+#include <wobjectimpl.h>
 
 module Artifact.Render.RamPreviewController;
 
 namespace Artifact {
+
+W_OBJECT_IMPL(ArtifactRamPreviewController)
 
 // --- Frame state bookkeeping ---
 
@@ -164,7 +167,7 @@ void ArtifactRamPreviewController::startBuild() {
 
     impl_->cancelRequested_ = false;
     impl_->building_ = true;
-    Q_EMIT buildStateChanged(true);
+    buildStateChanged(true);
 
     // Reset states for the preview range
     impl_->resetStates();
@@ -187,25 +190,25 @@ void ArtifactRamPreviewController::startBuild() {
         if (success) {
             fs.status = RamPreviewFrameStatus::Ready;
             impl_->readyCount_++;
-            Q_EMIT frameReady(job.frame);
+            frameReady(job.frame);
         } else {
             fs.status = RamPreviewFrameStatus::Failed;
             impl_->failedCount_++;
-            fs.failReason = QStringLiteral("Render returned false");
-            Q_EMIT frameFailed(job.frame, fs.failReason);
+            fs.failReason = QString("Render returned false");
+            frameFailed(job.frame, fs.failReason);
         }
 
-        Q_EMIT buildProgress(impl_->readyCount_.load(),
+        buildProgress(impl_->readyCount_.load(),
             static_cast<int>(impl_->previewEnd_ - impl_->previewStart_));
     }
 
     impl_->building_ = false;
 
     if (!impl_->cancelRequested_.load() && isRangeFullyReady()) {
-        Q_EMIT buildComplete();
+        buildComplete();
     }
 
-    Q_EMIT buildStateChanged(false);
+    buildStateChanged(false);
 }
 
 void ArtifactRamPreviewController::stopBuild() {
@@ -213,7 +216,7 @@ void ArtifactRamPreviewController::stopBuild() {
     impl_->building_ = false;
     // Clear pending queue
     impl_->jobQueue_ = std::priority_queue<BuildJob>();
-    Q_EMIT buildStateChanged(false);
+    buildStateChanged(false);
 }
 
 void ArtifactRamPreviewController::toggleBuild() {

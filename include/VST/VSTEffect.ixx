@@ -58,7 +58,7 @@ public:
     std::string getName() const override { return "VST Effect"; }
     std::string getDescription() const override { return "VST plugin effect"; }
     
-    std::vector<AudioEffectParameter> getParameters() const override;
+    std::vector<AudioEffectParameter> getUiParameters() const override;
     void setParameter(const std::string& name, float value) override;
     float getParameter(const std::string& name) const override;
 

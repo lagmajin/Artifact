@@ -64,7 +64,7 @@ void DelayEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCor
     }
 }
 
-std::vector<AudioEffectParameter> DelayEffect::getParameters() const {
+std::vector<AudioEffectParameter> DelayEffect::getUiParameters() const {
     return {
         {"delay_l",    "Delay L (ms)",  AudioEffectParameterType::Float, 1.0f,   2000.0f, 375.0f},
         {"delay_r",    "Delay R (ms)",  AudioEffectParameterType::Float, 1.0f,   2000.0f, 375.0f},

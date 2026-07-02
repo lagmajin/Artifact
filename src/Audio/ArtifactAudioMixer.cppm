@@ -15,6 +15,9 @@ module Artifact.Audio.Mixer;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
+import Audio.Bus;
+import Audio.Mixer;
+
 import std;
 
 namespace Artifact
@@ -168,6 +171,7 @@ public:
     float rightLevel_ = -60.0f;
     float peakLeft_ = -60.0f;
     float peakRight_ = -60.0f;
+    std::shared_ptr<AudioBus> coreBus_;
 };
 
 AudioMixerChannelStrip::AudioMixerChannelStrip(QObject* parent)
@@ -329,13 +333,24 @@ void AudioMixerChannelStrip::resetPeak()
     impl_->peakRight_ = -60.0f;
 }
 
+void AudioMixerChannelStrip::setCoreBus(std::shared_ptr<ArtifactCore::AudioBus> coreBus)
+{
+    impl_->coreBus_ = std::move(coreBus);
+}
+
+std::shared_ptr<ArtifactCore::AudioBus> AudioMixerChannelStrip::coreBus() const
+{
+    return impl_->coreBus_;
+}
+
 class AudioMixerMasterBus::Impl
 {
 public:
     float volume_ = 1.0f;
     bool muted_ = false;
     float leftLevel_ = -60.0f;
-    float rightLevel_ = -60.0f;
+        float rightLevel_ = -60.0f;
+    std::shared_ptr<ArtifactCore::AudioBus> coreBus_;
 };
 
 AudioMixerMasterBus::AudioMixerMasterBus(QObject* parent)
@@ -356,6 +371,9 @@ void AudioMixerMasterBus::setVolume(float volume)
         return;
     }
     impl_->volume_ = clamped;
+    if (impl_->coreBus_) {
+        impl_->coreBus_->setVolume(20.0f * std::log10(std::max(0.001f, clamped)));
+    }
     Q_EMIT volumeChanged(impl_->volume_);
 }
 
@@ -370,6 +388,9 @@ void AudioMixerMasterBus::setMuted(bool muted)
         return;
     }
     impl_->muted_ = muted;
+    if (impl_->coreBus_) {
+        impl_->coreBus_->setMute(muted);
+    }
     Q_EMIT muteChanged(muted);
 }
 
@@ -395,11 +416,25 @@ void AudioMixerMasterBus::updateLevels(float left, float right)
     Q_EMIT levelChanged(left, right);
 }
 
+void AudioMixerMasterBus::connectToCoreBus(std::shared_ptr<ArtifactCore::AudioBus> coreBus)
+{
+    impl_->coreBus_ = coreBus;
+    if (coreBus) {
+        impl_->volume_ = std::pow(10.0f, coreBus->getVolume() / 20.0f);
+    }
+}
+
+std::shared_ptr<ArtifactCore::AudioBus> AudioMixerMasterBus::coreBus() const
+{
+    return impl_->coreBus_;
+}
+
 class AudioMixer::Impl
 {
 public:
     std::map<LayerID, std::unique_ptr<AudioMixerChannelStrip, QObjectDeleteLaterDeleter>> channelStrips_;
     std::unique_ptr<AudioMixerMasterBus, QObjectDeleteLaterDeleter> masterBus_;
+    std::shared_ptr<ArtifactCore::AudioMixer> coreMixer_;
     ArtifactCompositionPtr composition_;
     std::map<LayerID, bool> manualMuted_;
     std::map<LayerID, bool> soloMuted_;
@@ -546,6 +581,9 @@ void AudioMixer::updatePlaybackLevels(float leftRms, float rightRms)
 
 void AudioMixer::clearChannelStrips()
 {
+    for (auto& pair : impl_->channelStrips_) {
+        pair.second->setCoreBus(nullptr);
+    }
     std::vector<LayerID> removedIds;
     removedIds.reserve(impl_->channelStrips_.size());
     for (const auto& pair : impl_->channelStrips_) {
@@ -557,6 +595,19 @@ void AudioMixer::clearChannelStrips()
     impl_->channelStrips_.clear();
     impl_->manualMuted_.clear();
     impl_->soloMuted_.clear();
+}
+
+void AudioMixer::connectToCoreMixer(std::shared_ptr<ArtifactCore::AudioMixer> coreMixer)
+{
+    impl_->coreMixer_ = coreMixer;
+    if (impl_->composition_) {
+        syncFromComposition(impl_->composition_);
+    }
+}
+
+std::shared_ptr<ArtifactCore::AudioMixer> AudioMixer::coreMixer() const
+{
+    return impl_->coreMixer_;
 }
 
 void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
@@ -588,27 +639,54 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
             strip->setVolume(readLayerVolume(layer));
             strip->setMuted(readLayerMuted(layer));
             strip->setSolo(layer->isSolo());
+
+            if (impl_->coreMixer_) {
+                const std::string busName = "layer_" + layer->id().toString().toStdString();
+                auto bus = impl_->coreMixer_->findBusByName(busName);
+                if (!bus) {
+                    bus = impl_->coreMixer_->createBus(busName);
+                }
+                strip->setCoreBus(bus);
+                bus->setVolume(20.0f * std::log10(std::max(0.001f, readLayerVolume(layer))));
+                bus->setPan(readLayerPan(layer));
+                bus->setMute(readLayerMuted(layer));
+                bus->setSolo(layer->isSolo());
+            } else {
+                strip->setCoreBus(nullptr);
+            }
         }
 
         QObject::connect(strip, &AudioMixerChannelStrip::volumeChanged, this,
-            [this, layer](const float volume) {
+            [this, layer, strip](const float volume) {
                 applyLayerVolume(layer, volume);
+                if (strip->coreBus()) {
+                    strip->coreBus()->setVolume(20.0f * std::log10(std::max(0.001f, volume)));
+                }
                 impl_->refreshDerivedLevels();
             });
         QObject::connect(strip, &AudioMixerChannelStrip::panChanged, this,
-            [this, layer](const float pan) {
+            [this, layer, strip](const float pan) {
                 applyLayerPan(layer, pan);
+                if (strip->coreBus()) {
+                    strip->coreBus()->setPan(pan);
+                }
                 impl_->refreshDerivedLevels();
             });
         QObject::connect(strip, &AudioMixerChannelStrip::muteChanged, this,
-            [this, layer](const bool muted) {
+            [this, layer, strip](const bool muted) {
                 impl_->manualMuted_[layer->id()] = muted;
                 applyLayerMuted(layer, muted);
+                if (strip->coreBus()) {
+                    strip->coreBus()->setMute(muted);
+                }
                 updateSoloStates();
             });
         QObject::connect(strip, &AudioMixerChannelStrip::soloChanged, this,
-            [this, layer](const bool solo) {
+            [this, layer, strip](const bool solo) {
                 applyLayerSolo(layer, solo);
+                if (strip->coreBus()) {
+                    strip->coreBus()->setSolo(solo);
+                }
                 updateSoloStates();
             });
     }

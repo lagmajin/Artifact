@@ -73,8 +73,8 @@ public:
     virtual std::string getName() const override = 0;
     virtual std::string getDescription() const = 0;
 
-    // パラメータ管理
-    virtual std::vector<AudioEffectParameter> getParameters() const = 0;
+    // パラメータ管理（UI向けの拡張表現）
+    virtual std::vector<AudioEffectParameter> getUiParameters() const = 0;
     virtual void setParameter(const std::string& name, float value) = 0;
     virtual float getParameter(const std::string& name) const = 0;
 

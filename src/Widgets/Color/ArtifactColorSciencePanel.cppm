@@ -216,21 +216,21 @@ void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
   auto *exportLUTBtn = new QPushButton("Export LUT as .cube...");
   ocioLayout->addRow("", exportLUTBtn);
 
-  QObject::connect(exportLUTBtn, &QPushButton::clicked, this, [this]() {
-    const auto* lut = impl_->manager_->currentLUT();
+  QObject::connect(exportLUTBtn, &QPushButton::clicked, [this, parent]() {
+    const auto* lut = manager_->currentLUT();
     if (!lut || !lut->isValid()) {
       return;
     }
-    const QString path = QFileDialog::getSaveFileName(this, "Export LUT",
+    const QString path = QFileDialog::getSaveFileName(parent, "Export LUT",
         QString(), "Cube LUT (*.cube);;Discreet 3DL (*.3dl);;All Files (*)");
     if (path.isEmpty()) return;
 
-    LUTFormat format = path.endsWith(".3dl", Qt::CaseInsensitive)
-        ? LUTFormat::Discreet3DL : LUTFormat::Cube;
+    ArtifactCore::LUTFormat format = path.endsWith(".3dl", Qt::CaseInsensitive)
+        ? ArtifactCore::LUTFormat::_3dl : ArtifactCore::LUTFormat::Cube;
 
     QString error;
     // Use rawData() + size().dimX from ColorLUT
-    if (!writeLUTToFile(path, lut->rawData(), lut->size().dimX, format, &error)) {
+    if (!ArtifactCore::writeLUTToFile(path, lut->rawData(), lut->size().dimX, format, &error)) {
       ocioStatusLabel_->setText(QStringLiteral("Export failed: %1").arg(error));
     } else {
       ocioStatusLabel_->setText(QStringLiteral("LUT exported to: %1").arg(path));
@@ -620,25 +620,25 @@ void ArtifactColorSciencePanel::Impl::connectSignals() {
   });
 
   // OCIO connections
-  connect(ocioPresetCombo_, &QComboBox::currentTextChanged, this, [this](const QString& preset) {
+  connect(ocioPresetCombo_, &QComboBox::currentTextChanged, [this](const QString& preset) {
     if (auto* ocio = ArtifactOCIOManager::instance()) {
       ocio->setActivePreset(preset);
       ocio->syncToColorScienceManager(manager_);
       updateUI();
     }
   });
-  connect(ocioDisplayCombo_, &QComboBox::currentTextChanged, this, [this](const QString& display) {
+  connect(ocioDisplayCombo_, &QComboBox::currentTextChanged, [this](const QString& display) {
     if (auto* ocio = ArtifactOCIOManager::instance()) {
       ocio->setDisplay(display);
     }
   });
-  connect(ocioViewCombo_, &QComboBox::currentTextChanged, this, [this](const QString& view) {
+  connect(ocioViewCombo_, &QComboBox::currentTextChanged, [this](const QString& view) {
     if (auto* ocio = ArtifactOCIOManager::instance()) {
       ocio->setView(view);
     }
   });
-  connect(loadConfigBtn_, &QPushButton::clicked, this, [this]() {
-    const QString path = QFileDialog::getOpenFileName(this, "Load OCIO Config",
+  connect(loadConfigBtn_, &QPushButton::clicked, [this]() {
+    const QString path = QFileDialog::getOpenFileName(nullptr, "Load OCIO Config",
         QString(), "OCIO Config (*.ocio *.json);;All Files (*)");
     if (!path.isEmpty()) {
       if (auto* ocio = ArtifactOCIOManager::instance()) {
@@ -651,7 +651,7 @@ void ArtifactColorSciencePanel::Impl::connectSignals() {
 
   // Listen for OCIO config changes
   if (auto* ocio = ArtifactOCIOManager::instance()) {
-    connect(ocio, &ArtifactOCIOManager::configChanged, this, [this]() {
+    connect(ocio, &ArtifactOCIOManager::configChanged, [this]() {
       updateUI();
     });
   }

@@ -18,9 +18,9 @@ import Image.ImageF32x4_RGBA;
 
 namespace Artifact {
 
-ParametricCompositionInputResolver buildParametricCompositionInputResolver()
+ArtifactCore::ParametricCompositionInputResolver buildParametricCompositionInputResolver()
 {
-    ParametricCompositionInputResolver resolver;
+    ArtifactCore::ParametricCompositionInputResolver resolver;
 
     resolver.resolve =
         [](const ParametricCompositionInputBinding& binding,
@@ -104,7 +104,9 @@ ParametricCompositionInputResolver buildParametricCompositionInputResolver()
                 // or fall back to the composition's thumbnail path
                 
                 // Create a simple ImageF32x4_RGBA from the layer bounds
-                ImageF32x4_RGBA result(targetSize.width(), targetSize.height());
+                ImageF32x4_RGBA result;
+                result.resize(targetSize.width(), targetSize.height());
+                result.fill(FloatRGBA(0.0f, 0.0f, 0.0f, 0.0f));
                 // Fill with transparent by default - actual rendering requires the full render pipeline
                 // In production, this would call through ArtifactCompositionRenderController
                 

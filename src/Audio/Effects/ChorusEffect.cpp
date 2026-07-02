@@ -82,7 +82,7 @@ void ChorusEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCo
     }
 }
 
-std::vector<AudioEffectParameter> ChorusEffect::getParameters() const {
+std::vector<AudioEffectParameter> ChorusEffect::getUiParameters() const {
     return {
         {"rate",      "Rate (Hz)",    AudioEffectParameterType::Float, 0.1f,  5.0f,  0.8f},
         {"depth",     "Depth",        AudioEffectParameterType::Float, 0.0f,  1.0f,  0.5f},

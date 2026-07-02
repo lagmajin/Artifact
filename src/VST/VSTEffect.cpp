@@ -146,7 +146,7 @@ void VSTEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore:
     segment = output;
 }
 
-std::vector<AudioEffectParameter> VSTEffect::getParameters() const {
+std::vector<AudioEffectParameter> VSTEffect::getUiParameters() const {
     std::vector<AudioEffectParameter> params;
     
     if (!impl_->isLoaded || impl_->pluginId < 0) {

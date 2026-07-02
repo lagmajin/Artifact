@@ -101,6 +101,10 @@ public:
             for (int x = 0; x < W; ++x) {
                 const float a = std::clamp(aRow[x] * so * opac, 0.0f, 1.0f);
                 // OpenCV internal order: B, G, R, A
+                sRow[x] = cv::Vec4f(sb, sg, sr, a);
+            }
+        }
+        
         // ── 5. 合成: Inner Shadow ──────────────────────────────────────────
         // dst = src をコピーし、影を src アルファでマスクした内側に合成
         dst = src.DeepCopy();
@@ -118,8 +122,6 @@ public:
             for (int x = 0; x < W; ++x) {
                 const float fa = fg[x][3];
                 const float sa = sh[x][3];
-                // Inner shadow: 影は src の内側にだけ表示される
-                // sa * (1 - fa) で縁の内側をマスク
                 const float shadowFactor = sa * (1.0f - fa);
                 const float oa = fa + shadowFactor * (1.0f - fa);
                 if (oa < 1e-6f) {
@@ -127,7 +129,6 @@ public:
                     continue;
                 }
                 for (int c = 0; c < 3; ++c) {
-                    // shadow は src の上に合成（影が内側に見える）
                     out[x][c] = (fg[x][c] * fa + sh[x][c] * shadowFactor * (1.0f - fa)) / oa;
                 }
                 out[x][3] = oa;
@@ -263,4 +264,3 @@ void InnerShadowEffect::syncImpls() {
 }
 
 } // namespace Artifact
-

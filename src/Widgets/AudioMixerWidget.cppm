@@ -89,7 +89,7 @@ static QDialog* createParameterEditor(const std::string& effectName,
     // Try new ArtifactAbstractAudioEffect interface first
     auto absEffect = dynamic_cast<Artifact::ArtifactAbstractAudioEffect*>(effect.get());
     if (absEffect) {
-        auto newParams = absEffect->getParameters();
+        auto newParams = absEffect->getUiParameters();
         for (const auto& p : newParams) {
             std::string pName = p.name;
             std::string pDisplay = p.displayName;

@@ -32,7 +32,6 @@ export module Artifact.AI.WorkspaceAutomation;
 import std;
 import Core.AI.Describable;
 import Core.AI.CommandIR;
-import Artifact.AI.CommandIRExecutor;
 import Artifact.Application.Manager;
 import Artifact.Service.ActiveContext;
 import Artifact.Project;

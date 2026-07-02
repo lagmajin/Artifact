@@ -350,7 +350,7 @@ void ReverbEffect::processHybridSample(float inL, float inR, float& outL, float&
 }
 
 // ── Parameter system ───────────────────────────────────────────────
-std::vector<AudioEffectParameter> ReverbEffect::getParameters() const {
+std::vector<AudioEffectParameter> ReverbEffect::getUiParameters() const {
     return {
         {"algorithm",    "Algorithm",       AudioEffectParameterType::Enum,  0.0f,    2.0f,    0.0f,
          {"Dattorro Plate", "FDN Hall", "Hybrid"}},

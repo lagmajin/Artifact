@@ -187,6 +187,13 @@ if(_layer_component_system_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactLayerComponentSystem.ixx")
 endif()
 
+# Color science / OCIO modules are imported from the color science panel and
+# should be pinned explicitly so module discovery does not depend on scan order.
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactOCIOManager.ixx" _ocio_manager_module_idx)
+if(_ocio_manager_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactOCIOManager.ixx")
+endif()
+
 # Glow Variants Pack modules are explicit so adding the files does not rely on
 # recursive glob discovery.
 foreach(glow_variant IN ITEMS LiquidGlow ResidualGlow)

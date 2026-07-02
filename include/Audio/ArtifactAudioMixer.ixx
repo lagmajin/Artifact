@@ -8,9 +8,14 @@ module;
 #include <QObject>
 export module Artifact.Audio.Mixer;
 
+import Audio.Bus;
+import Audio.Mixer;
+
 
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Audio.Bus;
+import Audio.Mixer;
 import Memory.SharedPtr;
 import Utils.Id;
 
@@ -66,6 +71,9 @@ public:
 
     void resetPeak();
 
+    void setCoreBus(std::shared_ptr<ArtifactCore::AudioBus> coreBus);
+    std::shared_ptr<ArtifactCore::AudioBus> coreBus() const;
+
 
     void volumeChanged(float volume) W_SIGNAL(volumeChanged, volume);
     void panChanged(float pan) W_SIGNAL(panChanged, pan);
@@ -76,6 +84,8 @@ public:
 private:
     class Impl;
     Impl* impl_;
+
+    friend class AudioMixer;
 };
 
 // マスターチャンネル
@@ -100,6 +110,17 @@ public:
     void volumeChanged(float volume) W_SIGNAL(volumeChanged, volume);
     void muteChanged(bool muted) W_SIGNAL(muteChanged, muted);
     void levelChanged(float left, float right) W_SIGNAL(levelChanged, left, right);
+  /**
+   * @brief Connect this master bus to a Core AudioBus for bus-level volume/mute sync.
+   */
+  void connectToCoreBus(std::shared_ptr<ArtifactCore::AudioBus> coreBus);
+
+  /**
+   * @brief Get the connected Core AudioBus (may be null).
+   */
+  std::shared_ptr<ArtifactCore::AudioBus> coreBus() const;
+
+
 
 private:
     class Impl;
@@ -130,6 +151,18 @@ public:
     void clearChannelStrips();
     void syncFromComposition(ArtifactCompositionPtr composition);
     ArtifactCompositionPtr composition() const;
+
+  /**
+   * @brief Connect this UI mixer to a Core AudioMixer for bus-level control.
+   *        Existing strips will be re-synced with the Core mixer's buses.
+   */
+  void connectToCoreMixer(std::shared_ptr<ArtifactCore::AudioMixer> coreMixer);
+
+  /**
+   * @brief Get the connected Core AudioMixer (may be null).
+   */
+  std::shared_ptr<ArtifactCore::AudioMixer> coreMixer() const;
+
 
     // Solo管理（複数のsolo状態管理）
     bool hasAnySolo() const;

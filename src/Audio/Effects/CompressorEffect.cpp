@@ -72,7 +72,7 @@ void CompressorEffect::process(ArtifactCore::AudioSegment& segment, const Artifa
     }
 }
 
-std::vector<AudioEffectParameter> CompressorEffect::getParameters() const {
+std::vector<AudioEffectParameter> CompressorEffect::getUiParameters() const {
     return {
         {"threshold",  "Threshold",    AudioEffectParameterType::Float, -60.0f, 0.0f,  -20.0f},
         {"ratio",      "Ratio",        AudioEffectParameterType::Float, 1.0f,   20.0f, 4.0f},

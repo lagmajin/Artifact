@@ -67,10 +67,12 @@ public:
 
 private:
     ArtifactOCIOManager();
-    ~ArtifactOCIOManager() override;
 
     class Impl;
     Impl* impl_;
+
+protected:
+    ~ArtifactOCIOManager() override;
 };
 
 } // namespace Artifact

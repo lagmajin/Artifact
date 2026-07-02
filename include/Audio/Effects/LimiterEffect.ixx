@@ -22,7 +22,7 @@ public:
         return "Brick-wall lookahead limiter with transparent gain reduction";
     }
 
-    std::vector<AudioEffectParameter> getParameters() const override;
+    std::vector<AudioEffectParameter> getUiParameters() const override;
     void setParameter(const std::string& name, float value) override;
     float getParameter(const std::string& name) const override;
 

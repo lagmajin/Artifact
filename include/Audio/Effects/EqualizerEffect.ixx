@@ -20,7 +20,7 @@ public:
     std::string getName() const override { return "Equalizer"; }
     std::string getDescription() const override { return "Multi-band equalizer effect"; }
 
-    std::vector<AudioEffectParameter> getParameters() const override;
+    std::vector<AudioEffectParameter> getUiParameters() const override;
     void setParameter(const std::string& name, float value) override;
     float getParameter(const std::string& name) const override;
 

@@ -85,7 +85,7 @@ void LimiterEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactC
     }
 }
 
-std::vector<AudioEffectParameter> LimiterEffect::getParameters() const {
+std::vector<AudioEffectParameter> LimiterEffect::getUiParameters() const {
     return {
         {"ceiling",    "Ceiling (dB)",     AudioEffectParameterType::Float, -6.0f,  0.0f,   -0.3f},
         {"release",    "Release (ms)",     AudioEffectParameterType::Float, 5.0f,   500.0f, 50.0f},

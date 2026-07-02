@@ -29,6 +29,9 @@ export import Artifact.Layer.Abstract;
 import Artifact.Composition.Result;
 import Composition.Settings;
 import Audio.Segment;
+import Audio.Segment;
+import Audio.Mixer;
+
 import Geometry.ResolutionRemap;
 import Artifact.Effect.Abstract;
 //import Artifact.Layer.Abstract;
@@ -151,6 +154,16 @@ export namespace Artifact {
 
   bool getAudio(ArtifactCore::AudioSegment &outSegment, const FramePosition &start,
                 int frameCount, int sampleRate);
+
+  /**
+   * @brief Enable AudioMixer-based audio processing for this composition.
+   *        When enabled, each audio-capable layer gets its own AudioBus
+   *        and the mixer handles volume/pan/mute/solo routing.
+   *        Must be called before getAudio() to take effect.
+   */
+  void ensureAudioMixer();
+  std::shared_ptr<AudioMixer> getAudioMixer() const;
+
 
   QJsonDocument toJson() const;
   static ArtifactCompositionPtr fromJson(const QJsonDocument& doc);

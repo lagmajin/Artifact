@@ -1,6 +1,7 @@
 module;
 
 #include <QString>
+#include <QStringView>
 #include <QVariantMap>
 #include <QVariantList>
 #include <memory>
@@ -10,6 +11,14 @@ export module Artifact.AI.CommandIRExecutor;
 import std;
 import Core.AI.CommandIR;
 import Artifact.AI.WorkspaceAutomation;
+
+namespace
+{
+    QVariant invokeWorkspaceAutomationMethod(QStringView name, const QVariantList& args)
+    {
+        return Artifact::WorkspaceAutomation::instance().invokeMethod(name, args);
+    }
+}
 
 export namespace Artifact {
 
@@ -156,23 +165,23 @@ private:
         QVariant success(false);
         if (normPath == QStringLiteral("position")) {
             QVariantList args{layerId, value};
-            success = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerPosition"), args);
+            success = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerPosition"), args);
         } else if (normPath == QStringLiteral("scale")) {
             QVariantList args{layerId, value};
-            success = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerScale"), args);
+            success = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerScale"), args);
         } else if (normPath == QStringLiteral("rotation")) {
             QVariantList args{layerId, value};
-            success = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerRotation"), args);
+            success = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerRotation"), args);
         } else if (normPath == QStringLiteral("opacity")) {
             QVariantList args{layerId, value};
-            success = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerOpacity"), args);
+            success = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerOpacity"), args);
         } else if (normPath == QStringLiteral("effect.enabled")) {
             QVariantList args{layerId, value};
-            success = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerEffectEnabled"), args);
+            success = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerEffectEnabled"), args);
         } else {
             // Try generic effect parameter setter
             QVariantList args{layerId, propertyPath, value};
-            success = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerEffectParameter"), args);
+            success = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerEffectParameter"), args);
         }
 
         result.success = success.isValid() && success.toBool();
@@ -198,7 +207,7 @@ private:
             int frame = key.value(QStringLiteral("frame")).toInt();
             QVariant value = key.value(QStringLiteral("value"));
             QVariantList args{layerId, propertyPath, frame, value};
-            WorkspaceAutomation::invokeMethod(QStringLiteral("setKeyframe"), args);
+            invokeWorkspaceAutomationMethod(QStringLiteral("setKeyframe"), args);
         }
 
         result.success = true;
@@ -229,7 +238,7 @@ private:
                 int frame = key.value(QStringLiteral("frame")).toInt();
                 QVariant value = key.value(QStringLiteral("value"));
                 QVariantList args{layerId, propPath, frame, value};
-                WorkspaceAutomation::invokeMethod(QStringLiteral("setKeyframe"), args);
+                invokeWorkspaceAutomationMethod(QStringLiteral("setKeyframe"), args);
                 ++totalKeyframes;
             }
         }
@@ -253,7 +262,7 @@ private:
         int newIndex = request.arguments.value(QStringLiteral("newIndex")).toInt();
 
         QVariantList args{layerId, newIndex};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("moveLayerInCurrentComposition"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("moveLayerInCurrentComposition"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -273,7 +282,7 @@ private:
         const QString newName = request.arguments.value(QStringLiteral("newName")).toString();
 
         QVariantList args{layerId, newName};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("renameLayerInCurrentComposition"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("renameLayerInCurrentComposition"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -293,7 +302,7 @@ private:
         const QString effectType = request.arguments.value(QStringLiteral("effectType")).toString();
 
         QVariantList args{layerId, effectType};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("addLayerEffect"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("addLayerEffect"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -315,13 +324,13 @@ private:
 
         if (layerType == QStringLiteral("solid")) {
             QVariantList args{layerName, 1920, 1080};
-            ok = WorkspaceAutomation::invokeMethod(QStringLiteral("addSolidLayerToCurrentComposition"), args);
+            ok = invokeWorkspaceAutomationMethod(QStringLiteral("addSolidLayerToCurrentComposition"), args);
         } else if (layerType == QStringLiteral("text")) {
             QVariantList args{layerName};
-            ok = WorkspaceAutomation::invokeMethod(QStringLiteral("addTextLayerToCurrentComposition"), args);
+            ok = invokeWorkspaceAutomationMethod(QStringLiteral("addTextLayerToCurrentComposition"), args);
         } else if (layerType == QStringLiteral("null")) {
             QVariantList args{layerName, 1920, 1080};
-            ok = WorkspaceAutomation::invokeMethod(QStringLiteral("addNullLayerToCurrentComposition"), args);
+            ok = invokeWorkspaceAutomationMethod(QStringLiteral("addNullLayerToCurrentComposition"), args);
         } else {
             result.error = QStringLiteral("Unsupported layer type: ") + layerType;
             return result;
@@ -343,7 +352,7 @@ private:
 
         const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
         QVariantList args{layerId};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("removeLayerFromCurrentComposition"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("removeLayerFromCurrentComposition"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -363,7 +372,7 @@ private:
         bool visible = request.arguments.value(QStringLiteral("visible")).toBool();
 
         QVariantList args{layerId, visible};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerVisibleInCurrentComposition"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerVisibleInCurrentComposition"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -383,7 +392,7 @@ private:
         int blendMode = request.arguments.value(QStringLiteral("blendMode")).toInt();
 
         QVariantList args{layerId, blendMode};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerBlendModeInCurrentComposition"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerBlendModeInCurrentComposition"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -403,7 +412,7 @@ private:
         double opacity = request.arguments.value(QStringLiteral("opacity")).toDouble();
 
         QVariantList args{layerId, opacity};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerOpacityInCurrentComposition"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerOpacityInCurrentComposition"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -424,17 +433,17 @@ private:
 
         if (state == QStringLiteral("play") || state == QStringLiteral("toggle")) {
             QVariantList args;
-            ok = WorkspaceAutomation::invokeMethod(QStringLiteral("playbackToggle"), args);
+            ok = invokeWorkspaceAutomationMethod(QStringLiteral("playbackToggle"), args);
         } else if (state == QStringLiteral("pause")) {
             QVariantList args;
-            ok = WorkspaceAutomation::invokeMethod(QStringLiteral("playbackPause"), args);
+            ok = invokeWorkspaceAutomationMethod(QStringLiteral("playbackPause"), args);
         } else if (state == QStringLiteral("stop")) {
             QVariantList args;
-            ok = WorkspaceAutomation::invokeMethod(QStringLiteral("playbackStop"), args);
+            ok = invokeWorkspaceAutomationMethod(QStringLiteral("playbackStop"), args);
         } else if (state == QStringLiteral("seek")) {
             int frame = request.arguments.value(QStringLiteral("frame")).toInt();
             QVariantList args{frame};
-            ok = WorkspaceAutomation::invokeMethod(QStringLiteral("playbackSetCurrentFrame"), args);
+            ok = invokeWorkspaceAutomationMethod(QStringLiteral("playbackSetCurrentFrame"), args);
         } else {
             result.error = QStringLiteral("Unsupported playback state: ") + state;
             return result;
@@ -455,7 +464,7 @@ private:
         result.undoLabel = QStringLiteral("Export Composition");
 
         QVariantList args;
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("addRenderQueueForCurrentComposition"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("addRenderQueueForCurrentComposition"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -475,7 +484,7 @@ private:
         int effectIndex = request.arguments.value(QStringLiteral("effectIndex")).toInt();
 
         QVariantList args{layerId, effectIndex};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("removeLayerEffect"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("removeLayerEffect"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -492,10 +501,10 @@ private:
         result.undoLabel = QStringLiteral("Get Scene Info");
 
         QVariantMap info;
-        info.insert(QStringLiteral("project"), WorkspaceAutomation::projectSnapshot());
-        info.insert(QStringLiteral("composition"), WorkspaceAutomation::currentCompositionSnapshot());
-        info.insert(QStringLiteral("layers"), WorkspaceAutomation::listCurrentCompositionLayers());
-        info.insert(QStringLiteral("selection"), WorkspaceAutomation::selectionSnapshot());
+        info.insert(QStringLiteral("project"), invokeWorkspaceAutomationMethod(QStringLiteral("projectSnapshot"), {}));
+        info.insert(QStringLiteral("composition"), invokeWorkspaceAutomationMethod(QStringLiteral("currentCompositionSnapshot"), {}));
+        info.insert(QStringLiteral("layers"), invokeWorkspaceAutomationMethod(QStringLiteral("listCurrentCompositionLayers"), {}));
+        info.insert(QStringLiteral("selection"), invokeWorkspaceAutomationMethod(QStringLiteral("selectionSnapshot"), {}));
 
         result.success = true;
         result.valid = true;
@@ -516,10 +525,10 @@ private:
 
         QVariantList args{layerId};
         QVariantList info;
-        info.append(WorkspaceAutomation::invokeMethod(QStringLiteral("getLayerPosition"), args));
-        info.append(WorkspaceAutomation::invokeMethod(QStringLiteral("getLayerScale"), args));
-        info.append(WorkspaceAutomation::invokeMethod(QStringLiteral("getLayerRotation"), args));
-        info.append(WorkspaceAutomation::invokeMethod(QStringLiteral("getLayerOpacity"), args));
+        info.append(invokeWorkspaceAutomationMethod(QStringLiteral("getLayerPosition"), args));
+        info.append(invokeWorkspaceAutomationMethod(QStringLiteral("getLayerScale"), args));
+        info.append(invokeWorkspaceAutomationMethod(QStringLiteral("getLayerRotation"), args));
+        info.append(invokeWorkspaceAutomationMethod(QStringLiteral("getLayerOpacity"), args));
 
         result.success = true;
         result.valid = true;
@@ -542,7 +551,7 @@ private:
         int h = request.arguments.value(QStringLiteral("height"), 1080).toInt();
 
         QVariantList args{name, w, h};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("createComposition"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("createComposition"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -560,7 +569,7 @@ private:
 
         const QString compId = request.arguments.value(QStringLiteral("compositionId")).toString();
         QVariantList args{compId};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("changeCurrentComposition"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("changeCurrentComposition"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -584,7 +593,7 @@ private:
 
         QVariantList args;
         args.append(QVariant::fromValue(filePaths));
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("importAssetsFromPaths"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("importAssetsFromPaths"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -602,7 +611,7 @@ private:
 
         const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
         QVariantList args{layerId};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("duplicateLayerInCurrentComposition"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("duplicateLayerInCurrentComposition"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -622,7 +631,7 @@ private:
         const QVariantList layerIds = request.arguments.value(QStringLiteral("layerIds")).toList();
 
         QVariantList args{groupName, 1920, 1080};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("createGroupLayer"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("createGroupLayer"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -642,7 +651,7 @@ private:
         const QString parentId = request.arguments.value(QStringLiteral("parentLayerId")).toString();
 
         QVariantList args{layerId, parentId};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerParentInCurrentComposition"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerParentInCurrentComposition"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -660,7 +669,7 @@ private:
 
         const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
         QVariantList args{layerId};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("splitLayerAtCurrentTime"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("splitLayerAtCurrentTime"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -680,7 +689,7 @@ private:
         const QString propertyPath = request.target.value(QStringLiteral("propertyPath")).toString();
 
         QVariantList args{layerId, propertyPath};
-        QVariant kfs = WorkspaceAutomation::invokeMethod(QStringLiteral("getKeyframes"), args);
+        QVariant kfs = invokeWorkspaceAutomationMethod(QStringLiteral("getKeyframes"), args);
 
         result.success = true;
         result.executed = true;
@@ -702,7 +711,7 @@ private:
         int frame = request.arguments.value(QStringLiteral("frame")).toInt();
 
         QVariantList args{layerId, propertyPath, frame};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("deleteKeyframe"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("deleteKeyframe"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -722,7 +731,7 @@ private:
         int endFrame = request.arguments.value(QStringLiteral("endFrame")).toInt();
 
         QVariantList args;
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("setWorkArea"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("setWorkArea"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -742,7 +751,7 @@ private:
         const QString label = request.arguments.value(QStringLiteral("label")).toString();
 
         QVariantList args;
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("playbackAddMarker"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("playbackAddMarker"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -764,7 +773,7 @@ private:
         const QVariant value = request.arguments.value(QStringLiteral("value"));
 
         QVariantList args{layerId, effectIndex, paramName, value};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerEffectParameter"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerEffectParameter"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -785,7 +794,7 @@ private:
         bool enabled = request.arguments.value(QStringLiteral("enabled")).toBool();
 
         QVariantList args{layerId, enabled};
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerEffectEnabled"), args);
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerEffectEnabled"), args);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -802,7 +811,7 @@ private:
         result.undoLabel = QStringLiteral("List Available Effects");
 
         QVariantList effects;
-        QVariant presets = WorkspaceAutomation::invokeMethod(QStringLiteral("listLayerEffectPresets"), QVariantList());
+        QVariant presets = invokeWorkspaceAutomationMethod(QStringLiteral("listLayerEffectPresets"), QVariantList());
         if (presets.isValid()) {
             effects.append(presets);
         }
@@ -822,7 +831,7 @@ private:
         result.type = QStringLiteral("start_render_queue");
         result.undoLabel = QStringLiteral("Start Render Queue");
 
-        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("startAllRenderQueues"), QVariantList());
+        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("startAllRenderQueues"), QVariantList());
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -838,7 +847,7 @@ private:
         result.type = QStringLiteral("get_render_status");
         result.undoLabel = QStringLiteral("Get Render Status");
 
-        QVariant status = WorkspaceAutomation::invokeMethod(QStringLiteral("renderQueueSnapshot"), QVariantList());
+        QVariant status = invokeWorkspaceAutomationMethod(QStringLiteral("renderQueueSnapshot"), QVariantList());
 
         result.success = true;
         result.executed = true;
@@ -855,7 +864,7 @@ private:
         result.type = QStringLiteral("list_compositions");
         result.undoLabel = QStringLiteral("List Compositions");
 
-        QVariant comps = WorkspaceAutomation::invokeMethod(QStringLiteral("listCompositions"), QVariantList());
+        QVariant comps = invokeWorkspaceAutomationMethod(QStringLiteral("listCompositions"), QVariantList());
 
         result.success = true;
         result.executed = true;
@@ -872,7 +881,7 @@ private:
         result.type = QStringLiteral("list_project_items");
         result.undoLabel = QStringLiteral("List Project Items");
 
-        QVariant items = WorkspaceAutomation::invokeMethod(QStringLiteral("listProjectItems"), QVariantList());
+        QVariant items = invokeWorkspaceAutomationMethod(QStringLiteral("listProjectItems"), QVariantList());
 
         result.success = true;
         result.executed = true;

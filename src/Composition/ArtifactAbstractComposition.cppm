@@ -42,6 +42,13 @@ import Artifact.Effect.Abstract;
 import Artifact.Render.CompositionViewDrawing;
 import Artifact.Event.Types;
 import Event.Bus;
+import Audio.Mixer;
+import Audio.Bus;
+import Audio.Mixer;
+import Audio.Bus;
+import Artifact.Layer.Audio;
+import Artifact.Layer.Video;
+
 //import Playback.Clock;
 
 namespace Artifact {
@@ -670,6 +677,7 @@ class ArtifactAbstractComposition::Impl {
   bool looping_ = false;
   float playbackSpeed_ = 1.0f;
   AudioLimiter limiter_;
+  std::shared_ptr<AudioMixer> audioMixer_;
   CompositionID id_;
   QString compositionNote_;
   FloatColor backgroundColor_ = { 0.47f, 0.47f, 0.47f, 1.0f };
@@ -1353,51 +1361,109 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
     int activeAudioLayerCount = 0;
     int producedAudioLayerCount = 0;
     
-    // Prepare output segment
-    if (outSegment.channelCount() < 2) {
-        outSegment.channelData.resize(2);
-    }
-    outSegment.sampleRate = sampleRate;
-    outSegment.setFrameCount(frameCount);
-    outSegment.zero();
-
-    AudioSegment layerSegment;
-    for (auto &layer : impl_->layerMultiIndex_) {
-        if (layer && layer->isActiveAt(start) && layer->hasAudio()) {
-            ++activeAudioLayerCount;
-            if (layer->getAudio(layerSegment, start, frameCount, sampleRate)) {
-                // Simple mix (Addition)
-                int chCount = std::min(outSegment.channelCount(), layerSegment.channelCount());
-                int fCount = std::min(outSegment.frameCount(), layerSegment.frameCount());
-                
-                for (int ch = 0; ch < chCount; ++ch) {
-                    float* outData = outSegment.channelData[ch].data();
-                    const float* layerData = layerSegment.channelData[ch].constData();
-                    __pragma(loop(ivdep))
-                    for (int i = 0; i < fCount; ++i) {
-                        outData[i] += layerData[i];
-                    }
+    // If mixer is active, use the mixer path for proper bus-based mixing.
+    if (impl_->audioMixer_) {
+        AudioMixer& mixer = *impl_->audioMixer_;
+        for (auto &layer : impl_->layerMultiIndex_) {
+            if (layer && layer->hasAudio()) {
+                const std::string busName = "layer_" + layer->id().toString().toStdString();
+                if (!mixer.findBusByName(busName)) {
+                    mixer.createBus(busName);
                 }
-                ++producedAudioLayerCount;
-                hasAnyAudio = true;
             }
         }
+        AudioSegment mixOutput;
+        mixOutput.sampleRate = sampleRate;
+        mixOutput.channelData.resize(2);
+        mixOutput.setFrameCount(frameCount);
+        mixOutput.zero();
+        AudioSegment layerSegment;
+        for (auto &layer : impl_->layerMultiIndex_) {
+            if (layer && layer->isActiveAt(start) && layer->hasAudio()) {
+                ++activeAudioLayerCount;
+                const std::string busName = "layer_" + layer->id().toString().toStdString();
+                auto bus = mixer.findBusByName(busName);
+                if (!bus) continue;
+                bus->clearInput(frameCount, sampleRate);
+                if (layer->getAudio(layerSegment, start, frameCount, sampleRate)) {
+                    float layerVol = 1.0f;
+                    if (auto al = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+                        layerVol = al->volume();
+                    } else if (auto vl = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+                        layerVol = static_cast<float>(vl->audioVolume());
+                    }
+                    bus->addInput(layerSegment, layerVol);
+                    ++producedAudioLayerCount;
+                    hasAnyAudio = true;
+                }
+            }
+        }
+        if (hasAnyAudio) {
+            mixer.process(mixOutput);
+            outSegment = std::move(mixOutput);
+            impl_->limiter_.process(outSegment, sampleRate);
+            softClip(outSegment);
+        } else {
+            outSegment = std::move(mixOutput);
+        }
     }
-    if (activeAudioLayerCount > 0 && !hasAnyAudio) {
-        qWarning() << "[Composition][Audio] active layers produced no audio"
-                   << "startFrame=" << start.framePosition()
-                   << "frameCount=" << frameCount
-                   << "sampleRate=" << sampleRate
-                   << "activeAudioLayers=" << activeAudioLayerCount
-                   << "producedAudioLayers=" << producedAudioLayerCount;
-    }
+    
+    // Fallback: direct sum path (legacy, no mixer)
+    if (!impl_->audioMixer_) {
+        if (outSegment.channelCount() < 2) {
+            outSegment.channelData.resize(2);
+        }
+        outSegment.sampleRate = sampleRate;
+        outSegment.setFrameCount(frameCount);
+        outSegment.zero();
 
-    if (hasAnyAudio) {
-        impl_->limiter_.process(outSegment, sampleRate);
-        softClip(outSegment);
+        AudioSegment layerSeg;
+        for (auto &layer : impl_->layerMultiIndex_) {
+            if (layer && layer->isActiveAt(start) && layer->hasAudio()) {
+                ++activeAudioLayerCount;
+                if (layer->getAudio(layerSeg, start, frameCount, sampleRate)) {
+                    int chCount = std::min(outSegment.channelCount(), layerSeg.channelCount());
+                    int fCount = std::min(outSegment.frameCount(), layerSeg.frameCount());
+                    for (int ch = 0; ch < chCount; ++ch) {
+                        float* outData = outSegment.channelData[ch].data();
+                        const float* layerData = layerSeg.channelData[ch].constData();
+                        for (int i = 0; i < fCount; ++i) {
+                            outData[i] += layerData[i];
+                        }
+                    }
+                    ++producedAudioLayerCount;
+                    hasAnyAudio = true;
+                }
+            }
+        }
+        if (activeAudioLayerCount > 0 && !hasAnyAudio) {
+            qWarning() << "[Composition][Audio] active layers produced no audio"
+                       << "startFrame=" << start.framePosition()
+                       << "frameCount=" << frameCount
+                       << "sampleRate=" << sampleRate
+                       << "activeAudioLayers=" << activeAudioLayerCount
+                       << "producedAudioLayers=" << producedAudioLayerCount;
+        }
+        if (hasAnyAudio) {
+            impl_->limiter_.process(outSegment, sampleRate);
+            softClip(outSegment);
+        }
     }
 
     return hasAnyAudio;
+}
+
+void ArtifactAbstractComposition::ensureAudioMixer()
+{
+    if (!impl_->audioMixer_) {
+        impl_->audioMixer_ = std::make_shared<AudioMixer>();
+        qDebug() << "[Composition] AudioMixer enabled for" << settings().compositionName().toQString();
+    }
+}
+
+std::shared_ptr<AudioMixer> ArtifactAbstractComposition::getAudioMixer() const
+{
+    return impl_->audioMixer_;
 }
 
 QList<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer()

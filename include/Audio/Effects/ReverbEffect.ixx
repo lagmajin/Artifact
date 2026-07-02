@@ -30,7 +30,7 @@ public:
     std::string getName() const override { return "Reverb"; }
     std::string getDescription() const override;
 
-    std::vector<AudioEffectParameter> getParameters() const override;
+    std::vector<AudioEffectParameter> getUiParameters() const override;
     void setParameter(const std::string& name, float value) override;
     float getParameter(const std::string& name) const override;
     void setSampleRate(int sampleRate) override;

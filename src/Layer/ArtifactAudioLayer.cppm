@@ -448,9 +448,15 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
       static_cast<qint64>(std::floor(startSeconds * impl_->sourceSampleRate_));
   const qint64 sourceFrameCount = impl_->interleavedPcm_.size() / std::max(1, impl_->sourceChannelCount_);
 
+  const int outChannels = std::max(1, impl_->sourceChannelCount_);
+  AudioChannelLayout outLayout = AudioChannelLayout::Stereo;
+  if (outChannels == 1) outLayout = AudioChannelLayout::Mono;
+  else if (outChannels == 2) outLayout = AudioChannelLayout::Stereo;
+  else if (outChannels == 6) outLayout = AudioChannelLayout::Surround51;
+  else if (outChannels == 8) outLayout = AudioChannelLayout::Surround71;
   outSegment.sampleRate = sampleRate;
-  outSegment.layout = ArtifactCore::AudioChannelLayout::Stereo;
-  outSegment.channelData.resize(2);
+  outSegment.layout = outLayout;
+  outSegment.channelData.resize(outChannels);
   outSegment.setFrameCount(frameCount);
   outSegment.zero();
 
@@ -458,69 +464,80 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     return false;
   }
 
-  // リサンプリング結果キャッシュを確認
+  // リサンプリング結果キャッシュを確認（チャンネル数も一致するか検証）
   auto& rc = impl_->resampledCache_;
   if (rc.startSample == startSample && rc.sampleRate == sampleRate &&
       rc.volume == impl_->volume_ && rc.pan == impl_->pan_ &&
+      rc.segment.channelCount() >= outChannels &&
       rc.segment.frameCount() >= frameCount) {
-    for (int ch = 0; ch < 2; ++ch) {
+    for (int ch = 0; ch < outChannels; ++ch) {
       std::copy_n(rc.segment.channelData[ch].data(), frameCount,
                   outSegment.channelData[ch].data());
     }
     return true;
   }
 
+  const int srcChannels = impl_->sourceChannelCount_;
+  const float volume = impl_->volume_;
+
   int producedFrames = 0;
   for (int i = 0; i < frameCount; ++i) {
     const double srcPos = static_cast<double>(startSample) +
         (static_cast<double>(i) * impl_->sourceSampleRate_) / sampleRate;
     const qint64 srcFrame0 = static_cast<qint64>(std::floor(srcPos));
-
     if (srcFrame0 < 0) continue;
     if (srcFrame0 >= sourceFrameCount) break;
 
     const qint64 srcFrame1 = srcFrame0 + 1;
     const float t = static_cast<float>(srcPos - static_cast<double>(srcFrame0));
+    const int base0 = static_cast<int>(srcFrame0) * srcChannels;
+    const int base1 = (srcFrame1 < sourceFrameCount)
+        ? static_cast<int>(srcFrame1) * srcChannels : base0;
 
-    const int base0 = static_cast<int>(srcFrame0) * impl_->sourceChannelCount_;
-    float left = 0.0f;
-    float right = 0.0f;
-    if (impl_->sourceChannelCount_ == 1) {
+    if (srcChannels == 1) {
+      // Mono source: interpolate and distribute to all output channels
       const float s0 = impl_->interleavedPcm_[base0];
       const float s1 = (srcFrame1 < sourceFrameCount)
-          ? impl_->interleavedPcm_[static_cast<int>(srcFrame1) * impl_->sourceChannelCount_]
+          ? impl_->interleavedPcm_[base0]
           : 0.0f;
-      left = right = s0 + t * (s1 - s0);
+      const float sample = (s0 + t * (s1 - s0)) * volume;
+      for (int ch = 0; ch < outChannels; ++ch) {
+        outSegment.channelData[ch][i] = sample;
+      }
     } else {
-      const int base1 = (srcFrame1 < sourceFrameCount)
-          ? static_cast<int>(srcFrame1) * impl_->sourceChannelCount_ : base0;
-      const float l0 = impl_->interleavedPcm_[base0];
-      const float r0 = impl_->interleavedPcm_[base0 + 1];
-      const float l1 = (srcFrame1 < sourceFrameCount) ? impl_->interleavedPcm_[base1] : 0.0f;
-      const float r1 = (srcFrame1 < sourceFrameCount) ? impl_->interleavedPcm_[base1 + 1] : 0.0f;
-      left  = l0 + t * (l1 - l0);
-      right = r0 + t * (r1 - r0);
+      // Multi-channel source: interpolate each channel independently
+      const int copyCh = std::min(srcChannels, outChannels);
+      for (int ch = 0; ch < copyCh; ++ch) {
+        const float s0 = impl_->interleavedPcm_[base0 + ch];
+        const float s1 = (srcFrame1 < sourceFrameCount)
+            ? impl_->interleavedPcm_[base1 + ch]
+            : 0.0f;
+        outSegment.channelData[ch][i] = (s0 + t * (s1 - s0)) * volume;
+      }
+      // Extra output channels remain zero (already zeroed)
     }
-
-    outSegment.channelData[0][i] = left * impl_->volume_;
-    outSegment.channelData[1][i] = right * impl_->volume_;
-    const auto gains = ArtifactCore::AudioPanner::calculateConstantPowerGains(impl_->pan_);
-    outSegment.channelData[0][i] *= gains.channelGains[0];
-    outSegment.channelData[1][i] *= gains.channelGains[1];
     producedFrames = i + 1;
   }
 
+  // Apply panning only for stereo/mono output (first 2 channels)
+  if (outChannels <= 2 && producedFrames > 0) {
+    const auto gains = ArtifactCore::AudioPanner::calculateConstantPowerGains(impl_->pan_);
+    for (int i = 0; i < producedFrames; ++i) {
+      if (outChannels >= 1) outSegment.channelData[0][i] *= gains.channelGains[0];
+      if (outChannels >= 2) outSegment.channelData[1][i] *= gains.channelGains[1];
+    }
+  }
+
   if (producedFrames > 0) {
-    // キャッシュを更新（リサンプリング結果を保存）
     rc.startSample = startSample;
     rc.sampleRate = sampleRate;
     rc.volume = impl_->volume_;
     rc.pan = impl_->pan_;
     rc.segment.sampleRate = sampleRate;
-    rc.segment.layout = ArtifactCore::AudioChannelLayout::Stereo;
-    rc.segment.channelData.resize(2);
+    rc.segment.layout = outLayout;
+    rc.segment.channelData.resize(outChannels);
     rc.segment.setFrameCount(producedFrames);
-    for (int ch = 0; ch < 2; ++ch) {
+    for (int ch = 0; ch < outChannels; ++ch) {
       std::copy_n(outSegment.channelData[ch].data(), producedFrames,
                   rc.segment.channelData[ch].data());
     }
