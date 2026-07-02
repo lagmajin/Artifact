@@ -490,6 +490,7 @@ namespace Artifact
         float overlayScale;
         float overlayRotationDeg;
         bool multiChannelExportEnabled = false;
+        QStringList multiChannelExportChannels;
         int framePadding = 4;   // 画像シーケンスのフレーム番号ゼロ埋め桁数
 
         ArtifactRenderJob()
@@ -554,6 +555,87 @@ namespace Artifact
             RendererChannel::Emission,
         };
 
+        QString rendererChannelKey(RendererChannel channel)
+        {
+            switch (channel) {
+            case RendererChannel::Red:
+                return QStringLiteral("R");
+            case RendererChannel::Green:
+                return QStringLiteral("G");
+            case RendererChannel::Blue:
+                return QStringLiteral("B");
+            case RendererChannel::Alpha:
+                return QStringLiteral("A");
+            case RendererChannel::Depth:
+                return QStringLiteral("Depth");
+            case RendererChannel::NormalX:
+                return QStringLiteral("Normal.X");
+            case RendererChannel::NormalY:
+                return QStringLiteral("Normal.Y");
+            case RendererChannel::NormalZ:
+                return QStringLiteral("Normal.Z");
+            case RendererChannel::VelocityX:
+                return QStringLiteral("Velocity.X");
+            case RendererChannel::VelocityY:
+                return QStringLiteral("Velocity.Y");
+            case RendererChannel::ObjectId:
+                return QStringLiteral("ObjectId");
+            case RendererChannel::MaterialId:
+                return QStringLiteral("MaterialId");
+            case RendererChannel::AlbedoR:
+                return QStringLiteral("Albedo.R");
+            case RendererChannel::AlbedoG:
+                return QStringLiteral("Albedo.G");
+            case RendererChannel::AlbedoB:
+                return QStringLiteral("Albedo.B");
+            case RendererChannel::Emission:
+                return QStringLiteral("Emission");
+            case RendererChannel::Custom:
+                return QStringLiteral("Custom");
+            }
+            return QStringLiteral("Unknown");
+        }
+
+        std::optional<RendererChannel> rendererChannelFromKey(const QString& key)
+        {
+            const QString normalized = key.trimmed();
+            for (const auto channel : kAllRendererChannels) {
+                if (rendererChannelKey(channel).compare(normalized, Qt::CaseInsensitive) == 0) {
+                    return channel;
+                }
+            }
+            return std::nullopt;
+        }
+
+        QStringList defaultMultiChannelExportChannelKeys()
+        {
+            QStringList names;
+            names.reserve(static_cast<int>(kDefaultMultiChannelExportChannels.size()));
+            for (const auto channel : kDefaultMultiChannelExportChannels) {
+                names.push_back(rendererChannelKey(channel));
+            }
+            return names;
+        }
+
+        QStringList sanitizeMultiChannelExportChannelKeys(const QStringList& requestedChannels)
+        {
+            QStringList sanitized;
+            for (const auto& name : requestedChannels) {
+                const auto parsed = rendererChannelFromKey(name);
+                if (!parsed.has_value()) {
+                    continue;
+                }
+                const QString canonical = rendererChannelKey(*parsed);
+                if (!sanitized.contains(canonical, Qt::CaseInsensitive)) {
+                    sanitized.push_back(canonical);
+                }
+            }
+            if (sanitized.isEmpty()) {
+                sanitized = defaultMultiChannelExportChannelKeys();
+            }
+            return sanitized;
+        }
+
         void configureRendererChannelsForRenderQueueJob(
             ArtifactIRenderer& renderer, const ArtifactRenderJob& job)
         {
@@ -566,8 +648,13 @@ namespace Artifact
                 return;
             }
 
-            for (const auto channel : kDefaultMultiChannelExportChannels) {
-                renderer.setChannelEnabled(channel, true);
+            const QStringList requestedChannels =
+                sanitizeMultiChannelExportChannelKeys(job.multiChannelExportChannels);
+            for (const auto& channelName : requestedChannels) {
+                const auto channel = rendererChannelFromKey(channelName);
+                if (channel.has_value()) {
+                    renderer.setChannelEnabled(*channel, true);
+                }
             }
         }
 
@@ -1789,6 +1876,11 @@ namespace Artifact
         void setJobMultiChannelEnabled(int index, bool enabled) {
             if (index < 0 || index >= jobs.size()) return;
             jobs[index].multiChannelExportEnabled = enabled;
+            if (enabled) {
+                jobs[index].multiChannelExportChannels =
+                    sanitizeMultiChannelExportChannelKeys(
+                        jobs[index].multiChannelExportChannels);
+            }
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -4724,6 +4816,10 @@ namespace Artifact
             obj["renderBackend"] = job.renderBackend;
             obj["integratedRenderEnabled"] = job.integratedRenderEnabled;
             obj["multiChannelExportEnabled"] = job.multiChannelExportEnabled;
+            obj["multiChannelExportChannels"] =
+                QJsonArray::fromStringList(
+                    sanitizeMultiChannelExportChannelKeys(
+                        job.multiChannelExportChannels));
             obj["framePadding"] = job.framePadding;
             obj["audioSourcePath"] = job.audioSourcePath;
             obj["audioCodec"] = job.audioCodec;
@@ -4761,6 +4857,14 @@ namespace Artifact
             job.renderBackend = normalizeRenderBackend(obj["renderBackend"].toString("auto"));
             job.integratedRenderEnabled = obj["integratedRenderEnabled"].toBool(false);
             job.multiChannelExportEnabled = obj["multiChannelExportEnabled"].toBool(false);
+            for (const auto& value : obj["multiChannelExportChannels"].toArray()) {
+                job.multiChannelExportChannels.push_back(value.toString());
+            }
+            if (job.multiChannelExportEnabled) {
+                job.multiChannelExportChannels =
+                    sanitizeMultiChannelExportChannelKeys(
+                        job.multiChannelExportChannels);
+            }
             job.framePadding = obj["framePadding"].toInt(4);
             job.audioSourcePath = obj["audioSourcePath"].toString();
             job.audioCodec = obj["audioCodec"].toString("aac");
