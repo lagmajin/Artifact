@@ -124,6 +124,8 @@ public:
                 return QStringLiteral("tinyobj");
             case ArtifactCore::MeshImporter::Backend::UfbxGltf:
                 return QStringLiteral("glTF via ufbx");
+            case ArtifactCore::MeshImporter::Backend::Usda:
+                return QStringLiteral("USD ASCII");
             case ArtifactCore::MeshImporter::Backend::None:
             default:
                 return QStringLiteral("none");
@@ -381,6 +383,8 @@ QString Artifact3DModelViewer::backendName() const
             return QStringLiteral("tinyobj");
         case ArtifactCore::MeshImporter::Backend::UfbxGltf:
             return QStringLiteral("glTF via ufbx");
+        case ArtifactCore::MeshImporter::Backend::Usda:
+            return QStringLiteral("USD ASCII");
         case ArtifactCore::MeshImporter::Backend::None:
         default:
             return QStringLiteral("none");

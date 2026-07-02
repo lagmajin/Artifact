@@ -1197,13 +1197,13 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
              const auto nowTime = currentTimeProvider
                                       ? currentTimeProvider()
                                       : currentPlaybackTime(playback);
-             propertyPtr->setAnimatable(true);
-             propertyPtr->addKeyFrame(nowTime, value);
-             row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
-             row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
-             if (keyframeChanged) {
-               keyframeChanged(propertyName);
-             }
+           propertyPtr->setAnimatable(true);
+           propertyPtr->addKeyFrame(nowTime, value);
+           row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
+           row->setNavigationEnabled(true);
+            if (keyframeChanged) {
+              keyframeChanged(propertyName);
+            }
            }
          }
          if (rowValueChanged) {
@@ -1234,7 +1234,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           propertyPtr->setAnimatable(true);
           propertyPtr->addKeyFrame(nowTime, value);
           row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
-          row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
+          row->setNavigationEnabled(true);
           if (keyframeChanged) {
             keyframeChanged(propertyName);
           }
@@ -1264,11 +1264,11 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
 
   const bool animatable = property.isAnimatable();
   row->setShowKeyframeButton(animatable);
-  row->setNavigationEnabled(false);
+  row->setNavigationEnabled(animatable);
   if (animatable) {
     const QString propertyName = property.getName();
     const auto track = propertyPtr->getKeyFrames();
-    row->setNavigationEnabled(!track.empty());
+    row->setNavigationEnabled(true);
     if (playback || currentTimeProvider) {
       const auto now = currentTimeProvider ? currentTimeProvider()
                                            : currentPlaybackTime(playback);
@@ -1300,10 +1300,9 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           } else {
             propertyPtr->removeKeyFrame(nowTime);
           }
-          const bool hasAnyKeyframes = !propertyPtr->getKeyFrames().empty();
           row->setKeyframeModeEnabled(checked);
           row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
-          row->setNavigationEnabled(hasAnyKeyframes);
+          row->setNavigationEnabled(true);
           if (keyframeChanged) {
             keyframeChanged(propertyName);
           }
@@ -2235,7 +2234,7 @@ void ArtifactPropertyWidget::Impl::updatePropertyValues() {
     row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(now));
     row->setKeyframeModeEnabled(row->isKeyframeModeEnabled() ||
                                 propertyPtr->hasKeyFrameAt(now));
-    row->setNavigationEnabled(hasAnyKeyframes);
+    row->setNavigationEnabled(hasAnyKeyframes || propertyPtr->isAnimatable());
   }
 
   applyLockState();

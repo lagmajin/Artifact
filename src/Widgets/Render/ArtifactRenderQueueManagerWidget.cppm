@@ -663,6 +663,8 @@ namespace Artifact
     dialog.setFrameRate(fps);
     dialog.setBitrateKbps(bitrateKbps);
     dialog.setIncludeAudio(impl_->service->jobIntegratedRenderEnabledAt(index));
+    dialog.setMultiChannelEnabled(impl_->service->jobMultiChannelEnabledAt(index));
+    dialog.setFramePadding(impl_->service->jobFramePaddingAt(index));
     dialog.setAudioCodec(impl_->service->jobAudioCodecAt(index));
     dialog.setAudioBitrateKbps(impl_->service->jobAudioBitrateKbpsAt(index));
     const auto preflight = impl_->service->preflightRenderQueueAt(index);
@@ -683,6 +685,8 @@ namespace Artifact
       impl_->service->setJobEncoderBackendAt(index, dialog.encoderBackend());
       impl_->service->setJobRenderBackendAt(index, dialog.renderBackend());
       impl_->service->setJobIntegratedRenderEnabledAt(index, dialog.includeAudio());
+      impl_->service->setJobMultiChannelEnabledAt(index, dialog.multiChannelEnabled());
+      impl_->service->setJobFramePaddingAt(index, dialog.framePadding());
       impl_->service->setJobAudioCodecAt(index, dialog.audioCodec());
       impl_->service->setJobAudioBitrateKbpsAt(index, dialog.audioBitrateKbps());
       impl_->syncJobsFromService();

@@ -102,6 +102,7 @@ public:
     RenderShaderPair gizmo3DShaders_;
     RenderShaderPair batchSolidRectShaders_;
     RenderShaderPair batchSolidRectAAShaders_;
+    RenderShaderPair skyboxShaders_;
 
     PSOAndSRB linePsoAndSrb_;
     PSOAndSRB outlinePsoAndSrb_;
@@ -121,6 +122,7 @@ public:
     PSOAndSRB gizmo3DTrianglePsoAndSrb_;
     PSOAndSRB batchSolidRectPsoAndSrb_;
     PSOAndSRB batchSolidRectAAPsoAndSrb_;
+    PSOAndSRB skyboxPsoAndSrb_;
 
     RefCntAutoPtr<ISampler> spriteSampler_;
     RefCntAutoPtr<ISampler> glyphAtlasSampler_;
@@ -142,6 +144,7 @@ public:
     void destroy();
 
     void createLineFamilyPSOs();
+    void createSkyboxPSO();
     void createSpriteFamilyPSOs();
     void createUtilityFamilyPSOs();
 };
@@ -407,6 +410,57 @@ float4 main(PS_INPUT input) : SV_TARGET
     createShaderOrWarn(glyphTransformVsInfo, glyphQuadTransformShaders_.VS);
     glyphQuadTransformShaders_.PS = glyphQuadShaders_.PS; // reuse the same glyph PS
 
+
+    // Skybox VS: full-screen triangle via vertex ID (no vertex buffer needed)
+    static const char* const s_skyboxVS = R"(
+    struct VSOut
+    {
+        float4 pos : SV_POSITION;
+        float3 dir : TEXCOORD0;
+    };
+    cbuffer SkyboxCB : register(b0)
+    {
+        float4x4 g_InvViewProj;
+    };
+    VSOut main(uint vI : SV_VERTEXID)
+    {
+        VSOut Out;
+        float2 pos = float2((vI == 2) ? 3.0 : -1.0, (vI == 1) ? 3.0 : -1.0);
+        Out.pos = float4(pos, 0.0, 1.0);
+        float4 unprojected = mul(g_InvViewProj, float4(pos, 0.0, 1.0));
+        Out.dir = normalize(unprojected.xyz / unprojected.w);
+        return Out;
+    }
+    )";
+    ShaderCreateInfo skyboxVsInfo;
+    skyboxVsInfo.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+    skyboxVsInfo.Desc.ShaderType = SHADER_TYPE_VERTEX;
+    skyboxVsInfo.Desc.Name = "Skybox VS";
+    skyboxVsInfo.Source = s_skyboxVS;
+    skyboxVsInfo.SourceLength = static_cast<Uint32>(std::strlen(s_skyboxVS));
+
+    static const char* const s_skyboxPS = R"(
+    struct PSIn
+    {
+        float4 pos : SV_POSITION;
+        float3 dir : TEXCOORD0;
+    };
+    TextureCube g_envMap : register(t0);
+    SamplerState g_sampler : register(s0);
+    float4 main(PSIn input) : SV_TARGET
+    {
+        return g_envMap.Sample(g_sampler, normalize(input.dir));
+    }
+    )";
+    ShaderCreateInfo skyboxPsInfo;
+    skyboxPsInfo.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+    skyboxPsInfo.Desc.ShaderType = SHADER_TYPE_PIXEL;
+    skyboxPsInfo.Desc.Name = "Skybox PS";
+    skyboxPsInfo.Source = s_skyboxPS;
+    skyboxPsInfo.SourceLength = static_cast<Uint32>(std::strlen(s_skyboxPS));
+
+    createShaderOrWarn(skyboxVsInfo, skyboxShaders_.VS);
+    createShaderOrWarn(skyboxPsInfo, skyboxShaders_.PS);
     // Post-parallel pointer assignments (no CreateShader needed, just sharing refs)
     solidTriangleShaders_              = solidShaders_;
     solidRectTransformShaders_.PS      = solidShaders_.PS;
@@ -890,6 +944,51 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
     }
 }
 
+
+
+void ShaderManager::Impl::createSkyboxPSO()
+{
+    if (!device_) return;
+
+    static const ShaderResourceVariableDesc skyboxVars[] =
+    {
+        { SHADER_TYPE_VERTEX, "SkyboxCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "g_envMap", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "g_sampler", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+    };
+
+    GraphicsPipelineStateCreateInfo skyboxInfo;
+    skyboxInfo.PSODesc.Name = "Skybox PSO";
+    skyboxInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    skyboxInfo.pPSOCache = psoCache_.RawPtr();
+    skyboxInfo.pVS = skyboxShaders_.VS;
+    skyboxInfo.pPS = skyboxShaders_.PS;
+    auto& skyboxGP = skyboxInfo.GraphicsPipeline;
+    skyboxGP.NumRenderTargets = 1;
+    skyboxGP.RTVFormats[0] = rtvFormat_;
+    skyboxGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    skyboxGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+    skyboxGP.DepthStencilDesc.DepthEnable = False;
+    auto& skyboxBlend = skyboxGP.BlendDesc.RenderTargets[0];
+    skyboxBlend.BlendEnable = True;
+    skyboxBlend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
+    skyboxBlend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
+    skyboxBlend.BlendOp = BLEND_OPERATION_ADD;
+    skyboxBlend.SrcBlendAlpha = BLEND_FACTOR_ONE;
+    skyboxBlend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
+    skyboxBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
+    skyboxBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
+    skyboxGP.InputLayout.NumElements = 0;  // no vertex buffer
+    skyboxInfo.PSODesc.ResourceLayout.Variables = skyboxVars;
+    skyboxInfo.PSODesc.ResourceLayout.NumVariables = _countof(skyboxVars);
+    device_->CreateGraphicsPipelineState(skyboxInfo, &skyboxPsoAndSrb_.pPSO);
+    if (skyboxPsoAndSrb_.pPSO) {
+        skyboxPsoAndSrb_.pPSO->CreateShaderResourceBinding(&skyboxPsoAndSrb_.pSRB, true);
+    } else {
+        qWarning() << "[ShaderManager] Failed to create PSO: Skybox PSO";
+    }
+}
+
 void ShaderManager::Impl::createUtilityFamilyPSOs()
 {
     if (!device_) {
@@ -1101,6 +1200,7 @@ void ShaderManager::Impl::destroy()
     clearPso(gizmo3DTrianglePsoAndSrb_);
     clearPso(batchSolidRectPsoAndSrb_);
     clearPso(batchSolidRectAAPsoAndSrb_);
+    clearPso(skyboxPsoAndSrb_);
 
     clearShaderPair(lineShaders_);
     clearShaderPair(outlineShaders_);
@@ -1119,6 +1219,7 @@ void ShaderManager::Impl::destroy()
     clearShaderPair(gizmo3DShaders_);
     clearShaderPair(batchSolidRectShaders_);
     clearShaderPair(batchSolidRectAAShaders_);
+    clearShaderPair(skyboxShaders_);
 
     spriteSampler_ = nullptr;
     glyphAtlasSampler_ = nullptr;
@@ -1304,6 +1405,15 @@ PSOAndSRB ShaderManager::batchSolidRectAAPsoAndSrb() const
     return impl_->batchSolidRectAAPsoAndSrb_;
 }
 
+PSOAndSRB ShaderManager::skyboxPsoAndSrb() const
+{
+    return impl_->skyboxPsoAndSrb_;
+}
+
+RenderShaderPair ShaderManager::skyboxShaders() const
+{
+    return impl_->skyboxShaders_;
+}
 RefCntAutoPtr<ISampler> ShaderManager::spriteSampler() const
 {
     return impl_->spriteSampler_;
@@ -1320,3 +1430,14 @@ bool ShaderManager::isInitialized() const
 }
 
 }
+
+
+
+
+
+
+
+
+
+
+

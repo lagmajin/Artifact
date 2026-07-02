@@ -83,6 +83,11 @@ class Artifact3DLayer::Impl {
 public:
   RenderMode renderMode_ = RenderMode::Wireframe;
   FixedGeometry3D fixedGeometry_ = FixedGeometry3D::Auto;
+  float geometryWidth_ = 200.0f;
+  float geometryHeight_ = 200.0f;
+  float geometryDepth_ = 200.0f;
+  int geometrySegments_ = 20;
+  int geometryRings_ = 12;
   ArtifactCore::Material material_ = ArtifactCore::Material::makeDefault();
   Mesh mesh_; // The 3D mesh data
   QString sourcePath_;
@@ -221,7 +226,7 @@ void Artifact3DLayer::setFixedGeometry(FixedGeometry3D geometry)
   createFixedGeometryMesh(geometry);
   impl_->meshLoaded_ = true;
   updateSourceSizeFromMesh();
-  impl_->renderMode_ = RenderMode::Wireframe;
+  impl_->renderMode_ = RenderMode::Solid;
 }
 
 FixedGeometry3D Artifact3DLayer::fixedGeometry() const
@@ -239,6 +244,11 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["sourcePath"] = impl_->sourcePath_;
   obj["renderMode"] = static_cast<int>(impl_->renderMode_);
   obj["fixedGeometry"] = static_cast<int>(impl_->fixedGeometry_);
+  obj["geometry.width"] = impl_->geometryWidth_;
+  obj["geometry.height"] = impl_->geometryHeight_;
+  obj["geometry.depth"] = impl_->geometryDepth_;
+  obj["geometry.segments"] = impl_->geometrySegments_;
+  obj["geometry.rings"] = impl_->geometryRings_;
   obj["material.baseColorTexture"] = impl_->material_.baseColorTexture().toQString();
   obj["material.metallicRoughnessTexture"] =
       impl_->material_.metallicRoughnessTexture().toQString();
@@ -252,6 +262,12 @@ QJsonObject Artifact3DLayer::toJson() const {
 void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
 {
   ArtifactAbstractLayer::fromJsonProperties(obj);
+
+  impl_->geometryWidth_ = std::max(0.01f, static_cast<float>(obj.value("geometry.width").toDouble(impl_->geometryWidth_)));
+  impl_->geometryHeight_ = std::max(0.01f, static_cast<float>(obj.value("geometry.height").toDouble(impl_->geometryHeight_)));
+  impl_->geometryDepth_ = std::max(0.01f, static_cast<float>(obj.value("geometry.depth").toDouble(impl_->geometryDepth_)));
+  impl_->geometrySegments_ = std::clamp(obj.value("geometry.segments").toInt(impl_->geometrySegments_), 3, 128);
+  impl_->geometryRings_ = std::clamp(obj.value("geometry.rings").toInt(impl_->geometryRings_), 2, 128);
 
   const QString sourcePath = obj.contains("model.sourcePath")
                                  ? obj.value("model.sourcePath").toString()
@@ -292,17 +308,18 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
 }
 
 void Artifact3DLayer::createCubeMesh() {
-  // Create a simple cube mesh
-  const float halfSize = 0.5f;
+  const float halfWidth = impl_->geometryWidth_ * 0.5f;
+  const float halfHeight = impl_->geometryHeight_ * 0.5f;
+  const float halfDepth = impl_->geometryDepth_ * 0.5f;
   QVector<QVector3D> positions = {
-      QVector3D(-halfSize, -halfSize, -halfSize), // 0
-      QVector3D(halfSize, -halfSize, -halfSize),  // 1
-      QVector3D(halfSize, halfSize, -halfSize),   // 2
-      QVector3D(-halfSize, halfSize, -halfSize),  // 3
-      QVector3D(-halfSize, -halfSize, halfSize),  // 4
-      QVector3D(halfSize, -halfSize, halfSize),   // 5
-      QVector3D(halfSize, halfSize, halfSize),    // 6
-      QVector3D(-halfSize, halfSize, halfSize)    // 7
+      QVector3D(-halfWidth, -halfHeight, -halfDepth),
+      QVector3D(halfWidth, -halfHeight, -halfDepth),
+      QVector3D(halfWidth, halfHeight, -halfDepth),
+      QVector3D(-halfWidth, halfHeight, -halfDepth),
+      QVector3D(-halfWidth, -halfHeight, halfDepth),
+      QVector3D(halfWidth, -halfHeight, halfDepth),
+      QVector3D(halfWidth, halfHeight, halfDepth),
+      QVector3D(-halfWidth, halfHeight, halfDepth)
   };
 
   impl_->mesh_.setVertexCount(8);
@@ -314,8 +331,9 @@ void Artifact3DLayer::createCubeMesh() {
   for (int i = 0; i < positions.size(); ++i) {
     const QVector3D normal = positions[i].normalized();
     (*normalAttr)[i] = normal;
-    (*uvAttr)[i] = QVector2D((positions[i].x() + halfSize) / (2.0f * halfSize),
-                             (positions[i].y() + halfSize) / (2.0f * halfSize));
+    (*uvAttr)[i] = QVector2D(
+        impl_->geometryWidth_ > 0.0f ? (positions[i].x() + halfWidth) / impl_->geometryWidth_ : 0.5f,
+        impl_->geometryHeight_ > 0.0f ? (positions[i].y() + halfHeight) / impl_->geometryHeight_ : 0.5f);
   }
 
   // Add polygons (triangulated for simplicity)
@@ -341,27 +359,250 @@ void Artifact3DLayer::createCubeMesh() {
 
 void Artifact3DLayer::createPlaneMesh()
 {
-  const float halfSize = 0.5f;
+  const float halfWidth = impl_->geometryWidth_ * 0.5f;
+  const float halfHeight = impl_->geometryHeight_ * 0.5f;
   QVector<QVector3D> positions = {
-      QVector3D(-halfSize, -halfSize, 0.0f),
-      QVector3D(halfSize, -halfSize, 0.0f),
-      QVector3D(halfSize, halfSize, 0.0f),
-      QVector3D(-halfSize, halfSize, 0.0f)
+      QVector3D(-halfWidth, -halfHeight, 0.0f),
+      QVector3D(halfWidth, -halfHeight, 0.0f),
+      QVector3D(halfWidth, halfHeight, 0.0f),
+      QVector3D(-halfWidth, halfHeight, 0.0f)
   };
 
-  impl_->mesh_.setVertexCount(4);
+  impl_->mesh_.setVertexCount(8);
   auto &vertexAttrs = impl_->mesh_.vertexAttributes();
   auto positionAttr = vertexAttrs.add<QVector3D>("position");
-  positionAttr->data() = positions;
   auto normalAttr = vertexAttrs.add<QVector3D>("normal");
   auto uvAttr = vertexAttrs.add<QVector2D>("uv");
   for (int i = 0; i < positions.size(); ++i) {
+    (*positionAttr)[i] = positions[i];
+    (*positionAttr)[i + 4] = positions[i];
     (*normalAttr)[i] = QVector3D(0.0f, 0.0f, 1.0f);
-    (*uvAttr)[i] = QVector2D((positions[i].x() + halfSize) / (2.0f * halfSize),
-                             (positions[i].y() + halfSize) / (2.0f * halfSize));
+    (*normalAttr)[i + 4] = QVector3D(0.0f, 0.0f, -1.0f);
+    const QVector2D uv(
+        impl_->geometryWidth_ > 0.0f ? (positions[i].x() + halfWidth) / impl_->geometryWidth_ : 0.5f,
+        impl_->geometryHeight_ > 0.0f ? (positions[i].y() + halfHeight) / impl_->geometryHeight_ : 0.5f);
+    (*uvAttr)[i] = uv;
+    (*uvAttr)[i + 4] = uv;
   }
   impl_->mesh_.addPolygon({0, 1, 2});
   impl_->mesh_.addPolygon({0, 2, 3});
+  impl_->mesh_.addPolygon({4, 6, 5});
+  impl_->mesh_.addPolygon({4, 7, 6});
+}
+
+void Artifact3DLayer::createSphereMesh()
+{
+  const int kSegments = std::clamp(impl_->geometrySegments_, 3, 128);
+  const int kRings = std::clamp(impl_->geometryRings_, 2, 128);
+  const float radiusX = impl_->geometryWidth_ * 0.5f;
+  const float radiusY = impl_->geometryHeight_ * 0.5f;
+  const float radiusZ = impl_->geometryDepth_ * 0.5f;
+
+  QVector<QVector3D> positions;
+  QVector<QVector3D> normals;
+  QVector<QVector2D> uvs;
+  positions.reserve((kRings + 1) * (kSegments + 1));
+  normals.reserve((kRings + 1) * (kSegments + 1));
+  uvs.reserve((kRings + 1) * (kSegments + 1));
+
+  for (int ring = 0; ring <= kRings; ++ring) {
+    const float v = static_cast<float>(ring) / static_cast<float>(kRings);
+    const float phi = static_cast<float>(M_PI) * v;
+    const float y = std::cos(phi);
+    const float r = std::sin(phi);
+    for (int segment = 0; segment <= kSegments; ++segment) {
+      const float u = static_cast<float>(segment) / static_cast<float>(kSegments);
+      const float theta = static_cast<float>(M_PI * 2.0) * u;
+      const float x = std::cos(theta) * r;
+      const float z = std::sin(theta) * r;
+      const QVector3D position(x * radiusX, y * radiusY, z * radiusZ);
+      positions.push_back(position);
+      normals.push_back(QVector3D(x, y, z).normalized());
+      uvs.push_back(QVector2D(u, 1.0f - v));
+    }
+  }
+
+  impl_->mesh_.setVertexCount(positions.size());
+  auto &vertexAttrs = impl_->mesh_.vertexAttributes();
+  auto positionAttr = vertexAttrs.add<QVector3D>("position");
+  auto normalAttr = vertexAttrs.add<QVector3D>("normal");
+  auto uvAttr = vertexAttrs.add<QVector2D>("uv");
+  positionAttr->data() = positions;
+  normalAttr->data() = normals;
+  uvAttr->data() = uvs;
+
+  const int stride = kSegments + 1;
+  for (int ring = 0; ring < kRings; ++ring) {
+    for (int segment = 0; segment < kSegments; ++segment) {
+      const int a = ring * stride + segment;
+      const int b = a + 1;
+      const int c = a + stride;
+      const int d = c + 1;
+      impl_->mesh_.addPolygon({a, c, b});
+      impl_->mesh_.addPolygon({b, c, d});
+    }
+  }
+}
+
+void Artifact3DLayer::createCylinderMesh()
+{
+  const int kSegments = std::clamp(impl_->geometrySegments_, 3, 128);
+  const float kRadiusX = impl_->geometryWidth_ * 0.5f;
+  const float kRadiusZ = impl_->geometryDepth_ * 0.5f;
+  const float kHalfHeight = impl_->geometryHeight_ * 0.5f;
+
+  QVector<QVector3D> positions;
+  QVector<QVector3D> normals;
+  QVector<QVector2D> uvs;
+
+  auto appendVertex = [&](const QVector3D& position, const QVector3D& normal, const QVector2D& uv) {
+    positions.push_back(position);
+    normals.push_back(normal);
+    uvs.push_back(uv);
+    return positions.size() - 1;
+  };
+
+  QVector<int> bottomRing;
+  QVector<int> topRing;
+  bottomRing.reserve(kSegments);
+  topRing.reserve(kSegments);
+
+  for (int segment = 0; segment < kSegments; ++segment) {
+    const float u = static_cast<float>(segment) / static_cast<float>(kSegments);
+    const float theta = static_cast<float>(M_PI * 2.0) * u;
+    const float x = std::cos(theta) * kRadiusX;
+    const float z = std::sin(theta) * kRadiusZ;
+    const QVector3D sideNormal = QVector3D(
+        kRadiusZ > 0.0f ? x / kRadiusZ : x,
+        0.0f,
+        kRadiusX > 0.0f ? z / kRadiusX : z).normalized();
+    bottomRing.push_back(appendVertex(QVector3D(x, -kHalfHeight, z), sideNormal, QVector2D(u, 1.0f)));
+    topRing.push_back(appendVertex(QVector3D(x, kHalfHeight, z), sideNormal, QVector2D(u, 0.0f)));
+  }
+
+  for (int segment = 0; segment < kSegments; ++segment) {
+    const int next = (segment + 1) % kSegments;
+    const int b0 = bottomRing[segment];
+    const int b1 = bottomRing[next];
+    const int t0 = topRing[segment];
+    const int t1 = topRing[next];
+    impl_->mesh_.addPolygon({b0, t0, b1});
+    impl_->mesh_.addPolygon({b1, t0, t1});
+  }
+
+  const int bottomCenter = appendVertex(QVector3D(0.0f, -kHalfHeight, 0.0f),
+                                        QVector3D(0.0f, -1.0f, 0.0f),
+                                        QVector2D(0.5f, 0.5f));
+  const int topCenter = appendVertex(QVector3D(0.0f, kHalfHeight, 0.0f),
+                                     QVector3D(0.0f, 1.0f, 0.0f),
+                                     QVector2D(0.5f, 0.5f));
+
+  QVector<int> bottomCap;
+  QVector<int> topCap;
+  bottomCap.reserve(kSegments);
+  topCap.reserve(kSegments);
+  for (int segment = 0; segment < kSegments; ++segment) {
+    const float u = static_cast<float>(segment) / static_cast<float>(kSegments);
+    const float theta = static_cast<float>(M_PI * 2.0) * u;
+    const float x = std::cos(theta) * kRadiusX;
+    const float z = std::sin(theta) * kRadiusZ;
+    bottomCap.push_back(appendVertex(QVector3D(x, -kHalfHeight, z),
+                                     QVector3D(0.0f, -1.0f, 0.0f),
+                                     QVector2D(kRadiusX > 0.0f ? x / impl_->geometryWidth_ + 0.5f : 0.5f,
+                                               kRadiusZ > 0.0f ? z / impl_->geometryDepth_ + 0.5f : 0.5f)));
+    topCap.push_back(appendVertex(QVector3D(x, kHalfHeight, z),
+                                  QVector3D(0.0f, 1.0f, 0.0f),
+                                  QVector2D(kRadiusX > 0.0f ? x / impl_->geometryWidth_ + 0.5f : 0.5f,
+                                            kRadiusZ > 0.0f ? z / impl_->geometryDepth_ + 0.5f : 0.5f)));
+  }
+
+  for (int segment = 0; segment < kSegments; ++segment) {
+    const int next = (segment + 1) % kSegments;
+    impl_->mesh_.addPolygon({bottomCenter, bottomCap[next], bottomCap[segment]});
+    impl_->mesh_.addPolygon({topCenter, topCap[segment], topCap[next]});
+  }
+
+  impl_->mesh_.setVertexCount(positions.size());
+  auto &vertexAttrs = impl_->mesh_.vertexAttributes();
+  auto positionAttr = vertexAttrs.add<QVector3D>("position");
+  auto normalAttr = vertexAttrs.add<QVector3D>("normal");
+  auto uvAttr = vertexAttrs.add<QVector2D>("uv");
+  positionAttr->data() = positions;
+  normalAttr->data() = normals;
+  uvAttr->data() = uvs;
+}
+
+void Artifact3DLayer::createConeMesh()
+{
+  const int kSegments = std::clamp(impl_->geometrySegments_, 3, 128);
+  const float kRadiusX = impl_->geometryWidth_ * 0.5f;
+  const float kRadiusZ = impl_->geometryDepth_ * 0.5f;
+  const float kHalfHeight = impl_->geometryHeight_ * 0.5f;
+
+  QVector<QVector3D> positions;
+  QVector<QVector3D> normals;
+  QVector<QVector2D> uvs;
+
+  auto appendVertex = [&](const QVector3D& position, const QVector3D& normal, const QVector2D& uv) {
+    positions.push_back(position);
+    normals.push_back(normal);
+    uvs.push_back(uv);
+    return positions.size() - 1;
+  };
+
+  const QVector3D tip(0.0f, kHalfHeight, 0.0f);
+  QVector<int> baseRing;
+  baseRing.reserve(kSegments);
+
+  for (int segment = 0; segment < kSegments; ++segment) {
+    const float u = static_cast<float>(segment) / static_cast<float>(kSegments);
+    const float theta = static_cast<float>(M_PI * 2.0) * u;
+    const float x = std::cos(theta) * kRadiusX;
+    const float z = std::sin(theta) * kRadiusZ;
+    const QVector3D tangent(-z, 0.0f, x);
+    const QVector3D slope = tip - QVector3D(x, -kHalfHeight, z);
+    const QVector3D sideNormal = QVector3D::crossProduct(tangent, slope).normalized();
+    baseRing.push_back(appendVertex(QVector3D(x, -kHalfHeight, z), sideNormal, QVector2D(u, 1.0f)));
+  }
+
+  for (int segment = 0; segment < kSegments; ++segment) {
+    const int next = (segment + 1) % kSegments;
+    const float midU = (static_cast<float>(segment) + 0.5f) / static_cast<float>(kSegments);
+    const QVector3D tipNormal = (positions[baseRing[segment]] + positions[baseRing[next]]) * 0.5f;
+    const int tipIndex = appendVertex(tip, QVector3D(tipNormal.x(), impl_->geometryHeight_, tipNormal.z()).normalized(),
+                                      QVector2D(midU, 0.0f));
+    impl_->mesh_.addPolygon({baseRing[segment], tipIndex, baseRing[next]});
+  }
+
+  const int bottomCenter = appendVertex(QVector3D(0.0f, -kHalfHeight, 0.0f),
+                                        QVector3D(0.0f, -1.0f, 0.0f),
+                                        QVector2D(0.5f, 0.5f));
+  QVector<int> bottomCap;
+  bottomCap.reserve(kSegments);
+  for (int segment = 0; segment < kSegments; ++segment) {
+    const float u = static_cast<float>(segment) / static_cast<float>(kSegments);
+    const float theta = static_cast<float>(M_PI * 2.0) * u;
+    const float x = std::cos(theta) * kRadiusX;
+    const float z = std::sin(theta) * kRadiusZ;
+    bottomCap.push_back(appendVertex(QVector3D(x, -kHalfHeight, z),
+                                     QVector3D(0.0f, -1.0f, 0.0f),
+                                     QVector2D(kRadiusX > 0.0f ? x / impl_->geometryWidth_ + 0.5f : 0.5f,
+                                               kRadiusZ > 0.0f ? z / impl_->geometryDepth_ + 0.5f : 0.5f)));
+  }
+
+  for (int segment = 0; segment < kSegments; ++segment) {
+    const int next = (segment + 1) % kSegments;
+    impl_->mesh_.addPolygon({bottomCenter, bottomCap[next], bottomCap[segment]});
+  }
+
+  impl_->mesh_.setVertexCount(positions.size());
+  auto &vertexAttrs = impl_->mesh_.vertexAttributes();
+  auto positionAttr = vertexAttrs.add<QVector3D>("position");
+  auto normalAttr = vertexAttrs.add<QVector3D>("normal");
+  auto uvAttr = vertexAttrs.add<QVector2D>("uv");
+  positionAttr->data() = positions;
+  normalAttr->data() = normals;
+  uvAttr->data() = uvs;
 }
 
 void Artifact3DLayer::createFixedGeometryMesh(FixedGeometry3D geometry)
@@ -372,6 +613,17 @@ void Artifact3DLayer::createFixedGeometryMesh(FixedGeometry3D geometry)
     createPlaneMesh();
     break;
   case FixedGeometry3D::Cube:
+    createCubeMesh();
+    break;
+  case FixedGeometry3D::Sphere:
+    createSphereMesh();
+    break;
+  case FixedGeometry3D::Cylinder:
+    createCylinderMesh();
+    break;
+  case FixedGeometry3D::Cone:
+    createConeMesh();
+    break;
   case FixedGeometry3D::Auto:
   default:
     createCubeMesh();
@@ -475,6 +727,45 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
 
   using namespace ArtifactCore;
+  PropertyGroup geometryGroup(QStringLiteral("Geometry"));
+
+  auto geometryTypeProp = persistentLayerProperty(
+      QStringLiteral("geometry.type"), PropertyType::Integer,
+      static_cast<int>(fixedGeometry()), -60);
+  geometryTypeProp->setDisplayLabel(QStringLiteral("Primitive Type"));
+  geometryTypeProp->setTooltip(QStringLiteral("0=Auto, 1=Plane, 2=Box, 3=Sphere, 4=Cylinder, 5=Cone"));
+  geometryGroup.addProperty(geometryTypeProp);
+
+  auto geometryWidthProp = persistentLayerProperty(
+      QStringLiteral("geometry.width"), PropertyType::Float,
+      impl_->geometryWidth_, -59);
+  geometryWidthProp->setDisplayLabel(QStringLiteral("Width"));
+  geometryGroup.addProperty(geometryWidthProp);
+
+  auto geometryHeightProp = persistentLayerProperty(
+      QStringLiteral("geometry.height"), PropertyType::Float,
+      impl_->geometryHeight_, -58);
+  geometryHeightProp->setDisplayLabel(QStringLiteral("Height"));
+  geometryGroup.addProperty(geometryHeightProp);
+
+  auto geometryDepthProp = persistentLayerProperty(
+      QStringLiteral("geometry.depth"), PropertyType::Float,
+      impl_->geometryDepth_, -57);
+  geometryDepthProp->setDisplayLabel(QStringLiteral("Depth"));
+  geometryGroup.addProperty(geometryDepthProp);
+
+  auto geometrySegmentsProp = persistentLayerProperty(
+      QStringLiteral("geometry.segments"), PropertyType::Integer,
+      impl_->geometrySegments_, -56);
+  geometrySegmentsProp->setDisplayLabel(QStringLiteral("Segments"));
+  geometryGroup.addProperty(geometrySegmentsProp);
+
+  auto geometryRingsProp = persistentLayerProperty(
+      QStringLiteral("geometry.rings"), PropertyType::Integer,
+      impl_->geometryRings_, -55);
+  geometryRingsProp->setDisplayLabel(QStringLiteral("Rings"));
+  geometryGroup.addProperty(geometryRingsProp);
+
   PropertyGroup renderGroup(QStringLiteral("3D Render"));
 
   auto renderModeProp = persistentLayerProperty(
@@ -598,6 +889,7 @@ Artifact3DLayer::getLayerPropertyGroups() const {
     materialGroup.addProperty(materialXProp);
   }
 
+  groups.push_back(geometryGroup);
   groups.push_back(renderGroup);
   groups.push_back(materialGroup);
   return groups;
@@ -605,7 +897,55 @@ Artifact3DLayer::getLayerPropertyGroups() const {
 
 bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
                                             const QVariant &value) {
-  if (propertyPath == QStringLiteral("render.mode")) {
+  if (propertyPath == QStringLiteral("geometry.type")) {
+    int geometryInt = value.toInt();
+    if (geometryInt >= static_cast<int>(FixedGeometry3D::Auto) &&
+        geometryInt <= static_cast<int>(FixedGeometry3D::Cone)) {
+      setFixedGeometry(static_cast<FixedGeometry3D>(geometryInt));
+      Q_EMIT changed();
+      return true;
+    }
+  } else if (propertyPath == QStringLiteral("geometry.width")) {
+    impl_->geometryWidth_ = std::max(0.01f, value.toFloat());
+    if (impl_->fixedGeometry_ != FixedGeometry3D::Auto) {
+      createFixedGeometryMesh(impl_->fixedGeometry_);
+      updateSourceSizeFromMesh();
+    }
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("geometry.height")) {
+    impl_->geometryHeight_ = std::max(0.01f, value.toFloat());
+    if (impl_->fixedGeometry_ != FixedGeometry3D::Auto) {
+      createFixedGeometryMesh(impl_->fixedGeometry_);
+      updateSourceSizeFromMesh();
+    }
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("geometry.depth")) {
+    impl_->geometryDepth_ = std::max(0.01f, value.toFloat());
+    if (impl_->fixedGeometry_ != FixedGeometry3D::Auto) {
+      createFixedGeometryMesh(impl_->fixedGeometry_);
+      updateSourceSizeFromMesh();
+    }
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("geometry.segments")) {
+    impl_->geometrySegments_ = std::clamp(value.toInt(), 3, 128);
+    if (impl_->fixedGeometry_ != FixedGeometry3D::Auto) {
+      createFixedGeometryMesh(impl_->fixedGeometry_);
+      updateSourceSizeFromMesh();
+    }
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("geometry.rings")) {
+    impl_->geometryRings_ = std::clamp(value.toInt(), 2, 128);
+    if (impl_->fixedGeometry_ != FixedGeometry3D::Auto) {
+      createFixedGeometryMesh(impl_->fixedGeometry_);
+      updateSourceSizeFromMesh();
+    }
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("render.mode")) {
     int modeInt = value.toInt();
     if (modeInt >= static_cast<int>(RenderMode::Wireframe) &&
         modeInt <= static_cast<int>(RenderMode::Solid)) {
@@ -683,6 +1023,37 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
 }
 
 bool Artifact3DLayer::affectedByLights() const { return impl_->affectedByLights_; }
+
+QString Artifact3DLayer::materialSignature() const
+{
+  const QColor baseColor = impl_->material_.baseColor();
+  const QColor emissionColor = impl_->material_.emissionColor();
+  return QStringLiteral(
+             "src=%1|baseTex=%2|mrTex=%3|normalTex=%4|emissionTex=%5|occTex=%6|opacityTex=%7|"
+             "base=%8,%9,%10,%11|emission=%12,%13,%14,%15|metallic=%16|roughness=%17|"
+             "emissionStrength=%18|opacity=%19|normalStrength=%20|occlusionStrength=%21")
+      .arg(impl_->sourcePath_)
+      .arg(impl_->material_.baseColorTexture().toQString())
+      .arg(impl_->material_.metallicRoughnessTexture().toQString())
+      .arg(impl_->material_.normalTexture().toQString())
+      .arg(impl_->material_.emissionTexture().toQString())
+      .arg(impl_->material_.occlusionTexture().toQString())
+      .arg(impl_->material_.opacityTexture().toQString())
+      .arg(baseColor.red())
+      .arg(baseColor.green())
+      .arg(baseColor.blue())
+      .arg(baseColor.alpha())
+      .arg(emissionColor.red())
+      .arg(emissionColor.green())
+      .arg(emissionColor.blue())
+      .arg(emissionColor.alpha())
+      .arg(impl_->material_.metallic(), 0, 'f', 6)
+      .arg(impl_->material_.roughness(), 0, 'f', 6)
+      .arg(impl_->material_.emissionStrength(), 0, 'f', 6)
+      .arg(impl_->material_.opacity(), 0, 'f', 6)
+      .arg(impl_->material_.normalStrength(), 0, 'f', 6)
+      .arg(impl_->material_.occlusionStrength(), 0, 'f', 6);
+}
 
 void Artifact3DLayer::setAffectedByLights(bool enabled)
 {

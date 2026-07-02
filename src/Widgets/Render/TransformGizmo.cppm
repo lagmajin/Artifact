@@ -1120,7 +1120,7 @@ void drawResizeBadge(ArtifactIRenderer* renderer,
  }
 
  QFont badgeFont = QApplication::font();
- badgeFont.setPointSizeF(std::max(13.0, static_cast<double>(badgeFont.pointSizeF()) + 3.0));
+ badgeFont.setPointSizeF(std::max(15.0, static_cast<double>(badgeFont.pointSizeF()) + 5.0));
  badgeFont.setBold(true);
  const QFontMetrics fm(badgeFont);
  float textW = 0.0f;
@@ -1129,12 +1129,12 @@ void drawResizeBadge(ArtifactIRenderer* renderer,
  }
  textW += 34.0f;
  const float lineH = static_cast<float>(fm.height());
- const float lineGap = 5.0f;
+ const float lineGap = 6.0f;
  const float textH = static_cast<float>(lines.size()) * lineH +
                      std::max(0.0f, static_cast<float>(lines.size() - 1) * lineGap) +
-                     18.0f;
- const float pad = std::max(12.0f, 12.0f * invZoom);
- const float margin = std::max(10.0f, 12.0f * invZoom);
+                     22.0f;
+ const float pad = std::max(14.0f, 14.0f * invZoom);
+ const float margin = std::max(12.0f, 14.0f * invZoom);
 
  QPointF pos(box.left() + pad, box.top() + pad);
  if (box.height() < textH + pad * 2.0f) {
@@ -1172,9 +1172,9 @@ void drawResizeBadge(ArtifactIRenderer* renderer,
   if (line.isEmpty()) {
    continue;
   }
-  const QRectF lineRect(textRect.left() + 12.0f,
-                        textRect.top() + 9.0f + static_cast<float>(i) * (lineH + lineGap),
-                        textRect.width() - 24.0f,
+  const QRectF lineRect(textRect.left() + 14.0f,
+                        textRect.top() + 10.0f + static_cast<float>(i) * (lineH + lineGap),
+                        textRect.width() - 28.0f,
                         lineH);
   renderer->drawText(lineRect, line, badgeFont,
                      FloatColor{0.97f, 0.98f, 1.0f, 1.0f},
@@ -1203,7 +1203,7 @@ struct TransformSnapshot {
 };
 
 TransformSnapshot captureTransformSnapshot(const ArtifactAbstractLayerPtr& layer,
-                                           const ArtifactCore::RationalTime& time)
+                                            const ArtifactCore::RationalTime& time)
 {
  TransformSnapshot snapshot;
  if (!layer) {
@@ -1235,12 +1235,43 @@ TransformSnapshot captureTransformSnapshot(const ArtifactAbstractLayerPtr& layer
  return snapshot;
 }
 
+void setAbsolutePosition(ArtifactCore::AnimatableTransform3D& t3d,
+                         const ArtifactCore::RationalTime& time,
+                         float x, float y)
+{
+ const float initialX = t3d.positionX() - t3d.positionXAt(time);
+ const float initialY = t3d.positionY() - t3d.positionYAt(time);
+ t3d.setPosition(time, x - initialX, y - initialY);
+}
+
+void syncAnimatedProperty(const ArtifactAbstractLayerPtr& layer,
+                          const QString& propertyPath,
+                          const ArtifactCore::RationalTime& time,
+                          const QVariant& value)
+{
+ if (!layer) {
+  return;
+ }
+ const auto property = layer->getProperty(propertyPath);
+ if (property && property->isAnimatable() && !property->getKeyFrames().empty()) {
+  property->addKeyFrame(time, value);
+ }
+}
+
+void syncAnimatedPositionProperties(const ArtifactAbstractLayerPtr& layer,
+                                    const ArtifactCore::RationalTime& time,
+                                    float x, float y)
+{
+ syncAnimatedProperty(layer, QStringLiteral("transform.position.x"), time, x);
+ syncAnimatedProperty(layer, QStringLiteral("transform.position.y"), time, y);
+}
+
 void applyPositionSnapshot(ArtifactCore::AnimatableTransform3D& t3d,
                            const ArtifactCore::RationalTime& time,
                            const TransformSnapshot& snapshot)
 {
  if (snapshot.hasPositionKey) {
-  t3d.setPosition(time, snapshot.positionX, snapshot.positionY);
+  setAbsolutePosition(t3d, time, snapshot.positionX, snapshot.positionY);
  } else {
   t3d.removePositionKeyFrameAt(time);
   if (!snapshot.positionAnimated) {
@@ -2386,10 +2417,10 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
  QPointF currentCanvasPos(canvasMouse.x, canvasMouse.y);
  QPointF delta = currentCanvasPos - dragStartCanvasPos_;
  ArtifactCore::RationalTime time(layer_->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
- auto &t3d = layer_->transform3D();
- const auto setDragPosition = [&t3d, &time, this](float x, float y) {
-  if (dragStartHasPositionKey_ || dragStartPositionAnimated_) {
-   t3d.setPosition(time, x, y);
+  auto &t3d = layer_->transform3D();
+  const auto setDragPosition = [&t3d, &time, this](float x, float y) {
+   if (dragStartHasPositionKey_ || dragStartPositionAnimated_) {
+    setAbsolutePosition(t3d, time, x, y);
   } else {
    t3d.removePositionKeyFrameAt(time);
    t3d.setInitialPosition(time, x, y);
@@ -2476,14 +2507,15 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
       for (const auto& target : targets) {
        if (!target) continue;
        auto& targetT3d = target->transform3D();
-       const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
-       if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
-        targetT3d.setPosition(targetTime, newX, newY);
-       } else {
-        targetT3d.removePositionKeyFrameAt(targetTime);
-        targetT3d.setInitialPosition(targetTime, newX, newY);
-       }
-       target->setDirty(LayerDirtyFlag::Transform);
+        const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+        if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+         setAbsolutePosition(targetT3d, targetTime, newX, newY);
+        } else {
+         targetT3d.removePositionKeyFrameAt(targetTime);
+         targetT3d.setInitialPosition(targetTime, newX, newY);
+        }
+        syncAnimatedPositionProperties(target, targetTime, newX, newY);
+        target->setDirty(LayerDirtyFlag::Transform);
       }
        publishDragMutation();
        moveBadgeVisible_ = true;
@@ -2530,22 +2562,33 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
     for (const auto& target : targets) {
      if (!target) continue;
      auto& targetT3d = target->transform3D();
-     const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
-     targetT3d.setAnchor(targetTime,
-                         static_cast<float>(targetLocalAnchor.x()),
-                         static_cast<float>(targetLocalAnchor.y()),
-                         targetT3d.anchorZ());
-     if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
-      targetT3d.setPosition(targetTime,
-                            dragStartLayerPos_.x() + static_cast<float>(compensation.x()),
-                            dragStartLayerPos_.y() + static_cast<float>(compensation.y()));
-     } else {
-      targetT3d.removePositionKeyFrameAt(targetTime);
-      targetT3d.setInitialPosition(targetTime,
-                                   dragStartLayerPos_.x() + static_cast<float>(compensation.x()),
-                                   dragStartLayerPos_.y() + static_cast<float>(compensation.y()));
-     }
-     target->setDirty(LayerDirtyFlag::Transform);
+      const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+      targetT3d.setAnchor(targetTime,
+                          static_cast<float>(targetLocalAnchor.x()),
+                          static_cast<float>(targetLocalAnchor.y()),
+                          targetT3d.anchorZ());
+      syncAnimatedProperty(target, QStringLiteral("transform.anchor.x"),
+                           targetTime,
+                           static_cast<float>(targetLocalAnchor.x()));
+      syncAnimatedProperty(target, QStringLiteral("transform.anchor.y"),
+                           targetTime,
+                           static_cast<float>(targetLocalAnchor.y()));
+      if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+       setAbsolutePosition(
+           targetT3d, targetTime,
+           dragStartLayerPos_.x() + static_cast<float>(compensation.x()),
+           dragStartLayerPos_.y() + static_cast<float>(compensation.y()));
+      } else {
+       targetT3d.removePositionKeyFrameAt(targetTime);
+       targetT3d.setInitialPosition(targetTime,
+                                    dragStartLayerPos_.x() + static_cast<float>(compensation.x()),
+                                    dragStartLayerPos_.y() + static_cast<float>(compensation.y()));
+      }
+      syncAnimatedPositionProperties(
+          target, targetTime,
+          dragStartLayerPos_.x() + static_cast<float>(compensation.x()),
+          dragStartLayerPos_.y() + static_cast<float>(compensation.y()));
+      target->setDirty(LayerDirtyFlag::Transform);
     }
     if (isDragging_) {
      publishDragMutation();
@@ -2565,11 +2608,13 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
     const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
     if (targetT3d.hasRotationKeyFrameAt(targetTime) || targetT3d.getRotationKeyFrameCount() > 0) {
      targetT3d.setRotation(targetTime, newRotation);
-    } else {
-     targetT3d.removeRotationKeyFrameAt(targetTime);
-     targetT3d.setInitialRotation(targetTime, newRotation);
-    }
-    target->setDirty(LayerDirtyFlag::Transform);
+     } else {
+      targetT3d.removeRotationKeyFrameAt(targetTime);
+      targetT3d.setInitialRotation(targetTime, newRotation);
+     }
+     syncAnimatedProperty(target, QStringLiteral("transform.rotation"),
+                          targetTime, newRotation);
+     target->setDirty(LayerDirtyFlag::Transform);
    }
 
    const QPointF localOffset = pivotLocal - dragStartAnchor_;
@@ -2582,14 +2627,15 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
     auto& targetT3d = target->transform3D();
     const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
     const float newX = dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x());
-    const float newY = dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y());
-    if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
-     targetT3d.setPosition(targetTime, newX, newY);
-    } else {
-     targetT3d.removePositionKeyFrameAt(targetTime);
-     targetT3d.setInitialPosition(targetTime, newX, newY);
-    }
-    target->setDirty(LayerDirtyFlag::Transform);
+     const float newY = dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y());
+     if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+      setAbsolutePosition(targetT3d, targetTime, newX, newY);
+     } else {
+      targetT3d.removePositionKeyFrameAt(targetTime);
+      targetT3d.setInitialPosition(targetTime, newX, newY);
+     }
+     syncAnimatedPositionProperties(target, targetTime, newX, newY);
+     target->setDirty(LayerDirtyFlag::Transform);
    }
    if (isDragging_) {
     publishDragMutation();
@@ -2629,14 +2675,19 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      targetT3d.removeScaleKeyFrameAt(targetTime);
      targetT3d.setInitialScale(targetTime, newScaleX, newScaleY);
     }
+    syncAnimatedProperty(target, QStringLiteral("transform.scale.x"),
+                         targetTime, newScaleX);
+    syncAnimatedProperty(target, QStringLiteral("transform.scale.y"),
+                         targetTime, newScaleY);
     const float newX = dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x());
     const float newY = dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y());
     if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
-     targetT3d.setPosition(targetTime, newX, newY);
+     setAbsolutePosition(targetT3d, targetTime, newX, newY);
     } else {
      targetT3d.removePositionKeyFrameAt(targetTime);
      targetT3d.setInitialPosition(targetTime, newX, newY);
     }
+    syncAnimatedPositionProperties(target, targetTime, newX, newY);
     target->setDirty(LayerDirtyFlag::Transform);
    }
    publishDragMutation();
@@ -2739,16 +2790,19 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      for (const auto& target : targets) {
       if (!target) continue;
       auto& targetT3d = target->transform3D();
-      const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
-      if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
-       targetT3d.setPosition(targetTime, static_cast<float>(newPos.x()),
-                             static_cast<float>(newPos.y()));
-      } else {
-       targetT3d.removePositionKeyFrameAt(targetTime);
-       targetT3d.setInitialPosition(targetTime, static_cast<float>(newPos.x()),
-                                    static_cast<float>(newPos.y()));
-      }
-      target->setDirty(LayerDirtyFlag::Source);
+       const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+       if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+        setAbsolutePosition(targetT3d, targetTime, static_cast<float>(newPos.x()),
+                            static_cast<float>(newPos.y()));
+       } else {
+        targetT3d.removePositionKeyFrameAt(targetTime);
+        targetT3d.setInitialPosition(targetTime, static_cast<float>(newPos.x()),
+                                     static_cast<float>(newPos.y()));
+       }
+       syncAnimatedPositionProperties(target, targetTime,
+                                      static_cast<float>(newPos.x()),
+                                      static_cast<float>(newPos.y()));
+       target->setDirty(LayerDirtyFlag::Source);
       target->setDirty(LayerDirtyFlag::Transform);
      }
      publishDragMutation();
@@ -2776,17 +2830,22 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
       const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
       if (targetT3d.hasScaleKeyFrameAt(targetTime) || targetT3d.getScaleKeyFrameCount() > 0) {
        targetT3d.setScale(targetTime, newScaleX, newScaleY);
-      } else {
-       targetT3d.removeScaleKeyFrameAt(targetTime);
-       targetT3d.setInitialScale(targetTime, newScaleX, newScaleY);
-      }
-      if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
-       targetT3d.setPosition(targetTime, newPosX, newPosY);
-      } else {
-       targetT3d.removePositionKeyFrameAt(targetTime);
-       targetT3d.setInitialPosition(targetTime, newPosX, newPosY);
-      }
-      target->setDirty(LayerDirtyFlag::Transform);
+       } else {
+        targetT3d.removeScaleKeyFrameAt(targetTime);
+        targetT3d.setInitialScale(targetTime, newScaleX, newScaleY);
+       }
+       syncAnimatedProperty(target, QStringLiteral("transform.scale.x"),
+                            targetTime, newScaleX);
+       syncAnimatedProperty(target, QStringLiteral("transform.scale.y"),
+                            targetTime, newScaleY);
+       if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+        setAbsolutePosition(targetT3d, targetTime, newPosX, newPosY);
+       } else {
+        targetT3d.removePositionKeyFrameAt(targetTime);
+        targetT3d.setInitialPosition(targetTime, newPosX, newPosY);
+       }
+       syncAnimatedPositionProperties(target, targetTime, newPosX, newPosY);
+       target->setDirty(LayerDirtyFlag::Transform);
      }
      publishDragMutation();
     }

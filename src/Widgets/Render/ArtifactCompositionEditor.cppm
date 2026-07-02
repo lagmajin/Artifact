@@ -129,6 +129,8 @@ import Artifact.Widget.Dialog.ScreenshotExport;
 import Dialog.Composition;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Image.ImageF32x4_RGBA;
+import IO.ImageExporter;
+import Image.ExportOptions;
 import Codec.Thumbnail.FFmpeg;
 import UI.ShortcutBindings;
 import Undo.UndoManager;
@@ -370,19 +372,17 @@ bool saveScreenshotImage(const QImage& image, const QString& filePath, const QSt
     return false;
   }
 
-  const QString normalizedFormat = format.toLower();
-  if (normalizedFormat == QStringLiteral("exr")) {
-    const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
-    ArtifactCore::ImageF32x4_RGBA exrImage;
-    exrImage.setFromRGBA8(rgba.constBits(), rgba.width(), rgba.height());
-    return exrImage.save(filePath);
-  }
+  ArtifactCore::ImageExportOptions options;
+  options.format = format.toLower();
+  options.compressionQuality = static_cast<float>(jpegQuality);
+  // EXR は自動で FLOAT に昇格される (ImageExporter 内の resolveWriteType による)
 
-  if (normalizedFormat == QStringLiteral("jpg") || normalizedFormat == QStringLiteral("jpeg")) {
-    return image.save(filePath, "JPG", jpegQuality);
+  ArtifactCore::ImageExporter exporter;
+  auto result = exporter.write(image, filePath, options);
+  if (!result.success) {
+    qWarning() << "saveScreenshotImage failed:" << result.errorStage << result.errorMessage;
   }
-
-  return image.save(filePath, "PNG");
+  return result.success;
 }
 
 QString shapeTypeDisplayName(ShapeType type) {
@@ -1923,6 +1923,54 @@ public:
         ArtifactLayerInitParams params(QStringLiteral("Light 1"),
                                        LayerType::Light);
         service->addLayerToCurrentComposition(params);
+      });
+      add(QStringLiteral("New 3D Box Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        ArtifactFixedGeometry3DLayerInitParams params(QStringLiteral("3D Box 1"),
+                                                      FixedGeometry3D::Cube);
+        service->addLayerToCurrentComposition(params);
+        if (controller_) {
+          controller_->markRenderDirty();
+        }
+      });
+      add(QStringLiteral("New 3D Sphere Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        ArtifactFixedGeometry3DLayerInitParams params(QStringLiteral("3D Sphere 1"),
+                                                      FixedGeometry3D::Sphere);
+        service->addLayerToCurrentComposition(params);
+        if (controller_) {
+          controller_->markRenderDirty();
+        }
+      });
+      add(QStringLiteral("New 3D Cylinder Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        ArtifactFixedGeometry3DLayerInitParams params(QStringLiteral("3D Cylinder 1"),
+                                                      FixedGeometry3D::Cylinder);
+        service->addLayerToCurrentComposition(params);
+        if (controller_) {
+          controller_->markRenderDirty();
+        }
+      });
+      add(QStringLiteral("New 3D Cone Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        ArtifactFixedGeometry3DLayerInitParams params(QStringLiteral("3D Cone 1"),
+                                                      FixedGeometry3D::Cone);
+        service->addLayerToCurrentComposition(params);
+        if (controller_) {
+          controller_->markRenderDirty();
+        }
       });
       add(QStringLiteral("New SVG Layer..."), [this]() {
         auto *service = ArtifactProjectService::instance();
@@ -5184,6 +5232,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->viewportLayoutButton_->setText(impl_->viewportLayoutLabel());
   impl_->viewportLayoutButton_->setFixedWidth(72);
   impl_->viewportLayoutButton_->setAutoRaise(true);
+  impl_->viewportLayoutButton_->setFocusPolicy(Qt::NoFocus);
   impl_->viewportLayoutButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
   impl_->viewportLayoutButton_->setSizePolicy(QSizePolicy::Fixed,
                                                QSizePolicy::Preferred);

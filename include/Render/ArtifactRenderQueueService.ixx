@@ -115,6 +115,10 @@ public:
                               double fps, int bitrateKbps);
   bool jobIntegratedRenderEnabledAt(int index) const;
   void setJobIntegratedRenderEnabledAt(int index, bool enabled);
+  bool jobMultiChannelEnabledAt(int index) const;
+  void setJobMultiChannelEnabledAt(int index, bool enabled);
+  int jobFramePaddingAt(int index) const;
+  void setJobFramePaddingAt(int index, int padding);
   QString jobAudioSourcePathAt(int index) const;
   void setJobAudioSourcePathAt(int index, const QString &path);
   QString jobAudioCodecAt(int index) const;

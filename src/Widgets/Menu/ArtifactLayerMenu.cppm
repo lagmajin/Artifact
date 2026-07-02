@@ -280,6 +280,10 @@ public:
     QAction* createSvgAction = nullptr;
     QAction* createModel3DAction = nullptr;
     QAction* createPlane3DAction = nullptr;
+    QAction* createBox3DAction = nullptr;
+    QAction* createSphere3DAction = nullptr;
+    QAction* createCylinder3DAction = nullptr;
+    QAction* createCone3DAction = nullptr;
     QAction* placementAtCompStartAction = nullptr;
     QAction* placementAtPlayheadAction = nullptr;
     QAction* cycleLayerForwardAction = nullptr;
@@ -367,6 +371,10 @@ public:
     void handleCreateSvg();
     void handleCreateModel3D();
     void handleCreatePlane3D();
+    void handleCreateBox3D();
+    void handleCreateSphere3D();
+    void handleCreateCylinder3D();
+    void handleCreateCone3D();
     void handleCycleLayerCreation(bool reverse);
     void handleCycleShapeCreation(bool reverse);
     void handleCreateShape(ShapeType type, const QString& nameBase);
@@ -475,6 +483,18 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createPlane3DAction = new QAction("3D平面レイヤー(&P)", createMenu);
     createPlane3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_square.svg")));
     createPlane3DAction->setToolTip(QStringLiteral("Create a fixed plane as a 3D layer"));
+    createBox3DAction = new QAction("3D Boxレイヤー(&B)", createMenu);
+    createBox3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    createBox3DAction->setToolTip(QStringLiteral("Create a fixed box as a 3D layer"));
+    createSphere3DAction = new QAction("3D Sphereレイヤー(&S)", createMenu);
+    createSphere3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    createSphere3DAction->setToolTip(QStringLiteral("Create a fixed sphere as a 3D layer"));
+    createCylinder3DAction = new QAction("3D Cylinderレイヤー(&Y)", createMenu);
+    createCylinder3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    createCylinder3DAction->setToolTip(QStringLiteral("Create a fixed cylinder as a 3D layer"));
+    createCone3DAction = new QAction("3D Coneレイヤー(&N)", createMenu);
+    createCone3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    createCone3DAction->setToolTip(QStringLiteral("Create a fixed cone as a 3D layer"));
     createPlacementMenu = new QMenu("作成位置(&O)", createMenu);
     createPlacementMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
     auto* placementGroup = new QActionGroup(createPlacementMenu);
@@ -550,6 +570,10 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addAction(createSvgAction);
     createMenu->addAction(createModel3DAction);
     createMenu->addAction(createPlane3DAction);
+    createMenu->addAction(createBox3DAction);
+    createMenu->addAction(createSphere3DAction);
+    createMenu->addAction(createCylinder3DAction);
+    createMenu->addAction(createCone3DAction);
     createMenu->addMenu(createPlacementMenu);
     createMenu->addAction(cycleLayerForwardAction);
     createMenu->addAction(cycleLayerReverseAction);
@@ -798,6 +822,10 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createSvgAction) { handleCreateSvg(); return; }
         if (action == createModel3DAction) { handleCreateModel3D(); return; }
         if (action == createPlane3DAction) { handleCreatePlane3D(); return; }
+        if (action == createBox3DAction) { handleCreateBox3D(); return; }
+        if (action == createSphere3DAction) { handleCreateSphere3D(); return; }
+        if (action == createCylinder3DAction) { handleCreateCylinder3D(); return; }
+        if (action == createCone3DAction) { handleCreateCone3D(); return; }
         if (action == placementAtCompStartAction) {
             layerCreationPlacementMode() = LayerCreationPlacementMode::CompositionStart;
             placementAtCompStartAction->setChecked(true);
@@ -1195,6 +1223,10 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createSvgAction->setEnabled(hasProject);
     createModel3DAction->setEnabled(hasProject);
     createPlane3DAction->setEnabled(hasProject);
+    createBox3DAction->setEnabled(hasProject);
+    createSphere3DAction->setEnabled(hasProject);
+    createCylinder3DAction->setEnabled(hasProject);
+    createCone3DAction->setEnabled(hasProject);
     addDebugBindlessPlanesAction->setEnabled(hasProject);
     addDebugParticleLayerAction->setEnabled(hasProject);
     createShapeRectAction->setEnabled(hasProject);
@@ -1641,7 +1673,7 @@ void ArtifactLayerMenu::Impl::handleCreateModel3D()
         menu_ ? menu_->window() : nullptr,
         QStringLiteral("3Dモデルを選択"),
         QString(),
-        QStringLiteral("3D Models (*.obj *.fbx *.gltf *.glb *.stl *.dae *.abc *.usd *.usdz *.pmd *.pmx);;All Files (*.*)"));
+        QStringLiteral("3D Models (*.obj *.fbx *.gltf *.glb *.stl *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd *.pmx);;All Files (*.*)"));
     if (filePath.isEmpty()) {
         return;
     }
@@ -1669,6 +1701,66 @@ void ArtifactLayerMenu::Impl::handleCreatePlane3D()
     }
     ArtifactFixedGeometry3DLayerInitParams params(uniqueLayerName(QStringLiteral("3D Plane 1")),
                                                   FixedGeometry3D::Plane);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+}
+
+void ArtifactLayerMenu::Impl::handleCreateBox3D()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    ArtifactFixedGeometry3DLayerInitParams params(uniqueLayerName(QStringLiteral("3D Box 1")),
+                                                  FixedGeometry3D::Cube);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+}
+
+void ArtifactLayerMenu::Impl::handleCreateSphere3D()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    ArtifactFixedGeometry3DLayerInitParams params(uniqueLayerName(QStringLiteral("3D Sphere 1")),
+                                                  FixedGeometry3D::Sphere);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+}
+
+void ArtifactLayerMenu::Impl::handleCreateCylinder3D()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    ArtifactFixedGeometry3DLayerInitParams params(uniqueLayerName(QStringLiteral("3D Cylinder 1")),
+                                                  FixedGeometry3D::Cylinder);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+}
+
+void ArtifactLayerMenu::Impl::handleCreateCone3D()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    ArtifactFixedGeometry3DLayerInitParams params(uniqueLayerName(QStringLiteral("3D Cone 1")),
+                                                  FixedGeometry3D::Cone);
     service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 }
 

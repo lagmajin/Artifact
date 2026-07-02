@@ -69,6 +69,8 @@ namespace Artifact
   QDoubleSpinBox* fpsSpin = nullptr;
   QSpinBox* bitrateSpin = nullptr;
   QCheckBox* includeAudioCheck = nullptr;
+  QCheckBox* multiChannelCheck = nullptr;
+  QSpinBox* framePaddingSpin = nullptr;
   QComboBox* audioCodecCombo = nullptr;
   QSpinBox* audioBitrateSpin = nullptr;
   QWidget* buttonRow = nullptr;
@@ -717,6 +719,25 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->audioBitrateSpin->setSuffix(" kbps");
     formLayout->addRow("Audio Bitrate:", impl_->audioBitrateSpin);
 
+    // Multi-channel (AOV) export toggle
+    impl_->multiChannelCheck = new QCheckBox(QStringLiteral("Multi-channel EXR (AOV: Depth/ObjectID/MaterialID/Albedo/Emission)"), this);
+    impl_->multiChannelCheck->setChecked(false);
+    impl_->multiChannelCheck->setToolTip(QStringLiteral("有効にすると Beauty RGBA に加えて Depth / ObjectID / MaterialID / Albedo / Emission チャンネルを含む EXR を書き出します。コンテナは自動で EXR に切り替わります。"));
+    QObject::connect(impl_->multiChannelCheck, &QCheckBox::toggled, [this](bool checked) {
+        if (checked && impl_->formatCombo) {
+            impl_->formatCombo->setCurrentText(QStringLiteral("EXR Sequence"));
+            impl_->codecCombo->setCurrentText(QStringLiteral("EXR"));
+        }
+    });
+    formLayout->addRow("AOV:", impl_->multiChannelCheck);
+
+    // Frame padding digits
+    impl_->framePaddingSpin = new QSpinBox();
+    impl_->framePaddingSpin->setRange(1, 10);
+    impl_->framePaddingSpin->setValue(4);
+    impl_->framePaddingSpin->setToolTip(QStringLiteral("画像シーケンスのフレーム番号の桁数（例: 4 → frame_0001.png）"));
+    formLayout->addRow("Frame Padding:", impl_->framePaddingSpin);
+
     impl_->advancedGroup = new QGroupBox(QStringLiteral("その他の設定"), this);
     impl_->advancedGroup->setCheckable(true);
     impl_->advancedGroup->setChecked(false);
@@ -985,6 +1006,29 @@ QString ArtifactRenderOutputSettingDialog::renderBackend() const
   return impl_->renderBackendCombo ? Impl::normalizeRenderBackend(impl_->renderBackendCombo->currentText()) : QStringLiteral("auto");
 }
 
+void ArtifactRenderOutputSettingDialog::setMultiChannelEnabled(bool enabled)
+{
+  if (impl_->multiChannelCheck) {
+    impl_->multiChannelCheck->setChecked(enabled);
+  }
+}
+
+bool ArtifactRenderOutputSettingDialog::multiChannelEnabled() const
+{
+  return impl_->multiChannelCheck ? impl_->multiChannelCheck->isChecked() : false;
+}
+
+void ArtifactRenderOutputSettingDialog::setFramePadding(int digits)
+{
+  if (impl_->framePaddingSpin) {
+    impl_->framePaddingSpin->setValue(std::clamp(digits, 1, 10));
+  }
+}
+
+int ArtifactRenderOutputSettingDialog::framePadding() const
+{
+  return impl_->framePaddingSpin ? impl_->framePaddingSpin->value() : 4;
+}
  void ArtifactRenderOutputSettingDialog::setResolution(int width, int height)
  {
    if (!impl_->widthSpin || !impl_->heightSpin) {

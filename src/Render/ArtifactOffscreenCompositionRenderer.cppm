@@ -6,6 +6,7 @@ module;
 #include <RefCntAutoPtr.hpp>
 #include <QImage>
 #include <QDebug>
+#include <QFileInfo>
 
 export module Artifact.Render.OffscreenComposition;
 
@@ -17,6 +18,8 @@ import Core.Point2D;
 import Image.ImageF32x4_RGBA;
 import Frame.Position;
 import std;
+import IO.ImageExporter;
+import Image.ExportOptions;
 
 namespace Artifact
 {
@@ -40,6 +43,8 @@ namespace Artifact
 
         // 特定のファイルパスに画像として保存
         bool saveFrame(const QString& path);
+        // フォーマット/品質指定版（ImageExporter / OIIO 経由）
+        bool saveFrame(const QString& path, const ArtifactCore::ImageExportOptions& options);
 
         // レンダラーへのアクセス
         ArtifactIRenderer* renderer() { return renderer_.get(); }
@@ -169,6 +174,16 @@ namespace Artifact
 
     bool OffscreenCompositionRenderer::saveFrame(const QString& path)
     {
+        ArtifactCore::ImageExportOptions defaultOptions;
+        const QString ext = QFileInfo(path).suffix().toLower();
+        if (!ext.isEmpty()) {
+            defaultOptions.format = ext;
+        }
+        return saveFrame(path, defaultOptions);
+    }
+
+    bool OffscreenCompositionRenderer::saveFrame(const QString& path, const ArtifactCore::ImageExportOptions& options)
+    {
         ArtifactCore::ImageF32x4_RGBA img = captureImage();
         QImage qimg(width_, height_, QImage::Format_RGBA8888);
         for (Uint32 y = 0; y < height_; ++y) {
@@ -181,6 +196,8 @@ namespace Artifact
                                 static_cast<int>(col.a() * 255));
             }
         }
-        return qimg.save(path);
+        ArtifactCore::ImageExporter exporter;
+        auto result = exporter.write(qimg, path, options);
+        return result.success;
     }
 }

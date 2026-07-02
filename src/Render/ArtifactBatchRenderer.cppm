@@ -180,12 +180,17 @@ int ArtifactBatchRenderer::addCompositionsWithTemplate(
             QString outFmt, codec, codecProfile;
             int w, h, bitrate;
             double fps;
+            QString useFormat = tmpl.format.isEmpty() ? outFmt : tmpl.format;
+            QString useCodec = tmpl.codec.isEmpty() ? codec : tmpl.codec;
+            QString useProfile = tmpl.codecProfile.isEmpty() ? codecProfile : tmpl.codecProfile;
+            int useBitrate = tmpl.overrideBitrate > 0 ? tmpl.overrideBitrate : bitrate;
+            queue->setJobFramePaddingAt(idx, tmpl.framePadding);
             if (queue->jobOutputSettingsAt(idx, &outFmt, &codec, &codecProfile, &w, &h, &fps, &bitrate)) {
-                queue->setJobOutputSettingsAt(idx, outFmt, codec, codecProfile,
+                queue->setJobOutputSettingsAt(idx, useFormat, useCodec, useProfile,
                     tmpl.overrideWidth > 0 ? tmpl.overrideWidth : w,
                     tmpl.overrideHeight > 0 ? tmpl.overrideHeight : h,
                     tmpl.overrideFps > 0.0 ? tmpl.overrideFps : fps,
-                    bitrate);
+                    useBitrate);
             }
             if (tmpl.startFrame >= 0 && tmpl.endFrame >= tmpl.startFrame) {
                 queue->setJobFrameRangeAt(idx, tmpl.startFrame, tmpl.endFrame);
@@ -233,6 +238,11 @@ QVector<BatchTemplate> ArtifactBatchRenderer::availableTemplates() const
         tmpl.overrideFps = obj["overrideFps"].toDouble(0.0);
         tmpl.startFrame = obj["startFrame"].toInt(-1);
         tmpl.endFrame = obj["endFrame"].toInt(-1);
+        tmpl.format = obj["format"].toString();
+        tmpl.codec = obj["codec"].toString();
+        tmpl.codecProfile = obj["codecProfile"].toString();
+        tmpl.overrideBitrate = obj["overrideBitrate"].toInt(0);
+        tmpl.framePadding = obj["framePadding"].toInt(4);
         result.push_back(tmpl);
     }
     return result;
@@ -253,6 +263,11 @@ bool ArtifactBatchRenderer::saveTemplate(const BatchTemplate& tmpl)
     obj["overrideFps"] = tmpl.overrideFps;
     obj["startFrame"] = tmpl.startFrame;
     obj["endFrame"] = tmpl.endFrame;
+    obj["format"] = tmpl.format;
+    obj["codec"] = tmpl.codec;
+    obj["codecProfile"] = tmpl.codecProfile;
+    obj["overrideBitrate"] = tmpl.overrideBitrate;
+    obj["framePadding"] = tmpl.framePadding;
 
     QFile file(dir.filePath(tmpl.name + ".json"));
     if (!file.open(QIODevice::WriteOnly)) return false;
@@ -279,6 +294,9 @@ BatchTemplate ArtifactBatchRenderer::defaultTemplate() const
     tmpl.overrideFps = 0.0;
     tmpl.startFrame = -1;
     tmpl.endFrame = -1;
+    tmpl.format = QStringLiteral("MP4");
+    tmpl.codec = QStringLiteral("H.264");
+    tmpl.overrideBitrate = 8000;
     return tmpl;
 }
 

@@ -26,7 +26,9 @@ export namespace Artifact
   RenderPipeline();
   ~RenderPipeline();
 
-  bool initialize(IRenderDevice* device, Uint32 width, Uint32 height, TEXTURE_FORMAT format);
+  bool initialize(IRenderDevice* device, Uint32 width, Uint32 height,
+                  TEXTURE_FORMAT format,
+                  bool enableEmission = false);
   void resize(Uint32 width, Uint32 height);
   void destroy();
 
@@ -51,6 +53,18 @@ export namespace Artifact
   ITextureView* layerFloatSRV() const;
   ITextureView* layerFloatUAV() const;
   ITextureView* matteSourceSRV() const;
+  ITextureView* emissionSRV() const;
+  ITextureView* emissionRTV() const;
+  bool hasEmissionTarget() const;
+  ITextureView* objectIdSRV() const;
+  ITextureView* objectIdRTV() const;
+  bool hasObjectIdTarget() const;
+  ITextureView* materialIdSRV() const;
+  ITextureView* materialIdRTV() const;
+  bool hasMaterialIdTarget() const;
+  ITextureView* albedoSRV() const;
+  ITextureView* albedoRTV() const;
+  bool hasAlbedoTarget() const;
   bool updateMatteSourceFromData(IDeviceContext* ctx,
                                   const void* data,
                                   Uint32 width,
@@ -62,7 +76,8 @@ export namespace Artifact
   void swapAccumAndTemp();
 
  private:
-  bool createTextures(IRenderDevice* device, Uint32 width, Uint32 height, TEXTURE_FORMAT format);
+  bool createTextures(IRenderDevice* device, Uint32 width, Uint32 height,
+                      TEXTURE_FORMAT format, bool enableEmission);
 
   struct Impl;
   Impl* impl_ = nullptr;

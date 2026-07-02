@@ -79,6 +79,7 @@ import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Core.Defaults;
 import Image.ImageF32x4_RGBA;
+import Image.MultiChannelImage;
 import CvUtils;
 import Audio.Segment;
 import Utils.Id;
@@ -488,6 +489,8 @@ namespace Artifact
         float overlayOffsetY;
         float overlayScale;
         float overlayRotationDeg;
+        bool multiChannelExportEnabled = false;
+        int framePadding = 4;   // 画像シーケンスのフレーム番号ゼロ埋め桁数
 
         ArtifactRenderJob()
             : resolutionWidth(1920)
@@ -509,11 +512,65 @@ namespace Artifact
             , overlayOffsetY(0.0f)
             , overlayScale(1.0f)
             , overlayRotationDeg(0.0f)
+        , multiChannelExportEnabled(false)
+        , framePadding(4)
         {
         }
     };
 
     namespace {
+        using RendererChannel = ArtifactIRenderer::ChannelType;
+
+        constexpr std::array<RendererChannel, 16> kAllRendererChannels = {
+            RendererChannel::Red,
+            RendererChannel::Green,
+            RendererChannel::Blue,
+            RendererChannel::Alpha,
+            RendererChannel::Depth,
+            RendererChannel::NormalX,
+            RendererChannel::NormalY,
+            RendererChannel::NormalZ,
+            RendererChannel::VelocityX,
+            RendererChannel::VelocityY,
+            RendererChannel::ObjectId,
+            RendererChannel::MaterialId,
+            RendererChannel::AlbedoR,
+            RendererChannel::AlbedoG,
+            RendererChannel::AlbedoB,
+            RendererChannel::Emission,
+        };
+
+        constexpr std::array<RendererChannel, 11> kDefaultMultiChannelExportChannels = {
+            RendererChannel::Red,
+            RendererChannel::Green,
+            RendererChannel::Blue,
+            RendererChannel::Alpha,
+            RendererChannel::Depth,
+            RendererChannel::ObjectId,
+            RendererChannel::MaterialId,
+            RendererChannel::AlbedoR,
+            RendererChannel::AlbedoG,
+            RendererChannel::AlbedoB,
+            RendererChannel::Emission,
+        };
+
+        void configureRendererChannelsForRenderQueueJob(
+            ArtifactIRenderer& renderer, const ArtifactRenderJob& job)
+        {
+            renderer.setMultiChannelEnabled(job.multiChannelExportEnabled);
+            for (const auto channel : kAllRendererChannels) {
+                renderer.setChannelEnabled(channel, false);
+            }
+
+            if (!job.multiChannelExportEnabled) {
+                return;
+            }
+
+            for (const auto channel : kDefaultMultiChannelExportChannels) {
+                renderer.setChannelEnabled(channel, true);
+            }
+        }
+
         void appendCompositionMismatchWarnings(const ArtifactRenderJob& job,
                                                const ArtifactCompositionPtr& composition,
                                                const QString& compId,
@@ -1494,7 +1551,7 @@ namespace Artifact
                 if (isSequence) {
                     // シーケンスの場合、各フレームの存在をチェック
                     for (int f = startFrame; f < endFrame; ++f) {
-                        QString framePath = generateFramePath(outputPath, f);
+                        QString framePath = generateFramePath(outputPath, f, job.framePadding);
                         if (!QFile::exists(framePath)) {
                             failedFrames.append(FailedFrameInfo{jobId, f, QStringLiteral("Frame not found"), QDateTime::currentMSecsSinceEpoch()});
                         } else if (QFileInfo(framePath).size() == 0) {
@@ -1514,7 +1571,7 @@ namespace Artifact
             }
             
         private:
-            QString generateFramePath(const QString& basePath, int frameNumber) {
+            QString generateFramePath(const QString& basePath, int frameNumber, int framePadding) {
                 QFileInfo fi(basePath);
                 QString dir = fi.path();
                 QString baseName = fi.completeBaseName();
@@ -1527,7 +1584,7 @@ namespace Artifact
                     baseName = baseName.left(match.capturedStart());
                 }
                 
-                return QDir(dir).filePath(QString("%1_%2.%3").arg(baseName).arg(frameNumber, 4, 10, QChar('0')).arg(ext));
+                return QDir(dir).filePath(QString("%1_%2.%3").arg(baseName).arg(frameNumber, framePadding, 10, QChar('0')).arg(ext));
             }
         };
         void addJob(const ArtifactRenderJob& job) {
@@ -1721,6 +1778,28 @@ namespace Artifact
         void setJobIntegratedRenderEnabled(int index, bool enabled) {
             if (index < 0 || index >= jobs.size()) return;
             jobs[index].integratedRenderEnabled = enabled;
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        bool jobMultiChannelEnabledAt(int index) const {
+            if (index < 0 || index >= jobs.size()) return false;
+            return jobs[index].multiChannelExportEnabled;
+        }
+
+        void setJobMultiChannelEnabled(int index, bool enabled) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].multiChannelExportEnabled = enabled;
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        int jobFramePaddingAt(int index) const {
+            if (index < 0 || index >= jobs.size()) return 4;
+            return jobs[index].framePadding;
+        }
+
+        void setJobFramePadding(int index, int padding) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].framePadding = std::clamp(padding, 1, 10);
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -2969,14 +3048,25 @@ namespace Artifact
                 }
             gpuRenderer_->flush();
 
-            // GPU から RGBA8888 で readback
-            QImage frame = gpuRenderer_->readbackToImage();
+            configureRendererChannelsForRenderQueueJob(*gpuRenderer_, job);
 
-            if (frame.isNull()) {
-                if (errorMessage) *errorMessage = QStringLiteral("GPU readback failed");
-                return false;
+            // GPU readback
+            ArtifactCore::MultiChannelImage multiFrame;
+            QImage frame;
+            if (job.multiChannelExportEnabled) {
+                multiFrame = gpuRenderer_->readbackToMultiChannelImage();
+                if (multiFrame.isEmpty()) {
+                    if (errorMessage) *errorMessage = QStringLiteral("Multi-channel GPU readback failed");
+                    return false;
+                }
+            } else {
+                frame = gpuRenderer_->readbackToImage();
+                if (frame.isNull()) {
+                    if (errorMessage) *errorMessage = QStringLiteral("GPU readback failed");
+                    return false;
+                }
+                applyCompositionFinalEffectsToImage(comp.get(), frame);
             }
-            applyCompositionFinalEffectsToImage(comp.get(), frame);
 
             // 出力パス決定
             const QString outPath = resolveDummyOutputPath(job, index);
@@ -2988,10 +3078,26 @@ namespace Artifact
                 return false;
             }
 
-            // 保存
-            if (!frame.save(outPath)) {
-                if (errorMessage) *errorMessage = QStringLiteral("Failed to save GPU rendered image: %1").arg(outPath);
-                return false;
+            // 保存 (ImageExporter / OIIO 経由)
+            ArtifactCore::ImageExportOptions exportOpts;
+            exportOpts.format = QFileInfo(outPath).suffix().toLower();
+            if (job.multiChannelExportEnabled) {
+                // EXR は自動で FLOAT に昇格 (resolveWriteType)
+                ArtifactCore::ImageExporter exporter;
+                auto exportResult = exporter.writeMultiChannel(multiFrame, outPath, exportOpts);
+                if (!exportResult.success) {
+                    if (errorMessage) *errorMessage = QStringLiteral("Failed to save multi-channel EXR via ImageExporter: %1 - %2: %3")
+                        .arg(outPath).arg(exportResult.errorStage).arg(exportResult.errorMessage);
+                    return false;
+                }
+            } else {
+                ArtifactCore::ImageExporter exporter;
+                auto exportResult = exporter.write(frame, outPath, exportOpts);
+                if (!exportResult.success) {
+                    if (errorMessage) *errorMessage = QStringLiteral("Failed to save GPU rendered image via ImageExporter: %1 - %2: %3")
+                        .arg(outPath).arg(exportResult.errorStage).arg(exportResult.errorMessage);
+                    return false;
+                }
             }
             return true;
         }
@@ -3378,6 +3484,28 @@ namespace Artifact
     void ArtifactRenderQueueService::setJobIntegratedRenderEnabledAt(int index, bool enabled)
     {
         impl_->queueManager.setJobIntegratedRenderEnabled(index, enabled);
+        impl_->syncCoreQueueModel();
+    }
+
+    bool ArtifactRenderQueueService::jobMultiChannelEnabledAt(int index) const
+    {
+        return impl_->queueManager.jobMultiChannelEnabledAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobMultiChannelEnabledAt(int index, bool enabled)
+    {
+        impl_->queueManager.setJobMultiChannelEnabled(index, enabled);
+        impl_->syncCoreQueueModel();
+    }
+
+    int ArtifactRenderQueueService::jobFramePaddingAt(int index) const
+    {
+        return impl_->queueManager.jobFramePaddingAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobFramePaddingAt(int index, int padding)
+    {
+        impl_->queueManager.setJobFramePadding(index, padding);
         impl_->syncCoreQueueModel();
     }
 
@@ -4132,7 +4260,7 @@ namespace Artifact
                     baseName = QStringLiteral("render");
                 }
                 const QString framePath = outDir.filePath(
-                    QStringLiteral("%1_%2.%3").arg(baseName).arg(f, 4, 10, QChar('0')).arg(frameExt));
+                    QStringLiteral("%1_%2.%3").arg(baseName).arg(f, job.framePadding, 10, QChar('0')).arg(frameExt));
                 ArtifactCore::ImageExporter exporter;
                 ArtifactCore::ImageExportOptions imgOpts;
                 imgOpts.format = frameExt;
@@ -4149,7 +4277,7 @@ namespace Artifact
                     bn = QStringLiteral("render");
                 }
                 const QString fp = outDir.filePath(
-                    QStringLiteral("%1_%2.svg").arg(bn).arg(f, 4, 10, QLatin1Char('0')));
+                    QStringLiteral("%1_%2.svg").arg(bn).arg(f, job.framePadding, 10, QLatin1Char('0')));
                 QFile sf(fp);
                 if (sf.open(QIODevice::WriteOnly | QIODevice::Text)) {
                     QTextStream so(&sf);
@@ -4169,7 +4297,7 @@ namespace Artifact
                     baseName = QStringLiteral("render");
                 }
                 const QString framePath = outDir.filePath(
-                    QStringLiteral("%1_%2.%3").arg(baseName).arg(f, 4, 10, QChar('0')).arg(frameExt));
+                    QStringLiteral("%1_%2.%3").arg(baseName).arg(f, job.framePadding, 10, QChar('0')).arg(frameExt));
                 ArtifactCore::ImageExporter exporter;
                 ArtifactCore::ImageExportOptions imgOpts;
                 imgOpts.format = frameExt;
@@ -4595,6 +4723,8 @@ namespace Artifact
             obj["encoderBackend"] = job.encoderBackend;
             obj["renderBackend"] = job.renderBackend;
             obj["integratedRenderEnabled"] = job.integratedRenderEnabled;
+            obj["multiChannelExportEnabled"] = job.multiChannelExportEnabled;
+            obj["framePadding"] = job.framePadding;
             obj["audioSourcePath"] = job.audioSourcePath;
             obj["audioCodec"] = job.audioCodec;
             obj["audioBitrateKbps"] = job.audioBitrateKbps;
@@ -4630,6 +4760,8 @@ namespace Artifact
             job.encoderBackend = obj["encoderBackend"].toString("auto");
             job.renderBackend = normalizeRenderBackend(obj["renderBackend"].toString("auto"));
             job.integratedRenderEnabled = obj["integratedRenderEnabled"].toBool(false);
+            job.multiChannelExportEnabled = obj["multiChannelExportEnabled"].toBool(false);
+            job.framePadding = obj["framePadding"].toInt(4);
             job.audioSourcePath = obj["audioSourcePath"].toString();
             job.audioCodec = obj["audioCodec"].toString("aac");
             job.audioBitrateKbps = obj["audioBitrateKbps"].toInt(128);

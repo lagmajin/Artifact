@@ -31,6 +31,10 @@ export namespace Artifact
   [[nodiscard]] QString encoderBackend() const;
   void setRenderBackend(const QString& backend);
   [[nodiscard]] QString renderBackend() const;
+  void setMultiChannelEnabled(bool enabled);
+  [[nodiscard]] bool multiChannelEnabled() const;
+  void setFramePadding(int digits);
+  [[nodiscard]] int framePadding() const;
   void setResolution(int width, int height);
   [[nodiscard]] int outputWidth() const;
   [[nodiscard]] int outputHeight() const;

@@ -169,6 +169,21 @@ if(_form_particle_impl_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactFormParticleLayer.cppm")
 endif()
 
+# Environment map layer is imported by the factory and should be pinned
+# explicitly so module discovery does not depend on recursive glob timing.
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactEnvironmentMapLayer.ixx" _environment_map_layer_module_idx)
+if(_environment_map_layer_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactEnvironmentMapLayer.ixx")
+endif()
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactEnvironmentMapLayerInitParams.ixx" _environment_map_params_module_idx)
+if(_environment_map_params_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactEnvironmentMapLayerInitParams.ixx")
+endif()
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactEnvironmentMapLayer.cppm" _environment_map_layer_impl_idx)
+if(_environment_map_layer_impl_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactEnvironmentMapLayer.cppm")
+endif()
+
 # Procedural3DLayer owns the Terrain / Path Tube authoring and renderer bridge.
 list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactProcedural3DLayer.ixx" _procedural_3d_layer_module_idx)
 if(_procedural_3d_layer_module_idx EQUAL -1)

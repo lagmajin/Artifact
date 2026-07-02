@@ -6,6 +6,7 @@ module;
 #include <QLabel>
 #include <QMenu>
 #include <QPalette>
+#include <QSizePolicy>
 #include <QString>
 
 module ArtifactStatusBar;
@@ -77,6 +78,9 @@ namespace Artifact
   QFont boldFont = font();
   boldFont.setBold(true);
   labels_[itemIndex(Item::TimelineDebug)]->setFont(boldFont);
+  labels_[itemIndex(Item::TimelineDebug)]->setFixedWidth(220);
+  labels_[itemIndex(Item::TimelineDebug)]->setSizePolicy(
+      QSizePolicy::Fixed, QSizePolicy::Preferred);
   labels_[itemIndex(Item::Memory)]->setMinimumWidth(100);
   labels_[itemIndex(Item::FPS)]->setMinimumWidth(80);
   labels_[itemIndex(Item::Zoom)]->setMinimumWidth(80);
@@ -176,7 +180,11 @@ namespace Artifact
  {
   if (auto* label = itemLabel(Item::TimelineDebug))
   {
-   label->setText(text.toUpper());
+   const QString fullText = text.toUpper();
+   label->setText(label->fontMetrics().elidedText(
+       fullText, Qt::ElideRight,
+       label->contentsRect().width() > 0 ? label->contentsRect().width() : 1));
+   label->setToolTip(fullText);
   }
  }
 

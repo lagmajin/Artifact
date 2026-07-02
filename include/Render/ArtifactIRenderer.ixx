@@ -138,6 +138,9 @@ public:
     VelocityY,
     ObjectId,
     MaterialId,
+    AlbedoR,
+    AlbedoG,
+    AlbedoB,
     Emission,
     Custom
   };
@@ -145,6 +148,13 @@ public:
   void setChannelEnabled(ChannelType channel, bool enabled);
   bool isChannelEnabled(ChannelType channel) const;
   QImage readbackChannelToImage(ChannelType channel) const;
+  void setAuxiliaryChannelSource(ChannelType channel,
+                                 Diligent::ITextureView *textureView);
+  void setMeshEmissionOnlyPass(bool enabled);
+  bool isMeshEmissionOnlyPass() const;
+  void setMeshIdPass(ChannelType channel, float encodedId);
+  void setMeshAlbedoOnlyPass(bool enabled);
+  bool isMeshAlbedoOnlyPass() const;
   void setCanvasSize(float w, float h);
   void setPan(float x, float y);
   void getPan(float &x, float &y) const;
@@ -326,8 +336,11 @@ public:
   void *createOffscreenDepthTexture(int width, int height);
   void destroyOffscreenTexture(void *textureView);
   void pushRenderTarget(void *textureView);
+  void pushRenderTarget(void *textureView, void *depthTextureView);
   void popRenderTarget();
   void clearRenderTarget(const FloatColor &color);
+  void clearRenderTarget(void *textureView, const FloatColor &color);
+  void clearDepthRenderTarget(void *depthTextureView, float depth = 1.0f);
   void drawOffscreenTexture(void *textureView, const QRectF &bounds,
                             float opacity = 1.0f);
   void drawGrid(float x, float y, float w, float h, float spacing,

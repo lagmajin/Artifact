@@ -26,6 +26,12 @@ struct BatchTemplate {
     double overrideFps = 0.0;
     int startFrame = -1;          // -1 = comp default
     int endFrame = -1;
+    // 明示的な出力設定（空文字列 = preset の値を使う）
+    QString format;                // "MP4", "PNG", "EXR" など
+    QString codec;                 // "H.264", "ProRes", "PNG" など
+    QString codecProfile;          // "hq", "4444", "high" など
+    int overrideBitrate = 0;       // 0 = preset の値を使う
+    int framePadding = 4;          // 画像シーケンスのフレーム番号ゼロ埋め桁数
 };
 
 class ArtifactBatchRenderer : public QObject {

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <memory>
 #include <typeindex>
@@ -125,7 +125,8 @@ enum class LayerType {
   FormParticle = 22,          // 独立した Form 風グリッド粒子レイヤー
   Procedural3D = 23,          // Terrain / Path Tube procedural source
   SandSim2D = 24,              // 2D falling-sand cellular automaton
-  ParametricComposition = 25   // Parametric composition with slots
+  ParametricComposition = 25,   // Parametric composition with slots
+  EnvironmentMap = 26           // HDRI / Skybox environment map layer
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -565,4 +566,8 @@ inline uint qHash(const Artifact::ArtifactAbstractLayerPtr &key,
 }
 
 } // namespace Artifact
+
+
+
+
 

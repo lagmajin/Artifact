@@ -57,6 +57,10 @@ public:
     PSOAndSRB batchSolidRectPsoAndSrb() const;
     PSOAndSRB batchSolidRectAAPsoAndSrb() const;
 
+    /// Skybox rendering PSO (fullscreen triangle with cubemap sampling)
+    PSOAndSRB skyboxPsoAndSrb() const;
+    RenderShaderPair skyboxShaders() const;
+
     /// Glyph quad PSO for GPU text rendering
     RefCntAutoPtr<ISampler> spriteSampler() const;
     RefCntAutoPtr<ISampler> glyphAtlasSampler() const;
@@ -69,3 +73,5 @@ private:
 };
 
 }
+
+

@@ -5,6 +5,7 @@ module;
 #include <QDateTime>
 #include <QFile>
 #include <QFileDialog>
+#include <QFont>
 #include <QFrame>
 #include <QLabel>
 #include <QAbstractScrollArea>
@@ -30,6 +31,7 @@ module;
 #include <QPalette>
 #include <QResizeEvent>
 #include <QShowEvent>
+#include <QSizePolicy>
 #include <QVBoxLayout>
 #include <QStandardPaths>
 #include <QToolButton>
@@ -114,6 +116,19 @@ QString resourceNoteFromResource(const ArtifactCore::FrameDebugSnapshot& snapsho
     return QStringLiteral("none");
 }
 
+QString diagnosticField(const QString& note, const QString& key,
+                        const QString& fallback = QStringLiteral("-"))
+{
+    const QString prefix = key + QLatin1Char('=');
+    const QStringList fields = note.split(QChar::Space, Qt::SkipEmptyParts);
+    for (const QString& field : fields) {
+        if (field.startsWith(prefix)) {
+            return field.mid(prefix.size());
+        }
+    }
+    return fallback;
+}
+
 QString perfBaselineText(const ArtifactCore::FrameDebugSnapshot& snapshot)
 {
     const int visibleLayers = std::max(0, snapshot.visibleLayerCount);
@@ -190,6 +205,9 @@ public:
     DebugRenderHarnessWidget* owner_ = nullptr;
     QLabel* summary_ = nullptr;
     QLabel* reportMeta_ = nullptr;
+    QLabel* healthState_ = nullptr;
+    QLabel* healthReason_ = nullptr;
+    QPlainTextEdit* overview_ = nullptr;
     QToolButton* copyReportButton_ = nullptr;
     QToolButton* saveReportButton_ = nullptr;
     PresetListWidget* presetList_ = nullptr;
@@ -217,49 +235,74 @@ public:
         owner_->setPalette(palette);
 
         auto* layout = new QVBoxLayout(owner_);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(0);
+        layout->setContentsMargins(10, 10, 10, 10);
+        layout->setSpacing(8);
 
-        summary_ = new QLabel(owner_);
-        summary_->setPalette(palette);
+        auto* header = new QFrame(owner_);
+        header->setFrameShape(QFrame::StyledPanel);
+        header->setFrameShadow(QFrame::Plain);
+        header->setAutoFillBackground(true);
+        QPalette headerPalette = palette;
+        headerPalette.setColor(QPalette::Window, QColor::fromRgb(34, 37, 44));
+        header->setPalette(headerPalette);
+        auto* headerLayout = new QHBoxLayout(header);
+        headerLayout->setContentsMargins(12, 8, 10, 8);
+        headerLayout->setSpacing(10);
+
+        auto* headerText = new QVBoxLayout();
+        headerText->setContentsMargins(0, 0, 0, 0);
+        headerText->setSpacing(2);
+        summary_ = new QLabel(header);
+        summary_->setPalette(headerPalette);
         summary_->setTextFormat(Qt::PlainText);
-        summary_->setWordWrap(true);
+        summary_->setWordWrap(false);
         summary_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        summary_->setMinimumHeight(48);
-        layout->addWidget(summary_);
+        QFont summaryFont = summary_->font();
+        summaryFont.setBold(true);
+        summaryFont.setPointSize(std::max(10, summaryFont.pointSize() + 1));
+        summary_->setFont(summaryFont);
+        headerText->addWidget(summary_);
 
-        auto* reportBar = new QWidget(owner_);
-        auto* reportBarLayout = new QHBoxLayout(reportBar);
-        reportBarLayout->setContentsMargins(8, 4, 8, 4);
-        reportBarLayout->setSpacing(8);
-
-        reportMeta_ = new QLabel(reportBar);
+        reportMeta_ = new QLabel(header);
         reportMeta_->setPalette(palette);
         reportMeta_->setTextFormat(Qt::PlainText);
         reportMeta_->setWordWrap(false);
         reportMeta_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        reportMeta_->setMinimumHeight(24);
-        reportBarLayout->addWidget(reportMeta_);
-        reportBarLayout->addStretch();
+        headerText->addWidget(reportMeta_);
+        headerLayout->addLayout(headerText, 1);
 
-        copyReportButton_ = new QToolButton(reportBar);
-        copyReportButton_->setText(QStringLiteral("Copy Report"));
+        copyReportButton_ = new QToolButton(header);
+        copyReportButton_->setText(QStringLiteral("Copy"));
         copyReportButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         copyReportButton_->setToolTip(QStringLiteral("Copy the current smoke report to the clipboard"));
-        copyReportButton_->setFixedWidth(120);
-        reportBarLayout->addWidget(copyReportButton_);
+        copyReportButton_->setFixedWidth(72);
+        headerLayout->addWidget(copyReportButton_);
 
-        saveReportButton_ = new QToolButton(reportBar);
-        saveReportButton_->setText(QStringLiteral("Save Report"));
+        saveReportButton_ = new QToolButton(header);
+        saveReportButton_->setText(QStringLiteral("Save"));
         saveReportButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         saveReportButton_->setToolTip(QStringLiteral("Save the current smoke report to a text file"));
-        saveReportButton_->setFixedWidth(120);
-        reportBarLayout->addWidget(saveReportButton_);
+        saveReportButton_->setFixedWidth(72);
+        headerLayout->addWidget(saveReportButton_);
 
-        layout->addWidget(reportBar);
+        layout->addWidget(header);
 
         auto* splitter = new QSplitter(Qt::Horizontal, owner_);
-        presetList_ = new PresetListWidget(this, splitter);
+        splitter->setChildrenCollapsible(false);
+
+        auto* presetPanel = new QFrame(splitter);
+        presetPanel->setFrameShape(QFrame::StyledPanel);
+        presetPanel->setFrameShadow(QFrame::Plain);
+        auto* presetLayout = new QVBoxLayout(presetPanel);
+        presetLayout->setContentsMargins(8, 8, 8, 8);
+        presetLayout->setSpacing(6);
+        auto* presetTitle = new QLabel(QStringLiteral("TEST SCENES"), presetPanel);
+        QFont sectionFont = presetTitle->font();
+        sectionFont.setBold(true);
+        presetTitle->setFont(sectionFont);
+        presetLayout->addWidget(presetTitle);
+
+        presetList_ = new PresetListWidget(this, presetPanel);
         presetList_->addItems(QStringList{
             QStringLiteral("particle-only"),
             QStringLiteral("video-only"),
@@ -267,13 +310,24 @@ public:
             QStringLiteral("overlay-only"),
             QStringLiteral("mixed-media")
         });
-        presetList_->setMinimumWidth(220);
+        presetList_->setMinimumWidth(150);
         presetList_->setCurrentRow(0);
+        presetLayout->addWidget(presetList_, 1);
 
-        auto* rightSplitter = new QSplitter(Qt::Vertical, splitter);
-        rightSplitter->setChildrenCollapsible(false);
+        auto* contentSplitter = new QSplitter(Qt::Vertical, splitter);
+        contentSplitter->setChildrenCollapsible(true);
 
-        preview_ = new QLabel(rightSplitter);
+        auto* previewPanel = new QFrame(contentSplitter);
+        previewPanel->setFrameShape(QFrame::StyledPanel);
+        previewPanel->setFrameShadow(QFrame::Plain);
+        auto* previewLayout = new QVBoxLayout(previewPanel);
+        previewLayout->setContentsMargins(8, 8, 8, 8);
+        previewLayout->setSpacing(6);
+        auto* previewTitle = new QLabel(QStringLiteral("FRAME PREVIEW"), previewPanel);
+        previewTitle->setFont(sectionFont);
+        previewLayout->addWidget(previewTitle);
+
+        preview_ = new QLabel(previewPanel);
         preview_->setAutoFillBackground(true);
         preview_->setAttribute(Qt::WA_StyledBackground, true);
         preview_->setPalette(palette);
@@ -285,8 +339,19 @@ public:
         preview_->setMinimumHeight(260);
         preview_->setText(QString());
         preview_->setWordWrap(true);
+        previewLayout->addWidget(preview_, 1);
 
-        report_ = new QPlainTextEdit(rightSplitter);
+        auto* reportPanel = new QFrame(contentSplitter);
+        reportPanel->setFrameShape(QFrame::StyledPanel);
+        reportPanel->setFrameShadow(QFrame::Plain);
+        auto* reportLayout = new QVBoxLayout(reportPanel);
+        reportLayout->setContentsMargins(8, 8, 8, 8);
+        reportLayout->setSpacing(6);
+        auto* reportTitle = new QLabel(QStringLiteral("RAW REPORT"), reportPanel);
+        reportTitle->setFont(sectionFont);
+        reportLayout->addWidget(reportTitle);
+
+        report_ = new QPlainTextEdit(reportPanel);
         report_->setPalette(palette);
         if (auto* viewport = report_->viewport()) {
             viewport->setAutoFillBackground(true);
@@ -295,14 +360,52 @@ public:
         report_->setReadOnly(true);
         report_->setLineWrapMode(QPlainTextEdit::NoWrap);
         report_->setFocusPolicy(Qt::StrongFocus);
+        reportLayout->addWidget(report_, 1);
 
-        splitter->addWidget(presetList_);
-        splitter->addWidget(rightSplitter);
-        splitter->setStretchFactor(0, 1);
-        splitter->setStretchFactor(1, 3);
-        rightSplitter->setStretchFactor(0, 2);
-        rightSplitter->setStretchFactor(1, 3);
-        layout->addWidget(splitter);
+        auto* healthPanel = new QFrame(splitter);
+        healthPanel->setFrameShape(QFrame::StyledPanel);
+        healthPanel->setFrameShadow(QFrame::Plain);
+        auto* healthLayout = new QVBoxLayout(healthPanel);
+        healthLayout->setContentsMargins(10, 10, 10, 10);
+        healthLayout->setSpacing(6);
+        auto* healthTitle = new QLabel(QStringLiteral("FRAME HEALTH"), healthPanel);
+        healthTitle->setFont(sectionFont);
+        healthLayout->addWidget(healthTitle);
+
+        healthState_ = new QLabel(QStringLiteral("WAITING"), healthPanel);
+        QFont healthFont = healthState_->font();
+        healthFont.setBold(true);
+        healthFont.setPointSize(std::max(12, healthFont.pointSize() + 3));
+        healthState_->setFont(healthFont);
+        healthLayout->addWidget(healthState_);
+
+        healthReason_ = new QLabel(healthPanel);
+        healthReason_->setWordWrap(true);
+        healthReason_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        healthLayout->addWidget(healthReason_);
+
+        auto* overviewTitle = new QLabel(QStringLiteral("AT A GLANCE"), healthPanel);
+        overviewTitle->setFont(sectionFont);
+        healthLayout->addWidget(overviewTitle);
+        overview_ = new QPlainTextEdit(healthPanel);
+        overview_->setReadOnly(true);
+        overview_->setFrameShape(QFrame::NoFrame);
+        overview_->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+        overview_->setFocusPolicy(Qt::NoFocus);
+        overview_->setPalette(palette);
+        healthLayout->addWidget(overview_, 1);
+
+        splitter->addWidget(presetPanel);
+        splitter->addWidget(contentSplitter);
+        splitter->addWidget(healthPanel);
+        splitter->setStretchFactor(0, 0);
+        splitter->setStretchFactor(1, 1);
+        splitter->setStretchFactor(2, 0);
+        splitter->setSizes({170, 760, 300});
+        contentSplitter->setStretchFactor(0, 3);
+        contentSplitter->setStretchFactor(1, 2);
+        contentSplitter->setSizes({430, 250});
+        layout->addWidget(splitter, 1);
 
         QObject::connect(copyReportButton_, &QToolButton::clicked, owner_, [this]() {
             copyReportToClipboard();
@@ -383,6 +486,94 @@ public:
             videoFixtureLayer_->setInPoint(0);
         }
         return videoFixtureLayer_.get();
+    }
+
+    bool usesVideoFixturePreset() const
+    {
+        const QString preset = scenePreset_.trimmed();
+        return preset == QStringLiteral("video-only") ||
+               preset == QStringLiteral("mixed-media");
+    }
+
+    const ArtifactCore::FrameDebugResourceRecord* capturedVideoResource() const
+    {
+        if (!hasSnapshot_) {
+            return nullptr;
+        }
+        for (const auto& resource : snapshot_.resources) {
+            if (resource.type == QStringLiteral("video") ||
+                resource.label == QStringLiteral("Video Decode")) {
+                return &resource;
+            }
+        }
+        return nullptr;
+    }
+
+    QString effectiveHarnessLayerName() const
+    {
+        if (!usesVideoFixturePreset()) {
+            if (hasSnapshot_ && !snapshot_.selectedLayerName.isEmpty()) {
+                return snapshot_.selectedLayerName;
+            }
+            return QStringLiteral("<none>");
+        }
+
+        const QString source = videoFixturePath_.isEmpty()
+                                   ? resolveVideoFixturePath()
+                                   : videoFixturePath_;
+        auto* fixture = ensureVideoFixtureLayer();
+        const QString fixtureSource =
+            !source.isEmpty()
+                ? source
+                : (fixture ? fixture->sourceFile() : QString());
+        if (fixtureSource.isEmpty()) {
+            if (const auto* captured = capturedVideoResource()) {
+                return captured->label.trimmed().isEmpty()
+                           ? QStringLiteral("captured composition video")
+                           : QStringLiteral("captured composition video (%1)")
+                                 .arg(captured->label.trimmed());
+            }
+            return QStringLiteral("video fixture (<missing source>)");
+        }
+
+        const QString baseName = QFileInfo(fixtureSource).completeBaseName();
+        return baseName.isEmpty()
+                   ? QStringLiteral("video fixture")
+                   : QStringLiteral("video fixture (%1)").arg(baseName);
+    }
+
+    QString videoFixtureDebugText() const
+    {
+        if (!usesVideoFixturePreset()) {
+            return QStringLiteral("not-requested");
+        }
+
+        const QString source = videoFixturePath_.isEmpty()
+                                   ? resolveVideoFixturePath()
+                                   : videoFixturePath_;
+        auto* fixture = ensureVideoFixtureLayer();
+        if (!fixture) {
+            if (const auto* captured = capturedVideoResource()) {
+                const QString note = captured->note.trimmed();
+                return QStringLiteral("state=captured-composition-video label=%1 %2")
+                    .arg(captured->label.trimmed().isEmpty()
+                             ? QStringLiteral("<unnamed>")
+                             : captured->label.trimmed(),
+                         note.isEmpty() ? QStringLiteral("note=<none>") : note);
+            }
+            return QStringLiteral("state=missing-source source=%1")
+                .arg(source.isEmpty() ? QStringLiteral("<none>") : source);
+        }
+
+        const QString decodeState = fixture->decodeState().trimmed().isEmpty()
+                                        ? QStringLiteral("unknown")
+                                        : fixture->decodeState().trimmed();
+        return QStringLiteral("state=%1 loaded=%2 source=%3 currentFrame=%4")
+            .arg(decodeState)
+            .arg(fixture->isLoaded() ? 1 : 0)
+            .arg(fixture->sourceFile().isEmpty() ? QStringLiteral("<none>")
+                                                 : fixture->sourceFile())
+            .arg(fixture->currentFrame());
     }
 
     QImage renderParticleFixturePreview() const
@@ -513,7 +704,9 @@ public:
             auto* videoLayer = ensureVideoFixtureLayer();
             if (!videoLayer) {
                 if (fixtureNote) {
-                    *fixtureNote = QStringLiteral("fixture=video-only missing source");
+                    *fixtureNote = capturedVideoResource()
+                                       ? QStringLiteral("fixture=video-only source=captured-composition")
+                                       : QStringLiteral("fixture=video-only missing source");
                 }
                 return QImage();
             }
@@ -609,9 +802,13 @@ public:
             painter.drawRect(targetRect.adjusted(-1, -1, 0, 0));
         } else {
             painter.setPen(QColor::fromRgb(220, 228, 236));
+            const bool capturedVideoAvailable =
+                usesVideoFixturePreset() && capturedVideoResource();
             painter.drawText(canvas.rect().adjusted(18, 18, -18, -18),
                              Qt::AlignCenter | Qt::TextWordWrap,
-                             QStringLiteral("Preview not available for this preset yet.\nSelect particle-only to inspect the live fixture."));
+                             capturedVideoAvailable
+                                 ? QStringLiteral("Video diagnostics captured.\nNo frame preview attachment is available.")
+                                 : QStringLiteral("Preview unavailable.\nProvide a fixture source or capture a frame attachment."));
         }
 
         return canvas;
@@ -688,7 +885,7 @@ public:
             preview_->update();
         }
         if (reportMeta_) {
-            reportMeta_->setText(QStringLiteral("reportId=%1  status=%2  viewport=%3x%4")
+            reportMeta_->setText(QStringLiteral("%1  |  %2  |  viewport %3x%4")
                                      .arg(reportId)
                                      .arg(statusText)
                                      .arg(previewSize().width())
@@ -710,22 +907,102 @@ public:
         const QString glyphState = hasSnapshot_
             ? mediaStateFromResource(snapshot_, QStringLiteral("glyphAtlas"), QStringLiteral("Glyph Atlas"))
             : QStringLiteral("none");
-        const QString particleDetail = hasSnapshot_
-            ? resourceNoteFromResource(snapshot_, QStringLiteral("particle"), QStringLiteral("Particle Draw"))
-            : QStringLiteral("none");
+        const QString effectiveLayerName = effectiveHarnessLayerName();
 
-        summary_->setText(QStringLiteral("preset=%1  fixture=%2  frame=%3  comp=%4  layer=%5  particleState=%6  particleDetail=%7  textState=%8  videoState=%9  blendState=%10  glyphState=%11")
-                              .arg(scenePreset_)
-                              .arg(previewImage.isNull() ? QStringLiteral("pending") : QStringLiteral("ready"))
+        const QString compositionName =
+            hasSnapshot_ && !snapshot_.compositionName.isEmpty()
+                ? snapshot_.compositionName
+                : QStringLiteral("<no composition>");
+        summary_->setText(QStringLiteral("%1  |  Frame %2  |  %3")
+                              .arg(compositionName)
                               .arg(hasSnapshot_ ? snapshot_.frame.framePosition() : -1)
-                              .arg(hasSnapshot_ && !snapshot_.compositionName.isEmpty() ? snapshot_.compositionName : QStringLiteral("<none>"))
-                              .arg(hasSnapshot_ && !snapshot_.selectedLayerName.isEmpty() ? snapshot_.selectedLayerName : QStringLiteral("<none>"))
-                              .arg(particleState)
-                              .arg(particleDetail)
-                              .arg(textState)
-                              .arg(videoState)
-                              .arg(blendState)
-                              .arg(glyphState));
+                              .arg(effectiveLayerName));
+
+        if (healthState_) {
+            const QString healthText =
+                hasSnapshot_ && snapshot_.failed
+                    ? QStringLiteral("FAILED")
+                    : (previewImage.isNull() ? QStringLiteral("NEEDS ATTENTION")
+                                             : QStringLiteral("HEALTHY"));
+            healthState_->setText(healthText);
+            QPalette healthPalette = healthState_->palette();
+            healthPalette.setColor(
+                QPalette::WindowText,
+                hasSnapshot_ && snapshot_.failed
+                    ? QColor::fromRgb(255, 105, 105)
+                    : (previewImage.isNull() ? QColor::fromRgb(255, 196, 92)
+                                             : QColor::fromRgb(106, 218, 148)));
+            healthState_->setPalette(healthPalette);
+        }
+        if (healthReason_) {
+            healthReason_->setText(
+                hasSnapshot_ && snapshot_.failed
+                    ? (snapshot_.failureReason.isEmpty()
+                           ? QStringLiteral("The captured frame reported a failure.")
+                           : snapshot_.failureReason)
+                    : (previewImage.isNull()
+                           ? QStringLiteral("Diagnostics are available, but the preview image is missing.")
+                           : QStringLiteral("Preview and frame diagnostics are available.")));
+        }
+        if (overview_) {
+            const auto* videoResource = capturedVideoResource();
+            const QString videoNote =
+                videoResource ? videoResource->note.trimmed() : QString();
+            QStringList overviewLines;
+            overviewLines
+                << QStringLiteral("SCENE")
+                << QStringLiteral("Preset      %1").arg(scenePreset_)
+                << QStringLiteral("Backend     %1")
+                       .arg(hasSnapshot_ && !snapshot_.renderBackend.isEmpty()
+                                ? snapshot_.renderBackend
+                                : QStringLiteral("<none>"))
+                << QString()
+                << QStringLiteral("MEDIA")
+                << QStringLiteral("Video       %1").arg(videoState)
+                << QStringLiteral("Decoder     %1")
+                       .arg(diagnosticField(videoNote, QStringLiteral("backend")))
+                << QStringLiteral("Frames      %1 -> %2")
+                       .arg(diagnosticField(videoNote, QStringLiteral("source")),
+                            diagnosticField(videoNote, QStringLiteral("target")))
+                << QStringLiteral("Decode      %1 ms")
+                       .arg(diagnosticField(videoNote, QStringLiteral("decodeMs")))
+                << QStringLiteral("Late by     %1 ms")
+                       .arg(diagnosticField(videoNote, QStringLiteral("lateByMs")))
+                << QStringLiteral("On time     %1%")
+                       .arg(diagnosticField(videoNote, QStringLiteral("onTimePct")))
+                << QStringLiteral("Blend       %1").arg(blendState)
+                << QStringLiteral("Text        %1").arg(textState)
+                << QStringLiteral("Particles   %1").arg(particleState)
+                << QStringLiteral("Glyphs      %1").arg(glyphState)
+                << QString()
+                << QStringLiteral("PERFORMANCE")
+                << QStringLiteral("Last        %1 ms")
+                       .arg(hasSnapshot_
+                                ? QString::number(snapshot_.renderLastFrameMs, 'f', 1)
+                                : QStringLiteral("-"))
+                << QStringLiteral("Average     %1 ms")
+                       .arg(hasSnapshot_
+                                ? QString::number(snapshot_.renderAverageFrameMs, 'f', 1)
+                                : QStringLiteral("-"))
+                << QStringLiteral("GPU         %1 ms")
+                       .arg(hasSnapshot_
+                                ? QString::number(snapshot_.renderGpuFrameMs, 'f', 1)
+                                : QStringLiteral("-"))
+                << QString()
+                << QStringLiteral("CAPTURE")
+                << QStringLiteral("Resources   %1")
+                       .arg(hasSnapshot_
+                                ? static_cast<int>(snapshot_.resources.size())
+                                : 0)
+                << QStringLiteral("Passes      %1")
+                       .arg(hasSnapshot_
+                                ? static_cast<int>(snapshot_.passes.size())
+                                : 0)
+                << QStringLiteral("Preview     %1")
+                       .arg(previewImage.isNull() ? QStringLiteral("missing")
+                                                  : QStringLiteral("ready"));
+            overview_->setPlainText(overviewLines.join(QChar::LineFeed));
+        }
 
         report_->setPlainText(reportText);
     }
@@ -751,6 +1028,8 @@ public:
         const QString particleDetail = hasSnapshot_
             ? resourceNoteFromResource(snapshot_, QStringLiteral("particle"), QStringLiteral("Particle Draw"))
             : QStringLiteral("none");
+        const QString effectiveLayerName = effectiveHarnessLayerName();
+        const QString videoFixtureDebug = videoFixtureDebugText();
         const QString shortReason = hasSnapshot_ && snapshot_.failed && !snapshot_.failureReason.isEmpty()
                                         ? snapshot_.failureReason
                                         : QStringLiteral("none");
@@ -764,9 +1043,7 @@ public:
         lines << QStringLiteral("composition: %1").arg(hasSnapshot_ && !snapshot_.compositionName.isEmpty()
                                                        ? snapshot_.compositionName
                                                        : QStringLiteral("<none>"));
-        lines << QStringLiteral("selectedLayer: %1").arg(hasSnapshot_ && !snapshot_.selectedLayerName.isEmpty()
-                                                        ? snapshot_.selectedLayerName
-                                                        : QStringLiteral("<none>"));
+        lines << QStringLiteral("selectedLayer: %1").arg(effectiveLayerName);
         lines << QStringLiteral("renderBackend: %1").arg(hasSnapshot_ && !snapshot_.renderBackend.isEmpty()
                                                        ? snapshot_.renderBackend
                                                        : QStringLiteral("<none>"));
@@ -777,6 +1054,9 @@ public:
         lines << QStringLiteral("blendState: %1").arg(hasSnapshot_ ? blendStateText() : QStringLiteral("none"));
         lines << QStringLiteral("blendMaskContract: %1").arg(hasSnapshot_ ? blendMaskContractText() : QStringLiteral("none"));
         lines << QStringLiteral("glyphState: %1").arg(hasSnapshot_ ? glyphStateText() : QStringLiteral("none"));
+        if (usesVideoFixturePreset()) {
+            lines << QStringLiteral("videoFixture: %1").arg(videoFixtureDebug);
+        }
 
         lines << QString();
         lines << QStringLiteral("Summary");
@@ -796,6 +1076,9 @@ public:
         lines << QStringLiteral("blendState: %1").arg(hasSnapshot_ ? blendStateText() : QStringLiteral("none"));
         lines << QStringLiteral("blendMaskContract: %1").arg(hasSnapshot_ ? blendMaskContractText() : QStringLiteral("none"));
         lines << QStringLiteral("glyphState: %1").arg(hasSnapshot_ ? glyphStateText() : QStringLiteral("none"));
+        if (usesVideoFixturePreset()) {
+            lines << QStringLiteral("videoFixture: %1").arg(videoFixtureDebug);
+        }
         lines << QStringLiteral("viewportNotes: %1").arg(previewImage.isNull()
                                                             ? QStringLiteral("preview missing or not yet rendered")
                                                             : QStringLiteral("preview available"));
@@ -945,7 +1228,7 @@ public:
         }
         const int total = static_cast<int>(snapshot_.resources.size());
         const int hitPercent = total > 0 ? static_cast<int>(std::lround((hitCount * 100.0) / total)) : 0;
-        return QStringLiteral("cache=%1/%2 hit (%3%%) stale=%4")
+        return QStringLiteral("cache=%1/%2 hit (%3%) stale=%4")
                 .arg(hitCount)
                 .arg(total)
                 .arg(hitPercent)

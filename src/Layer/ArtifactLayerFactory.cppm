@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <QJsonObject>
 #include <QList>
@@ -35,6 +35,8 @@ import Artifact.Layer.Composition;
 import Artifact.Layer.MaterialContainer;
 import Artifact.Layer.SandSim2D;
 import Artifact.Layer.ParametricComposition;
+import Artifact.Layer.EnvironmentMap;
+import Artifact.Layer.EnvironmentMapInitParams;
 //import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -207,6 +209,13 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
   case LayerType::SandSim2D:
     ptr = ArtifactAbstractLayerPtr(new ArtifactSandSim2DLayer());
     break;
+  case LayerType::EnvironmentMap:
+    ptr = ArtifactAbstractLayerPtr(new ArtifactEnvironmentMapLayer());
+    if (auto* envParams = dynamic_cast<ArtifactEnvironmentMapLayerInitParams*>(&params)) {
+      auto* envLayer = static_cast<ArtifactEnvironmentMapLayer*>(ptr.get());
+      envLayer->setHdriPath(envParams->hdriPath());
+    }
+    break;
    default:
      break;
   }
@@ -349,3 +358,6 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
   }
 
 }
+
+
+

@@ -1,4 +1,9 @@
 module;
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 module Artifact.Audio.Effects.Manager;
 

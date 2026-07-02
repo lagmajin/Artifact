@@ -20,7 +20,10 @@ export namespace Artifact {
  enum class FixedGeometry3D {
    Auto = 0,
    Plane,
-   Cube
+   Cube,
+   Sphere,
+   Cylinder,
+   Cone
  };
 
  class Artifact3DLayer : public ArtifactAbstractLayer
@@ -30,6 +33,9 @@ export namespace Artifact {
    Impl* impl_;
    void createCubeMesh();
    void createPlaneMesh();
+   void createSphereMesh();
+   void createCylinderMesh();
+   void createConeMesh();
    void createFixedGeometryMesh(FixedGeometry3D geometry);
    void updateSourceSizeFromMesh();
 
@@ -60,6 +66,7 @@ export namespace Artifact {
     void setAffectedByLights(bool enabled);
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
     bool setLayerPropertyValue(const QString &propertyPath, const QVariant &value) override;
+    QString materialSignature() const;
  };
 
 }

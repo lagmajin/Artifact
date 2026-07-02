@@ -97,12 +97,17 @@ namespace Artifact
   RefCntAutoPtr<IRenderDevice> device_;
   TextureBundle accum_;
   TextureBundle temp_;
-  TextureBundle layer_;
-  TextureBundle layerFloat_;
+ TextureBundle layer_;
+ TextureBundle layerFloat_;
   TextureBundle matteSource_;
+  TextureBundle emission_;
+  TextureBundle objectId_;
+  TextureBundle materialId_;
+  TextureBundle albedo_;
   Uint32 width_ = 0;
   Uint32 height_ = 0;
   TEXTURE_FORMAT format_ = TEX_FORMAT_UNKNOWN;
+  bool emissionEnabled_ = false;
  };
 
  RenderPipeline::RenderPipeline()
@@ -117,10 +122,11 @@ namespace Artifact
   impl_ = nullptr;
  }
 
- bool RenderPipeline::initialize(IRenderDevice* device,
-                                 Uint32 width,
-                                 Uint32 height,
-                                 TEXTURE_FORMAT format)
+bool RenderPipeline::initialize(IRenderDevice* device,
+                                Uint32 width,
+                                Uint32 height,
+                                TEXTURE_FORMAT format,
+                                bool enableEmission)
  {
   if (!device || width == 0 || height == 0)
   {
@@ -136,6 +142,7 @@ namespace Artifact
                         impl_->width_ == width &&
                         impl_->height_ == height &&
                         impl_->format_ == resolvedFormat &&
+                        impl_->emissionEnabled_ == enableEmission &&
                         ready();
   if (sameSize)
   {
@@ -147,8 +154,9 @@ namespace Artifact
   impl_->width_ = width;
   impl_->height_ = height;
   impl_->format_ = resolvedFormat;
+  impl_->emissionEnabled_ = enableEmission;
 
-  if (!createTextures(device, width, height, resolvedFormat))
+  if (!createTextures(device, width, height, resolvedFormat, enableEmission))
   {
    destroy();
    return false;
@@ -170,7 +178,8 @@ namespace Artifact
    return;
   }
 
-  initialize(impl_->device_, width, height, impl_->format_);
+  initialize(impl_->device_, width, height, impl_->format_,
+             impl_->emissionEnabled_);
  }
 
  void RenderPipeline::destroy()
@@ -180,9 +189,14 @@ namespace Artifact
   impl_->layer_ = {};
   impl_->layerFloat_ = {};
   impl_->matteSource_ = {};
+  impl_->emission_ = {};
+  impl_->objectId_ = {};
+  impl_->materialId_ = {};
+  impl_->albedo_ = {};
   impl_->width_ = 0;
   impl_->height_ = 0;
   impl_->format_ = TEX_FORMAT_UNKNOWN;
+  impl_->emissionEnabled_ = false;
   impl_->device_ = nullptr;
  }
 
@@ -195,7 +209,17 @@ namespace Artifact
          impl_->temp_.srv && impl_->temp_.uav && impl_->temp_.rtv &&
          impl_->layer_.srv && impl_->layer_.rtv &&
          impl_->layerFloat_.srv && impl_->layerFloat_.uav &&
-         impl_->matteSource_.srv;
+         impl_->matteSource_.srv &&
+         (!impl_->emissionEnabled_ ||
+          (impl_->emission_.texture && impl_->emission_.srv &&
+           impl_->emission_.rtv)) &&
+         (!impl_->emissionEnabled_ ||
+          (impl_->objectId_.texture && impl_->objectId_.srv &&
+           impl_->objectId_.rtv &&
+           impl_->materialId_.texture && impl_->materialId_.srv &&
+           impl_->materialId_.rtv &&
+           impl_->albedo_.texture && impl_->albedo_.srv &&
+           impl_->albedo_.rtv));
  }
 
  bool RenderPipeline::renderComposition(
@@ -228,9 +252,21 @@ namespace Artifact
  ITextureView* RenderPipeline::layerSRV() const { return impl_->layer_.srv; }
  ITextureView* RenderPipeline::layerUAV() const { return impl_->layer_.uav; }
  ITextureView* RenderPipeline::layerRTV() const { return impl_->layer_.rtv; }
- ITextureView* RenderPipeline::layerFloatSRV() const { return impl_->layerFloat_.srv; }
- ITextureView* RenderPipeline::layerFloatUAV() const { return impl_->layerFloat_.uav; }
- ITextureView* RenderPipeline::matteSourceSRV() const { return impl_->matteSource_.srv; }
+ITextureView* RenderPipeline::layerFloatSRV() const { return impl_->layerFloat_.srv; }
+ITextureView* RenderPipeline::layerFloatUAV() const { return impl_->layerFloat_.uav; }
+ITextureView* RenderPipeline::matteSourceSRV() const { return impl_->matteSource_.srv; }
+ITextureView* RenderPipeline::emissionSRV() const { return impl_->emission_.srv; }
+ITextureView* RenderPipeline::emissionRTV() const { return impl_->emission_.rtv; }
+bool RenderPipeline::hasEmissionTarget() const { return impl_->emissionEnabled_ && impl_->emission_.texture; }
+ITextureView* RenderPipeline::objectIdSRV() const { return impl_->objectId_.srv; }
+ITextureView* RenderPipeline::objectIdRTV() const { return impl_->objectId_.rtv; }
+bool RenderPipeline::hasObjectIdTarget() const { return impl_->emissionEnabled_ && impl_->objectId_.texture; }
+ITextureView* RenderPipeline::materialIdSRV() const { return impl_->materialId_.srv; }
+ITextureView* RenderPipeline::materialIdRTV() const { return impl_->materialId_.rtv; }
+bool RenderPipeline::hasMaterialIdTarget() const { return impl_->emissionEnabled_ && impl_->materialId_.texture; }
+ITextureView* RenderPipeline::albedoSRV() const { return impl_->albedo_.srv; }
+ITextureView* RenderPipeline::albedoRTV() const { return impl_->albedo_.rtv; }
+bool RenderPipeline::hasAlbedoTarget() const { return impl_->emissionEnabled_ && impl_->albedo_.texture; }
  bool RenderPipeline::updateMatteSourceFromData(IDeviceContext* ctx,
                                                  const void* data,
                                                  Uint32 width,
@@ -274,10 +310,11 @@ namespace Artifact
   std::swap(impl_->accum_, impl_->temp_);
  }
 
- bool RenderPipeline::createTextures(IRenderDevice* device,
-                                     Uint32 width,
-                                     Uint32 height,
-                                     TEXTURE_FORMAT format)
+bool RenderPipeline::createTextures(IRenderDevice* device,
+                                    Uint32 width,
+                                    Uint32 height,
+                                    TEXTURE_FORMAT format,
+                                    bool enableEmission)
  {
   if (!createTextureBundle(device, width, height, format,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
@@ -313,6 +350,35 @@ namespace Artifact
    return false;
   }
 
+  if (enableEmission &&
+      !createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                           "RenderPipeline.Emission", impl_->emission_))
+  {
+   return false;
+  }
+  if (enableEmission &&
+      !createTextureBundle(device, width, height, TEX_FORMAT_RGBA16_FLOAT,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                           "RenderPipeline.ObjectId", impl_->objectId_))
+  {
+   return false;
+  }
+  if (enableEmission &&
+      !createTextureBundle(device, width, height, TEX_FORMAT_RGBA16_FLOAT,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                           "RenderPipeline.MaterialId", impl_->materialId_))
+  {
+   return false;
+  }
+  if (enableEmission &&
+      !createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                           "RenderPipeline.Albedo", impl_->albedo_))
+  {
+   return false;
+  }
+
   return true;
- }
+}
 }

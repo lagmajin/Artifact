@@ -484,7 +484,7 @@ QString fileDialogFilterForProperty(const QString &propertyName) {
   if (propertyName.contains(QStringLiteral("model"), Qt::CaseInsensitive) ||
       propertyName.contains(QStringLiteral("3d"), Qt::CaseInsensitive)) {
     return QStringLiteral(
-        "3D Models (*.obj *.fbx *.gltf *.glb *.stl *.dae *.abc *.usd *.usdz *.pmd *.pmx);;All Files (*.*)");
+        "3D Models (*.obj *.fbx *.gltf *.glb *.stl *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd *.pmx);;All Files (*.*)");
   }
   if (propertyName.contains(QStringLiteral("video"), Qt::CaseInsensitive) ||
       propertyName.contains(QStringLiteral("media"), Qt::CaseInsensitive)) {
@@ -2563,8 +2563,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       loadPropertyIcon(QStringLiteral("MaterialVS/neutral/undo.svg"));
   QIcon exprIcon = loadPropertyIcon(QStringLiteral("MaterialVS/blue/code.svg"));
 
-  // Aux button setup — all buttons share a fixed-width container so that
-  // showing/hiding buttons on hover does NOT change the row's total width.
+  // Keep secondary actions compact so the editable value remains the row's
+  // dominant surface.
   prevKeyBtn_->setFixedSize(kPropertyNavButtonWidth, kPropertyNavButtonHeight);
   nextKeyBtn_->setFixedSize(kPropertyNavButtonWidth, kPropertyNavButtonHeight);
   prevKeyBtn_->setIcon(prevIcon);
@@ -2636,10 +2636,9 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   favoriteButton_->setFocusPolicy(Qt::NoFocus);
   applyPropertyButtonPalette(favoriteButton_);
 
-  // Fixed-width container that always reserves the same horizontal space.
   auto *auxContainer = new QWidget(this);
-  auxContainer->setFixedWidth(kAuxButtonAreaWidth);
-  auxContainer->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  auxContainer->setMaximumWidth(kAuxButtonAreaWidth);
+  auxContainer->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
   auxContainer->setAutoFillBackground(false);
   auto *auxLayout = new QHBoxLayout(auxContainer);
   auxLayout->setContentsMargins(0, 0, 0, 0);
@@ -2854,21 +2853,44 @@ void ArtifactPropertyEditorRowWidget::updateKeyframeButtonIcon() {
   if (!keyframeButton_) {
     return;
   }
-  const bool checked = keyframeButton_->isChecked();
-  const QColor fillColor = checked ? QColor(QStringLiteral("#FFD84D"))
-                                   : QColor(QStringLiteral("#6E7681"));
-  const QColor outlineColor = checked ? QColor(QStringLiteral("#FFF1A8"))
-                                      : QColor(QStringLiteral("#B6C0CD"));
+  const bool modeEnabled = keyframeButton_->isChecked();
+  const bool hasCurrentFrameKey = currentFrameKeyframed_;
+  const bool enabled = keyframeButton_->isEnabled();
+  QColor fillColor = QColor(QStringLiteral("#6E7681"));
+  QColor outlineColor = QColor(QStringLiteral("#B6C0CD"));
+  KeyframeIconState state = KeyframeIconState::Normal;
+  if (modeEnabled) {
+    fillColor = QColor(QStringLiteral("#A786FF"));
+    outlineColor = QColor(QStringLiteral("#D9CCFF"));
+    state = KeyframeIconState::Selected;
+  }
+  if (hasCurrentFrameKey) {
+    fillColor = QColor(QStringLiteral("#FFD84D"));
+    outlineColor = QColor(QStringLiteral("#FFF1A8"));
+    state = KeyframeIconState::Selected;
+  }
+  if (!enabled) {
+    fillColor.setAlpha(110);
+    outlineColor.setAlpha(130);
+  }
   KeyframeIconStyle style;
   style.size = QSize(14, 14);
   style.fillColor = fillColor;
   style.outlineColor = outlineColor;
-  style.state = checked ? KeyframeIconState::Selected : KeyframeIconState::Normal;
+  style.state = state;
   keyframeButton_->setIcon(cachedKeyframeIcon(style));
+  keyframeButton_->setToolTip(
+      hasCurrentFrameKey
+          ? QStringLiteral("Current frame has a keyframe: %1").arg(propertyName_)
+          : modeEnabled
+                ? QStringLiteral("Animation enabled for property: %1").arg(propertyName_)
+                : QStringLiteral("Toggle keyframe at current frame: %1")
+                      .arg(propertyName_));
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeChecked(const bool checked) {
   currentFrameKeyframed_ = checked;
+  updateKeyframeButtonIcon();
   update();
 }
 
@@ -2886,6 +2908,7 @@ bool ArtifactPropertyEditorRowWidget::isKeyframeModeEnabled() const {
 
 void ArtifactPropertyEditorRowWidget::setKeyframeEnabled(const bool enabled) {
   keyframeButton_->setEnabled(enabled);
+  updateKeyframeButtonIcon();
   update();
 }
 
@@ -2894,6 +2917,17 @@ void ArtifactPropertyEditorRowWidget::setNavigationEnabled(const bool enabled) {
   nextKeyBtn_->setProperty("baseVisible", enabled);
   prevKeyBtn_->setEnabled(enabled);
   nextKeyBtn_->setEnabled(enabled);
+  const QString prevToolTip = enabled
+                                  ? QStringLiteral("Previous keyframe: %1")
+                                        .arg(propertyName_)
+                                  : QStringLiteral("No previous keyframe available: %1")
+                                        .arg(propertyName_);
+  const QString nextToolTip = enabled
+                                  ? QStringLiteral("Next keyframe: %1").arg(propertyName_)
+                                  : QStringLiteral("No next keyframe available: %1")
+                                        .arg(propertyName_);
+  prevKeyBtn_->setToolTip(prevToolTip);
+  nextKeyBtn_->setToolTip(nextToolTip);
   updateAuxControlVisibility();
   update();
 }
@@ -2907,17 +2941,17 @@ void ArtifactPropertyEditorRowWidget::updateAuxControlVisibility() {
                           nextKeyBtn_->property("baseVisible").toBool();
   const bool favVisible = favoriteButton_->property("baseVisible").toBool();
 
-  resetButton_->setVisible(resetVisible);
-  expressionButton_->setVisible(exprVisible);
-  favoriteButton_->setVisible(favVisible);
+  resetButton_->setVisible(resetVisible && hover);
+  expressionButton_->setVisible(exprVisible && hover);
+  favoriteButton_->setVisible(favVisible && (hover || favoriteButton_->isChecked()));
   prevKeyBtn_->setVisible(keyVisible && navVisible);
   nextKeyBtn_->setVisible(keyVisible && navVisible);
 
   resetButton_->setEnabled(resetVisible && hover);
   expressionButton_->setEnabled(exprVisible && hover);
   favoriteButton_->setEnabled(favVisible && hover);
-  prevKeyBtn_->setEnabled(keyVisible && navVisible && hover);
-  nextKeyBtn_->setEnabled(keyVisible && navVisible && hover);
+  prevKeyBtn_->setEnabled(navVisible);
+  nextKeyBtn_->setEnabled(navVisible);
 }
 
 void ArtifactPropertyEditorRowWidget::enterEvent(QEnterEvent *event) {

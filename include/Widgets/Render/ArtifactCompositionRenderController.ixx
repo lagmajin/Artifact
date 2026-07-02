@@ -47,7 +47,8 @@ export namespace Artifact {
  enum class CompositionBackgroundMode {
   Solid,
   Checkerboard,
-  MayaGradient
+  MayaGradient,
+  Skybox
  };
 
  enum class LineDebugKind : uint8_t {
@@ -240,3 +241,5 @@ signals:
   void videoDebugMessage(const QString& msg) W_SIGNAL(videoDebugMessage, msg);
  };
 }
+
+

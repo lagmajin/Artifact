@@ -120,6 +120,21 @@ namespace {
            type == ArtifactIRenderer::ChannelType::Alpha;
   }
 
+  constexpr bool isAuxiliarySingleChannel(ArtifactIRenderer::ChannelType type)
+  {
+    return type == ArtifactIRenderer::ChannelType::Emission ||
+           type == ArtifactIRenderer::ChannelType::ObjectId ||
+           type == ArtifactIRenderer::ChannelType::MaterialId;
+  }
+
+  constexpr bool isAuxiliaryColorChannel(ArtifactIRenderer::ChannelType type)
+  {
+    return type == ArtifactIRenderer::ChannelType::AlbedoR ||
+           type == ArtifactIRenderer::ChannelType::AlbedoG ||
+           type == ArtifactIRenderer::ChannelType::AlbedoB ||
+           type == ArtifactIRenderer::ChannelType::Custom;
+  }
+
   constexpr std::array<bool, kArtifactChannelCount> makeDefaultChannelFlags()
   {
     std::array<bool, kArtifactChannelCount> flags{};
@@ -145,6 +160,9 @@ namespace {
     case ArtifactIRenderer::ChannelType::VelocityY:  return ArtifactCore::ChannelType::VelocityY;
     case ArtifactIRenderer::ChannelType::ObjectId:   return ArtifactCore::ChannelType::ObjectId;
     case ArtifactIRenderer::ChannelType::MaterialId: return ArtifactCore::ChannelType::MaterialId;
+    case ArtifactIRenderer::ChannelType::AlbedoR:    return ArtifactCore::ChannelType::AlbedoR;
+    case ArtifactIRenderer::ChannelType::AlbedoG:    return ArtifactCore::ChannelType::AlbedoG;
+    case ArtifactIRenderer::ChannelType::AlbedoB:    return ArtifactCore::ChannelType::AlbedoB;
     case ArtifactIRenderer::ChannelType::Emission:   return ArtifactCore::ChannelType::Emission;
     case ArtifactIRenderer::ChannelType::Custom:     return ArtifactCore::ChannelType::Custom;
     }
@@ -158,6 +176,9 @@ namespace {
     case ArtifactIRenderer::ChannelType::Green: return 1;
     case ArtifactIRenderer::ChannelType::Blue:  return 2;
     case ArtifactIRenderer::ChannelType::Alpha: return 3;
+    case ArtifactIRenderer::ChannelType::AlbedoR: return 0;
+    case ArtifactIRenderer::ChannelType::AlbedoG: return 1;
+    case ArtifactIRenderer::ChannelType::AlbedoB: return 2;
     default: return -1;
     }
   }
@@ -353,7 +374,11 @@ namespace {
   RefCntAutoPtr<ITexture> m_layerDepthTex;
   ITextureView* m_overrideColorRTV = nullptr;
   ITextureView* m_overrideDepthDSV = nullptr;
-  std::vector<ITextureView*> m_renderTargetStack;
+  struct RenderTargetStackEntry {
+   ITextureView* colorRTV = nullptr;
+   ITextureView* depthDSV = nullptr;
+  };
+  std::vector<RenderTargetStackEntry> m_renderTargetStack;
   Uint32 m_layerRTWidth = 0;
   Uint32 m_layerRTHeight = 0;
   bool m_upscaleEnabled = false;
@@ -421,6 +446,12 @@ namespace {
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
   bool m_multiChannelEnabled = false;
   std::array<bool, kArtifactChannelCount> m_channelEnabled = makeDefaultChannelFlags();
+  std::array<ITextureView*, kArtifactChannelCount> m_auxiliaryChannelSources{};
+  bool meshEmissionOnlyPass_ = false;
+  bool meshAlbedoOnlyPass_ = false;
+  ArtifactIRenderer::ChannelType meshIdPassChannel_ =
+      ArtifactIRenderer::ChannelType::Custom;
+  float meshIdPassEncodedValue_ = 0.0f;
   quint64 presentAttemptCount_ = 0;
   quint64 presentSuccessCount_ = 0;
   quint64 presentFailureCount_ = 0;
@@ -542,6 +573,9 @@ namespace {
     renderer->setViewMatrix(meshViewMatrix_.constData());
     renderer->setProjectionMatrix(meshProjMatrix_.constData());
     renderer->setBaseColorTexture(material.baseColorTexture().toQString());
+    renderer->setEmissionTexture(material.emissionTexture().toQString());
+    renderer->setEmissionColor(material.emissionColor(),
+                               material.emissionStrength());
     renderer->updateMeshGeometry(positions.data(),
                                  normals.data(),
                                  uvs.data(),
@@ -556,12 +590,26 @@ namespace {
     }
     const QColor color = material.baseColor();
     const float alpha = std::clamp(opacity * material.opacity() * color.alphaF(), 0.0f, 1.0f);
-    instance.color[0] = color.redF();
-    instance.color[1] = color.greenF();
-    instance.color[2] = color.blueF();
-    instance.color[3] = alpha;
+    if (meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ||
+        meshIdPassChannel_ == ArtifactIRenderer::ChannelType::MaterialId) {
+      instance.color[0] = meshIdPassEncodedValue_;
+      instance.color[1] = meshIdPassEncodedValue_;
+      instance.color[2] = meshIdPassEncodedValue_;
+      instance.color[3] = 1.0f;
+    } else {
+      instance.color[0] = color.redF();
+      instance.color[1] = color.greenF();
+      instance.color[2] = color.blueF();
+      instance.color[3] = alpha;
+    }
     instance.weight = 1.0f;
-    instance.timeOffset = static_cast<float>(std::clamp(shadingMode, 1, 3));
+    const int effectiveShadingMode =
+        meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ? 5 :
+        meshIdPassChannel_ == ArtifactIRenderer::ChannelType::MaterialId ? 6 :
+        meshEmissionOnlyPass_ ? 4 :
+        meshAlbedoOnlyPass_ ? 1
+                            : std::clamp(shadingMode, 1, 3);
+    instance.timeOffset = static_cast<float>(effectiveShadingMode);
     renderer->updateInstanceData(&instance, 1);
 
     auto ctx = deviceManager_.immediateContext();
@@ -584,6 +632,9 @@ namespace {
   QImage readbackToImage() const;
   QImage readbackDepthToImage() const;
   QImage readbackChannelToImage(ArtifactIRenderer::ChannelType channel) const;
+  bool readbackDepthToFloatBuffer(std::vector<float>& outDepth,
+                                  int& outWidth,
+                                  int& outHeight) const;
   QImage readbackTextureViewToImage(ITextureView* textureView) const;
   void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
@@ -611,6 +662,16 @@ namespace {
   bool isMultiChannelEnabled() const { return m_multiChannelEnabled; }
   void setChannelEnabled(ArtifactIRenderer::ChannelType channel, bool enabled);
   bool isChannelEnabled(ArtifactIRenderer::ChannelType channel) const;
+  void setAuxiliaryChannelSource(ArtifactIRenderer::ChannelType channel,
+                                 ITextureView* textureView);
+  void setMeshEmissionOnlyPass(bool enabled) { meshEmissionOnlyPass_ = enabled; }
+  bool isMeshEmissionOnlyPass() const { return meshEmissionOnlyPass_; }
+  void setMeshIdPass(ArtifactIRenderer::ChannelType channel, float encodedId) {
+    meshIdPassChannel_ = channel;
+    meshIdPassEncodedValue_ = encodedId;
+  }
+  void setMeshAlbedoOnlyPass(bool enabled) { meshAlbedoOnlyPass_ = enabled; }
+  bool isMeshAlbedoOnlyPass() const { return meshAlbedoOnlyPass_; }
   FloatColor getClearColor() const { return clearColor_; }
   void flushAndWait();
   void flush();
@@ -1393,13 +1454,41 @@ namespace {
   return result;
  }
 
- QImage ArtifactIRenderer::Impl::readbackDepthToImage() const
- {
+QImage ArtifactIRenderer::Impl::readbackDepthToImage() const
+{
+  std::vector<float> depthValues;
+  int srcWidth = 0;
+  int srcHeight = 0;
+  if (!readbackDepthToFloatBuffer(depthValues, srcWidth, srcHeight) ||
+      srcWidth <= 0 || srcHeight <= 0) {
+   return {};
+  }
+
+  QImage result(srcWidth, srcHeight, QImage::Format_Grayscale8);
+  for (int y = 0; y < srcHeight; ++y) {
+   auto* dst = result.scanLine(y);
+   const auto* src = depthValues.data() +
+                     static_cast<size_t>(y) * static_cast<size_t>(srcWidth);
+   for (int x = 0; x < srcWidth; ++x) {
+    const float depth = std::clamp(src[x], 0.0f, 1.0f);
+    dst[x] = static_cast<uint8_t>((1.0f - depth) * 255.0f + 0.5f);
+   }
+  }
+  return result;
+}
+
+bool ArtifactIRenderer::Impl::readbackDepthToFloatBuffer(
+    std::vector<float>& outDepth, int& outWidth, int& outHeight) const
+{
   std::lock_guard<std::mutex> guard(m_readbackMutex);
+
+  outDepth.clear();
+  outWidth = 0;
+  outHeight = 0;
 
   auto ctx = deviceManager_.immediateContext();
   auto device = deviceManager_.device();
-  if (!ctx || !device) return {};
+  if (!ctx || !device) return false;
 
   ITexture* srcTex = nullptr;
   Uint32 srcWidth = 0;
@@ -1430,11 +1519,8 @@ namespace {
    }
   }
 
-  if (!srcTex || srcWidth == 0 || srcHeight == 0) return {};
+  if (!srcTex || srcWidth == 0 || srcHeight == 0) return false;
 
-  // Depth staging/fence are cached: depth inspection happens repeatedly (gizmo
-  // picking, debug overlays) and recreating them per call generated avoidable
-  // device traffic. Reallocate only when the source size changes.
   if (!m_depthReadbackStaging ||
       m_depthReadbackWidth != srcWidth ||
       m_depthReadbackHeight != srcHeight) {
@@ -1449,7 +1535,7 @@ namespace {
     stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
     stagDesc.BindFlags      = BIND_NONE;
     device->CreateTexture(stagDesc, nullptr, &m_depthReadbackStaging);
-    if (!m_depthReadbackStaging) return {};
+    if (!m_depthReadbackStaging) return false;
     m_depthReadbackWidth  = srcWidth;
     m_depthReadbackHeight = srcHeight;
   }
@@ -1460,7 +1546,7 @@ namespace {
     fenceDesc.Name = "DepthReadbackFence";
     fenceDesc.Type = FENCE_TYPE_GENERAL;
     device->CreateFence(fenceDesc, &m_depthReadbackFence);
-    if (!m_depthReadbackFence) return {};
+    if (!m_depthReadbackFence) return false;
     m_depthReadbackFenceValue = 0;
   }
   IFence* fence = m_depthReadbackFence;
@@ -1481,33 +1567,92 @@ namespace {
 
   MappedTextureSubresource mapped = {};
   ctx->MapTextureSubresource(stagingTex, 0, 0, MAP_READ, MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
-  if (!mapped.pData) return {};
-
-  QImage result(static_cast<int>(srcWidth), static_cast<int>(srcHeight), QImage::Format_Grayscale8);
+  if (!mapped.pData) return false;
   if (mapped.Stride < static_cast<size_t>(srcWidth) * sizeof(float)) {
    ctx->UnmapTextureSubresource(stagingTex, 0, 0);
-   return {};
+   return false;
   }
 
+  outDepth.resize(static_cast<size_t>(srcWidth) * static_cast<size_t>(srcHeight));
   const auto* srcRow = static_cast<const float*>(mapped.pData);
   for (Uint32 row = 0; row < srcHeight; ++row) {
-   auto* dst = result.scanLine(static_cast<int>(row));
-   const auto* rowPtr = srcRow;
-   for (Uint32 x = 0; x < srcWidth; ++x) {
-    const float depth = std::clamp(rowPtr[x], 0.0f, 1.0f);
-    dst[x] = static_cast<uint8_t>((1.0f - depth) * 255.0f + 0.5f);
-   }
-   srcRow = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
+   auto* dst = outDepth.data() +
+               static_cast<size_t>(row) * static_cast<size_t>(srcWidth);
+   std::memcpy(dst, srcRow, static_cast<size_t>(srcWidth) * sizeof(float));
+   srcRow = reinterpret_cast<const float*>(
+       reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
   }
 
   ctx->UnmapTextureSubresource(stagingTex, 0, 0);
-  return result;
- }
+  outWidth = static_cast<int>(srcWidth);
+  outHeight = static_cast<int>(srcHeight);
+  return true;
+}
 
- QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::ChannelType channel) const
- {
+QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::ChannelType channel) const
+{
   if (channel == ArtifactIRenderer::ChannelType::Depth) {
    return readbackDepthToImage();
+  }
+
+  if (isAuxiliaryColorChannel(channel)) {
+   const auto index = static_cast<size_t>(channel);
+   if (index >= m_auxiliaryChannelSources.size()) {
+    return {};
+   }
+   auto* sourceView = m_auxiliaryChannelSources[index];
+   if (!sourceView) {
+    return {};
+   }
+   const QImage colorImage = readbackTextureViewToImage(sourceView);
+   if (channel == ArtifactIRenderer::ChannelType::AlbedoR ||
+       channel == ArtifactIRenderer::ChannelType::AlbedoG ||
+       channel == ArtifactIRenderer::ChannelType::AlbedoB) {
+    const int offset = rgbaOffsetForChannel(channel);
+    if (offset < 0 || colorImage.isNull()) {
+      return {};
+    }
+    const QImage rgba = (colorImage.format() == QImage::Format_RGBA8888)
+                            ? colorImage
+                            : colorImage.convertToFormat(QImage::Format_RGBA8888);
+    QImage channelImage(rgba.width(), rgba.height(), QImage::Format_Grayscale8);
+    for (int y = 0; y < rgba.height(); ++y) {
+      const auto* src = rgba.constScanLine(y);
+      auto* dst = channelImage.scanLine(y);
+      for (int x = 0; x < rgba.width(); ++x) {
+        dst[x] = src[x * 4 + offset];
+      }
+    }
+    return channelImage;
+   }
+   return colorImage;
+  }
+
+  if (isAuxiliarySingleChannel(channel)) {
+   const auto index = static_cast<size_t>(channel);
+   if (index >= m_auxiliaryChannelSources.size()) {
+    return {};
+   }
+   auto* sourceView = m_auxiliaryChannelSources[index];
+   if (!sourceView) {
+    return {};
+   }
+   const QImage auxColor = readbackTextureViewToImage(sourceView);
+   if (auxColor.isNull()) {
+    return {};
+   }
+   const QImage rgba = (auxColor.format() == QImage::Format_RGBA8888)
+                           ? auxColor
+                           : auxColor.convertToFormat(QImage::Format_RGBA8888);
+   QImage channelImage(rgba.width(), rgba.height(), QImage::Format_Grayscale8);
+   for (int y = 0; y < rgba.height(); ++y) {
+    const auto* src = rgba.constScanLine(y);
+    auto* dst = channelImage.scanLine(y);
+    for (int x = 0; x < rgba.width(); ++x) {
+     dst[x] = std::max({src[x * 4 + 0], src[x * 4 + 1], src[x * 4 + 2]});
+    }
+   }
+   return channelImage;
   }
 
   const int offset = rgbaOffsetForChannel(channel);
@@ -1995,16 +2140,16 @@ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDe
   m_multiChannelEnabled = enabled;
  }
 
- void ArtifactIRenderer::Impl::setChannelEnabled(ArtifactIRenderer::ChannelType channel, bool enabled)
- {
+void ArtifactIRenderer::Impl::setChannelEnabled(ArtifactIRenderer::ChannelType channel, bool enabled)
+{
   const auto index = static_cast<size_t>(channel);
   if (index >= m_channelEnabled.size()) {
    return;
   }
   m_channelEnabled[index] = enabled;
- }
+}
 
- bool ArtifactIRenderer::Impl::isChannelEnabled(ArtifactIRenderer::ChannelType channel) const
+bool ArtifactIRenderer::Impl::isChannelEnabled(ArtifactIRenderer::ChannelType channel) const
  {
   if (!m_multiChannelEnabled) {
    return isBaseRgbaChannel(channel);
@@ -2014,7 +2159,17 @@ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDe
    return false;
   }
   return m_channelEnabled[index];
- }
+}
+
+void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
+    ArtifactIRenderer::ChannelType channel, ITextureView* textureView)
+{
+  const auto index = static_cast<size_t>(channel);
+  if (index >= m_auxiliaryChannelSources.size() || !isAuxiliarySingleChannel(channel)) {
+   return;
+  }
+  m_auxiliaryChannelSources[index] = textureView;
+}
 
  void ArtifactIRenderer::Impl::flush()
  {
@@ -2201,14 +2356,21 @@ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDe
  {
   return impl_->readbackChannelToImage(channel);
  }
- ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage() const
- {
+ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage() const
+{
   const bool needRgba =
       impl_->isChannelEnabled(ChannelType::Red) ||
       impl_->isChannelEnabled(ChannelType::Green) ||
       impl_->isChannelEnabled(ChannelType::Blue) ||
       impl_->isChannelEnabled(ChannelType::Alpha);
   const bool needDepth = impl_->isChannelEnabled(ChannelType::Depth);
+  const bool needEmission = impl_->isChannelEnabled(ChannelType::Emission);
+  const bool needObjectId = impl_->isChannelEnabled(ChannelType::ObjectId);
+  const bool needMaterialId = impl_->isChannelEnabled(ChannelType::MaterialId);
+  const bool needAlbedo =
+      impl_->isChannelEnabled(ChannelType::AlbedoR) ||
+      impl_->isChannelEnabled(ChannelType::AlbedoG) ||
+      impl_->isChannelEnabled(ChannelType::AlbedoB);
 
   QImage rgba;
   if (needRgba) {
@@ -2221,15 +2383,51 @@ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDe
   }
 
   QImage depth;
+  std::vector<float> depthValues;
+  int depthWidth = 0;
+  int depthHeight = 0;
   if (needDepth) {
-   depth = impl_->readbackDepthToImage();
+   impl_->readbackDepthToFloatBuffer(depthValues, depthWidth, depthHeight);
+   if (depthWidth > 0 && depthHeight > 0) {
+    depth = QImage(depthWidth, depthHeight, QImage::Format_Grayscale8);
+   }
+  }
+
+  QImage emission;
+  if (needEmission) {
+   emission = impl_->readbackChannelToImage(ChannelType::Emission);
+  }
+  QImage objectId;
+  if (needObjectId) {
+   objectId = impl_->readbackChannelToImage(ChannelType::ObjectId);
+  }
+  QImage materialId;
+  if (needMaterialId) {
+   materialId = impl_->readbackChannelToImage(ChannelType::MaterialId);
+  }
+  QImage albedo;
+  if (needAlbedo) {
+   const auto index = static_cast<size_t>(ChannelType::AlbedoR);
+   if (index < impl_->m_auxiliaryChannelSources.size() &&
+       impl_->m_auxiliaryChannelSources[index]) {
+    albedo = impl_->readbackTextureViewToImage(
+        impl_->m_auxiliaryChannelSources[index]);
+   }
   }
 
   QSize imageSize;
   if (!rgba.isNull()) {
    imageSize = rgba.size();
-  } else if (!depth.isNull()) {
-   imageSize = depth.size();
+  } else if (depthWidth > 0 && depthHeight > 0) {
+   imageSize = QSize(depthWidth, depthHeight);
+  } else if (!emission.isNull()) {
+   imageSize = emission.size();
+  } else if (!objectId.isNull()) {
+   imageSize = objectId.size();
+  } else if (!materialId.isNull()) {
+   imageSize = materialId.size();
+  } else if (!albedo.isNull()) {
+   imageSize = albedo.size();
   } else {
    return {};
   }
@@ -2270,25 +2468,100 @@ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDe
   writeRgbaChannel(ChannelType::Blue, 2);
   writeRgbaChannel(ChannelType::Alpha, 3);
 
-  if (needDepth && !depth.isNull() && depth.size() == imageSize) {
+  if (needDepth && depthWidth == imageSize.width() && depthHeight == imageSize.height() &&
+      !depthValues.empty()) {
    auto depthChannel = image.getChannel(ArtifactCore::ChannelType::Depth);
    if (!depthChannel) {
     image.addChannel(ArtifactCore::ChannelType::Depth);
     depthChannel = image.getChannel(ArtifactCore::ChannelType::Depth);
    }
    if (depthChannel) {
-    for (int y = 0; y < depth.height(); ++y) {
-     const auto* src = depth.constScanLine(y);
-     auto* dst = depthChannel->data() + static_cast<size_t>(y) * static_cast<size_t>(depth.width());
-     for (int x = 0; x < depth.width(); ++x) {
-      dst[x] = 1.0f - (static_cast<float>(src[x]) / 255.0f);
+    std::memcpy(depthChannel->data(), depthValues.data(),
+                depthValues.size() * sizeof(float));
+   }
+  }
+
+  if (needEmission && !emission.isNull() && emission.size() == imageSize) {
+   auto emissionChannel = image.getChannel(ArtifactCore::ChannelType::Emission);
+   if (!emissionChannel) {
+    image.addChannel(ArtifactCore::ChannelType::Emission);
+    emissionChannel = image.getChannel(ArtifactCore::ChannelType::Emission);
+   }
+   if (emissionChannel) {
+    for (int y = 0; y < emission.height(); ++y) {
+     const auto* src = emission.constScanLine(y);
+     auto* dst = emissionChannel->data() +
+                 static_cast<size_t>(y) * static_cast<size_t>(emission.width());
+     for (int x = 0; x < emission.width(); ++x) {
+      dst[x] = static_cast<float>(src[x]) / 255.0f;
      }
     }
    }
   }
 
+  if (needAlbedo && !albedo.isNull() && albedo.size() == imageSize) {
+   const QImage rgba = (albedo.format() == QImage::Format_RGBA8888)
+                           ? albedo
+                           : albedo.convertToFormat(QImage::Format_RGBA8888);
+   auto writeAlbedoChannel = [&](ChannelType channelType, int offset) {
+    if (!impl_->isChannelEnabled(channelType)) {
+      return;
+    }
+    const ArtifactCore::ChannelType type = toCoreChannel(channelType);
+    auto outChannel = image.getChannel(type);
+    if (!outChannel) {
+      image.addChannel(type);
+      outChannel = image.getChannel(type);
+    }
+    if (!outChannel) {
+      return;
+    }
+    for (int y = 0; y < rgba.height(); ++y) {
+      const auto* src = rgba.constScanLine(y);
+      auto* dst = outChannel->data() +
+                  static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
+      for (int x = 0; x < rgba.width(); ++x) {
+        dst[x] = static_cast<float>(src[x * 4 + offset]) / 255.0f;
+      }
+    }
+   };
+   writeAlbedoChannel(ChannelType::AlbedoR, 0);
+   writeAlbedoChannel(ChannelType::AlbedoG, 1);
+   writeAlbedoChannel(ChannelType::AlbedoB, 2);
+  }
+
+  auto writeAuxGrayChannel = [&](const QImage& srcImage,
+                                 ArtifactCore::ChannelType dstType) {
+   if (srcImage.isNull() || srcImage.size() != imageSize) {
+    return;
+   }
+   auto dstChannel = image.getChannel(dstType);
+   if (!dstChannel) {
+    image.addChannel(dstType);
+    dstChannel = image.getChannel(dstType);
+   }
+   if (!dstChannel) {
+    return;
+   }
+   for (int y = 0; y < srcImage.height(); ++y) {
+    const auto* src = srcImage.constScanLine(y);
+    auto* dst = dstChannel->data() +
+                static_cast<size_t>(y) * static_cast<size_t>(srcImage.width());
+    for (int x = 0; x < srcImage.width(); ++x) {
+      dst[x] = static_cast<float>(src[x]) / 255.0f;
+    }
+   }
+  };
+
+  if (needObjectId) {
+   writeAuxGrayChannel(objectId, ArtifactCore::ChannelType::ObjectId);
+  }
+  if (needMaterialId) {
+   writeAuxGrayChannel(materialId, ArtifactCore::ChannelType::MaterialId);
+  }
+
   return image;
- }
+}
  void ArtifactIRenderer::readbackToImageAsync(ReadbackCallback callback) const {
   impl_->readbackToImageAsync(std::move(callback));
  }
@@ -2298,11 +2571,30 @@ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDe
   impl_->present();
  }
 
- void ArtifactIRenderer::setClearColor(const FloatColor& color) { impl_->setClearColor(color); }
- void ArtifactIRenderer::setMultiChannelEnabled(bool enabled) { impl_->setMultiChannelEnabled(enabled); }
- bool ArtifactIRenderer::isMultiChannelEnabled() const { return impl_->isMultiChannelEnabled(); }
- void ArtifactIRenderer::setChannelEnabled(ArtifactIRenderer::ChannelType channel, bool enabled) { impl_->setChannelEnabled(channel, enabled); }
- bool ArtifactIRenderer::isChannelEnabled(ArtifactIRenderer::ChannelType channel) const { return impl_->isChannelEnabled(channel); }
+void ArtifactIRenderer::setClearColor(const FloatColor& color) { impl_->setClearColor(color); }
+void ArtifactIRenderer::setMultiChannelEnabled(bool enabled) { impl_->setMultiChannelEnabled(enabled); }
+bool ArtifactIRenderer::isMultiChannelEnabled() const { return impl_->isMultiChannelEnabled(); }
+void ArtifactIRenderer::setChannelEnabled(ArtifactIRenderer::ChannelType channel, bool enabled) { impl_->setChannelEnabled(channel, enabled); }
+bool ArtifactIRenderer::isChannelEnabled(ArtifactIRenderer::ChannelType channel) const { return impl_->isChannelEnabled(channel); }
+void ArtifactIRenderer::setAuxiliaryChannelSource(
+    ArtifactIRenderer::ChannelType channel, Diligent::ITextureView* textureView) {
+  impl_->setAuxiliaryChannelSource(channel, textureView);
+}
+void ArtifactIRenderer::setMeshEmissionOnlyPass(bool enabled) {
+  impl_->setMeshEmissionOnlyPass(enabled);
+}
+bool ArtifactIRenderer::isMeshEmissionOnlyPass() const {
+  return impl_->isMeshEmissionOnlyPass();
+}
+void ArtifactIRenderer::setMeshIdPass(ChannelType channel, float encodedId) {
+  impl_->setMeshIdPass(channel, encodedId);
+}
+void ArtifactIRenderer::setMeshAlbedoOnlyPass(bool enabled) {
+  impl_->setMeshAlbedoOnlyPass(enabled);
+}
+bool ArtifactIRenderer::isMeshAlbedoOnlyPass() const {
+  return impl_->isMeshAlbedoOnlyPass();
+}
   FloatColor ArtifactIRenderer::getClearColor() const { return impl_->getClearColor(); }
   void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }
   void ArtifactIRenderer::setViewportRect(float w, float h) { impl_->setViewportRect(w, h); }
@@ -2786,21 +3078,35 @@ bool ArtifactIRenderer::applyTrackMatte(
 
  void ArtifactIRenderer::pushRenderTarget(void* textureView)
  {
-  if (!textureView) return;
-  auto* view = static_cast<Diligent::ITextureView*>(textureView);
-  impl_->m_renderTargetStack.push_back(impl_->m_overrideColorRTV);
-  setOverrideRTV(view);
+  pushRenderTarget(textureView, nullptr);
+ }
+
+ void ArtifactIRenderer::pushRenderTarget(void* textureView, void* depthTextureView)
+ {
+  if (!textureView && !depthTextureView) return;
+  impl_->m_renderTargetStack.push_back(
+      {impl_->m_overrideColorRTV, impl_->m_overrideDepthDSV});
+  if (textureView) {
+   auto* colorView = static_cast<Diligent::ITextureView*>(textureView);
+   setOverrideRTV(colorView);
+  }
+  if (depthTextureView || impl_->m_overrideDepthDSV) {
+   auto* depthView = static_cast<Diligent::ITextureView*>(depthTextureView);
+   setOverrideDSV(depthView);
+  }
  }
 
  void ArtifactIRenderer::popRenderTarget()
  {
   if (impl_->m_renderTargetStack.empty()) {
    setOverrideRTV(nullptr);
+   setOverrideDSV(nullptr);
    return;
   }
-  auto* previousRTV = impl_->m_renderTargetStack.back();
+  const auto previous = impl_->m_renderTargetStack.back();
   impl_->m_renderTargetStack.pop_back();
-  setOverrideRTV(previousRTV);
+  setOverrideRTV(previous.colorRTV);
+  setOverrideDSV(previous.depthDSV);
  }
 
  void ArtifactIRenderer::clearRenderTarget(const FloatColor& color)
@@ -2812,6 +3118,30 @@ bool ArtifactIRenderer::applyTrackMatte(
   const float clearColor[] = { color.r(), color.g(), color.b(), color.a() };
   ctx->SetRenderTargets(1, &rtv, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   ctx->ClearRenderTarget(rtv, clearColor, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ }
+
+ void ArtifactIRenderer::clearRenderTarget(void* textureView, const FloatColor& color)
+ {
+  auto ctx = impl_->deviceManager_.immediateContext();
+  if (!ctx || !textureView) return;
+  auto* rtv = static_cast<Diligent::ITextureView*>(textureView);
+  const float clearColor[] = { color.r(), color.g(), color.b(), color.a() };
+  ctx->SetRenderTargets(1, &rtv, nullptr,
+                        Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  ctx->ClearRenderTarget(rtv, clearColor,
+                         Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ }
+
+ void ArtifactIRenderer::clearDepthRenderTarget(void* depthTextureView, float depth)
+ {
+  auto ctx = impl_->deviceManager_.immediateContext();
+  if (!ctx || !depthTextureView) return;
+  auto* dsv = static_cast<Diligent::ITextureView*>(depthTextureView);
+  auto clearDepth = std::clamp(depth, 0.0f, 1.0f);
+  ctx->SetRenderTargets(0, nullptr, dsv,
+                        Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  ctx->ClearDepthStencil(dsv, Diligent::CLEAR_DEPTH_FLAG, clearDepth, 0,
+                         Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
  }
 
  void ArtifactIRenderer::drawOffscreenTexture(void* textureView, const QRectF& bounds, float opacity)

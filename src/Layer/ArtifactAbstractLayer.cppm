@@ -6834,6 +6834,11 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
   auto &t3 = transform3D();
   const RationalTime currentTime = currentTimelineTime(this);
+  const auto propertyHasKeys = [this](const QString &path) {
+    const auto property = getProperty(path);
+    return property && property->isAnimatable() &&
+           !property->getKeyFrames().empty();
+  };
 
   if (propertyPath == QStringLiteral("transform.initialRotation")) {
     t3.setInitialRotation(currentTime, static_cast<float>(value.toDouble()));
@@ -6854,25 +6859,49 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
 
   if (propertyPath == QStringLiteral("transform.position.x")) {
-    t3.setPosition(currentTime, value.toDouble(), t3.positionYAt(currentTime));
+    const float x = static_cast<float>(value.toDouble());
+    if (propertyHasKeys(propertyPath)) {
+      const float initialX = t3.positionX() - t3.positionXAt(currentTime);
+      t3.setPosition(currentTime, x - initialX, t3.positionYAt(currentTime));
+    } else {
+      t3.removePositionKeyFrameAt(currentTime);
+      t3.setInitialPosition(currentTime, x, t3.positionY());
+    }
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
   }
   if (propertyPath == QStringLiteral("transform.position.y")) {
-    t3.setPosition(currentTime, t3.positionXAt(currentTime), value.toDouble());
+    const float y = static_cast<float>(value.toDouble());
+    if (propertyHasKeys(propertyPath)) {
+      const float initialY = t3.positionY() - t3.positionYAt(currentTime);
+      t3.setPosition(currentTime, t3.positionXAt(currentTime), y - initialY);
+    } else {
+      t3.removePositionKeyFrameAt(currentTime);
+      t3.setInitialPosition(currentTime, t3.positionX(), y);
+    }
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
   }
   if (propertyPath == QStringLiteral("transform.scale.x")) {
-    t3.setScale(currentTime, value.toDouble(), t3.scaleY());
+    if (propertyHasKeys(propertyPath)) {
+      t3.setScale(currentTime, value.toDouble(), t3.scaleY());
+    } else {
+      t3.removeScaleKeyFrameAt(currentTime);
+      t3.setInitialScale(currentTime, value.toDouble(), t3.scaleY());
+    }
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
   }
   if (propertyPath == QStringLiteral("transform.scale.y")) {
-    t3.setScale(currentTime, t3.scaleX(), value.toDouble());
+    if (propertyHasKeys(propertyPath)) {
+      t3.setScale(currentTime, t3.scaleX(), value.toDouble());
+    } else {
+      t3.removeScaleKeyFrameAt(currentTime);
+      t3.setInitialScale(currentTime, t3.scaleX(), value.toDouble());
+    }
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
@@ -6881,7 +6910,12 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (t3.isAutoOrient()) {
       t3.setAutoOrient(false);
     }
-    t3.setRotation(currentTime, value.toDouble());
+    if (propertyHasKeys(propertyPath)) {
+      t3.setRotation(currentTime, value.toDouble());
+    } else {
+      t3.removeRotationKeyFrameAt(currentTime);
+      t3.setInitialRotation(currentTime, value.toDouble());
+    }
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
@@ -6893,15 +6927,23 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("transform.anchor.x")) {
-    t3.setAnchor(currentTime, value.toDouble(), t3.anchorYAt(currentTime),
-                 t3.anchorZAt(currentTime));
+    if (propertyHasKeys(propertyPath)) {
+      t3.setAnchor(currentTime, value.toDouble(), t3.anchorYAt(currentTime),
+                   t3.anchorZAt(currentTime));
+    } else {
+      t3.setCurrentAnchor(value.toDouble(), t3.anchorY(), t3.anchorZ());
+    }
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
   }
   if (propertyPath == QStringLiteral("transform.anchor.y")) {
-    t3.setAnchor(currentTime, t3.anchorXAt(currentTime), value.toDouble(),
-                 t3.anchorZAt(currentTime));
+    if (propertyHasKeys(propertyPath)) {
+      t3.setAnchor(currentTime, t3.anchorXAt(currentTime), value.toDouble(),
+                   t3.anchorZAt(currentTime));
+    } else {
+      t3.setCurrentAnchor(t3.anchorX(), value.toDouble(), t3.anchorZ());
+    }
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
