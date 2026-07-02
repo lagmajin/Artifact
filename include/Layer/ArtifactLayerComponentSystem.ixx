@@ -1,6 +1,7 @@
 module;
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -149,6 +150,87 @@ struct LayerEvaluationContext {
     bool interactive = false;
 };
 
+enum class LayerComponentRuntimeOutcome : std::uint8_t {
+    Skipped = 0,
+    Applied,
+    Failed,
+};
+
+struct LayerComponentRuntimeRecord {
+    QString componentId;
+    QString typeId;
+    LayerComponentPhase phase = LayerComponentPhase::Source;
+    LayerComponentRuntimeOutcome outcome = LayerComponentRuntimeOutcome::Skipped;
+    QString message;
+};
+
+struct LayerComponentRuntimeLog {
+    std::vector<LayerComponentRuntimeRecord> records;
+
+    void clear() {
+        records.clear();
+    }
+
+    bool hasFailures() const {
+        return std::any_of(
+            records.begin(), records.end(),
+            [](const LayerComponentRuntimeRecord& record) {
+                return record.outcome == LayerComponentRuntimeOutcome::Failed;
+            });
+    }
+};
+
+struct LayerComponentDefinition {
+    QString typeId;
+    QString displayName;
+    QString description;
+    bool enabledByDefault = true;
+    LayerComponentPhase phase = LayerComponentPhase::Source;
+    LayerComponentScope scope = LayerComponentScope::Layer;
+    int order = 0;
+};
+
+using LayerComponentProcessor = std::function<bool(
+    const LayerComponentDescriptor& descriptor,
+    const LayerComponentDefinition& definition,
+    const LayerEvaluationContext& context,
+    LayerEvaluationState& state,
+    LayerComponentRuntimeLog& log)>;
+
+class LayerComponentRegistry {
+public:
+    bool upsert(LayerComponentDefinition definition);
+    bool remove(const QString& typeId);
+    void clear();
+
+    LayerComponentDefinition* find(const QString& typeId);
+    const LayerComponentDefinition* find(const QString& typeId) const;
+
+    std::vector<LayerComponentDefinition> definitions() const;
+
+private:
+    std::vector<LayerComponentDefinition> definitions_;
+};
+
+class LayerComponentRuntime {
+public:
+    bool registerProcessor(QString typeId, LayerComponentProcessor processor);
+    bool removeProcessor(const QString& typeId);
+    void clearProcessors();
+
+    const LayerComponentRegistry* registry() const;
+    void setRegistry(const LayerComponentRegistry* registry);
+
+    std::vector<LayerComponentRuntimeRecord> evaluate(
+        const LayerComponentHost& host,
+        const LayerEvaluationContext& context,
+        LayerEvaluationState& state) const;
+
+private:
+    const LayerComponentRegistry* registry_ = nullptr;
+    std::vector<std::pair<QString, LayerComponentProcessor>> processors_;
+};
+
 inline QString layerComponentPhaseName(LayerComponentPhase phase) {
     switch (phase) {
     case LayerComponentPhase::Source:
@@ -216,6 +298,163 @@ inline LayerComponentScope layerComponentScopeFromName(const QString& name) {
     if (normalized == QStringLiteral("composition"))
         return LayerComponentScope::Composition;
     return LayerComponentScope::Layer;
+}
+
+inline bool LayerComponentRegistry::upsert(LayerComponentDefinition definition) {
+    definition.typeId = definition.typeId.trimmed();
+    definition.displayName = definition.displayName.trimmed();
+    if (definition.typeId.isEmpty()) {
+        return false;
+    }
+
+    if (auto* existing = find(definition.typeId)) {
+        *existing = std::move(definition);
+        return true;
+    }
+
+    definitions_.push_back(std::move(definition));
+    return true;
+}
+
+inline bool LayerComponentRegistry::remove(const QString& typeId) {
+    const QString normalized = typeId.trimmed();
+    const auto oldSize = definitions_.size();
+    definitions_.erase(
+        std::remove_if(
+            definitions_.begin(), definitions_.end(),
+            [&normalized](const LayerComponentDefinition& definition) {
+                return definition.typeId == normalized;
+            }),
+        definitions_.end());
+    return definitions_.size() != oldSize;
+}
+
+inline void LayerComponentRegistry::clear() {
+    definitions_.clear();
+}
+
+inline LayerComponentDefinition*
+LayerComponentRegistry::find(const QString& typeId) {
+    const QString normalized = typeId.trimmed();
+    for (auto& definition : definitions_) {
+        if (definition.typeId == normalized)
+            return &definition;
+    }
+    return nullptr;
+}
+
+inline const LayerComponentDefinition*
+LayerComponentRegistry::find(const QString& typeId) const {
+    const QString normalized = typeId.trimmed();
+    for (const auto& definition : definitions_) {
+        if (definition.typeId == normalized)
+            return &definition;
+    }
+    return nullptr;
+}
+
+inline std::vector<LayerComponentDefinition>
+LayerComponentRegistry::definitions() const {
+    return definitions_;
+}
+
+inline bool LayerComponentRuntime::registerProcessor(
+    QString typeId, LayerComponentProcessor processor) {
+    typeId = typeId.trimmed();
+    if (typeId.isEmpty() || !processor) {
+        return false;
+    }
+
+    for (auto& entry : processors_) {
+        if (entry.first == typeId) {
+            entry.second = std::move(processor);
+            return true;
+        }
+    }
+
+    processors_.emplace_back(std::move(typeId), std::move(processor));
+    return true;
+}
+
+inline bool LayerComponentRuntime::removeProcessor(const QString& typeId) {
+    const QString normalized = typeId.trimmed();
+    const auto oldSize = processors_.size();
+    processors_.erase(
+        std::remove_if(
+            processors_.begin(), processors_.end(),
+            [&normalized](const auto& entry) { return entry.first == normalized; }),
+        processors_.end());
+    return processors_.size() != oldSize;
+}
+
+inline void LayerComponentRuntime::clearProcessors() {
+    processors_.clear();
+}
+
+inline const LayerComponentRegistry* LayerComponentRuntime::registry() const {
+    return registry_;
+}
+
+inline void LayerComponentRuntime::setRegistry(
+    const LayerComponentRegistry* registry) {
+    registry_ = registry;
+}
+
+inline std::vector<LayerComponentRuntimeRecord>
+LayerComponentRuntime::evaluate(const LayerComponentHost& host,
+                                const LayerEvaluationContext& context,
+                                LayerEvaluationState& state) const {
+    LayerComponentRuntimeLog log;
+    std::vector<LayerComponentRuntimeRecord> records;
+    for (int phaseIndex = static_cast<int>(LayerComponentPhase::Source);
+         phaseIndex <= static_cast<int>(LayerComponentPhase::RenderExtraction);
+         ++phaseIndex) {
+        const auto phase = static_cast<LayerComponentPhase>(phaseIndex);
+        const auto components = host.enabledForPhase(phase);
+        for (const auto& descriptor : components) {
+            LayerComponentRuntimeRecord record;
+            record.componentId = descriptor.componentId;
+            record.typeId = descriptor.typeId;
+            record.phase = descriptor.phase;
+
+            const auto* definition = registry_ ? registry_->find(descriptor.typeId)
+                                               : nullptr;
+            if (!definition) {
+                record.outcome = LayerComponentRuntimeOutcome::Skipped;
+                record.message = QStringLiteral("No registered component definition.");
+                records.push_back(record);
+                continue;
+            }
+
+            const auto processorIt = std::find_if(
+                processors_.begin(), processors_.end(),
+                [&descriptor](const auto& entry) {
+                    return entry.first == descriptor.typeId;
+                });
+
+            if (processorIt == processors_.end() || !processorIt->second) {
+                record.outcome = LayerComponentRuntimeOutcome::Skipped;
+                record.message = QStringLiteral("No registered component processor.");
+                records.push_back(record);
+                continue;
+            }
+
+            const bool applied = processorIt->second(
+                descriptor, *definition, context, state, log);
+            record.outcome = applied ? LayerComponentRuntimeOutcome::Applied
+                                     : LayerComponentRuntimeOutcome::Failed;
+            if (record.message.isEmpty()) {
+                record.message = applied
+                    ? QStringLiteral("Applied.")
+                    : QStringLiteral("Processor reported failure.");
+            }
+            records.push_back(record);
+        }
+    }
+    for (const auto& note : log.records) {
+        records.push_back(note);
+    }
+    return records;
 }
 
 inline bool LayerComponentHost::upsert(LayerComponentDescriptor descriptor) {
@@ -516,6 +755,129 @@ inline LayerComponentDescriptor makeParticleEmitterComponentDescriptor(
         {},
         {},
     };
+}
+
+inline LayerComponentDescriptor makeScriptComponentDescriptor(bool enabled) {
+    return {
+        QStringLiteral("builtin.script"),
+        QStringLiteral("artifact.component.script"),
+        1,
+        enabled,
+        LayerComponentPhase::Drive,
+        LayerComponentScope::Layer,
+        50,
+        {},
+        {},
+    };
+}
+
+inline LayerComponentDefinition makeBuiltinClonerComponentDefinition() {
+    return {
+        QStringLiteral("artifact.component.cloner"),
+        QStringLiteral("Cloner"),
+        QStringLiteral("Duplicates layer instances across a generated set."),
+        true,
+        LayerComponentPhase::Generate,
+        LayerComponentScope::InstanceSet,
+        100,
+    };
+}
+
+inline LayerComponentDefinition makeBuiltinLayoutComponentDefinition() {
+    return {
+        QStringLiteral("artifact.component.layout"),
+        QStringLiteral("Layout"),
+        QStringLiteral("Arranges generated instances in a grid or stack."),
+        true,
+        LayerComponentPhase::Arrange,
+        LayerComponentScope::InstanceSet,
+        200,
+    };
+}
+
+inline LayerComponentDefinition makeBuiltinCrowdComponentDefinition() {
+    return {
+        QStringLiteral("artifact.component.crowd"),
+        QStringLiteral("Crowd"),
+        QStringLiteral("Blends motion intent across a crowd of instances."),
+        true,
+        LayerComponentPhase::Intent,
+        LayerComponentScope::InstanceSet,
+        300,
+    };
+}
+
+inline LayerComponentDefinition makeBuiltinMotionDynamicsComponentDefinition() {
+    return {
+        QStringLiteral("artifact.component.motion-dynamics"),
+        QStringLiteral("Motion Dynamics"),
+        QStringLiteral("Applies layer-level drive dynamics before instance generation."),
+        true,
+        LayerComponentPhase::Drive,
+        LayerComponentScope::Layer,
+        400,
+    };
+}
+
+inline LayerComponentDefinition makeBuiltinScriptComponentDefinition() {
+    return {
+        QStringLiteral("artifact.component.script"),
+        QStringLiteral("Script"),
+        QStringLiteral("Runs Unity-like lifecycle hooks for the layer."),
+        true,
+        LayerComponentPhase::Drive,
+        LayerComponentScope::Layer,
+        50,
+    };
+}
+
+inline LayerComponentDefinition makeBuiltinCollisionComponentDefinition() {
+    return {
+        QStringLiteral("artifact.component.collision"),
+        QStringLiteral("Collision"),
+        QStringLiteral("Registers composition-wide collision resolution."),
+        true,
+        LayerComponentPhase::Dynamics,
+        LayerComponentScope::Composition,
+        500,
+    };
+}
+
+inline LayerComponentDefinition makeBuiltinFractureComponentDefinition() {
+    return {
+        QStringLiteral("artifact.component.fracture"),
+        QStringLiteral("Fracture"),
+        QStringLiteral("Generates fracture events from high-energy impacts."),
+        true,
+        LayerComponentPhase::Topology,
+        LayerComponentScope::InstanceSet,
+        600,
+    };
+}
+
+inline LayerComponentDefinition makeBuiltinParticleEmitterComponentDefinition() {
+    return {
+        QStringLiteral("artifact.component.particle-emitter"),
+        QStringLiteral("Particle Emitter"),
+        QStringLiteral("Spawns particles during the emit phase."),
+        true,
+        LayerComponentPhase::Emit,
+        LayerComponentScope::InstanceSet,
+        700,
+    };
+}
+
+inline LayerComponentRegistry makeBuiltinLayerComponentRegistry() {
+    LayerComponentRegistry registry;
+    registry.upsert(makeBuiltinScriptComponentDefinition());
+    registry.upsert(makeBuiltinMotionDynamicsComponentDefinition());
+    registry.upsert(makeBuiltinClonerComponentDefinition());
+    registry.upsert(makeBuiltinLayoutComponentDefinition());
+    registry.upsert(makeBuiltinCrowdComponentDefinition());
+    registry.upsert(makeBuiltinCollisionComponentDefinition());
+    registry.upsert(makeBuiltinFractureComponentDefinition());
+    registry.upsert(makeBuiltinParticleEmitterComponentDefinition());
+    return registry;
 }
 
 } // namespace Artifact

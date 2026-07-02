@@ -265,6 +265,54 @@ QString formatNumericSliderText(const double value, const QString &unit,
   return text;
 }
 
+std::optional<std::vector<double>> parseVectorEditorText(const QString &text,
+                                                         const int expectedCount) {
+  const QString trimmed = text.trimmed();
+  if (trimmed.isEmpty()) {
+    return std::nullopt;
+  }
+  const QString normalized =
+      trimmed.startsWith(u'[') && trimmed.endsWith(u']')
+          ? trimmed.mid(1, trimmed.size() - 2)
+          : trimmed;
+  QStringList parts = normalized.split(u',', Qt::SkipEmptyParts);
+  if (parts.size() <= 1) {
+    parts = normalized.split(u' ', Qt::SkipEmptyParts);
+  }
+  if (parts.size() != expectedCount) {
+    return std::nullopt;
+  }
+  std::vector<double> values;
+  values.reserve(parts.size());
+  for (const QString &part : parts) {
+    bool ok = false;
+    const double value = part.trimmed().toDouble(&ok);
+    if (!ok) {
+      return std::nullopt;
+    }
+    values.push_back(value);
+  }
+  return values;
+}
+
+std::optional<int>
+scriptVectorComponentCount(const ArtifactCore::AbstractProperty &property) {
+  if (property.getType() != ArtifactCore::PropertyType::String) {
+    return std::nullopt;
+  }
+  const auto meta = property.metadata();
+  if (meta.referenceTypeName == QStringLiteral("ArtifactScriptVec2")) {
+    return 2;
+  }
+  if (meta.referenceTypeName == QStringLiteral("ArtifactScriptVec3")) {
+    return 3;
+  }
+  if (meta.referenceTypeName == QStringLiteral("ArtifactScriptVec4")) {
+    return 4;
+  }
+  return std::nullopt;
+}
+
 void applyThemeTextPalette(QWidget *widget, int shade = 100) {
   if (!widget) {
     return;
@@ -2256,6 +2304,82 @@ void ArtifactStringPropertyEditor::setValueFromVariant(const QVariant &value) {
   lineEdit_->setText(value.toString());
 }
 
+ArtifactVectorStringPropertyEditor::ArtifactVectorStringPropertyEditor(
+    const ArtifactCore::AbstractProperty &property, const int componentCount,
+    QWidget *parent)
+    : ArtifactAbstractPropertyEditor(parent), componentCount_(componentCount) {
+  setObjectName(QStringLiteral("propertyVectorStringEditor"));
+  auto *layout = new QHBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(4);
+
+  const auto meta = property.metadata();
+  for (int i = 0; i < componentCount_; ++i) {
+    auto *spinBox = new ArtifactRelativeDoubleSpinBox(this);
+    spinBox->setRange(meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1000000.0,
+                      meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1000000.0);
+    spinBox->setDecimals(4);
+    spinBox->setSingleStep(meta.step.isValid() ? meta.step.toDouble() : 0.1);
+    spinBox->setMinimumWidth(72);
+    spinBox->setMinimumHeight(26);
+    spinBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    spinBox->setFrame(false);
+    applyPropertyFieldPalette(spinBox);
+    applyThemeTextPalette(spinBox);
+    spinBox->installEventFilter(this);
+    spinBoxes_.push_back(spinBox);
+    layout->addWidget(spinBox, 1);
+  }
+
+  setValueFromVariant(property.getValue());
+}
+
+QVariant ArtifactVectorStringPropertyEditor::value() const {
+  QStringList parts;
+  for (auto *spinBox : spinBoxes_) {
+    parts.push_back(QString::number(spinBox->value(), 'f', 4));
+  }
+  return parts.join(QStringLiteral(", "));
+}
+
+void ArtifactVectorStringPropertyEditor::setValueFromVariant(
+    const QVariant &value) {
+  const auto parsed = parseVectorEditorText(value.toString(), componentCount_);
+  if (!parsed.has_value()) {
+    return;
+  }
+  for (int i = 0; i < componentCount_ &&
+                  i < static_cast<int>(spinBoxes_.size());
+       ++i) {
+    const QSignalBlocker blocker(spinBoxes_[i]);
+    spinBoxes_[i]->setValue((*parsed)[i]);
+  }
+}
+
+bool ArtifactVectorStringPropertyEditor::eventFilter(QObject *watched,
+                                                     QEvent *event) {
+  for (auto *spinBox : spinBoxes_) {
+    if (watched != spinBox) {
+      continue;
+    }
+    if (event && event->type() == QEvent::FocusOut) {
+      commitCurrentVector();
+    } else if (event && event->type() == QEvent::KeyPress) {
+      auto *keyEvent = static_cast<QKeyEvent *>(event);
+      if (keyEvent->key() == Qt::Key_Return ||
+          keyEvent->key() == Qt::Key_Enter) {
+        commitCurrentVector();
+      }
+    }
+    break;
+  }
+  return ArtifactAbstractPropertyEditor::eventFilter(watched, event);
+}
+
+void ArtifactVectorStringPropertyEditor::commitCurrentVector() {
+  commitValue(value());
+}
+
 ArtifactMultilineStringPropertyEditor::ArtifactMultilineStringPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
@@ -3337,6 +3461,10 @@ createPropertyEditorWidget(const ArtifactCore::AbstractProperty &property,
   case ArtifactCore::PropertyType::Color:
     return new ArtifactColorPropertyEditor(property, parent);
   case ArtifactCore::PropertyType::String:
+    if (const auto componentCount = scriptVectorComponentCount(property)) {
+      return new ArtifactVectorStringPropertyEditor(
+          property, *componentCount, parent);
+    }
     return new ArtifactStringPropertyEditor(property, parent);
   case ArtifactCore::PropertyType::ObjectReference:
     return new ArtifactObjectReferencePropertyEditor(property, parent);

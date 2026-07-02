@@ -199,6 +199,24 @@ private:
     QLineEdit* lineEdit_ = nullptr;
 };
 
+class ArtifactVectorStringPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    ArtifactVectorStringPropertyEditor(const ArtifactCore::AbstractProperty& property,
+                                       int componentCount,
+                                       QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
+    void commitCurrentVector();
+
+    std::vector<QDoubleSpinBox*> spinBoxes_;
+    int componentCount_ = 0;
+};
+
 class ArtifactMultilineStringPropertyEditor final : public ArtifactAbstractPropertyEditor {
 public:
     explicit ArtifactMultilineStringPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);

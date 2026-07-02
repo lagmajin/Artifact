@@ -493,11 +493,16 @@ public:
   enabledLayerComponents(LayerComponentPhase phase) const;
   std::vector<LayerComponentValidationIssue>
   validateLayerComponents() const;
+  std::vector<LayerComponentRuntimeRecord>
+  evaluateLayerComponents(const LayerEvaluationContext& context,
+                          LayerEvaluationState& state,
+                          const LayerComponentRegistry* registry = nullptr) const;
   /*Components*/
 
   /*Script*/
   QJsonObject scriptBinding() const;
   void setScriptBinding(const QJsonObject& binding);
+  void reloadScriptBinding();
   void clearScriptBinding();
   bool hasScriptBinding() const;
   /*Script*/

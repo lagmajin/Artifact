@@ -2,14 +2,22 @@ module;
 #include <utility>
 #include <QAction>
 #include <QApplication>
+#include <QDialog>
 #include <QIcon>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileInfoList>
+#include <QHBoxLayout>
+#include <QInputDialog>
+#include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QMessageBox>
+#include <QPushButton>
+#include <QProcess>
 #include <QTextStream>
+#include <QVBoxLayout>
 #include <QUrl>
 #include <wobjectimpl.h>
 
@@ -34,7 +42,10 @@ public:
 
  ArtifactScriptMenu* menu_ = nullptr;
  QAction* openScriptsFolderAction = nullptr;
+ QAction* createScriptAction = nullptr;
  QAction* openMenuScriptAction = nullptr;
+ QAction* openMenuScriptInInternalEditorAction = nullptr;
+ QAction* openMenuScriptInVSCodeAction = nullptr;
  QAction* openHooksFolderAction = nullptr;
  QAction* openMacrosFolderAction = nullptr;
  QMenu* aeUtilityMenu = nullptr;
@@ -52,8 +63,12 @@ public:
  QString hooksRootPath() const;
  bool ensureScriptsWorkspaceScaffold() const;
  bool ensureTextFile(const QString& path, const QString& contents) const;
+ bool ensureScriptStub(const QString& path, const QString& displayName) const;
  void openFolder(const QString& path) const;
  void openFile(const QString& path) const;
+ void openScriptInInternalEditor(const QString& path) const;
+ void openScriptInVSCode(const QString& path) const;
+ void createAndOpenScript();
  void runHook(const QString& hookName);
  void runMacroFile(const QString& filePath);
  void refreshAeUtilityActions();
@@ -120,6 +135,19 @@ bool ArtifactScriptMenu::Impl::ensureTextFile(const QString& path,
  stream << contents;
  file.close();
  return true;
+}
+
+bool ArtifactScriptMenu::Impl::ensureScriptStub(const QString& path,
+                                                const QString& displayName) const
+{
+ const QString stub =
+     QStringLiteral(
+         "# ArtifactStudio script\n"
+         "# %1\n"
+         "\n"
+         "print(\"%1 loaded\")\n")
+         .arg(displayName);
+ return ensureTextFile(path, stub);
 }
 
 bool ArtifactScriptMenu::Impl::ensureScriptsWorkspaceScaffold() const
@@ -233,6 +261,105 @@ void ArtifactScriptMenu::Impl::openFile(const QString& path) const
   dir.mkpath(QStringLiteral("."));
  }
  QDesktopServices::openUrl(QUrl::fromLocalFile(info.absoluteFilePath()));
+}
+
+void ArtifactScriptMenu::Impl::openScriptInInternalEditor(const QString& path) const
+{
+ if (path.trimmed().isEmpty()) {
+  return;
+ }
+ ensureScriptsWorkspaceScaffold();
+ QFileInfo info(path);
+ if (!info.exists()) {
+  QMessageBox::information(menu_, tr("Script"), tr("Script file not found:\n%1").arg(info.absoluteFilePath()));
+  return;
+ }
+
+ auto* dialog = new QDialog(menu_);
+ dialog->setAttribute(Qt::WA_DeleteOnClose, true);
+ dialog->setWindowTitle(tr("Script Editor - %1").arg(info.fileName()));
+ dialog->resize(980, 720);
+
+ auto* layout = new QVBoxLayout(dialog);
+ auto* editor = new QPlainTextEdit(dialog);
+ QFile file(info.absoluteFilePath());
+ if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+  editor->setPlainText(QString::fromUtf8(file.readAll()));
+  file.close();
+ }
+  layout->addWidget(editor, 1);
+
+ auto* buttonRow = new QHBoxLayout();
+ auto* saveButton = new QPushButton(tr("Save"), dialog);
+ auto* closeButton = new QPushButton(tr("Close"), dialog);
+ buttonRow->addStretch(1);
+ buttonRow->addWidget(saveButton);
+ buttonRow->addWidget(closeButton);
+ layout->addLayout(buttonRow);
+
+ QObject::connect(saveButton, &QPushButton::clicked, dialog, [dialog, editor, path]() {
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+   QMessageBox::warning(dialog, tr("Script"), tr("Failed to save:\n%1").arg(path));
+   return;
+  }
+  QTextStream stream(&file);
+  stream << editor->toPlainText();
+  file.close();
+ });
+ QObject::connect(closeButton, &QPushButton::clicked, dialog, &QDialog::accept);
+ dialog->show();
+ dialog->raise();
+ dialog->activateWindow();
+}
+
+void ArtifactScriptMenu::Impl::openScriptInVSCode(const QString& path) const
+{
+ if (path.trimmed().isEmpty()) {
+  return;
+ }
+ ensureScriptsWorkspaceScaffold();
+ QFileInfo info(path);
+ if (!info.exists()) {
+  QMessageBox::information(menu_, tr("Script"), tr("Script file not found:\n%1").arg(info.absoluteFilePath()));
+  return;
+ }
+
+ QString program = qEnvironmentVariable("ARTIFACT_VSCODE_PATH");
+ if (program.trimmed().isEmpty()) {
+  program = QStringLiteral("code");
+ }
+ const QStringList args = {info.absoluteFilePath()};
+ const bool ok = QProcess::startDetached(program, args, info.absolutePath());
+ if (!ok) {
+  QMessageBox::warning(
+      menu_, tr("Script"),
+      tr("Failed to launch VS Code. You can set ARTIFACT_VSCODE_PATH or use the internal editor."));
+ }
+}
+
+void ArtifactScriptMenu::Impl::createAndOpenScript()
+{
+ ensureScriptsWorkspaceScaffold();
+ bool accepted = false;
+ const QString name = QInputDialog::getText(
+     menu_, tr("New Script"), tr("Script file name:"), QLineEdit::Normal,
+     QStringLiteral("new_script.py"), &accepted)
+                         .trimmed();
+ if (!accepted || name.isEmpty()) {
+  return;
+ }
+
+ QString fileName = name;
+ if (!fileName.endsWith(QStringLiteral(".py"), Qt::CaseInsensitive)) {
+  fileName += QStringLiteral(".py");
+ }
+ const QString path = QDir(macrosRootPath()).filePath(fileName);
+ if (!ensureScriptStub(path, QFileInfo(path).completeBaseName())) {
+  QMessageBox::warning(menu_, tr("Script"), tr("Failed to create script:\n%1").arg(path));
+  return;
+ }
+ openScriptInInternalEditor(path);
 }
 
 void ArtifactScriptMenu::Impl::runHook(const QString& hookName)
@@ -432,10 +559,25 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  openScriptsFolderAction->setToolTip(
      tr("Open the canonical user scripts root and scaffold menu.py, hooks, and macros folders."));
 
+ createScriptAction = new QAction(tr("Create New Script..."));
+ createScriptAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_menu_py.svg")));
+ createScriptAction->setToolTip(
+     tr("Create a new Python script in the macros folder and open it in the internal editor."));
+
  openMenuScriptAction = new QAction(tr("Open menu.py"));
  openMenuScriptAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_menu_py.svg")));
  openMenuScriptAction->setToolTip(
      tr("Open the script menu entry file from the user scripts workspace."));
+
+ openMenuScriptInInternalEditorAction = new QAction(tr("Open menu.py in Internal Editor"));
+ openMenuScriptInInternalEditorAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_menu_py.svg")));
+ openMenuScriptInInternalEditorAction->setToolTip(
+     tr("Open menu.py in Artifact's built-in text editor."));
+
+ openMenuScriptInVSCodeAction = new QAction(tr("Open menu.py in VS Code"));
+ openMenuScriptInVSCodeAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_menu_py.svg")));
+ openMenuScriptInVSCodeAction->setToolTip(
+     tr("Open menu.py in VS Code or the executable pointed to by ARTIFACT_VSCODE_PATH."));
 
  openHooksFolderAction = new QAction(tr("Open Hook Scripts Folder"));
  openHooksFolderAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_hooks_folder.svg")));
@@ -469,7 +611,10 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  }
 
  menu->addAction(openScriptsFolderAction);
+ menu->addAction(createScriptAction);
  menu->addAction(openMenuScriptAction);
+ menu->addAction(openMenuScriptInInternalEditorAction);
+ menu->addAction(openMenuScriptInVSCodeAction);
  menu->addAction(openHooksFolderAction);
  menu->addAction(openMacrosFolderAction);
  menu->addSeparator();
@@ -483,8 +628,17 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  QObject::connect(openScriptsFolderAction, &QAction::triggered, menu, [this]() {
   openFolder(scriptsRootPath());
  });
+ QObject::connect(createScriptAction, &QAction::triggered, menu, [this]() {
+  createAndOpenScript();
+ });
  QObject::connect(openMenuScriptAction, &QAction::triggered, menu, [this]() {
   openFile(menuScriptPath());
+ });
+ QObject::connect(openMenuScriptInInternalEditorAction, &QAction::triggered, menu, [this]() {
+  openScriptInInternalEditor(menuScriptPath());
+ });
+ QObject::connect(openMenuScriptInVSCodeAction, &QAction::triggered, menu, [this]() {
+  openScriptInVSCode(menuScriptPath());
  });
  QObject::connect(openHooksFolderAction, &QAction::triggered, menu, [this]() {
   openFolder(hooksRootPath());

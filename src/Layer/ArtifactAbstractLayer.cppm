@@ -3,7 +3,11 @@ module;
 #include <cmath>
 #include <random>
 #include <utility>
+#include <optional>
 #include <QDebug>
+#include <QFile>
+#include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QImage>
 #include <QPointF>
 #include <QRectF>
@@ -60,6 +64,7 @@ import Property.Abstract;
 import Property.Group;
 import Artifact.Event.Types;
 import Event.Bus;
+import Script.ArtifactScript;
 
 namespace Artifact {
 
@@ -117,6 +122,275 @@ bool isSourceReframeLayerPropertyGroup(const QString &groupName) {
 }
 
 namespace {
+std::string readArtifactScriptSource(const QJsonObject& binding) {
+  const QString inlineSource =
+      binding.value(QStringLiteral("source")).toString();
+  if (!inlineSource.trimmed().isEmpty()) {
+    return inlineSource.toStdString();
+  }
+
+  const QStringList pathKeys = {
+      QStringLiteral("path"),
+      QStringLiteral("file"),
+      QStringLiteral("scriptPath"),
+      QStringLiteral("scriptFile"),
+  };
+  for (const QString& key : pathKeys) {
+    const QString path = binding.value(key).toString().trimmed();
+    if (path.isEmpty()) {
+      continue;
+    }
+    QFile file(path);
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+      const QByteArray bytes = file.readAll();
+      file.close();
+      return bytes.toStdString();
+    }
+  }
+  return {};
+}
+
+std::string resolveArtifactScriptClassName(const QJsonObject& binding) {
+  const QStringList keys = {
+      QStringLiteral("scriptClass"),
+      QStringLiteral("className"),
+      QStringLiteral("class"),
+  };
+  for (const QString& key : keys) {
+    const QString value = binding.value(key).toString().trimmed();
+    if (!value.isEmpty()) {
+      return value.toStdString();
+    }
+  }
+  return {};
+}
+
+std::optional<QString> parseScriptFieldPropertyPath(const QString& propertyPath) {
+  const QString prefix = QStringLiteral("component.script.field.");
+  if (!propertyPath.startsWith(prefix, Qt::CaseInsensitive)) {
+    return std::nullopt;
+  }
+  const QString fieldName = propertyPath.mid(prefix.size()).trimmed();
+  if (fieldName.isEmpty()) {
+    return std::nullopt;
+  }
+  return fieldName;
+}
+
+QJsonObject scriptBindingFieldsObject(const QJsonObject& binding) {
+  return binding.value(QStringLiteral("fields")).toObject();
+}
+
+ArtifactScriptValueType artifactScriptFieldTypeFromString(const QString& typeName) {
+  const QString normalized = typeName.trimmed().toLower();
+  if (normalized == QStringLiteral("bool")) return ArtifactScriptValueType::Bool;
+  if (normalized == QStringLiteral("int")) return ArtifactScriptValueType::Int;
+  if (normalized == QStringLiteral("float") || normalized == QStringLiteral("double")) {
+    return ArtifactScriptValueType::Float;
+  }
+  if (normalized == QStringLiteral("string")) return ArtifactScriptValueType::String;
+  if (normalized == QStringLiteral("vec2")) return ArtifactScriptValueType::Vec2;
+  if (normalized == QStringLiteral("vec3")) return ArtifactScriptValueType::Vec3;
+  if (normalized == QStringLiteral("vec4")) return ArtifactScriptValueType::Vec4;
+  if (normalized == QStringLiteral("color")) return ArtifactScriptValueType::Color;
+  if (normalized == QStringLiteral("objectref")) return ArtifactScriptValueType::ObjectRef;
+  if (normalized == QStringLiteral("assetref")) return ArtifactScriptValueType::AssetRef;
+  return ArtifactScriptValueType::Null;
+}
+
+QVariant artifactScriptValueToVariant(const ArtifactScriptValue& value) {
+  return std::visit(
+      [](const auto& item) -> QVariant {
+        using T = std::decay_t<decltype(item)>;
+        if constexpr (std::is_same_v<T, std::monostate>) {
+          return {};
+        } else if constexpr (std::is_same_v<T, bool>) {
+          return item;
+        } else if constexpr (std::is_same_v<T, std::int64_t>) {
+          return static_cast<qint64>(item);
+        } else if constexpr (std::is_same_v<T, double>) {
+          return item;
+        } else if constexpr (std::is_same_v<T, std::string>) {
+          return QString::fromStdString(item);
+        } else if constexpr (std::is_same_v<T, ArtifactScriptVec2>) {
+          return QStringLiteral("%1, %2").arg(item.x).arg(item.y);
+        } else if constexpr (std::is_same_v<T, ArtifactScriptVec3>) {
+          return QStringLiteral("%1, %2, %3").arg(item.x).arg(item.y).arg(item.z);
+        } else if constexpr (std::is_same_v<T, ArtifactScriptVec4>) {
+          return QStringLiteral("%1, %2, %3, %4")
+              .arg(item.x).arg(item.y).arg(item.z).arg(item.w);
+        } else if constexpr (std::is_same_v<T, ArtifactScriptColor>) {
+          return QColor::fromRgbF(item.r, item.g, item.b, item.a);
+        } else if constexpr (std::is_same_v<T, ArtifactScriptRef>) {
+          return QString::fromStdString(item.id);
+        } else {
+          return {};
+        }
+      },
+      value);
+}
+
+QJsonValue artifactScriptValueToJson(const ArtifactScriptValue& value) {
+  return std::visit(
+      [](const auto& item) -> QJsonValue {
+        using T = std::decay_t<decltype(item)>;
+        if constexpr (std::is_same_v<T, std::monostate>) {
+          return QJsonValue();
+        } else if constexpr (std::is_same_v<T, bool>) {
+          return QJsonValue(item);
+        } else if constexpr (std::is_same_v<T, std::int64_t>) {
+          return QJsonValue(static_cast<qint64>(item));
+        } else if constexpr (std::is_same_v<T, double>) {
+          return QJsonValue(item);
+        } else if constexpr (std::is_same_v<T, std::string>) {
+          return QJsonValue(QString::fromStdString(item));
+        } else if constexpr (std::is_same_v<T, ArtifactScriptVec2>) {
+          QJsonArray arr;
+          arr.append(item.x);
+          arr.append(item.y);
+          return arr;
+        } else if constexpr (std::is_same_v<T, ArtifactScriptVec3>) {
+          QJsonArray arr;
+          arr.append(item.x);
+          arr.append(item.y);
+          arr.append(item.z);
+          return arr;
+        } else if constexpr (std::is_same_v<T, ArtifactScriptVec4>) {
+          QJsonArray arr;
+          arr.append(item.x);
+          arr.append(item.y);
+          arr.append(item.z);
+          arr.append(item.w);
+          return arr;
+        } else if constexpr (std::is_same_v<T, ArtifactScriptColor>) {
+          QJsonArray arr;
+          arr.append(item.r);
+          arr.append(item.g);
+          arr.append(item.b);
+          arr.append(item.a);
+          return arr;
+        } else if constexpr (std::is_same_v<T, ArtifactScriptRef>) {
+          return QJsonValue(QString::fromStdString(item.id));
+        } else {
+          return QJsonValue();
+        }
+      },
+      value);
+}
+
+ArtifactScriptValue artifactScriptValueFromJson(const QJsonValue& value,
+                                                ArtifactScriptValueType type) {
+  auto parseFloatList = [](const QString& text) -> std::optional<std::vector<float>> {
+    const QString normalized =
+        text.trimmed().startsWith(u'[') && text.trimmed().endsWith(u']')
+            ? text.trimmed().mid(1, text.trimmed().size() - 2)
+            : text.trimmed();
+    if (normalized.isEmpty()) {
+      return std::nullopt;
+    }
+    QStringList parts = normalized.split(u',', Qt::SkipEmptyParts);
+    if (parts.size() <= 1) {
+      parts = normalized.split(u' ', Qt::SkipEmptyParts);
+    }
+    std::vector<float> values;
+    values.reserve(parts.size());
+    for (const QString& part : parts) {
+      bool ok = false;
+      const float parsed = part.trimmed().toFloat(&ok);
+      if (!ok) {
+        return std::nullopt;
+      }
+      values.push_back(parsed);
+    }
+    return values;
+  };
+  auto parseFloatArray = [&](int expectedCount) -> std::optional<std::vector<float>> {
+    std::vector<float> values;
+    if (value.isArray()) {
+      const QJsonArray arr = value.toArray();
+      if (arr.size() != expectedCount) {
+        return std::nullopt;
+      }
+      values.reserve(arr.size());
+      for (const QJsonValue& entry : arr) {
+        if (!entry.isDouble()) {
+          return std::nullopt;
+        }
+        values.push_back(static_cast<float>(entry.toDouble()));
+      }
+      return values;
+    }
+    if (value.isString()) {
+      auto parsed = parseFloatList(value.toString());
+      if (!parsed.has_value() ||
+          static_cast<int>(parsed->size()) != expectedCount) {
+        return std::nullopt;
+      }
+      return parsed;
+    }
+    return std::nullopt;
+  };
+  switch (type) {
+  case ArtifactScriptValueType::Bool:
+    return value.toBool();
+  case ArtifactScriptValueType::Int:
+    return static_cast<std::int64_t>(value.toInteger());
+  case ArtifactScriptValueType::Float:
+    return value.toDouble();
+  case ArtifactScriptValueType::String:
+    return value.toString().toStdString();
+  case ArtifactScriptValueType::Vec2:
+    if (auto values = parseFloatArray(2); values.has_value()) {
+      return ArtifactScriptVec2{(*values)[0], (*values)[1]};
+    }
+    return std::monostate{};
+  case ArtifactScriptValueType::Vec3:
+    if (auto values = parseFloatArray(3); values.has_value()) {
+      return ArtifactScriptVec3{(*values)[0], (*values)[1], (*values)[2]};
+    }
+    return std::monostate{};
+  case ArtifactScriptValueType::Vec4:
+    if (auto values = parseFloatArray(4); values.has_value()) {
+      return ArtifactScriptVec4{(*values)[0], (*values)[1], (*values)[2],
+                                (*values)[3]};
+    }
+    return std::monostate{};
+  case ArtifactScriptValueType::Color:
+    if (auto values = parseFloatArray(4); values.has_value()) {
+      return ArtifactScriptColor{(*values)[0], (*values)[1], (*values)[2],
+                                 (*values)[3]};
+    }
+    return std::monostate{};
+  case ArtifactScriptValueType::ObjectRef:
+  case ArtifactScriptValueType::AssetRef:
+    return ArtifactScriptRef{value.toString().toStdString()};
+  default:
+    return std::monostate{};
+  }
+}
+
+PropertyType propertyTypeForArtifactScriptValueType(ArtifactScriptValueType type) {
+  switch (type) {
+  case ArtifactScriptValueType::Bool:
+    return PropertyType::Boolean;
+  case ArtifactScriptValueType::Int:
+    return PropertyType::Integer;
+  case ArtifactScriptValueType::Float:
+    return PropertyType::Float;
+  case ArtifactScriptValueType::Color:
+    return PropertyType::Color;
+  default:
+    return PropertyType::String;
+  }
+}
+
+ArtifactScriptComponent buildArtifactScriptComponentFromBinding(
+    const QJsonObject& binding) {
+  ArtifactScriptComponent component;
+  component.setScriptClass(resolveArtifactScriptClassName(binding));
+  return component;
+}
+
 struct ClonerTransformOperation {
   QString name = QStringLiteral("Transform");
   bool enabled = true;
@@ -557,6 +831,20 @@ public:
     std::vector<ArtifactCore::ParticleVertex> componentParticles_;
     mutable int64_t componentParticlesLastFrame_ =
         std::numeric_limits<int64_t>::min();
+    mutable std::string scriptRuntimeSourceCache_;
+    mutable std::optional<ArtifactScriptDefinition> scriptRuntimeDefinition_;
+    mutable std::optional<ArtifactScriptComponent> scriptRuntimeComponent_;
+    mutable std::optional<ArtifactScriptInstance> scriptRuntimeInstance_;
+    mutable bool scriptRuntimeCreated_ = false;
+    mutable bool scriptRuntimeEnabled_ = false;
+    mutable bool scriptRuntimeStartPending_ = false;
+    mutable bool scriptRuntimeStartedThisPlayback_ = false;
+    ArtifactCore::PlaybackState scriptRuntimePlaybackState_ =
+        ArtifactCore::PlaybackState::Stopped;
+    ArtifactCore::EventBus::Subscription playbackStateSubscription_;
+    ArtifactAbstractLayer* owner_ = nullptr;
+    QFileSystemWatcher* scriptFileWatcher_ = nullptr;
+    QString watchedScriptFilePath_;
     mutable int64_t lastCollisionImpactFrame_ =
         std::numeric_limits<int64_t>::min();
     LayerComponentHost componentHost_;
@@ -633,9 +921,15 @@ public:
   size_t activeVariantIndex_ = 0;
 
 public:
-  Impl();
+  explicit Impl(ArtifactAbstractLayer* owner);
   ~Impl();
   void syncBuiltinComponentDescriptors();
+  void resetScriptRuntimeState(bool invokeLifecycleTeardown);
+  void refreshScriptFileWatch();
+  bool evaluateScriptComponent(const LayerComponentDescriptor& descriptor,
+                               const LayerEvaluationContext& context,
+                               LayerEvaluationState& state,
+                               LayerComponentRuntimeLog& log) const;
   std::type_index type_index_ = typeid(void);
   void goToStartFrame();
   void goToEndFrame();
@@ -678,11 +972,71 @@ namespace {
 bool g_globalLayerCacheEnabled = true;
 }
 
-ArtifactAbstractLayer::Impl::Impl() {
+ArtifactAbstractLayer::Impl::Impl(ArtifactAbstractLayer* owner) : owner_(owner) {
   // Avoid undefined draw bounds when a layer is queried before explicit size
   // assignment.
   sourceSize_ = Size_2D(1920, 1080);
+  playbackStateSubscription_ =
+      ArtifactCore::globalEventBus().subscribe<PlaybackStateChangedEvent>(
+          [this](const PlaybackStateChangedEvent& event) {
+            const auto previousState = scriptRuntimePlaybackState_;
+            scriptRuntimePlaybackState_ = event.state;
+            if (event.state == ArtifactCore::PlaybackState::Playing &&
+                previousState != ArtifactCore::PlaybackState::Playing) {
+              scriptRuntimeStartPending_ = true;
+              scriptRuntimeStartedThisPlayback_ = false;
+            } else if (event.state != ArtifactCore::PlaybackState::Playing) {
+              scriptRuntimeStartPending_ = false;
+              scriptRuntimeStartedThisPlayback_ = false;
+            }
+          });
+  scriptFileWatcher_ = new QFileSystemWatcher(owner_);
+  QObject::connect(scriptFileWatcher_, &QFileSystemWatcher::fileChanged, owner_,
+                   [this](const QString& path) {
+                     const QFileInfo info(path);
+                     const QString normalizedPath = info.absoluteFilePath();
+                     if (!watchedScriptFilePath_.isEmpty() &&
+                         normalizedPath.compare(watchedScriptFilePath_,
+                                                Qt::CaseInsensitive) != 0) {
+                       return;
+                     }
+                     refreshScriptFileWatch();
+                     resetScriptRuntimeState(true);
+                     syncBuiltinComponentDescriptors();
+                     if (owner_) {
+                       notifyLayerMutation(owner_, LayerDirtyFlag::Property,
+                                           LayerDirtyReason::PropertyChanged);
+                     }
+                   });
+  refreshScriptFileWatch();
   syncBuiltinComponentDescriptors();
+}
+
+void ArtifactAbstractLayer::Impl::refreshScriptFileWatch() {
+  if (!scriptFileWatcher_) {
+    return;
+  }
+  if (!watchedScriptFilePath_.isEmpty()) {
+    scriptFileWatcher_->removePath(watchedScriptFilePath_);
+    watchedScriptFilePath_.clear();
+  }
+
+  const QJsonObject binding = scriptBinding_;
+  const QString configuredPath =
+      binding.value(QStringLiteral("path")).toString().trimmed().isEmpty()
+          ? binding.value(QStringLiteral("scriptPath")).toString().trimmed()
+          : binding.value(QStringLiteral("path")).toString().trimmed();
+  if (configuredPath.isEmpty()) {
+    return;
+  }
+
+  const QFileInfo scriptInfo(configuredPath);
+  if (!scriptInfo.exists() || !scriptInfo.isFile()) {
+    return;
+  }
+
+  watchedScriptFilePath_ = scriptInfo.absoluteFilePath();
+  scriptFileWatcher_->addPath(watchedScriptFilePath_);
 }
 
 ArtifactAbstractLayer::Impl::~Impl() {}
@@ -733,6 +1087,10 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
       motionDynamicsEnabled_;
   componentHost_.upsert(std::move(motion));
 
+  auto script = makeScriptComponentDescriptor(scriptComponentEnabled_);
+  script.settings[QStringLiteral("binding")] = scriptBinding_;
+  componentHost_.upsert(std::move(script));
+
   auto collision =
       makeCollisionComponentDescriptor(collisionComponentEnabled_);
   componentHost_.upsert(std::move(collision));
@@ -756,6 +1114,123 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
   componentHost_.upsert(std::move(emitter));
 }
 
+bool ArtifactAbstractLayer::Impl::evaluateScriptComponent(
+    const LayerComponentDescriptor& descriptor,
+    const LayerEvaluationContext& context, LayerEvaluationState&,
+    LayerComponentRuntimeLog& log) const {
+  Q_UNUSED(context);
+
+  const QJsonObject binding =
+      descriptor.settings.value(QStringLiteral("binding")).toObject();
+  const std::string source = readArtifactScriptSource(binding);
+  if (source.empty()) {
+    log.records.push_back({
+        descriptor.componentId,
+        descriptor.typeId,
+        descriptor.phase,
+        LayerComponentRuntimeOutcome::Skipped,
+        QStringLiteral("Script binding has no source or readable file."),
+    });
+    return true;
+  }
+
+  if (!scriptRuntimeDefinition_.has_value() || scriptRuntimeSourceCache_ != source) {
+    ArtifactScriptParser parser;
+    scriptRuntimeSourceCache_ = source;
+    scriptRuntimeDefinition_ = parser.parse(source);
+    scriptRuntimeComponent_ = buildArtifactScriptComponentFromBinding(binding);
+    if (scriptRuntimeComponent_.has_value() && scriptRuntimeDefinition_.has_value()) {
+      const QJsonObject fields = scriptBindingFieldsObject(binding);
+      for (const ArtifactScriptField& field : scriptRuntimeDefinition_->rootClass.fields) {
+        if (!field.isPublic || field.name.empty()) {
+          continue;
+        }
+        const QString fieldName = QString::fromStdString(field.name);
+        const QJsonValue storedValue = fields.value(fieldName);
+        if (!storedValue.isUndefined()) {
+          scriptRuntimeComponent_->publicFields()[field.name] =
+              artifactScriptValueFromJson(storedValue, field.type);
+        }
+      }
+      scriptRuntimeComponent_->applyDefaults(*scriptRuntimeDefinition_);
+      scriptRuntimeInstance_.emplace(*scriptRuntimeDefinition_);
+      scriptRuntimeInstance_->bindComponent(*scriptRuntimeComponent_);
+      scriptRuntimeCreated_ = false;
+      scriptRuntimeEnabled_ = false;
+    } else {
+      scriptRuntimeInstance_.reset();
+    }
+  }
+
+  if (!scriptRuntimeDefinition_.has_value() || !scriptRuntimeInstance_.has_value()) {
+    log.records.push_back({
+        descriptor.componentId,
+        descriptor.typeId,
+        descriptor.phase,
+        LayerComponentRuntimeOutcome::Failed,
+        QStringLiteral("Failed to initialize script runtime."),
+    });
+    return false;
+  }
+
+  if (!scriptRuntimeDefinition_->diagnostics.empty()) {
+    const auto& diagnostic = scriptRuntimeDefinition_->diagnostics.front();
+    log.records.push_back({
+        descriptor.componentId,
+        descriptor.typeId,
+        descriptor.phase,
+        LayerComponentRuntimeOutcome::Failed,
+        QStringLiteral("Script parse error: %1")
+            .arg(QString::fromStdString(diagnostic.message)),
+    });
+    return false;
+  }
+
+  if (!scriptRuntimeCreated_) {
+    scriptRuntimeInstance_->invokeHook(ArtifactScriptHook::OnCreate);
+    scriptRuntimeCreated_ = true;
+  }
+  if (!scriptRuntimeEnabled_) {
+    scriptRuntimeInstance_->invokeHook(ArtifactScriptHook::OnEnable);
+    scriptRuntimeEnabled_ = true;
+  }
+  if (scriptRuntimePlaybackState_ == ArtifactCore::PlaybackState::Playing &&
+      (scriptRuntimeStartPending_ || !scriptRuntimeStartedThisPlayback_)) {
+    if (scriptRuntimeInstance_->hasHook(ArtifactScriptHook::OnStart)) {
+      scriptRuntimeInstance_->invokeHook(ArtifactScriptHook::OnStart);
+    }
+    scriptRuntimeStartPending_ = false;
+    scriptRuntimeStartedThisPlayback_ = true;
+  }
+
+  if (scriptRuntimeInstance_->hasHook(ArtifactScriptHook::OnUpdate)) {
+    scriptRuntimeInstance_->invokeHook(ArtifactScriptHook::OnUpdate);
+  }
+
+  return true;
+}
+
+void ArtifactAbstractLayer::Impl::resetScriptRuntimeState(
+    bool invokeLifecycleTeardown) {
+  if (invokeLifecycleTeardown && scriptRuntimeInstance_.has_value()) {
+    if (scriptRuntimeEnabled_) {
+      scriptRuntimeInstance_->invokeHook(ArtifactScriptHook::OnDisable);
+    }
+    if (scriptRuntimeCreated_) {
+      scriptRuntimeInstance_->invokeHook(ArtifactScriptHook::OnDestroy);
+    }
+  }
+  scriptRuntimeSourceCache_.clear();
+  scriptRuntimeDefinition_.reset();
+  scriptRuntimeComponent_.reset();
+  scriptRuntimeInstance_.reset();
+  scriptRuntimeCreated_ = false;
+  scriptRuntimeEnabled_ = false;
+  scriptRuntimeStartPending_ =
+      scriptRuntimePlaybackState_ == ArtifactCore::PlaybackState::Playing;
+  scriptRuntimeStartedThisPlayback_ = false;
+}
+
 void ArtifactAbstractLayer::Impl::goToStartFrame() {}
 
 void ArtifactAbstractLayer::Impl::goToEndFrame() {}
@@ -766,7 +1241,7 @@ void ArtifactAbstractLayer::Impl::goToPrevFrame() {}
 
 bool ArtifactAbstractLayer::Impl::is3D() const { return is3D_; }
 
-ArtifactAbstractLayer::ArtifactAbstractLayer() : impl_(new Impl()) {
+ArtifactAbstractLayer::ArtifactAbstractLayer() : impl_(new Impl(this)) {
   impl_->id = Id(); // Generate new ID
   impl_->variants_.push_back(std::make_unique<LayerVariant>(this, "A"));
   impl_->activeVariantIndex_ = 0;
@@ -3581,12 +4056,50 @@ ArtifactAbstractLayer::validateLayerComponents() const {
   return impl_->componentHost_.validate();
 }
 
+std::vector<LayerComponentRuntimeRecord>
+ArtifactAbstractLayer::evaluateLayerComponents(
+    const LayerEvaluationContext& context, LayerEvaluationState& state,
+    const LayerComponentRegistry* registry) const {
+  impl_->syncBuiltinComponentDescriptors();
+  const LayerComponentRegistry* activeRegistry = registry;
+  LayerComponentRegistry builtinRegistry;
+  if (!activeRegistry) {
+    builtinRegistry = makeBuiltinLayerComponentRegistry();
+    activeRegistry = &builtinRegistry;
+  }
+
+  LayerComponentRuntime runtime;
+  runtime.setRegistry(activeRegistry);
+  runtime.registerProcessor(
+      QStringLiteral("artifact.component.script"),
+      [this](const LayerComponentDescriptor& descriptor,
+             const LayerComponentDefinition&,
+             const LayerEvaluationContext& runtimeContext,
+             LayerEvaluationState& runtimeState,
+             LayerComponentRuntimeLog& log) {
+        return impl_->evaluateScriptComponent(
+            descriptor, runtimeContext, runtimeState, log);
+      });
+  return runtime.evaluate(impl_->componentHost_, context, state);
+}
+
 QJsonObject ArtifactAbstractLayer::scriptBinding() const {
   return impl_->scriptBinding_;
 }
 
 void ArtifactAbstractLayer::setScriptBinding(const QJsonObject& binding) {
+  impl_->resetScriptRuntimeState(true);
   impl_->scriptBinding_ = binding;
+  impl_->refreshScriptFileWatch();
+  impl_->syncBuiltinComponentDescriptors();
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
+}
+
+void ArtifactAbstractLayer::reloadScriptBinding() {
+  impl_->resetScriptRuntimeState(true);
+  impl_->refreshScriptFileWatch();
+  impl_->syncBuiltinComponentDescriptors();
   notifyLayerMutation(this, LayerDirtyFlag::Property,
                       LayerDirtyReason::PropertyChanged);
 }
@@ -3595,7 +4108,10 @@ void ArtifactAbstractLayer::clearScriptBinding() {
   if (impl_->scriptBinding_.isEmpty()) {
     return;
   }
+  impl_->resetScriptRuntimeState(true);
   impl_->scriptBinding_ = QJsonObject{};
+  impl_->refreshScriptFileWatch();
+  impl_->syncBuiltinComponentDescriptors();
   notifyLayerMutation(this, LayerDirtyFlag::Property,
                       LayerDirtyReason::PropertyChanged);
 }
@@ -4005,6 +4521,85 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                PropertyType::Boolean, impl_->scriptComponentEnabled_, -100);
   scriptComponentEnabledProp->setDisplayLabel(QStringLiteral("Script Component Enabled"));
   componentGroup.addProperty(scriptComponentEnabledProp);
+
+  const QJsonObject scriptBinding = impl_->scriptBinding_;
+  auto scriptClassProp =
+      makeProp(QStringLiteral("component.script.class"),
+               PropertyType::String,
+               QString::fromStdString(resolveArtifactScriptClassName(scriptBinding)),
+               -99);
+  scriptClassProp->setDisplayLabel(QStringLiteral("Script Class"));
+  componentGroup.addProperty(scriptClassProp);
+
+  const QString scriptPath =
+      scriptBinding.value(QStringLiteral("path")).toString().trimmed().isEmpty()
+          ? scriptBinding.value(QStringLiteral("scriptPath")).toString()
+          : scriptBinding.value(QStringLiteral("path")).toString();
+  auto scriptPathProp =
+      makeProp(QStringLiteral("component.script.path"),
+               PropertyType::String, scriptPath, -98);
+  scriptPathProp->setDisplayLabel(QStringLiteral("Script Path"));
+  componentGroup.addProperty(scriptPathProp);
+
+  const QString scriptSource =
+      scriptBinding.value(QStringLiteral("source")).toString();
+  auto scriptSourceProp =
+      makeProp(QStringLiteral("component.script.source"),
+               PropertyType::String, scriptSource, -97);
+  scriptSourceProp->setDisplayLabel(QStringLiteral("Script Source"));
+  componentGroup.addProperty(scriptSourceProp);
+
+  const std::string scriptSourceBytes = readArtifactScriptSource(scriptBinding);
+  if (!scriptSourceBytes.empty()) {
+    ArtifactScriptParser scriptParser;
+    const ArtifactScriptDefinition scriptDefinition =
+        scriptParser.parse(scriptSourceBytes);
+    QJsonObject fieldValues = scriptBindingFieldsObject(scriptBinding);
+    int scriptFieldPriority = -96;
+    for (const ArtifactScriptField& field : scriptDefinition.rootClass.fields) {
+      if (!field.isPublic || field.name.empty()) {
+        continue;
+      }
+      const QString fieldName = QString::fromStdString(field.name);
+      const QString propertyPath =
+          QStringLiteral("component.script.field.%1").arg(fieldName);
+      const QJsonValue storedValue = fieldValues.value(fieldName);
+      const ArtifactScriptValue effectiveValue =
+          storedValue.isUndefined()
+              ? field.defaultValue
+              : artifactScriptValueFromJson(storedValue, field.type);
+      auto fieldProp = makeProp(
+          propertyPath,
+          propertyTypeForArtifactScriptValueType(field.type),
+          artifactScriptValueToVariant(effectiveValue), scriptFieldPriority--);
+      auto fieldMeta = fieldProp->metadata();
+      switch (field.type) {
+      case ArtifactScriptValueType::Vec2:
+        fieldMeta.referenceTypeName = QStringLiteral("ArtifactScriptVec2");
+        fieldMeta.hardMin = -1000000.0;
+        fieldMeta.hardMax = 1000000.0;
+        fieldMeta.step = 0.1;
+        break;
+      case ArtifactScriptValueType::Vec3:
+        fieldMeta.referenceTypeName = QStringLiteral("ArtifactScriptVec3");
+        fieldMeta.hardMin = -1000000.0;
+        fieldMeta.hardMax = 1000000.0;
+        fieldMeta.step = 0.1;
+        break;
+      case ArtifactScriptValueType::Vec4:
+        fieldMeta.referenceTypeName = QStringLiteral("ArtifactScriptVec4");
+        fieldMeta.hardMin = -1000000.0;
+        fieldMeta.hardMax = 1000000.0;
+        fieldMeta.step = 0.1;
+        break;
+      default:
+        break;
+      }
+      fieldProp->setMetadata(fieldMeta);
+      fieldProp->setDisplayLabel(fieldName);
+      componentGroup.addProperty(fieldProp);
+    }
+  }
 
   auto clonerComponentEnabledProp =
       makeProp(QStringLiteral("component.cloner.enabled"),
@@ -4722,10 +5317,116 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
 
   if (propertyPath == QStringLiteral("component.script.enabled")) {
-    impl_->scriptComponentEnabled_ = value.toBool();
-    Q_EMIT changed();
-    return true;
-  }
+      if (impl_->scriptComponentEnabled_ && !value.toBool()) {
+        impl_->resetScriptRuntimeState(true);
+      }
+      impl_->scriptComponentEnabled_ = value.toBool();
+      if (!impl_->scriptComponentEnabled_) {
+        impl_->resetScriptRuntimeState(false);
+      }
+      impl_->syncBuiltinComponentDescriptors();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.script.class")) {
+      QJsonObject binding = impl_->scriptBinding_;
+      binding[QStringLiteral("scriptClass")] = value.toString().trimmed();
+      setScriptBinding(binding);
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.script.path")) {
+      QJsonObject binding = impl_->scriptBinding_;
+      binding[QStringLiteral("path")] = value.toString().trimmed();
+      setScriptBinding(binding);
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.script.source")) {
+      QJsonObject binding = impl_->scriptBinding_;
+      binding[QStringLiteral("source")] = value.toString();
+      setScriptBinding(binding);
+      Q_EMIT changed();
+      return true;
+    }
+    if (const auto scriptFieldName = parseScriptFieldPropertyPath(propertyPath);
+        scriptFieldName.has_value()) {
+      QJsonObject binding = impl_->scriptBinding_;
+      QJsonObject fields = scriptBindingFieldsObject(binding);
+      ArtifactScriptValueType fieldType = ArtifactScriptValueType::String;
+      const std::string source = readArtifactScriptSource(binding);
+      if (!source.empty()) {
+        ArtifactScriptParser parser;
+        const ArtifactScriptDefinition definition = parser.parse(source);
+        for (const ArtifactScriptField& field : definition.rootClass.fields) {
+          if (QString::fromStdString(field.name) == *scriptFieldName) {
+            fieldType = field.type;
+            break;
+          }
+        }
+      }
+
+      ArtifactScriptValue runtimeValue;
+      switch (fieldType) {
+      case ArtifactScriptValueType::Bool:
+        runtimeValue = value.toBool();
+        break;
+      case ArtifactScriptValueType::Int:
+        runtimeValue = static_cast<std::int64_t>(value.toLongLong());
+        break;
+      case ArtifactScriptValueType::Float:
+        runtimeValue = value.toDouble();
+        break;
+      case ArtifactScriptValueType::String:
+        runtimeValue = value.toString().toStdString();
+        break;
+      case ArtifactScriptValueType::Color:
+        if (value.canConvert<QColor>()) {
+          const QColor color = value.value<QColor>();
+          runtimeValue = ArtifactScriptColor{
+              static_cast<float>(color.redF()),
+              static_cast<float>(color.greenF()),
+              static_cast<float>(color.blueF()),
+              static_cast<float>(color.alphaF())};
+          break;
+        }
+        runtimeValue =
+            artifactScriptValueFromJson(QJsonValue(value.toString()), fieldType);
+        break;
+      case ArtifactScriptValueType::Vec2:
+      case ArtifactScriptValueType::Vec3:
+      case ArtifactScriptValueType::Vec4:
+      case ArtifactScriptValueType::ObjectRef:
+      case ArtifactScriptValueType::AssetRef:
+      case ArtifactScriptValueType::Null:
+      default:
+        runtimeValue =
+            artifactScriptValueFromJson(QJsonValue(value.toString()), fieldType);
+        break;
+      }
+
+      QJsonValue storedValue = artifactScriptValueToJson(runtimeValue);
+      if (storedValue.isUndefined() || storedValue.isNull()) {
+        switch (fieldType) {
+        case ArtifactScriptValueType::String:
+        case ArtifactScriptValueType::ObjectRef:
+        case ArtifactScriptValueType::AssetRef:
+          storedValue = QJsonValue(value.toString());
+          break;
+        default:
+          fields.remove(*scriptFieldName);
+          binding[QStringLiteral("fields")] = fields;
+          setScriptBinding(binding);
+          Q_EMIT changed();
+          return true;
+        }
+      }
+      fields[*scriptFieldName] = storedValue;
+      binding[QStringLiteral("fields")] = fields;
+      setScriptBinding(binding);
+      Q_EMIT changed();
+      return true;
+    }
     if (propertyPath == QStringLiteral("component.cloner.transforms.add")) {
       ClonerTransformOperation op;
       op.name = QStringLiteral("Transform %1")

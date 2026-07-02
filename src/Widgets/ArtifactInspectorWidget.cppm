@@ -683,6 +683,7 @@ public:
   QPushButton *layoutComponentButton = nullptr;
   QPushButton *cloneComponentButton = nullptr;
   QPushButton *openScriptButton = nullptr;
+  QPushButton *reloadScriptButton = nullptr;
   ArtifactPropertyWidget *componentPropertyWidget = nullptr;
   QLabel *statusLabel = nullptr;
 
@@ -1292,6 +1293,17 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
         canOpen ? QStringLiteral("Open the script file linked to this layer.")
                 : (hasLayer ? QStringLiteral("No script file is linked to this layer yet.")
                             : QStringLiteral("Select a layer inside a composition to open its script.")));
+  }
+  if (reloadScriptButton) {
+    const bool canReload = hasLayer && layer && layer->hasScriptBinding();
+    reloadScriptButton->setEnabled(canReload);
+    reloadScriptButton->setVisible(hasLayer);
+    reloadScriptButton->setText(QStringLiteral("Reload Script"));
+    reloadScriptButton->setToolTip(
+        canReload
+            ? QStringLiteral("Drop the current script runtime and reload from binding/source.")
+            : (hasLayer ? QStringLiteral("No script binding is linked to this layer yet.")
+                        : QStringLiteral("Select a layer inside a composition to reload its script.")));
   }
 }
 
@@ -2912,11 +2924,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->layoutComponentButton = new QPushButton("+ Layout");
   impl_->cloneComponentButton = new QPushButton("+ Cloner");
   impl_->openScriptButton = new QPushButton("Open Script");
+  impl_->reloadScriptButton = new QPushButton("Reload Script");
   applyInspectorButton(impl_->physicsComponentButton, true);
   applyInspectorButton(impl_->scriptComponentButton, false);
   applyInspectorButton(impl_->layoutComponentButton, false);
   applyInspectorButton(impl_->cloneComponentButton, false);
   applyInspectorButton(impl_->openScriptButton, false);
+  applyInspectorButton(impl_->reloadScriptButton, false);
   impl_->physicsComponentButton->setToolTip(
       QStringLiteral("Toggle the layer physics component."));
   impl_->scriptComponentButton->setToolTip(
@@ -2927,11 +2941,14 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       QStringLiteral("Toggle the layer Cloner component."));
   impl_->openScriptButton->setToolTip(
       QStringLiteral("Open the script file linked to this layer."));
+  impl_->reloadScriptButton->setToolTip(
+      QStringLiteral("Reload the linked script runtime."));
   componentsButtonLayout->addWidget(impl_->physicsComponentButton);
   componentsButtonLayout->addWidget(impl_->scriptComponentButton);
   componentsButtonLayout->addWidget(impl_->layoutComponentButton);
   componentsButtonLayout->addWidget(impl_->cloneComponentButton);
   componentsButtonLayout->addWidget(impl_->openScriptButton);
+  componentsButtonLayout->addWidget(impl_->reloadScriptButton);
   componentsLayout->addLayout(componentsButtonLayout);
   impl_->componentPropertyWidget = new ArtifactPropertyWidget();
   impl_->componentPropertyWidget->setVisible(false);
@@ -3045,6 +3062,32 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                       : info.absoluteFilePath();
                      QDesktopServices::openUrl(
                          QUrl::fromLocalFile(openPath));
+                   });
+  QObject::connect(impl_->reloadScriptButton, &QPushButton::clicked, this,
+                   [this]() {
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->findLayer(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     layer->reloadScriptBinding();
+                     impl_->updateLayerInfo(layer);
                    });
 
   layerInfoWidget->setLayout(layerInfoLayout);
