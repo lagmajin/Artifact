@@ -670,9 +670,9 @@ void PrimitiveRenderer2D::drawGrid(float x, float y, float w, float h,
     pkt.helper.param1    = effectiveThickness;
     pkt.helper._pad[0]   = w;   // canvasSize.x (composition width)
     pkt.helper._pad[1]   = h;   // canvasSize.y (composition height)
-    pkt.helper.color1    = { color.r(), color.g(), color.b(), 1.0f };
+    pkt.helper.color1    = { color.r(), color.g(), color.b(), color.a() };
     pkt.helper.color2    = {};
-    pkt.baseColor        = { color.r(), color.g(), color.b(), 1.0f };
+    pkt.baseColor        = { color.r(), color.g(), color.b(), color.a() };
     impl_->cmdBuf_->append(pkt);
 }
 

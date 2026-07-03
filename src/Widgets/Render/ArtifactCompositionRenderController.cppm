@@ -4997,6 +4997,7 @@ public:
                                ArtifactCameraLayer *activeCamera,
                                const FramePosition &currentFrame, float cw,
                                float ch);
+  void drawViewportCanvasOverlay(float cw, float ch);
   void drawViewportGuideOverlay(const ArtifactCompositionPtr &comp, float cw,
                                 float ch);
   void drawViewportInteractionOverlay(CompositionRenderController *owner,
@@ -5761,6 +5762,7 @@ void CompositionRenderController::setGridSettings(
     const Artifact::Grid::GridSettings &settings) {
   impl_->gridSettings_ = settings;
   if (impl_->showGrid_) {
+    impl_->invalidateOverlayComposite();
     markRenderDirty();
   }
 }
@@ -9876,37 +9878,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setCanvasSize(cw, ch);
       renderer_->setZoom(prevZoom);
       renderer_->setPan(prevPanX, prevPanY);
-      const bool showGridDebug =
-          owner->isLineDebugKindVisible(LineDebugKind::Grid);
-      if (showGrid_ && showGridDebug) {
-        renderer_->drawGrid(0, 0, cw, ch,
-                            std::max(1.0f, gridSettings_.majorInterval),
-                            gridSettings_.majorStyle.thickness,
-                            gridSettings_.majorColor);
-        const FloatColor thirdsColor{0.32f, 0.86f, 1.0f, 0.52f};
-        const FloatColor thirdsShadow{0.0f, 0.0f, 0.0f, 0.26f};
-        const float thirdX1 = cw / 3.0f;
-        const float thirdX2 = cw * 2.0f / 3.0f;
-        const float thirdY1 = ch / 3.0f;
-        const float thirdY2 = ch * 2.0f / 3.0f;
-        drawTaggedSolidLine(renderer_.get(), {thirdX1, 0.0f}, {thirdX1, ch},
-                            thirdsShadow, 2.0f, showGridDebug);
-        drawTaggedSolidLine(renderer_.get(), {thirdX2, 0.0f}, {thirdX2, ch},
-                            thirdsShadow, 2.0f, showGridDebug);
-        drawTaggedSolidLine(renderer_.get(), {0.0f, thirdY1}, {cw, thirdY1},
-                            thirdsShadow, 2.0f, showGridDebug);
-        drawTaggedSolidLine(renderer_.get(), {0.0f, thirdY2}, {cw, thirdY2},
-                            thirdsShadow, 2.0f, showGridDebug);
-        drawTaggedSolidLine(renderer_.get(), {thirdX1, 0.0f}, {thirdX1, ch},
-                            thirdsColor, 1.0f, showGridDebug);
-        drawTaggedSolidLine(renderer_.get(), {thirdX2, 0.0f}, {thirdX2, ch},
-                            thirdsColor, 1.0f, showGridDebug);
-        drawTaggedSolidLine(renderer_.get(), {0.0f, thirdY1}, {cw, thirdY1},
-                            thirdsColor, 1.0f, showGridDebug);
-        drawTaggedSolidLine(renderer_.get(), {0.0f, thirdY2}, {cw, thirdY2},
-                            thirdsColor, 1.0f, showGridDebug);
-      }
-
       if (compositionViewLog().isDebugEnabled()) {
         const auto tl = renderer_->canvasToViewport({0.0f, 0.0f});
         const auto br = renderer_->canvasToViewport({cw, ch});
@@ -10725,6 +10696,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       } // BoundingBox scope
     } */
 
+    drawViewportCanvasOverlay(cw, ch);
     drawViewportInteractionOverlay(owner, currentFrame, cw, ch);
     drawViewportGuideOverlay(comp, cw, ch);
     drawViewportOverlayPass(owner, comp, activeCamera, currentFrame, cw, ch);
@@ -11268,6 +11240,89 @@ void CompositionRenderController::Impl::drawViewportGuideOverlay(
   }
 }
 
+void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
+                                                                  float ch) {
+  if (!renderer_ || cw <= 0.0f || ch <= 0.0f) {
+    return;
+  }
+
+  const float zoom = std::max(renderer_->getZoom(), 0.001f);
+  if (showGrid_) {
+    const float majorSpacing = std::max(1.0f, gridSettings_.majorInterval);
+    const int subdivisions = std::max(1, gridSettings_.subdivisions);
+    const float minorSpacing = majorSpacing / static_cast<float>(subdivisions);
+
+    if (gridSettings_.showMinor && subdivisions > 1 &&
+        minorSpacing * zoom >= 4.0f) {
+      renderer_->drawGrid(0.0f, 0.0f, cw, ch, minorSpacing,
+                          gridSettings_.minorStyle.thickness,
+                          gridSettings_.minorColor);
+    }
+    if (gridSettings_.showMajor) {
+      renderer_->drawGrid(0.0f, 0.0f, cw, ch, majorSpacing,
+                          gridSettings_.majorStyle.thickness,
+                          gridSettings_.majorColor);
+    }
+    if (gridSettings_.showAxis) {
+      const auto origin = renderer_->canvasToViewport({0.0f, 0.0f});
+      const auto bottomRight = renderer_->canvasToViewport({cw, ch});
+      const float axisThickness =
+          std::max(1.0f, gridSettings_.axisStyle.thickness);
+      renderer_->drawThickLineLocal(
+          {origin.x, origin.y}, {bottomRight.x, origin.y}, axisThickness,
+          gridSettings_.axisColor);
+      renderer_->drawThickLineLocal(
+          {origin.x, origin.y}, {origin.x, bottomRight.y}, axisThickness,
+          gridSettings_.axisColor);
+    }
+  }
+
+  if (!showSafeMargins_) {
+    return;
+  }
+
+  const auto canvasTopLeft = renderer_->canvasToViewport({0.0f, 0.0f});
+  const auto canvasBottomRight = renderer_->canvasToViewport({cw, ch});
+  const float screenW = std::abs(canvasBottomRight.x - canvasTopLeft.x);
+  const float screenH = std::abs(canvasBottomRight.y - canvasTopLeft.y);
+  if (screenW <= 0.0f || screenH <= 0.0f) {
+    return;
+  }
+
+  const FloatColor outlineColor = {0.0f, 0.0f, 0.0f, 0.72f};
+  const FloatColor innerColor = {0.95f, 0.97f, 1.0f, 0.94f};
+  const auto snapScreen = [](float value) {
+    return std::round(value) + 0.5f;
+  };
+  const auto drawSafeRect = [&](float ratio) {
+    const float insetX = screenW * (1.0f - ratio) * 0.5f;
+    const float insetY = screenH * (1.0f - ratio) * 0.5f;
+    const float x = snapScreen(std::min(canvasTopLeft.x, canvasBottomRight.x) +
+                               insetX);
+    const float y = snapScreen(std::min(canvasTopLeft.y, canvasBottomRight.y) +
+                               insetY);
+    const float w = std::max(0.0f, screenW - insetX * 2.0f);
+    const float h = std::max(0.0f, screenH - insetY * 2.0f);
+    if (w <= 2.0f || h <= 2.0f) {
+      return;
+    }
+    renderer_->drawRectOutlineLocal(x, y, w, h, outlineColor);
+    renderer_->drawRectOutlineLocal(x + 1.0f, y + 1.0f, w - 2.0f, h - 2.0f,
+                                    innerColor);
+  };
+
+  drawSafeRect(0.9f);
+  drawSafeRect(0.8f);
+
+  const float centerX =
+      snapScreen((canvasTopLeft.x + canvasBottomRight.x) * 0.5f);
+  const float centerY =
+      snapScreen((canvasTopLeft.y + canvasBottomRight.y) * 0.5f);
+  const float crossSize =
+      std::clamp(std::min(screenW, screenH) * 0.05f, 12.0f, 72.0f);
+  renderer_->drawCrosshair(centerX, centerY, crossSize, innerColor);
+}
+
 void CompositionRenderController::Impl::drawViewportInteractionOverlay(
     CompositionRenderController *owner, const FramePosition &currentFrame,
     float cw, float ch) {
@@ -11328,49 +11383,6 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
     }
   }
 
-  if (!showSafeMargins_) {
-    return;
-  }
-
-  const float actionSafeW = cw * 0.9f;
-  const float actionSafeH = ch * 0.9f;
-  const float titleSafeW = cw * 0.8f;
-  const float titleSafeH = ch * 0.8f;
-  const FloatColor outlineColor = {0.0f, 0.0f, 0.0f, 0.72f};
-  const FloatColor innerColor = {0.95f, 0.97f, 1.0f, 0.94f};
-  const auto snap = [](float value) { return std::round(value) + 0.5f; };
-
-  const float actionX = snap((cw - actionSafeW) * 0.5f);
-  const float actionY = snap((ch - actionSafeH) * 0.5f);
-  const float actionX2 = snap(actionX + actionSafeW);
-  const float actionY2 = snap(actionY + actionSafeH);
-  const float titleX = snap((cw - titleSafeW) * 0.5f);
-  const float titleY = snap((ch - titleSafeH) * 0.5f);
-  const float titleX2 = snap(titleX + titleSafeW);
-  const float titleY2 = snap(titleY + titleSafeH);
-  const auto drawSafeRect = [&](float x1, float y1, float x2, float y2) {
-    if (!renderer_) {
-      return;
-    }
-    const float w = x2 - x1;
-    const float h = y2 - y1;
-    if (w <= 0.0f || h <= 0.0f) {
-      return;
-    }
-
-    renderer_->drawRectOutline(x1, y1, w, h, outlineColor);
-    if (w > 4.0f && h > 4.0f) {
-      renderer_->drawRectOutline(x1 + 1.0f, y1 + 1.0f, w - 2.0f, h - 2.0f,
-                                 innerColor);
-    }
-  };
-
-  drawSafeRect(actionX, actionY, actionX2, actionY2);
-  drawSafeRect(titleX, titleY, titleX2, titleY2);
-
-  const float crossSize = std::max(20.0f, std::min(cw, ch) * 0.05f);
-  renderer_->drawCrosshair(snap(cw * 0.5f), snap(ch * 0.5f), crossSize,
-                           innerColor);
 }
 
 void CompositionRenderController::Impl::drawSelectionEditingOverlay(
