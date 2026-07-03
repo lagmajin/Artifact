@@ -24,6 +24,9 @@ module;
 #include <QProcessEnvironment>
 #include <QDir>
 #include <QFileInfo>
+#include <QPalette>
+#include <QColor>
+#include <QFont>
 #include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 module Artifact.Widget.Dialog.RenderOutputSetting;
 
@@ -61,6 +64,13 @@ namespace Artifact
   QLabel* advancedEncodeLabel = nullptr;
   QLabel* preflightSummaryLabel = nullptr;
   QLabel* preflightDetailsLabel = nullptr;
+  QFrame* playbackGuideFrame = nullptr;
+  QFrame* intermediateGuideFrame = nullptr;
+  QFrame* noAlphaGuideFrame = nullptr;
+  QFrame* alphaGuideFrame = nullptr;
+  QFrame* straightGuideFrame = nullptr;
+  QFrame* premultipliedGuideFrame = nullptr;
+  QLabel* recommendationLabel = nullptr;
   double compositionFrameRate = 30.0;
     QComboBox* renderBackendCombo = nullptr;
     QComboBox* resolutionCombo = nullptr;
@@ -102,6 +112,7 @@ namespace Artifact
   void updateActionLabels();
   void updateFrameRatePreflight();
   void updateMultiChannelUi();
+  void updateBeginnerGuide();
   QStringList selectedMultiChannelChannels() const;
   void setSelectedMultiChannelChannels(const QStringList& channels);
  static QString normalizeBackend(const QString& backend);
@@ -293,6 +304,10 @@ namespace Artifact
    
    presetCombo->clear();
    presetCombo->addItem(QStringLiteral("─ プリセットを選択 ─"), QString());
+   presetCombo->addItem(QStringLiteral("再生・配布用 — MP4 / H.264"), QStringLiteral("guide.playback"));
+   presetCombo->addItem(QStringLiteral("編集用中間素材 — ProRes 422"), QStringLiteral("guide.intermediate"));
+   presetCombo->addItem(QStringLiteral("透過つき編集素材 — ProRes 4444"), QStringLiteral("guide.alpha"));
+   presetCombo->insertSeparator(presetCombo->count());
    
    const auto presets = ArtifactRenderFormatPresetManager::instance().allPresets();
   for (const auto& preset : presets) {
@@ -362,6 +377,53 @@ namespace Artifact
     guide = QStringLiteral("Alphaなし。透過は書き出されません。");
   }
   formatGuideLabel->setText(guide);
+  updateBeginnerGuide();
+ }
+
+ void setGuideFrameState(QFrame* frame, bool selected, bool warning = false)
+ {
+   if (!frame) {
+     return;
+   }
+   QPalette palette = frame->palette();
+   const QColor base = palette.color(QPalette::Window);
+   palette.setColor(QPalette::Window, selected ? QColor(QStringLiteral("#263A53")) : base);
+   palette.setColor(QPalette::WindowText,
+                    warning ? QColor(QStringLiteral("#F09A3E"))
+                            : (selected ? QColor(QStringLiteral("#78AFFF"))
+                                        : palette.color(QPalette::WindowText)));
+   frame->setPalette(palette);
+   frame->setAutoFillBackground(selected);
+   frame->setFrameShadow(selected ? QFrame::Raised : QFrame::Plain);
+ }
+
+ void ArtifactRenderOutputSettingDialog::Impl::updateBeginnerGuide()
+ {
+   const QString container = formatCombo ? formatCombo->currentText() : QStringLiteral("MP4");
+   const QString codec = codecCombo ? codecCombo->currentText() : QStringLiteral("H.264");
+   const bool alphaEnabled = alphaEnabledCheck && alphaEnabledCheck->isChecked();
+   const bool intermediate = container == QStringLiteral("MOV")
+       && (codec == QStringLiteral("ProRes") || codec == QStringLiteral("DNxHD"));
+
+   setGuideFrameState(playbackGuideFrame, !intermediate);
+   setGuideFrameState(intermediateGuideFrame, intermediate);
+   setGuideFrameState(noAlphaGuideFrame, !alphaEnabled);
+   setGuideFrameState(alphaGuideFrame, alphaEnabled);
+   setGuideFrameState(straightGuideFrame, alphaEnabled);
+   setGuideFrameState(premultipliedGuideFrame, false, true);
+
+   if (recommendationLabel) {
+     if (!intermediate) {
+       recommendationLabel->setText(
+           QStringLiteral("おすすめ: 再生・配布用 / MP4 / H.264 / 透過なし"));
+     } else if (alphaEnabled) {
+       recommendationLabel->setText(
+           QStringLiteral("おすすめ: 編集用中間素材 / ProRes 4444 / Straight"));
+     } else {
+       recommendationLabel->setText(
+           QStringLiteral("おすすめ: 編集用中間素材 / ProRes 422 / 透過なし"));
+     }
+   }
  }
 
  void ArtifactRenderOutputSettingDialog::Impl::updateAdvancedSummary()
@@ -414,8 +476,7 @@ void ArtifactRenderOutputSettingDialog::Impl::updateActionLabels()
    if (!okButton) {
      return;
    }
-   const bool alphaEnabled = alphaEnabledCheck ? alphaEnabledCheck->isChecked() : true;
-   okButton->setText(alphaEnabled ? QStringLiteral("書き出し") : QStringLiteral("Alphaなしで書き出し"));
+   okButton->setText(QStringLiteral("この設定でレンダー"));
   if (cancelButton) {
     cancelButton->setText(QStringLiteral("キャンセル"));
   }
@@ -575,6 +636,29 @@ void ArtifactRenderOutputSettingDialog::Impl::setSelectedMultiChannelChannels(co
   void ArtifactRenderOutputSettingDialog::Impl::applyPresetToEditors(const QString& presetId)
   {
    if (presetId.isEmpty() || !formatCombo || !codecCombo) return;
+
+   if (presetId == QStringLiteral("guide.playback")) {
+     formatCombo->setCurrentText(QStringLiteral("MP4"));
+     codecCombo->setCurrentText(QStringLiteral("H.264"));
+     codecProfile.clear();
+     if (alphaEnabledCheck) alphaEnabledCheck->setChecked(false);
+     if (includeAudioCheck) includeAudioCheck->setChecked(true);
+     return;
+   }
+   if (presetId == QStringLiteral("guide.intermediate")) {
+     formatCombo->setCurrentText(QStringLiteral("MOV"));
+     codecCombo->setCurrentText(QStringLiteral("ProRes"));
+     codecProfile = QStringLiteral("hq");
+     if (alphaEnabledCheck) alphaEnabledCheck->setChecked(false);
+     return;
+   }
+   if (presetId == QStringLiteral("guide.alpha")) {
+     formatCombo->setCurrentText(QStringLiteral("MOV"));
+     codecCombo->setCurrentText(QStringLiteral("ProRes"));
+     codecProfile = QStringLiteral("4444");
+     if (alphaEnabledCheck) alphaEnabledCheck->setChecked(true);
+     return;
+   }
    
    const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(presetId);
    if (!preset) return;
@@ -680,11 +764,78 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
 	
  ArtifactRenderOutputSettingDialog::ArtifactRenderOutputSettingDialog(QWidget* parent /*= nullptr*/):QDialog(parent),impl_(new Impl())
  {
-    setWindowTitle("Render Output Settings");
-    setMinimumWidth(760);
+    setWindowTitle(QStringLiteral("レンダー出力の設定"));
+    setMinimumWidth(920);
 
     auto mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(14, 14, 14, 14);
+    mainLayout->setSpacing(10);
     auto formLayout = new QFormLayout();
+
+    const auto createGuideFrame = [this](const QString& title, const QString& detail) {
+      auto* frame = new QFrame(this);
+      frame->setFrameShape(QFrame::StyledPanel);
+      frame->setFrameShadow(QFrame::Plain);
+      auto* layout = new QVBoxLayout(frame);
+      layout->setContentsMargins(10, 8, 10, 8);
+      layout->setSpacing(3);
+      auto* titleLabel = new QLabel(title, frame);
+      QFont titleFont = titleLabel->font();
+      titleFont.setBold(true);
+      titleLabel->setFont(titleFont);
+      auto* detailLabel = new QLabel(detail, frame);
+      detailLabel->setWordWrap(true);
+      layout->addWidget(titleLabel);
+      layout->addWidget(detailLabel);
+      return frame;
+    };
+
+    auto* beginnerGuide = new QFrame(this);
+    beginnerGuide->setFrameShape(QFrame::StyledPanel);
+    beginnerGuide->setFrameShadow(QFrame::Raised);
+    auto* beginnerLayout = new QHBoxLayout(beginnerGuide);
+    beginnerLayout->setContentsMargins(10, 10, 10, 10);
+    beginnerLayout->setSpacing(10);
+
+    auto* purposeGroup = new QGroupBox(QStringLiteral("1  何に使いますか？"), beginnerGuide);
+    auto* purposeLayout = new QHBoxLayout(purposeGroup);
+    impl_->playbackGuideFrame = createGuideFrame(
+        QStringLiteral("再生・配布用"), QStringLiteral("MP4 / H.264\n軽い・すぐ見られる"));
+    impl_->intermediateGuideFrame = createGuideFrame(
+        QStringLiteral("編集用の中間素材"), QStringLiteral("ProRes / DNxHD\n高品質・再編集向け"));
+    purposeLayout->addWidget(impl_->playbackGuideFrame);
+    purposeLayout->addWidget(impl_->intermediateGuideFrame);
+
+    auto* alphaGroup = new QGroupBox(QStringLiteral("2  透明を残しますか？"), beginnerGuide);
+    auto* guideAlphaLayout = new QHBoxLayout(alphaGroup);
+    impl_->noAlphaGuideFrame = createGuideFrame(
+        QStringLiteral("不要"), QStringLiteral("通常の動画・配布向け"));
+    impl_->alphaGuideFrame = createGuideFrame(
+        QStringLiteral("必要"), QStringLiteral("ProRes 4444 / PNG連番"));
+    guideAlphaLayout->addWidget(impl_->noAlphaGuideFrame);
+    guideAlphaLayout->addWidget(impl_->alphaGuideFrame);
+
+    auto* alphaModeGroup = new QGroupBox(QStringLiteral("3  透明の計算方法"), beginnerGuide);
+    auto* alphaModeLayout = new QHBoxLayout(alphaModeGroup);
+    impl_->straightGuideFrame = createGuideFrame(
+        QStringLiteral("Straight"), QStringLiteral("通常はこちら\n色と透明度を別に保持"));
+    impl_->premultipliedGuideFrame = createGuideFrame(
+        QStringLiteral("Premultiplied"), QStringLiteral("受け渡し先の指定時のみ\n誤ると輪郭にフチ"));
+    alphaModeLayout->addWidget(impl_->straightGuideFrame);
+    alphaModeLayout->addWidget(impl_->premultipliedGuideFrame);
+
+    beginnerLayout->addWidget(purposeGroup, 2);
+    beginnerLayout->addWidget(alphaGroup, 2);
+    beginnerLayout->addWidget(alphaModeGroup, 2);
+
+    impl_->recommendationLabel = new QLabel(
+        QStringLiteral("おすすめ: 再生・配布用 / MP4 / H.264 / 透過なし"), this);
+    QFont recommendationFont = impl_->recommendationLabel->font();
+    recommendationFont.setBold(true);
+    impl_->recommendationLabel->setFont(recommendationFont);
+    QPalette recommendationPalette = impl_->recommendationLabel->palette();
+    recommendationPalette.setColor(QPalette::WindowText, QColor(QStringLiteral("#78AFFF")));
+    impl_->recommendationLabel->setPalette(recommendationPalette);
 
     auto* summaryFrame = new QFrame(this);
     summaryFrame->setFrameShape(QFrame::StyledPanel);
@@ -702,7 +853,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     summaryLayout->addWidget(impl_->formatGuideLabel, 2);
 
     impl_->alphaEnabledCheck = new QCheckBox(QStringLiteral("Alphaあり"), this);
-    impl_->alphaEnabledCheck->setChecked(true);
+    impl_->alphaEnabledCheck->setChecked(false);
     auto* alphaDisabledLabel = new QLabel(QStringLiteral("Alphaなし"), this);
 
     auto* alphaRow = new QHBoxLayout();
@@ -723,7 +874,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     // Format preset selection (After Effects style)
     impl_->presetCombo = new QComboBox();
     impl_->loadFormatPresets();
-    formLayout->addRow("Format Preset:", impl_->presetCombo);
+    formLayout->addRow(QStringLiteral("用途プリセット:"), impl_->presetCombo);
 
     // Format selection
     impl_->formatCombo = new QComboBox();
@@ -898,6 +1049,8 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
         impl_->cancelButton->setText(QStringLiteral("キャンセル"));
     }
 
+    mainLayout->addWidget(beginnerGuide);
+    mainLayout->addWidget(impl_->recommendationLabel);
     mainLayout->addWidget(summaryFrame);
     mainLayout->addLayout(formLayout);
     mainLayout->addWidget(impl_->advancedGroup);
@@ -958,6 +1111,9 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
 
     // フォーマット変更時に拡張子を自動更新
     QObject::connect(impl_->formatCombo, &QComboBox::currentTextChanged, [this](const QString& format) {
+        impl_->updatePresetSummary();
+        impl_->updateFormatGuide();
+        impl_->updateAdvancedSummary();
         if (!impl_->outputPathEdit) return;
         QString path = impl_->outputPathEdit->text().trimmed();
         if (path.isEmpty()) return;
@@ -984,6 +1140,9 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
 
     // コーデック変更時も拡張子を更新（ProRes → .mov など）
     QObject::connect(impl_->codecCombo, &QComboBox::currentTextChanged, [this](const QString& codec) {
+        impl_->updatePresetSummary();
+        impl_->updateFormatGuide();
+        impl_->updateAdvancedSummary();
         const QString normalizedCodec = codec.trimmed().toLower();
         if (normalizedCodec == QStringLiteral("prores")) {
             if (impl_->codecProfile.trimmed().isEmpty()) {
@@ -1030,6 +1189,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     });
     impl_->updateMultiChannelUi();
     impl_->updateActionLabels();
+    impl_->updateBeginnerGuide();
     updateAlphaPreflight(impl_->alphaEnabledCheck, impl_->preflightSummaryLabel, impl_->preflightDetailsLabel,
                          impl_->formatCombo ? impl_->formatCombo->currentText() : QStringLiteral("MP4"),
                          impl_->codecCombo ? impl_->codecCombo->currentText() : QStringLiteral("H.264"));

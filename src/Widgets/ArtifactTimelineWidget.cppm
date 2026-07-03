@@ -7378,15 +7378,16 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     }
   }
 
-  // Slide keyboard shortcuts: Alt+←/→ for inPoint, Ctrl+Alt+←/→ for outPoint
+  // Slide keyboard shortcuts: Alt+←/→ move the whole clip while preserving its
+  // source window. Keep this on the same undo surface as drag-based slide.
   if ((event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) &&
-      (event->modifiers() & Qt::AltModifier)) {
+      (event->modifiers() & Qt::AltModifier) &&
+      !(event->modifiers() & Qt::ControlModifier)) {
     auto *svc = ArtifactProjectService::instance();
     auto comp = svc ? svc->currentComposition().lock() : nullptr;
     auto *selManager = ArtifactApplicationManager::instance()->layerSelectionManager();
     if (comp && selManager) {
       const bool isShift = event->modifiers() & Qt::ShiftModifier;
-      const bool isCtrl = event->modifiers() & Qt::ControlModifier;
       const int64_t step = isShift ? 10 : 1;
       const int64_t direction = (event->key() == Qt::Key_Right) ? 1 : -1;
       const int64_t delta = direction * step;
@@ -7402,55 +7403,32 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
       }
       if (layersVec.isEmpty()) { event->accept(); return; }
 
-      const auto beforeSnapshots = captureTimelineLayerStateSnapshots(comp, layersVec);
-
+      auto macro = std::make_unique<MacroUndoCommand>(
+          QStringLiteral("Slide Clips"));
+      int commandCount = 0;
       for (const auto& layer : layersVec) {
-        const qint64 oldIn = layer->inPoint().framePosition();
-        const qint64 oldOut = layer->outPoint().framePosition();
-        const qint64 oldDuration = std::max<qint64>(1, oldOut - oldIn);
-        qint64 newIn, newOut;
-
-        if (isCtrl) {
-          // Ctrl+Alt+←/→: slide outPoint only
-          newIn = oldIn;
-          newOut = std::max<qint64>(newIn + 1, oldOut + delta);
-        } else {
-          // Alt+←/→: slide inPoint and outPoint together
-          newIn = std::max<qint64>(0, oldIn + delta);
-          newOut = std::max<qint64>(newIn + 1, newIn + oldDuration);
+        if (!layer) {
+          continue;
         }
-        layer->setInPoint(FramePosition(newIn));
-        layer->setOutPoint(FramePosition(newOut));
-
-        const qint64 inPointDelta = newIn - oldIn;
-        if (inPointDelta != 0) {
-          for (const auto &group : layer->getLayerPropertyGroups()) {
-            for (const auto &property : group.sortedProperties()) {
-              if (!property || !property->isAnimatable()) continue;
-              const auto keyframes = property->getKeyFrames();
-              if (keyframes.empty()) continue;
-              property->clearKeyFrames();
-              const int64_t fps = static_cast<int64_t>(std::llround(comp->frameRate().framerate()));
-              for (const auto &kf : keyframes) {
-                property->addKeyFrame(
-                    RationalTime(std::max<int64_t>(0, kf.time.rescaledTo(fps) + inPointDelta), fps),
-                    kf.value.isValid() ? kf.value : property->getValue(),
-                    kf.interpolation, kf.cp1_x, kf.cp1_y, kf.cp2_x, kf.cp2_y, kf.roving);
-              }
-            }
-          }
-        }
-        layer->changed();
-        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                              LayerChangedEvent::ChangeType::Modified});
+        const QVector<ArtifactAbstractLayerPtr> singleLayer{layer};
+        const auto beforeSnapshots =
+            captureTimelineLayerStateSnapshots(comp, singleLayer);
+        macro->addChild(std::make_unique<SlideClipCommand>(
+            comp->id(), layer->id(),
+            layer->inPoint().framePosition() + delta,
+            beforeSnapshots));
+        ++commandCount;
       }
 
-      Q_EMIT timelineDebugMessage(
-          QStringLiteral("Slid %1 layer(s) by %2 %3")
-              .arg(layersVec.size())
-              .arg(delta)
-              .arg(isCtrl ? QStringLiteral("outPoint") : QStringLiteral("inPoint")));
+      if (commandCount > 0) {
+        if (auto *mgr = UndoManager::instance()) {
+          mgr->push(std::move(macro));
+        }
+        Q_EMIT timelineDebugMessage(
+            QStringLiteral("Slid %1 layer(s) by %2 frame(s)")
+                .arg(commandCount)
+                .arg(delta));
+      }
     }
     event->accept();
     return;
