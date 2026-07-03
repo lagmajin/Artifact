@@ -3669,7 +3669,9 @@ public:
         gpuTextureCacheManager_.get(), currentFrame.framePosition(), true, lod,
         has3DCamera ? &cameraViewMatrix : nullptr,
         has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver, &sceneLights,
-        viewportInteracting_, surfaceGeneration(layer));
+        viewportInteracting_ ||
+            previewDownsample_ >= interactivePreviewDownsampleFloor_,
+        surfaceGeneration(layer));
     renderer_->flush();
     renderer_->setOverrideRTV(nullptr);
     renderer_->unbindColorTargetsForCompute();
@@ -8995,6 +8997,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       viewportInteracting_
           ? std::max(previewDownsample_, interactivePreviewDownsampleFloor_)
           : previewDownsample_;
+  const bool draftRendering =
+      viewportInteracting_ ||
+      previewDownsample_ >= interactivePreviewDownsampleFloor_;
   const float previewRcw = std::max(
       1.0f, viewportW / static_cast<float>(effectivePreviewDownsample));
   const float previewRch = std::max(
@@ -9780,16 +9785,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               layer.get(), layerRTV, accumSRV, rcw, rch, cw, ch, lod,
               currentFrame, matteResolver, sceneLights, has3DCamera,
               cameraViewMatrix, cameraProjMatrix);
-          if (!viewportInteracting_ && emissionRTV) {
+          if (!draftRendering && emissionRTV) {
             drawGpuLayerEmissionToTarget(layer.get(), emissionRTV);
           }
-          if (!viewportInteracting_ && normalRTV) {
+          if (!draftRendering && normalRTV) {
             drawGpuLayerNormalToTarget(layer.get(), normalRTV);
           }
-          if (!viewportInteracting_ && velocityRTV) {
+          if (!draftRendering && velocityRTV) {
             drawGpuLayerVelocityToTarget(layer.get(), velocityRTV);
           }
-          if (!viewportInteracting_ && objectIdRTV) {
+          if (!draftRendering && objectIdRTV) {
             const quint32 objectHash =
                 qHash(layer->id().toString(), 0x51a7u) & 0x00ffffffu;
             const float objectEncoded =
@@ -9798,7 +9803,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                    ArtifactIRenderer::ChannelType::ObjectId,
                                    objectEncoded);
           }
-          if (!viewportInteracting_ && materialIdRTV) {
+          if (!draftRendering && materialIdRTV) {
             QString materialKey = layer->layerName() + QStringLiteral("|material");
             if (auto* modelLayer = dynamic_cast<Artifact3DLayer*>(layer.get())) {
               materialKey = modelLayer->materialSignature();
@@ -9810,7 +9815,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                    ArtifactIRenderer::ChannelType::MaterialId,
                                    materialEncoded);
           }
-          if (!viewportInteracting_ && albedoRTV) {
+          if (!draftRendering && albedoRTV) {
             drawGpuLayerAlbedoToTarget(layer.get(), albedoRTV);
           }
           surfacePassMs = markPhaseMs();
@@ -10021,7 +10026,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               gpuTextureCacheManager_.get(), currentFrame.framePosition(),
               false, lod, has3DCamera ? &cameraViewMatrix : nullptr,
               has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver,
-              &sceneLights, viewportInteracting_,
+              &sceneLights, draftRendering,
               surfaceGeneration(layer.get()));
           surfacePassMs = markPhaseMs();
           maskPassMs = surfacePassMs;
