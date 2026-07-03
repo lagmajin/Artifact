@@ -4514,6 +4514,10 @@ public:
   QHash<QString, LayerSurfaceCacheEntry> surfaceCache_;
   QHash<QString, quint64> surfaceGenerations_;
   std::unique_ptr<GPUTextureCacheManager> gpuTextureCacheManager_;
+  QElapsedTimer projectPreflightTimer_;
+  CompositionID projectPreflightCompositionId_;
+  bool cachedProjectHasBlockingErrors_ = false;
+  int cachedProjectDiagnosticCount_ = 0;
 
   // Render debounce timer: coalesces rapid LayerChangedEvent notifications
   // into a single renderOneFrame() call, preventing GPU saturation during drag
@@ -4923,6 +4927,7 @@ public:
                 if (event.compositionId != compositionId) {
                   return;
                 }
+                projectPreflightTimer_.invalidate();
                 applyCompositionState(composition);
                 invalidateBaseComposite();
                 invalidateOverlayComposite();
@@ -8897,17 +8902,27 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   }
 
   if (auto *service = ArtifactProjectService::instance()) {
-    const auto projectDiagnostics = service->currentProjectDiagnostics();
-    const bool hasBlockingErrors = std::any_of(
-        projectDiagnostics.begin(), projectDiagnostics.end(),
-        [](const auto& diagnostic) { return diagnostic.isError(); });
-    if (hasBlockingErrors) {
+    constexpr qint64 kProjectPreflightRefreshMs = 1000;
+    const bool compositionChanged =
+        projectPreflightCompositionId_ != comp->id();
+    if (compositionChanged || !projectPreflightTimer_.isValid() ||
+        projectPreflightTimer_.elapsed() >= kProjectPreflightRefreshMs) {
+      const auto projectDiagnostics = service->currentProjectDiagnostics();
+      cachedProjectHasBlockingErrors_ = std::any_of(
+          projectDiagnostics.begin(), projectDiagnostics.end(),
+          [](const auto &diagnostic) { return diagnostic.isError(); });
+      cachedProjectDiagnosticCount_ =
+          static_cast<int>(projectDiagnostics.size());
+      projectPreflightCompositionId_ = comp->id();
+      projectPreflightTimer_.restart();
+    }
+    if (cachedProjectHasBlockingErrors_) {
       const QString blockedSummary =
           QStringLiteral("preflight=blocked issues=%1")
-              .arg(static_cast<int>(projectDiagnostics.size()));
+              .arg(cachedProjectDiagnosticCount_);
       if (blockedSummary != lastRenderPathSummary_) {
         qWarning() << "[CompositionView] render preflight blocked by project health errors"
-                   << "issues=" << projectDiagnostics.size();
+                   << "issues=" << cachedProjectDiagnosticCount_;
       }
       lastRenderPathSummary_ = blockedSummary;
       renderCrashTrace("render-preflight-blocked-present-begin", renderFrameCounter_);
