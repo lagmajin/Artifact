@@ -129,7 +129,12 @@ namespace {
 
   constexpr bool isAuxiliaryColorChannel(ArtifactIRenderer::ChannelType type)
   {
-    return type == ArtifactIRenderer::ChannelType::AlbedoR ||
+    return type == ArtifactIRenderer::ChannelType::NormalX ||
+           type == ArtifactIRenderer::ChannelType::NormalY ||
+           type == ArtifactIRenderer::ChannelType::NormalZ ||
+           type == ArtifactIRenderer::ChannelType::VelocityX ||
+           type == ArtifactIRenderer::ChannelType::VelocityY ||
+           type == ArtifactIRenderer::ChannelType::AlbedoR ||
            type == ArtifactIRenderer::ChannelType::AlbedoG ||
            type == ArtifactIRenderer::ChannelType::AlbedoB ||
            type == ArtifactIRenderer::ChannelType::Custom;
@@ -176,6 +181,11 @@ namespace {
     case ArtifactIRenderer::ChannelType::Green: return 1;
     case ArtifactIRenderer::ChannelType::Blue:  return 2;
     case ArtifactIRenderer::ChannelType::Alpha: return 3;
+    case ArtifactIRenderer::ChannelType::NormalX: return 0;
+    case ArtifactIRenderer::ChannelType::NormalY: return 1;
+    case ArtifactIRenderer::ChannelType::NormalZ: return 2;
+    case ArtifactIRenderer::ChannelType::VelocityX: return 0;
+    case ArtifactIRenderer::ChannelType::VelocityY: return 1;
     case ArtifactIRenderer::ChannelType::AlbedoR: return 0;
     case ArtifactIRenderer::ChannelType::AlbedoG: return 1;
     case ArtifactIRenderer::ChannelType::AlbedoB: return 2;
@@ -448,6 +458,8 @@ namespace {
   std::array<bool, kArtifactChannelCount> m_channelEnabled = makeDefaultChannelFlags();
   std::array<ITextureView*, kArtifactChannelCount> m_auxiliaryChannelSources{};
   bool meshEmissionOnlyPass_ = false;
+  bool meshNormalOnlyPass_ = false;
+  bool meshVelocityOnlyPass_ = false;
   bool meshAlbedoOnlyPass_ = false;
   ArtifactIRenderer::ChannelType meshIdPassChannel_ =
       ArtifactIRenderer::ChannelType::Custom;
@@ -504,7 +516,8 @@ namespace {
   void drawMesh(const QString& cacheKey, const ArtifactCore::Mesh& mesh,
                 const ArtifactCore::Material& material,
                 const QMatrix4x4& modelMatrix, float opacity,
-                int shadingMode)
+                int shadingMode,
+                const QMatrix4x4* previousModelMatrix)
   {
     auto* renderer = meshRendererFor(cacheKey);
     if (!renderer) {
@@ -572,6 +585,8 @@ namespace {
 
     renderer->setViewMatrix(meshViewMatrix_.constData());
     renderer->setProjectionMatrix(meshProjMatrix_.constData());
+    renderer->setPreviousViewMatrix(meshViewMatrix_.constData());
+    renderer->setPreviousProjectionMatrix(meshProjMatrix_.constData());
     renderer->setBaseColorTexture(material.baseColorTexture().toQString());
     renderer->setEmissionTexture(material.emissionTexture().toQString());
     renderer->setEmissionColor(material.emissionColor(),
@@ -583,9 +598,14 @@ namespace {
 
     ArtifactCore::InstanceData instance{};
     const float* modelData = modelMatrix.constData();
+    const QMatrix4x4& previousMatrix =
+        previousModelMatrix ? *previousModelMatrix : modelMatrix;
+    const float* previousModelData = previousMatrix.constData();
     for (int row = 0; row < 4; ++row) {
       for (int col = 0; col < 4; ++col) {
         instance.transform[row * 4 + col] = modelData[col * 4 + row];
+        instance.previousTransform[row * 4 + col] =
+            previousModelData[col * 4 + row];
       }
     }
     const QColor color = material.baseColor();
@@ -607,6 +627,8 @@ namespace {
         meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ? 5 :
         meshIdPassChannel_ == ArtifactIRenderer::ChannelType::MaterialId ? 6 :
         meshEmissionOnlyPass_ ? 4 :
+        meshNormalOnlyPass_ ? 2 :
+        meshVelocityOnlyPass_ ? 7 :
         meshAlbedoOnlyPass_ ? 1
                             : std::clamp(shadingMode, 1, 3);
     instance.timeOffset = static_cast<float>(effectiveShadingMode);
@@ -670,6 +692,10 @@ namespace {
     meshIdPassChannel_ = channel;
     meshIdPassEncodedValue_ = encodedId;
   }
+  void setMeshNormalOnlyPass(bool enabled) { meshNormalOnlyPass_ = enabled; }
+  bool isMeshNormalOnlyPass() const { return meshNormalOnlyPass_; }
+  void setMeshVelocityOnlyPass(bool enabled) { meshVelocityOnlyPass_ = enabled; }
+  bool isMeshVelocityOnlyPass() const { return meshVelocityOnlyPass_; }
   void setMeshAlbedoOnlyPass(bool enabled) { meshAlbedoOnlyPass_ = enabled; }
   bool isMeshAlbedoOnlyPass() const { return meshAlbedoOnlyPass_; }
   FloatColor getClearColor() const { return clearColor_; }
@@ -1605,7 +1631,10 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     return {};
    }
    const QImage colorImage = readbackTextureViewToImage(sourceView);
-   if (channel == ArtifactIRenderer::ChannelType::AlbedoR ||
+   if (channel == ArtifactIRenderer::ChannelType::NormalX ||
+       channel == ArtifactIRenderer::ChannelType::NormalY ||
+       channel == ArtifactIRenderer::ChannelType::NormalZ ||
+       channel == ArtifactIRenderer::ChannelType::AlbedoR ||
        channel == ArtifactIRenderer::ChannelType::AlbedoG ||
        channel == ArtifactIRenderer::ChannelType::AlbedoB) {
     const int offset = rgbaOffsetForChannel(channel);
@@ -2165,7 +2194,8 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
     ArtifactIRenderer::ChannelType channel, ITextureView* textureView)
 {
   const auto index = static_cast<size_t>(channel);
-  if (index >= m_auxiliaryChannelSources.size() || !isAuxiliarySingleChannel(channel)) {
+  if (index >= m_auxiliaryChannelSources.size() ||
+      (!isAuxiliarySingleChannel(channel) && !isAuxiliaryColorChannel(channel))) {
    return;
   }
   m_auxiliaryChannelSources[index] = textureView;
@@ -2371,6 +2401,13 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
       impl_->isChannelEnabled(ChannelType::AlbedoR) ||
       impl_->isChannelEnabled(ChannelType::AlbedoG) ||
       impl_->isChannelEnabled(ChannelType::AlbedoB);
+  const bool needNormal =
+      impl_->isChannelEnabled(ChannelType::NormalX) ||
+      impl_->isChannelEnabled(ChannelType::NormalY) ||
+      impl_->isChannelEnabled(ChannelType::NormalZ);
+  const bool needVelocity =
+      impl_->isChannelEnabled(ChannelType::VelocityX) ||
+      impl_->isChannelEnabled(ChannelType::VelocityY);
 
   QImage rgba;
   if (needRgba) {
@@ -2414,6 +2451,24 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
         impl_->m_auxiliaryChannelSources[index]);
    }
   }
+  QImage normal;
+  if (needNormal) {
+   const auto index = static_cast<size_t>(ChannelType::NormalX);
+   if (index < impl_->m_auxiliaryChannelSources.size() &&
+       impl_->m_auxiliaryChannelSources[index]) {
+    normal = impl_->readbackTextureViewToImage(
+        impl_->m_auxiliaryChannelSources[index]);
+   }
+  }
+  QImage velocity;
+  if (needVelocity) {
+   const auto index = static_cast<size_t>(ChannelType::VelocityX);
+   if (index < impl_->m_auxiliaryChannelSources.size() &&
+       impl_->m_auxiliaryChannelSources[index]) {
+    velocity = impl_->readbackTextureViewToImage(
+        impl_->m_auxiliaryChannelSources[index]);
+   }
+  }
 
   QSize imageSize;
   if (!rgba.isNull()) {
@@ -2428,6 +2483,10 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
    imageSize = materialId.size();
   } else if (!albedo.isNull()) {
    imageSize = albedo.size();
+  } else if (!normal.isNull()) {
+   imageSize = normal.size();
+  } else if (!velocity.isNull()) {
+   imageSize = velocity.size();
   } else {
    return {};
   }
@@ -2530,6 +2589,71 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
    writeAlbedoChannel(ChannelType::AlbedoB, 2);
   }
 
+  if (needNormal && !normal.isNull() && normal.size() == imageSize) {
+   const QImage rgba = (normal.format() == QImage::Format_RGBA8888)
+                           ? normal
+                           : normal.convertToFormat(QImage::Format_RGBA8888);
+   auto writeNormalChannel = [&](ChannelType channelType, int offset) {
+    if (!impl_->isChannelEnabled(channelType)) {
+      return;
+    }
+    const ArtifactCore::ChannelType type = toCoreChannel(channelType);
+    auto outChannel = image.getChannel(type);
+    if (!outChannel) {
+      image.addChannel(type);
+      outChannel = image.getChannel(type);
+    }
+    if (!outChannel) {
+      return;
+    }
+    for (int y = 0; y < rgba.height(); ++y) {
+      const auto* src = rgba.constScanLine(y);
+      auto* dst = outChannel->data() +
+                  static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
+      for (int x = 0; x < rgba.width(); ++x) {
+        const float encoded =
+            static_cast<float>(src[x * 4 + offset]) / 255.0f;
+        dst[x] = encoded * 2.0f - 1.0f;
+      }
+    }
+   };
+   writeNormalChannel(ChannelType::NormalX, 0);
+   writeNormalChannel(ChannelType::NormalY, 1);
+   writeNormalChannel(ChannelType::NormalZ, 2);
+  }
+
+  if (needVelocity && !velocity.isNull() && velocity.size() == imageSize) {
+   const QImage rgba = (velocity.format() == QImage::Format_RGBA8888)
+                           ? velocity
+                           : velocity.convertToFormat(QImage::Format_RGBA8888);
+   auto writeVelocityChannel = [&](ChannelType channelType, int offset) {
+    if (!impl_->isChannelEnabled(channelType)) {
+      return;
+    }
+    const ArtifactCore::ChannelType type = toCoreChannel(channelType);
+    auto outChannel = image.getChannel(type);
+    if (!outChannel) {
+      image.addChannel(type);
+      outChannel = image.getChannel(type);
+    }
+    if (!outChannel) {
+      return;
+    }
+    for (int y = 0; y < rgba.height(); ++y) {
+      const auto* src = rgba.constScanLine(y);
+      auto* dst = outChannel->data() +
+                  static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
+      for (int x = 0; x < rgba.width(); ++x) {
+        const float encoded =
+            static_cast<float>(src[x * 4 + offset]) / 255.0f;
+        dst[x] = (encoded - 0.5f) * 2.0f;
+      }
+    }
+   };
+   writeVelocityChannel(ChannelType::VelocityX, 0);
+   writeVelocityChannel(ChannelType::VelocityY, 1);
+  }
+
   auto writeAuxGrayChannel = [&](const QImage& srcImage,
                                  ArtifactCore::ChannelType dstType) {
    if (srcImage.isNull() || srcImage.size() != imageSize) {
@@ -2588,6 +2712,18 @@ bool ArtifactIRenderer::isMeshEmissionOnlyPass() const {
 }
 void ArtifactIRenderer::setMeshIdPass(ChannelType channel, float encodedId) {
   impl_->setMeshIdPass(channel, encodedId);
+}
+void ArtifactIRenderer::setMeshNormalOnlyPass(bool enabled) {
+  impl_->setMeshNormalOnlyPass(enabled);
+}
+bool ArtifactIRenderer::isMeshNormalOnlyPass() const {
+  return impl_->isMeshNormalOnlyPass();
+}
+void ArtifactIRenderer::setMeshVelocityOnlyPass(bool enabled) {
+  impl_->setMeshVelocityOnlyPass(enabled);
+}
+bool ArtifactIRenderer::isMeshVelocityOnlyPass() const {
+  return impl_->isMeshVelocityOnlyPass();
 }
 void ArtifactIRenderer::setMeshAlbedoOnlyPass(bool enabled) {
   impl_->setMeshAlbedoOnlyPass(enabled);
@@ -2913,8 +3049,9 @@ void ArtifactIRenderer::draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail:
 void ArtifactIRenderer::drawMesh(const QString& cacheKey, const ArtifactCore::Mesh& mesh,
                                  const ArtifactCore::Material& material,
                                  const QMatrix4x4& modelMatrix, float opacity,
-                                 int shadingMode)
-{ impl_->drawMesh(cacheKey, mesh, material, modelMatrix, opacity, shadingMode); }
+                                 int shadingMode,
+                                 const QMatrix4x4* previousModelMatrix)
+{ impl_->drawMesh(cacheKey, mesh, material, modelMatrix, opacity, shadingMode, previousModelMatrix); }
  void ArtifactIRenderer::setUpscaleConfig(bool enable, float sharpness)
  {
   impl_->m_upscaleEnabled = enable;

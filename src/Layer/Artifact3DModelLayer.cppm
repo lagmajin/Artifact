@@ -657,12 +657,20 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   const auto size = sourceSize();
   const RationalTime frameTime(currentFrame(), 30); // Assume 30fps for now
   const auto snapshot = t3.snapshotAt(frameTime);
+  const RationalTime previousFrameTime(std::max<int64_t>(0, currentFrame() - 1), 30);
+  const auto previousSnapshot = t3.snapshotAt(previousFrameTime);
   QMatrix4x4 modelMatrix;
   modelMatrix.setToIdentity();
   modelMatrix.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
   modelMatrix.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
   modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, 1.0f);
   modelMatrix.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
+  QMatrix4x4 previousModelMatrix;
+  previousModelMatrix.setToIdentity();
+  previousModelMatrix.translate(previousSnapshot.positionX, previousSnapshot.positionY, previousSnapshot.positionZ);
+  previousModelMatrix.rotate(previousSnapshot.rotation, 0.0f, 0.0f, 1.0f);
+  previousModelMatrix.scale(previousSnapshot.scaleX, previousSnapshot.scaleY, 1.0f);
+  previousModelMatrix.translate(-previousSnapshot.anchorX, -previousSnapshot.anchorY, -previousSnapshot.anchorZ);
 
   // Get mesh data
   const auto &vertexAttrs = impl_->mesh_.vertexAttributes();
@@ -684,7 +692,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   if (impl_->renderMode_ == RenderMode::Solid) {
     const QString cacheKey = sourcePath().isEmpty() ? id().toString() : sourcePath();
     renderer->drawMesh(cacheKey, impl_->mesh_, impl_->material_, modelMatrix,
-                       opacity());
+                       opacity(), 3, &previousModelMatrix);
   } else {
     // Wireframe mode: draw edges
     const FloatColor color = wireframeColor;

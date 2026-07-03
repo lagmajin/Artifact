@@ -153,6 +153,10 @@ public:
   void setMeshEmissionOnlyPass(bool enabled);
   bool isMeshEmissionOnlyPass() const;
   void setMeshIdPass(ChannelType channel, float encodedId);
+  void setMeshNormalOnlyPass(bool enabled);
+  bool isMeshNormalOnlyPass() const;
+  void setMeshVelocityOnlyPass(bool enabled);
+  bool isMeshVelocityOnlyPass() const;
   void setMeshAlbedoOnlyPass(bool enabled);
   bool isMeshAlbedoOnlyPass() const;
   void setCanvasSize(float w, float h);
@@ -326,7 +330,8 @@ public:
   void drawMesh(const QString &cacheKey, const ArtifactCore::Mesh &mesh,
                 const ArtifactCore::Material &material,
                 const QMatrix4x4 &modelMatrix, float opacity = 1.0f,
-                int shadingMode = 3);
+                int shadingMode = 3,
+                const QMatrix4x4 *previousModelMatrix = nullptr);
 
   void drawCheckerboard(float x, float y, float w, float h, float tileSize,
                         const FloatColor &c1, const FloatColor &c2);

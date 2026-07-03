@@ -70,6 +70,16 @@ namespace Artifact
   QSpinBox* bitrateSpin = nullptr;
   QCheckBox* includeAudioCheck = nullptr;
   QCheckBox* multiChannelCheck = nullptr;
+  QGroupBox* multiChannelGroup = nullptr;
+  QCheckBox* beautyChannelCheck = nullptr;
+  QCheckBox* alphaChannelCheck = nullptr;
+  QCheckBox* depthChannelCheck = nullptr;
+  QCheckBox* normalChannelCheck = nullptr;
+  QCheckBox* velocityChannelCheck = nullptr;
+  QCheckBox* objectIdChannelCheck = nullptr;
+  QCheckBox* materialIdChannelCheck = nullptr;
+  QCheckBox* albedoChannelCheck = nullptr;
+  QCheckBox* emissionChannelCheck = nullptr;
   QSpinBox* framePaddingSpin = nullptr;
   QComboBox* audioCodecCombo = nullptr;
   QSpinBox* audioBitrateSpin = nullptr;
@@ -91,6 +101,9 @@ namespace Artifact
   void updateAdvancedSummary();
   void updateActionLabels();
   void updateFrameRatePreflight();
+  void updateMultiChannelUi();
+  QStringList selectedMultiChannelChannels() const;
+  void setSelectedMultiChannelChannels(const QStringList& channels);
  static QString normalizeBackend(const QString& backend);
  static QString normalizeRenderBackend(const QString& backend);
  };
@@ -427,6 +440,94 @@ void ArtifactRenderOutputSettingDialog::Impl::updateFrameRatePreflight()
   }
 }
 
+void ArtifactRenderOutputSettingDialog::Impl::updateMultiChannelUi()
+{
+  const bool enabled = multiChannelCheck && multiChannelCheck->isChecked();
+  if (multiChannelGroup) {
+    multiChannelGroup->setEnabled(enabled);
+  }
+  if (enabled && formatCombo) {
+    formatCombo->setCurrentText(QStringLiteral("EXR Sequence"));
+  }
+  if (enabled && codecCombo) {
+    codecCombo->setCurrentText(QStringLiteral("EXR"));
+  }
+}
+
+QStringList ArtifactRenderOutputSettingDialog::Impl::selectedMultiChannelChannels() const
+{
+  QStringList channels;
+  if (beautyChannelCheck && beautyChannelCheck->isChecked()) {
+    channels << QStringLiteral("R") << QStringLiteral("G") << QStringLiteral("B");
+  }
+  if (alphaChannelCheck && alphaChannelCheck->isChecked()) {
+    channels << QStringLiteral("A");
+  }
+  if (depthChannelCheck && depthChannelCheck->isChecked()) {
+    channels << QStringLiteral("Depth");
+  }
+  if (normalChannelCheck && normalChannelCheck->isChecked()) {
+    channels << QStringLiteral("Normal.X") << QStringLiteral("Normal.Y")
+             << QStringLiteral("Normal.Z");
+  }
+  if (velocityChannelCheck && velocityChannelCheck->isChecked()) {
+    channels << QStringLiteral("Velocity.X") << QStringLiteral("Velocity.Y");
+  }
+  if (objectIdChannelCheck && objectIdChannelCheck->isChecked()) {
+    channels << QStringLiteral("ObjectId");
+  }
+  if (materialIdChannelCheck && materialIdChannelCheck->isChecked()) {
+    channels << QStringLiteral("MaterialId");
+  }
+  if (albedoChannelCheck && albedoChannelCheck->isChecked()) {
+    channels << QStringLiteral("Albedo.R") << QStringLiteral("Albedo.G")
+             << QStringLiteral("Albedo.B");
+  }
+  if (emissionChannelCheck && emissionChannelCheck->isChecked()) {
+    channels << QStringLiteral("Emission");
+  }
+  return channels;
+}
+
+void ArtifactRenderOutputSettingDialog::Impl::setSelectedMultiChannelChannels(const QStringList& channels)
+{
+  const auto hasAny = [&](const QStringList& names) {
+    for (const auto& name : names) {
+      if (channels.contains(name, Qt::CaseInsensitive)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  if (beautyChannelCheck) {
+    beautyChannelCheck->setChecked(hasAny({QStringLiteral("R"), QStringLiteral("G"), QStringLiteral("B")}));
+  }
+  if (alphaChannelCheck) {
+    alphaChannelCheck->setChecked(hasAny({QStringLiteral("A"), QStringLiteral("Alpha")}));
+  }
+  if (depthChannelCheck) {
+    depthChannelCheck->setChecked(hasAny({QStringLiteral("Depth")}));
+  }
+  if (normalChannelCheck) {
+    normalChannelCheck->setChecked(hasAny({QStringLiteral("Normal.X"), QStringLiteral("Normal.Y"), QStringLiteral("Normal.Z")}));
+  }
+  if (velocityChannelCheck) {
+    velocityChannelCheck->setChecked(hasAny({QStringLiteral("Velocity.X"), QStringLiteral("Velocity.Y")}));
+  }
+  if (objectIdChannelCheck) {
+    objectIdChannelCheck->setChecked(hasAny({QStringLiteral("ObjectId")}));
+  }
+  if (materialIdChannelCheck) {
+    materialIdChannelCheck->setChecked(hasAny({QStringLiteral("MaterialId")}));
+  }
+  if (albedoChannelCheck) {
+    albedoChannelCheck->setChecked(hasAny({QStringLiteral("Albedo.R"), QStringLiteral("Albedo.G"), QStringLiteral("Albedo.B")}));
+  }
+  if (emissionChannelCheck) {
+    emissionChannelCheck->setChecked(hasAny({QStringLiteral("Emission")}));
+  }
+}
+
  void updateAlphaUi(QCheckBox* alphaEnabledCheck, QLabel* formatGuideLabel, const QString& container, const QString& codec)
  {
    if (!alphaEnabledCheck || !formatGuideLabel) {
@@ -720,16 +821,32 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     formLayout->addRow("Audio Bitrate:", impl_->audioBitrateSpin);
 
     // Multi-channel (AOV) export toggle
-    impl_->multiChannelCheck = new QCheckBox(QStringLiteral("Multi-channel EXR (AOV: Depth/ObjectID/MaterialID/Albedo/Emission)"), this);
+    impl_->multiChannelCheck = new QCheckBox(QStringLiteral("Multi-channel EXR (AOV: Depth/Normal/Velocity/ObjectID/MaterialID/Albedo/Emission)"), this);
     impl_->multiChannelCheck->setChecked(false);
-    impl_->multiChannelCheck->setToolTip(QStringLiteral("有効にすると Beauty RGBA に加えて Depth / ObjectID / MaterialID / Albedo / Emission チャンネルを含む EXR を書き出します。コンテナは自動で EXR に切り替わります。"));
-    QObject::connect(impl_->multiChannelCheck, &QCheckBox::toggled, [this](bool checked) {
-        if (checked && impl_->formatCombo) {
-            impl_->formatCombo->setCurrentText(QStringLiteral("EXR Sequence"));
-            impl_->codecCombo->setCurrentText(QStringLiteral("EXR"));
-        }
-    });
+    impl_->multiChannelCheck->setToolTip(QStringLiteral("有効にすると Beauty RGBA に加えて Depth / Normal / Velocity / ObjectID / MaterialID / Albedo / Emission チャンネルを含む EXR を書き出します。コンテナは自動で EXR に切り替わります。"));
     formLayout->addRow("AOV:", impl_->multiChannelCheck);
+
+    impl_->multiChannelGroup = new QGroupBox(QStringLiteral("AOV Channels"), this);
+    auto* multiChannelLayout = new QVBoxLayout(impl_->multiChannelGroup);
+    impl_->beautyChannelCheck = new QCheckBox(QStringLiteral("Beauty RGB"), impl_->multiChannelGroup);
+    impl_->alphaChannelCheck = new QCheckBox(QStringLiteral("Alpha"), impl_->multiChannelGroup);
+    impl_->depthChannelCheck = new QCheckBox(QStringLiteral("Depth"), impl_->multiChannelGroup);
+    impl_->normalChannelCheck = new QCheckBox(QStringLiteral("Normal XYZ"), impl_->multiChannelGroup);
+    impl_->velocityChannelCheck = new QCheckBox(QStringLiteral("Velocity XY"), impl_->multiChannelGroup);
+    impl_->objectIdChannelCheck = new QCheckBox(QStringLiteral("Object ID"), impl_->multiChannelGroup);
+    impl_->materialIdChannelCheck = new QCheckBox(QStringLiteral("Material ID"), impl_->multiChannelGroup);
+    impl_->albedoChannelCheck = new QCheckBox(QStringLiteral("Albedo RGB"), impl_->multiChannelGroup);
+    impl_->emissionChannelCheck = new QCheckBox(QStringLiteral("Emission"), impl_->multiChannelGroup);
+    multiChannelLayout->addWidget(impl_->beautyChannelCheck);
+    multiChannelLayout->addWidget(impl_->alphaChannelCheck);
+    multiChannelLayout->addWidget(impl_->depthChannelCheck);
+    multiChannelLayout->addWidget(impl_->normalChannelCheck);
+    multiChannelLayout->addWidget(impl_->velocityChannelCheck);
+    multiChannelLayout->addWidget(impl_->objectIdChannelCheck);
+    multiChannelLayout->addWidget(impl_->materialIdChannelCheck);
+    multiChannelLayout->addWidget(impl_->albedoChannelCheck);
+    multiChannelLayout->addWidget(impl_->emissionChannelCheck);
+    formLayout->addRow(QString(), impl_->multiChannelGroup);
 
     // Frame padding digits
     impl_->framePaddingSpin = new QSpinBox();
@@ -821,6 +938,12 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
         impl_->updatePresetSummary();
         impl_->updateAdvancedSummary();
     });
+    QObject::connect(impl_->multiChannelCheck, &QCheckBox::toggled, [this](bool) {
+        impl_->updateMultiChannelUi();
+        impl_->updatePresetSummary();
+        impl_->updateFormatGuide();
+        impl_->updateAdvancedSummary();
+    });
     QObject::connect(impl_->widthSpin, qOverload<int>(&QSpinBox::valueChanged), [this](int) {
         impl_->syncResolutionPreset();
     });
@@ -895,6 +1018,17 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->updatePresetSummary();
     impl_->updateFormatGuide();
     impl_->updateAdvancedSummary();
+    impl_->setSelectedMultiChannelChannels({
+        QStringLiteral("R"), QStringLiteral("G"), QStringLiteral("B"),
+        QStringLiteral("A"), QStringLiteral("Depth"),
+        QStringLiteral("Normal.X"), QStringLiteral("Normal.Y"), QStringLiteral("Normal.Z"),
+        QStringLiteral("Velocity.X"), QStringLiteral("Velocity.Y"),
+        QStringLiteral("ObjectId"),
+        QStringLiteral("MaterialId"), QStringLiteral("Albedo.R"),
+        QStringLiteral("Albedo.G"), QStringLiteral("Albedo.B"),
+        QStringLiteral("Emission")
+    });
+    impl_->updateMultiChannelUi();
     impl_->updateActionLabels();
     updateAlphaPreflight(impl_->alphaEnabledCheck, impl_->preflightSummaryLabel, impl_->preflightDetailsLabel,
                          impl_->formatCombo ? impl_->formatCombo->currentText() : QStringLiteral("MP4"),
@@ -1011,11 +1145,27 @@ void ArtifactRenderOutputSettingDialog::setMultiChannelEnabled(bool enabled)
   if (impl_->multiChannelCheck) {
     impl_->multiChannelCheck->setChecked(enabled);
   }
+  if (impl_) {
+    impl_->updateMultiChannelUi();
+  }
 }
 
 bool ArtifactRenderOutputSettingDialog::multiChannelEnabled() const
 {
   return impl_->multiChannelCheck ? impl_->multiChannelCheck->isChecked() : false;
+}
+
+void ArtifactRenderOutputSettingDialog::setMultiChannelChannels(const QStringList& channels)
+{
+  if (!impl_) {
+    return;
+  }
+  impl_->setSelectedMultiChannelChannels(channels);
+}
+
+QStringList ArtifactRenderOutputSettingDialog::multiChannelChannels() const
+{
+  return impl_ ? impl_->selectedMultiChannelChannels() : QStringList{};
 }
 
 void ArtifactRenderOutputSettingDialog::setFramePadding(int digits)

@@ -3710,6 +3710,32 @@ public:
     renderer_->setOverrideRTV(nullptr);
   }
 
+  void drawGpuLayerNormalToTarget(
+      ArtifactAbstractLayer* layer, Diligent::ITextureView* normalRTV) {
+    if (!layer || !normalRTV || !layer->is3D()) {
+      return;
+    }
+    renderer_->setOverrideRTV(normalRTV);
+    renderer_->setMeshNormalOnlyPass(true);
+    layer->draw(renderer_.get());
+    renderer_->flush();
+    renderer_->setMeshNormalOnlyPass(false);
+    renderer_->setOverrideRTV(nullptr);
+  }
+
+  void drawGpuLayerVelocityToTarget(
+      ArtifactAbstractLayer* layer, Diligent::ITextureView* velocityRTV) {
+    if (!layer || !velocityRTV || !layer->is3D()) {
+      return;
+    }
+    renderer_->setOverrideRTV(velocityRTV);
+    renderer_->setMeshVelocityOnlyPass(true);
+    layer->draw(renderer_.get());
+    renderer_->flush();
+    renderer_->setMeshVelocityOnlyPass(false);
+    renderer_->setOverrideRTV(nullptr);
+  }
+
   void drawGpuLayerIdToTarget(ArtifactAbstractLayer* layer,
                               Diligent::ITextureView* idRTV,
                               ArtifactIRenderer::ChannelType channel,
@@ -9302,6 +9328,31 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
 
     renderer_->setAuxiliaryChannelSource(
+        ArtifactIRenderer::ChannelType::NormalX,
+        (gpuBlendPathRequested && renderPipeline.hasNormalTarget())
+            ? renderPipeline.normalSRV()
+            : nullptr);
+    renderer_->setAuxiliaryChannelSource(
+        ArtifactIRenderer::ChannelType::NormalY,
+        (gpuBlendPathRequested && renderPipeline.hasNormalTarget())
+            ? renderPipeline.normalSRV()
+            : nullptr);
+    renderer_->setAuxiliaryChannelSource(
+        ArtifactIRenderer::ChannelType::NormalZ,
+        (gpuBlendPathRequested && renderPipeline.hasNormalTarget())
+            ? renderPipeline.normalSRV()
+            : nullptr);
+    renderer_->setAuxiliaryChannelSource(
+        ArtifactIRenderer::ChannelType::VelocityX,
+        (gpuBlendPathRequested && renderPipeline.hasVelocityTarget())
+            ? renderPipeline.velocitySRV()
+            : nullptr);
+    renderer_->setAuxiliaryChannelSource(
+        ArtifactIRenderer::ChannelType::VelocityY,
+        (gpuBlendPathRequested && renderPipeline.hasVelocityTarget())
+            ? renderPipeline.velocitySRV()
+            : nullptr);
+    renderer_->setAuxiliaryChannelSource(
         ArtifactIRenderer::ChannelType::Emission,
         (gpuBlendPathRequested && renderPipeline.hasEmissionTarget())
             ? renderPipeline.emissionSRV()
@@ -9546,6 +9597,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       auto layerFloatSRV = renderPipeline.layerFloatSRV();
       auto layerFloatUAV = renderPipeline.layerFloatUAV();
       auto emissionRTV = renderPipeline.emissionRTV();
+      auto normalRTV = renderPipeline.normalRTV();
+      auto velocityRTV = renderPipeline.velocityRTV();
       auto objectIdRTV = renderPipeline.objectIdRTV();
       auto materialIdRTV = renderPipeline.materialIdRTV();
       auto albedoRTV = renderPipeline.albedoRTV();
@@ -9597,6 +9650,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       if (emissionRTV) {
         renderer_->clearRenderTarget(emissionRTV,
                                      FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+      }
+      if (normalRTV) {
+        renderer_->clearRenderTarget(normalRTV,
+                                     FloatColor{0.5f, 0.5f, 1.0f, 1.0f});
+      }
+      if (velocityRTV) {
+        renderer_->clearRenderTarget(velocityRTV,
+                                     FloatColor{0.5f, 0.5f, 0.5f, 1.0f});
       }
       if (objectIdRTV) {
         renderer_->clearRenderTarget(objectIdRTV,
@@ -9706,6 +9767,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               cameraViewMatrix, cameraProjMatrix);
           if (emissionRTV) {
             drawGpuLayerEmissionToTarget(layer.get(), emissionRTV);
+          }
+          if (normalRTV) {
+            drawGpuLayerNormalToTarget(layer.get(), normalRTV);
+          }
+          if (velocityRTV) {
+            drawGpuLayerVelocityToTarget(layer.get(), velocityRTV);
           }
           if (objectIdRTV) {
             const quint32 objectHash =

@@ -56,6 +56,12 @@ export namespace Artifact
   ITextureView* emissionSRV() const;
   ITextureView* emissionRTV() const;
   bool hasEmissionTarget() const;
+  ITextureView* normalSRV() const;
+  ITextureView* normalRTV() const;
+  bool hasNormalTarget() const;
+  ITextureView* velocitySRV() const;
+  ITextureView* velocityRTV() const;
+  bool hasVelocityTarget() const;
   ITextureView* objectIdSRV() const;
   ITextureView* objectIdRTV() const;
   bool hasObjectIdTarget() const;

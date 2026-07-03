@@ -101,6 +101,8 @@ namespace Artifact
  TextureBundle layerFloat_;
   TextureBundle matteSource_;
   TextureBundle emission_;
+  TextureBundle normal_;
+  TextureBundle velocity_;
   TextureBundle objectId_;
   TextureBundle materialId_;
   TextureBundle albedo_;
@@ -190,6 +192,8 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->layerFloat_ = {};
   impl_->matteSource_ = {};
   impl_->emission_ = {};
+  impl_->normal_ = {};
+  impl_->velocity_ = {};
   impl_->objectId_ = {};
   impl_->materialId_ = {};
   impl_->albedo_ = {};
@@ -212,7 +216,11 @@ bool RenderPipeline::initialize(IRenderDevice* device,
          impl_->matteSource_.srv &&
          (!impl_->emissionEnabled_ ||
           (impl_->emission_.texture && impl_->emission_.srv &&
-           impl_->emission_.rtv)) &&
+           impl_->emission_.rtv &&
+           impl_->normal_.texture && impl_->normal_.srv &&
+           impl_->normal_.rtv &&
+           impl_->velocity_.texture && impl_->velocity_.srv &&
+           impl_->velocity_.rtv)) &&
          (!impl_->emissionEnabled_ ||
           (impl_->objectId_.texture && impl_->objectId_.srv &&
            impl_->objectId_.rtv &&
@@ -258,6 +266,12 @@ ITextureView* RenderPipeline::matteSourceSRV() const { return impl_->matteSource
 ITextureView* RenderPipeline::emissionSRV() const { return impl_->emission_.srv; }
 ITextureView* RenderPipeline::emissionRTV() const { return impl_->emission_.rtv; }
 bool RenderPipeline::hasEmissionTarget() const { return impl_->emissionEnabled_ && impl_->emission_.texture; }
+ITextureView* RenderPipeline::normalSRV() const { return impl_->normal_.srv; }
+ITextureView* RenderPipeline::normalRTV() const { return impl_->normal_.rtv; }
+bool RenderPipeline::hasNormalTarget() const { return impl_->emissionEnabled_ && impl_->normal_.texture; }
+ITextureView* RenderPipeline::velocitySRV() const { return impl_->velocity_.srv; }
+ITextureView* RenderPipeline::velocityRTV() const { return impl_->velocity_.rtv; }
+bool RenderPipeline::hasVelocityTarget() const { return impl_->emissionEnabled_ && impl_->velocity_.texture; }
 ITextureView* RenderPipeline::objectIdSRV() const { return impl_->objectId_.srv; }
 ITextureView* RenderPipeline::objectIdRTV() const { return impl_->objectId_.rtv; }
 bool RenderPipeline::hasObjectIdTarget() const { return impl_->emissionEnabled_ && impl_->objectId_.texture; }
@@ -354,6 +368,20 @@ bool RenderPipeline::createTextures(IRenderDevice* device,
       !createTextureBundle(device, width, height, format,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
                            "RenderPipeline.Emission", impl_->emission_))
+  {
+   return false;
+  }
+  if (enableEmission &&
+      !createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                           "RenderPipeline.Normal", impl_->normal_))
+  {
+   return false;
+  }
+  if (enableEmission &&
+      !createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                           "RenderPipeline.Velocity", impl_->velocity_))
   {
    return false;
   }

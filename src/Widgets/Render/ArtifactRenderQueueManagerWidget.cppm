@@ -664,6 +664,7 @@ namespace Artifact
     dialog.setBitrateKbps(bitrateKbps);
     dialog.setIncludeAudio(impl_->service->jobIntegratedRenderEnabledAt(index));
     dialog.setMultiChannelEnabled(impl_->service->jobMultiChannelEnabledAt(index));
+    dialog.setMultiChannelChannels(impl_->service->jobMultiChannelChannelsAt(index));
     dialog.setFramePadding(impl_->service->jobFramePaddingAt(index));
     dialog.setAudioCodec(impl_->service->jobAudioCodecAt(index));
     dialog.setAudioBitrateKbps(impl_->service->jobAudioBitrateKbpsAt(index));
@@ -686,6 +687,7 @@ namespace Artifact
       impl_->service->setJobRenderBackendAt(index, dialog.renderBackend());
       impl_->service->setJobIntegratedRenderEnabledAt(index, dialog.includeAudio());
       impl_->service->setJobMultiChannelEnabledAt(index, dialog.multiChannelEnabled());
+      impl_->service->setJobMultiChannelChannelsAt(index, dialog.multiChannelChannels());
       impl_->service->setJobFramePaddingAt(index, dialog.framePadding());
       impl_->service->setJobAudioCodecAt(index, dialog.audioCodec());
       impl_->service->setJobAudioBitrateKbpsAt(index, dialog.audioBitrateKbps());

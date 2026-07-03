@@ -541,12 +541,17 @@ namespace Artifact
             RendererChannel::Emission,
         };
 
-        constexpr std::array<RendererChannel, 11> kDefaultMultiChannelExportChannels = {
+        constexpr std::array<RendererChannel, 16> kDefaultMultiChannelExportChannels = {
             RendererChannel::Red,
             RendererChannel::Green,
             RendererChannel::Blue,
             RendererChannel::Alpha,
             RendererChannel::Depth,
+            RendererChannel::NormalX,
+            RendererChannel::NormalY,
+            RendererChannel::NormalZ,
+            RendererChannel::VelocityX,
+            RendererChannel::VelocityY,
             RendererChannel::ObjectId,
             RendererChannel::MaterialId,
             RendererChannel::AlbedoR,
@@ -634,6 +639,106 @@ namespace Artifact
                 sanitized = defaultMultiChannelExportChannelKeys();
             }
             return sanitized;
+        }
+
+        bool requestedMultiChannelContains(const ArtifactRenderJob& job,
+                                           const QString& channelName)
+        {
+            const QStringList channels =
+                sanitizeMultiChannelExportChannelKeys(job.multiChannelExportChannels);
+            return channels.contains(channelName, Qt::CaseInsensitive);
+        }
+
+        QString buildCryptomatteManifestJson(const ArtifactCompositionPtr& composition,
+                                             bool materialManifest)
+        {
+            if (!composition) {
+                return QStringLiteral("{}");
+            }
+
+            QJsonObject manifest;
+            const auto& layers = composition->allLayerRef();
+            for (const auto& layer : layers) {
+                if (!layer) {
+                    continue;
+                }
+
+                QString entryName;
+                quint32 hashedValue = 0;
+                if (materialManifest) {
+                    entryName = layer->layerName() + QStringLiteral("|material");
+                    if (auto* modelLayer =
+                            dynamic_cast<Artifact3DLayer*>(layer.get())) {
+                        entryName = modelLayer->materialSignature();
+                    }
+                    hashedValue = qHash(entryName, 0x7f31u) & 0x00ffffffu;
+                } else {
+                    entryName = layer->id().toString();
+                    hashedValue = qHash(entryName, 0x51a7u) & 0x00ffffffu;
+                }
+
+                if (entryName.trimmed().isEmpty()) {
+                    continue;
+                }
+                manifest.insert(entryName,
+                                QStringLiteral("0x%1")
+                                    .arg(static_cast<qulonglong>(hashedValue), 6, 16,
+                                         QLatin1Char('0')));
+            }
+
+            return QString::fromUtf8(
+                QJsonDocument(manifest).toJson(QJsonDocument::Compact));
+        }
+
+        void appendCryptomatteMetadata(
+            ArtifactCore::ImageExportOptions& options, const QString& draftPrefix,
+            const QString& standardId, const QString& displayName,
+            const QString& manifestJson)
+        {
+            options.stringAttributes.insert(
+                QStringLiteral("%1.name").arg(draftPrefix), displayName);
+            options.stringAttributes.insert(
+                QStringLiteral("%1.hash").arg(draftPrefix),
+                QStringLiteral("qHash24"));
+            options.stringAttributes.insert(
+                QStringLiteral("%1.manifest").arg(draftPrefix), manifestJson);
+
+            const QString standardPrefix =
+                QStringLiteral("cryptomatte/%1").arg(standardId);
+            options.stringAttributes.insert(
+                QStringLiteral("%1/name").arg(standardPrefix), displayName);
+            options.stringAttributes.insert(
+                QStringLiteral("%1/hash").arg(standardPrefix),
+                QStringLiteral("qHash24"));
+            options.stringAttributes.insert(
+                QStringLiteral("%1/conversion").arg(standardPrefix),
+                QStringLiteral("uint32_to_float32"));
+            options.stringAttributes.insert(
+                QStringLiteral("%1/manifest").arg(standardPrefix),
+                manifestJson);
+        }
+
+        void populateCryptomatteDraftAttributes(
+            const ArtifactRenderJob& job, const ArtifactCompositionPtr& composition,
+            ArtifactCore::ImageExportOptions& options)
+        {
+            if (!job.multiChannelExportEnabled || !composition) {
+                return;
+            }
+
+            options.creator = QStringLiteral("ArtifactStudio");
+            if (requestedMultiChannelContains(job, QStringLiteral("ObjectId"))) {
+                appendCryptomatteMetadata(
+                    options, QStringLiteral("artifact.cryptomatte.object"),
+                    QStringLiteral("00000000"), QStringLiteral("CryptoObject"),
+                    buildCryptomatteManifestJson(composition, false));
+            }
+            if (requestedMultiChannelContains(job, QStringLiteral("MaterialId"))) {
+                appendCryptomatteMetadata(
+                    options, QStringLiteral("artifact.cryptomatte.material"),
+                    QStringLiteral("00000001"), QStringLiteral("CryptoMaterial"),
+                    buildCryptomatteManifestJson(composition, true));
+            }
         }
 
         void configureRendererChannelsForRenderQueueJob(
@@ -757,6 +862,44 @@ namespace Artifact
                         compId);
                     result.addDiagnostic(diag);
                 }
+            }
+        }
+
+        void appendUnsupportedAovWarnings(const ArtifactRenderJob& job,
+                                           const QString& compId,
+                                           ArtifactCore::DiagnosticResult& result)
+        {
+            if (!job.multiChannelExportEnabled) {
+                return;
+            }
+
+            const QStringList channels =
+                sanitizeMultiChannelExportChannelKeys(job.multiChannelExportChannels);
+            const bool requestsVelocity =
+                channels.contains(QStringLiteral("Velocity.X"), Qt::CaseInsensitive) ||
+                channels.contains(QStringLiteral("Velocity.Y"), Qt::CaseInsensitive);
+            if (requestsVelocity) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Warning,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Velocity AOV currently exports object motion only"),
+                    QStringLiteral("This job requests Velocity.X/Y. The current render path exports 3D object motion from previous/current model transforms, but does not include camera motion or 2D layer vectors yet."),
+                    QStringLiteral("Use Velocity for 3D object motion today, or extend the render path for camera and 2D motion vectors"),
+                    compId));
+            }
+
+            const bool requestsObjectId =
+                channels.contains(QStringLiteral("ObjectId"), Qt::CaseInsensitive);
+            const bool requestsMaterialId =
+                channels.contains(QStringLiteral("MaterialId"), Qt::CaseInsensitive);
+            if (requestsObjectId || requestsMaterialId) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Info,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Cryptomatte export uses draft packing"),
+                    QStringLiteral("ObjectId/MaterialId exports now add draft CryptoObject00/CryptoMaterial00 packed channels and mirror metadata into cryptomatte/* keys, but still do not provide full ranked coverage layers or MurmurHash-based standard hashing."),
+                    QStringLiteral("Treat the EXR as single-hit draft Cryptomatte output until full packed coverage layers are implemented"),
+                    compId));
             }
         }
     }
@@ -1881,6 +2024,21 @@ namespace Artifact
                     sanitizeMultiChannelExportChannelKeys(
                         jobs[index].multiChannelExportChannels);
             }
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        QStringList jobMultiChannelChannelsAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return defaultMultiChannelExportChannelKeys();
+            }
+            return sanitizeMultiChannelExportChannelKeys(
+                jobs[index].multiChannelExportChannels);
+        }
+
+        void setJobMultiChannelChannels(int index, const QStringList& channels) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].multiChannelExportChannels =
+                sanitizeMultiChannelExportChannelKeys(channels);
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -3174,6 +3332,7 @@ namespace Artifact
             ArtifactCore::ImageExportOptions exportOpts;
             exportOpts.format = QFileInfo(outPath).suffix().toLower();
             if (job.multiChannelExportEnabled) {
+                populateCryptomatteDraftAttributes(job, comp, exportOpts);
                 // EXR は自動で FLOAT に昇格 (resolveWriteType)
                 ArtifactCore::ImageExporter exporter;
                 auto exportResult = exporter.writeMultiChannel(multiFrame, outPath, exportOpts);
@@ -3590,6 +3749,17 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    QStringList ArtifactRenderQueueService::jobMultiChannelChannelsAt(int index) const
+    {
+        return impl_->queueManager.jobMultiChannelChannelsAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobMultiChannelChannelsAt(int index, const QStringList& channels)
+    {
+        impl_->queueManager.setJobMultiChannelChannels(index, channels);
+        impl_->syncCoreQueueModel();
+    }
+
     int ArtifactRenderQueueService::jobFramePaddingAt(int index) const
     {
         return impl_->queueManager.jobFramePaddingAt(index);
@@ -3871,6 +4041,7 @@ namespace Artifact
         appendMissingAssetDiagnostics(composition, compId, result);
         appendCompositionMismatchWarnings(job, composition, compId, result);
         appendTemplateLockDiagnostics(composition, compId, result);
+        appendUnsupportedAovWarnings(job, compId, result);
         return result;
     }
 

@@ -831,6 +831,32 @@ LayerPresentationBadgeTone toneFromRackIndex(int rackIndex) {
   }
 }
 
+constexpr int rasterizerRackIndex() {
+  return static_cast<int>(EffectPipelineStage::Rasterizer) - 1;
+}
+
+bool isLayerVisibleEffectStage(EffectPipelineStage stage) {
+  return stage == EffectPipelineStage::Rasterizer;
+}
+
+QString effectStackStateSignature(
+    const std::vector<ArtifactAbstractEffectPtr> &effects) {
+  QString signature;
+  signature.reserve(static_cast<int>(effects.size()) * 48);
+  for (const auto &effect : effects) {
+    if (!effect) {
+      continue;
+    }
+    signature += effect->effectID().toQString();
+    signature += QLatin1Char('|');
+    signature += effect->displayName().toQString();
+    signature += QLatin1Char('|');
+    signature += effect->isEnabled() ? QLatin1Char('1') : QLatin1Char('0');
+    signature += QLatin1Char('|');
+  }
+  return signature;
+}
+
 QString matteTypeToText(MatteType type) {
   switch (type) {
   case MatteType::Alpha:
@@ -1376,6 +1402,7 @@ public:
   void handleRemoveEffectClicked(int rackIndex);
   void refreshRackButtons();
   void setEffectRackEnabled(bool enabled);
+  void updateEffectRackVisibility();
   void setEffectsStateText(const QString &text, bool visible);
   void setNoProjectState();
   void setNoLayerState();
@@ -1492,7 +1519,16 @@ ArtifactInspectorWidget::Impl::currentEffectStack() const {
     return comp->getEffects();
   }
   auto layer = comp->layerById(currentLayerId_);
-  return layer ? layer->getEffects() : std::vector<ArtifactAbstractEffectPtr>{};
+  if (!layer) {
+    return {};
+  }
+  std::vector<ArtifactAbstractEffectPtr> visibleEffects;
+  for (const auto &effect : layer->getEffects()) {
+    if (effect && isLayerVisibleEffectStage(effect->pipelineStage())) {
+      visibleEffects.push_back(effect);
+    }
+  }
+  return visibleEffects;
 }
 
 ArtifactAbstractEffectPtr
@@ -1608,11 +1644,12 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     return;
   }
 
+  const auto visibleEffects = currentEffectStack();
   bool effectExists = false;
   QString focusedEffectName;
   QString resolvedFocusedEffectId = focusedEffectId_.trimmed();
   if (!focusedEffectId_.trimmed().isEmpty()) {
-    for (const auto &effect : layer->getEffects()) {
+    for (const auto &effect : visibleEffects) {
       if (effect && effect->effectID().toQString() == focusedEffectId_) {
         effectExists = true;
         focusedEffectName = effect->displayName().toQString();
@@ -1626,8 +1663,11 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     resolvedFocusedEffectId.clear();
   }
 
-  const QString stateSignature =
-      QStringLiteral("%1|%2").arg(layer->id().toString(), resolvedFocusedEffectId);
+  const QString stateSignature = QStringLiteral("%1|%2|%3")
+                                     .arg(layer->id().toString(),
+                                          resolvedFocusedEffectId,
+                                          effectStackStateSignature(
+                                              visibleEffects));
   if (layer == lastSyncedLayer_ &&
       resolvedFocusedEffectId == lastSyncedFocusedEffectId_ &&
       stateSignature == lastEffectPropertyStateSignature_) {
@@ -3143,6 +3183,18 @@ void ArtifactInspectorWidget::Impl::setEffectRackEnabled(bool enabled) {
   }
 }
 
+void ArtifactInspectorWidget::Impl::updateEffectRackVisibility() {
+  const bool restrictToLayerRaster =
+      !currentCompositionId_.isNil() && !currentLayerId_.isNil();
+  const int visibleRackIndex = rasterizerRackIndex();
+  for (int i = 0; i < kEffectRackCount; ++i) {
+    if (racks[i].groupBox) {
+      racks[i].groupBox->setVisible(!restrictToLayerRaster ||
+                                    i == visibleRackIndex);
+    }
+  }
+}
+
 void ArtifactInspectorWidget::Impl::refreshRackButtons() {
   const bool canEdit = !currentCompositionId_.isNil();
   if (effectsQuickAddButton) {
@@ -3170,6 +3222,7 @@ void ArtifactInspectorWidget::Impl::refreshRackButtons() {
 }
 
 void ArtifactInspectorWidget::Impl::updateEffectsList() {
+  updateEffectRackVisibility();
   auto projectService = ArtifactProjectService::instance();
   if (!projectService) {
     setEffectRackEnabled(false);
@@ -3343,11 +3396,16 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   }
   if (effectsStackSummaryLabel) {
     effectsStackSummaryLabel->setText(
-        effectCount > 0
-            ? QStringLiteral("%1 effect(s) across %2 pipeline stages. Add into the rack that matches where the effect should run.")
-                  .arg(effectCount)
-                  .arg(kEffectRackCount)
-            : QStringLiteral("The stack is empty. Start by adding an effect into the stage where it belongs."));
+        editingCompositionEffects()
+            ? (effectCount > 0
+                   ? QStringLiteral("%1 effect(s) across %2 pipeline stages. Add into the rack that matches where the effect should run.")
+                         .arg(effectCount)
+                         .arg(kEffectRackCount)
+                   : QStringLiteral("The stack is empty. Start by adding an effect into the stage where it belongs."))
+            : (effectCount > 0
+                   ? QStringLiteral("%1 raster effect(s) on this layer.")
+                         .arg(effectCount)
+                   : QStringLiteral("This layer has no raster effects yet.")));
   }
   refreshRackButtons();
 
@@ -3651,9 +3709,11 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
     return;
   }
 
-  if (rackIndex < 0 || rackIndex >= kEffectRackCount) {
+  if (!editingCompositionEffects()) {
+    rackIndex = rasterizerRackIndex();
+  } else if (rackIndex < 0 || rackIndex >= kEffectRackCount) {
     // Default to the rasterizer stage when invoked from the single header button.
-    rackIndex = 3;
+    rackIndex = rasterizerRackIndex();
   }
 
   QString targetLabel = editingCompositionEffects()

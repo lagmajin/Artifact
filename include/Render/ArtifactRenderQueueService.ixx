@@ -117,6 +117,8 @@ public:
   void setJobIntegratedRenderEnabledAt(int index, bool enabled);
   bool jobMultiChannelEnabledAt(int index) const;
   void setJobMultiChannelEnabledAt(int index, bool enabled);
+  QStringList jobMultiChannelChannelsAt(int index) const;
+  void setJobMultiChannelChannelsAt(int index, const QStringList& channels);
   int jobFramePaddingAt(int index) const;
   void setJobFramePaddingAt(int index, int padding);
   QString jobAudioSourcePathAt(int index) const;

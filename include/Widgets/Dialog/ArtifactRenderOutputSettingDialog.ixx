@@ -33,6 +33,8 @@ export namespace Artifact
   [[nodiscard]] QString renderBackend() const;
   void setMultiChannelEnabled(bool enabled);
   [[nodiscard]] bool multiChannelEnabled() const;
+  void setMultiChannelChannels(const QStringList& channels);
+  [[nodiscard]] QStringList multiChannelChannels() const;
   void setFramePadding(int digits);
   [[nodiscard]] int framePadding() const;
   void setResolution(int width, int height);
