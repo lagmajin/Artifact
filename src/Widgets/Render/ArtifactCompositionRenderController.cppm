@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <DeviceContext.h>
 #define NOMINMAX
 #define QT_NO_KEYWORDS
@@ -112,6 +112,7 @@ import Time.Rational;
 import Artifact.Render.Pipeline;
 import Graphics.LayerBlendPipeline;
 import Graphics.GPUcomputeContext;
+import Graphics.Shader.Compute.MaskCutout;
 import Widgets.Utils.CSS;
 import Core.Diagnostics.Trace;
 
@@ -1314,28 +1315,6 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
     mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
   }
 
-  if (hasRasterizerEffect) {
-    ArtifactCore::ImageF32x4_RGBA cpuImage;
-    cpuImage.setFromCVMat(mat);
-    ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
-
-    for (const auto &effect : effects) {
-      if (!effect || !effect->isEnabled() ||
-          effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
-        continue;
-      }
-
-      ArtifactCore::ImageF32x4RGBAWithCache next;
-      effect->setContext(makeControllerEffectContext(
-          targetLayer,
-          QRectF(0.0, 0.0, static_cast<qreal>(current.width()),
-                 static_cast<qreal>(current.height()))));
-      effect->applyConfigured(current, next);
-      current = next;
-    }
-    mat = current.image().toCVMat();
-  }
-
   if (hasMasks) {
     // Mask vertices are in layer-local space (centered at 0,0).
     // Translate to pixel space: pixel = localPos - localBounds.topLeft()
@@ -1378,6 +1357,28 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
             << "hasRasterizerEffect=" << hasRasterizerEffect;
       }
     }
+
+
+  if (hasRasterizerEffect) {
+    ArtifactCore::ImageF32x4_RGBA cpuImage;
+    cpuImage.setFromCVMat(mat);
+    ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
+
+    for (const auto &effect : effects) {
+      if (!effect || !effect->isEnabled() ||
+          effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
+        continue;
+      }
+
+      ArtifactCore::ImageF32x4RGBAWithCache next;
+      effect->setContext(makeControllerEffectContext(
+          targetLayer,
+          QRectF(0.0, 0.0, static_cast<qreal>(current.width()),
+                 static_cast<qreal>(current.height()))));
+      effect->applyConfigured(current, next);
+      current = next;
+    }
+    mat = current.image().toCVMat();
   }
 
   outBuffer->setFromCVMat(mat);
@@ -3381,6 +3382,7 @@ public:
   ArtifactCore::MotionTracker* trackerMotionTracker_ = nullptr;
   std::unique_ptr<Artifact::OffscreenCompositionRenderer> trackerOffscreenRenderer_;
   std::unique_ptr<ArtifactCore::LayerBlendPipeline> blendPipeline_;
+  std::unique_ptr<ArtifactCore::MaskCutoutPipeline> maskCutoutPipeline_;
   static constexpr int kPreviewRenderPipelineSlotCount = 2;
   struct PreviewRenderPipelineSlot {
     enum class State {
@@ -5438,6 +5440,18 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
               << "[CompositionView] LayerBlendPipeline FAILED to initialize.";
         }
       }
+      // Lazily initialize GPU mask cutout pipeline
+      if (!impl_->maskCutoutPipeline_) {
+        auto ctx = std::make_unique<ArtifactCore::GpuContext>(
+            renderer->device(), renderer->immediateContext());
+        impl_->maskCutoutPipeline_ =
+            std::make_unique<ArtifactCore::MaskCutoutPipeline>(*ctx);
+        ctx.release();
+        if (impl_->maskCutoutPipeline_->initialize()) {
+          qInfo() << "[CompositionView][Startup] mask cutout pipeline init OK";
+        } else {
+          qWarning() << "[CompositionView] MaskCutoutPipeline FAILED to init.";
+      }
     });
   }
 }
@@ -5466,6 +5480,7 @@ void CompositionRenderController::destroy() {
   impl_->blendPipeline_.reset();
   impl_->blendPipelineReady_ = false;
   impl_->blendPipelineInitAttempted_ = false;
+  impl_->maskCutoutPipeline_.reset();
   impl_->lastPresentedReadbackSRV_ = nullptr;
   if (impl_->renderer_) {
     impl_->renderer_->destroy();
@@ -8434,6 +8449,103 @@ void CompositionRenderController::handleMouseRelease() {
     }
     markRenderDirty();
   }
+}
+
+
+bool CompositionRenderController::applyGpuLayerMaskCutout(
+    ArtifactAbstractLayer *targetLayer,
+    ArtifactCore::ImageF32x4_RGBA &layerBuffer) {
+  if (!impl_->maskCutoutPipeline_ || !impl_->maskCutoutPipeline_->ready()) {
+    return false;
+  }
+  if (!targetLayer || !targetLayer->hasMasks()) {
+    return false;
+  }
+  auto *renderer = impl_->renderer_.get();
+  if (!renderer) return false;
+  auto devCtx = renderer->immediateContext();
+  if (!devCtx) return false;
+
+  const QImage layerImage = layerBuffer.toQImage();
+  if (layerImage.isNull()) return false;
+
+  const QRectF lb = targetLayer->localBounds();
+  const float sx = static_cast<float>(layerImage.width()) / std::max(1.0f, static_cast<float>(lb.width()));
+  const float sy = static_cast<float>(layerImage.height()) / std::max(1.0f, static_cast<float>(lb.height()));
+  const float ox = static_cast<float>(-lb.x() * sx);
+  const float oy = static_cast<float>(-lb.y() * sy);
+
+  QImage maskImage(layerImage.size(), QImage::Format_RGBA8888);
+  maskImage.fill(Qt::white);
+  {
+    cv::Mat maskMat = ArtifactCore::CvUtils::qImageToCvMat(maskImage, true);
+    for (int m = 0; m < targetLayer->maskCount(); ++m) {
+      LayerMask mask = targetLayer->mask(m);
+      mask.applyToImage(maskMat.cols, maskMat.rows, &maskMat, ox, oy, sx, sy);
+    }
+    std::vector<cv::Mat> ch;
+    cv::split(maskMat, ch);
+    if (ch.size() >= 4) {
+      cv::Mat alphaMask;
+      cv::merge(std::vector<cv::Mat>{ch[3], ch[3], ch[3], ch[3]}, alphaMask);
+      maskImage = ArtifactCore::CvUtils::cvMatToQImage(alphaMask);
+    }
+  }
+
+  const int w = layerImage.width();
+  const int h = layerImage.height();
+  if (w <= 0 || h <= 0) return false;
+
+  auto* pDevice = renderer->device().RawPtr();
+  if (!pDevice) return false;
+
+  Diligent::TextureDesc texDesc{};
+  texDesc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+  texDesc.Width = static_cast<Diligent::Uint32>(w);
+  texDesc.Height = static_cast<Diligent::Uint32>(h);
+  texDesc.Format = Diligent::TEX_FORMAT_RGBA8_UNORM;
+  texDesc.MipLevels = 1;
+  texDesc.ArraySize = 1;
+  texDesc.SampleCount = 1;
+  texDesc.Usage = Diligent::USAGE_DEFAULT;
+  texDesc.BindFlags = Diligent::BIND_SHADER_RESOURCE | Diligent::BIND_UNORDERED_ACCESS;
+
+  Diligent::RefCntAutoPtr<Diligent::ITexture> tempTex;
+  pDevice->CreateTexture(texDesc, nullptr, &tempTex);
+  if (!tempTex) return false;
+
+  QImage layerRgba = layerImage.convertToFormat(QImage::Format_RGBA8888);
+  if (layerRgba.isNull()) return false;
+
+  Diligent::TextureDesc uploadDesc = texDesc;
+  uploadDesc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
+
+  Diligent::RefCntAutoPtr<Diligent::ITexture> layerTex;
+  Diligent::TextureSubResData subData;
+  subData.pData = layerRgba.constBits();
+  subData.Stride = static_cast<Diligent::Uint64>(layerRgba.bytesPerLine());
+  Diligent::TextureData initData;
+  initData.pSubResources = &subData;
+  initData.NumSubresources = 1;
+  pDevice->CreateTexture(uploadDesc, &initData, &layerTex);
+  if (!layerTex) return false;
+
+  auto* layerSRV = layerTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+  auto* outUAV = tempTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS);
+  if (!layerSRV || !outUAV) return false;
+
+  const bool ok = impl_->maskCutoutPipeline_->apply(
+      devCtx.RawPtr(), maskImage, layerSRV, outUAV, 1.0f);
+
+  if (ok) {
+    QImage result = renderer->readbackTextureViewToImage(
+        tempTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE));
+    if (!result.isNull()) {
+      layerBuffer = ArtifactCore::ImageF32x4_RGBA(result);
+      return true;
+    }
+  }
+  return false;
 }
 
 bool CompositionRenderController::hasPendingMaskEdit() const {

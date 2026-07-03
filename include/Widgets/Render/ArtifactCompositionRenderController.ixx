@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 
 #include <wobjectdefs.h>
@@ -195,6 +195,7 @@ void handleMousePress(QMouseEvent* event);
 void handleMouseMove(const QPointF& viewportPos);
   void handleMouseRelease();
   bool hasPendingMaskEdit() const;
+   bool hasPendingMaskEdit() const;
 
 TransformGizmo* gizmo() const;
  class Artifact3DGizmo* gizmo3D() const;
