@@ -23,9 +23,16 @@ import Property.Abstract;
 import Property.Group;
 import Widgets.Utils.CSS;
 import Artifact.Widgets.Timeline;
+import Artifact.Widgets.LayerPanelWidget;
+import Artifact.Widgets.PropertyEditor;
+import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Text;
+import Artifact.Layer.InitParams;
+import Artifact.Service.Playback;
 import Event.Bus;
 import Time.Rational;
+import Settings.Accessibility;
 
 namespace Artifact {
 namespace detail {
@@ -381,7 +388,7 @@ void applyThemeTextPalette(QWidget *widget, int shade = 100) {
   widget->setPalette(pal);
 }
 
-void applyPropertyPanelPalette(QWidget *widget, const bool elevated = false) {
+void applyPropertyPanelPalette(QWidget *widget, const bool elevated) {
   if (!widget) {
     return;
   }
@@ -1015,7 +1022,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
 
   if (auto *colorEditor = qobject_cast<ArtifactTextAnimatorColorEditor *>(editor)) {
     if (layer) {
-      if (auto *textLayer = dynamic_cast<Artifact::ArtifactTextLayer *>(layer.get())) {
+      if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(layer.get())) {
         colorEditor->setLayer(textLayer);
       }
     }
@@ -1261,7 +1268,7 @@ void alignPropertyRowLabels(
     const std::vector<ArtifactPropertyEditorRowWidget *> &rows,
     const int minimumLabelWidth = kPropertyLabelMinWidth,
     const int maximumLabelWidth = kPropertyLabelMaxWidth) {
-  const float accelScale = Accessibility::targetScale();
+  const float accelScale = Artifact::Accessibility::targetScale();
   const int minW = static_cast<int>(static_cast<float>(minimumLabelWidth) * accelScale + 0.5f);
   const int maxW = static_cast<int>(static_cast<float>(maximumLabelWidth) * accelScale + 0.5f);
   int labelWidth = minW;

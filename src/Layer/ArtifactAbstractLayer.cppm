@@ -151,6 +151,28 @@ void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
   Q_EMIT layer->changed();
 }
 
+void applyCompositionTransformFields(
+    const ArtifactAbstractLayer* layer, double& positionX, double& positionY,
+    double& scaleX, double& scaleY) {
+  if (!layer) {
+    return;
+  }
+  const auto* composition =
+      dynamic_cast<const ArtifactAbstractComposition*>(layer->compositionObject());
+  if (!composition) {
+    return;
+  }
+  const auto adjustment = composition->evaluateTransformFields(
+      layer->id(), QPointF(positionX, positionY));
+  if (!adjustment.affected) {
+    return;
+  }
+  positionX += adjustment.positionOffset.x();
+  positionY += adjustment.positionOffset.y();
+  scaleX *= adjustment.scaleMultiplier;
+  scaleY *= adjustment.scaleMultiplier;
+}
+
 QRectF mapRectWithMatrix(const QMatrix4x4 &matrix, const QRectF &rect) {
   if (!rect.isValid() || rect.width() <= 0.0 || rect.height() <= 0.0) {
     return QRectF();
@@ -1477,6 +1499,7 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
     }
   }
 
+  applyCompositionTransformFields(this, positionX, positionY, scaleX, scaleY);
   QTransform transform = makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
                                               anchorX, anchorY);
   transform = impl_->modifiers_.apply(transform, localBounds(), time.toDouble());
@@ -1528,8 +1551,8 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
   double positionX = evaluateDouble(QStringLiteral("transform.position.x"), t.positionXAt(time));
   double positionY = evaluateDouble(QStringLiteral("transform.position.y"), t.positionYAt(time));
   double rotation = evaluateDouble(QStringLiteral("transform.rotation"), t.rotationAt(time));
-  const double scaleX = evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleXAt(time));
-  const double scaleY = evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleYAt(time));
+  double scaleX = evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleXAt(time));
+  double scaleY = evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleYAt(time));
   const double anchorX = evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorXAt(time));
   const double anchorY = evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorYAt(time));
 
@@ -1584,6 +1607,7 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
 
   // Skip physics for random access evaluating (e.g. motion path rendering) to maintain determinism.
 
+  applyCompositionTransformFields(this, positionX, positionY, scaleX, scaleY);
   QTransform transform = makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
                                               anchorX, anchorY);
   transform = impl_->modifiers_.apply(transform, localBounds(), time.toDouble());
@@ -1624,9 +1648,9 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   const double positionZ = t.positionZAt(time);
   double rotation =
       evaluateDouble(QStringLiteral("transform.rotation"), t.rotation());
-  const double scaleX =
+  double scaleX =
       evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleX());
-  const double scaleY =
+  double scaleY =
       evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleY());
   const double anchorX =
       evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorXAt(time));
@@ -1747,6 +1771,7 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
     }
   }
 
+  applyCompositionTransformFields(this, positionX, positionY, scaleX, scaleY);
   const QTransform local2D = impl_->modifiers_.apply(
       makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
                            anchorX, anchorY),
@@ -4331,11 +4356,13 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   transformGroup.addProperty(rotationProp);
 
   auto autoOrientProp =
-      makeProp(QStringLiteral("transform.autoOrient"), PropertyType::Boolean,
-               t3.isAutoOrient(), -295);
+      makeProp(QStringLiteral("transform.autoOrient"), PropertyType::Integer,
+               static_cast<int>(t3.autoOrientMode()), -295);
   autoOrientProp->setDisplayLabel(QStringLiteral("Auto-Orient"));
   autoOrientProp->setTooltip(QStringLiteral(
-      "Automatically orient the layer along its motion path."));
+      "Off: keep the current rotation.\n"
+      "Along Path: rotate the layer to follow the motion path tangent.\n"
+      "Along Path at Frame Start: use the tangent at the start of the current segment."));
   transformGroup.addProperty(autoOrientProp);
 
   auto anchorXProp = makeProp(QStringLiteral("transform.anchor.x"),
@@ -5176,11 +5203,47 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
     invertProp->setDisplayLabel(QStringLiteral("Invert"));
     fieldGroup.addProperty(invertProp);
 
+    auto centerXProp =
+        makeProp(fieldPrefix + QStringLiteral("centerX"), PropertyType::Float,
+                 descriptor->settings.value(QStringLiteral("centerX")).toDouble(0.0),
+                 orderBase + 3);
+    centerXProp->setDisplayLabel(QStringLiteral("Center X"));
+    fieldGroup.addProperty(centerXProp);
+
+    auto centerYProp =
+        makeProp(fieldPrefix + QStringLiteral("centerY"), PropertyType::Float,
+                 descriptor->settings.value(QStringLiteral("centerY")).toDouble(0.0),
+                 orderBase + 4);
+    centerYProp->setDisplayLabel(QStringLiteral("Center Y"));
+    fieldGroup.addProperty(centerYProp);
+
+    auto angleProp =
+        makeProp(fieldPrefix + QStringLiteral("angle"), PropertyType::Float,
+                 descriptor->settings.value(QStringLiteral("angle")).toDouble(0.0),
+                 orderBase + 5);
+    angleProp->setDisplayLabel(QStringLiteral("Angle"));
+    angleProp->setUnit(QStringLiteral("deg"));
+    angleProp->setSoftRange(-180.0, 180.0);
+    fieldGroup.addProperty(angleProp);
+
+    auto summaryProp =
+        makeProp(fieldPrefix + QStringLiteral("summary"), PropertyType::String,
+                 QStringLiteral("%1 cx=%2 cy=%3 a=%4")
+                     .arg(descriptor->typeId.section('.', -1))
+                     .arg(descriptor->settings.value(QStringLiteral("centerX")).toDouble(0.0), 0, 'f', 0)
+                     .arg(descriptor->settings.value(QStringLiteral("centerY")).toDouble(0.0), 0, 'f', 0)
+                     .arg(descriptor->settings.value(QStringLiteral("angle")).toDouble(0.0), 0, 'f', 0),
+                 orderBase + 6);
+    summaryProp->setDisplayLabel(QStringLiteral("Preview"));
+    summaryProp->setTooltip(
+        QStringLiteral("Compact field authoring summary for center and direction."));
+    fieldGroup.addProperty(summaryProp);
+
     if (descriptor->typeId == QStringLiteral("artifact.field.solid")) {
       auto valueProp =
           makeProp(fieldPrefix + QStringLiteral("value"), PropertyType::Float,
                    descriptor->settings.value(QStringLiteral("value")).toDouble(1.0),
-                   orderBase + 3);
+                   orderBase + 7);
       valueProp->setDisplayLabel(QStringLiteral("Value"));
       valueProp->setSoftRange(0.0, 1.0);
       fieldGroup.addProperty(valueProp);
@@ -5188,7 +5251,7 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       auto radiusProp =
           makeProp(fieldPrefix + QStringLiteral("radius"), PropertyType::Float,
                    descriptor->settings.value(QStringLiteral("radius")).toDouble(160.0),
-                   orderBase + 3);
+                   orderBase + 7);
       radiusProp->setDisplayLabel(QStringLiteral("Radius"));
       radiusProp->setSoftRange(0.0, 2000.0);
       fieldGroup.addProperty(radiusProp);
@@ -5196,7 +5259,7 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       auto falloffProp =
           makeProp(fieldPrefix + QStringLiteral("falloffWidth"), PropertyType::Float,
                    descriptor->settings.value(QStringLiteral("falloffWidth")).toDouble(40.0),
-                   orderBase + 4);
+                   orderBase + 8);
       falloffProp->setDisplayLabel(QStringLiteral("Falloff Width"));
       falloffProp->setSoftRange(0.0, 1000.0);
       fieldGroup.addProperty(falloffProp);
@@ -5204,32 +5267,32 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       auto halfXProp =
           makeProp(fieldPrefix + QStringLiteral("halfX"), PropertyType::Float,
                    descriptor->settings.value(QStringLiteral("halfX")).toDouble(120.0),
-                   orderBase + 3);
+                   orderBase + 7);
       halfXProp->setDisplayLabel(QStringLiteral("Half X"));
       fieldGroup.addProperty(halfXProp);
       auto halfYProp =
           makeProp(fieldPrefix + QStringLiteral("halfY"), PropertyType::Float,
                    descriptor->settings.value(QStringLiteral("halfY")).toDouble(120.0),
-                   orderBase + 4);
+                   orderBase + 8);
       halfYProp->setDisplayLabel(QStringLiteral("Half Y"));
       fieldGroup.addProperty(halfYProp);
       auto halfZProp =
           makeProp(fieldPrefix + QStringLiteral("halfZ"), PropertyType::Float,
                    descriptor->settings.value(QStringLiteral("halfZ")).toDouble(120.0),
-                   orderBase + 5);
+                   orderBase + 9);
       halfZProp->setDisplayLabel(QStringLiteral("Half Z"));
       fieldGroup.addProperty(halfZProp);
       auto falloffProp =
           makeProp(fieldPrefix + QStringLiteral("falloffWidth"), PropertyType::Float,
                    descriptor->settings.value(QStringLiteral("falloffWidth")).toDouble(40.0),
-                   orderBase + 6);
+                   orderBase + 10);
       falloffProp->setDisplayLabel(QStringLiteral("Falloff Width"));
       fieldGroup.addProperty(falloffProp);
     } else if (descriptor->typeId == QStringLiteral("artifact.field.linear")) {
       auto lengthProp =
           makeProp(fieldPrefix + QStringLiteral("length"), PropertyType::Float,
                    descriptor->settings.value(QStringLiteral("length")).toDouble(320.0),
-                   orderBase + 3);
+                   orderBase + 7);
       lengthProp->setDisplayLabel(QStringLiteral("Length"));
       lengthProp->setSoftRange(1.0, 4000.0);
       fieldGroup.addProperty(lengthProp);
@@ -5237,39 +5300,39 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
           makeProp(fieldPrefix + QStringLiteral("useSmoothstep"),
                    PropertyType::Boolean,
                    descriptor->settings.value(QStringLiteral("useSmoothstep")).toBool(true),
-                   orderBase + 4);
+                   orderBase + 8);
       smoothProp->setDisplayLabel(QStringLiteral("Smoothstep"));
       fieldGroup.addProperty(smoothProp);
     } else if (descriptor->typeId == QStringLiteral("artifact.field.radial")) {
       auto innerProp =
           makeProp(fieldPrefix + QStringLiteral("innerRadius"), PropertyType::Float,
                    descriptor->settings.value(QStringLiteral("innerRadius")).toDouble(0.0),
-                   orderBase + 3);
+                   orderBase + 7);
       innerProp->setDisplayLabel(QStringLiteral("Inner Radius"));
       fieldGroup.addProperty(innerProp);
       auto outerProp =
           makeProp(fieldPrefix + QStringLiteral("outerRadius"), PropertyType::Float,
                    descriptor->settings.value(QStringLiteral("outerRadius")).toDouble(160.0),
-                   orderBase + 4);
+                   orderBase + 8);
       outerProp->setDisplayLabel(QStringLiteral("Outer Radius"));
       fieldGroup.addProperty(outerProp);
     } else if (descriptor->typeId == QStringLiteral("artifact.field.noise")) {
       auto scaleProp =
           makeProp(fieldPrefix + QStringLiteral("scale"), PropertyType::Float,
                    descriptor->settings.value(QStringLiteral("scale")).toDouble(120.0),
-                   orderBase + 3);
+                   orderBase + 7);
       scaleProp->setDisplayLabel(QStringLiteral("Scale"));
       fieldGroup.addProperty(scaleProp);
       auto amplitudeProp =
           makeProp(fieldPrefix + QStringLiteral("amplitude"), PropertyType::Float,
                    descriptor->settings.value(QStringLiteral("amplitude")).toDouble(1.0),
-                   orderBase + 4);
+                   orderBase + 8);
       amplitudeProp->setDisplayLabel(QStringLiteral("Amplitude"));
       fieldGroup.addProperty(amplitudeProp);
       auto octavesProp =
           makeProp(fieldPrefix + QStringLiteral("octaves"), PropertyType::Integer,
                    descriptor->settings.value(QStringLiteral("octaves")).toInt(3),
-                   orderBase + 5);
+                   orderBase + 9);
       octavesProp->setDisplayLabel(QStringLiteral("Octaves"));
       fieldGroup.addProperty(octavesProp);
     }
@@ -6005,6 +6068,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       descriptor.blendMode = QStringLiteral("normal");
       descriptor.strength = 1.0f;
       descriptor.invert = false;
+      descriptor.settings[QStringLiteral("centerX")] = 0.0;
+      descriptor.settings[QStringLiteral("centerY")] = 0.0;
+      descriptor.settings[QStringLiteral("angle")] = 0.0;
       if (requestedType == QStringLiteral("sphere")) {
         descriptor.typeId = QStringLiteral("artifact.field.sphere");
         descriptor.settings[QStringLiteral("radius")] = 160.0;
@@ -6117,6 +6183,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         } else if (fieldName == QStringLiteral("invert")) {
           descriptor->invert = value.toBool();
         } else if (fieldName == QStringLiteral("value") ||
+                   fieldName == QStringLiteral("centerX") ||
+                   fieldName == QStringLiteral("centerY") ||
+                   fieldName == QStringLiteral("angle") ||
                    fieldName == QStringLiteral("radius") ||
                    fieldName == QStringLiteral("falloffWidth") ||
                    fieldName == QStringLiteral("halfX") ||
@@ -6132,6 +6201,8 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
           return setSetting(fieldName, std::max(1, value.toInt()));
         } else if (fieldName == QStringLiteral("useSmoothstep")) {
           return setSetting(fieldName, value.toBool());
+        } else if (fieldName == QStringLiteral("summary")) {
+          return true;
         } else {
           return false;
         }
@@ -6907,9 +6978,6 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("transform.rotation")) {
-    if (t3.isAutoOrient()) {
-      t3.setAutoOrient(false);
-    }
     if (propertyHasKeys(propertyPath)) {
       t3.setRotation(currentTime, value.toDouble());
     } else {
@@ -6921,7 +6989,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("transform.autoOrient")) {
-    t3.setAutoOrient(value.toBool());
+    t3.setAutoOrientMode(static_cast<AutoOrientMode>(value.toInt()));
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;

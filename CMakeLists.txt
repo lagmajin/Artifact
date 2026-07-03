@@ -179,6 +179,17 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactEnviron
 if(_environment_map_params_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactEnvironmentMapLayerInitParams.ixx")
 endif()
+
+# Paint layer is imported by the composition overlay and brush tools, so pin it
+# explicitly to avoid module discovery timing issues.
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactPaintLayer.ixx" _paint_layer_module_idx)
+if(_paint_layer_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactPaintLayer.ixx")
+endif()
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactPaintLayer.cppm" _paint_layer_impl_idx)
+if(_paint_layer_impl_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactPaintLayer.cppm")
+endif()
 list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactEnvironmentMapLayer.cppm" _environment_map_layer_impl_idx)
 if(_environment_map_layer_impl_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactEnvironmentMapLayer.cppm")
