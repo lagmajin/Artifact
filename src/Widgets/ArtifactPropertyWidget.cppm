@@ -723,6 +723,75 @@ bool ArtifactPropertyWidget::convertActiveExpressionToKeyframes() {
   return true;
 }
 
+bool ArtifactPropertyWidget::bakeActivePropertyToKeyframes() {
+  if (!impl_) {
+    return false;
+  }
+
+  auto *row = impl_->activeExpressionRow();
+  if (!row || !impl_->currentLayer) {
+    return false;
+  }
+
+  auto propertyPtr = impl_->resolveRowProperty(row);
+  if (!propertyPtr || !propertyPtr->isAnimatable()) {
+    return false;
+  }
+
+  auto *composition =
+      static_cast<ArtifactAbstractComposition *>(impl_->currentLayer->composition());
+  const int fps = composition
+                      ? std::max<int>(1, static_cast<int>(
+                                              std::lround(composition->frameRate().framerate())))
+                      : 30;
+  int64_t startFrame = impl_->currentLayer->inPoint().framePosition();
+  int64_t endFrame = impl_->currentLayer->outPoint().framePosition();
+  if (composition) {
+    startFrame = std::max<int64_t>(startFrame, composition->frameRange().start());
+    endFrame = std::min<int64_t>(endFrame, composition->frameRange().end());
+  }
+  if (endFrame <= startFrame) {
+    endFrame = startFrame + 1;
+  }
+
+  const auto previousFrame = composition ? composition->framePosition() : FramePosition(startFrame);
+  std::vector<std::pair<RationalTime, QVariant>> sampledKeyframes;
+  sampledKeyframes.reserve(static_cast<size_t>(endFrame - startFrame));
+
+  for (int64_t frame = startFrame; frame < endFrame; ++frame) {
+    const RationalTime time(frame, fps);
+    if (composition) {
+      composition->goToFrame(frame);
+    } else {
+      impl_->currentLayer->goToFrame(frame);
+    }
+    const QVariant sampledValue = propertyPtr->getValue();
+    sampledKeyframes.emplace_back(time, sampledValue);
+  }
+
+  if (composition) {
+    composition->goToFrame(previousFrame.framePosition());
+  } else {
+    impl_->currentLayer->goToFrame(previousFrame.framePosition());
+  }
+
+  if (sampledKeyframes.empty()) {
+    return false;
+  }
+
+  propertyPtr->clearKeyFrames();
+  for (const auto &[time, value] : sampledKeyframes) {
+    propertyPtr->addKeyFrame(time, value);
+  }
+
+  if (impl_->currentLayer) {
+    notifyLayerPropertyAnimationChanged(impl_->currentLayer);
+  }
+  impl_->scheduleRebuild(0);
+  impl_->scheduleUpdateValues();
+  return true;
+}
+
 bool ArtifactPropertyWidget::saveActiveExpressionPreset() {
   if (!impl_) {
     return false;
@@ -855,6 +924,21 @@ bool ArtifactPropertyWidget::hasActiveExpressionTarget() const {
     return false;
   }
   return impl_->activeExpressionRow() != nullptr;
+}
+
+QString ArtifactPropertyWidget::activePropertyPath() const {
+  if (!impl_) {
+    return {};
+  }
+  auto *row = impl_->activeExpressionRow();
+  return row ? row->propertyName() : QString{};
+}
+
+Artifact::ArtifactAbstractLayerPtr ArtifactPropertyWidget::activePropertyLayer() const {
+  if (!impl_) {
+    return {};
+  }
+  return impl_->currentLayer;
 }
 
 void ArtifactPropertyWidget::Impl::updatePropertyValues() {

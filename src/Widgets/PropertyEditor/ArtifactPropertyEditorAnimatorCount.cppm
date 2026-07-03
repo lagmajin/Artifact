@@ -2,7 +2,9 @@ module;
 #include <QDialog>
 #include <QFileDialog>
 #include <QHBoxLayout>
+#include <QFrame>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QVariant>
@@ -18,6 +20,7 @@ import Artifact.Widgets.RelativeSpinBox;
 namespace Artifact {
 using namespace detail;
 
+ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyAnimatorCountEditor"));
@@ -38,8 +41,7 @@ using namespace detail;
   removeButton_->setFixedHeight(24);
   removeButton_->setMinimumWidth(28);
   applyPropertyButtonPalette(removeButton_, false);
-  static_cast<PropertyCallbackButton *>(removeButton_)->setCallback(
-      [this]() { stepCount(-1); });
+  removeButton_->setCallback([this]() { stepCount(-1); });
 
   countLabel_ = new QLabel(this);
   countLabel_->setAlignment(Qt::AlignCenter);
@@ -54,8 +56,7 @@ using namespace detail;
   addButton_->setFixedHeight(24);
   addButton_->setMinimumWidth(28);
   applyPropertyButtonPalette(addButton_, true);
-  static_cast<PropertyCallbackButton *>(addButton_)->setCallback(
-      [this]() {
+  addButton_->setCallback([this]() {
         QMenu menu(this);
         QAction *defaultAct = menu.addAction(QStringLiteral("Default Animator"));
         menu.addSeparator();
@@ -147,5 +148,4 @@ void ArtifactAnimatorCountPropertyEditor::syncUi() {
   }
 }
 
-ArtifactDashPatternPropertyEditor::ArtifactDashPatternPropertyEditor(
 } // namespace Artifact

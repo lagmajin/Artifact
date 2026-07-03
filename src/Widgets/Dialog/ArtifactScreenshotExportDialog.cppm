@@ -85,6 +85,7 @@ public:
  QLabel* jpegQualityLabel = nullptr;
  QSpinBox* jpegQualitySpin = nullptr;
  QCheckBox* captureWholeWindowCheck = nullptr;
+ QCheckBox* multiChannelCheck = nullptr;
  QDialogButtonBox* buttonBox = nullptr;
 
  void syncFormatUi(ArtifactScreenshotExportDialog* dialog);
@@ -173,6 +174,9 @@ ArtifactScreenshotExportDialog::ArtifactScreenshotExportDialog(QWidget* parent)
  impl_->captureWholeWindowCheck =
      new QCheckBox(QStringLiteral("Capture whole editor window"), this);
  impl_->captureWholeWindowCheck->setChecked(false);
+ impl_->multiChannelCheck =
+     new QCheckBox(QStringLiteral("Multi-channel EXR (AOV)"), this);
+ impl_->multiChannelCheck->setChecked(false);
 
  impl_->buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
 
@@ -180,6 +184,7 @@ ArtifactScreenshotExportDialog::ArtifactScreenshotExportDialog(QWidget* parent)
  root->addLayout(formatRow);
  root->addLayout(qualityRow);
  root->addWidget(impl_->captureWholeWindowCheck);
+ root->addWidget(impl_->multiChannelCheck);
  root->addWidget(impl_->buttonBox);
 
  QObject::connect(impl_->browseButton, &QPushButton::clicked, this, [this]() {
@@ -283,6 +288,19 @@ ScreenshotCaptureSource ArtifactScreenshotExportDialog::captureSource() const
  return impl_->captureWholeWindowCheck->isChecked()
      ? ScreenshotCaptureSource::WholeWindow
      : ScreenshotCaptureSource::Renderer;
+}
+
+void ArtifactScreenshotExportDialog::setMultiChannelEnabled(bool enabled)
+{
+ if (impl_->multiChannelCheck) {
+  const QSignalBlocker blocker(impl_->multiChannelCheck);
+  impl_->multiChannelCheck->setChecked(enabled);
+ }
+}
+
+bool ArtifactScreenshotExportDialog::multiChannelEnabled() const
+{
+ return impl_->multiChannelCheck ? impl_->multiChannelCheck->isChecked() : false;
 }
 
 void ArtifactScreenshotExportDialog::setOptions(const ScreenshotExportOptions& options)

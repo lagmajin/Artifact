@@ -18,6 +18,7 @@ import Artifact.Widgets.RelativeSpinBox;
 namespace Artifact {
 using namespace detail;
 
+ArtifactEnumPropertyEditor::ArtifactEnumPropertyEditor(
     const ArtifactCore::AbstractProperty &property, OptionList options,
     QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent), options_(std::move(options)) {

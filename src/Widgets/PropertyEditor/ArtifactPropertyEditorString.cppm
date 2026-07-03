@@ -12,10 +12,18 @@ module Artifact.Widgets.PropertyEditor;
 import Property.Abstract;
 import Font.FreeFont;
 import Artifact.Layer.Text;
+import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Widgets.FontPicker;
 
+namespace Artifact::detail {
+void applyPropertyFieldPalette(QWidget *widget, bool elevated = false);
+void applyPropertyButtonPalette(QAbstractButton *button, bool accent = false);
+void applyThemeTextPalette(QWidget *widget, int shade = 100);
+} // namespace Artifact::detail
+
 namespace Artifact {
+using namespace detail;
 
 ArtifactStringPropertyEditor::ArtifactStringPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)

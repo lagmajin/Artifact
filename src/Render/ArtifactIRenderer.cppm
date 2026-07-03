@@ -452,6 +452,8 @@ namespace {
   float m_canvasHeight = -1.0f;
   QMatrix4x4 meshViewMatrix_;
   QMatrix4x4 meshProjMatrix_;
+  QMatrix4x4 previousMeshViewMatrix_;
+  QMatrix4x4 previousMeshProjMatrix_;
 
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
   bool m_multiChannelEnabled = false;
@@ -585,8 +587,8 @@ namespace {
 
     renderer->setViewMatrix(meshViewMatrix_.constData());
     renderer->setProjectionMatrix(meshProjMatrix_.constData());
-    renderer->setPreviousViewMatrix(meshViewMatrix_.constData());
-    renderer->setPreviousProjectionMatrix(meshProjMatrix_.constData());
+    renderer->setPreviousViewMatrix(previousMeshViewMatrix_.constData());
+    renderer->setPreviousProjectionMatrix(previousMeshProjMatrix_.constData());
     renderer->setBaseColorTexture(material.baseColorTexture().toQString());
     renderer->setEmissionTexture(material.emissionTexture().toQString());
     renderer->setEmissionColor(material.emissionColor(),
@@ -771,14 +773,23 @@ namespace {
     primitiveRenderer3D_.setCameraMatrices(view, proj);
     meshViewMatrix_ = view;
     meshProjMatrix_ = proj;
+    previousMeshViewMatrix_ = view;
+    previousMeshProjMatrix_ = proj;
     particle3DCameraActive_ = true;
     particleViewMatrix_ = view;
     particleProjMatrix_ = proj;
+  }
+  void setPrevious3DCameraMatrices(const QMatrix4x4& view,
+                                   const QMatrix4x4& proj) {
+    previousMeshViewMatrix_ = view;
+    previousMeshProjMatrix_ = proj;
   }
   void reset3DCameraMatrices() {
     primitiveRenderer3D_.resetMatrices();
     meshViewMatrix_.setToIdentity();
     meshProjMatrix_.setToIdentity();
+    previousMeshViewMatrix_.setToIdentity();
+    previousMeshProjMatrix_.setToIdentity();
     particle3DCameraActive_ = false;
     particleViewMatrix_.setToIdentity();
     particleProjMatrix_.setToIdentity();
@@ -1183,6 +1194,8 @@ namespace {
                                                            deviceManager_.immediateContext());
   meshViewMatrix_.setToIdentity();
   meshProjMatrix_.setToIdentity();
+  previousMeshViewMatrix_.setToIdentity();
+  previousMeshProjMatrix_.setToIdentity();
 
   {
     ScopedStartupTimer t("PrimitiveRenderer3D::init", StartupPhase::Custom);
@@ -1244,6 +1257,8 @@ namespace {
                                                            deviceManager_.immediateContext());
   meshViewMatrix_.setToIdentity();
   meshProjMatrix_.setToIdentity();
+  previousMeshViewMatrix_.setToIdentity();
+  previousMeshProjMatrix_.setToIdentity();
 
   primitiveRenderer3D_.createBuffers(deviceManager_.device());
   primitiveRenderer3D_.setPSOs(shaderManager_);
@@ -2754,6 +2769,9 @@ void ArtifactIRenderer::resetGizmoCameraMatrices()
 { impl_->resetGizmoCameraMatrices(); }
 void ArtifactIRenderer::set3DCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj)
  { impl_->set3DCameraMatrices(view, proj); }
+void ArtifactIRenderer::setPrevious3DCameraMatrices(const QMatrix4x4& view,
+                                                    const QMatrix4x4& proj)
+ { impl_->setPrevious3DCameraMatrices(view, proj); }
 void ArtifactIRenderer::reset3DCameraMatrices()
 { impl_->reset3DCameraMatrices(); }
 void ArtifactIRenderer::setStereoCameraMatrices(const QMatrix4x4& leftView,

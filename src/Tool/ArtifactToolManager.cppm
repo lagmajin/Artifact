@@ -53,6 +53,8 @@ void ArtifactToolManager::setActiveTool(ToolType type) {
    case ToolType::MotionSketch: return "MotionSketchTool";
    case ToolType::Puppet: return "PuppetTool";
    case ToolType::ScrubPreview: return "ScrubPreviewTool";
+   case ToolType::Brush: return "BrushTool";
+   case ToolType::Eraser: return "EraserTool";
    default: return "Unknown";
   }
  }

@@ -1,4 +1,5 @@
 module;
+#include <QAbstractButton>
 #include <QApplication>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -19,13 +20,32 @@ module Artifact.Widgets.PropertyEditor;
 
 import Property.Abstract;
 import Artifact.Widgets.RelativeSpinBox;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import FloatColorPickerDialog;
 import Utils.Path;
 
 namespace Artifact {
-using namespace detail;
+QVariant getPropertyDefaultValue(const ArtifactCore::AbstractProperty &property);
+void installSliderJumpBehavior(QWidget *pickerRoot);
+} // namespace Artifact
 
-ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
+namespace Artifact::detail {
+extern const int kNumericEditorValueWidth;
+extern ArtifactNumericEditorLayoutMode g_numericEditorLayoutMode;
+void applyPropertyFieldPalette(QWidget *widget, bool elevated = false);
+void applyPropertyButtonPalette(QAbstractButton *button, bool accent = false);
+void applyThemeTextPalette(QWidget *widget, int shade = 100);
+std::pair<double, double> resolveFloatSoftRange(
+    const ArtifactCore::AbstractProperty &property,
+    const ArtifactCore::PropertyMetadata &meta, double hardMin,
+    double hardMax);
+std::pair<int, int> resolveIntSoftRange(
+    const ArtifactCore::AbstractProperty &property,
+    const ArtifactCore::PropertyMetadata &meta, int hardMin, int hardMax);
+} // namespace Artifact::detail
+
+namespace Artifact {
+using namespace detail;
 
 ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent,
@@ -34,7 +54,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   setObjectName(QStringLiteral("propertyFloatEditor"));
   spinBox_ = new ArtifactRelativeDoubleSpinBox(this);
   if (showSlider) {
-    slider_ = new PropertySliderWidget(this);
+    slider_ = new QSlider(Qt::Horizontal, this);
     applyPropertyFieldPalette(slider_);
   }
   QPushButton *resetButton = nullptr;
@@ -54,26 +74,13 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                        if (spinBox_) {
                          spinBox_->setValue(defaultNumericValue);
                        }
-                       if (slider_) {
-                         const QSignalBlocker blocker(slider_);
-                         slider_->setValue(floatToSliderPosition(
-                             defaultNumericValue, softMin_, softMax_));
-                         if (auto *propertySlider =
-                                 static_cast<PropertySliderWidget *>(slider_)) {
-                           propertySlider->setDisplayText(
-                               formatNumericSliderText(
-                                   defaultNumericValue,
-                                   spinBox_ ? spinBox_->suffix().trimmed()
-                                            : QString(),
-                                   3));
-                         }
-                       }
-                       if (auto *propertyKnob =
-                               static_cast<PropertyNumericKnobWidget *>(knob_)) {
-                         propertyKnob->setValue(defaultNumericValue);
-                       }
-                       commitCurrentValue();
-                     });
+                        if (slider_) {
+                          const QSignalBlocker blocker(slider_);
+                          slider_->setValue(floatToSliderPosition(
+                              defaultNumericValue, softMin_, softMax_));
+                        }
+                        commitCurrentValue();
+                      });
   }
 
   auto *layout = new QHBoxLayout(this);
@@ -113,25 +120,6 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     softMin_ = hardMin;
     softMax_ = hardMax;
   }
-  if (auto *propertyKnob = static_cast<PropertyNumericKnobWidget *>(knob_)) {
-    propertyKnob->setRange(softMin_, softMax_);
-    propertyKnob->setValue(property.getValue().toDouble());
-    propertyKnob->setPreviewHandler([this](const double nextValue) {
-      if (!spinBox_) {
-        return;
-      }
-      spinBox_->setValue(nextValue);
-      previewValue(spinBox_->value());
-    });
-    propertyKnob->setCommitHandler([this](const double nextValue) {
-      if (!spinBox_) {
-        return;
-      }
-      spinBox_->setValue(nextValue);
-      commitValue(spinBox_->value());
-    });
-  }
-
   spinBox_->setRange(meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1e6,
                      meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1e6);
   spinBox_->setValue(property.getValue().toDouble());
@@ -160,28 +148,15 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     slider_->setTracking(true); // ドラッグ中の追従を有効化
     slider_->setValue(floatToSliderPosition(property.getValue().toDouble(),
                                             softMin_, softMax_));
-    if (auto *propertySlider = static_cast<PropertySliderWidget *>(slider_)) {
-      propertySlider->setDisplayText(
-          formatNumericSliderText(property.getValue().toDouble(), meta.unit, 3));
-    }
   }
 
   QObject::connect(spinBox_, &QDoubleSpinBox::valueChanged, this,
                    [this, sliderUnit](const double nextValue) {
-                     if (slider_) {
-                       const QSignalBlocker blocker(slider_);
-                       slider_->setValue(
-                           floatToSliderPosition(nextValue, softMin_, softMax_));
-                       if (auto *propertySlider =
-                               static_cast<PropertySliderWidget *>(slider_)) {
-                         propertySlider->setDisplayText(
-                             formatNumericSliderText(nextValue, sliderUnit, 3));
-                       }
-                     }
-                     if (auto *propertyKnob =
-                             static_cast<PropertyNumericKnobWidget *>(knob_)) {
-                       propertyKnob->setValue(nextValue);
-                     }
+                      if (slider_) {
+                        const QSignalBlocker blocker(slider_);
+                        slider_->setValue(
+                            floatToSliderPosition(nextValue, softMin_, softMax_));
+                      }
                      if (spinBox_->hasFocus() && !sliderInteracting_) {
                        previewValue(nextValue);
                      }
@@ -200,13 +175,6 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
               this->sliderPositionToFloat(sliderValue, softMin_, softMax_);
           const QSignalBlocker blocker(spinBox_);
           spinBox_->setValue(nextValue);
-          if (auto *propertyKnob = static_cast<PropertyNumericKnobWidget *>(knob_)) {
-            propertyKnob->setValue(nextValue);
-          }
-          if (auto *propertySlider = static_cast<PropertySliderWidget *>(slider_)) {
-            propertySlider->setDisplayText(
-                formatNumericSliderText(nextValue, sliderUnit, 3));
-          }
           if (sliderInteracting_) {
             previewValue(nextValue);
           }
@@ -318,13 +286,6 @@ void ArtifactFloatPropertyEditor::setValueFromVariant(const QVariant &value) {
   if (slider_) {
     const QSignalBlocker sliderBlocker(slider_);
     slider_->setValue(this->floatToSliderPosition(nextValue, softMin_, softMax_));
-    if (auto *propertySlider = static_cast<PropertySliderWidget *>(slider_)) {
-      propertySlider->setDisplayText(
-          formatNumericSliderText(nextValue, spinBox_->suffix().trimmed(), 3));
-    }
-  }
-  if (auto *propertyKnob = static_cast<PropertyNumericKnobWidget *>(knob_)) {
-    propertyKnob->setValue(nextValue);
   }
 }
 
@@ -365,16 +326,13 @@ void ArtifactFloatPropertyEditor::scrubByPixels(
 }
 
 ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
-ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
-
-ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent,
     const bool showSlider)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyIntEditor"));
   spinBox_ = new ArtifactRelativeSpinBox(this);
   if (showSlider) {
-    slider_ = new PropertySliderWidget(this);
+    slider_ = new QSlider(Qt::Horizontal, this);
     applyPropertyFieldPalette(slider_);
   }
   QPushButton *resetButton = nullptr;
@@ -427,26 +385,6 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     softMin_ = hardMin;
     softMax_ = hardMax;
   }
-  if (auto *propertyKnob = static_cast<PropertyNumericKnobWidget *>(knob_)) {
-    propertyKnob->setRange(static_cast<double>(softMin_),
-                           static_cast<double>(softMax_));
-    propertyKnob->setValue(static_cast<double>(property.getValue().toInt()));
-    propertyKnob->setPreviewHandler([this](const double nextValue) {
-      if (!spinBox_) {
-        return;
-      }
-      spinBox_->setValue(static_cast<int>(std::llround(nextValue)));
-      previewValue(spinBox_->value());
-    });
-    propertyKnob->setCommitHandler([this](const double nextValue) {
-      if (!spinBox_) {
-        return;
-      }
-      spinBox_->setValue(static_cast<int>(std::llround(nextValue)));
-      commitValue(spinBox_->value());
-    });
-  }
-
   spinBox_->setRange(meta.hardMin.isValid() ? meta.hardMin.toInt() : -1000000,
                      meta.hardMax.isValid() ? meta.hardMax.toInt() : 1000000);
   spinBox_->setValue(property.getValue().toInt());
@@ -475,10 +413,6 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     slider_->setTracking(true);
     slider_->setValue(
         intToSliderPosition(property.getValue().toInt(), softMin_, softMax_));
-          if (auto *propertySlider = static_cast<PropertySliderWidget *>(slider_)) {
-      propertySlider->setDisplayText(
-          formatNumericSliderText(property.getValue().toInt(), meta.unit, 0));
-    }
   }
 
   QObject::connect(
@@ -486,14 +420,6 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
         if (slider_) {
           const QSignalBlocker blocker(slider_);
           slider_->setValue(intToSliderPosition(nextValue, softMin_, softMax_));
-          if (auto *propertySlider =
-                  static_cast<PropertySliderWidget *>(slider_)) {
-            propertySlider->setDisplayText(
-                formatNumericSliderText(nextValue, sliderUnit, 0));
-          }
-        }
-        if (auto *propertyKnob = static_cast<PropertyNumericKnobWidget *>(knob_)) {
-          propertyKnob->setValue(static_cast<double>(nextValue));
         }
         if (spinBox_->hasFocus() && !sliderInteracting_) {
           previewValue(nextValue);
@@ -512,15 +438,6 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
                            sliderPositionToInt(sliderValue, softMin_, softMax_);
                        const QSignalBlocker blocker(spinBox_);
                        spinBox_->setValue(nextValue);
-                       if (auto *propertyKnob =
-                               static_cast<PropertyNumericKnobWidget *>(knob_)) {
-                         propertyKnob->setValue(static_cast<double>(nextValue));
-                       }
-                       if (auto *propertySlider =
-                               static_cast<PropertySliderWidget *>(slider_)) {
-                         propertySlider->setDisplayText(
-                             formatNumericSliderText(nextValue, sliderUnit, 0));
-                       }
                        if (sliderInteracting_) {
                          previewValue(nextValue);
                        }
@@ -552,13 +469,6 @@ void ArtifactIntPropertyEditor::setValueFromVariant(const QVariant &value) {
   if (slider_) {
     const QSignalBlocker sliderBlocker(slider_);
     slider_->setValue(intToSliderPosition(nextValue, softMin_, softMax_));
-    if (auto *propertySlider = static_cast<PropertySliderWidget *>(slider_)) {
-      propertySlider->setDisplayText(
-          formatNumericSliderText(nextValue, spinBox_->suffix().trimmed(), 0));
-    }
-  }
-  if (auto *propertyKnob = static_cast<PropertyNumericKnobWidget *>(knob_)) {
-    propertyKnob->setValue(static_cast<double>(nextValue));
   }
 }
 
@@ -568,7 +478,7 @@ QWidget *ArtifactIntPropertyEditor::scrubTargetWidget() const {
   if (!spinBox_) {
     return ArtifactAbstractPropertyEditor::scrubTargetWidget();
   }
+  return spinBox_;
+}
 
-
-ArtifactPathPropertyEditor::ArtifactPathPropertyEditor(
 } // namespace Artifact

@@ -18,6 +18,7 @@ import Artifact.Widgets.RelativeSpinBox;
 namespace Artifact {
 using namespace detail;
 
+ArtifactDashPatternPropertyEditor::ArtifactDashPatternPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyDashPatternEditor"));
@@ -90,5 +91,4 @@ void ArtifactDashPatternPropertyEditor::applyPreset(const QString& pattern) {
   commitValue(pattern);
 }
 
-ArtifactRotationPropertyEditor::ArtifactRotationPropertyEditor(
 } // namespace Artifact

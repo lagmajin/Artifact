@@ -132,6 +132,12 @@ void setShowAnchorCenterOverlay(bool show);
 bool isShowAnchorCenterOverlay() const;
 void setShowCameraFrustumOverlay(bool show);
 bool isShowCameraFrustumOverlay() const;
+void setShowOnionSkin(bool show);
+bool isShowOnionSkin() const;
+void setOnionSkinFrameCount(int count);
+int onionSkinFrameCount() const;
+void setOnionSkinOpacity(int percent);
+int onionSkinOpacity() const;
 
    // Render Queue support: when active, composition changed signals do not invalidate caches
    void setRenderQueueActive(bool active);
@@ -195,7 +201,6 @@ void handleMousePress(QMouseEvent* event);
 void handleMouseMove(const QPointF& viewportPos);
   void handleMouseRelease();
   bool hasPendingMaskEdit() const;
-   bool hasPendingMaskEdit() const;
 
 TransformGizmo* gizmo() const;
  class Artifact3DGizmo* gizmo3D() const;

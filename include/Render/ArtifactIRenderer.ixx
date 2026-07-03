@@ -174,6 +174,8 @@ public:
   void setGizmoCameraMatrices(const QMatrix4x4 &view, const QMatrix4x4 &proj);
   void resetGizmoCameraMatrices();
   void set3DCameraMatrices(const QMatrix4x4 &view, const QMatrix4x4 &proj);
+  void setPrevious3DCameraMatrices(const QMatrix4x4 &view,
+                                   const QMatrix4x4 &proj);
   void reset3DCameraMatrices();
   void setStereoCameraMatrices(const QMatrix4x4 &leftView,
                                const QMatrix4x4 &rightView,

@@ -123,6 +123,23 @@ bool convertActiveExpressionToKeyframes(QWidget* root)
  return false;
 }
 
+bool bakeActivePropertyToKeyframes(QWidget* root)
+{
+ if (!root) {
+  return false;
+ }
+
+ const auto propertyWidgets = root->findChildren<ArtifactPropertyWidget*>();
+ for (auto* propertyWidget : propertyWidgets) {
+  if (propertyWidget && propertyWidget->isVisible() &&
+      propertyWidget->hasActiveExpressionTarget() &&
+      propertyWidget->bakeActivePropertyToKeyframes()) {
+   return true;
+  }
+ }
+ return false;
+}
+
 bool saveActiveExpressionPreset(QWidget* root)
 {
  if (!root) {
@@ -220,6 +237,7 @@ bool hasActiveExpressionTarget(QWidget* root)
   QAction* editExpressionAction = nullptr;
   QAction* removeExpressionAction = nullptr;
   QAction* convertToKeyframesAction = nullptr;
+  QAction* bakeLiveToKeyframesAction = nullptr;
 
   QAction* saveAnimationPresetAction = nullptr;
   QAction* loadAnimationPresetAction = nullptr;
@@ -316,6 +334,9 @@ bool hasActiveExpressionTarget(QWidget* root)
   }
   if (convertToKeyframesAction) {
    convertToKeyframesAction->setEnabled(hasLayer && hasExpressionTarget);
+  }
+  if (bakeLiveToKeyframesAction) {
+   bakeLiveToKeyframesAction->setEnabled(hasLayer && hasExpressionTarget);
   }
   if (saveAnimationPresetAction) {
    saveAnimationPresetAction->setEnabled(hasLayer && hasExpressionTarget);
@@ -486,6 +507,8 @@ bool hasActiveExpressionTarget(QWidget* root)
 
   impl_->convertToKeyframesAction = impl_->expressionMenu->addAction("エクスプレッションをキーフレームに変換...");
   impl_->convertToKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
+  impl_->bakeLiveToKeyframesAction = impl_->expressionMenu->addAction("現在PropertyをキーフレームにBake...");
+  impl_->bakeLiveToKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
   addSeparator();
 
   impl_->presetMenu = addMenu("アニメーションプリセット(&P)");
@@ -547,6 +570,7 @@ bool hasActiveExpressionTarget(QWidget* root)
    if (action == impl_->editExpressionAction) { openActiveExpressionCopilot(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->removeExpressionAction) { clearActiveExpression(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->convertToKeyframesAction) { convertActiveExpressionToKeyframes(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->bakeLiveToKeyframesAction) { bakeActivePropertyToKeyframes(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->saveAnimationPresetAction) { saveActiveExpressionPreset(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->loadAnimationPresetAction) { loadActiveExpressionPreset(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
   };

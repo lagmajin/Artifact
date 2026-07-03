@@ -20,6 +20,7 @@ import Artifact.Service.Project;
 namespace Artifact {
 using namespace detail;
 
+ArtifactObjectReferencePropertyEditor::ArtifactObjectReferencePropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   Q_UNUSED(property);

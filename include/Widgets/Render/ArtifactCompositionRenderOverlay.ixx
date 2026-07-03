@@ -73,6 +73,11 @@ void drawViewportStatusChipOverlay(ArtifactIRenderer *renderer,
                                    const QString &statusText,
                                    const QSize *restoreCanvasSize = nullptr);
 
+void drawPaintLayerOnionSkinOverlay(ArtifactIRenderer *renderer,
+                                    const ArtifactAbstractLayerPtr &paintLayer,
+                                    const ArtifactCompositionPtr &comp,
+                                    float overlayW, float overlayH,
+                                    int frameCount, int opacityPercent);
 void drawViewportSnapHintOverlay(ArtifactIRenderer *renderer,
                                  int overlayW,
                                  int overlayH,

@@ -77,7 +77,6 @@ void artifactSetShowPropertyResetButtons(bool show) {
   artifactSetShowPropertyResetButtonsImpl(show);
 }
 
-ArtifactEnumPropertyEditor::ArtifactEnumPropertyEditor(
 ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     const QString &labelText, ArtifactAbstractPropertyEditor *editor,
     const QString &propertyName, QWidget *parent)
@@ -168,6 +167,12 @@ enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
   if (name == QStringLiteral("orientation")) {
     return ArtifactEnumPropertyEditor::OptionList{
         {0, QStringLiteral("Horizontal")}, {1, QStringLiteral("Vertical")}};
+  }
+  if (name == QStringLiteral("transform.autoOrient")) {
+    return ArtifactEnumPropertyEditor::OptionList{
+        {0, QStringLiteral("Off")},
+        {1, QStringLiteral("Along Path")},
+        {2, QStringLiteral("Along Path at Frame Start")}};
   }
   if (name.startsWith(QStringLiteral("mask."), Qt::CaseInsensitive) &&
       name.endsWith(QStringLiteral(".mode"), Qt::CaseInsensitive)) {

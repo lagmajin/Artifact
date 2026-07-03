@@ -28,6 +28,7 @@ import Color.Float;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Video;
 import Artifact.Layer.Shape;
+import Artifact.Layer.Paint;
 import Artifact.Layer.CloneEffectSupport;
 import Layer.Blend;
 import Artifact.Widgets.PieMenu;
@@ -1301,4 +1302,35 @@ namespace {
     &Artifact::drawViewportPieMenuOverlay;
 } // namespace
 
+
+void drawPaintLayerOnionSkinOverlay(ArtifactIRenderer *renderer,
+                                     const ArtifactAbstractLayerPtr &paintLayer,
+                                     const ArtifactCompositionPtr &comp,
+                                     float overlayW, float overlayH,
+                                     int frameCount, int opacityPercent)
+{
+    if (!renderer || !paintLayer || !comp) return;
+    auto* paint = dynamic_cast<ArtifactPaintLayer*>(paintLayer.get());
+    if (!paint) return;
+    if (frameCount <= 0) return;
+
+    const float alpha = std::clamp(opacityPercent / 100.0f, 0.05f, 0.8f);
+    auto currentFrame = comp->framePosition();
+    auto bounds = paintLayer->localBounds();
+
+    for (int i = -frameCount; i <= frameCount; ++i) {
+        if (i == 0) continue;
+        FramePosition f(std::max<int64_t>(0, currentFrame.framePosition() + i));
+        auto* buf = paint->frameBuffer(f);
+        if (!buf || buf->isEmpty()) continue;
+
+        float fade = 1.0f - static_cast<float>(std::abs(i)) / (frameCount + 1);
+        renderer->drawSprite(
+            static_cast<float>(bounds.x()),
+            static_cast<float>(bounds.y()),
+            static_cast<float>(bounds.width()),
+            static_cast<float>(bounds.height()),
+            *buf, alpha * fade);
+    }
+}
 } // namespace Artifact

@@ -1,11 +1,14 @@
 module;
+#include <QColor>
 #include <QDialog>
 #include <QFileDialog>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QVariant>
+#include <QTextEdit>
 #include <QWidget>
 #include <memory>
 #include <utility>
@@ -14,6 +17,7 @@ module Artifact.Widgets.PropertyEditor;
 
 import Property.Abstract;
 import Artifact.Widgets.RelativeSpinBox;
+import FloatColorPickerDialog;
 import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Utils.Path;
 
@@ -114,16 +118,16 @@ void ArtifactTextAnimatorColorEditor::onColorPicked() {
 ArtifactAbstractPropertyEditor *
 createPropertyEditorWidget(const ArtifactCore::AbstractProperty &property,
                            QWidget *parent) {
-  if (isMultilineTextProperty(property)) {
+  if (detail::isMultilineTextProperty(property)) {
     return new ArtifactTextAnimatorColorEditor(property, parent);
   }
-  if (isFontFamilyProperty(property)) {
+  if (detail::isFontFamilyProperty(property)) {
     return new ArtifactFontFamilyPropertyEditor(property, parent);
   }
-  if (isPathProperty(property)) {
+  if (detail::isPathProperty(property)) {
     return new ArtifactPathPropertyEditor(property, parent);
   }
-  if (const auto enumOptions = enumOptionsForProperty(property)) {
+  if (const auto enumOptions = detail::enumOptionsForProperty(property)) {
     return new ArtifactEnumPropertyEditor(property, *enumOptions, parent);
   }
   if (property.getType() == ArtifactCore::PropertyType::Float &&
@@ -141,10 +145,10 @@ createPropertyEditorWidget(const ArtifactCore::AbstractProperty &property,
   switch (property.getType()) {
   case ArtifactCore::PropertyType::Float:
     return new ArtifactFloatPropertyEditor(
-        property, parent, shouldShowNumericSlider(property));
+        property, parent, detail::shouldShowNumericSlider(property));
   case ArtifactCore::PropertyType::Integer:
     return new ArtifactIntPropertyEditor(
-        property, parent, shouldShowNumericSlider(property));
+        property, parent, detail::shouldShowNumericSlider(property));
   case ArtifactCore::PropertyType::Boolean:
     return new ArtifactBoolPropertyEditor(property, parent);
   case ArtifactCore::PropertyType::Color:

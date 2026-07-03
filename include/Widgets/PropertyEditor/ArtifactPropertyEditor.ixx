@@ -17,10 +17,13 @@ module;
 #include <QFontComboBox>
 #include <QKeyEvent>
 #include <QContextMenuEvent>
+#include <QEnterEvent>
+#include <QMouseEvent>
 #include <QLineEdit>
 #include <QSlider>
 #include <QSpinBox>
 #include <QTextEdit>
+#include <QWheelEvent>
 #include <wobjectdefs.h>
 export module Artifact.Widgets.PropertyEditor;
 
@@ -28,6 +31,67 @@ import Property.Abstract;
 import Artifact.Layer.Text;
 import Artifact.Widgets.FontPicker;
 import Event.Bus;
+
+namespace detail {
+class PropertyComboBox final : public QComboBox {
+public:
+    explicit PropertyComboBox(QWidget* parent = nullptr);
+protected:
+    void wheelEvent(QWheelEvent* event) override;
+};
+
+class PropertySliderWidget final : public QSlider {
+public:
+    explicit PropertySliderWidget(QWidget* parent = nullptr);
+protected:
+    void wheelEvent(QWheelEvent* event) override;
+};
+
+class PropertyCallbackButton final : public QPushButton {
+public:
+    using Callback = std::function<void()>;
+
+    explicit PropertyCallbackButton(const QString& text, QWidget* parent = nullptr);
+    void setCallback(Callback callback);
+};
+
+class PropertyRotationKnobWidget final : public QWidget {
+public:
+    explicit PropertyRotationKnobWidget(QWidget* parent = nullptr);
+    void setValue(double value);
+    double value() const;
+    void setRange(double minimum, double maximum);
+    void setPreviewHandler(std::function<void(double)> handler);
+    void setCommitHandler(std::function<void(double)> handler);
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void leaveEvent(QEvent* event) override;
+};
+
+class ArtifactToggleSwitch final : public QAbstractButton {
+public:
+    explicit ArtifactToggleSwitch(QWidget* parent = nullptr);
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void enterEvent(QEnterEvent* event) override;
+    void leaveEvent(QEvent* event) override;
+};
+
+void applyPropertyFieldPalette(QWidget* widget, bool elevated = false);
+void applyPropertyButtonPalette(QAbstractButton* button, bool accent = false);
+void applyPropertyLabelPalette(QLabel* label, bool prominent = false);
+void applyThemeTextPalette(QWidget* widget, int shade = 100);
+QString fileDialogFilterForProperty(const QString& propertyName);
+QColor propertyColor(const ArtifactCore::AbstractProperty& property);
+bool artifactShouldShowPropertyResetButtonsImpl();
+void artifactSetShowPropertyResetButtonsImpl(bool show);
+}
 
 export namespace Artifact {
 
@@ -73,6 +137,7 @@ ArtifactNumericEditorLayoutMode globalNumericEditorLayoutMode();
 void setGlobalNumericEditorLayoutMode(ArtifactNumericEditorLayoutMode mode);
 bool artifactShouldShowPropertyResetButtons();
 void artifactSetShowPropertyResetButtons(bool show);
+QVariant getPropertyDefaultValue(const ArtifactCore::AbstractProperty& property);
 
 class ArtifactFloatPropertyEditor final : public ArtifactAbstractPropertyEditor {
 public:
@@ -146,8 +211,8 @@ private:
 
 private:
     QLabel* countLabel_ = nullptr;
-    QPushButton* removeButton_ = nullptr;
-    QPushButton* addButton_ = nullptr;
+    detail::PropertyCallbackButton* removeButton_ = nullptr;
+    detail::PropertyCallbackButton* addButton_ = nullptr;
     int currentCount_ = 0;
     int minCount_ = 0;
     int maxCount_ = 16;

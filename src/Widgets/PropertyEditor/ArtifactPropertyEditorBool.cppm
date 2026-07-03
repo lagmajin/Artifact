@@ -8,6 +8,8 @@ module Artifact.Widgets.PropertyEditor;
 
 namespace Artifact {
 
+using namespace detail;
+
 ArtifactBoolPropertyEditor::ArtifactBoolPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {

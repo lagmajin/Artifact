@@ -98,6 +98,12 @@ import UI.ShortcutBindings;
 import Artifact.Audio.ScrubController;
 
 namespace Artifact {
+void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr& composition,
+                                   const ArtifactAbstractLayerPtr& layer,
+                                   qint64 frameDelta);
+}
+
+namespace Artifact {
 
 using namespace ArtifactCore;
 using namespace ArtifactWidgets;
@@ -554,37 +560,12 @@ bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
   // Move keeps the source offset stable.
   // Trim-in shifts the source offset by the same amount as the new in-point.
   if (!preserveExistingDuration && inPointDelta != 0) {
-    layer->setStartTime(FramePosition(oldStartTime + inPointDelta));
+    layer->setStartTime(FramePosition(std::max<int64_t>(0, oldStartTime + inPointDelta)));
   }
 
-  if (preserveExistingDuration && inPointDelta != 0) {
-    const double fps = std::max(
-        1.0, static_cast<double>(comp->frameRate().framerate()));
-    const int64_t frameScale = static_cast<int64_t>(std::llround(fps));
-    for (const auto &group : layer->getLayerPropertyGroups()) {
-      for (const auto &property : group.sortedProperties()) {
-        if (!property || !property->isAnimatable()) {
-          continue;
-        }
-
-        const auto keyframes = property->getKeyFrames();
-        if (keyframes.empty()) {
-          // No keyframes yet - will show flat line from current value
-        } else {
-          property->clearKeyFrames();
-        }
-        for (const auto &keyframe : keyframes) {
-          const int64_t oldFrame = keyframe.time.rescaledTo(frameScale);
-          const int64_t newFrame =
-              std::max<int64_t>(0, oldFrame + inPointDelta);
-          property->addKeyFrame(
-              RationalTime(newFrame, frameScale),
-              keyframe.value.isValid() ? keyframe.value : property->getValue(),
-              keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
-              keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
-        }
-      }
-    }
+  // Shift keyframes to follow the layer inPoint move (both Move and Trim modes)
+  if (inPointDelta != 0) {
+    shiftAnimatableLayerKeyframes(comp, layer, inPointDelta);
   }
 
   layer->changed();

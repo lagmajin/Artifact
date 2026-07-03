@@ -7,6 +7,7 @@ module;
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QHash>
+#include <QLocale>
 #include <QPointF>
 #include <QMatrix4x4>
 #include <QPainter>
@@ -179,6 +180,16 @@ QColor colorWithOpacity(const QColor &color, const float opacity) {
   return out;
 }
 
+QColor blendColors(const QColor &baseColor, const QColor &overrideColor,
+                   const float weight) {
+  const float t = std::clamp(weight, 0.0f, 1.0f);
+  return QColor::fromRgbF(
+      std::lerp(baseColor.redF(), overrideColor.redF(), t),
+      std::lerp(baseColor.greenF(), overrideColor.greenF(), t),
+      std::lerp(baseColor.blueF(), overrideColor.blueF(), t),
+      std::lerp(baseColor.alphaF(), overrideColor.alphaF(), t));
+}
+
 QVector<TextRubyAttachment> buildRubyAttachments(const UniString &text,
                                                  const QString &rubyText,
                                                  const float rubyScale) {
@@ -321,7 +332,8 @@ QVector<float> selectorWeightPreviewForAnimators(
 QVector<float> selectorWeightPreviewForGlyphs(
     const std::vector<GlyphItem> &glyphs,
     const std::vector<TextAnimatorState> &animators,
-    int sampleCount) {
+    int sampleCount,
+    const QString &sourceText) {
   QVector<float> preview;
   if (sampleCount <= 0) {
     return preview;
@@ -331,32 +343,19 @@ QVector<float> selectorWeightPreviewForGlyphs(
     return preview;
   }
 
-  int clusterCount = 0;
-  int lineCount = 0;
-  QHash<QString, int> tagOrder;
-  std::vector<int> tagIndices;
-  tagIndices.reserve(glyphs.size());
-  for (const auto &glyph : glyphs) {
-    if (glyph.clusterIndex >= 0) {
-      clusterCount = std::max(clusterCount, glyph.clusterIndex + 1);
-    }
-    if (glyph.lineIndex >= 0) {
-      lineCount = std::max(lineCount, glyph.lineIndex + 1);
-    }
-    const QString tag = glyph.selectorTag.isEmpty() ? QStringLiteral("untagged")
-                                                    : glyph.selectorTag;
-    const auto it = tagOrder.constFind(tag);
-    if (it == tagOrder.cend()) {
-      const int index = tagOrder.size();
-      tagOrder.insert(tag, index);
-      tagIndices.push_back(index);
-    } else {
-      tagIndices.push_back(it.value());
-    }
-  }
-  const int tagCount = tagOrder.size();
-
   const int glyphCount = static_cast<int>(glyphs.size());
+  QVector<SelectorResult> selectorResults;
+  selectorResults.reserve(static_cast<qsizetype>(animators.size()));
+  const SelectorEvaluationContext context{
+      sourceText,
+      std::span<const GlyphItem>(glyphs.data(), glyphs.size()),
+      TextSelectorOrder::Logical};
+  for (const auto &animator : animators) {
+    selectorResults.push_back(
+        animator.enabled
+            ? TextAnimatorEngine::evaluateSelector(context, animator.range)
+            : SelectorResult{});
+  }
   for (int sample = 0; sample < sampleCount; ++sample) {
     const int glyphIndex = (sampleCount == 1)
                                ? 0
@@ -364,18 +363,12 @@ QVector<float> selectorWeightPreviewForGlyphs(
                                      (static_cast<double>(sample) /
                                       static_cast<double>(sampleCount - 1)) *
                                      static_cast<double>(std::max(0, glyphCount - 1))));
-    const GlyphItem &glyph = glyphs[static_cast<size_t>(glyphIndex)];
     float maxWeight = 0.0f;
-    for (const auto &animator : animators) {
-      if (!animator.enabled) {
+    for (const auto &result : selectorResults) {
+      if (glyphIndex >= result.weights.size()) {
         continue;
       }
-      maxWeight = std::max(
-          maxWeight,
-          TextAnimatorEngine::calculateWeightForGlyph(
-              glyph, glyphIndex, glyphCount, clusterCount, lineCount,
-              tagIndices[static_cast<size_t>(glyphIndex)], tagCount,
-              animator.range));
+      maxWeight = std::max(maxWeight, result.weights[glyphIndex]);
     }
     preview[sample] = std::clamp(maxWeight, 0.0f, 1.0f);
   }
@@ -409,6 +402,255 @@ QString animatorPresetTooltip() {
   return QStringLiteral(
       "0=Custom, 1=Typewriter, 2=Slide Up, 3=Scale In, 4=Rotation In, "
       "5=Tracking Fade, 6=Wiggly Position, 7=Blur Reveal");
+}
+
+float radialFieldInfluenceAtPoint(const LayerFieldDescriptor &field,
+                                  const QPointF &point) {
+  if (field.typeId != QStringLiteral("artifact.field.radial")) {
+    return 1.0f;
+  }
+
+  const QPointF centeredPoint(
+      point.x() - field.settings.value(QStringLiteral("centerX")).toDouble(0.0),
+      point.y() - field.settings.value(QStringLiteral("centerY")).toDouble(0.0));
+
+  const qreal innerRadius = std::max<qreal>(
+      0.0, field.settings.value(QStringLiteral("innerRadius")).toDouble(0.0));
+  const qreal outerRadius = std::max<qreal>(
+      innerRadius + 0.0001,
+      field.settings.value(QStringLiteral("outerRadius")).toDouble(200.0));
+  const qreal strength = std::clamp<qreal>(field.strength, 0.0, 1.0);
+  const qreal distance = std::hypot(centeredPoint.x(), centeredPoint.y());
+
+  qreal raw = 0.0;
+  if (distance <= innerRadius) {
+    raw = 1.0;
+  } else if (distance >= outerRadius) {
+    raw = 0.0;
+  } else {
+    const qreal t =
+        std::clamp((distance - innerRadius) / (outerRadius - innerRadius), 0.0,
+                   1.0);
+    raw = 1.0 - (t * t * (3.0 - 2.0 * t));
+  }
+  if (field.invert) {
+    raw = 1.0 - raw;
+  }
+  return std::clamp(static_cast<float>(std::lerp<qreal>(1.0, raw, strength)),
+                    0.0f, 1.0f);
+}
+
+QPointF transformPointForField(const LayerFieldDescriptor &field,
+                               const QPointF &point) {
+  const qreal centerX =
+      field.settings.value(QStringLiteral("centerX")).toDouble(0.0);
+  const qreal centerY =
+      field.settings.value(QStringLiteral("centerY")).toDouble(0.0);
+  const qreal angleDegrees =
+      field.settings.value(QStringLiteral("angle")).toDouble(0.0);
+  const qreal angleRadians = -angleDegrees * std::numbers::pi_v<qreal> / 180.0;
+  const qreal cosAngle = std::cos(angleRadians);
+  const qreal sinAngle = std::sin(angleRadians);
+  const qreal x = point.x() - centerX;
+  const qreal y = point.y() - centerY;
+  return QPointF(x * cosAngle - y * sinAngle, x * sinAngle + y * cosAngle);
+}
+
+float boxFieldInfluenceAtPoint(const LayerFieldDescriptor &field,
+                               const QPointF &point) {
+  if (field.typeId != QStringLiteral("artifact.field.box")) {
+    return 1.0f;
+  }
+
+  const qreal halfX = std::max<qreal>(
+      0.0001, field.settings.value(QStringLiteral("halfX")).toDouble(120.0));
+  const qreal halfY = std::max<qreal>(
+      0.0001, field.settings.value(QStringLiteral("halfY")).toDouble(120.0));
+  const qreal falloffWidth = std::max<qreal>(
+      0.0001,
+      field.settings.value(QStringLiteral("falloffWidth")).toDouble(40.0));
+  const qreal strength = std::clamp<qreal>(field.strength, 0.0, 1.0);
+  const QPointF localPoint = transformPointForField(field, point);
+
+  const qreal dx = std::abs(localPoint.x());
+  const qreal dy = std::abs(localPoint.y());
+  qreal raw = 0.0;
+  if (dx <= halfX && dy <= halfY) {
+    raw = 1.0;
+  } else {
+    const qreal overX = std::max<qreal>(0.0, dx - halfX);
+    const qreal overY = std::max<qreal>(0.0, dy - halfY);
+    const qreal distance = std::hypot(overX, overY);
+    const qreal t = std::clamp(distance / falloffWidth, 0.0, 1.0);
+    raw = 1.0 - (t * t * (3.0 - 2.0 * t));
+  }
+  if (field.invert) {
+    raw = 1.0 - raw;
+  }
+  return std::clamp(static_cast<float>(std::lerp<qreal>(1.0, raw, strength)),
+                    0.0f, 1.0f);
+}
+
+float linearFieldInfluenceAtPoint(const LayerFieldDescriptor &field,
+                                  const QPointF &point) {
+  if (field.typeId != QStringLiteral("artifact.field.linear")) {
+    return 1.0f;
+  }
+
+  const qreal length = std::max<qreal>(
+      0.0001, field.settings.value(QStringLiteral("length")).toDouble(320.0));
+  const bool useSmoothstep =
+      field.settings.value(QStringLiteral("useSmoothstep")).toBool(true);
+  const qreal strength = std::clamp<qreal>(field.strength, 0.0, 1.0);
+  const QPointF localPoint = transformPointForField(field, point);
+
+  qreal raw =
+      1.0 - std::clamp((localPoint.x() + length * 0.5) / length, 0.0, 1.0);
+  if (useSmoothstep) {
+    raw = raw * raw * (3.0 - 2.0 * raw);
+  }
+  if (field.invert) {
+    raw = 1.0 - raw;
+  }
+  return std::clamp(static_cast<float>(std::lerp<qreal>(1.0, raw, strength)),
+                    0.0f, 1.0f);
+}
+
+float noiseHash2D(const QPointF &point, int octave) {
+  const qreal v = std::sin(point.x() * 12.9898 + point.y() * 78.233 +
+                           static_cast<qreal>(octave) * 37.719) *
+                  43758.5453;
+  return static_cast<float>(v - std::floor(v));
+}
+
+float noiseFieldInfluenceAtPoint(const LayerFieldDescriptor &field,
+                                 const QPointF &point) {
+  if (field.typeId != QStringLiteral("artifact.field.noise")) {
+    return 1.0f;
+  }
+
+  const qreal scale = std::max<qreal>(
+      0.0001, field.settings.value(QStringLiteral("scale")).toDouble(120.0));
+  const qreal amplitude = std::clamp<qreal>(
+      field.settings.value(QStringLiteral("amplitude")).toDouble(1.0), 0.0,
+      1.0);
+  const int octaves =
+      std::clamp(field.settings.value(QStringLiteral("octaves")).toInt(3), 1, 8);
+  const qreal strength = std::clamp<qreal>(field.strength, 0.0, 1.0);
+  const QPointF localPoint = transformPointForField(field, point);
+
+  QPointF scaledPoint(localPoint.x() / scale, localPoint.y() / scale);
+  qreal total = 0.0;
+  qreal totalWeight = 0.0;
+  qreal frequency = 1.0;
+  qreal octaveWeight = 1.0;
+  for (int octave = 0; octave < octaves; ++octave) {
+    total += noiseHash2D(
+                 QPointF(scaledPoint.x() * frequency, scaledPoint.y() * frequency),
+                 octave) *
+             octaveWeight;
+    totalWeight += octaveWeight;
+    frequency *= 2.0;
+    octaveWeight *= 0.5;
+  }
+
+  qreal raw = totalWeight > 0.0001 ? total / totalWeight : 0.0;
+  raw *= amplitude;
+  if (field.invert) {
+    raw = 1.0 - raw;
+  }
+  return std::clamp(static_cast<float>(std::lerp<qreal>(1.0, raw, strength)),
+                    0.0f, 1.0f);
+}
+
+float textFieldInfluenceAtPoint(const LayerFieldDescriptor &field,
+                                const QPointF &point) {
+  if (field.typeId == QStringLiteral("artifact.field.radial")) {
+    return radialFieldInfluenceAtPoint(field, point);
+  }
+  if (field.typeId == QStringLiteral("artifact.field.box")) {
+    return boxFieldInfluenceAtPoint(field, point);
+  }
+  if (field.typeId == QStringLiteral("artifact.field.linear")) {
+    return linearFieldInfluenceAtPoint(field, point);
+  }
+  if (field.typeId == QStringLiteral("artifact.field.noise")) {
+    return noiseFieldInfluenceAtPoint(field, point);
+  }
+  return 1.0f;
+}
+
+QString textFieldPreviewSummary(const ArtifactTextLayer *layer) {
+  if (!layer) {
+    return QStringLiteral("field=none");
+  }
+  const auto fields = layer->layerFields();
+  QStringList parts;
+  for (const auto &field : fields) {
+    if (!field.enabled) {
+      continue;
+    }
+    if (field.typeId != QStringLiteral("artifact.field.radial") &&
+        field.typeId != QStringLiteral("artifact.field.box") &&
+        field.typeId != QStringLiteral("artifact.field.linear") &&
+        field.typeId != QStringLiteral("artifact.field.noise")) {
+      continue;
+    }
+    parts.push_back(
+        QStringLiteral("%1(cx=%2,cy=%3,a=%4,s=%5)")
+            .arg(field.typeId.section('.', -1))
+            .arg(field.settings.value(QStringLiteral("centerX")).toDouble(0.0), 0,
+                 'f', 0)
+            .arg(field.settings.value(QStringLiteral("centerY")).toDouble(0.0), 0,
+                 'f', 0)
+            .arg(field.settings.value(QStringLiteral("angle")).toDouble(0.0), 0,
+                 'f', 0)
+            .arg(field.strength, 0, 'f', 2));
+  }
+  return parts.isEmpty() ? QStringLiteral("field=none")
+                         : parts.join(QStringLiteral(" | "));
+}
+
+std::vector<float> fieldDrivenGlyphWeights(const ArtifactTextLayer *layer,
+                                           const std::vector<GlyphItem> &glyphs) {
+  std::vector<float> weights;
+  if (!layer || glyphs.empty()) {
+    return weights;
+  }
+
+  const auto fields = layer->layerFields();
+  std::vector<const LayerFieldDescriptor *> supportedFields;
+  supportedFields.reserve(fields.size());
+  for (const auto &field : fields) {
+    if (!field.enabled) {
+      continue;
+    }
+    if (field.typeId != QStringLiteral("artifact.field.radial") &&
+        field.typeId != QStringLiteral("artifact.field.box") &&
+        field.typeId != QStringLiteral("artifact.field.linear") &&
+        field.typeId != QStringLiteral("artifact.field.noise")) {
+      continue;
+    }
+    supportedFields.push_back(&field);
+  }
+  if (supportedFields.empty()) {
+    return weights;
+  }
+
+  weights.assign(glyphs.size(), 1.0f);
+  for (size_t glyphIndex = 0; glyphIndex < glyphs.size(); ++glyphIndex) {
+    const auto &glyph = glyphs[glyphIndex];
+    const QPointF point = glyph.basePosition + glyph.bounds.center();
+    float combined = 0.0f;
+    for (const auto *field : supportedFields) {
+      if (!field) {
+        continue;
+      }
+      combined = std::max(combined, textFieldInfluenceAtPoint(*field, point));
+    }
+    weights[glyphIndex] = std::clamp(combined, 0.0f, 1.0f);
+  }
+  return weights;
 }
 
 QString textUnitBadgeForState(const QString &displayText,
@@ -604,11 +846,12 @@ QString selectorScriptLabelForContract(const TextLayoutContract &contract) {
 }
 
 QString selectorVerticalLabelForContract(const TextLayoutContract &contract) {
-  return QStringLiteral("tcy=%1;punct=%2;brackets=%3;kinsoku=%4")
+  return QStringLiteral("tcy=%1;punct=%2;brackets=%3;kinsoku=%4;viol=%5")
       .arg(contract.tateChuYokoRuns.size())
       .arg(contract.punctuationRuns.size())
       .arg(contract.bracketOrientationRuns.size())
-      .arg(contract.kinsokuBoundaryInfos.size());
+      .arg(contract.kinsokuBoundaryInfos.size())
+      .arg(contract.kinsokuViolationCount);
 }
 
 QString textDirectionLabel(const TextDirection direction) {
@@ -625,7 +868,7 @@ QString textDirectionLabel(const TextDirection direction) {
 
 QString selectorContractSummaryForContract(const TextLayoutContract &contract) {
   return QStringLiteral(
-             "mode=%1;base=%2;scripts=%3;clusters=%4;bidi=%5;lines=%6;ruby=%7;tcy=%8;punct=%9;brackets=%10;kinsoku=%11")
+             "mode=%1;base=%2;scripts=%3;clusters=%4;bidi=%5;lines=%6;ruby=%7;tcy=%8;punct=%9;brackets=%10;kinsoku=%11;viol=%12")
       .arg(contract.writingMode == TextWritingMode::Vertical
                ? QStringLiteral("vertical")
                : QStringLiteral("horizontal"))
@@ -638,7 +881,8 @@ QString selectorContractSummaryForContract(const TextLayoutContract &contract) {
       .arg(contract.tateChuYokoRuns.size())
       .arg(contract.punctuationRuns.size())
       .arg(contract.bracketOrientationRuns.size())
-      .arg(contract.kinsokuBoundaryInfos.size());
+      .arg(contract.kinsokuBoundaryInfos.size())
+      .arg(contract.kinsokuViolationCount);
 }
 
 QString textWritingModeLabel(const TextWritingMode writingMode) {
@@ -695,6 +939,7 @@ TextShapingResult layoutTextShape(const UniString &text,
   request.paragraph = paragraph;
   request.writingMode = writingMode;
   request.baseDirection = inferredBaseDirection(request.text);
+  request.locale = QLocale::system().name();
   request.rubyAttachments = rubyAttachments;
   return backend.shape(request);
 }
@@ -1059,16 +1304,20 @@ void drawAnimatedGlyphRun(QPainter &painter, const std::vector<GlyphItem> &glyph
 
     const QTransform transform = glyphTransform(glyph, path);
     const float glyphOpacity = std::clamp(glyph.offsetOpacity, 0.0f, 1.0f);
+    const QColor blendedFill =
+        useGlyphOverrides && glyph.hasColorOverride
+            ? blendColors(fillColor, toQColor(glyph.fillColorOverride),
+                          glyph.fillColorOverrideWeight)
+            : fillColor;
+    const QColor blendedStroke =
+        useGlyphOverrides && glyph.hasStrokeOverride
+            ? blendColors(strokeColor, toQColor(glyph.strokeColorOverride),
+                          glyph.strokeColorOverrideWeight)
+            : strokeColor;
     const QColor resolvedFill =
-        colorWithOpacity(useGlyphOverrides && glyph.hasColorOverride
-                             ? toQColor(glyph.fillColorOverride)
-                             : fillColor,
-                         glyphOpacity);
+        colorWithOpacity(blendedFill, glyphOpacity);
     const QColor resolvedStroke =
-        colorWithOpacity(useGlyphOverrides && glyph.hasStrokeOverride
-                             ? toQColor(glyph.strokeColorOverride)
-                             : strokeColor,
-                         glyphOpacity);
+        colorWithOpacity(blendedStroke, glyphOpacity);
     const qreal strokeWidth =
         std::max<qreal>(0.0, (style.strokeEnabled ? style.strokeWidth : 0.0f) +
                                  glyph.offsetStrokeWidth);
@@ -1900,11 +2149,11 @@ QVector<float> ArtifactTextLayer::selectorWeightPreview(const int sampleCount) c
   if (!impl_) {
     return {};
   }
+  const QString displayText = resolvedSourceTextAtTime(this);
   if (!impl_->glyphs_.empty()) {
     return selectorWeightPreviewForGlyphs(impl_->glyphs_, impl_->animators_,
-                                         sampleCount);
+                                         sampleCount, displayText);
   }
-  const QString displayText = resolvedSourceTextAtTime(this);
   const int textLength = std::max<int>(1, static_cast<int>(displayText.size()));
   return selectorWeightPreviewForAnimators(impl_->animators_, sampleCount,
                                            textLength);
@@ -2258,24 +2507,31 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   selectorOverviewProp->setTooltip(
       QStringLiteral("Primary compact key=value summary for target, mode, source, visual, unit, tag, script, vertical, token, clusters, and lines."));
   textGroup.addProperty(selectorOverviewProp);
+  auto fieldPreviewProp = makeProp(QStringLiteral("text.fieldPreview"),
+                                   ArtifactCore::PropertyType::String,
+                                   textFieldPreviewSummary(this), -82);
+  fieldPreviewProp->setDisplayLabel(QStringLiteral("Field Preview"));
+  fieldPreviewProp->setTooltip(
+      QStringLiteral("Compact summary of supported text field masks with center, angle, and strength."));
+  textGroup.addProperty(fieldPreviewProp);
   auto selectorScriptProp = makeProp(QStringLiteral("text.selectorScript"),
                                      ArtifactCore::PropertyType::String,
                                      selectorScriptLabelForContract(impl_->layoutContract_),
-                                     -82);
+                                     -81);
   selectorScriptProp->setDisplayLabel(QStringLiteral("Selector Script"));
   selectorScriptProp->setTooltip(
       QStringLiteral("Script run summary from the shaped layout contract."));
   textGroup.addProperty(selectorScriptProp);
   auto selectorVerticalProp = makeProp(
       QStringLiteral("text.selectorVertical"), ArtifactCore::PropertyType::String,
-      selectorVerticalLabelForContract(impl_->layoutContract_), -81);
+      selectorVerticalLabelForContract(impl_->layoutContract_), -80);
   selectorVerticalProp->setDisplayLabel(QStringLiteral("Selector Vertical"));
   selectorVerticalProp->setTooltip(
       QStringLiteral("Vertical-writing summary from the shaped layout contract."));
   textGroup.addProperty(selectorVerticalProp);
   auto selectorContractProp = makeProp(
       QStringLiteral("text.selectorContract"), ArtifactCore::PropertyType::String,
-      selectorContractSummaryForContract(impl_->layoutContract_), -80);
+      selectorContractSummaryForContract(impl_->layoutContract_), -79);
   selectorContractProp->setDisplayLabel(QStringLiteral("Selector Contract"));
   selectorContractProp->setTooltip(
       QStringLiteral("Full shaped layout contract summary for the current selector state."));
@@ -2283,7 +2539,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   auto selectorTokenProp = makeProp(QStringLiteral("text.selectorToken"),
                                     ArtifactCore::PropertyType::String,
                                     selectorTokenLabelForGlyphs(impl_->glyphs_),
-                                    -79);
+                                    -78);
   selectorTokenProp->setDisplayLabel(QStringLiteral("Selector Token"));
   selectorTokenProp->setTooltip(
       QStringLiteral("Representative stable token id for the current shaped glyph stream."));
@@ -2291,14 +2547,14 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   auto selectorTagProp = makeProp(QStringLiteral("text.selectorTag"),
                                   ArtifactCore::PropertyType::String,
                                   selectorTagLabelForText(badgeSourceText),
-                                  -78);
+                                  -77);
   selectorTagProp->setDisplayLabel(QStringLiteral("Selector Tag"));
   selectorTagProp->setTooltip(
       QStringLiteral("Representative script-family tag for the current text stream."));
   textGroup.addProperty(selectorTagProp);
   auto unitBadgeProp = makeProp(QStringLiteral("text.unitBadge"),
                                 ArtifactCore::PropertyType::String,
-                                badgeText, -77);
+                                badgeText, -76);
   unitBadgeProp->setDisplayLabel(QStringLiteral("Unit Badge"));
   unitBadgeProp->setTooltip(
       QStringLiteral("Detail used by Selector Overview: current text unit semantics."));
@@ -3263,8 +3519,11 @@ void ArtifactTextLayer::updateImage() {
       animatorStack.emplace_back(resolvedAnimator.range, resolvedAnimator.wiggly,
                                  resolvedAnimator.properties);
     }
-    TextAnimatorEngine::applyAnimatorStack(impl_->glyphs_, animatorStack,
-                                           timeSeconds);
+    const std::vector<float> glyphFieldWeights =
+        fieldDrivenGlyphWeights(this, impl_->glyphs_);
+    TextAnimatorEngine::applyAnimatorStack(
+        impl_->glyphs_, animatorStack, timeSeconds, displayText,
+        glyphFieldWeights);
 
     const QRectF glyphBounds = animatedGlyphBounds(impl_->glyphs_,
                                                    impl_->textStyle_);

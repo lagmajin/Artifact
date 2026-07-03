@@ -671,10 +671,6 @@ namespace Artifact
                 quint32 hashedValue = 0;
                 if (materialManifest) {
                     entryName = layer->layerName() + QStringLiteral("|material");
-                    if (auto* modelLayer =
-                            dynamic_cast<Artifact3DLayer*>(layer.get())) {
-                        entryName = modelLayer->materialSignature();
-                    }
                     hashedValue = qHash(entryName, 0x7f31u) & 0x00ffffffu;
                 } else {
                     entryName = layer->id().toString();
@@ -886,9 +882,9 @@ namespace Artifact
                 result.addDiagnostic(makePreflightDiagnostic(
                     ArtifactCore::DiagnosticSeverity::Warning,
                     ArtifactCore::DiagnosticCategory::Configuration,
-                    QStringLiteral("Velocity AOV currently exports object motion only"),
-                    QStringLiteral("This job requests Velocity.X/Y. The current render path exports 3D object motion from previous/current model transforms, but does not include camera motion or 2D layer vectors yet."),
-                    QStringLiteral("Use Velocity for 3D object motion today, or extend the render path for camera and 2D motion vectors"),
+                    QStringLiteral("Velocity AOV currently exports 3D motion only"),
+                    QStringLiteral("This job requests Velocity.X/Y. The current render path exports 3D object motion and active 3D camera motion from previous/current frame transforms, but does not include 2D layer vectors yet."),
+                    QStringLiteral("Use Velocity for current 3D motion today, or extend the render path for 2D layer vectors"),
                     compId));
             }
 
@@ -901,7 +897,7 @@ namespace Artifact
                     ArtifactCore::DiagnosticSeverity::Info,
                     ArtifactCore::DiagnosticCategory::Configuration,
                     QStringLiteral("Cryptomatte export uses draft packing"),
-                    QStringLiteral("ObjectId/MaterialId exports now add draft CryptoObject00/CryptoMaterial00 packed channels and mirror metadata into cryptomatte/* keys, but still do not provide full ranked coverage layers or MurmurHash-based standard hashing."),
+                    QStringLiteral("ObjectId/MaterialId exports now add draft CryptoObject00/CryptoMaterial00 packed channels with alpha-based single-hit coverage and mirror metadata into cryptomatte/* keys, but still do not provide full ranked coverage layers or MurmurHash-based standard hashing."),
                     QStringLiteral("Treat the EXR as single-hit draft Cryptomatte output until full packed coverage layers are implemented"),
                     compId));
             }

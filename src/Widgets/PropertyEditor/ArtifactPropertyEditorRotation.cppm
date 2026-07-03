@@ -18,6 +18,7 @@ import Artifact.Widgets.RelativeSpinBox;
 namespace Artifact {
 using namespace detail;
 
+ArtifactRotationPropertyEditor::ArtifactRotationPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyRotationEditor"));

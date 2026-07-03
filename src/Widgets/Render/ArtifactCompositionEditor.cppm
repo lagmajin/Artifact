@@ -129,6 +129,7 @@ import Artifact.Widget.Dialog.ScreenshotExport;
 import Dialog.Composition;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Image.ImageF32x4_RGBA;
+import Artifact.Render.IRenderer;
 import IO.ImageExporter;
 import Image.ExportOptions;
 import Codec.Thumbnail.FFmpeg;
@@ -5034,6 +5035,47 @@ public:
       return false;
     }
 
+    if (options.multiChannel) {
+      // Multi-channel (AOV) EXR output
+      auto* renderer = renderController_->renderer();
+      if (!renderer) {
+        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
+                             QStringLiteral("Renderer not available."));
+        return false;
+      }
+      renderer->setMultiChannelEnabled(true);
+      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::Depth, true);
+      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalX, true);
+      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalY, true);
+      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalZ, true);
+      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::ObjectId, true);
+      renderer->clear();
+      if (auto comp = renderController_->composition()) {
+        const auto pos = comp->currentFramePosition();
+        const auto& layers = comp->allLayerRef();
+        for (const auto& layer : layers) {
+          if (layer && layer->isVisible() && layer->isActiveAt(pos)) {
+            layer->draw(renderer);
+          }
+        }
+      }
+      renderer->flush();
+      ArtifactCore::MultiChannelImage multiFrame = renderer->readbackToMultiChannelImage();
+      if (multiFrame.isEmpty()) {
+        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
+                             QStringLiteral("Failed to capture multi-channel image."));
+        return false;
+      }
+      ArtifactCore::ImageExportOptions exportOpts;
+      exportOpts.format = options.format;
+      ArtifactCore::ImageExporter exporter;
+      auto result = exporter.writeMultiChannel(multiFrame, filePath, exportOpts);
+      if (!result.success) {
+        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
+                             QStringLiteral("Save failed: %1 - %2").arg(result.errorStage, result.errorMessage));
+        return false;
+      }
+    } else {
     if (!saveScreenshotImage(screenshot, filePath, options.format, options.jpegQuality)) {
       QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
                            QStringLiteral("保存に失敗しました:\n%1").arg(filePath));
