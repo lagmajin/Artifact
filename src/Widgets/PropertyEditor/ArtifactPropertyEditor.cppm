@@ -121,11 +121,13 @@ protected:
     const QColor surface = palette().color(QPalette::Window);
     const QColor trackBase = palette().color(QPalette::Base);
     const QColor trackBorder = palette().color(QPalette::Dark);
-    const QColor trackFill = palette().color(QPalette::Highlight);
+    const QColor activeFill = palette().color(QPalette::Highlight);
+    const QColor trackFill =
+        (isSliderDown() || hasFocus())
+            ? activeFill
+            : trackBase.lighter(112);
     const QColor handleFill = palette().color(QPalette::Button);
     const QColor handleBorder = palette().color(QPalette::Mid);
-    const QColor textColor = palette().color(QPalette::Text);
-
     painter.fillRect(rect(), surface);
 
     QStyleOptionSlider opt;
@@ -183,15 +185,6 @@ protected:
       painter.drawRoundedRect(ghostHandleRect, 3.0, 3.0);
     }
 
-    if (!displayText_.isEmpty()) {
-      QFont textFont = font();
-      textFont.setPointSize(std::max(10, textFont.pointSize()));
-      textFont.setWeight(QFont::DemiBold);
-      painter.setFont(textFont);
-      painter.setPen(textColor);
-      painter.drawText(trackRect.adjusted(10, 0, -10, 0),
-                       Qt::AlignCenter, displayText_);
-    }
   }
 
 private:
@@ -1242,8 +1235,6 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   if (showSlider) {
     slider_ = new PropertySliderWidget(this);
     applyPropertyFieldPalette(slider_);
-    knob_ = new PropertyNumericKnobWidget(this);
-    applyPropertyFieldPalette(knob_, true);
   }
   QPushButton *resetButton = nullptr;
   if (::Artifact::artifactShouldShowPropertyResetButtons()) {
@@ -1581,8 +1572,6 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   if (showSlider) {
     slider_ = new PropertySliderWidget(this);
     applyPropertyFieldPalette(slider_);
-    knob_ = new PropertyNumericKnobWidget(this);
-    applyPropertyFieldPalette(knob_, true);
   }
   QPushButton *resetButton = nullptr;
   if (::Artifact::artifactShouldShowPropertyResetButtons()) {
@@ -3087,40 +3076,18 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
   QPainterPath path;
   path.addRoundedRect(frame, radius, radius);
 
-  QColor fill = propertySurfaceColor(false);
-  if (hovered) {
-    fill = blendColor(fill, accent, 0.04);
-  }
-  if (focused) {
-    fill = blendColor(fill, selection, 0.24);
-  }
-  QLinearGradient baseGrad(frame.topLeft(), frame.bottomRight());
-  baseGrad.setColorAt(0.0, blendColor(fill, QColor(QStringLiteral("#F2F4F1")),
-                                      hovered ? 0.10 : 0.055));
-  baseGrad.setColorAt(0.44, fill);
-  baseGrad.setColorAt(1.0, blendColor(fill, QColor(QStringLiteral("#050708")),
-                                      focused ? 0.12 : 0.07));
-  painter.fillPath(path, baseGrad);
+  if (hovered || focused) {
+    QColor fill = propertySurfaceColor(false);
+    fill = focused ? blendColor(fill, selection, 0.18)
+                   : blendColor(fill, accent, 0.025);
+    painter.fillPath(path, fill);
 
-  QLinearGradient veilGrad(frame.topLeft(), frame.topRight());
-  QColor leftVeil = blendColor(accent, QColor(QStringLiteral("#F4F6F2")),
-                               focused ? 0.52 : 0.38);
-  leftVeil.setAlpha(hovered || focused ? 30 : 18);
-  QColor rightVeil = leftVeil;
-  rightVeil.setAlpha(0);
-  veilGrad.setColorAt(0.0, leftVeil);
-  veilGrad.setColorAt(0.62, rightVeil);
-  painter.fillPath(path, veilGrad);
-
-  QColor line = border.lighter(118);
-  if (hovered) {
-    line = blendColor(line, accent, 0.34);
+    const QColor line =
+        focused ? blendColor(border, selection, 0.40)
+                : blendColor(border, accent, 0.10);
+    painter.setPen(QPen(line, 1.0));
+    painter.drawPath(path);
   }
-  if (focused) {
-    line = blendColor(line, selection, 0.48);
-  }
-  painter.setPen(QPen(line, 1.0));
-  painter.drawPath(path);
 
   if (keyframed) {
     painter.save();

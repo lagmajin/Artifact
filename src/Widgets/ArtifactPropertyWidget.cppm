@@ -1175,9 +1175,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
   const QString labelText = meta.displayLabel.isEmpty()
                                 ? humanizePropertyLabel(property.getName())
                                 : meta.displayLabel;
-  const QString rowLabel = contextLabel.isEmpty()
-                               ? labelText
-                               : QStringLiteral("%1 · %2").arg(contextLabel, labelText);
+  const QString rowLabel = labelText;
   auto *row = new ArtifactPropertyEditorRowWidget(rowLabel, editor,
                                                   property.getName(), parent);
   if (!contextLabel.isEmpty()) {
