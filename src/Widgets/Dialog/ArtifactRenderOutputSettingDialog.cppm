@@ -71,6 +71,7 @@ namespace Artifact
   QFrame* straightGuideFrame = nullptr;
   QFrame* premultipliedGuideFrame = nullptr;
   QLabel* recommendationLabel = nullptr;
+  QLabel* outputPackageLabel = nullptr;
   double compositionFrameRate = 30.0;
     QComboBox* renderBackendCombo = nullptr;
     QComboBox* resolutionCombo = nullptr;
@@ -92,6 +93,8 @@ namespace Artifact
   QCheckBox* emissionChannelCheck = nullptr;
   QSpinBox* framePaddingSpin = nullptr;
   QComboBox* audioCodecCombo = nullptr;
+  QComboBox* audioChannelCombo = nullptr;
+  QComboBox* audioSampleRateCombo = nullptr;
   QSpinBox* audioBitrateSpin = nullptr;
   QWidget* buttonRow = nullptr;
   QPushButton* okButton = nullptr;
@@ -113,6 +116,8 @@ namespace Artifact
   void updateFrameRatePreflight();
   void updateMultiChannelUi();
   void updateBeginnerGuide();
+  void updateOutputPackageGuide();
+  void updateContainerCompatibility();
   QStringList selectedMultiChannelChannels() const;
   void setSelectedMultiChannelChannels(const QStringList& channels);
  static QString normalizeBackend(const QString& backend);
@@ -307,6 +312,7 @@ namespace Artifact
    presetCombo->addItem(QStringLiteral("再生・配布用 — MP4 / H.264"), QStringLiteral("guide.playback"));
    presetCombo->addItem(QStringLiteral("編集用中間素材 — ProRes 422"), QStringLiteral("guide.intermediate"));
    presetCombo->addItem(QStringLiteral("透過つき編集素材 — ProRes 4444"), QStringLiteral("guide.alpha"));
+   presetCombo->addItem(QStringLiteral("連番素材 — PNG Sequence"), QStringLiteral("guide.sequence"));
    presetCombo->insertSeparator(presetCombo->count());
    
    const auto presets = ArtifactRenderFormatPresetManager::instance().allPresets();
@@ -424,6 +430,150 @@ namespace Artifact
            QStringLiteral("おすすめ: 編集用中間素材 / ProRes 422 / 透過なし"));
      }
    }
+ }
+
+ void ArtifactRenderOutputSettingDialog::Impl::updateOutputPackageGuide()
+ {
+   if (!outputPackageLabel || !formatCombo || !includeAudioCheck) {
+     return;
+   }
+
+   const QString format = formatCombo->currentText();
+   const bool imageSequence = format.endsWith(QStringLiteral(" Sequence"));
+   const bool supportsIntegratedAudio =
+       format == QStringLiteral("MP4") || format == QStringLiteral("MOV")
+       || format == QStringLiteral("WebM") || format == QStringLiteral("MKV")
+       || format == QStringLiteral("AVI");
+   if (!supportsIntegratedAudio && includeAudioCheck->isChecked()) {
+     const QSignalBlocker blocker(includeAudioCheck);
+     includeAudioCheck->setChecked(false);
+   }
+   includeAudioCheck->setEnabled(supportsIntegratedAudio);
+
+   QPalette palette = outputPackageLabel->palette();
+   if (imageSequence) {
+     outputPackageLabel->setText(QStringLiteral(
+         "出力パッケージ: 画像連番のみ。連番には音声を格納できません。"
+         "音声が必要な場合は別途WAVなどを用意してください（音声別出力の自動生成は未対応）。"));
+     palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#F09A3E")));
+   } else if (!supportsIntegratedAudio) {
+     outputPackageLabel->setText(QStringLiteral(
+         "出力パッケージ: この形式では音声同梱を利用できません。"));
+     palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#F09A3E")));
+   } else if (includeAudioCheck->isChecked()) {
+     outputPackageLabel->setText(QStringLiteral(
+         "出力パッケージ: 動画1ファイル（映像＋音声を同梱）"));
+     palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#78AFFF")));
+   } else {
+     outputPackageLabel->setText(QStringLiteral(
+         "出力パッケージ: 動画1ファイル（映像のみ）"));
+     palette.setColor(QPalette::WindowText, palette.color(QPalette::Text));
+   }
+   outputPackageLabel->setPalette(palette);
+
+   if (audioCodecCombo) audioCodecCombo->setEnabled(supportsIntegratedAudio && includeAudioCheck->isChecked());
+   if (audioChannelCombo) audioChannelCombo->setEnabled(supportsIntegratedAudio && includeAudioCheck->isChecked());
+   if (audioSampleRateCombo) audioSampleRateCombo->setEnabled(supportsIntegratedAudio && includeAudioCheck->isChecked());
+   if (audioBitrateSpin) {
+     const bool losslessPcm = audioCodecCombo
+         && audioCodecCombo->currentText() == QStringLiteral("PCM 24-bit");
+     audioBitrateSpin->setEnabled(
+         supportsIntegratedAudio && includeAudioCheck->isChecked() && !losslessPcm);
+     audioBitrateSpin->setToolTip(losslessPcm
+         ? QStringLiteral("PCMは非圧縮のためビットレート指定を使用しません。")
+         : QString());
+   }
+ }
+
+ void ArtifactRenderOutputSettingDialog::Impl::updateContainerCompatibility()
+ {
+   if (!formatCombo || !codecCombo || !audioCodecCombo) {
+     return;
+   }
+
+   const QString format = formatCombo->currentText();
+   QStringList videoCodecs;
+   QStringList audioCodecs;
+   QString preferredVideo;
+   QString preferredAudio;
+
+   if (format == QStringLiteral("MP4")) {
+     videoCodecs = {QStringLiteral("H.264"), QStringLiteral("H.265")};
+     audioCodecs = {QStringLiteral("AAC")};
+     preferredVideo = QStringLiteral("H.264");
+     preferredAudio = QStringLiteral("AAC");
+   } else if (format == QStringLiteral("MOV")) {
+     videoCodecs = {QStringLiteral("ProRes"), QStringLiteral("DNxHD"),
+                    QStringLiteral("H.264"), QStringLiteral("H.265")};
+     audioCodecs = {QStringLiteral("PCM 24-bit")};
+     preferredVideo = QStringLiteral("ProRes");
+     preferredAudio = QStringLiteral("PCM 24-bit");
+   } else if (format == QStringLiteral("WebM")) {
+     videoCodecs = {QStringLiteral("VP9")};
+     audioCodecs = {QStringLiteral("Opus"), QStringLiteral("Vorbis")};
+     preferredVideo = QStringLiteral("VP9");
+     preferredAudio = QStringLiteral("Opus");
+   } else if (format == QStringLiteral("MKV")) {
+     videoCodecs = {QStringLiteral("H.264"), QStringLiteral("H.265"), QStringLiteral("VP9")};
+     audioCodecs = {QStringLiteral("AAC"), QStringLiteral("Opus"), QStringLiteral("FLAC")};
+     preferredVideo = QStringLiteral("H.264");
+     preferredAudio = QStringLiteral("AAC");
+   } else if (format == QStringLiteral("AVI")) {
+     videoCodecs = {QStringLiteral("rawvideo"), QStringLiteral("H.264")};
+     audioCodecs = {QStringLiteral("PCM 24-bit")};
+     preferredVideo = QStringLiteral("rawvideo");
+     preferredAudio = QStringLiteral("PCM 24-bit");
+   } else if (format == QStringLiteral("WMV")) {
+     videoCodecs = {QStringLiteral("wmv2")};
+     preferredVideo = QStringLiteral("wmv2");
+   } else if (format == QStringLiteral("GIF")) {
+     videoCodecs = {QStringLiteral("gif")};
+     preferredVideo = QStringLiteral("gif");
+   } else if (format == QStringLiteral("APNG")) {
+     videoCodecs = {QStringLiteral("apng")};
+     preferredVideo = QStringLiteral("apng");
+   } else if (format == QStringLiteral("WEBP")) {
+     videoCodecs = {QStringLiteral("webp")};
+     preferredVideo = QStringLiteral("webp");
+   } else if (format == QStringLiteral("HTML")) {
+     videoCodecs = {QStringLiteral("CSS / HTML player")};
+     preferredVideo = videoCodecs.front();
+   } else {
+     QString imageCodec = format;
+     imageCodec.remove(QStringLiteral(" Sequence"));
+     videoCodecs = {imageCodec};
+     preferredVideo = imageCodec;
+   }
+
+   {
+     const QSignalBlocker videoBlocker(codecCombo);
+     codecCombo->clear();
+     codecCombo->addItems(videoCodecs);
+     codecCombo->setCurrentText(preferredVideo);
+   }
+   {
+     const QSignalBlocker audioBlocker(audioCodecCombo);
+     audioCodecCombo->clear();
+     audioCodecCombo->addItems(audioCodecs);
+     if (!audioCodecs.isEmpty()) {
+       audioCodecCombo->setCurrentText(preferredAudio);
+     }
+   }
+   if (codecCombo->currentText() == QStringLiteral("ProRes") && codecProfile.isEmpty()) {
+     codecProfile = QStringLiteral("hq");
+   } else if (codecCombo->currentText() != QStringLiteral("ProRes")) {
+     codecProfile.clear();
+   }
+   if (audioChannelCombo) {
+     audioChannelCombo->setCurrentIndex(
+         audioChannelCombo->findData(format == QStringLiteral("MOV")
+                                         ? QStringLiteral("source")
+                                         : QStringLiteral("stereo")));
+   }
+   if (audioSampleRateCombo) {
+     audioSampleRateCombo->setCurrentIndex(audioSampleRateCombo->findData(48000));
+   }
+   updateOutputPackageGuide();
  }
 
  void ArtifactRenderOutputSettingDialog::Impl::updateAdvancedSummary()
@@ -657,6 +807,14 @@ void ArtifactRenderOutputSettingDialog::Impl::setSelectedMultiChannelChannels(co
      codecCombo->setCurrentText(QStringLiteral("ProRes"));
      codecProfile = QStringLiteral("4444");
      if (alphaEnabledCheck) alphaEnabledCheck->setChecked(true);
+     return;
+   }
+   if (presetId == QStringLiteral("guide.sequence")) {
+     formatCombo->setCurrentText(QStringLiteral("PNG Sequence"));
+     codecCombo->setCurrentText(QStringLiteral("PNG"));
+     codecProfile.clear();
+     if (alphaEnabledCheck) alphaEnabledCheck->setChecked(true);
+     if (includeAudioCheck) includeAudioCheck->setChecked(false);
      return;
    }
    
@@ -957,19 +1115,39 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     formLayout->addRow("Bitrate:", impl_->bitrateSpin);
 
     // Audio settings
-    impl_->includeAudioCheck = new QCheckBox("Include audio in output");
-    formLayout->addRow("Audio:", impl_->includeAudioCheck);
+    impl_->includeAudioCheck = new QCheckBox(QStringLiteral("動画ファイルに音声を含める"));
+    formLayout->addRow(QStringLiteral("音声の扱い:"), impl_->includeAudioCheck);
+
+    impl_->outputPackageLabel = new QLabel(this);
+    impl_->outputPackageLabel->setWordWrap(true);
+    formLayout->addRow(QStringLiteral("出力内容:"), impl_->outputPackageLabel);
 
     impl_->audioCodecCombo = new QComboBox();
-    impl_->audioCodecCombo->addItems(QStringList{"AAC", "MP3", "FLAC", "Opus"});
-    formLayout->addRow("Audio Codec:", impl_->audioCodecCombo);
+    impl_->audioCodecCombo->addItem(QStringLiteral("AAC"));
+    formLayout->addRow(QStringLiteral("音声コーデック:"), impl_->audioCodecCombo);
+
+    impl_->audioChannelCombo = new QComboBox(this);
+    impl_->audioChannelCombo->addItem(QStringLiteral("ソース準拠"), QStringLiteral("source"));
+    impl_->audioChannelCombo->addItem(QStringLiteral("Mono"), QStringLiteral("mono"));
+    impl_->audioChannelCombo->addItem(QStringLiteral("Stereo（配布向け推奨）"), QStringLiteral("stereo"));
+    impl_->audioChannelCombo->addItem(QStringLiteral("5.1"), QStringLiteral("5.1"));
+    impl_->audioChannelCombo->setToolTip(QStringLiteral(
+        "ソース準拠ではチャンネル数を引き継ぎます。Mono・Stereo・5.1を選ぶとFFmpegで変換します。"));
+    formLayout->addRow(QStringLiteral("音声チャンネル:"), impl_->audioChannelCombo);
+
+    impl_->audioSampleRateCombo = new QComboBox(this);
+    impl_->audioSampleRateCombo->addItem(QStringLiteral("ソース準拠"), 0);
+    impl_->audioSampleRateCombo->addItem(QStringLiteral("48 kHz（映像向け推奨）"), 48000);
+    impl_->audioSampleRateCombo->addItem(QStringLiteral("96 kHz"), 96000);
+    impl_->audioSampleRateCombo->setCurrentIndex(1);
+    formLayout->addRow(QStringLiteral("サンプルレート:"), impl_->audioSampleRateCombo);
 
     impl_->audioBitrateSpin = new ArtifactRelativeSpinBox();
     impl_->audioBitrateSpin->setRange(32, 512);
     impl_->audioBitrateSpin->setSingleStep(32);
     impl_->audioBitrateSpin->setValue(128);
     impl_->audioBitrateSpin->setSuffix(" kbps");
-    formLayout->addRow("Audio Bitrate:", impl_->audioBitrateSpin);
+    formLayout->addRow(QStringLiteral("音声ビットレート:"), impl_->audioBitrateSpin);
 
     // Multi-channel (AOV) export toggle
     impl_->multiChannelCheck = new QCheckBox(QStringLiteral("Multi-channel EXR (AOV: Depth/Normal/Velocity/ObjectID/MaterialID/Albedo/Emission)"), this);
@@ -1026,6 +1204,8 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     const auto updateAudioEnabled = [this]() {
         const bool on = impl_->includeAudioCheck->isChecked();
         if (impl_->audioCodecCombo) impl_->audioCodecCombo->setEnabled(on);
+        if (impl_->audioChannelCombo) impl_->audioChannelCombo->setEnabled(on);
+        if (impl_->audioSampleRateCombo) impl_->audioSampleRateCombo->setEnabled(on);
         if (impl_->audioBitrateSpin) impl_->audioBitrateSpin->setEnabled(on);
     };
     updateAudioEnabled();
@@ -1090,12 +1270,14 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     QObject::connect(impl_->includeAudioCheck, &QCheckBox::toggled, [this](bool) {
         impl_->updatePresetSummary();
         impl_->updateAdvancedSummary();
+        impl_->updateOutputPackageGuide();
     });
     QObject::connect(impl_->multiChannelCheck, &QCheckBox::toggled, [this](bool) {
         impl_->updateMultiChannelUi();
         impl_->updatePresetSummary();
         impl_->updateFormatGuide();
         impl_->updateAdvancedSummary();
+        impl_->updateOutputPackageGuide();
     });
     QObject::connect(impl_->widthSpin, qOverload<int>(&QSpinBox::valueChanged), [this](int) {
         impl_->syncResolutionPreset();
@@ -1114,6 +1296,8 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
         impl_->updatePresetSummary();
         impl_->updateFormatGuide();
         impl_->updateAdvancedSummary();
+        impl_->updateContainerCompatibility();
+        impl_->updateOutputPackageGuide();
         if (!impl_->outputPathEdit) return;
         QString path = impl_->outputPathEdit->text().trimmed();
         if (path.isEmpty()) return;
@@ -1190,6 +1374,8 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->updateMultiChannelUi();
     impl_->updateActionLabels();
     impl_->updateBeginnerGuide();
+    impl_->updateContainerCompatibility();
+    impl_->updateOutputPackageGuide();
     updateAlphaPreflight(impl_->alphaEnabledCheck, impl_->preflightSummaryLabel, impl_->preflightDetailsLabel,
                          impl_->formatCombo ? impl_->formatCombo->currentText() : QStringLiteral("MP4"),
                          impl_->codecCombo ? impl_->codecCombo->currentText() : QStringLiteral("H.264"));
@@ -1240,11 +1426,14 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
    } else if (lower == QStringLiteral("mjpeg")) {
     normalizedCodec = QStringLiteral("JPEG");
    }
-   Impl::ensureComboContains(impl_->codecCombo, normalizedCodec);
    if (!impl_->codecCombo) {
      return;
    }
-   impl_->codecCombo->setCurrentIndex(std::max(0, impl_->codecCombo->findText(normalizedCodec)));
+   const int compatibleIndex = impl_->codecCombo->findText(normalizedCodec);
+   if (compatibleIndex < 0) {
+     return;
+   }
+   impl_->codecCombo->setCurrentIndex(compatibleIndex);
    if (lower == QStringLiteral("prores") && impl_->codecProfile.trimmed().isEmpty()) {
     impl_->codecProfile = QStringLiteral("hq");
    }
@@ -1408,7 +1597,10 @@ double ArtifactRenderOutputSettingDialog::compositionFrameRate() const
      const QSignalBlocker blocker(impl_->includeAudioCheck);
      impl_->includeAudioCheck->setChecked(include);
      if (impl_->audioCodecCombo) impl_->audioCodecCombo->setEnabled(include);
+     if (impl_->audioChannelCombo) impl_->audioChannelCombo->setEnabled(include);
+     if (impl_->audioSampleRateCombo) impl_->audioSampleRateCombo->setEnabled(include);
      if (impl_->audioBitrateSpin) impl_->audioBitrateSpin->setEnabled(include);
+     impl_->updateOutputPackageGuide();
    }
  }
 
@@ -1426,6 +1618,8 @@ double ArtifactRenderOutputSettingDialog::compositionFrameRate() const
    else if (lower == QStringLiteral("mp3")) display = QStringLiteral("MP3");
    else if (lower == QStringLiteral("flac")) display = QStringLiteral("FLAC");
    else if (lower == QStringLiteral("opus")) display = QStringLiteral("Opus");
+   else if (lower == QStringLiteral("vorbis")) display = QStringLiteral("Vorbis");
+   else if (lower == QStringLiteral("pcm_s24le") || lower == QStringLiteral("pcm")) display = QStringLiteral("PCM 24-bit");
    else display = codec;
    const int idx = impl_->audioCodecCombo->findText(display);
    impl_->audioCodecCombo->setCurrentIndex(idx >= 0 ? idx : 0);
@@ -1438,6 +1632,8 @@ double ArtifactRenderOutputSettingDialog::compositionFrameRate() const
    if (text == QStringLiteral("mp3")) return QStringLiteral("mp3");
    if (text == QStringLiteral("flac")) return QStringLiteral("flac");
    if (text == QStringLiteral("opus")) return QStringLiteral("opus");
+   if (text == QStringLiteral("vorbis")) return QStringLiteral("vorbis");
+   if (text == QStringLiteral("pcm 24-bit")) return QStringLiteral("pcm_s24le");
    return QStringLiteral("aac");
  }
 
@@ -1451,6 +1647,34 @@ double ArtifactRenderOutputSettingDialog::compositionFrameRate() const
  int ArtifactRenderOutputSettingDialog::audioBitrateKbps() const
  {
    return impl_->audioBitrateSpin ? impl_->audioBitrateSpin->value() : 128;
+ }
+
+ void ArtifactRenderOutputSettingDialog::setAudioChannelMode(const QString& mode)
+ {
+   if (!impl_->audioChannelCombo) return;
+   const int index = impl_->audioChannelCombo->findData(mode.trimmed().toLower());
+   impl_->audioChannelCombo->setCurrentIndex(index >= 0 ? index : 0);
+ }
+
+ QString ArtifactRenderOutputSettingDialog::audioChannelMode() const
+ {
+   return impl_->audioChannelCombo
+       ? impl_->audioChannelCombo->currentData().toString()
+       : QStringLiteral("source");
+ }
+
+ void ArtifactRenderOutputSettingDialog::setAudioSampleRate(int sampleRate)
+ {
+   if (!impl_->audioSampleRateCombo) return;
+   const int index = impl_->audioSampleRateCombo->findData(sampleRate);
+   impl_->audioSampleRateCombo->setCurrentIndex(index >= 0 ? index : 1);
+ }
+
+ int ArtifactRenderOutputSettingDialog::audioSampleRate() const
+ {
+   return impl_->audioSampleRateCombo
+       ? impl_->audioSampleRateCombo->currentData().toInt()
+       : 48000;
  }
 
  void ArtifactRenderOutputSettingDialog::setPreflightSummary(const QString& summary)

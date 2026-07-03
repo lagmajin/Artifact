@@ -476,6 +476,8 @@ namespace Artifact
         QString audioSourcePath;       // mux 用の音声ソースパス
         QString audioCodec;            // "aac", "mp3", ...
         int audioBitrateKbps;          // 音声ビットレート
+        QString audioChannelMode;       // "source", "mono", "stereo", "5.1"
+        int audioSampleRate;            // 0=source, otherwise Hz
         int resolutionWidth;          // 解像度幅
         int resolutionHeight;         // 解像度高さ
         double frameRate;             // フレームレート
@@ -507,6 +509,8 @@ namespace Artifact
             , audioSourcePath()
             , audioCodec(QStringLiteral("aac"))
             , audioBitrateKbps(128)
+            , audioChannelMode(QStringLiteral("stereo"))
+            , audioSampleRate(48000)
             , status(Status::Pending)
             , progress(0)
             , overlayOffsetX(0.0f)
@@ -2089,6 +2093,40 @@ namespace Artifact
         void setJobAudioBitrateKbps(int index, int bitrateKbps) {
             if (index < 0 || index >= jobs.size()) return;
             jobs[index].audioBitrateKbps = std::clamp(bitrateKbps, 32, 1024);
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        QString jobAudioChannelModeAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return QStringLiteral("stereo");
+            }
+            return jobs[index].audioChannelMode;
+        }
+
+        void setJobAudioChannelMode(int index, const QString& mode) {
+            if (index < 0 || index >= jobs.size()) return;
+            const QString normalized = mode.trimmed().toLower();
+            jobs[index].audioChannelMode =
+                normalized == QStringLiteral("mono") || normalized == QStringLiteral("5.1")
+                    || normalized == QStringLiteral("source")
+                ? normalized
+                : QStringLiteral("stereo");
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        int jobAudioSampleRateAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return 48000;
+            }
+            return jobs[index].audioSampleRate;
+        }
+
+        void setJobAudioSampleRate(int index, int sampleRate) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].audioSampleRate =
+                sampleRate == 0 || sampleRate == 48000 || sampleRate == 96000
+                ? sampleRate
+                : 48000;
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -3804,6 +3842,28 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    QString ArtifactRenderQueueService::jobAudioChannelModeAt(int index) const
+    {
+        return impl_->queueManager.jobAudioChannelModeAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobAudioChannelModeAt(int index, const QString& mode)
+    {
+        impl_->queueManager.setJobAudioChannelMode(index, mode);
+        impl_->syncCoreQueueModel();
+    }
+
+    int ArtifactRenderQueueService::jobAudioSampleRateAt(int index) const
+    {
+        return impl_->queueManager.jobAudioSampleRateAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobAudioSampleRateAt(int index, int sampleRate)
+    {
+        impl_->queueManager.setJobAudioSampleRate(index, sampleRate);
+        impl_->syncCoreQueueModel();
+    }
+
     bool ArtifactRenderQueueService::jobFrameRangeAt(int index, int* startFrame, int* endFrame) const
     {
         return impl_->queueManager.jobFrameRangeAt(index, startFrame, endFrame);
@@ -4020,6 +4080,74 @@ namespace Artifact
             const QString audioPath = job.audioSourcePath.trimmed();
             const bool hasExternalAudioSource = !audioPath.isEmpty() && QFileInfo(audioPath).isFile();
             const bool hasCompositionAudio = composition->hasAudio();
+            const QString format = job.outputFormat.trimmed().toLower();
+            const QString audioCodec = job.audioCodec.trimmed().toLower();
+            QStringList compatibleAudioCodecs;
+            if (format == QStringLiteral("mp4")) {
+                compatibleAudioCodecs = {QStringLiteral("aac")};
+            } else if (format == QStringLiteral("mov")) {
+                compatibleAudioCodecs = {QStringLiteral("aac"), QStringLiteral("pcm_s24le")};
+            } else if (format == QStringLiteral("webm")) {
+                compatibleAudioCodecs = {QStringLiteral("opus"), QStringLiteral("vorbis")};
+            } else if (format == QStringLiteral("mkv")) {
+                compatibleAudioCodecs = {QStringLiteral("aac"), QStringLiteral("opus"), QStringLiteral("flac")};
+            } else if (format == QStringLiteral("avi")) {
+                compatibleAudioCodecs = {QStringLiteral("pcm_s24le"), QStringLiteral("mp3")};
+            }
+
+            if (compatibleAudioCodecs.isEmpty()) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Selected container cannot include audio"),
+                    QStringLiteral("The %1 output does not support integrated audio in the current render path.")
+                        .arg(job.outputFormat),
+                    QStringLiteral("Disable integrated audio or choose MP4, MOV, WebM, MKV, or AVI"),
+                    compId));
+            } else if (!compatibleAudioCodecs.contains(audioCodec)) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Audio codec is incompatible with the container"),
+                    QStringLiteral("%1 audio is not supported in the %2 container.")
+                        .arg(job.audioCodec, job.outputFormat),
+                    QStringLiteral("Choose a compatible audio codec in Render Output Settings"),
+                    compId));
+            }
+
+            const QString channelMode = job.audioChannelMode.trimmed().toLower();
+            if (channelMode != QStringLiteral("source")
+                && channelMode != QStringLiteral("mono")
+                && channelMode != QStringLiteral("stereo")
+                && channelMode != QStringLiteral("5.1")) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Audio channel mode is invalid"),
+                    QStringLiteral("Unknown audio channel mode: %1").arg(job.audioChannelMode),
+                    QStringLiteral("Choose Source, Mono, Stereo, or 5.1"),
+                    compId));
+            }
+            if (job.audioSampleRate != 0 && job.audioSampleRate != 48000
+                && job.audioSampleRate != 96000) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Audio sample rate is invalid"),
+                    QStringLiteral("Unsupported sample rate: %1 Hz").arg(job.audioSampleRate),
+                    QStringLiteral("Choose Source, 48 kHz, or 96 kHz"),
+                    compId));
+            }
+            if (audioCodec == QStringLiteral("opus")
+                && job.audioSampleRate != 48000) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Opus output requires 48 kHz"),
+                    QStringLiteral("The current Opus render path requires an explicit 48 kHz sample rate."),
+                    QStringLiteral("Set the audio sample rate to 48 kHz"),
+                    compId));
+            }
 
             if (!hasExternalAudioSource && !hasCompositionAudio) {
                 result.addDiagnostic(makePreflightDiagnostic(
@@ -4866,12 +4994,19 @@ namespace Artifact
                         ? QStringLiteral("aac")
                         : job.audioCodec.trimmed();
                     const int audioBitrate = std::max(32, job.audioBitrateKbps) * 1000;
+                    const int outputAudioChannels =
+                        job.audioChannelMode == QStringLiteral("mono") ? 1
+                        : job.audioChannelMode == QStringLiteral("stereo") ? 2
+                        : job.audioChannelMode == QStringLiteral("5.1") ? 6
+                        : 0;
                     if (!ArtifactCore::FFmpegAudioEncoder::muxAudioWithVideo(
                             videoRenderPath,
                             audioSourcePathForMux,
                             outputPath,
                             audioCodec,
-                            audioBitrate)) {
+                            audioBitrate,
+                            outputAudioChannels,
+                            job.audioSampleRate)) {
                         success.store(false, std::memory_order_relaxed);
                         failureReason = QStringLiteral("Audio mux failed");
                     } else {
@@ -4995,6 +5130,8 @@ namespace Artifact
             obj["audioSourcePath"] = job.audioSourcePath;
             obj["audioCodec"] = job.audioCodec;
             obj["audioBitrateKbps"] = job.audioBitrateKbps;
+            obj["audioChannelMode"] = job.audioChannelMode;
+            obj["audioSampleRate"] = job.audioSampleRate;
             obj["resolutionWidth"] = job.resolutionWidth;
             obj["resolutionHeight"] = job.resolutionHeight;
             obj["frameRate"] = job.frameRate;
@@ -5040,6 +5177,18 @@ namespace Artifact
             job.audioSourcePath = obj["audioSourcePath"].toString();
             job.audioCodec = obj["audioCodec"].toString("aac");
             job.audioBitrateKbps = obj["audioBitrateKbps"].toInt(128);
+            job.audioChannelMode = obj["audioChannelMode"].toString("stereo");
+            job.audioSampleRate = obj["audioSampleRate"].toInt(48000);
+            if (job.audioChannelMode != QStringLiteral("source")
+                && job.audioChannelMode != QStringLiteral("mono")
+                && job.audioChannelMode != QStringLiteral("stereo")
+                && job.audioChannelMode != QStringLiteral("5.1")) {
+                job.audioChannelMode = QStringLiteral("stereo");
+            }
+            if (job.audioSampleRate != 0 && job.audioSampleRate != 48000
+                && job.audioSampleRate != 96000) {
+                job.audioSampleRate = 48000;
+            }
             job.resolutionWidth = obj["resolutionWidth"].toInt(1920);
             job.resolutionHeight = obj["resolutionHeight"].toInt(1080);
             job.frameRate = obj["frameRate"].toDouble(30.0);

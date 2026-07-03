@@ -52,6 +52,10 @@ export namespace Artifact
   [[nodiscard]] QString audioCodec() const;
   void setAudioBitrateKbps(int bitrateKbps);
   [[nodiscard]] int audioBitrateKbps() const;
+  void setAudioChannelMode(const QString& mode);
+  [[nodiscard]] QString audioChannelMode() const;
+  void setAudioSampleRate(int sampleRate);
+  [[nodiscard]] int audioSampleRate() const;
   void setPreflightSummary(const QString& summary);
   void setPreflightDetails(const QStringList& details);
  };
