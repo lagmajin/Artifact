@@ -35,10 +35,8 @@ module;
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <functional>
 #include <limits>
 #include <memory>
 #include <opencv2/core.hpp>
@@ -3421,76 +3419,6 @@ public:
     QString name;
     QString note;
   };
-  struct RenderPassResources {
-    RenderPipeline* pipeline = nullptr;
-    Diligent::ITextureView* layerRTV = nullptr;
-    Diligent::ITextureView* layerSRV = nullptr;
-    Diligent::ITextureView* layerFloatSRV = nullptr;
-    Diligent::ITextureView* layerFloatUAV = nullptr;
-    Diligent::ITextureView* accumSRV = nullptr;
-    Diligent::ITextureView* tempUAV = nullptr;
-  };
-  struct RenderPassContext {
-    ArtifactIRenderer* renderer = nullptr;
-    quint64 frame = 0;
-  };
-  class RenderPass {
-  public:
-    virtual ~RenderPass() = default;
-    virtual bool setup(RenderPassResources& resources) = 0;
-    virtual bool execute(RenderPassContext& context,
-                         RenderPassResources& resources) = 0;
-    virtual FrameRenderPassKind kind() const = 0;
-    virtual QString name() const = 0;
-  };
-  class FunctionalRenderPass final : public RenderPass {
-  public:
-    using Setup = std::function<bool(RenderPassResources&)>;
-    using Execute =
-        std::function<bool(RenderPassContext&, RenderPassResources&)>;
-
-    FunctionalRenderPass(FrameRenderPassKind passKind, QString passName,
-                         Setup setup, Execute execute)
-        : kind_(passKind), name_(std::move(passName)),
-          setup_(std::move(setup)), execute_(std::move(execute)) {}
-
-    bool setup(RenderPassResources& resources) override {
-      return !setup_ || setup_(resources);
-    }
-    bool execute(RenderPassContext& context,
-                 RenderPassResources& resources) override {
-      return execute_ && execute_(context, resources);
-    }
-    FrameRenderPassKind kind() const override { return kind_; }
-    QString name() const override { return name_; }
-
-  private:
-    FrameRenderPassKind kind_ = FrameRenderPassKind::Setup;
-    QString name_;
-    Setup setup_;
-    Execute execute_;
-  };
-  struct RenderPassExecutor {
-    static bool run(RenderPass& pass, RenderPassContext& context,
-                    RenderPassResources& resources) {
-      if (!context.renderer || !pass.setup(resources)) {
-        return false;
-      }
-      return pass.execute(context, resources);
-    }
-
-    template <std::size_t PassCount>
-    static bool runAll(const std::array<RenderPass*, PassCount>& passes,
-                       RenderPassContext& context,
-                       RenderPassResources& resources) {
-      for (RenderPass* pass : passes) {
-        if (!pass || !run(*pass, context, resources)) {
-          return false;
-        }
-      }
-      return true;
-    }
-  };
   struct GpuBasePassState {
     float origZoom = 1.0f;
     FloatColor origClearColor{};
@@ -3579,27 +3507,22 @@ public:
         {FrameRenderPassKind::Base, QStringLiteral("background"),
          pipelineEnabled ? QStringLiteral("seed background and intermediates")
                          : QStringLiteral("viewport background")});
-    if (pipelineEnabled) {
-      plan.push_back(
-          {FrameRenderPassKind::Surface, QStringLiteral("surface"),
-           QStringLiteral("layer surface capture")});
-      plan.push_back(
-          {FrameRenderPassKind::Mask, QStringLiteral("mask"),
-           QStringLiteral("mask and track matte resolve")});
-      plan.push_back(
-          {FrameRenderPassKind::Composite, QStringLiteral("composite"),
-           QStringLiteral("blend into accum target")});
-      plan.push_back(
-          {FrameRenderPassKind::Post, QStringLiteral("resolve"),
-           QStringLiteral("resolve accumulation for viewport")});
-    } else {
-      plan.push_back(
-          {FrameRenderPassKind::Composite,
-           useRamPreviewFallback ? QStringLiteral("ram-preview-composite")
-                                 : QStringLiteral("direct-composite"),
-           useRamPreviewFallback ? QStringLiteral("cached frame composite")
-                                 : QStringLiteral("direct layer composite")});
-    }
+    plan.push_back(
+        {FrameRenderPassKind::Surface, QStringLiteral("surface"),
+         pipelineEnabled ? QStringLiteral("layer surface capture")
+                         : QStringLiteral("direct layer draw")});
+    plan.push_back(
+        {FrameRenderPassKind::Mask, QStringLiteral("mask"),
+         pipelineEnabled ? QStringLiteral("mask and track matte resolve")
+                         : QStringLiteral("layer-local mask resolve")});
+    plan.push_back(
+        {FrameRenderPassKind::Composite, QStringLiteral("composite"),
+         pipelineEnabled ? QStringLiteral("blend into accum target")
+                         : QStringLiteral("direct viewport compositing")});
+    plan.push_back(
+        {FrameRenderPassKind::Post, QStringLiteral("post"),
+         hasComposition ? QStringLiteral("final composition effects")
+                        : QStringLiteral("post disabled")});
     plan.push_back(
         {FrameRenderPassKind::Overlay, QStringLiteral("overlay"),
          hasComposition ? QStringLiteral("controller overlays")
@@ -3830,112 +3753,109 @@ public:
     renderer_->setOverrideRTV(nullptr);
   }
 
-  Diligent::ITextureView* prepareGpuLayerForBlend(
-      ArtifactAbstractLayer* layer, RenderPipeline& renderPipeline,
-      Diligent::ITextureView* layerSRV, Diligent::ITextureView* layerFloatSRV,
-      Diligent::ITextureView* layerFloatUAV, Diligent::ITextureView* tempUAV,
-      const QHash<ArtifactCore::Id, QImage>& matteSourceImages,
-      int& layerToFloatConvertCount, bool& convertedLayerToFloat) {
-    convertedLayerToFloat = renderer_->convertLayerToFloat(
-        blendPipeline_.get(), layerSRV, layerFloatUAV,
-        static_cast<Diligent::Uint32>(renderPipeline.width()),
-        static_cast<Diligent::Uint32>(renderPipeline.height()));
-    if (!convertedLayerToFloat) {
-      qWarning() << "[CompositionView] layer-to-float conversion failed; "
-                    "falling back to legacy layer SRV"
-                 << "layer=" << layer->id().toString()
-                 << "layerName=" << layer->layerName();
-      return layerSRV;
-    }
-
-    ++layerToFloatConvertCount;
-    const auto mattes = layer->matteReferences();
-    if (mattes.empty()) {
-      return layerFloatSRV;
-    }
-
-    auto devCtx = renderer_->immediateContext();
-    bool allMatted = true;
-    for (const auto& matteRef : mattes) {
-      if (!matteRef.enabled || matteRef.sourceLayerId.isNil()) {
-        continue;
-      }
-      const auto matteIt = matteSourceImages.constFind(matteRef.sourceLayerId);
-      if (matteIt == matteSourceImages.constEnd() || matteIt.value().isNull()) {
-        allMatted = false;
-        continue;
-      }
-      const QImage& matteSrc = matteIt.value();
-      const bool uploaded = renderPipeline.updateMatteSourceFromData(
-          devCtx.RawPtr(), matteSrc.constBits(),
-          static_cast<Diligent::Uint32>(matteSrc.width()),
-          static_cast<Diligent::Uint32>(matteSrc.height()),
-          static_cast<Diligent::Uint32>(matteSrc.bytesPerLine()));
-      if (!uploaded) {
-        allMatted = false;
-        continue;
-      }
-
-      Diligent::Uint32 shaderMode = 0;
-      switch (matteRef.type) {
-      case MatteType::Alpha:
-        shaderMode = matteRef.invert ? 2u : 0u;
-        break;
-      case MatteType::Luma:
-        shaderMode = matteRef.invert ? 3u : 1u;
-        break;
-      case MatteType::InverseAlpha:
-        shaderMode = matteRef.invert ? 0u : 2u;
-        break;
-      case MatteType::InverseLuma:
-        shaderMode = matteRef.invert ? 1u : 3u;
-        break;
-      }
-
-      ArtifactCore::MatteTrackParams params;
-      params.matteCount = 1;
-      params.matteMode0 = shaderMode;
-      params.stackMode = 0;
-      params.lumaMode = 0;
-      params.opacity = 1.0f;
-      if (!renderer_->applyTrackMatte(
-              blendPipeline_.get(), layerFloatSRV,
-              renderPipeline.matteSourceSRV(), nullptr, nullptr, tempUAV,
-              params, renderPipeline.width(), renderPipeline.height())) {
-        allMatted = false;
-        continue;
-      }
-
-      Diligent::CopyTextureAttribs copyAttrs = {};
-      copyAttrs.pSrcTexture = tempUAV->GetTexture();
-      copyAttrs.SrcTextureTransitionMode =
-          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-      copyAttrs.pDstTexture = layerFloatUAV->GetTexture();
-      copyAttrs.DstTextureTransitionMode =
-          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-      devCtx->CopyTexture(copyAttrs);
-    }
-    if (!allMatted) {
-      qWarning() << "[CompositionView] GPU track matte partial/failure for"
-                 << layer->layerName();
-    }
-    return layerFloatSRV;
-  }
-
   GpuLayerBlendResult blendGpuLayerIntoAccum(
       ArtifactAbstractLayer* layer, RenderPipeline& renderPipeline,
-      Diligent::ITextureView* layerSRV,
-      Diligent::ITextureView* preparedBlendSRV,
-      Diligent::ITextureView*& accumSRV, Diligent::ITextureView*& tempUAV,
+      Diligent::ITextureView* layerSRV, Diligent::ITextureView* layerFloatSRV,
+      Diligent::ITextureView* layerFloatUAV, Diligent::ITextureView*& accumSRV,
+      Diligent::ITextureView*& tempUAV,
+      const QHash<ArtifactCore::Id, QImage>& matteSourceImages,
       ArtifactCore::BlendMode blendMode, float opacity, float cw, float ch,
       int& blendDispatchCount, int& blendRetryNormalCount,
       int& blendFailureCount, int& directBlendFallbackCount,
-      bool convertedLayerToFloat) {
+      int& layerToFloatConvertCount) {
     GpuLayerBlendResult result;
-    result.convertedLayerToFloat = convertedLayerToFloat;
     ++blendDispatchCount;
-    result.blended = renderer_->blendLayers(blendPipeline_.get(),
-                                            preparedBlendSRV,
+    result.convertedLayerToFloat = renderer_->convertLayerToFloat(
+        blendPipeline_.get(), layerSRV, layerFloatUAV,
+        static_cast<Diligent::Uint32>(renderPipeline.width()),
+        static_cast<Diligent::Uint32>(renderPipeline.height()));
+    Diligent::ITextureView* blendSrcSRV =
+        result.convertedLayerToFloat ? layerFloatSRV : layerSRV;
+    if (result.convertedLayerToFloat) {
+      ++layerToFloatConvertCount;
+      auto mattes = layer->matteReferences();
+      if (!mattes.empty()) {
+        auto devCtx = renderer_->immediateContext();
+        bool allMatted = true;
+        for (const auto& matteRef : mattes) {
+          if (!matteRef.enabled || matteRef.sourceLayerId.isNil()) continue;
+          auto matteIt = matteSourceImages.constFind(matteRef.sourceLayerId);
+          if (matteIt == matteSourceImages.constEnd()) {
+            allMatted = false;
+            continue;
+          }
+          const QImage& matteSrc = matteIt.value();
+          if (matteSrc.isNull()) {
+            allMatted = false;
+            continue;
+          }
+
+          const auto mw = static_cast<Diligent::Uint32>(matteSrc.width());
+          const auto mh = static_cast<Diligent::Uint32>(matteSrc.height());
+          const bool uploaded = renderPipeline.updateMatteSourceFromData(
+              devCtx.RawPtr(), matteSrc.constBits(), mw, mh,
+              static_cast<Diligent::Uint32>(matteSrc.bytesPerLine()));
+          if (!uploaded) {
+            allMatted = false;
+            continue;
+          }
+
+          Diligent::Uint32 shaderMode = 0;
+          switch (matteRef.type) {
+            case MatteType::Alpha:
+              shaderMode = matteRef.invert ? 2u : 0u;
+              break;
+            case MatteType::Luma:
+              shaderMode = matteRef.invert ? 3u : 1u;
+              break;
+            case MatteType::InverseAlpha:
+              shaderMode = matteRef.invert ? 0u : 2u;
+              break;
+            case MatteType::InverseLuma:
+              shaderMode = matteRef.invert ? 1u : 3u;
+              break;
+          }
+
+          ArtifactCore::MatteTrackParams mtParams;
+          mtParams.matteCount = 1;
+          mtParams.matteMode0 = shaderMode;
+          mtParams.stackMode = 0;
+          mtParams.lumaMode = 0;
+          mtParams.opacity = 1.0f;
+
+          const bool matteOk = renderer_->applyTrackMatte(
+              blendPipeline_.get(), layerFloatSRV, renderPipeline.matteSourceSRV(),
+              nullptr, nullptr, tempUAV, mtParams, renderPipeline.width(),
+              renderPipeline.height());
+          if (!matteOk) {
+            allMatted = false;
+            continue;
+          }
+
+          Diligent::CopyTextureAttribs copyAttrs = {};
+          copyAttrs.pSrcTexture = tempUAV->GetTexture();
+          copyAttrs.SrcTextureTransitionMode =
+              Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+          copyAttrs.pDstTexture = layerFloatUAV->GetTexture();
+          copyAttrs.DstTextureTransitionMode =
+              Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+          devCtx->CopyTexture(copyAttrs);
+        }
+        if (!allMatted) {
+          qWarning() << "[CompositionView] GPU track matte partial/failure for"
+                     << layer->layerName();
+        }
+      }
+    }
+    if (!result.convertedLayerToFloat) {
+      qWarning() << "[CompositionView] layer-to-float conversion failed; "
+                    "falling back to legacy layer SRV"
+                 << "layer=" << layer->id().toString()
+                 << "layerName=" << layer->layerName()
+                 << "mode=" << static_cast<int>(blendMode);
+    }
+
+    result.blended = renderer_->blendLayers(blendPipeline_.get(), blendSrcSRV,
                                             accumSRV, tempUAV, blendMode,
                                             opacity);
     if (!result.blended && blendMode != ArtifactCore::BlendMode::Normal) {
@@ -3947,7 +3867,7 @@ public:
                  << "opacity=" << opacity;
       ++blendDispatchCount;
       result.blended = renderer_->blendLayers(
-          blendPipeline_.get(), preparedBlendSRV, accumSRV, tempUAV,
+          blendPipeline_.get(), blendSrcSRV, accumSRV, tempUAV,
           ArtifactCore::BlendMode::Normal, opacity);
     }
     if (!result.blended) {
@@ -9685,67 +9605,38 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     // バックバッファ全体をクリア (外側ゴミ表示修正)
     renderCrashTrace("render-clear-begin", renderFrameCounter_);
-    RenderPassContext setupContext{renderer_.get(), renderFrameCounter_};
-    RenderPassResources setupResources;
-    FunctionalRenderPass setupPass(
-        FrameRenderPassKind::Setup, QStringLiteral("Viewport Setup / Clear"),
-        [](RenderPassResources&) { return true; },
-        [&](RenderPassContext& context, RenderPassResources&) {
-          context.renderer->clearRenderTarget(viewportClearColor_);
-          return true;
-        });
-    RenderPassExecutor::run(setupPass, setupContext, setupResources);
+    renderer_->clearRenderTarget(viewportClearColor_);
     renderCrashTrace("render-clear-end", renderFrameCounter_);
 
     Diligent::ITextureView* ramPreviewReadbackSRV = nullptr;
     lastPresentedReadbackSRV_ = nullptr;
     if (useRamPreviewFallback) {
       renderCrashTrace("render-branch-ram-preview", renderFrameCounter_);
-      RenderPassContext ramContext{renderer_.get(), renderFrameCounter_};
-      RenderPassResources ramResources;
-      FunctionalRenderPass ramBasePass(
-          FrameRenderPassKind::Base, QStringLiteral("RAM Preview Base"),
-          [](RenderPassResources&) { return true; },
-          [&](RenderPassContext& context, RenderPassResources&) {
-            if (backgroundMode == CompositionBackgroundMode::MayaGradient) {
-              drawViewportMayaGradientBackground(
-                  context.renderer, viewportW, viewportH, layerBgColor,
-                  cachedMayaGradientSprite_);
-            } else if (backgroundMode ==
-                       CompositionBackgroundMode::Checkerboard) {
-              drawViewportCheckerboardBackground(
-                  context.renderer, viewportW, viewportH,
-                  checkerboardTileSize_);
-            }
-            context.renderer->setUseExternalMatrices(false);
-            context.renderer->resetGizmoCameraMatrices();
-            context.renderer->reset3DCameraMatrices();
-            context.renderer->setCanvasSize(cw, ch);
-            context.renderer->setZoom(zoom);
-            context.renderer->setPan(panX, panY);
-            drawCompositionBackgroundDirect(
-                context.renderer, cw, ch, layerBgColor, backgroundMode,
-                checkerboardTileSize_, cachedMayaGradientSprite_);
-            basePassMs = markPhaseMs();
-            return true;
-          });
-      FunctionalRenderPass ramCompositePass(
-          FrameRenderPassKind::Composite,
-          QStringLiteral("RAM Preview Composite"),
-          [](RenderPassResources&) { return true; },
-          [&](RenderPassContext& context, RenderPassResources&) {
-            QMatrix4x4 identity;
-            context.renderer->drawSpriteTransformed(
-                0.0f, 0.0f, cw, ch, identity, ramPreviewFrameImage, 1.0f);
-            surfacePassMs = markPhaseMs();
-            return true;
-          });
-      const std::array<RenderPass*, 2> ramPasses{
-          &ramBasePass, &ramCompositePass};
-      RenderPassExecutor::runAll(ramPasses, ramContext, ramResources);
-      maskPassMs = surfacePassMs;
-      compositePassMs = surfacePassMs;
-      postPassMs = compositePassMs;
+      if (backgroundMode == CompositionBackgroundMode::MayaGradient) {
+        drawViewportMayaGradientBackground(renderer_.get(), viewportW,
+                                           viewportH, layerBgColor,
+                                           cachedMayaGradientSprite_);
+      } else if (backgroundMode == CompositionBackgroundMode::Checkerboard) {
+        drawViewportCheckerboardBackground(renderer_.get(), viewportW,
+                                           viewportH, checkerboardTileSize_);
+      }
+      renderer_->setUseExternalMatrices(false);
+      renderer_->resetGizmoCameraMatrices();
+      renderer_->reset3DCameraMatrices();
+      renderer_->setCanvasSize(cw, ch);
+      renderer_->setZoom(zoom);
+      renderer_->setPan(panX, panY);
+      drawCompositionBackgroundDirect(renderer_.get(), cw, ch, layerBgColor,
+                                      backgroundMode, checkerboardTileSize_,
+                                      cachedMayaGradientSprite_);
+      QMatrix4x4 identity;
+      renderer_->drawSpriteTransformed(0.0f, 0.0f, cw, ch, identity,
+                                       ramPreviewFrameImage, 1.0f);
+      basePassMs = markPhaseMs();
+      surfacePassMs = basePassMs;
+      maskPassMs = basePassMs;
+      compositePassMs = basePassMs;
+      postPassMs = basePassMs;
     } else if (pipelineEnabled) {
     renderCrashTrace("render-branch-gpu-pipeline", renderFrameCounter_);
     // ============================================================
@@ -9793,33 +9684,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
 
       const FloatColor layerBgColor = comp->backgroundColor();
-      GpuBasePassState gpuBasePassState;
-      RenderPassContext baseContext{renderer_.get(), renderFrameCounter_};
-      RenderPassResources baseResources{
-          &renderPipeline, layerRTV, layerSRV, layerFloatSRV,
-          layerFloatUAV, accumSRV, tempUAV};
-      FunctionalRenderPass basePass(
-          FrameRenderPassKind::Base, QStringLiteral("Clear / Base"),
-          [](RenderPassResources& resources) {
-            return resources.pipeline && resources.layerRTV &&
-                   resources.layerSRV && resources.accumSRV &&
-                   resources.tempUAV;
-          },
-          [&](RenderPassContext&, RenderPassResources& resources) {
-            gpuBasePassState = beginGpuBasePass(
-                *resources.pipeline, previewRenderSlot, rcw, rch, cw, ch,
-                layerBgColor, backgroundMode);
-            seedGpuBasePassBackground(
-                *resources.pipeline, resources.layerRTV, resources.layerSRV,
-                resources.layerFloatSRV, resources.layerFloatUAV,
-                resources.accumSRV, resources.tempUAV,
-                layerToFloatConvertCount, blendDispatchCount,
-                blendFailureCount, cw, ch, layerBgColor, backgroundMode);
-            accumSRV = resources.accumSRV;
-            tempUAV = resources.tempUAV;
-            return true;
-          });
-      RenderPassExecutor::run(basePass, baseContext, baseResources);
+      const GpuBasePassState gpuBasePassState = beginGpuBasePass(
+          renderPipeline, previewRenderSlot, rcw, rch, cw, ch, layerBgColor,
+          backgroundMode);
       const float origZoom = gpuBasePassState.origZoom;
       const FloatColor origClearColor = gpuBasePassState.origClearColor;
       const float origPanX = gpuBasePassState.origPanX;
@@ -9827,6 +9694,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       const float origViewW = gpuBasePassState.origViewW;
       const float origViewH = gpuBasePassState.origViewH;
 
+      // Seed accum with the composition background through the same
+      // layerRTV -> LayerFloat -> blend path used by visible layers. This keeps
+      // GPU blend frames consistent with fallback/RAM preview frames.
+      seedGpuBasePassBackground(
+          renderPipeline, layerRTV, layerSRV, layerFloatSRV, layerFloatUAV,
+          accumSRV, tempUAV, layerToFloatConvertCount, blendDispatchCount,
+          blendFailureCount, cw, ch, layerBgColor, backgroundMode);
       if (emissionRTV) {
         renderer_->clearRenderTarget(emissionRTV,
                                      FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
@@ -9941,101 +9815,52 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             ++nonNormalBlendLayerCount;
           }
 
-          RenderPassContext passContext{renderer_.get(), renderFrameCounter_};
-          RenderPassResources passResources{
-              &renderPipeline, layerRTV, layerSRV, layerFloatSRV,
-              layerFloatUAV, accumSRV, tempUAV};
-          FunctionalRenderPass layerRasterPass(
-              FrameRenderPassKind::Surface, QStringLiteral("Layer Raster"),
-              [](RenderPassResources& resources) {
-                return resources.pipeline && resources.layerRTV &&
-                       resources.layerSRV;
-              },
-              [&](RenderPassContext&, RenderPassResources& resources) {
-                drawGpuLayerToIntermediate(
-                    layer.get(), resources.layerRTV, resources.accumSRV, rcw,
-                    rch, cw, ch, lod, currentFrame, matteResolver, sceneLights,
-                    has3DCamera, cameraViewMatrix, cameraProjMatrix);
-                if (!draftRendering && emissionRTV) {
-                  drawGpuLayerEmissionToTarget(layer.get(), emissionRTV);
-                }
-                if (!draftRendering && normalRTV) {
-                  drawGpuLayerNormalToTarget(layer.get(), normalRTV);
-                }
-                if (!draftRendering && velocityRTV) {
-                  drawGpuLayerVelocityToTarget(layer.get(), velocityRTV);
-                }
-                if (!draftRendering && objectIdRTV) {
-                  const quint32 objectHash =
-                      qHash(layer->id().toString(), 0x51a7u) & 0x00ffffffu;
-                  drawGpuLayerIdToTarget(
-                      layer.get(), objectIdRTV,
-                      ArtifactIRenderer::ChannelType::ObjectId,
-                      static_cast<float>(objectHash) / 16777215.0f);
-                }
-                if (!draftRendering && materialIdRTV) {
-                  QString materialKey =
-                      layer->layerName() + QStringLiteral("|material");
-                  if (auto* modelLayer =
-                          dynamic_cast<Artifact3DLayer*>(layer.get())) {
-                    materialKey = modelLayer->materialSignature();
-                  }
-                  const quint32 materialHash =
-                      qHash(materialKey, 0x7f31u) & 0x00ffffffu;
-                  drawGpuLayerIdToTarget(
-                      layer.get(), materialIdRTV,
-                      ArtifactIRenderer::ChannelType::MaterialId,
-                      static_cast<float>(materialHash) / 16777215.0f);
-                }
-                if (!draftRendering && albedoRTV) {
-                  drawGpuLayerAlbedoToTarget(layer.get(), albedoRTV);
-                }
-                surfacePassMs = markPhaseMs();
-                return true;
-              });
-          Diligent::ITextureView* preparedBlendSRV = layerSRV;
-          bool convertedLayerToFloat = false;
-          FunctionalRenderPass maskPass(
-              FrameRenderPassKind::Mask, QStringLiteral("Mask / Track Matte"),
-              [](RenderPassResources& resources) {
-                return resources.pipeline && resources.layerSRV &&
-                       resources.layerFloatSRV && resources.layerFloatUAV &&
-                       resources.tempUAV;
-              },
-              [&](RenderPassContext&, RenderPassResources& resources) {
-                preparedBlendSRV = prepareGpuLayerForBlend(
-                    layer.get(), *resources.pipeline, resources.layerSRV,
-                    resources.layerFloatSRV, resources.layerFloatUAV,
-                    resources.tempUAV, matteSourceImages,
-                    layerToFloatConvertCount, convertedLayerToFloat);
-                maskPassMs = markPhaseMs();
-                return preparedBlendSRV != nullptr;
-              });
-          GpuLayerBlendResult blendResult;
-          FunctionalRenderPass blendPass(
-              FrameRenderPassKind::Composite, QStringLiteral("Blend"),
-              [](RenderPassResources& resources) {
-                return resources.pipeline && resources.layerSRV &&
-                       resources.accumSRV && resources.tempUAV;
-              },
-              [&](RenderPassContext&, RenderPassResources& resources) {
-                blendResult = blendGpuLayerIntoAccum(
-                    layer.get(), *resources.pipeline, resources.layerSRV,
-                    preparedBlendSRV, resources.accumSRV, resources.tempUAV,
-                    blendMode, opacity, cw, ch, blendDispatchCount,
-                    blendRetryNormalCount, blendFailureCount,
-                    directBlendFallbackCount, convertedLayerToFloat);
-                accumSRV = resources.accumSRV;
-                tempUAV = resources.tempUAV;
-                compositePassMs = markPhaseMs();
-                return blendResult.blended || blendResult.directFallbackUsed;
-              });
-          const std::array<RenderPass*, 3> layerPasses{
-              &layerRasterPass, &maskPass, &blendPass};
-          if (!RenderPassExecutor::runAll(layerPasses, passContext,
-                                          passResources)) {
-            continue;
+          drawGpuLayerToIntermediate(
+              layer.get(), layerRTV, accumSRV, rcw, rch, cw, ch, lod,
+              currentFrame, matteResolver, sceneLights, has3DCamera,
+              cameraViewMatrix, cameraProjMatrix);
+          if (!draftRendering && emissionRTV) {
+            drawGpuLayerEmissionToTarget(layer.get(), emissionRTV);
           }
+          if (!draftRendering && normalRTV) {
+            drawGpuLayerNormalToTarget(layer.get(), normalRTV);
+          }
+          if (!draftRendering && velocityRTV) {
+            drawGpuLayerVelocityToTarget(layer.get(), velocityRTV);
+          }
+          if (!draftRendering && objectIdRTV) {
+            const quint32 objectHash =
+                qHash(layer->id().toString(), 0x51a7u) & 0x00ffffffu;
+            const float objectEncoded =
+                static_cast<float>(objectHash) / 16777215.0f;
+            drawGpuLayerIdToTarget(layer.get(), objectIdRTV,
+                                   ArtifactIRenderer::ChannelType::ObjectId,
+                                   objectEncoded);
+          }
+          if (!draftRendering && materialIdRTV) {
+            QString materialKey = layer->layerName() + QStringLiteral("|material");
+            if (auto* modelLayer = dynamic_cast<Artifact3DLayer*>(layer.get())) {
+              materialKey = modelLayer->materialSignature();
+            }
+            const quint32 materialHash = qHash(materialKey, 0x7f31u) & 0x00ffffffu;
+            const float materialEncoded =
+                static_cast<float>(materialHash) / 16777215.0f;
+            drawGpuLayerIdToTarget(layer.get(), materialIdRTV,
+                                   ArtifactIRenderer::ChannelType::MaterialId,
+                                   materialEncoded);
+          }
+          if (!draftRendering && albedoRTV) {
+            drawGpuLayerAlbedoToTarget(layer.get(), albedoRTV);
+          }
+          surfacePassMs = markPhaseMs();
+          const GpuLayerBlendResult blendResult = blendGpuLayerIntoAccum(
+              layer.get(), renderPipeline, layerSRV, layerFloatSRV,
+              layerFloatUAV, accumSRV, tempUAV, matteSourceImages, blendMode,
+              opacity, cw, ch, blendDispatchCount, blendRetryNormalCount,
+              blendFailureCount, directBlendFallbackCount,
+              layerToFloatConvertCount);
+          maskPassMs = surfacePassMs;
+          compositePassMs = markPhaseMs();
           if (!blendResult.blended) {
             continue;
           }
@@ -10052,37 +9877,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         }
       }
 
-      RenderPassContext resolveContext{renderer_.get(), renderFrameCounter_};
-      RenderPassResources resolveResources{
-          &renderPipeline, layerRTV, layerSRV, layerFloatSRV,
-          layerFloatUAV, accumSRV, tempUAV};
-      FunctionalRenderPass resolvePass(
-          FrameRenderPassKind::Post, QStringLiteral("Resolve"),
-          [](RenderPassResources& resources) {
-            return resources.pipeline && resources.accumSRV &&
-                   resources.layerFloatSRV && resources.layerFloatUAV;
-          },
-          [&](RenderPassContext&, RenderPassResources& resources) {
-            ramPreviewReadbackSRV = finalizeGpuRenderToViewport(
-                *resources.pipeline, resources.accumSRV,
-                resources.layerFloatSRV, resources.layerFloatUAV, rcw, rch,
-                cw, ch, origViewW, origViewH, origZoom, origPanX, origPanY,
-                bgColor, layerBgColor, origClearColor, backgroundMode,
-                layerToFloatConvertCount);
-            return ramPreviewReadbackSRV != nullptr;
-          });
-      RenderPassExecutor::run(resolvePass, resolveContext, resolveResources);
+      ramPreviewReadbackSRV = finalizeGpuRenderToViewport(
+          renderPipeline, accumSRV, layerFloatSRV, layerFloatUAV, rcw, rch, cw,
+          ch, origViewW, origViewH, origZoom, origPanX, origPanY, bgColor,
+          layerBgColor, origClearColor, backgroundMode,
+          layerToFloatConvertCount);
       postPassMs = markPhaseMs();
     } else {
       // === Fallback path (GPU パイプラインなし) ===
       renderCrashTrace("render-branch-fallback", renderFrameCounter_);
-      RenderPassContext fallbackContext{renderer_.get(), renderFrameCounter_};
-      RenderPassResources fallbackResources;
-      FunctionalRenderPass fallbackBasePass(
-          FrameRenderPassKind::Base, QStringLiteral("Direct Base"),
-          [](RenderPassResources&) { return true; },
-          [&](RenderPassContext& context, RenderPassResources&) {
-      context.renderer->setViewportRect(viewportW, viewportH);
+      renderer_->setViewportRect(viewportW, viewportH);
       const float prevZoom = renderer_->getZoom();
       float prevPanX = 0.0f;
       float prevPanY = 0.0f;
@@ -10156,10 +9960,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         renderer_->setZoom(prevZoom);
         renderer_->setPan(prevPanX, prevPanY);
       }
-      return true;
-          });
-      RenderPassExecutor::run(fallbackBasePass, fallbackContext,
-                              fallbackResources);
       basePassMs = markPhaseMs();
 
       if (!frameOutOfRange) {
@@ -10255,26 +10055,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               QLoggingCategory::defaultCategory()->isDebugEnabled()
                   ? &lastVideoDebug_
                   : nullptr;
-          RenderPassContext directContext{renderer_.get(),
-                                          renderFrameCounter_};
-          RenderPassResources directResources;
-          FunctionalRenderPass directCompositePass(
-              FrameRenderPassKind::Composite,
-              QStringLiteral("Direct Layer Composite"),
-              [](RenderPassResources&) { return true; },
-              [&](RenderPassContext& context, RenderPassResources&) {
-                drawLayerForCompositionView(
-                    layer.get(), context.renderer, opacity, dbgOut,
-                    &surfaceCache_, gpuTextureCacheManager_.get(),
-                    currentFrame.framePosition(), false, lod,
-                    has3DCamera ? &cameraViewMatrix : nullptr,
-                    has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver,
-                    &sceneLights, draftRendering,
-                    surfaceGeneration(layer.get()));
-                return true;
-              });
-          RenderPassExecutor::run(directCompositePass, directContext,
-                                  directResources);
+          drawLayerForCompositionView(
+              layer.get(), renderer_.get(), opacity, dbgOut, &surfaceCache_,
+              gpuTextureCacheManager_.get(), currentFrame.framePosition(),
+              false, lod, has3DCamera ? &cameraViewMatrix : nullptr,
+              has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver,
+              &sceneLights, draftRendering,
+              surfaceGeneration(layer.get()));
           surfacePassMs = markPhaseMs();
           maskPassMs = surfacePassMs;
           compositePassMs = surfacePassMs;
@@ -10962,20 +10749,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       } // BoundingBox scope
     } */
 
-    RenderPassContext overlayContext{renderer_.get(), renderFrameCounter_};
-    RenderPassResources overlayResources;
-    FunctionalRenderPass overlayPass(
-        FrameRenderPassKind::Overlay, QStringLiteral("Overlay"),
-        [](RenderPassResources&) { return true; },
-        [&](RenderPassContext&, RenderPassResources&) {
-          drawViewportCanvasOverlay(cw, ch);
-          drawViewportInteractionOverlay(owner, currentFrame, cw, ch);
-          drawViewportGuideOverlay(comp, cw, ch);
-          drawViewportOverlayPass(owner, comp, activeCamera, currentFrame, cw,
-                                  ch);
-          return true;
-        });
-    RenderPassExecutor::run(overlayPass, overlayContext, overlayResources);
+    drawViewportCanvasOverlay(cw, ch);
+    drawViewportInteractionOverlay(owner, currentFrame, cw, ch);
+    drawViewportGuideOverlay(comp, cw, ch);
+    drawViewportOverlayPass(owner, comp, activeCamera, currentFrame, cw, ch);
     overlayMs = markPhaseMs();
 
     flushMs = 0;
@@ -10995,20 +10772,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       ArtifactCore::ProfileScope _profPresent(
           "Present", ArtifactCore::ProfileCategory::Render);
       renderCrashTrace("render-present-begin", renderFrameCounter_);
-      PresentStageResult presentResult;
-      RenderPassContext presentContext{renderer_.get(), renderFrameCounter_};
-      RenderPassResources presentResources;
-      FunctionalRenderPass presentPass(
-          FrameRenderPassKind::Present, QStringLiteral("Present"),
-          [](RenderPassResources&) { return true; },
-          [&](RenderPassContext&, RenderPassResources&) {
-            presentResult = presentAndUpdateVideoLayers(
-                layerVector, currentFrame, useRamPreviewFallback,
-                playbackPreviewState, ramPreviewFallbackReason);
-            return !presentResult.presentedStatus.contains(
-                QStringLiteral("fail"), Qt::CaseInsensitive);
-          });
-      RenderPassExecutor::run(presentPass, presentContext, presentResources);
+      const PresentStageResult presentResult = presentAndUpdateVideoLayers(
+          layerVector, currentFrame, useRamPreviewFallback,
+          playbackPreviewState,
+          ramPreviewFallbackReason);
       if (!presentResult.presentedVideoDebug.isEmpty() &&
           presentResult.presentedVideoDebug != lastEmittedVideoDebug_) {
         lastVideoDebug_ = presentResult.presentedVideoDebug;
