@@ -419,6 +419,15 @@ bool renderCrashTraceEnabled()
   return enabled;
 }
 
+bool continuousRenderDiagnosticsEnabled()
+{
+  static const bool enabled =
+      qEnvironmentVariableIsSet("ARTIFACT_ENABLE_CONTINUOUS_RENDER_DIAGNOSTICS") &&
+      qEnvironmentVariable("ARTIFACT_ENABLE_CONTINUOUS_RENDER_DIAGNOSTICS") !=
+          QStringLiteral("0");
+  return enabled;
+}
+
 void renderCrashTrace(const char* phase, quint64 frame, const QString& detail = {})
 {
   if (!renderCrashTraceEnabled()) {
@@ -8804,14 +8813,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   struct RenderCostCaptureGuard {
     ArtifactIRenderer* renderer = nullptr;
     quint64 frame = 0;
-    RenderCostCaptureGuard(ArtifactIRenderer* r, quint64 f) : renderer(r), frame(f) {
-      if (renderer) {
+    bool enabled = false;
+    RenderCostCaptureGuard(ArtifactIRenderer* r, quint64 f, bool capture)
+        : renderer(r), frame(f), enabled(capture) {
+      if (renderer && enabled) {
         renderer->beginFrameCostCapture();
         renderer->beginFrameGpuProfiling();
       }
     }
     ~RenderCostCaptureGuard() {
-      if (renderer) {
+      if (renderer && enabled) {
         renderCrashTrace("render-cost-guard-gpu-end-begin", frame);
         renderer->endFrameGpuProfiling();
         renderCrashTrace("render-cost-guard-gpu-end-end", frame);
@@ -8850,6 +8861,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   QElapsedTimer frameTimer;
   frameTimer.start();
+  const bool captureRenderDiagnostics =
+      continuousRenderDiagnosticsEnabled() ||
+      (renderFrameCounter_ % 30u) == 0u;
   qint64 phaseNs = 0;
   auto markPhaseMs = [&frameTimer, &phaseNs]() -> qint64 {
     const qint64 nowNs = frameTimer.nsecsElapsed();
@@ -8861,20 +8875,24 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   struct TraceScopeGuard {
     ArtifactCore::TraceScopeRecord scope;
     QElapsedTimer timer;
-    TraceScopeGuard() {
+    bool enabled = false;
+    explicit TraceScopeGuard(bool capture) : enabled(capture) {
       scope.name = QStringLiteral("CompositionRenderController::renderOneFrameImpl");
       scope.domain = ArtifactCore::TraceDomain::Render;
       scope.startNs = 0;
       timer.start();
     }
     ~TraceScopeGuard() {
+      if (!enabled) {
+        return;
+      }
       scope.endNs = timer.nsecsElapsed();
       if (scope.endNs <= scope.startNs) {
         scope.endNs = scope.startNs + 1;
       }
       ArtifactCore::TraceRecorder::instance().recordScope(scope);
     }
-  } traceGuard;
+  } traceGuard(captureRenderDiagnostics);
 
   renderer_->setSceneLights(std::vector<ArtifactCore::Light>{});
   renderCrashTrace("render-after-scene-lights", renderFrameCounter_);
@@ -8936,7 +8954,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   }
 
   auto renderCostGuard =
-      std::make_unique<RenderCostCaptureGuard>(renderer_.get(), renderFrameCounter_);
+      std::make_unique<RenderCostCaptureGuard>(
+          renderer_.get(), renderFrameCounter_, captureRenderDiagnostics);
   renderCrashTrace("render-cost-begin", renderFrameCounter_);
 
   const QSize compSize = comp->settings().compositionSize();
