@@ -1268,84 +1268,10 @@ int compositionPreviewIntervalMs(const ArtifactCompositionPtr &comp) {
   return std::max(1, static_cast<int>(std::lround(1000.0 / fps)));
 }
 
-QString layerSurfaceDependencyKey(ArtifactAbstractLayer *layer) {
-  if (!layer) {
-    return QString();
-  }
-
-  QString key;
-  key += QStringLiteral("|masks=%1").arg(layer->maskCount());
-  for (int m = 0; m < layer->maskCount(); ++m) {
-    const LayerMask mask = layer->mask(m);
-    key += QStringLiteral("|mask%1:enabled=%2:paths=%3")
-               .arg(m)
-               .arg(mask.isEnabled() ? 1 : 0)
-               .arg(mask.maskPathCount());
-    for (int p = 0; p < mask.maskPathCount(); ++p) {
-      const MaskPath path = mask.maskPath(p);
-      key += QStringLiteral(":p%1 closed=%2 mode=%3 opacity=%4 feather=%5 fH=%6 fV=%7 fI=%8 fO=%9 expansion=%10 inverted=%11 vertices=%12")
-                 .arg(p)
-                 .arg(path.isClosed() ? 1 : 0)
-                 .arg(static_cast<int>(path.mode()))
-                 .arg(path.opacity(), 0, 'f', 4)
-                 .arg(path.feather(), 0, 'f', 4)
-                 .arg(path.featherHorizontal(), 0, 'f', 4)
-                 .arg(path.featherVertical(), 0, 'f', 4)
-                 .arg(path.featherInner(), 0, 'f', 4)
-                 .arg(path.featherOuter(), 0, 'f', 4)
-                 .arg(path.expansion(), 0, 'f', 4)
-                 .arg(path.isInverted() ? 1 : 0)
-                 .arg(path.vertexCount());
-      for (int v = 0; v < path.vertexCount(); ++v) {
-        const MaskVertex vertex = path.vertex(v);
-        key += QStringLiteral("[%1,%2,%3,%4,%5,%6]")
-                   .arg(vertex.position.x(), 0, 'f', 3)
-                   .arg(vertex.position.y(), 0, 'f', 3)
-                   .arg(vertex.inTangent.x(), 0, 'f', 3)
-                   .arg(vertex.inTangent.y(), 0, 'f', 3)
-                   .arg(vertex.outTangent.x(), 0, 'f', 3)
-                   .arg(vertex.outTangent.y(), 0, 'f', 3);
-      }
-    }
-  }
-
-  const auto mattes = layer->matteReferences();
-  key += QStringLiteral("|mattes=%1").arg(static_cast<qulonglong>(mattes.size()));
-  for (size_t i = 0; i < mattes.size(); ++i) {
-    const auto &ref = mattes[i];
-    key += QStringLiteral("|matte%1:id=%2:src=%3:enabled=%4:type=%5:blend=%6:fit=%7:opacity=%8:invert=%9")
-               .arg(static_cast<qulonglong>(i))
-               .arg(ref.id.toString())
-               .arg(ref.sourceLayerId.toString())
-               .arg(ref.enabled ? 1 : 0)
-               .arg(static_cast<int>(ref.type))
-               .arg(static_cast<int>(ref.blendMode))
-               .arg(static_cast<int>(ref.fitMode))
-               .arg(ref.opacity, 0, 'f', 4)
-               .arg(ref.invert ? 1 : 0);
-  }
-
-  const auto effects = layer->getEffects();
-  key += QStringLiteral("|effects=%1").arg(static_cast<qulonglong>(effects.size()));
-  for (size_t i = 0; i < effects.size(); ++i) {
-    const auto &effect = effects[i];
-    if (!effect) {
-      key += QStringLiteral("|effect%1:null").arg(static_cast<qulonglong>(i));
-      continue;
-    }
-    key += QStringLiteral("|effect%1:enabled=%2:stage=%3:name=%4")
-               .arg(static_cast<qulonglong>(i))
-               .arg(effect->isEnabled() ? 1 : 0)
-               .arg(static_cast<int>(effect->pipelineStage()))
-               .arg(effect->displayName().toQString());
-  }
-
-  return key;
-}
-
 bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
                                   const QImage &surface,
-                                  ArtifactCore::ImageF32x4_RGBA *outBuffer) {
+                                  ArtifactCore::ImageF32x4_RGBA *outBuffer,
+                                  bool skipRasterizerEffects = false) {
   if (!targetLayer || surface.isNull() || !outBuffer) {
     return false;
   }
@@ -1354,7 +1280,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
   const auto effects = targetLayer->getEffects();
   bool hasRasterizerEffect = false;
   for (const auto &effect : effects) {
-    if (effect && effect->isEnabled() &&
+    if (!skipRasterizerEffects && effect && effect->isEnabled() &&
         effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
       hasRasterizerEffect = true;
       break;
@@ -1917,7 +1843,8 @@ std::vector<ArtifactCore::Light> filterSceneLightsForLayer(
 }
 
 QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
-                                  const QImage &surface, int64_t frameNumber) {
+                                  const QImage &surface, int64_t frameNumber,
+                                  quint64 surfaceGeneration) {
   if (!layer) {
     return QString();
   }
@@ -1925,7 +1852,7 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
   QString key = layer->id().toString();
   key +=
       QStringLiteral("|size=%1x%2").arg(surface.width()).arg(surface.height());
-  key += layerSurfaceDependencyKey(layer);
+  key += QStringLiteral("|generation=%1").arg(surfaceGeneration);
 
   if (auto *solid2D = dynamic_cast<ArtifactSolid2DLayer *>(layer)) {
     const QRectF bounds = solid2D->localBounds();
@@ -2727,7 +2654,8 @@ void drawLayerForCompositionView(
     const QMatrix4x4 *cameraView = nullptr,
     const QMatrix4x4 *cameraProj = nullptr,
     const std::function<QImage(const ArtifactCore::Id &)> *matteSourceResolver = nullptr,
-    const std::vector<SceneLightEntry> *sceneLights = nullptr) {
+    const std::vector<SceneLightEntry> *sceneLights = nullptr,
+    bool interactiveDraft = false, quint64 surfaceGeneration = 1) {
   if (!layer || !renderer) {
     qCDebug(compositionViewLog)
         << "[CompositionView] drawLayerForCompositionView: invalid "
@@ -2778,16 +2706,6 @@ void drawLayerForCompositionView(
     return;
   }
 
-  auto applyRasterizerEffectsAndMasksToSurface =
-      [&](ArtifactAbstractLayer *targetLayer, QImage &surface) {
-        ArtifactCore::ImageF32x4_RGBA processed;
-        if (buildRasterizedSurfaceBuffer(targetLayer, surface, &processed)) {
-          if (!processed.isEmpty()) {
-            surface = processed.toQImage();
-          }
-        }
-      };
-
   auto hasRasterizerEffectsOrMasks = [](ArtifactAbstractLayer *targetLayer) {
     if (!targetLayer) {
       return false;
@@ -2811,32 +2729,65 @@ void drawLayerForCompositionView(
       return false;
     }
 
-    // Apply track matte before drawing
+    QHash<ArtifactCore::Id, QImage> resolvedMatteSources;
+    QString matteSourceSignature;
     if (matteSourceResolver && layer->matteReferences().size() > 0) {
-        applyLayerMatteToSurface(layer, surface, *matteSourceResolver);
+      for (const auto &ref : layer->matteReferences()) {
+        if (!ref.enabled || ref.sourceLayerId.isNil()) {
+          continue;
+        }
+        QImage source = (*matteSourceResolver)(ref.sourceLayerId);
+        if (source.isNull()) {
+          matteSourceSignature +=
+              QStringLiteral("|matte=%1:null").arg(ref.sourceLayerId.toString());
+          continue;
+        }
+        matteSourceSignature +=
+            QStringLiteral("|matte=%1:%2:%3x%4")
+                .arg(ref.sourceLayerId.toString())
+                .arg(static_cast<qulonglong>(source.cacheKey()))
+                .arg(source.width())
+                .arg(source.height());
+        resolvedMatteSources.insert(ref.sourceLayerId, std::move(source));
+      }
     }
 
     const QString ownerId = layer->id().toString();
-    const QString cacheSignature =
-        buildLayerSurfaceCacheKey(layer, surface, cacheFrameNumber);
+    QString cacheSignature =
+        buildLayerSurfaceCacheKey(layer, surface, cacheFrameNumber,
+                                  surfaceGeneration);
+    cacheSignature +=
+        QStringLiteral("|interactiveDraft=%1").arg(interactiveDraft ? 1 : 0);
+    cacheSignature += matteSourceSignature;
+    const QString cacheSlotKey =
+        ownerId + (interactiveDraft ? QStringLiteral("|draft")
+                                    : QStringLiteral("|full"));
     LayerSurfaceCacheEntry *cacheEntry = nullptr;
 
-    const bool useSurfaceCache =
-        surfaceCache && layer->matteReferences().empty() &&
-        !cacheSignature.isEmpty();
+    const bool useSurfaceCache = surfaceCache && !cacheSignature.isEmpty();
 
     if (useSurfaceCache) {
-      auto cacheIt = surfaceCache->find(ownerId);
+      auto cacheIt = surfaceCache->find(cacheSlotKey);
       if (cacheIt != surfaceCache->end() && cacheIt->ownerId == ownerId &&
           cacheIt->cacheSignature == cacheSignature &&
-          !cacheIt->processedSurface.isNull()) {
+          (!cacheIt->processedSurface.isNull() || cacheIt->processedBuffer)) {
         cacheEntry = &(*cacheIt);
-        surface = cacheIt->processedSurface;
+        if (!cacheIt->processedSurface.isNull()) {
+          surface = cacheIt->processedSurface;
+        }
       } else {
+        if (!resolvedMatteSources.isEmpty()) {
+          const std::function<QImage(const ArtifactCore::Id &)> cachedResolver =
+              [&resolvedMatteSources](const ArtifactCore::Id &id) {
+                return resolvedMatteSources.value(id);
+              };
+          applyLayerMatteToSurface(layer, surface, cachedResolver);
+        }
         std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
         if (allowSurfaceCache) {
           ArtifactCore::ImageF32x4_RGBA processed;
-          if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
+          if (buildRasterizedSurfaceBuffer(layer, surface, &processed,
+                                           interactiveDraft)) {
             processedBuffer =
                 std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
             if (!processed.isEmpty() &&
@@ -2862,12 +2813,28 @@ void drawLayerForCompositionView(
             entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(
                 ownerId, cacheSignature, surface);
           }
+          if (entry.processedBuffer &&
+              gpuTextureCacheManager->isValid(entry.gpuTextureHandle)) {
+            entry.processedSurface = QImage();
+          }
         }
-        (*surfaceCache)[ownerId] = entry;
-        cacheEntry = &(*surfaceCache)[ownerId];
+        (*surfaceCache)[cacheSlotKey] = entry;
+        cacheEntry = &(*surfaceCache)[cacheSlotKey];
       }
     } else if (allowSurfaceCache) {
-      applyRasterizerEffectsAndMasksToSurface(layer, surface);
+      if (!resolvedMatteSources.isEmpty()) {
+        const std::function<QImage(const ArtifactCore::Id &)> cachedResolver =
+            [&resolvedMatteSources](const ArtifactCore::Id &id) {
+              return resolvedMatteSources.value(id);
+            };
+        applyLayerMatteToSurface(layer, surface, cachedResolver);
+      }
+      ArtifactCore::ImageF32x4_RGBA processed;
+      if (buildRasterizedSurfaceBuffer(layer, surface, &processed,
+                                       interactiveDraft) &&
+          !processed.isEmpty()) {
+        surface = processed.toQImage();
+      }
     }
 
     const float baseOpacity =
@@ -2905,6 +2872,12 @@ void drawLayerForCompositionView(
                   static_cast<float>(rect.height()), instanceTransform, binding.srv,
                   finalOpacity);
               return;
+            }
+            if (cacheEntry->processedSurface.isNull() &&
+                cacheEntry->processedBuffer) {
+              cacheEntry->processedSurface =
+                  cacheEntry->processedBuffer->toQImage();
+              surface = cacheEntry->processedSurface;
             }
           }
 
@@ -3584,8 +3557,12 @@ public:
 
     renderer_->setViewportSize(rcw, rch);
     renderer_->setCanvasSize(cw, ch);
-    renderer_->setZoom(state.origZoom);
-    renderer_->setPan(state.origPanX, state.origPanY);
+    const float previewScale =
+        std::min(rcw / std::max(1.0f, state.origViewW),
+                 rch / std::max(1.0f, state.origViewH));
+    renderer_->setZoom(state.origZoom * previewScale);
+    renderer_->setPan(state.origPanX * previewScale,
+                      state.origPanY * previewScale);
     renderer_->setViewportRect(rcw, rch);
 
     if (compositionViewLog().isDebugEnabled()) {
@@ -3691,7 +3668,8 @@ public:
         layer, renderer_.get(), 1.0f, dbgOut, &surfaceCache_,
         gpuTextureCacheManager_.get(), currentFrame.framePosition(), true, lod,
         has3DCamera ? &cameraViewMatrix : nullptr,
-        has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver, &sceneLights);
+        has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver, &sceneLights,
+        viewportInteracting_, surfaceGeneration(layer));
     renderer_->flush();
     renderer_->setOverrideRTV(nullptr);
     renderer_->unbindColorTargetsForCompute();
@@ -3951,7 +3929,8 @@ public:
     renderer_->setCanvasSize(origViewW, origViewH);
     renderer_->setZoom(1.0f);
     renderer_->setPan(0.0f, 0.0f);
-    renderer_->drawSprite(0.0f, 0.0f, rcw, rch, finalPresentSRV, 1.0f);
+    renderer_->drawSprite(0.0f, 0.0f, origViewW, origViewH, finalPresentSRV,
+                          1.0f);
 
     if (compositionRenderer_) {
       compositionRenderer_->SetCompositionSize(cw, ch);
@@ -4531,6 +4510,7 @@ public:
   FloatColor lastBgColorCache_ = {-1.f, -1.f, -1.f, -1.f};
   CompositionID lastBackgroundCompositionId_;
   QHash<QString, LayerSurfaceCacheEntry> surfaceCache_;
+  QHash<QString, quint64> surfaceGenerations_;
   std::unique_ptr<GPUTextureCacheManager> gpuTextureCacheManager_;
 
   // Render debounce timer: coalesces rapid LayerChangedEvent notifications
@@ -4954,7 +4934,10 @@ public:
       return;
     }
     const QString ownerId = layer->id().toString();
-    surfaceCache_.remove(ownerId);
+    surfaceGenerations_[ownerId] =
+        surfaceGenerations_.value(ownerId, 1) + 1;
+    surfaceCache_.remove(ownerId + QStringLiteral("|full"));
+    surfaceCache_.remove(ownerId + QStringLiteral("|draft"));
     if (gpuTextureCacheManager_) {
       gpuTextureCacheManager_->invalidateOwner(ownerId);
     }
@@ -4976,6 +4959,10 @@ public:
   }
 
   RenderDamageTracker& damageTracker() { return damageTracker_; }
+
+  quint64 surfaceGeneration(const ArtifactAbstractLayer *layer) const {
+    return layer ? surfaceGenerations_.value(layer->id().toString(), 1) : 1;
+  }
 
   void drawViewportGhostOverlay(CompositionRenderController *owner,
                                 const ArtifactCompositionPtr &comp,
@@ -5087,8 +5074,9 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                   if (layerId == impl_->selectedLayerId_) {
                     impl_->selectedLayerId_ = LayerID();
                   }
-               }
+                }
                 impl_->surfaceCache_.clear();
+                impl_->surfaceGenerations_.clear();
                 if (impl_->gpuTextureCacheManager_) {
                   impl_->gpuTextureCacheManager_->clear();
                }
@@ -5098,9 +5086,19 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                 // ギズモドラッグ中は同じレイヤーのピクセルは変わらないので、
                 // transform だけの更新では重いサーフェス再生成を避ける。
                 if (auto layer = comp->layerById(layerId)) {
+                  const bool directDragTarget =
+                      impl_->isDraggingLayer_ &&
+                      (layerId == impl_->selectedLayerId_ ||
+                       std::any_of(
+                           impl_->dragGroupLayers_.cbegin(),
+                           impl_->dragGroupLayers_.cend(),
+                           [&layerId](const ArtifactAbstractLayerPtr &candidate) {
+                             return candidate && candidate->id() == layerId;
+                           }));
                   const bool skipCacheInvalidation =
-                      impl_->gizmoDragActive_ &&
-                      layerId == impl_->selectedLayerId_;
+                      directDragTarget ||
+                      (impl_->gizmoDragActive_ &&
+                       layerId == impl_->selectedLayerId_);
                   if (!skipCacheInvalidation) {
                     impl_->invalidateLayerSurfaceCache(layer);
                   }
@@ -5364,6 +5362,7 @@ void CompositionRenderController::destroy() {
   }
   impl_->compositionRenderer_.reset();
   impl_->surfaceCache_.clear();
+  impl_->surfaceGenerations_.clear();
   if (impl_->gpuTextureCacheManager_) {
     impl_->gpuTextureCacheManager_->clearDevice();
     impl_->gpuTextureCacheManager_.reset();
@@ -5584,6 +5583,7 @@ void CompositionRenderController::setComposition(
   impl_->layerChangedConnections_.clear();
   impl_->compositionChangedSubscription_.disconnect();
   impl_->surfaceCache_.clear();
+  impl_->surfaceGenerations_.clear();
   if (impl_->gpuTextureCacheManager_) {
     impl_->gpuTextureCacheManager_->clear();
   }
@@ -8994,17 +8994,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   const int effectivePreviewDownsample =
       viewportInteracting_
           ? std::max(previewDownsample_, interactivePreviewDownsampleFloor_)
-          : (gpuBlendEnabled_ ? std::max(previewDownsample_, 2)
-                              : previewDownsample_);
+          : previewDownsample_;
   const float previewRcw = std::max(
       1.0f, viewportW / static_cast<float>(effectivePreviewDownsample));
   const float previewRch = std::max(
       1.0f, viewportH / static_cast<float>(effectivePreviewDownsample));
-  // GPU blend intermediates mirror the editor viewport. This keeps non-Normal
-  // blend modes consistent with the direct editor path when layers extend
-  // outside the composition rect.
-  const float rcw = gpuBlendEnabled_ ? std::max(1.0f, viewportW) : previewRcw;
-  const float rch = gpuBlendEnabled_ ? std::max(1.0f, viewportH) : previewRch;
+  // GPU blend intermediates preserve the viewport aspect and framing while
+  // honoring the selected preview resolution.
+  const float rcw = previewRcw;
+  const float rch = previewRch;
 
   if (compositionRenderer_) {
     compositionRenderer_->SetCompositionSize(cw, ch);
@@ -9049,25 +9047,40 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   }
   renderer_->setSceneLights(rendererSceneLights);
 
-  // Build matte source resolver: find layer by ID, render to QImage
-  auto matteResolverLambda = [&layers](const ArtifactCore::Id &layerId) -> QImage {
+  // Resolve each matte source at most once per rendered frame. Multiple matte
+  // consumers then share the same implicitly-shared QImage until the frame is
+  // complete.
+  QHash<ArtifactCore::Id, QImage> matteSourceFrameCache;
+  auto matteResolverLambda =
+      [&layers, &matteSourceFrameCache](const ArtifactCore::Id &layerId)
+      -> QImage {
+      const auto cached = matteSourceFrameCache.constFind(layerId);
+      if (cached != matteSourceFrameCache.constEnd()) {
+          return cached.value();
+      }
+      QImage resolved;
       for (const auto &l : layers) {
           if (l && l->id() == layerId) {
               if (auto *imgLayer = dynamic_cast<ArtifactImageLayer *>(l.get())) {
-                  return imgLayer->toQImage();
+                  resolved = imgLayer->toQImage();
+                  break;
               }
               if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(l.get())) {
-                  return videoLayer->currentFrameToQImage();
+                  resolved = videoLayer->currentFrameToQImage();
+                  break;
               }
               if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(l.get())) {
-                  return textLayer->toQImage();
+                  resolved = textLayer->toQImage();
+                  break;
               }
               if (auto *svgLayer = dynamic_cast<ArtifactSvgLayer *>(l.get())) {
-                  return svgLayer->toQImage();
+                  resolved = svgLayer->toQImage();
+                  break;
               }
           }
       }
-      return {};
+      matteSourceFrameCache.insert(layerId, resolved);
+      return resolved;
   };
   std::function<QImage(const ArtifactCore::Id &)> matteResolver = matteResolverLambda;
 
@@ -9767,16 +9780,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               layer.get(), layerRTV, accumSRV, rcw, rch, cw, ch, lod,
               currentFrame, matteResolver, sceneLights, has3DCamera,
               cameraViewMatrix, cameraProjMatrix);
-          if (emissionRTV) {
+          if (!viewportInteracting_ && emissionRTV) {
             drawGpuLayerEmissionToTarget(layer.get(), emissionRTV);
           }
-          if (normalRTV) {
+          if (!viewportInteracting_ && normalRTV) {
             drawGpuLayerNormalToTarget(layer.get(), normalRTV);
           }
-          if (velocityRTV) {
+          if (!viewportInteracting_ && velocityRTV) {
             drawGpuLayerVelocityToTarget(layer.get(), velocityRTV);
           }
-          if (objectIdRTV) {
+          if (!viewportInteracting_ && objectIdRTV) {
             const quint32 objectHash =
                 qHash(layer->id().toString(), 0x51a7u) & 0x00ffffffu;
             const float objectEncoded =
@@ -9785,7 +9798,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                    ArtifactIRenderer::ChannelType::ObjectId,
                                    objectEncoded);
           }
-          if (materialIdRTV) {
+          if (!viewportInteracting_ && materialIdRTV) {
             QString materialKey = layer->layerName() + QStringLiteral("|material");
             if (auto* modelLayer = dynamic_cast<Artifact3DLayer*>(layer.get())) {
               materialKey = modelLayer->materialSignature();
@@ -9797,7 +9810,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                    ArtifactIRenderer::ChannelType::MaterialId,
                                    materialEncoded);
           }
-          if (albedoRTV) {
+          if (!viewportInteracting_ && albedoRTV) {
             drawGpuLayerAlbedoToTarget(layer.get(), albedoRTV);
           }
           surfacePassMs = markPhaseMs();
@@ -10008,7 +10021,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               gpuTextureCacheManager_.get(), currentFrame.framePosition(),
               false, lod, has3DCamera ? &cameraViewMatrix : nullptr,
               has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver,
-              &sceneLights);
+              &sceneLights, viewportInteracting_,
+              surfaceGeneration(layer.get()));
           surfacePassMs = markPhaseMs();
           maskPassMs = surfacePassMs;
           compositePassMs = surfacePassMs;
