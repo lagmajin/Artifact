@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 
 #include <wobjectdefs.h>
@@ -8,6 +8,7 @@ module;
 #include <QMouseEvent>
 #include <QPointF>
 #include <QMatrix4x4>
+#include <QQuaternion>
 #include <QVector3D>
 #include <QVector>
 #include <QRectF>
@@ -51,6 +52,29 @@ export namespace Artifact {
   Skybox
  };
 
+ enum class ViewportChannelDisplayMode {
+ Color,
+ Alpha,
+ Red,
+ Green,
+  Blue,
+  Depth,
+  Emission,
+  ObjectId,
+  MaterialId,
+  Albedo,
+  AlbedoR,
+  AlbedoG,
+  AlbedoB,
+  Normal,
+  NormalX,
+  NormalY,
+  NormalZ,
+  Velocity,
+  VelocityX,
+  VelocityY
+ };
+
  enum class LineDebugKind : uint8_t {
   Grid = 0,
   Axis,
@@ -65,7 +89,7 @@ export namespace Artifact {
 
  class CompositionRenderController : public QObject
  {
-  W_OBJECT(CompositionRenderController)
+ W_OBJECT(CompositionRenderController)
  private:
   class Impl;
   Impl* impl_;
@@ -125,6 +149,17 @@ void setShowEffectHitboxOverlay(bool show);
 bool isShowEffectHitboxOverlay() const;
 void setShowDensityHeatmapOverlay(bool show);
 bool isShowDensityHeatmapOverlay() const;
+void setReferenceOverlayImage(const QImage& image);
+void clearReferenceOverlayImage();
+bool hasReferenceOverlayImage() const;
+void setShowReferenceOverlay(bool show);
+bool isShowReferenceOverlay() const;
+void setShowColorSamplerOverlay(bool show);
+bool isShowColorSamplerOverlay() const;
+void setShowAutoColorPaletteOverlay(bool show);
+bool isShowAutoColorPaletteOverlay() const;
+void setViewportChannelDisplayMode(ViewportChannelDisplayMode mode);
+ViewportChannelDisplayMode viewportChannelDisplayMode() const;
 bool setSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool removeSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool setSelectedLayerMotionPathInterpolationAtCurrentFrame(int interpolationType);
@@ -132,6 +167,18 @@ void setShowAnchorCenterOverlay(bool show);
 bool isShowAnchorCenterOverlay() const;
 void setShowCameraFrustumOverlay(bool show);
 bool isShowCameraFrustumOverlay() const;
+void setShowGizmoOverlay(bool show);
+bool isShowGizmoOverlay() const;
+void setShowXRayOverlay(bool show);
+bool isShowXRayOverlay() const;
+void setShowIsolationOverlay(bool show);
+bool isShowIsolationOverlay() const;
+void setShowOnionSkin(bool show);
+bool isShowOnionSkin() const;
+void setOnionSkinFrameCount(int count);
+int onionSkinFrameCount() const;
+void setOnionSkinOpacity(int percent);
+int onionSkinOpacity() const;
 
    // Render Queue support: when active, composition changed signals do not invalidate caches
    void setRenderQueueActive(bool active);
@@ -153,6 +200,12 @@ void showContextMenuOverlay(const QPointF& viewportPos, const QStringList& items
                            const QString& subtitle = QString(),
                            const QVector<bool>& enabledStates = QVector<bool>());
 void showPieMenuOverlay(const PieMenuModel& model, const QPointF& viewportPos);
+bool placeWorkCursorAtViewportPos(const QPointF& viewportPos);
+void setWorkCursorCanvasPosition(const QPointF& canvasPos);
+QPointF workCursorCanvasPosition() const;
+void setWorkCursorVisible(bool visible);
+bool isWorkCursorVisible() const;
+void clearWorkCursor();
 void hideViewportOverlay();
 bool isViewportOverlayVisible() const;
 bool isContextMenuOverlayVisible() const;
@@ -214,6 +267,8 @@ TransformGizmo* gizmo() const;
  CameraFrustumVisual cameraFrustumVisual() const;
  void setViewportOrientation(ArtifactCore::ViewOrientationHotspot hotspot);
  ArtifactCore::ViewOrientationHotspot viewportOrientation() const;
+ QQuaternion viewportOrientationQuaternion() const;
+ void setViewportOrientationQuaternion(const QQuaternion& orientation);
  Ray createPickingRay(const QPointF& viewportPos) const;
   Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos) const;
 

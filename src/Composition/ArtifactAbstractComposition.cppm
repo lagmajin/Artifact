@@ -48,6 +48,7 @@ import Audio.Mixer;
 import Audio.Bus;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
+import ArtifactCore.Control.External;
 
 //import Playback.Clock;
 
@@ -55,6 +56,43 @@ namespace Artifact {
  using namespace ArtifactCore;
 
 namespace {
+
+const Artifact::CompositionStateVariant* findStateVariantById(
+    const QVector<Artifact::CompositionStateVariant>& states,
+    const QString& stateId)
+{
+    for (const auto& state : states) {
+        if (state.stateId == stateId) {
+            return &state;
+        }
+    }
+    return nullptr;
+}
+Artifact::CompositionStateVariant* findStateVariantById(
+    QVector<Artifact::CompositionStateVariant>& states,
+    const QString& stateId)
+{
+    for (auto& state : states) {
+        if (state.stateId == stateId) {
+            return &state;
+        }
+    }
+    return nullptr;
+}
+QString uniqueStateVariantId(const QVector<Artifact::CompositionStateVariant>& states,
+                             QString stateId)
+{
+    stateId = stateId.trimmed();
+    if (stateId.isEmpty()) {
+        stateId = QStringLiteral("state");
+    }
+    QString candidate = stateId;
+    int suffix = 2;
+    while (findStateVariantById(states, candidate) != nullptr) {
+        candidate = QStringLiteral("%1_%2").arg(stateId).arg(suffix++);
+    }
+    return candidate;
+}
 
 // transform 系プロパティの keyframe 値を解像度変更に合わせて再計算する。
 // position / anchor は X/Y が別プロパティなので、同時刻の keyframe をペアリングして
@@ -346,6 +384,11 @@ float layerFloatProperty(const ArtifactAbstractLayerPtr& layer,
   }
   const auto property = layer->getProperty(propertyPath);
   return property ? property->getValue().toFloat() : fallback;
+}
+
+QString recordingSnapshotKey(const LayerID& layerId, const QString& propertyPath)
+{
+  return layerId.toString() + QStringLiteral("::") + propertyPath;
 }
 
 QRectF compositionCollisionLocalBounds(const ArtifactAbstractLayerPtr& layer)
@@ -674,6 +717,22 @@ class ArtifactAbstractComposition::Impl {
   FrameRange workAreaRange_ = FrameRange(0, 300);
   FrameRate frameRate_;
   ResponsiveLayoutSet responsiveLayout_;
+  QVector<CompositionTransformField> transformFields_;
+  QVector<CompositionStateVariant> stateVariants_;
+  QString activeStateVariantId_;
+  struct RecordedPropertySnapshot {
+    LayerID layerId;
+    QString propertyPath;
+    QVariant value;
+    std::vector<KeyFrame> keyframes;
+  };
+  struct LiveControlRecordingState {
+    bool active = false;
+    LiveControlRecordingOptions options;
+    QHash<QString, qint64> lastRecordedFrameByAddress;
+    QHash<QString, double> lastRecordedValueByAddress;
+    QHash<QString, RecordedPropertySnapshot> snapshotsByAddress;
+  } liveControlRecording_;
   bool looping_ = false;
   float playbackSpeed_ = 1.0f;
   AudioLimiter limiter_;
@@ -1163,6 +1222,136 @@ bool ResponsiveLayoutSet::hasVariant(const QString& variantId) const
 {
     for (const auto& variant : variants) {
         if (variant.variantId == variantId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CompositionTransformField::targetsLayer(const LayerID& layerId) const
+{
+    return targetLayerIds.contains(layerId);
+}
+
+QJsonObject CompositionTransformField::toJson() const
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("fieldId"), fieldId);
+    obj.insert(QStringLiteral("displayName"), displayName);
+    obj.insert(QStringLiteral("type"), QStringLiteral("radial-transform"));
+    obj.insert(QStringLiteral("enabled"), enabled);
+    obj.insert(QStringLiteral("center"), QJsonObject{
+        {QStringLiteral("x"), center.x()},
+        {QStringLiteral("y"), center.y()},
+    });
+    obj.insert(QStringLiteral("radius"), radius);
+    obj.insert(QStringLiteral("expansion"), expansion);
+    obj.insert(QStringLiteral("edgeScale"), edgeScale);
+    obj.insert(
+        QStringLiteral("coordinateParentLayerId"),
+        coordinateParentLayerId.toString());
+    QJsonArray targetArray;
+    for (const auto& layerId : targetLayerIds) {
+        targetArray.append(layerId.toString());
+    }
+    obj.insert(QStringLiteral("targetLayerIds"), targetArray);
+    return obj;
+}
+
+CompositionTransformField CompositionTransformField::fromJson(const QJsonObject& obj)
+{
+    CompositionTransformField field;
+    field.fieldId = obj.value(QStringLiteral("fieldId")).toString();
+    field.displayName = obj.value(QStringLiteral("displayName"))
+                            .toString(QStringLiteral("Radial Transform Field"));
+    field.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
+    const QJsonObject centerObj = obj.value(QStringLiteral("center")).toObject();
+    field.center = QPointF(
+        centerObj.value(QStringLiteral("x")).toDouble(0.0),
+        centerObj.value(QStringLiteral("y")).toDouble(0.0));
+    field.radius = std::max<qreal>(
+        0.0001, obj.value(QStringLiteral("radius")).toDouble(1.0));
+    field.expansion = obj.value(QStringLiteral("expansion")).toDouble(0.0);
+    field.edgeScale = std::max<qreal>(
+        0.0001, obj.value(QStringLiteral("edgeScale")).toDouble(1.0));
+    field.coordinateParentLayerId = LayerID(
+        obj.value(QStringLiteral("coordinateParentLayerId")).toString());
+    const QJsonArray targetArray =
+        obj.value(QStringLiteral("targetLayerIds")).toArray();
+    for (const auto& value : targetArray) {
+        const LayerID layerId(value.toString());
+        if (!layerId.isNil() && !field.targetLayerIds.contains(layerId)) {
+            field.targetLayerIds.append(layerId);
+        }
+    }
+    return field;
+}
+
+QJsonObject CompositionStatePropertyOverride::toJson() const
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("layerId"), layerId.toString());
+    obj.insert(QStringLiteral("propertyPath"), propertyPath);
+    obj.insert(QStringLiteral("value"), QJsonValue::fromVariant(value));
+    obj.insert(QStringLiteral("baselineValue"), QJsonValue::fromVariant(baselineValue));
+    obj.insert(QStringLiteral("enabled"), enabled);
+    return obj;
+}
+
+CompositionStatePropertyOverride CompositionStatePropertyOverride::fromJson(
+    const QJsonObject& obj)
+{
+    CompositionStatePropertyOverride overrideItem;
+    overrideItem.layerId = LayerID(obj.value(QStringLiteral("layerId")).toString());
+    overrideItem.propertyPath = obj.value(QStringLiteral("propertyPath")).toString();
+    overrideItem.value = obj.value(QStringLiteral("value")).toVariant();
+    overrideItem.baselineValue = obj.value(QStringLiteral("baselineValue")).toVariant();
+    overrideItem.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
+    return overrideItem;
+}
+
+QJsonObject CompositionStateVariant::toJson() const
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("stateId"), stateId);
+    obj.insert(QStringLiteral("displayName"), displayName);
+    obj.insert(QStringLiteral("enabled"), enabled);
+    QJsonArray overrideArray;
+    for (const auto& overrideItem : overrides) {
+        overrideArray.append(overrideItem.toJson());
+    }
+    obj.insert(QStringLiteral("overrides"), overrideArray);
+    return obj;
+}
+
+CompositionStateVariant CompositionStateVariant::fromJson(const QJsonObject& obj)
+{
+    CompositionStateVariant state;
+    state.stateId = obj.value(QStringLiteral("stateId")).toString();
+    state.displayName = obj.value(QStringLiteral("displayName")).toString();
+    state.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
+    const auto overrideArray = obj.value(QStringLiteral("overrides")).toArray();
+    for (const auto& value : overrideArray) {
+        if (value.isObject()) {
+            state.overrides.append(CompositionStatePropertyOverride::fromJson(
+                value.toObject()));
+        }
+    }
+    if (state.stateId.isEmpty()) {
+        state.stateId = QStringLiteral("state");
+    }
+    if (state.displayName.trimmed().isEmpty()) {
+        state.displayName = state.stateId;
+    }
+    return state;
+}
+
+bool CompositionStateVariant::hasOverride(const LayerID& layerId,
+                                          const QString& propertyPath) const
+{
+    for (const auto& overrideItem : overrides) {
+        if (overrideItem.layerId == layerId &&
+            overrideItem.propertyPath == propertyPath) {
             return true;
         }
     }
@@ -1781,6 +1970,414 @@ QSize ArtifactAbstractComposition::effectiveCompositionSize() const
     return impl_->settings_.compositionSize();
 }
 
+QVector<CompositionTransformField> ArtifactAbstractComposition::transformFields() const
+{
+    return impl_->transformFields_;
+}
+
+void ArtifactAbstractComposition::setTransformFields(
+    const QVector<CompositionTransformField>& fields)
+{
+    impl_->transformFields_ = fields;
+    for (const auto& layer : impl_->layerMultiIndex_.all()) {
+        if (layer) {
+            layer->setDirty(LayerDirtyFlag::Transform);
+            layer->changed();
+        }
+    }
+    Q_EMIT changed();
+}
+
+void ArtifactAbstractComposition::addTransformField(
+    const CompositionTransformField& field)
+{
+    if (field.fieldId.isEmpty()) {
+        return;
+    }
+    for (auto& existing : impl_->transformFields_) {
+        if (existing.fieldId == field.fieldId) {
+            existing = field;
+            for (const auto& layerId : field.targetLayerIds) {
+                if (const auto layer = layerById(layerId)) {
+                    layer->setDirty(LayerDirtyFlag::Transform);
+                    layer->changed();
+                }
+            }
+            Q_EMIT changed();
+            return;
+        }
+    }
+    impl_->transformFields_.append(field);
+    for (const auto& layerId : field.targetLayerIds) {
+        if (const auto layer = layerById(layerId)) {
+            layer->setDirty(LayerDirtyFlag::Transform);
+            layer->changed();
+        }
+    }
+    Q_EMIT changed();
+}
+
+bool ArtifactAbstractComposition::removeTransformField(const QString& fieldId)
+{
+    for (qsizetype index = 0; index < impl_->transformFields_.size(); ++index) {
+        if (impl_->transformFields_.at(index).fieldId != fieldId) {
+            continue;
+        }
+        const auto targetLayerIds = impl_->transformFields_.at(index).targetLayerIds;
+        impl_->transformFields_.removeAt(index);
+        for (const auto& layerId : targetLayerIds) {
+            if (const auto layer = layerById(layerId)) {
+                layer->setDirty(LayerDirtyFlag::Transform);
+                layer->changed();
+            }
+        }
+        Q_EMIT changed();
+        return true;
+    }
+    return false;
+}
+
+void ArtifactAbstractComposition::clearTransformFields()
+{
+    if (impl_->transformFields_.isEmpty()) {
+        return;
+    }
+    impl_->transformFields_.clear();
+    for (const auto& layer : impl_->layerMultiIndex_.all()) {
+        if (layer) {
+            layer->setDirty(LayerDirtyFlag::Transform);
+            layer->changed();
+        }
+    }
+    Q_EMIT changed();
+}
+
+CompositionFieldTransformAdjustment
+ArtifactAbstractComposition::evaluateTransformFields(
+    const LayerID& layerId, const QPointF& basePosition) const
+{
+    CompositionFieldTransformAdjustment adjustment;
+    for (const auto& field : impl_->transformFields_) {
+        if (!field.enabled || field.radius <= 0.0001 ||
+            !field.targetsLayer(layerId)) {
+            continue;
+        }
+        const QPointF delta = basePosition - field.center;
+        const qreal normalizedDistance = std::clamp<qreal>(
+            std::hypot(delta.x(), delta.y()) / field.radius, 0.0, 1.0);
+        const qreal influence = normalizedDistance * normalizedDistance *
+                                (3.0 - 2.0 * normalizedDistance);
+        adjustment.positionOffset += delta * field.expansion * influence;
+        adjustment.scaleMultiplier *=
+            std::lerp<qreal>(1.0, field.edgeScale, influence);
+        adjustment.affected = true;
+    }
+    return adjustment;
+}
+
+bool ArtifactAbstractComposition::applyExternalControlValue(
+    const QString& address,
+    double rawValue,
+    bool resetSmoothing)
+{
+    if (address.trimmed().isEmpty()) {
+        return false;
+    }
+
+    auto& controlManager = ArtifactCore::ExternalControlManager::instance();
+    const auto mapping = controlManager.getMappingDefinition(address);
+    if (!mapping.has_value() || !mapping->enabled) {
+        return false;
+    }
+
+    const auto processedValue =
+        controlManager.processIncomingValue(address, rawValue, resetSmoothing);
+    if (!processedValue.has_value()) {
+        return false;
+    }
+
+    const auto targetLayer = layerById(mapping->target.layerId);
+    if (!targetLayer) {
+        return false;
+    }
+    auto& recording = impl_->liveControlRecording_;
+    const bool shouldConsiderRecording =
+        recording.active &&
+        (recording.options.addresses.isEmpty() ||
+         recording.options.addresses.contains(address));
+    const auto property = shouldConsiderRecording
+        ? targetLayer->getProperty(mapping->target.propertyPath)
+        : nullptr;
+    const bool shouldRecord =
+        shouldConsiderRecording && property && property->isAnimatable();
+
+    const QString snapshotKey =
+        shouldRecord
+            ? recordingSnapshotKey(mapping->target.layerId, mapping->target.propertyPath)
+            : QString();
+    if (shouldRecord && !recording.snapshotsByAddress.contains(snapshotKey)) {
+        Impl::RecordedPropertySnapshot snapshot;
+        snapshot.layerId = mapping->target.layerId;
+        snapshot.propertyPath = mapping->target.propertyPath;
+        snapshot.value = property->getValue();
+        snapshot.keyframes = property->getKeyFrames();
+        recording.snapshotsByAddress.insert(snapshotKey, snapshot);
+    }
+
+    const bool applied = targetLayer->setLayerPropertyValue(
+        mapping->target.propertyPath, QVariant(processedValue.value()));
+    if (!applied) {
+        return false;
+    }
+
+    if (!shouldRecord) {
+        return true;
+    }
+
+    const qint64 currentFrame = framePosition().framePosition();
+    const int frameStride = std::max(1, recording.options.sampleEveryNFrames);
+    auto lastFrameIt = recording.lastRecordedFrameByAddress.constFind(address);
+    if (lastFrameIt != recording.lastRecordedFrameByAddress.constEnd() &&
+        std::abs(currentFrame - lastFrameIt.value()) < frameStride) {
+        return true;
+    }
+
+    auto lastValueIt = recording.lastRecordedValueByAddress.constFind(address);
+    if (lastValueIt != recording.lastRecordedValueByAddress.constEnd() &&
+        std::abs(processedValue.value() - lastValueIt.value()) < recording.options.deadZone) {
+        return true;
+    }
+
+    const RationalTime keyTime(
+        currentFrame,
+        static_cast<int64_t>(std::max<double>(
+            1.0, static_cast<double>(frameRate().framerate()))));
+    property->addKeyFrame(keyTime, QVariant(processedValue.value()));
+    recording.lastRecordedFrameByAddress.insert(address, currentFrame);
+    recording.lastRecordedValueByAddress.insert(address, processedValue.value());
+    return true;
+}
+
+bool ArtifactAbstractComposition::applyAudioAnalysis(
+    const ArtifactCore::AudioAnalyzer::AnalysisResult& analysis,
+    const QString& addressPrefix,
+    bool resetSmoothing)
+{
+    const QString prefix = addressPrefix.trimmed().isEmpty()
+        ? QStringLiteral("audio")
+        : addressPrefix.trimmed();
+
+    bool applied = false;
+    applied = applyExternalControlValue(prefix + QStringLiteral(".amplitude"),
+                                        analysis.rms,
+                                        resetSmoothing) || applied;
+    applied = applyExternalControlValue(prefix + QStringLiteral(".peak"),
+                                        analysis.peak,
+                                        resetSmoothing) || applied;
+    applied = applyExternalControlValue(prefix + QStringLiteral(".low"),
+                                        analysis.lowIntensity,
+                                        resetSmoothing) || applied;
+    applied = applyExternalControlValue(prefix + QStringLiteral(".mid"),
+                                        analysis.midIntensity,
+                                        resetSmoothing) || applied;
+    applied = applyExternalControlValue(prefix + QStringLiteral(".high"),
+                                        analysis.highIntensity,
+                                        resetSmoothing) || applied;
+    return applied;
+}
+
+bool ArtifactAbstractComposition::beginLiveControlRecording(
+    const LiveControlRecordingOptions& options)
+{
+    if (impl_->liveControlRecording_.active) {
+        return false;
+    }
+    impl_->liveControlRecording_.active = true;
+    impl_->liveControlRecording_.options = options;
+    impl_->liveControlRecording_.options.sampleEveryNFrames =
+        std::max(1, options.sampleEveryNFrames);
+    impl_->liveControlRecording_.options.deadZone =
+        std::max(0.0, options.deadZone);
+    impl_->liveControlRecording_.lastRecordedFrameByAddress.clear();
+    impl_->liveControlRecording_.lastRecordedValueByAddress.clear();
+    impl_->liveControlRecording_.snapshotsByAddress.clear();
+    Q_EMIT changed();
+    return true;
+}
+
+bool ArtifactAbstractComposition::isLiveControlRecordingActive() const
+{
+    return impl_->liveControlRecording_.active;
+}
+
+LiveControlRecordingOptions ArtifactAbstractComposition::liveControlRecordingOptions() const
+{
+    return impl_->liveControlRecording_.options;
+}
+
+void ArtifactAbstractComposition::commitLiveControlRecording()
+{
+    if (!impl_->liveControlRecording_.active) {
+        return;
+    }
+    impl_->liveControlRecording_ = Impl::LiveControlRecordingState{};
+    Q_EMIT changed();
+}
+
+void ArtifactAbstractComposition::cancelLiveControlRecording()
+{
+    if (!impl_->liveControlRecording_.active) {
+        return;
+    }
+    const auto recording = impl_->liveControlRecording_;
+    if (recording.options.restoreOnCancel) {
+        for (auto it = recording.snapshotsByAddress.constBegin();
+             it != recording.snapshotsByAddress.constEnd();
+             ++it) {
+            const auto layer = layerById(it.value().layerId);
+            if (!layer) {
+                continue;
+            }
+            const auto property = layer->getProperty(it.value().propertyPath);
+            if (!property) {
+                continue;
+            }
+            property->clearKeyFrames();
+            for (const auto& keyframe : it.value().keyframes) {
+                property->addKeyFrame(keyframe.time,
+                                      keyframe.value,
+                                      keyframe.interpolation,
+                                      keyframe.cp1_x,
+                                      keyframe.cp1_y,
+                                      keyframe.cp2_x,
+                                      keyframe.cp2_y,
+                                      keyframe.roving);
+                property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+                property->setKeyFrameColorLabelAt(keyframe.time,
+                                                  keyframe.colorLabel);
+            }
+            property->setValue(it.value().value);
+        }
+    }
+    impl_->liveControlRecording_ = Impl::LiveControlRecordingState{};
+    Q_EMIT changed();
+}
+
+QVector<CompositionStateVariant> ArtifactAbstractComposition::stateVariants() const
+{
+    return impl_->stateVariants_;
+}
+
+void ArtifactAbstractComposition::setStateVariants(
+    const QVector<CompositionStateVariant>& states)
+{
+    QVector<CompositionStateVariant> normalizedStates;
+    normalizedStates.reserve(states.size());
+    for (auto state : states) {
+        state.stateId = uniqueStateVariantId(normalizedStates, state.stateId);
+        if (state.displayName.trimmed().isEmpty()) {
+            state.displayName = state.stateId;
+        }
+        normalizedStates.append(state);
+    }
+    impl_->stateVariants_ = normalizedStates;
+    if (!impl_->activeStateVariantId_.isEmpty() &&
+        findStateVariantById(impl_->stateVariants_, impl_->activeStateVariantId_) == nullptr) {
+        impl_->activeStateVariantId_.clear();
+    }
+    Q_EMIT changed();
+}
+
+void ArtifactAbstractComposition::addStateVariant(
+    const CompositionStateVariant& state)
+{
+    CompositionStateVariant normalized = state;
+    normalized.stateId = uniqueStateVariantId(impl_->stateVariants_, normalized.stateId);
+    if (normalized.displayName.trimmed().isEmpty()) {
+        normalized.displayName = normalized.stateId;
+    }
+    impl_->stateVariants_.append(normalized);
+    Q_EMIT changed();
+}
+
+bool ArtifactAbstractComposition::removeStateVariant(const QString& stateId)
+{
+    for (qsizetype index = 0; index < impl_->stateVariants_.size(); ++index) {
+        if (impl_->stateVariants_.at(index).stateId != stateId) {
+            continue;
+        }
+        impl_->stateVariants_.removeAt(index);
+        if (impl_->activeStateVariantId_ == stateId) {
+            impl_->activeStateVariantId_.clear();
+        }
+        Q_EMIT changed();
+        return true;
+    }
+    return false;
+}
+
+QString ArtifactAbstractComposition::activeStateVariantId() const
+{
+    return impl_->activeStateVariantId_;
+}
+
+bool ArtifactAbstractComposition::setActiveStateVariantId(const QString& stateId)
+{
+    const QString trimmedStateId = stateId.trimmed();
+    if (trimmedStateId == impl_->activeStateVariantId_) {
+        return true;
+    }
+
+    const CompositionStateVariant* nextState =
+        trimmedStateId.isEmpty() ? nullptr
+                                 : findStateVariantById(impl_->stateVariants_,
+                                                        trimmedStateId);
+    if (!trimmedStateId.isEmpty() && (!nextState || !nextState->enabled)) {
+        return false;
+    }
+
+    const CompositionStateVariant* previousState =
+        impl_->activeStateVariantId_.isEmpty()
+            ? nullptr
+            : findStateVariantById(impl_->stateVariants_, impl_->activeStateVariantId_);
+
+    if (previousState) {
+        for (const auto& previousOverride : previousState->overrides) {
+            if (!previousOverride.enabled || !previousOverride.baselineValue.isValid()) {
+                continue;
+            }
+            if (nextState &&
+                nextState->hasOverride(previousOverride.layerId,
+                                       previousOverride.propertyPath)) {
+                continue;
+            }
+            const auto layer = layerById(previousOverride.layerId);
+            if (layer) {
+                layer->setLayerPropertyValue(previousOverride.propertyPath,
+                                             previousOverride.baselineValue);
+            }
+        }
+    }
+
+    if (nextState) {
+        for (const auto& overrideItem : nextState->overrides) {
+            if (!overrideItem.enabled) {
+                continue;
+            }
+            const auto layer = layerById(overrideItem.layerId);
+            if (layer) {
+                layer->setLayerPropertyValue(overrideItem.propertyPath,
+                                             overrideItem.value);
+            }
+        }
+    }
+
+    impl_->activeStateVariantId_ = trimmedStateId;
+    impl_->invalidateThumbnailCache();
+    Q_EMIT changed();
+    return true;
+}
+
 QJsonDocument ArtifactAbstractComposition::toJson() const{
     QJsonObject obj;
     obj["id"] = id().toString();
@@ -1801,6 +2398,17 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
     backgroundColorObj["a"] = impl_->backgroundColor_.a();
     obj["backgroundColor"] = backgroundColorObj;
     obj["responsiveLayout"] = impl_->responsiveLayout_.toJson();
+    obj["activeStateVariantId"] = impl_->activeStateVariantId_;
+    QJsonArray stateVariantsArray;
+    for (const auto& state : impl_->stateVariants_) {
+        stateVariantsArray.append(state.toJson());
+    }
+    obj["stateVariants"] = stateVariantsArray;
+    QJsonArray transformFieldsArray;
+    for (const auto& field : impl_->transformFields_) {
+        transformFieldsArray.append(field.toJson());
+    }
+    obj["transformFields"] = transformFieldsArray;
     QJsonArray effectsArray;
     for (const auto& effect : impl_->effects_) {
         if (effect) {
@@ -1875,6 +2483,34 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
         }
     } else {
         comp->impl_->responsiveLayout_ = makeDefaultResponsiveLayoutSet(comp->impl_->settings_.compositionSize());
+    }
+    if (obj.contains("stateVariants") && obj["stateVariants"].isArray()) {
+        const QJsonArray stateVariantsArray = obj["stateVariants"].toArray();
+        for (const auto& value : stateVariantsArray) {
+            if (value.isObject()) {
+                comp->impl_->stateVariants_.append(
+                    CompositionStateVariant::fromJson(value.toObject()));
+            }
+        }
+    }
+    comp->impl_->activeStateVariantId_ =
+        obj.value("activeStateVariantId").toString();
+    if (!comp->impl_->activeStateVariantId_.isEmpty() &&
+        findStateVariantById(comp->impl_->stateVariants_,
+                             comp->impl_->activeStateVariantId_) == nullptr) {
+        comp->impl_->activeStateVariantId_.clear();
+    }
+    if (obj.contains("transformFields") && obj["transformFields"].isArray()) {
+        const QJsonArray transformFieldsArray = obj["transformFields"].toArray();
+        for (const auto& value : transformFieldsArray) {
+            if (!value.isObject()) {
+                continue;
+            }
+            const auto field = CompositionTransformField::fromJson(value.toObject());
+            if (!field.fieldId.isEmpty()) {
+                comp->impl_->transformFields_.append(field);
+            }
+        }
     }
 
     if (obj.contains("effects") && obj["effects"].isArray()) {
@@ -2055,3 +2691,4 @@ QImage ArtifactAbstractComposition::getThumbnailAtFrame(int64_t frameNumber,
 }
 
 };
+

@@ -7,6 +7,7 @@ module;
 #include <type_traits>
 #include <QImage>
 #include <QFont>
+#include <QLocale>
 #include <QRectF>
 #include <QMatrix4x4>
 #include <QDebug>
@@ -167,6 +168,7 @@ static std::vector<GlyphItem> shapeGlyphsForRender(const QString& text,
     request.paragraph = paragraph;
     request.writingMode = TextWritingMode::Horizontal;
     request.baseDirection = inferredBaseDirection(text);
+    request.locale = QLocale::system().name();
     return backend.shape(request).glyphs;
 }
 

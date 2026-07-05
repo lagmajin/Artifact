@@ -126,7 +126,9 @@ enum class LayerType {
   Procedural3D = 23,          // Terrain / Path Tube procedural source
   SandSim2D = 24,              // 2D falling-sand cellular automaton
   ParametricComposition = 25,   // Parametric composition with slots
-  EnvironmentMap = 26           // HDRI / Skybox environment map layer
+  EnvironmentMap = 26,          // HDRI / Skybox environment map layer
+  Switch = 27,                  // Switch layer (Moho-style pose switching)
+  Paint = 28,                   // Paint layer (frame-by-frame raster)
 };
 
 enum class LayerDirtyFlag : uint32_t {

@@ -34,6 +34,8 @@ module;
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QScrollArea>
+#include <QGroupBox>
+#include <QLabel>
 #include <QSet>
 
 export module Artifact.Widgets.ArtifactPropertyWidget;
@@ -42,8 +44,33 @@ export module Artifact.Widgets.ArtifactPropertyWidget;
 
 import Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;
+import Time.Rational;
 
 export namespace Artifact {
+
+class ArtifactPlaybackService;
+
+namespace detail {
+enum class LayerPresentationBadgeTone {
+  Neutral,
+  Container,
+  Media,
+  Motion,
+  Special
+};
+ArtifactCore::RationalTime currentPlaybackTime(ArtifactPlaybackService* playback);
+ArtifactCore::RationalTime currentPlaybackTime(ArtifactPlaybackService* playback, const ArtifactAbstractLayerPtr& layer);
+void applyThemeTextPalette(QWidget* widget, int shade);
+void applyPropertySectionBox(QGroupBox* box);
+void applyPresentationToneLabel(QLabel* label, LayerPresentationBadgeTone tone, bool emphasized = true);
+void applyPropertyPanelPalette(QWidget* widget, bool elevated = false);
+void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr& layer);
+std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+prioritizedSummaryProperties(
+    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>& properties,
+    const std::unordered_set<std::string>& preferredKeys,
+    std::size_t maxCount);
+}
 
 using namespace ArtifactCore;
 
@@ -79,9 +106,12 @@ public:
     bool openActiveExpressionCopilot();
     bool clearActiveExpression();
     bool convertActiveExpressionToKeyframes();
+    bool bakeActivePropertyToKeyframes();
     bool saveActiveExpressionPreset();
     bool loadActiveExpressionPreset();
     bool hasActiveExpressionTarget() const;
+    QString activePropertyPath() const;
+    Artifact::ArtifactAbstractLayerPtr activePropertyLayer() const;
 
 protected:
     void showEvent(QShowEvent* event) override;

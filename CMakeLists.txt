@@ -67,6 +67,8 @@ foreach(file_path ${POTENTIAL_SOURCES})
        file_path MATCHES "src/Audio/Effects/AudioEffectsInit\\.cpp" OR
        file_path MATCHES "src/Test/ArtifactTestRenderQueue\\.cppm" OR
        file_path MATCHES "src/Generator/CloneGenerator\\.ixx" OR
+       file_path MATCHES "include/Effects/RadialBlur/RadialBlurEffect\\.ixx" OR
+       file_path MATCHES "src/Effects/RadialBlur/RadialBlurEffect\\.cppm" OR
        file_path MATCHES "src/Composition/ArtifactCompositionManager\\.cpp" OR
        file_path MATCHES "include/Effect/ArtifactStabilizer\\.ixx" OR
        file_path MATCHES "src/Effect/ArtifactStabilizer\\.cppm" OR
@@ -179,9 +181,31 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactEnviron
 if(_environment_map_params_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactEnvironmentMapLayerInitParams.ixx")
 endif()
+
+# Paint layer is imported by the composition overlay and brush tools, so pin it
+# explicitly to avoid module discovery timing issues.
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactPaintLayer.ixx" _paint_layer_module_idx)
+if(_paint_layer_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactPaintLayer.ixx")
+endif()
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactPaintLayer.cppm" _paint_layer_impl_idx)
+if(_paint_layer_impl_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactPaintLayer.cppm")
+endif()
 list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactEnvironmentMapLayer.cppm" _environment_map_layer_impl_idx)
 if(_environment_map_layer_impl_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactEnvironmentMapLayer.cppm")
+endif()
+
+# DopeSheetWidget is imported from AppMain and should be pinned explicitly so
+# module discovery does not depend on the recursive glob scan.
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/ArtifactDopeSheetWidget.ixx" _dope_sheet_widget_module_idx)
+if(_dope_sheet_widget_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/ArtifactDopeSheetWidget.ixx")
+endif()
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactDopeSheetWidget.cppm" _dope_sheet_widget_impl_idx)
+if(_dope_sheet_widget_impl_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactDopeSheetWidget.cppm")
 endif()
 
 # Procedural3DLayer owns the Terrain / Path Tube authoring and renderer bridge.

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 
 #include <wobjectdefs.h>
@@ -71,6 +71,10 @@ public:
     void setInPoint();
     void setOutPoint();
     void clearInOutPoints();
+
+    // Auto-Key モード
+    void setAutoKeyEnabled(bool enabled);
+    bool isAutoKeyEnabled() const;
 
 public: // slots
     W_SLOT(play)

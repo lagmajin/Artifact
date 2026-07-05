@@ -1,8 +1,11 @@
 module;
 #include <algorithm>
+#include <cmath>
+#include <functional>
 #include <memory>
-#include <QVariant>
 #include <QStringList>
+#include <QHash>
+#include <QVariant>
 #include <vector>
 #include <wobjectimpl.h>
 
@@ -237,6 +240,160 @@ void notifyLayerChanged(const ArtifactAbstractLayerPtr& layer, const Composition
                              LayerChangedEvent::ChangeType::Modified});
     }
 }
+
+QString dopeSheetPropertyKey(const LayerID& layerId, const QString& propertyPath) {
+    return QStringLiteral("%1|%2").arg(layerId.toString(), propertyPath);
+}
+
+std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+    const ArtifactAbstractLayerPtr& layer,
+    const QString& propertyPath) {
+    if (!layer) {
+        return {};
+    }
+
+    for (const auto& group : layer->getLayerPropertyGroups()) {
+        if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
+                group.name())) {
+            continue;
+        }
+        if (const auto property = group.findProperty(propertyPath)) {
+            return property;
+        }
+    }
+    return {};
+}
+
+void restorePropertyKeyframes(const std::shared_ptr<ArtifactCore::AbstractProperty>& property,
+                              const std::vector<KeyFrame>& keyframes) {
+    if (!property) {
+        return;
+    }
+
+    property->clearKeyFrames();
+    for (const auto& keyframe : keyframes) {
+        property->addKeyFrame(keyframe.time, keyframe.value, keyframe.interpolation,
+                              keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x,
+                              keyframe.cp2_y, keyframe.roving);
+        property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+        property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+    }
+}
+
+bool applyDopeSheetTransform(const CompositionID& compId,
+                             const std::vector<DopeSheetKeyframeRef>& refs,
+                             const std::function<RationalTime(const RationalTime&)>& remapTime) {
+    if (refs.empty()) {
+        return false;
+    }
+
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc) {
+        return false;
+    }
+    const auto findResult = svc->findComposition(compId);
+    if (!findResult.success) {
+        return false;
+    }
+    const auto composition = findResult.ptr.lock();
+    if (!composition) {
+        return false;
+    }
+
+    QHash<QString, QVector<RationalTime>> selectedTimesByProperty;
+    QVector<QString> propertyOrder;
+    for (const auto& ref : refs) {
+        if (!ref.isValid()) {
+            continue;
+        }
+        const QString key = dopeSheetPropertyKey(ref.layerId, ref.propertyPath);
+        if (!selectedTimesByProperty.contains(key)) {
+            propertyOrder.push_back(key);
+        }
+        selectedTimesByProperty[key].push_back(ref.time);
+    }
+
+    bool changed = false;
+    QHash<QString, ArtifactAbstractLayerPtr> changedLayers;
+
+    for (const auto& propertyKey : propertyOrder) {
+        const int sep = propertyKey.indexOf(QLatin1Char('|'));
+        if (sep <= 0) {
+            continue;
+        }
+
+        const LayerID layerId(propertyKey.left(sep));
+        const QString propertyPath = propertyKey.mid(sep + 1);
+        const auto layer = composition->layerById(layerId);
+        if (!layer) {
+            continue;
+        }
+        const auto property = findLayerPropertyByPath(layer, propertyPath);
+        if (!property || !property->isAnimatable()) {
+            continue;
+        }
+
+        const auto originalKeyframes = property->getKeyFrames();
+        if (originalKeyframes.empty()) {
+            continue;
+        }
+
+        const auto& selectedTimes = selectedTimesByProperty[propertyKey];
+        std::vector<KeyFrame> rebuilt;
+        rebuilt.reserve(originalKeyframes.size());
+        bool propertyChanged = false;
+
+        for (const auto& keyframe : originalKeyframes) {
+            const bool isSelected = std::any_of(
+                selectedTimes.begin(), selectedTimes.end(),
+                [&keyframe](const RationalTime& selectedTime) {
+                    return keyframe.time == selectedTime;
+                });
+            if (!isSelected) {
+                rebuilt.push_back(keyframe);
+                continue;
+            }
+
+            KeyFrame moved = keyframe;
+            moved.time = remapTime(keyframe.time);
+            rebuilt.push_back(std::move(moved));
+            propertyChanged = true;
+        }
+
+        if (!propertyChanged) {
+            continue;
+        }
+
+        std::stable_sort(rebuilt.begin(), rebuilt.end(),
+                         [](const KeyFrame& lhs, const KeyFrame& rhs) {
+                             return lhs.time < rhs.time;
+                         });
+
+        std::vector<KeyFrame> deduped;
+        deduped.reserve(rebuilt.size());
+        for (const auto& keyframe : rebuilt) {
+            if (!deduped.empty() && deduped.back().time == keyframe.time) {
+                deduped.back() = keyframe;
+                continue;
+            }
+            deduped.push_back(keyframe);
+        }
+
+        restorePropertyKeyframes(property, deduped);
+        changedLayers.insert(layer->id().toString(), layer);
+        changed = true;
+    }
+
+    for (auto it = changedLayers.begin(); it != changedLayers.end(); ++it) {
+        const auto& layer = it.value();
+        if (!layer) {
+            continue;
+        }
+        notifyLayerChanged(layer, compId, layer->id());
+    }
+
+    return changed;
+}
 } // namespace
 
 std::vector<KeyFrame> ArtifactTimelineKeyframeModel::getKeyframesFor(
@@ -307,6 +464,99 @@ bool ArtifactTimelineKeyframeModel::removeKeyframe(const CompositionID& compId,
         return true;
     }
 return false;
+}
+
+std::vector<DopeSheetKeyframeEntry>
+ArtifactTimelineKeyframeModel::collectDopeSheetKeyframesForLayer(
+    const CompositionID& compId,
+    const LayerID& layerId) const {
+    std::vector<DopeSheetKeyframeEntry> result;
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc) {
+        return result;
+    }
+
+    const auto findResult = svc->findComposition(compId);
+    if (!findResult.success) {
+        return result;
+    }
+
+    const auto composition = findResult.ptr.lock();
+    if (!composition) {
+        return result;
+    }
+
+    const auto layer = composition->layerById(layerId);
+    if (!layer) {
+        return result;
+    }
+
+    for (const auto& group : layer->getLayerPropertyGroups()) {
+        if (shouldHideTimelinePropertyGroup(group.name())) {
+            continue;
+        }
+        for (const auto& property : group.sortedProperties()) {
+            if (!property || !property->isAnimatable()) {
+                continue;
+            }
+            for (const auto& keyframe : property->getKeyFrames()) {
+                result.push_back(
+                    DopeSheetKeyframeEntry{layerId, property->getName(), keyframe});
+            }
+        }
+    }
+
+    std::stable_sort(result.begin(), result.end(),
+                     [](const DopeSheetKeyframeEntry& lhs,
+                        const DopeSheetKeyframeEntry& rhs) {
+                         if (lhs.keyframe.time == rhs.keyframe.time) {
+                             return lhs.propertyPath < rhs.propertyPath;
+                         }
+                         return lhs.keyframe.time < rhs.keyframe.time;
+                     });
+    return result;
+}
+
+bool ArtifactTimelineKeyframeModel::offsetKeyframes(
+    const CompositionID& compId,
+    const std::vector<DopeSheetKeyframeRef>& refs,
+    const RationalTime& delta) {
+    if (delta.value() == 0) {
+        return false;
+    }
+
+    return applyDopeSheetTransform(
+        compId, refs,
+        [&delta](const RationalTime& time) {
+            const RationalTime moved = time + delta;
+            return moved < RationalTime(0, moved.scale())
+                       ? RationalTime(0, moved.scale())
+                       : moved;
+        });
+}
+
+bool ArtifactTimelineKeyframeModel::scaleKeyframes(
+    const CompositionID& compId,
+    const std::vector<DopeSheetKeyframeRef>& refs,
+    const RationalTime& pivot,
+    double factor) {
+    if (refs.empty() || !std::isfinite(factor) || factor <= 0.0) {
+        return false;
+    }
+
+    return applyDopeSheetTransform(
+        compId, refs,
+        [&pivot, factor](const RationalTime& time) {
+            const int64_t scale = std::max<int64_t>(1, time.scale());
+            const int64_t pivotValue = pivot.rescaledTo(scale);
+            const int64_t sourceValue = time.rescaledTo(scale);
+            const double scaledValue =
+                static_cast<double>(pivotValue) +
+                (static_cast<double>(sourceValue - pivotValue) * factor);
+            const int64_t roundedValue =
+                static_cast<int64_t>(std::llround(scaledValue));
+            return RationalTime(std::max<int64_t>(0, roundedValue), scale);
+        });
 }
 
 } // namespace Artifact

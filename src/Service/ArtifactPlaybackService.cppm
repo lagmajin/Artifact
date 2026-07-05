@@ -58,6 +58,7 @@ import Core.Diagnostics.Trace;
 import Image.ImageF32x4RGBAWithCache;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
+import Artifact.Service.Project;
 import Event.Bus;
 import Artifact.Event.Types;
 
@@ -209,6 +210,35 @@ public:
       // Selection range is intentionally left as a future extension.
     }
     engine_->setFrameRange(range);
+  }
+
+  bool ensureCurrentCompositionBound() {
+    if (!currentComposition_) {
+      if (auto *projectService = ArtifactProjectService::instance()) {
+        if (auto fallbackComposition = projectService->currentComposition().lock()) {
+          owner_->setCurrentComposition(fallbackComposition);
+        }
+      }
+    }
+
+    if (!currentComposition_) {
+      return false;
+    }
+
+    if (engine_ && engine_->composition() != currentComposition_) {
+      applyCurrentPlaybackFrameRangeToEngine();
+      engine_->setFrameRate(currentComposition_->frameRate());
+      engine_->setCurrentFrame(currentComposition_->framePosition());
+      engine_->setComposition(currentComposition_);
+    }
+
+    if (controller_) {
+      controller_->setFrameRange(currentComposition_->frameRange());
+      controller_->setFrameRate(currentComposition_->frameRate());
+      controller_->setCurrentFrame(currentComposition_->framePosition());
+    }
+
+    return true;
   }
 
   explicit Impl(ArtifactPlaybackService *owner) : owner_(owner) {
@@ -1581,6 +1611,11 @@ PlaybackSkipMode ArtifactPlaybackService::playbackSkipMode() const {
 }
 
 void ArtifactPlaybackService::play() {
+  if (!impl_->ensureCurrentCompositionBound()) {
+    qWarning() << "[PlaybackService] play ignored: no current composition bound";
+    return;
+  }
+
   impl_->startAudioClock();
   
   // 再生開始直前に最新の範囲を適用
@@ -1863,6 +1898,16 @@ bool ArtifactPlaybackService::isLooping() const {
   return impl_->engine_
              ? impl_->engine_->isLooping()
              : (impl_->controller_ ? impl_->controller_->isLooping() : false);
+}
+
+void ArtifactPlaybackService::setPingPong(bool enabled) {
+  if (impl_->engine_) {
+    impl_->engine_->setPingPong(enabled);
+  }
+}
+
+bool ArtifactPlaybackService::isPingPong() const {
+  return impl_->engine_ && impl_->engine_->isPingPong();
 }
 
 void ArtifactPlaybackService::setLooping(bool loop) {

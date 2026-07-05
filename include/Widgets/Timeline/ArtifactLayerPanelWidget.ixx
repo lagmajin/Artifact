@@ -137,8 +137,9 @@ export namespace Artifact
    void dragMoveEvent(class QDragMoveEvent* event) override;
    void dropEvent(class QDropEvent* event) override;
    void dragLeaveEvent(class QDragLeaveEvent* event) override;
-  public:
-  explicit ArtifactLayerPanelWidget(QWidget* parent = nullptr);
+   bool wouldCreateCycle(const LayerID& childId, const LayerID& parentId) const;
+   public:
+   explicit ArtifactLayerPanelWidget(QWidget* parent = nullptr);
 
   ~ArtifactLayerPanelWidget();
  

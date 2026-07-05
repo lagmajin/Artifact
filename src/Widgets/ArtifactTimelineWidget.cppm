@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QBoxLayout>
 #include <QApplication>
@@ -66,6 +66,7 @@ import Artifact.Widgets.Timeline.KeyPatternDialog;
 import Artifact.Layers.Selection.Manager;
 import Panel.DraggableSplitter;
 import Artifact.Widgets.Timeline.GlobalSwitches;
+import Artifact.Service.ActiveContext;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Artifact.Service.ActiveContext;
@@ -103,6 +104,10 @@ using namespace ArtifactCore;
 using namespace ArtifactWidgets;
 
 namespace {
+void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr& composition,
+                                   const ArtifactAbstractLayerPtr& layer,
+                                   const qint64 frameDelta);
+
 void styleTimelineToolButton(QToolButton* button)
 {
   if (!button) {
@@ -520,7 +525,7 @@ bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
     return false;
   }
 
-  auto comp = result.ptr.lock();
+  ArtifactCompositionPtr comp = result.ptr.lock();
   if (!comp) {
     return false;
   }
@@ -554,37 +559,12 @@ bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
   // Move keeps the source offset stable.
   // Trim-in shifts the source offset by the same amount as the new in-point.
   if (!preserveExistingDuration && inPointDelta != 0) {
-    layer->setStartTime(FramePosition(oldStartTime + inPointDelta));
+    layer->setStartTime(FramePosition(std::max<int64_t>(0, oldStartTime + inPointDelta)));
   }
 
-  if (preserveExistingDuration && inPointDelta != 0) {
-    const double fps = std::max(
-        1.0, static_cast<double>(comp->frameRate().framerate()));
-    const int64_t frameScale = static_cast<int64_t>(std::llround(fps));
-    for (const auto &group : layer->getLayerPropertyGroups()) {
-      for (const auto &property : group.sortedProperties()) {
-        if (!property || !property->isAnimatable()) {
-          continue;
-        }
-
-        const auto keyframes = property->getKeyFrames();
-        if (keyframes.empty()) {
-          // No keyframes yet - will show flat line from current value
-        } else {
-          property->clearKeyFrames();
-        }
-        for (const auto &keyframe : keyframes) {
-          const int64_t oldFrame = keyframe.time.rescaledTo(frameScale);
-          const int64_t newFrame =
-              std::max<int64_t>(0, oldFrame + inPointDelta);
-          property->addKeyFrame(
-              RationalTime(newFrame, frameScale),
-              keyframe.value.isValid() ? keyframe.value : property->getValue(),
-              keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
-              keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
-        }
-      }
-    }
+  // Shift keyframes to follow the layer inPoint move (both Move and Trim modes)
+  if (inPointDelta != 0) {
+    shiftAnimatableLayerKeyframes(comp, layer, inPointDelta);
   }
 
   layer->changed();
@@ -1351,7 +1331,7 @@ bool applyTimelineRippleTrimOut(const CompositionID& compositionId,
     return false;
   }
 
-  auto comp = result.ptr.lock();
+  ArtifactCompositionPtr comp = result.ptr.lock();
   if (!comp) {
     return false;
   }
@@ -1474,7 +1454,7 @@ bool applyTimelineRippleTrimIn(const CompositionID& compositionId,
     return false;
   }
 
-  auto comp = result.ptr.lock();
+  ArtifactCompositionPtr comp = result.ptr.lock();
   if (!comp) {
     return false;
   }
@@ -1562,7 +1542,7 @@ bool applyTimelineRippleDelete(const CompositionID& compositionId,
     return false;
   }
 
-  auto comp = result.ptr.lock();
+  ArtifactCompositionPtr comp = result.ptr.lock();
   if (!comp) {
     return false;
   }
@@ -1707,7 +1687,7 @@ bool applyTimelineLayerSlide(const CompositionID& compositionId,
   if (!svc) return false;
   auto result = svc->findComposition(compositionId);
   if (!result.success) return false;
-  auto comp = result.ptr.lock();
+  ArtifactCompositionPtr comp = result.ptr.lock();
   if (!comp) return false;
   auto layer = comp->layerById(LayerID(layerIdText));
   if (!layer || layer->isTimingLocked()) return false;
@@ -3405,7 +3385,9 @@ private:
     }
     if (auto *workArea = dynamic_cast<WorkAreaControl *>(widget)) {
       return isHandleInteraction(pos, workArea->width(), workArea->height(),
-                                 workArea->startValue(), workArea->endValue());
+                                 workArea->startValue(), workArea->endValue()) ||
+             isRangeBodyInteraction(pos, workArea->width(), workArea->height(),
+                                    workArea->startValue(), workArea->endValue());
     }
     return false;
   }
@@ -3422,6 +3404,19 @@ private:
     const QRect leftHandleRect(x1 - handleHalfW, 0, handleW, height);
     const QRect rightHandleRect(x2 - handleHalfW, 0, handleW, height);
     return leftHandleRect.contains(pos) || rightHandleRect.contains(pos);
+  }
+
+  static bool isRangeBodyInteraction(const QPoint &pos, const int width,
+                                     const int height, const float start,
+                                     const float end) {
+    const int handleHalfW = 6;
+    const int handleW = handleHalfW * 2;
+    const int usableWidth = std::max(1, width - handleW);
+    const int x1 = handleHalfW + static_cast<int>(start * usableWidth);
+    const int x2 = handleHalfW + static_cast<int>(end * usableWidth);
+    const QRect rangeRect(x1 + handleHalfW, 0, std::max(0, x2 - x1 - handleW),
+                          height);
+    return rangeRect.contains(pos);
   }
 
   ArtifactTimelineTrackPainterView *trackView_ = nullptr;
@@ -3744,15 +3739,13 @@ protected:
 
 private:
   int currentPlayheadX() const {
-    if (!trackView_ || !parentWidget()) {
+    if (!scrubBar_ || !parentWidget()) {
       return 0;
     }
 
-    const double ppf = std::max(0.01, trackView_->pixelsPerFrame());
-    const double frame = std::max(0.0, trackView_->currentFrame());
-    const double localTrackX = frame * ppf - trackView_->horizontalOffset();
-    const QPoint panelPoint = trackView_->mapTo(
-        parentWidget(), QPoint(static_cast<int>(std::round(localTrackX)), 0));
+    const double frame = std::max(0.0, trackView_ ? trackView_->currentFrame() : 0.0);
+    const QPoint panelPoint = scrubBar_->mapTo(
+        parentWidget(), QPoint(scrubBar_->rulerFrameToX(frame), 0));
     return panelPoint.x() - x();
   }
 
@@ -4040,6 +4033,11 @@ public:
   bool graphEditorVisible_ = false;
   bool graphEditorNeedsFit_ = false;
   bool audioPreviewActive_ = false;
+  // JKL シャトル state
+  QElapsedTimer shuttleLastKeyTime_;
+  int shuttleLastKey_ = 0;
+  bool shuttleKArmed_ = false;
+  QElapsedTimer shuttleKTime_;
   QString audioWaveformSummary_;
   QHash<QString, CachedAudioWaveform> audioWaveformCache_;
 };
@@ -7154,15 +7152,44 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     }
   }
 
-  // J/K/L シャトル操作
+  // J/K/L シャトル操作（Premiere互換: K+L=スロー, 連打=倍速）
   if (event->key() == Qt::Key_J || event->key() == Qt::Key_K || event->key() == Qt::Key_L) {
     if (auto *svc = ArtifactPlaybackService::instance()) {
       if (event->key() == Qt::Key_K) {
         svc->shuttleStop();
+        if (!event->isAutoRepeat()) {
+          impl_->shuttleKArmed_ = true;
+          impl_->shuttleKTime_.restart();
+        }
+        impl_->shuttleLastKey_ = Qt::Key_K;
       } else if (event->key() == Qt::Key_L) {
-        svc->shuttleForward();
+        if (impl_->shuttleKArmed_ && impl_->shuttleKTime_.elapsed() < 300) {
+          svc->setPlaybackSpeed(0.5f);
+          svc->play();
+        } else if (impl_->shuttleLastKey_ == Qt::Key_L &&
+                   impl_->shuttleLastKeyTime_.elapsed() < 500) {
+          svc->shuttleForward();
+        } else {
+          svc->setPlaybackSpeed(1.0f);
+          svc->play();
+        }
+        impl_->shuttleKArmed_ = false;
+        impl_->shuttleLastKey_ = Qt::Key_L;
+        impl_->shuttleLastKeyTime_.restart();
       } else if (event->key() == Qt::Key_J) {
-        svc->shuttleReverse();
+        if (impl_->shuttleKArmed_ && impl_->shuttleKTime_.elapsed() < 300) {
+          svc->setPlaybackSpeed(-0.5f);
+          svc->play();
+        } else if (impl_->shuttleLastKey_ == Qt::Key_J &&
+                   impl_->shuttleLastKeyTime_.elapsed() < 500) {
+          svc->shuttleReverse();
+        } else {
+          svc->setPlaybackSpeed(-1.0f);
+          svc->play();
+        }
+        impl_->shuttleKArmed_ = false;
+        impl_->shuttleLastKey_ = Qt::Key_J;
+        impl_->shuttleLastKeyTime_.restart();
       }
     }
     event->accept();
@@ -7184,7 +7211,9 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
 
   // 再生/一時停止
   if (shortcuts.matches(event, ArtifactCore::ShortcutId::PlaybackToggle)) {
-    if (auto *svc = ArtifactPlaybackService::instance()) {
+    if (auto *active = ArtifactActiveContextService::instance()) {
+      active->togglePlayPause();
+    } else if (auto *svc = ArtifactPlaybackService::instance()) {
       svc->togglePlayPause();
     }
     event->accept();
@@ -7378,15 +7407,16 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     }
   }
 
-  // Slide keyboard shortcuts: Alt+←/→ for inPoint, Ctrl+Alt+←/→ for outPoint
+  // Slide keyboard shortcuts: Alt+←/→ move the whole clip while preserving its
+  // source window. Keep this on the same undo surface as drag-based slide.
   if ((event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) &&
-      (event->modifiers() & Qt::AltModifier)) {
+      (event->modifiers() & Qt::AltModifier) &&
+      !(event->modifiers() & Qt::ControlModifier)) {
     auto *svc = ArtifactProjectService::instance();
     auto comp = svc ? svc->currentComposition().lock() : nullptr;
     auto *selManager = ArtifactApplicationManager::instance()->layerSelectionManager();
     if (comp && selManager) {
       const bool isShift = event->modifiers() & Qt::ShiftModifier;
-      const bool isCtrl = event->modifiers() & Qt::ControlModifier;
       const int64_t step = isShift ? 10 : 1;
       const int64_t direction = (event->key() == Qt::Key_Right) ? 1 : -1;
       const int64_t delta = direction * step;
@@ -7402,55 +7432,32 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
       }
       if (layersVec.isEmpty()) { event->accept(); return; }
 
-      const auto beforeSnapshots = captureTimelineLayerStateSnapshots(comp, layersVec);
-
+      auto macro = std::make_unique<MacroUndoCommand>(
+          QStringLiteral("Slide Clips"));
+      int commandCount = 0;
       for (const auto& layer : layersVec) {
-        const qint64 oldIn = layer->inPoint().framePosition();
-        const qint64 oldOut = layer->outPoint().framePosition();
-        const qint64 oldDuration = std::max<qint64>(1, oldOut - oldIn);
-        qint64 newIn, newOut;
-
-        if (isCtrl) {
-          // Ctrl+Alt+←/→: slide outPoint only
-          newIn = oldIn;
-          newOut = std::max<qint64>(newIn + 1, oldOut + delta);
-        } else {
-          // Alt+←/→: slide inPoint and outPoint together
-          newIn = std::max<qint64>(0, oldIn + delta);
-          newOut = std::max<qint64>(newIn + 1, newIn + oldDuration);
+        if (!layer) {
+          continue;
         }
-        layer->setInPoint(FramePosition(newIn));
-        layer->setOutPoint(FramePosition(newOut));
-
-        const qint64 inPointDelta = newIn - oldIn;
-        if (inPointDelta != 0) {
-          for (const auto &group : layer->getLayerPropertyGroups()) {
-            for (const auto &property : group.sortedProperties()) {
-              if (!property || !property->isAnimatable()) continue;
-              const auto keyframes = property->getKeyFrames();
-              if (keyframes.empty()) continue;
-              property->clearKeyFrames();
-              const int64_t fps = static_cast<int64_t>(std::llround(comp->frameRate().framerate()));
-              for (const auto &kf : keyframes) {
-                property->addKeyFrame(
-                    RationalTime(std::max<int64_t>(0, kf.time.rescaledTo(fps) + inPointDelta), fps),
-                    kf.value.isValid() ? kf.value : property->getValue(),
-                    kf.interpolation, kf.cp1_x, kf.cp1_y, kf.cp2_x, kf.cp2_y, kf.roving);
-              }
-            }
-          }
-        }
-        layer->changed();
-        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                              LayerChangedEvent::ChangeType::Modified});
+        const QVector<ArtifactAbstractLayerPtr> singleLayer{layer};
+        const auto beforeSnapshots =
+            captureTimelineLayerStateSnapshots(comp, singleLayer);
+        macro->addChild(std::make_unique<SlideClipCommand>(
+            comp->id(), layer->id(),
+            layer->inPoint().framePosition() + delta,
+            beforeSnapshots));
+        ++commandCount;
       }
 
-      Q_EMIT timelineDebugMessage(
-          QStringLiteral("Slid %1 layer(s) by %2 %3")
-              .arg(layersVec.size())
-              .arg(delta)
-              .arg(isCtrl ? QStringLiteral("outPoint") : QStringLiteral("inPoint")));
+      if (commandCount > 0) {
+        if (auto *mgr = UndoManager::instance()) {
+          mgr->push(std::move(macro));
+        }
+        Q_EMIT timelineDebugMessage(
+            QStringLiteral("Slid %1 layer(s) by %2 frame(s)")
+                .arg(commandCount)
+                .arg(delta));
+      }
     }
     event->accept();
     return;

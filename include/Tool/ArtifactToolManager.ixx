@@ -33,7 +33,9 @@ export namespace Artifact {
   Puppet,
   ScrubPreview,
   // 2D Tracking
-  TrackPoint
+  TrackPoint,
+   Brush,
+   Eraser
  };
 
  class ArtifactToolManager : public QObject {

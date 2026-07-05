@@ -27,7 +27,6 @@ namespace Artifact
 
     static constexpr int kScrubFrameCount = 2400;
     static constexpr int kScrubSampleRate = 48000;
-    static constexpr float kSpeedVolumeFactor = 0.35f;
 
     // ──────────────────────────────────────────
     // ScrubWorker — runs on dedicated worker thread
@@ -130,11 +129,12 @@ namespace Artifact
         float calcScrubVolume() const
         {
             if (lastFrame_ < 0 || lastFrameTime_ <= 0) return 0.0f;
-            if (currentSpeedFps_ <= 1.0f) return 0.0f;
-            if (currentSpeedFps_ <= 10.0f) return volumeScale_;
-            const float v = currentSpeedFps_;
-            float vol = 1.0f - std::log10(v / 10.0f) * kSpeedVolumeFactor;
-            return qBound(0.0f, vol * volumeScale_, volumeScale_);
+            const float v = std::max(0.0f, currentSpeedFps_);
+            if (v < 0.35f) return 0.0f;
+            const float normalized = std::clamp(v / 18.0f, 0.0f, 1.0f);
+            const float eased = normalized * normalized * (3.0f - 2.0f * normalized);
+            const float vol = (0.22f + 0.78f * eased) * volumeScale_;
+            return qBound(0.0f, vol, volumeScale_);
         }
 
         void updateSpeed(int64_t currentFrame, qint64 nowMs)
@@ -147,6 +147,16 @@ namespace Artifact
                 }
             } else {
                 currentSpeedFps_ = 0.0f;
+            }
+        }
+
+        void updateDebounceInterval()
+        {
+            // Keep scrub response aligned with the configured latency target.
+            // Lower targets react faster; higher targets trade responsiveness for stability.
+            const int intervalMs = qBound(1, latencyTarget_, 33);
+            if (debounceTimer && debounceTimer->interval() != intervalMs) {
+                debounceTimer->setInterval(intervalMs);
             }
         }
 
@@ -178,8 +188,8 @@ namespace Artifact
         impl_->worker->moveToThread(&impl_->workerThread);
 
         impl_->debounceTimer = new QTimer(this);
-        impl_->debounceTimer->setInterval(16);
         impl_->debounceTimer->setSingleShot(false);
+        impl_->updateDebounceInterval();
         QObject::connect(impl_->debounceTimer, &QTimer::timeout,
                          this, [this]() { impl_->onDebounceTick(); });
 
@@ -220,6 +230,7 @@ namespace Artifact
     void ArtifactAudioScrubController::setLatencyTargetMs(int ms)
     {
         impl_->latencyTarget_ = qBound(5, ms, 200);
+        impl_->updateDebounceInterval();
     }
 
     int ArtifactAudioScrubController::latencyTargetMs() const
@@ -335,10 +346,9 @@ namespace Artifact
             ProjectDiagnostic diag(
                 DiagnosticSeverity::Info,
                 DiagnosticCategory::Audio,
-                QStringLiteral("Audio scrubbing is disabled"));
+                QStringLiteral("Audio scrubbing is off"));
             diag.setDescription(QStringLiteral(
-                "Audio scrubbing during timeline drag is turned off. "
-                "Enable it in Settings > Audio > Scrubbing."));
+                "Timeline drag will stay silent until audio scrubbing is enabled."));
             diag.setFixAction(QStringLiteral("Enable audio scrubbing in Settings"));
             result.push_back(std::move(diag));
         }
@@ -347,14 +357,12 @@ namespace Artifact
             ProjectDiagnostic diag(
                 DiagnosticSeverity::Warning,
                 DiagnosticCategory::Performance,
-                QStringLiteral("Audio scrub latency high: %1 ms")
+                QStringLiteral("Audio scrub latency is high: %1 ms")
                     .arg(impl_->measureLatencyMs_));
             diag.setDescription(QStringLiteral(
-                "Audio scrubbing latency exceeds 50ms threshold. "
-                "This may cause audio-visual desync during scrub."));
+                "Audio scrub response is above the 50 ms warning threshold."));
             diag.setFixAction(QStringLiteral(
-                "Reduce latency target in Settings > Audio > Scrubbing "
-                "or check system load"));
+                "Lower the latency target in Settings > Audio > Scrubbing"));
             result.push_back(std::move(diag));
         }
 
@@ -362,10 +370,9 @@ namespace Artifact
             ProjectDiagnostic diag(
                 DiagnosticSeverity::Warning,
                 DiagnosticCategory::Audio,
-                QStringLiteral("Audio scrub device open failed"));
+                QStringLiteral("Audio scrub output device could not open"));
             diag.setDescription(QStringLiteral(
-                "The audio scrub controller could not open the audio output "
-                "device. Scrub audio will be silent."));
+                "The scrub controller could not open an audio output device, so scrub playback is silent."));
             diag.setFixAction(QStringLiteral(
                 "Check audio device configuration in system settings"));
             result.push_back(std::move(diag));

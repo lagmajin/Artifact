@@ -4,8 +4,10 @@ module;
 #include <QDebug>
 #include <QHash>
 #include <QIcon>
+#include <QMetaObject>
 #include <QMenu>
 #include <QKeySequence>
+#include <QThread>
 #include <QWidget>
 #include <wobjectimpl.h>
 
@@ -155,6 +157,7 @@ class ArtifactEffectMenu::Impl
   void buildEffectCatalog();
   void handleAddEffect(const EffectInfo& info);
   void handleRemoveAllEffects();
+  void requestRefreshEnabledState();
   void refreshEnabledState();
 };
 
@@ -200,7 +203,7 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
                   }
               }
               selectedLayerId_ = layerId;
-              refreshEnabledState();
+              requestRefreshEnabledState();
           }));
   eventBusSubscriptions_.push_back(
       eventBus.subscribe<LayerChangedEvent>(
@@ -219,16 +222,30 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
                   selectedLayerId_ == ArtifactCore::LayerID(event.layerId)) {
                   selectedLayerId_ = {};
               }
-              refreshEnabledState();
+              requestRefreshEnabledState();
           }));
   eventBusSubscriptions_.push_back(
       eventBus.subscribe<ProjectChangedEvent>(
           [this](const ProjectChangedEvent&) {
-              refreshEnabledState();
+              requestRefreshEnabledState();
           }));
   QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
       refreshEnabledState();
   });
+}
+
+void ArtifactEffectMenu::Impl::requestRefreshEnabledState()
+{
+  if (!menu_) {
+    return;
+  }
+  if (QThread::currentThread() == menu_->thread()) {
+    refreshEnabledState();
+    return;
+  }
+  QMetaObject::invokeMethod(menu_, [this]() {
+    refreshEnabledState();
+  }, Qt::QueuedConnection);
 }
 
 ArtifactEffectMenu::Impl::~Impl() = default;

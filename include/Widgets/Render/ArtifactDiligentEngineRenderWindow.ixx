@@ -6,12 +6,15 @@
 #include <Buffer.h>
 #include <PipelineState.h>
 #include <RefCntAutoPtr.hpp>
+#include <Sampler.h>
 #include <SwapChain.h>
+#include <Texture.h>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <ShaderResourceBinding.h>
 #include <QColor>
 #include <QPoint>
+#include <QString>
 #include <QWindow>
 #include <QWidget>
 #include <wobjectimpl.h>
@@ -55,13 +58,31 @@ namespace Artifact
    bool solidResourcesReady_ = false;
    bool meshDirty_ = true;
    RefCntAutoPtr<IBuffer> solidVertexBuffer_;
+   RefCntAutoPtr<IBuffer> solidIndexBuffer_;
    RefCntAutoPtr<IBuffer> solidTransformBuffer_;
    RefCntAutoPtr<IBuffer> solidColorBuffer_;
+   RefCntAutoPtr<ITexture> baseColorTexture_;
+   RefCntAutoPtr<ITextureView> baseColorTextureSrv_;
+   RefCntAutoPtr<ITexture> metallicRoughnessTexture_;
+   RefCntAutoPtr<ITextureView> metallicRoughnessTextureSrv_;
+   RefCntAutoPtr<ITexture> normalTexture_;
+   RefCntAutoPtr<ITextureView> normalTextureSrv_;
+   RefCntAutoPtr<ISampler> baseColorSampler_;
    RefCntAutoPtr<IPipelineState> solidPso_;
    RefCntAutoPtr<IPipelineState> wirePso_;
    RefCntAutoPtr<IShaderResourceBinding> solidSrb_;
    RefCntAutoPtr<IShaderResourceBinding> wireSrb_;
    Uint32 solidVertexCount_ = 0;
+   Uint32 solidIndexCount_ = 0;
+   QString baseColorTexturePath_;
+   QString metallicRoughnessTexturePath_;
+   QString normalTexturePath_;
+   QColor materialBaseColor_{ 180, 185, 195 };
+   float materialMetallic_ = 0.0f;
+   float materialRoughness_ = 0.55f;
+   bool baseColorTextureDirty_ = true;
+   bool metallicRoughnessTextureDirty_ = true;
+   bool normalTextureDirty_ = true;
    float previewZoom_ = 1.0f;
    float previewYaw_ = 35.0f;
    float previewPitch_ = 25.0f;
@@ -71,6 +92,9 @@ namespace Artifact
    void present();
    void ensureSolidResources();
    void uploadMeshGeometry();
+   void updateBaseColorTexture();
+   void updateMetallicRoughnessTexture();
+   void updateNormalTexture();
  protected:
   void resizeEvent(QResizeEvent* event);
   void exposeEvent(QExposeEvent* event);
@@ -91,6 +115,10 @@ namespace Artifact
   ShadingMode shadingMode() const;
   void setClearColor(const QColor& color);
   QColor clearColor() const;
+  void setBaseColorTexture(const QString& path);
+  void setMetallicRoughnessTexture(const QString& path);
+  void setNormalTexture(const QString& path);
+  void setPbrMaterial(const QColor& baseColor, float metallic, float roughness);
   void setPreviewCamera(float zoom, float yawDeg, float pitchDeg, const QVector3D& target = QVector3D(0.0f, 0.0f, 0.0f));
   float previewZoom() const;
   float previewYaw() const;

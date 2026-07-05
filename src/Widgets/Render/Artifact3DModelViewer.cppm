@@ -12,6 +12,7 @@ module;
 #include <QWheelEvent>
 #include <QDebug>
 #include <QPaintEvent>
+#include <QtMath>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -258,6 +259,12 @@ void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
         qDebug() << "Model loaded successfully. Vertices:" << impl_->currentMesh->vertexCount();
         if (impl_->renderWindow) {
             impl_->renderWindow->setMesh(impl_->currentMesh);
+            impl_->renderWindow->setBaseColorTexture(
+                importer.lastBaseColorTexture());
+            impl_->renderWindow->setMetallicRoughnessTexture(
+                importer.lastMetallicRoughnessTexture());
+            impl_->renderWindow->setNormalTexture(
+                importer.lastNormalTexture());
         }
         resetView();
     } else {
@@ -268,6 +275,9 @@ void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
         qDebug() << "Failed to load model:" << filePath.toQString() << "-" << impl_->lastErrorText;
         if (impl_->renderWindow) {
             impl_->renderWindow->clearMesh();
+            impl_->renderWindow->setBaseColorTexture(QString());
+            impl_->renderWindow->setMetallicRoughnessTexture(QString());
+            impl_->renderWindow->setNormalTexture(QString());
         }
     }
 
@@ -284,6 +294,9 @@ void Artifact3DModelViewer::clearModel()
     impl_->lastErrorText.clear();
     if (impl_->renderWindow) {
         impl_->renderWindow->clearMesh();
+        impl_->renderWindow->setBaseColorTexture(QString());
+        impl_->renderWindow->setMetallicRoughnessTexture(QString());
+        impl_->renderWindow->setNormalTexture(QString());
     }
     impl_->updateStatus();
     requestUpdate();
@@ -349,6 +362,17 @@ void Artifact3DModelViewer::setDisplayMode(DisplayMode mode)
         }
     }
     Q_EMIT displayModeChanged(static_cast<int>(mode));
+}
+
+void Artifact3DModelViewer::setPbrMaterial(
+    const QColor& baseColor,
+    float metallic,
+    float roughness)
+{
+    if (impl_->renderWindow) {
+        impl_->renderWindow->setPbrMaterial(
+            baseColor, metallic, roughness);
+    }
 }
 
 Artifact3DModelViewer::DisplayMode Artifact3DModelViewer::displayMode() const
@@ -485,7 +509,20 @@ bool Artifact3DModelViewer::eventFilter(QObject* obj, QEvent* event)
         if (impl_->navMode_ == Impl::NavMode::Pan) {
             const QPointF delta = me->position() - impl_->lastMousePos_;
             const float panSpeed = impl_->orbitDistance_ * 0.002f;
-            impl_->orbitTarget_ += QVector3D(-delta.x() * panSpeed, delta.y() * panSpeed, 0.0f);
+            const float yawRadians = qDegreesToRadians(impl_->orbitYaw_);
+            const float pitchRadians = qDegreesToRadians(impl_->orbitPitch_);
+            const float sinYaw = std::sin(yawRadians);
+            const float cosYaw = std::cos(yawRadians);
+            const float sinPitch = std::sin(pitchRadians);
+            const float cosPitch = std::cos(pitchRadians);
+            const QVector3D cameraRight(cosYaw, 0.0f, sinYaw);
+            const QVector3D cameraUp(
+                sinYaw * sinPitch,
+                cosPitch,
+                -cosYaw * sinPitch);
+            impl_->orbitTarget_ +=
+                cameraRight * static_cast<float>(-delta.x() * panSpeed) +
+                cameraUp * static_cast<float>(delta.y() * panSpeed);
             impl_->lastMousePos_ = me->position();
             impl_->pushCamera();
             return true;

@@ -1820,6 +1820,8 @@ AudioScrubSettingPage::AudioScrubSettingPage(QWidget *parent)
   impl_->enabledCheckBox_ =
       new QCheckBox(QStringLiteral("Enable audio scrubbing during timeline drag"), this);
   layout->addWidget(impl_->enabledCheckBox_);
+  layout->addWidget(new QLabel(
+      QStringLiteral("When enabled, the timeline plays a short preview while you scrub."), this));
 
   auto *latencyRow = new QHBoxLayout();
   latencyRow->addWidget(new QLabel(QStringLiteral("Latency target:"), this));
@@ -1833,6 +1835,8 @@ AudioScrubSettingPage::AudioScrubSettingPage(QWidget *parent)
   latencyRow->addWidget(impl_->latencyCombo_);
   latencyRow->addStretch();
   layout->addLayout(latencyRow);
+  layout->addWidget(new QLabel(
+      QStringLiteral("Lower latency reacts faster; higher values are steadier on slow systems."), this));
 
   auto *volumeRow = new QHBoxLayout();
   volumeRow->addWidget(new QLabel(QStringLiteral("Volume scale:"), this));
@@ -1844,6 +1848,8 @@ AudioScrubSettingPage::AudioScrubSettingPage(QWidget *parent)
   volumeRow->addWidget(impl_->volumeScaleSpinBox_);
   volumeRow->addStretch();
   layout->addLayout(volumeRow);
+  layout->addWidget(new QLabel(
+      QStringLiteral("Volume scales the scrub preview, independent of normal playback."), this));
 
   mainLayout->addWidget(group);
   mainLayout->addStretch();

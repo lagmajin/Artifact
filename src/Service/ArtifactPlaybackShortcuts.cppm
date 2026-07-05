@@ -46,12 +46,28 @@ module Artifact.Service.PlaybackShortcuts;
 import Frame.Position;
 import Artifact.Composition.InOutPoints;
 import Artifact.Composition.PlaybackController;
+import Artifact.Service.ActiveContext;
 import Artifact.Service.Playback;
 import Input.Operator;
 
 namespace Artifact {
 
 W_OBJECT_IMPL(ArtifactPlaybackShortcuts)
+
+static void bindActionCallback(ArtifactCore::ActionManager* actionManager,
+                               const QString& actionId,
+                               const std::function<void()>& callback)
+{
+    if (!actionManager || !callback) {
+        return;
+    }
+
+    if (auto* action = actionManager->getAction(actionId)) {
+        action->setExecuteCallback([callback](const QVariantMap&) {
+            callback();
+        });
+    }
+}
 
 // ==================== Impl ====================
 
@@ -61,7 +77,7 @@ public:
     ArtifactInOutPoints* inOutPoints_ = nullptr;
     InputOperator* inputOperator_ = nullptr;
     bool enabled_ = true;
-    QString activeContext_ = "Timeline";
+    QString activeContext_ = "Workspace.Timeline";
     
     // Action IDs
     static inline const QString ACTION_PLAY_PAUSE = "playback.play_pause";
@@ -192,6 +208,36 @@ ArtifactPlaybackShortcuts::ArtifactPlaybackShortcuts(QObject* parent)
     am->registerAction(Impl::ACTION_SPEED_HALF, "Half Speed", "Set playback speed to 50%", "Speed");
     am->registerAction(Impl::ACTION_SPEED_DOUBLE, "Double Speed", "Set playback speed to 200%", "Speed");
     am->registerAction(Impl::ACTION_TOGGLE_LOOP, "Toggle Loop", "Toggle loop playback", "Playback");
+
+    bindActionCallback(am, Impl::ACTION_PLAY_PAUSE, [this]() { playPause(); });
+    bindActionCallback(am, Impl::ACTION_PLAY, [this]() { play(); });
+    bindActionCallback(am, Impl::ACTION_PAUSE, [this]() { pause(); });
+    bindActionCallback(am, Impl::ACTION_STOP, [this]() { stop(); });
+    bindActionCallback(am, Impl::ACTION_GOTO_START, [this]() { goToStart(); });
+    bindActionCallback(am, Impl::ACTION_GOTO_END, [this]() { goToEnd(); });
+    bindActionCallback(am, Impl::ACTION_SHUTTLE_FORWARD, [this]() { shuttleForward(); });
+    bindActionCallback(am, Impl::ACTION_SHUTTLE_REVERSE, [this]() { shuttleReverse(); });
+    bindActionCallback(am, Impl::ACTION_SHUTTLE_STOP, [this]() { shuttleStop(); });
+    bindActionCallback(am, Impl::ACTION_NEXT_FRAME, [this]() { nextFrame(); });
+    bindActionCallback(am, Impl::ACTION_PREV_FRAME, [this]() { previousFrame(); });
+    bindActionCallback(am, Impl::ACTION_SET_IN_POINT, [this]() { setInPoint(); });
+    bindActionCallback(am, Impl::ACTION_SET_OUT_POINT, [this]() { setOutPoint(); });
+    bindActionCallback(am, Impl::ACTION_CLEAR_IN_POINT, [this]() { clearInPoint(); });
+    bindActionCallback(am, Impl::ACTION_CLEAR_OUT_POINT, [this]() { clearOutPoint(); });
+    bindActionCallback(am, Impl::ACTION_CLEAR_IN_OUT, [this]() { clearInOutPoints(); });
+    bindActionCallback(am, Impl::ACTION_GOTO_IN_POINT, [this]() { goToInPoint(); });
+    bindActionCallback(am, Impl::ACTION_GOTO_OUT_POINT, [this]() { goToOutPoint(); });
+    bindActionCallback(am, Impl::ACTION_ADD_MARKER, [this]() { addMarker(); });
+    bindActionCallback(am, Impl::ACTION_ADD_CHAPTER, [this]() { addChapterMarker(); });
+    bindActionCallback(am, Impl::ACTION_NEXT_MARKER, [this]() { goToNextMarker(); });
+    bindActionCallback(am, Impl::ACTION_PREV_MARKER, [this]() { goToPreviousMarker(); });
+    bindActionCallback(am, Impl::ACTION_NEXT_CHAPTER, [this]() { goToNextChapter(); });
+    bindActionCallback(am, Impl::ACTION_PREV_CHAPTER, [this]() { goToPreviousChapter(); });
+    bindActionCallback(am, Impl::ACTION_DELETE_MARKER, [this]() { deleteMarkerAtCurrent(); });
+    bindActionCallback(am, Impl::ACTION_SPEED_NORMAL, [this]() { setSpeedNormal(); });
+    bindActionCallback(am, Impl::ACTION_SPEED_HALF, [this]() { setSpeedHalf(); });
+    bindActionCallback(am, Impl::ACTION_SPEED_DOUBLE, [this]() { setSpeedDouble(); });
+    bindActionCallback(am, Impl::ACTION_TOGGLE_LOOP, [this]() { toggleLoop(); });
 }
 
 ArtifactPlaybackShortcuts::~ArtifactPlaybackShortcuts() = default;
@@ -327,7 +373,9 @@ QString ArtifactPlaybackShortcuts::activeContext() const {
 // ==================== Playback Actions ====================
 
 void ArtifactPlaybackShortcuts::playPause() {
-    if (auto* service = ArtifactPlaybackService::instance()) {
+    if (auto* active = ArtifactActiveContextService::instance()) {
+        active->togglePlayPause();
+    } else if (auto* service = ArtifactPlaybackService::instance()) {
         service->togglePlayPause();
     } else if (impl_->controller_) {
         impl_->controller_->togglePlayPause();
@@ -336,7 +384,9 @@ void ArtifactPlaybackShortcuts::playPause() {
 }
 
 void ArtifactPlaybackShortcuts::play() {
-    if (auto* service = ArtifactPlaybackService::instance()) {
+    if (auto* active = ArtifactActiveContextService::instance()) {
+        active->play();
+    } else if (auto* service = ArtifactPlaybackService::instance()) {
         service->play();
     } else if (impl_->controller_) {
         impl_->controller_->play();
@@ -345,7 +395,9 @@ void ArtifactPlaybackShortcuts::play() {
 }
 
 void ArtifactPlaybackShortcuts::pause() {
-    if (auto* service = ArtifactPlaybackService::instance()) {
+    if (auto* active = ArtifactActiveContextService::instance()) {
+        active->pause();
+    } else if (auto* service = ArtifactPlaybackService::instance()) {
         service->pause();
     } else if (impl_->controller_) {
         impl_->controller_->pause();
@@ -354,7 +406,9 @@ void ArtifactPlaybackShortcuts::pause() {
 }
 
 void ArtifactPlaybackShortcuts::stop() {
-    if (auto* service = ArtifactPlaybackService::instance()) {
+    if (auto* active = ArtifactActiveContextService::instance()) {
+        active->stop();
+    } else if (auto* service = ArtifactPlaybackService::instance()) {
         service->stop();
     } else if (impl_->controller_) {
         impl_->controller_->stop();

@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <QAction>
 #include <QApplication>
 #include <QComboBox>
 #include <QDialog>
@@ -45,6 +46,18 @@ ArtifactCommonStyle::ArtifactCommonStyle(QStyle* baseStyle)
 ArtifactCommonStyle::~ArtifactCommonStyle() = default;
 
 namespace {
+void ensureMenuActionIconsVisible(QMenu* menu)
+{
+  if (!menu) {
+    return;
+  }
+  for (QAction* action : menu->actions()) {
+    if (action && !action->icon().isNull()) {
+      action->setIconVisibleInMenu(true);
+    }
+  }
+}
+
 void scaleMenuFont(QWidget* widget)
 {
   if (!widget) {
@@ -164,6 +177,9 @@ public:
   bool eventFilter(QObject* watched, QEvent* event) override {
     if (event->type() == QEvent::Show || event->type() == QEvent::Resize) {
       if (auto* w = qobject_cast<QWidget*>(watched)) {
+        if (event->type() == QEvent::Show) {
+          ensureMenuActionIconsVisible(qobject_cast<QMenu*>(w));
+        }
         if (onlyIfFrameless_ && !(w->windowFlags() & Qt::FramelessWindowHint))
           return false;
         if (dwmApplied_) return false;
@@ -243,6 +259,7 @@ void ArtifactCommonStyle::polish(QWidget* widget)
 
   if (qobject_cast<QMenuBar*>(widget) || qobject_cast<QMenu*>(widget)) {
     scaleMenuFont(widget);
+    ensureMenuActionIconsVisible(qobject_cast<QMenu*>(widget));
     QPalette pal = widget->palette();
     pal.setColor(QPalette::Highlight, QColor(theme.accentColor).lighter(108));
     pal.setColor(QPalette::HighlightedText, text);

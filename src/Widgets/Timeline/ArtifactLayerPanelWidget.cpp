@@ -41,8 +41,10 @@ module;
 #include <QFileDialog>
 #include <QDockWidget>
 #include <QMainWindow>
+#include <QMetaObject>
 #include <QToolTip>
 #include <QTimer>
+#include <QThread>
 #include <QElapsedTimer>
 #include <QDrag>
 #include <QMenu>
@@ -549,7 +551,7 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
   constexpr int kLayerHeaderHeight = 26;
   constexpr int kLayerHeaderButtonSize = 24;
   constexpr int kLayerColumnWidth = 28;
-  constexpr int kLayerPropertyColumnCount = 5;
+  constexpr int kLayerPropertyColumnCount = 6;
   constexpr int kColumnDividerDragMargin = 4;
   constexpr int kInlineComboHeight = 24;
   constexpr int kInlineBlendWidth = 120;
@@ -1009,6 +1011,7 @@ QString tt(const char* key, const char* fallback)
   QPixmap soloIcon;
   QPixmap audioIcon;
   QPixmap shyIcon;
+  QPixmap parentWhipIcon;
   QIcon parentIcon;
   QIcon blendIcon;
   
@@ -1044,6 +1047,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   impl_->shyIcon = loadLayerPanelPixmap(QStringLiteral("Studio/layermenu_shy.svg"), QStringLiteral("shy.svg"));
   impl_->parentIcon = loadLayerPanelIcon(QStringLiteral("Studio/layermenu_parent_select.svg"));
   impl_->blendIcon = loadLayerPanelIcon(QStringLiteral("Studio/merge_type.svg"));
+  impl_->parentWhipIcon = loadLayerPanelPixmap(QStringLiteral("Studio/pick_whip_parent.svg"), QStringLiteral("pick_whip_parent.svg"));
 
   auto visButton = impl_->visibilityButton = new QPushButton();
   visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
@@ -2050,11 +2054,12 @@ class ArtifactLayerPanelWidget::Impl
 public:
  Impl()
   {
-    visibilityIcon    = loadLayerPanelPixmap(QStringLiteral("Studio/visibility.svg"),     QStringLiteral("eye.png"));
-    lockIcon          = loadLayerPanelPixmap(QStringLiteral("Studio/lock.svg"));
-    soloIcon          = loadLayerPanelPixmap(QStringLiteral("Studio/group.svg"),           QStringLiteral("solo.png"));
-    audioIcon         = loadLayerPanelPixmap(QStringLiteral("Studio/volume.svg"),          QStringLiteral("volume.png"));
-    shyIcon           = loadLayerPanelPixmap(QStringLiteral("Studio/visibility_off.svg"),  QStringLiteral("shy.png"));
+  visibilityIcon    = loadLayerPanelPixmap(QStringLiteral("Studio/visibility.svg"),     QStringLiteral("eye.png"));
+  lockIcon          = loadLayerPanelPixmap(QStringLiteral("Studio/lock.svg"));
+  soloIcon          = loadLayerPanelPixmap(QStringLiteral("Studio/group.svg"),           QStringLiteral("solo.png"));
+  audioIcon         = loadLayerPanelPixmap(QStringLiteral("Studio/volume.svg"),          QStringLiteral("volume.png"));
+  shyIcon           = loadLayerPanelPixmap(QStringLiteral("Studio/visibility_off.svg"),  QStringLiteral("shy.png"));
+  parentWhipIcon    = loadLayerPanelPixmap(QStringLiteral("Studio/pick_whip_parent.svg"), QStringLiteral("pick_whip_parent.svg"));
     // [Fix B] 右クリックメニュー用アイコンを構築時にキャッシュ（毎回 SVG パースを防ぐ）
     iconRename        = loadLayerPanelIcon(QStringLiteral("Studio/edit.svg"));
     iconCopy          = loadLayerPanelIcon(QStringLiteral("Studio/content_copy.svg"));
@@ -2104,6 +2109,7 @@ public:
   QPixmap soloIcon;
   QPixmap audioIcon;
   QPixmap shyIcon;
+  QPixmap parentWhipIcon;
   // [Fix B] 右クリックメニュー用アイコンキャッシュ
   QIcon iconRename, iconCopy, iconDelete, iconFileOpen;
   QIcon iconVisOn, iconVisOff, iconLock, iconUnlock, iconSolo, iconShy;
@@ -2136,7 +2142,7 @@ public:
   bool layerNameEditable = true;
   QHash<int, LayerID> layerBookmarks;
   int columnWidths_[kLayerPropertyColumnCount];
-  bool columnVisible_[kLayerPropertyColumnCount] = {true, true, true, true, true};
+  bool columnVisible_[kLayerPropertyColumnCount] = {true, true, true, true, true, true};
   int dragCol_ = -1;
   int dragStartX_ = 0;
   QVector<int> dragStartWidths_;
@@ -2146,6 +2152,9 @@ public:
   int dragInsertVisibleRow = -1;
   int dragMatteHoverVisibleRow = -1;
   bool dragMatteLinkMode = false;
+  LayerID pickWhipSourceLayerId_;
+  bool pickWhipDragging_ = false;
+  int pickWhipHoverRow_ = -1;
   MultiEditCycleMode multiEditMode = MultiEditCycleMode::None;
   int multiEditPresetIndex = 0;
   std::chrono::steady_clock::time_point multiEditStartedAt{};
@@ -2607,12 +2616,32 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
 
  impl_->eventBusSubscriptions_.push_back(
   impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent& event) {
-      if (event.changeType == LayerChangedEvent::ChangeType::Created) {
-        if (impl_->compositionId.isNil() ||
-            event.compositionId == impl_->compositionId.toString()) {
-          updateLayout();
-          const LayerID layerId(event.layerId);
-          QMetaObject::invokeMethod(this, [this, layerId]() {
+      const QString compositionId = event.compositionId;
+      const LayerID layerId(event.layerId);
+      const auto changeType = event.changeType;
+      const bool allowInteractiveCreatedHandling =
+          QCoreApplication::instance() &&
+          QThread::currentThread() == QCoreApplication::instance()->thread();
+      QMetaObject::invokeMethod(
+          this,
+          [this, compositionId, layerId, changeType,
+           allowInteractiveCreatedHandling]() {
+            if (!impl_) {
+              return;
+            }
+            const bool targetsPanel =
+                impl_->compositionId.isNil() ||
+                compositionId == impl_->compositionId.toString();
+            if (!targetsPanel) {
+              return;
+            }
+
+            updateLayout();
+            if (changeType != LayerChangedEvent::ChangeType::Created ||
+                !allowInteractiveCreatedHandling) {
+              return;
+            }
+
             const auto widgets = QApplication::allWidgets();
             for (QWidget* w : widgets) {
               if (!w) continue;
@@ -2630,17 +2659,8 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
               editLayerName(layerId);
             }
             this->visibleRowsChanged();
-          }, Qt::QueuedConnection);
-        }
-      } else if (event.changeType == LayerChangedEvent::ChangeType::Removed) {
-        if (event.compositionId == impl_->compositionId.toString()) {
-          updateLayout();
-        }
-      } else if (event.changeType == LayerChangedEvent::ChangeType::Modified) {
-        if (event.compositionId == impl_->compositionId.toString()) {
-          updateLayout();
-        }
-      }
+          },
+          Qt::QueuedConnection);
     }));
   impl_->eventBusSubscriptions_.push_back(
     impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(
@@ -3378,6 +3398,31 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       combo->showPopup();
       event->accept();
       return;
+    }
+    // Pick Whip: 親レイヤードラッグ
+    if (showInlineCombos && row.kind == RowKind::Layer && event->button() == Qt::LeftButton) {
+      int whipCumX = 0;
+      for (int ci = 0; ci < kLayerPropertyColumnCount; ++ci) {
+        if (!impl_->columnVisible_[ci]) { whipCumX += impl_->columnWidths_[ci]; continue; }
+        if (ci == 5) {
+          const QRect whipColRect(whipCumX, impl_->rowViewportY(idx), impl_->columnWidths_[ci], kLayerRowHeight);
+          if (whipColRect.contains(event->pos())) {
+            impl_->pickWhipSourceLayerId_ = layer->id();
+            impl_->pickWhipDragging_ = true;
+            QDrag* drag = new QDrag(this);
+            QMimeData* mime = new QMimeData();
+            mime->setData(QStringLiteral("application/x-artifact-parent-link"), layer->id().toString().toUtf8());
+            drag->setMimeData(mime);
+            auto* pix = new QPixmap(impl_->parentWhipIcon);
+            if (!pix->isNull()) drag->setPixmap(pix->scaled(20, 20, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            drag->exec(Qt::LinkAction);
+            impl_->pickWhipDragging_ = false;
+            event->accept();
+            return;
+          }
+        }
+        whipCumX += impl_->columnWidths_[ci];
+      }
     }
     // M: 列の区切り線ドラッグ開始チェック（非表示列をスキップ）
     if (row.kind == RowKind::Layer && event->button() == Qt::LeftButton) {
@@ -6091,13 +6136,14 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     int curX = 0;
     if (!isPropertyRow && !isDisplayLeafRow) {
       const int colCount = kLayerPropertyColumnCount;
-      const QPixmap* colIcons[colCount] = {&impl_->visibilityIcon, &impl_->lockIcon, &impl_->soloIcon, &impl_->audioIcon, &impl_->shyIcon};
+      const QPixmap* colIcons[colCount] = {&impl_->visibilityIcon, &impl_->lockIcon, &impl_->soloIcon, &impl_->audioIcon, &impl_->shyIcon, &impl_->parentWhipIcon};
       const auto colOpacity = [&](int ci) -> double {
         if (ci == 0) return l->isVisible() ? 1.0 : 0.3;
         if (ci == 1) return l->isLocked() ? 1.0 : 0.15;
         if (ci == 2) return l->isSolo() ? 1.0 : 0.15;
         if (ci == 3) return 0.15;
         if (ci == 4) return l->isShy() ? 1.0 : 0.15;
+        if (ci == 5) return l->hasParent() ? 1.0 : 0.35;
         return 1.0;
       };
       for (int ci = 0; ci < colCount; ++ci) {
@@ -6106,6 +6152,12 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
         p.setOpacity(colOpacity(ci));
         if (!colIcons[ci]->isNull()) {
           p.drawPixmap(QRect(curX + offset, y + offset, iconSize, iconSize), *colIcons[ci]);
+        }
+        // Pick Whip hover highlight
+        if (ci == 5 && i == impl_->pickWhipHoverRow_) {
+          p.fillRect(curX, y, cw, rowH, QColor(255, 255, 255, 25));
+          p.setPen(QPen(QColor(255, 255, 255, 80), 1));
+          p.drawRect(curX + 2, y + 2, cw - 4, rowH - 4);
         }
         curX += cw;
         p.setOpacity(1.0);
@@ -6435,6 +6487,11 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
     update();
     return;
   }
+  if (mime && mime->hasFormat(QStringLiteral("application/x-artifact-parent-link"))) {
+    e->acceptProposedAction();
+    update();
+    return;
+  }
   if (mime->hasUrls()) {
     for (const auto& url : mime->urls()) {
         if (url.isLocalFile()) {
@@ -6474,6 +6531,22 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
     update();
     return;
   }
+  if (mime && mime->hasFormat(QStringLiteral("application/x-artifact-parent-link"))) {
+    const int idx = impl_->rowIndexFromViewportY(static_cast<int>(e->position().y()));
+    impl_->pickWhipHoverRow_ = idx;
+    if (idx >= 0 && idx < impl_->visibleRows.size()) {
+      const LayerID sourceId(QString::fromUtf8(mime->data(QStringLiteral("application/x-artifact-parent-link"))));
+      auto target = impl_->visibleRows[idx].layer;
+      if (target && target->id() != sourceId && !wouldCreateCycle(sourceId, target->id())) {
+        e->acceptProposedAction();
+        update();
+        return;
+      }
+    }
+    e->ignore();
+    update();
+    return;
+  }
   if (mime && (mime->hasUrls() || mime->hasText())) {
     e->acceptProposedAction();
   } else {
@@ -6486,6 +6559,7 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
   e->accept();
   impl_->dragInsertVisibleRow = -1;
   impl_->dragMatteHoverVisibleRow = -1;
+  impl_->pickWhipHoverRow_ = -1;
   setToolTip(QString());
   update();  // ビジュアルフィードバック解除
  }
@@ -6556,6 +6630,26 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
     return;
   }
 
+  // Pick Whip parent-link drop
+  if (mime->hasFormat("application/x-artifact-parent-link")) {
+    const int dropIdx = impl_->rowIndexFromViewportY(static_cast<int>(event->position().y()));
+    if (dropIdx >= 0 && dropIdx < impl_->visibleRows.size()) {
+      LayerID sourceId(QString::fromUtf8(mime->data(QStringLiteral("application/x-artifact-parent-link"))));
+      auto target = impl_->visibleRows[dropIdx].layer;
+      if (target && target->id() != sourceId && !wouldCreateCycle(sourceId, target->id())) {
+        auto* svc = ArtifactProjectService::instance();
+        if (svc) {
+          svc->clearLayerParentInCurrentComposition(sourceId);
+          svc->setLayerParentInCurrentComposition(sourceId, target->id());
+        }
+      }
+    }
+    impl_->pickWhipHoverRow_ = -1;
+    event->acceptProposedAction();
+    update();
+    return;
+  }
+
   QStringList validPaths = collectTimelineDroppedPaths(mime);
 
   if (validPaths.isEmpty()) {
@@ -6567,6 +6661,19 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
 
   event->acceptProposedAction();
  }
+
+bool ArtifactLayerPanelWidget::wouldCreateCycle(const LayerID& childId, const LayerID& parentId) const {
+  auto comp = safeCompositionLookup(impl_->compositionId);
+  if (!comp) return true;
+  LayerID cursor = parentId;
+  int guard = 0;
+  while (!cursor.isNil() && guard++ < 1024) {
+    if (cursor == childId) return true;
+    auto layer = comp->layerById(cursor);
+    cursor = layer ? layer->parentLayerId() : LayerID();
+  }
+  return false;
+}
 
  // ============================================================================
  // ArtifactLayerTimelinePanelWrapper Implementation

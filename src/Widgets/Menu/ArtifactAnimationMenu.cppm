@@ -6,8 +6,10 @@ module;
 #include <QActionGroup>
 #include <QKeySequence>
 #include <QCursor>
+#include <QMetaObject>
 #include <QPoint>
 #include <QSignalBlocker>
+#include <QThread>
 #include <wobjectimpl.h>
 
 module Menu.Animation;
@@ -123,6 +125,23 @@ bool convertActiveExpressionToKeyframes(QWidget* root)
  return false;
 }
 
+bool bakeActivePropertyToKeyframes(QWidget* root)
+{
+ if (!root) {
+  return false;
+ }
+
+ const auto propertyWidgets = root->findChildren<ArtifactPropertyWidget*>();
+ for (auto* propertyWidget : propertyWidgets) {
+  if (propertyWidget && propertyWidget->isVisible() &&
+      propertyWidget->hasActiveExpressionTarget() &&
+      propertyWidget->bakeActivePropertyToKeyframes()) {
+   return true;
+  }
+ }
+ return false;
+}
+
 bool saveActiveExpressionPreset(QWidget* root)
 {
  if (!root) {
@@ -220,6 +239,7 @@ bool hasActiveExpressionTarget(QWidget* root)
   QAction* editExpressionAction = nullptr;
   QAction* removeExpressionAction = nullptr;
   QAction* convertToKeyframesAction = nullptr;
+  QAction* bakeLiveToKeyframesAction = nullptr;
 
   QAction* saveAnimationPresetAction = nullptr;
   QAction* loadAnimationPresetAction = nullptr;
@@ -232,6 +252,7 @@ bool hasActiveExpressionTarget(QWidget* root)
   QMenu* presetMenu = nullptr;
 
   void refreshEnabledState();
+  void requestRefreshEnabledState();
  };
 
  ArtifactAnimationMenu::Impl::Impl(ArtifactAnimationMenu* menu) : menu_(menu)
@@ -252,7 +273,7 @@ bool hasActiveExpressionTarget(QWidget* root)
               }
             }
             selectedLayerId_ = layerId;
-            refreshEnabledState();
+            requestRefreshEnabledState();
           }));
   eventBusSubscriptions_.push_back(
       eventBus.subscribe<LayerChangedEvent>(
@@ -271,16 +292,30 @@ bool hasActiveExpressionTarget(QWidget* root)
                 selectedLayerId_ == ArtifactCore::LayerID(event.layerId)) {
               selectedLayerId_ = {};
             }
-            refreshEnabledState();
+            requestRefreshEnabledState();
           }));
   eventBusSubscriptions_.push_back(
       eventBus.subscribe<ProjectChangedEvent>(
           [this](const ProjectChangedEvent&) {
-            refreshEnabledState();
+            requestRefreshEnabledState();
           }));
   QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
    refreshEnabledState();
   });
+ }
+
+ void ArtifactAnimationMenu::Impl::requestRefreshEnabledState()
+ {
+  if (!menu_) {
+   return;
+  }
+  if (QThread::currentThread() == menu_->thread()) {
+   refreshEnabledState();
+   return;
+  }
+  QMetaObject::invokeMethod(menu_, [this]() {
+   refreshEnabledState();
+  }, Qt::QueuedConnection);
  }
 
  ArtifactAnimationMenu::Impl::~Impl()
@@ -316,6 +351,9 @@ bool hasActiveExpressionTarget(QWidget* root)
   }
   if (convertToKeyframesAction) {
    convertToKeyframesAction->setEnabled(hasLayer && hasExpressionTarget);
+  }
+  if (bakeLiveToKeyframesAction) {
+   bakeLiveToKeyframesAction->setEnabled(hasLayer && hasExpressionTarget);
   }
   if (saveAnimationPresetAction) {
    saveAnimationPresetAction->setEnabled(hasLayer && hasExpressionTarget);
@@ -486,6 +524,8 @@ bool hasActiveExpressionTarget(QWidget* root)
 
   impl_->convertToKeyframesAction = impl_->expressionMenu->addAction("エクスプレッションをキーフレームに変換...");
   impl_->convertToKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
+  impl_->bakeLiveToKeyframesAction = impl_->expressionMenu->addAction("現在PropertyをキーフレームにBake...");
+  impl_->bakeLiveToKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
   addSeparator();
 
   impl_->presetMenu = addMenu("アニメーションプリセット(&P)");
@@ -547,6 +587,7 @@ bool hasActiveExpressionTarget(QWidget* root)
    if (action == impl_->editExpressionAction) { openActiveExpressionCopilot(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->removeExpressionAction) { clearActiveExpression(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->convertToKeyframesAction) { convertActiveExpressionToKeyframes(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->bakeLiveToKeyframesAction) { bakeActivePropertyToKeyframes(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->saveAnimationPresetAction) { saveActiveExpressionPreset(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->loadAnimationPresetAction) { loadActiveExpressionPreset(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
   };

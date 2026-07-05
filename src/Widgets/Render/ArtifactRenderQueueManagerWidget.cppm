@@ -424,8 +424,15 @@ namespace Artifact
       const QString renderBackend = service->jobRenderBackendAt(index);
       const QString encoderBackend = service->jobEncoderBackendAt(index);
       const bool audioEnabled = service->jobIntegratedRenderEnabledAt(index);
+      const int audioSampleRate = service->jobAudioSampleRateAt(index);
+      const QString audioRateText = audioSampleRate > 0
+          ? QStringLiteral("%1kHz").arg(audioSampleRate / 1000)
+          : QStringLiteral("source rate");
       const QString audioInfo = audioEnabled
-          ? QStringLiteral(" | Audio: %1@%2kbps").arg(service->jobAudioCodecAt(index)).arg(service->jobAudioBitrateKbpsAt(index))
+          ? QStringLiteral(" | Audio: %1@%2kbps/%3/%4")
+                .arg(service->jobAudioCodecAt(index))
+                .arg(service->jobAudioBitrateKbpsAt(index))
+                .arg(service->jobAudioChannelModeAt(index), audioRateText)
           : QStringLiteral(" | Audio: off");
       const auto preflight = service->preflightRenderQueueAt(index);
       outputSettingsSummaryLabel->setText(
@@ -668,6 +675,8 @@ namespace Artifact
     dialog.setFramePadding(impl_->service->jobFramePaddingAt(index));
     dialog.setAudioCodec(impl_->service->jobAudioCodecAt(index));
     dialog.setAudioBitrateKbps(impl_->service->jobAudioBitrateKbpsAt(index));
+    dialog.setAudioChannelMode(impl_->service->jobAudioChannelModeAt(index));
+    dialog.setAudioSampleRate(impl_->service->jobAudioSampleRateAt(index));
     const auto preflight = impl_->service->preflightRenderQueueAt(index);
     dialog.setPreflightSummary(ArtifactRenderQueueService::formatPreflightSummary(preflight));
     dialog.setPreflightDetails(ArtifactRenderQueueService::formatPreflightDetails(preflight));
@@ -691,6 +700,8 @@ namespace Artifact
       impl_->service->setJobFramePaddingAt(index, dialog.framePadding());
       impl_->service->setJobAudioCodecAt(index, dialog.audioCodec());
       impl_->service->setJobAudioBitrateKbpsAt(index, dialog.audioBitrateKbps());
+      impl_->service->setJobAudioChannelModeAt(index, dialog.audioChannelMode());
+      impl_->service->setJobAudioSampleRateAt(index, dialog.audioSampleRate());
       impl_->syncJobsFromService();
       impl_->syncDetailEditorsFromJob(index);
     }

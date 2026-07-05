@@ -17,13 +17,16 @@ module;
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QStatusBar>
+#include <QThread>
 #include <QUrl>
 #include <QtSVG/QSvgRenderer>
 #include <QTimer>
 #include <QSet>
 #include <QPointF>
 #include <QRectF>
+#include <QUuid>
 #include <QVariant>
+#include <cmath>
 #include <wobjectimpl.h>
 
 module Artifact.Menu.Layer;
@@ -42,18 +45,22 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Composition;
+import Artifact.Layer.ParametricComposition;
+import Composition.ParametricComposition;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Video;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Procedural3D;
+import Artifact.Layer.ParametricComposition;
 import Layer.Blend;
 import Color.Float;
 import Artifact.Project.Manager;
 import Artifact.Project.PresetManager;
 import Artifact.Mask.LayerMask;
 import Artifact.Widgets.ProjectManagerWidget;
+import Artifact.Widgets.ArtifactPropertyWidget;
 import Artifact.Composition.Abstract;
 import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Widgets.CreatePlaneLayerDialog;
@@ -63,7 +70,10 @@ import Artifact.Tool.CameraTracker;
 import Tracking.MotionTracker;
 import Geometry.LayerAlignment;
 import Undo.UndoManager;
+import Artifact.Service.Playback;
+import ArtifactCore.Control.External;
 import UI.ShortcutBindings;
+import Time.Rational;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -97,6 +107,21 @@ bool placeAtCurrentFrameRequested()
 bool placeAtCurrentFrameRequested(const LayerCreationPlacementMode mode)
 {
     return mode == LayerCreationPlacementMode::Playhead;
+}
+
+ArtifactPropertyWidget* activePropertyWidget(QWidget* root)
+{
+    if (!root) {
+        return nullptr;
+    }
+
+    const auto widgets = root->findChildren<ArtifactPropertyWidget*>();
+    for (auto* widget : widgets) {
+        if (widget && widget->isVisible() && widget->hasActiveExpressionTarget()) {
+            return widget;
+        }
+    }
+    return nullptr;
 }
 
 QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
@@ -242,6 +267,272 @@ ArtifactAbstractLayerPtr addDebugBindlessPlaneLayer(
     return result.layer;
 }
 
+struct RadialTransformSnapshot {
+    ArtifactAbstractLayerWeak layer;
+    float beforeX = 0.0f;
+    float beforeY = 0.0f;
+    float beforeScaleX = 1.0f;
+    float beforeScaleY = 1.0f;
+    float afterX = 0.0f;
+    float afterY = 0.0f;
+    float afterScaleX = 1.0f;
+    float afterScaleY = 1.0f;
+};
+
+class RadialTransformLayersCommand final : public UndoCommand {
+public:
+    RadialTransformLayersCommand(
+        const RationalTime& time, std::vector<RadialTransformSnapshot> snapshots)
+        : time_(time), snapshots_(std::move(snapshots))
+    {
+    }
+
+    void undo() override
+    {
+        apply(true);
+    }
+
+    void redo() override
+    {
+        apply(false);
+    }
+
+    QString label() const override
+    {
+        return QStringLiteral("Radial Transform Layers");
+    }
+
+private:
+    void apply(const bool before)
+    {
+        for (const auto& snapshot : snapshots_) {
+            const auto layer = snapshot.layer.lock();
+            if (!layer) {
+                continue;
+            }
+            auto& transform = layer->transform3D();
+            transform.setPosition(
+                time_,
+                before ? snapshot.beforeX : snapshot.afterX,
+                before ? snapshot.beforeY : snapshot.afterY);
+            transform.setScale(
+                time_,
+                before ? snapshot.beforeScaleX : snapshot.afterScaleX,
+                before ? snapshot.beforeScaleY : snapshot.afterScaleY);
+            layer->changed();
+        }
+        if (auto* manager = UndoManager::instance()) {
+            manager->notifyAnythingChanged();
+        }
+    }
+
+    RationalTime time_;
+    std::vector<RadialTransformSnapshot> snapshots_;
+};
+
+class AddCompositionTransformFieldCommand final : public UndoCommand {
+public:
+    AddCompositionTransformFieldCommand(
+        ArtifactCompositionWeakPtr composition, CompositionTransformField field)
+        : composition_(std::move(composition)), field_(std::move(field))
+    {
+    }
+
+    void undo() override
+    {
+        if (const auto composition = composition_.lock()) {
+            composition->removeTransformField(field_.fieldId);
+        }
+    }
+
+    void redo() override
+    {
+        if (const auto composition = composition_.lock()) {
+            composition->addTransformField(field_);
+        }
+    }
+
+    QString label() const override
+    {
+        return QStringLiteral("Create Live Radial Field");
+    }
+
+private:
+    ArtifactCompositionWeakPtr composition_;
+    CompositionTransformField field_;
+};
+
+class UpdateCompositionTransformFieldCommand final : public UndoCommand {
+public:
+    UpdateCompositionTransformFieldCommand(
+        ArtifactCompositionWeakPtr composition, CompositionTransformField before,
+        CompositionTransformField after)
+        : composition_(std::move(composition)),
+          before_(std::move(before)),
+          after_(std::move(after))
+    {
+    }
+
+    void undo() override
+    {
+        if (const auto composition = composition_.lock()) {
+            composition->addTransformField(before_);
+        }
+    }
+
+    void redo() override
+    {
+        if (const auto composition = composition_.lock()) {
+            composition->addTransformField(after_);
+        }
+    }
+
+    QString label() const override
+    {
+        return QStringLiteral("Edit Live Radial Field");
+    }
+
+private:
+    ArtifactCompositionWeakPtr composition_;
+    CompositionTransformField before_;
+    CompositionTransformField after_;
+};
+
+class RemoveCompositionTransformFieldCommand final : public UndoCommand {
+public:
+    RemoveCompositionTransformFieldCommand(
+        ArtifactCompositionWeakPtr composition, CompositionTransformField field)
+        : composition_(std::move(composition)), field_(std::move(field))
+    {
+    }
+
+    void undo() override
+    {
+        if (const auto composition = composition_.lock()) {
+            composition->addTransformField(field_);
+        }
+    }
+
+    void redo() override
+    {
+        if (const auto composition = composition_.lock()) {
+            composition->removeTransformField(field_.fieldId);
+        }
+    }
+
+    QString label() const override
+    {
+        return QStringLiteral("Remove Live Radial Field");
+    }
+
+private:
+    ArtifactCompositionWeakPtr composition_;
+    CompositionTransformField field_;
+};
+
+class SetParametricDefinitionCommand final : public UndoCommand {
+public:
+    SetParametricDefinitionCommand(
+        ArtifactAbstractLayerWeak layer,
+        std::shared_ptr<const ParametricCompositionDefinition> before,
+        std::shared_ptr<const ParametricCompositionDefinition> after,
+        QString label)
+        : layer_(std::move(layer)),
+          before_(std::move(before)),
+          after_(std::move(after)),
+          label_(std::move(label))
+    {
+    }
+
+    void undo() override
+    {
+        apply(before_);
+    }
+
+    void redo() override
+    {
+        apply(after_);
+    }
+
+    QString label() const override
+    {
+        return label_;
+    }
+
+private:
+    void apply(const std::shared_ptr<const ParametricCompositionDefinition>& definition)
+    {
+        const auto layer = std::dynamic_pointer_cast<ArtifactParametricCompositionLayer>(
+            layer_.lock());
+        if (!layer) {
+            return;
+        }
+        layer->setDefinition(definition);
+        if (auto* manager = UndoManager::instance()) {
+            manager->notifyAnythingChanged();
+        }
+    }
+
+    ArtifactAbstractLayerWeak layer_;
+    std::shared_ptr<const ParametricCompositionDefinition> before_;
+    std::shared_ptr<const ParametricCompositionDefinition> after_;
+    QString label_;
+};
+
+std::optional<CompositionTransformField> chooseTransformField(
+    QWidget* parent, const ArtifactCompositionPtr& composition,
+    const QString& title)
+{
+    if (!composition) {
+        return std::nullopt;
+    }
+    const auto fields = composition->transformFields();
+    if (fields.isEmpty()) {
+        QMessageBox::information(
+            parent, title, QStringLiteral("このコンポジションにライブFieldはありません。"));
+        return std::nullopt;
+    }
+
+    QStringList choices;
+    choices.reserve(fields.size());
+    for (const auto& field : fields) {
+        const QString state = field.enabled
+                                  ? QStringLiteral("有効")
+                                  : QStringLiteral("無効");
+        choices.append(QStringLiteral("%1 — %2")
+                           .arg(field.displayName, state));
+    }
+    bool accepted = false;
+    const QString choice = QInputDialog::getItem(
+        parent, title, QStringLiteral("Field"), choices, 0, false, &accepted);
+    if (!accepted) {
+        return std::nullopt;
+    }
+    const int index = choices.indexOf(choice);
+    if (index < 0 || index >= fields.size()) {
+        return std::nullopt;
+    }
+    return fields.at(index);
+}
+
+std::shared_ptr<ArtifactParametricCompositionLayer> currentSelectedParametricLayer()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return {};
+    }
+    auto composition = service->currentComposition().lock();
+    if (!composition) {
+        return {};
+    }
+    auto* selection = ArtifactLayerSelectionManager::instance();
+    if (!selection) {
+        return {};
+    }
+    return std::dynamic_pointer_cast<ArtifactParametricCompositionLayer>(
+        selection->currentLayer());
+}
+
 } // namespace
 
 W_OBJECT_IMPL(ArtifactLayerMenu)
@@ -356,6 +647,16 @@ public:
     QAction* distributeHCenterAction = nullptr;
     QAction* distributeVCenterAction = nullptr;
     QAction* distributeSpacingAction = nullptr;
+    QAction* radialTransformAction = nullptr;
+    QAction* createLiveRadialFieldAction = nullptr;
+    QAction* editLiveRadialFieldAction = nullptr;
+    QAction* toggleLiveRadialFieldAction = nullptr;
+    QAction* removeLiveRadialFieldAction = nullptr;
+    QAction* addParametricParameterAction = nullptr;
+    QAction* publishParametricParameterAction = nullptr;
+    QAction* editParametricControlAction = nullptr;
+    QAction* unpublishParametricControlAction = nullptr;
+    QAction* controllerLearnAction = nullptr;
 
     void handleCreateSolid();
     void handleCreateNull();
@@ -418,11 +719,22 @@ public:
     void handleAlign(ArtifactCore::AlignType type);
     void handleDistribute(ArtifactCore::DistributeType type);
     void handleDistributeSpacing();
+    void handleRadialTransform();
+    void handleCreateLiveRadialField();
+    void handleEditLiveRadialField();
+    void handleToggleLiveRadialField();
+    void handleRemoveLiveRadialField();
+    void handleAddParametricParameter();
+    void handlePublishParametricParameter();
+    void handleEditParametricControl();
+    void handleUnpublishParametricControl();
+    void handleControllerLearn();
 
     bool hasCurrentComposition() const;
     bool ensureCurrentComposition();
     bool hasSelectedLayer() const;
     QStringList selectedVideoSourcePathsInCurrentComposition() const;
+    void requestRefreshEnabledState();
     void refreshEnabledState();
 };
 
@@ -687,6 +999,36 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     arrangeMenu->addAction(bringForwardAction);
     arrangeMenu->addAction(sendBackwardAction);
     arrangeMenu->addAction(sendToBackAction);
+    arrangeMenu->addSeparator();
+    radialTransformAction = new QAction("放射状変形...", arrangeMenu);
+    radialTransformAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_arrange.svg")));
+    radialTransformAction->setToolTip(
+        QStringLiteral("選択中心からの距離に応じて、複数レイヤーの位置とスケールを一度だけ変更します"));
+    arrangeMenu->addAction(radialTransformAction);
+    createLiveRadialFieldAction = new QAction("ライブ放射状Fieldを作成...", arrangeMenu);
+    createLiveRadialFieldAction->setIcon(
+        QIcon(resolveIconPath("Studio/layermenu_arrange.svg")));
+    createLiveRadialFieldAction->setToolTip(
+        QStringLiteral("元のTransformを保ったまま、選択レイヤーへ放射状変形を適用します"));
+    arrangeMenu->addAction(createLiveRadialFieldAction);
+    editLiveRadialFieldAction = new QAction("ライブFieldを編集...", arrangeMenu);
+    toggleLiveRadialFieldAction = new QAction("ライブFieldを有効/無効...", arrangeMenu);
+    removeLiveRadialFieldAction = new QAction("ライブFieldを削除...", arrangeMenu);
+    arrangeMenu->addAction(editLiveRadialFieldAction);
+    arrangeMenu->addAction(toggleLiveRadialFieldAction);
+    arrangeMenu->addAction(removeLiveRadialFieldAction);
+    arrangeMenu->addSeparator();
+    addParametricParameterAction = new QAction("Parametric Parameterを追加...", arrangeMenu);
+    publishParametricParameterAction = new QAction("ParameterをPublished Controlにする...", arrangeMenu);
+    editParametricControlAction = new QAction("Published Controlを編集...", arrangeMenu);
+    unpublishParametricControlAction = new QAction("Published Controlを解除...", arrangeMenu);
+    controllerLearnAction = new QAction("Controller Learn を現在Propertyへ適用", arrangeMenu);
+    arrangeMenu->addAction(addParametricParameterAction);
+    arrangeMenu->addAction(publishParametricParameterAction);
+    arrangeMenu->addAction(editParametricControlAction);
+    arrangeMenu->addAction(unpublishParametricControlAction);
+    arrangeMenu->addSeparator();
+    arrangeMenu->addAction(controllerLearnAction);
 
     alignMenu = new QMenu("整列(&L)", menu);
     alignMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_align.svg")));
@@ -1099,6 +1441,16 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == bringForwardAction) { handleBringForward(); return; }
         if (action == sendBackwardAction) { handleSendBackward(); return; }
         if (action == sendToBackAction) { handleSendToBack(); return; }
+        if (action == radialTransformAction) { handleRadialTransform(); return; }
+        if (action == createLiveRadialFieldAction) { handleCreateLiveRadialField(); return; }
+        if (action == editLiveRadialFieldAction) { handleEditLiveRadialField(); return; }
+        if (action == toggleLiveRadialFieldAction) { handleToggleLiveRadialField(); return; }
+        if (action == removeLiveRadialFieldAction) { handleRemoveLiveRadialField(); return; }
+        if (action == addParametricParameterAction) { handleAddParametricParameter(); return; }
+        if (action == publishParametricParameterAction) { handlePublishParametricParameter(); return; }
+        if (action == editParametricControlAction) { handleEditParametricControl(); return; }
+        if (action == unpublishParametricControlAction) { handleUnpublishParametricControl(); return; }
+        if (action == controllerLearnAction) { handleControllerLearn(); return; }
         if (action == alignLeftAction) { handleAlign(ArtifactCore::AlignType::Left); return; }
         if (action == alignHCenterAction) { handleAlign(ArtifactCore::AlignType::CenterHorizontal); return; }
         if (action == alignRightAction) { handleAlign(ArtifactCore::AlignType::Right); return; }
@@ -1130,7 +1482,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
                     }
                 }
                 selectedLayerId_ = layerId;
-                refreshEnabledState();
+                requestRefreshEnabledState();
             }));
     eventBusSubscriptions_.push_back(
         eventBus.subscribe<LayerChangedEvent>(
@@ -1149,21 +1501,35 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
                     selectedLayerId_ == ArtifactCore::LayerID(event.layerId)) {
                     selectedLayerId_ = {};
                 }
-                refreshEnabledState();
+                requestRefreshEnabledState();
             }));
     eventBusSubscriptions_.push_back(
         eventBus.subscribe<CurrentCompositionChangedEvent>(
             [this](const CurrentCompositionChangedEvent&) {
-                refreshEnabledState();
+                requestRefreshEnabledState();
             }));
     eventBusSubscriptions_.push_back(
         eventBus.subscribe<ProjectChangedEvent>(
             [this](const ProjectChangedEvent&) {
-                refreshEnabledState();
+                requestRefreshEnabledState();
             }));
     QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
         refreshEnabledState();
     });
+}
+
+void ArtifactLayerMenu::Impl::requestRefreshEnabledState()
+{
+    if (!menu_) {
+        return;
+    }
+    if (QThread::currentThread() == menu_->thread()) {
+        refreshEnabledState();
+        return;
+    }
+    QMetaObject::invokeMethod(menu_, [this]() {
+        refreshEnabledState();
+    }, Qt::QueuedConnection);
 }
 
 bool ArtifactLayerMenu::Impl::hasCurrentComposition() const
@@ -1319,6 +1685,21 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     
     splitAction->setEnabled(hasLayer);
 
+    const auto parametricLayer = currentSelectedParametricLayer();
+    const bool hasParametricLayer = static_cast<bool>(parametricLayer);
+    const auto parametricDefinition =
+        hasParametricLayer ? parametricLayer->definition()
+                           : std::shared_ptr<const ParametricCompositionDefinition>{};
+    addParametricParameterAction->setEnabled(hasParametricLayer);
+    publishParametricParameterAction->setEnabled(
+        parametricDefinition && !parametricDefinition->parameters().isEmpty());
+    editParametricControlAction->setEnabled(
+        parametricDefinition && !parametricDefinition->publishedControls().isEmpty());
+    unpublishParametricControlAction->setEnabled(
+        parametricDefinition && !parametricDefinition->publishedControls().isEmpty());
+    controllerLearnAction->setEnabled(
+        activePropertyWidget(mainWindow_ ? mainWindow_ : menu_->window()) != nullptr);
+
     // 3Dカメラトラッキング: 動画レイヤーが選択されている場合のみ有効
     bool isVideoSelected = false;
     bool hasProxy = false;
@@ -1338,6 +1719,17 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     }
 
     auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    const int selectedLayerCount =
+        selectionManager ? selectionManager->selectedLayers().size() : 0;
+    radialTransformAction->setEnabled(hasComp && selectedLayerCount >= 2);
+    createLiveRadialFieldAction->setEnabled(hasComp && selectedLayerCount >= 2);
+    const auto currentComposition =
+        service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
+    const bool hasLiveFields =
+        currentComposition && !currentComposition->transformFields().isEmpty();
+    editLiveRadialFieldAction->setEnabled(hasLiveFields);
+    toggleLiveRadialFieldAction->setEnabled(hasLiveFields);
+    removeLiveRadialFieldAction->setEnabled(hasLiveFields);
     if (hasComp && selectionManager) {
         const auto selected = selectionManager->selectedLayers();
         auto isSelected = [&selected](const LayerID& id) {
@@ -2815,6 +3207,603 @@ void ArtifactLayerMenu::Impl::handleDistributeSpacing()
     }
 
     UndoManager::instance()->push(std::make_unique<AlignLayersUndoCommand>(snapshots, QStringLiteral("Distribute Spacing")));
+}
+
+void ArtifactLayerMenu::Impl::handleRadialTransform()
+{
+    auto* selection = ArtifactLayerSelectionManager::instance();
+    auto* playback = ArtifactPlaybackService::instance();
+    if (!selection) {
+        return;
+    }
+    const auto composition = selection->activeComposition();
+    if (!composition) {
+        return;
+    }
+
+    QVector<ArtifactAbstractLayerPtr> layers;
+    for (const auto& layer : selection->selectedLayersInOrder()) {
+        if (layer && !layer->isTransformLocked()) {
+            layers.push_back(layer);
+        }
+    }
+    if (layers.size() < 2) {
+        QMessageBox::information(
+            menu_->window(), QStringLiteral("放射状変形"),
+            QStringLiteral("変形ロックされていないレイヤーを2つ以上選択してください。"));
+        return;
+    }
+
+    const LayerID commonParentId = layers.front()->parentLayerId();
+    for (const auto& layer : layers) {
+        if (layer->parentLayerId() != commonParentId) {
+            QMessageBox::information(
+                menu_->window(), QStringLiteral("放射状変形"),
+                QStringLiteral("異なる親を持つレイヤーは座標系が異なるため、同じ親のレイヤーだけを選択してください。"));
+            return;
+        }
+    }
+
+    bool accepted = false;
+    const double expansionPercent = QInputDialog::getDouble(
+        menu_->window(), QStringLiteral("放射状変形"),
+        QStringLiteral("外側レイヤーの移動量 (%)\n"
+                       "正数で外側へ、負数で中心へ移動します。"),
+        25.0, -90.0, 500.0, 1, &accepted);
+    if (!accepted) {
+        return;
+    }
+
+    const double edgeScalePercent = QInputDialog::getDouble(
+        menu_->window(), QStringLiteral("放射状変形"),
+        QStringLiteral("最外周のスケール (%)\n"
+                       "中心は元のスケールを維持します。"),
+        70.0, 1.0, 500.0, 1, &accepted);
+    if (!accepted) {
+        return;
+    }
+
+    QPointF center;
+    for (const auto& layer : layers) {
+        center += QPointF(
+            static_cast<qreal>(layer->transform3D().positionX()),
+            static_cast<qreal>(layer->transform3D().positionY()));
+    }
+    center /= static_cast<qreal>(layers.size());
+
+    double maxDistance = 0.0;
+    for (const auto& layer : layers) {
+        const QPointF delta(
+            static_cast<qreal>(layer->transform3D().positionX()) - center.x(),
+            static_cast<qreal>(layer->transform3D().positionY()) - center.y());
+        maxDistance = std::max(maxDistance, std::hypot(delta.x(), delta.y()));
+    }
+    if (maxDistance <= 0.0001) {
+        QMessageBox::information(
+            menu_->window(), QStringLiteral("放射状変形"),
+            QStringLiteral("選択レイヤーが同じ位置にあるため、距離に基づく変形を計算できません。"));
+        return;
+    }
+
+    const qint64 frame = playback ? playback->currentFrame().framePosition() : 0;
+    const qint64 timeScale = std::max<qint64>(
+        1, static_cast<qint64>(std::llround(composition->frameRate().framerate())));
+    const RationalTime time(frame, timeScale);
+    const double expansion = expansionPercent / 100.0;
+    const double edgeScale = edgeScalePercent / 100.0;
+
+    std::vector<RadialTransformSnapshot> snapshots;
+    snapshots.reserve(static_cast<std::size_t>(layers.size()));
+    for (const auto& layer : layers) {
+        auto& transform = layer->transform3D();
+        const QPointF beforePosition(
+            static_cast<qreal>(transform.positionX()),
+            static_cast<qreal>(transform.positionY()));
+        const QPointF delta = beforePosition - center;
+        const double normalizedDistance =
+            std::clamp(std::hypot(delta.x(), delta.y()) / maxDistance, 0.0, 1.0);
+        const double influence =
+            normalizedDistance * normalizedDistance * (3.0 - 2.0 * normalizedDistance);
+        const QPointF afterPosition =
+            center + delta * (1.0 + expansion * influence);
+        const double scaleFactor = std::lerp(1.0, edgeScale, influence);
+
+        RadialTransformSnapshot snapshot;
+        snapshot.layer = layer;
+        snapshot.beforeX = transform.positionX();
+        snapshot.beforeY = transform.positionY();
+        snapshot.beforeScaleX = transform.scaleX();
+        snapshot.beforeScaleY = transform.scaleY();
+        snapshot.afterX = static_cast<float>(afterPosition.x());
+        snapshot.afterY = static_cast<float>(afterPosition.y());
+        snapshot.afterScaleX =
+            static_cast<float>(static_cast<double>(snapshot.beforeScaleX) * scaleFactor);
+        snapshot.afterScaleY =
+            static_cast<float>(static_cast<double>(snapshot.beforeScaleY) * scaleFactor);
+        snapshots.push_back(snapshot);
+    }
+
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(
+            std::make_unique<RadialTransformLayersCommand>(time, std::move(snapshots)));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleCreateLiveRadialField()
+{
+    auto* selection = ArtifactLayerSelectionManager::instance();
+    if (!selection) {
+        return;
+    }
+    const auto composition = selection->activeComposition();
+    if (!composition) {
+        return;
+    }
+
+    QVector<ArtifactAbstractLayerPtr> layers;
+    for (const auto& layer : selection->selectedLayersInOrder()) {
+        if (layer && !layer->isTransformLocked()) {
+            layers.push_back(layer);
+        }
+    }
+    if (layers.size() < 2) {
+        QMessageBox::information(
+            menu_->window(), QStringLiteral("ライブ放射状Field"),
+            QStringLiteral("変形ロックされていないレイヤーを2つ以上選択してください。"));
+        return;
+    }
+
+    const LayerID commonParentId = layers.front()->parentLayerId();
+    for (const auto& layer : layers) {
+        if (layer->parentLayerId() != commonParentId) {
+            QMessageBox::information(
+                menu_->window(), QStringLiteral("ライブ放射状Field"),
+                QStringLiteral("異なる親を持つレイヤーは座標系が異なるため、同じ親のレイヤーだけを選択してください。"));
+            return;
+        }
+    }
+
+    bool accepted = false;
+    const double expansionPercent = QInputDialog::getDouble(
+        menu_->window(), QStringLiteral("ライブ放射状Field"),
+        QStringLiteral("外側レイヤーの移動量 (%)"),
+        25.0, -90.0, 500.0, 1, &accepted);
+    if (!accepted) {
+        return;
+    }
+    const double edgeScalePercent = QInputDialog::getDouble(
+        menu_->window(), QStringLiteral("ライブ放射状Field"),
+        QStringLiteral("最外周のスケール (%)"),
+        70.0, 1.0, 500.0, 1, &accepted);
+    if (!accepted) {
+        return;
+    }
+
+    QPointF center;
+    for (const auto& layer : layers) {
+        center += QPointF(
+            static_cast<qreal>(layer->transform3D().positionX()),
+            static_cast<qreal>(layer->transform3D().positionY()));
+    }
+    center /= static_cast<qreal>(layers.size());
+
+    qreal radius = 0.0;
+    CompositionTransformField field;
+    field.fieldId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    field.displayName = QStringLiteral("Radial Transform Field");
+    field.center = center;
+    field.expansion = expansionPercent / 100.0;
+    field.edgeScale = edgeScalePercent / 100.0;
+    field.coordinateParentLayerId = commonParentId;
+    for (const auto& layer : layers) {
+        const QPointF position(
+            static_cast<qreal>(layer->transform3D().positionX()),
+            static_cast<qreal>(layer->transform3D().positionY()));
+        radius = std::max(radius, std::hypot(
+            position.x() - center.x(), position.y() - center.y()));
+        field.targetLayerIds.append(layer->id());
+    }
+    if (radius <= 0.0001) {
+        QMessageBox::information(
+            menu_->window(), QStringLiteral("ライブ放射状Field"),
+            QStringLiteral("選択レイヤーが同じ位置にあるため、Fieldを作成できません。"));
+        return;
+    }
+    field.radius = radius;
+
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<AddCompositionTransformFieldCommand>(
+            ArtifactCompositionWeakPtr(composition), std::move(field)));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
+{
+    const auto composition =
+        ArtifactProjectService::instance()
+            ? ArtifactProjectService::instance()->currentComposition().lock()
+            : ArtifactCompositionPtr{};
+    auto selected = chooseTransformField(
+        menu_->window(), composition, QStringLiteral("ライブFieldを編集"));
+    if (!selected.has_value()) {
+        return;
+    }
+
+    CompositionTransformField edited = *selected;
+    bool accepted = false;
+    edited.radius = QInputDialog::getDouble(
+        menu_->window(), QStringLiteral("ライブFieldを編集"),
+        QStringLiteral("半径"), edited.radius, 0.01, 100000.0, 2, &accepted);
+    if (!accepted) {
+        return;
+    }
+    edited.expansion = QInputDialog::getDouble(
+        menu_->window(), QStringLiteral("ライブFieldを編集"),
+        QStringLiteral("外側レイヤーの移動量 (%)"),
+        edited.expansion * 100.0, -90.0, 500.0, 1, &accepted) / 100.0;
+    if (!accepted) {
+        return;
+    }
+    edited.edgeScale = QInputDialog::getDouble(
+        menu_->window(), QStringLiteral("ライブFieldを編集"),
+        QStringLiteral("最外周のスケール (%)"),
+        edited.edgeScale * 100.0, 1.0, 500.0, 1, &accepted) / 100.0;
+    if (!accepted) {
+        return;
+    }
+
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<UpdateCompositionTransformFieldCommand>(
+            ArtifactCompositionWeakPtr(composition), *selected, std::move(edited)));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleToggleLiveRadialField()
+{
+    const auto composition =
+        ArtifactProjectService::instance()
+            ? ArtifactProjectService::instance()->currentComposition().lock()
+            : ArtifactCompositionPtr{};
+    auto selected = chooseTransformField(
+        menu_->window(), composition, QStringLiteral("ライブFieldを有効/無効"));
+    if (!selected.has_value()) {
+        return;
+    }
+    CompositionTransformField edited = *selected;
+    edited.enabled = !edited.enabled;
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<UpdateCompositionTransformFieldCommand>(
+            ArtifactCompositionWeakPtr(composition), *selected, std::move(edited)));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleRemoveLiveRadialField()
+{
+    const auto composition =
+        ArtifactProjectService::instance()
+            ? ArtifactProjectService::instance()->currentComposition().lock()
+            : ArtifactCompositionPtr{};
+    auto selected = chooseTransformField(
+        menu_->window(), composition, QStringLiteral("ライブFieldを削除"));
+    if (!selected.has_value()) {
+        return;
+    }
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<RemoveCompositionTransformFieldCommand>(
+            ArtifactCompositionWeakPtr(composition), std::move(*selected)));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleAddParametricParameter()
+{
+    const auto layer = currentSelectedParametricLayer();
+    if (!layer) {
+        return;
+    }
+
+    bool accepted = false;
+    const QString key = QInputDialog::getText(
+        menu_->window(), QStringLiteral("Parametric Parameter"),
+        QStringLiteral("Parameter Key"),
+        QLineEdit::Normal, QStringLiteral("control.value"), &accepted).trimmed();
+    if (!accepted || key.isEmpty()) {
+        return;
+    }
+
+    const double defaultValue = QInputDialog::getDouble(
+        menu_->window(), QStringLiteral("Parametric Parameter"),
+        QStringLiteral("Default Value"), 0.0, -1000000.0, 1000000.0, 3, &accepted);
+    if (!accepted) {
+        return;
+    }
+
+    const auto before = layer->definition();
+    auto after = std::make_shared<ParametricCompositionDefinition>(
+        before ? *before
+               : makeDefaultParametricCompositionDefinition(
+                     QStringLiteral("parametric.layer"),
+                     QStringLiteral("Parametric Composition")));
+    if (after->hasParameter(key)) {
+        QMessageBox::warning(
+            menu_->window(), QStringLiteral("Parametric Parameter"),
+            QStringLiteral("Parameter を追加できませんでした。既に同名の parameter がある可能性があります。"));
+        return;
+    }
+
+    ParametricCompositionParameter parameter;
+    parameter.key = key;
+    parameter.displayName = key;
+    parameter.defaultValue = QVariant(defaultValue);
+    if (!after->addParameter(parameter)) {
+        QMessageBox::warning(
+            menu_->window(), QStringLiteral("Parametric Parameter"),
+            QStringLiteral("Parameter を追加できませんでした。"));
+        return;
+    }
+
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<SetParametricDefinitionCommand>(
+            ArtifactAbstractLayerWeak(layer), before, after,
+            QStringLiteral("Add Parametric Parameter")));
+    } else {
+        layer->setDefinition(after);
+    }
+}
+
+void ArtifactLayerMenu::Impl::handlePublishParametricParameter()
+{
+    const auto layer = currentSelectedParametricLayer();
+    if (!layer || !layer->definition()) {
+        return;
+    }
+
+    QStringList parameterChoices;
+    for (const auto& parameter : layer->definition()->parameters()) {
+        parameterChoices.append(parameter.key);
+    }
+    if (parameterChoices.isEmpty()) {
+        QMessageBox::information(
+            menu_->window(), QStringLiteral("Published Control"),
+            QStringLiteral("公開できる parameter がありません。先に parameter を追加してください。"));
+        return;
+    }
+
+    bool accepted = false;
+    const QString parameterKey = QInputDialog::getItem(
+        menu_->window(), QStringLiteral("Published Control"),
+        QStringLiteral("Parameter"), parameterChoices, 0, false, &accepted);
+    if (!accepted || parameterKey.isEmpty()) {
+        return;
+    }
+
+    const QString displayName = QInputDialog::getText(
+        menu_->window(), QStringLiteral("Published Control"),
+        QStringLiteral("Display Name"),
+        QLineEdit::Normal, parameterKey, &accepted).trimmed();
+    if (!accepted) {
+        return;
+    }
+
+    const auto before = layer->definition();
+    if (!before) {
+        return;
+    }
+    auto after = std::make_shared<ParametricCompositionDefinition>(*before);
+    ParametricCompositionPublishedControl control;
+    control.sourceParameterKey = parameterKey;
+    control.controlId = parameterKey;
+    control.displayName = displayName.isEmpty() ? parameterKey : displayName;
+    if (const auto* parameter = after->parameter(parameterKey)) {
+        control.defaultValue = parameter->defaultValue;
+        control.displayName =
+            displayName.isEmpty() ? parameter->displayName : displayName;
+        control.valueType = QString::fromLatin1(parameter->defaultValue.typeName());
+    }
+    if (after->hasPublishedControl(control.controlId) ||
+        !after->addPublishedControl(control)) {
+        QMessageBox::warning(
+            menu_->window(), QStringLiteral("Published Control"),
+            QStringLiteral("Published Control を作成できませんでした。既に公開済みの可能性があります。"));
+        return;
+    }
+
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<SetParametricDefinitionCommand>(
+            ArtifactAbstractLayerWeak(layer), before, after,
+            QStringLiteral("Publish Parametric Control")));
+    } else {
+        layer->setDefinition(after);
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleEditParametricControl()
+{
+    const auto layer = currentSelectedParametricLayer();
+    if (!layer || !layer->definition()) {
+        return;
+    }
+
+    const auto& controls = layer->definition()->publishedControls();
+    if (controls.isEmpty()) {
+        QMessageBox::information(
+            menu_->window(), QStringLiteral("Published Control"),
+            QStringLiteral("編集できる Published Control がありません。"));
+        return;
+    }
+
+    QStringList controlChoices;
+    controlChoices.reserve(controls.size());
+    for (const auto& control : controls) {
+        const QString title = control.displayName.trimmed().isEmpty()
+                                  ? control.controlId
+                                  : control.displayName;
+        controlChoices.append(QStringLiteral("%1 (%2)")
+                                  .arg(title, control.controlId));
+    }
+
+    bool accepted = false;
+    const QString selectedChoice = QInputDialog::getItem(
+        menu_->window(), QStringLiteral("Published Controlを編集"),
+        QStringLiteral("Control"), controlChoices, 0, false, &accepted);
+    if (!accepted || selectedChoice.isEmpty()) {
+        return;
+    }
+
+    const int selectedIndex = controlChoices.indexOf(selectedChoice);
+    if (selectedIndex < 0 || selectedIndex >= controls.size()) {
+        return;
+    }
+
+    const auto before = layer->definition();
+    if (!before) {
+        return;
+    }
+    auto after = std::make_shared<ParametricCompositionDefinition>(*before);
+    auto selectedControl = controls.at(selectedIndex);
+
+    const QString newDisplayName = QInputDialog::getText(
+        menu_->window(), QStringLiteral("Published Controlを編集"),
+        QStringLiteral("Display Name"),
+        QLineEdit::Normal, selectedControl.displayName, &accepted).trimmed();
+    if (!accepted) {
+        return;
+    }
+
+    const QString newControlId = QInputDialog::getText(
+        menu_->window(), QStringLiteral("Published Controlを編集"),
+        QStringLiteral("Control ID"),
+        QLineEdit::Normal, selectedControl.controlId, &accepted).trimmed();
+    if (!accepted || newControlId.isEmpty()) {
+        return;
+    }
+
+    if (newControlId != selectedControl.controlId &&
+        after->hasPublishedControl(newControlId)) {
+        QMessageBox::warning(
+            menu_->window(), QStringLiteral("Published Control"),
+            QStringLiteral("同じ Control ID が既に存在します。"));
+        return;
+    }
+
+    if (!after->removePublishedControl(selectedControl.controlId)) {
+        QMessageBox::warning(
+            menu_->window(), QStringLiteral("Published Control"),
+            QStringLiteral("Published Control を更新できませんでした。"));
+        return;
+    }
+
+    selectedControl.displayName =
+        newDisplayName.isEmpty() ? selectedControl.displayName : newDisplayName;
+    selectedControl.controlId = newControlId;
+    if (!after->addPublishedControl(selectedControl)) {
+        QMessageBox::warning(
+            menu_->window(), QStringLiteral("Published Control"),
+            QStringLiteral("Published Control を更新できませんでした。"));
+        return;
+    }
+
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<SetParametricDefinitionCommand>(
+            ArtifactAbstractLayerWeak(layer), before, after,
+            QStringLiteral("Edit Published Control")));
+    } else {
+        layer->setDefinition(after);
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleUnpublishParametricControl()
+{
+    const auto layer = currentSelectedParametricLayer();
+    if (!layer || !layer->definition()) {
+        return;
+    }
+
+    const auto& controls = layer->definition()->publishedControls();
+    if (controls.isEmpty()) {
+        QMessageBox::information(
+            menu_->window(), QStringLiteral("Published Control"),
+            QStringLiteral("解除できる Published Control がありません。"));
+        return;
+    }
+
+    QStringList controlChoices;
+    for (const auto& control : controls) {
+        controlChoices.append(control.controlId);
+    }
+
+    bool accepted = false;
+    const QString controlId = QInputDialog::getItem(
+        menu_->window(), QStringLiteral("Published Control を解除"),
+        QStringLiteral("Control"), controlChoices, 0, false, &accepted);
+    if (!accepted || controlId.isEmpty()) {
+        return;
+    }
+
+    const auto before = layer->definition();
+    if (!before) {
+        return;
+    }
+    auto after = std::make_shared<ParametricCompositionDefinition>(*before);
+    if (!after->removePublishedControl(controlId)) {
+        QMessageBox::warning(
+            menu_->window(), QStringLiteral("Published Control"),
+            QStringLiteral("Published Control を解除できませんでした。"));
+        return;
+    }
+
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<SetParametricDefinitionCommand>(
+            ArtifactAbstractLayerWeak(layer), before, after,
+            QStringLiteral("Unpublish Parametric Control")));
+    } else {
+        layer->setDefinition(after);
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleControllerLearn()
+{
+    QWidget* root = mainWindow_ ? mainWindow_ : (menu_ ? menu_->window() : nullptr);
+    auto* propertyWidget = activePropertyWidget(root);
+    if (!propertyWidget) {
+        QMessageBox::information(
+            root,
+            QStringLiteral("Controller Learn"),
+            QStringLiteral("フォーカス中の animatable property が見つかりません。"));
+        return;
+    }
+
+    const auto layer = propertyWidget->activePropertyLayer();
+    const QString propertyPath = propertyWidget->activePropertyPath().trimmed();
+    if (!layer || propertyPath.isEmpty()) {
+        QMessageBox::information(
+            root,
+            QStringLiteral("Controller Learn"),
+            QStringLiteral("Learn 先の property を特定できませんでした。"));
+        return;
+    }
+
+    auto& controlManager = ArtifactCore::ExternalControlManager::instance();
+    QString address = controlManager.lastObservedAddress().trimmed();
+    if (address.isEmpty()) {
+        bool ok = false;
+        address = QInputDialog::getText(
+            root,
+            QStringLiteral("Controller Learn"),
+            QStringLiteral("最後に観測した controller input がありません。address を入力してください。"),
+            QLineEdit::Normal,
+            QStringLiteral("midi:1:1"),
+            &ok).trimmed();
+        if (!ok || address.isEmpty()) {
+            return;
+        }
+    }
+
+    controlManager.setMapping(address, layer->id(), propertyPath);
+    QMessageBox::information(
+        root,
+        QStringLiteral("Controller Learn"),
+        QStringLiteral("%1 → %2 に割り当てました。")
+            .arg(address, propertyPath));
 }
 
 ArtifactLayerMenu::ArtifactLayerMenu(QWidget* mainWindow, QWidget* parent)

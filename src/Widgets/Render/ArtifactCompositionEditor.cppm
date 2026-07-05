@@ -41,8 +41,11 @@ module;
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QPolygonF>
+#include <QQuaternion>
 #include <QMessageBox>
 #include <QResizeEvent>
+#include <QRegion>
 #include <QSet>
 #include <QLineEdit>
 #include <QPushButton>
@@ -54,6 +57,7 @@ module;
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+#include <QTransform>
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QVector>
@@ -62,7 +66,9 @@ module;
 #include <QFileDialog>
 #include <QApplication>
 #include <QDockWidget>
+#include <QDoubleSpinBox>
 #include <QMainWindow>
+#include <QWidgetAction>
 #include <QtSVG/QSvgRenderer>
 #include <algorithm>
 #include <cmath>
@@ -129,6 +135,7 @@ import Artifact.Widget.Dialog.ScreenshotExport;
 import Dialog.Composition;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Image.ImageF32x4_RGBA;
+import Artifact.Render.IRenderer;
 import IO.ImageExporter;
 import Image.ExportOptions;
 import Codec.Thumbnail.FFmpeg;
@@ -827,8 +834,9 @@ public:
     card->setFrameShape(QFrame::StyledPanel);
     card->setFrameShadow(QFrame::Plain);
     card->setAutoFillBackground(true);
-    card->setMinimumWidth(360);
+    card->setMinimumWidth(0);
     card->setMaximumWidth(640);
+    card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     QPalette cardPalette = card->palette();
     cardPalette.setColor(QPalette::Window, QColor(18, 20, 25, 230));
@@ -847,22 +855,27 @@ public:
     titleFont.setBold(true);
     titleLabel_->setFont(titleFont);
     titleLabel_->setAlignment(Qt::AlignCenter);
+    titleLabel_->setMinimumWidth(0);
+    titleLabel_->setWordWrap(true);
 
     bodyLabel_ = new QLabel(
         QStringLiteral("新規コンポジションを作成して、編集を始めましょう。"),
         card);
     bodyLabel_->setAlignment(Qt::AlignCenter);
+    bodyLabel_->setMinimumWidth(0);
     bodyLabel_->setWordWrap(true);
 
     helperLabel_ = new QLabel(
         QStringLiteral("ボタンを押すと、コンポジション設定ダイアログを開きます。"),
         card);
     helperLabel_->setAlignment(Qt::AlignCenter);
+    helperLabel_->setMinimumWidth(0);
     helperLabel_->setWordWrap(true);
 
     createButton_ = new QPushButton(QStringLiteral("新規コンポジション"), card);
     createButton_->setMinimumHeight(46);
-    createButton_->setMinimumWidth(240);
+    createButton_->setMinimumWidth(0);
+    createButton_->setMaximumWidth(240);
     QFont buttonFont = createButton_->font();
     buttonFont.setPointSizeF(std::max(12.0, buttonFont.pointSizeF() + 1.0));
     buttonFont.setBold(true);
@@ -929,6 +942,13 @@ class CompositionViewport final : public QWidget {
   friend class CompositionOverlayWidget;
 
 public:
+  enum class NavigationFeedbackMode {
+    None,
+    Orbit,
+    Pan,
+    Zoom,
+  };
+
   explicit CompositionViewport(CompositionRenderController *controller,
                                QWidget *parent = nullptr)
       : QWidget(parent), controller_(controller) {
@@ -1153,6 +1173,19 @@ public:
   void setActivatedCallback(std::function<void()> callback) {
     activatedCallback_ = std::move(callback);
   }
+  QString navigationFeedbackLabel() const {
+    switch (navigationFeedbackMode_) {
+    case NavigationFeedbackMode::Orbit:
+      return QStringLiteral("ORBIT");
+    case NavigationFeedbackMode::Pan:
+      return QStringLiteral("PAN");
+    case NavigationFeedbackMode::Zoom:
+      return QStringLiteral("ZOOM");
+    case NavigationFeedbackMode::None:
+      break;
+    }
+    return {};
+  }
   void setOverlayVisible(bool visible) {
     if (overlayWidget_) {
       overlayWidget_->setVisible(visible);
@@ -1260,6 +1293,30 @@ public:
         selection ? static_cast<int>(selection->selectedLayers().size()) : 0;
     const bool clipboardHasLayerData =
         ArtifactCore::ClipboardManager::instance().hasLayerData();
+    add(QStringLiteral("Place Work Cursor Here"),
+        [this, viewportPos]() {
+          if (controller_) {
+            controller_->placeWorkCursorAtViewportPos(viewportPos);
+          }
+        });
+    add(QStringLiteral("Center Work Cursor"),
+        [this, comp]() {
+          if (!controller_ || !comp) {
+            return;
+          }
+          const QSize size = comp->settings().compositionSize();
+          controller_->setWorkCursorCanvasPosition(
+              QPointF(size.width() * 0.5, size.height() * 0.5));
+        },
+        comp != nullptr);
+    add(QStringLiteral("Clear Work Cursor"),
+        [this]() {
+          if (controller_) {
+            controller_->clearWorkCursor();
+          }
+        },
+        controller_->isWorkCursorVisible());
+    addSeparator();
     const auto describeLayerMenuTitle = [&](const ArtifactAbstractLayerPtr &targetLayer) {
       if (!targetLayer) {
         return QStringLiteral("Layer");
@@ -2311,6 +2368,7 @@ protected:
   void hideEvent(QHideEvent *event) override {
     restoreTemporarySolo();
     restoreTemporaryPlayback();
+    clearNavigationFeedback();
     if (controller_) {
       controller_->stop();
     }
@@ -2320,6 +2378,7 @@ protected:
   void focusOutEvent(QFocusEvent *event) override {
     restoreTemporarySolo();
     restoreTemporaryPlayback();
+    clearNavigationFeedback();
     QWidget::focusOutEvent(event);
   }
 
@@ -2391,9 +2450,6 @@ protected:
   }
 
   void enterEvent(QEnterEvent *event) override {
-    if (activatedCallback_) {
-      activatedCallback_();
-    }
     QWidget::enterEvent(event);
   }
 
@@ -2444,6 +2500,11 @@ protected:
       }
     }
 
+    setNavigationFeedback(
+        modifiers.testFlag(Qt::ShiftModifier)
+            ? NavigationFeedbackMode::Pan
+            : NavigationFeedbackMode::Zoom,
+        true);
     event->accept();
   }
 
@@ -2512,6 +2573,7 @@ protected:
     if (event->button() == Qt::RightButton &&
         event->modifiers().testFlag(Qt::AltModifier)) {
       isAltZooming_ = true;
+      setNavigationFeedback(NavigationFeedbackMode::Zoom);
       lastMousePos_ = event->position();
       grabMouse();
       if (controller_) {
@@ -2522,9 +2584,33 @@ protected:
       return;
     }
 
+    if (event->button() == Qt::LeftButton &&
+        event->modifiers().testFlag(Qt::AltModifier) &&
+        !event->modifiers().testFlag(Qt::ControlModifier) && controller_) {
+      isAltOrbiting_ = true;
+      setNavigationFeedback(NavigationFeedbackMode::Orbit);
+      orbitDragStartPos_ = event->position();
+      orbitDragStartOrientation_ =
+          controller_->viewportOrientationQuaternion();
+      grabMouse();
+      controller_->notifyViewportInteractionActivity();
+      setCursor(Qt::SizeAllCursor);
+      event->accept();
+      return;
+    }
+
+    if (event->button() == Qt::LeftButton &&
+        event->modifiers().testFlag(Qt::ControlModifier) &&
+        event->modifiers().testFlag(Qt::AltModifier) && controller_) {
+      controller_->placeWorkCursorAtViewportPos(event->position());
+      event->accept();
+      return;
+    }
+
     if (event->button() == Qt::MiddleButton ||
         (event->button() == Qt::LeftButton && spacePressed_)) {
       isPanning_ = true;
+      setNavigationFeedback(NavigationFeedbackMode::Pan);
       isPanningWithMiddle_ = (event->button() == Qt::MiddleButton);
       if (spacePressed_) {
         didSpacePan_ = true;
@@ -2580,8 +2666,28 @@ protected:
     if (!isPanning_ && (event->buttons() & Qt::MiddleButton) && controller_) {
       qDebug() << "[VP] mouseMoveEvent recovering pan, buttons=" << event->buttons();
       isPanning_ = true;
+      setNavigationFeedback(NavigationFeedbackMode::Pan);
       isPanningWithMiddle_ = true;
       lastMousePos_ = event->position();
+    }
+    if (isAltOrbiting_ && controller_) {
+      const QPointF delta = event->position() - orbitDragStartPos_;
+      controller_->notifyViewportInteractionActivity();
+      const float yawDelta = static_cast<float>(delta.x()) * 0.55f;
+      const float pitchDelta = static_cast<float>(-delta.y()) * 0.55f;
+      const QQuaternion yaw =
+          QQuaternion::fromAxisAndAngle(0.0f, 1.0f, 0.0f, yawDelta);
+      const QVector3D localRight =
+          orbitDragStartOrientation_.rotatedVector(QVector3D(1.0f, 0.0f, 0.0f));
+      const QQuaternion pitch =
+          QQuaternion::fromAxisAndAngle(localRight, pitchDelta);
+      controller_->setViewportOrientationQuaternion(
+          (pitch * yaw * orbitDragStartOrientation_).normalized());
+      if (overlayWidget_) {
+        overlayWidget_->update();
+      }
+      event->accept();
+      return;
     }
     if (isAltZooming_ && controller_) {
       const QPointF delta = event->position() - lastMousePos_;
@@ -2644,6 +2750,7 @@ protected:
          (!isPanningWithMiddle_ && event->button() == Qt::LeftButton))) {
       isPanning_ = false;
       isPanningWithMiddle_ = false;
+      clearNavigationFeedback();
       if (controller_) {
         controller_->finishViewportInteraction();
       }
@@ -2659,8 +2766,21 @@ protected:
       return;
     }
 
+    if (isAltOrbiting_ && event->button() == Qt::LeftButton) {
+      isAltOrbiting_ = false;
+      clearNavigationFeedback();
+      releaseMouse();
+      if (controller_) {
+        controller_->finishViewportInteraction();
+      }
+      unsetCursor();
+      event->accept();
+      return;
+    }
+
     if (isAltZooming_ && event->button() == Qt::RightButton) {
       isAltZooming_ = false;
+      clearNavigationFeedback();
       releaseMouse();
       if (controller_) {
         controller_->finishViewportInteraction();
@@ -2688,7 +2808,8 @@ protected:
   }
 
   void leaveEvent(QEvent *event) override {
-    if (!isPanning_ && !(controller_ && controller_->gizmo() && controller_->gizmo()->isDragging())) {
+    if (!isPanning_ && !isAltOrbiting_ &&
+        !(controller_ && controller_->gizmo() && controller_->gizmo()->isDragging())) {
       unsetCursor();
     }
     QWidget::leaveEvent(event);
@@ -2720,6 +2841,7 @@ protected:
       }
       if (altDown) {
         isAltZooming_ = true;
+        setNavigationFeedback(NavigationFeedbackMode::Zoom);
         lastMousePos_ = logPos;
         SetCapture(msg->hwnd);
         setCursor(Qt::SizeVerCursor);
@@ -2742,12 +2864,26 @@ protected:
       }
       if (spacePressed_) {
         isPanning_ = true;
+        setNavigationFeedback(NavigationFeedbackMode::Pan);
         isPanningWithMiddle_ = false;
         lastMousePos_ = logPos;
         SetCapture(msg->hwnd);
         setCursor(Qt::ClosedHandCursor);
         if (controller_)
           controller_->notifyViewportInteractionActivity();
+      } else if (altDown && (GetKeyState(VK_CONTROL) & 0x8000) == 0 &&
+                 controller_) {
+        isAltOrbiting_ = true;
+        setNavigationFeedback(NavigationFeedbackMode::Orbit);
+        orbitDragStartPos_ = logPos;
+        orbitDragStartOrientation_ =
+            controller_->viewportOrientationQuaternion();
+        SetCapture(msg->hwnd);
+        setCursor(Qt::SizeAllCursor);
+        controller_->notifyViewportInteractionActivity();
+      } else if (altDown && (GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
+                 controller_) {
+        controller_->placeWorkCursorAtViewportPos(logPos);
       } else if (controller_) {
         SetCapture(msg->hwnd);
         QMouseEvent synth(QEvent::MouseButtonPress, logPos,
@@ -2764,8 +2900,15 @@ protected:
 
     case WM_LBUTTONUP:
       ReleaseCapture();
-      if (isPanning_ && !isPanningWithMiddle_) {
+      if (isAltOrbiting_) {
+        isAltOrbiting_ = false;
+        clearNavigationFeedback();
+        if (controller_)
+          controller_->finishViewportInteraction();
+        unsetCursor();
+      } else if (isPanning_ && !isPanningWithMiddle_) {
         isPanning_ = false;
+        clearNavigationFeedback();
         if (controller_)
           controller_->finishViewportInteraction();
         if (!spacePressed_)
@@ -2780,6 +2923,7 @@ protected:
 
     case WM_MBUTTONDOWN:
       isPanning_ = true;
+      setNavigationFeedback(NavigationFeedbackMode::Pan);
       isPanningWithMiddle_ = true;
       lastMousePos_ = logPos;
       SetCapture(msg->hwnd);
@@ -2792,6 +2936,7 @@ protected:
       if (isPanning_ && isPanningWithMiddle_) {
         isPanning_ = false;
         isPanningWithMiddle_ = false;
+        clearNavigationFeedback();
         ReleaseCapture();
         if (controller_)
           controller_->finishViewportInteraction();
@@ -2803,6 +2948,7 @@ protected:
     case WM_RBUTTONUP:
       if (isAltZooming_) {
         isAltZooming_ = false;
+        clearNavigationFeedback();
         ReleaseCapture();
         if (controller_) {
           controller_->finishViewportInteraction();
@@ -2815,6 +2961,24 @@ protected:
     case WM_MOUSEMOVE:
       if (controller_ && controller_->isPieMenuOverlayVisible()) {
         controller_->updatePieMenuOverlayMousePos(logPos);
+        return true;
+      }
+      if (isAltOrbiting_ && controller_) {
+        const QPointF delta = logPos - orbitDragStartPos_;
+        controller_->notifyViewportInteractionActivity();
+        const float yawDelta = static_cast<float>(delta.x()) * 0.55f;
+        const float pitchDelta = static_cast<float>(-delta.y()) * 0.55f;
+        const QQuaternion yaw =
+            QQuaternion::fromAxisAndAngle(0.0f, 1.0f, 0.0f, yawDelta);
+        const QVector3D localRight =
+            orbitDragStartOrientation_.rotatedVector(
+                QVector3D(1.0f, 0.0f, 0.0f));
+        const QQuaternion pitch =
+            QQuaternion::fromAxisAndAngle(localRight, pitchDelta);
+        controller_->setViewportOrientationQuaternion(
+            (pitch * yaw * orbitDragStartOrientation_).normalized());
+        if (overlayWidget_)
+          overlayWidget_->update();
         return true;
       }
       if (isAltZooming_ && controller_) {
@@ -3137,6 +3301,7 @@ protected:
         didSpacePan_ = false;
         if (!isPanningWithMiddle_) {
           isPanning_ = false;
+          clearNavigationFeedback();
         }
         if (controller_) {
           controller_->finishViewportInteraction();
@@ -3537,9 +3702,13 @@ protected:
   std::function<void()> resizeCallback_;
   bool isPanning_ = false;
   bool isPanningWithMiddle_ = false;
+  bool isAltOrbiting_ = false;
   bool isAltZooming_ = false;
   bool spacePressed_ = false;
   bool didSpacePan_ = false;
+  NavigationFeedbackMode navigationFeedbackMode_ =
+      NavigationFeedbackMode::None;
+  quint64 navigationFeedbackGeneration_ = 0;
   std::chrono::steady_clock::time_point lastMaskShortcutPressTime_{};
   bool lastMaskShortcutPressValid_ = false;
   bool pendingInitialFit_ = true;
@@ -3547,6 +3716,8 @@ protected:
   QSize pendingResizeSize_;
   bool resizePending_ = false;
   QPointF lastMousePos_;
+  QPointF orbitDragStartPos_;
+  QQuaternion orbitDragStartOrientation_;
   // D&D オーバーレイ
   bool dropOverlayVisible_ = false;
   QString dropCandidateLabel_;
@@ -3866,6 +4037,33 @@ private:
   QSize lastReadyPhysicalSize_;
   float lastReadyDpr_ = 0.0f;
 
+  void setNavigationFeedback(NavigationFeedbackMode mode,
+                             bool transient = false) {
+    navigationFeedbackMode_ = mode;
+    const quint64 generation = ++navigationFeedbackGeneration_;
+    if (overlayWidget_) {
+      overlayWidget_->update();
+    }
+    if (!transient) {
+      return;
+    }
+    QPointer<CompositionViewport> self(this);
+    QTimer::singleShot(650, this, [self, generation]() {
+      if (!self || self->navigationFeedbackGeneration_ != generation) {
+        return;
+      }
+      self->clearNavigationFeedback();
+    });
+  }
+
+  void clearNavigationFeedback() {
+    navigationFeedbackMode_ = NavigationFeedbackMode::None;
+    ++navigationFeedbackGeneration_;
+    if (overlayWidget_) {
+      overlayWidget_->update();
+    }
+  }
+
   void resetSwapChainReadinessTracking() {
     lastReadyHostWinId_ = 0;
     lastReadyPhysicalSize_ = QSize();
@@ -3916,6 +4114,35 @@ public:
     setAttribute(Qt::WA_NoSystemBackground);
     setAttribute(Qt::WA_TranslucentBackground);
     setAutoFillBackground(false);
+
+    navigationLabel_ = new QLabel(this);
+    navigationLabel_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    navigationLabel_->setAlignment(Qt::AlignCenter);
+    navigationLabel_->setContentsMargins(14, 4, 14, 4);
+    navigationLabel_->setAutoFillBackground(true);
+    QPalette navigationPalette = navigationLabel_->palette();
+    navigationPalette.setColor(QPalette::Window, QColor(12, 16, 22, 220));
+    navigationPalette.setColor(QPalette::WindowText,
+                               QColor(226, 241, 252, 236));
+    navigationLabel_->setPalette(navigationPalette);
+    QFont navigationFont = navigationLabel_->font();
+    navigationFont.setBold(true);
+    navigationLabel_->setFont(navigationFont);
+    navigationLabel_->hide();
+
+    previewLabel_ = new QLabel(this);
+    previewLabel_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    previewLabel_->setAlignment(Qt::AlignCenter);
+    previewLabel_->setContentsMargins(12, 4, 12, 4);
+    previewLabel_->setAutoFillBackground(true);
+    QPalette previewPalette = previewLabel_->palette();
+    previewPalette.setColor(QPalette::Window, QColor(56, 34, 12, 214));
+    previewPalette.setColor(QPalette::WindowText, QColor(255, 229, 197, 240));
+    previewLabel_->setPalette(previewPalette);
+    QFont previewFont = previewLabel_->font();
+    previewFont.setBold(true);
+    previewLabel_->setFont(previewFont);
+    previewLabel_->hide();
   }
 
   void syncToViewport() {
@@ -3929,11 +4156,110 @@ public:
     update();
   }
 
+  void setActivePaneIndicatorProvider(
+      std::function<std::optional<std::pair<QRect, QString>>()> provider) {
+    activePaneIndicatorProvider_ = std::move(provider);
+    update();
+  }
+
+  void setNavigationFeedbackProvider(std::function<QString()> provider) {
+    navigationFeedbackProvider_ = std::move(provider);
+    update();
+  }
+
+  void setPreviewBadgeProvider(std::function<QString()> provider) {
+    previewBadgeProvider_ = std::move(provider);
+    update();
+  }
+
 protected:
-  void paintEvent(QPaintEvent *) override { Q_UNUSED(viewport_); }
+  void paintEvent(QPaintEvent *) override {
+    Q_UNUSED(viewport_);
+    refreshNavigationFeedback();
+    refreshPreviewBadge();
+    if (!activePaneIndicatorProvider_) {
+      return;
+    }
+    const auto indicator = activePaneIndicatorProvider_();
+    if (!indicator.has_value()) {
+      return;
+    }
+
+    const QRect paneRect = indicator->first;
+    const QString label = indicator->second;
+    if (!paneRect.isValid()) {
+      return;
+    }
+
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    const QRect frameRect = paneRect.adjusted(1, 1, -1, -1);
+    p.setPen(QPen(QColor(110, 190, 255, 214), 2.0));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(frameRect, 8.0, 8.0);
+
+    if (!label.isEmpty()) {
+      QFont font = p.font();
+      font.setPointSizeF(std::max(8.5, font.pointSizeF() - 0.5));
+      font.setBold(true);
+      p.setFont(font);
+      const QFontMetrics fm(font);
+      const int chipW = std::max(84, fm.horizontalAdvance(label) + 24);
+      const QRect chipRect(frameRect.left() + 10, frameRect.top() + 10, chipW, 24);
+      p.setPen(Qt::NoPen);
+      p.setBrush(QColor(14, 18, 26, 212));
+      p.drawRoundedRect(chipRect, 12.0, 12.0);
+      p.setPen(QColor(226, 241, 252, 236));
+      p.drawText(chipRect, Qt::AlignCenter, label);
+    }
+  }
 
 private:
+  void refreshNavigationFeedback() {
+    if (!navigationLabel_) {
+      return;
+    }
+    const QString label =
+        navigationFeedbackProvider_ ? navigationFeedbackProvider_() : QString{};
+    if (label.isEmpty()) {
+      navigationLabel_->hide();
+      return;
+    }
+    navigationLabel_->setText(label);
+    navigationLabel_->adjustSize();
+    navigationLabel_->resize(std::max(76, navigationLabel_->width()), 28);
+    navigationLabel_->move(
+        std::max(12, (width() - navigationLabel_->width()) / 2),
+        std::max(12, height() - navigationLabel_->height() - 18));
+    navigationLabel_->show();
+    navigationLabel_->raise();
+  }
+
+  void refreshPreviewBadge() {
+    if (!previewLabel_) {
+      return;
+    }
+    const QString label =
+        previewBadgeProvider_ ? previewBadgeProvider_() : QString{};
+    if (label.isEmpty()) {
+      previewLabel_->hide();
+      return;
+    }
+    previewLabel_->setText(label);
+    previewLabel_->adjustSize();
+    previewLabel_->resize(std::max(84, previewLabel_->width()), 28);
+    previewLabel_->move(12, 12);
+    previewLabel_->show();
+    previewLabel_->raise();
+  }
+
   CompositionViewport *viewport_ = nullptr;
+  QLabel *navigationLabel_ = nullptr;
+  QLabel *previewLabel_ = nullptr;
+  std::function<std::optional<std::pair<QRect, QString>>()> activePaneIndicatorProvider_;
+  std::function<QString()> navigationFeedbackProvider_;
+  std::function<QString()> previewBadgeProvider_;
 };
 
 class ViewOrientationWidget final : public QWidget {
@@ -3952,10 +4278,19 @@ public:
     }
     hotspot_ = hotspot;
     navigator_.snapTo(hotspot_, true);
+    orientation_ = navigator_.currentOrientation();
     update();
   }
 
   ArtifactCore::ViewOrientationHotspot orientation() const { return hotspot_; }
+
+  void setOrientationQuaternion(const QQuaternion &orientation) {
+    orientation_ = orientation.normalized();
+    navigator_.setCurrentOrientation(orientation_);
+    hotspot_ = ArtifactCore::ViewOrientationNavigator::resolveHotspotFromDirection(
+        orientation_.rotatedVector(QVector3D(0.0f, 0.0f, 1.0f)));
+    update();
+  }
 
   void setEnabledState(bool enabled) {
     setEnabled(enabled);
@@ -3967,7 +4302,12 @@ public:
     activatedCallback_ = std::move(callback);
   }
 
-  QSize sizeHint() const override { return {132, 168}; }
+  void setOrbitChangedCallback(
+      std::function<void(const QQuaternion &)> callback) {
+    orbitChangedCallback_ = std::move(callback);
+  }
+
+  QSize sizeHint() const override { return {138, 164}; }
 
 protected:
   void paintEvent(QPaintEvent *) override {
@@ -3982,55 +4322,94 @@ protected:
     p.setPen(QColor(210, 225, 240, isEnabled() ? 168 : 80));
     p.drawText(QRectF(0.0, 8.0, width(), 18.0), Qt::AlignCenter,
                QStringLiteral("View"));
-
-    const float margin = 12.0f;
-    const float gap = 8.0f;
-    const float faceW = (width() - margin * 2.0f - gap) * 0.5f;
-    const float faceH = (height() - 44.0f - margin * 2.0f - gap * 2.0f) / 3.0f;
-    const float topY = 28.0f;
-    const float row2Y = topY + faceH + gap;
-    const float row3Y = row2Y + faceH + gap;
-    const float leftX = margin;
-    const float rightX = margin + faceW + gap;
-
-    const std::array<std::pair<ArtifactCore::ViewOrientationHotspot, QRectF>, 6>
-        faces = {{{ArtifactCore::ViewOrientationHotspot::Top,
-                   QRectF(leftX, topY, faceW, faceH)},
-                  {ArtifactCore::ViewOrientationHotspot::Back,
-                   QRectF(rightX, topY, faceW, faceH)},
-                  {ArtifactCore::ViewOrientationHotspot::Left,
-                   QRectF(leftX, row2Y, faceW, faceH)},
-                  {ArtifactCore::ViewOrientationHotspot::Front,
-                   QRectF(rightX, row2Y, faceW, faceH)},
-                  {ArtifactCore::ViewOrientationHotspot::Right,
-                   QRectF(leftX, row3Y, faceW, faceH)},
-                  {ArtifactCore::ViewOrientationHotspot::Bottom,
-                   QRectF(rightX, row3Y, faceW, faceH)}}};
-
-    for (const auto &[hotspot, faceRect] : faces) {
-      const bool selected = hotspot == hotspot_;
-      const bool hovered = hotspot == hoverHotspot_;
-      QColor fill(51, 72, 96, 190);
-      QColor border(125, 180, 230, 180);
+    const auto faces = projectedFaces();
+    for (const auto &face : faces) {
+      if (!face.visible) {
+        continue;
+      }
+      const bool selected = face.hotspot == hotspot_;
+      const bool hovered = face.hotspot == hoverHotspot_;
+      QColor fill = face.baseFill;
+      QColor border = face.baseBorder;
       QColor text(233, 242, 248, 220);
       if (!isEnabled()) {
-        fill.setAlpha(70);
+        fill.setAlpha(64);
         border.setAlpha(70);
         text.setAlpha(90);
       } else if (selected) {
-        fill = QColor(78, 126, 170, 220);
-        border = QColor(200, 232, 255, 230);
+        fill = fill.lighter(145);
+        fill.setAlpha(240);
+        border = QColor(214, 236, 255, 240);
       } else if (hovered) {
-        fill = QColor(68, 94, 125, 220);
-        border = QColor(222, 240, 255, 230);
+        fill = fill.lighter(128);
+        fill.setAlpha(228);
+        border = QColor(222, 240, 255, 228);
       }
 
-      p.setPen(QPen(border, selected ? 2.0 : 1.2));
+      p.setPen(QPen(border, selected ? 2.2 : 1.25));
       p.setBrush(fill);
-      p.drawRoundedRect(faceRect, 8.0, 8.0);
+      p.drawPolygon(face.polygon);
 
-      p.setPen(text);
-      p.drawText(faceRect, Qt::AlignCenter, hotspotLabel(hotspot));
+      QFont faceFont = p.font();
+      faceFont.setBold(true);
+      faceFont.setPointSizeF(20.0);
+      QPolygonF insetFace;
+      insetFace.reserve(4);
+      for (const auto &point : face.polygon) {
+        insetFace << face.labelRect.center() +
+                         (point - face.labelRect.center()) * 0.72;
+      }
+      const QPolygonF sourceQuad{
+          QPointF(0.0, 0.0), QPointF(100.0, 0.0),
+          QPointF(100.0, 100.0), QPointF(0.0, 100.0)};
+      QTransform faceTransform;
+      if (QTransform::quadToQuad(sourceQuad, insetFace, faceTransform)) {
+        p.save();
+        p.setClipRegion(QRegion(face.polygon.toPolygon()));
+        p.setWorldTransform(faceTransform, true);
+        p.setFont(faceFont);
+        p.setPen(text);
+        p.drawText(QRectF(4.0, 20.0, 92.0, 60.0), Qt::AlignCenter,
+                   hotspotLabel(face.hotspot, false));
+        p.restore();
+      }
+    }
+
+    const auto snapTargets = projectedSnapTargets();
+    for (const auto &target : snapTargets) {
+      if (!target.visible) {
+        continue;
+      }
+      const bool selected = target.hotspot == hotspot_;
+      const bool hovered = target.hotspot == hoverHotspot_;
+      QColor fill(205, 228, 246, selected ? 245 : hovered ? 225 : 180);
+      QColor border(24, 32, 46, selected ? 245 : 170);
+      if (!isEnabled()) {
+        fill.setAlpha(72);
+        border.setAlpha(72);
+      }
+      QPen edgePen(fill, selected ? target.thickness + 2.0
+                                 : hovered ? target.thickness + 1.0
+                                           : target.thickness);
+      edgePen.setCapStyle(Qt::RoundCap);
+      p.setPen(edgePen);
+      p.setBrush(Qt::NoBrush);
+      p.drawLine(target.start, target.end);
+      QPen edgeInsetPen(border, selected ? 1.8 : 1.0);
+      edgeInsetPen.setCapStyle(Qt::RoundCap);
+      p.setPen(edgeInsetPen);
+      p.drawLine(target.start, target.end);
+      if (selected || hovered) {
+        QFont snapFont = p.font();
+        snapFont.setBold(true);
+        snapFont.setPointSizeF(std::max(7.0, snapFont.pointSizeF() - 1.5));
+        p.setFont(snapFont);
+        p.setPen(QColor(236, 244, 250, 235));
+        const QRectF textRect(target.center.x() - 18.0, target.center.y() - 22.0,
+                              36.0, 12.0);
+        p.drawText(textRect, Qt::AlignCenter,
+                   hotspotLabel(target.hotspot, true));
+      }
     }
 
     p.setPen(QColor(255, 255, 255, 35));
@@ -4040,6 +4419,31 @@ protected:
   void mouseMoveEvent(QMouseEvent *event) override {
     if (!isEnabled()) {
       QWidget::mouseMoveEvent(event);
+      return;
+    }
+    if (pressArmed_ && !dragActive_ &&
+        (event->position() - dragStartPos_).manhattanLength() >=
+            QApplication::startDragDistance()) {
+      dragActive_ = true;
+    }
+    if (dragActive_) {
+      const QPointF delta = event->position() - dragStartPos_;
+      const float yawDelta = static_cast<float>(delta.x()) * 0.55f;
+      const float pitchDelta = static_cast<float>(-delta.y()) * 0.55f;
+      const QQuaternion yaw =
+          QQuaternion::fromAxisAndAngle(0.0f, 1.0f, 0.0f, yawDelta);
+      const QVector3D localRight =
+          dragStartOrientation_.rotatedVector(QVector3D(1.0f, 0.0f, 0.0f));
+      const QQuaternion pitch =
+          QQuaternion::fromAxisAndAngle(localRight, pitchDelta);
+      orientation_ = (pitch * yaw * dragStartOrientation_).normalized();
+      navigator_.setCurrentOrientation(orientation_);
+      hoverHotspot_ = hotspotAt(event->position());
+      if (orbitChangedCallback_) {
+        orbitChangedCallback_(orientation_);
+      }
+      update();
+      event->accept();
       return;
     }
     hoverHotspot_ = hotspotAt(event->position());
@@ -4058,22 +4462,72 @@ protected:
       QWidget::mousePressEvent(event);
       return;
     }
-    const auto hotspot = hotspotAt(event->position());
-    if (hotspot == ArtifactCore::ViewOrientationHotspot::None) {
+    pressedHotspot_ = hotspotAt(event->position());
+    if (pressedHotspot_ == ArtifactCore::ViewOrientationHotspot::None) {
       QWidget::mousePressEvent(event);
       return;
     }
-    hotspot_ = hotspot;
-    navigator_.snapTo(hotspot_, true);
-    update();
-    if (activatedCallback_) {
-      activatedCallback_(hotspot_);
-    }
+    pressArmed_ = true;
+    dragActive_ = false;
+    dragStartPos_ = event->position();
+    dragStartOrientation_ = orientation_;
     event->accept();
   }
 
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    if (!isEnabled() || event->button() != Qt::LeftButton) {
+      QWidget::mouseReleaseEvent(event);
+      return;
+    }
+    const auto releaseHotspot = hotspotAt(event->position());
+    if (dragActive_) {
+      dragActive_ = false;
+      pressArmed_ = false;
+      event->accept();
+      return;
+    }
+    if (pressArmed_ && pressedHotspot_ != ArtifactCore::ViewOrientationHotspot::None &&
+        pressedHotspot_ == releaseHotspot) {
+      hotspot_ = pressedHotspot_;
+      navigator_.snapTo(hotspot_, true);
+      orientation_ = navigator_.currentOrientation();
+      if (activatedCallback_) {
+        activatedCallback_(hotspot_);
+      }
+      update();
+      event->accept();
+      pressArmed_ = false;
+      return;
+    }
+    pressArmed_ = false;
+    QWidget::mouseReleaseEvent(event);
+  }
+
 private:
-  static QString hotspotLabel(ArtifactCore::ViewOrientationHotspot hotspot) {
+  struct CubeFaceProjection {
+    ArtifactCore::ViewOrientationHotspot hotspot =
+        ArtifactCore::ViewOrientationHotspot::None;
+    QPolygonF polygon;
+    QRectF labelRect;
+    QColor baseFill;
+    QColor baseBorder;
+    bool visible = false;
+    float depth = 0.0f;
+  };
+
+  struct CubeSnapTarget {
+    ArtifactCore::ViewOrientationHotspot hotspot =
+        ArtifactCore::ViewOrientationHotspot::None;
+    QPointF start;
+    QPointF end;
+    QPointF center;
+    qreal thickness = 0.0;
+    bool visible = false;
+    float depth = 0.0f;
+  };
+
+  static QString hotspotLabel(ArtifactCore::ViewOrientationHotspot hotspot,
+                              bool compact = false) {
     switch (hotspot) {
     case ArtifactCore::ViewOrientationHotspot::Top:
       return QStringLiteral("Top");
@@ -4087,52 +4541,231 @@ private:
       return QStringLiteral("Front");
     case ArtifactCore::ViewOrientationHotspot::Back:
       return QStringLiteral("Back");
+    case ArtifactCore::ViewOrientationHotspot::FrontTop:
+      return compact ? QStringLiteral("F/T") : QStringLiteral("Front Top");
+    case ArtifactCore::ViewOrientationHotspot::FrontBottom:
+      return compact ? QStringLiteral("F/B") : QStringLiteral("Front Bottom");
+    case ArtifactCore::ViewOrientationHotspot::FrontLeft:
+      return compact ? QStringLiteral("F/L") : QStringLiteral("Front Left");
+    case ArtifactCore::ViewOrientationHotspot::FrontRight:
+      return compact ? QStringLiteral("F/R") : QStringLiteral("Front Right");
+    case ArtifactCore::ViewOrientationHotspot::BackTop:
+      return compact ? QStringLiteral("B/T") : QStringLiteral("Back Top");
+    case ArtifactCore::ViewOrientationHotspot::BackBottom:
+      return compact ? QStringLiteral("B/B") : QStringLiteral("Back Bottom");
+    case ArtifactCore::ViewOrientationHotspot::BackLeft:
+      return compact ? QStringLiteral("B/L") : QStringLiteral("Back Left");
+    case ArtifactCore::ViewOrientationHotspot::BackRight:
+      return compact ? QStringLiteral("B/R") : QStringLiteral("Back Right");
+    case ArtifactCore::ViewOrientationHotspot::LeftTop:
+      return compact ? QStringLiteral("L/T") : QStringLiteral("Left Top");
+    case ArtifactCore::ViewOrientationHotspot::LeftBottom:
+      return compact ? QStringLiteral("L/B") : QStringLiteral("Left Bottom");
+    case ArtifactCore::ViewOrientationHotspot::RightTop:
+      return compact ? QStringLiteral("R/T") : QStringLiteral("Right Top");
+    case ArtifactCore::ViewOrientationHotspot::RightBottom:
+      return compact ? QStringLiteral("R/B") : QStringLiteral("Right Bottom");
     default:
       return QStringLiteral("-");
     }
   }
 
+  std::array<CubeFaceProjection, 6> projectedFaces() const {
+    const QRectF bounds = rect().adjusted(16.0, 28.0, -16.0, -16.0);
+    const QPointF center(bounds.center().x(), bounds.center().y() + 4.0);
+    const float cubeRadius =
+        static_cast<float>(std::max(24.0, std::min(bounds.width(), bounds.height()) * 0.28));
+    const auto rotate = [this](float x, float y, float z) {
+      return orientation_.rotatedVector(QVector3D(x, y, z));
+    };
+    const auto project = [center, cubeRadius](const QVector3D &v) {
+      const float perspective = 1.0f + v.z() * 0.22f;
+      return QPointF(center.x() + v.x() * cubeRadius * perspective,
+                     center.y() - v.y() * cubeRadius * perspective);
+    };
+    const std::array<QVector3D, 8> vertices = {{
+        rotate(-1.0f, 1.0f, 1.0f),  rotate(1.0f, 1.0f, 1.0f),
+        rotate(1.0f, -1.0f, 1.0f),  rotate(-1.0f, -1.0f, 1.0f),
+        rotate(-1.0f, 1.0f, -1.0f), rotate(1.0f, 1.0f, -1.0f),
+        rotate(1.0f, -1.0f, -1.0f), rotate(-1.0f, -1.0f, -1.0f),
+    }};
+    const std::array<QPointF, 8> projected = {{
+        project(vertices[0]), project(vertices[1]), project(vertices[2]),
+        project(vertices[3]), project(vertices[4]), project(vertices[5]),
+        project(vertices[6]), project(vertices[7]),
+    }};
+    struct FaceDef {
+      ArtifactCore::ViewOrientationHotspot hotspot;
+      std::array<int, 4> indices;
+      QVector3D normal;
+      QColor fill;
+      QColor border;
+    };
+    const std::array<FaceDef, 6> defs = {{
+        {ArtifactCore::ViewOrientationHotspot::Front, {0, 1, 2, 3},
+         QVector3D(0.0f, 0.0f, 1.0f), QColor(76, 120, 168, 210),
+         QColor(132, 188, 236, 210)},
+        {ArtifactCore::ViewOrientationHotspot::Back, {5, 4, 7, 6},
+         QVector3D(0.0f, 0.0f, -1.0f), QColor(42, 56, 78, 190),
+         QColor(96, 124, 156, 180)},
+        {ArtifactCore::ViewOrientationHotspot::Left, {4, 0, 3, 7},
+         QVector3D(-1.0f, 0.0f, 0.0f), QColor(58, 86, 118, 205),
+         QColor(118, 166, 214, 190)},
+        {ArtifactCore::ViewOrientationHotspot::Right, {1, 5, 6, 2},
+         QVector3D(1.0f, 0.0f, 0.0f), QColor(64, 96, 132, 205),
+         QColor(125, 176, 226, 196)},
+        {ArtifactCore::ViewOrientationHotspot::Top, {4, 5, 1, 0},
+         QVector3D(0.0f, 1.0f, 0.0f), QColor(88, 128, 168, 220),
+         QColor(148, 204, 248, 205)},
+        {ArtifactCore::ViewOrientationHotspot::Bottom, {3, 2, 6, 7},
+         QVector3D(0.0f, -1.0f, 0.0f), QColor(36, 48, 66, 185),
+         QColor(90, 112, 142, 170)},
+    }};
+
+    std::array<CubeFaceProjection, 6> faces{};
+    for (int i = 0; i < static_cast<int>(defs.size()); ++i) {
+      const auto &def = defs[i];
+      auto &face = faces[i];
+      face.hotspot = def.hotspot;
+      face.baseFill = def.fill;
+      face.baseBorder = def.border;
+      const QVector3D rotatedNormal = orientation_.rotatedVector(def.normal);
+      face.visible = rotatedNormal.z() > 0.0f;
+      face.depth = rotatedNormal.z();
+      QPolygonF polygon;
+      polygon.reserve(4);
+      QRectF labelRect;
+      QPointF centroid(0.0, 0.0);
+      for (const int index : def.indices) {
+        polygon << projected[index];
+        centroid += projected[index];
+      }
+      centroid /= 4.0;
+      face.polygon = polygon;
+      labelRect = QRectF(centroid.x() - 22.0, centroid.y() - 10.0, 44.0, 20.0);
+      face.labelRect = labelRect;
+    }
+    std::sort(faces.begin(), faces.end(),
+              [](const CubeFaceProjection &a, const CubeFaceProjection &b) {
+                return a.depth < b.depth;
+              });
+    return faces;
+  }
+
+  std::vector<CubeSnapTarget> projectedSnapTargets() const {
+    const QRectF bounds = rect().adjusted(16.0, 28.0, -16.0, -16.0);
+    const QPointF center(bounds.center().x(), bounds.center().y() + 4.0);
+    const float cubeRadius = static_cast<float>(
+        std::max(24.0, std::min(bounds.width(), bounds.height()) * 0.28));
+    const auto project = [center, cubeRadius](const QVector3D &v) {
+      const float perspective = 1.0f + v.z() * 0.22f;
+      return QPointF(center.x() + v.x() * cubeRadius * perspective,
+                     center.y() - v.y() * cubeRadius * perspective);
+    };
+    struct EdgeDef {
+      ArtifactCore::ViewOrientationHotspot hotspot;
+      QVector3D start;
+      QVector3D end;
+    };
+    const std::array<EdgeDef, 12> edges = {{
+        {ArtifactCore::ViewOrientationHotspot::FrontTop,
+         {-1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::FrontBottom,
+         {-1.0f, -1.0f, 1.0f}, {1.0f, -1.0f, 1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::FrontLeft,
+         {-1.0f, 1.0f, 1.0f}, {-1.0f, -1.0f, 1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::FrontRight,
+         {1.0f, 1.0f, 1.0f}, {1.0f, -1.0f, 1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::BackTop,
+         {-1.0f, 1.0f, -1.0f}, {1.0f, 1.0f, -1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::BackBottom,
+         {-1.0f, -1.0f, -1.0f}, {1.0f, -1.0f, -1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::BackLeft,
+         {-1.0f, 1.0f, -1.0f}, {-1.0f, -1.0f, -1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::BackRight,
+         {1.0f, 1.0f, -1.0f}, {1.0f, -1.0f, -1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::LeftTop,
+         {-1.0f, 1.0f, -1.0f}, {-1.0f, 1.0f, 1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::LeftBottom,
+         {-1.0f, -1.0f, -1.0f}, {-1.0f, -1.0f, 1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::RightTop,
+         {1.0f, 1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::RightBottom,
+         {1.0f, -1.0f, -1.0f}, {1.0f, -1.0f, 1.0f}},
+    }};
+
+    std::vector<CubeSnapTarget> targets;
+    targets.reserve(edges.size());
+    for (const auto &edge : edges) {
+      const QVector3D rotatedStart = orientation_.rotatedVector(edge.start);
+      const QVector3D rotatedEnd = orientation_.rotatedVector(edge.end);
+      const QVector3D rotatedCenter = (rotatedStart + rotatedEnd) * 0.5f;
+      CubeSnapTarget target;
+      target.hotspot = edge.hotspot;
+      target.start = project(rotatedStart);
+      target.end = project(rotatedEnd);
+      target.center = project(rotatedCenter);
+      target.thickness = 6.0;
+      target.depth = rotatedCenter.z();
+      target.visible = rotatedCenter.z() > 0.02f;
+      targets.push_back(target);
+    }
+
+    std::sort(targets.begin(), targets.end(),
+              [](const CubeSnapTarget &a, const CubeSnapTarget &b) {
+                return a.depth < b.depth;
+              });
+    return targets;
+  }
+
   ArtifactCore::ViewOrientationHotspot hotspotAt(const QPointF &pos) const {
-    const QRectF panel = rect().adjusted(1, 1, -1, -1);
-    const float margin = 12.0f;
-    const float gap = 8.0f;
-    const float faceW = (panel.width() - margin * 2.0f - gap) * 0.5f;
-    const float faceH =
-        (panel.height() - 44.0f - margin * 2.0f - gap * 2.0f) / 3.0f;
-    const float topY = 28.0f;
-    const float row2Y = topY + faceH + gap;
-    const float row3Y = row2Y + faceH + gap;
-    const float leftX = margin;
-    const float rightX = margin + faceW + gap;
-
-    const std::array<std::pair<ArtifactCore::ViewOrientationHotspot, QRectF>, 6>
-        faces = {{{ArtifactCore::ViewOrientationHotspot::Top,
-                   QRectF(leftX, topY, faceW, faceH)},
-                  {ArtifactCore::ViewOrientationHotspot::Back,
-                   QRectF(rightX, topY, faceW, faceH)},
-                  {ArtifactCore::ViewOrientationHotspot::Left,
-                   QRectF(leftX, row2Y, faceW, faceH)},
-                  {ArtifactCore::ViewOrientationHotspot::Front,
-                   QRectF(rightX, row2Y, faceW, faceH)},
-                  {ArtifactCore::ViewOrientationHotspot::Right,
-                   QRectF(leftX, row3Y, faceW, faceH)},
-                  {ArtifactCore::ViewOrientationHotspot::Bottom,
-                   QRectF(rightX, row3Y, faceW, faceH)}}};
-
-    for (const auto &[hotspot, faceRect] : faces) {
-      if (faceRect.contains(pos)) {
-        return hotspot;
+    const auto snapTargets = projectedSnapTargets();
+    for (auto it = snapTargets.rbegin(); it != snapTargets.rend(); ++it) {
+      if (!it->visible) {
+        continue;
+      }
+      const QPointF edge = it->end - it->start;
+      const qreal edgeLengthSquared =
+          edge.x() * edge.x() + edge.y() * edge.y();
+      if (edgeLengthSquared <= 0.0) {
+        continue;
+      }
+      const QPointF fromStart = pos - it->start;
+      const qreal t = std::clamp(
+          (fromStart.x() * edge.x() + fromStart.y() * edge.y()) /
+              edgeLengthSquared,
+          0.0, 1.0);
+      const QPointF nearest = it->start + edge * t;
+      const QPointF delta = pos - nearest;
+      const qreal hitRadius = it->thickness * 0.5 + 3.0;
+      if ((delta.x() * delta.x()) + (delta.y() * delta.y()) <=
+          hitRadius * hitRadius) {
+        return it->hotspot;
+      }
+    }
+    auto faces = projectedFaces();
+    for (auto it = faces.rbegin(); it != faces.rend(); ++it) {
+      if (it->visible && it->polygon.containsPoint(pos, Qt::OddEvenFill)) {
+        return it->hotspot;
       }
     }
     return ArtifactCore::ViewOrientationHotspot::None;
   }
 
   ArtifactCore::ViewOrientationNavigator navigator_;
+  QQuaternion orientation_;
   ArtifactCore::ViewOrientationHotspot hotspot_ =
       ArtifactCore::ViewOrientationHotspot::Front;
   ArtifactCore::ViewOrientationHotspot hoverHotspot_ =
       ArtifactCore::ViewOrientationHotspot::None;
   std::function<void(ArtifactCore::ViewOrientationHotspot)> activatedCallback_;
+  std::function<void(const QQuaternion &)> orbitChangedCallback_;
+  ArtifactCore::ViewOrientationHotspot pressedHotspot_ =
+      ArtifactCore::ViewOrientationHotspot::None;
+  QPointF dragStartPos_;
+  QQuaternion dragStartOrientation_;
+  bool pressArmed_ = false;
+  bool dragActive_ = false;
 };
 } // namespace
 
@@ -4187,7 +4820,8 @@ public:
       {3, QRect(), nullptr, nullptr, false},
   }};
   CompositionOverlayWidget *overlayView_ = nullptr;
-  EmptyCompositionOverlayWidget *emptyStateOverlay_ = nullptr;
+  std::array<EmptyCompositionOverlayWidget *, kViewportPaneCount>
+      emptyStateOverlays_{{nullptr, nullptr, nullptr, nullptr}};
   ViewOrientationWidget *viewOrientationWidget_ = nullptr;
   CompositionRenderController *renderController_ = nullptr;
   ViewportLayoutButton *viewportLayoutButton_ = nullptr;
@@ -4211,12 +4845,32 @@ public:
   QAction *compareAction_ = nullptr;
   QAction *motionPathAction_ = nullptr;
   QAction *effectHitboxAction_ = nullptr;
+  QAction *layerChromeAction_ = nullptr;
+  QAction *lockViewAction_ = nullptr;
+  QAction *autoFourUpAction_ = nullptr;
   QAction *densityHeatmapAction_ = nullptr;
+  QAction *gizmoVisibleAction_ = nullptr;
+  QAction *xRayAction_ = nullptr;
+  QAction *isolationAction_ = nullptr;
+  QToolButton *shadingButton_ = nullptr;
+  QToolButton *viewPresetButton_ = nullptr;
+  QAction *renderSuspendAction_ = nullptr;
+  QAction *previewOrbitAction_ = nullptr;
   QToolButton *toolModeButton_ = nullptr;
   QToolButton *gizmoModeButton_ = nullptr;
   QToolButton *pivotModeButton_ = nullptr;
   QAction *immersiveAction_ = nullptr;
   bool immersiveMode_ = false;
+  struct PreviewOrbitSnapshot {
+    QQuaternion orientation;
+    QPointF pan;
+    float zoom = 1.0f;
+  };
+  QHash<CompositionRenderController *, PreviewOrbitSnapshot>
+      previewOrbitSnapshots_;
+  bool previewOrbitMode_ = false;
+  ViewportChannelDisplayMode viewportChannelDisplayMode_ =
+      ViewportChannelDisplayMode::Color;
 
   PaneState *pane(int paneId) {
     if (paneId < 0 || paneId >= kViewportPaneCount) {
@@ -4263,6 +4917,9 @@ public:
     }
     activePaneId_ = clampedPaneId;
     syncOverlayGeometry(owner);
+    if (overlayView_) {
+      overlayView_->update();
+    }
   }
 
   int activeViewportPaneCount() const {
@@ -4287,6 +4944,49 @@ public:
       return QStringLiteral("4-Up");
     }
     return QStringLiteral("1 View");
+  }
+
+  QString activePaneViewLabel() const {
+    auto *controller = activeRenderController();
+    if (!controller) {
+      return QStringLiteral("Active View");
+    }
+    switch (controller->viewportOrientation()) {
+    case ArtifactCore::ViewOrientationHotspot::Top:
+      return QStringLiteral("Active: Top");
+    case ArtifactCore::ViewOrientationHotspot::Bottom:
+      return QStringLiteral("Active: Bottom");
+    case ArtifactCore::ViewOrientationHotspot::Left:
+      return QStringLiteral("Active: Left");
+    case ArtifactCore::ViewOrientationHotspot::Right:
+      return QStringLiteral("Active: Right");
+    case ArtifactCore::ViewOrientationHotspot::Back:
+      return QStringLiteral("Active: Back");
+    case ArtifactCore::ViewOrientationHotspot::Front:
+      return QStringLiteral("Active: Front");
+    case ArtifactCore::ViewOrientationHotspot::None:
+      break;
+    }
+    return QStringLiteral("Active View");
+  }
+
+  std::optional<std::pair<QRect, QString>> activePaneIndicator() const {
+    if (activeViewportPaneCount() <= 1) {
+      return std::nullopt;
+    }
+    const auto *paneState = activePane();
+    if (!paneState || !paneState->view || !paneState->view->isVisible()) {
+      return std::nullopt;
+    }
+    return std::make_pair(QRect(QPoint(0, 0), paneState->view->size()),
+                          activePaneViewLabel());
+  }
+
+  QString activeNavigationFeedbackLabel() const {
+    if (const auto *viewport = activeViewport()) {
+      return viewport->navigationFeedbackLabel();
+    }
+    return {};
   }
 
   ViewportLayoutMode nextViewportLayoutMode() const {
@@ -4423,6 +5123,9 @@ public:
   QComboBox *resolutionCombo_ = nullptr;
   QToolButton *fastPreviewBtn_ = nullptr;
   QToolButton *displayOptionsBtn_ = nullptr;
+  bool layerChromeVisible_ = true;
+  bool lockViewToSelection_ = false;
+  bool autoAssignFourUpViews_ = true;
 
   bool selectionSyncQueued_ = false;
   bool toolLabelSyncQueued_ = false;
@@ -4505,6 +5208,8 @@ public:
                                          ? current->id().toString()
                                          : current->layerName().trimmed())
                                   : QStringLiteral("<none>");
+    const QString viewName = activePaneViewLabel();
+    const QString channelName = viewportChannelDisplayLabel();
     auto *playback = ArtifactPlaybackService::instance();
     const QString playState =
         playback && playback->isPlaying() ? QStringLiteral("Playing")
@@ -4513,20 +5218,41 @@ public:
         renderController_ && renderController_->isRunning()
             ? QStringLiteral("Render hot")
             : QStringLiteral("Render paused");
+    const QString gizmoState =
+        viewportToggleLabel(QStringLiteral("Gizmo"),
+                            !gizmoVisibleAction_ ||
+                                gizmoVisibleAction_->isChecked());
+    const QString xRayState =
+        viewportToggleLabel(QStringLiteral("X-Ray"),
+                            xRayAction_ && xRayAction_->isChecked());
+    const QString isolationState =
+        viewportToggleLabel(QStringLiteral("Isolate"),
+                            isolationAction_ && isolationAction_->isChecked());
+    const QString previewState =
+        viewportToggleLabel(QStringLiteral("Preview"), previewOrbitMode_);
+    const QString renderSuspendState =
+        viewportToggleLabel(QStringLiteral("Hold"),
+                            renderSuspendAction_ &&
+                                renderSuspendAction_->isChecked());
+    const QString lockViewState =
+        viewportToggleLabel(QStringLiteral("Lock"), lockViewToSelection_);
 
     chromeTitleLabel_->setText(QStringLiteral("Composition: %1").arg(compName));
     chromeDetailLabel_->setText(
-        QStringLiteral("Layer: %1  |  Selection: %2  |  %3")
+        QStringLiteral("Layer: %1  |  Selection: %2  |  View: %3  |  Channel: %4")
             .arg(layerName)
             .arg(selectedCount)
-            .arg(playState));
-    chromeMetaLabel_->setText(QStringLiteral("%1  |  %2")
+            .arg(viewName)
+            .arg(channelName));
+    chromeMetaLabel_->setText(QStringLiteral("%1  |  %2  |  %3  |  %4  |  %5  |  %6  |  %7  |  %8")
                                   .arg(controllerState)
-                                  .arg(renderController_ &&
-                                               renderController_->selectedLayerId()
-                                                   .isNil()
-                                           ? QStringLiteral("No focus")
-                                           : QStringLiteral("Focused")));
+                                  .arg(playState)
+                                  .arg(gizmoState)
+                                  .arg(xRayState)
+                                  .arg(isolationState)
+                                  .arg(previewState)
+                                  .arg(renderSuspendState)
+                                  .arg(lockViewState));
   }
 
   void openCreateCompositionDialog(ArtifactCompositionEditor *owner) {
@@ -4900,38 +5626,55 @@ public:
                           : ArtifactCompositionPtr{};
     const bool hasComposition = static_cast<bool>(comp);
     const bool hasLayers = comp && !comp->allLayerRef().isEmpty();
+    syncToolbarVisibility(hasComposition, hasLayers);
     CompositionViewport *overlayViewport = activeViewport();
     if (!overlayViewport) {
       overlayViewport = compositionView_;
     }
-    QRect viewportGeometry;
-    if (const auto *paneState = activePane(); paneState && !paneState->rect.isEmpty()) {
-      viewportGeometry = paneState->rect;
-    } else {
-      const QPoint viewportTopLeft = overlayViewport->mapTo(owner, QPoint(0, 0));
-      viewportGeometry = QRect(viewportTopLeft, overlayViewport->size());
-    }
+    const QPoint viewportTopLeft =
+        overlayViewport->mapTo(owner, QPoint(0, 0));
+    const QRect viewportGeometry(viewportTopLeft, overlayViewport->size());
 
     if (overlayView_) {
       overlayView_->setGeometry(viewportGeometry);
-      if (overlayView_->isVisible()) {
-        overlayView_->raise();
-      }
+      // A QWidget layered over the native swap-chain surface can occlude the
+      // viewport. Keep this legacy full-surface overlay dormant.
+      overlayView_->hide();
     }
 
-    if (emptyStateOverlay_) {
-      emptyStateOverlay_->setGeometry(viewportGeometry);
-      emptyStateOverlay_->setCompositionAvailable(hasComposition);
-      emptyStateOverlay_->setVisible(!hasComposition || !hasLayers);
-      if (emptyStateOverlay_->isVisible()) {
-        emptyStateOverlay_->raise();
+    const bool showEmptyState = !hasComposition || !hasLayers;
+    for (int i = 0; i < kViewportPaneCount; ++i) {
+      auto *emptyStateOverlay = emptyStateOverlays_[i];
+      const auto *paneState = pane(i);
+      const bool showInPane =
+          showEmptyState && i < activeViewportPaneCount() && paneState &&
+          paneState->view && paneState->view->isVisible();
+      if (!emptyStateOverlay) {
+        continue;
+      }
+      if (showInPane) {
+        const QPoint paneTopLeft =
+            paneState->view->mapTo(owner, QPoint(0, 0));
+        emptyStateOverlay->setGeometry(
+            QRect(paneTopLeft, paneState->view->size()));
+        emptyStateOverlay->setCompositionAvailable(hasComposition);
+        emptyStateOverlay->show();
+        emptyStateOverlay->raise();
+      } else {
+        emptyStateOverlay->hide();
       }
     }
     if (viewOrientationWidget_) {
       const QSize sz = viewOrientationWidget_->sizeHint();
-      const int x = std::max(12, overlayViewport->width() - sz.width() - 12);
-      const int y = 12;
+      const int x =
+          viewportGeometry.left() +
+          std::max(12, overlayViewport->width() - sz.width() - 12);
+      const int y = viewportGeometry.top() + 12;
       viewOrientationWidget_->setGeometry(x, y, sz.width(), sz.height());
+      if (auto *controller = activeRenderController()) {
+        viewOrientationWidget_->setOrientationQuaternion(
+            controller->viewportOrientationQuaternion());
+      }
       const bool showNavigator = hasComposition;
       viewOrientationWidget_->setVisible(showNavigator);
       viewOrientationWidget_->setEnabledState(showNavigator);
@@ -4947,6 +5690,311 @@ public:
         profilerOverlay_->raise();
       }
       Q_UNUSED(ps);
+    }
+  }
+
+  QString viewportChannelDisplayLabel() const {
+    QStringList tags;
+    switch (viewportChannelDisplayMode_) {
+    case ViewportChannelDisplayMode::Color:
+      break;
+    case ViewportChannelDisplayMode::Alpha:
+      tags << QStringLiteral("Alpha");
+      break;
+    case ViewportChannelDisplayMode::Red:
+      tags << QStringLiteral("R");
+      break;
+    case ViewportChannelDisplayMode::Green:
+      tags << QStringLiteral("G");
+      break;
+    case ViewportChannelDisplayMode::Blue:
+      tags << QStringLiteral("B");
+      break;
+    case ViewportChannelDisplayMode::Depth:
+      tags << QStringLiteral("Depth+");
+      break;
+    case ViewportChannelDisplayMode::Emission:
+      tags << QStringLiteral("Emission");
+      break;
+    case ViewportChannelDisplayMode::ObjectId:
+      tags << QStringLiteral("Object ID+");
+      break;
+    case ViewportChannelDisplayMode::MaterialId:
+      tags << QStringLiteral("Material ID+");
+      break;
+    case ViewportChannelDisplayMode::Albedo:
+      tags << QStringLiteral("Albedo");
+      break;
+    case ViewportChannelDisplayMode::AlbedoR:
+      tags << QStringLiteral("Alb R");
+      break;
+    case ViewportChannelDisplayMode::AlbedoG:
+      tags << QStringLiteral("Alb G");
+      break;
+    case ViewportChannelDisplayMode::AlbedoB:
+      tags << QStringLiteral("Alb B");
+      break;
+    case ViewportChannelDisplayMode::Normal:
+      tags << QStringLiteral("Normal");
+      break;
+    case ViewportChannelDisplayMode::NormalX:
+      tags << QStringLiteral("Nrm X");
+      break;
+    case ViewportChannelDisplayMode::NormalY:
+      tags << QStringLiteral("Nrm Y");
+      break;
+    case ViewportChannelDisplayMode::NormalZ:
+      tags << QStringLiteral("Nrm Z");
+      break;
+    case ViewportChannelDisplayMode::Velocity:
+      tags << QStringLiteral("Velocity");
+      break;
+    case ViewportChannelDisplayMode::VelocityX:
+      tags << QStringLiteral("Vel X");
+      break;
+    case ViewportChannelDisplayMode::VelocityY:
+      tags << QStringLiteral("Vel Y");
+      break;
+    }
+    if (xRayAction_ && xRayAction_->isChecked()) {
+      tags << QStringLiteral("X-Ray");
+    }
+    if (isolationAction_ && isolationAction_->isChecked()) {
+      tags << QStringLiteral("Isolate");
+    }
+    if (gizmoVisibleAction_ && !gizmoVisibleAction_->isChecked()) {
+      tags << QStringLiteral("No Gizmo");
+    }
+    return tags.isEmpty()
+               ? QStringLiteral("Shading")
+               : QStringLiteral("Shading: %1").arg(tags.join(QStringLiteral(" + ")));
+  }
+
+  QString gizmoButtonLabel() const {
+    const bool visible = !gizmoVisibleAction_ || gizmoVisibleAction_->isChecked();
+    return visible ? QStringLiteral("Gizmo: ON") : QStringLiteral("Gizmo: OFF");
+  }
+
+  QString shadingButtonTooltip() const {
+    QStringList lines;
+    lines << QStringLiteral("Viewport shading and channel display");
+    lines << QStringLiteral("Current: %1").arg(viewportChannelDisplayLabel());
+    return lines.join(QChar::LineFeed);
+  }
+
+  QString gizmoButtonTooltip() const {
+    QStringList lines;
+    lines << QStringLiteral("Transform gizmo visibility");
+    lines << QStringLiteral("Current: %1").arg(gizmoButtonLabel());
+    lines << QStringLiteral("W = Move, R = Rotate, S = Scale");
+    return lines.join(QChar::LineFeed);
+  }
+
+  QString layerChromeButtonLabel() const {
+    return layerChromeVisible_ ? QStringLiteral("Layer Controls: ON")
+                               : QStringLiteral("Layer Controls: OFF");
+  }
+
+  QString lockViewButtonLabel() const {
+    return lockViewToSelection_ ? QStringLiteral("Lock View: ON")
+                               : QStringLiteral("Lock View: OFF");
+  }
+
+  QString viewportToggleLabel(const QString &name, bool enabled) const {
+    return QStringLiteral("%1: %2")
+        .arg(name, enabled ? QStringLiteral("ON") : QStringLiteral("OFF"));
+  }
+
+  QString previewOrbitButtonLabel() const {
+    return previewOrbitMode_ ? QStringLiteral("Preview: ON")
+                             : QStringLiteral("Preview: OFF");
+  }
+
+  QString previewOrbitButtonTooltip() const {
+    QStringList lines;
+    lines << QStringLiteral("Temporary view-only navigation session");
+    lines << QStringLiteral("Current: %1").arg(previewOrbitButtonLabel());
+    lines << QStringLiteral("Restores the saved orientation / pan / zoom when turned off");
+    return lines.join(QChar::LineFeed);
+  }
+
+  QString renderSuspendButtonLabel() const {
+    return renderSuspendAction_ && renderSuspendAction_->isChecked()
+               ? QStringLiteral("Render Hold: ON")
+               : QStringLiteral("Render Hold: OFF");
+  }
+
+  QString renderSuspendButtonTooltip() const {
+    QStringList lines;
+    lines << QStringLiteral("Suspend viewport cache invalidation");
+    lines << QStringLiteral("Current: %1").arg(renderSuspendButtonLabel());
+    lines << QStringLiteral("Useful while inspecting a frozen viewport state");
+    return lines.join(QChar::LineFeed);
+  }
+
+  void refreshViewportStateLabels() {
+    if (shadingButton_) {
+      shadingButton_->setText(viewportChannelDisplayLabel());
+      shadingButton_->setToolTip(shadingButtonTooltip());
+    }
+    if (gizmoModeButton_) {
+      gizmoModeButton_->setText(gizmoButtonLabel());
+      gizmoModeButton_->setToolTip(gizmoButtonTooltip());
+    }
+    if (previewOrbitAction_) {
+      previewOrbitAction_->setText(previewOrbitButtonLabel());
+      previewOrbitAction_->setToolTip(previewOrbitButtonTooltip());
+      previewOrbitAction_->setChecked(previewOrbitMode_);
+    }
+    if (renderSuspendAction_) {
+      renderSuspendAction_->setText(renderSuspendButtonLabel());
+      renderSuspendAction_->setToolTip(renderSuspendButtonTooltip());
+      const bool checked = renderSuspendAction_->isChecked();
+      if (renderController_) {
+        renderController_->setRenderQueueActive(checked);
+      }
+      forEachActiveSecondaryController(
+        [checked](CompositionRenderController *controller) {
+          controller->setRenderQueueActive(checked);
+        });
+    }
+    if (autoFourUpAction_) {
+      autoFourUpAction_->setText(fourUpAutoAssignButtonLabel());
+      autoFourUpAction_->setChecked(autoAssignFourUpViews_);
+    }
+  }
+
+  void setPreviewOrbitMode(ArtifactCompositionEditor *owner, bool enabled) {
+    Q_UNUSED(owner);
+    if (previewOrbitMode_ == enabled) {
+      return;
+    }
+    if (enabled) {
+      previewOrbitSnapshots_.clear();
+      forEachRenderController([this](CompositionRenderController *controller) {
+        if (!controller) {
+          return;
+        }
+        PreviewOrbitSnapshot snapshot;
+        snapshot.orientation = controller->viewportOrientationQuaternion();
+        if (auto *renderer = controller->renderer()) {
+          float panX = 0.0f;
+          float panY = 0.0f;
+          renderer->getPan(panX, panY);
+          snapshot.pan = QPointF(panX, panY);
+          snapshot.zoom = std::max(0.001f, renderer->getZoom());
+        }
+        previewOrbitSnapshots_.insert(controller, snapshot);
+      });
+      previewOrbitMode_ = true;
+    } else {
+      for (auto it = previewOrbitSnapshots_.cbegin();
+           it != previewOrbitSnapshots_.cend(); ++it) {
+        if (!it.key()) {
+          continue;
+        }
+        auto *controller = it.key();
+        const PreviewOrbitSnapshot snapshot = it.value();
+        controller->setViewportOrientationQuaternion(snapshot.orientation);
+        if (auto *renderer = controller->renderer()) {
+          renderer->setZoom(snapshot.zoom);
+          renderer->setPan(static_cast<float>(snapshot.pan.x()),
+                           static_cast<float>(snapshot.pan.y()));
+        }
+      }
+      previewOrbitSnapshots_.clear();
+      previewOrbitMode_ = false;
+    }
+    refreshViewportStateLabels();
+    if (overlayView_) {
+      overlayView_->update();
+    }
+  }
+
+  void setViewportChannelDisplayMode(ArtifactCompositionEditor *owner,
+                                     ViewportChannelDisplayMode mode) {
+    Q_UNUSED(owner);
+    viewportChannelDisplayMode_ = mode;
+    forEachRenderController([mode](CompositionRenderController *controller) {
+      controller->setViewportChannelDisplayMode(mode);
+    });
+    refreshViewportStateLabels();
+  }
+
+  void applyFourUpDefaultOrientations() {
+    if (viewportLayoutMode_ != ViewportLayoutMode::FourUp) {
+      return;
+    }
+    static constexpr std::array<ArtifactCore::ViewOrientationHotspot, 3>
+        secondaryHotspots{ArtifactCore::ViewOrientationHotspot::Top,
+                          ArtifactCore::ViewOrientationHotspot::Front,
+                          ArtifactCore::ViewOrientationHotspot::Right};
+    for (int i = 1; i < 4; ++i) {
+      if (auto *paneState = pane(i);
+          paneState && paneState->controller && paneState->visible) {
+        paneState->controller->setViewportOrientation(secondaryHotspots[i - 1]);
+      }
+    }
+    if (overlayView_) {
+      overlayView_->update();
+    }
+  }
+
+  QString fourUpAutoAssignButtonLabel() const {
+    return autoAssignFourUpViews_
+               ? QStringLiteral("Auto-Assign Four-Up Views: ON")
+               : QStringLiteral("Auto-Assign Four-Up Views: OFF");
+  }
+
+  void setToolbarActionVisible(QAction *action, bool visible) {
+    if (!topToolbar_ || !action) {
+      return;
+    }
+    if (QWidget *widget = topToolbar_->widgetForAction(action)) {
+      widget->setVisible(visible);
+    }
+    action->setVisible(visible);
+  }
+
+  void syncToolbarVisibility(bool hasComposition, bool hasLayers) {
+    if (!topToolbar_ || !viewportLayoutButton_) {
+      return;
+    }
+
+    const bool showEditingChrome = hasComposition;
+    const bool showLayerChrome = hasComposition && hasLayers && layerChromeVisible_;
+
+    viewportLayoutButton_->setVisible(true);
+    setToolbarActionVisible(resetAction_, showEditingChrome);
+    setToolbarActionVisible(zoomInAction_, showEditingChrome);
+    setToolbarActionVisible(zoomOutAction_, showEditingChrome);
+    setToolbarActionVisible(zoomFitAction_, showEditingChrome);
+    setToolbarActionVisible(zoom100Action_, showEditingChrome);
+    setToolbarActionVisible(editTextAction_, showLayerChrome);
+    if (screenshotButton_) {
+      screenshotButton_->setVisible(showEditingChrome);
+    }
+    setToolbarActionVisible(compareAction_, showLayerChrome);
+    setToolbarActionVisible(motionPathAction_, showLayerChrome);
+    setToolbarActionVisible(effectHitboxAction_, showLayerChrome);
+    if (toolModeButton_) {
+      toolModeButton_->setVisible(showEditingChrome);
+    }
+    if (gizmoModeButton_) {
+      gizmoModeButton_->setVisible(showLayerChrome);
+    }
+    if (pivotModeButton_) {
+      pivotModeButton_->setVisible(showLayerChrome);
+    }
+    if (layerChromeAction_) {
+      layerChromeAction_->setText(layerChromeButtonLabel());
+      layerChromeAction_->setChecked(layerChromeVisible_);
+      layerChromeAction_->setEnabled(hasComposition && hasLayers);
+    }
+    if (lockViewAction_) {
+      lockViewAction_->setText(lockViewButtonLabel());
+      lockViewAction_->setChecked(lockViewToSelection_);
+      lockViewAction_->setEnabled(hasComposition && hasLayers);
     }
   }
 
@@ -5034,15 +6082,60 @@ public:
       return false;
     }
 
-    if (!saveScreenshotImage(screenshot, filePath, options.format, options.jpegQuality)) {
-      QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
-                           QStringLiteral("保存に失敗しました:\n%1").arg(filePath));
-      return false;
-    }
+    if (options.multiChannel) {
+      // Multi-channel (AOV) EXR output
+      auto* renderer = renderController_->renderer();
+      if (!renderer) {
+        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
+                             QStringLiteral("Renderer not available."));
+        return false;
+      }
+      renderer->setMultiChannelEnabled(true);
+      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::Depth, true);
+      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalX, true);
+      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalY, true);
+      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalZ, true);
+      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::ObjectId, true);
+      renderer->clear();
+      if (auto comp = renderController_->composition()) {
+        const auto pos = comp->framePosition();
+        const auto& layers = comp->allLayerRef();
+        for (const auto& layer : layers) {
+          if (layer && layer->isVisible() && layer->isActiveAt(pos)) {
+            layer->draw(renderer);
+          }
+        }
+      }
+      renderer->flush();
+      ArtifactCore::MultiChannelImage multiFrame = renderer->readbackToMultiChannelImage();
+      if (multiFrame.isEmpty()) {
+        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
+                             QStringLiteral("Failed to capture multi-channel image."));
+        return false;
+      }
+      ArtifactCore::ImageExportOptions exportOpts;
+      exportOpts.format = options.format;
+      ArtifactCore::ImageExporter exporter;
+      auto result = exporter.writeMultiChannel(multiFrame, filePath, exportOpts);
+      if (!result.success) {
+        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
+                             QStringLiteral("Save failed: %1 - %2").arg(result.errorStage, result.errorMessage));
+        return false;
+      }
+      QMessageBox::information(owner, QStringLiteral("Advanced Screenshot"),
+                               QStringLiteral("保存しました:\n%1").arg(filePath));
+      return true;
+    } else {
+      if (!saveScreenshotImage(screenshot, filePath, options.format, options.jpegQuality)) {
+        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
+                             QStringLiteral("保存に失敗しました:\n%1").arg(filePath));
+        return false;
+      }
 
-    QMessageBox::information(owner, QStringLiteral("Advanced Screenshot"),
-                             QStringLiteral("保存しました:\n%1").arg(filePath));
-    return true;
+      QMessageBox::information(owner, QStringLiteral("Advanced Screenshot"),
+                               QStringLiteral("保存しました:\n%1").arg(filePath));
+      return true;
+    }
   }
 };
 
@@ -5059,6 +6152,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   editorPalette.setColor(QPalette::Window, QColor(theme.backgroundColor));
   editorPalette.setColor(QPalette::WindowText, QColor(theme.textColor));
   setPalette(editorPalette);
+
+  if (auto *active = ArtifactActiveContextService::instance()) {
+    active->setHandler(this);
+  }
 
   auto *mainLayout = new QVBoxLayout(this);
   mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -5181,26 +6278,56 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   }
   impl_->overlayView_ =
       new CompositionOverlayWidget(impl_->compositionView_, this);
+  impl_->overlayView_->setActivePaneIndicatorProvider([this]() {
+    if (!impl_) {
+      return std::optional<std::pair<QRect, QString>>{};
+    }
+    return impl_->activePaneIndicator();
+  });
+  impl_->overlayView_->setNavigationFeedbackProvider([this]() {
+    return impl_ ? impl_->activeNavigationFeedbackLabel() : QString{};
+  });
+  impl_->overlayView_->setPreviewBadgeProvider([this]() {
+    return impl_ && impl_->previewOrbitMode_ ? QStringLiteral("Preview On")
+                                             : QString{};
+  });
   for (int i = 0; i < ArtifactCompositionEditor::Impl::kViewportPaneCount; ++i) {
     if (auto *view = impl_->panes_[i].view) {
       view->setOverlayWidget(impl_->overlayView_);
     }
   }
   impl_->overlayView_->hide();
-  impl_->emptyStateOverlay_ = new EmptyCompositionOverlayWidget(
-      this, [this]() {
-        if (impl_) {
-          impl_->openCreateCompositionDialog(this);
-        }
-      });
-  impl_->emptyStateOverlay_->hide();
-  impl_->viewOrientationWidget_ =
-      new ViewOrientationWidget(impl_->overlayView_);
+  for (int i = 0; i < ArtifactCompositionEditor::Impl::kViewportPaneCount; ++i) {
+    impl_->emptyStateOverlays_[i] = new EmptyCompositionOverlayWidget(
+        this, [this]() {
+          if (impl_) {
+            impl_->openCreateCompositionDialog(this);
+          }
+        });
+    impl_->emptyStateOverlays_[i]->hide();
+  }
+  impl_->viewOrientationWidget_ = new ViewOrientationWidget(this);
   impl_->viewOrientationWidget_->setActivatedCallback(
       [this](ArtifactCore::ViewOrientationHotspot hotspot) {
         if (impl_) {
           if (auto *controller = impl_->activeRenderController()) {
             controller->setViewportOrientation(hotspot);
+            impl_->viewOrientationWidget_->setOrientationQuaternion(
+                controller->viewportOrientationQuaternion());
+            if (impl_->overlayView_) {
+              impl_->overlayView_->update();
+            }
+          }
+        }
+      });
+  impl_->viewOrientationWidget_->setOrbitChangedCallback(
+      [this](const QQuaternion &orientation) {
+        if (impl_) {
+          if (auto *controller = impl_->activeRenderController()) {
+            controller->setViewportOrientationQuaternion(orientation);
+            if (impl_->overlayView_) {
+              impl_->overlayView_->update();
+            }
           }
         }
       });
@@ -5254,6 +6381,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
           controller->setComposition(composition);
         });
     impl_->applyViewportLayout();
+    if (impl_->autoAssignFourUpViews_) {
+      impl_->applyFourUpDefaultOrientations();
+    }
     if (composition) {
       impl_->forEachActiveSecondaryController(
           [](CompositionRenderController *controller) { controller->start(); });
@@ -5271,6 +6401,243 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     }
     setViewportLayout(impl_->nextViewportLayoutMode());
   });
+
+  auto *viewPresetMenu = new QMenu(this);
+  polishEditorMenu(viewPresetMenu, this);
+  auto *viewValuesHost = new QWidget(viewPresetMenu);
+  auto *viewValuesLayout = new QHBoxLayout(viewValuesHost);
+  viewValuesLayout->setContentsMargins(10, 8, 10, 8);
+  viewValuesLayout->setSpacing(6);
+  auto *yawLabel = new QLabel(QStringLiteral("Yaw"), viewValuesHost);
+  auto *yawSpin = new QDoubleSpinBox(viewValuesHost);
+  yawSpin->setRange(-180.0, 180.0);
+  yawSpin->setDecimals(1);
+  yawSpin->setSingleStep(5.0);
+  yawSpin->setFixedWidth(72);
+  auto *pitchLabel = new QLabel(QStringLiteral("Pitch"), viewValuesHost);
+  auto *pitchSpin = new QDoubleSpinBox(viewValuesHost);
+  pitchSpin->setRange(-180.0, 180.0);
+  pitchSpin->setDecimals(1);
+  pitchSpin->setSingleStep(5.0);
+  pitchSpin->setFixedWidth(72);
+  auto *zoomLabel = new QLabel(QStringLiteral("Zoom"), viewValuesHost);
+  auto *zoomSpin = new QDoubleSpinBox(viewValuesHost);
+  zoomSpin->setRange(0.05, 64.0);
+  zoomSpin->setDecimals(2);
+  zoomSpin->setSingleStep(0.25);
+  zoomSpin->setFixedWidth(72);
+  auto *syncViewButton = new QPushButton(QStringLiteral("Sync"), viewValuesHost);
+  auto *applyViewButton = new QPushButton(QStringLiteral("Apply"), viewValuesHost);
+  viewValuesLayout->addWidget(yawLabel);
+  viewValuesLayout->addWidget(yawSpin);
+  viewValuesLayout->addWidget(pitchLabel);
+  viewValuesLayout->addWidget(pitchSpin);
+  viewValuesLayout->addWidget(zoomLabel);
+  viewValuesLayout->addWidget(zoomSpin);
+  viewValuesLayout->addWidget(syncViewButton);
+  viewValuesLayout->addWidget(applyViewButton);
+  auto *viewValuesAction = new QWidgetAction(viewPresetMenu);
+  viewValuesAction->setDefaultWidget(viewValuesHost);
+  viewPresetMenu->addAction(viewValuesAction);
+  viewPresetMenu->addSeparator();
+  const auto syncViewValueEditors = [this, yawSpin, pitchSpin, zoomSpin]() {
+    if (!impl_) {
+      return;
+    }
+    if (auto *controller = impl_->activeRenderController()) {
+      const QVector3D euler =
+          controller->viewportOrientationQuaternion().toEulerAngles();
+      const QSignalBlocker yawBlocker(yawSpin);
+      const QSignalBlocker pitchBlocker(pitchSpin);
+      const QSignalBlocker zoomBlocker(zoomSpin);
+      yawSpin->setValue(euler.y());
+      pitchSpin->setValue(euler.x());
+      zoomSpin->setValue(controller->renderer()
+                             ? static_cast<double>(controller->renderer()->getZoom())
+                             : 1.0);
+    }
+  };
+  QObject::connect(syncViewButton, &QPushButton::clicked, this,
+                   [syncViewValueEditors]() { syncViewValueEditors(); });
+  QObject::connect(applyViewButton, &QPushButton::clicked, this,
+                   [this, yawSpin, pitchSpin, zoomSpin]() {
+                     if (!impl_) {
+                       return;
+                     }
+                     if (auto *controller = impl_->activeRenderController()) {
+                       controller->setViewportOrientationQuaternion(
+                           QQuaternion::fromEulerAngles(
+                               static_cast<float>(pitchSpin->value()),
+                               static_cast<float>(yawSpin->value()), 0.0f));
+                       if (auto *renderer = controller->renderer()) {
+                         renderer->setZoom(static_cast<float>(zoomSpin->value()));
+                       }
+                       controller->markRenderDirty();
+                       if (impl_->viewOrientationWidget_) {
+                         impl_->viewOrientationWidget_->setOrientationQuaternion(
+                             controller->viewportOrientationQuaternion());
+                       }
+                       if (impl_->overlayView_) {
+                         impl_->overlayView_->update();
+                       }
+                     }
+                   });
+  QAction *frameSelectedAct =
+      viewPresetMenu->addAction(QStringLiteral("Frame Selected"));
+  frameSelectedAct->setToolTip(
+      QStringLiteral("Focus the active viewport on the selected layer"));
+  QObject::connect(frameSelectedAct, &QAction::triggered, this, [this]() {
+    if (!impl_) {
+      return;
+    }
+    if (auto *controller = impl_->activeRenderController()) {
+      controller->focusSelectedLayer();
+    }
+  });
+  QAction *frameAllAct = viewPresetMenu->addAction(QStringLiteral("Frame All"));
+  frameAllAct->setToolTip(
+      QStringLiteral("Reset the active viewport to the full composition view"));
+  QObject::connect(frameAllAct, &QAction::triggered, this, [this]() {
+    if (!impl_) {
+      return;
+    }
+    if (auto *controller = impl_->activeRenderController()) {
+      controller->resetView();
+    }
+  });
+  viewPresetMenu->addSeparator();
+  const auto addViewPresetAction =
+      [this, viewPresetMenu](const QString &text,
+                             ArtifactCore::ViewOrientationHotspot hotspot) {
+        QAction *action = viewPresetMenu->addAction(text);
+        QObject::connect(action, &QAction::triggered, this, [this, hotspot]() {
+          if (!impl_) {
+            return;
+          }
+          if (auto *controller = impl_->activeRenderController()) {
+            controller->setViewportOrientation(hotspot);
+            if (impl_->viewOrientationWidget_) {
+              impl_->viewOrientationWidget_->setOrientationQuaternion(
+                  controller->viewportOrientationQuaternion());
+            }
+            if (impl_->overlayView_) {
+              impl_->overlayView_->update();
+            }
+          }
+        });
+        return action;
+      };
+  addViewPresetAction(QStringLiteral("Front"), ArtifactCore::ViewOrientationHotspot::Front);
+  addViewPresetAction(QStringLiteral("Back"), ArtifactCore::ViewOrientationHotspot::Back);
+  addViewPresetAction(QStringLiteral("Left"), ArtifactCore::ViewOrientationHotspot::Left);
+  addViewPresetAction(QStringLiteral("Right"), ArtifactCore::ViewOrientationHotspot::Right);
+  addViewPresetAction(QStringLiteral("Top"), ArtifactCore::ViewOrientationHotspot::Top);
+  addViewPresetAction(QStringLiteral("Bottom"), ArtifactCore::ViewOrientationHotspot::Bottom);
+  viewPresetMenu->addSeparator();
+  QAction *quadAssignAct =
+      viewPresetMenu->addAction(QStringLiteral("Apply Four-Up Preset"));
+  QAction *autoQuadAssignAct =
+      viewPresetMenu->addAction(QStringLiteral("Auto-Assign Four-Up Views"));
+  autoQuadAssignAct->setCheckable(true);
+  autoQuadAssignAct->setChecked(impl_->autoAssignFourUpViews_);
+  autoQuadAssignAct->setToolTip(
+      QStringLiteral("Automatically apply Top / Front / Right when Four-Up layout is enabled"));
+  impl_->autoFourUpAction_ = autoQuadAssignAct;
+  QObject::connect(quadAssignAct, &QAction::triggered, this, [this]() {
+    if (!impl_) {
+      return;
+    }
+    impl_->applyFourUpDefaultOrientations();
+    impl_->syncOverlayGeometry(this);
+  });
+  QObject::connect(autoQuadAssignAct, &QAction::toggled, this, [this](bool checked) {
+    if (!impl_) {
+      return;
+    }
+    impl_->autoAssignFourUpViews_ = checked;
+    if (checked && impl_->viewportLayoutMode_ ==
+                       ArtifactCompositionEditor::Impl::ViewportLayoutMode::FourUp) {
+      impl_->applyFourUpDefaultOrientations();
+    }
+    refreshEnabledState();
+  });
+  impl_->viewPresetButton_ = new QToolButton(impl_->topToolbar_);
+  impl_->viewPresetButton_->setText(QStringLiteral("View"));
+  impl_->viewPresetButton_->setMenu(viewPresetMenu);
+  impl_->viewPresetButton_->setPopupMode(QToolButton::InstantPopup);
+  impl_->viewPresetButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  impl_->viewPresetButton_->setToolTip(
+      QStringLiteral("Viewport orientation presets"));
+  QObject::connect(viewPresetMenu, &QMenu::aboutToShow, this,
+                   [syncViewValueEditors]() { syncViewValueEditors(); });
+  impl_->topToolbar_->addWidget(impl_->viewPresetButton_);
+  const auto applyViewPreset =
+      [this](ArtifactCore::ViewOrientationHotspot hotspot) {
+        if (!impl_) {
+          return;
+        }
+        if (auto *controller = impl_->activeRenderController()) {
+          controller->setViewportOrientation(hotspot);
+          if (impl_->viewOrientationWidget_) {
+            impl_->viewOrientationWidget_->setOrientationQuaternion(
+                controller->viewportOrientationQuaternion());
+          }
+          if (impl_->overlayView_) {
+            impl_->overlayView_->update();
+          }
+          impl_->refreshViewportStateLabels();
+        }
+      };
+  impl_->topToolbar_->addSeparator();
+
+  const auto addQuickViewPresetButton =
+      [this, applyViewPreset](const QString &text,
+                              ArtifactCore::ViewOrientationHotspot hotspot) {
+        QAction *action = impl_->topToolbar_->addAction(text);
+        action->setToolTip(QStringLiteral("Quick preset: %1 view").arg(text));
+        QObject::connect(action, &QAction::triggered, this,
+                         [applyViewPreset, hotspot]() { applyViewPreset(hotspot); });
+        return action;
+      };
+  addQuickViewPresetButton(QStringLiteral("Front"),
+                           ArtifactCore::ViewOrientationHotspot::Front);
+  addQuickViewPresetButton(QStringLiteral("Top"),
+                           ArtifactCore::ViewOrientationHotspot::Top);
+  addQuickViewPresetButton(QStringLiteral("Right"),
+                           ArtifactCore::ViewOrientationHotspot::Right);
+  addQuickViewPresetButton(QStringLiteral("Back"),
+                           ArtifactCore::ViewOrientationHotspot::Back);
+  addQuickViewPresetButton(QStringLiteral("Left"),
+                           ArtifactCore::ViewOrientationHotspot::Left);
+  addQuickViewPresetButton(QStringLiteral("Bottom"),
+                           ArtifactCore::ViewOrientationHotspot::Bottom);
+  impl_->renderSuspendAction_ =
+      impl_->topToolbar_->addAction(QStringLiteral("Render Hold Off"));
+  impl_->renderSuspendAction_->setCheckable(true);
+  impl_->renderSuspendAction_->setChecked(false);
+  impl_->renderSuspendAction_->setToolTip(
+      QStringLiteral("Suspend viewport cache invalidation"));
+  QObject::connect(impl_->renderSuspendAction_, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (!impl_) {
+                       return;
+                     }
+                     impl_->renderSuspendAction_->setChecked(checked);
+                     impl_->refreshViewportStateLabels();
+                   });
+  impl_->previewOrbitAction_ = impl_->topToolbar_->addAction(QStringLiteral("Preview Off"));
+  impl_->previewOrbitAction_->setCheckable(true);
+  impl_->previewOrbitAction_->setChecked(false);
+  impl_->previewOrbitAction_->setToolTip(
+      QStringLiteral("Temporary view-only navigation session"));
+  QObject::connect(impl_->previewOrbitAction_, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (!impl_) {
+                       return;
+                     }
+                     impl_->setPreviewOrbitMode(this, checked);
+                   });
+  impl_->topToolbar_->addSeparator();
 
   impl_->resetAction_ = impl_->topToolbar_->addAction("Reset");
   impl_->topToolbar_->addSeparator();
@@ -5397,13 +6764,30 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   addGizmoAction(QStringLiteral("Gizmo: Scale (S)"),
                  QStringLiteral("MaterialVS/neutral/crop.svg"),
                  TransformGizmo::Mode::Scale, false);
+  gizmoMenu->addSeparator();
+  impl_->gizmoVisibleAction_ = gizmoMenu->addAction(QStringLiteral("Show Gizmo"));
+  impl_->gizmoVisibleAction_->setCheckable(true);
+  impl_->gizmoVisibleAction_->setChecked(true);
+  QObject::connect(impl_->gizmoVisibleAction_, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (!impl_) {
+                       return;
+                     }
+                     if (auto *controller = impl_->renderController_) {
+                       controller->setShowGizmoOverlay(checked);
+                     }
+                     impl_->forEachActiveSecondaryController(
+                         [checked](CompositionRenderController *controller) {
+                           controller->setShowGizmoOverlay(checked);
+                         });
+                     impl_->refreshViewportStateLabels();
+                   });
   impl_->gizmoModeButton_ = new QToolButton(this);
-  impl_->gizmoModeButton_->setText(QStringLiteral("Gizmo W/R/S"));
+  impl_->gizmoModeButton_->setText(impl_->gizmoButtonLabel());
   impl_->gizmoModeButton_->setMenu(gizmoMenu);
   impl_->gizmoModeButton_->setIcon(
       loadEditorMenuIcon(QStringLiteral("MaterialVS/neutral/transform.svg")));
-  impl_->gizmoModeButton_->setToolTip(
-      QStringLiteral("W = Move, R = Rotate, S = Scale"));
+  impl_->gizmoModeButton_->setToolTip(impl_->gizmoButtonTooltip());
   impl_->gizmoModeButton_->setPopupMode(QToolButton::InstantPopup);
   impl_->topToolbar_->addWidget(impl_->gizmoModeButton_);
 
@@ -5636,6 +7020,26 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *anchorCenterAct = displayMenu->addAction("Anchor / Center");
   QAction *cameraOverlayAct = displayMenu->addAction("Camera Frustum");
   QAction *densityHeatmapAct = displayMenu->addAction("Density Heatmap");
+  QAction *layerChromeAct = displayMenu->addAction("Layer Controls");
+  QAction *lockViewAct = displayMenu->addAction("Lock View to Selected");
+  auto *onionMenu = displayMenu->addMenu("Onion Skin");
+  polishEditorMenu(onionMenu, this);
+  QAction *onionEnableAct = onionMenu->addAction("Enable");
+  auto *onionFrameMenu = onionMenu->addMenu("Frame Count");
+  polishEditorMenu(onionFrameMenu, this);
+  auto *onionOpacityMenu = onionMenu->addMenu("Opacity");
+  polishEditorMenu(onionOpacityMenu, this);
+  displayMenu->addSeparator();
+  QAction *loadReferenceImageAct =
+      displayMenu->addAction("Load Reference Image...");
+  QAction *showReferenceImageAct =
+      displayMenu->addAction("Show Reference Image");
+  QAction *clearReferenceImageAct =
+      displayMenu->addAction("Clear Reference Image");
+  QAction *colorSamplerAct =
+      displayMenu->addAction("Color Sampler (Info Palette)");
+  QAction *autoColorPaletteAct =
+      displayMenu->addAction("Auto Color Palette");
   displayMenu->addSeparator();
   QAction *gpuBlendAct = displayMenu->addAction("GPU Blend Path");
   impl_->densityHeatmapAction_ = densityHeatmapAct;
@@ -5650,15 +7054,65 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   anchorCenterAct->setCheckable(true);
   cameraOverlayAct->setCheckable(true);
   densityHeatmapAct->setCheckable(true);
+  layerChromeAct->setCheckable(true);
+  layerChromeAct->setChecked(impl_->layerChromeVisible_);
+  impl_->layerChromeAction_ = layerChromeAct;
+  lockViewAct->setCheckable(true);
+  lockViewAct->setChecked(impl_->lockViewToSelection_);
+  impl_->lockViewAction_ = lockViewAct;
+  onionEnableAct->setCheckable(true);
+  showReferenceImageAct->setCheckable(true);
+  colorSamplerAct->setCheckable(true);
+  autoColorPaletteAct->setCheckable(true);
   gpuBlendAct->setCheckable(true);
   anchorCenterAct->setToolTip(
       QStringLiteral("Show the selected layer anchor point and center point"));
   densityHeatmapAct->setToolTip(
       QStringLiteral("Show a grid-based visual density heatmap on the composition"));
+  layerChromeAct->setToolTip(
+      QStringLiteral("Show or hide the layer-specific controls in the top chrome"));
+  lockViewAct->setToolTip(
+      QStringLiteral("Keep the viewport centered on the selected layer"));
+  onionEnableAct->setToolTip(
+      QStringLiteral("Overlay captured previous frames over the current viewport"));
+  showReferenceImageAct->setToolTip(
+      QStringLiteral("Show the loaded reference image over the viewport"));
+  clearReferenceImageAct->setToolTip(
+      QStringLiteral("Remove the current viewport reference image"));
+  colorSamplerAct->setToolTip(
+      QStringLiteral("Show the cursor-under color as RGB / HSL / HEX / coordinates"));
+  autoColorPaletteAct->setToolTip(
+      QStringLiteral("Extract dominant colors from the reference image and show a generated harmony palette"));
   gpuBlendAct->setToolTip(
       QStringLiteral("Enable the compute-shader blend path when the composition needs masks, non-normal blending, or rasterizer effects"));
   gpuBlendAct->setStatusTip(
       QStringLiteral("Toggle the experimental GPU blend path"));
+  onionEnableAct->setCheckable(true);
+  onionEnableAct->setChecked(false);
+  onionFrameMenu->clear();
+  onionOpacityMenu->clear();
+  auto *onionFrameGroup = new QActionGroup(onionFrameMenu);
+  onionFrameGroup->setExclusive(true);
+  for (int count = 1; count <= 5; ++count) {
+    QAction *countAct = onionFrameMenu->addAction(QStringLiteral("%1 frame%2")
+                                                      .arg(count)
+                                                      .arg(count == 1 ? "" : "s"));
+    countAct->setCheckable(true);
+    countAct->setData(count);
+    onionFrameGroup->addAction(countAct);
+  }
+  auto *onionOpacityGroup = new QActionGroup(onionOpacityMenu);
+  onionOpacityGroup->setExclusive(true);
+  for (int opacity : {10, 20, 30, 40, 50, 60, 70, 80}) {
+    QAction *opacityAct =
+        onionOpacityMenu->addAction(QStringLiteral("%1%").arg(opacity));
+    opacityAct->setCheckable(true);
+    opacityAct->setData(opacity);
+    onionOpacityGroup->addAction(opacityAct);
+  }
+  showReferenceImageAct->setEnabled(false);
+  clearReferenceImageAct->setEnabled(false);
+  autoColorPaletteAct->setEnabled(false);
   for (const float size : checkerboardSizes) {
     QAction *sizeAct = checkerboardSizeMenu->addAction(
         QStringLiteral("%1 px").arg(QString::number(size, 'f', 0)));
@@ -5835,6 +7289,170 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                        }
                      }
                    });
+  QObject::connect(layerChromeAct, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (!impl_) {
+                       return;
+                     }
+                     impl_->layerChromeVisible_ = checked;
+                     refreshEnabledState();
+                   });
+  QObject::connect(lockViewAct, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (!impl_) {
+                       return;
+                     }
+                     impl_->lockViewToSelection_ = checked;
+                     if (checked) {
+                       if (auto *controller = impl_->activeRenderController()) {
+                         controller->focusSelectedLayer();
+                       }
+                      }
+                      refreshEnabledState();
+                    });
+  QObject::connect(onionEnableAct, &QAction::toggled, this, [this](bool checked) {
+    if (!impl_) {
+      return;
+    }
+    if (auto *controller = impl_->renderController_) {
+      controller->setShowOnionSkin(checked);
+    }
+    impl_->forEachActiveSecondaryController(
+        [checked](CompositionRenderController *controller) {
+          controller->setShowOnionSkin(checked);
+        });
+    refreshEnabledState();
+  });
+  for (QAction *action : onionFrameMenu->actions()) {
+    QObject::connect(action, &QAction::triggered, this, [this, action]() {
+      if (!impl_) {
+        return;
+      }
+      const int count = action->data().toInt();
+      if (auto *controller = impl_->renderController_) {
+        controller->setOnionSkinFrameCount(count);
+      }
+      impl_->forEachActiveSecondaryController(
+          [count](CompositionRenderController *controller) {
+            controller->setOnionSkinFrameCount(count);
+          });
+      refreshEnabledState();
+    });
+  }
+  for (QAction *action : onionOpacityMenu->actions()) {
+    QObject::connect(action, &QAction::triggered, this, [this, action]() {
+      if (!impl_) {
+        return;
+      }
+      const int opacity = action->data().toInt();
+      if (auto *controller = impl_->renderController_) {
+        controller->setOnionSkinOpacity(opacity);
+      }
+      impl_->forEachActiveSecondaryController(
+          [opacity](CompositionRenderController *controller) {
+            controller->setOnionSkinOpacity(opacity);
+          });
+      refreshEnabledState();
+    });
+  }
+  QObject::connect(loadReferenceImageAct, &QAction::triggered, this,
+                   [this, showReferenceImageAct, clearReferenceImageAct,
+                    autoColorPaletteAct]() {
+                     if (!impl_->renderController_) {
+                       return;
+                     }
+                     const QString filePath = QFileDialog::getOpenFileName(
+                         this, QStringLiteral("Reference Image を選択"),
+                         QString(),
+                         QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff);;All Files (*.*)"));
+                     if (filePath.isEmpty()) {
+                       return;
+                     }
+                     QImageReader reader(filePath);
+                     if (!reader.canRead()) {
+                       QMessageBox::warning(
+                           this, QStringLiteral("Reference Image"),
+                           QStringLiteral("画像を読み込めませんでした。"));
+                       return;
+                     }
+                     const QImage image = reader.read();
+                     if (image.isNull()) {
+                       QMessageBox::warning(
+                           this, QStringLiteral("Reference Image"),
+                           QStringLiteral("画像を読み込めませんでした。"));
+                       return;
+                     }
+                     impl_->renderController_->setReferenceOverlayImage(image);
+                     impl_->forEachActiveSecondaryController(
+                         [&image](CompositionRenderController *controller) {
+                           controller->setReferenceOverlayImage(image);
+                         });
+                     showReferenceImageAct->setEnabled(true);
+                     clearReferenceImageAct->setEnabled(true);
+                     autoColorPaletteAct->setEnabled(true);
+                     showReferenceImageAct->setChecked(true);
+                   });
+  QObject::connect(showReferenceImageAct, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (impl_->renderController_) {
+                       impl_->renderController_->setShowReferenceOverlay(
+                           checked);
+                       impl_->forEachActiveSecondaryController(
+                           [checked](CompositionRenderController *controller) {
+                           controller->setShowReferenceOverlay(checked);
+                         });
+                     }
+                   });
+  QObject::connect(colorSamplerAct, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (impl_->renderController_) {
+                       impl_->renderController_->setShowColorSamplerOverlay(
+                           checked);
+                       impl_->forEachActiveSecondaryController(
+                           [checked](CompositionRenderController *controller) {
+                             controller->setShowColorSamplerOverlay(checked);
+                           });
+                     }
+                   });
+  QObject::connect(autoColorPaletteAct, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (impl_->renderController_) {
+                       impl_->renderController_->setShowAutoColorPaletteOverlay(
+                           checked);
+                       impl_->forEachActiveSecondaryController(
+                           [checked](CompositionRenderController *controller) {
+                             controller->setShowAutoColorPaletteOverlay(
+                                 checked);
+                           });
+                       if (checked &&
+                           !impl_->renderController_->hasReferenceOverlayImage()) {
+                         QMessageBox::information(
+                             this, QStringLiteral("Auto Color Palette"),
+                             QStringLiteral("Reference Image Overlay を読み込むと、支配色抽出と調和パレット生成を表示できます。"));
+                       }
+                     }
+                   });
+  QObject::connect(clearReferenceImageAct, &QAction::triggered, this,
+                   [this, showReferenceImageAct, clearReferenceImageAct,
+                    autoColorPaletteAct]() {
+                     if (!impl_->renderController_) {
+                       return;
+                     }
+                     impl_->renderController_->clearReferenceOverlayImage();
+                     impl_->forEachActiveSecondaryController(
+                         [](CompositionRenderController *controller) {
+                           controller->clearReferenceOverlayImage();
+                         });
+                     const QSignalBlocker blocker(showReferenceImageAct);
+                     showReferenceImageAct->setChecked(false);
+                     showReferenceImageAct->setEnabled(false);
+                     clearReferenceImageAct->setEnabled(false);
+                     {
+                       const QSignalBlocker paletteBlocker(autoColorPaletteAct);
+                       autoColorPaletteAct->setChecked(false);
+                       autoColorPaletteAct->setEnabled(false);
+                     }
+                   });
   QObject::connect(gpuBlendAct, &QAction::toggled, this, [this](bool checked) {
     if (impl_->renderController_) {
       impl_->renderController_->setGpuBlendEnabled(checked);
@@ -5844,6 +7462,185 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
           });
     }
   });
+
+  impl_->shadingButton_ = new QToolButton(impl_->bottomBar_);
+  impl_->shadingButton_->setText(impl_->viewportChannelDisplayLabel());
+  impl_->shadingButton_->setToolTip(impl_->shadingButtonTooltip());
+  impl_->shadingButton_->setPopupMode(QToolButton::InstantPopup);
+  {
+    QPalette pal = impl_->shadingButton_->palette();
+    pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
+    impl_->shadingButton_->setPalette(pal);
+  }
+  auto *shadingMenu = new QMenu(this);
+  polishEditorMenu(shadingMenu, this);
+  auto *channelGroup = new QActionGroup(shadingMenu);
+  channelGroup->setExclusive(true);
+  const auto addChannelAction = [&](const QString &text,
+                                    ViewportChannelDisplayMode mode,
+                                    bool checked) {
+    QAction *action = shadingMenu->addAction(text);
+    action->setCheckable(true);
+    action->setChecked(checked);
+    channelGroup->addAction(action);
+    QObject::connect(action, &QAction::triggered, this, [this, mode]() {
+      if (impl_) {
+        impl_->setViewportChannelDisplayMode(this, mode);
+      }
+    });
+    return action;
+  };
+  QAction *channelColorAct =
+      addChannelAction(QStringLiteral("Color"), ViewportChannelDisplayMode::Color, true);
+  QAction *channelAlphaAct =
+      addChannelAction(QStringLiteral("Alpha"), ViewportChannelDisplayMode::Alpha, false);
+  QAction *channelRedAct =
+      addChannelAction(QStringLiteral("Red"), ViewportChannelDisplayMode::Red, false);
+  QAction *channelGreenAct =
+      addChannelAction(QStringLiteral("Green"), ViewportChannelDisplayMode::Green, false);
+  QAction *channelBlueAct =
+      addChannelAction(QStringLiteral("Blue"), ViewportChannelDisplayMode::Blue, false);
+  shadingMenu->addSeparator();
+  QAction *channelDepthAct =
+      addChannelAction(QStringLiteral("Depth"), ViewportChannelDisplayMode::Depth, false);
+  QAction *channelEmissionAct =
+      addChannelAction(QStringLiteral("Emission"), ViewportChannelDisplayMode::Emission, false);
+  QAction *channelObjectIdAct =
+      addChannelAction(QStringLiteral("Object ID"), ViewportChannelDisplayMode::ObjectId, false);
+  QAction *channelMaterialIdAct =
+      addChannelAction(QStringLiteral("Material ID"), ViewportChannelDisplayMode::MaterialId, false);
+  QAction *channelAlbedoAct =
+      addChannelAction(QStringLiteral("Albedo"), ViewportChannelDisplayMode::Albedo, false);
+  QAction *channelAlbedoRAct =
+      addChannelAction(QStringLiteral("Albedo R"), ViewportChannelDisplayMode::AlbedoR, false);
+  QAction *channelAlbedoGAct =
+      addChannelAction(QStringLiteral("Albedo G"), ViewportChannelDisplayMode::AlbedoG, false);
+  QAction *channelAlbedoBAct =
+      addChannelAction(QStringLiteral("Albedo B"), ViewportChannelDisplayMode::AlbedoB, false);
+  QAction *channelNormalAct =
+      addChannelAction(QStringLiteral("Normal"), ViewportChannelDisplayMode::Normal, false);
+  QAction *channelNormalXAct =
+      addChannelAction(QStringLiteral("Normal X"), ViewportChannelDisplayMode::NormalX, false);
+  QAction *channelNormalYAct =
+      addChannelAction(QStringLiteral("Normal Y"), ViewportChannelDisplayMode::NormalY, false);
+  QAction *channelNormalZAct =
+      addChannelAction(QStringLiteral("Normal Z"), ViewportChannelDisplayMode::NormalZ, false);
+  QAction *channelVelocityAct =
+      addChannelAction(QStringLiteral("Velocity"), ViewportChannelDisplayMode::Velocity, false);
+  QAction *channelVelocityXAct =
+      addChannelAction(QStringLiteral("Velocity X"), ViewportChannelDisplayMode::VelocityX, false);
+  QAction *channelVelocityYAct =
+      addChannelAction(QStringLiteral("Velocity Y"), ViewportChannelDisplayMode::VelocityY, false);
+  shadingMenu->addSeparator();
+  auto *qualityGroup = new QActionGroup(shadingMenu);
+  qualityGroup->setExclusive(true);
+  const auto addQualityAction = [&](const QString &text,
+                                    PreviewQualityPreset preset,
+                                    bool checked) {
+    QAction *action = shadingMenu->addAction(text);
+    action->setCheckable(true);
+    action->setChecked(checked);
+    qualityGroup->addAction(action);
+    QObject::connect(action, &QAction::triggered, this, [preset]() {
+      if (auto *svc = ArtifactProjectService::instance()) {
+        svc->setPreviewQualityPreset(preset);
+      }
+    });
+    return action;
+  };
+  QAction *qualityFullAct =
+      addQualityAction(QStringLiteral("Full"), PreviewQualityPreset::Final, true);
+  QAction *qualityHalfAct =
+      addQualityAction(QStringLiteral("Half"), PreviewQualityPreset::Preview, false);
+  QAction *qualityQuarterAct =
+      addQualityAction(QStringLiteral("Quarter"), PreviewQualityPreset::Draft, false);
+  shadingMenu->addSeparator();
+  QAction *shadeGridAct = shadingMenu->addAction(QStringLiteral("Grid"));
+  QAction *shadeGuidesAct = shadingMenu->addAction(QStringLiteral("Guides"));
+  QAction *shadeSafeAreaAct = shadingMenu->addAction(QStringLiteral("Safe Area"));
+  QAction *shadeMotionPathAct = shadingMenu->addAction(QStringLiteral("Motion Path"));
+  QAction *shadeEffectHitboxAct =
+      shadingMenu->addAction(QStringLiteral("Effect Hitbox"));
+  QAction *shadeAnchorCenterAct =
+      shadingMenu->addAction(QStringLiteral("Anchor / Center"));
+  QAction *shadeCameraFrustumAct =
+      shadingMenu->addAction(QStringLiteral("Camera Frustum"));
+  QAction *shadeDensityHeatmapAct =
+      shadingMenu->addAction(QStringLiteral("Density Heatmap"));
+  QAction *shadeGizmoAct = shadingMenu->addAction(QStringLiteral("Gizmo"));
+  QAction *shadeXRayAct = shadingMenu->addAction(QStringLiteral("X-Ray"));
+  QAction *shadeIsolationAct =
+      shadingMenu->addAction(QStringLiteral("Isolate Selected"));
+  for (QAction *action : {shadeGridAct, shadeGuidesAct, shadeSafeAreaAct,
+                          shadeMotionPathAct, shadeEffectHitboxAct,
+                          shadeAnchorCenterAct, shadeCameraFrustumAct,
+                          shadeDensityHeatmapAct, shadeGizmoAct, shadeXRayAct,
+                          shadeIsolationAct}) {
+    action->setCheckable(true);
+  }
+  impl_->xRayAction_ = shadeXRayAct;
+  impl_->isolationAction_ = shadeIsolationAct;
+  QObject::connect(shadeGridAct, &QAction::toggled, gridAct, &QAction::setChecked);
+  QObject::connect(shadeGuidesAct, &QAction::toggled, guidesAct, &QAction::setChecked);
+  QObject::connect(shadeSafeAreaAct, &QAction::toggled, safeMarginsAct,
+                   &QAction::setChecked);
+  QObject::connect(shadeMotionPathAct, &QAction::toggled, impl_->motionPathAction_,
+                   &QAction::setChecked);
+  QObject::connect(shadeEffectHitboxAct, &QAction::toggled,
+                   impl_->effectHitboxAction_, &QAction::setChecked);
+  QObject::connect(shadeAnchorCenterAct, &QAction::toggled, anchorCenterAct,
+                   &QAction::setChecked);
+  QObject::connect(shadeCameraFrustumAct, &QAction::toggled, cameraOverlayAct,
+                   &QAction::setChecked);
+  QObject::connect(shadeDensityHeatmapAct, &QAction::toggled, densityHeatmapAct,
+                   &QAction::setChecked);
+  QObject::connect(shadeGizmoAct, &QAction::toggled, impl_->gizmoVisibleAction_,
+                   &QAction::setChecked);
+  QObject::connect(shadeXRayAct, &QAction::toggled, this, [this](bool checked) {
+    if (!impl_) {
+      return;
+    }
+    if (auto *controller = impl_->renderController_) {
+      controller->setShowXRayOverlay(checked);
+    }
+    impl_->forEachActiveSecondaryController(
+        [checked](CompositionRenderController *controller) {
+          controller->setShowXRayOverlay(checked);
+        });
+    impl_->refreshViewportStateLabels();
+  });
+  QObject::connect(shadeIsolationAct, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (!impl_) {
+                       return;
+                     }
+                     if (auto *controller = impl_->renderController_) {
+                       controller->setShowIsolationOverlay(checked);
+                     }
+                     impl_->forEachActiveSecondaryController(
+                         [checked](CompositionRenderController *controller) {
+                           controller->setShowIsolationOverlay(checked);
+                         });
+                     impl_->refreshViewportStateLabels();
+                   });
+  QObject::connect(gridAct, &QAction::toggled, shadeGridAct, &QAction::setChecked);
+  QObject::connect(guidesAct, &QAction::toggled, shadeGuidesAct,
+                   &QAction::setChecked);
+  QObject::connect(safeMarginsAct, &QAction::toggled, shadeSafeAreaAct,
+                   &QAction::setChecked);
+  QObject::connect(impl_->motionPathAction_, &QAction::toggled, shadeMotionPathAct,
+                   &QAction::setChecked);
+  QObject::connect(impl_->effectHitboxAction_, &QAction::toggled,
+                   shadeEffectHitboxAct, &QAction::setChecked);
+  QObject::connect(anchorCenterAct, &QAction::toggled, shadeAnchorCenterAct,
+                   &QAction::setChecked);
+  QObject::connect(cameraOverlayAct, &QAction::toggled, shadeCameraFrustumAct,
+                   &QAction::setChecked);
+  QObject::connect(densityHeatmapAct, &QAction::toggled, shadeDensityHeatmapAct,
+                   &QAction::setChecked);
+  QObject::connect(impl_->gizmoVisibleAction_, &QAction::toggled, shadeGizmoAct,
+                   &QAction::setChecked);
+  impl_->shadingButton_->setMenu(shadingMenu);
 
   // Initialize checked state
   if (impl_->renderController_) {
@@ -5866,20 +7663,92 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     cameraOverlayAct->setChecked(impl_->renderController_->isShowCameraFrustumOverlay());
     densityHeatmapAct->setChecked(
         impl_->renderController_->isShowDensityHeatmapOverlay());
+    if (impl_->layerChromeAction_) {
+      impl_->layerChromeAction_->setText(impl_->layerChromeButtonLabel());
+      impl_->layerChromeAction_->setChecked(impl_->layerChromeVisible_);
+    }
+    layerChromeAct->setChecked(impl_->layerChromeVisible_);
+    if (impl_->lockViewAction_) {
+      impl_->lockViewAction_->setText(impl_->lockViewButtonLabel());
+      impl_->lockViewAction_->setChecked(impl_->lockViewToSelection_);
+    }
+    lockViewAct->setChecked(impl_->lockViewToSelection_);
+    showReferenceImageAct->setChecked(
+        impl_->renderController_->isShowReferenceOverlay());
+    showReferenceImageAct->setEnabled(
+        impl_->renderController_->hasReferenceOverlayImage());
+    clearReferenceImageAct->setEnabled(
+        impl_->renderController_->hasReferenceOverlayImage());
+    colorSamplerAct->setChecked(
+        impl_->renderController_->isShowColorSamplerOverlay());
+    autoColorPaletteAct->setChecked(
+        impl_->renderController_->isShowAutoColorPaletteOverlay());
+    autoColorPaletteAct->setEnabled(
+        impl_->renderController_->hasReferenceOverlayImage());
     gpuBlendAct->setChecked(impl_->renderController_->isGpuBlendEnabled());
     impl_->motionPathAction_->setChecked(
         impl_->renderController_->isShowMotionPathOverlay());
     impl_->effectHitboxAction_->setChecked(
         impl_->renderController_->isShowEffectHitboxOverlay());
+    onionEnableAct->setChecked(impl_->renderController_->isShowOnionSkin());
+    for (QAction *action : onionFrameMenu->actions()) {
+      action->setChecked(action->data().toInt() ==
+                         impl_->renderController_->onionSkinFrameCount());
+    }
+    for (QAction *action : onionOpacityMenu->actions()) {
+      action->setChecked(action->data().toInt() ==
+                         impl_->renderController_->onionSkinOpacity());
+    }
     const float checkerboardSize = impl_->renderController_->checkerboardSize();
     for (QAction *action : checkerboardSizeMenu->actions()) {
       const float size = action->data().toFloat();
       action->setChecked(std::abs(size - checkerboardSize) <= 0.5f);
     }
+    const auto channelMode = impl_->renderController_->viewportChannelDisplayMode();
+    impl_->viewportChannelDisplayMode_ = channelMode;
+    channelColorAct->setChecked(channelMode == ViewportChannelDisplayMode::Color);
+    channelAlphaAct->setChecked(channelMode == ViewportChannelDisplayMode::Alpha);
+    channelRedAct->setChecked(channelMode == ViewportChannelDisplayMode::Red);
+    channelGreenAct->setChecked(channelMode == ViewportChannelDisplayMode::Green);
+    channelBlueAct->setChecked(channelMode == ViewportChannelDisplayMode::Blue);
+    channelDepthAct->setChecked(channelMode == ViewportChannelDisplayMode::Depth);
+    channelEmissionAct->setChecked(channelMode == ViewportChannelDisplayMode::Emission);
+    channelObjectIdAct->setChecked(channelMode == ViewportChannelDisplayMode::ObjectId);
+    channelMaterialIdAct->setChecked(channelMode == ViewportChannelDisplayMode::MaterialId);
+    channelAlbedoAct->setChecked(channelMode == ViewportChannelDisplayMode::Albedo);
+    channelAlbedoRAct->setChecked(channelMode == ViewportChannelDisplayMode::AlbedoR);
+    channelAlbedoGAct->setChecked(channelMode == ViewportChannelDisplayMode::AlbedoG);
+    channelAlbedoBAct->setChecked(channelMode == ViewportChannelDisplayMode::AlbedoB);
+    channelNormalAct->setChecked(channelMode == ViewportChannelDisplayMode::Normal);
+    channelNormalXAct->setChecked(channelMode == ViewportChannelDisplayMode::NormalX);
+    channelNormalYAct->setChecked(channelMode == ViewportChannelDisplayMode::NormalY);
+    channelNormalZAct->setChecked(channelMode == ViewportChannelDisplayMode::NormalZ);
+    channelVelocityAct->setChecked(channelMode == ViewportChannelDisplayMode::Velocity);
+    channelVelocityXAct->setChecked(channelMode == ViewportChannelDisplayMode::VelocityX);
+    channelVelocityYAct->setChecked(channelMode == ViewportChannelDisplayMode::VelocityY);
+    impl_->refreshViewportStateLabels();
+    shadeGridAct->setChecked(gridAct->isChecked());
+    shadeGuidesAct->setChecked(guidesAct->isChecked());
+    shadeSafeAreaAct->setChecked(safeMarginsAct->isChecked());
+    shadeMotionPathAct->setChecked(impl_->motionPathAction_->isChecked());
+    shadeEffectHitboxAct->setChecked(impl_->effectHitboxAction_->isChecked());
+    shadeAnchorCenterAct->setChecked(anchorCenterAct->isChecked());
+    shadeCameraFrustumAct->setChecked(cameraOverlayAct->isChecked());
+    shadeDensityHeatmapAct->setChecked(densityHeatmapAct->isChecked());
+    if (impl_->gizmoVisibleAction_) {
+      impl_->gizmoVisibleAction_->setChecked(
+          impl_->renderController_->isShowGizmoOverlay());
+      shadeGizmoAct->setChecked(impl_->gizmoVisibleAction_->isChecked());
+    }
+    shadeXRayAct->setChecked(impl_->renderController_->isShowXRayOverlay());
+    shadeIsolationAct->setChecked(
+        impl_->renderController_->isShowIsolationOverlay());
+    impl_->refreshViewportStateLabels();
   }
 
   bottomLayout->addWidget(impl_->resolutionCombo_);
   bottomLayout->addWidget(impl_->fastPreviewBtn_);
+  bottomLayout->addWidget(impl_->shadingButton_);
   bottomLayout->addWidget(impl_->displayOptionsBtn_);
   bottomLayout->addStretch();
 
@@ -5995,6 +7864,27 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                        }
                      }
                    });
+  auto *frameSelectedShortcut =
+      new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F), this);
+  frameSelectedShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  QObject::connect(frameSelectedShortcut, &QShortcut::activated, this,
+                   [this]() {
+                     if (impl_) {
+                       if (auto *controller = impl_->activeRenderController()) {
+                         controller->focusSelectedLayer();
+                       }
+                     }
+                   });
+  auto *frameAllShortcut =
+      new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_H), this);
+  frameAllShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  QObject::connect(frameAllShortcut, &QShortcut::activated, this, [this]() {
+    if (impl_) {
+      if (auto *controller = impl_->activeRenderController()) {
+        controller->resetView();
+      }
+    }
+  });
   auto *compareSurfaceShortcut =
       new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_V), this);
   compareSurfaceShortcut->setContext(Qt::WidgetWithChildrenShortcut);
@@ -6111,13 +8001,26 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       QSignalBlocker blocker(impl_->resolutionCombo_);
       impl_->resolutionCombo_->setCurrentIndex(targetIndex);
     };
+    const auto syncShadingQualityActions = [qualityFullAct, qualityHalfAct,
+                                            qualityQuarterAct](
+                                               PreviewQualityPreset preset) {
+      const QSignalBlocker fullBlocker(qualityFullAct);
+      const QSignalBlocker halfBlocker(qualityHalfAct);
+      const QSignalBlocker quarterBlocker(qualityQuarterAct);
+      qualityFullAct->setChecked(preset == PreviewQualityPreset::Final);
+      qualityHalfAct->setChecked(preset == PreviewQualityPreset::Preview);
+      qualityQuarterAct->setChecked(preset == PreviewQualityPreset::Draft);
+    };
     syncResolutionCombo(service->previewQualityPreset());
+    syncShadingQualityActions(service->previewQualityPreset());
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<PreviewQualityPresetChangedEvent>(
-            [this, syncResolutionCombo](
+            [this, syncResolutionCombo, syncShadingQualityActions](
                 const PreviewQualityPresetChangedEvent &event) {
-              syncResolutionCombo(
-                  static_cast<PreviewQualityPreset>(event.preset));
+              const auto preset =
+                  static_cast<PreviewQualityPreset>(event.preset);
+              syncResolutionCombo(preset);
+              syncShadingQualityActions(preset);
             }));
   }
 
@@ -6192,6 +8095,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
           [this](const LayerSelectionChangedEvent &) {
             if (impl_) {
               impl_->queueSelectionSync(this);
+              if (impl_->lockViewToSelection_) {
+                if (auto *controller = impl_->activeRenderController()) {
+                  controller->focusSelectedLayer();
+                }
+              }
             }
           }));
 
@@ -6397,6 +8305,22 @@ void ArtifactCompositionEditor::play() {
   }
   impl_->forEachActiveSecondaryController(
       [](CompositionRenderController *controller) { controller->start(); });
+}
+
+void ArtifactCompositionEditor::pause() {
+  if (auto *playback = ArtifactPlaybackService::instance()) {
+    playback->pause();
+  }
+}
+
+void ArtifactCompositionEditor::togglePlayPause() {
+  if (auto *playback = ArtifactPlaybackService::instance()) {
+    if (playback->isPlaying()) {
+      pause();
+    } else {
+      play();
+    }
+  }
 }
 
 void ArtifactCompositionEditor::stop() {

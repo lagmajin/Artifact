@@ -1402,6 +1402,82 @@ private:
   QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
 };
 
+bool applyTimelineLayerSlide(const CompositionID &compositionId,
+                             const QString &layerIdText,
+                             const qint64 newStartFrame) {
+  if (layerIdText.trimmed().isEmpty()) {
+    return false;
+  }
+
+  const auto composition = lookupTimelineComposition(compositionId);
+  if (!composition) {
+    return false;
+  }
+
+  const auto layer = composition->layerById(LayerID(layerIdText));
+  if (!layer || layer->isTimingLocked()) {
+    return false;
+  }
+
+  const qint64 oldInPoint = layer->inPoint().framePosition();
+  const qint64 oldOutPoint = layer->outPoint().framePosition();
+  const qint64 oldDuration = std::max<qint64>(1, oldOutPoint - oldInPoint);
+  const qint64 inPoint = std::max<qint64>(0, newStartFrame);
+  const qint64 outPoint = std::max<qint64>(inPoint + 1, inPoint + oldDuration);
+  const qint64 inPointDelta = inPoint - oldInPoint;
+
+  layer->setInPoint(FramePosition(inPoint));
+  layer->setOutPoint(FramePosition(outPoint));
+
+  if (inPointDelta != 0) {
+    shiftAnimatableLayerKeyframes(composition, layer, inPointDelta);
+  }
+
+  layer->changed();
+  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+      LayerChangedEvent{compositionId.toString(), layerIdText,
+                        LayerChangedEvent::ChangeType::Modified});
+  return true;
+}
+
+class SlideClipCommand final : public UndoCommand {
+public:
+  SlideClipCommand(CompositionID compositionId, LayerID layerId,
+                   qint64 newStartFrame,
+                   QVector<TimelineLayerStateSnapshot> beforeSnapshots)
+      : compositionId_(std::move(compositionId)),
+        layerId_(std::move(layerId)), newStartFrame_(newStartFrame),
+        beforeSnapshots_(std::move(beforeSnapshots)) {}
+
+  void undo() override {
+    const auto composition = lookupTimelineComposition(compositionId_);
+    if (!composition) {
+      return;
+    }
+    restoreTimelineLayerStateSnapshots(composition, beforeSnapshots_);
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void redo() override {
+    if (applyTimelineLayerSlide(compositionId_, layerId_.toString(),
+                                newStartFrame_)) {
+      if (auto *mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+      }
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Slide Clip"); }
+
+private:
+  CompositionID compositionId_;
+  LayerID layerId_;
+  qint64 newStartFrame_ = 0;
+  QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
+};
+
 class TimelineKeyframeSnapshotCommand final : public UndoCommand {
 public:
   TimelineKeyframeSnapshotCommand(QString label, std::function<void()> redoFunc,
@@ -8389,6 +8465,65 @@ void ArtifactTimelineTrackPainterView::keyPressEvent(QKeyEvent *event) {
       }
       QWidget::keyPressEvent(event);
       return;
+    }
+  }
+  if ((event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) &&
+      (event->modifiers() & Qt::AltModifier) &&
+      !(event->modifiers() & Qt::ControlModifier)) {
+    const auto composition =
+        ArtifactProjectService::instance()
+            ? ArtifactProjectService::instance()->currentComposition().lock()
+            : ArtifactCompositionPtr{};
+    auto *selectionManager = ArtifactLayerSelectionManager::instance();
+    if (composition && selectionManager) {
+      const bool isShift = event->modifiers() & Qt::ShiftModifier;
+      const qint64 step = isShift ? 10 : 1;
+      const qint64 direction = (event->key() == Qt::Key_Right) ? 1 : -1;
+      const qint64 delta = direction * step;
+
+      auto selectedLayers = selectionManager->selectedLayers();
+      if (selectedLayers.isEmpty()) {
+        if (auto current = selectionManager->currentLayer()) {
+          selectedLayers.insert(current);
+        }
+      }
+
+      QVector<ArtifactAbstractLayerPtr> layers;
+      for (const auto &layer : selectedLayers) {
+        if (layer && !layer->isTimingLocked()) {
+          layers.push_back(layer);
+        }
+      }
+
+      if (!layers.isEmpty()) {
+        auto macro =
+            std::make_unique<MacroUndoCommand>(QStringLiteral("Slide Clips"));
+        int commandCount = 0;
+        for (const auto &layer : layers) {
+          if (!layer) {
+            continue;
+          }
+          const QVector<ArtifactAbstractLayerPtr> singleLayer{layer};
+          const auto beforeSnapshots =
+              captureTimelineLayerStateSnapshots(composition, singleLayer);
+          macro->addChild(std::make_unique<SlideClipCommand>(
+              composition->id(), layer->id(),
+              layer->inPoint().framePosition() + delta, beforeSnapshots));
+          ++commandCount;
+        }
+
+        if (commandCount > 0) {
+          if (auto *mgr = UndoManager::instance()) {
+            mgr->push(std::move(macro));
+          }
+          Q_EMIT timelineDebugMessage(
+              QStringLiteral("Slid %1 layer(s) by %2 frame(s)")
+                  .arg(commandCount)
+                  .arg(delta));
+          event->accept();
+          return;
+        }
+      }
     }
   }
   if (resolveTimelineAction(event) == ArtifactTimelineAction::CleanKeyframes) {

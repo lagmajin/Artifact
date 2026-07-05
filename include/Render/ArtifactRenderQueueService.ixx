@@ -127,6 +127,10 @@ public:
   void setJobAudioCodecAt(int index, const QString &codec);
   int jobAudioBitrateKbpsAt(int index) const;
   void setJobAudioBitrateKbpsAt(int index, int bitrateKbps);
+  QString jobAudioChannelModeAt(int index) const;
+  void setJobAudioChannelModeAt(int index, const QString &mode);
+  int jobAudioSampleRateAt(int index) const;
+  void setJobAudioSampleRateAt(int index, int sampleRate);
   QString jobEncoderBackendAt(int index) const;
   void setJobEncoderBackendAt(int index, const QString &backend);
   QString jobErrorMessageAt(int index) const;

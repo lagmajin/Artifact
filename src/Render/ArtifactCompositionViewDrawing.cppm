@@ -100,6 +100,8 @@ EffectContext makeLayerEffectContext(ArtifactAbstractLayer* layer,
   ctx.timeSeconds = ctx.frameRate > 0.0
                         ? static_cast<double>(ctx.compositionFrame) / ctx.frameRate
                         : 0.0;
+  ctx.sampler = nullptr;
+
   return ctx;
 }
 
@@ -120,6 +122,7 @@ EffectContext makeCompositionEffectContext(ArtifactAbstractComposition* composit
   ctx.timeSeconds = ctx.frameRate > 0.0
                         ? static_cast<double>(ctx.compositionFrame) / ctx.frameRate
                         : 0.0;
+  ctx.sampler = nullptr;
   return ctx;
 }
 
@@ -395,6 +398,8 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
       effect->applyConfigured(current, next);
       current = next;
     }
+
+    // Store frame for temporal effect lookback.
     mat = current.image().toCVMat();
   }
 

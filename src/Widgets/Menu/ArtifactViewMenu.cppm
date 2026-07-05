@@ -14,6 +14,7 @@ module;
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QImage>
+#include <QQuaternion>
 #include <QStandardPaths>
 #include <QVariantList>
 #include <QVariantMap>
@@ -157,6 +158,19 @@ namespace Artifact {
    double zoom = 1.0;
    double panX = 0.0;
    double panY = 0.0;
+   QQuaternion orientation;
+  };
+
+  struct ViewportTemplateEntry {
+   QString name;
+   double zoom = 1.0;
+   double panX = 0.0;
+   double panY = 0.0;
+   bool showGrid = true;
+   bool showGuides = true;
+   bool showSafeMargins = true;
+   bool showReferenceOverlay = true;
+   int previewQualityPreset = static_cast<int>(::PreviewQualityPreset::Preview);
   };
 
   struct SelectionSetEntry {
@@ -186,6 +200,10 @@ namespace Artifact {
     map.insert(QStringLiteral("zoom"), entry.zoom);
     map.insert(QStringLiteral("panX"), entry.panX);
     map.insert(QStringLiteral("panY"), entry.panY);
+    map.insert(QStringLiteral("orientationW"), entry.orientation.scalar());
+    map.insert(QStringLiteral("orientationX"), entry.orientation.x());
+    map.insert(QStringLiteral("orientationY"), entry.orientation.y());
+    map.insert(QStringLiteral("orientationZ"), entry.orientation.z());
     return map;
    }
 
@@ -202,6 +220,11 @@ namespace Artifact {
     entry.zoom = map.value(QStringLiteral("zoom"), 1.0).toDouble();
     entry.panX = map.value(QStringLiteral("panX"), 0.0).toDouble();
     entry.panY = map.value(QStringLiteral("panY"), 0.0).toDouble();
+    entry.orientation = QQuaternion(
+        static_cast<float>(map.value(QStringLiteral("orientationW"), 1.0).toDouble()),
+        static_cast<float>(map.value(QStringLiteral("orientationX"), 0.0).toDouble()),
+        static_cast<float>(map.value(QStringLiteral("orientationY"), 0.0).toDouble()),
+        static_cast<float>(map.value(QStringLiteral("orientationZ"), 0.0).toDouble()));
     return entry;
    }
 
@@ -290,6 +313,167 @@ namespace Artifact {
    {
     const QString compId = compositionId.trimmed();
     const QString wanted = bookmarkName.trimmed();
+    if (compId.isEmpty() || wanted.isEmpty()) {
+     return false;
+    }
+
+    ArtifactCore::FastSettingsStore store(storePath());
+    const QString key = entriesKey(compId);
+    QVariantList list = store.value(key, QVariantList()).toList();
+    bool removed = false;
+    for (int i = list.size() - 1; i >= 0; --i) {
+     const QVariantMap map = list[i].toMap();
+     const QString existingName = map.value(QStringLiteral("name")).toString().trimmed();
+     if (existingName.compare(wanted, Qt::CaseInsensitive) == 0) {
+      list.removeAt(i);
+      removed = true;
+     }
+    }
+    if (!removed) {
+     return false;
+    }
+
+    store.setValue(key, list);
+    return store.sync();
+   }
+  };
+
+  class ViewportTemplateStore {
+  public:
+   QString storePath() const
+   {
+    const QString appData =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return QDir(appData).filePath(QStringLiteral("ViewportTemplates/view_templates.cbor"));
+   }
+
+   static QString entriesKey(const QString& compositionId)
+   {
+    return QStringLiteral("ViewportTemplates/%1/Entries").arg(compositionId.trimmed());
+   }
+
+   static QVariantMap entryToVariantMap(const ViewportTemplateEntry& entry)
+   {
+    QVariantMap map;
+    map.insert(QStringLiteral("name"), entry.name);
+    map.insert(QStringLiteral("zoom"), entry.zoom);
+    map.insert(QStringLiteral("panX"), entry.panX);
+    map.insert(QStringLiteral("panY"), entry.panY);
+    map.insert(QStringLiteral("showGrid"), entry.showGrid);
+    map.insert(QStringLiteral("showGuides"), entry.showGuides);
+    map.insert(QStringLiteral("showSafeMargins"), entry.showSafeMargins);
+    map.insert(QStringLiteral("showReferenceOverlay"), entry.showReferenceOverlay);
+    map.insert(QStringLiteral("previewQualityPreset"), entry.previewQualityPreset);
+    return map;
+   }
+
+   static std::optional<ViewportTemplateEntry> entryFromVariantMap(
+       const QVariantMap& map)
+   {
+    const QString name = map.value(QStringLiteral("name")).toString().trimmed();
+    if (name.isEmpty()) {
+     return std::nullopt;
+    }
+
+    ViewportTemplateEntry entry;
+    entry.name = name;
+    entry.zoom = map.value(QStringLiteral("zoom"), 1.0).toDouble();
+    entry.panX = map.value(QStringLiteral("panX"), 0.0).toDouble();
+    entry.panY = map.value(QStringLiteral("panY"), 0.0).toDouble();
+    entry.showGrid = map.value(QStringLiteral("showGrid"), true).toBool();
+    entry.showGuides = map.value(QStringLiteral("showGuides"), true).toBool();
+    entry.showSafeMargins = map.value(QStringLiteral("showSafeMargins"), true).toBool();
+    entry.showReferenceOverlay = map.value(QStringLiteral("showReferenceOverlay"), true).toBool();
+    entry.previewQualityPreset =
+        map.value(QStringLiteral("previewQualityPreset"), 0).toInt();
+    return entry;
+   }
+
+   QStringList templateNames(const QString& compositionId) const
+   {
+    if (compositionId.trimmed().isEmpty()) {
+     return {};
+    }
+
+    ArtifactCore::FastSettingsStore store(storePath());
+    const QVariantList list = store.value(entriesKey(compositionId), QVariantList()).toList();
+    QStringList names;
+    names.reserve(list.size());
+    for (const QVariant& item : list) {
+     const auto entry = entryFromVariantMap(item.toMap());
+     if (entry) {
+      names.push_back(entry->name);
+     }
+    }
+    names.removeDuplicates();
+    std::sort(names.begin(), names.end(),
+              [](const QString& lhs, const QString& rhs) {
+               const int cmp = lhs.compare(rhs, Qt::CaseInsensitive);
+               if (cmp != 0) {
+                return cmp < 0;
+               }
+               return lhs < rhs;
+              });
+    return names;
+   }
+
+   std::optional<ViewportTemplateEntry> templateEntry(const QString& compositionId,
+                                                      const QString& templateName) const
+   {
+    if (compositionId.trimmed().isEmpty()) {
+     return std::nullopt;
+    }
+    const QString wanted = templateName.trimmed();
+    if (wanted.isEmpty()) {
+     return std::nullopt;
+    }
+
+    ArtifactCore::FastSettingsStore store(storePath());
+    const QVariantList list = store.value(entriesKey(compositionId), QVariantList()).toList();
+    for (const QVariant& item : list) {
+     const auto entry = entryFromVariantMap(item.toMap());
+     if (entry && entry->name.compare(wanted, Qt::CaseInsensitive) == 0) {
+      return entry;
+     }
+    }
+    return std::nullopt;
+   }
+
+   bool saveTemplate(const QString& compositionId, const ViewportTemplateEntry& entry) const
+   {
+    const QString compId = compositionId.trimmed();
+    if (compId.isEmpty() || entry.name.trimmed().isEmpty()) {
+     return false;
+    }
+
+    ArtifactCore::FastSettingsStore store(storePath());
+    const QString key = entriesKey(compId);
+    QVariantList list = store.value(key, QVariantList()).toList();
+
+    bool replaced = false;
+    for (QVariant& item : list) {
+     QVariantMap map = item.toMap();
+     const QString existingName = map.value(QStringLiteral("name")).toString().trimmed();
+     if (existingName.compare(entry.name, Qt::CaseInsensitive) == 0) {
+      map = entryToVariantMap(entry);
+      item = map;
+      replaced = true;
+      break;
+     }
+    }
+
+    if (!replaced) {
+     list.push_back(entryToVariantMap(entry));
+    }
+
+    store.setValue(key, list);
+    return store.sync();
+   }
+
+   bool deleteTemplate(const QString& compositionId, const QString& templateName) const
+   {
+    const QString compId = compositionId.trimmed();
+    const QString wanted = templateName.trimmed();
     if (compId.isEmpty() || wanted.isEmpty()) {
      return false;
     }
@@ -464,6 +648,42 @@ namespace Artifact {
    entry.zoom = std::max(0.001, static_cast<double>(renderer->getZoom()));
    entry.panX = static_cast<double>(panX);
    entry.panY = static_cast<double>(panY);
+   entry.orientation = controller->viewportOrientationQuaternion();
+   return entry;
+  }
+
+  std::optional<ViewportTemplateEntry> currentViewportTemplateState(
+      ArtifactCompositionEditor* editor)
+  {
+   if (!editor) {
+    return std::nullopt;
+   }
+
+   auto* controller = editor->renderController();
+   if (!controller) {
+    return std::nullopt;
+   }
+
+   auto* renderer = controller->renderer();
+   if (!renderer) {
+    return std::nullopt;
+   }
+
+   float panX = 0.0f;
+   float panY = 0.0f;
+   renderer->getPan(panX, panY);
+
+   ViewportTemplateEntry entry;
+   entry.zoom = std::max(0.001, static_cast<double>(renderer->getZoom()));
+   entry.panX = static_cast<double>(panX);
+   entry.panY = static_cast<double>(panY);
+   entry.showGrid = controller->isShowGrid();
+   entry.showGuides = controller->isShowGuides();
+   entry.showSafeMargins = controller->isShowSafeMargins();
+   entry.showReferenceOverlay = controller->isShowReferenceOverlay();
+   if (auto* svc = ArtifactProjectService::instance()) {
+    entry.previewQualityPreset = static_cast<int>(svc->previewQualityPreset());
+   }
    return entry;
   }
 
@@ -500,6 +720,38 @@ namespace Artifact {
 
    renderer->setZoom(static_cast<float>(std::max(0.001, entry.zoom)));
    renderer->setPan(static_cast<float>(entry.panX), static_cast<float>(entry.panY));
+   controller->setViewportOrientationQuaternion(entry.orientation);
+   controller->markRenderDirty();
+   return true;
+  }
+
+  bool applyViewportTemplateState(ArtifactCompositionEditor* editor,
+                                  const ViewportTemplateEntry& entry)
+  {
+   if (!editor) {
+    return false;
+   }
+
+   auto* controller = editor->renderController();
+   if (!controller) {
+    return false;
+   }
+
+   auto* renderer = controller->renderer();
+   if (!renderer) {
+    return false;
+   }
+
+   renderer->setZoom(static_cast<float>(std::max(0.001, entry.zoom)));
+   renderer->setPan(static_cast<float>(entry.panX), static_cast<float>(entry.panY));
+   controller->setShowGrid(entry.showGrid);
+   controller->setShowGuides(entry.showGuides);
+   controller->setShowSafeMargins(entry.showSafeMargins);
+   controller->setShowReferenceOverlay(entry.showReferenceOverlay);
+   if (auto* svc = ArtifactProjectService::instance()) {
+    svc->setPreviewQualityPreset(static_cast<::PreviewQualityPreset>(
+        std::clamp(entry.previewQualityPreset, 0, 2)));
+   }
    controller->markRenderDirty();
    return true;
   }
@@ -552,6 +804,19 @@ namespace Artifact {
    QMenu* viewportBookmarkMenu = nullptr;
    QAction* saveViewportBookmarkAction = nullptr;
    QAction* deleteViewportBookmarkAction = nullptr;
+   QMenu* viewportTemplateMenu = nullptr;
+   QAction* saveViewportTemplateAction = nullptr;
+   QAction* deleteViewportTemplateAction = nullptr;
+   QMenu* compareMenu = nullptr;
+   QActionGroup* compareGroup = nullptr;
+   QAction* compareSurfaceAction = nullptr;
+   QAction* compareOffAction = nullptr;
+   QAction* compareAAction = nullptr;
+   QAction* compareBAction = nullptr;
+   QAction* compareDiffAction = nullptr;
+   QAction* compareReferenceAction = nullptr;
+   QAction* xRayAction = nullptr;
+   QAction* isolationAction = nullptr;
    QMenu* selectionSetMenu = nullptr;
    QAction* saveSelectionSetAction = nullptr;
    
@@ -606,6 +871,8 @@ namespace Artifact {
    void refreshWorkspaceState();
    void refreshWorkspacePresetMenu();
    void refreshViewportBookmarkMenu();
+   void refreshViewportTemplateMenu();
+   void refreshCompareMenu();
    void refreshSelectionSetMenu();
    void rebuildWindowPanelsMenu();
    void showProjectPanel();
@@ -633,8 +900,14 @@ namespace Artifact {
    fitToScreenAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewFitToScreen));
    fitToScreenAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_fit_screen.svg")));
 
-   viewportBookmarkMenu = new QMenu("Viewport ブックマーク(&B)");
+   viewportBookmarkMenu = new QMenu("Camera ブックマーク(&B)");
    viewportBookmarkMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+   viewportTemplateMenu = new QMenu("View Template(&T)");
+   viewportTemplateMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_presets.svg")));
+   compareMenu = new QMenu("Compare(&C)");
+   compareMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_contents_viewer.svg")));
+   compareGroup = new QActionGroup(menu);
+   compareGroup->setExclusive(true);
    selectionSetMenu = new QMenu("Selection セット(&S)");
    selectionSetMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
 
@@ -888,6 +1161,8 @@ namespace Artifact {
     refreshWorkspaceState();
     refreshWorkspacePresetMenu();
     refreshViewportBookmarkMenu();
+    refreshViewportTemplateMenu();
+    refreshCompareMenu();
     refreshSelectionSetMenu();
    });
 
@@ -897,6 +1172,8 @@ namespace Artifact {
    menu->addAction(fitToScreenAction);
    menu->addSeparator();
    menu->addMenu(viewportBookmarkMenu);
+   menu->addMenu(viewportTemplateMenu);
+   menu->addMenu(compareMenu);
    menu->addMenu(selectionSetMenu);
    menu->addSeparator();
    menu->addMenu(resolutionMenu);
@@ -1022,6 +1299,12 @@ namespace Artifact {
   fitToScreenAction->setEnabled(hasComp);
   if (viewportBookmarkMenu) {
    viewportBookmarkMenu->setEnabled(hasViewport);
+  }
+  if (viewportTemplateMenu) {
+   viewportTemplateMenu->setEnabled(hasViewport);
+  }
+  if (compareMenu) {
+   compareMenu->setEnabled(hasViewport || hasComp);
   }
   
   resolutionMenu->setEnabled(hasComp);
@@ -1347,10 +1630,10 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
 
  viewportBookmarkMenu->clear();
  saveViewportBookmarkAction =
-     viewportBookmarkMenu->addAction("現在のビューを保存...");
+     viewportBookmarkMenu->addAction("現在のカメラを保存...");
  saveViewportBookmarkAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save.svg")));
  deleteViewportBookmarkAction =
-     viewportBookmarkMenu->addAction("ブックマークを削除...");
+     viewportBookmarkMenu->addAction("カメラブックマークを削除...");
  deleteViewportBookmarkAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
 
  QObject::connect(saveViewportBookmarkAction, &QAction::triggered, menu_,
@@ -1365,7 +1648,7 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                    const auto comp = currentViewportComposition(editor);
                    if (!editor || !comp) {
                     QMessageBox::information(
-                        dialogParent, QStringLiteral("Viewport ブックマーク"),
+                        dialogParent, QStringLiteral("Camera ブックマーク"),
                         QStringLiteral("保存先のコンポジションまたは viewport が見つかりません。"));
                     return;
                    }
@@ -1373,7 +1656,7 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                    const auto state = currentViewportBookmarkState(editor);
                    if (!state) {
                     QMessageBox::warning(
-                        dialogParent, QStringLiteral("Viewport ブックマーク"),
+                        dialogParent, QStringLiteral("Camera ブックマーク"),
                         QStringLiteral("現在の viewport 状態を取得できませんでした。"));
                     return;
                    }
@@ -1381,7 +1664,7 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                    bool ok = false;
                    const QString defaultName = QStringLiteral("Bookmark");
                    const QString bookmarkName = QInputDialog::getText(
-                       dialogParent, QStringLiteral("Viewport ブックマークを保存"),
+                       dialogParent, QStringLiteral("Camera ブックマークを保存"),
                        QStringLiteral("ブックマーク名を入力してください"), QLineEdit::Normal,
                        defaultName, &ok)
                                                     .trimmed();
@@ -1394,7 +1677,7 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                    ViewportBookmarkStore store;
                    if (!store.saveBookmark(comp->id().toString(), entry)) {
                     QMessageBox::warning(
-                        dialogParent, QStringLiteral("Viewport ブックマーク"),
+                        dialogParent, QStringLiteral("Camera ブックマーク"),
                         QStringLiteral("ブックマークの保存に失敗しました。"));
                    }
                   });
@@ -1411,7 +1694,7 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                        activeCompositionEditor(dialogParent));
                    if (!comp) {
                     QMessageBox::information(
-                        dialogParent, QStringLiteral("Viewport ブックマーク"),
+                        dialogParent, QStringLiteral("Camera ブックマーク"),
                         QStringLiteral("削除対象のコンポジションが見つかりません。"));
                     return;
                    }
@@ -1420,14 +1703,14 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                    const QStringList names = store.bookmarkNames(comp->id().toString());
                    if (names.isEmpty()) {
                     QMessageBox::information(
-                        dialogParent, QStringLiteral("Viewport ブックマーク"),
+                        dialogParent, QStringLiteral("Camera ブックマーク"),
                         QStringLiteral("削除できるブックマークがありません。"));
                     return;
                    }
 
                    bool ok = false;
                    const QString bookmarkName = QInputDialog::getItem(
-                       dialogParent, QStringLiteral("Viewport ブックマークを削除"),
+                       dialogParent, QStringLiteral("Camera ブックマークを削除"),
                        QStringLiteral("削除するブックマークを選択してください"), names, 0, false,
                        &ok);
                    if (!ok || bookmarkName.trimmed().isEmpty()) {
@@ -1437,7 +1720,7 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                    const QString confirmMessage =
                        QStringLiteral("ブックマーク「%1」を削除しますか？").arg(bookmarkName);
                    if (QMessageBox::question(
-                           dialogParent, QStringLiteral("Viewport ブックマークを削除"),
+                           dialogParent, QStringLiteral("Camera ブックマークを削除"),
                            confirmMessage, QMessageBox::Yes | QMessageBox::No,
                            QMessageBox::No) != QMessageBox::Yes) {
                     return;
@@ -1445,7 +1728,7 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
 
                    if (!store.deleteBookmark(comp->id().toString(), bookmarkName)) {
                     QMessageBox::warning(
-                        dialogParent, QStringLiteral("Viewport ブックマーク"),
+                        dialogParent, QStringLiteral("Camera ブックマーク"),
                         QStringLiteral("ブックマークの削除に失敗しました。"));
                    }
                   });
@@ -1481,7 +1764,7 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                     auto* editor = activeCompositionEditor(dialogParent);
                     if (!editor) {
                      QMessageBox::information(
-                         dialogParent, QStringLiteral("Viewport ブックマーク"),
+                         dialogParent, QStringLiteral("Camera ブックマーク"),
                          QStringLiteral("復元先の viewport が見つかりません。"));
                      return;
                     }
@@ -1489,19 +1772,301 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                     const auto entry = store.bookmark(compositionId, bookmarkName);
                     if (!entry) {
                      QMessageBox::warning(
-                         dialogParent, QStringLiteral("Viewport ブックマーク"),
+                         dialogParent, QStringLiteral("Camera ブックマーク"),
                          QStringLiteral("ブックマーク「%1」を読み込めませんでした。")
                              .arg(bookmarkName));
                      return;
                     }
                    if (!applyViewportBookmarkState(editor, *entry)) {
                      QMessageBox::warning(
-                         dialogParent, QStringLiteral("Viewport ブックマーク"),
+                         dialogParent, QStringLiteral("Camera ブックマーク"),
                          QStringLiteral("ブックマーク「%1」の復元に失敗しました。")
                              .arg(bookmarkName));
                     }
                    });
  }
+}
+
+void ArtifactViewMenu::Impl::refreshViewportTemplateMenu()
+{
+ if (!viewportTemplateMenu || !menu_) {
+  return;
+ }
+
+ viewportTemplateMenu->clear();
+ saveViewportTemplateAction =
+     viewportTemplateMenu->addAction("現在のビュー設定を保存...");
+ saveViewportTemplateAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save.svg")));
+ deleteViewportTemplateAction =
+     viewportTemplateMenu->addAction("ビュー設定を削除...");
+ deleteViewportTemplateAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
+
+ QObject::connect(saveViewportTemplateAction, &QAction::triggered, menu_,
+                   [this]() {
+                    QWidget* dialogParent = mainWindow
+                                                ? static_cast<QWidget*>(mainWindow)
+                                                : static_cast<QWidget*>(menu_);
+                    if (!dialogParent) {
+                     return;
+                    }
+                    auto* editor = activeCompositionEditor(dialogParent);
+                    const auto comp = currentViewportComposition(editor);
+                    if (!editor || !comp) {
+                     QMessageBox::information(
+                         dialogParent, QStringLiteral("View Template"),
+                         QStringLiteral("保存先のコンポジションまたは viewport が見つかりません。"));
+                     return;
+                    }
+
+                    const auto state = currentViewportTemplateState(editor);
+                    if (!state) {
+                     QMessageBox::warning(
+                         dialogParent, QStringLiteral("View Template"),
+                         QStringLiteral("現在の viewport 設定を取得できませんでした。"));
+                     return;
+                    }
+
+                    bool ok = false;
+                    const QString defaultName = QStringLiteral("Template");
+                    const QString templateName = QInputDialog::getText(
+                        dialogParent, QStringLiteral("View Template を保存"),
+                        QStringLiteral("テンプレート名を入力してください"), QLineEdit::Normal,
+                        defaultName, &ok)
+                                                    .trimmed();
+                    if (!ok || templateName.isEmpty()) {
+                     return;
+                    }
+
+                    ViewportTemplateEntry entry = *state;
+                    entry.name = templateName;
+                    ViewportTemplateStore store;
+                    if (!store.saveTemplate(comp->id().toString(), entry)) {
+                     QMessageBox::warning(
+                         dialogParent, QStringLiteral("View Template"),
+                         QStringLiteral("ビュー設定の保存に失敗しました。"));
+                    }
+                   });
+
+ QObject::connect(deleteViewportTemplateAction, &QAction::triggered, menu_,
+                   [this]() {
+                    QWidget* dialogParent = mainWindow
+                                                ? static_cast<QWidget*>(mainWindow)
+                                                : static_cast<QWidget*>(menu_);
+                    if (!dialogParent) {
+                     return;
+                    }
+                    const auto comp = currentViewportComposition(
+                        activeCompositionEditor(dialogParent));
+                    if (!comp) {
+                     QMessageBox::information(
+                         dialogParent, QStringLiteral("View Template"),
+                         QStringLiteral("削除対象のコンポジションが見つかりません。"));
+                     return;
+                    }
+
+                    ViewportTemplateStore store;
+                    const QStringList names = store.templateNames(comp->id().toString());
+                    if (names.isEmpty()) {
+                     QMessageBox::information(
+                         dialogParent, QStringLiteral("View Template"),
+                         QStringLiteral("削除できるビュー設定がありません。"));
+                     return;
+                    }
+
+                    bool ok = false;
+                    const QString templateName = QInputDialog::getItem(
+                        dialogParent, QStringLiteral("View Template を削除"),
+                        QStringLiteral("削除するテンプレートを選択してください"), names, 0,
+                        false, &ok);
+                    if (!ok || templateName.trimmed().isEmpty()) {
+                     return;
+                    }
+
+                    const QString confirmMessage =
+                        QStringLiteral("ビュー設定「%1」を削除しますか？").arg(templateName);
+                    if (QMessageBox::question(
+                            dialogParent, QStringLiteral("View Template を削除"),
+                            confirmMessage, QMessageBox::Yes | QMessageBox::No,
+                            QMessageBox::No) != QMessageBox::Yes) {
+                     return;
+                    }
+
+                    if (!store.deleteTemplate(comp->id().toString(), templateName)) {
+                     QMessageBox::warning(
+                         dialogParent, QStringLiteral("View Template"),
+                         QStringLiteral("ビュー設定の削除に失敗しました。"));
+                    }
+                   });
+
+ const auto editor =
+     activeCompositionEditor(mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+ const auto comp = currentViewportComposition(editor);
+ const QString compositionId = comp ? comp->id().toString() : QString();
+ ViewportTemplateStore store;
+ const QStringList names =
+     comp ? store.templateNames(compositionId) : QStringList{};
+
+ viewportTemplateMenu->addSeparator();
+
+ if (!editor || !comp || names.isEmpty()) {
+  QAction* empty = viewportTemplateMenu->addAction("(no templates)");
+  empty->setIcon(QIcon(resolveIconPath("Studio/viewmenu_empty_state.svg")));
+  empty->setEnabled(false);
+  return;
+ }
+
+ for (const QString& templateName : names) {
+  QAction* action = viewportTemplateMenu->addAction(templateName);
+  action->setIcon(QIcon(resolveIconPath("Studio/viewmenu_presets.svg")));
+  QObject::connect(action, &QAction::triggered, menu_,
+                    [this, templateName, compositionId]() {
+                     QWidget* dialogParent = mainWindow
+                                                 ? static_cast<QWidget*>(mainWindow)
+                                                 : static_cast<QWidget*>(menu_);
+                    if (!dialogParent) {
+                     return;
+                    }
+                    auto* editor = activeCompositionEditor(dialogParent);
+                    if (!editor) {
+                     QMessageBox::information(
+                         dialogParent, QStringLiteral("View Template"),
+                         QStringLiteral("復元先の viewport が見つかりません。"));
+                     return;
+                    }
+                    ViewportTemplateStore store;
+                    const auto entry = store.templateEntry(compositionId, templateName);
+                    if (!entry) {
+                     QMessageBox::warning(
+                         dialogParent, QStringLiteral("View Template"),
+                         QStringLiteral("ビュー設定「%1」を読み込めませんでした。")
+                             .arg(templateName));
+                     return;
+                    }
+                   if (!applyViewportTemplateState(editor, *entry)) {
+                     QMessageBox::warning(
+                         dialogParent, QStringLiteral("View Template"),
+                         QStringLiteral("ビュー設定「%1」の復元に失敗しました。")
+                             .arg(templateName));
+                    }
+                   });
+ }
+}
+
+void ArtifactViewMenu::Impl::refreshCompareMenu()
+{
+ if (!compareMenu || !menu_ || !compareGroup) {
+  return;
+ }
+
+ compareMenu->clear();
+ compareGroup->setExclusive(true);
+
+ compareSurfaceAction = compareMenu->addAction("A/B Surface in Contents Viewer");
+ compareSurfaceAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_contents_viewer.svg")));
+ QObject::connect(compareSurfaceAction, &QAction::triggered, menu_,
+                   []() { openContentsViewerCompareSurface(); });
+
+ compareMenu->addSeparator();
+
+ const auto bindCompareAction = [this](QAction* action, CompositionCompareMode mode) {
+  if (!action) {
+   return;
+  }
+  action->setCheckable(true);
+  compareGroup->addAction(action);
+  QObject::connect(action, &QAction::triggered, menu_, [this, mode]() {
+   auto* editor = activeCompositionEditor(mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+   auto* controller = editor ? editor->renderController() : nullptr;
+   if (!controller) {
+    return;
+   }
+   controller->setCompareMode(mode);
+  });
+ };
+
+ compareOffAction = compareMenu->addAction("Compare: Off");
+ compareAAction = compareMenu->addAction("Compare: A");
+ compareBAction = compareMenu->addAction("Compare: B");
+ compareDiffAction = compareMenu->addAction("Compare: Diff");
+   compareReferenceAction = compareMenu->addAction("Reference Pin");
+   compareReferenceAction->setCheckable(true);
+ compareReferenceAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+   compareMenu->addSeparator();
+   xRayAction = compareMenu->addAction("X-Ray");
+   xRayAction->setCheckable(true);
+   xRayAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_color_palette.svg")));
+   isolationAction = compareMenu->addAction("Isolate Selected");
+   isolationAction->setCheckable(true);
+   isolationAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
+
+ bindCompareAction(compareOffAction, CompositionCompareMode::Off);
+ bindCompareAction(compareAAction, CompositionCompareMode::A);
+ bindCompareAction(compareBAction, CompositionCompareMode::B);
+ bindCompareAction(compareDiffAction, CompositionCompareMode::Diff);
+
+  QObject::connect(compareReferenceAction, &QAction::toggled, menu_, [this](bool checked) {
+  auto* editor = activeCompositionEditor(mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+  auto* controller = editor ? editor->renderController() : nullptr;
+  if (!controller) {
+   return;
+  }
+  controller->setReferencePinned(checked);
+  if (checked) {
+   if (auto* playback = ArtifactPlaybackService::instance()) {
+    controller->setReferenceFrame(static_cast<int>(playback->currentFrame().framePosition()));
+   }
+  }
+ });
+
+ QObject::connect(xRayAction, &QAction::toggled, menu_, [this](bool checked) {
+  auto* editor = activeCompositionEditor(mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+  auto* controller = editor ? editor->renderController() : nullptr;
+  if (!controller) {
+   return;
+  }
+  controller->setShowXRayOverlay(checked);
+  if (editor->window()) {
+   editor->window()->update();
+  }
+ });
+
+ QObject::connect(isolationAction, &QAction::toggled, menu_, [this](bool checked) {
+  auto* editor = activeCompositionEditor(mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+  auto* controller = editor ? editor->renderController() : nullptr;
+  if (!controller) {
+   return;
+  }
+  controller->setShowIsolationOverlay(checked);
+  if (editor->window()) {
+   editor->window()->update();
+  }
+ });
+
+ const auto editor =
+     activeCompositionEditor(mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+ const auto controller = editor ? editor->renderController() : nullptr;
+ const auto mode = controller ? controller->compareMode() : CompositionCompareMode::Off;
+ const bool pinned = controller && controller->isReferencePinned();
+ const bool hasControl = controller != nullptr;
+
+ compareSurfaceAction->setEnabled(editor != nullptr && currentViewportComposition(editor));
+ compareOffAction->setChecked(mode == CompositionCompareMode::Off);
+ compareAAction->setChecked(mode == CompositionCompareMode::A);
+ compareBAction->setChecked(mode == CompositionCompareMode::B);
+ compareDiffAction->setChecked(mode == CompositionCompareMode::Diff);
+ compareReferenceAction->setChecked(pinned);
+ compareOffAction->setEnabled(hasControl);
+ compareAAction->setEnabled(hasControl);
+ compareBAction->setEnabled(hasControl);
+ compareDiffAction->setEnabled(hasControl);
+ compareReferenceAction->setEnabled(hasControl);
+ xRayAction->setChecked(hasControl && controller->isShowXRayOverlay());
+ isolationAction->setChecked(hasControl && controller->isShowIsolationOverlay());
+ xRayAction->setEnabled(hasControl);
+ isolationAction->setEnabled(hasControl);
+
+ compareMenu->addSeparator();
+ compareMenu->setEnabled(true);
 }
 
 void ArtifactViewMenu::Impl::refreshSelectionSetMenu()

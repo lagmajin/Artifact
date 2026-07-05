@@ -6,6 +6,7 @@
 #include <QShowEvent>
 #include <QHideEvent>
 #include <QEvent>
+#include <QColor>
 #include <QVector3D>
 #include <QPainter>
 #include <QPaintEvent>
@@ -75,6 +76,7 @@ public:
     void setCameraRotation(float yaw, float pitch);
     void setCameraPosition(const QVector3D& position);
     void setDisplayMode(DisplayMode mode);
+    void setPbrMaterial(const QColor& baseColor, float metallic, float roughness);
     void displayModeChanged(int mode) W_SIGNAL(displayModeChanged, mode);
     DisplayMode displayMode() const;
     bool hasModel() const;

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectimpl.h>
 #include <QWidget>
 #include <QHBoxLayout>
@@ -6,11 +6,14 @@ module;
 #include <QFrame>
 #include <QSizePolicy>
 #include <QFont>
+#include <QGuiApplication>
 #include <QPalette>
 #include <QColor>
 #include <QPushButton>
 #include <QToolButton>
 #include <QLabel>
+#include <QLineEdit>
+#include <QMouseEvent>
 #include <QSlider>
 #include <QFrame>
 #include <QFontMetrics>
@@ -20,6 +23,7 @@ module;
 #include <QDoubleSpinBox>
 #include <QSignalBlocker>
 #include <QCheckBox>
+#include <QMenu>
 #include <QEvent>
 #include <QPainter>
 #include <QPaintEvent>
@@ -78,6 +82,7 @@ import Artifact.Event.Types;
 import Widgets.StyleSurface;
 import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
+import Artifact.Service.ActiveContext;
 import Artifact.Service.Playback;
 import Artifact.Service.ActiveContext;
 import Artifact.Composition.PlaybackController;
@@ -157,11 +162,12 @@ public:
         const int mainWidth = currentMetrics.horizontalAdvance(currentLine) +
                               currentMetrics.horizontalAdvance(endLine) +
                               currentMetrics.horizontalAdvance(QStringLiteral(" / ")) + 18;
+        const int labelValueGap = 6;
         const int inWidth =
-            labelMetrics.horizontalAdvance(inLabel) + 3 +
+            labelMetrics.horizontalAdvance(inLabel) + labelValueGap +
             valueMetrics.horizontalAdvance(inValue);
         const int outWidth =
-            labelMetrics.horizontalAdvance(outLabel) + 3 +
+            labelMetrics.horizontalAdvance(outLabel) + labelValueGap +
             valueMetrics.horizontalAdvance(outValue);
         const int rangeWidth = std::max(64, std::max(inWidth, outWidth));
         const int width = mainWidth + rangeWidth + 20;
@@ -212,8 +218,17 @@ protected:
         const QString outLabel = QStringLiteral("Out");
         const QString inValue = inText_.isEmpty() ? QStringLiteral("--:--:--:--") : inText_;
         const QString outValue = outText_.isEmpty() ? QStringLiteral("--:--:--:--") : outText_;
+        const QFontMetrics labelMetrics(labelFont);
+        const QFontMetrics valueMetrics(valueFont);
 
-        const int rangeWidth = 82;
+        const int labelValueGap = 6;
+        const int inWidth =
+            labelMetrics.horizontalAdvance(inLabel) + labelValueGap +
+            valueMetrics.horizontalAdvance(inValue);
+        const int outWidth =
+            labelMetrics.horizontalAdvance(outLabel) + labelValueGap +
+            valueMetrics.horizontalAdvance(outValue);
+        const int rangeWidth = std::max(64, std::max(inWidth, outWidth)) + 12;
         const QRect mainRect(content.left(), content.top(),
                              std::max(1, content.width() - rangeWidth - 10),
                              content.height());
@@ -245,21 +260,75 @@ protected:
 
         painter.setFont(labelFont);
         painter.setPen(mutedText);
-        const QFontMetrics labelMetrics(labelFont);
-        const QFontMetrics valueMetrics(valueFont);
         int y = rangeRect.top() + 4 + labelMetrics.ascent();
-        painter.drawText(rangeRect.left() + 5, y, inLabel);
+        const int labelX = rangeRect.left() + 5;
+        const int valueX = labelX + labelMetrics.horizontalAdvance(inLabel) + labelValueGap;
+        painter.drawText(labelX, y, inLabel);
         painter.setFont(valueFont);
         painter.setPen(currentTimeText);
-        painter.drawText(rangeRect.left() + 22, y, inValue);
+        painter.drawText(valueX, y, inValue);
 
         painter.setFont(labelFont);
         painter.setPen(mutedText);
         y += std::max(labelMetrics.lineSpacing(), valueMetrics.lineSpacing()) + 2;
-        painter.drawText(rangeRect.left() + 5, y, outLabel);
+        painter.drawText(labelX, y, outLabel);
         painter.setFont(valueFont);
         painter.setPen(currentTimeText);
-        painter.drawText(rangeRect.left() + 22, y, outValue);
+        painter.drawText(valueX, y, outValue);
+    }
+
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        if (event->button() != Qt::LeftButton) {
+            QFrame::mousePressEvent(event);
+            return;
+        }
+        const QRect mainRect = mainTextRect();
+        if (!mainRect.contains(event->pos())) {
+            QFrame::mousePressEvent(event);
+            return;
+        }
+        auto* editor = new QLineEdit(this);
+        const QString seed = currentText_.isEmpty() ? QStringLiteral("00:00:00:00") : currentText_;
+        editor->setText(seed);
+        editor->selectAll();
+        QFont editFont = font();
+        editFont.setPointSize(12);
+        editFont.setWeight(QFont::DemiBold);
+        editor->setFont(editFont);
+        editor->setFrame(false);
+        editor->setAlignment(Qt::AlignCenter);
+        editor->setGeometry(mainRect.adjusted(2, 3, -2, -3));
+        editor->show();
+        editor->setFocus();
+        editField_ = editor;
+        QObject::connect(editor, &QLineEdit::returnPressed, this, [this, editor]() {
+            if (timecodeCallback_) {
+                timecodeCallback_(editor->text());
+            }
+            editor->deleteLater();
+        });
+    }
+
+    QRect mainTextRect() const
+    {
+        QFont labelFont = font();
+        labelFont.setPointSize(8);
+        labelFont.setWeight(QFont::DemiBold);
+        QFont valueFont = font();
+        valueFont.setPointSize(9);
+        valueFont.setWeight(QFont::DemiBold);
+        const QFontMetrics labelMetrics(labelFont);
+        const QFontMetrics valueMetrics(valueFont);
+        const QRect content = rect().adjusted(8, 5, -8, -5);
+        const int inWidth = labelMetrics.horizontalAdvance(QStringLiteral("In")) + 6 +
+                            valueMetrics.horizontalAdvance(inText_.isEmpty() ? "--:--:--:--" : inText_);
+        const int outWidth = labelMetrics.horizontalAdvance(QStringLiteral("Out")) + 6 +
+                             valueMetrics.horizontalAdvance(outText_.isEmpty() ? "--:--:--:--" : outText_);
+        const int rangeWidth = std::max(64, std::max(inWidth, outWidth)) + 12;
+        return QRect(content.left(), content.top(),
+                     std::max(1, content.width() - rangeWidth - 10),
+                     content.height());
     }
 
 private:
@@ -267,6 +336,14 @@ private:
     QString endText_;
     QString inText_;
     QString outText_;
+    QLineEdit* editField_ = nullptr;
+    std::function<void(const QString&)> timecodeCallback_;
+
+public:
+    void setTimecodeCallback(std::function<void(const QString&)> cb)
+    {
+        timecodeCallback_ = std::move(cb);
+    }
 };
 
 void applyThemeTextPalette(QWidget* widget, const QColor& color, int shade = 100)
@@ -414,6 +491,8 @@ public:
     QToolButton* speedOneButton_ = nullptr;
     QCheckBox* ramCacheCheckbox_ = nullptr;
     QToolButton* previewWorkAreaButton_ = nullptr;
+    QCheckBox* autoKeyCheckbox_ = nullptr;
+    QCheckBox* mutePreviewCheckbox_ = nullptr;
     QToolButton* clearRamPreviewButton_ = nullptr;
     QComboBox* playbackRangeCombo_ = nullptr;
     QComboBox* playbackSkipCombo_ = nullptr;
@@ -425,6 +504,7 @@ public:
     bool isPaused_ = false;
     bool isStopped_ = true;
     bool isLooping_ = false;
+    int loopMode_ = 0;
     float playbackSpeed_ = 1.0f;
     ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
@@ -457,8 +537,8 @@ public:
             QStringLiteral("MaterialVS/colored/E3E3E3/play_arrow.svg")
         }, "再生/一時停止 (Space)", Qt::Key_Space);
         playButton_->setProperty("artifactPlayButton", true);
-        playButton_->setFixedSize(40, 40);
-        playButton_->setIconSize(QSize(22, 22));
+        playButton_->setFixedSize(46, 46);
+        playButton_->setIconSize(QSize(26, 26));
 
         stopButton_ = createToolButton(QStringList{
             QStringLiteral("MaterialVS/colored/E3E3E3/stop.svg"),
@@ -489,7 +569,64 @@ public:
             QStringLiteral("MaterialVS/colored/E3E3E3/loop.svg")
         }, "ループ再生 (L)", Qt::Key_L);
         loopButton_->setCheckable(true);
+        loopButton_->setContextMenuPolicy(Qt::CustomContextMenu);
+        QObject::connect(loopButton_, &QToolButton::customContextMenuRequested, owner_, [this](const QPoint&) {
+            QMenu menu;
+            QAction* off = menu.addAction(QStringLiteral("Off"));
+            off->setCheckable(true);
+            off->setChecked(!isLooping_);
+            QAction* normal = menu.addAction(QStringLiteral("Normal Loop"));
+            normal->setCheckable(true);
+            normal->setChecked(isLooping_ && loopMode_ == 0);
+            QAction* pingpong = menu.addAction(QStringLiteral("Ping-Pong"));
+            pingpong->setCheckable(true);
+            pingpong->setChecked(isLooping_ && loopMode_ == 1);
+            QAction* chosen = menu.exec(QCursor::pos());
+            if (chosen == off) {
+                isLooping_ = false;
+                loopMode_ = 0;
+                loopButton_->setChecked(false);
+                if (auto* svc = ArtifactPlaybackService::instance()) {
+                    svc->setLooping(false);
+                    svc->setPingPong(false);
+                }
+            } else if (chosen == normal) {
+                isLooping_ = true;
+                loopMode_ = 0;
+                loopButton_->setChecked(true);
+                if (auto* svc = ArtifactPlaybackService::instance()) {
+                    svc->setLooping(true);
+                    svc->setPingPong(false);
+                }
+            } else if (chosen == pingpong) {
+                isLooping_ = true;
+                loopMode_ = 1;
+                loopButton_->setChecked(true);
+                if (auto* svc = ArtifactPlaybackService::instance()) {
+                    svc->setLooping(true);
+                    svc->setPingPong(true);
+                }
+            }
+        });
         timecodeFrame_ = new PlaybackTimecodeFrame(owner_);
+        timecodeFrame_->setTimecodeCallback([this](const QString& tc) {
+          if (auto* svc = ArtifactPlaybackService::instance()) {
+            const float fps = std::max(1.0f, svc->frameRate().framerate());
+            const QStringList parts = tc.split(':');
+            if (parts.size() == 4) {
+              bool ok = true;
+              const int hh = parts[0].toInt(&ok);
+              const int mm = ok ? parts[1].toInt(&ok) : 0;
+              const int ss = ok ? parts[2].toInt(&ok) : 0;
+              const int ff = ok ? parts[3].toInt(&ok) : 0;
+              if (ok) {
+                const qint64 totalSeconds = hh * 3600 + mm * 60 + ss;
+                const qint64 frame = totalSeconds * static_cast<qint64>(fps) + ff;
+                svc->goToFrame(FramePosition(frame));
+              }
+            }
+          }
+        });
 
         transportRow->addWidget(seekStartButton_);
         transportRow->addWidget(stepBackwardButton_);
@@ -623,6 +760,32 @@ public:
         clearRamPreviewButton_->setText(QStringLiteral("Clear Cache"));
         clearRamPreviewButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         clearRamPreviewButton_->setFixedSize(112, 24);
+
+    autoKeyCheckbox_ = new QCheckBox(QStringLiteral("Auto-Key"), owner_);
+    {
+        QFont font = autoKeyCheckbox_->font();
+        font.setPointSize(9);
+        autoKeyCheckbox_->setFont(font);
+        QPalette pal = autoKeyCheckbox_->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+        autoKeyCheckbox_->setPalette(pal);
+        autoKeyCheckbox_->setFixedHeight(24);
+        autoKeyCheckbox_->setToolTip(QStringLiteral("ON: property changes auto-create keyframes"));
+    }
+    optionsRow->addWidget(autoKeyCheckbox_);
+
+    mutePreviewCheckbox_ = new QCheckBox(QStringLiteral("Mute Preview"), owner_);
+    {
+        QFont font = mutePreviewCheckbox_->font();
+        font.setPointSize(9);
+        mutePreviewCheckbox_->setFont(font);
+        QPalette pal = mutePreviewCheckbox_->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+        mutePreviewCheckbox_->setPalette(pal);
+        mutePreviewCheckbox_->setFixedHeight(24);
+        mutePreviewCheckbox_->setToolTip(QStringLiteral("Mute audio during playback preview"));
+    }
+    optionsRow->addWidget(mutePreviewCheckbox_);
         clearRamPreviewButton_->setIconSize(QSize(16, 16));
         optionsRow->addWidget(clearRamPreviewButton_);
 
@@ -808,8 +971,8 @@ public:
         }
 
         if (timecodeFrame_) {
-            QString inText = QStringLiteral("--:--:--:--");
-            QString outText = QStringLiteral("--:--:--:--");
+            QString inText = formatTimecode(startFrame, fps);
+            QString outText = formatTimecode(endFrame, fps);
             QString currentText = QStringLiteral("00:00:00:00");
             QString endText = QStringLiteral("00:00:00:00");
             if (const auto inPoint =
@@ -902,6 +1065,18 @@ public:
         });
 
         QObject::connect(clearInOutButton_, &QToolButton::clicked, owner_, [this]() {
+            handleClearInOutClicked();
+        });
+
+        QObject::connect(mutePreviewCheckbox_, &QCheckBox::toggled, owner_, [this](bool checked) {
+            if (auto* svc = ArtifactPlaybackService::instance()) {
+                svc->setAudioMasterMuted(checked);
+            }
+        });
+
+        QObject::connect(autoKeyCheckbox_, &QCheckBox::toggled, owner_, [this](bool checked) {
+            // state stored in checkbox
+        });
             handleClearInOutClicked();
         });
 
@@ -1006,7 +1181,9 @@ public:
     
     void handlePlayButtonClicked()
     {
-        if (auto* service = ArtifactPlaybackService::instance()) {
+        if (auto* active = ArtifactActiveContextService::instance()) {
+            active->togglePlayPause();
+        } else if (auto* service = ArtifactPlaybackService::instance()) {
             if (service->isPlaying()) {
                 service->pause();
             } else {
@@ -1017,14 +1194,18 @@ public:
     
     void handlePauseButtonClicked()
     {
-        if (auto* service = ArtifactPlaybackService::instance()) {
+        if (auto* active = ArtifactActiveContextService::instance()) {
+            active->pause();
+        } else if (auto* service = ArtifactPlaybackService::instance()) {
             service->pause();
         }
     }
     
     void handleStopButtonClicked()
     {
-        if (auto* service = ArtifactPlaybackService::instance()) {
+        if (auto* active = ArtifactActiveContextService::instance()) {
+            active->stop();
+        } else if (auto* service = ArtifactPlaybackService::instance()) {
             service->stop();
         }
     }
@@ -1060,14 +1241,18 @@ public:
     void handleStepBackwardClicked()
     {
         if (auto* service = ArtifactPlaybackService::instance()) {
-            service->goToPreviousFrame();
+            const bool shift = QGuiApplication::keyboardModifiers() & Qt::ShiftModifier;
+            const int steps = shift ? 5 : 1;
+            for (int i = 0; i < steps; ++i) service->goToPreviousFrame();
         }
     }
     
     void handleStepForwardClicked()
     {
         if (auto* service = ArtifactPlaybackService::instance()) {
-            service->goToNextFrame();
+            const bool shift = QGuiApplication::keyboardModifiers() & Qt::ShiftModifier;
+            const int steps = shift ? 5 : 1;
+            for (int i = 0; i < steps; ++i) service->goToNextFrame();
         }
     }
     
@@ -1338,9 +1523,18 @@ bool ArtifactPlaybackControlWidget::isLoopEnabled() const
 void ArtifactPlaybackControlWidget::setPlaybackSpeed(float speed)
 {
     impl_->playbackSpeed_ = speed;
-    if (auto* service = ArtifactPlaybackService::instance()) {
-        service->setPlaybackSpeed(speed);
-    }
+}
+
+void ArtifactPlaybackControlWidget::setAutoKeyEnabled(bool enabled)
+{
+  if (impl_->autoKeyCheckbox_) {
+    impl_->autoKeyCheckbox_->setChecked(enabled);
+  }
+}
+
+bool ArtifactPlaybackControlWidget::isAutoKeyEnabled() const
+{
+  return impl_->autoKeyCheckbox_ && impl_->autoKeyCheckbox_->isChecked();
 }
 
 float ArtifactPlaybackControlWidget::playbackSpeed() const

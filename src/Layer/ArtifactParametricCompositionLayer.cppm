@@ -8,6 +8,7 @@ module;
 #include <QSize>
 #include <QString>
 #include <QVariant>
+#include <QStringList>
 
 module Artifact.Layer.ParametricComposition;
 
@@ -18,6 +19,60 @@ import Property.Abstract;
 import Property.Group;
 
 namespace Artifact {
+
+namespace {
+
+ArtifactCore::PropertyType propertyTypeForPublishedValue(const QVariant& value)
+{
+    switch (value.typeId()) {
+    case QMetaType::Bool:
+        return ArtifactCore::PropertyType::Boolean;
+    case QMetaType::QString:
+        return ArtifactCore::PropertyType::String;
+    case QMetaType::Int:
+    case QMetaType::LongLong:
+    case QMetaType::UInt:
+    case QMetaType::ULongLong:
+        return ArtifactCore::PropertyType::Integer;
+    case QMetaType::Float:
+    case QMetaType::Double:
+        return ArtifactCore::PropertyType::Float;
+    default:
+        return ArtifactCore::PropertyType::String;
+    }
+}
+
+QString publishedControlPropertyPath(const QString& controlId)
+{
+    return QStringLiteral("published.") + controlId;
+}
+
+QString publishedControlSourcePath(const QString& controlId)
+{
+    return QStringLiteral("published.meta.") + controlId + QStringLiteral(".sourceParameterKey");
+}
+
+QString normalizedPublishedControlId(const QString& source)
+{
+    QString result;
+    result.reserve(source.size());
+    bool lastWasUnderscore = false;
+    for (const QChar ch : source.trimmed().toLower()) {
+        if (ch.isLetterOrNumber()) {
+            result.append(ch);
+            lastWasUnderscore = false;
+        } else if (!result.isEmpty() && !lastWasUnderscore) {
+            result.append(QChar('_'));
+            lastWasUnderscore = true;
+        }
+    }
+    while (result.endsWith(QChar('_'))) {
+        result.chop(1);
+    }
+    return result.isEmpty() ? QStringLiteral("control") : result;
+}
+
+} // namespace
 
 class ArtifactParametricCompositionLayer::Impl {
 public:
@@ -97,6 +152,120 @@ void ArtifactParametricCompositionLayer::clearParamOverride(const QString& key)
     Q_EMIT changed();
 }
 
+void ArtifactParametricCompositionLayer::setPublishedControlOverride(
+    const QString& controlId, const QVariant& value)
+{
+    impl_->instance_.setPublishedControlOverride(controlId, value);
+    Q_EMIT changed();
+}
+
+void ArtifactParametricCompositionLayer::clearPublishedControlOverride(const QString& controlId)
+{
+    impl_->instance_.clearPublishedControlOverride(controlId);
+    Q_EMIT changed();
+}
+
+void ArtifactParametricCompositionLayer::applyDataRow(const QVariantMap& rowValues)
+{
+    impl_->instance_.applyDataRow(rowValues);
+    Q_EMIT changed();
+}
+
+QVariantMap ArtifactParametricCompositionLayer::dataRowValues() const
+{
+    return impl_->instance_.dataRowValues();
+}
+
+bool ArtifactParametricCompositionLayer::addParameterDefinition(
+    const QString& key,
+    const QVariant& defaultValue,
+    const QString& displayName)
+{
+    if (key.trimmed().isEmpty()) {
+        return false;
+    }
+
+    auto currentDefinition = impl_->instance_.definition();
+    auto updatedDefinition = std::make_shared<ParametricCompositionDefinition>(
+        currentDefinition ? *currentDefinition
+                          : makeDefaultParametricCompositionDefinition(
+                                QStringLiteral("parametric.layer"),
+                                QStringLiteral("Parametric Composition")));
+
+    if (updatedDefinition->hasParameter(key)) {
+        return false;
+    }
+
+    ParametricCompositionParameter parameter;
+    parameter.key = key.trimmed();
+    parameter.displayName =
+        displayName.trimmed().isEmpty() ? parameter.key : displayName.trimmed();
+    parameter.defaultValue = defaultValue;
+    if (!updatedDefinition->addParameter(parameter)) {
+        return false;
+    }
+
+    setDefinition(updatedDefinition);
+    return true;
+}
+
+bool ArtifactParametricCompositionLayer::publishParameter(
+    const QString& key,
+    const QString& controlId,
+    const QString& displayName)
+{
+    auto currentDefinition = impl_->instance_.definition();
+    if (!currentDefinition || !currentDefinition->hasParameter(key)) {
+        return false;
+    }
+
+    auto updatedDefinition =
+        std::make_shared<ParametricCompositionDefinition>(*currentDefinition);
+    ParametricCompositionPublishedControl control;
+    control.sourceParameterKey = key;
+    control.controlId = controlId.trimmed().isEmpty()
+                            ? normalizedPublishedControlId(key)
+                            : controlId.trimmed();
+    control.displayName =
+        displayName.trimmed().isEmpty() ? key : displayName.trimmed();
+
+    const auto* parameter = updatedDefinition->parameter(key);
+    if (parameter) {
+        control.defaultValue = parameter->defaultValue;
+        control.displayName = displayName.trimmed().isEmpty()
+                                  ? parameter->displayName
+                                  : displayName.trimmed();
+        control.valueType = QString::fromLatin1(parameter->defaultValue.typeName());
+    }
+
+    if (updatedDefinition->hasPublishedControl(control.controlId)) {
+        return false;
+    }
+    if (!updatedDefinition->addPublishedControl(control)) {
+        return false;
+    }
+
+    setDefinition(updatedDefinition);
+    return true;
+}
+
+bool ArtifactParametricCompositionLayer::unpublishControl(const QString& controlId)
+{
+    auto currentDefinition = impl_->instance_.definition();
+    if (!currentDefinition || !currentDefinition->hasPublishedControl(controlId)) {
+        return false;
+    }
+
+    auto updatedDefinition =
+        std::make_shared<ParametricCompositionDefinition>(*currentDefinition);
+    if (!updatedDefinition->removePublishedControl(controlId)) {
+        return false;
+    }
+
+    setDefinition(updatedDefinition);
+    return true;
+}
+
 void ArtifactParametricCompositionLayer::draw(ArtifactIRenderer*)
 {
     // Parametric composition layers are rendered through the composition view
@@ -138,13 +307,82 @@ ArtifactParametricCompositionLayer::getLayerPropertyGroups() const
         -109);
     paramGroup.addProperty(bindingCountProp);
 
+    const auto def = impl_->instance_.definition();
+    if (def) {
+        auto publishedCountProp = persistentLayerProperty(
+            QStringLiteral("parametric.publishedControlCount"),
+            PropertyType::Integer,
+            static_cast<int>(def->publishedControls().size()),
+            -108);
+        paramGroup.addProperty(publishedCountProp);
+        auto dataBindingCountProp = persistentLayerProperty(
+            QStringLiteral("parametric.dataBindingCount"),
+            PropertyType::Integer,
+            static_cast<int>(def->dataBindings().size()),
+            -107);
+        paramGroup.addProperty(dataBindingCountProp);
+    }
+
+    auto dataRowCountProp = persistentLayerProperty(
+        QStringLiteral("parametric.dataRowValueCount"),
+        PropertyType::Integer,
+        static_cast<int>(impl_->instance_.dataRowValues().size()),
+        -106);
+    paramGroup.addProperty(dataRowCountProp);
+
     groups.push_back(paramGroup);
+
+    if (const auto def = impl_->instance_.definition()) {
+        PropertyGroup publishedGroup(QStringLiteral("Published Controls"));
+        for (const auto& control : def->publishedControls()) {
+            if (control.hidden) {
+                continue;
+            }
+
+            const QVariant currentValue = impl_->instance_.publishedControlValue(
+                control.controlId,
+                control.defaultValue);
+            const QString propertyPath = publishedControlPropertyPath(control.controlId);
+            auto prop = persistentLayerProperty(
+                propertyPath,
+                propertyTypeForPublishedValue(currentValue.isValid() ? currentValue : control.defaultValue),
+                currentValue,
+                -60 + control.order);
+            if (!control.displayName.isEmpty()) {
+                prop->setDisplayLabel(control.displayName);
+            }
+            publishedGroup.addProperty(prop);
+
+            auto sourceProp = persistentLayerProperty(
+                publishedControlSourcePath(control.controlId),
+                PropertyType::String,
+                control.sourceParameterKey,
+                2000 + control.order);
+            if (!control.displayName.isEmpty()) {
+                sourceProp->setDisplayLabel(control.displayName + QStringLiteral(" Source"));
+            }
+            publishedGroup.addProperty(sourceProp);
+        }
+
+        if (publishedGroup.propertyCount() > 0) {
+            groups.push_back(publishedGroup);
+        }
+    }
+
     return groups;
 }
 
 bool ArtifactParametricCompositionLayer::setLayerPropertyValue(
     const QString& propertyPath, const QVariant& value)
 {
+    if (propertyPath.startsWith(QStringLiteral("published.")) &&
+        !propertyPath.startsWith(QStringLiteral("published.meta."))) {
+        const QString controlId = propertyPath.mid(QStringLiteral("published.").size());
+        if (!controlId.isEmpty()) {
+            setPublishedControlOverride(controlId, value);
+            return true;
+        }
+    }
     return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
 

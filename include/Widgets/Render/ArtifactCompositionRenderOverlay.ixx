@@ -73,6 +73,11 @@ void drawViewportStatusChipOverlay(ArtifactIRenderer *renderer,
                                    const QString &statusText,
                                    const QSize *restoreCanvasSize = nullptr);
 
+void drawPaintLayerOnionSkinOverlay(ArtifactIRenderer *renderer,
+                                    const ArtifactAbstractLayerPtr &paintLayer,
+                                    const ArtifactCompositionPtr &comp,
+                                    float overlayW, float overlayH,
+                                    int frameCount, int opacityPercent);
 void drawViewportSnapHintOverlay(ArtifactIRenderer *renderer,
                                  int overlayW,
                                  int overlayH,
@@ -106,6 +111,10 @@ void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
                                 const QRectF &rect,
                                 const PieMenuModel &model,
                                 int selectedIndex);
+
+void drawViewportWorkCursorOverlay(ArtifactIRenderer *renderer,
+                                   const QPointF &canvasPos,
+                                   const QString &label = QString());
 
 export inline void drawViewportCommandPaletteOverlay(ArtifactIRenderer *renderer,
                                                      float overlayWf,
@@ -341,6 +350,61 @@ export inline void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
 
   renderer->setZoom(prevZoom);
   renderer->setPan(prevPanX, prevPanY);
+}
+
+export inline void drawViewportWorkCursorOverlay(ArtifactIRenderer *renderer,
+                                                 const QPointF &canvasPos,
+                                                 const QString &label)
+{
+  if (!renderer) {
+    return;
+  }
+
+  const float zoom = std::max(0.001f, renderer->getZoom());
+  const float arm = std::max(18.0f, 28.0f / zoom);
+  const float gap = std::max(4.0f, 8.0f / zoom);
+  const float ringRadius = std::max(7.0f, 12.0f / zoom);
+  const float outerRadius = ringRadius + std::max(4.0f, 6.0f / zoom);
+  const float thickness = std::max(1.1f, 2.0f / zoom);
+
+  const float x = static_cast<float>(canvasPos.x());
+  const float y = static_cast<float>(canvasPos.y());
+
+  const FloatColor accent{1.0f, 0.43f, 0.12f, 0.98f};
+  const FloatColor core{0.98f, 0.99f, 1.0f, 0.96f};
+  const FloatColor shadow{0.04f, 0.05f, 0.06f, 0.86f};
+
+  auto line = [&](float x0, float y0, float x1, float y1,
+                  const FloatColor &color, float lineThickness) {
+    renderer->drawSolidLine({x0, y0}, {x1, y1}, color, lineThickness);
+  };
+
+  line(x - arm, y, x - gap, y, shadow, thickness + 2.0f / zoom);
+  line(x + gap, y, x + arm, y, shadow, thickness + 2.0f / zoom);
+  line(x, y - arm, x, y - gap, shadow, thickness + 2.0f / zoom);
+  line(x, y + gap, x, y + arm, shadow, thickness + 2.0f / zoom);
+
+  line(x - arm, y, x - gap, y, accent, thickness);
+  line(x + gap, y, x + arm, y, accent, thickness);
+  line(x, y - arm, x, y - gap, accent, thickness);
+  line(x, y + gap, x, y + arm, accent, thickness);
+
+  renderer->drawCircle(x, y, outerRadius, shadow, thickness + 1.0f / zoom,
+                       false);
+  renderer->drawCircle(x, y, ringRadius, accent, thickness, false);
+  renderer->drawCircle(x, y, std::max(1.5f, 2.5f / zoom), core, 1.0f, true);
+
+  const QString displayLabel =
+      label.trimmed().isEmpty() ? QStringLiteral("Work Cursor") : label.trimmed();
+  QFont font = QApplication::font();
+  font.setPointSizeF(std::max(9.0, static_cast<double>(font.pointSizeF())));
+  font.setWeight(QFont::DemiBold);
+  const QRectF textRect(x + arm + std::max(8.0f, 12.0f / zoom),
+                        y - std::max(14.0f, 20.0f / zoom),
+                        std::max(110.0f, 150.0f / zoom),
+                        std::max(18.0f, 22.0f / zoom));
+  renderer->drawText(textRect, displayLabel, font, core,
+                     Qt::AlignLeft | Qt::AlignVCenter, 1.0f, shadow, 1.0f);
 }
 
 } // namespace Artifact

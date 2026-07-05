@@ -8,6 +8,7 @@ module;
 #include <QPointF>
 #include <QRectF>
 #include <QSize>
+#include <QVector>
 
 export module Artifact.Composition.Abstract;
 import std;
@@ -28,6 +29,7 @@ import Artifact.Composition.InitParams;
 export import Artifact.Layer.Abstract;
 import Artifact.Composition.Result;
 import Composition.Settings;
+import Audio.Analyze;
 import Audio.Segment;
 import Audio.Segment;
 import Audio.Mixer;
@@ -67,6 +69,57 @@ export namespace Artifact {
   QJsonObject toJson() const;
   static ResponsiveLayoutSet fromJson(const QJsonObject& obj);
   bool hasVariant(const QString& variantId) const;
+ };
+
+ struct CompositionTransformField {
+  QString fieldId;
+  QString displayName = QStringLiteral("Radial Transform Field");
+  bool enabled = true;
+  QPointF center;
+  qreal radius = 1.0;
+  qreal expansion = 0.0;
+  qreal edgeScale = 1.0;
+  LayerID coordinateParentLayerId;
+  QVector<LayerID> targetLayerIds;
+
+  bool targetsLayer(const LayerID& layerId) const;
+  QJsonObject toJson() const;
+  static CompositionTransformField fromJson(const QJsonObject& obj);
+ };
+
+ struct CompositionFieldTransformAdjustment {
+  QPointF positionOffset;
+  qreal scaleMultiplier = 1.0;
+  bool affected = false;
+ };
+
+ struct CompositionStatePropertyOverride {
+  LayerID layerId;
+  QString propertyPath;
+  QVariant value;
+  QVariant baselineValue;
+  bool enabled = true;
+
+  QJsonObject toJson() const;
+  static CompositionStatePropertyOverride fromJson(const QJsonObject& obj);
+ };
+
+ struct CompositionStateVariant {
+  QString stateId;
+  QString displayName;
+  bool enabled = true;
+  QVector<CompositionStatePropertyOverride> overrides;
+
+  QJsonObject toJson() const;
+  static CompositionStateVariant fromJson(const QJsonObject& obj);
+  bool hasOverride(const LayerID& layerId, const QString& propertyPath) const;
+ };
+
+ struct LiveControlRecordingOptions {
+  QStringList addresses;
+  int sampleEveryNFrames = 1;
+  double deadZone = 0.001;
+  bool restoreOnCancel = true;
  };
 
  class ArtifactAbstractComposition:public QObject, public ArtifactAbstractCompositionAccess {
@@ -146,6 +199,29 @@ export namespace Artifact {
   void setActiveResponsiveLayoutVariantId(const QString& variantId);
   QVector<ResponsiveLayoutVariant> responsiveLayoutVariants() const;
   QSize effectiveCompositionSize() const;
+
+  QVector<CompositionTransformField> transformFields() const;
+  void setTransformFields(const QVector<CompositionTransformField>& fields);
+  void addTransformField(const CompositionTransformField& field);
+  bool removeTransformField(const QString& fieldId);
+  void clearTransformFields();
+  CompositionFieldTransformAdjustment evaluateTransformFields(
+      const LayerID& layerId, const QPointF& basePosition) const;
+  bool applyExternalControlValue(const QString& address, double rawValue, bool resetSmoothing = false);
+  bool applyAudioAnalysis(const ArtifactCore::AudioAnalyzer::AnalysisResult& analysis,
+                          const QString& addressPrefix = QStringLiteral("audio"),
+                          bool resetSmoothing = false);
+  bool beginLiveControlRecording(const LiveControlRecordingOptions& options = {});
+  bool isLiveControlRecordingActive() const;
+  LiveControlRecordingOptions liveControlRecordingOptions() const;
+  void commitLiveControlRecording();
+  void cancelLiveControlRecording();
+  QVector<CompositionStateVariant> stateVariants() const;
+  void setStateVariants(const QVector<CompositionStateVariant>& states);
+  void addStateVariant(const CompositionStateVariant& state);
+  bool removeStateVariant(const QString& stateId);
+  QString activeStateVariantId() const;
+  bool setActiveStateVariantId(const QString& stateId);
   	
   bool hasVideo() const;
   bool hasAudio() const;

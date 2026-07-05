@@ -1090,11 +1090,11 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->primaryCenterDock = centralDock;
   impl_->dockStyleManager->applyStyle();
 
-  // Welcome widget — overlay over central area when no project is open
+  // Let Composition Viewer own the startup empty state so its
+  // Create Composition action stays actionable.
   impl_->welcomeWidget = new Artifact::ArtifactWelcomeWidget(impl_->centralWidgetHost);
   impl_->welcomeWidget->setGeometry(impl_->centralWidgetHost->rect());
-  impl_->welcomeWidget->raise();
-  impl_->welcomeWidget->show();
+  impl_->welcomeWidget->hide();
   // Sync welcome widget size with central host when it resizes
   impl_->centralWidgetHost->installEventFilter(this);
   QObject::connect(impl_->welcomeWidget, &ArtifactWelcomeWidget::openRecentProject, this,
@@ -1141,7 +1141,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
               ArtifactProjectManager::getInstance().loadFromFile(path);
           }
       });
-  // Listen for project changes to toggle welcome visibility
+  // Keep recent-project data fresh without covering Composition Viewer.
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<ProjectChangedEvent>(
           [this](const ProjectChangedEvent&) {
@@ -1149,7 +1149,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
               const auto& mgr = ArtifactProjectManager::getInstance();
               const bool noProject = mgr.currentProjectPath().isEmpty()
                                      && !mgr.isProjectCreated();
-              impl_->welcomeWidget->setVisible(noProject);
+              impl_->welcomeWidget->hide();
               if (noProject) {
                   impl_->welcomeWidget->refreshRecentProjects();
               }

@@ -19,6 +19,7 @@ struct ScreenshotExportOptions
  QString format = QStringLiteral("png");
  int jpegQuality = 95;
  ScreenshotCaptureSource captureSource = ScreenshotCaptureSource::Renderer;
+ bool multiChannel = false;          // Multi-channel EXR (AOV)
 };
 
 class ArtifactScreenshotExportDialog : public QDialog
@@ -45,6 +46,8 @@ public:
  [[nodiscard]] ScreenshotCaptureSource captureSource() const;
  void setOptions(const ScreenshotExportOptions& options);
  [[nodiscard]] ScreenshotExportOptions options() const;
+ void setMultiChannelEnabled(bool enabled);
+ [[nodiscard]] bool multiChannelEnabled() const;
 };
 
 }

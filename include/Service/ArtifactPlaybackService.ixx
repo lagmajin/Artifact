@@ -168,6 +168,8 @@ public:
   // Loop settings
   bool isLooping() const;
   void setLooping(bool loop);
+  void setPingPong(bool enabled);
+  bool isPingPong() const;
 
   // Real-time mode
   bool isRealTime() const;

@@ -35,6 +35,13 @@ public:
     // Parameter overrides
     void setParamOverride(const QString& key, const QVariant& value);
     void clearParamOverride(const QString& key);
+    void setPublishedControlOverride(const QString& controlId, const QVariant& value);
+    void clearPublishedControlOverride(const QString& controlId);
+    void applyDataRow(const QVariantMap& rowValues);
+    QVariantMap dataRowValues() const;
+    bool addParameterDefinition(const QString& key, const QVariant& defaultValue, const QString& displayName = QString());
+    bool publishParameter(const QString& key, const QString& controlId = QString(), const QString& displayName = QString());
+    bool unpublishControl(const QString& controlId);
 
     // Layer overrides
     void draw(ArtifactIRenderer* renderer) override;
