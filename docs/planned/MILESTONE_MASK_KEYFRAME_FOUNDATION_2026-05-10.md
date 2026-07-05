@@ -60,3 +60,13 @@ This milestone separates the problem into a smaller first slice:
 ## Suggested Next Task
 
 Implement the property exposure for one mask path first, then prove that the current timeline time can alter the rendered mask output without breaking the existing mask editor.
+
+## Future Extension Note
+
+The keyframe drag workflow may later reuse a "Brush Stabilizer"-style input filter:
+
+- `straighten` mode: force vertical or horizontal alignment for intent-driven edits
+- `smooth` mode: average small pointer jitter before applying movement
+- `lag` mode: follow slightly behind the pointer to absorb hand shake
+
+This is intentionally not part of the first pass. It is a candidate for vertical/horizontal keyframe dragging and handle editing after the basic mask property pipeline is stable.

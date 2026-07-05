@@ -6,8 +6,10 @@ module;
 #include <QActionGroup>
 #include <QKeySequence>
 #include <QCursor>
+#include <QMetaObject>
 #include <QPoint>
 #include <QSignalBlocker>
+#include <QThread>
 #include <wobjectimpl.h>
 
 module Menu.Animation;
@@ -250,6 +252,7 @@ bool hasActiveExpressionTarget(QWidget* root)
   QMenu* presetMenu = nullptr;
 
   void refreshEnabledState();
+  void requestRefreshEnabledState();
  };
 
  ArtifactAnimationMenu::Impl::Impl(ArtifactAnimationMenu* menu) : menu_(menu)
@@ -270,7 +273,7 @@ bool hasActiveExpressionTarget(QWidget* root)
               }
             }
             selectedLayerId_ = layerId;
-            refreshEnabledState();
+            requestRefreshEnabledState();
           }));
   eventBusSubscriptions_.push_back(
       eventBus.subscribe<LayerChangedEvent>(
@@ -289,16 +292,30 @@ bool hasActiveExpressionTarget(QWidget* root)
                 selectedLayerId_ == ArtifactCore::LayerID(event.layerId)) {
               selectedLayerId_ = {};
             }
-            refreshEnabledState();
+            requestRefreshEnabledState();
           }));
   eventBusSubscriptions_.push_back(
       eventBus.subscribe<ProjectChangedEvent>(
           [this](const ProjectChangedEvent&) {
-            refreshEnabledState();
+            requestRefreshEnabledState();
           }));
   QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
    refreshEnabledState();
   });
+ }
+
+ void ArtifactAnimationMenu::Impl::requestRefreshEnabledState()
+ {
+  if (!menu_) {
+   return;
+  }
+  if (QThread::currentThread() == menu_->thread()) {
+   refreshEnabledState();
+   return;
+  }
+  QMetaObject::invokeMethod(menu_, [this]() {
+   refreshEnabledState();
+  }, Qt::QueuedConnection);
  }
 
  ArtifactAnimationMenu::Impl::~Impl()

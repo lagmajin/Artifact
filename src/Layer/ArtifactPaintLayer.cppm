@@ -5,6 +5,7 @@ module;
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMatrix4x4>
+#include <QImage>
 #include <QRectF>
 #include <QPainter>
 
@@ -13,6 +14,7 @@ module Artifact.Layer.Paint;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageF32x4_RGBA;
 import FloatRGBA;
 
 namespace Artifact {
@@ -28,9 +30,9 @@ public:
         auto it = frames_.find(frame);
         if (it == frames_.end()) {
             auto& buf = frames_[frame];
-            buf = ArtifactCore::ImageF32x4RGBAWithCache(
-                ArtifactCore::ImageF32x4_RGBA(defaultSize_.width(), defaultSize_.height()));
-            buf.image().clear(FloatRGBA{0,0,0,0});
+            buf = ArtifactCore::ImageF32x4RGBAWithCache();
+            buf.image().resize(defaultSize_.width(), defaultSize_.height());
+            buf.image().fill(FloatRGBA{0,0,0,0});
             return buf;
         }
         return it->second;
@@ -56,13 +58,14 @@ QRectF ArtifactPaintLayer::localBounds() const {
 }
 
 void ArtifactPaintLayer::draw(ArtifactIRenderer* renderer) {
-    auto frame = currentFrame();
+    FramePosition frame(currentFrame());
     auto* buf = frameBuffer(frame);
     if (!buf || buf->isEmpty()) return;
+    QImage image = buf->toQImage();
     renderer->drawSprite(0, 0,
-        static_cast<float>(buf->width()),
-        static_cast<float>(buf->height()),
-        *buf, opacity());
+        static_cast<float>(image.width()),
+        static_cast<float>(image.height()),
+        image, opacity());
 }
 
 void ArtifactPaintLayer::newFrame(const FramePosition& pos) {
@@ -90,7 +93,7 @@ void ArtifactPaintLayer::clearAllFrames() {
 }
 
 void ArtifactPaintLayer::applyStroke(const BrushStroke& stroke) {
-    applyStrokeAtFrame(stroke, currentFrame());
+    applyStrokeAtFrame(stroke, FramePosition(currentFrame()));
 }
 
 void ArtifactPaintLayer::applyStrokeAtFrame(const BrushStroke& stroke, const FramePosition& frame) {
@@ -120,16 +123,18 @@ void ArtifactPaintLayer::applyStrokeAtFrame(const BrushStroke& stroke, const Fra
                 float dy = static_cast<float>(y - cy);
                 if (dx * dx + dy * dy <= r2) {
                     float falloff = 1.0f - std::sqrt(dx*dx + dy*dy) / stroke.radius;
-                    float alpha = color.a * stroke.opacity * std::max(0.0f, falloff);
+                    float alpha = color.a() * stroke.opacity * std::max(0.0f, falloff);
                     if (stroke.eraser) {
-                        auto* px = img.pixel(x, y);
-                        px->a *= (1.0f - alpha);
+                        FloatRGBA px = img.getPixel(x, y);
+                        px.setAlpha(px.a() * (1.0f - alpha));
+                        img.setPixel(x, y, px);
                     } else {
-                        auto* px = img.pixel(x, y);
-                        px->r = px->r * (1.0f - alpha) + color.r * alpha;
-                        px->g = px->g * (1.0f - alpha) + color.g * alpha;
-                        px->b = px->b * (1.0f - alpha) + color.b * alpha;
-                        px->a = px->a * (1.0f - alpha) + alpha;
+                        FloatRGBA px = img.getPixel(x, y);
+                        px.setRed(px.r() * (1.0f - alpha) + color.r() * alpha);
+                        px.setGreen(px.g() * (1.0f - alpha) + color.g() * alpha);
+                        px.setBlue(px.b() * (1.0f - alpha) + color.b() * alpha);
+                        px.setAlpha(px.a() * (1.0f - alpha) + alpha);
+                        img.setPixel(x, y, px);
                     }
                 }
             }
@@ -139,15 +144,16 @@ void ArtifactPaintLayer::applyStrokeAtFrame(const BrushStroke& stroke, const Fra
 }
 
 void ArtifactPaintLayer::undoLastStroke() {
-    auto frame = currentFrame().framePosition();
-    auto it = impl_->undoStacks_.find(frame);
+    FramePosition frame(currentFrame());
+    auto it = impl_->undoStacks_.find(frame.framePosition());
     if (it == impl_->undoStacks_.end() || it->second.empty()) return;
-    impl_->frames_[frame] = it->second.back();
+    impl_->frames_[frame.framePosition()] = it->second.back();
     it->second.pop_back();
 }
 
 bool ArtifactPaintLayer::canUndo() const {
-    auto it = impl_->undoStacks_.find(currentFrame().framePosition());
+    FramePosition frame(currentFrame());
+    auto it = impl_->undoStacks_.find(frame.framePosition());
     return it != impl_->undoStacks_.end() && !it->second.empty();
 }
 
@@ -201,4 +207,4 @@ void ArtifactPaintLayer::fromJson(const QJsonObject& obj) {
 
 } // namespace Artifact
 
-W_OBJECT_IMPL(ArtifactPaintLayer)
+W_OBJECT_IMPL(Artifact::ArtifactPaintLayer)

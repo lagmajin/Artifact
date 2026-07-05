@@ -324,6 +324,14 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   }
  }
 
+ int ArtifactTimelineScrubBar::rulerFrameToX(double frame) const
+ {
+  if (!impl_) {
+   return 0;
+  }
+  return static_cast<int>(std::lround(impl_->resolveFrameToX(std::max(0.0, frame), width())));
+ }
+
  void ArtifactTimelineScrubBar::paintEvent(QPaintEvent* event)
  {
   ArtifactCore::ProfileTimer _profTimer("ScrubBarPaint",

@@ -51,6 +51,7 @@ public:
     FrameRate frameRate_{30.0f};
     float playbackSpeed_{1.0f};
     std::atomic<bool> looping_{false};
+    std::atomic<bool> pingPong_{false};
     std::atomic<PlaybackSkipMode> skipMode_{PlaybackSkipMode::None};
     
     // In/Out Points
@@ -242,7 +243,14 @@ public:
             
             if (totalFramesInRange > 0) {
                 if (targetFrame > endPos.framePosition()) {
-                    if (looping_) {
+                    if (pingPong_) {
+                        // Ping-Pong: reverse direction at boundary
+                        playbackSpeed_ = -playbackSpeed_;
+                        playbackStartTime_ = now;
+                        playbackStartFrame_ = endPos.framePosition();
+                        targetFrame = endPos.framePosition();
+                        audioSeekPending_ = true;
+                    } else if (looping_) {
                         // ループ時はベース時間をリセットして、最初から回す
                         playbackStartTime_ = now;
                         playbackStartFrame_ = startPos.framePosition();
@@ -256,7 +264,13 @@ public:
                         break;
                     }
                 } else if (targetFrame < startPos.framePosition()) {
-                    if (looping_) {
+                    if (pingPong_) {
+                        playbackSpeed_ = -playbackSpeed_;
+                        playbackStartTime_ = now;
+                        playbackStartFrame_ = startPos.framePosition();
+                        targetFrame = startPos.framePosition();
+                        audioSeekPending_ = true;
+                    } else if (looping_) {
                         playbackStartTime_ = now;
                         playbackStartFrame_ = endPos.framePosition();
                         targetFrame = endPos.framePosition();
@@ -682,6 +696,14 @@ void ArtifactPlaybackEngine::setLooping(bool loop) {
 
 bool ArtifactPlaybackEngine::isLooping() const {
     return impl_->looping_;
+}
+
+void ArtifactPlaybackEngine::setPingPong(bool enabled) {
+    impl_->pingPong_ = enabled;
+}
+
+bool ArtifactPlaybackEngine::isPingPong() const {
+    return impl_->pingPong_;
 }
 
 void ArtifactPlaybackEngine::setPlaybackSkipMode(PlaybackSkipMode mode) {

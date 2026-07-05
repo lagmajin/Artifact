@@ -162,6 +162,4 @@ createPropertyEditorWidget(const ArtifactCore::AbstractProperty &property,
   }
 }
 
-// ObjectReferencePropertyEditor 実装
-ArtifactObjectReferencePropertyEditor::ArtifactObjectReferencePropertyEditor(
 } // namespace Artifact

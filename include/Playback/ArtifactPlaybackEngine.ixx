@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <chrono>
 #include <atomic>
 #include <functional>
@@ -85,6 +85,9 @@ public:
 
     void setLooping(bool loop);
     bool isLooping() const;
+
+    void setPingPong(bool enabled);
+    bool isPingPong() const;
 
     void setPlaybackSkipMode(PlaybackSkipMode mode);
     PlaybackSkipMode playbackSkipMode() const;

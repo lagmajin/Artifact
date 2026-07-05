@@ -63,4 +63,4 @@ bool ArtifactBrushTool::mouseReleaseEvent(
 
 } // namespace Artifact
 
-W_OBJECT_IMPL(ArtifactBrushTool)
+W_OBJECT_IMPL(Artifact::ArtifactBrushTool)

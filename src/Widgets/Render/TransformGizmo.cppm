@@ -139,6 +139,28 @@ QRectF adjustedResizeBox(const QRectF& startBox, const QPointF& delta, Transform
  return box.normalized();
 }
 
+QRectF unionCanvasBoundingRect(const std::vector<ArtifactAbstractLayerPtr>& layers)
+{
+ QRectF out;
+ bool hasRect = false;
+ for (const auto& layer : layers) {
+  if (!layer || !layer->isVisible()) {
+   continue;
+  }
+  const QRectF bounds = layer->transformedBoundingBox();
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+   continue;
+  }
+  if (!hasRect) {
+   out = bounds;
+   hasRect = true;
+  } else {
+   out = out.united(bounds);
+  }
+ }
+ return hasRect ? out : QRectF();
+}
+
 QRectF enforceResizeMinSize(QRectF box, const TransformGizmo::HandleType handle,
                            const double minWidth, const double minHeight)
 {
@@ -224,6 +246,38 @@ struct SnapGuideSet {
  std::vector<float> horizontal;
 };
 
+GuideType guideTypeForAxisValue(const std::shared_ptr<ArtifactAbstractComposition>& comp,
+                                const float value,
+                                const bool isVertical)
+{
+ if (!comp) {
+  return GuideType::LayerEdge;
+ }
+
+ const QSize sz = comp->settings().compositionSize();
+ const float compSize = isVertical ? static_cast<float>(sz.width())
+                                   : static_cast<float>(sz.height());
+ const float half = compSize * 0.5f;
+ if (std::abs(value) < 0.5f || std::abs(value - compSize) < 0.5f) {
+  return GuideType::CompEdge;
+ }
+ if (std::abs(value - half) < 0.5f) {
+  return GuideType::CompCenter;
+ }
+  return GuideType::LayerEdge;
+}
+
+GuideType guideTypeForEdgeLabel(const QString& edgeLabel,
+                                const GuideType baseType)
+{
+ if (baseType == GuideType::CompEdge || baseType == GuideType::CompCenter) {
+  return baseType;
+ }
+ return (edgeLabel == QStringLiteral("X") || edgeLabel == QStringLiteral("Y"))
+            ? GuideType::LayerCenter
+            : GuideType::LayerEdge;
+}
+
 void appendBoundsToSnapGuides(const QRectF& bounds, SnapGuideSet& guides)
 {
  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
@@ -266,7 +320,8 @@ SnapGuideSet buildSnapGuides(const std::shared_ptr<ArtifactAbstractComposition>&
 
  for (const auto& other : comp->allLayerRef()) {
   if (!other || !other->isVisible() || (ignoreLayer && other->id() == ignoreLayer->id()) ||
-      other->isLocked() || other->isTransformLocked()) {
+      other->isLocked() || other->isTransformLocked() ||
+      (other->hasAudio() && !other->hasVideo())) {
    continue;
   }
   appendBoundsToSnapGuides(other->transformedBoundingBox(), guides);
@@ -290,7 +345,8 @@ SnapGuideSet buildSpacingGuides(const std::shared_ptr<ArtifactAbstractCompositio
 
  for (const auto& other : comp->allLayerRef()) {
   if (!other || !other->isVisible() || (ignoreLayer && other->id() == ignoreLayer->id()) ||
-      other->isLocked() || other->isTransformLocked()) {
+      other->isLocked() || other->isTransformLocked() ||
+      (other->hasAudio() && !other->hasVideo())) {
    continue;
   }
   appendEdgeBoundsToSnapGuides(other->transformedBoundingBox(), guides);
@@ -300,6 +356,7 @@ SnapGuideSet buildSpacingGuides(const std::shared_ptr<ArtifactAbstractCompositio
 
 bool snapValueToGuides(float& value, const std::vector<float>& guides,
                        const float threshold, const bool isVertical,
+                       const std::shared_ptr<ArtifactAbstractComposition>& comp,
                        std::vector<SnapLine>& activeSnapLines)
 {
  float bestDist = threshold;
@@ -315,13 +372,15 @@ bool snapValueToGuides(float& value, const std::vector<float>& guides,
  }
  if (snapped) {
   value = bestValue;
-  activeSnapLines.push_back({isVertical, bestValue});
+  activeSnapLines.push_back(
+      {isVertical, bestValue, guideTypeForAxisValue(comp, bestValue, isVertical)});
  }
  return snapped;
 }
 
 bool snapBoundingBoxAxis(QRectF& box, const std::vector<float>& guides,
                          const float threshold, const bool snapVertical,
+                         const std::shared_ptr<ArtifactAbstractComposition>& comp,
                          std::vector<SnapLine>& activeSnapLines,
                          std::vector<SnapLabel>* activeSnapLabels)
 {
@@ -362,7 +421,9 @@ bool snapBoundingBoxAxis(QRectF& box, const std::vector<float>& guides,
   trySnap(right, QStringLiteral("Right"));
   if (snapped) {
    box.translate(bestDelta, 0.0);
-   activeSnapLines.push_back({true, bestLine});
+   const GuideType guideType =
+       guideTypeForEdgeLabel(bestEdgeLabel, guideTypeForAxisValue(comp, bestLine, true));
+   activeSnapLines.push_back({true, bestLine, guideType});
    if (activeSnapLabels) {
     activeSnapLabels->push_back({true,
                                  QPointF(bestLine, static_cast<float>(box.center().y())),
@@ -377,7 +438,9 @@ bool snapBoundingBoxAxis(QRectF& box, const std::vector<float>& guides,
   trySnap(bottom, QStringLiteral("Bottom"));
   if (snapped) {
    box.translate(0.0, bestDelta);
-   activeSnapLines.push_back({false, bestLine});
+   const GuideType guideType =
+       guideTypeForEdgeLabel(bestEdgeLabel, guideTypeForAxisValue(comp, bestLine, false));
+   activeSnapLines.push_back({false, bestLine, guideType});
    if (activeSnapLabels) {
     activeSnapLabels->push_back({false,
                                  QPointF(static_cast<float>(box.center().x()), bestLine),
@@ -392,6 +455,7 @@ bool snapBoundingBoxAxis(QRectF& box, const std::vector<float>& guides,
 
 bool snapBoxBetweenGuides(QRectF& box, const std::vector<float>& guides,
                           const float threshold, const bool snapVertical,
+                          const std::shared_ptr<ArtifactAbstractComposition>& comp,
                           std::vector<SnapLine>& activeSnapLines,
                           std::vector<SnapLabel>* activeSnapLabels)
 {
@@ -441,8 +505,8 @@ bool snapBoxBetweenGuides(QRectF& box, const std::vector<float>& guides,
 
  if (snapped) {
   box.translate(snapVertical ? bestDelta : 0.0, snapVertical ? 0.0 : bestDelta);
-  activeSnapLines.push_back({snapVertical, leftGuide});
-  activeSnapLines.push_back({snapVertical, rightGuide});
+  activeSnapLines.push_back({snapVertical, leftGuide, GuideType::Spacing});
+  activeSnapLines.push_back({snapVertical, rightGuide, GuideType::Spacing});
   if (activeSnapLabels) {
    const float gap = rightGuide - leftGuide;
    activeSnapLabels->push_back(
@@ -460,6 +524,7 @@ bool snapBoxBetweenGuides(QRectF& box, const std::vector<float>& guides,
 
 bool snapResizePointToGuides(QPointF& point, const TransformGizmo::HandleType handle,
                              const SnapGuideSet& guides, const float threshold,
+                             const std::shared_ptr<ArtifactAbstractComposition>& comp,
                              std::vector<SnapLine>& activeSnapLines)
 {
  bool snapped = false;
@@ -480,13 +545,13 @@ bool snapResizePointToGuides(QPointF& point, const TransformGizmo::HandleType ha
 
  if (snapX) {
   float snappedX = static_cast<float>(point.x());
-  snapped |= snapValueToGuides(snappedX, guides.vertical, threshold, true,
+  snapped |= snapValueToGuides(snappedX, guides.vertical, threshold, true, comp,
                                activeSnapLines);
   point.setX(snappedX);
  }
  if (snapY) {
   float snappedY = static_cast<float>(point.y());
-  snapped |= snapValueToGuides(snappedY, guides.horizontal, threshold, false,
+  snapped |= snapValueToGuides(snappedY, guides.horizontal, threshold, false, comp,
                                activeSnapLines);
   point.setY(snappedY);
  }
@@ -1162,13 +1227,13 @@ void drawResizeBadge(ArtifactIRenderer* renderer,
                             static_cast<float>(textRect.width()),
                             static_cast<float>(textRect.height()),
                             FloatColor{0.04f, 0.05f, 0.07f, 0.86f},
-                            FloatColor{accentColor.redF(),
-                                       accentColor.greenF(),
-                                       accentColor.blueF(),
-                                       0.92f});
+                            FloatColor{0.96f, 0.54f, 0.18f, 0.92f});
 
  for (size_t i = 0; i < lines.size(); ++i) {
-  const QString line = lines[i].trimmed();
+  QString line = lines[i].trimmed();
+  if (i == 0 && !line.isEmpty()) {
+   line = QStringLiteral("OVR:RSZ %1").arg(line);
+  }
   if (line.isEmpty()) {
    continue;
   }
@@ -1308,6 +1373,32 @@ void applyScaleSnapshot(ArtifactCore::AnimatableTransform3D& t3d,
  }
 }
 
+double effectiveTransformKeyframeRate(const ArtifactAbstractLayer* layer)
+{
+ if (!layer) {
+  return 24.0;
+ }
+ if (auto* composition = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+  const double fps = composition->frameRate().framerate();
+  if (fps > 0.0) {
+   return fps;
+  }
+ }
+ return 24.0;
+}
+
+ArtifactCore::RationalTime transformKeyframeTimeAtFrame(const ArtifactAbstractLayer* layer,
+                                                        const int64_t frame);
+
+ArtifactCore::RationalTime transformKeyframeTimeAtFrame(const ArtifactAbstractLayer* layer,
+                                                        const int64_t frame)
+{
+ if (!layer) {
+  return ArtifactCore::RationalTime(0, effectiveTransformKeyframeRate(nullptr));
+ }
+ return ArtifactCore::RationalTime(frame, effectiveTransformKeyframeRate(layer));
+}
+
 class TransformUndoCommand final : public UndoCommand {
 public:
  TransformUndoCommand(ArtifactAbstractLayerPtr layer, int64_t frame, TransformSnapshot before, TransformSnapshot after)
@@ -1324,7 +1415,8 @@ private:
    return;
   }
 
-  const ArtifactCore::RationalTime time(frame_, 24);
+  const ArtifactCore::RationalTime time =
+      transformKeyframeTimeAtFrame(layer.get(), frame_);
   auto& t3d = layer->transform3D();
   const TransformSnapshot current = captureTransformSnapshot(layer, time);
   const bool alreadyMatches =
@@ -1394,12 +1486,13 @@ public:
 
 private:
  void apply(bool useBefore) {
-  const ArtifactCore::RationalTime time(frame_, 24);
   for (auto &entry : entries_) {
    auto layer = entry.layer.lock();
    if (!layer) {
     continue;
    }
+   const ArtifactCore::RationalTime time =
+       transformKeyframeTimeAtFrame(layer.get(), frame_);
    const TransformSnapshot &snapshot = useBefore ? entry.before : entry.after;
    auto &t3d = layer->transform3D();
    applyPositionSnapshot(t3d, time, snapshot);
@@ -1558,7 +1651,15 @@ TransformGizmo::Mode TransformGizmo::mode() const {
 static constexpr double HANDLE_SIZE = 8.0;
 static constexpr double ROTATE_HANDLE_DISTANCE = 28.0;
 static constexpr double GIZMO_OFFSET = 0.0;  // was 15.0; handles use offsetPointAwayFromCenter so no border expansion needed
-static constexpr int TRANSFORM_KEYFRAME_SCALE = 24;
+
+ArtifactCore::RationalTime currentTransformKeyframeTime(const ArtifactAbstractLayer* layer)
+{
+ if (!layer) {
+  return ArtifactCore::RationalTime(0, effectiveTransformKeyframeRate(nullptr));
+ }
+ return ArtifactCore::RationalTime(layer->currentFrame(),
+                                   effectiveTransformKeyframeRate(layer));
+}
 
 void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  // 5. 不要時の描画スキップ: 早期リターンで無駄な計算を防止
@@ -1995,15 +2096,29 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
    const float w = static_cast<float>(size.width() > 0 ? size.width() : 1920);
    const float h = static_cast<float>(size.height() > 0 ? size.height() : 1080);
  for (const auto& sl : activeSnapLines_) {
-    const FloatColor snapColor{
+    FloatColor snapColor{
         themeAccent.redF(),
         themeAccent.greenF(),
         themeAccent.blueF(),
         0.58f};
+    float snapThickness = std::max(1.0f, 1.5f * invZoom);
+    if (sl.type == GuideType::CompCenter) {
+     snapColor = {1.0f, 0.82f, 0.22f, 0.86f};
+     snapThickness = std::max(1.35f, 2.1f * invZoom);
+    } else if (sl.type == GuideType::CompEdge) {
+     snapColor = {0.98f, 0.54f, 0.18f, 0.72f};
+     snapThickness = std::max(1.15f, 1.75f * invZoom);
+    } else if (sl.type == GuideType::LayerCenter) {
+     snapColor = {0.26f, 0.92f, 1.0f, 0.82f};
+     snapThickness = std::max(1.15f, 1.75f * invZoom);
+    } else if (sl.type == GuideType::Spacing) {
+     snapColor = {0.74f, 0.54f, 1.0f, 0.72f};
+     snapThickness = std::max(1.0f, 1.55f * invZoom);
+    }
     if (sl.isVertical) {
-     renderer->drawSolidLine({sl.position, 0.0f}, {sl.position, h}, snapColor, std::max(1.0f, 1.5f * invZoom));
+     renderer->drawSolidLine({sl.position, 0.0f}, {sl.position, h}, snapColor, snapThickness);
     } else {
-     renderer->drawSolidLine({0.0f, sl.position}, {w, sl.position}, snapColor, std::max(1.0f, 1.5f * invZoom));
+     renderer->drawSolidLine({0.0f, sl.position}, {w, sl.position}, snapColor, snapThickness);
     }
    }
    if (!activeSnapLabels_.empty()) {
@@ -2030,11 +2145,10 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
                                  static_cast<float>(textRect.width()),
                                  static_cast<float>(textRect.height()),
                                  FloatColor{0.05f, 0.06f, 0.08f, 0.82f},
-                                 FloatColor{themeAccent.redF(),
-                                            themeAccent.greenF(),
-                                            themeAccent.blueF(),
-                                            0.84f});
-     renderer->drawText(textRect, text, labelFont,
+                                 FloatColor{0.88f, 0.34f, 0.78f, 0.90f});
+     renderer->drawText(textRect,
+                        QStringLiteral("OVR:SNP %1").arg(text),
+                        labelFont,
                         FloatColor{0.94f, 0.97f, 0.99f, 1.0f},
                         Qt::AlignCenter);
     }
@@ -2100,12 +2214,15 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
                                static_cast<float>(textRect.width()),
                                static_cast<float>(textRect.height()),
                                FloatColor{0.04f, 0.05f, 0.07f, 0.86f},
-                               FloatColor{themeAccent.redF(), themeAccent.greenF(), themeAccent.blueF(), 0.92f});
+                               FloatColor{0.20f, 0.84f, 0.46f, 0.92f});
    for (size_t i = 0; i < moveBadgeLines_.size(); ++i) {
     const QRectF lineRect(textRect.left() + 8.0f,
                           textRect.top() + 6.0f + static_cast<float>(i) * (lineH + lineGap),
                           textW - 16.0f, lineH);
-    renderer->drawText(lineRect, moveBadgeLines_[i], badgeFont,
+    const QString line =
+        i == 0 ? QStringLiteral("OVR:MOVE %1").arg(moveBadgeLines_[i])
+               : moveBadgeLines_[i];
+    renderer->drawText(lineRect, line, badgeFont,
                        FloatColor{0.94f, 0.97f, 0.99f, 1.0f}, Qt::AlignLeft | Qt::AlignVCenter);
    }
   }
@@ -2299,6 +2416,14 @@ TransformGizmo::HandleType TransformGizmo::handleAtViewportPos(const QPointF& vi
 bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* renderer) {
  if (!layer_ || !renderer) return false;
 
+ const auto targets = [&]() -> std::vector<ArtifactAbstractLayerPtr> {
+  if (!targetLayers_.empty()) {
+   return targetLayers_;
+  }
+  return layer_ ? std::vector<ArtifactAbstractLayerPtr>{layer_}
+                : std::vector<ArtifactAbstractLayerPtr>{};
+ }();
+
  activeHandle_ = hitTest(viewportPos, renderer);
  if (activeHandle_ != HandleType::None) {
   isDragging_ = true;
@@ -2308,19 +2433,36 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
   lastDragMutationNotify_ = {};
   const auto &t3d = layer_->transform3D();
   dragStartFrame_ = layer_->currentFrame();
-   dragStartLayerPos_ = QPointF(t3d.positionX(), t3d.positionY());
-   dragStartScaleX_ = t3d.scaleX();
-   dragStartScaleY_ = t3d.scaleY();
-   dragStartRotation_ = t3d.rotation();
-  dragStartHasPositionKey_ = t3d.hasPositionKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
-  dragStartHasRotationKey_ = t3d.hasRotationKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
-  dragStartHasScaleKey_ = t3d.hasScaleKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
+  dragStartLayerPos_ = QPointF(t3d.positionX(), t3d.positionY());
+  dragStartScaleX_ = t3d.scaleX();
+  dragStartScaleY_ = t3d.scaleY();
+  dragStartRotation_ = t3d.rotation();
+  dragStartTargetLayerPositions_.clear();
+  dragStartTargetLayerPositions_.reserve(targets.size());
+  for (const auto& target : targets) {
+   if (!target) {
+    dragStartTargetLayerPositions_.push_back(dragStartLayerPos_);
+    continue;
+   }
+   const auto& targetT3d = target->transform3D();
+   dragStartTargetLayerPositions_.push_back(
+       QPointF(targetT3d.positionX(), targetT3d.positionY()));
+  }
+  const ArtifactCore::RationalTime dragStartTime =
+      transformKeyframeTimeAtFrame(layer_.get(), dragStartFrame_);
+  dragStartHasPositionKey_ = t3d.hasPositionKeyFrameAt(dragStartTime);
+  dragStartHasRotationKey_ = t3d.hasRotationKeyFrameAt(dragStartTime);
+  dragStartHasScaleKey_ = t3d.hasScaleKeyFrameAt(dragStartTime);
   dragStartPositionAnimated_ = t3d.getPositionKeyFrameCount() > 0;
   dragStartRotationAnimated_ = t3d.getRotationKeyFrameCount() > 0;
   dragStartScaleAnimated_ = t3d.getScaleKeyFrameCount() > 0;
   dragStartHasTextBoxState_ = false;
   dragStartGlobalTransform_ = layer_->getGlobalTransform();
-  dragStartBoundingBox_ = currentCanvasBoundingRect();
+  if (activeHandle_ == HandleType::Move && targets.size() > 1) {
+   dragStartBoundingBox_ = unionCanvasBoundingRect(targets);
+  } else {
+   dragStartBoundingBox_ = currentCanvasBoundingRect();
+  }
   dragStartLocalBounds_ = layer_->localBounds();
   bool invertible = false;
   const QTransform inv = dragStartGlobalTransform_.inverted(&invertible);
@@ -2366,11 +2508,14 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
     cachedSpacingHLines_ = spacingGuides.horizontal;
    }
    if (activeHandle_ == HandleType::Move) {
-    moveBadgeVisible_ = true;
-    moveBadgeBox_ = dragStartBoundingBox_;
-    moveBadgeLines_.clear();
-    const int x = static_cast<int>(std::lround(dragStartLayerPos_.x()));
-    const int y = static_cast<int>(std::lround(dragStartLayerPos_.y()));
+   moveBadgeVisible_ = true;
+   moveBadgeBox_ = dragStartBoundingBox_;
+   moveBadgeLines_.clear();
+    const bool multiTargetMove = targets.size() > 1 && dragStartBoundingBox_.isValid();
+    const int x = static_cast<int>(std::lround(multiTargetMove ? dragStartBoundingBox_.left()
+                                                               : dragStartLayerPos_.x()));
+    const int y = static_cast<int>(std::lround(multiTargetMove ? dragStartBoundingBox_.top()
+                                                               : dragStartLayerPos_.y()));
     const int w = static_cast<int>(std::lround(dragStartBoundingBox_.width()));
     const int h = static_cast<int>(std::lround(dragStartBoundingBox_.height()));
     moveBadgeLines_.push_back(QStringLiteral("X: %1  Y: %2").arg(x).arg(y));
@@ -2416,7 +2561,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
  auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
  QPointF currentCanvasPos(canvasMouse.x, canvasMouse.y);
  QPointF delta = currentCanvasPos - dragStartCanvasPos_;
- ArtifactCore::RationalTime time(layer_->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+ ArtifactCore::RationalTime time = currentTransformKeyframeTime(layer_.get());
   auto &t3d = layer_->transform3D();
   const auto setDragPosition = [&t3d, &time, this](float x, float y) {
    if (dragStartHasPositionKey_ || dragStartPositionAnimated_) {
@@ -2464,50 +2609,51 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
  };
  activeSnapLines_.clear();
  activeSnapLabels_.clear();
+ const auto comp = ArtifactProjectService::instance()->currentComposition().lock();
 
  if (activeHandle_ == HandleType::Move) {
-   float newX = dragStartLayerPos_.x() + static_cast<float>(delta.x());
-   float newY = dragStartLayerPos_.y() + static_cast<float>(delta.y());
    const bool enableSnapping = !(QGuiApplication::keyboardModifiers() & Qt::AltModifier);
+   QRectF currentBBox = dragStartBoundingBox_;
+   currentBBox.translate(delta);
 
    if (enableSnapping &&
        (!cachedSnapVLines_.empty() || !cachedSnapHLines_.empty())) {
     const float SNAP_DIST = 10.0f / (renderer->getZoom() > 0.001f ? renderer->getZoom() : 1.0f);
 
-    QRectF currentBBox = dragStartBoundingBox_;
-    currentBBox.translate(delta);
-    const float movedLeft = static_cast<float>(currentBBox.left());
-    const float movedTop = static_cast<float>(currentBBox.top());
-    snapBoundingBoxAxis(currentBBox, cachedSnapVLines_, SNAP_DIST, true,
+    snapBoundingBoxAxis(currentBBox, cachedSnapVLines_, SNAP_DIST, true, comp,
                         activeSnapLines_,
                         snapDistanceLabelsEnabled_ ? &activeSnapLabels_ : nullptr);
-    snapBoundingBoxAxis(currentBBox, cachedSnapHLines_, SNAP_DIST, false,
+    snapBoundingBoxAxis(currentBBox, cachedSnapHLines_, SNAP_DIST, false, comp,
                         activeSnapLines_,
                         snapDistanceLabelsEnabled_ ? &activeSnapLabels_ : nullptr);
-    newX += static_cast<float>(currentBBox.left() - movedLeft);
-    newY += static_cast<float>(currentBBox.top() - movedTop);
 
-    const float alignedLeft = static_cast<float>(currentBBox.left());
-    const float alignedTop = static_cast<float>(currentBBox.top());
     if (snapDistanceLabelsEnabled_) {
-     snapBoxBetweenGuides(currentBBox, cachedSpacingVLines_, SNAP_DIST, true,
+     snapBoxBetweenGuides(currentBBox, cachedSpacingVLines_, SNAP_DIST, true, comp,
                           activeSnapLines_, &activeSnapLabels_);
-     snapBoxBetweenGuides(currentBBox, cachedSpacingHLines_, SNAP_DIST, false,
+     snapBoxBetweenGuides(currentBBox, cachedSpacingHLines_, SNAP_DIST, false, comp,
                           activeSnapLines_, &activeSnapLabels_);
     } else {
-     snapBoxBetweenGuides(currentBBox, cachedSpacingVLines_, SNAP_DIST, true,
+     snapBoxBetweenGuides(currentBBox, cachedSpacingVLines_, SNAP_DIST, true, comp,
                           activeSnapLines_, nullptr);
-     snapBoxBetweenGuides(currentBBox, cachedSpacingHLines_, SNAP_DIST, false,
+     snapBoxBetweenGuides(currentBBox, cachedSpacingHLines_, SNAP_DIST, false, comp,
                           activeSnapLines_, nullptr);
     }
-    newX += static_cast<float>(currentBBox.left() - alignedLeft);
-    newY += static_cast<float>(currentBBox.top() - alignedTop);
    }
 
-      for (const auto& target : targets) {
+   const QPointF snappedGroupDelta = currentBBox.topLeft() - dragStartBoundingBox_.topLeft();
+
+      for (std::size_t i = 0; i < targets.size(); ++i) {
+       const auto& target = targets[i];
        if (!target) continue;
+       const QPointF startPos =
+           i < dragStartTargetLayerPositions_.size()
+               ? dragStartTargetLayerPositions_[i]
+               : dragStartLayerPos_;
+       const float newX = static_cast<float>(startPos.x() + snappedGroupDelta.x());
+       const float newY = static_cast<float>(startPos.y() + snappedGroupDelta.y());
        auto& targetT3d = target->transform3D();
-        const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+        const ArtifactCore::RationalTime targetTime =
+            currentTransformKeyframeTime(target.get());
         if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
          setAbsolutePosition(targetT3d, targetTime, newX, newY);
         } else {
@@ -2519,10 +2665,14 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
       }
        publishDragMutation();
        moveBadgeVisible_ = true;
-       moveBadgeBox_ = currentCanvasBoundingRect();
+       moveBadgeBox_ = targets.size() > 1 ? unionCanvasBoundingRect(targets)
+                                          : currentCanvasBoundingRect();
        moveBadgeLines_.clear();
-       const int mx = static_cast<int>(std::lround(newX));
-       const int my = static_cast<int>(std::lround(newY));
+       const bool multiTargetMove = targets.size() > 1 && moveBadgeBox_.isValid();
+       const int mx = static_cast<int>(std::lround(multiTargetMove ? moveBadgeBox_.left()
+                                                                   : dragStartLayerPos_.x() + snappedGroupDelta.x()));
+       const int my = static_cast<int>(std::lround(multiTargetMove ? moveBadgeBox_.top()
+                                                                   : dragStartLayerPos_.y() + snappedGroupDelta.y()));
        const int mw = static_cast<int>(std::lround(moveBadgeBox_.width()));
        const int mh = static_cast<int>(std::lround(moveBadgeBox_.height()));
        moveBadgeLines_.push_back(QStringLiteral("X: %1  Y: %2").arg(mx).arg(my));
@@ -2562,7 +2712,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
     for (const auto& target : targets) {
      if (!target) continue;
      auto& targetT3d = target->transform3D();
-      const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+      const ArtifactCore::RationalTime targetTime =
+          currentTransformKeyframeTime(target.get());
       targetT3d.setAnchor(targetTime,
                           static_cast<float>(targetLocalAnchor.x()),
                           static_cast<float>(targetLocalAnchor.y()),
@@ -2605,7 +2756,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    for (const auto& target : targets) {
     if (!target) continue;
     auto& targetT3d = target->transform3D();
-    const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+    const ArtifactCore::RationalTime targetTime =
+        currentTransformKeyframeTime(target.get());
     if (targetT3d.hasRotationKeyFrameAt(targetTime) || targetT3d.getRotationKeyFrameCount() > 0) {
      targetT3d.setRotation(targetTime, newRotation);
      } else {
@@ -2625,7 +2777,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    for (const auto& target : targets) {
     if (!target) continue;
     auto& targetT3d = target->transform3D();
-    const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+    const ArtifactCore::RationalTime targetTime =
+        currentTransformKeyframeTime(target.get());
     const float newX = dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x());
      const float newY = dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y());
      if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
@@ -2650,7 +2803,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
     const float SNAP_DIST = 10.0f / (renderer->getZoom() > 0.001f ? renderer->getZoom() : 1.0f);
     snapResizePointToGuides(snappedCanvasPos, activeHandle_,
                             SnapGuideSet{cachedSnapVLines_, cachedSnapHLines_},
-                            SNAP_DIST, activeSnapLines_);
+                            SNAP_DIST, comp, activeSnapLines_);
    }
    const QPointF currentVec = snappedCanvasPos - pivotWorldStart;
    const float startLen = std::max(1.0f, static_cast<float>(std::sqrt(startVec.x() * startVec.x() + startVec.y() * startVec.y())));
@@ -2668,7 +2821,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    for (const auto& target : targets) {
     if (!target) continue;
     auto& targetT3d = target->transform3D();
-    const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+    const ArtifactCore::RationalTime targetTime =
+        currentTransformKeyframeTime(target.get());
     if (targetT3d.hasScaleKeyFrameAt(targetTime) || targetT3d.getScaleKeyFrameCount() > 0) {
      targetT3d.setScale(targetTime, newScaleX, newScaleY);
     } else {
@@ -2709,7 +2863,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    const float SNAP_DIST = 10.0f / (renderer->getZoom() > 0.001f ? renderer->getZoom() : 1.0f);
    snapResizePointToGuides(snappedCanvasPos, activeHandle_,
                            SnapGuideSet{cachedSnapVLines_, cachedSnapHLines_},
-                           SNAP_DIST, activeSnapLines_);
+                           SNAP_DIST, comp, activeSnapLines_);
   }
   const QRectF startBox = dragStartBoundingBox_;
   const QRectF localBounds = dragStartLocalBounds_;
@@ -2790,7 +2944,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      for (const auto& target : targets) {
       if (!target) continue;
       auto& targetT3d = target->transform3D();
-       const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+       const ArtifactCore::RationalTime targetTime =
+           currentTransformKeyframeTime(target.get());
        if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
         setAbsolutePosition(targetT3d, targetTime, static_cast<float>(newPos.x()),
                             static_cast<float>(newPos.y()));
@@ -2827,7 +2982,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      for (const auto& target : targets) {
       if (!target) continue;
       auto& targetT3d = target->transform3D();
-      const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+      const ArtifactCore::RationalTime targetTime =
+          currentTransformKeyframeTime(target.get());
       if (targetT3d.hasScaleKeyFrameAt(targetTime) || targetT3d.getScaleKeyFrameCount() > 0) {
        targetT3d.setScale(targetTime, newScaleX, newScaleY);
        } else {
@@ -2859,7 +3015,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
 
 void TransformGizmo::handleMouseRelease() {
  if (isDragging_ && layer_) {
-  const ArtifactCore::RationalTime time(dragStartFrame_, 24);
+  const ArtifactCore::RationalTime time =
+      transformKeyframeTimeAtFrame(layer_.get(), dragStartFrame_);
   std::vector<MultiTransformEntry> undoEntries;
   const auto targets = !targetLayers_.empty() ? targetLayers_ : std::vector<ArtifactAbstractLayerPtr>{layer_};
   undoEntries.reserve(targets.size());

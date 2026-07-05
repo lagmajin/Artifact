@@ -3,6 +3,7 @@ module;
 #include <QString>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <wobjectdefs.h>
 #include <memory>
 #include <vector>
 
@@ -29,7 +30,7 @@ public:
 
     void setComposition(void* comp) override;
     void draw(ArtifactIRenderer* renderer) override;
-    bool isSwitchLayer() const override { return true; }
+    bool isSwitchLayer() const { return true; }
     QRectF localBounds() const override;
 
     // 子レイヤー管理
@@ -51,7 +52,7 @@ public:
     void setFrameForIndex(int index, int frame);
 
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
-    bool hasChildren() const override { return childrenCount() > 0; }
+    bool hasChildren() const { return childrenCount() > 0; }
     int childrenCount() const;
 
     QJsonObject toJson() const;

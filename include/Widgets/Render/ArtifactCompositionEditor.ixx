@@ -33,6 +33,8 @@ public:
 
 public /*slots*/:
   void play(); W_SLOT(play);
+  void pause(); W_SLOT(pause);
+  void togglePlayPause(); W_SLOT(togglePlayPause);
   void stop(); W_SLOT(stop);
   void resetView(); W_SLOT(resetView);
   void zoomIn(); W_SLOT(zoomIn);

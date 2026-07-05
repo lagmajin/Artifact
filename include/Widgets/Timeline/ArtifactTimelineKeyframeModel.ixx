@@ -25,6 +25,22 @@ W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
 
 export namespace Artifact {
 
+struct DopeSheetKeyframeRef {
+  LayerID layerId;
+  QString propertyPath;
+  RationalTime time;
+
+  bool isValid() const {
+    return !propertyPath.trimmed().isEmpty();
+  }
+};
+
+struct DopeSheetKeyframeEntry {
+  LayerID layerId;
+  QString propertyPath;
+  KeyFrame keyframe;
+};
+
 class ArtifactTimelineKeyframeModel : public QObject {
   W_OBJECT(ArtifactTimelineKeyframeModel)
 public:
@@ -66,6 +82,19 @@ public:
                       const LayerID& layerId,
                       const QString& propertyPath,
                       const RationalTime& time);
+
+  std::vector<DopeSheetKeyframeEntry>
+  collectDopeSheetKeyframesForLayer(const CompositionID& compId,
+                                    const LayerID& layerId) const;
+
+  bool offsetKeyframes(const CompositionID& compId,
+                       const std::vector<DopeSheetKeyframeRef>& refs,
+                       const RationalTime& delta);
+
+  bool scaleKeyframes(const CompositionID& compId,
+                      const std::vector<DopeSheetKeyframeRef>& refs,
+                      const RationalTime& pivot,
+                      double factor);
 
 };
 

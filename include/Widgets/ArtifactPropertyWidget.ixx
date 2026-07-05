@@ -34,6 +34,8 @@ module;
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QScrollArea>
+#include <QGroupBox>
+#include <QLabel>
 #include <QSet>
 
 export module Artifact.Widgets.ArtifactPropertyWidget;
@@ -49,8 +51,18 @@ export namespace Artifact {
 class ArtifactPlaybackService;
 
 namespace detail {
+enum class LayerPresentationBadgeTone {
+  Neutral,
+  Container,
+  Media,
+  Motion,
+  Special
+};
 ArtifactCore::RationalTime currentPlaybackTime(ArtifactPlaybackService* playback);
 ArtifactCore::RationalTime currentPlaybackTime(ArtifactPlaybackService* playback, const ArtifactAbstractLayerPtr& layer);
+void applyThemeTextPalette(QWidget* widget, int shade);
+void applyPropertySectionBox(QGroupBox* box);
+void applyPresentationToneLabel(QLabel* label, LayerPresentationBadgeTone tone, bool emphasized = true);
 void applyPropertyPanelPalette(QWidget* widget, bool elevated = false);
 void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr& layer);
 std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>

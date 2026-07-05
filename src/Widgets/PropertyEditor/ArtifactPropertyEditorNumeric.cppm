@@ -32,9 +32,9 @@ void installSliderJumpBehavior(QWidget *pickerRoot);
 namespace Artifact::detail {
 extern const int kNumericEditorValueWidth;
 extern ArtifactNumericEditorLayoutMode g_numericEditorLayoutMode;
-void applyPropertyFieldPalette(QWidget *widget, bool elevated = false);
-void applyPropertyButtonPalette(QAbstractButton *button, bool accent = false);
-void applyThemeTextPalette(QWidget *widget, int shade = 100);
+void applyPropertyFieldPalette(QWidget *widget, bool elevated);
+void applyPropertyButtonPalette(QAbstractButton *button, bool accent);
+void applyThemeTextPalette(QWidget *widget, int shade);
 std::pair<double, double> resolveFloatSoftRange(
     const ArtifactCore::AbstractProperty &property,
     const ArtifactCore::PropertyMetadata &meta, double hardMin,
@@ -47,10 +47,39 @@ std::pair<int, int> resolveIntSoftRange(
 namespace Artifact {
 using namespace detail;
 
+namespace {
+
+int decimalsForNumericProperty(const ArtifactCore::PropertyMetadata &meta,
+                               const ArtifactCore::AbstractProperty &property) {
+  if (meta.step.isValid()) {
+    const QString stepText = meta.step.toString();
+    const int dot = stepText.indexOf(QLatin1Char('.'));
+    if (dot >= 0) {
+      const int precision = static_cast<int>(stepText.size()) - dot - 1;
+      return std::clamp(precision, 0, 4);
+    }
+    return 0;
+  }
+
+  if (meta.unit.compare(QStringLiteral("px"), Qt::CaseInsensitive) == 0) {
+    return 0;
+  }
+
+  const QString name = property.getName();
+  if (name.contains(QStringLiteral("opacity"), Qt::CaseInsensitive) ||
+      name.contains(QStringLiteral("scale"), Qt::CaseInsensitive)) {
+    return 2;
+  }
+  return 2;
+}
+
+} // namespace
+
 ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent,
     const bool showSlider)
     : ArtifactAbstractPropertyEditor(parent) {
+  auto initializing = std::make_shared<bool>(true);
   setObjectName(QStringLiteral("propertyFloatEditor"));
   spinBox_ = new ArtifactRelativeDoubleSpinBox(this);
   if (showSlider) {
@@ -67,7 +96,10 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     applyPropertyButtonPalette(resetButton);
 
     QObject::connect(resetButton, &QPushButton::clicked, this,
-                     [this, property]() {
+                     [this, property, initializing]() {
+                       if (*initializing) {
+                         return;
+                       }
                        const QVariant defaultValue =
                            getPropertyDefaultValue(property);
                        const double defaultNumericValue = defaultValue.toDouble();
@@ -123,6 +155,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   spinBox_->setRange(meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1e6,
                      meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1e6);
   spinBox_->setValue(property.getValue().toDouble());
+  spinBox_->setDecimals(decimalsForNumericProperty(meta, property));
   {
     QFont font = spinBox_->font();
     font.setPointSize(11);
@@ -162,7 +195,12 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                      }
                    });
   QObject::connect(spinBox_, &QDoubleSpinBox::editingFinished, this,
-                   [this]() { commitValue(spinBox_->value()); });
+                   [this, initializing]() {
+                     if (*initializing) {
+                       return;
+                     }
+                     commitValue(spinBox_->value());
+                   });
   if (slider_) {
     QObject::connect(slider_, &QSlider::sliderPressed, this, [this]() {
       sliderInteracting_ = true;
@@ -179,16 +217,20 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
             previewValue(nextValue);
           }
         });
-    QObject::connect(slider_, &QSlider::sliderReleased, this, [this]() {
+    QObject::connect(slider_, &QSlider::sliderReleased, this, [this, initializing]() {
       if (!sliderInteracting_) {
         return;
       }
       sliderInteracting_ = false;
+      if (*initializing) {
+        return;
+      }
       commitCurrentValue();
     });
 
     Artifact::installSliderJumpBehavior(this);
   }
+  *initializing = false;
 }
 
 bool ArtifactFloatPropertyEditor::eventFilter(QObject *watched, QEvent *event) {
@@ -312,7 +354,7 @@ void ArtifactFloatPropertyEditor::scrubByPixels(
   if (range < 1e-5)
     range = 100.0;
 
-  double sensitivity = range / 500.0;
+  double sensitivity = std::max(std::abs(spinBox_->singleStep()), range / 500.0);
   if (modifiers.testFlag(Qt::ShiftModifier)) {
     sensitivity *= 0.1;
   }
@@ -329,6 +371,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent,
     const bool showSlider)
     : ArtifactAbstractPropertyEditor(parent) {
+  auto initializing = std::make_shared<bool>(true);
   setObjectName(QStringLiteral("propertyIntEditor"));
   spinBox_ = new ArtifactRelativeSpinBox(this);
   if (showSlider) {
@@ -426,7 +469,12 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
         }
       });
   QObject::connect(spinBox_, &QSpinBox::editingFinished, this,
-                   [this]() { commitValue(spinBox_->value()); });
+                   [this, initializing]() {
+                     if (*initializing) {
+                       return;
+                     }
+                     commitValue(spinBox_->value());
+                   });
   if (slider_) {
     QObject::connect(slider_, &QSlider::sliderPressed, this, [this]() {
       sliderInteracting_ = true;
@@ -442,15 +490,19 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
                          previewValue(nextValue);
                        }
                      });
-    QObject::connect(slider_, &QSlider::sliderReleased, this, [this]() {
+    QObject::connect(slider_, &QSlider::sliderReleased, this, [this, initializing]() {
       if (!sliderInteracting_) {
         return;
       }
       sliderInteracting_ = false;
+      if (*initializing) {
+        return;
+      }
       commitCurrentValue();
     });
     Artifact::installSliderJumpBehavior(this);
   }
+  *initializing = false;
 }
 
 QVariant ArtifactIntPropertyEditor::value() const {

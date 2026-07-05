@@ -110,6 +110,7 @@ export namespace Artifact {
   std::vector<float> cachedSnapHLines_;
   std::vector<float> cachedSpacingVLines_;
   std::vector<float> cachedSpacingHLines_;
+  std::vector<QPointF> dragStartTargetLayerPositions_;
   QPointF dragStartCanvasPos_;
   QPointF dragStartLocalMousePos_;
   QPointF dragStartLayerPos_;

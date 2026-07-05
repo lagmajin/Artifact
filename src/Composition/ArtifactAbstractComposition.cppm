@@ -57,14 +57,42 @@ namespace Artifact {
 
 namespace {
 
-const CompositionStateVariant* findStateVariantById(
-    const QVector<CompositionStateVariant>& states,
-    const QString& stateId);
-CompositionStateVariant* findStateVariantById(
-    QVector<CompositionStateVariant>& states,
-    const QString& stateId);
-QString uniqueStateVariantId(const QVector<CompositionStateVariant>& states,
-                             QString stateId);
+const Artifact::CompositionStateVariant* findStateVariantById(
+    const QVector<Artifact::CompositionStateVariant>& states,
+    const QString& stateId)
+{
+    for (const auto& state : states) {
+        if (state.stateId == stateId) {
+            return &state;
+        }
+    }
+    return nullptr;
+}
+Artifact::CompositionStateVariant* findStateVariantById(
+    QVector<Artifact::CompositionStateVariant>& states,
+    const QString& stateId)
+{
+    for (auto& state : states) {
+        if (state.stateId == stateId) {
+            return &state;
+        }
+    }
+    return nullptr;
+}
+QString uniqueStateVariantId(const QVector<Artifact::CompositionStateVariant>& states,
+                             QString stateId)
+{
+    stateId = stateId.trimmed();
+    if (stateId.isEmpty()) {
+        stateId = QStringLiteral("state");
+    }
+    QString candidate = stateId;
+    int suffix = 2;
+    while (findStateVariantById(states, candidate) != nullptr) {
+        candidate = QStringLiteral("%1_%2").arg(stateId).arg(suffix++);
+    }
+    return candidate;
+}
 
 // transform 系プロパティの keyframe 値を解像度変更に合わせて再計算する。
 // position / anchor は X/Y が別プロパティなので、同時刻の keyframe をペアリングして
@@ -2122,7 +2150,8 @@ bool ArtifactAbstractComposition::applyExternalControlValue(
 
     const RationalTime keyTime(
         currentFrame,
-        static_cast<int64_t>(std::max(1.0, frameRate().framerate())));
+        static_cast<int64_t>(std::max<double>(
+            1.0, static_cast<double>(frameRate().framerate()))));
     property->addKeyFrame(keyTime, QVariant(processedValue.value()));
     recording.lastRecordedFrameByAddress.insert(address, currentFrame);
     recording.lastRecordedValueByAddress.insert(address, processedValue.value());
@@ -2663,45 +2692,3 @@ QImage ArtifactAbstractComposition::getThumbnailAtFrame(int64_t frameNumber,
 
 };
 
-namespace {
-
-const CompositionStateVariant* findStateVariantById(
-    const QVector<CompositionStateVariant>& states,
-    const QString& stateId)
-{
-    for (const auto& state : states) {
-        if (state.stateId == stateId) {
-            return &state;
-        }
-    }
-    return nullptr;
-}
-
-CompositionStateVariant* findStateVariantById(
-    QVector<CompositionStateVariant>& states,
-    const QString& stateId)
-{
-    for (auto& state : states) {
-        if (state.stateId == stateId) {
-            return &state;
-        }
-    }
-    return nullptr;
-}
-
-QString uniqueStateVariantId(const QVector<CompositionStateVariant>& states,
-                             QString stateId)
-{
-    stateId = stateId.trimmed();
-    if (stateId.isEmpty()) {
-        stateId = QStringLiteral("state");
-    }
-    QString candidate = stateId;
-    int suffix = 2;
-    while (findStateVariantById(states, candidate) != nullptr) {
-        candidate = QStringLiteral("%1_%2").arg(stateId).arg(suffix++);
-    }
-    return candidate;
-}
-
-} // namespace

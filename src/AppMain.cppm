@@ -124,6 +124,7 @@ import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Widgets.CompositionAudioMixer;
+import Artifact.Widgets.DopeSheetWidget;
 import Artifact.Widgets.Timeline;
 import Artifact.Widgets.AI.ArtifactAICloudWidget;
 import Artifact.Widgets.CompositionEditor;
@@ -2909,9 +2910,18 @@ int main(int argc, char *argv[]) {
       const auto timelineDockObjectId = [](const CompositionID &compId) {
         return QStringLiteral("timeline::%1").arg(compId.toString());
       };
+      const auto dopeSheetDockTitle =
+          [timelineDockTitle](const CompositionID &compId) {
+            return QStringLiteral("%1 Dope Sheet").arg(
+                timelineDockTitle(compId));
+          };
+      const auto dopeSheetDockObjectId = [](const CompositionID &compId) {
+        return QStringLiteral("dopesheet::%1").arg(compId.toString());
+      };
       appEventSubscriptions.push_back(
           appEventBus.subscribe<CompositionCreatedEvent>(
-              [mw, timelineDockTitle, timelineDockObjectId,
+              [mw, timelineDockTitle, timelineDockObjectId, dopeSheetDockTitle,
+               dopeSheetDockObjectId,
                status](const CompositionCreatedEvent &event) {
                 const CompositionID compId(event.compositionId);
                 ArtifactPythonHookManager::runHook(
@@ -2920,7 +2930,7 @@ int main(int argc, char *argv[]) {
                 QTimer::singleShot(
                     0, mw,
                     [mw, compId, timelineDockTitle, timelineDockObjectId,
-                     status]() {
+                     dopeSheetDockTitle, dopeSheetDockObjectId, status]() {
                       const QString dockTitle = timelineDockTitle(compId);
                       const QString dockId = timelineDockObjectId(compId);
                       if (mw->hasDock(dockId)) {
@@ -2950,6 +2960,19 @@ int main(int argc, char *argv[]) {
                       mw->addDockedWidgetTabbedWithId(
                           dockTitle, dockId, ads::BottomDockWidgetArea,
                           panel, QStringLiteral("timeline::"));
+
+                      auto *dopeSheetPanel =
+                          new ArtifactDopeSheetWidget(mw);
+                      dopeSheetPanel->setMinimumHeight(180);
+                      dopeSheetPanel->setComposition(compId);
+                      dopeSheetPanel->setWindowTitle(
+                          dopeSheetDockTitle(compId));
+                      mw->addDockedWidgetTabbedWithId(
+                          dopeSheetDockTitle(compId),
+                          dopeSheetDockObjectId(compId),
+                          ads::BottomDockWidgetArea, dopeSheetPanel,
+                          QStringLiteral("timeline::"));
+
                       QTimer::singleShot(0, mw, [mw, dockId, panel]() {
                         mw->setDockSplitterSizes(dockId, {700, 350});
                         if (panel) {
@@ -2961,9 +2984,12 @@ int main(int argc, char *argv[]) {
               }));
       appEventSubscriptions.push_back(
           appEventBus.subscribe<CompositionRemovedEvent>(
-              [mw, timelineDockObjectId](const CompositionRemovedEvent &event) {
+              [mw, timelineDockObjectId,
+               dopeSheetDockObjectId](const CompositionRemovedEvent &event) {
                 mw->closeDock(
                     timelineDockObjectId(CompositionID(event.compositionId)));
+                mw->closeDock(
+                    dopeSheetDockObjectId(CompositionID(event.compositionId)));
               }));
       appEventSubscriptions.push_back(
           appEventBus.subscribe<ProjectCreatedEvent>(
@@ -3135,6 +3161,11 @@ int main(int argc, char *argv[]) {
     if (!layoutState.dockState.isEmpty()) {
       mw->restoreDockManagerState(layoutState.dockState);
     }
+    // Auxiliary note/AI surfaces remain available from the View menu, but
+    // should never be reopened implicitly by a persisted startup layout.
+    mw->setDockVisible(QStringLiteral("Composition Note"), false);
+    mw->setDockVisible(QStringLiteral("Layer Note"), false);
+    mw->setDockVisible(QStringLiteral("AI Cloud"), false);
     mw->setStartupLayoutFrozen(false);
   });
 

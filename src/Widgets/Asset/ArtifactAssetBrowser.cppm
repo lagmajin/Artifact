@@ -48,6 +48,7 @@ module;
 #include <QInputDialog>
 #include <QFileSystemWatcher>
 #include <QTimer>
+#include <QThread>
 #include <OpenImageIO/imagebuf.h>
 #include <OpenImageIO/imagebufalgo.h>
 #include <OpenImageIO/imageio.h>
@@ -495,9 +496,15 @@ QImage loadImageThumbnailViaWindowsShell(const QString& filePath,
   const int height = targetSize.height() > 0 ? targetSize.height() : width;
   const SIZE shellSize{width, height};
   HBITMAP bitmap = nullptr;
-  hr = imageFactory->GetImage(shellSize, SIIGBF_BIGGERSIZEOK, &bitmap);
+  hr = imageFactory->GetImage(
+      shellSize,
+      static_cast<SIIGBF>(SIIGBF_THUMBNAILONLY | SIIGBF_BIGGERSIZEOK),
+      &bitmap);
   if (FAILED(hr) || !bitmap) {
-    hr = imageFactory->GetImage(shellSize, SIIGBF_RESIZETOFIT, &bitmap);
+    hr = imageFactory->GetImage(
+        shellSize,
+        static_cast<SIIGBF>(SIIGBF_THUMBNAILONLY | SIIGBF_RESIZETOFIT),
+        &bitmap);
   }
   if (FAILED(hr) || !bitmap) {
     if (errorOut) {
@@ -893,6 +900,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   };
   QHash<QString, PendingPreviewJob> pendingPreviewJobs_;
   QSet<QString> failedPreviewPaths_;
+  QHash<QString, QString> previewFailureReasons_;
 
   // Async waveform thumbnail generation
   struct PendingWaveJob {
@@ -952,6 +960,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   QIcon getFileIcon(const QString& fileName, const QString& filePath);
   void clearThumbnailCache();
   void startAsyncPreviewThumbnailGeneration(const QString& filePath);
+  QString thumbnailDebugStatus(const QString& filePath) const;
   void showHoverPreview(const QString& filePath, const QPoint& globalPos);
   void hideHoverPreview();
   void scheduleHoverPreview(const QString& filePath, const QPoint& globalPos);
@@ -1349,7 +1358,7 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
 
  QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
  {
-  std::lock_guard<std::mutex> lock(thumbnailMutex_);
+  std::unique_lock<std::mutex> lock(thumbnailMutex_);
   // Check cache first
   if (thumbnailCache_.contains(filePath)) {
    return thumbnailCache_[filePath];
@@ -1382,6 +1391,7 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
    if (failedPreviewPaths_.contains(filePath)) {
     return placeholder;
    }
+   lock.unlock();
    startAsyncPreviewThumbnailGeneration(filePath);
    return placeholder;
   }
@@ -1398,6 +1408,7 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
       if (failedPreviewPaths_.contains(filePath)) {
        return placeholder;
       }
+      lock.unlock();
       startAsyncPreviewThumbnailGeneration(filePath);
       return placeholder;
   }
@@ -1420,9 +1431,23 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
    return defaultFontIcon_;
   }
 
-  // Default file icon
-  thumbnailCache_[filePath] = defaultFileIcon_;
-  return defaultFileIcon_;
+  // Ask the platform for a real thumbnail before falling back to the
+  // application-owned file type icon.
+  const QIcon placeholder = fileTypeIconFor(fileInfo.fileName());
+  if (auto it = pendingPreviewJobs_.find(filePath); it != pendingPreviewJobs_.end()) {
+   if (it.value().generation == currentGeneration) {
+    return placeholder;
+   }
+   pendingPreviewJobs_.erase(it);
+  }
+  if (!failedPreviewPaths_.contains(filePath)) {
+   thumbnailCache_[filePath] = placeholder;
+   lock.unlock();
+   startAsyncPreviewThumbnailGeneration(filePath);
+   return placeholder;
+  }
+  thumbnailCache_[filePath] = placeholder;
+  return placeholder;
  }
 
  QIcon ArtifactAssetBrowser::Impl::getFileIcon(const QString& fileName, const QString& filePath)
@@ -1433,9 +1458,13 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
 void ArtifactAssetBrowser::Impl::clearThumbnailCache()
 {
   thumbnailGeneration_.fetch_add(1, std::memory_order_relaxed);
-  thumbnailCache_.clear();
-  failedPreviewPaths_.clear();
-  failedWavePaths_.clear();
+  {
+    std::lock_guard<std::mutex> lock(thumbnailMutex_);
+    thumbnailCache_.clear();
+    failedPreviewPaths_.clear();
+    failedWavePaths_.clear();
+    previewFailureReasons_.clear();
+  }
   if (fileView_) {
     fileView_->update();
   }
@@ -1443,32 +1472,85 @@ void ArtifactAssetBrowser::Impl::clearThumbnailCache()
 
 void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QString& filePath)
 {
-  if (pendingPreviewJobs_.contains(filePath)) {
-    const auto existing = pendingPreviewJobs_.value(filePath);
-    if (existing.generation == thumbnailGeneration_.load(std::memory_order_relaxed)) {
-      return;
-    }
-    pendingPreviewJobs_.remove(filePath);
+  if (!owner_) {
+    return;
   }
+
+  if (QThread::currentThread() != owner_->thread()) {
+    QTimer::singleShot(0, owner_, [this, filePath]() {
+      startAsyncPreviewThumbnailGeneration(filePath);
+    });
+    return;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(thumbnailMutex_);
+    if (pendingPreviewJobs_.contains(filePath)) {
+      const auto existing = pendingPreviewJobs_.value(filePath);
+      if (existing.generation == thumbnailGeneration_.load(std::memory_order_relaxed)) {
+        return;
+      }
+      pendingPreviewJobs_.remove(filePath);
+    }
+    previewFailureReasons_.remove(filePath);
+  }
+
   const quint64 jobGeneration = thumbnailGeneration_.load(std::memory_order_relaxed);
   auto* watcher = new QFutureWatcher<QImage>();
   QObject::connect(watcher, &QFutureWatcher<QImage>::finished, [this, watcher, filePath, jobGeneration]() {
     const QImage image = watcher->result();
-    pendingPreviewJobs_.remove(filePath);
+    {
+      std::lock_guard<std::mutex> lock(thumbnailMutex_);
+      pendingPreviewJobs_.remove(filePath);
+    }
     if (jobGeneration != thumbnailGeneration_.load(std::memory_order_relaxed)) {
       watcher->deleteLater();
       return;
     }
     if (!image.isNull()) {
       const QIcon icon(QPixmap::fromImage(image));
-      thumbnailCache_[filePath] = icon;
+      {
+        std::lock_guard<std::mutex> lock(thumbnailMutex_);
+        thumbnailCache_[filePath] = icon;
+        failedPreviewPaths_.remove(filePath);
+        previewFailureReasons_.remove(filePath);
+      }
       if (assetModel_ && assetModel_->updateItemIconByPath(filePath, icon)) {
         // model updated via dataChanged
       } else if (fileView_) {
         fileView_->update();
       }
+      if (owner_ && fileView_ && fileView_->selectionModel()) {
+        const QModelIndexList selectedIndexes = fileView_->selectionModel()->selectedIndexes();
+        for (const QModelIndex& index : selectedIndexes) {
+          const AssetMenuItem item = assetModel_->itemAt(index.row());
+          if (item.path.toQString() == filePath) {
+            owner_->updateFileInfo(filePath);
+            break;
+          }
+        }
+      }
     } else {
-      failedPreviewPaths_.insert(filePath);
+      QFileInfo fileInfo(filePath);
+      const QString failureReason =
+          QStringLiteral("Async thumbnail decode returned empty image for %1.")
+              .arg(fileInfo.suffix().toUpper());
+      {
+        std::lock_guard<std::mutex> lock(thumbnailMutex_);
+        failedPreviewPaths_.insert(filePath);
+        previewFailureReasons_[filePath] = failureReason;
+      }
+      qWarning().noquote() << "[AssetBrowser][Thumbnail]" << filePath << failureReason;
+      if (owner_ && fileView_ && fileView_->selectionModel()) {
+        const QModelIndexList selectedIndexes = fileView_->selectionModel()->selectedIndexes();
+        for (const QModelIndex& index : selectedIndexes) {
+          const AssetMenuItem item = assetModel_->itemAt(index.row());
+          if (item.path.toQString() == filePath) {
+            owner_->updateFileInfo(filePath);
+            break;
+          }
+        }
+      }
     }
     watcher->deleteLater();
   });
@@ -1557,12 +1639,39 @@ void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QStr
       return {};
     }
 
+#ifdef _WIN32
+    QString shellError;
+    return loadImageThumbnailViaWindowsShell(filePath, thumbSize, &shellError);
+#else
     return {};
+#endif
   });
 
   watcher->setFuture(future);
-  pendingPreviewJobs_[filePath] = {filePath, watcher, jobGeneration};
+  {
+    std::lock_guard<std::mutex> lock(thumbnailMutex_);
+    pendingPreviewJobs_[filePath] = {filePath, watcher, jobGeneration};
+  }
  }
+
+QString ArtifactAssetBrowser::Impl::thumbnailDebugStatus(const QString& filePath) const
+{
+  std::lock_guard<std::mutex> lock(thumbnailMutex_);
+  if (thumbnailCache_.contains(filePath)) {
+    return QStringLiteral("Ready");
+  }
+  if (pendingPreviewJobs_.contains(filePath)) {
+    return QStringLiteral("Pending");
+  }
+  if (failedPreviewPaths_.contains(filePath)) {
+    const QString failureReason = previewFailureReasons_.value(filePath);
+    if (!failureReason.isEmpty()) {
+      return QStringLiteral("Failed (%1)").arg(failureReason);
+    }
+    return QStringLiteral("Failed");
+  }
+  return QStringLiteral("Placeholder");
+}
 
 void ArtifactAssetBrowser::Impl::syncProjectAssetRoot()
 {
@@ -2840,6 +2949,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
    info += QString("Usage: %1<br>").arg(impl_->isUnusedAssetPath(filePath) ? QStringLiteral("Unused") : QStringLiteral("In Use"));
    info += QString("Status: %1<br>").arg(impl_->isMissingAssetPath(filePath) ? QStringLiteral("Missing") : QStringLiteral("OK"));
+   info += QString("Thumbnail: %1<br>").arg(impl_->thumbnailDebugStatus(filePath).toHtmlEscaped());
 
    // Get detailed information based on file type
    const QString fileName = fileInfo.fileName();

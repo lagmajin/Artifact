@@ -152,4 +152,4 @@ void ArtifactSwitchLayer::fromJson(const QJsonObject& obj) {
 
 } // namespace Artifact
 
-W_OBJECT_IMPL(ArtifactSwitchLayer)
+W_OBJECT_IMPL(Artifact::ArtifactSwitchLayer)

@@ -17,9 +17,9 @@ import Event.Bus;
 import Artifact.Widgets.FontPicker;
 
 namespace Artifact::detail {
-void applyPropertyFieldPalette(QWidget *widget, bool elevated = false);
-void applyPropertyButtonPalette(QAbstractButton *button, bool accent = false);
-void applyThemeTextPalette(QWidget *widget, int shade = 100);
+void applyPropertyFieldPalette(QWidget *widget, bool elevated);
+void applyPropertyButtonPalette(QAbstractButton *button, bool accent);
+void applyThemeTextPalette(QWidget *widget, int shade);
 } // namespace Artifact::detail
 
 namespace Artifact {

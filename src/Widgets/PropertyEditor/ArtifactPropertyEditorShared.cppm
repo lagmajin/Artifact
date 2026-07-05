@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 #include <QAbstractButton>
 #include <QAction>
@@ -97,25 +97,22 @@ QColor themeColor(const QString &value, const QColor &fallback) {
   return color.isValid() ? color : fallback;
 }
 
-class PropertySliderWidget final : public QSlider {
-public:
-  explicit PropertySliderWidget(QWidget *parent = nullptr)
-      : QSlider(Qt::Horizontal, parent) {}
+PropertySliderWidget::PropertySliderWidget(QWidget *parent)
+    : QSlider(Qt::Horizontal, parent) {}
 
-  void setDisplayText(QString text) {
-    if (displayText_ == text) {
-      return;
-    }
-    displayText_ = std::move(text);
-    update();
+void PropertySliderWidget::setDisplayText(QString text) {
+  if (displayText_ == text) {
+    return;
   }
+  displayText_ = std::move(text);
+  update();
+}
 
-protected:
-  void wheelEvent(QWheelEvent *event) override {
-    event->ignore();
-  }
+void PropertySliderWidget::wheelEvent(QWheelEvent *event) {
+  event->ignore();
+}
 
-  void paintEvent(QPaintEvent *event) override {
+void PropertySliderWidget::paintEvent(QPaintEvent *event) {
     Q_UNUSED(event);
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
@@ -187,44 +184,30 @@ protected:
       painter.drawRoundedRect(ghostHandleRect, 3.0, 3.0);
     }
 
+}
+
+PropertyComboBox::PropertyComboBox(QWidget *parent) : QComboBox(parent) {}
+
+void PropertyComboBox::wheelEvent(QWheelEvent *event) {
+  event->ignore();
+}
+
+PropertyCallbackButton::PropertyCallbackButton(const QString &text,
+                                               QWidget *parent)
+    : QPushButton(text, parent) {}
+
+void PropertyCallbackButton::setCallback(Callback callback) {
+  callback_ = std::move(callback);
+}
+
+void PropertyCallbackButton::mouseReleaseEvent(QMouseEvent *event) {
+  QPushButton::mouseReleaseEvent(event);
+  if (!isEnabled() || !callback_ || !event ||
+      event->button() != Qt::LeftButton || !rect().contains(event->pos())) {
+    return;
   }
-
-private:
-  QString displayText_;
-};
-
-class PropertyComboBox final : public QComboBox {
-public:
-  explicit PropertyComboBox(QWidget *parent = nullptr) : QComboBox(parent) {}
-
-protected:
-  void wheelEvent(QWheelEvent *event) override {
-    event->ignore();
-  }
-};
-
-class PropertyCallbackButton final : public QPushButton {
-public:
-  using Callback = std::function<void()>;
-
-  explicit PropertyCallbackButton(const QString &text, QWidget *parent = nullptr)
-      : QPushButton(text, parent) {}
-
-  void setCallback(Callback callback) { callback_ = std::move(callback); }
-
-protected:
-  void mouseReleaseEvent(QMouseEvent *event) override {
-    QPushButton::mouseReleaseEvent(event);
-    if (!isEnabled() || !callback_ || !event ||
-        event->button() != Qt::LeftButton || !rect().contains(event->pos())) {
-      return;
-    }
-    callback_();
-  }
-
-private:
-  Callback callback_;
-};
+  callback_();
+}
 
 QColor blendColor(const QColor &a, const QColor &b, const qreal t) {
   const qreal clamped = std::clamp(t, 0.0, 1.0);
@@ -234,7 +217,7 @@ QColor blendColor(const QColor &a, const QColor &b, const qreal t) {
                           a.alphaF() * (1.0 - clamped) + b.alphaF() * clamped);
 }
 
-QColor propertySurfaceColor(const bool elevated = false) {
+QColor propertySurfaceColor(const bool elevated) {
   const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor background =
       themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
@@ -260,7 +243,7 @@ QString formatNumericSliderText(const double value, const QString &unit,
   return text;
 }
 
-void applyThemeTextPalette(QWidget *widget, int shade = 100) {
+void applyThemeTextPalette(QWidget *widget, int shade) {
   if (!widget) {
     return;
   }
@@ -272,7 +255,7 @@ void applyThemeTextPalette(QWidget *widget, int shade = 100) {
   widget->setPalette(pal);
 }
 
-void applyPropertyFieldPalette(QWidget *widget, const bool elevated = false) {
+void applyPropertyFieldPalette(QWidget *widget, const bool elevated) {
   if (!widget) {
     return;
   }
@@ -319,7 +302,7 @@ void applyPropertyFieldPalette(QWidget *widget, const bool elevated = false) {
 }
 
 void applyPropertyButtonPalette(QAbstractButton *button,
-                                const bool accent = false) {
+                                const bool accent) {
   if (!button) {
     return;
   }
@@ -350,7 +333,7 @@ void applyPropertyButtonPalette(QAbstractButton *button,
   button->setPalette(pal);
 }
 
-void applyPropertyLabelPalette(QLabel *label, const bool prominent = false) {
+void applyPropertyLabelPalette(QLabel *label, const bool prominent) {
   if (!label) {
     return;
   }
@@ -693,7 +676,7 @@ ArtifactNumericEditorLayoutMode g_numericEditorLayoutMode =
     ArtifactNumericEditorLayoutMode::ValueThenSlider;
 
 // ✅ プロパティリセットボタンを表示するかどうかの設定
-bool g_showPropertyResetButtons = false;
+bool g_showPropertyResetButtons = true;
 
 bool artifactShouldShowPropertyResetButtonsImpl() {
   return g_showPropertyResetButtons;
@@ -703,9 +686,11 @@ void artifactSetShowPropertyResetButtonsImpl(bool show) {
   g_showPropertyResetButtons = show;
 }
 
+} // namespace detail
+
 // ✅ プロパティのデフォルト値を取得するユーティリティ関数
-QVariant
-getPropertyDefaultValue(const ArtifactCore::AbstractProperty &property) {
+QVariant Artifact::getPropertyDefaultValue(
+    const ArtifactCore::AbstractProperty &property) {
   // プロパティのメタデータからデフォルト値を取得
   const auto meta = property.metadata();
   if (property.getDefaultValue().isValid()) {
@@ -728,6 +713,8 @@ getPropertyDefaultValue(const ArtifactCore::AbstractProperty &property) {
     return QVariant();
   }
 }
+
+namespace detail {
 
 // --- Icon Loading Helpers ---
 
@@ -775,25 +762,23 @@ QIcon loadPropertyIcon(const QString &resourceRelativePath,
 // ArtifactRelativeDoubleSpinBox / ArtifactRelativeSpinBox は
 // Artifact.Widgets.RelativeSpinBox モジュールに切り出した（Dialog 系と共有するため）。
 
-class ArtifactToggleSwitch final : public QAbstractButton {
-public:
-  explicit ArtifactToggleSwitch(QWidget *parent = nullptr)
-      : QAbstractButton(parent) {
-    setCheckable(true);
-    setCursor(Qt::PointingHandCursor);
-    setFocusPolicy(Qt::StrongFocus);
-    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-  }
+ArtifactToggleSwitch::ArtifactToggleSwitch(QWidget *parent)
+    : QAbstractButton(parent) {
+  setCheckable(true);
+  setCursor(Qt::PointingHandCursor);
+  setFocusPolicy(Qt::StrongFocus);
+  setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+}
 
-  QSize sizeHint() const override { return {48, 26}; }
-  QSize minimumSizeHint() const override { return {42, 24}; }
+QSize ArtifactToggleSwitch::sizeHint() const { return {48, 26}; }
 
-protected:
-  bool hitButton(const QPoint &pos) const override {
-    return rect().contains(pos);
-  }
+QSize ArtifactToggleSwitch::minimumSizeHint() const { return {42, 24}; }
 
-  void paintEvent(QPaintEvent *) override {
+bool ArtifactToggleSwitch::hitButton(const QPoint &pos) const {
+  return rect().contains(pos);
+}
+
+void ArtifactToggleSwitch::paintEvent(QPaintEvent *) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
@@ -836,15 +821,44 @@ protected:
     painter.setPen(Qt::NoPen);
     painter.setBrush(knobColor);
     painter.drawEllipse(knobRect);
-
-    if (hasFocus()) {
-      QPen focusPen(accent.lighter(125), 1.0);
-      painter.setPen(focusPen);
-      painter.setBrush(Qt::NoBrush);
-      painter.drawRoundedRect(trackRect.adjusted(1, 1, -1, -1), radius, radius);
-    }
+  if (hasFocus()) {
+    QPen focusPen(accent.lighter(125), 1.0);
+    painter.setPen(focusPen);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(trackRect.adjusted(1, 1, -1, -1), radius, radius);
   }
-};
+}
+
+void ArtifactToggleSwitch::mousePressEvent(QMouseEvent *event) {
+  if (event && event->button() == Qt::LeftButton) {
+    event->accept();
+    return;
+  }
+  QAbstractButton::mousePressEvent(event);
+}
+
+void ArtifactToggleSwitch::mouseReleaseEvent(QMouseEvent *event) {
+  if (event && event->button() == Qt::LeftButton) {
+    if (rect().contains(event->pos())) {
+      setChecked(!isChecked());
+      Q_EMIT toggled(isChecked());
+      Q_EMIT clicked(isChecked());
+    }
+    event->accept();
+    return;
+  }
+  QAbstractButton::mouseReleaseEvent(event);
+}
+
+void ArtifactToggleSwitch::enterEvent(QEnterEvent *event) {
+  QAbstractButton::enterEvent(event);
+  update();
+}
+
+void ArtifactToggleSwitch::leaveEvent(QEvent *event) {
+  QAbstractButton::leaveEvent(event);
+  update();
+}
 
 class PropertyNumericKnobWidget final : public QWidget {
 public:
@@ -1025,38 +1039,43 @@ private:
   ValueHandler commitHandler_;
 };
 
-class PropertyRotationKnobWidget final : public QWidget {
-public:
-  using ValueHandler = std::function<void(double)>;
+PropertyRotationKnobWidget::PropertyRotationKnobWidget(QWidget *parent)
+    : QWidget(parent) {
+  setFocusPolicy(Qt::StrongFocus);
+  setCursor(Qt::OpenHandCursor);
+  setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+}
 
-  explicit PropertyRotationKnobWidget(QWidget *parent = nullptr)
-      : QWidget(parent) {
-    setFocusPolicy(Qt::StrongFocus);
-    setCursor(Qt::OpenHandCursor);
-    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+QSize PropertyRotationKnobWidget::sizeHint() const { return {36, 36}; }
+
+QSize PropertyRotationKnobWidget::minimumSizeHint() const { return {30, 30}; }
+
+void PropertyRotationKnobWidget::setValue(const double value) {
+  const double next = std::clamp(value, minimum_, maximum_);
+  if (std::abs(value_ - next) < 0.0001) {
+    return;
   }
+  value_ = next;
+  update();
+}
 
-  QSize sizeHint() const override { return {36, 36}; }
-  QSize minimumSizeHint() const override { return {30, 30}; }
+double PropertyRotationKnobWidget::value() const { return value_; }
 
-  void setValue(const double value) {
-    if (std::abs(value_ - value) < 0.0001) {
-      return;
-    }
-    value_ = value;
-    update();
-  }
+void PropertyRotationKnobWidget::setRange(double minimum, double maximum) {
+  minimum_ = minimum;
+  maximum_ = maximum > minimum ? maximum : minimum + 1.0;
+  setValue(value_);
+}
 
-  void setPreviewHandler(ValueHandler handler) {
-    previewHandler_ = std::move(handler);
-  }
+void PropertyRotationKnobWidget::setPreviewHandler(ValueHandler handler) {
+  previewHandler_ = std::move(handler);
+}
 
-  void setCommitHandler(ValueHandler handler) {
-    commitHandler_ = std::move(handler);
-  }
+void PropertyRotationKnobWidget::setCommitHandler(ValueHandler handler) {
+  commitHandler_ = std::move(handler);
+}
 
-protected:
-  void mousePressEvent(QMouseEvent *event) override {
+void PropertyRotationKnobWidget::mousePressEvent(QMouseEvent *event) {
     if (event->button() != Qt::LeftButton) {
       QWidget::mousePressEvent(event);
       return;
@@ -1067,9 +1086,9 @@ protected:
     setFocus(Qt::MouseFocusReason);
     setCursor(Qt::ClosedHandCursor);
     event->accept();
-  }
+}
 
-  void mouseMoveEvent(QMouseEvent *event) override {
+void PropertyRotationKnobWidget::mouseMoveEvent(QMouseEvent *event) {
     if (!dragging_) {
       QWidget::mouseMoveEvent(event);
       return;
@@ -1096,9 +1115,9 @@ protected:
       previewHandler_(value_);
     }
     event->accept();
-  }
+}
 
-  void mouseReleaseEvent(QMouseEvent *event) override {
+void PropertyRotationKnobWidget::mouseReleaseEvent(QMouseEvent *event) {
     if (!dragging_ || event->button() != Qt::LeftButton) {
       QWidget::mouseReleaseEvent(event);
       return;
@@ -1110,9 +1129,9 @@ protected:
       commitHandler_(value_);
     }
     event->accept();
-  }
+}
 
-  void paintEvent(QPaintEvent *event) override {
+void PropertyRotationKnobWidget::paintEvent(QPaintEvent *event) {
     Q_UNUSED(event);
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
@@ -1149,21 +1168,36 @@ protected:
       painter.setBrush(Qt::NoBrush);
       painter.drawEllipse(knobRect.adjusted(1, 1, -1, -1));
     }
-  }
+}
 
-private:
-  double angleFromPosition(const QPointF &position) const {
-    const QPointF center = rect().center();
-    const QPointF delta = position - center;
-    return std::atan2(delta.y(), delta.x()) * 180.0 / std::numbers::pi + 90.0;
+void PropertyRotationKnobWidget::wheelEvent(QWheelEvent *event) {
+  double delta = event->angleDelta().y() >= 0 ? 1.0 : -1.0;
+  if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+    delta *= 0.2;
   }
+  if (event->modifiers().testFlag(Qt::ControlModifier)) {
+    delta *= 15.0;
+  }
+  setValue(value_ + delta);
+  if (previewHandler_) {
+    previewHandler_(value_);
+  }
+  if (commitHandler_) {
+    commitHandler_(value_);
+  }
+  event->accept();
+}
 
-  double value_ = 0.0;
-  double lastAngle_ = 0.0;
-  bool dragging_ = false;
-  ValueHandler previewHandler_;
-  ValueHandler commitHandler_;
-};
+void PropertyRotationKnobWidget::leaveEvent(QEvent *event) {
+  QWidget::leaveEvent(event);
+}
+
+double PropertyRotationKnobWidget::angleFromPosition(
+    const QPointF &position) const {
+  const QPointF center = rect().center();
+  const QPointF delta = position - center;
+  return std::atan2(delta.y(), delta.x()) * 180.0 / std::numbers::pi + 90.0;
+}
 
 } // namespace detail
 } // namespace Artifact

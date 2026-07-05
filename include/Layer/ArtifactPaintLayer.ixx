@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <QString>
 #include <QJsonObject>
+#include <wobjectdefs.h>
 #include <memory>
 #include <vector>
 #include <map>
@@ -12,7 +13,7 @@ import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
 import FloatRGBA;
 import Frame.Position;
-import Image.ImageF32x4RGBAWithCache;
+import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {
 
@@ -39,7 +40,7 @@ public:
 
     void setComposition(void* comp) override;
     void draw(ArtifactIRenderer* renderer) override;
-    bool isPaintLayer() const override { return true; }
+    bool isPaintLayer() const { return true; }
     QRectF localBounds() const override;
 
     // フレーム管理

@@ -41,6 +41,11 @@ using namespace ArtifactCore;
 
 namespace {
 
+QString overlayDebugTag(const QString& tag)
+{
+  return QStringLiteral("OVR:%1").arg(tag);
+}
+
 QString blendModeName(const ArtifactCore::BlendMode mode)
 {
   return ArtifactCore::BlendModeUtils::toString(mode);
@@ -1072,7 +1077,7 @@ void drawSelectionSummaryOverlay(ArtifactIRenderer *renderer,
                              FloatColor{0.05f, 0.07f, 0.10f, 0.88f},
                              selectedCount > 1
                                  ? FloatColor{0.96f, 0.62f, 0.20f, 0.92f}
-                                 : FloatColor{0.20f, 0.72f, 0.92f, 0.90f});
+                                 : FloatColor{0.24f, 0.76f, 1.0f, 0.90f});
   for (int i = 0; i < lines.size(); ++i) {
     const QRect lineRect = labelRect.adjusted(10, 6 + lineHeight * i, -10, -6);
     const FloatColor textColor =
@@ -1080,8 +1085,15 @@ void drawSelectionSummaryOverlay(ArtifactIRenderer *renderer,
                : (i == lines.size() - 1 && selectedCount > 1)
                      ? FloatColor{1.0f, 0.86f, 0.68f, 1.0f}
                      : FloatColor{0.72f, 0.79f, 0.86f, 1.0f};
+    const QString displayLine =
+        i == 0
+            ? QStringLiteral("%1 %2")
+                  .arg(overlayDebugTag(QStringLiteral("SEL")),
+                       fm.elidedText(lines[i], Qt::ElideRight,
+                                     std::max(0, lineRect.width() - 56)))
+            : fm.elidedText(lines[i], Qt::ElideRight, lineRect.width());
     renderer->drawText(lineRect,
-                       fm.elidedText(lines[i], Qt::ElideRight, lineRect.width()),
+                       displayLine,
                        font, textColor, Qt::AlignLeft | Qt::AlignTop);
   }
 }
@@ -1179,10 +1191,12 @@ void drawViewportInfoOverlay(ArtifactIRenderer *renderer,
                              static_cast<float>(labelRect.height()),
                              7.0f,
                              FloatColor{0.03f, 0.04f, 0.06f, 0.82f},
-                             FloatColor{0.20f, 0.72f, 0.92f, 0.90f},
+                             FloatColor{0.18f, 0.86f, 0.48f, 0.92f},
                              1.0f,
                              1.0f);
-  renderer->drawText(labelRect.adjusted(10, 6, -10, -6), title, font,
+  renderer->drawText(labelRect.adjusted(10, 6, -10, -6),
+                     QStringLiteral("%1 %2").arg(overlayDebugTag(QStringLiteral("INFO")), title),
+                     font,
                      FloatColor{0.92f, 0.96f, 1.0f, 1.0f},
                      Qt::AlignLeft | Qt::AlignTop);
   if (!detail.isEmpty()) {
@@ -1220,10 +1234,12 @@ void drawViewportStatusChipOverlay(ArtifactIRenderer *renderer,
                              static_cast<float>(chipRect.height()),
                              10.0f,
                              FloatColor{0.05f, 0.06f, 0.09f, 0.82f},
-                             FloatColor{0.30f, 0.40f, 0.52f, 0.90f},
+                             FloatColor{0.84f, 0.58f, 0.22f, 0.90f},
                              1.0f,
                              1.0f);
-  renderer->drawText(chipRect, statusText, font,
+  renderer->drawText(chipRect,
+                     QStringLiteral("%1 %2").arg(overlayDebugTag(QStringLiteral("STAT")), statusText),
+                     font,
                      FloatColor{0.90f, 0.94f, 0.97f, 1.0f},
                      Qt::AlignCenter);
   (void)restoreCanvasSize;
@@ -1280,10 +1296,12 @@ void drawViewportSnapHintOverlay(ArtifactIRenderer *renderer,
                              static_cast<float>(labelRect.height()),
                              7.0f,
                              FloatColor{0.03f, 0.04f, 0.06f, 0.82f},
-                             FloatColor{0.18f, 0.75f, 0.95f, 0.90f},
+                             FloatColor{0.88f, 0.34f, 0.78f, 0.92f},
                              1.0f,
                              1.0f);
-  renderer->drawText(labelRect.adjusted(10, 6, -10, -6), title, font,
+  renderer->drawText(labelRect.adjusted(10, 6, -10, -6),
+                     QStringLiteral("%1 %2").arg(overlayDebugTag(QStringLiteral("SNAP")), title),
+                     font,
                      FloatColor{0.92f, 0.96f, 1.0f, 1.0f},
                      Qt::AlignLeft | Qt::AlignTop);
   const QRect detailRect = labelRect.adjusted(10, 6 + lineHeight, -10, -6);
@@ -1325,12 +1343,13 @@ void drawPaintLayerOnionSkinOverlay(ArtifactIRenderer *renderer,
         if (!buf || buf->isEmpty()) continue;
 
         float fade = 1.0f - static_cast<float>(std::abs(i)) / (frameCount + 1);
+        const QImage frameImage = buf->toQImage();
         renderer->drawSprite(
             static_cast<float>(bounds.x()),
             static_cast<float>(bounds.y()),
             static_cast<float>(bounds.width()),
             static_cast<float>(bounds.height()),
-            *buf, alpha * fade);
+            frameImage, alpha * fade);
     }
 }
 } // namespace Artifact

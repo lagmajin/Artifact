@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QColor>
 #include <QApplication>
@@ -74,6 +74,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Text;
 import Artifact.Layer.InitParams;
 import Artifact.Composition.Abstract;
+import Artifact.Widgets.PropertyEditor;
 import Property;
 import Property.Abstract;
 import Property.Group;
@@ -96,6 +97,188 @@ import Property.SerializationBridge;
 import Settings.Accessibility;
 
 namespace Artifact {
+
+namespace detail {
+
+struct LayerStateToggleDef {
+  const char *propertyName;
+  const char *label;
+  const char *tooltip;
+};
+
+void applyPropertySearchPalette(QLineEdit *edit);
+void applyPropertySectionLabel(QLabel *label, bool prominent);
+void clearLayoutRecursive(QLayout *layout);
+void updateScaleSupplementaryText(
+    ArtifactPropertyEditorRowWidget *row,
+    const ArtifactAbstractLayerPtr &layer,
+    const std::shared_ptr<ArtifactCore::AbstractProperty> &property,
+    const QVariant &value);
+void launchExpressionCopilot(
+    QWidget *parent, const QString &propertyName,
+    const std::shared_ptr<ArtifactCore::AbstractProperty> &propertyPtr,
+    const QString &initialExpression, const ArtifactAbstractLayerPtr &layer,
+    const RationalTime &currentTime,
+    const std::function<void(const QString &)> &applyHandler);
+void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer);
+
+constexpr std::array<LayerStateToggleDef, 8> kLayerStateToggleDefs = {{
+    {"layer.visible", "Visible", "Show or hide the layer"},
+    {"layer.locked", "Lock", "Prevent direct edits on the layer"},
+    {"layer.selectionLocked", "Sel", "Prevent selection in the layer panel"},
+    {"layer.transformLocked", "Xform", "Prevent transform edits"},
+    {"layer.timingLocked", "Time", "Prevent timing edits"},
+    {"layer.guide", "Guide", "Mark as guide layer"},
+    {"layer.solo", "Solo", "Solo this layer"},
+    {"layer.shy", "Shy", "Hide the layer from the panel"},
+}};
+
+struct EffectPresentationDescriptor {
+  QString stageText;
+  QString headingText;
+  QString stageNoteText;
+  LayerPresentationBadgeTone badgeTone = LayerPresentationBadgeTone::Neutral;
+};
+
+template <typename EffectPtr>
+EffectPresentationDescriptor describeEffectPresentation(const EffectPtr &effect) {
+  EffectPresentationDescriptor descriptor;
+  descriptor.stageText = QStringLiteral("Effect");
+  descriptor.headingText = QStringLiteral("Effect");
+  descriptor.stageNoteText = QStringLiteral("Stage: Unknown");
+  descriptor.badgeTone = LayerPresentationBadgeTone::Neutral;
+  if (!effect) {
+    return descriptor;
+  }
+
+  switch (effect->pipelineStage()) {
+  case EffectPipelineStage::Generator:
+    descriptor.stageText = QStringLiteral("Generator");
+    descriptor.stageNoteText = QStringLiteral("Stage: Generator");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    break;
+  case EffectPipelineStage::GeometryTransform:
+    descriptor.stageText = QStringLiteral("Geo Transform");
+    descriptor.stageNoteText = QStringLiteral("Stage: Geometry Transform");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    break;
+  case EffectPipelineStage::MaterialRender:
+    descriptor.stageText = QStringLiteral("Material");
+    descriptor.stageNoteText = QStringLiteral("Stage: Material Render");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    break;
+  case EffectPipelineStage::Rasterizer:
+    descriptor.stageText = QStringLiteral("Rasterizer");
+    descriptor.stageNoteText = QStringLiteral("Stage: Rasterizer");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    break;
+  case EffectPipelineStage::LayerTransform:
+    descriptor.stageText = QStringLiteral("Layer Transform");
+    descriptor.stageNoteText = QStringLiteral("Stage: Layer Transform");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Container;
+    break;
+  default:
+    break;
+  }
+
+  descriptor.headingText =
+      QStringLiteral("%1 · %2")
+          .arg(descriptor.stageText, effect->displayName().toQString());
+  return descriptor;
+}
+
+class ScopedPropertyEditGuard final {
+public:
+  explicit ScopedPropertyEditGuard(int &depth) : depth_(depth) { ++depth_; }
+  ~ScopedPropertyEditGuard() { --depth_; }
+
+private:
+  int &depth_;
+};
+
+class CollapsibleSectionButton final : public QToolButton {
+public:
+  explicit CollapsibleSectionButton(QWidget *parent = nullptr)
+      : QToolButton(parent) {
+    setCheckable(true);
+    setAutoRaise(true);
+    setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  }
+
+  void setTarget(QWidget *target) {
+    target_ = target;
+    applyState(isChecked());
+  }
+
+protected:
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    if (event) {
+      event->accept();
+    }
+    toggle();
+    applyState(isChecked());
+  }
+
+private:
+  void applyState(bool expanded) {
+    setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+    if (target_) {
+      target_->setVisible(expanded);
+    }
+  }
+
+  QWidget *target_ = nullptr;
+};
+
+QStringList loadFavoriteProperties();
+void saveFavoriteProperties(const QStringList &favorites);
+bool isFavorite(const QString &propertyPath);
+void toggleFavorite(const QString &propertyPath);
+bool isExpandedInspectorSection(const QString &groupName);
+bool shouldHideInspectorPropertyGroup(const QString &groupName);
+bool isClonerSection(const QString &groupName);
+bool isSourceReframeSection(const QString &groupName);
+std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+applyFavoriteFilter(
+    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+        &properties,
+    bool favoriteOnly);
+std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+filteredGroupProperties(
+    const ArtifactAbstractLayerPtr &layer, const QString &groupName,
+    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+        &properties);
+std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+inspectorProperties(
+    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+        &properties);
+void registerCurrentLayerPropertySnapshot(
+    const ArtifactAbstractLayerPtr &layer, const QString &focusedEffectId);
+void alignPropertyRowLabels(
+    const std::vector<ArtifactPropertyEditorRowWidget *> &rows, int minWidth,
+    int maxWidth);
+void addRowsFromProperties(
+    QWidget *owner, QVBoxLayout *layout,
+    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+        &properties,
+    const QString &filterText,
+    const std::function<void(const QString &, const QVariant &)> &commitValue,
+    const std::function<void(const QString &, const QVariant &)> &previewValue,
+    const std::function<RationalTime()> &currentTimeProvider,
+    const std::function<void(const QString &)> &keyframeChanged,
+    const ArtifactAbstractLayerPtr &layer, bool *addedAny = nullptr,
+    const QString &registryScope = QString(),
+    QMultiHash<QString, ArtifactPropertyEditorRowWidget *> *registry = nullptr,
+    std::vector<ArtifactPropertyEditorRowWidget *> *collectedRows = nullptr,
+    const std::function<void(ArtifactPropertyEditorRowWidget *,
+                             const std::shared_ptr<ArtifactCore::AbstractProperty> &)>
+        &decorateRow = {},
+    const std::function<void(
+        ArtifactPropertyEditorRowWidget *,
+        const std::shared_ptr<ArtifactCore::AbstractProperty> &,
+        const QVariant &)> &rowValueChanged = {});
+
+} // namespace detail
 
 using namespace detail;
 
@@ -1324,6 +1507,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         const QString propName = property->getName();
         const bool fav = isFavorite(propName);
         row->setShowFavoriteButton(true);
+        row->setShowResetButton(true);
         row->setFavoriteChecked(fav);
         row->setFavoriteHandler([this, propName](bool checked) {
           toggleFavorite(propName);

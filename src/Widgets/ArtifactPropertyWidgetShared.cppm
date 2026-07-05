@@ -41,47 +41,12 @@ constexpr int kPropertyLabelMinWidth = 132;
 constexpr int kPropertyLabelMaxWidth = 184;
 
 
-class CollapsibleSectionButton final : public QToolButton {
-public:
-  explicit CollapsibleSectionButton(QWidget *parent = nullptr)
-      : QToolButton(parent) {
-    setCheckable(true);
-    setAutoRaise(true);
-    setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-  }
-
-  void setTarget(QWidget *target) {
-    target_ = target;
-    applyState(isChecked());
-  }
-
-protected:
-  void mouseReleaseEvent(QMouseEvent *event) override {
-    if (event) {
-      event->accept();
-    }
-    toggle();
-    applyState(isChecked());
-  }
-
-private:
-  void applyState(bool expanded) {
-    setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
-    if (target_) {
-      target_->setVisible(expanded);
-    }
-  }
-
-  QWidget *target_ = nullptr;
-};
-
-
-QColor themeColor(const QString &value, const QColor &fallback) {
+QColor propertyWidgetThemeColor(const QString &value, const QColor &fallback) {
   const QColor color(value);
   return color.isValid() ? color : fallback;
 }
 
-QColor blendColor(const QColor &a, const QColor &b, const qreal t) {
+QColor propertyWidgetBlendColor(const QColor &a, const QColor &b, const qreal t) {
   const qreal clamped = std::clamp(t, 0.0, 1.0);
   return QColor::fromRgbF(a.redF() * (1.0 - clamped) + b.redF() * clamped,
                           a.greenF() * (1.0 - clamped) + b.greenF() * clamped,
@@ -375,14 +340,14 @@ RationalTime currentPlaybackTime(ArtifactPlaybackService *playback,
   return currentPlaybackTime(playback);
 }
 
-void applyThemeTextPalette(QWidget *widget, int shade = 100) {
+void applyThemeTextPalette(QWidget *widget, int shade) {
   if (!widget) {
     return;
   }
   const auto &theme = ArtifactCore::currentDCCTheme();
   QPalette pal = widget->palette();
   const QColor textColor(
-      themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC"))));
+      propertyWidgetThemeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC"))));
   pal.setColor(QPalette::WindowText, textColor.darker(shade));
   pal.setColor(QPalette::Text, textColor.darker(shade));
   widget->setPalette(pal);
@@ -394,27 +359,27 @@ void applyPropertyPanelPalette(QWidget *widget, const bool elevated) {
   }
   const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor background =
-      themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
-  const QColor surface = themeColor(theme.secondaryBackgroundColor,
+      propertyWidgetThemeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
+  const QColor surface = propertyWidgetThemeColor(theme.secondaryBackgroundColor,
                                     QColor(QStringLiteral("#2B3038")));
   const QColor text =
-      themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
+      propertyWidgetThemeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
   const QColor selection =
-      themeColor(theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
+      propertyWidgetThemeColor(theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
   const QColor border =
-      themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
+      propertyWidgetThemeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
   const QColor accent =
-      themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+      propertyWidgetThemeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
 
   widget->setAttribute(Qt::WA_StyledBackground, true);
   widget->setAutoFillBackground(true);
   QPalette pal = widget->palette();
   const QColor window =
-      blendColor(background, surface, elevated ? 0.72 : 0.58);
+      propertyWidgetBlendColor(background, surface, elevated ? 0.72 : 0.58);
   pal.setColor(QPalette::Window, window);
   pal.setColor(QPalette::WindowText, text);
   pal.setColor(QPalette::Base, surface);
-  pal.setColor(QPalette::AlternateBase, blendColor(window, surface, 0.16));
+  pal.setColor(QPalette::AlternateBase, propertyWidgetBlendColor(window, surface, 0.16));
   pal.setColor(QPalette::Text, text);
   pal.setColor(QPalette::Button, window);
   pal.setColor(QPalette::ButtonText, text);
@@ -485,15 +450,15 @@ void applyPropertySearchPalette(QLineEdit *edit) {
   edit->setFont(font);
 }
 
-void applyPropertySectionLabel(QLabel *label, const bool prominent = false) {
+void applyPropertySectionLabel(QLabel *label, const bool prominent) {
   if (!label) {
     return;
   }
   const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor text =
-      themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
+      propertyWidgetThemeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
   const QColor accent =
-      themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+      propertyWidgetThemeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
   QPalette pal = label->palette();
   pal.setColor(QPalette::WindowText, prominent ? accent : text);
   label->setPalette(pal);
@@ -501,22 +466,22 @@ void applyPropertySectionLabel(QLabel *label, const bool prominent = false) {
 
 void applyPresentationToneLabel(QLabel *label,
                                 LayerPresentationBadgeTone tone,
-                                const bool prominent = false) {
+                                const bool prominent) {
   if (!label) {
     return;
   }
   const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor text =
-      themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
+      propertyWidgetThemeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
   const QColor accent =
-      themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+      propertyWidgetThemeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
   QColor toneColor = text;
   switch (tone) {
   case LayerPresentationBadgeTone::Container:
     toneColor = accent;
     break;
   case LayerPresentationBadgeTone::Media:
-    toneColor = blendColor(text, accent, 0.22);
+    toneColor = propertyWidgetBlendColor(text, accent, 0.22);
     break;
   case LayerPresentationBadgeTone::Motion:
     toneColor = accent.lighter(115);
@@ -545,30 +510,6 @@ void applyPropertySectionBox(QGroupBox *box) {
   box->setFont(font);
   box->setFlat(false);
 }
-
-struct EffectPresentationDescriptor {
-  QString stageText;
-  QString headingText;
-  QString stageNoteText;
-  LayerPresentationBadgeTone badgeTone = LayerPresentationBadgeTone::Neutral;
-};
-
-struct LayerStateToggleDef {
-  const char *propertyName;
-  const char *label;
-  const char *tooltip;
-};
-
-constexpr std::array<LayerStateToggleDef, 8> kLayerStateToggleDefs = {{
-    {"layer.visible", "Visible", "Show or hide the layer"},
-    {"layer.locked", "Lock", "Prevent direct edits on the layer"},
-    {"layer.selectionLocked", "Sel", "Prevent selection in the layer panel"},
-    {"layer.transformLocked", "Xform", "Prevent transform edits"},
-    {"layer.timingLocked", "Time", "Prevent timing edits"},
-    {"layer.guide", "Guide", "Mark as guide layer"},
-    {"layer.solo", "Solo", "Solo this layer"},
-    {"layer.shy", "Shy", "Hide the layer from the panel"},
-}};
 
 bool isExpandedInspectorSection(const QString &groupName) {
   return isInspectorExpandedByDefaultLayerPropertyGroup(groupName);
@@ -613,57 +554,6 @@ applyFavoriteFilter(
   return filtered;
 }
 
-template <typename EffectPtr>
-EffectPresentationDescriptor describeEffectPresentation(const EffectPtr &effect) {
-  EffectPresentationDescriptor descriptor;
-  descriptor.stageText = QStringLiteral("Effect");
-  descriptor.headingText = QStringLiteral("Effect");
-  descriptor.stageNoteText = QStringLiteral("Stage: Unknown");
-  descriptor.badgeTone = LayerPresentationBadgeTone::Neutral;
-  if (!effect) {
-    return descriptor;
-  }
-
-  switch (effect->pipelineStage()) {
-  case EffectPipelineStage::Generator:
-    descriptor.stageText = QStringLiteral("Generator");
-    descriptor.stageNoteText = QStringLiteral("Stage: Generator");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
-    break;
-  case EffectPipelineStage::GeometryTransform:
-    descriptor.stageText = QStringLiteral("Geo Transform");
-    descriptor.stageNoteText = QStringLiteral("Stage: Geometry Transform");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
-    break;
-  case EffectPipelineStage::MaterialRender:
-    descriptor.stageText = QStringLiteral("Material");
-    descriptor.stageNoteText = QStringLiteral("Stage: Material Render");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
-    break;
-  case EffectPipelineStage::Rasterizer:
-    descriptor.stageText = QStringLiteral("Rasterizer");
-    descriptor.stageNoteText = QStringLiteral("Stage: Rasterizer");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
-    break;
-  case EffectPipelineStage::LayerTransform:
-    descriptor.stageText = QStringLiteral("Layer Transform");
-    descriptor.stageNoteText = QStringLiteral("Stage: Layer Transform");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Container;
-    break;
-  default:
-    descriptor.stageText = QStringLiteral("Effect");
-    descriptor.stageNoteText = QStringLiteral("Stage: Unknown");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Neutral;
-    break;
-  }
-
-  descriptor.headingText =
-      QStringLiteral("%1 · %2")
-          .arg(descriptor.stageText,
-               effect->displayName().toQString());
-  return descriptor;
-}
-
 void clearLayoutRecursive(QLayout *layout) {
   if (!layout) {
     return;
@@ -681,15 +571,6 @@ void clearLayoutRecursive(QLayout *layout) {
 }
 
 
-
-class ScopedPropertyEditGuard final {
-public:
-  explicit ScopedPropertyEditGuard(int &depth) : depth_(depth) { ++depth_; }
-  ~ScopedPropertyEditGuard() { --depth_; }
-
-private:
-  int &depth_;
-};
 
 QString humanizePropertyLabel(QString name) {
   static const QHash<QString, QString> explicitLabels = {

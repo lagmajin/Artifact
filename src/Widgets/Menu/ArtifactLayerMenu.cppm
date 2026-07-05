@@ -17,6 +17,7 @@ module;
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QStatusBar>
+#include <QThread>
 #include <QUrl>
 #include <QtSVG/QSvgRenderer>
 #include <QTimer>
@@ -45,12 +46,14 @@ import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Composition;
 import Artifact.Layer.ParametricComposition;
+import Composition.ParametricComposition;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Video;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Procedural3D;
+import Artifact.Layer.ParametricComposition;
 import Layer.Blend;
 import Color.Float;
 import Artifact.Project.Manager;
@@ -70,6 +73,7 @@ import Undo.UndoManager;
 import Artifact.Service.Playback;
 import ArtifactCore.Control.External;
 import UI.ShortcutBindings;
+import Time.Rational;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -730,6 +734,7 @@ public:
     bool ensureCurrentComposition();
     bool hasSelectedLayer() const;
     QStringList selectedVideoSourcePathsInCurrentComposition() const;
+    void requestRefreshEnabledState();
     void refreshEnabledState();
 };
 
@@ -1477,7 +1482,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
                     }
                 }
                 selectedLayerId_ = layerId;
-                refreshEnabledState();
+                requestRefreshEnabledState();
             }));
     eventBusSubscriptions_.push_back(
         eventBus.subscribe<LayerChangedEvent>(
@@ -1496,21 +1501,35 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
                     selectedLayerId_ == ArtifactCore::LayerID(event.layerId)) {
                     selectedLayerId_ = {};
                 }
-                refreshEnabledState();
+                requestRefreshEnabledState();
             }));
     eventBusSubscriptions_.push_back(
         eventBus.subscribe<CurrentCompositionChangedEvent>(
             [this](const CurrentCompositionChangedEvent&) {
-                refreshEnabledState();
+                requestRefreshEnabledState();
             }));
     eventBusSubscriptions_.push_back(
         eventBus.subscribe<ProjectChangedEvent>(
             [this](const ProjectChangedEvent&) {
-                refreshEnabledState();
+                requestRefreshEnabledState();
             }));
     QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
         refreshEnabledState();
     });
+}
+
+void ArtifactLayerMenu::Impl::requestRefreshEnabledState()
+{
+    if (!menu_) {
+        return;
+    }
+    if (QThread::currentThread() == menu_->thread()) {
+        refreshEnabledState();
+        return;
+    }
+    QMetaObject::invokeMethod(menu_, [this]() {
+        refreshEnabledState();
+    }, Qt::QueuedConnection);
 }
 
 bool ArtifactLayerMenu::Impl::hasCurrentComposition() const

@@ -2,6 +2,7 @@ module;
 #include <utility>
 
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include <QWidget>
@@ -32,6 +33,7 @@ import Artifact.Layer.Text;
 import Artifact.Widgets.FontPicker;
 import Event.Bus;
 
+export namespace Artifact {
 namespace detail {
 class PropertyComboBox final : public QComboBox {
 public:
@@ -43,8 +45,12 @@ protected:
 class PropertySliderWidget final : public QSlider {
 public:
     explicit PropertySliderWidget(QWidget* parent = nullptr);
+    void setDisplayText(QString text);
 protected:
+    void paintEvent(QPaintEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+private:
+    QString displayText_;
 };
 
 class PropertyCallbackButton final : public QPushButton {
@@ -53,16 +59,23 @@ public:
 
     explicit PropertyCallbackButton(const QString& text, QWidget* parent = nullptr);
     void setCallback(Callback callback);
+protected:
+    void mouseReleaseEvent(QMouseEvent* event) override;
+private:
+    Callback callback_;
 };
 
 class PropertyRotationKnobWidget final : public QWidget {
 public:
+    using ValueHandler = std::function<void(double)>;
     explicit PropertyRotationKnobWidget(QWidget* parent = nullptr);
     void setValue(double value);
     double value() const;
     void setRange(double minimum, double maximum);
-    void setPreviewHandler(std::function<void(double)> handler);
-    void setCommitHandler(std::function<void(double)> handler);
+    void setPreviewHandler(ValueHandler handler);
+    void setCommitHandler(ValueHandler handler);
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
@@ -70,12 +83,24 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void leaveEvent(QEvent* event) override;
+private:
+    double angleFromPosition(const QPointF& position) const;
+    double value_ = 0.0;
+    double minimum_ = 0.0;
+    double maximum_ = 360.0;
+    double lastAngle_ = 0.0;
+    bool dragging_ = false;
+    ValueHandler previewHandler_;
+    ValueHandler commitHandler_;
 };
 
 class ArtifactToggleSwitch final : public QAbstractButton {
 public:
     explicit ArtifactToggleSwitch(QWidget* parent = nullptr);
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
 protected:
+    bool hitButton(const QPoint& pos) const override;
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -87,13 +112,22 @@ void applyPropertyFieldPalette(QWidget* widget, bool elevated = false);
 void applyPropertyButtonPalette(QAbstractButton* button, bool accent = false);
 void applyPropertyLabelPalette(QLabel* label, bool prominent = false);
 void applyThemeTextPalette(QWidget* widget, int shade = 100);
+QColor themeColor(const QString& value, const QColor& fallback);
+QColor blendColor(const QColor& a, const QColor& b, qreal t);
+QColor propertySurfaceColor(bool elevated = false);
 QString fileDialogFilterForProperty(const QString& propertyName);
 QColor propertyColor(const ArtifactCore::AbstractProperty& property);
+bool isPathProperty(const ArtifactCore::AbstractProperty& property);
+bool isFontFamilyProperty(const ArtifactCore::AbstractProperty& property);
+bool isMultilineTextProperty(const ArtifactCore::AbstractProperty& property);
+bool shouldShowNumericSlider(const ArtifactCore::AbstractProperty& property);
+int intToSliderPosition(int value, int min, int max);
+int sliderPositionToInt(int pos, int min, int max);
+std::optional<std::vector<std::pair<int, QString>>>
+enumOptionsForProperty(const ArtifactCore::AbstractProperty& property);
 bool artifactShouldShowPropertyResetButtonsImpl();
 void artifactSetShowPropertyResetButtonsImpl(bool show);
 }
-
-export namespace Artifact {
 
 enum class ArtifactPropertyRowLayoutMode {
     LabelThenEditor = 0,

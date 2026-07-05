@@ -36,7 +36,7 @@ ArtifactCore::PropertyType propertyTypeForPublishedValue(const QVariant& value)
         return ArtifactCore::PropertyType::Integer;
     case QMetaType::Float:
     case QMetaType::Double:
-        return ArtifactCore::PropertyType::Double;
+        return ArtifactCore::PropertyType::Float;
     default:
         return ArtifactCore::PropertyType::String;
     }
@@ -349,7 +349,7 @@ ArtifactParametricCompositionLayer::getLayerPropertyGroups() const
                 currentValue,
                 -60 + control.order);
             if (!control.displayName.isEmpty()) {
-                prop->setDisplayName(control.displayName);
+                prop->setDisplayLabel(control.displayName);
             }
             publishedGroup.addProperty(prop);
 
@@ -359,7 +359,7 @@ ArtifactParametricCompositionLayer::getLayerPropertyGroups() const
                 control.sourceParameterKey,
                 2000 + control.order);
             if (!control.displayName.isEmpty()) {
-                sourceProp->setDisplayName(control.displayName + QStringLiteral(" Source"));
+                sourceProp->setDisplayLabel(control.displayName + QStringLiteral(" Source"));
             }
             publishedGroup.addProperty(sourceProp);
         }

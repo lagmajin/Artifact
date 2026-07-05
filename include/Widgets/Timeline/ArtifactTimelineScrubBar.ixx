@@ -59,6 +59,7 @@ export namespace Artifact
   // タイムラインズーム座標に合わせたルーラーのための設定
   void setRulerPixelsPerFrame(double ppf);
   void setRulerHorizontalOffset(double offset);
+  int rulerFrameToX(double frame) const;
 
   void setSeekLockDuringPlayback(bool lock);
   bool isSeekLockedDuringPlayback() const;

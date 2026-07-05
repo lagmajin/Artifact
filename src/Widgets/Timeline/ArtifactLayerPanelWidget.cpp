@@ -41,8 +41,10 @@ module;
 #include <QFileDialog>
 #include <QDockWidget>
 #include <QMainWindow>
+#include <QMetaObject>
 #include <QToolTip>
 #include <QTimer>
+#include <QThread>
 #include <QElapsedTimer>
 #include <QDrag>
 #include <QMenu>
@@ -2107,6 +2109,7 @@ public:
   QPixmap soloIcon;
   QPixmap audioIcon;
   QPixmap shyIcon;
+  QPixmap parentWhipIcon;
   // [Fix B] 右クリックメニュー用アイコンキャッシュ
   QIcon iconRename, iconCopy, iconDelete, iconFileOpen;
   QIcon iconVisOn, iconVisOff, iconLock, iconUnlock, iconSolo, iconShy;
@@ -2613,12 +2616,32 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
 
  impl_->eventBusSubscriptions_.push_back(
   impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent& event) {
-      if (event.changeType == LayerChangedEvent::ChangeType::Created) {
-        if (impl_->compositionId.isNil() ||
-            event.compositionId == impl_->compositionId.toString()) {
-          updateLayout();
-          const LayerID layerId(event.layerId);
-          QMetaObject::invokeMethod(this, [this, layerId]() {
+      const QString compositionId = event.compositionId;
+      const LayerID layerId(event.layerId);
+      const auto changeType = event.changeType;
+      const bool allowInteractiveCreatedHandling =
+          QCoreApplication::instance() &&
+          QThread::currentThread() == QCoreApplication::instance()->thread();
+      QMetaObject::invokeMethod(
+          this,
+          [this, compositionId, layerId, changeType,
+           allowInteractiveCreatedHandling]() {
+            if (!impl_) {
+              return;
+            }
+            const bool targetsPanel =
+                impl_->compositionId.isNil() ||
+                compositionId == impl_->compositionId.toString();
+            if (!targetsPanel) {
+              return;
+            }
+
+            updateLayout();
+            if (changeType != LayerChangedEvent::ChangeType::Created ||
+                !allowInteractiveCreatedHandling) {
+              return;
+            }
+
             const auto widgets = QApplication::allWidgets();
             for (QWidget* w : widgets) {
               if (!w) continue;
@@ -2636,17 +2659,8 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
               editLayerName(layerId);
             }
             this->visibleRowsChanged();
-          }, Qt::QueuedConnection);
-        }
-      } else if (event.changeType == LayerChangedEvent::ChangeType::Removed) {
-        if (event.compositionId == impl_->compositionId.toString()) {
-          updateLayout();
-        }
-      } else if (event.changeType == LayerChangedEvent::ChangeType::Modified) {
-        if (event.compositionId == impl_->compositionId.toString()) {
-          updateLayout();
-        }
-      }
+          },
+          Qt::QueuedConnection);
     }));
   impl_->eventBusSubscriptions_.push_back(
     impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(

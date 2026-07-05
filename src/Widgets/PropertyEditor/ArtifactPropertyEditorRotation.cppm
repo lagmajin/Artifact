@@ -139,5 +139,4 @@ QWidget *ArtifactRotationPropertyEditor::scrubTargetWidget() const {
   return ArtifactAbstractPropertyEditor::scrubTargetWidget();
 }
 
-ArtifactPropertyEditorRowWidget::~ArtifactPropertyEditorRowWidget() = default;
 } // namespace Artifact

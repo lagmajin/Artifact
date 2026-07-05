@@ -4285,9 +4285,28 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   // トランスフォームのプロパティグループ（優先度を高く設定）
   PropertyGroup transformGroup(QStringLiteral("Transform"));
   const auto &t3 = transform3D();
+  const auto sz = sourceSize();
+  QSize compositionSize(1920, 1080);
+  if (const auto *composition =
+          dynamic_cast<const ArtifactAbstractComposition *>(
+              compositionObject())) {
+    const QSize candidate = composition->settings().compositionSize();
+    if (candidate.width() > 0 && candidate.height() > 0) {
+      compositionSize = candidate;
+    }
+  }
+  const int sourceWidth = std::max(1, sz.width);
+  const int sourceHeight = std::max(1, sz.height);
+  const double positionRangeX =
+      static_cast<double>(std::max(compositionSize.width() * 2, 4096));
+  const double positionRangeY =
+      static_cast<double>(std::max(compositionSize.height() * 2, 4096));
+  const double anchorRangeX =
+      static_cast<double>(std::max(sourceWidth * 2, 2048));
+  const double anchorRangeY =
+      static_cast<double>(std::max(sourceHeight * 2, 2048));
 
   PropertyGroup initialGroup(QStringLiteral("Initial"));
-  const auto sz = sourceSize();
   auto sourceWidthProp =
       makeProp(QStringLiteral("source.width"), PropertyType::Integer,
                sz.width, -500);
@@ -4324,6 +4343,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                            PropertyType::Float, t3.positionX(), -300);
   posXProp->setDisplayLabel(QStringLiteral("Position X"));
   posXProp->setUnit(QStringLiteral("px"));
+  posXProp->setStep(1.0);
+  posXProp->setSoftRange(-positionRangeX, positionRangeX);
   posXProp->setAnimatable(true);
   transformGroup.addProperty(posXProp);
 
@@ -4331,6 +4352,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                            PropertyType::Float, t3.positionY(), -299);
   posYProp->setDisplayLabel(QStringLiteral("Position Y"));
   posYProp->setUnit(QStringLiteral("px"));
+  posYProp->setStep(1.0);
+  posYProp->setSoftRange(-positionRangeY, positionRangeY);
   posYProp->setAnimatable(true);
   transformGroup.addProperty(posYProp);
 
@@ -4338,20 +4361,24 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                              PropertyType::Float, t3.scaleX(), -298);
   scaleXProp->setDisplayLabel(QStringLiteral("Scale X"));
   scaleXProp->setAnimatable(true);
-   scaleXProp->setSoftRange(0.0, 2.0);  // Soft range for typical use (0-200%)
+  scaleXProp->setStep(0.01);
+  scaleXProp->setSoftRange(0.0, 2.0);  // Soft range for typical use (0-200%)
   transformGroup.addProperty(scaleXProp);
 
   auto scaleYProp = makeProp(QStringLiteral("transform.scale.y"),
                              PropertyType::Float, t3.scaleY(), -297);
   scaleYProp->setDisplayLabel(QStringLiteral("Scale Y"));
   scaleYProp->setAnimatable(true);
-   scaleYProp->setSoftRange(0.0, 2.0);  // Soft range for typical use (0-200%)
+  scaleYProp->setStep(0.01);
+  scaleYProp->setSoftRange(0.0, 2.0);  // Soft range for typical use (0-200%)
   transformGroup.addProperty(scaleYProp);
 
   auto rotationProp = makeProp(QStringLiteral("transform.rotation"),
                                PropertyType::Float, t3.rotation(), -296);
   rotationProp->setDisplayLabel(QStringLiteral("Rotation"));
   rotationProp->setUnit(QStringLiteral("deg"));
+  rotationProp->setStep(1.0);
+  rotationProp->setSoftRange(-180.0, 180.0);
   rotationProp->setAnimatable(true);
   transformGroup.addProperty(rotationProp);
 
@@ -4369,6 +4396,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                               PropertyType::Float, t3.anchorX(), -295);
   anchorXProp->setDisplayLabel(QStringLiteral("Anchor X"));
   anchorXProp->setUnit(QStringLiteral("px"));
+  anchorXProp->setStep(1.0);
+  anchorXProp->setSoftRange(-anchorRangeX, anchorRangeX);
   anchorXProp->setAnimatable(true);
   transformGroup.addProperty(anchorXProp);
 
@@ -4376,6 +4405,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                               PropertyType::Float, t3.anchorY(), -294);
   anchorYProp->setDisplayLabel(QStringLiteral("Anchor Y"));
   anchorYProp->setUnit(QStringLiteral("px"));
+  anchorYProp->setStep(1.0);
+  anchorYProp->setSoftRange(-anchorRangeY, anchorRangeY);
   anchorYProp->setAnimatable(true);
   transformGroup.addProperty(anchorYProp);
 
