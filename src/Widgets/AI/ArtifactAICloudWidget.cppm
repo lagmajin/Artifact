@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QApplication>
 #include <QComboBox>
 #include <QDateTime>
@@ -40,6 +40,8 @@ module;
 module Artifact.Widgets.AI.ArtifactAICloudWidget;
 
 import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
+import Artifact.AI.Cloud.AICloudSessionController;
+import Artifact.AI.Cloud.AICloudWorkerProtocol;
 import std;
 import Core.AI.Context;
 import Core.AI.PromptGenerator;
@@ -899,30 +901,29 @@ void Artifact::ArtifactAICloudWidget::startChatRequest(
   const QString apiKey =
       settings.value(QStringLiteral("apiKey")).toString().trimmed();
   const QString baseUrl = currentChatCompletionsUrl();
-
-  QJsonObject requestObj;
-  requestObj["model"] = modelId;
-  QJsonArray messages;
-  messages.append(QJsonObject{{"role", "system"}, {"content", systemPrompt}});
-  if (!toolTrace.isEmpty()) {
-    messages.append(QJsonObject{
-        {"role", "system"},
-        {"content",
-         QStringLiteral(
-             "The previous tool execution produced the following result. "
-             "Use it to answer the user:\n%1")
-             .arg(toolTrace)}});
-  }
-  messages.append(QJsonObject{{"role", "user"}, {"content", userPrompt}});
-  requestObj["messages"] = messages;
-  requestObj["stream"] = false;
-  requestObj["temperature"] = 0.7;
-
+  cloudSessionController_.setContextSnapshot(buildCurrentCloudContext());
+  const QString providerId = [this]() {
+    switch (currentProvider()) {
+    case AIProvider::OpenAI:
+      return QStringLiteral("openai");
+    case AIProvider::Grok:
+      return QStringLiteral("grok");
+    case AIProvider::OpenRouter:
+      return QStringLiteral("openrouter");
+    case AIProvider::KiloGateway:
+      return QStringLiteral("kilogateway");
+    case AIProvider::Custom:
+      return QStringLiteral("custom");
+    }
+    return QStringLiteral("openai");
+  }();
+  const auto request = cloudSessionController_.makeChatRequest(
+      providerId, modelId, userPrompt, systemPrompt, toolTrace, baseUrl,
+      apiKey, 0.7, false);
   const QByteArray body =
-      QJsonDocument(requestObj).toJson(QJsonDocument::Compact);
-
+      cloudSessionController_.serializeChatRequestBody(request);
   sendProcess_->setProgram(QStringLiteral("curl.exe"));
-  sendProcess_->setArguments(buildCurlJsonRequestArgs(baseUrl, apiKey, body));
+  sendProcess_->setArguments(cloudSessionController_.buildCurlArgs(request));
   sendProcess_->start();
   if (sendProcess_->state() == QProcess::NotRunning) {
     replaceLastAssistantMessage(
@@ -2512,8 +2513,59 @@ bool Artifact::ArtifactAICloudWidget::eventFilter(QObject *watched,
     }
   }
 
+  // Slash Commands: /command -> prompt template (Tab to complete)
+static const QHash<QString, QString> kSlashCommands = {
+    {QStringLiteral("/fix"), QStringLiteral("Fix the following issue in the current composition: ")},
+    {QStringLiteral("/explain"), QStringLiteral("Explain how the current composition/layer is structured: ")},
+    {QStringLiteral("/optimize"), QStringLiteral("Suggest render performance optimizations: ")},
+    {QStringLiteral("/create"), QStringLiteral("Create a new effect, layer, or animation that: ")},
+    {QStringLiteral("/analyze"), QStringLiteral("Analyze the current project for issues or improvements: ")},
+    {QStringLiteral("/color"), QStringLiteral("Suggest a color grading approach: ")},
+    {QStringLiteral("/animate"), QStringLiteral("Create a keyframe animation that: ")},
+    {QStringLiteral("/refactor"), QStringLiteral("Refactor this composition structure: ")},
+};
+
+static QString currentWordAtCursor(QTextEdit* editor) {
+    QTextCursor cursor = editor->textCursor();
+    QString text = editor->toPlainText();
+    int pos = cursor.position();
+    int start = pos;
+    while (start > 0 && !text.at(start - 1).isSpace()) --start;
+    return text.mid(start, pos - start);
+}
+
+static void replaceCurrentWord(QTextEdit* editor, const QString& replacement) {
+    QTextCursor cursor = editor->textCursor();
+    QString text = editor->toPlainText();
+    int pos = cursor.position();
+    int start = pos;
+    while (start > 0 && !text.at(start - 1).isSpace()) --start;
+    cursor.setPosition(start);
+    cursor.setPosition(pos, QTextCursor::KeepAnchor);
+    cursor.insertText(replacement);
+    editor->setTextCursor(cursor);
+}
+
   if (watched == promptEdit_ && event && event->type() == QEvent::KeyPress) {
     auto *keyEvent = static_cast<QKeyEvent *>(event);
+    if (keyEvent->key() == Qt::Key_Tab && !isSending_) {
+      const QString word = currentWordAtCursor(promptEdit_);
+      if (word.startsWith('/')) {
+        // Exact match: expand template
+        auto it = kSlashCommands.constFind(word);
+        if (it != kSlashCommands.constEnd()) {
+          replaceCurrentWord(promptEdit_, it.value());
+          return true;
+        }
+        // Partial match: show completions by inserting first match
+        for (auto ci = kSlashCommands.constBegin(); ci != kSlashCommands.constEnd(); ++ci) {
+          if (ci.key().startsWith(word)) {
+            replaceCurrentWord(promptEdit_, ci.key() + " ");
+            return true;
+          }
+        }
+      }
+    }
     if (keyEvent->key() == Qt::Key_Escape && isSending_) {
       cancelCurrentSend();
       return true;
@@ -2564,30 +2616,25 @@ void Artifact::ArtifactAICloudWidget::onSendProcessFinished(
     return;
   }
 
-  const QString output = QString::fromUtf8(stdoutBytes).trimmed();
-  if (output.isEmpty()) {
-    const QString errorText = QString::fromUtf8(stderrBytes).trimmed();
-    replaceLastAssistantMessage(
-        errorText.isEmpty() ? QStringLiteral("Error: empty response")
-                            : QStringLiteral("Error: %1").arg(errorText));
+  const auto response = cloudSessionController_.parseChatResponse(
+      stdoutBytes, stderrBytes, exitCode, exitStatus);
+  if (!response.ok) {
+    const QString errorText =
+        response.errorText.isEmpty() ||
+                response.errorText.startsWith(QStringLiteral("Error:"))
+            ? response.errorText
+            : QStringLiteral("Error: %1").arg(response.errorText);
+    replaceLastAssistantMessage(errorText.isEmpty() ? QStringLiteral("Error: empty response")
+                                                    : errorText);
     pendingToolTrace_.clear();
     return;
   }
 
-  const QJsonDocument doc = QJsonDocument::fromJson(stdoutBytes);
-  if (doc.isNull()) {
-    replaceLastAssistantMessage(QStringLiteral("Invalid JSON response"));
-    pendingToolTrace_.clear();
-    return;
-  }
-
-  QJsonObject obj = doc.object();
+  const QJsonObject obj = response.rawJson;
   if (obj.contains("choices") && !obj["choices"].toArray().isEmpty()) {
-    QJsonObject choice =
-        obj["choices"].toArray()[0].toObject()["message"].toObject();
-    QString content = choice["content"].toString();
-    const QString finalContent =
-        content.isEmpty() ? QStringLiteral("No response content") : content;
+    const QString finalContent = response.assistantContent.isEmpty()
+                                     ? QStringLiteral("No response content")
+                                     : response.assistantContent;
 
     QString toolTrace;
     QString toolError;
@@ -2637,10 +2684,10 @@ void Artifact::ArtifactAICloudWidget::onSendProcessFinished(
     pendingToolTrace_.clear();
   } else if (obj.contains("error")) {
     QString errorMsg = obj["error"].toObject()["message"].toString();
-    replaceLastAssistantMessage("API Error: " + errorMsg);
+    replaceLastAssistantMessage(QStringLiteral("API Error: %1").arg(errorMsg));
     pendingToolTrace_.clear();
   } else {
-    replaceLastAssistantMessage("No response content");
+    replaceLastAssistantMessage(QStringLiteral("No response content"));
     pendingToolTrace_.clear();
   }
 }

@@ -24,7 +24,9 @@ module;
 export module Artifact.Widgets.AI.ArtifactAICloudWidget;
 
 import std;
+import Artifact.AI.Cloud.AICloudSessionController;
 import Core.AI.McpTransport;
+import Artifact.AI.Cloud.AICloudWorkerProtocol;
 
 export namespace Artifact {
 
@@ -132,6 +134,7 @@ private:
   QStringList mcpLogEntries_;
   QStringList mcpToolNames_;
   ArtifactCore::McpTransportSession mcpSession_;
+  AICloudSessionController cloudSessionController_;
   QNetworkAccessManager *networkManager_;
   QNetworkAccessManager *modelsNetworkManager_;
 };
