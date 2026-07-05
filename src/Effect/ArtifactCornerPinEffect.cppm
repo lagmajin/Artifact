@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 #include <vector>
 #include <QString>

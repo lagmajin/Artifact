@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QString>
 #include <QUuid>

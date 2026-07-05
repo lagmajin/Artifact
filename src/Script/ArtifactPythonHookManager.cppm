@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>

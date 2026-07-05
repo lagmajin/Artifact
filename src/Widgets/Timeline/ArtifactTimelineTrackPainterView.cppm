@@ -1721,6 +1721,37 @@ QVariant effectiveKeyframeValue(const ArtifactCore::AbstractProperty *property,
   return property ? property->getValue() : QVariant();
 }
 
+bool isPercentScalePropertyPath(const QString &propertyPath) {
+  return propertyPath.compare(QStringLiteral("transform.scale.x"),
+                              Qt::CaseInsensitive) == 0 ||
+         propertyPath.compare(QStringLiteral("transform.scale.y"),
+                              Qt::CaseInsensitive) == 0;
+}
+
+bool isDegreeRotationPropertyPath(const QString &propertyPath) {
+  return propertyPath.compare(QStringLiteral("transform.rotation"),
+                              Qt::CaseInsensitive) == 0;
+}
+
+QString formatTimelinePropertyValue(const QString &propertyPath,
+                                    const QVariant &value) {
+  bool numeric = false;
+  const double numericValue = value.toDouble(&numeric);
+  if (!numeric) {
+    return value.toString();
+  }
+
+  if (isPercentScalePropertyPath(propertyPath)) {
+    return QStringLiteral("%1%").arg(
+        QLocale::system().toString(numericValue * 100.0, 'f', 0));
+  }
+  if (isDegreeRotationPropertyPath(propertyPath)) {
+    return QStringLiteral("%1 deg").arg(
+        QLocale::system().toString(numericValue, 'f', 1));
+  }
+  return QLocale::system().toString(numericValue, 'f', 3);
+}
+
 bool approximatelyEqualValue(const QVariant &lhs, const QVariant &rhs,
                              const ArtifactCore::PropertyType type) {
   switch (type) {
@@ -2753,7 +2784,8 @@ QString formatKeyframeAreaTooltip(const KeyframeAreaVisual &area,
                .arg(endFrame);
   lines << tt("timeline.area_duration", "Span: %1 frames").arg(durationFrames);
   if (area.value.isValid()) {
-    lines << tt("timeline.area_value", "Value: %1").arg(area.value.toString());
+    lines << tt("timeline.area_value", "Value: %1")
+                 .arg(formatTimelinePropertyValue(area.propertyPath, area.value));
   }
   lines << (selected ? tt("timeline.state_selected", "State: Selected")
                      : tt("timeline.state_idle", "State: Idle"));
@@ -7535,17 +7567,25 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     clipSelected(QString(), area.layerId);
     if (chosen == setAreaValueAct) {
       bool numericArea = false;
-      const double currentValue = area.value.toDouble(&numericArea);
+      double currentValue = area.value.toDouble(&numericArea);
+      const bool scalePercent = isPercentScalePropertyPath(area.propertyPath);
+      if (numericArea && scalePercent) {
+        currentValue *= 100.0;
+      }
       if (numericArea && composition) {
         bool accepted = false;
         const double nextValue = QInputDialog::getDouble(
             this, tt("timeline.set_area_value", "Set Area Value"),
-            tt("timeline.area_value_prompt", "Value"), currentValue, -1000000.0,
+            scalePercent ? tt("timeline.area_value_prompt_percent", "Value (%)")
+                         : tt("timeline.area_value_prompt", "Value"),
+            currentValue, -1000000.0,
             1000000.0, 3, &accepted);
         if (accepted) {
+          const double storedValue =
+              scalePercent ? nextValue / 100.0 : nextValue;
           QVector<KeyframePropertySnapshot> beforeSnapshots;
           QVector<KeyframePropertySnapshot> afterSnapshots;
-          if (applyValueToKeyframeArea(composition, area, QVariant(nextValue),
+          if (applyValueToKeyframeArea(composition, area, QVariant(storedValue),
                                        &beforeSnapshots, &afterSnapshots)) {
             if (auto *mgr = UndoManager::instance()) {
               QPointer<ArtifactTimelineTrackPainterView> self(this);

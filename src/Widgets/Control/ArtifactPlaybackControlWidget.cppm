@@ -1077,8 +1077,6 @@ public:
         QObject::connect(autoKeyCheckbox_, &QCheckBox::toggled, owner_, [this](bool checked) {
             // state stored in checkbox
         });
-            handleClearInOutClicked();
-        });
 
         QObject::connect(speedQuarterButton_, &QToolButton::clicked, owner_, [this]() {
             handleSpeedPresetClicked(0.25f);
@@ -1839,4 +1837,3 @@ void ArtifactPlaybackSpeedWidget::setSpeedPreset(float speed)
 }
 
 } // namespace Artifact
-

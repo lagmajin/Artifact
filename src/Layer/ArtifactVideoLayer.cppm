@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QImage>
 #include <QMatrix4x4>
 #include <QSize>

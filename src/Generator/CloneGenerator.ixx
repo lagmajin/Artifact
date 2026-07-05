@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QVector>
 #include <QMatrix4x4>
 #include <QString>

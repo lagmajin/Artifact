@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>

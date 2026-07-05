@@ -4706,21 +4706,33 @@ void drawCameraFrustumOverlay(ArtifactIRenderer *renderer,
 
 QMatrix4x4 viewportOrientationViewMatrix(
 
-    const ArtifactCore::ViewOrientationHotspot hotspot, const float cw,
+    const QQuaternion& orientation, const QPointF& target,
 
-    const float ch) {
+    const float distance) {
+
+  const QQuaternion cameraOrientation = orientation.conjugated();
+  const QVector3D targetPosition(
+      static_cast<float>(target.x()), static_cast<float>(target.y()), 0.0f);
+
+  const QVector3D eye =
+
+      targetPosition +
+      cameraOrientation.rotatedVector(QVector3D(0.0f, 0.0f, 1.0f)) *
+
+                   std::max(1.0f, distance);
+
+  QVector3D up =
+      cameraOrientation.rotatedVector(QVector3D(0.0f, 1.0f, 0.0f));
+
+  if (up.lengthSquared() < 1.0e-6f) {
+
+    up = QVector3D(0.0f, 1.0f, 0.0f);
+
+  }
 
   QMatrix4x4 view;
 
-  const QQuaternion q =
-
-      ArtifactCore::ViewOrientationNavigator::orientationForHotspot(hotspot);
-
-  view.translate(cw * 0.5f, ch * 0.5f, 0.0f);
-
-  view.rotate(q.conjugated());
-
-  view.translate(-cw * 0.5f, -ch * 0.5f, 0.0f);
+  view.lookAt(eye, targetPosition, up.normalized());
 
   return view;
 
@@ -4730,7 +4742,9 @@ QMatrix4x4 viewportOrientationViewMatrix(
 
 QMatrix4x4 viewportOrientationProjectionMatrix(const float viewportW,
 
-                                               const float viewportH) {
+                                               const float viewportH,
+
+                                               const float fovDegrees) {
 
   QMatrix4x4 proj;
 
@@ -4738,7 +4752,12 @@ QMatrix4x4 viewportOrientationProjectionMatrix(const float viewportW,
 
   const float h = std::max(1.0f, viewportH);
 
-  proj.ortho(0.0f, w, h, 0.0f, -100000.0f, 100000.0f);
+  const float aspect = w / h;
+
+  proj.perspective(std::clamp(fovDegrees, 8.0f, 120.0f), aspect, 1.0f,
+
+                   100000.0f);
+  proj(1, 1) = -proj(1, 1);
 
   return proj;
 
@@ -4749,6 +4768,63 @@ QMatrix4x4 viewportOrientationProjectionMatrix(const float viewportW,
 // Forward declaration
 
 FramePosition currentFrameForComposition(const ArtifactCompositionPtr &comp);
+
+std::vector<RationalTime> motionPathPositionKeyTimes(
+    const ArtifactAbstractLayerPtr &layer, const int fps) {
+  std::vector<int64_t> frames;
+  if (!layer) {
+    return {};
+  }
+
+  const auto collectPropertyFrames =
+      [&frames, fps](const auto &property) {
+        if (!property || !property->isAnimatable()) {
+          return;
+        }
+        for (const auto &keyframe : property->getKeyFrames()) {
+          frames.push_back(keyframe.time.rescaledTo(fps));
+        }
+      };
+  collectPropertyFrames(
+      layer->getProperty(QStringLiteral("transform.position.x")));
+  collectPropertyFrames(
+      layer->getProperty(QStringLiteral("transform.position.y")));
+
+  if (frames.empty()) {
+    for (const auto &time : layer->transform3D().getPositionKeyFrameTimes()) {
+      frames.push_back(time.rescaledTo(fps));
+    }
+  }
+
+  std::sort(frames.begin(), frames.end());
+  frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
+
+  std::vector<RationalTime> times;
+  times.reserve(frames.size());
+  for (const int64_t frame : frames) {
+    times.emplace_back(frame, fps);
+  }
+  return times;
+}
+
+int motionPathPositionInterpolation(
+    const ArtifactAbstractLayerPtr &layer, const RationalTime &time) {
+  if (layer) {
+    const auto property =
+        layer->getProperty(QStringLiteral("transform.position.x"));
+    if (property && property->isAnimatable()) {
+      for (const auto &keyframe : property->getKeyFrames()) {
+        if (keyframe.time == time ||
+            keyframe.time.rescaledTo(time.scale()) == time.value()) {
+          return static_cast<int>(keyframe.interpolation);
+        }
+      }
+    }
+    return static_cast<int>(
+        layer->transform3D().positionXKeyFrameInterpolationAt(time));
+  }
+  return static_cast<int>(ArtifactCore::InterpolationType::Linear);
+}
 
 
 
@@ -4768,7 +4844,9 @@ buildMotionPathSamples(const ArtifactAbstractLayerPtr &layer,
 
 
 
-  const auto keyTimes = layer->transform3D().getAllKeyFrameTimes();
+  const int fps =
+      std::max(1, static_cast<int>(std::round(comp->frameRate().framerate())));
+  const auto keyTimes = motionPathPositionKeyTimes(layer, fps);
 
   if (keyTimes.empty()) {
 
@@ -4780,21 +4858,14 @@ buildMotionPathSamples(const ArtifactAbstractLayerPtr &layer,
 
   samples.reserve(static_cast<int>(keyTimes.size()) + 1);
 
-  const int fps =
-
-      std::max(1, static_cast<int>(std::round(comp->frameRate().framerate())));
-
-
-
   for (const auto &time : keyTimes) {
-
-    const auto snapshot = layer->transform3D().snapshotAt(time);
-
-    samples.push_back({QPointF(snapshot.anchorCanvasPosition.x,
-
-                               snapshot.anchorCanvasPosition.y),
-
-                       MotionPathSampleKind::Keyframe, time.value()});
+    const int64_t frame = time.rescaledTo(fps);
+    const auto &transform = layer->transform3D();
+    const QTransform globalTransform = layer->getGlobalTransformAt(frame);
+    const QPointF anchor = globalTransform.map(
+        QPointF(transform.anchorXAt(time), transform.anchorYAt(time)));
+    samples.push_back(
+        {anchor, MotionPathSampleKind::Keyframe, frame});
 
   }
 
@@ -4804,14 +4875,13 @@ buildMotionPathSamples(const ArtifactAbstractLayerPtr &layer,
 
   const RationalTime currentTime(currentFrame.framePosition(), fps);
 
-  const auto currentSnapshot = layer->transform3D().snapshotAt(currentTime);
-
-  samples.push_back({QPointF(currentSnapshot.anchorCanvasPosition.x,
-
-                             currentSnapshot.anchorCanvasPosition.y),
-
-                     MotionPathSampleKind::Current,
-
+  const auto &transform = layer->transform3D();
+  const QTransform currentGlobalTransform =
+      layer->getGlobalTransformAt(currentFrame.framePosition());
+  const QPointF currentAnchor = currentGlobalTransform.map(
+      QPointF(transform.anchorXAt(currentTime),
+              transform.anchorYAt(currentTime)));
+  samples.push_back({currentAnchor, MotionPathSampleKind::Current,
                      currentFrame.framePosition()});
 
 
@@ -5399,7 +5469,8 @@ void drawLayerForCompositionView(
 
     const std::vector<SceneLightEntry> *sceneLights = nullptr,
 
-    bool interactiveDraft = false, quint64 surfaceGeneration = 1) {
+    bool interactiveDraft = false, bool applyViewportCameraTo2D = false,
+    quint64 surfaceGeneration = 1) {
 
   if (!layer || !renderer) {
 
@@ -5501,6 +5572,25 @@ void drawLayerForCompositionView(
     return;
 
   }
+
+  struct External2DMatrixScope {
+    ArtifactIRenderer *renderer = nullptr;
+    bool active = false;
+
+    ~External2DMatrixScope() {
+      if (renderer && active) {
+        renderer->setUseExternalMatrices(false);
+      }
+    }
+  } external2DMatrixScope{
+      renderer, applyViewportCameraTo2D && cameraView && cameraProj};
+
+  if (external2DMatrixScope.active) {
+    renderer->setViewMatrix(*cameraView);
+    renderer->setProjectionMatrix(*cameraProj);
+    renderer->setUseExternalMatrices(true);
+  }
+
   auto applySurfaceAndDraw = [&](QImage surface, const QRectF &rect,
 
                                  bool allowSurfaceCache) {
@@ -6556,7 +6646,10 @@ void drawCompositionBackgroundDirect(ArtifactIRenderer *renderer, float cw,
 
                                      float checkerboardTileSize,
 
-                                     const QImage &mayaGradientSprite) {
+                                     const QImage &mayaGradientSprite,
+                                     const QMatrix4x4 *viewportView = nullptr,
+                                     const QMatrix4x4 *viewportProjection =
+                                         nullptr) {
 
   if (!renderer || cw <= 0.0f || ch <= 0.0f) {
 
@@ -6564,11 +6657,26 @@ void drawCompositionBackgroundDirect(ArtifactIRenderer *renderer, float cw,
 
   }
 
+  const auto drawCanvasFill =
+      [&](const FloatColor &color) {
+        if (viewportView && viewportProjection) {
+          QMatrix4x4 identity;
+          renderer->setViewMatrix(*viewportView);
+          renderer->setProjectionMatrix(*viewportProjection);
+          renderer->setUseExternalMatrices(true);
+          renderer->drawSolidRectTransformed(0.0f, 0.0f, cw, ch, identity,
+                                             color, 1.0f);
+          renderer->setUseExternalMatrices(false);
+          return;
+        }
+        renderer->drawRectLocal(0.f, 0.f, cw, ch, color, 1.0f);
+      };
+
   if (mode == CompositionBackgroundMode::Solid) {
 
     if (bgColor.a() > 0.0f) {
 
-      renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+      drawCanvasFill(bgColor);
 
     }
 
@@ -6584,7 +6692,7 @@ void drawCompositionBackgroundDirect(ArtifactIRenderer *renderer, float cw,
 
     if (bgColor.a() > 0.0f) {
 
-      renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+      drawCanvasFill(bgColor);
 
     }
 
@@ -6600,7 +6708,7 @@ void drawCompositionBackgroundDirect(ArtifactIRenderer *renderer, float cw,
 
     if (bgColor.a() > 0.0f) {
 
-      renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+      drawCanvasFill(bgColor);
 
     }
 
@@ -7406,7 +7514,13 @@ public:
 
                                     backgroundMode, checkerboardTileSize_,
 
-                                    cachedMayaGradientSprite_);
+                                    cachedMayaGradientSprite_,
+                                    viewportOrientationMatricesValid_
+                                        ? &viewportOrientationViewForOverlay_
+                                        : nullptr,
+                                    viewportOrientationMatricesValid_
+                                        ? &viewportOrientationProjectionForOverlay_
+                                        : nullptr);
 
     renderer_->flush();
 
@@ -7554,7 +7668,7 @@ public:
 
             previewDownsample_ >= interactivePreviewDownsampleFloor_,
 
-        surfaceGeneration(layer));
+        viewportOrientationActive_, surfaceGeneration(layer));
 
     renderer_->flush();
 
@@ -8042,7 +8156,13 @@ public:
 
                                     backgroundMode, checkerboardTileSize_,
 
-                                    cachedMayaGradientSprite_);
+                                    cachedMayaGradientSprite_,
+                                    viewportOrientationMatricesValid_
+                                        ? &viewportOrientationViewForOverlay_
+                                        : nullptr,
+                                    viewportOrientationMatricesValid_
+                                        ? &viewportOrientationProjectionForOverlay_
+                                        : nullptr);
 
 
 
@@ -8392,6 +8512,9 @@ public:
   ArtifactCore::ViewOrientationNavigator viewportOrientationNavigator_;
 
   bool viewportOrientationActive_ = false;
+  bool viewportOrientationMatricesValid_ = false;
+  QMatrix4x4 viewportOrientationViewForOverlay_;
+  QMatrix4x4 viewportOrientationProjectionForOverlay_;
 
   int currentFrameForOverlay_ = 0;
 
@@ -10806,6 +10929,16 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
           }
 
+          const bool animateResizeGhost =
+              impl_->gizmo_ && impl_->gizmo_->isDragging() &&
+              impl_->gizmo_->activeHandle() >=
+                  TransformGizmo::HandleType::Scale_TL &&
+              impl_->gizmo_->activeHandle() <=
+                  TransformGizmo::HandleType::Scale_Center;
+          if (animateResizeGhost) {
+            impl_->renderDirty_.store(true, std::memory_order_release);
+          }
+
           if (auto *host = impl_->hostWidget_.data()) {
 
             if (!host->isVisible()) {
@@ -11162,6 +11295,11 @@ void CompositionRenderController::recreateSwapChain(QWidget *hostWidget) {
 
   impl_->hostWidget_ = hostWidget;
 
+  const float savedZoom = impl_->renderer_->getZoom();
+  float savedPanX = 0.0f;
+  float savedPanY = 0.0f;
+  impl_->renderer_->getPan(savedPanX, savedPanY);
+
   impl_->renderer_->flushAndWait();
 
   // If swapchain was never created (e.g., widget was 0×0 at init time),
@@ -11181,6 +11319,9 @@ void CompositionRenderController::recreateSwapChain(QWidget *hostWidget) {
     impl_->renderer_->recreateSwapChain(hostWidget);
 
   }
+
+  impl_->renderer_->setZoom(savedZoom);
+  impl_->renderer_->setPan(savedPanX, savedPanY);
 
   impl_->invalidateBaseComposite();
 
@@ -13393,17 +13534,13 @@ void CompositionRenderController::zoom100() {
 
     // Center the canvas in the viewport at 100% zoom.
 
-    // hostWidth_/hostHeight_ are physical pixels, while lastCanvasWidth_/Height_
+    // hostWidth_/hostHeight_ are physical pixels. lastCanvasWidth_/Height_ are
+    // already the renderer's canvas size in the same physical render space, so
+    // do not apply DPR again here.
 
-    // are composition pixels. Convert the canvas size into the same physical
+    const float canvasW = impl_->lastCanvasWidth_;
 
-    // pixel space before calculating the pan offset.
-
-    const float dpr = impl_->devicePixelRatio_ > 0.0f ? impl_->devicePixelRatio_ : 1.0f;
-
-    const float canvasW = impl_->lastCanvasWidth_ * dpr;
-
-    const float canvasH = impl_->lastCanvasHeight_ * dpr;
+    const float canvasH = impl_->lastCanvasHeight_;
 
     const float panX = (impl_->hostWidth_ - canvasW) * 0.5f;
 
@@ -19013,6 +19150,47 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   }
 
+  viewportOrientationMatricesValid_ = false;
+  if (viewportOrientationActive_) {
+
+    const float orientationViewportW = std::max(1.0f, hostWidth_);
+    const float orientationViewportH = std::max(1.0f, hostHeight_);
+    const float orientationZoom = std::max(0.001f, renderer_->getZoom());
+    float orientationPanX = 0.0f;
+    float orientationPanY = 0.0f;
+    renderer_->getPan(orientationPanX, orientationPanY);
+
+    constexpr float orientationFovDegrees = 45.0f;
+    constexpr float degreesToRadians =
+        3.14159265358979323846f / 180.0f;
+    const float orientationDistance =
+        (orientationViewportH * 0.5f) /
+        (orientationZoom *
+         std::tan(orientationFovDegrees * 0.5f * degreesToRadians));
+    const QPointF orientationTarget(
+        (orientationViewportW * 0.5f - orientationPanX) / orientationZoom,
+        (orientationViewportH * 0.5f - orientationPanY) / orientationZoom);
+
+    const QQuaternion orientation =
+        viewportOrientationNavigator_.currentOrientation();
+
+    cameraViewMatrix = viewportOrientationViewMatrix(
+        orientation, orientationTarget, orientationDistance);
+
+    cameraProjMatrix = viewportOrientationProjectionMatrix(
+        orientationViewportW, orientationViewportH, orientationFovDegrees);
+
+    previousCameraViewMatrix = cameraViewMatrix;
+
+    previousCameraProjMatrix = cameraProjMatrix;
+
+    has3DCamera = true;
+    viewportOrientationViewForOverlay_ = cameraViewMatrix;
+    viewportOrientationProjectionForOverlay_ = cameraProjMatrix;
+    viewportOrientationMatricesValid_ = true;
+
+  }
+
   int64_t effectiveEndFrame = 0;
 
   for (const auto &l : layers) {
@@ -19989,7 +20167,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                 context.renderer, cw, ch, layerBgColor, backgroundMode,
 
-                checkerboardTileSize_, cachedMayaGradientSprite_);
+                checkerboardTileSize_, cachedMayaGradientSprite_,
+                viewportOrientationMatricesValid_
+                    ? &viewportOrientationViewForOverlay_
+                    : nullptr,
+                viewportOrientationMatricesValid_
+                    ? &viewportOrientationProjectionForOverlay_
+                    : nullptr);
 
             basePassMs = markPhaseMs();
 
@@ -20786,7 +20970,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                                       backgroundMode, checkerboardTileSize_,
 
-                                      cachedMayaGradientSprite_);
+                                      cachedMayaGradientSprite_,
+                                      viewportOrientationMatricesValid_
+                                          ? &viewportOrientationViewForOverlay_
+                                          : nullptr,
+                                      viewportOrientationMatricesValid_
+                                          ? &viewportOrientationProjectionForOverlay_
+                                          : nullptr);
 
       lastPresentedReadbackSRV_ = nullptr;
 
@@ -21100,7 +21290,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     has3DCamera ? &cameraProjMatrix : nullptr,
                     has3DCamera ? &previousCameraViewMatrix : nullptr,
                     has3DCamera ? &previousCameraProjMatrix : nullptr, &matteResolver,
-                    &sceneLights, draftRendering,
+                    &sceneLights, draftRendering, viewportOrientationActive_,
 
                     surfaceGeneration(layer.get()));
 
@@ -22083,19 +22273,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           const auto &t3d = layer->transform3D();
 
-          const size_t posKeyCount = t3d.getPositionKeyFrameCount();
-
-          if (posKeyCount == 0) {
-
-            motionPathCache_.valid = false;
-
-            continue;
-
-          }
-
-
-
-          auto posTimes = t3d.getPositionKeyFrameTimes();
+          const int motionPathFps = std::max(
+              1, static_cast<int>(std::round(comp->frameRate().framerate())));
+          auto posTimes =
+              motionPathPositionKeyTimes(layer, motionPathFps);
 
           if (posTimes.empty()) {
 
@@ -22118,14 +22299,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           const int currentFrameNum = currentFrame.framePosition();
 
           const bool hasPathSegment = posTimes.size() >= 2;
-
-
-
-          // Limit drawing range for performance (±300 frames around playhead).
-
-          minFrame = std::max(minFrame, currentFrameNum - 300);
-
-          maxFrame = std::min(maxFrame, currentFrameNum + 300);
 
 
 
@@ -22227,9 +22400,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               QPointF wPos = gTrans.map(QPointF(ax, ay));
 
-              const int interp = static_cast<int>(
-
-                  t3d.positionXKeyFrameInterpolationAt(kfTime));
+              const int interp =
+                  motionPathPositionInterpolation(layer, kfTime);
 
               MotionPathCacheEntry::Pt pt;
 
@@ -23481,8 +23653,30 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
   drawOnionSkinOverlay(cw, ch);
 
-  if (showCompositionRegionOverlay_) {
+  if (showCompositionRegionOverlay_ &&
+      !viewportOrientationMatricesValid_) {
     ::Artifact::drawCompositionRegionOverlay(renderer_.get(), comp);
+  }
+  if (viewportOrientationMatricesValid_) {
+    const float borderThickness =
+        std::max(1.0f, 2.0f / std::max(0.001f, renderer_->getZoom()));
+    const FloatColor borderColor{0.42f, 0.82f, 1.0f, 0.92f};
+    QMatrix4x4 identity;
+    renderer_->setViewMatrix(viewportOrientationViewForOverlay_);
+    renderer_->setProjectionMatrix(
+        viewportOrientationProjectionForOverlay_);
+    renderer_->setUseExternalMatrices(true);
+    renderer_->drawSolidRectTransformed(
+        0.0f, 0.0f, cw, borderThickness, identity, borderColor, 1.0f);
+    renderer_->drawSolidRectTransformed(
+        0.0f, std::max(0.0f, ch - borderThickness), cw, borderThickness,
+        identity, borderColor, 1.0f);
+    renderer_->drawSolidRectTransformed(
+        0.0f, 0.0f, borderThickness, ch, identity, borderColor, 1.0f);
+    renderer_->drawSolidRectTransformed(
+        std::max(0.0f, cw - borderThickness), 0.0f, borderThickness, ch,
+        identity, borderColor, 1.0f);
+    renderer_->setUseExternalMatrices(false);
   }
   if (comp) {
     QSet<LayerID> selectedLayerIds;
@@ -23849,7 +24043,7 @@ void CompositionRenderController::Impl::drawOnionSkinOverlay(
   }
 
   const int frameCount = std::clamp(onionSkinFrameCount_, 1, 5);
-  const int drawCount = std::min(frameCount, frames.size());
+  const int drawCount = std::min(frameCount, static_cast<int>(frames.size()));
   const float baseOpacity = std::clamp(onionSkinOpacity_ / 100.0f, 0.05f, 0.80f);
 
   for (int i = 0; i < drawCount; ++i) {
@@ -24858,19 +25052,10 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
         const auto &t3d = layer->transform3D();
 
-        const size_t posKeyCount = t3d.getPositionKeyFrameCount();
-
-        if (posKeyCount == 0) {
-
-          motionPathCache_.valid = false;
-
-          continue;
-
-        }
-
-
-
-        auto posTimes = t3d.getPositionKeyFrameTimes();
+        const int motionPathFps = std::max(
+            1, static_cast<int>(std::round(comp->frameRate().framerate())));
+        auto posTimes =
+            motionPathPositionKeyTimes(layer, motionPathFps);
 
         if (posTimes.empty()) {
 
@@ -24893,10 +25078,6 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
         const int currentFrameNum = currentFrame.framePosition();
 
         const bool hasPathSegment = posTimes.size() >= 2;
-
-        minFrame = std::max(minFrame, currentFrameNum - 300);
-
-        maxFrame = std::min(maxFrame, currentFrameNum + 300);
 
         if (minFrame > maxFrame)
 
@@ -24982,8 +25163,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
             QPointF wPos = gTrans.map(QPointF(ax, ay));
 
             const int interp =
-
-                static_cast<int>(t3d.positionXKeyFrameInterpolationAt(kfTime));
+                motionPathPositionInterpolation(layer, kfTime);
 
             MotionPathCacheEntry::Pt pt;
 

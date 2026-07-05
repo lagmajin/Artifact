@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QVector2D>
 #include <QVector3D>

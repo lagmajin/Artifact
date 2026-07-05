@@ -565,6 +565,33 @@ parseClonerTransformPropertyPath(const QString &propertyPath) {
   }
   return ClonerTransformPropertyAddress{index, parts[1]};
 }
+
+struct FractureShardRenderPrimitive {
+  std::vector<Detail::float2> polygon;
+  FloatColor color;
+};
+
+struct FractureRenderElement {
+  ArtifactCore::ParticleRenderData debris;
+  std::vector<FractureShardRenderPrimitive> shards;
+
+  bool empty() const {
+    return debris.particles.empty() && shards.empty();
+  }
+};
+
+void submitFractureRenderElement(ArtifactIRenderer *renderer,
+                                 const FractureRenderElement &element) {
+  if (!renderer || element.empty()) {
+    return;
+  }
+  if (!element.debris.particles.empty()) {
+    renderer->drawParticles(element.debris);
+  }
+  for (const auto &shard : element.shards) {
+    renderer->drawSolidPolygonLocal(shard.polygon, shard.color);
+  }
+}
 } // namespace
 
 
@@ -1811,6 +1838,7 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
   Q_UNUSED(sourceSize);
 
   const int64_t frame = currentTimelineFrame(this);
+  FractureRenderElement fractureElement;
   if (impl_->fluidComponentEnabled_) {
     const double fps = std::max(1.0, effectiveLayerFrameRate(this));
     const bool solverMismatch =
@@ -1974,7 +2002,12 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
       renderData.particles.push_back(particle);
     }
     if (!renderData.particles.empty()) {
-      renderer->drawParticles(renderData);
+      if (impl_->fractureEnabled_ &&
+          !impl_->fractureState_.shards.empty()) {
+        fractureElement.debris = std::move(renderData);
+      } else {
+        renderer->drawParticles(renderData);
+      }
     }
   }
 
@@ -2039,13 +2072,21 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
     shardPoly.push_back({nV.x(), nV.y()});
     shardPoly.push_back({brV.x(), brV.y()});
     shardPoly.push_back({blV.x(), blV.y()});
-    renderer->drawSolidPolygonLocal(shardPoly, FloatColor(0.92f, 0.96f, 1.0f, alpha * 0.42f));
+    fractureElement.shards.push_back(
+        {std::move(shardPoly),
+         FloatColor(0.92f, 0.96f, 1.0f, alpha * 0.42f)});
   }
+  submitFractureRenderElement(renderer, fractureElement);
 }
 
 void ArtifactAbstractLayer::resetFractureState() {
   ArtifactCore::resetFractureState(impl_->fractureState_);
   impl_->fractureMotionLastFrame_ = std::numeric_limits<int64_t>::min();
+  if (impl_->particleEmitterComponentEnabled_) {
+    impl_->componentParticles_.clear();
+    impl_->componentParticlesLastFrame_ =
+        std::numeric_limits<int64_t>::min();
+  }
 }
 
 void ArtifactAbstractLayer::applyFractureImpact(const FractureImpact& impact) {
@@ -2072,27 +2113,68 @@ void ArtifactAbstractLayer::applyFractureImpact(const FractureImpact& impact) {
     std::uniform_real_distribution<float> sizeDistribution(2.0f, 7.0f);
     const float impactScale =
         std::max(0.25f, std::min(4.0f, impact.impulse));
+    const auto& shards = impl_->fractureState_.shards;
+    const bool emitFromShards = impl_->fractureEnabled_ && !shards.empty();
+
+    QVector3D debrisColor(1.0f, 0.72f, 0.28f);
+    switch (static_cast<FracturePreset>(impl_->fracturePreset_)) {
+    case FracturePreset::Glass:
+      debrisColor = QVector3D(0.62f, 0.88f, 1.0f);
+      break;
+    case FracturePreset::Concrete:
+      debrisColor = QVector3D(0.62f, 0.58f, 0.52f);
+      break;
+    case FracturePreset::Stone:
+      debrisColor = QVector3D(0.50f, 0.43f, 0.35f);
+      break;
+    case FracturePreset::Metal:
+      debrisColor = QVector3D(1.0f, 0.76f, 0.34f);
+      break;
+    case FracturePreset::Wood:
+      debrisColor = QVector3D(0.58f, 0.34f, 0.16f);
+      break;
+    case FracturePreset::Dust:
+      debrisColor = QVector3D(0.74f, 0.66f, 0.52f);
+      break;
+    }
+
     impl_->componentParticles_.reserve(
         impl_->componentParticles_.size() +
         static_cast<std::size_t>(impl_->particleEmitterCount_));
     for (int index = 0; index < impl_->particleEmitterCount_; ++index) {
       const float angle = angleDistribution(rng);
       const float speed = impl_->particleEmitterSpeed_ *
-                          speedDistribution(rng) * impactScale;
+                          speedDistribution(rng) * impactScale *
+                          (emitFromShards ? 0.35f : 1.0f);
+      QVector3D sourcePosition(static_cast<float>(center.x()),
+                               static_cast<float>(center.y()), 0.0f);
+      QVector3D sourceVelocity;
+      float sourceScale = 1.0f;
+      if (emitFromShards) {
+        const auto& shard =
+            shards[static_cast<std::size_t>(index) % shards.size()];
+        sourcePosition = shard.position;
+        sourceVelocity = shard.velocity;
+        sourceScale = std::max(0.25f, shard.scale);
+      }
+
       ArtifactCore::ParticleVertex particle{};
-      particle.px = static_cast<float>(center.x());
-      particle.py = static_cast<float>(center.y());
-      particle.pz = 0.0f;
-      particle.vx = std::cos(angle) * speed;
-      particle.vy = std::sin(angle) * speed;
-      particle.vz = 0.0f;
-      particle.r = 1.0f;
-      particle.g = 0.72f;
-      particle.b = 0.28f;
+      particle.px = sourcePosition.x();
+      particle.py = sourcePosition.y();
+      particle.pz = sourcePosition.z();
+      particle.vx = sourceVelocity.x() + std::cos(angle) * speed;
+      particle.vy = sourceVelocity.y() + std::sin(angle) * speed;
+      particle.vz = sourceVelocity.z();
+      particle.r = debrisColor.x();
+      particle.g = debrisColor.y();
+      particle.b = debrisColor.z();
       particle.a = 1.0f;
-      particle.size = sizeDistribution(rng);
-      particle.stretch = 1.0f;
-      particle.rotation = angle;
+      particle.size = sizeDistribution(rng) * sourceScale;
+      const float particleSpeed =
+          std::sqrt(particle.vx * particle.vx + particle.vy * particle.vy);
+      particle.stretch =
+          std::clamp(1.0f + particleSpeed / 320.0f, 1.0f, 3.0f);
+      particle.rotation = std::atan2(particle.vy, particle.vx);
       particle.age = 0.0f;
       particle.lifetime = impl_->particleEmitterLifetime_;
       impl_->componentParticles_.push_back(particle);

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <functional>
 #include <future>
 #include <atomic>

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <EngineFactory.h>
 #include <EngineFactoryD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>

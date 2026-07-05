@@ -40,12 +40,17 @@ public /*slots*/:
   void zoomIn(); W_SLOT(zoomIn);
   void zoomOut(); W_SLOT(zoomOut);
   void zoomFit(); W_SLOT(zoomFit);
-  void zoomFill(); W_SLOT(zoomFill);
-  void zoom100(); W_SLOT(zoom100);
+ void zoomFill(); W_SLOT(zoomFill);
+ void zoom100(); W_SLOT(zoom100);
   bool handleImportPlacementKeyPress(QKeyEvent* event);
+
+private:
+  void refreshEnabledState();
 
 signals:
   void videoDebugMessage(const QString& msg) W_SIGNAL(videoDebugMessage, msg);
  };
+
+export void openContentsViewerCompareSurface();
 
 }

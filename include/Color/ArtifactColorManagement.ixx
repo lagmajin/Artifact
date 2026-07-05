@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <wobjectdefs.h>
 

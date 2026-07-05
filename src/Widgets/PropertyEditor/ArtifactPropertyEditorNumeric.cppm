@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QAbstractButton>
 #include <QApplication>
 #include <QHBoxLayout>
@@ -49,15 +49,37 @@ using namespace detail;
 
 namespace {
 
+bool isScalePercentProperty(const ArtifactCore::AbstractProperty &property) {
+  const QString name = property.getName();
+  return name.compare(QStringLiteral("transform.scale.x"),
+                      Qt::CaseInsensitive) == 0 ||
+         name.compare(QStringLiteral("transform.scale.y"),
+                      Qt::CaseInsensitive) == 0;
+}
+
+double storageToDisplayValue(const double value, const bool displayAsPercent) {
+  return displayAsPercent ? value * 100.0 : value;
+}
+
+double displayToStorageValue(const double value, const bool displayAsPercent) {
+  return displayAsPercent ? value / 100.0 : value;
+}
+
 int decimalsForNumericProperty(const ArtifactCore::PropertyMetadata &meta,
-                               const ArtifactCore::AbstractProperty &property) {
+                               const ArtifactCore::AbstractProperty &property,
+                               const bool displayAsPercent = false) {
   if (meta.step.isValid()) {
     const QString stepText = meta.step.toString();
     const int dot = stepText.indexOf(QLatin1Char('.'));
     if (dot >= 0) {
       const int precision = static_cast<int>(stepText.size()) - dot - 1;
-      return std::clamp(precision, 0, 4);
+      return std::clamp(displayAsPercent ? std::max(0, precision - 2) : precision,
+                        0, 4);
     }
+    return 0;
+  }
+
+  if (displayAsPercent) {
     return 0;
   }
 
@@ -80,8 +102,10 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     const bool showSlider)
     : ArtifactAbstractPropertyEditor(parent) {
   auto initializing = std::make_shared<bool>(true);
+  const bool displayAsPercent = isScalePercentProperty(property);
   setObjectName(QStringLiteral("propertyFloatEditor"));
   spinBox_ = new ArtifactRelativeDoubleSpinBox(this);
+  spinBox_->setProperty("displayAsPercent", displayAsPercent);
   if (showSlider) {
     slider_ = new QSlider(Qt::Horizontal, this);
     applyPropertyFieldPalette(slider_);
@@ -102,7 +126,10 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                        }
                        const QVariant defaultValue =
                            getPropertyDefaultValue(property);
-                       const double defaultNumericValue = defaultValue.toDouble();
+                       const double defaultNumericValue = storageToDisplayValue(
+                           defaultValue.toDouble(),
+                           spinBox_ != nullptr &&
+                               spinBox_->property("displayAsPercent").toBool());
                        if (spinBox_) {
                          spinBox_->setValue(defaultNumericValue);
                        }
@@ -141,21 +168,25 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   }
 
   const auto meta = property.metadata();
-  const double hardMin =
+  const double storedHardMin =
       meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1e6;
-  const double hardMax = meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1e6;
+  const double storedHardMax =
+      meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1e6;
   const auto [resolvedSoftMin, resolvedSoftMax] =
-      resolveFloatSoftRange(property, meta, hardMin, hardMax);
-  softMin_ = resolvedSoftMin;
-  softMax_ = resolvedSoftMax;
+      resolveFloatSoftRange(property, meta, storedHardMin, storedHardMax);
+  const double hardMin = storageToDisplayValue(storedHardMin, displayAsPercent);
+  const double hardMax = storageToDisplayValue(storedHardMax, displayAsPercent);
+  softMin_ = storageToDisplayValue(resolvedSoftMin, displayAsPercent);
+  softMax_ = storageToDisplayValue(resolvedSoftMax, displayAsPercent);
   if (softMax_ <= softMin_) {
     softMin_ = hardMin;
     softMax_ = hardMax;
   }
-  spinBox_->setRange(meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1e6,
-                     meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1e6);
-  spinBox_->setValue(property.getValue().toDouble());
-  spinBox_->setDecimals(decimalsForNumericProperty(meta, property));
+  spinBox_->setRange(hardMin, hardMax);
+  spinBox_->setValue(
+      storageToDisplayValue(property.getValue().toDouble(), displayAsPercent));
+  spinBox_->setDecimals(
+      decimalsForNumericProperty(meta, property, displayAsPercent));
   {
     QFont font = spinBox_->font();
     font.setPointSize(11);
@@ -165,12 +196,15 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     applyThemeTextPalette(spinBox_);
   }
   if (meta.step.isValid()) {
-    spinBox_->setSingleStep(meta.step.toDouble());
+    spinBox_->setSingleStep(
+        storageToDisplayValue(meta.step.toDouble(), displayAsPercent));
   }
-  if (!meta.unit.isEmpty()) {
-    spinBox_->setSuffix(QStringLiteral(" ") + meta.unit);
+  const QString displayUnit =
+      displayAsPercent ? QStringLiteral("%") : meta.unit;
+  if (!displayUnit.isEmpty()) {
+    spinBox_->setSuffix(QStringLiteral(" ") + displayUnit);
   }
-  const QString sliderUnit = meta.unit;
+  const QString sliderUnit = displayUnit;
   spinBox_->setMinimumHeight(22);
   spinBox_->setButtonSymbols(QAbstractSpinBox::NoButtons);
   spinBox_->setFrame(false);
@@ -179,27 +213,30 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     slider_->setRange(0, 10000); // 精度を向上
     slider_->setMinimumHeight(24);
     slider_->setTracking(true); // ドラッグ中の追従を有効化
-    slider_->setValue(floatToSliderPosition(property.getValue().toDouble(),
-                                            softMin_, softMax_));
+    slider_->setValue(floatToSliderPosition(
+        storageToDisplayValue(property.getValue().toDouble(), displayAsPercent),
+        softMin_, softMax_));
   }
 
   QObject::connect(spinBox_, &QDoubleSpinBox::valueChanged, this,
-                   [this, sliderUnit](const double nextValue) {
+                   [this, sliderUnit, displayAsPercent](const double nextValue) {
                       if (slider_) {
                         const QSignalBlocker blocker(slider_);
                         slider_->setValue(
                             floatToSliderPosition(nextValue, softMin_, softMax_));
                       }
                      if (spinBox_->hasFocus() && !sliderInteracting_) {
-                       previewValue(nextValue);
+                       previewValue(
+                           displayToStorageValue(nextValue, displayAsPercent));
                      }
                    });
   QObject::connect(spinBox_, &QDoubleSpinBox::editingFinished, this,
-                   [this, initializing]() {
+                   [this, initializing, displayAsPercent]() {
                      if (*initializing) {
                        return;
                      }
-                     commitValue(spinBox_->value());
+                     commitValue(displayToStorageValue(spinBox_->value(),
+                                                       displayAsPercent));
                    });
   if (slider_) {
     QObject::connect(slider_, &QSlider::sliderPressed, this, [this]() {
@@ -208,13 +245,15 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     });
 
     QObject::connect(
-        slider_, &QSlider::valueChanged, this, [this, sliderUnit](const int sliderValue) {
+        slider_, &QSlider::valueChanged, this,
+        [this, sliderUnit, displayAsPercent](const int sliderValue) {
           const double nextValue =
               this->sliderPositionToFloat(sliderValue, softMin_, softMax_);
           const QSignalBlocker blocker(spinBox_);
           spinBox_->setValue(nextValue);
           if (sliderInteracting_) {
-            previewValue(nextValue);
+            previewValue(
+                displayToStorageValue(nextValue, displayAsPercent));
           }
         });
     QObject::connect(slider_, &QSlider::sliderReleased, this, [this, initializing]() {
@@ -313,14 +352,19 @@ double ArtifactFloatPropertyEditor::sliderPositionToFloat(int pos, double min,
 }
 
 QVariant ArtifactFloatPropertyEditor::value() const {
-  return spinBox_ ? QVariant(spinBox_->value()) : QVariant();
+  if (!spinBox_) {
+    return QVariant();
+  }
+  return QVariant(displayToStorageValue(
+      spinBox_->value(), spinBox_->property("displayAsPercent").toBool()));
 }
 
 void ArtifactFloatPropertyEditor::setValueFromVariant(const QVariant &value) {
   if (!spinBox_) {
     return;
   }
-  const double nextValue = value.toDouble();
+  const double nextValue = storageToDisplayValue(
+      value.toDouble(), spinBox_->property("displayAsPercent").toBool());
   {
     const QSignalBlocker spinBlocker(spinBox_);
     spinBox_->setValue(nextValue);

@@ -173,7 +173,7 @@ void activateDock(QMainWindow* window, const QString& title)
   dock->activateWindow();
 }
 
-void openContentsViewerCompareSurface()
+void openContentsViewerCompareSurfaceImpl()
 {
   ArtifactContentsViewer *viewer = nullptr;
   for (QWidget *widget : QApplication::allWidgets()) {
@@ -1173,6 +1173,11 @@ public:
   void setActivatedCallback(std::function<void()> callback) {
     activatedCallback_ = std::move(callback);
   }
+  void setViewportOrientationChangedCallback(
+      std::function<void(const QQuaternion &)> callback) {
+    viewportOrientationChangedCallback_ = std::move(callback);
+  }
+  bool isResizePending() const { return resizePending_; }
   QString navigationFeedbackLabel() const {
     switch (navigationFeedbackMode_) {
     case NavigationFeedbackMode::Orbit:
@@ -2683,6 +2688,10 @@ protected:
           QQuaternion::fromAxisAndAngle(localRight, pitchDelta);
       controller_->setViewportOrientationQuaternion(
           (pitch * yaw * orbitDragStartOrientation_).normalized());
+      if (viewportOrientationChangedCallback_) {
+        viewportOrientationChangedCallback_(
+            controller_->viewportOrientationQuaternion());
+      }
       if (overlayWidget_) {
         overlayWidget_->update();
       }
@@ -2977,6 +2986,10 @@ protected:
             QQuaternion::fromAxisAndAngle(localRight, pitchDelta);
         controller_->setViewportOrientationQuaternion(
             (pitch * yaw * orbitDragStartOrientation_).normalized());
+        if (viewportOrientationChangedCallback_) {
+          viewportOrientationChangedCallback_(
+              controller_->viewportOrientationQuaternion());
+        }
         if (overlayWidget_)
           overlayWidget_->update();
         return true;
@@ -3729,6 +3742,7 @@ protected:
   bool processingDroppedAssets_ = false;
   QWidget *overlayWidget_ = nullptr;
   std::function<void()> activatedCallback_;
+  std::function<void(const QQuaternion &)> viewportOrientationChangedCallback_;
   QVector<std::function<void()>> viewportOverlayActions_;
   QVector<bool> viewportOverlayEnabledStates_;
   // 動画ファイルのキャンバスサイズキャッシュ（非同期取得）
@@ -4143,6 +4157,13 @@ public:
     previewFont.setBold(true);
     previewLabel_->setFont(previewFont);
     previewLabel_->hide();
+
+    resizeFrameTimer_ = new QTimer(this);
+    resizeFrameTimer_->setInterval(90);
+    QObject::connect(resizeFrameTimer_, &QTimer::timeout, this, [this]() {
+      resizeFramePhase_ = (resizeFramePhase_ + 1) % 8;
+      update();
+    });
   }
 
   void syncToViewport() {
@@ -4172,11 +4193,18 @@ public:
     update();
   }
 
+  void setResizeIndicatorProvider(std::function<bool()> provider) {
+    resizeIndicatorProvider_ = std::move(provider);
+    updateResizeIndicatorAnimation();
+    update();
+  }
+
 protected:
   void paintEvent(QPaintEvent *) override {
     Q_UNUSED(viewport_);
     refreshNavigationFeedback();
     refreshPreviewBadge();
+    updateResizeIndicatorAnimation();
     if (!activePaneIndicatorProvider_) {
       return;
     }
@@ -4195,7 +4223,13 @@ protected:
     p.setRenderHint(QPainter::Antialiasing, true);
 
     const QRect frameRect = paneRect.adjusted(1, 1, -1, -1);
-    p.setPen(QPen(QColor(110, 190, 255, 214), 2.0));
+    QPen framePen(QColor(110, 190, 255, 214), 2.0);
+    if (resizeIndicatorProvider_ && resizeIndicatorProvider_()) {
+      framePen.setStyle(Qt::DashLine);
+      framePen.setDashPattern({5.0, 3.0});
+      framePen.setDashOffset(static_cast<qreal>(resizeFramePhase_) * -1.2);
+    }
+    p.setPen(framePen);
     p.setBrush(Qt::NoBrush);
     p.drawRoundedRect(frameRect, 8.0, 8.0);
 
@@ -4216,6 +4250,21 @@ protected:
   }
 
 private:
+  void updateResizeIndicatorAnimation() {
+    const bool animate =
+        resizeIndicatorProvider_ && resizeIndicatorProvider_();
+    if (animate) {
+      if (!resizeFrameTimer_->isActive()) {
+        resizeFrameTimer_->start();
+      }
+      return;
+    }
+    if (resizeFrameTimer_->isActive()) {
+      resizeFrameTimer_->stop();
+    }
+    resizeFramePhase_ = 0;
+  }
+
   void refreshNavigationFeedback() {
     if (!navigationLabel_) {
       return;
@@ -4257,9 +4306,12 @@ private:
   CompositionViewport *viewport_ = nullptr;
   QLabel *navigationLabel_ = nullptr;
   QLabel *previewLabel_ = nullptr;
+  QTimer *resizeFrameTimer_ = nullptr;
+  int resizeFramePhase_ = 0;
   std::function<std::optional<std::pair<QRect, QString>>()> activePaneIndicatorProvider_;
   std::function<QString()> navigationFeedbackProvider_;
   std::function<QString()> previewBadgeProvider_;
+  std::function<bool()> resizeIndicatorProvider_;
 };
 
 class ViewOrientationWidget final : public QWidget {
@@ -4287,8 +4339,7 @@ public:
   void setOrientationQuaternion(const QQuaternion &orientation) {
     orientation_ = orientation.normalized();
     navigator_.setCurrentOrientation(orientation_);
-    hotspot_ = ArtifactCore::ViewOrientationNavigator::resolveHotspotFromDirection(
-        orientation_.rotatedVector(QVector3D(0.0f, 0.0f, 1.0f)));
+    hotspot_ = navigator_.activeHotspot();
     update();
   }
 
@@ -4337,13 +4388,13 @@ protected:
         border.setAlpha(70);
         text.setAlpha(90);
       } else if (selected) {
-        fill = fill.lighter(145);
-        fill.setAlpha(240);
-        border = QColor(214, 236, 255, 240);
+        fill = fill.lighter(118);
+        fill.setAlpha(224);
+        border = QColor(198, 226, 248, 225);
       } else if (hovered) {
-        fill = fill.lighter(128);
-        fill.setAlpha(228);
-        border = QColor(222, 240, 255, 228);
+        fill = fill.lighter(110);
+        fill.setAlpha(214);
+        border = QColor(184, 214, 238, 212);
       }
 
       p.setPen(QPen(border, selected ? 2.2 : 1.25));
@@ -4382,8 +4433,8 @@ protected:
       }
       const bool selected = target.hotspot == hotspot_;
       const bool hovered = target.hotspot == hoverHotspot_;
-      QColor fill(205, 228, 246, selected ? 245 : hovered ? 225 : 180);
-      QColor border(24, 32, 46, selected ? 245 : 170);
+      QColor fill(205, 228, 246, selected ? 228 : hovered ? 206 : 144);
+      QColor border(30, 38, 52, selected ? 224 : hovered ? 188 : 132);
       if (!isEnabled()) {
         fill.setAlpha(72);
         border.setAlpha(72);
@@ -4412,6 +4463,27 @@ protected:
       }
     }
 
+    const auto cornerTargets = projectedCornerTargets();
+    for (const auto &target : cornerTargets) {
+      if (!target.visible) {
+        continue;
+      }
+      const bool selected = target.hotspot == hotspot_;
+      const bool hovered = target.hotspot == hoverHotspot_;
+      QColor fill(214, 228, 240, selected ? 214 : hovered ? 188 : 92);
+      QColor border(186, 210, 230, selected ? 228 : hovered ? 204 : 120);
+      if (!isEnabled()) {
+        fill.setAlpha(56);
+        border.setAlpha(70);
+      }
+      if (!selected && !hovered) {
+        fill.setAlpha(40);
+      }
+      p.setPen(QPen(border, selected ? 1.5 : hovered ? 1.2 : 0.8));
+      p.setBrush(fill);
+      p.drawEllipse(target.center, target.radius, target.radius);
+    }
+
     p.setPen(QColor(255, 255, 255, 35));
     p.drawRoundedRect(panelRect.adjusted(4.0, 22.0, -4.0, -4.0), 10.0, 10.0);
   }
@@ -4438,6 +4510,7 @@ protected:
           QQuaternion::fromAxisAndAngle(localRight, pitchDelta);
       orientation_ = (pitch * yaw * dragStartOrientation_).normalized();
       navigator_.setCurrentOrientation(orientation_);
+      hotspot_ = navigator_.activeHotspot();
       hoverHotspot_ = hotspotAt(event->position());
       if (orbitChangedCallback_) {
         orbitChangedCallback_(orientation_);
@@ -4526,6 +4599,15 @@ private:
     float depth = 0.0f;
   };
 
+  struct CubeCornerTarget {
+    ArtifactCore::ViewOrientationHotspot hotspot =
+        ArtifactCore::ViewOrientationHotspot::None;
+    QPointF center;
+    qreal radius = 0.0;
+    bool visible = false;
+    float depth = 0.0f;
+  };
+
   static QString hotspotLabel(ArtifactCore::ViewOrientationHotspot hotspot,
                               bool compact = false) {
     switch (hotspot) {
@@ -4565,6 +4647,22 @@ private:
       return compact ? QStringLiteral("R/T") : QStringLiteral("Right Top");
     case ArtifactCore::ViewOrientationHotspot::RightBottom:
       return compact ? QStringLiteral("R/B") : QStringLiteral("Right Bottom");
+    case ArtifactCore::ViewOrientationHotspot::FrontTopLeft:
+      return compact ? QStringLiteral("FTL") : QStringLiteral("Front Top Left");
+    case ArtifactCore::ViewOrientationHotspot::FrontTopRight:
+      return compact ? QStringLiteral("FTR") : QStringLiteral("Front Top Right");
+    case ArtifactCore::ViewOrientationHotspot::FrontBottomLeft:
+      return compact ? QStringLiteral("FBL") : QStringLiteral("Front Bottom Left");
+    case ArtifactCore::ViewOrientationHotspot::FrontBottomRight:
+      return compact ? QStringLiteral("FBR") : QStringLiteral("Front Bottom Right");
+    case ArtifactCore::ViewOrientationHotspot::BackTopLeft:
+      return compact ? QStringLiteral("BTL") : QStringLiteral("Back Top Left");
+    case ArtifactCore::ViewOrientationHotspot::BackTopRight:
+      return compact ? QStringLiteral("BTR") : QStringLiteral("Back Top Right");
+    case ArtifactCore::ViewOrientationHotspot::BackBottomLeft:
+      return compact ? QStringLiteral("BBL") : QStringLiteral("Back Bottom Left");
+    case ArtifactCore::ViewOrientationHotspot::BackBottomRight:
+      return compact ? QStringLiteral("BBR") : QStringLiteral("Back Bottom Right");
     default:
       return QStringLiteral("-");
     }
@@ -4718,7 +4816,72 @@ private:
     return targets;
   }
 
+  std::vector<CubeCornerTarget> projectedCornerTargets() const {
+    const QRectF bounds = rect().adjusted(16.0, 28.0, -16.0, -16.0);
+    const QPointF center(bounds.center().x(), bounds.center().y() + 4.0);
+    const float cubeRadius = static_cast<float>(
+        std::max(24.0, std::min(bounds.width(), bounds.height()) * 0.28));
+    const auto project = [center, cubeRadius](const QVector3D &v) {
+      const float perspective = 1.0f + v.z() * 0.22f;
+      return QPointF(center.x() + v.x() * cubeRadius * perspective,
+                     center.y() - v.y() * cubeRadius * perspective);
+    };
+    struct CornerDef {
+      ArtifactCore::ViewOrientationHotspot hotspot;
+      QVector3D position;
+    };
+    const std::array<CornerDef, 8> corners = {{
+        {ArtifactCore::ViewOrientationHotspot::FrontTopLeft,
+         {-1.0f, 1.0f, 1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::FrontTopRight,
+         {1.0f, 1.0f, 1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::FrontBottomLeft,
+         {-1.0f, -1.0f, 1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::FrontBottomRight,
+         {1.0f, -1.0f, 1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::BackTopLeft,
+         {-1.0f, 1.0f, -1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::BackTopRight,
+         {1.0f, 1.0f, -1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::BackBottomLeft,
+         {-1.0f, -1.0f, -1.0f}},
+        {ArtifactCore::ViewOrientationHotspot::BackBottomRight,
+         {1.0f, -1.0f, -1.0f}},
+    }};
+
+    std::vector<CubeCornerTarget> targets;
+    targets.reserve(corners.size());
+    for (const auto &corner : corners) {
+      const QVector3D rotated = orientation_.rotatedVector(corner.position);
+      CubeCornerTarget target;
+      target.hotspot = corner.hotspot;
+      target.center = project(rotated);
+      target.radius = rotated.z() > 0.45f ? 4.5 : 3.8;
+      target.visible = rotated.z() > 0.0f;
+      target.depth = rotated.z();
+      targets.push_back(target);
+    }
+
+    std::sort(targets.begin(), targets.end(),
+              [](const CubeCornerTarget &a, const CubeCornerTarget &b) {
+                return a.depth < b.depth;
+              });
+    return targets;
+  }
+
   ArtifactCore::ViewOrientationHotspot hotspotAt(const QPointF &pos) const {
+    const auto cornerTargets = projectedCornerTargets();
+    for (auto it = cornerTargets.rbegin(); it != cornerTargets.rend(); ++it) {
+      if (!it->visible) {
+        continue;
+      }
+      const QPointF delta = pos - it->center;
+      const qreal hitRadius = it->radius + 1.75;
+      if ((delta.x() * delta.x()) + (delta.y() * delta.y()) <=
+          hitRadius * hitRadius) {
+        return it->hotspot;
+      }
+    }
     const auto snapTargets = projectedSnapTargets();
     for (auto it = snapTargets.rbegin(); it != snapTargets.rend(); ++it) {
       if (!it->visible) {
@@ -4768,6 +4931,10 @@ private:
   bool dragActive_ = false;
 };
 } // namespace
+
+void openContentsViewerCompareSurface() {
+  openContentsViewerCompareSurfaceImpl();
+}
 
 class ArtifactCompositionEditor::Impl {
 public:
@@ -4964,10 +5131,55 @@ public:
       return QStringLiteral("Active: Back");
     case ArtifactCore::ViewOrientationHotspot::Front:
       return QStringLiteral("Active: Front");
+    case ArtifactCore::ViewOrientationHotspot::FrontTop:
+      return QStringLiteral("Active: Front Top");
+    case ArtifactCore::ViewOrientationHotspot::FrontBottom:
+      return QStringLiteral("Active: Front Bottom");
+    case ArtifactCore::ViewOrientationHotspot::FrontLeft:
+      return QStringLiteral("Active: Front Left");
+    case ArtifactCore::ViewOrientationHotspot::FrontRight:
+      return QStringLiteral("Active: Front Right");
+    case ArtifactCore::ViewOrientationHotspot::BackTop:
+      return QStringLiteral("Active: Back Top");
+    case ArtifactCore::ViewOrientationHotspot::BackBottom:
+      return QStringLiteral("Active: Back Bottom");
+    case ArtifactCore::ViewOrientationHotspot::BackLeft:
+      return QStringLiteral("Active: Back Left");
+    case ArtifactCore::ViewOrientationHotspot::BackRight:
+      return QStringLiteral("Active: Back Right");
+    case ArtifactCore::ViewOrientationHotspot::LeftTop:
+      return QStringLiteral("Active: Left Top");
+    case ArtifactCore::ViewOrientationHotspot::LeftBottom:
+      return QStringLiteral("Active: Left Bottom");
+    case ArtifactCore::ViewOrientationHotspot::RightTop:
+      return QStringLiteral("Active: Right Top");
+    case ArtifactCore::ViewOrientationHotspot::RightBottom:
+      return QStringLiteral("Active: Right Bottom");
+    case ArtifactCore::ViewOrientationHotspot::FrontTopLeft:
+      return QStringLiteral("Active: Front Top Left");
+    case ArtifactCore::ViewOrientationHotspot::FrontTopRight:
+      return QStringLiteral("Active: Front Top Right");
+    case ArtifactCore::ViewOrientationHotspot::FrontBottomLeft:
+      return QStringLiteral("Active: Front Bottom Left");
+    case ArtifactCore::ViewOrientationHotspot::FrontBottomRight:
+      return QStringLiteral("Active: Front Bottom Right");
+    case ArtifactCore::ViewOrientationHotspot::BackTopLeft:
+      return QStringLiteral("Active: Back Top Left");
+    case ArtifactCore::ViewOrientationHotspot::BackTopRight:
+      return QStringLiteral("Active: Back Top Right");
+    case ArtifactCore::ViewOrientationHotspot::BackBottomLeft:
+      return QStringLiteral("Active: Back Bottom Left");
+    case ArtifactCore::ViewOrientationHotspot::BackBottomRight:
+      return QStringLiteral("Active: Back Bottom Right");
     case ArtifactCore::ViewOrientationHotspot::None:
-      break;
+      return QStringLiteral("Active: Perspective");
     }
     return QStringLiteral("Active View");
+  }
+
+  bool activePaneResizePending() const {
+    const auto *paneState = activePane();
+    return paneState && paneState->view && paneState->view->isResizePending();
   }
 
   std::optional<std::pair<QRect, QString>> activePaneIndicator() const {
@@ -6291,9 +6503,19 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     return impl_ && impl_->previewOrbitMode_ ? QStringLiteral("Preview On")
                                              : QString{};
   });
+  impl_->overlayView_->setResizeIndicatorProvider([this]() {
+    return impl_ && impl_->activePaneResizePending();
+  });
   for (int i = 0; i < ArtifactCompositionEditor::Impl::kViewportPaneCount; ++i) {
     if (auto *view = impl_->panes_[i].view) {
       view->setOverlayWidget(impl_->overlayView_);
+      view->setViewportOrientationChangedCallback(
+          [this](const QQuaternion &orientation) {
+            if (impl_ && impl_->viewOrientationWidget_) {
+              impl_->viewOrientationWidget_->setOrientationQuaternion(
+                  orientation);
+            }
+          });
     }
   }
   impl_->overlayView_->hide();
@@ -6559,7 +6781,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                        ArtifactCompositionEditor::Impl::ViewportLayoutMode::FourUp) {
       impl_->applyFourUpDefaultOrientations();
     }
-    refreshEnabledState();
+     this->refreshEnabledState();
   });
   impl_->viewPresetButton_ = new QToolButton(impl_->topToolbar_);
   impl_->viewPresetButton_->setText(QStringLiteral("View"));
@@ -7295,7 +7517,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                        return;
                      }
                      impl_->layerChromeVisible_ = checked;
-                     refreshEnabledState();
+    this->refreshEnabledState();
                    });
   QObject::connect(lockViewAct, &QAction::toggled, this,
                    [this](bool checked) {
@@ -7308,7 +7530,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                          controller->focusSelectedLayer();
                        }
                       }
-                      refreshEnabledState();
+                      this->refreshEnabledState();
                     });
   QObject::connect(onionEnableAct, &QAction::toggled, this, [this](bool checked) {
     if (!impl_) {
@@ -7321,7 +7543,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         [checked](CompositionRenderController *controller) {
           controller->setShowOnionSkin(checked);
         });
-    refreshEnabledState();
+                       this->refreshEnabledState();
   });
   for (QAction *action : onionFrameMenu->actions()) {
     QObject::connect(action, &QAction::triggered, this, [this, action]() {
@@ -7336,7 +7558,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
           [count](CompositionRenderController *controller) {
             controller->setOnionSkinFrameCount(count);
           });
-      refreshEnabledState();
+       this->refreshEnabledState();
     });
   }
   for (QAction *action : onionOpacityMenu->actions()) {
@@ -7352,7 +7574,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
           [opacity](CompositionRenderController *controller) {
             controller->setOnionSkinOpacity(opacity);
           });
-      refreshEnabledState();
+       this->refreshEnabledState();
     });
   }
   QObject::connect(loadReferenceImageAct, &QAction::triggered, this,
@@ -7803,7 +8025,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     }
   });
   QObject::connect(impl_->compareAction_, &QAction::triggered, this, [this]() {
-    openContentsViewerCompareSurface();
+    openContentsViewerCompareSurfaceImpl();
   });
   QObject::connect(
       impl_->motionPathAction_, &QAction::toggled, this, [this](bool checked) {
@@ -7889,7 +8111,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_V), this);
   compareSurfaceShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(compareSurfaceShortcut, &QShortcut::activated, this,
-                   []() { openContentsViewerCompareSurface(); });
+                    []() { openContentsViewerCompareSurfaceImpl(); });
   auto *compareModeAShortcut =
       new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_A), this);
   compareModeAShortcut->setContext(Qt::WidgetWithChildrenShortcut);
@@ -8290,6 +8512,30 @@ void ArtifactCompositionEditor::setClearColor(const FloatColor &color) {
       [&color](CompositionRenderController *controller) {
         controller->setClearColor(color);
       });
+}
+
+void ArtifactCompositionEditor::refreshEnabledState() {
+  if (!impl_) {
+    return;
+  }
+
+  const auto composition = impl_->renderController_
+                                ? impl_->renderController_->composition()
+                                : ArtifactCompositionPtr();
+  const bool hasComposition = static_cast<bool>(composition);
+  const bool hasLayers = hasComposition && composition->layerCount() > 0;
+  const bool enabled = hasComposition && hasLayers;
+
+  if (impl_->layerChromeAction_) {
+    impl_->layerChromeAction_->setText(impl_->layerChromeButtonLabel());
+    impl_->layerChromeAction_->setChecked(impl_->layerChromeVisible_);
+    impl_->layerChromeAction_->setEnabled(enabled);
+  }
+  if (impl_->lockViewAction_) {
+    impl_->lockViewAction_->setText(impl_->lockViewButtonLabel());
+    impl_->lockViewAction_->setChecked(impl_->lockViewToSelection_);
+    impl_->lockViewAction_->setEnabled(enabled);
+  }
 }
 
 CompositionRenderController* ArtifactCompositionEditor::renderController() const {

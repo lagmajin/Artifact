@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QString>
 #include <QStringList>
 #include <QVector3D>

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectimpl.h>
 #include <iostream>
 #include <vector>

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QVector>
 #include <iostream>
 #include <vector>

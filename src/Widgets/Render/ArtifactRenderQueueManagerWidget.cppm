@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QListWidget>
 #include <QPushButton>
 #include <QLabel>

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectimpl.h>
 #include <QDebug>
 #include <QJsonDocument>

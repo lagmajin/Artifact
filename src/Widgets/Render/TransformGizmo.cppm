@@ -11,6 +11,7 @@ module;
 #include <QTransform>
 #include <QString>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <memory>
 #include <QGuiApplication>
@@ -1799,7 +1800,16 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
   if (scaleDragging) {
    const float dash = std::max(5.0f, 8.0f * invZoom);
    const float gap = std::max(3.0f, 5.0f * invZoom);
-   drawTransformedDashedRect(renderer, globalTransform, sourceLocalRect, gizmoColor,
+   const double pulseSeconds =
+       std::chrono::duration<double>(
+           std::chrono::steady_clock::now().time_since_epoch())
+           .count();
+   const float pulse =
+       0.5f + 0.5f * static_cast<float>(std::sin(pulseSeconds * 8.0));
+   const FloatColor pulsingColor{
+       gizmoColor.r(), gizmoColor.g(), gizmoColor.b(),
+       0.28f + pulse * 0.68f};
+   drawTransformedDashedRect(renderer, globalTransform, sourceLocalRect, pulsingColor,
                              lineThickness, dash, gap);
   } else {
    drawEmphasizedLine(renderer, tl_bbox, tr_bbox, gizmoColor, lineThickness, invZoom, isActive);
@@ -2162,7 +2172,14 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
         "TransformGizmoResizeBadge", ArtifactCore::ProfileCategory::Render);
     if (dragStartLocalBounds_.isValid() && dragStartLocalBounds_.width() > 0.0 &&
         dragStartLocalBounds_.height() > 0.0) {
-     const FloatColor startRectColor{0.42f, 0.86f, 1.0f, 0.66f};
+     const double pulseSeconds =
+         std::chrono::duration<double>(
+             std::chrono::steady_clock::now().time_since_epoch())
+             .count();
+     const float pulse =
+         0.5f + 0.5f * static_cast<float>(std::sin(pulseSeconds * 8.0));
+     const FloatColor startRectColor{
+         0.42f, 0.86f, 1.0f, 0.24f + pulse * 0.64f};
      const float startDash = std::max(5.0f, 7.0f * invZoom);
      const float startGap = std::max(3.0f, 5.0f * invZoom);
      drawTransformedDashedRect(renderer,
@@ -2181,9 +2198,52 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
                    invZoom);
   }
 
+  if (isDragging_ && activeHandle_ == HandleType::Rotate) {
+   ArtifactCore::ProfileScope _profRotateOverlay(
+       "TransformGizmoRotateOverlay", ArtifactCore::ProfileCategory::Render);
+   QFont badgeFont = QApplication::font();
+   badgeFont.setPointSizeF(std::max(16.0, static_cast<double>(badgeFont.pointSizeF()) + 5.0));
+   badgeFont.setBold(true);
+   const QString line = QStringLiteral("OVR:ROT %1 deg")
+                            .arg(QString::number(dragStartRotation_ +
+                                                     dragAccumulatedRotationDelta_,
+                                                 'f', 1));
+   const QFontMetrics fm(badgeFont);
+   const float textW = static_cast<float>(fm.horizontalAdvance(line)) + 32.0f;
+   const float textH = static_cast<float>(fm.height()) + 18.0f;
+   auto comp = ArtifactProjectService::instance()->currentComposition().lock();
+   const auto compSize =
+       comp ? comp->settings().compositionSize() : QSize(1920, 1080);
+   const float compW =
+       static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920);
+   const float compH =
+       static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
+   const QRectF textRect((compW - textW) * 0.5f, (compH - textH) * 0.5f,
+                         textW, textH);
+   renderer->drawOverlayPanel(static_cast<float>(textRect.left()),
+                              static_cast<float>(textRect.top()),
+                              static_cast<float>(textRect.width()),
+                              static_cast<float>(textRect.height()),
+                              FloatColor{0.04f, 0.05f, 0.07f, 0.88f},
+                              FloatColor{0.93f, 0.62f, 0.28f, 0.94f});
+   renderer->drawText(textRect, line, badgeFont,
+                      FloatColor{0.96f, 0.98f, 1.0f, 1.0f},
+                      Qt::AlignCenter);
+  }
+
   if (isDragging_ && moveBadgeVisible_ && activeHandle_ == HandleType::Move) {
    ArtifactCore::ProfileScope _profMoveBadge(
        "TransformGizmoMoveBadge", ArtifactCore::ProfileCategory::Render);
+   if (dragStartLocalBounds_.isValid() && dragStartLocalBounds_.width() > 0.0 &&
+       dragStartLocalBounds_.height() > 0.0) {
+    drawTransformedDashedRect(renderer,
+                              dragStartGlobalTransform_,
+                              dragStartLocalBounds_,
+                              FloatColor{0.36f, 0.80f, 1.0f, 0.56f},
+                              std::max(1.0f, lineThickness * 0.85f),
+                              std::max(5.0f, 7.0f * invZoom),
+                              std::max(3.0f, 5.0f * invZoom));
+   }
    QFont badgeFont = QApplication::font();
    badgeFont.setPointSizeF(std::max(13.0, static_cast<double>(badgeFont.pointSizeF()) + 3.0));
    badgeFont.setBold(true);
@@ -2511,15 +2571,13 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
    moveBadgeVisible_ = true;
    moveBadgeBox_ = dragStartBoundingBox_;
    moveBadgeLines_.clear();
-    const bool multiTargetMove = targets.size() > 1 && dragStartBoundingBox_.isValid();
+   const bool multiTargetMove = targets.size() > 1 && dragStartBoundingBox_.isValid();
     const int x = static_cast<int>(std::lround(multiTargetMove ? dragStartBoundingBox_.left()
                                                                : dragStartLayerPos_.x()));
     const int y = static_cast<int>(std::lround(multiTargetMove ? dragStartBoundingBox_.top()
                                                                : dragStartLayerPos_.y()));
-    const int w = static_cast<int>(std::lround(dragStartBoundingBox_.width()));
-    const int h = static_cast<int>(std::lround(dragStartBoundingBox_.height()));
     moveBadgeLines_.push_back(QStringLiteral("X: %1  Y: %2").arg(x).arg(y));
-    moveBadgeLines_.push_back(QStringLiteral("W: %1  H: %2").arg(w).arg(h));
+    moveBadgeLines_.push_back(QStringLiteral("dX: 0  dY: 0"));
    }
   }
   return true;
@@ -2673,10 +2731,14 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
                                                                    : dragStartLayerPos_.x() + snappedGroupDelta.x()));
        const int my = static_cast<int>(std::lround(multiTargetMove ? moveBadgeBox_.top()
                                                                    : dragStartLayerPos_.y() + snappedGroupDelta.y()));
-       const int mw = static_cast<int>(std::lround(moveBadgeBox_.width()));
-       const int mh = static_cast<int>(std::lround(moveBadgeBox_.height()));
+       const int mdx = static_cast<int>(std::lround(multiTargetMove
+                                                        ? moveBadgeBox_.left() - dragStartBoundingBox_.left()
+                                                        : snappedGroupDelta.x()));
+       const int mdy = static_cast<int>(std::lround(multiTargetMove
+                                                        ? moveBadgeBox_.top() - dragStartBoundingBox_.top()
+                                                        : snappedGroupDelta.y()));
        moveBadgeLines_.push_back(QStringLiteral("X: %1  Y: %2").arg(mx).arg(my));
-       moveBadgeLines_.push_back(QStringLiteral("W: %1  H: %2").arg(mw).arg(mh));
+       moveBadgeLines_.push_back(QStringLiteral("dX: %1  dY: %2").arg(mdx).arg(mdy));
   } else if (activeHandle_ == HandleType::Anchor) {
    bool invertible = false;
    const QTransform inv = dragStartGlobalTransform_.inverted(&invertible);

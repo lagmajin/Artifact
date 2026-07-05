@@ -722,7 +722,7 @@ void applyInspectorPropertyPresentation(
                            Qt::CaseInsensitive) == 0 ||
       propertyName.compare(QStringLiteral("transform.scale.y"),
                            Qt::CaseInsensitive) == 0) {
-    property->setUnit(QStringLiteral("x"));
+    property->setUnit(QStringLiteral("%"));
   }
 }
 

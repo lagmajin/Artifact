@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QHash>
 #include <QCoreApplication>
 #include <QDir>

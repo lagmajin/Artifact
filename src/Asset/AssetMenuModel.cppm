@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QAbstractListModel>
 #include <QApplication>
 #include <QByteArray>

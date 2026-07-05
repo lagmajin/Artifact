@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QDialog>
 #include <wobjectimpl.h>
 #include <QComboBox>

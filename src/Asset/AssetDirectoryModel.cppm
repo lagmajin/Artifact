@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QAbstractItemModel>
 #include <QString>

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QAction>
 #include <QDialog>
 #include <QDialogButtonBox>

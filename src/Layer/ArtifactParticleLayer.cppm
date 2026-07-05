@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QImage>
 #include <QDebug>

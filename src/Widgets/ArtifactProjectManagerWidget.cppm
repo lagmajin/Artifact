@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QVector>
 #include <QWidget>
 #include <QFormLayout>

@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QJsonArray>
 #include <QJsonObject>

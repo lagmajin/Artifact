@@ -871,6 +871,38 @@ bool requestToolExecutionApproval(QWidget *parent, const QJsonObject &toolCall,
   return false;
 }
 
+static const QHash<QString, QString> kSlashCommands = {
+    {QStringLiteral("/fix"), QStringLiteral("Fix the following issue in the current composition: ")},
+    {QStringLiteral("/explain"), QStringLiteral("Explain how the current composition/layer is structured: ")},
+    {QStringLiteral("/optimize"), QStringLiteral("Suggest render performance optimizations: ")},
+    {QStringLiteral("/create"), QStringLiteral("Create a new effect, layer, or animation that: ")},
+    {QStringLiteral("/analyze"), QStringLiteral("Analyze the current project for issues or improvements: ")},
+    {QStringLiteral("/color"), QStringLiteral("Suggest a color grading approach: ")},
+    {QStringLiteral("/animate"), QStringLiteral("Create a keyframe animation that: ")},
+    {QStringLiteral("/refactor"), QStringLiteral("Refactor this composition structure: ")},
+};
+
+static QString currentWordAtCursor(QTextEdit* editor) {
+  QTextCursor cursor = editor->textCursor();
+  QString text = editor->toPlainText();
+  int pos = cursor.position();
+  int start = pos;
+  while (start > 0 && !text.at(start - 1).isSpace()) --start;
+  return text.mid(start, pos - start);
+}
+
+static void replaceCurrentWord(QTextEdit* editor, const QString& replacement) {
+  QTextCursor cursor = editor->textCursor();
+  QString text = editor->toPlainText();
+  int pos = cursor.position();
+  int start = pos;
+  while (start > 0 && !text.at(start - 1).isSpace()) --start;
+  cursor.setPosition(start);
+  cursor.setPosition(pos, QTextCursor::KeepAnchor);
+  cursor.insertText(replacement);
+  editor->setTextCursor(cursor);
+}
+
 } // namespace
 
 void Artifact::ArtifactAICloudWidget::startChatRequest(
@@ -2512,39 +2544,6 @@ bool Artifact::ArtifactAICloudWidget::eventFilter(QObject *watched,
       }
     }
   }
-
-  // Slash Commands: /command -> prompt template (Tab to complete)
-static const QHash<QString, QString> kSlashCommands = {
-    {QStringLiteral("/fix"), QStringLiteral("Fix the following issue in the current composition: ")},
-    {QStringLiteral("/explain"), QStringLiteral("Explain how the current composition/layer is structured: ")},
-    {QStringLiteral("/optimize"), QStringLiteral("Suggest render performance optimizations: ")},
-    {QStringLiteral("/create"), QStringLiteral("Create a new effect, layer, or animation that: ")},
-    {QStringLiteral("/analyze"), QStringLiteral("Analyze the current project for issues or improvements: ")},
-    {QStringLiteral("/color"), QStringLiteral("Suggest a color grading approach: ")},
-    {QStringLiteral("/animate"), QStringLiteral("Create a keyframe animation that: ")},
-    {QStringLiteral("/refactor"), QStringLiteral("Refactor this composition structure: ")},
-};
-
-static QString currentWordAtCursor(QTextEdit* editor) {
-    QTextCursor cursor = editor->textCursor();
-    QString text = editor->toPlainText();
-    int pos = cursor.position();
-    int start = pos;
-    while (start > 0 && !text.at(start - 1).isSpace()) --start;
-    return text.mid(start, pos - start);
-}
-
-static void replaceCurrentWord(QTextEdit* editor, const QString& replacement) {
-    QTextCursor cursor = editor->textCursor();
-    QString text = editor->toPlainText();
-    int pos = cursor.position();
-    int start = pos;
-    while (start > 0 && !text.at(start - 1).isSpace()) --start;
-    cursor.setPosition(start);
-    cursor.setPosition(pos, QTextCursor::KeepAnchor);
-    cursor.insertText(replacement);
-    editor->setTextCursor(cursor);
-}
 
   if (watched == promptEdit_ && event && event->type() == QEvent::KeyPress) {
     auto *keyEvent = static_cast<QKeyEvent *>(event);

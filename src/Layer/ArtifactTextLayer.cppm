@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QAbstractTextDocumentLayout>
 #include <QColor>
 #include <QFont>

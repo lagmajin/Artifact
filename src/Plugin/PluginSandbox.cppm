@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <chrono>
 #include <functional>

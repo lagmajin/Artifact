@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectimpl.h>
 #include <QObject>
 #include <QMetaObject>

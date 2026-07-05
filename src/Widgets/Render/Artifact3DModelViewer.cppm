@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>

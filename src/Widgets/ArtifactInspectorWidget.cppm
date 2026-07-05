@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>

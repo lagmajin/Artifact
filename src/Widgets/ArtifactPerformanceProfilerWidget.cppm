@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QTimer>
 #include <QPainter>

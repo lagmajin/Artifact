@@ -1,4 +1,4 @@
-module;
+﻿module;
 #pragma warning(push)
 #pragma warning(disable: 4348)  // redeclaration of default parameter
 #pragma warning(disable: 4679)  // could not import symbol
