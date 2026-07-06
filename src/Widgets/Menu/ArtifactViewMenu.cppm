@@ -901,7 +901,9 @@ namespace Artifact {
    fitToScreenAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_fit_screen.svg")));
 
    viewportBookmarkMenu = new QMenu("Camera ブックマーク(&B)");
+   viewportBookmarkMenu->setObjectName(QStringLiteral("viewportBookmarkMenu"));
    viewportBookmarkMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+   viewportBookmarkMenu->setToolTip("Save and restore named camera / viewport states");
    viewportTemplateMenu = new QMenu("View Template(&T)");
    viewportTemplateMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_presets.svg")));
    compareMenu = new QMenu("Compare(&C)");
@@ -1632,9 +1634,11 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
  saveViewportBookmarkAction =
      viewportBookmarkMenu->addAction("現在のカメラを保存...");
  saveViewportBookmarkAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save.svg")));
+ saveViewportBookmarkAction->setToolTip("Store the current camera / viewport state under a name");
  deleteViewportBookmarkAction =
      viewportBookmarkMenu->addAction("カメラブックマークを削除...");
  deleteViewportBookmarkAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
+ deleteViewportBookmarkAction->setToolTip("Remove a saved camera / viewport bookmark");
 
  QObject::connect(saveViewportBookmarkAction, &QAction::triggered, menu_,
                    [this]() {
@@ -1992,12 +1996,20 @@ void ArtifactViewMenu::Impl::refreshCompareMenu()
    compareReferenceAction->setCheckable(true);
  compareReferenceAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
    compareMenu->addSeparator();
-   xRayAction = compareMenu->addAction("X-Ray");
+   xRayAction = compareMenu->addAction("X-Ray (透過)");
    xRayAction->setCheckable(true);
    xRayAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_color_palette.svg")));
-   isolationAction = compareMenu->addAction("Isolate Selected");
+   xRayAction->setToolTip(
+       QStringLiteral("Show selected layer through occlusion (%1)")
+           .arg(shortcuts.shortcutText(ShortcutId::ViewToggleXRay)));
+   xRayAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewToggleXRay));
+   isolationAction = compareMenu->addAction("Isolation (選択のみ)");
    isolationAction->setCheckable(true);
    isolationAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
+   isolationAction->setToolTip(
+       QStringLiteral("Show only the selected layer (%1)")
+           .arg(shortcuts.shortcutText(ShortcutId::ViewToggleIsolation)));
+   isolationAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewToggleIsolation));
 
  bindCompareAction(compareOffAction, CompositionCompareMode::Off);
  bindCompareAction(compareAAction, CompositionCompareMode::A);

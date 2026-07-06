@@ -9,6 +9,8 @@ module;
 
 export module Artifact.Layer.Switch;
 
+namespace ArtifactCore { class LipSyncTrack; }
+
 import Artifact.Layers.Abstract._2D;
 import FloatRGBA;
 import Frame.Position;
@@ -50,6 +52,9 @@ public:
     void setSyncToTimeline(bool sync);
     int timelineFrameForIndex(int index) const;
     void setFrameForIndex(int index, int frame);
+    void setTimelineFrames(const std::vector<int>& frames);
+    std::vector<int> timelineFrames() const;
+    void applyLipSyncTrack(const ArtifactCore::LipSyncTrack& track);
 
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
     bool hasChildren() const { return childrenCount() > 0; }

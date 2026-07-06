@@ -13,9 +13,11 @@ import Audio.Panner;
 
 import Property.Abstract;
 import Property.Group;
+import Audio.LipSyncTrack;
 import Audio.SimpleWav;
 import Audio.Cache;
 import Artifact.Audio.Waveform;
+import Artifact.Layer.Switch;
 import Artifact.Composition.Abstract;
 
 namespace Artifact
@@ -372,6 +374,54 @@ QString ArtifactAudioLayer::waveformPreviewSummary(int displayWidth) const
 {
   const auto waveform = buildWaveformData(displayWidth);
   return Artifact::waveformPreviewSummary(waveform.peaks, waveform.rms);
+}
+
+bool ArtifactAudioLayer::buildLipSyncTrack(ArtifactCore::LipSyncTrack& track,
+                                           double frameRate) const
+{
+  if (!impl_ || !impl_->isLoaded_ || impl_->sourceSampleRate_ <= 0 ||
+      impl_->sourceChannelCount_ <= 0 || impl_->interleavedPcm_.isEmpty()) {
+    return false;
+  }
+
+  if (frameRate <= 0.0) {
+    return false;
+  }
+
+  ArtifactCore::AudioSegment segment;
+  segment.sampleRate = impl_->sourceSampleRate_;
+  segment.layout = impl_->sourceChannelCount_ == 1
+                       ? ArtifactCore::AudioChannelLayout::Mono
+                       : ArtifactCore::AudioChannelLayout::Stereo;
+  segment.channelData.resize(impl_->sourceChannelCount_);
+  segment.setFrameCount(static_cast<int>(impl_->totalFrames_));
+
+  const int sourceFrames =
+      static_cast<int>(std::min<qint64>(impl_->totalFrames_,
+                                        impl_->interleavedPcm_.size() /
+                                            std::max(1, impl_->sourceChannelCount_)));
+  for (int frame = 0; frame < sourceFrames; ++frame) {
+    for (int ch = 0; ch < impl_->sourceChannelCount_; ++ch) {
+      const int index = frame * impl_->sourceChannelCount_ + ch;
+      if (index < impl_->interleavedPcm_.size()) {
+        segment.channelData[ch][frame] = impl_->interleavedPcm_[index];
+      }
+    }
+  }
+
+  return track.analyze(segment, frameRate);
+}
+
+bool ArtifactAudioLayer::applyLipSyncToSwitchLayer(ArtifactSwitchLayer& switchLayer,
+                                                   double frameRate) const
+{
+  ArtifactCore::LipSyncTrack track;
+  if (!buildLipSyncTrack(track, frameRate)) {
+    return false;
+  }
+
+  switchLayer.applyLipSyncTrack(track);
+  return true;
 }
 
 size_t ArtifactAudioLayer::getCacheSize() const

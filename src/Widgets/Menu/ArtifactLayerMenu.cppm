@@ -1,4 +1,5 @@
 module;
+#include <algorithm>
 #include <utility>
 #include <QAction>
 #include <QActionGroup>
@@ -16,6 +17,7 @@ module;
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QPair>
 #include <QStatusBar>
 #include <QThread>
 #include <QUrl>
@@ -49,11 +51,14 @@ import Artifact.Layer.ParametricComposition;
 import Composition.ParametricComposition;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Video;
+import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Particle;
+import Artifact.Layer.Paint;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Procedural3D;
 import Artifact.Layer.ParametricComposition;
+import Artifact.Layer.Switch;
 import Layer.Blend;
 import Color.Float;
 import Artifact.Project.Manager;
@@ -107,6 +112,14 @@ bool placeAtCurrentFrameRequested()
 bool placeAtCurrentFrameRequested(const LayerCreationPlacementMode mode)
 {
     return mode == LayerCreationPlacementMode::Playhead;
+}
+
+bool startHiddenRequested()
+{
+    if (auto* service = ArtifactProjectService::instance()) {
+        return service->defaultNewLayerHidden();
+    }
+    return false;
 }
 
 ArtifactPropertyWidget* activePropertyWidget(QWidget* root)
@@ -349,6 +362,7 @@ public:
     {
         if (const auto composition = composition_.lock()) {
             composition->addTransformField(field_);
+            composition->setActiveTransformFieldId(field_.fieldId);
         }
     }
 
@@ -401,8 +415,11 @@ private:
 class RemoveCompositionTransformFieldCommand final : public UndoCommand {
 public:
     RemoveCompositionTransformFieldCommand(
-        ArtifactCompositionWeakPtr composition, CompositionTransformField field)
-        : composition_(std::move(composition)), field_(std::move(field))
+        ArtifactCompositionWeakPtr composition, CompositionTransformField field,
+        QString activeFieldIdBefore)
+        : composition_(std::move(composition)),
+          field_(std::move(field)),
+          activeFieldIdBefore_(std::move(activeFieldIdBefore))
     {
     }
 
@@ -410,6 +427,9 @@ public:
     {
         if (const auto composition = composition_.lock()) {
             composition->addTransformField(field_);
+            if (activeFieldIdBefore_ == field_.fieldId) {
+                composition->setActiveTransformFieldId(activeFieldIdBefore_);
+            }
         }
     }
 
@@ -417,6 +437,9 @@ public:
     {
         if (const auto composition = composition_.lock()) {
             composition->removeTransformField(field_.fieldId);
+            if (activeFieldIdBefore_ == field_.fieldId) {
+                composition->setActiveTransformFieldId(QString());
+            }
         }
     }
 
@@ -428,6 +451,87 @@ public:
 private:
     ArtifactCompositionWeakPtr composition_;
     CompositionTransformField field_;
+    QString activeFieldIdBefore_;
+};
+
+class ReorderCompositionTransformFieldsCommand final : public UndoCommand {
+public:
+    ReorderCompositionTransformFieldsCommand(
+        ArtifactCompositionWeakPtr composition, QVector<CompositionTransformField> before,
+        QVector<CompositionTransformField> after, QString label)
+        : composition_(std::move(composition)),
+          before_(std::move(before)),
+          after_(std::move(after)),
+          label_(std::move(label))
+    {
+    }
+
+    void undo() override
+    {
+        apply(before_);
+    }
+
+    void redo() override
+    {
+        apply(after_);
+    }
+
+    QString label() const override
+    {
+        return label_;
+    }
+
+private:
+    void apply(const QVector<CompositionTransformField>& fields)
+    {
+        if (const auto composition = composition_.lock()) {
+            composition->setTransformFields(fields);
+            if (auto* mgr = UndoManager::instance()) {
+                mgr->notifyAnythingChanged();
+            }
+        }
+    }
+
+    ArtifactCompositionWeakPtr composition_;
+    QVector<CompositionTransformField> before_;
+    QVector<CompositionTransformField> after_;
+    QString label_;
+};
+
+class SetActiveCompositionTransformFieldCommand final : public UndoCommand {
+public:
+    SetActiveCompositionTransformFieldCommand(
+        ArtifactCompositionWeakPtr composition, QString beforeFieldId,
+        QString afterFieldId)
+        : composition_(std::move(composition)),
+          beforeFieldId_(std::move(beforeFieldId)),
+          afterFieldId_(std::move(afterFieldId))
+    {
+    }
+
+    void undo() override
+    {
+        if (const auto composition = composition_.lock()) {
+            composition->setActiveTransformFieldId(beforeFieldId_);
+        }
+    }
+
+    void redo() override
+    {
+        if (const auto composition = composition_.lock()) {
+            composition->setActiveTransformFieldId(afterFieldId_);
+        }
+    }
+
+    QString label() const override
+    {
+        return QStringLiteral("Activate Live Field");
+    }
+
+private:
+    ArtifactCompositionWeakPtr composition_;
+    QString beforeFieldId_;
+    QString afterFieldId_;
 };
 
 class SetParametricDefinitionCommand final : public UndoCommand {
@@ -479,6 +583,52 @@ private:
     QString label_;
 };
 
+QStringList transformFieldBlendModeChoices()
+{
+    return {
+        QStringLiteral("normal"),
+        QStringLiteral("additive"),
+        QStringLiteral("multiply"),
+        QStringLiteral("screen"),
+    };
+}
+
+QString transformFieldBlendModeLabel(const QString& blendMode)
+{
+    const QString normalized = blendMode.trimmed().toLower();
+    if (normalized == QStringLiteral("additive")) {
+        return QStringLiteral("Additive");
+    }
+    if (normalized == QStringLiteral("multiply")) {
+        return QStringLiteral("Multiply");
+    }
+    if (normalized == QStringLiteral("screen")) {
+        return QStringLiteral("Screen");
+    }
+    return QStringLiteral("Normal");
+}
+
+QString transformFieldStrengthLabel(qreal strength)
+{
+    return QStringLiteral("x%1").arg(QString::number(strength, 'f', 1));
+}
+
+void clearLiveFieldListActions(QMenu* menu, QVector<QAction*>& actions)
+{
+    if (!menu) {
+        actions.clear();
+        return;
+    }
+    for (auto* action : actions) {
+        if (!action) {
+            continue;
+        }
+        menu->removeAction(action);
+        delete action;
+    }
+    actions.clear();
+}
+
 std::optional<CompositionTransformField> chooseTransformField(
     QWidget* parent, const ArtifactCompositionPtr& composition,
     const QString& title)
@@ -495,16 +645,38 @@ std::optional<CompositionTransformField> chooseTransformField(
 
     QStringList choices;
     choices.reserve(fields.size());
+    const QString activeFieldId = composition->activeTransformFieldId();
+    int activeIndex = -1;
     for (const auto& field : fields) {
-        const QString state = field.enabled
-                                  ? QStringLiteral("有効")
-                                  : QStringLiteral("無効");
-        choices.append(QStringLiteral("%1 — %2")
-                           .arg(field.displayName, state));
+        const QString displayName = field.displayName.trimmed().isEmpty()
+                                        ? QStringLiteral("Radial Transform Field")
+                                        : field.displayName.trimmed();
+        const QString state = QStringLiteral("%1 / %2 / %3")
+                                  .arg(field.enabled ? QStringLiteral("有効")
+                                                     : QStringLiteral("無効"),
+                                       field.fieldId == activeFieldId
+                                           ? QStringLiteral("active")
+                                           : QStringLiteral("inactive"),
+                                       QStringLiteral("%1 %2%3")
+                                           .arg(transformFieldBlendModeLabel(field.blendMode),
+                                                transformFieldStrengthLabel(field.strength),
+                                                field.invert ? QStringLiteral(" inv")
+                                                             : QString()));
+        if (activeIndex < 0 && field.fieldId == activeFieldId) {
+            activeIndex = choices.size();
+        }
+        choices.append(QStringLiteral("%1. %2 — %3")
+                           .arg(QString::number(choices.size() + 1), displayName,
+                                state));
     }
     bool accepted = false;
+    const int initialIndex =
+        activeIndex >= 0 ? activeIndex : 0;
+    const int maxIndex = fields.isEmpty() ? 0 : fields.size() - 1;
     const QString choice = QInputDialog::getItem(
-        parent, title, QStringLiteral("Field"), choices, 0, false, &accepted);
+        parent, title, QStringLiteral("Field"), choices,
+        std::clamp(initialIndex, 0, maxIndex), false,
+        &accepted);
     if (!accepted) {
         return std::nullopt;
     }
@@ -513,6 +685,33 @@ std::optional<CompositionTransformField> chooseTransformField(
         return std::nullopt;
     }
     return fields.at(index);
+}
+
+std::optional<QPair<QVector<CompositionTransformField>, int>>
+reorderedTransformFieldsForMove(const ArtifactCompositionPtr& composition,
+                               const QString& fieldId, int direction)
+{
+    if (!composition || fieldId.isEmpty() || direction == 0) {
+        return std::nullopt;
+    }
+
+    auto fields = composition->transformFields();
+    const int index = std::find_if(
+        fields.begin(), fields.end(),
+        [&fieldId](const CompositionTransformField& field) {
+            return field.fieldId == fieldId;
+        }) - fields.begin();
+    if (index < 0 || index >= fields.size()) {
+        return std::nullopt;
+    }
+
+    const int targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= fields.size()) {
+        return std::nullopt;
+    }
+
+    std::swap(fields[index], fields[targetIndex]);
+    return QPair<QVector<CompositionTransformField>, int>{std::move(fields), targetIndex};
 }
 
 std::shared_ptr<ArtifactParametricCompositionLayer> currentSelectedParametricLayer()
@@ -562,6 +761,7 @@ public:
     QAction* createAdjustAction = nullptr;
     QAction* createTextAction = nullptr;
     QAction* createParticleAction = nullptr;
+    QAction* createPaintAction = nullptr;
     QAction* createFormParticleAction = nullptr;
     QAction* createTerrainAction = nullptr;
     QAction* createPathTubeAction = nullptr;
@@ -577,6 +777,7 @@ public:
     QAction* createCone3DAction = nullptr;
     QAction* placementAtCompStartAction = nullptr;
     QAction* placementAtPlayheadAction = nullptr;
+    QAction* startHiddenAction = nullptr;
     QAction* cycleLayerForwardAction = nullptr;
     QAction* cycleLayerReverseAction = nullptr;
     QAction* cycleShapeForwardAction = nullptr;
@@ -619,6 +820,7 @@ public:
     QAction* clearParentAction = nullptr;
     QAction* openInspectorAction = nullptr;
     QAction* openPropertiesAction = nullptr;
+    QAction* applyLipSyncAction = nullptr;
 
     QAction* addDebugBlendLayersAction = nullptr;
     QAction* addDebugBindlessPlanesAction = nullptr;
@@ -649,9 +851,18 @@ public:
     QAction* distributeSpacingAction = nullptr;
     QAction* radialTransformAction = nullptr;
     QAction* createLiveRadialFieldAction = nullptr;
+    QMenu* liveFieldMenu = nullptr;
+    QAction* selectLiveRadialFieldAction = nullptr;
+    QAction* activatePreviousLiveRadialFieldAction = nullptr;
+    QAction* activateNextLiveRadialFieldAction = nullptr;
     QAction* editLiveRadialFieldAction = nullptr;
     QAction* toggleLiveRadialFieldAction = nullptr;
+    QAction* moveActiveLiveRadialFieldUpAction = nullptr;
+    QAction* moveActiveLiveRadialFieldDownAction = nullptr;
+    QAction* moveLiveRadialFieldUpAction = nullptr;
+    QAction* moveLiveRadialFieldDownAction = nullptr;
     QAction* removeLiveRadialFieldAction = nullptr;
+    QVector<QAction*> liveFieldListActions_;
     QAction* addParametricParameterAction = nullptr;
     QAction* publishParametricParameterAction = nullptr;
     QAction* editParametricControlAction = nullptr;
@@ -664,6 +875,7 @@ public:
     void handleCreateAdjust();
     void handleCreateText();
     void handleCreateParticle();
+    void handleCreatePaint();
     void handleCreateFormParticle();
     void handleCreateProcedural3D(Procedural3DLayerKind kind);
     void handleCreateCamera();
@@ -704,6 +916,7 @@ public:
     void handleClearParent();
     void handleOpenInspector();
     void handleOpenProperties();
+    void handleApplyLipSyncToSwitchLayer();
 
     void handlePrecompose();
     void handleUnprecompose();
@@ -721,8 +934,13 @@ public:
     void handleDistributeSpacing();
     void handleRadialTransform();
     void handleCreateLiveRadialField();
+    void handleSelectLiveRadialField();
+    void handleActivateLiveRadialField(int direction);
+    void handleActivateLiveFieldById(const QString& fieldId);
     void handleEditLiveRadialField();
     void handleToggleLiveRadialField();
+    void handleMoveActiveLiveRadialField(int direction);
+    void handleMoveLiveRadialField(int direction);
     void handleRemoveLiveRadialField();
     void handleAddParametricParameter();
     void handlePublishParametricParameter();
@@ -768,6 +986,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     createParticleAction = new QAction("パーティクル(&P)", createMenu);
     createParticleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
+    createPaintAction = new QAction("ペイントレイヤー(&R)...", createMenu);
+    createPaintAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_brush.svg")));
+    createPaintAction->setToolTip(QStringLiteral("Create a frame-by-frame Paint Layer for brush work."));
     createFormParticleAction = new QAction("Form Particle(&F)", createMenu);
     createFormParticleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
     createFormParticleAction->setToolTip(QStringLiteral("Grid / point-cloud particle layer inspired by Trapcode Form"));
@@ -822,6 +1043,11 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     placementGroup->addAction(placementAtPlayheadAction);
     createPlacementMenu->addAction(placementAtCompStartAction);
     createPlacementMenu->addAction(placementAtPlayheadAction);
+    startHiddenAction = new QAction("非表示のまま追加", createPlacementMenu);
+    startHiddenAction->setCheckable(true);
+    startHiddenAction->setChecked(startHiddenRequested());
+    startHiddenAction->setToolTip(QStringLiteral("新規レイヤーを表示オフのまま追加します"));
+    createPlacementMenu->addAction(startHiddenAction);
     cycleLayerForwardAction = new QAction("レイヤーを次々作成", createMenu);
     cycleLayerForwardAction->setToolTip(QStringLiteral("Cycle common layer creation presets"));
     cycleLayerForwardAction->setShortcut(
@@ -873,6 +1099,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addAction(createAdjustAction);
     createMenu->addAction(createTextAction);
     createMenu->addAction(createParticleAction);
+    createMenu->addAction(createPaintAction);
     createMenu->addAction(createFormParticleAction);
     createMenu->addAction(createTerrainAction);
     createMenu->addAction(createPathTubeAction);
@@ -1011,11 +1238,28 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createLiveRadialFieldAction->setToolTip(
         QStringLiteral("元のTransformを保ったまま、選択レイヤーへ放射状変形を適用します"));
     arrangeMenu->addAction(createLiveRadialFieldAction);
+    liveFieldMenu = new QMenu("Live Fields", arrangeMenu);
+    liveFieldMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    arrangeMenu->addMenu(liveFieldMenu);
+    selectLiveRadialFieldAction = new QAction("ライブFieldを選択...", arrangeMenu);
+    arrangeMenu->addAction(selectLiveRadialFieldAction);
+    activatePreviousLiveRadialFieldAction = new QAction("前のFieldをアクティブ", arrangeMenu);
+    activateNextLiveRadialFieldAction = new QAction("次のFieldをアクティブ", arrangeMenu);
+    arrangeMenu->addAction(activatePreviousLiveRadialFieldAction);
+    arrangeMenu->addAction(activateNextLiveRadialFieldAction);
     editLiveRadialFieldAction = new QAction("ライブFieldを編集...", arrangeMenu);
     toggleLiveRadialFieldAction = new QAction("ライブFieldを有効/無効...", arrangeMenu);
+    moveActiveLiveRadialFieldUpAction = new QAction("アクティブFieldを上へ", arrangeMenu);
+    moveActiveLiveRadialFieldDownAction = new QAction("アクティブFieldを下へ", arrangeMenu);
+    moveLiveRadialFieldUpAction = new QAction("ライブFieldを上へ...", arrangeMenu);
+    moveLiveRadialFieldDownAction = new QAction("ライブFieldを下へ...", arrangeMenu);
     removeLiveRadialFieldAction = new QAction("ライブFieldを削除...", arrangeMenu);
     arrangeMenu->addAction(editLiveRadialFieldAction);
     arrangeMenu->addAction(toggleLiveRadialFieldAction);
+    arrangeMenu->addAction(moveActiveLiveRadialFieldUpAction);
+    arrangeMenu->addAction(moveActiveLiveRadialFieldDownAction);
+    arrangeMenu->addAction(moveLiveRadialFieldUpAction);
+    arrangeMenu->addAction(moveLiveRadialFieldDownAction);
     arrangeMenu->addAction(removeLiveRadialFieldAction);
     arrangeMenu->addSeparator();
     addParametricParameterAction = new QAction("Parametric Parameterを追加...", arrangeMenu);
@@ -1083,6 +1327,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     openInspectorAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_inspector.svg")));
     openPropertiesAction = new QAction("Properties を開く", menu);
     openPropertiesAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    applyLipSyncAction = new QAction("Lip Sync を Switch Layer に適用", menu);
 
     addDebugBlendLayersAction = new QAction("Debug Blend Test Layers...", debugMenu);
     addDebugBlendLayersAction->setIcon(QIcon(resolveIconPath("Studio/testmenu_layer_composite.svg")));
@@ -1138,6 +1383,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     menu->addSeparator();
     menu->addAction(openInspectorAction);
     menu->addAction(openPropertiesAction);
+    menu->addAction(applyLipSyncAction);
     menu->addSeparator();
     menu->addAction(precomposeAction);
     menu->addAction(unprecomposeAction);
@@ -1149,12 +1395,18 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (!action) {
             return;
         }
+        const QString actionData = action->data().toString();
+        if (actionData.startsWith(QStringLiteral("live-field:activate:"))) {
+            handleActivateLiveFieldById(actionData.mid(QStringLiteral("live-field:activate:").size()));
+            return;
+        }
         if (action == createSolidAction) { handleCreateSolid(); return; }
         if (action == createNullAction) { handleCreateNull(); return; }
         if (action == createConstructionAction) { handleCreateConstruction(); return; }
         if (action == createAdjustAction) { handleCreateAdjust(); return; }
         if (action == createTextAction) { handleCreateText(); return; }
         if (action == createParticleAction) { handleCreateParticle(); return; }
+        if (action == createPaintAction) { handleCreatePaint(); return; }
         if (action == createFormParticleAction) { handleCreateFormParticle(); return; }
         if (action == createTerrainAction) { handleCreateProcedural3D(Procedural3DLayerKind::Terrain); return; }
         if (action == createPathTubeAction) { handleCreateProcedural3D(Procedural3DLayerKind::PathTube); return; }
@@ -1178,6 +1430,12 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             layerCreationPlacementMode() = LayerCreationPlacementMode::Playhead;
             placementAtCompStartAction->setChecked(false);
             placementAtPlayheadAction->setChecked(true);
+            return;
+        }
+        if (action == startHiddenAction) {
+            if (auto* service = ArtifactProjectService::instance()) {
+                service->setDefaultNewLayerHidden(startHiddenAction->isChecked());
+            }
             return;
         }
         if (action == cycleLayerForwardAction) { handleCycleLayerCreation(false); return; }
@@ -1216,6 +1474,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == loadMaskPresetAction) { handleLoadMaskPreset(); return; }
         if (action == openInspectorAction) { handleOpenInspector(); return; }
         if (action == openPropertiesAction) { handleOpenProperties(); return; }
+        if (action == applyLipSyncAction) { handleApplyLipSyncToSwitchLayer(); return; }
         if (action == addDebugBlendLayersAction) {
             auto* projectService = ArtifactProjectService::instance();
             if (!projectService) {
@@ -1443,8 +1702,15 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == sendToBackAction) { handleSendToBack(); return; }
         if (action == radialTransformAction) { handleRadialTransform(); return; }
         if (action == createLiveRadialFieldAction) { handleCreateLiveRadialField(); return; }
+        if (action == selectLiveRadialFieldAction) { handleSelectLiveRadialField(); return; }
+        if (action == activatePreviousLiveRadialFieldAction) { handleActivateLiveRadialField(-1); return; }
+        if (action == activateNextLiveRadialFieldAction) { handleActivateLiveRadialField(1); return; }
         if (action == editLiveRadialFieldAction) { handleEditLiveRadialField(); return; }
         if (action == toggleLiveRadialFieldAction) { handleToggleLiveRadialField(); return; }
+        if (action == moveActiveLiveRadialFieldUpAction) { handleMoveActiveLiveRadialField(-1); return; }
+        if (action == moveActiveLiveRadialFieldDownAction) { handleMoveActiveLiveRadialField(1); return; }
+        if (action == moveLiveRadialFieldUpAction) { handleMoveLiveRadialField(-1); return; }
+        if (action == moveLiveRadialFieldDownAction) { handleMoveLiveRadialField(1); return; }
         if (action == removeLiveRadialFieldAction) { handleRemoveLiveRadialField(); return; }
         if (action == addParametricParameterAction) { handleAddParametricParameter(); return; }
         if (action == publishParametricParameterAction) { handlePublishParametricParameter(); return; }
@@ -1583,6 +1849,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createAdjustAction->setEnabled(hasProject);
     createTextAction->setEnabled(hasProject);
     createParticleAction->setEnabled(hasProject);
+    createPaintAction->setEnabled(hasProject);
     createCameraAction->setEnabled(hasProject);
     createLightAction->setEnabled(hasProject);
     createAudioAction->setEnabled(hasProject);
@@ -1593,6 +1860,10 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createSphere3DAction->setEnabled(hasProject);
     createCylinder3DAction->setEnabled(hasProject);
     createCone3DAction->setEnabled(hasProject);
+    startHiddenAction->setEnabled(hasProject);
+    if (service) {
+        startHiddenAction->setChecked(service->defaultNewLayerHidden());
+    }
     addDebugBindlessPlanesAction->setEnabled(hasProject);
     addDebugParticleLayerAction->setEnabled(hasProject);
     createShapeRectAction->setEnabled(hasProject);
@@ -1660,6 +1931,37 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     clearParentAction->setEnabled(hasParent);
     openInspectorAction->setEnabled(hasLayer);
     openPropertiesAction->setEnabled(hasLayer);
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    bool canApplyLipSync = false;
+    if (hasComp && selectionManager) {
+        const auto selected = selectionManager->selectedLayers();
+        bool hasAudio = false;
+        bool hasSwitch = false;
+        if (auto comp = service->currentComposition().lock()) {
+            for (const auto& layer : comp->allLayer()) {
+                if (!layer) {
+                    continue;
+                }
+                bool selectedMatch = false;
+                for (const auto& selectedLayer : selected) {
+                    if (selectedLayer && selectedLayer->id() == layer->id()) {
+                        selectedMatch = true;
+                        break;
+                    }
+                }
+                if (!selectedMatch) {
+                    continue;
+                }
+                hasAudio = hasAudio ||
+                           static_cast<bool>(std::dynamic_pointer_cast<ArtifactAudioLayer>(layer));
+                hasSwitch = hasSwitch ||
+                            static_cast<bool>(std::dynamic_pointer_cast<ArtifactSwitchLayer>(layer));
+            }
+        }
+        canApplyLipSync = hasAudio && hasSwitch;
+    }
+    applyLipSyncAction->setEnabled(canApplyLipSync);
     precomposeAction->setEnabled(hasLayer);
     bool isPrecomposeLayer = false;
     if (hasLayer) {
@@ -1676,7 +1978,6 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     
     // Ungroup: 選択中のレイヤーがグループの場合のみ有効
     bool isGroupSelected = false;
-    auto* app = ArtifactApplicationManager::instance();
     if (app && app->layerSelectionManager()) {
         auto current = app->layerSelectionManager()->currentLayer();
         isGroupSelected = current && current->isGroupLayer();
@@ -1727,9 +2028,71 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
         service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
     const bool hasLiveFields =
         currentComposition && !currentComposition->transformFields().isEmpty();
+    const bool canReorderLiveFields =
+        currentComposition && currentComposition->transformFields().size() >= 2;
+    const bool hasActiveLiveField =
+        currentComposition && !currentComposition->activeTransformFieldId().trimmed().isEmpty();
+    if (liveFieldMenu) {
+        liveFieldMenu->setEnabled(hasLiveFields);
+        if (hasLiveFields && currentComposition) {
+            const auto fields = currentComposition->transformFields();
+            const QString activeFieldId = currentComposition->activeTransformFieldId();
+            const int fieldCount = fields.size();
+            QString activeFieldName = QStringLiteral("none");
+            for (const auto& field : fields) {
+                if (field.fieldId == activeFieldId) {
+                    activeFieldName = field.displayName.trimmed().isEmpty()
+                                          ? QStringLiteral("Radial Transform Field")
+                                          : field.displayName.trimmed();
+                    break;
+                }
+            }
+            liveFieldMenu->setTitle(
+                QStringLiteral("Live Fields (%1)").arg(fieldCount));
+            liveFieldMenu->setToolTip(
+                QStringLiteral("Active: %1").arg(activeFieldName));
+        } else {
+            liveFieldMenu->setTitle(QStringLiteral("Live Fields"));
+            liveFieldMenu->setToolTip(QStringLiteral("No live fields in this composition"));
+        }
+    }
+    selectLiveRadialFieldAction->setEnabled(hasLiveFields);
+    activatePreviousLiveRadialFieldAction->setEnabled(canReorderLiveFields);
+    activateNextLiveRadialFieldAction->setEnabled(canReorderLiveFields);
     editLiveRadialFieldAction->setEnabled(hasLiveFields);
     toggleLiveRadialFieldAction->setEnabled(hasLiveFields);
+    moveActiveLiveRadialFieldUpAction->setEnabled(canReorderLiveFields && hasActiveLiveField);
+    moveActiveLiveRadialFieldDownAction->setEnabled(canReorderLiveFields && hasActiveLiveField);
+    moveLiveRadialFieldUpAction->setEnabled(canReorderLiveFields);
+    moveLiveRadialFieldDownAction->setEnabled(canReorderLiveFields);
     removeLiveRadialFieldAction->setEnabled(hasLiveFields);
+
+    clearLiveFieldListActions(liveFieldMenu, liveFieldListActions_);
+    if (hasLiveFields && liveFieldMenu && currentComposition) {
+        const auto fields = currentComposition->transformFields();
+        const QString activeFieldId = currentComposition->activeTransformFieldId();
+        for (const auto& field : fields) {
+            const QString blendLabel = transformFieldBlendModeLabel(field.blendMode);
+            auto* action = new QAction(
+                QStringLiteral("%1  [%2 / %3 / %4 / %5%6]")
+                    .arg(field.displayName.trimmed().isEmpty()
+                             ? QStringLiteral("Radial Transform Field")
+                             : field.displayName.trimmed(),
+                         field.fieldId == activeFieldId ? QStringLiteral("active")
+                                                        : QStringLiteral("inactive"),
+                         field.enabled ? QStringLiteral("enabled")
+                                       : QStringLiteral("disabled"),
+                         blendLabel,
+                         transformFieldStrengthLabel(field.strength),
+                         field.invert ? QStringLiteral(" / inv") : QString()),
+                liveFieldMenu);
+            action->setCheckable(true);
+            action->setChecked(field.fieldId == activeFieldId);
+            action->setData(QStringLiteral("live-field:activate:%1").arg(field.fieldId));
+            liveFieldMenu->addAction(action);
+            liveFieldListActions_.push_back(action);
+        }
+    }
     if (hasComp && selectionManager) {
         const auto selected = selectionManager->selectedLayers();
         auto isSelected = [&selected](const LayerID& id) {
@@ -1869,6 +2232,23 @@ void ArtifactLayerMenu::Impl::handleCreateParticle()
     }
     ArtifactLayerInitParams params(uniqueLayerName(u8"Particle 1"), LayerType::Particle);
     ArtifactProjectService::instance()->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+}
+
+void ArtifactLayerMenu::Impl::handleCreatePaint()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, QStringLiteral("Layer"),
+                             QStringLiteral("コンポジションが選択されていません。"));
+        return;
+    }
+
+    ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Paint Layer 1")),
+                                   LayerType::Paint);
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 }
 
 void ArtifactLayerMenu::Impl::handleCreateFormParticle()
@@ -2760,6 +3140,65 @@ void ArtifactLayerMenu::Impl::handleOpenProperties()
     activateDock(window, QStringLiteral("Properties"));
 }
 
+void ArtifactLayerMenu::Impl::handleApplyLipSyncToSwitchLayer()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("Lip Sync"),
+                             QStringLiteral("コンポジションが選択されていません。"));
+        return;
+    }
+
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    if (!selectionManager) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("Lip Sync"),
+                             QStringLiteral("選択レイヤーを取得できませんでした。"));
+        return;
+    }
+
+    ArtifactAbstractLayerPtr audioLayer;
+    ArtifactAbstractLayerPtr switchLayer;
+    const auto selected = selectionManager->selectedLayers();
+    for (const auto& layer : selected) {
+        if (!layer) {
+            continue;
+        }
+        if (!audioLayer && std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+            audioLayer = layer;
+            continue;
+        }
+        if (!switchLayer && std::dynamic_pointer_cast<ArtifactSwitchLayer>(layer)) {
+            switchLayer = layer;
+            continue;
+        }
+    }
+
+    const auto audio = std::dynamic_pointer_cast<ArtifactAudioLayer>(audioLayer);
+    const auto switchTarget = std::dynamic_pointer_cast<ArtifactSwitchLayer>(switchLayer);
+    if (!audio || !switchTarget) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("Lip Sync"),
+                             QStringLiteral("音声レイヤーと Switch Layer の両方を選択してください。"));
+        return;
+    }
+
+    const double frameRate = comp->frameRate().framerate();
+    if (!audio->applyLipSyncToSwitchLayer(*switchTarget, frameRate)) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("Lip Sync"),
+                             QStringLiteral("Lip Sync の適用に失敗しました。"));
+        return;
+    }
+
+    switchTarget->changed();
+    QMessageBox::information(menu_->window(), QStringLiteral("Lip Sync"),
+                             QStringLiteral("Lip Sync を Switch Layer に適用しました。"));
+}
+
 void ArtifactLayerMenu::Impl::handlePrecompose()
 {
     auto* service = ArtifactProjectService::instance();
@@ -3378,6 +3817,27 @@ void ArtifactLayerMenu::Impl::handleCreateLiveRadialField()
     if (!accepted) {
         return;
     }
+    const double strength = QInputDialog::getDouble(
+        menu_->window(), QStringLiteral("ライブ放射状Field"),
+        QStringLiteral("強さ (strength)"),
+        1.0, 0.0, 4.0, 2, &accepted);
+    if (!accepted) {
+        return;
+    }
+
+    const auto blendChoices = transformFieldBlendModeChoices();
+    const QString blendMode = QInputDialog::getItem(
+        menu_->window(), QStringLiteral("ライブ放射状Field"),
+        QStringLiteral("Blend mode"), blendChoices, 0, false, &accepted);
+    if (!accepted) {
+        return;
+    }
+
+    const auto invertChoice = QMessageBox::question(
+        menu_->window(), QStringLiteral("ライブ放射状Field"),
+        QStringLiteral("Field を反転しますか?"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    const bool invert = invertChoice == QMessageBox::Yes;
 
     QPointF center;
     for (const auto& layer : layers) {
@@ -3394,6 +3854,9 @@ void ArtifactLayerMenu::Impl::handleCreateLiveRadialField()
     field.center = center;
     field.expansion = expansionPercent / 100.0;
     field.edgeScale = edgeScalePercent / 100.0;
+    field.strength = strength;
+    field.blendMode = blendMode;
+    field.invert = invert;
     field.coordinateParentLayerId = commonParentId;
     for (const auto& layer : layers) {
         const QPointF position(
@@ -3414,6 +3877,108 @@ void ArtifactLayerMenu::Impl::handleCreateLiveRadialField()
     if (auto* manager = UndoManager::instance()) {
         manager->push(std::make_unique<AddCompositionTransformFieldCommand>(
             ArtifactCompositionWeakPtr(composition), std::move(field)));
+    } else {
+        composition->addTransformField(field);
+        composition->setActiveTransformFieldId(field.fieldId);
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleSelectLiveRadialField()
+{
+    const auto composition =
+        ArtifactProjectService::instance()
+            ? ArtifactProjectService::instance()->currentComposition().lock()
+            : ArtifactCompositionPtr{};
+    auto selected = chooseTransformField(
+        menu_->window(), composition, QStringLiteral("ライブFieldを選択"));
+    if (!selected.has_value() || !composition) {
+        return;
+    }
+
+    const QString beforeFieldId = composition->activeTransformFieldId();
+    if (beforeFieldId == selected->fieldId) {
+        return;
+    }
+
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<SetActiveCompositionTransformFieldCommand>(
+            ArtifactCompositionWeakPtr(composition), beforeFieldId,
+            selected->fieldId));
+    } else {
+        composition->setActiveTransformFieldId(selected->fieldId);
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleActivateLiveRadialField(const int direction)
+{
+    const auto composition =
+        ArtifactProjectService::instance()
+            ? ArtifactProjectService::instance()->currentComposition().lock()
+            : ArtifactCompositionPtr{};
+    if (!composition || direction == 0) {
+        return;
+    }
+
+    const auto fields = composition->transformFields();
+    if (fields.size() < 2) {
+        return;
+    }
+
+    const QString activeFieldId = composition->activeTransformFieldId();
+    int activeIndex = -1;
+    for (int index = 0; index < fields.size(); ++index) {
+        if (fields.at(index).fieldId == activeFieldId) {
+            activeIndex = index;
+            break;
+        }
+    }
+
+    if (activeIndex < 0) {
+        activeIndex = 0;
+    }
+
+    const int count = fields.size();
+    const int nextIndex = (activeIndex + direction + count) % count;
+    if (nextIndex < 0 || nextIndex >= count) {
+        return;
+    }
+
+    const QString beforeFieldId = activeFieldId;
+    const QString afterFieldId = fields.at(nextIndex).fieldId;
+    if (beforeFieldId == afterFieldId) {
+        return;
+    }
+
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<SetActiveCompositionTransformFieldCommand>(
+            ArtifactCompositionWeakPtr(composition), beforeFieldId, afterFieldId));
+    } else {
+        composition->setActiveTransformFieldId(afterFieldId);
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleActivateLiveFieldById(const QString& fieldId)
+{
+    const auto composition =
+        ArtifactProjectService::instance()
+            ? ArtifactProjectService::instance()->currentComposition().lock()
+            : ArtifactCompositionPtr{};
+    if (!composition || fieldId.trimmed().isEmpty()) {
+        return;
+    }
+
+    const QString beforeFieldId = composition->activeTransformFieldId();
+    const QString afterFieldId = fieldId.trimmed();
+    if (beforeFieldId == afterFieldId) {
+        return;
+    }
+
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<SetActiveCompositionTransformFieldCommand>(
+            ArtifactCompositionWeakPtr(composition), beforeFieldId,
+            afterFieldId));
+    } else {
+        composition->setActiveTransformFieldId(afterFieldId);
     }
 }
 
@@ -3452,9 +4017,38 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
         return;
     }
 
+    edited.strength = QInputDialog::getDouble(
+        menu_->window(), QStringLiteral("ライブFieldを編集"),
+        QStringLiteral("強さ (strength)"),
+        edited.strength, 0.0, 4.0, 2, &accepted);
+    if (!accepted) {
+        return;
+    }
+
+    const auto blendChoices = transformFieldBlendModeChoices();
+    const int currentBlendIndex = std::max(
+        0, blendChoices.indexOf(
+               transformFieldBlendModeLabel(edited.blendMode).toLower()));
+    edited.blendMode = QInputDialog::getItem(
+        menu_->window(), QStringLiteral("ライブFieldを編集"),
+        QStringLiteral("Blend mode"), blendChoices, currentBlendIndex, false,
+        &accepted);
+    if (!accepted) {
+        return;
+    }
+
+    const auto invertChoice = QMessageBox::question(
+        menu_->window(), QStringLiteral("ライブFieldを編集"),
+        QStringLiteral("Field を反転しますか?"),
+        QMessageBox::Yes | QMessageBox::No,
+        edited.invert ? QMessageBox::Yes : QMessageBox::No);
+    edited.invert = invertChoice == QMessageBox::Yes;
+
     if (auto* manager = UndoManager::instance()) {
         manager->push(std::make_unique<UpdateCompositionTransformFieldCommand>(
             ArtifactCompositionWeakPtr(composition), *selected, std::move(edited)));
+    } else {
+        composition->addTransformField(std::move(edited));
     }
 }
 
@@ -3474,6 +4068,104 @@ void ArtifactLayerMenu::Impl::handleToggleLiveRadialField()
     if (auto* manager = UndoManager::instance()) {
         manager->push(std::make_unique<UpdateCompositionTransformFieldCommand>(
             ArtifactCompositionWeakPtr(composition), *selected, std::move(edited)));
+    } else {
+        composition->addTransformField(std::move(edited));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleMoveActiveLiveRadialField(const int direction)
+{
+    const auto composition =
+        ArtifactProjectService::instance()
+            ? ArtifactProjectService::instance()->currentComposition().lock()
+            : ArtifactCompositionPtr{};
+    if (!composition || direction == 0) {
+        return;
+    }
+
+    const QString activeFieldId = composition->activeTransformFieldId();
+    if (activeFieldId.isEmpty()) {
+        QMessageBox::information(
+            menu_->window(), QStringLiteral("ライブFieldの順序を変更"),
+            QStringLiteral("アクティブな Field がありません。先に Field を選択してください。"));
+        return;
+    }
+
+    const auto reordered =
+        reorderedTransformFieldsForMove(composition, activeFieldId, direction);
+    if (!reordered.has_value()) {
+        QMessageBox::information(
+            menu_->window(), QStringLiteral("ライブFieldの順序を変更"),
+            direction < 0
+                ? QStringLiteral("これ以上上へ移動できません。")
+                : QStringLiteral("これ以上下へ移動できません。"));
+        return;
+    }
+
+    const auto before = composition->transformFields();
+    const auto& after = reordered->first;
+    if (before.size() == after.size() &&
+        std::equal(before.cbegin(), before.cend(), after.cbegin(),
+                   [](const CompositionTransformField& lhs,
+                      const CompositionTransformField& rhs) {
+                       return lhs.fieldId == rhs.fieldId;
+                   })) {
+        return;
+    }
+
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<ReorderCompositionTransformFieldsCommand>(
+            ArtifactCompositionWeakPtr(composition), before, after,
+            direction < 0 ? QStringLiteral("Move Active Live Field Up")
+                          : QStringLiteral("Move Active Live Field Down")));
+    } else {
+        composition->setTransformFields(after);
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleMoveLiveRadialField(const int direction)
+{
+    const auto composition =
+        ArtifactProjectService::instance()
+            ? ArtifactProjectService::instance()->currentComposition().lock()
+            : ArtifactCompositionPtr{};
+    auto selected = chooseTransformField(
+        menu_->window(), composition, QStringLiteral("ライブFieldの順序を変更"));
+    if (!selected.has_value() || !composition) {
+        return;
+    }
+
+    const auto reordered =
+        reorderedTransformFieldsForMove(composition, selected->fieldId, direction);
+    if (!reordered.has_value()) {
+        QMessageBox::information(
+            menu_->window(), QStringLiteral("ライブFieldの順序を変更"),
+            direction < 0
+                ? QStringLiteral("これ以上上へ移動できません。")
+                : QStringLiteral("これ以上下へ移動できません。"));
+        return;
+    }
+
+    const auto before = composition->transformFields();
+    const auto& after = reordered->first;
+    const bool sameOrder =
+        before.size() == after.size() &&
+        std::equal(before.cbegin(), before.cend(), after.cbegin(),
+                   [](const CompositionTransformField& lhs,
+                      const CompositionTransformField& rhs) {
+                       return lhs.fieldId == rhs.fieldId;
+                   });
+    if (sameOrder) {
+        return;
+    }
+
+    if (auto* manager = UndoManager::instance()) {
+        manager->push(std::make_unique<ReorderCompositionTransformFieldsCommand>(
+            ArtifactCompositionWeakPtr(composition), before, after,
+            direction < 0 ? QStringLiteral("Move Live Field Up")
+                          : QStringLiteral("Move Live Field Down")));
+    } else {
+        composition->setTransformFields(after);
     }
 }
 
@@ -3488,9 +4180,13 @@ void ArtifactLayerMenu::Impl::handleRemoveLiveRadialField()
     if (!selected.has_value()) {
         return;
     }
+    const QString activeFieldId = composition ? composition->activeTransformFieldId() : QString();
     if (auto* manager = UndoManager::instance()) {
         manager->push(std::make_unique<RemoveCompositionTransformFieldCommand>(
-            ArtifactCompositionWeakPtr(composition), std::move(*selected)));
+            ArtifactCompositionWeakPtr(composition), std::move(*selected),
+            activeFieldId));
+    } else {
+        composition->removeTransformField(selected->fieldId);
     }
 }
 

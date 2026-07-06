@@ -100,8 +100,16 @@ void ArtifactScreenshotExportDialog::Impl::syncFormatUi(ArtifactScreenshotExport
 
  const QString format = formatCombo->currentData().toString();
  const bool isJpeg = normalizedScreenshotFormat(format) == QStringLiteral("jpg");
+ const bool isExr = normalizedScreenshotFormat(format) == QStringLiteral("exr");
  jpegQualityLabel->setEnabled(isJpeg);
  jpegQualitySpin->setEnabled(isJpeg);
+ if (multiChannelCheck) {
+  const QSignalBlocker blocker(multiChannelCheck);
+  multiChannelCheck->setEnabled(isExr);
+  if (!isExr) {
+   multiChannelCheck->setChecked(false);
+  }
+ }
 
  if (filePathEdit && !filePathEdit->text().trimmed().isEmpty()) {
   const QSignalBlocker blocker(filePathEdit);
@@ -308,16 +316,20 @@ void ArtifactScreenshotExportDialog::setOptions(const ScreenshotExportOptions& o
  setFilePath(options.filePath);
  setFormat(options.format);
  setJpegQuality(options.jpegQuality);
- setCaptureSource(options.captureSource);
+ setCaptureSource(options.multiChannel ? ScreenshotCaptureSource::Renderer
+                                       : options.captureSource);
+ setMultiChannelEnabled(options.multiChannel);
 }
 
 ScreenshotExportOptions ArtifactScreenshotExportDialog::options() const
 {
  ScreenshotExportOptions options;
  options.filePath = filePath();
- options.format = format();
+ options.format = multiChannelEnabled() ? QStringLiteral("exr") : format();
  options.jpegQuality = jpegQuality();
- options.captureSource = captureSource();
+ options.captureSource = multiChannelEnabled() ? ScreenshotCaptureSource::Renderer
+                                               : captureSource();
+ options.multiChannel = multiChannelEnabled();
  return options;
 }
 

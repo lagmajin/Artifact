@@ -10,6 +10,7 @@ module;
 #include <QRectF>
 #include <QString>
 #include <QStringList>
+#include <QMatrix4x4>
 #include <QSize>
 #include <QVector>
 
@@ -30,7 +31,9 @@ void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
                              const ArtifactAbstractLayerPtr &layer);
 
 void drawSelectionOverlay(ArtifactIRenderer *renderer,
-                          const ArtifactAbstractLayerPtr &layer);
+                          const ArtifactAbstractLayerPtr &layer,
+                          const QMatrix4x4 *cameraView = nullptr,
+                          const QMatrix4x4 *cameraProj = nullptr);
 
 void drawTrackerPinOverlay(ArtifactIRenderer *renderer,
                           float x,

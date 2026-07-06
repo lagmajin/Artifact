@@ -2489,6 +2489,210 @@ std::array<QPointF, 4> rectCorners(const QRectF &rect)
 
 
 
+enum class TransformFieldDragMode { None, Center, Radius };
+
+
+
+bool fieldTargetsSelectedLayers(const CompositionTransformField &field,
+                               const QSet<LayerID> &selectedLayerIds)
+{
+  if (selectedLayerIds.isEmpty()) {
+    return false;
+  }
+  for (const auto &targetLayerId : field.targetLayerIds) {
+    if (selectedLayerIds.contains(targetLayerId)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+
+
+QPointF transformFieldDisplayCenter(const ArtifactCompositionPtr &comp,
+                                   const CompositionTransformField &field)
+{
+  QPointF displayCenter = field.center;
+  if (!comp || field.coordinateParentLayerId.isNil()) {
+    return displayCenter;
+  }
+  if (const auto parentLayer = comp->layerById(field.coordinateParentLayerId)) {
+    displayCenter = parentLayer->getGlobalTransform().map(displayCenter);
+  }
+  return displayCenter;
+}
+
+
+
+QPointF transformFieldDisplayRadiusPoint(const ArtifactCompositionPtr &comp,
+                                         const CompositionTransformField &field)
+{
+  const QPointF radiusPoint = field.center + QPointF(field.radius, 0.0);
+  if (!comp || field.coordinateParentLayerId.isNil()) {
+    return radiusPoint;
+  }
+  if (const auto parentLayer = comp->layerById(field.coordinateParentLayerId)) {
+    return parentLayer->getGlobalTransform().map(radiusPoint);
+  }
+  return radiusPoint;
+}
+
+
+
+bool transformFieldLocalPointFromCanvas(const ArtifactCompositionPtr &comp,
+                                        const CompositionTransformField &field,
+                                        const QPointF &canvasPoint,
+                                        QPointF &outLocalPoint)
+{
+  outLocalPoint = canvasPoint;
+  if (!comp || field.coordinateParentLayerId.isNil()) {
+    return true;
+  }
+  const auto parentLayer = comp->layerById(field.coordinateParentLayerId);
+  if (!parentLayer) {
+    return true;
+  }
+  bool invertible = false;
+  const QTransform invTransform = parentLayer->getGlobalTransform().inverted(&invertible);
+  if (!invertible) {
+    return false;
+  }
+  outLocalPoint = invTransform.map(canvasPoint);
+  return true;
+}
+
+
+
+bool hitTestTransformFieldHandle(
+    const ArtifactCompositionPtr &comp, const QPointF &canvasPos,
+    const QSet<LayerID> &selectedLayerIds, qreal hitThreshold,
+    QString &outFieldId, TransformFieldDragMode &outMode)
+{
+  outFieldId.clear();
+  outMode = TransformFieldDragMode::None;
+  if (!comp) {
+    return false;
+  }
+
+  qreal bestDistance = std::numeric_limits<qreal>::max();
+
+  for (const auto &field : comp->transformFields()) {
+    if (!field.enabled || !fieldTargetsSelectedLayers(field, selectedLayerIds)) {
+      continue;
+    }
+
+    const QPointF displayCenter = transformFieldDisplayCenter(comp, field);
+    const QPointF displayRadiusPoint = transformFieldDisplayRadiusPoint(comp, field);
+
+    const qreal centerDistance = std::hypot(canvasPos.x() - displayCenter.x(),
+                                            canvasPos.y() - displayCenter.y());
+    if (centerDistance <= hitThreshold && centerDistance < bestDistance) {
+      bestDistance = centerDistance;
+      outFieldId = field.fieldId;
+      outMode = TransformFieldDragMode::Center;
+    }
+
+    const qreal radiusDistance = std::hypot(
+        canvasPos.x() - displayRadiusPoint.x(),
+        canvasPos.y() - displayRadiusPoint.y());
+    if (radiusDistance <= hitThreshold && radiusDistance < bestDistance) {
+      bestDistance = radiusDistance;
+      outFieldId = field.fieldId;
+      outMode = TransformFieldDragMode::Radius;
+    }
+  }
+
+  return !outFieldId.isEmpty() && outMode != TransformFieldDragMode::None;
+}
+
+
+
+void drawTransformFieldBadge(ArtifactIRenderer *renderer,
+                             const CompositionTransformField &field,
+                             const QPointF &displayCenter,
+                             const QPointF &displayRadiusPoint,
+                             bool isHoveredField, bool isDraggingField,
+                             bool isActiveField, float inverseZoom)
+{
+  if (!renderer || !isActiveField) {
+    return;
+  }
+
+  const QString badgeTitle = field.displayName.trimmed().isEmpty()
+                                 ? QStringLiteral("Live Field")
+                                 : field.displayName.trimmed();
+  const QString blendMode = field.blendMode.trimmed().toLower();
+  const QString blendLabel =
+      blendMode == QStringLiteral("additive")
+          ? QStringLiteral("Additive")
+          : blendMode == QStringLiteral("multiply")
+                ? QStringLiteral("Multiply")
+                : blendMode == QStringLiteral("screen")
+                      ? QStringLiteral("Screen")
+                      : QStringLiteral("Normal");
+  const QString badgeSubtitle = QStringLiteral("%1 / %2 / %3")
+                                   .arg(QStringLiteral("ACTIVE"), blendLabel,
+                                        field.enabled ? QStringLiteral("enabled")
+                                                      : QStringLiteral("disabled"));
+  const QString badgeDetails = QStringLiteral("%1 / %2")
+                                   .arg(QStringLiteral("strength %1")
+                                            .arg(QString::number(field.strength, 'f', 1)),
+                                        field.invert ? QStringLiteral("invert on")
+                                                     : QStringLiteral("invert off"));
+
+  const QPointF anchor =
+      QPointF((displayCenter.x() + displayRadiusPoint.x()) * 0.5,
+              (displayCenter.y() + displayRadiusPoint.y()) * 0.5);
+  const float panelW =
+      std::clamp(160.0f + static_cast<float>(badgeTitle.size()) * 4.5f, 160.0f,
+                 320.0f);
+  const float panelH = 54.0f;
+  const float panelX = static_cast<float>(anchor.x()) + 12.0f;
+  const float panelY = static_cast<float>(anchor.y()) - 10.0f - panelH;
+
+  const FloatColor panelFill =
+      isDraggingField
+          ? FloatColor{0.16f, 0.10f, 0.05f, 0.88f}
+          : isHoveredField
+                ? FloatColor{0.10f, 0.12f, 0.08f, 0.86f}
+                : FloatColor{0.05f, 0.12f, 0.08f, 0.82f};
+  const FloatColor panelBorder =
+      isDraggingField
+          ? FloatColor{1.0f, 0.55f, 0.18f, 0.96f}
+          : isHoveredField ? FloatColor{1.0f, 0.83f, 0.32f, 0.94f}
+                           : FloatColor{0.38f, 0.95f, 0.63f, 0.94f};
+
+  renderer->drawOverlayPanel(panelX, panelY, panelW, panelH, panelFill,
+                             panelBorder);
+
+  QFont titleFont = QApplication::font();
+  titleFont.setPointSizeF(std::max(9.0, static_cast<double>(titleFont.pointSizeF())));
+  titleFont.setWeight(QFont::DemiBold);
+  QFont detailFont = QApplication::font();
+  detailFont.setPointSizeF(
+      std::max(7.5, static_cast<double>(detailFont.pointSizeF()) - 0.5));
+
+  renderer->drawText(
+      QRectF(panelX + 10.0f, panelY + 6.0f, panelW - 20.0f, 16.0f),
+      badgeTitle, titleFont, FloatColor{0.98f, 0.99f, 1.0f, 1.0f},
+      Qt::AlignLeft | Qt::AlignVCenter);
+  renderer->drawText(
+      QRectF(panelX + 10.0f, panelY + 22.0f, panelW - 20.0f, 14.0f),
+      badgeSubtitle, detailFont, FloatColor{0.88f, 0.94f, 0.91f, 1.0f},
+      Qt::AlignLeft | Qt::AlignVCenter);
+  renderer->drawText(
+      QRectF(panelX + 10.0f, panelY + 36.0f, panelW - 20.0f, 12.0f),
+      badgeDetails, detailFont, FloatColor{0.80f, 0.88f, 0.84f, 1.0f},
+      Qt::AlignLeft | Qt::AlignVCenter);
+
+  const float tagSize = std::max(8.0f, 10.0f * inverseZoom);
+  renderer->drawCircle(static_cast<float>(displayCenter.x()),
+                       static_cast<float>(displayCenter.y()),
+                       tagSize * 1.4f, panelBorder, 1.4f, true);
+}
+
+
+
 QString uniqueLayerNameForCurrentComposition(const QString &baseName)
 
 {
@@ -4266,6 +4470,47 @@ private:
 
 
 
+class TransformFieldUndoCommand final : public UndoCommand {
+
+public:
+
+  TransformFieldUndoCommand(ArtifactCompositionWeakPtr composition,
+                            CompositionTransformField before,
+                            CompositionTransformField after)
+      : composition_(std::move(composition)),
+        before_(std::move(before)),
+        after_(std::move(after))
+  {
+  }
+
+  void undo() override { apply(before_); }
+
+  void redo() override { apply(after_); }
+
+  QString label() const override
+  {
+    return QStringLiteral("Edit Live Field");
+  }
+
+private:
+  void apply(const CompositionTransformField &field)
+  {
+    if (const auto composition = composition_.lock()) {
+      composition->addTransformField(field);
+      composition->changed();
+      if (auto *mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+      }
+    }
+  }
+
+  ArtifactCompositionWeakPtr composition_;
+  CompositionTransformField before_;
+  CompositionTransformField after_;
+};
+
+
+
 class MotionPathInterpolationUndoCommand final : public UndoCommand {
 
 public:
@@ -5663,6 +5908,19 @@ void drawLayerForCompositionView(
 
     cacheSignature += matteSourceSignature;
 
+    auto applyResolvedMattes = [&](QImage& targetSurface) {
+      if (targetSurface.isNull() || resolvedMatteSources.isEmpty()) {
+        return;
+      }
+
+      const std::function<QImage(const ArtifactCore::Id&)> cachedResolver =
+          [&resolvedMatteSources](const ArtifactCore::Id& id) {
+            return resolvedMatteSources.value(id);
+          };
+
+      applyLayerMatteToSurface(layer, targetSurface, cachedResolver);
+    };
+
     const QString cacheSlotKey =
 
         ownerId + (interactiveDraft ? QStringLiteral("|draft")
@@ -5697,20 +5955,6 @@ void drawLayerForCompositionView(
 
       } else {
 
-        if (!resolvedMatteSources.isEmpty()) {
-
-          const std::function<QImage(const ArtifactCore::Id &)> cachedResolver =
-
-              [&resolvedMatteSources](const ArtifactCore::Id &id) {
-
-                return resolvedMatteSources.value(id);
-
-              };
-
-          applyLayerMatteToSurface(layer, surface, cachedResolver);
-
-        }
-
         std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
 
         if (allowSurfaceCache) {
@@ -5737,6 +5981,16 @@ void drawLayerForCompositionView(
 
           }
 
+        }
+
+        applyResolvedMattes(surface);
+
+        if (processedBuffer && !surface.isNull()) {
+          ArtifactCore::ImageF32x4_RGBA mattedProcessed;
+          mattedProcessed.setFromCVMat(
+              ArtifactCore::CvUtils::qImageToCvMat(surface, true));
+          processedBuffer =
+              std::make_shared<ArtifactCore::ImageF32x4_RGBA>(mattedProcessed);
         }
 
 
@@ -5789,20 +6043,6 @@ void drawLayerForCompositionView(
 
     } else if (allowSurfaceCache) {
 
-      if (!resolvedMatteSources.isEmpty()) {
-
-        const std::function<QImage(const ArtifactCore::Id &)> cachedResolver =
-
-            [&resolvedMatteSources](const ArtifactCore::Id &id) {
-
-              return resolvedMatteSources.value(id);
-
-            };
-
-        applyLayerMatteToSurface(layer, surface, cachedResolver);
-
-      }
-
       ArtifactCore::ImageF32x4_RGBA processed;
 
       if (buildRasterizedSurfaceBuffer(layer, surface, &processed,
@@ -5814,6 +6054,8 @@ void drawLayerForCompositionView(
         surface = processed.toQImage();
 
       }
+
+      applyResolvedMattes(surface);
 
     }
 
@@ -9496,6 +9738,24 @@ public:
 
 
 
+  // Live field editing state
+
+  bool isDraggingTransformField_ = false;
+
+  QString draggingTransformFieldId_;
+
+  CompositionTransformField draggingTransformFieldBefore_;
+
+  TransformFieldDragMode draggingTransformFieldMode_ =
+      TransformFieldDragMode::None;
+
+  QString hoveredTransformFieldId_;
+
+  TransformFieldDragMode hoveredTransformFieldMode_ =
+      TransformFieldDragMode::None;
+
+
+
   // Mask editing state
 
   int hoveredMaskIndex_ = -1;
@@ -10144,6 +10404,123 @@ public:
 
     dragGroupStartPositions_.clear();
 
+    clearTransformFieldDragState();
+
+    clearTransformFieldHoverState();
+
+  }
+
+
+
+  void clearTransformFieldDragState()
+  {
+    isDraggingTransformField_ = false;
+    draggingTransformFieldId_.clear();
+    draggingTransformFieldBefore_ = {};
+    draggingTransformFieldMode_ = TransformFieldDragMode::None;
+  }
+
+
+
+  void clearTransformFieldHoverState()
+  {
+    hoveredTransformFieldId_.clear();
+    hoveredTransformFieldMode_ = TransformFieldDragMode::None;
+  }
+
+
+
+  bool beginTransformFieldDrag(const ArtifactCompositionPtr &comp,
+                               const QString &fieldId,
+                               TransformFieldDragMode mode)
+  {
+    if (!comp || fieldId.isEmpty() || mode == TransformFieldDragMode::None) {
+      return false;
+    }
+
+    for (const auto &field : comp->transformFields()) {
+      if (field.fieldId != fieldId) {
+        continue;
+      }
+      draggingTransformFieldBefore_ = field;
+      draggingTransformFieldId_ = fieldId;
+      draggingTransformFieldMode_ = mode;
+      hoveredTransformFieldId_ = fieldId;
+      hoveredTransformFieldMode_ = mode;
+      if (comp->activeTransformFieldId() != fieldId) {
+        comp->setActiveTransformFieldId(fieldId);
+      }
+      isDraggingTransformField_ = true;
+      return true;
+    }
+
+    return false;
+  }
+
+
+
+  bool applyTransformFieldDrag(const ArtifactCompositionPtr &comp,
+                               const QPointF &canvasPos)
+  {
+    if (!isDraggingTransformField_ || draggingTransformFieldId_.isEmpty() ||
+        !comp) {
+      return false;
+    }
+
+    for (auto field : comp->transformFields()) {
+      if (field.fieldId != draggingTransformFieldId_) {
+        continue;
+      }
+
+      QPointF localPoint;
+      if (!transformFieldLocalPointFromCanvas(comp, field, canvasPos,
+                                              localPoint)) {
+        return false;
+      }
+
+      if (draggingTransformFieldMode_ == TransformFieldDragMode::Center) {
+        field.center = localPoint;
+      } else if (draggingTransformFieldMode_ == TransformFieldDragMode::Radius) {
+        field.radius = std::max<qreal>(
+            0.01, std::hypot(localPoint.x() - field.center.x(),
+                              localPoint.y() - field.center.y()));
+      } else {
+        return false;
+      }
+
+      comp->addTransformField(field);
+      comp->changed();
+      invalidateOverlayComposite();
+      return true;
+    }
+
+    return false;
+  }
+
+
+
+  bool updateTransformFieldHover(const ArtifactCompositionPtr &comp,
+                                 const QPointF &canvasPos,
+                                 const QSet<LayerID> &selectedLayerIds,
+                                 qreal hitThreshold)
+  {
+    QString fieldId;
+    TransformFieldDragMode mode = TransformFieldDragMode::None;
+    if (!hitTestTransformFieldHandle(comp, canvasPos, selectedLayerIds,
+                                     hitThreshold, fieldId, mode)) {
+      const bool changed = !hoveredTransformFieldId_.isEmpty() ||
+                           hoveredTransformFieldMode_ != TransformFieldDragMode::None;
+      clearTransformFieldHoverState();
+      return changed;
+    }
+
+    if (hoveredTransformFieldId_ == fieldId &&
+        hoveredTransformFieldMode_ == mode) {
+      return false;
+    }
+    hoveredTransformFieldId_ = std::move(fieldId);
+    hoveredTransformFieldMode_ = mode;
+    return true;
   }
 
 
@@ -15214,6 +15591,41 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
   }
 
+  if (event->button() == Qt::LeftButton && activeTool == ToolType::Selection &&
+      comp && impl_->renderer_) {
+    QSet<LayerID> selectedLayerIds;
+    if (auto *selection = ArtifactApplicationManager::instance()
+                              ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                              : nullptr) {
+      for (const auto &layer : selection->selectedLayers()) {
+        if (layer) {
+          selectedLayerIds.insert(layer->id());
+        }
+      }
+    }
+    if (selectedLayerIds.isEmpty() && !impl_->selectedLayerId_.isNil()) {
+      selectedLayerIds.insert(impl_->selectedLayerId_);
+    }
+
+    if (!selectedLayerIds.isEmpty()) {
+      const auto cPos = impl_->renderer_->viewportToCanvas(
+          {(float)viewportPos.x(), (float)viewportPos.y()});
+      const float hitThreshold = 14.0f / impl_->renderer_->getZoom();
+      QString fieldId;
+      TransformFieldDragMode dragMode = TransformFieldDragMode::None;
+      if (hitTestTransformFieldHandle(comp, QPointF(cPos.x, cPos.y),
+                                      selectedLayerIds, hitThreshold, fieldId,
+                                      dragMode) &&
+          impl_->beginTransformFieldDrag(comp, fieldId, dragMode)) {
+        notifyViewportInteractionActivity();
+        impl_->applyTransformFieldDrag(comp, QPointF(cPos.x, cPos.y));
+        markRenderDirty();
+        event->accept();
+        return;
+      }
+    }
+  }
+
 if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
     auto *selectionManager = ArtifactApplicationManager::instance()
@@ -16434,9 +16846,41 @@ void CompositionRenderController::handleMouseMove(
 
   }
 
+  if (activeTool == ToolType::Selection && impl_->renderer_ &&
+      !impl_->isDraggingTransformField_) {
+    auto comp = impl_->previewPipeline_.composition();
+    QSet<LayerID> selectedLayerIds;
+    if (auto *selection = ArtifactApplicationManager::instance()
+                              ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                              : nullptr) {
+      for (const auto &layer : selection->selectedLayers()) {
+        if (layer) {
+          selectedLayerIds.insert(layer->id());
+        }
+      }
+    }
+    if (selectedLayerIds.isEmpty() && !impl_->selectedLayerId_.isNil()) {
+      selectedLayerIds.insert(impl_->selectedLayerId_);
+    }
+    if (!selectedLayerIds.isEmpty() && comp) {
+      const auto cPos = impl_->renderer_->viewportToCanvas(
+          {(float)viewportPos.x(), (float)viewportPos.y()});
+      const float hitThreshold = 14.0f / impl_->renderer_->getZoom();
+      if (impl_->updateTransformFieldHover(comp, QPointF(cPos.x, cPos.y),
+                                          selectedLayerIds, hitThreshold)) {
+        needsRender = true;
+      }
+    } else if (!impl_->hoveredTransformFieldId_.isEmpty() ||
+               impl_->hoveredTransformFieldMode_ != TransformFieldDragMode::None) {
+      impl_->clearTransformFieldHoverState();
+      needsRender = true;
+    }
+  } else if (!impl_->hoveredTransformFieldId_.isEmpty() ||
+             impl_->hoveredTransformFieldMode_ != TransformFieldDragMode::None) {
+    impl_->clearTransformFieldHoverState();
+    needsRender = true;
+  }
 
-
-  
 
   // MotionSketch tool: capture samples during drag
 
@@ -16496,6 +16940,19 @@ void CompositionRenderController::handleMouseMove(
 
     }
 
+  }
+
+  if (impl_->isDraggingTransformField_ && impl_->renderer_) {
+    auto comp = impl_->previewPipeline_.composition();
+    if (comp) {
+      const auto cPos = impl_->renderer_->viewportToCanvas(
+          {(float)viewportPos.x(), (float)viewportPos.y()});
+      if (impl_->applyTransformFieldDrag(comp, QPointF(cPos.x, cPos.y))) {
+        notifyViewportInteractionActivity();
+        markRenderDirty();
+        return;
+      }
+    }
   }
 
 if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
@@ -17082,6 +17539,51 @@ void CompositionRenderController::handleMouseRelease() {
 
     markRenderDirty();
 
+  }
+
+  if (impl_->isDraggingTransformField_) {
+    auto comp = impl_->previewPipeline_.composition();
+    if (comp && !impl_->draggingTransformFieldId_.isEmpty()) {
+      for (const auto &field : comp->transformFields()) {
+        if (field.fieldId != impl_->draggingTransformFieldId_) {
+          continue;
+        }
+        const bool changed =
+            field.center != impl_->draggingTransformFieldBefore_.center ||
+            std::abs(field.radius - impl_->draggingTransformFieldBefore_.radius) >
+                0.0001 ||
+            std::abs(field.strength - impl_->draggingTransformFieldBefore_.strength) >
+                0.0001 ||
+            std::abs(field.expansion -
+                     impl_->draggingTransformFieldBefore_.expansion) >
+                0.0001 ||
+            std::abs(field.edgeScale -
+                     impl_->draggingTransformFieldBefore_.edgeScale) >
+                0.0001 ||
+            field.blendMode != impl_->draggingTransformFieldBefore_.blendMode ||
+            field.invert != impl_->draggingTransformFieldBefore_.invert ||
+            field.enabled != impl_->draggingTransformFieldBefore_.enabled ||
+            field.coordinateParentLayerId !=
+                impl_->draggingTransformFieldBefore_.coordinateParentLayerId ||
+            field.targetLayerIds !=
+                impl_->draggingTransformFieldBefore_.targetLayerIds ||
+            field.displayName != impl_->draggingTransformFieldBefore_.displayName;
+        if (changed) {
+          if (auto *mgr = UndoManager::instance()) {
+            mgr->push(std::make_unique<TransformFieldUndoCommand>(
+                ArtifactCompositionWeakPtr(comp),
+                impl_->draggingTransformFieldBefore_, field));
+          }
+        }
+        break;
+      }
+    }
+
+    impl_->clearTransformFieldDragState();
+    impl_->invalidateOverlayComposite();
+    finishViewportInteraction();
+    markRenderDirty();
+    return;
   }
 
 
@@ -18134,6 +18636,50 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
     return Qt::ArrowCursor;
 
+  }
+
+  if (activeTool == ToolType::Selection) {
+    auto comp = impl_->previewPipeline_.composition();
+    if (comp) {
+      QSet<LayerID> selectedLayerIds;
+      if (auto* selection = ArtifactApplicationManager::instance()
+                                ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                                : nullptr) {
+        for (const auto& layer : selection->selectedLayers()) {
+          if (layer) {
+            selectedLayerIds.insert(layer->id());
+          }
+        }
+      }
+      if (selectedLayerIds.isEmpty() && !impl_->selectedLayerId_.isNil()) {
+        selectedLayerIds.insert(impl_->selectedLayerId_);
+      }
+      if (!selectedLayerIds.isEmpty()) {
+        const auto canvasPos = impl_->renderer_->viewportToCanvas(
+            {(float)viewportPos.x(), (float)viewportPos.y()});
+        QString fieldId;
+        TransformFieldDragMode mode = TransformFieldDragMode::None;
+        if (hitTestTransformFieldHandle(
+                comp, QPointF(canvasPos.x, canvasPos.y), selectedLayerIds,
+                14.0f / std::max(0.001f, impl_->renderer_->getZoom()),
+                fieldId, mode)) {
+          if (mode == TransformFieldDragMode::Center) {
+            return impl_->isDraggingTransformField_ &&
+                           impl_->draggingTransformFieldMode_ ==
+                               TransformFieldDragMode::Center
+                       ? Qt::ClosedHandCursor
+                       : Qt::SizeAllCursor;
+          }
+          if (mode == TransformFieldDragMode::Radius) {
+            return impl_->isDraggingTransformField_ &&
+                           impl_->draggingTransformFieldMode_ ==
+                               TransformFieldDragMode::Radius
+                       ? Qt::ClosedHandCursor
+                       : Qt::SizeHorCursor;
+          }
+        }
+      }
+    }
   }
 
 
@@ -23679,6 +24225,7 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
     renderer_->setUseExternalMatrices(false);
   }
   if (comp) {
+    const QString activeTransformFieldId = comp->activeTransformFieldId();
     QSet<LayerID> selectedLayerIds;
     if (auto* selection = ArtifactLayerSelectionManager::instance()) {
       for (const auto& layer : selection->selectedLayers()) {
@@ -23688,9 +24235,11 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
       }
     }
     for (const auto& field : comp->transformFields()) {
-      if (!field.enabled) {
+      const bool isActiveField = field.fieldId == activeTransformFieldId;
+      if (!field.enabled && !isActiveField) {
         continue;
       }
+      const bool isDisabledField = !field.enabled;
       bool targetsSelection = false;
       for (const auto& targetLayerId : field.targetLayerIds) {
         if (selectedLayerIds.contains(targetLayerId)) {
@@ -23698,7 +24247,7 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
           break;
         }
       }
-      if (!targetsSelection) {
+      if (!targetsSelection && !isActiveField) {
         continue;
       }
 
@@ -23721,19 +24270,58 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
       }
       const float inverseZoom =
           1.0f / std::max(0.001f, renderer_->getZoom());
-      const FloatColor fieldColor{0.22f, 0.78f, 1.0f, 0.92f};
+      const bool isDraggingField =
+          draggingTransformFieldId_ == field.fieldId && isDraggingTransformField_;
+      const bool isHoveredField =
+          hoveredTransformFieldId_ == field.fieldId &&
+          hoveredTransformFieldMode_ != TransformFieldDragMode::None;
+      const FloatColor fieldColor = isDraggingField
+                                        ? FloatColor{1.0f, 0.55f, 0.18f, 0.96f}
+                                        : isHoveredField
+                                              ? FloatColor{1.0f, 0.83f, 0.32f, 0.96f}
+                                              : isDisabledField
+                                                    ? FloatColor{0.58f, 0.58f, 0.58f, 0.70f}
+                                                    : isActiveField
+                                                    ? FloatColor{0.38f, 0.95f, 0.63f, 0.95f}
+                                                    : FloatColor{0.22f, 0.78f, 1.0f, 0.92f};
+      const float strokeWidth = isActiveField ? 2.2f : 1.5f;
+      const FloatColor guideColor =
+          isDraggingField
+              ? FloatColor{1.0f, 0.66f, 0.32f, 0.55f}
+              : isHoveredField
+                    ? FloatColor{1.0f, 0.86f, 0.44f, 0.42f}
+                    : isActiveField
+                          ? FloatColor{0.38f, 0.95f, 0.63f, 0.32f}
+                          : FloatColor{0.22f, 0.78f, 1.0f, 0.22f};
+      renderer_->drawSolidLine(
+          {static_cast<float>(displayCenter.x()),
+           static_cast<float>(displayCenter.y())},
+          {static_cast<float>(displayRadiusPoint.x()),
+           static_cast<float>(displayRadiusPoint.y())},
+          guideColor, std::max(1.0f, 1.2f * inverseZoom));
+      const float centerHandleRadius =
+          isDraggingField ? std::max(5.5f, 8.0f * inverseZoom)
+                          : isHoveredField ? std::max(4.5f, 6.5f * inverseZoom)
+                                           : std::max(3.5f, 5.0f * inverseZoom);
+      const float radiusHandleRadius =
+          isDraggingField ? std::max(4.8f, 7.0f * inverseZoom)
+                          : isHoveredField ? std::max(4.0f, 5.8f * inverseZoom)
+                                           : std::max(3.0f, 4.8f * inverseZoom);
       renderer_->drawCircle(
           static_cast<float>(displayCenter.x()),
           static_cast<float>(displayCenter.y()), displayRadius, fieldColor,
-          1.5f, false);
+          strokeWidth, false);
       renderer_->drawCircle(
           static_cast<float>(displayCenter.x()),
           static_cast<float>(displayCenter.y()),
-          std::max(3.0f, 5.0f * inverseZoom), fieldColor, 1.0f, true);
+          centerHandleRadius, fieldColor, 1.0f, true);
       renderer_->drawCircle(
           static_cast<float>(displayRadiusPoint.x()),
           static_cast<float>(displayRadiusPoint.y()),
-          std::max(3.0f, 4.0f * inverseZoom), fieldColor, 1.0f, true);
+          radiusHandleRadius, fieldColor, 1.0f, true);
+      drawTransformFieldBadge(renderer_.get(), field, displayCenter,
+                              displayRadiusPoint, isHoveredField,
+                              isDraggingField, isActiveField, inverseZoom);
     }
   }
   if (showCameraFrustumOverlay_ && activeCamera) {
@@ -23755,7 +24343,10 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
     if (!showGizmoOverlay_) {
 
-      ::Artifact::drawSelectionOverlay(renderer_.get(), selectedLayer);
+      ::Artifact::drawSelectionOverlay(
+          renderer_.get(), selectedLayer,
+          has3DCamera ? &cameraViewMatrix : nullptr,
+          has3DCamera ? &cameraProjMatrix : nullptr);
 
     }
 
@@ -23909,10 +24500,45 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
         dst[x * 4 + 1] = gSrc[x];
         dst[x * 4 + 2] = bSrc[x];
         dst[x * 4 + 3] = 255;
-  }
-}
+      }
+    }
 
     Q_UNUSED(fallbackBlue);
+    return out;
+  };
+
+  const auto composeRgbAlpha = [](const QImage &rgbImage, const QImage &alphaImage) {
+    if (rgbImage.isNull() || alphaImage.isNull() ||
+        rgbImage.size() != alphaImage.size()) {
+      return QImage{};
+    }
+    const QImage rgba = (rgbImage.format() == QImage::Format_RGBA8888)
+                            ? rgbImage
+                            : rgbImage.convertToFormat(QImage::Format_RGBA8888);
+    const QImage alpha = (alphaImage.format() == QImage::Format_Grayscale8)
+                             ? alphaImage
+                             : alphaImage.convertToFormat(QImage::Format_Grayscale8);
+    QImage out(rgbImage.width() * 2, rgbImage.height(), QImage::Format_RGBA8888);
+    for (int y = 0; y < out.height(); ++y) {
+      const auto *rgbSrc = rgba.constScanLine(y);
+      const auto *alphaSrc = alpha.constScanLine(y);
+      auto *dst = out.scanLine(y);
+      for (int x = 0; x < rgbImage.width(); ++x) {
+        const int dstX = x * 4;
+        dst[dstX + 0] = rgbSrc[x * 4 + 0];
+        dst[dstX + 1] = rgbSrc[x * 4 + 1];
+        dst[dstX + 2] = rgbSrc[x * 4 + 2];
+        dst[dstX + 3] = rgbSrc[x * 4 + 3];
+      }
+      for (int x = 0; x < alpha.width(); ++x) {
+        const int v = alphaSrc[x];
+        const int dstX = (x + rgbImage.width()) * 4;
+        dst[dstX + 0] = static_cast<uchar>(v);
+        dst[dstX + 1] = static_cast<uchar>(v);
+        dst[dstX + 2] = static_cast<uchar>(v);
+        dst[dstX + 3] = 255;
+      }
+    }
     return out;
   };
 
@@ -23967,6 +24593,10 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
   switch (viewportChannelDisplayMode_) {
   case ViewportChannelDisplayMode::Alpha:
     return readChannel(ArtifactIRenderer::ChannelType::Alpha);
+  case ViewportChannelDisplayMode::ColorAlpha:
+    return composeRgbAlpha(
+        renderer_->readbackToImage(),
+        readChannel(ArtifactIRenderer::ChannelType::Alpha));
   case ViewportChannelDisplayMode::Red:
     return readChannel(ArtifactIRenderer::ChannelType::Red);
   case ViewportChannelDisplayMode::Green:
@@ -24122,6 +24752,7 @@ void CompositionRenderController::Impl::syncViewportChannelReadbackConfiguration
   const bool needsAuxChannel =
       viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Color &&
       viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Alpha &&
+      viewportChannelDisplayMode_ != ViewportChannelDisplayMode::ColorAlpha &&
       viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Red &&
       viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Green &&
       viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Blue;

@@ -110,6 +110,13 @@ public:
     void setMaskOpacity(float opacity);
     float maskOpacity() const;
 
+    // Additional effect-level mask images. These combine with the primary mask.
+    void addEffectMaskImage(const std::shared_ptr<ImageF32x4_RGBA>& maskImage);
+    void removeEffectMaskImage(int index);
+    void clearEffectMaskImages();
+    int effectMaskImageCount() const;
+    std::shared_ptr<ImageF32x4_RGBA> effectMaskImage(int index) const;
+
     // identification
     UniString effectID() const;
     void setEffectID(const UniString& id);

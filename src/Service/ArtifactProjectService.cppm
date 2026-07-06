@@ -1118,7 +1118,10 @@ public:
   void installSelectionBridge(ArtifactProjectService *owner);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams &params,
                                     bool selectNewLayer = true,
-                                    bool placeAtCurrentFrame = false);
+                                    bool placeAtCurrentFrame = false,
+                                    bool startHidden = false);
+  void setDefaultNewLayerHidden(bool hidden);
+  bool defaultNewLayerHidden() const;
   void addAssetFromPath(const UniString &path);
   QStringList importAssetsFromPaths(const QStringList &sourcePaths);
   void importAssetsFromPathsAsync(const QStringList &sourcePaths,
@@ -1148,6 +1151,7 @@ public:
   QVector<LayerID> lastUnprecomposeMovedLayerIds_;
   UniString lastUnprecomposeChildName_;
   bool forwardingSelectionChange_ = false;
+  bool defaultNewLayerHidden_ = false;
   LayerID lastForwardedLayerId_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
@@ -1292,7 +1296,7 @@ ArtifactProjectManager &ArtifactProjectService::Impl::projectManager() {
 
 void ArtifactProjectService::Impl::addLayerToCurrentComposition(
     const ArtifactLayerInitParams &params, bool selectNewLayer,
-    bool placeAtCurrentFrame) {
+    bool placeAtCurrentFrame, bool startHidden) {
   auto &manager = ArtifactProjectService::Impl::projectManager();
   LayerID selectedLayerId;
   if (auto *selectionManager = ArtifactLayerSelectionManager::instance()) {
@@ -1312,6 +1316,9 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
         const_cast<ArtifactLayerInitParams &>(params));
   }
   if (result.success && result.layer) {
+    if (startHidden) {
+      result.layer->setVisible(false);
+    }
     if (auto comp = currentComposition().lock()) {
       if (result.layer->is3D()) {
         const QSize compSize = comp->settings().compositionSize();
@@ -1882,6 +1889,14 @@ void ArtifactProjectService::addLayerToCurrentComposition(
   impl_->addLayerToCurrentComposition(params, true);
 }
 
+void ArtifactProjectService::Impl::setDefaultNewLayerHidden(bool hidden) {
+  defaultNewLayerHidden_ = hidden;
+}
+
+bool ArtifactProjectService::Impl::defaultNewLayerHidden() const {
+  return defaultNewLayerHidden_;
+}
+
 void ArtifactProjectService::addLayerToCurrentComposition(
     const ArtifactLayerInitParams &params, bool selectNewLayer) {
   impl_->addLayerToCurrentComposition(params, selectNewLayer);
@@ -1890,7 +1905,23 @@ void ArtifactProjectService::addLayerToCurrentComposition(
 void ArtifactProjectService::addLayerToCurrentComposition(
     const ArtifactLayerInitParams &params, bool selectNewLayer,
     bool placeAtCurrentFrame) {
-  impl_->addLayerToCurrentComposition(params, selectNewLayer, placeAtCurrentFrame);
+  impl_->addLayerToCurrentComposition(
+      params, selectNewLayer, placeAtCurrentFrame,
+      impl_->defaultNewLayerHidden());
+}
+
+void ArtifactProjectService::addLayerToCurrentComposition(
+    const ArtifactLayerInitParams &params, bool selectNewLayer,
+    bool placeAtCurrentFrame, bool startHidden) {
+  impl_->addLayerToCurrentComposition(params, selectNewLayer, placeAtCurrentFrame, startHidden);
+}
+
+void ArtifactProjectService::setDefaultNewLayerHidden(bool hidden) {
+  impl_->setDefaultNewLayerHidden(hidden);
+}
+
+bool ArtifactProjectService::defaultNewLayerHidden() const {
+  return impl_->defaultNewLayerHidden();
 }
 
 bool ArtifactProjectService::ungroupSelectedGroupInCurrentComposition()

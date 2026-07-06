@@ -216,6 +216,50 @@ void applyMatteSnapshot(const ArtifactAbstractLayerPtr& layer,
     layer->setMatteReferences(mattes);
     layer->changed();
 }
+
+void applyLayerPropertyKeyframeSnapshot(
+    const ArtifactAbstractLayerPtr& layer,
+    const QString& propertyPath,
+    const std::vector<ArtifactCore::KeyFrame>& keyframes) {
+    if (!layer || propertyPath.trimmed().isEmpty()) {
+        return;
+    }
+
+    auto property = layer->getProperty(propertyPath);
+    if (!property) {
+        return;
+    }
+
+    if (keyframes.empty()) {
+        property->clearKeyFrames();
+    } else {
+        property->clearKeyFrames();
+        for (const auto& keyframe : keyframes) {
+            property->addKeyFrame(keyframe.time, keyframe.value,
+                                  static_cast<int>(keyframe.interpolation),
+                                  keyframe.cp1_x, keyframe.cp1_y,
+                                  keyframe.cp2_x, keyframe.cp2_y,
+                                  keyframe.roving);
+        }
+    }
+
+    layer->changed();
+}
+
+void applyEffectMaskImageSnapshot(
+    const std::shared_ptr<ArtifactAbstractEffect>& effect,
+    const std::vector<std::shared_ptr<ImageF32x4_RGBA>>& masks) {
+    if (!effect) {
+        return;
+    }
+
+    effect->clearEffectMaskImages();
+    for (const auto& mask : masks) {
+        if (mask) {
+            effect->addEffectMaskImage(mask);
+        }
+    }
+}
 } // namespace
 
 // --- MaskEditCommand ---
@@ -267,6 +311,66 @@ void ChangeLayerMatteReferencesCommand::redo() {
 
 QString ChangeLayerMatteReferencesCommand::label() const {
     return QStringLiteral("Edit Track Mattes");
+}
+
+// --- SetLayerPropertyKeyframesCommand ---
+SetLayerPropertyKeyframesCommand::SetLayerPropertyKeyframesCommand(
+    ArtifactAbstractLayerPtr layer,
+    QString propertyPath,
+    std::vector<ArtifactCore::KeyFrame> beforeKeyframes,
+    std::vector<ArtifactCore::KeyFrame> afterKeyframes,
+    QString label)
+    : layer_(layer),
+      propertyPath_(std::move(propertyPath)),
+      beforeKeyframes_(std::move(beforeKeyframes)),
+      afterKeyframes_(std::move(afterKeyframes)),
+      label_(std::move(label)) {}
+
+void SetLayerPropertyKeyframesCommand::undo() {
+    applyLayerPropertyKeyframeSnapshot(layer_.lock(), propertyPath_, beforeKeyframes_);
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+void SetLayerPropertyKeyframesCommand::redo() {
+    applyLayerPropertyKeyframeSnapshot(layer_.lock(), propertyPath_, afterKeyframes_);
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+QString SetLayerPropertyKeyframesCommand::label() const {
+    return label_;
+}
+
+// --- SetEffectMaskImagesCommand ---
+SetEffectMaskImagesCommand::SetEffectMaskImagesCommand(
+    std::shared_ptr<ArtifactAbstractEffect> effect,
+    std::vector<std::shared_ptr<ImageF32x4_RGBA>> beforeMasks,
+    std::vector<std::shared_ptr<ImageF32x4_RGBA>> afterMasks,
+    QString label)
+    : effect_(effect),
+      beforeMasks_(std::move(beforeMasks)),
+      afterMasks_(std::move(afterMasks)),
+      label_(std::move(label)) {}
+
+void SetEffectMaskImagesCommand::undo() {
+    applyEffectMaskImageSnapshot(effect_.lock(), beforeMasks_);
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+void SetEffectMaskImagesCommand::redo() {
+    applyEffectMaskImageSnapshot(effect_.lock(), afterMasks_);
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+QString SetEffectMaskImagesCommand::label() const {
+    return label_;
 }
 
 // --- AlignLayersUndoCommand ---

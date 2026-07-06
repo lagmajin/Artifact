@@ -504,6 +504,12 @@ void ArtifactPropertyEditorRowWidget::setResetHandler(
   resetHandler_ = std::move(handler);
 }
 
+void ArtifactPropertyEditorRowWidget::setAuxAction(
+    std::function<void()> handler, const QString &label) {
+  auxActionHandler_ = std::move(handler);
+  auxActionLabel_ = label;
+}
+
 void ArtifactPropertyEditorRowWidget::setKeyframeHandler(
     KeyFrameHandler handler) {
   keyframeHandler_ = std::move(handler);
@@ -745,6 +751,10 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
   QAction *copyAction = menu.addAction(QStringLiteral("Copy Value"));
   QAction *pasteAction = menu.addAction(QStringLiteral("Paste Value"));
   QAction *resetAction = menu.addAction(QStringLiteral("Reset Value"));
+  QAction *auxAction = nullptr;
+  if (auxActionHandler_ && !auxActionLabel_.isEmpty()) {
+    auxAction = menu.addAction(auxActionLabel_);
+  }
   QAction *copyNameAction =
       menu.addAction(QStringLiteral("Copy Property Name"));
   QMenu *anchorMenu = nullptr;
@@ -800,6 +810,8 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
   } else if (chosen == resetAction && resetButton_ &&
              resetButton_->isVisible()) {
     resetButton_->click();
+  } else if (chosen == auxAction && auxActionHandler_) {
+    auxActionHandler_();
   } else if (chosen == copyNameAction) {
     QApplication::clipboard()->setText(propertyName_);
   } else if (anchorMenu &&

@@ -718,6 +718,7 @@ class ArtifactAbstractComposition::Impl {
   FrameRate frameRate_;
   ResponsiveLayoutSet responsiveLayout_;
   QVector<CompositionTransformField> transformFields_;
+  QString activeTransformFieldId_;
   QVector<CompositionStateVariant> stateVariants_;
   QString activeStateVariantId_;
   struct RecordedPropertySnapshot {
@@ -1245,6 +1246,9 @@ QJsonObject CompositionTransformField::toJson() const
         {QStringLiteral("y"), center.y()},
     });
     obj.insert(QStringLiteral("radius"), radius);
+    obj.insert(QStringLiteral("strength"), strength);
+    obj.insert(QStringLiteral("blendMode"), blendMode);
+    obj.insert(QStringLiteral("invert"), invert);
     obj.insert(QStringLiteral("expansion"), expansion);
     obj.insert(QStringLiteral("edgeScale"), edgeScale);
     obj.insert(
@@ -1271,6 +1275,15 @@ CompositionTransformField CompositionTransformField::fromJson(const QJsonObject&
         centerObj.value(QStringLiteral("y")).toDouble(0.0));
     field.radius = std::max<qreal>(
         0.0001, obj.value(QStringLiteral("radius")).toDouble(1.0));
+    field.strength = obj.value(QStringLiteral("strength")).toDouble(1.0);
+    field.blendMode = obj.value(QStringLiteral("blendMode"))
+                          .toString(QStringLiteral("normal"))
+                          .trimmed()
+                          .toLower();
+    if (field.blendMode.isEmpty()) {
+        field.blendMode = QStringLiteral("normal");
+    }
+    field.invert = obj.value(QStringLiteral("invert")).toBool(false);
     field.expansion = obj.value(QStringLiteral("expansion")).toDouble(0.0);
     field.edgeScale = std::max<qreal>(
         0.0001, obj.value(QStringLiteral("edgeScale")).toDouble(1.0));
@@ -1979,6 +1992,14 @@ void ArtifactAbstractComposition::setTransformFields(
     const QVector<CompositionTransformField>& fields)
 {
     impl_->transformFields_ = fields;
+    const bool activeStillExists = std::any_of(
+        impl_->transformFields_.cbegin(), impl_->transformFields_.cend(),
+        [this](const CompositionTransformField& field) {
+            return field.fieldId == impl_->activeTransformFieldId_;
+        });
+    if (!activeStillExists) {
+        impl_->activeTransformFieldId_.clear();
+    }
     for (const auto& layer : impl_->layerMultiIndex_.all()) {
         if (layer) {
             layer->setDirty(LayerDirtyFlag::Transform);
@@ -1997,6 +2018,18 @@ void ArtifactAbstractComposition::addTransformField(
     for (auto& existing : impl_->transformFields_) {
         if (existing.fieldId == field.fieldId) {
             existing = field;
+            if (!impl_->activeTransformFieldId_.isEmpty() &&
+                impl_->activeTransformFieldId_ != field.fieldId) {
+                const bool activeStillExists = std::any_of(
+                    impl_->transformFields_.cbegin(),
+                    impl_->transformFields_.cend(),
+                    [this](const CompositionTransformField& candidate) {
+                        return candidate.fieldId == impl_->activeTransformFieldId_;
+                    });
+                if (!activeStillExists) {
+                    impl_->activeTransformFieldId_.clear();
+                }
+            }
             for (const auto& layerId : field.targetLayerIds) {
                 if (const auto layer = layerById(layerId)) {
                     layer->setDirty(LayerDirtyFlag::Transform);
@@ -2025,6 +2058,9 @@ bool ArtifactAbstractComposition::removeTransformField(const QString& fieldId)
         }
         const auto targetLayerIds = impl_->transformFields_.at(index).targetLayerIds;
         impl_->transformFields_.removeAt(index);
+        if (impl_->activeTransformFieldId_ == fieldId) {
+            impl_->activeTransformFieldId_.clear();
+        }
         for (const auto& layerId : targetLayerIds) {
             if (const auto layer = layerById(layerId)) {
                 layer->setDirty(LayerDirtyFlag::Transform);
@@ -2043,12 +2079,38 @@ void ArtifactAbstractComposition::clearTransformFields()
         return;
     }
     impl_->transformFields_.clear();
+    impl_->activeTransformFieldId_.clear();
     for (const auto& layer : impl_->layerMultiIndex_.all()) {
         if (layer) {
             layer->setDirty(LayerDirtyFlag::Transform);
             layer->changed();
         }
     }
+    Q_EMIT changed();
+}
+
+QString ArtifactAbstractComposition::activeTransformFieldId() const
+{
+    return impl_->activeTransformFieldId_;
+}
+
+void ArtifactAbstractComposition::setActiveTransformFieldId(const QString& fieldId)
+{
+    const QString normalizedFieldId = fieldId.trimmed();
+    if (normalizedFieldId == impl_->activeTransformFieldId_) {
+        return;
+    }
+    if (!normalizedFieldId.isEmpty()) {
+        const bool exists = std::any_of(
+            impl_->transformFields_.cbegin(), impl_->transformFields_.cend(),
+            [&normalizedFieldId](const CompositionTransformField& field) {
+                return field.fieldId == normalizedFieldId;
+            });
+        if (!exists) {
+            return;
+        }
+    }
+    impl_->activeTransformFieldId_ = normalizedFieldId;
     Q_EMIT changed();
 }
 
@@ -2065,11 +2127,29 @@ ArtifactAbstractComposition::evaluateTransformFields(
         const QPointF delta = basePosition - field.center;
         const qreal normalizedDistance = std::clamp<qreal>(
             std::hypot(delta.x(), delta.y()) / field.radius, 0.0, 1.0);
-        const qreal influence = normalizedDistance * normalizedDistance *
-                                (3.0 - 2.0 * normalizedDistance);
-        adjustment.positionOffset += delta * field.expansion * influence;
+        qreal influence = normalizedDistance * normalizedDistance *
+                          (3.0 - 2.0 * normalizedDistance);
+        if (field.invert) {
+            influence = 1.0 - influence;
+        }
+        influence = std::clamp<qreal>(influence * std::max<qreal>(0.0, field.strength),
+                                      0.0, 4.0);
+        qreal positionInfluence = influence;
+        qreal scaleInfluence = influence;
+        const QString blendMode = field.blendMode.trimmed().toLower();
+        if (blendMode == QStringLiteral("additive")) {
+            positionInfluence = std::clamp<qreal>(influence * 1.25, 0.0, 4.0);
+            scaleInfluence = std::clamp<qreal>(influence * 1.1, 0.0, 4.0);
+        } else if (blendMode == QStringLiteral("multiply")) {
+            positionInfluence = influence * influence;
+            scaleInfluence = influence * influence;
+        } else if (blendMode == QStringLiteral("screen")) {
+            positionInfluence = std::sqrt(std::clamp<qreal>(influence, 0.0, 4.0));
+            scaleInfluence = positionInfluence;
+        }
+        adjustment.positionOffset += delta * field.expansion * positionInfluence;
         adjustment.scaleMultiplier *=
-            std::lerp<qreal>(1.0, field.edgeScale, influence);
+            std::lerp<qreal>(1.0, field.edgeScale, std::clamp<qreal>(scaleInfluence, 0.0, 1.0));
         adjustment.affected = true;
     }
     return adjustment;
@@ -2409,6 +2489,7 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
         transformFieldsArray.append(field.toJson());
     }
     obj["transformFields"] = transformFieldsArray;
+    obj["activeTransformFieldId"] = impl_->activeTransformFieldId_;
     QJsonArray effectsArray;
     for (const auto& effect : impl_->effects_) {
         if (effect) {
@@ -2510,6 +2591,20 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
             if (!field.fieldId.isEmpty()) {
                 comp->impl_->transformFields_.append(field);
             }
+        }
+    }
+    comp->impl_->activeTransformFieldId_ =
+        obj.value("activeTransformFieldId").toString();
+    if (!comp->impl_->activeTransformFieldId_.isEmpty()) {
+        const QString activeTransformFieldId = comp->impl_->activeTransformFieldId_;
+        const bool activeExists = std::any_of(
+            comp->impl_->transformFields_.cbegin(),
+            comp->impl_->transformFields_.cend(),
+            [&activeTransformFieldId](const CompositionTransformField& field) {
+                return field.fieldId == activeTransformFieldId;
+            });
+        if (!activeExists) {
+            comp->impl_->activeTransformFieldId_.clear();
         }
     }
 

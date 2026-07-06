@@ -1,7 +1,9 @@
 module;
 #include <wobjectimpl.h>
+#include <cstdint>
 #include <algorithm>
 #include <utility>
+#include <limits>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMatrix4x4>
@@ -12,6 +14,7 @@ module Artifact.Layer.Switch;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.CompositionRenderOverlay;
+import Audio.LipSyncTrack;
 import FloatRGBA;
 
 namespace Artifact {
@@ -47,7 +50,35 @@ QRectF ArtifactSwitchLayer::localBounds() const {
 }
 
 void ArtifactSwitchLayer::draw(ArtifactIRenderer* renderer) {
-    auto active = activeChild();
+    const int index = [this]() {
+        if (!impl_ || impl_->children_.empty()) {
+            return 0;
+        }
+        if (!impl_->syncToTimeline_ || !impl_->composition_) {
+            return std::clamp(impl_->activeIndex_, 0,
+                              std::max(0, static_cast<int>(impl_->children_.size()) - 1));
+        }
+        const int64_t currentFrame = impl_->composition_->framePosition().framePosition();
+        int resolvedIndex = -1;
+        int64_t bestFrame = std::numeric_limits<int64_t>::min();
+        for (int i = 0; i < static_cast<int>(impl_->children_.size()); ++i) {
+            const int frame = (i < static_cast<int>(impl_->timelineFrames_.size()))
+                                  ? impl_->timelineFrames_[i]
+                                  : i;
+            if (frame <= currentFrame && static_cast<int64_t>(frame) >= bestFrame) {
+                bestFrame = frame;
+                resolvedIndex = i;
+            }
+        }
+        if (resolvedIndex >= 0) {
+            return resolvedIndex;
+        }
+        return std::clamp(impl_->activeIndex_, 0,
+                          std::max(0, static_cast<int>(impl_->children_.size()) - 1));
+    }();
+    auto active = (index >= 0 && index < static_cast<int>(impl_->children_.size()))
+                      ? impl_->children_[index]
+                      : ArtifactAbstractLayerPtr{};
     if (active) active->draw(renderer);
 }
 
@@ -88,7 +119,36 @@ void ArtifactSwitchLayer::setActiveIndex(int index) {
 
 ArtifactAbstractLayerPtr ArtifactSwitchLayer::activeChild() const {
     if (impl_->children_.empty()) return nullptr;
-    return impl_->children_[impl_->activeIndex_];
+    const int index = [this]() {
+        if (!impl_ || impl_->children_.empty()) {
+            return 0;
+        }
+        if (!impl_->syncToTimeline_ || !impl_->composition_) {
+            return std::clamp(impl_->activeIndex_, 0,
+                              std::max(0, static_cast<int>(impl_->children_.size()) - 1));
+        }
+        const int64_t currentFrame = impl_->composition_->framePosition().framePosition();
+        int resolvedIndex = -1;
+        int64_t bestFrame = std::numeric_limits<int64_t>::min();
+        for (int i = 0; i < static_cast<int>(impl_->children_.size()); ++i) {
+            const int frame = (i < static_cast<int>(impl_->timelineFrames_.size()))
+                                  ? impl_->timelineFrames_[i]
+                                  : i;
+            if (frame <= currentFrame && static_cast<int64_t>(frame) >= bestFrame) {
+                bestFrame = frame;
+                resolvedIndex = i;
+            }
+        }
+        if (resolvedIndex >= 0) {
+            return resolvedIndex;
+        }
+        return std::clamp(impl_->activeIndex_, 0,
+                          std::max(0, static_cast<int>(impl_->children_.size()) - 1));
+    }();
+    if (index < 0 || index >= static_cast<int>(impl_->children_.size())) {
+        return nullptr;
+    }
+    return impl_->children_[index];
 }
 
 bool ArtifactSwitchLayer::syncToTimeline() const { return impl_->syncToTimeline_; }
@@ -105,6 +165,56 @@ void ArtifactSwitchLayer::setFrameForIndex(int index, int frame) {
     if (index >= static_cast<int>(impl_->timelineFrames_.size()))
         impl_->timelineFrames_.resize(index + 1, index);
     impl_->timelineFrames_[index] = frame;
+}
+
+void ArtifactSwitchLayer::setTimelineFrames(const std::vector<int>& frames) {
+    impl_->timelineFrames_ = frames;
+    if (impl_->timelineFrames_.size() < impl_->children_.size()) {
+        const size_t start = impl_->timelineFrames_.size();
+        impl_->timelineFrames_.resize(impl_->children_.size());
+        for (size_t i = start; i < impl_->timelineFrames_.size(); ++i) {
+            impl_->timelineFrames_[i] = static_cast<int>(i);
+        }
+    }
+}
+
+std::vector<int> ArtifactSwitchLayer::timelineFrames() const {
+    return impl_->timelineFrames_;
+}
+
+void ArtifactSwitchLayer::applyLipSyncTrack(const ArtifactCore::LipSyncTrack& track) {
+    const auto& events = track.events();
+    if (events.empty()) {
+        return;
+    }
+
+    setSyncToTimeline(true);
+
+    std::vector<int> frames;
+    frames.resize(static_cast<size_t>(childrenCount()), 0);
+    std::vector<bool> seen(static_cast<size_t>(childrenCount()), false);
+
+    for (const auto& event : events) {
+        const int shapeIndex = event.mouthShapeIndex();
+        if (shapeIndex < 0 || shapeIndex >= childrenCount()) {
+            continue;
+        }
+        const size_t index = static_cast<size_t>(shapeIndex);
+        if (!seen[index] || event.frame < frames[index]) {
+            frames[index] = static_cast<int>(event.frame);
+            seen[index] = true;
+        }
+    }
+
+    for (int i = 0; i < childrenCount(); ++i) {
+        const size_t index = static_cast<size_t>(i);
+        if (!seen[index]) {
+            frames[index] = i;
+        }
+    }
+
+    setTimelineFrames(frames);
+    setActiveIndex(std::clamp(activeIndex(), 0, std::max(0, childrenCount() - 1)));
 }
 
 int ArtifactSwitchLayer::childrenCount() const {
@@ -142,12 +252,23 @@ QJsonObject ArtifactSwitchLayer::toJson() const {
     obj["children"] = children;
     obj["activeIndex"] = impl_->activeIndex_;
     obj["syncToTimeline"] = impl_->syncToTimeline_;
+    QJsonArray timelineFrames;
+    for (int frame : impl_->timelineFrames_) {
+        timelineFrames.append(frame);
+    }
+    obj["timelineFrames"] = timelineFrames;
     return obj;
 }
 
 void ArtifactSwitchLayer::fromJson(const QJsonObject& obj) {
     impl_->activeIndex_ = obj.value("activeIndex").toInt(0);
     impl_->syncToTimeline_ = obj.value("syncToTimeline").toBool(false);
+    impl_->timelineFrames_.clear();
+    const QJsonArray frames = obj.value("timelineFrames").toArray();
+    impl_->timelineFrames_.reserve(frames.size());
+    for (const auto& val : frames) {
+        impl_->timelineFrames_.push_back(val.toInt());
+    }
 }
 
 } // namespace Artifact

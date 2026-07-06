@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QApplication>
 #include <QMessageBox>
 #include <QScreen>
@@ -13,6 +13,7 @@ import Artifact.Layer.CompositionBackground;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
 import Artifact.Layer.Image;
+import Artifact.Layer.Paint;
 import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.ParametricComposition;
@@ -41,6 +42,25 @@ QMessageBox::StandardButton centeredQuestion(QWidget* parent,
   return static_cast<QMessageBox::StandardButton>(box.exec());
 }
 
+LayerPresentationDescriptor applyMatteSummary(const ArtifactAbstractLayerPtr& layer,
+                                              LayerPresentationDescriptor descriptor)
+{
+  if (!layer) {
+    return descriptor;
+  }
+
+  const int matteCount = static_cast<int>(layer->matteReferences().size());
+  if (matteCount > 0) {
+    descriptor.capabilitySummaryText = QStringLiteral("Matte x%1").arg(matteCount);
+    descriptor.timelineBadgeText = QStringLiteral("%1 + Matte")
+                                      .arg(descriptor.timelineBadgeText);
+    descriptor.propertySummaryTitle += QStringLiteral(" · Matte Linked");
+    descriptor.inspectorTypeLabel += QStringLiteral(" · Matte Linked");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+  }
+  return descriptor;
+}
+
 LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLayerPtr& layer)
 {
   LayerPresentationDescriptor descriptor;
@@ -61,6 +81,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Null Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Specialized");
     descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (layer->isAdjustmentLayer()) {
@@ -70,6 +91,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Adjustment Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Specialized");
     descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (layer->isGroupLayer()) {
@@ -79,6 +101,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Group Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Container");
     descriptor.badgeTone = LayerPresentationBadgeTone::Container;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (layer->isCloneLayer()) {
@@ -88,6 +111,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Clone Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Instanced");
     descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (layer->isConstructionLayer()) {
@@ -99,6 +123,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
         ? QStringLiteral("Editor + Export")
         : QStringLiteral("Editor only");
     descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (dynamic_cast<ArtifactCompositionBackgroundLayer *>(layer.get())) {
@@ -110,6 +135,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
         ? QStringLiteral("Specialized + Export")
         : QStringLiteral("Specialized");
     descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (dynamic_cast<ArtifactCameraLayer *>(layer.get())) {
@@ -119,6 +145,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Camera");
     descriptor.capabilitySummaryText = QStringLiteral("View control");
     descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (dynamic_cast<ArtifactLightLayer *>(layer.get())) {
@@ -128,6 +155,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Light");
     descriptor.capabilitySummaryText = QStringLiteral("Scene lighting");
     descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (layer->is3D()) {
@@ -137,6 +165,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: 3D Model Layer");
     descriptor.capabilitySummaryText = QStringLiteral("3D Space");
     descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
@@ -146,6 +175,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Precomp Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Nested Composition");
     descriptor.badgeTone = LayerPresentationBadgeTone::Container;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (dynamic_cast<ArtifactParametricCompositionLayer*>(layer.get())) {
@@ -155,6 +185,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Parametric Comp Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Slot-based Composition");
     descriptor.badgeTone = LayerPresentationBadgeTone::Container;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (dynamic_cast<ArtifactImageLayer *>(layer.get())) {
@@ -164,6 +195,17 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Image Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Image");
     descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
+    return descriptor;
+  }
+  if (dynamic_cast<ArtifactPaintLayer *>(layer.get())) {
+    descriptor.typeText = QStringLiteral("Paint Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Paint");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Paint Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Paint Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Frame-by-frame raster");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (dynamic_cast<ArtifactParticleLayer *>(layer.get()) ||
@@ -174,6 +216,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Form Particle Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Particle");
     descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (dynamic_cast<ArtifactVideoLayer *>(layer.get())) {
@@ -183,6 +226,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Video Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Video");
     descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (dynamic_cast<ArtifactAudioLayer *>(layer.get())) {
@@ -192,6 +236,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Audio Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Waveform preview");
     descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (layer->hasAudio() && layer->hasVideo()) {
@@ -201,6 +246,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Audio-Video Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Audio + Video");
     descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (layer->hasAudio()) {
@@ -210,6 +256,7 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Audio Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Waveform preview");
     descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
   if (layer->hasVideo()) {
@@ -219,9 +266,10 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Video Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Video");
     descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
   }
-  return descriptor;
+  return applyMatteSummary(layer, std::move(descriptor));
 }
 
 QString describeLayerType(const ArtifactAbstractLayerPtr& layer)

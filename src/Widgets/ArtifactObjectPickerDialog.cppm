@@ -66,6 +66,11 @@ ArtifactObjectPickerDialog::~ArtifactObjectPickerDialog()
 void ArtifactObjectPickerDialog::setReferenceType(const QString& typeName)
 {
     referenceType_ = typeName;
+    if (referenceType_.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0) {
+        setWindowTitle(QStringLiteral("Select Layer"));
+    } else {
+        setWindowTitle(QStringLiteral("Select Object"));
+    }
 }
 
 void ArtifactObjectPickerDialog::setCurrentSelectionId(const ArtifactCore::Id& id)
@@ -77,6 +82,17 @@ void ArtifactObjectPickerDialog::setCurrentSelectionId(const ArtifactCore::Id& i
     if (!items.isEmpty()) {
         objectTree_->setCurrentItem(items.first());
     }
+}
+
+bool ArtifactObjectPickerDialog::isSelectableItem(QTreeWidgetItem* item) const
+{
+    if (!item) {
+        return false;
+    }
+    if (referenceType_.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0) {
+        return item->text(2).compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0;
+    }
+    return true;
 }
 
 ArtifactCore::Id ArtifactObjectPickerDialog::selectedId() const
@@ -92,7 +108,7 @@ ArtifactCore::Id ArtifactObjectPickerDialog::selectedId() const
 void ArtifactObjectPickerDialog::onObjectDoubleClicked(QTreeWidgetItem* item, int column)
 {
     Q_UNUSED(column);
-    if (item) {
+    if (isSelectableItem(item)) {
         currentSelectionId_ = ArtifactCore::Id(item->text(1));
         accept();
     }
@@ -106,7 +122,7 @@ void ArtifactObjectPickerDialog::onSearchTextChanged(const QString& text)
 void ArtifactObjectPickerDialog::onOkClicked()
 {
     auto* item = objectTree_->currentItem();
-    if (item) {
+    if (isSelectableItem(item)) {
         currentSelectionId_ = ArtifactCore::Id(item->text(1));
         accept();
     } else {
@@ -128,8 +144,12 @@ void ArtifactObjectPickerDialog::buildObjectTree()
         return;
     }
     
-    // Compositions
-    addCompositionTree(nullptr);
+    if (referenceType_.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0) {
+        addLayerTree(nullptr);
+    } else {
+        // Default to the existing composition tree with nested layers.
+        addCompositionTree(nullptr);
+    }
     
     // 現在選択中のアイテムを選択
     if (!currentSelectionId_.isNil()) {
@@ -161,6 +181,35 @@ void ArtifactObjectPickerDialog::addCompositionTree(QTreeWidgetItem* parent)
         for (const auto& layer : layers) {
             if (!layer) continue;
             
+            auto* layerItem = new QTreeWidgetItem(compItem);
+            layerItem->setText(0, layer->layerName());
+            layerItem->setText(1, layer->id().toString());
+            layerItem->setText(2, QStringLiteral("Layer"));
+        }
+    }
+}
+
+void ArtifactObjectPickerDialog::addLayerTree(QTreeWidgetItem* parent)
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+
+    auto comp = service->currentComposition().lock();
+    if (comp) {
+        auto* compItem = new QTreeWidgetItem(parent);
+        compItem->setText(0, comp->settings().compositionName().toQString());
+        compItem->setText(1, comp->id().toString());
+        compItem->setText(2, QStringLiteral("Composition"));
+        compItem->setExpanded(true);
+
+        const auto layers = comp->allLayer();
+        for (const auto& layer : layers) {
+            if (!layer) {
+                continue;
+            }
+
             auto* layerItem = new QTreeWidgetItem(compItem);
             layerItem->setText(0, layer->layerName());
             layerItem->setText(1, layer->id().toString());

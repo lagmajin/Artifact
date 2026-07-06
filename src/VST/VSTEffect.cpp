@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <cstring>
 #include <algorithm>
 
@@ -92,7 +92,10 @@ bool VSTEffect::loadPlugin(const std::string& path) {
     }
     
     impl_->pluginPath = path;
-    impl_->pluginId = host.getLoadedPluginCount() - 1;
+    impl_->pluginId = host.getLoadedPluginIdByPath(path);
+    if (impl_->pluginId < 0) {
+        impl_->pluginId = host.getLoadedPluginCount() - 1;
+    }
     impl_->pluginName = host.getPluginInfo(impl_->pluginId).name;
     impl_->isLoaded = true;
     

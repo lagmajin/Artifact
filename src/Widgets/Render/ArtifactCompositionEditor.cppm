@@ -1189,7 +1189,7 @@ public:
     case NavigationFeedbackMode::None:
       break;
     }
-    return {};
+    return QStringLiteral("Nav: Alt+LMB Orbit | MMB Pan | Wheel Zoom");
   }
   void setOverlayVisible(bool visible) {
     if (overlayWidget_) {
@@ -1344,6 +1344,8 @@ public:
         typeText = QStringLiteral("Text Layer");
       } else if (className.contains(QStringLiteral("Image"), Qt::CaseInsensitive)) {
         typeText = QStringLiteral("Image Layer");
+      } else if (className.contains(QStringLiteral("Paint"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("Paint Layer");
       } else if (className.contains(QStringLiteral("Svg"), Qt::CaseInsensitive) ||
                  className.contains(QStringLiteral("Shape"), Qt::CaseInsensitive)) {
         typeText = QStringLiteral("SVG Layer");
@@ -5007,8 +5009,10 @@ public:
   QAction *zoom100Action_ = nullptr;
   QAction *editTextAction_ = nullptr;
   QToolButton *screenshotButton_ = nullptr;
+  QToolButton *viewportRenderOutputButton_ = nullptr;
   QAction *quickScreenshotAction_ = nullptr;
   QAction *advancedScreenshotAction_ = nullptr;
+  QAction *viewportRenderOutputAction_ = nullptr;
   QAction *compareAction_ = nullptr;
   QAction *motionPathAction_ = nullptr;
   QAction *effectHitboxAction_ = nullptr;
@@ -5021,6 +5025,7 @@ public:
   QAction *isolationAction_ = nullptr;
   QToolButton *shadingButton_ = nullptr;
   QToolButton *viewPresetButton_ = nullptr;
+  QToolButton *viewportBookmarkButton_ = nullptr;
   QAction *renderSuspendAction_ = nullptr;
   QAction *previewOrbitAction_ = nullptr;
   QToolButton *toolModeButton_ = nullptr;
@@ -5909,9 +5914,13 @@ public:
     QStringList tags;
     switch (viewportChannelDisplayMode_) {
     case ViewportChannelDisplayMode::Color:
+      tags << QStringLiteral("RGB");
       break;
     case ViewportChannelDisplayMode::Alpha:
       tags << QStringLiteral("Alpha");
+      break;
+    case ViewportChannelDisplayMode::ColorAlpha:
+      tags << QStringLiteral("RGBA");
       break;
     case ViewportChannelDisplayMode::Red:
       tags << QStringLiteral("R");
@@ -5991,6 +6000,7 @@ public:
     QStringList lines;
     lines << QStringLiteral("Viewport shading and channel display");
     lines << QStringLiteral("Current: %1").arg(viewportChannelDisplayLabel());
+    lines << QStringLiteral("Alt+2 RGB, Alt+3 Alpha, Alt+4 RGBA");
     return lines.join(QChar::LineFeed);
   }
 
@@ -6026,6 +6036,7 @@ public:
     QStringList lines;
     lines << QStringLiteral("Temporary view-only navigation session");
     lines << QStringLiteral("Current: %1").arg(previewOrbitButtonLabel());
+    lines << QStringLiteral("Alt+Left = Orbit, Middle = Pan, Wheel = Zoom");
     lines << QStringLiteral("Restores the saved orientation / pan / zoom when turned off");
     return lines.join(QChar::LineFeed);
   }
@@ -6133,6 +6144,134 @@ public:
     refreshViewportStateLabels();
   }
 
+  bool saveRendererMultiChannelImage(ArtifactCompositionEditor *owner,
+                                     const QString &filePath,
+                                     const QString &format,
+                                     const QString &dialogTitle) {
+    if (!owner || !renderController_) {
+      return false;
+    }
+
+    auto *renderer = renderController_->renderer();
+    if (!renderer) {
+      QMessageBox::warning(owner, dialogTitle, QStringLiteral("Renderer not available."));
+      return false;
+    }
+
+    struct RendererStateGuard {
+      ArtifactIRenderer *renderer = nullptr;
+      bool previousMultiChannel = false;
+      bool previousDepth = false;
+      bool previousNormalX = false;
+      bool previousNormalY = false;
+      bool previousNormalZ = false;
+      bool previousObjectId = false;
+
+      ~RendererStateGuard() {
+        if (!renderer) {
+          return;
+        }
+        renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::Depth, previousDepth);
+        renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalX, previousNormalX);
+        renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalY, previousNormalY);
+        renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalZ, previousNormalZ);
+        renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::ObjectId, previousObjectId);
+        renderer->setMultiChannelEnabled(previousMultiChannel);
+      }
+    } stateGuard{
+        renderer, renderer->isMultiChannelEnabled(),
+        renderer->isChannelEnabled(ArtifactIRenderer::ChannelType::Depth),
+        renderer->isChannelEnabled(ArtifactIRenderer::ChannelType::NormalX),
+        renderer->isChannelEnabled(ArtifactIRenderer::ChannelType::NormalY),
+        renderer->isChannelEnabled(ArtifactIRenderer::ChannelType::NormalZ),
+        renderer->isChannelEnabled(ArtifactIRenderer::ChannelType::ObjectId)};
+
+    renderer->setMultiChannelEnabled(true);
+    renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::Depth, true);
+    renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalX, true);
+    renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalY, true);
+    renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalZ, true);
+    renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::ObjectId, true);
+    renderer->clear();
+    if (auto comp = renderController_->composition()) {
+      const auto pos = comp->framePosition();
+      const auto &layers = comp->allLayerRef();
+      for (const auto &layer : layers) {
+        if (layer && layer->isVisible() && layer->isActiveAt(pos)) {
+          layer->draw(renderer);
+        }
+      }
+    }
+    renderer->flush();
+
+    ArtifactCore::MultiChannelImage multiFrame = renderer->readbackToMultiChannelImage();
+    if (multiFrame.isEmpty()) {
+      QMessageBox::warning(owner, dialogTitle,
+                           QStringLiteral("Failed to capture multi-channel image."));
+      return false;
+    }
+
+    ArtifactCore::ImageExportOptions exportOpts;
+    exportOpts.format = format;
+    ArtifactCore::ImageExporter exporter;
+    auto result = exporter.writeMultiChannel(multiFrame, filePath, exportOpts);
+    if (!result.success) {
+      QMessageBox::warning(owner, dialogTitle,
+                           QStringLiteral("Save failed: %1 - %2")
+                               .arg(result.errorStage, result.errorMessage));
+      return false;
+    }
+
+    QMessageBox::information(owner, dialogTitle,
+                             QStringLiteral("保存しました:\n%1").arg(filePath));
+    return true;
+  }
+
+  void saveViewportRenderOutput(ArtifactCompositionEditor *owner) {
+    if (!owner || !renderController_) {
+      return;
+    }
+
+    ArtifactScreenshotExportDialog dialog(owner);
+    dialog.setWindowTitle(QStringLiteral("Viewport Render Output"));
+    dialog.setFilePath(QStringLiteral("viewport_render.exr"));
+    dialog.setFormat(QStringLiteral("exr"));
+    dialog.setCaptureSource(ScreenshotCaptureSource::Renderer);
+    dialog.setMultiChannelEnabled(true);
+    if (dialog.exec() != QDialog::Accepted) {
+      return;
+    }
+
+    const ScreenshotExportOptions options = dialog.options();
+    auto *renderer = renderController_->renderer();
+    if (!renderer) {
+      QMessageBox::warning(owner, QStringLiteral("Viewport Render Output"),
+                           QStringLiteral("Renderer not available."));
+      return;
+    }
+    if (options.multiChannel) {
+      saveRendererMultiChannelImage(owner, options.filePath, options.format,
+                                    QStringLiteral("Viewport Render Output"));
+      return;
+    }
+
+    const QImage frame = renderer->readbackToImage();
+    if (frame.isNull()) {
+      QMessageBox::warning(owner, QStringLiteral("Viewport Render Output"),
+                           QStringLiteral("現在のビューポートを取得できませんでした。"));
+      return;
+    }
+
+    if (!saveScreenshotImage(frame, options.filePath, options.format, options.jpegQuality)) {
+      QMessageBox::warning(owner, QStringLiteral("Viewport Render Output"),
+                           QStringLiteral("保存に失敗しました:\n%1").arg(options.filePath));
+      return;
+    }
+
+    QMessageBox::information(owner, QStringLiteral("Viewport Render Output"),
+                             QStringLiteral("保存しました:\n%1").arg(options.filePath));
+  }
+
   void applyFourUpDefaultOrientations() {
     if (viewportLayoutMode_ != ViewportLayoutMode::FourUp) {
       return;
@@ -6185,6 +6324,9 @@ public:
     setToolbarActionVisible(editTextAction_, showLayerChrome);
     if (screenshotButton_) {
       screenshotButton_->setVisible(showEditingChrome);
+    }
+    if (viewportRenderOutputButton_) {
+      viewportRenderOutputButton_->setVisible(showEditingChrome);
     }
     setToolbarActionVisible(compareAction_, showLayerChrome);
     setToolbarActionVisible(motionPathAction_, showLayerChrome);
@@ -6286,58 +6428,18 @@ public:
 
     const QString filePath = options.filePath;
 
-    const QImage screenshot = captureScreenshotForOptions(
-        renderController_, owner, options.captureSource);
-    if (screenshot.isNull()) {
-      QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
-                           QStringLiteral("現在のフレームを取得できませんでした。"));
-      return false;
-    }
-
     if (options.multiChannel) {
-      // Multi-channel (AOV) EXR output
-      auto* renderer = renderController_->renderer();
-      if (!renderer) {
-        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
-                             QStringLiteral("Renderer not available."));
-        return false;
-      }
-      renderer->setMultiChannelEnabled(true);
-      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::Depth, true);
-      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalX, true);
-      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalY, true);
-      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::NormalZ, true);
-      renderer->setChannelEnabled(ArtifactIRenderer::ChannelType::ObjectId, true);
-      renderer->clear();
-      if (auto comp = renderController_->composition()) {
-        const auto pos = comp->framePosition();
-        const auto& layers = comp->allLayerRef();
-        for (const auto& layer : layers) {
-          if (layer && layer->isVisible() && layer->isActiveAt(pos)) {
-            layer->draw(renderer);
-          }
-        }
-      }
-      renderer->flush();
-      ArtifactCore::MultiChannelImage multiFrame = renderer->readbackToMultiChannelImage();
-      if (multiFrame.isEmpty()) {
-        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
-                             QStringLiteral("Failed to capture multi-channel image."));
-        return false;
-      }
-      ArtifactCore::ImageExportOptions exportOpts;
-      exportOpts.format = options.format;
-      ArtifactCore::ImageExporter exporter;
-      auto result = exporter.writeMultiChannel(multiFrame, filePath, exportOpts);
-      if (!result.success) {
-        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
-                             QStringLiteral("Save failed: %1 - %2").arg(result.errorStage, result.errorMessage));
-        return false;
-      }
-      QMessageBox::information(owner, QStringLiteral("Advanced Screenshot"),
-                               QStringLiteral("保存しました:\n%1").arg(filePath));
-      return true;
+      return saveRendererMultiChannelImage(owner, filePath, options.format,
+                                           QStringLiteral("Advanced Screenshot"));
     } else {
+      const QImage screenshot = captureScreenshotForOptions(
+          renderController_, owner, options.captureSource);
+      if (screenshot.isNull()) {
+        QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
+                             QStringLiteral("現在のフレームを取得できませんでした。"));
+        return false;
+      }
+
       if (!saveScreenshotImage(screenshot, filePath, options.format, options.jpegQuality)) {
         QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
                              QStringLiteral("保存に失敗しました:\n%1").arg(filePath));
@@ -6793,6 +6895,41 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QObject::connect(viewPresetMenu, &QMenu::aboutToShow, this,
                    [syncViewValueEditors]() { syncViewValueEditors(); });
   impl_->topToolbar_->addWidget(impl_->viewPresetButton_);
+  impl_->viewportBookmarkButton_ = new QToolButton(impl_->topToolbar_);
+  impl_->viewportBookmarkButton_->setText(QStringLiteral("Bookmark"));
+  impl_->viewportBookmarkButton_->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+  impl_->viewportBookmarkButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  impl_->viewportBookmarkButton_->setToolTip(
+      QStringLiteral("Open the Camera ブックマーク menu from the main View menu"));
+  QObject::connect(impl_->viewportBookmarkButton_, &QToolButton::clicked, this,
+                   [this]() {
+                      if (!impl_) {
+                        return;
+                      }
+                      auto *hostWindow = this->window();
+                      QMenu *bookmarkMenu = nullptr;
+                      if (hostWindow) {
+                        if (auto *namedMenu = hostWindow->findChild<QMenu *>(
+                                QStringLiteral("viewportBookmarkMenu"))) {
+                          bookmarkMenu = namedMenu;
+                        } else {
+                          const auto menus = hostWindow->findChildren<QMenu *>();
+                          for (QMenu *menu : menus) {
+                            if (menu && menu->title().contains(QStringLiteral("Camera ブックマーク"))) {
+                              bookmarkMenu = menu;
+                              break;
+                            }
+                          }
+                        }
+                      }
+                      if (!bookmarkMenu) {
+                       return;
+                     }
+                     bookmarkMenu->popup(
+                         impl_->viewportBookmarkButton_->mapToGlobal(
+                             QPoint(0, impl_->viewportBookmarkButton_->height())));
+                   });
+  impl_->topToolbar_->addWidget(impl_->viewportBookmarkButton_);
   const auto applyViewPreset =
       [this](ArtifactCore::ViewOrientationHotspot hotspot) {
         if (!impl_) {
@@ -6879,11 +7016,31 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->advancedScreenshotAction_ = screenshotMenu->addAction(QStringLiteral("Advanced Screenshot..."));
   impl_->advancedScreenshotAction_->setToolTip(
       QStringLiteral("Open the custom screenshot dialog"));
+  screenshotMenu->addSeparator();
+  impl_->viewportRenderOutputAction_ =
+      screenshotMenu->addAction(QStringLiteral("Viewport Render Output..."));
+  impl_->viewportRenderOutputAction_->setToolTip(
+      QStringLiteral("Save the rendered viewport frame through the renderer pipeline\n"
+                     "Supports single-frame export and multi-channel EXR"));
+  impl_->viewportRenderOutputAction_->setShortcut(
+      QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_S));
+  impl_->viewportRenderOutputAction_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
   impl_->screenshotButton_ = new QToolButton(this);
   impl_->screenshotButton_->setText(QStringLiteral("Screenshot"));
   impl_->screenshotButton_->setMenu(screenshotMenu);
   impl_->screenshotButton_->setPopupMode(QToolButton::InstantPopup);
   impl_->topToolbar_->addWidget(impl_->screenshotButton_);
+  impl_->viewportRenderOutputButton_ = new QToolButton(this);
+  impl_->viewportRenderOutputButton_->setText(QStringLiteral("Render Output"));
+  impl_->viewportRenderOutputButton_->setToolTip(
+      QStringLiteral("Open the viewport render output export dialog"));
+  QObject::connect(impl_->viewportRenderOutputButton_, &QToolButton::clicked, this,
+                   [this]() {
+                     if (impl_) {
+                       impl_->saveViewportRenderOutput(this);
+                     }
+                   });
+  impl_->topToolbar_->addWidget(impl_->viewportRenderOutputButton_);
 
   impl_->compareAction_ = impl_->topToolbar_->addAction("A/B");
   impl_->compareAction_->setToolTip(
@@ -7133,6 +7290,12 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                    [this]() {
                      if (impl_) {
                        impl_->saveAdvancedScreenshot(this);
+                     }
+                   });
+  QObject::connect(impl_->viewportRenderOutputAction_, &QAction::triggered, this,
+                   [this]() {
+                     if (impl_) {
+                       impl_->saveViewportRenderOutput(this);
                      }
                    });
 
@@ -7716,12 +7879,25 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       addChannelAction(QStringLiteral("Color"), ViewportChannelDisplayMode::Color, true);
   QAction *channelAlphaAct =
       addChannelAction(QStringLiteral("Alpha"), ViewportChannelDisplayMode::Alpha, false);
+  QAction *channelColorAlphaAct =
+      addChannelAction(QStringLiteral("RGB + Alpha"), ViewportChannelDisplayMode::ColorAlpha, false);
   QAction *channelRedAct =
       addChannelAction(QStringLiteral("Red"), ViewportChannelDisplayMode::Red, false);
   QAction *channelGreenAct =
       addChannelAction(QStringLiteral("Green"), ViewportChannelDisplayMode::Green, false);
   QAction *channelBlueAct =
       addChannelAction(QStringLiteral("Blue"), ViewportChannelDisplayMode::Blue, false);
+  channelColorAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_2));
+  channelAlphaAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_3));
+  channelColorAlphaAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_4));
+  channelRedAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_5));
+  channelGreenAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_6));
+  channelBlueAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_7));
+  for (QAction *action :
+       {channelColorAct, channelAlphaAct, channelColorAlphaAct,
+        channelRedAct, channelGreenAct, channelBlueAct}) {
+    action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+  }
   shadingMenu->addSeparator();
   QAction *channelDepthAct =
       addChannelAction(QStringLiteral("Depth"), ViewportChannelDisplayMode::Depth, false);
@@ -7828,9 +8004,16 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     impl_->forEachActiveSecondaryController(
         [checked](CompositionRenderController *controller) {
           controller->setShowXRayOverlay(checked);
-        });
+    });
     impl_->refreshViewportStateLabels();
   });
+  shadeXRayAct->setShortcut(
+      ArtifactCore::ShortcutBindings::instance().shortcut(
+          ArtifactCore::ShortcutId::ViewToggleXRay));
+  shadeXRayAct->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+  shadeXRayAct->setToolTip(QStringLiteral("Toggle the X-Ray overlay for the selected layer (%1)")
+                               .arg(ArtifactCore::ShortcutBindings::instance().shortcutText(
+                                   ArtifactCore::ShortcutId::ViewToggleXRay)));
   QObject::connect(shadeIsolationAct, &QAction::toggled, this,
                    [this](bool checked) {
                      if (!impl_) {
@@ -7842,9 +8025,17 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      impl_->forEachActiveSecondaryController(
                          [checked](CompositionRenderController *controller) {
                            controller->setShowIsolationOverlay(checked);
-                         });
-                     impl_->refreshViewportStateLabels();
-                   });
+                      });
+                      impl_->refreshViewportStateLabels();
+                    });
+  shadeIsolationAct->setShortcut(
+      ArtifactCore::ShortcutBindings::instance().shortcut(
+          ArtifactCore::ShortcutId::ViewToggleIsolation));
+  shadeIsolationAct->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+  shadeIsolationAct->setToolTip(
+      QStringLiteral("Toggle isolation mode to show only the selected layer (%1)")
+          .arg(ArtifactCore::ShortcutBindings::instance().shortcutText(
+              ArtifactCore::ShortcutId::ViewToggleIsolation)));
   QObject::connect(gridAct, &QAction::toggled, shadeGridAct, &QAction::setChecked);
   QObject::connect(guidesAct, &QAction::toggled, shadeGuidesAct,
                    &QAction::setChecked);
@@ -7930,6 +8121,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     impl_->viewportChannelDisplayMode_ = channelMode;
     channelColorAct->setChecked(channelMode == ViewportChannelDisplayMode::Color);
     channelAlphaAct->setChecked(channelMode == ViewportChannelDisplayMode::Alpha);
+    channelColorAlphaAct->setChecked(
+        channelMode == ViewportChannelDisplayMode::ColorAlpha);
     channelRedAct->setChecked(channelMode == ViewportChannelDisplayMode::Red);
     channelGreenAct->setChecked(channelMode == ViewportChannelDisplayMode::Green);
     channelBlueAct->setChecked(channelMode == ViewportChannelDisplayMode::Blue);

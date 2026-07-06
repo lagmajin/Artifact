@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QFile>
+#include <QByteArray>
 
 #include <iostream>
 #include <vector>
@@ -46,11 +47,60 @@ module Artifact.Project.PresetManager;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
+import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Artifact.Color.Palette;
 
 namespace Artifact {
+
+namespace {
+
+QJsonObject imageToJson(const std::shared_ptr<ImageF32x4_RGBA>& image)
+{
+    QJsonObject obj;
+    if (!image || image->width() <= 0 || image->height() <= 0) {
+        return obj;
+    }
+
+    obj["width"] = image->width();
+    obj["height"] = image->height();
+    const std::size_t byteCount = image->totalPixels() * 4u * sizeof(float);
+    if (byteCount == 0 || !image->rgba32fData()) {
+        return obj;
+    }
+
+    const QByteArray bytes(
+        reinterpret_cast<const char*>(image->rgba32fData()),
+        static_cast<qsizetype>(byteCount));
+    obj["pixels_b64"] = QString::fromLatin1(bytes.toBase64());
+    return obj;
+}
+
+std::shared_ptr<ImageF32x4_RGBA> imageFromJson(const QJsonObject& obj)
+{
+    const int width = obj.value(QStringLiteral("width")).toInt(0);
+    const int height = obj.value(QStringLiteral("height")).toInt(0);
+    if (width <= 0 || height <= 0) {
+        return {};
+    }
+
+    auto image = std::make_shared<ImageF32x4_RGBA>();
+    image->resize(width, height);
+    image->fillAlpha(0.0f);
+
+    const QString pixelsB64 = obj.value(QStringLiteral("pixels_b64")).toString();
+    if (!pixelsB64.isEmpty()) {
+        const QByteArray bytes = QByteArray::fromBase64(pixelsB64.toLatin1());
+        const std::size_t requiredBytes = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u * sizeof(float);
+        if (bytes.size() >= static_cast<qsizetype>(requiredBytes)) {
+            image->setFromRGBA32F(reinterpret_cast<const float*>(bytes.constData()), width, height);
+        }
+    }
+    return image;
+}
+
+} // namespace
 
 QJsonObject ArtifactPresetManager::effectToPresetJson(const ArtifactAbstractEffectPtr& effect) {
     if (!effect) return {};
@@ -63,6 +113,15 @@ QJsonObject ArtifactPresetManager::effectToPresetJson(const ArtifactAbstractEffe
     root["mask_name"] = effect->maskName();
     root["mask_inverted"] = effect->maskInverted();
     root["mask_opacity"] = effect->maskOpacity();
+    if (effect->maskImage()) {
+        root["mask_image"] = imageToJson(effect->maskImage());
+    }
+
+    QJsonArray effectMaskArray;
+    for (int i = 0; i < effect->effectMaskImageCount(); ++i) {
+        effectMaskArray.append(imageToJson(effect->effectMaskImage(i)));
+    }
+    root["effect_mask_images"] = effectMaskArray;
 
     QJsonArray propsArray;
     auto props = effect->getProperties();
@@ -94,6 +153,26 @@ bool ArtifactPresetManager::applyPresetJsonToEffect(ArtifactAbstractEffectPtr& e
     }
     if (json.contains("mask_opacity")) {
         effect->setMaskOpacity(static_cast<float>(json["mask_opacity"].toDouble()));
+    }
+    if (json.contains("mask_image")) {
+        if (json["mask_image"].isObject()) {
+            effect->setMaskImage(imageFromJson(json["mask_image"].toObject()));
+        } else {
+            effect->setMaskImage({});
+        }
+    }
+
+    if (json.contains("effect_mask_images")) {
+        effect->clearEffectMaskImages();
+        const QJsonArray effectMaskArray = json["effect_mask_images"].toArray();
+        for (const auto& value : effectMaskArray) {
+            if (value.isObject()) {
+                auto maskImage = imageFromJson(value.toObject());
+                if (maskImage) {
+                    effect->addEffectMaskImage(maskImage);
+                }
+            }
+        }
     }
 
     // Check effect ID match? Or just apply what we can.

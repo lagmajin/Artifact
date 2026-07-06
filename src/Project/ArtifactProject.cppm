@@ -37,6 +37,7 @@ import Artifact.Layer.InitParams;
 import Artifact.Layer.Result;
 import Artifact.Layer.Svg;
 import Artifact.Project.CreationDefaults;
+import Property.SerializationBridge;
 import Application.AppSettings;
 
 import Artifact.Project.Items;
@@ -652,12 +653,20 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
      continue;
     }
 
-    QVariant value = property->getValue();
-    if (property->getType() == ArtifactCore::PropertyType::Color) {
-      value = property->getColorValue();
+    auto duplicatedProperty = duplicatedLayer->getProperty(propertyName);
+    if (!duplicatedProperty) {
+      QVariant value = property->getValue();
+      if (property->getType() == ArtifactCore::PropertyType::Color) {
+        value = property->getColorValue();
+      }
+      duplicatedLayer->setLayerPropertyValue(propertyName, value);
+      continue;
     }
 
-    duplicatedLayer->setLayerPropertyValue(propertyName, value);
+    const auto serialized = ArtifactCore::PropertySerializationBridge::serializeProperty(property);
+    duplicatedProperty->clearKeyFrames();
+    duplicatedProperty->clearEnvelopes();
+    ArtifactCore::PropertySerializationBridge::deserializeProperty(duplicatedProperty, serialized);
    }
   }
 
@@ -1448,6 +1457,27 @@ void ArtifactProject::setExtensionData(const QJsonObject& data)
     if (!findResult.success || !compPtr) return false;
     if (!compPtr->containsLayerById(layerId)) return false;
     compPtr->removeLayer(layerId);
+
+    // Remove dangling matte references that still point at the deleted layer.
+    // This keeps the remaining layer graph internally consistent even after
+    // the source layer disappears.
+    for (const auto& layer : compPtr->allLayer()) {
+      if (!layer) {
+        continue;
+      }
+      auto refs = layer->matteReferences();
+      const auto oldSize = refs.size();
+      refs.erase(
+        std::remove_if(refs.begin(), refs.end(),
+                       [&layerId](const LayerMatteReference& ref) {
+                         return ref.sourceLayerId == layerId;
+                       }),
+        refs.end());
+      if (refs.size() != oldSize) {
+        layer->setMatteReferences(refs);
+        layer->changed();
+      }
+    }
     
     // ダーティ状態に設定
     setDirty(true);

@@ -110,7 +110,10 @@ export namespace Artifact {
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params, bool selectNewLayer);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params,
                                     bool selectNewLayer,
-                                    bool placeAtCurrentFrame);
+                                    bool placeAtCurrentFrame,
+                                    bool startHidden = false);
+  void setDefaultNewLayerHidden(bool hidden);
+  bool defaultNewLayerHidden() const;
   bool groupSelectedLayersInCurrentComposition(const UniString& groupName = UniString(QStringLiteral("Group 1")));
   bool ungroupSelectedGroupInCurrentComposition();
   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);

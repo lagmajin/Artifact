@@ -64,6 +64,7 @@ public:
     EffectContext context_;
     bool maskEnabled = false;
     std::shared_ptr<ImageF32x4_RGBA> maskImage;
+    std::vector<std::shared_ptr<ImageF32x4_RGBA>> effectMaskImages;
     QString maskLayerId;
     QString maskName;
     bool maskInverted = false;
@@ -128,7 +129,8 @@ EffectPipelineStage ArtifactAbstractEffect::pipelineStage() const { return impl_
 void ArtifactAbstractEffect::setPipelineStage(EffectPipelineStage stage) { impl_->pipelineStage = stage; }
 
 bool ArtifactAbstractEffect::hasMask() const {
-    return impl_->maskEnabled || !impl_->maskLayerId.isEmpty() || !impl_->maskName.isEmpty();
+    return impl_->maskEnabled || impl_->maskImage || !impl_->maskLayerId.isEmpty() ||
+           !impl_->maskName.isEmpty() || !impl_->effectMaskImages.empty();
 }
 
 void ArtifactAbstractEffect::setMaskEnabled(bool enabled) { impl_->maskEnabled = enabled; }
@@ -161,6 +163,34 @@ void ArtifactAbstractEffect::setMaskOpacity(float opacity) {
 
 float ArtifactAbstractEffect::maskOpacity() const { return impl_->maskOpacity; }
 
+void ArtifactAbstractEffect::addEffectMaskImage(const std::shared_ptr<ImageF32x4_RGBA>& maskImage) {
+    if (maskImage) {
+        impl_->effectMaskImages.push_back(maskImage);
+    }
+}
+
+void ArtifactAbstractEffect::removeEffectMaskImage(int index) {
+    if (index < 0 || index >= static_cast<int>(impl_->effectMaskImages.size())) {
+        return;
+    }
+    impl_->effectMaskImages.erase(impl_->effectMaskImages.begin() + index);
+}
+
+void ArtifactAbstractEffect::clearEffectMaskImages() {
+    impl_->effectMaskImages.clear();
+}
+
+int ArtifactAbstractEffect::effectMaskImageCount() const {
+    return static_cast<int>(impl_->effectMaskImages.size());
+}
+
+std::shared_ptr<ImageF32x4_RGBA> ArtifactAbstractEffect::effectMaskImage(int index) const {
+    if (index < 0 || index >= static_cast<int>(impl_->effectMaskImages.size())) {
+        return {};
+    }
+    return impl_->effectMaskImages[static_cast<std::size_t>(index)];
+}
+
 void ArtifactAbstractEffect::applyCPUOnly(const ImageF32x4RGBAWithCache& src,
                                          ImageF32x4RGBAWithCache& dst) {
     const ComputeMode previousMode = impl_->mode;
@@ -184,14 +214,13 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
         impl_->mode = previousMode;
     }
 
-    if (!impl_->maskEnabled || !impl_->maskImage) {
+    const bool hasPrimaryMask = impl_->maskEnabled && impl_->maskImage;
+    const bool hasSecondaryMasks = !impl_->effectMaskImages.empty();
+    if (!hasPrimaryMask && !hasSecondaryMasks) {
         return;
     }
 
-    const ImageF32x4_RGBA& maskSrc = *impl_->maskImage;
-    if (maskSrc.width() <= 0 || maskSrc.height() <= 0 ||
-        dst.width() <= 0 || dst.height() <= 0 ||
-        maskSrc.width() != dst.width() || maskSrc.height() != dst.height()) {
+    if (dst.width() <= 0 || dst.height() <= 0) {
         return;
     }
 
@@ -202,30 +231,51 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
 
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            const FloatRGBA maskPixel = maskSrc.getPixel(x, y);
-            float maskAlpha = maskPixel.a();
-            if (impl_->maskInverted) {
-                maskAlpha = 1.0f - maskAlpha;
+            float combinedMaskAlpha = 1.0f;
+            bool hasValidMask = false;
+
+            if (hasPrimaryMask &&
+                impl_->maskImage->width() == width &&
+                impl_->maskImage->height() == height) {
+                const FloatRGBA maskPixel = impl_->maskImage->getPixel(x, y);
+                float maskAlpha = maskPixel.a();
+                if (impl_->maskInverted) {
+                    maskAlpha = 1.0f - maskAlpha;
+                }
+                combinedMaskAlpha *= std::clamp(maskAlpha * impl_->maskOpacity, 0.0f, 1.0f);
+                hasValidMask = true;
             }
-            maskAlpha = std::clamp(maskAlpha * impl_->maskOpacity, 0.0f, 1.0f);
-            if (maskAlpha <= 0.0f) {
+
+            for (const auto& extraMask : impl_->effectMaskImages) {
+                if (!extraMask || extraMask->width() != width || extraMask->height() != height) {
+                    continue;
+                }
+                combinedMaskAlpha *= std::clamp(extraMask->getPixel(x, y).a(), 0.0f, 1.0f);
+                hasValidMask = true;
+            }
+
+            if (!hasValidMask) {
+                continue;
+            }
+
+            if (combinedMaskAlpha <= 0.0f) {
                 dstImage.setPixel(x, y, srcCopy.getPixel(x, y));
                 continue;
             }
-            if (maskAlpha >= 1.0f) {
+            if (combinedMaskAlpha >= 1.0f) {
                 continue;
             }
 
             const FloatRGBA basePixel = srcCopy.getPixel(x, y);
             const FloatRGBA effectPixel = dstImage.getPixel(x, y);
-            const float inv = 1.0f - maskAlpha;
+            const float inv = 1.0f - combinedMaskAlpha;
             dstImage.setPixel(
                 x, y,
                 FloatRGBA(
-                    basePixel.r() * inv + effectPixel.r() * maskAlpha,
-                    basePixel.g() * inv + effectPixel.g() * maskAlpha,
-                    basePixel.b() * inv + effectPixel.b() * maskAlpha,
-                    basePixel.a() * inv + effectPixel.a() * maskAlpha));
+                    basePixel.r() * inv + effectPixel.r() * combinedMaskAlpha,
+                    basePixel.g() * inv + effectPixel.g() * combinedMaskAlpha,
+                    basePixel.b() * inv + effectPixel.b() * combinedMaskAlpha,
+                    basePixel.a() * inv + effectPixel.a() * combinedMaskAlpha));
         }
     }
 }
@@ -298,7 +348,7 @@ std::shared_ptr<ArtifactEffectImplBase> ArtifactAbstractEffect::gpuImpl() const 
 
 std::vector<ArtifactCore::AbstractProperty> ArtifactAbstractEffect::getProperties() const {
     std::vector<ArtifactCore::AbstractProperty> props;
-    props.reserve(5);
+    props.reserve(6);
 
     auto makeProp = [](const char* name, const QVariant& value) {
         ArtifactCore::AbstractProperty prop;
@@ -307,12 +357,41 @@ std::vector<ArtifactCore::AbstractProperty> ArtifactAbstractEffect::getPropertie
         return prop;
     };
 
-    props.push_back(makeProp("mask.enabled", impl_->maskEnabled));
-    props.push_back(makeProp("mask.hasImage", static_cast<bool>(impl_->maskImage)));
-    props.push_back(makeProp("mask.layerId", impl_->maskLayerId));
-    props.push_back(makeProp("mask.name", impl_->maskName));
-    props.push_back(makeProp("mask.inverted", impl_->maskInverted));
-    props.push_back(makeProp("mask.opacity", impl_->maskOpacity));
+    auto enabledProp = makeProp("mask.enabled", impl_->maskEnabled);
+    enabledProp.setDisplayLabel(QStringLiteral("Mask Enabled"));
+    enabledProp.setTooltip(QStringLiteral("Enable or disable the primary effect mask."));
+    props.push_back(enabledProp);
+
+    auto hasImageProp = makeProp("mask.hasImage", static_cast<bool>(impl_->maskImage));
+    hasImageProp.setDisplayLabel(QStringLiteral("Has Mask Image"));
+    hasImageProp.setTooltip(QStringLiteral("True when a primary mask image is attached."));
+    props.push_back(hasImageProp);
+
+    auto extraCountProp = makeProp("mask.effectImageCount",
+                                   static_cast<int>(impl_->effectMaskImages.size()));
+    extraCountProp.setDisplayLabel(QStringLiteral("Extra Mask Images"));
+    extraCountProp.setTooltip(QStringLiteral("Number of additional effect-level mask images."));
+    props.push_back(extraCountProp);
+
+    auto layerIdProp = makeProp("mask.layerId", impl_->maskLayerId);
+    layerIdProp.setDisplayLabel(QStringLiteral("Mask Layer ID"));
+    layerIdProp.setTooltip(QStringLiteral("Linked layer id used as the primary mask source."));
+    props.push_back(layerIdProp);
+
+    auto nameProp = makeProp("mask.name", impl_->maskName);
+    nameProp.setDisplayLabel(QStringLiteral("Mask Name"));
+    nameProp.setTooltip(QStringLiteral("Human-readable mask name."));
+    props.push_back(nameProp);
+
+    auto invertedProp = makeProp("mask.inverted", impl_->maskInverted);
+    invertedProp.setDisplayLabel(QStringLiteral("Invert Mask"));
+    invertedProp.setTooltip(QStringLiteral("Invert the primary mask alpha before blending."));
+    props.push_back(invertedProp);
+
+    auto opacityProp = makeProp("mask.opacity", impl_->maskOpacity);
+    opacityProp.setDisplayLabel(QStringLiteral("Mask Opacity"));
+    opacityProp.setTooltip(QStringLiteral("Opacity multiplier for the primary mask."));
+    props.push_back(opacityProp);
     return props;
 }
 
@@ -323,6 +402,10 @@ void ArtifactAbstractEffect::setPropertyValue(const ArtifactCore::UniString& nam
         return;
     }
     if (key == QStringLiteral("mask.hasImage")) {
+        Q_UNUSED(value);
+        return;
+    }
+    if (key == QStringLiteral("mask.effectImageCount")) {
         Q_UNUSED(value);
         return;
     }

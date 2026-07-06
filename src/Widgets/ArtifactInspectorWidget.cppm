@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
@@ -44,6 +44,8 @@
 #include <QWidget>
 #include <cstdlib>
 #include <wobjectimpl.h>
+
+#include <opencv2/opencv.hpp>
 
 
 #include <algorithm>
@@ -93,8 +95,12 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Component.System;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
+import Image.ImageF32x4_RGBA;
+import Artifact.Widgets.ObjectPicker;
 import Artifact.Layer.Matte;
 import Artifact.Layer.Video;
+import Artifact.Layer.Audio;
+import Artifact.Layer.Switch;
 import Artifact.Event.Types;
 import Event.Bus;
 import Undo.UndoManager;
@@ -1014,12 +1020,110 @@ bool applyMatteTypeToLayer(const CompositionID &compositionId,
   return true;
 }
 
+bool setMatteSourceToLayer(const CompositionID &compositionId,
+                           const LayerID &layerId,
+                           int matteIndex,
+                           const LayerID &sourceLayerId) {
+  auto comp = resolveCompositionForId(compositionId);
+  if (!comp || layerId.isNil() || sourceLayerId.isNil() || matteIndex < 0 ||
+      layerId == sourceLayerId) {
+    return false;
+  }
+
+  auto layer = comp->layerById(layerId);
+  if (!layer || !comp->containsLayerById(sourceLayerId)) {
+    return false;
+  }
+
+  auto beforeRefs = layer->matteReferences();
+  if (matteIndex >= static_cast<int>(beforeRefs.size())) {
+    return false;
+  }
+
+  auto afterRefs = beforeRefs;
+  auto &ref = afterRefs[matteIndex];
+  if (ref.sourceLayerId == sourceLayerId) {
+    return false;
+  }
+
+  ref.sourceLayerId = sourceLayerId;
+  ref.enabled = true;
+
+  auto *cmd = new ChangeLayerMatteReferencesCommand(layer,
+                                                    std::move(beforeRefs),
+                                                    std::move(afterRefs));
+  UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
+  return true;
+}
+
+bool addMatteSourceToLayer(const CompositionID &compositionId,
+                           const LayerID &layerId,
+                           const LayerID &sourceLayerId) {
+  auto comp = resolveCompositionForId(compositionId);
+  if (!comp || layerId.isNil() || sourceLayerId.isNil() ||
+      layerId == sourceLayerId) {
+    return false;
+  }
+
+  auto layer = comp->layerById(layerId);
+  if (!layer || !comp->containsLayerById(sourceLayerId)) {
+    return false;
+  }
+
+  auto beforeRefs = layer->matteReferences();
+  auto afterRefs = beforeRefs;
+
+  LayerMatteReference ref;
+  ref.sourceLayerId = sourceLayerId;
+  ref.enabled = true;
+  ref.type = MatteType::Alpha;
+  ref.blendMode = MatteBlendMode::Add;
+  ref.fitMode = MatteFitMode::Stretch;
+  ref.opacity = 1.0f;
+  ref.invert = false;
+  afterRefs.push_back(ref);
+
+  auto *cmd = new ChangeLayerMatteReferencesCommand(layer,
+                                                    std::move(beforeRefs),
+                                                    std::move(afterRefs));
+  UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
+  return true;
+}
+
+bool clearMatteReferenceFromLayer(const CompositionID &compositionId,
+                                  const LayerID &layerId,
+                                  int matteIndex) {
+  auto comp = resolveCompositionForId(compositionId);
+  if (!comp || layerId.isNil() || matteIndex < 0) {
+    return false;
+  }
+
+  auto layer = comp->layerById(layerId);
+  if (!layer) {
+    return false;
+  }
+
+  auto beforeRefs = layer->matteReferences();
+  if (matteIndex >= static_cast<int>(beforeRefs.size())) {
+    return false;
+  }
+
+  auto afterRefs = beforeRefs;
+  afterRefs.erase(afterRefs.begin() + matteIndex);
+
+  auto *cmd = new ChangeLayerMatteReferencesCommand(layer,
+                                                    std::move(beforeRefs),
+                                                    std::move(afterRefs));
+  UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
+  return true;
+}
+
 class MatteInfoLabel final : public QLabel {
 public:
   explicit MatteInfoLabel(QWidget *parent = nullptr)
       : QLabel(parent) {
     setCursor(Qt::PointingHandCursor);
-    setToolTip(QStringLiteral("Left click: focus matte source. Right click: change matte type."));
+    setToolTip(QStringLiteral("Left click: focus matte source or create one from the selected layer. Right click: change matte type, replace source, or clear it."));
   }
 
   void setMatteContext(const CompositionID &compositionId,
@@ -1029,7 +1133,15 @@ public:
     layerId_ = layer ? layer->id() : LayerID();
     composition_ = composition;
     const bool hasMatteRefs = layer && !layer->matteReferences().empty();
-    setCursor(hasMatteRefs ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    const ArtifactAbstractLayerPtr selectedLayer =
+        ArtifactLayerSelectionManager::instance()
+            ? ArtifactLayerSelectionManager::instance()->currentLayer()
+            : ArtifactAbstractLayerPtr{};
+    const bool canCreateFromSelection =
+        composition && layer && selectedLayer && selectedLayer->id() != layerId_ &&
+        composition->containsLayerById(selectedLayer->id());
+    setCursor((hasMatteRefs || canCreateFromSelection) ? Qt::PointingHandCursor
+                                                       : Qt::ArrowCursor);
   }
 
 protected:
@@ -1052,7 +1164,19 @@ protected:
     }
 
     const auto refs = layer->matteReferences();
+    const ArtifactAbstractLayerPtr selectedLayer =
+        ArtifactLayerSelectionManager::instance()
+            ? ArtifactLayerSelectionManager::instance()->currentLayer()
+            : ArtifactAbstractLayerPtr{};
     if (refs.empty()) {
+      if (event->button() == Qt::LeftButton && selectedLayer &&
+          selectedLayer->id() != layerId_ &&
+          composition->containsLayerById(selectedLayer->id())) {
+        if (addMatteSourceToLayer(compositionId_, layerId_, selectedLayer->id())) {
+          event->accept();
+          return;
+        }
+      }
       QLabel::mousePressEvent(event);
       return;
     }
@@ -1075,6 +1199,16 @@ protected:
           QStringLiteral("Luma"),
           QStringLiteral("Inverted Alpha"),
           QStringLiteral("Inverted Luma")};
+
+      if (refs.empty()) {
+        if (selectedLayer && selectedLayer->id() != layerId_ &&
+            composition && composition->containsLayerById(selectedLayer->id())) {
+          QAction *addAction =
+              menu.addAction(QStringLiteral("Use selected layer as source"));
+          addAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("add_selected")},
+                                         {QStringLiteral("selectedLayerId"), selectedLayer->id().toString()}});
+        }
+      }
 
       for (int i = 0; i < refs.size(); ++i) {
         const auto &ref = refs[i];
@@ -1099,6 +1233,22 @@ protected:
         focusAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("focus")},
                                          {QStringLiteral("index"), i}});
 
+        if (auto *selMgr = ArtifactLayerSelectionManager::instance()) {
+          const auto selected = selMgr->currentLayer();
+          if (selected && selected->id() != layerId_ &&
+              comp && comp->containsLayerById(selected->id())) {
+            QAction *useSelectedAction =
+                refMenu->addAction(QStringLiteral("Use selected layer as source"));
+            useSelectedAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("use_selected")},
+                                                   {QStringLiteral("index"), i},
+                                                   {QStringLiteral("selectedLayerId"), selected->id().toString()}});
+          }
+        }
+
+        QAction *clearAction = refMenu->addAction(QStringLiteral("Clear source"));
+        clearAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("clear")},
+                                         {QStringLiteral("index"), i}});
+
         QMenu *typeMenu = refMenu->addMenu(QStringLiteral("Set matte type"));
         for (int typeIndex = 0; typeIndex < typeLabels.size(); ++typeIndex) {
           QAction *typeAction = typeMenu->addAction(typeLabels[typeIndex]);
@@ -1116,6 +1266,12 @@ protected:
         if (!indexOk) {
           return;
         }
+        if (kind == QStringLiteral("add_selected")) {
+          const auto selectedLayerId = LayerID(data.value(QStringLiteral("selectedLayerId")).toString());
+          addMatteSourceToLayer(compositionId_, layerId_, selectedLayerId);
+          event->accept();
+          return;
+        }
         if (kind == QStringLiteral("focus")) {
           if (index >= 0 && index < static_cast<int>(refs.size())) {
             const auto &ref = refs[index];
@@ -1124,6 +1280,15 @@ protected:
                 service->selectLayer(ref.sourceLayerId);
               }
             }
+          }
+        } else if (kind == QStringLiteral("use_selected")) {
+          const auto selectedLayerId = LayerID(data.value(QStringLiteral("selectedLayerId")).toString());
+          if (index >= 0 && index < static_cast<int>(refs.size())) {
+            setMatteSourceToLayer(compositionId_, layerId_, index, selectedLayerId);
+          }
+        } else if (kind == QStringLiteral("clear")) {
+          if (index >= 0 && index < static_cast<int>(refs.size())) {
+            clearMatteReferenceFromLayer(compositionId_, layerId_, index);
           }
         } else if (kind == QStringLiteral("type")) {
           bool typeOk = false;
@@ -1313,6 +1478,7 @@ public:
   InspectorActionButton *cloneModifierMoveDownButton = nullptr;
   InspectorSelectionList *cloneModifierListWidget = nullptr;
   InspectorActionButton *openScriptButton = nullptr;
+  InspectorActionButton *applyLipSyncButton = nullptr;
   ArtifactPropertyWidget *componentPropertyWidget = nullptr;
   QLabel *statusLabel = nullptr;
 
@@ -1398,6 +1564,7 @@ public:
   QString currentSelectedEffectIdFromRacks() const;
   void syncFocusedEffectFromRackSelection();
   void syncEffectPropertyWidget();
+  void handleApplyLipSyncToSwitchLayer();
   void handleAddEffectClicked(int rackIndex);
   void handleRemoveEffectClicked(int rackIndex);
   void refreshRackButtons();
@@ -2225,6 +2392,45 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
                 : (hasLayer ? QStringLiteral("No script file is linked to this layer yet.")
                             : QStringLiteral("Select a layer inside a composition to open its script.")));
   }
+
+  if (applyLipSyncButton) {
+    const auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer);
+    const bool canShow = static_cast<bool>(audioLayer);
+    bool canApply = false;
+    ArtifactSwitchLayerPtr switchTarget;
+    if (audioLayer) {
+      auto *selMgr = ArtifactLayerSelectionManager::instance();
+      const auto selected = selMgr ? selMgr->selectedLayers() : QSet<ArtifactAbstractLayerPtr>{};
+      for (const auto &selectedLayer : selected) {
+        if (!selectedLayer || selectedLayer == layer) {
+          continue;
+        }
+        switchTarget = std::dynamic_pointer_cast<ArtifactSwitchLayer>(selectedLayer);
+        if (switchTarget) {
+          break;
+        }
+      }
+      auto currentComposition = projectService->currentComposition().lock();
+      if (!switchTarget && currentComposition) {
+        for (const auto &candidate : currentComposition->allLayer()) {
+          if (!candidate || candidate == layer) {
+            continue;
+          }
+          switchTarget = std::dynamic_pointer_cast<ArtifactSwitchLayer>(candidate);
+          if (switchTarget) {
+            break;
+          }
+        }
+      }
+      canApply = static_cast<bool>(switchTarget);
+    }
+    applyLipSyncButton->setVisible(canShow);
+    applyLipSyncButton->setEnabled(canApply);
+    applyLipSyncButton->setToolTip(
+        canApply ? QStringLiteral("Build a lip sync track from this audio layer and apply it to the selected Switch Layer.")
+                 : (canShow ? QStringLiteral("Select a Switch Layer in the same composition to enable Lip Sync.")
+                            : QStringLiteral("Select an audio layer to enable Lip Sync.")));
+  }
 }
 
 void ArtifactInspectorWidget::Impl::focusComponentProperties(
@@ -2500,9 +2706,137 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
                                QStringLiteral("Status: Effect %1")
                                    .arg(!isEnabled ? "enabled" : "disabled"));
                          }
-                       }
-                     });
+                      }
+      });
   }
+
+  const auto effect = currentEffectById(effectId);
+
+  QString layerMaskActionLabel = QStringLiteral("Use Current Layer Mask(s) as Effect Mask...");
+  if (!currentCompositionId_.isNil() && !currentLayerId_.isNil()) {
+    if (auto *projectService = ArtifactProjectService::instance()) {
+      auto findResult = projectService->findComposition(currentCompositionId_);
+      if (findResult.success) {
+        if (auto comp = findResult.ptr.lock()) {
+          if (auto layer = comp->layerById(currentLayerId_)) {
+            layerMaskActionLabel =
+                QStringLiteral("Use \"%1\" Mask(s) as Effect Mask...")
+                    .arg(layer->layerName());
+          }
+        }
+      }
+    }
+  }
+
+  auto buildEffectMaskImageFromLayer =
+      [](const ArtifactAbstractLayerPtr &sourceLayer)
+          -> std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> {
+    if (!sourceLayer || !sourceLayer->hasMasks()) {
+      return {};
+    }
+
+    QImage layerPreview = sourceLayer->toQImage();
+    if (layerPreview.isNull()) {
+      return {};
+    }
+
+    const int maskW = layerPreview.width();
+    const int maskH = layerPreview.height();
+    if (maskW <= 0 || maskH <= 0) {
+      return {};
+    }
+
+    cv::Mat maskMat(maskH, maskW, CV_32FC4,
+                    cv::Scalar(1.0f, 1.0f, 1.0f, 1.0f));
+    for (int i = 0; i < sourceLayer->maskCount(); ++i) {
+      const LayerMask sourceMask = sourceLayer->mask(i);
+      if (!sourceMask.isEnabled()) {
+        continue;
+      }
+      sourceMask.applyToImage(maskW, maskH, &maskMat);
+    }
+
+    auto maskImage = std::make_shared<ArtifactCore::ImageF32x4_RGBA>();
+    maskImage->setFromRGBA32F(maskMat.ptr<float>(), maskW, maskH);
+    return maskImage;
+  };
+
+  auto captureEffectMaskImages =
+      [](const std::shared_ptr<ArtifactAbstractEffect> &effect) {
+        std::vector<std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>> masks;
+        if (!effect) {
+          return masks;
+        }
+        masks.reserve(static_cast<std::size_t>(std::max(0, effect->effectMaskImageCount())));
+        for (int i = 0; i < effect->effectMaskImageCount(); ++i) {
+          masks.push_back(effect->effectMaskImage(i));
+        }
+        return masks;
+      };
+
+  QAction *pickLayerMaskAction =
+      menu.addAction("Pick Layer Mask Source...");
+  QObject::connect(pickLayerMaskAction, &QAction::triggered, [this, effectId]() {
+    auto effect = currentEffectById(effectId);
+    if (!effect) {
+      QMessageBox::information(containerWidget, QStringLiteral("Effect Mask"),
+                               QStringLiteral("適用先のエフェクトが見つかりません。"));
+      return;
+    }
+
+    auto *projectService = ArtifactProjectService::instance();
+    if (!projectService || currentCompositionId_.isNil()) {
+      return;
+    }
+    auto findResult = projectService->findComposition(currentCompositionId_);
+    if (!findResult.success) {
+      return;
+    }
+    auto comp = findResult.ptr.lock();
+    if (!comp) {
+      return;
+    }
+
+    ArtifactObjectPickerDialog picker(containerWidget);
+    picker.setReferenceType(QStringLiteral("Layer"));
+    if (!currentLayerId_.isNil()) {
+      picker.setCurrentSelectionId(currentLayerId_);
+    }
+    if (picker.exec() != QDialog::Accepted) {
+      return;
+    }
+
+    const auto selectedLayer = comp->layerById(LayerID(picker.selectedId()));
+    if (!selectedLayer || !selectedLayer->hasMasks()) {
+      QMessageBox::information(containerWidget, QStringLiteral("Effect Mask"),
+                               QStringLiteral("選択したレイヤーにマスクがありません。"));
+      return;
+    }
+
+    auto maskImage = buildEffectMaskImageFromLayer(selectedLayer);
+    if (!maskImage) {
+      QMessageBox::warning(containerWidget, QStringLiteral("Effect Mask"),
+                           QStringLiteral("レイヤーのマスク画像を生成できませんでした。"));
+      return;
+    }
+
+    const auto beforeMasks = captureEffectMaskImages(effect);
+    auto afterMasks = beforeMasks;
+    afterMasks.clear();
+    afterMasks.push_back(maskImage);
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->push(std::make_unique<SetEffectMaskImagesCommand>(
+          effect, beforeMasks, afterMasks, QStringLiteral("Apply Layer Mask To Effect")));
+    } else {
+      effect->clearEffectMaskImages();
+      effect->addEffectMaskImage(maskImage);
+    }
+    updateEffectsList();
+    if (statusLabel) {
+      statusLabel->setText(
+          QStringLiteral("Status: Layer mask source applied to effect"));
+    }
+  });
 
   QAction *moveUpAction = menu.addAction("Move Up");
   QObject::connect(moveUpAction, &QAction::triggered, [this, effectId]() {
@@ -2530,6 +2864,185 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
       updateEffectsList();
     }
   });
+
+  QAction *clearMaskAction = nullptr;
+  if (found && effect && effect->effectMaskImageCount() > 0) {
+    clearMaskAction = menu.addAction("Clear Effect Mask Images");
+    QObject::connect(clearMaskAction, &QAction::triggered, [this, effectId]() {
+      auto effect = currentEffectById(effectId);
+      if (!effect) {
+        QMessageBox::information(containerWidget, QStringLiteral("Effect Mask"),
+                                 QStringLiteral("適用先のエフェクトが見つかりません。"));
+        return;
+      }
+
+      const auto beforeMasks = captureEffectMaskImages(effect);
+      if (beforeMasks.empty()) {
+        return;
+      }
+      const std::vector<std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>> afterMasks;
+      if (auto *mgr = UndoManager::instance()) {
+        mgr->push(std::make_unique<SetEffectMaskImagesCommand>(
+            effect, beforeMasks, afterMasks, QStringLiteral("Clear Effect Mask Images")));
+      } else {
+        effect->clearEffectMaskImages();
+      }
+      updateEffectsList();
+      if (statusLabel) {
+        statusLabel->setText(QStringLiteral("Status: Effect mask images cleared"));
+      }
+    });
+  }
+
+  QAction *applyLayerMaskAction = menu.addAction(layerMaskActionLabel);
+  QObject::connect(applyLayerMaskAction, &QAction::triggered,
+                   [this, effectId]() {
+                     auto effect = currentEffectById(effectId);
+                     if (!effect) {
+                       QMessageBox::information(
+                           containerWidget, QStringLiteral("Effect Mask"),
+                           QStringLiteral("適用先のエフェクトが見つかりません。"));
+                       return;
+                     }
+
+                     if (currentLayerId_.isNil() || currentCompositionId_.isNil()) {
+                       QMessageBox::information(
+                           containerWidget, QStringLiteral("Effect Mask"),
+                           QStringLiteral("マスク元のレイヤーが選択されていません。"));
+                       return;
+                     }
+
+                     auto *projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(currentLayerId_);
+                     if (!layer || !layer->hasMasks()) {
+                       QMessageBox::information(
+                           containerWidget, QStringLiteral("Effect Mask"),
+                           QStringLiteral("適用するレイヤーマスクがありません。"));
+                       return;
+                     }
+
+                     auto maskImage = buildEffectMaskImageFromLayer(layer);
+                     if (!maskImage) {
+                       QMessageBox::warning(
+                           containerWidget, QStringLiteral("Effect Mask"),
+                           QStringLiteral("レイヤーのマスク画像を生成できませんでした。"));
+                       return;
+                     }
+
+                     const auto applyMode = QMessageBox::question(
+                         containerWidget, QStringLiteral("Effect Mask"),
+                         QStringLiteral("現在の effect mask を置換しますか？\n\n"
+                                        "Yes: 置換\nNo: 追加"),
+                         QMessageBox::Yes | QMessageBox::No,
+                         QMessageBox::Yes);
+                     const auto beforeMasks = captureEffectMaskImages(effect);
+                     auto afterMasks = beforeMasks;
+                     if (applyMode == QMessageBox::Yes) {
+                       afterMasks.clear();
+                     }
+                     afterMasks.push_back(maskImage);
+                     if (auto *mgr = UndoManager::instance()) {
+                       mgr->push(std::make_unique<SetEffectMaskImagesCommand>(
+                           effect, beforeMasks, afterMasks,
+                           applyMode == QMessageBox::Yes
+                               ? QStringLiteral("Replace Effect Mask Images")
+                               : QStringLiteral("Append Effect Mask Image")));
+                     } else {
+                       if (applyMode == QMessageBox::Yes) {
+                         effect->clearEffectMaskImages();
+                       }
+                       effect->addEffectMaskImage(maskImage);
+                     }
+                     updateEffectsList();
+                     if (statusLabel) {
+                       statusLabel->setText(applyMode == QMessageBox::Yes
+                                                ? QStringLiteral("Status: Layer mask applied to effect (replaced)")
+                                                : QStringLiteral("Status: Layer mask applied to effect (appended)"));
+                     }
+                   });
+
+  QAction *savePresetAction = menu.addAction("Save Effect Preset...");
+  QObject::connect(savePresetAction, &QAction::triggered,
+                   [this, effectId]() {
+                     auto effect = currentEffectById(effectId);
+                     if (!effect) {
+                       QMessageBox::information(
+                           containerWidget, QStringLiteral("Effect Preset"),
+                           QStringLiteral("保存するエフェクトが見つかりません。"));
+                       return;
+                     }
+
+                     const QString filePath = QFileDialog::getSaveFileName(
+                         containerWidget,
+                         QStringLiteral("エフェクトプリセットを保存"),
+                         QString(),
+                         QStringLiteral("Effect Preset (*.effect.json *.json);;All Files (*.*)"));
+                     if (filePath.isEmpty()) {
+                       return;
+                     }
+
+                     QString resolvedPath = filePath;
+                     if (!resolvedPath.endsWith(QStringLiteral(".effect.json"),
+                                                Qt::CaseInsensitive) &&
+                         !resolvedPath.endsWith(QStringLiteral(".json"),
+                                                Qt::CaseInsensitive)) {
+                       resolvedPath += QStringLiteral(".effect.json");
+                     }
+
+                     if (!ArtifactPresetManager::saveEffectPreset(effect,
+                                                                  resolvedPath)) {
+                       QMessageBox::warning(
+                           containerWidget, QStringLiteral("Effect Preset"),
+                           QStringLiteral("エフェクトプリセットを保存できませんでした。"));
+                     }
+                   });
+
+  QAction *loadPresetAction = menu.addAction("Load Effect Preset...");
+  QObject::connect(loadPresetAction, &QAction::triggered,
+                   [this, effectId]() {
+                     auto effect = currentEffectById(effectId);
+                     if (!effect) {
+                       QMessageBox::information(
+                           containerWidget, QStringLiteral("Effect Preset"),
+                           QStringLiteral("適用先のエフェクトが見つかりません。"));
+                       return;
+                     }
+
+                     const QString filePath = QFileDialog::getOpenFileName(
+                         containerWidget,
+                         QStringLiteral("エフェクトプリセットを適用"),
+                         QString(),
+                         QStringLiteral("Effect Preset (*.effect.json *.json);;All Files (*.*)"));
+                     if (filePath.isEmpty()) {
+                       return;
+                     }
+
+                     if (!ArtifactPresetManager::loadEffectPreset(effect,
+                                                                   filePath)) {
+                       QMessageBox::warning(
+                           containerWidget, QStringLiteral("Effect Preset"),
+                           QStringLiteral("エフェクトプリセットを読み込めませんでした。"));
+                       return;
+                     }
+
+                     updateEffectsList();
+                     if (statusLabel) {
+                       statusLabel->setText(
+                           QStringLiteral("Status: Effect preset applied"));
+                     }
+                   });
 
   menu.addSeparator();
   QAction *copyIdAction = menu.addAction("Copy Effect ID");
@@ -3309,12 +3822,16 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   auto effects = currentEffectStack();
   setEffectRackEnabled(true);
   int effectCount = 0;
+  int maskedEffectCount = 0;
   std::array<std::vector<ArtifactAbstractEffectPtr>, kEffectRackCount>
       rackEffects;
 
   for (const auto &effect : effects) {
     if (effect) {
       ++effectCount;
+      if (effect->hasMask()) {
+        ++maskedEffectCount;
+      }
       const int rackIdx = rackIndexFromStage(effect->pipelineStage());
       if (rackIdx >= 0) {
         rackEffects[rackIdx].push_back(effect);
@@ -3371,15 +3888,27 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
       QString effectName = effect->displayName().toQString();
       QString effectStatus = effect->isEnabled() ? QStringLiteral("Enabled")
                                                  : QStringLiteral("Disabled");
-      QString itemText = QStringLiteral("%1 %2").arg(effectStatus, effectName);
+      const bool hasMask = effect->hasMask();
+      const int effectMaskCount = effect->effectMaskImageCount();
+      const QString maskSuffix = hasMask
+                                     ? (effectMaskCount > 0
+                                            ? QStringLiteral(" [Mask x%1]").arg(effectMaskCount)
+                                            : QStringLiteral(" [Mask]"))
+                                     : QString();
+      QString itemText = QStringLiteral("%1 %2%3").arg(effectStatus, effectName, maskSuffix);
       auto *item = new QListWidgetItem(itemText);
       item->setData(Qt::UserRole, effect->effectID().toQString());
       item->setData(Qt::UserRole + 1, effect->isEnabled());
+      item->setData(Qt::UserRole + 2, hasMask);
       item->setToolTip(
-          QStringLiteral("%1 on this %2. Single click to focus. Double click toggles enable/disable. Right click for effect actions.")
+          QStringLiteral("%1 on this %2.%3%4 Single click to focus. Double click toggles enable/disable. Right click for effect actions.")
               .arg(effectName,
                    editingCompositionEffects() ? QStringLiteral("composition")
-                                               : QStringLiteral("layer")));
+                                               : QStringLiteral("layer"),
+                   hasMask ? QStringLiteral(" Mask attached.") : QString(),
+                   effectMaskCount > 0
+                       ? QStringLiteral(" Effect mask images: %1.").arg(effectMaskCount)
+                       : QString()));
       item->setForeground(
           effect->isEnabled() ? rackColor
                               : blendColor(rackColor, backgroundColor, 0.58));
@@ -3398,13 +3927,15 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
     effectsStackSummaryLabel->setText(
         editingCompositionEffects()
             ? (effectCount > 0
-                   ? QStringLiteral("%1 effect(s) across %2 pipeline stages. Add into the rack that matches where the effect should run.")
+                   ? QStringLiteral("%1 effect(s) across %2 pipeline stages, %3 with masks. Add into the rack that matches where the effect should run.")
                          .arg(effectCount)
                          .arg(kEffectRackCount)
+                         .arg(maskedEffectCount)
                    : QStringLiteral("The stack is empty. Start by adding an effect into the stage where it belongs."))
             : (effectCount > 0
-                   ? QStringLiteral("%1 raster effect(s) on this layer.")
+                   ? QStringLiteral("%1 raster effect(s) on this layer, %2 with masks.")
                          .arg(effectCount)
+                         .arg(maskedEffectCount)
                    : QStringLiteral("This layer has no raster effects yet.")));
   }
   refreshRackButtons();
@@ -3472,22 +4003,25 @@ void ArtifactInspectorWidget::Impl::updateEffectRackItemEnabled(
         effectName.remove(0, disabledPrefix.size());
       }
       effectName = effectName.trimmed();
+      const bool hasMask = item->data(Qt::UserRole + 2).toBool();
 
       const QColor rackColor =
           toneColor(toneFromRackIndex(rackIndex), textColor, accentColor);
-      item->setText(QStringLiteral("%1 %2")
+      item->setText(QStringLiteral("%1 %2%3")
                         .arg(enabled ? QStringLiteral("Enabled")
                                      : QStringLiteral("Disabled"),
-                             effectName));
+                             effectName,
+                             hasMask ? QStringLiteral(" [Mask]") : QString()));
       item->setData(Qt::UserRole + 1, enabled);
       item->setForeground(
           enabled ? rackColor
                   : blendColor(rackColor, backgroundColor, 0.58));
       item->setToolTip(
-          QStringLiteral("%1 on this %2. Single click to focus. Double click toggles enable/disable. Right click for effect actions.")
+          QStringLiteral("%1 on this %2.%3 Single click to focus. Double click toggles enable/disable. Right click for effect actions.")
               .arg(effectName,
                    editingCompositionEffects() ? QStringLiteral("composition")
-                                               : QStringLiteral("layer")));
+                                               : QStringLiteral("layer"),
+                   hasMask ? QStringLiteral(" Mask attached.") : QString()));
       refreshRackButtons();
       return;
     }
@@ -3815,6 +4349,77 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex) {
   }
 }
 
+void ArtifactInspectorWidget::Impl::handleApplyLipSyncToSwitchLayer() {
+  if (currentCompositionId_.isNil() || currentLayerId_.isNil()) {
+    return;
+  }
+
+  auto projectService = ArtifactProjectService::instance();
+  if (!projectService) {
+    return;
+  }
+
+  auto findResult = projectService->findComposition(currentCompositionId_);
+  if (!findResult.success) {
+    return;
+  }
+
+  auto comp = findResult.ptr.lock();
+  if (!comp) {
+    return;
+  }
+
+  auto layer = comp->layerById(currentLayerId_);
+  auto audio = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer);
+  if (!audio) {
+    QMessageBox::warning(containerWidget, QStringLiteral("Lip Sync"),
+                         QStringLiteral("Select an audio layer first."));
+    return;
+  }
+
+  ArtifactSwitchLayerPtr switchTarget;
+  auto *selMgr = ArtifactLayerSelectionManager::instance();
+  const auto selected = selMgr ? selMgr->selectedLayers() : QSet<ArtifactAbstractLayerPtr>{};
+  for (const auto &selectedLayer : selected) {
+    if (!selectedLayer || selectedLayer == layer) {
+      continue;
+    }
+    switchTarget = std::dynamic_pointer_cast<ArtifactSwitchLayer>(selectedLayer);
+    if (switchTarget) {
+      break;
+    }
+  }
+  if (!switchTarget) {
+    for (const auto &candidate : comp->allLayer()) {
+      if (!candidate || candidate == layer) {
+        continue;
+      }
+      switchTarget = std::dynamic_pointer_cast<ArtifactSwitchLayer>(candidate);
+      if (switchTarget) {
+        break;
+      }
+    }
+  }
+
+  if (!switchTarget) {
+    QMessageBox::warning(containerWidget, QStringLiteral("Lip Sync"),
+                         QStringLiteral("Select a Switch Layer in the same composition."));
+    return;
+  }
+
+  const double frameRate = comp->frameRate().framerate();
+  if (!audio->applyLipSyncToSwitchLayer(*switchTarget, frameRate)) {
+    QMessageBox::warning(containerWidget, QStringLiteral("Lip Sync"),
+                         QStringLiteral("Lip Sync の適用に失敗しました。"));
+    return;
+  }
+
+  switchTarget->changed();
+  statusLabel->setText(QStringLiteral("Status: Lip Sync applied to Switch Layer"));
+  QMessageBox::information(containerWidget, QStringLiteral("Lip Sync"),
+                           QStringLiteral("Lip Sync を Switch Layer に適用しました。"));
+}
+
 void ArtifactInspectorWidget::update() {}
 
 void ArtifactInspectorWidget::focusInEvent(QFocusEvent* event)
@@ -3927,6 +4532,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->cloneModifierMoveUpButton = new InspectorActionButton("Mod Up");
   impl_->cloneModifierMoveDownButton = new InspectorActionButton("Mod Down");
   impl_->openScriptButton = new InspectorActionButton("Open Script");
+  impl_->applyLipSyncButton = new InspectorActionButton("Lip Sync");
   applyInspectorButton(impl_->physicsComponentButton, true);
   applyInspectorButton(impl_->scriptComponentButton, false);
   applyInspectorButton(impl_->layoutComponentButton, false);
@@ -3945,6 +4551,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   applyInspectorButton(impl_->cloneModifierMoveUpButton, false);
   applyInspectorButton(impl_->cloneModifierMoveDownButton, false);
   applyInspectorButton(impl_->openScriptButton, false);
+  applyInspectorButton(impl_->applyLipSyncButton, false);
   impl_->physicsComponentButton->setToolTip(
       QStringLiteral("Toggle the layer physics component."));
   impl_->scriptComponentButton->setToolTip(
@@ -3981,6 +4588,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       QStringLiteral("Move the selected clone modifier down."));
   impl_->openScriptButton->setToolTip(
       QStringLiteral("Open the script file linked to this layer."));
+  impl_->applyLipSyncButton->setToolTip(
+      QStringLiteral("Build a lip sync track from the audio layer and apply it to a Switch Layer."));
   auto primaryComponentLayout = new QHBoxLayout();
   primaryComponentLayout->addWidget(impl_->physicsComponentButton);
   primaryComponentLayout->addWidget(impl_->scriptComponentButton);
@@ -3990,6 +4599,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   secondaryComponentLayout->addWidget(impl_->cloneComponentButton);
   secondaryComponentLayout->addWidget(impl_->fluidComponentButton);
   secondaryComponentLayout->addWidget(impl_->openScriptButton);
+  secondaryComponentLayout->addWidget(impl_->applyLipSyncButton);
   componentsLayout->addLayout(secondaryComponentLayout);
 
   auto generatorHeaderLayout = new QHBoxLayout();
@@ -4723,6 +5333,9 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                      QDesktopServices::openUrl(
                          QUrl::fromLocalFile(openPath));
                    });
+  impl_->applyLipSyncButton->setAction([this]() {
+    impl_->handleApplyLipSyncToSwitchLayer();
+  });
 
   layerInfoWidget->setLayout(layerInfoLayout);
   impl_->tabWidget->addTab(layerInfoWidget, "Layer Info");
@@ -5054,5 +5667,3 @@ void ArtifactInspectorWidget::contextMenuEvent(QContextMenuEvent *event) {
 }
 
 } // namespace Artifact
-
-

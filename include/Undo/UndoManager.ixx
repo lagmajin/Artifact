@@ -139,6 +139,40 @@ private:
     std::vector<LayerMatteReference> afterRefs_;
 };
 
+class SetLayerPropertyKeyframesCommand : public UndoCommand {
+public:
+    SetLayerPropertyKeyframesCommand(ArtifactAbstractLayerPtr layer,
+                                     QString propertyPath,
+                                     std::vector<ArtifactCore::KeyFrame> beforeKeyframes,
+                                     std::vector<ArtifactCore::KeyFrame> afterKeyframes,
+                                     QString label = QStringLiteral("Edit Layer Property Keyframes"));
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    QString propertyPath_;
+    std::vector<ArtifactCore::KeyFrame> beforeKeyframes_;
+    std::vector<ArtifactCore::KeyFrame> afterKeyframes_;
+    QString label_;
+};
+
+class SetEffectMaskImagesCommand : public UndoCommand {
+public:
+    SetEffectMaskImagesCommand(std::shared_ptr<ArtifactAbstractEffect> effect,
+                               std::vector<std::shared_ptr<ImageF32x4_RGBA>> beforeMasks,
+                               std::vector<std::shared_ptr<ImageF32x4_RGBA>> afterMasks,
+                               QString label = QStringLiteral("Edit Effect Mask Images"));
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    std::weak_ptr<ArtifactAbstractEffect> effect_;
+    std::vector<std::shared_ptr<ImageF32x4_RGBA>> beforeMasks_;
+    std::vector<std::shared_ptr<ImageF32x4_RGBA>> afterMasks_;
+    QString label_;
+};
+
 // 新規コマンド：レイヤー移動（インデックス変更）
 class MoveLayerIndexCommand : public UndoCommand {
 public:

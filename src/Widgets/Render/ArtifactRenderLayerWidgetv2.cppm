@@ -16,6 +16,7 @@ module;
 #include <QApplication>
 #include <QImage>
 #include <QLinearGradient>
+#include <QLineF>
 #include <QMenu>
 #include <QPainter>
 #include <QCursor>
@@ -445,6 +446,21 @@ QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskHandleType
  return vertex.position;
 }
 
+constexpr float kMinProportionalEditRadius = 8.0f;
+constexpr float kMaxProportionalEditRadius = 4096.0f;
+
+float proportionalEditWeight(const qreal distance, const qreal radius)
+{
+ if (radius <= 0.0) {
+  return distance <= 0.0 ? 1.0f : 0.0f;
+ }
+ if (distance >= radius) {
+  return 0.0f;
+ }
+ const qreal t = std::clamp(1.0 - (distance / radius), 0.0, 1.0);
+ return static_cast<float>(t * t * (3.0 - 2.0 * t));
+}
+
 std::vector<QPointF> buildShapeEditSeedPoints(const ArtifactShapeLayer& shape)
 {
  const float w = static_cast<float>(std::max(1, shape.shapeWidth()));
@@ -690,7 +706,13 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   bool maskEditDirty_ = false;
   ArtifactAbstractLayerWeak maskEditLayer_;
   std::vector<LayerMask> maskEditBefore_;
-
+  bool proportionalEditingEnabled_ = false;
+  float proportionalEditRadius_ = 96.0f;
+  bool proportionalDragActive_ = false;
+  QPointF proportionalDragOrigin_;
+  std::vector<MaskVertex> proportionalMaskVerticesBefore_;
+  std::vector<QPointF> proportionalShapePointsBefore_;
+  std::vector<CustomPathVertex> proportionalPathVerticesBefore_;
   bool isDraggingMaskHandle_ = false;
   bool isDraggingShapeVertex_ = false;
   int draggingShapeVertexIndex_ = -1;
@@ -712,6 +734,16 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   void beginMaskEditTransaction(const ArtifactAbstractLayerPtr& layer);
   void markMaskEditDirty();
   void commitMaskEditTransaction();
+  void resetProportionalDragState();
+  void beginMaskProportionalDragSnapshot(const MaskPath& path, int vertexIndex);
+  void beginShapeProportionalDragSnapshot(const std::vector<QPointF>& points, int vertexIndex);
+  void beginPathProportionalDragSnapshot(const std::vector<CustomPathVertex>& verts, int vertexIndex);
+  bool applyMaskProportionalDrag(const ArtifactAbstractLayerPtr& layer, const QPointF& localPos);
+  bool applyShapeProportionalDrag(const ArtifactAbstractLayerPtr& layer,
+                                  ArtifactShapeLayer& shape,
+                                  const QPointF& localPos);
+  bool applyPathProportionalDrag(ArtifactShapeLayer& shape, const QPointF& localPos);
+  QString proportionalEditingStatusText() const;
   bool hitTestMaskVertex(const ArtifactAbstractLayerPtr& layer,
                          const QPointF& canvasPos,
                          int& maskIndex,
@@ -1003,8 +1035,8 @@ void ArtifactLayerEditorWidgetV2::Impl::destroy()
   }
  }
 
- void ArtifactLayerEditorWidgetV2::Impl::commitMaskEditTransaction()
- {
+void ArtifactLayerEditorWidgetV2::Impl::commitMaskEditTransaction()
+{
   if (!maskEditPending_) {
    return;
   }
@@ -1026,6 +1058,151 @@ void ArtifactLayerEditorWidgetV2::Impl::destroy()
   }
  maskEditBefore_.clear();
  maskEditDirty_ = false;
+}
+
+void ArtifactLayerEditorWidgetV2::Impl::resetProportionalDragState()
+{
+ proportionalDragActive_ = false;
+ proportionalDragOrigin_ = {};
+ proportionalMaskVerticesBefore_.clear();
+ proportionalShapePointsBefore_.clear();
+ proportionalPathVerticesBefore_.clear();
+}
+
+void ArtifactLayerEditorWidgetV2::Impl::beginMaskProportionalDragSnapshot(const MaskPath& path,
+                                                                          const int vertexIndex)
+{
+ resetProportionalDragState();
+ if (!proportionalEditingEnabled_ || vertexIndex < 0 || vertexIndex >= path.vertexCount()) {
+  return;
+ }
+ proportionalMaskVerticesBefore_.reserve(static_cast<size_t>(path.vertexCount()));
+ for (int i = 0; i < path.vertexCount(); ++i) {
+  proportionalMaskVerticesBefore_.push_back(path.vertex(i));
+ }
+ proportionalDragOrigin_ = proportionalMaskVerticesBefore_[static_cast<size_t>(vertexIndex)].position;
+ proportionalDragActive_ = true;
+}
+
+void ArtifactLayerEditorWidgetV2::Impl::beginShapeProportionalDragSnapshot(const std::vector<QPointF>& points,
+                                                                           const int vertexIndex)
+{
+ resetProportionalDragState();
+ if (!proportionalEditingEnabled_ || vertexIndex < 0 ||
+     vertexIndex >= static_cast<int>(points.size())) {
+  return;
+ }
+ proportionalShapePointsBefore_ = points;
+ proportionalDragOrigin_ = points[static_cast<size_t>(vertexIndex)];
+ proportionalDragActive_ = true;
+}
+
+void ArtifactLayerEditorWidgetV2::Impl::beginPathProportionalDragSnapshot(
+    const std::vector<CustomPathVertex>& verts,
+    const int vertexIndex)
+{
+ resetProportionalDragState();
+ if (!proportionalEditingEnabled_ || vertexIndex < 0 ||
+     vertexIndex >= static_cast<int>(verts.size())) {
+  return;
+ }
+ proportionalPathVerticesBefore_ = verts;
+ proportionalDragOrigin_ = verts[static_cast<size_t>(vertexIndex)].pos;
+ proportionalDragActive_ = true;
+}
+
+bool ArtifactLayerEditorWidgetV2::Impl::applyMaskProportionalDrag(const ArtifactAbstractLayerPtr& layer,
+                                                                  const QPointF& localPos)
+{
+ if (!layer || !proportionalDragActive_ ||
+     draggingMaskIndex_ < 0 || draggingPathIndex_ < 0 || draggingVertexIndex_ < 0) {
+  return false;
+ }
+ LayerMask mask = layer->mask(draggingMaskIndex_);
+ MaskPath path = mask.maskPath(draggingPathIndex_);
+ if (proportionalMaskVerticesBefore_.size() != static_cast<size_t>(path.vertexCount()) ||
+     draggingVertexIndex_ >= path.vertexCount()) {
+  return false;
+ }
+ const QPointF delta = localPos - proportionalDragOrigin_;
+ for (int i = 0; i < path.vertexCount(); ++i) {
+  const MaskVertex& before = proportionalMaskVerticesBefore_[static_cast<size_t>(i)];
+  const float weight = proportionalEditWeight(
+      QLineF(before.position, proportionalDragOrigin_).length(),
+      proportionalEditRadius_);
+  if (weight <= 0.0f) {
+   continue;
+  }
+  MaskVertex updated = before;
+  updated.position += delta * weight;
+  path.setVertex(i, updated);
+ }
+ mask.setMaskPath(draggingPathIndex_, path);
+ layer->setMask(draggingMaskIndex_, mask);
+ markMaskEditDirty();
+ return true;
+}
+
+bool ArtifactLayerEditorWidgetV2::Impl::applyShapeProportionalDrag(const ArtifactAbstractLayerPtr& layer,
+                                                                   ArtifactShapeLayer& shape,
+                                                                   const QPointF& localPos)
+{
+ if (!layer || !proportionalDragActive_ || draggingShapeVertexIndex_ < 0 ||
+     proportionalShapePointsBefore_.empty() ||
+     draggingShapeVertexIndex_ >= static_cast<int>(proportionalShapePointsBefore_.size())) {
+  return false;
+ }
+ auto points = proportionalShapePointsBefore_;
+ const QPointF delta = localPos - proportionalDragOrigin_;
+ for (size_t i = 0; i < points.size(); ++i) {
+  const QPointF& before = proportionalShapePointsBefore_[i];
+  const float weight = proportionalEditWeight(
+      QLineF(before, proportionalDragOrigin_).length(),
+      proportionalEditRadius_);
+  if (weight <= 0.0f) {
+   continue;
+  }
+  const QPointF moved = before + delta * weight;
+  points[i] = QPointF(
+      std::clamp(moved.x(), 0.0, static_cast<double>(shape.shapeWidth())),
+      std::clamp(moved.y(), 0.0, static_cast<double>(shape.shapeHeight())));
+ }
+ shape.setCustomPolygonPoints(points, shape.customPolygonClosed());
+ markShapeEditDirty();
+ return true;
+}
+
+bool ArtifactLayerEditorWidgetV2::Impl::applyPathProportionalDrag(ArtifactShapeLayer& shape,
+                                                                  const QPointF& localPos)
+{
+ if (!proportionalDragActive_ || draggingPathVertexIndex_ < 0 ||
+     proportionalPathVerticesBefore_.empty() ||
+     draggingPathVertexIndex_ >= static_cast<int>(proportionalPathVerticesBefore_.size())) {
+  return false;
+ }
+ auto verts = proportionalPathVerticesBefore_;
+ const QPointF delta = localPos - proportionalDragOrigin_;
+ for (size_t i = 0; i < verts.size(); ++i) {
+  const CustomPathVertex& before = proportionalPathVerticesBefore_[i];
+  const float weight = proportionalEditWeight(
+      QLineF(before.pos, proportionalDragOrigin_).length(),
+      proportionalEditRadius_);
+  if (weight <= 0.0f) {
+   continue;
+  }
+  verts[i].pos = before.pos + delta * weight;
+ }
+ shape.setCustomPathVertices(verts, shape.customPathClosed());
+ markPathEditDirty();
+ return true;
+}
+
+QString ArtifactLayerEditorWidgetV2::Impl::proportionalEditingStatusText() const
+{
+ const QString state = proportionalEditingEnabled_ ? QStringLiteral("prop on") : QStringLiteral("prop off");
+ return QStringLiteral("%1 %2 / O / [ ]")
+     .arg(state)
+     .arg(static_cast<int>(std::lround(proportionalEditRadius_)));
 }
 
 void ArtifactLayerEditorWidgetV2::Impl::beginShapeEditTransaction(const ArtifactAbstractLayerPtr& layer)
@@ -1283,12 +1460,12 @@ void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractL
                              : QStringLiteral("insert / split / convert");
   const QPointF hudAnchor = globalTransform.map(points.front()) + QPointF(14.0, -30.0);
   const float zoom = std::max(0.1f, renderer_->getZoom());
-  const QRectF hudRect(hudAnchor, QSizeF(176.0f / zoom, 36.0f / zoom));
+  const QRectF hudRect(hudAnchor, QSizeF(228.0f / zoom, 48.0f / zoom));
   renderer_->drawOverlayPanel(hudRect.x(), hudRect.y(), hudRect.width(), hudRect.height(),
                               FloatColor{0.06f, 0.09f, 0.13f, 0.88f},
                               FloatColor{0.42f, 0.72f, 0.98f, 0.90f});
   renderer_->drawText(hudRect.adjusted(8.0, 5.0, -8.0, -4.0),
-                      QStringLiteral("Shape %1\n%2").arg(headline, detail),
+                      QStringLiteral("Shape %1\n%2\n%3").arg(headline, detail, proportionalEditingStatusText()),
                       hudFont, FloatColor{0.95f, 0.97f, 1.0f, 1.0f},
                       Qt::AlignLeft | Qt::AlignVCenter);
  }
@@ -1646,12 +1823,12 @@ void ArtifactLayerEditorWidgetV2::Impl::drawCustomPathOverlay(const ArtifactAbst
                                                 : QStringLiteral("drag / rebalance / smooth"))
                              : QStringLiteral("drag / delete / toggle smooth");
   const QPointF hudAnchor = gt.map(verts.front().pos) + QPointF(14.0, -30.0);
-  const QRectF hudRect(hudAnchor, QSizeF(184.0 / zoom, 36.0 / zoom));
+  const QRectF hudRect(hudAnchor, QSizeF(236.0 / zoom, 48.0 / zoom));
   renderer_->drawOverlayPanel(hudRect.x(), hudRect.y(), hudRect.width(), hudRect.height(),
                               FloatColor{0.06f, 0.09f, 0.13f, 0.88f},
                               FloatColor{0.42f, 0.72f, 0.98f, 0.90f});
   renderer_->drawText(hudRect.adjusted(8.0, 5.0, -8.0, -4.0),
-                      QStringLiteral("Path %1\n%2").arg(headline, detail),
+                      QStringLiteral("Path %1\n%2\n%3").arg(headline, detail, proportionalEditingStatusText()),
                       hudFont, FloatColor{0.95f, 0.97f, 1.0f, 1.0f},
                       Qt::AlignLeft | Qt::AlignVCenter);
  }
@@ -2405,10 +2582,11 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   impl_->isDraggingShapeVertex_ = false;
   impl_->draggingShapeVertexIndex_ = -1;
   impl_->hoveredShapeVertexIndex_ = -1;
-  impl_->isDraggingCornerRadius_ = false;
-  impl_->isDraggingStarInnerRadius_ = false;
-  impl_->hoveredCornerRadius_ = false;
-  impl_->hoveredStarInnerRadius_ = false;
+ impl_->isDraggingCornerRadius_ = false;
+ impl_->isDraggingStarInnerRadius_ = false;
+ impl_->hoveredCornerRadius_ = false;
+ impl_->hoveredStarInnerRadius_ = false;
+ impl_->resetProportionalDragState();
   impl_->isDraggingPathVertex_ = false;
   impl_->isDraggingPathTangent_ = false;
   impl_->draggingPathVertexIndex_ = -1;
@@ -2433,7 +2611,23 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
  void ArtifactLayerEditorWidgetV2::keyPressEvent(QKeyEvent* event)
  {
-  if (impl_->editMode_ == EditMode::Mask && impl_->renderer_ && event) {
+ if (impl_->editMode_ == EditMode::Mask && impl_->renderer_ && event) {
+   if (event->key() == Qt::Key_O) {
+    impl_->proportionalEditingEnabled_ = !impl_->proportionalEditingEnabled_;
+    impl_->requestRender();
+    event->accept();
+    return;
+   }
+   if (event->key() == Qt::Key_BracketLeft || event->key() == Qt::Key_BracketRight) {
+    const float scale = event->key() == Qt::Key_BracketLeft ? 0.85f : 1.15f;
+    impl_->proportionalEditRadius_ = std::clamp(
+        impl_->proportionalEditRadius_ * scale,
+        kMinProportionalEditRadius,
+        kMaxProportionalEditRadius);
+    impl_->requestRender();
+    event->accept();
+    return;
+   }
    if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
     auto layer = impl_->targetLayer();
     if (layer) {
@@ -2449,6 +2643,22 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    }
   }
   if (isShapeEditingMode(impl_->editMode_) && impl_->renderer_ && event) {
+   if (event->key() == Qt::Key_O) {
+    impl_->proportionalEditingEnabled_ = !impl_->proportionalEditingEnabled_;
+    impl_->requestRender();
+    event->accept();
+    return;
+   }
+   if (event->key() == Qt::Key_BracketLeft || event->key() == Qt::Key_BracketRight) {
+    const float scale = event->key() == Qt::Key_BracketLeft ? 0.85f : 1.15f;
+    impl_->proportionalEditRadius_ = std::clamp(
+        impl_->proportionalEditRadius_ * scale,
+        kMinProportionalEditRadius,
+        kMaxProportionalEditRadius);
+    impl_->requestRender();
+    event->accept();
+    return;
+   }
    if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
     auto layer = impl_->targetLayer();
     if (layer) {
@@ -2559,9 +2769,10 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       return;
      }
      if (impl_->hitTestCustomPathVertex(layer, canvasPoint, vi)) {
-      impl_->beginPathEditTransaction(layer);
-      impl_->isDraggingPathVertex_ = true;
-      impl_->draggingPathVertexIndex_ = vi;
+     impl_->beginPathEditTransaction(layer);
+     impl_->isDraggingPathVertex_ = true;
+     impl_->draggingPathVertexIndex_ = vi;
+      impl_->beginPathProportionalDragSnapshot(shape->customPathVertices(), vi);
       setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
                           Qt::ClosedHandCursor));
       event->accept();
@@ -2591,6 +2802,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      impl_->beginShapeEditTransaction(layer);
      impl_->isDraggingShapeVertex_ = true;
      impl_->draggingShapeVertexIndex_ = vertexIndex;
+     impl_->beginShapeProportionalDragSnapshot(shape->customPolygonPoints(), vertexIndex);
      setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
                          Qt::ClosedHandCursor));
      event->accept();
@@ -2698,6 +2910,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       impl_->draggingMaskIndex_ = maskIndex;
       impl_->draggingPathIndex_ = pathIndex;
       impl_->draggingVertexIndex_ = vertexIndex;
+      impl_->beginMaskProportionalDragSnapshot(path, vertexIndex);
      setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
                          Qt::ClosedHandCursor));
      event->accept();
@@ -2730,6 +2943,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
     impl_->draggingMaskIndex_ = -1;
     impl_->draggingPathIndex_ = -1;
     impl_->draggingVertexIndex_ = -1;
+    impl_->resetProportionalDragState();
     impl_->draggingMaskHandleType_ = -1;
     impl_->commitMaskEditTransaction();
     unsetCursor();
@@ -2741,6 +2955,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
     impl_->draggingMaskIndex_ = -1;
     impl_->draggingPathIndex_ = -1;
     impl_->draggingVertexIndex_ = -1;
+    impl_->resetProportionalDragState();
     impl_->commitMaskEditTransaction();
     unsetCursor();
     event->accept();
@@ -2787,9 +3002,10 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
   if (isShapeEditingMode(impl_->editMode_) && event->button() == Qt::LeftButton) {
    // Phase 5: path vertex/tangent release
    if (impl_->isDraggingPathVertex_ || impl_->isDraggingPathTangent_) {
-    impl_->isDraggingPathVertex_ = false;
-    impl_->isDraggingPathTangent_ = false;
-    impl_->draggingPathVertexIndex_ = -1;
+   impl_->isDraggingPathVertex_ = false;
+   impl_->isDraggingPathTangent_ = false;
+   impl_->draggingPathVertexIndex_ = -1;
+    impl_->resetProportionalDragState();
     impl_->commitPathEditTransaction();
     unsetCursor();
     event->accept();
@@ -2801,8 +3017,9 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
     return;
    }
    if (impl_->isDraggingShapeVertex_) {
-    impl_->isDraggingShapeVertex_ = false;
-    impl_->draggingShapeVertexIndex_ = -1;
+   impl_->isDraggingShapeVertex_ = false;
+   impl_->draggingShapeVertexIndex_ = -1;
+    impl_->resetProportionalDragState();
     impl_->commitShapeEditTransaction();
     unsetCursor();
     event->accept();
@@ -2978,11 +3195,14 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
       LayerMask mask = layer->mask(impl_->draggingMaskIndex_);
       MaskPath path = mask.maskPath(impl_->draggingPathIndex_);
       MaskVertex vertex = path.vertex(impl_->draggingVertexIndex_);
-      vertex.position = invTransform.map(canvasPoint);
-      path.setVertex(impl_->draggingVertexIndex_, vertex);
-      mask.setMaskPath(impl_->draggingPathIndex_, path);
-      layer->setMask(impl_->draggingMaskIndex_, mask);
-      impl_->markMaskEditDirty();
+      const QPointF localPos = invTransform.map(canvasPoint);
+      if (!impl_->applyMaskProportionalDrag(layer, localPos)) {
+       vertex.position = localPos;
+       path.setVertex(impl_->draggingVertexIndex_, vertex);
+       mask.setMaskPath(impl_->draggingPathIndex_, path);
+       layer->setMask(impl_->draggingMaskIndex_, mask);
+       impl_->markMaskEditDirty();
+      }
       impl_->requestRender();
       event->accept();
       return;
@@ -3021,13 +3241,16 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
       const QTransform gt = layer->getGlobalTransform();
       bool invertible = false;
       const QTransform inv = gt.inverted(&invertible);
-      if (invertible) {
+     if (invertible) {
        auto verts = shape->customPathVertices();
        const int idx = impl_->draggingPathVertexIndex_;
        if (idx < static_cast<int>(verts.size())) {
-       verts[idx].pos = inv.map(canvasPoint);
-       shape->setCustomPathVertices(verts, shape->customPathClosed());
-       impl_->markPathEditDirty();
+       const QPointF localPos = inv.map(canvasPoint);
+       if (!impl_->applyPathProportionalDrag(*shape, localPos)) {
+        verts[idx].pos = localPos;
+        shape->setCustomPathVertices(verts, shape->customPathClosed());
+        impl_->markPathEditDirty();
+       }
         impl_->requestRender();
         event->accept();
         return;
@@ -3093,12 +3316,14 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
       if (impl_->draggingShapeVertexIndex_ >= 0 &&
           impl_->draggingShapeVertexIndex_ < static_cast<int>(points.size())) {
        const QPointF rawLocalPos = invTransform.map(canvasPoint);
-       points[static_cast<size_t>(impl_->draggingShapeVertexIndex_)] = QPointF(
-           std::clamp(rawLocalPos.x(), 0.0, static_cast<double>(shape->shapeWidth())),
-           std::clamp(rawLocalPos.y(), 0.0, static_cast<double>(shape->shapeHeight())));
        impl_->beginShapeEditTransaction(layer);
-       shape->setCustomPolygonPoints(points, shape->customPolygonClosed());
-       impl_->markShapeEditDirty();
+       if (!impl_->applyShapeProportionalDrag(layer, *shape, rawLocalPos)) {
+        points[static_cast<size_t>(impl_->draggingShapeVertexIndex_)] = QPointF(
+            std::clamp(rawLocalPos.x(), 0.0, static_cast<double>(shape->shapeWidth())),
+            std::clamp(rawLocalPos.y(), 0.0, static_cast<double>(shape->shapeHeight())));
+        shape->setCustomPolygonPoints(points, shape->customPolygonClosed());
+        impl_->markShapeEditDirty();
+       }
        impl_->requestRender();
        event->accept();
        return;

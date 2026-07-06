@@ -648,6 +648,11 @@ void Artifact3DLayer::setRenderMode(RenderMode mode) {
   impl_->renderMode_ = mode;
 }
 
+const ArtifactCore::Mesh& Artifact3DLayer::mesh() const
+{
+  return impl_->mesh_;
+}
+
 void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   if (!renderer || !isVisible() || !impl_->meshLoaded_) {
     return;

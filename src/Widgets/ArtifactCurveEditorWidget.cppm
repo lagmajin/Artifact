@@ -6,6 +6,7 @@
 #include <QPainter>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QInputDialog>
 #include <QWheelEvent>
 #include <QPointF>
 #include <QRectF>
@@ -573,19 +574,20 @@ public:
    return false;
   }
   Q_UNUSED(track);
-  if (prev) {
-   const int64_t span = std::max<int64_t>(1, (key->frame - prev->frame) / 3);
-   key->inHandleFrame = -span;
-   key->inHandleValue = 0.0f;
-  }
-  if (next) {
-   const int64_t span = std::max<int64_t>(1, (next->frame - key->frame) / 3);
-   key->outHandleFrame = span;
-   key->outHandleValue = 0.0f;
-  }
-  key->smooth = true;
-  return true;
+ if (prev) {
+  const int64_t span = std::max<int64_t>(1, (key->frame - prev->frame) / 3);
+  key->inHandleFrame = -span;
+  key->inHandleValue = 0.0f;
  }
+  if (next) {
+  const int64_t span = std::max<int64_t>(1, (next->frame - key->frame) / 3);
+  key->outHandleFrame = span;
+  key->outHandleValue = 0.0f;
+ }
+ key->brokenTangents = false;
+ key->smooth = true;
+ return true;
+}
 
  bool setSelectedTangentsAuto() {
   CurveTrack* track = nullptr;
@@ -617,6 +619,7 @@ public:
    key->outHandleFrame = span;
    key->outHandleValue = slope * static_cast<float>(span);
   }
+  key->brokenTangents = false;
   key->smooth = true;
   return true;
  }
@@ -644,6 +647,7 @@ public:
    key->outHandleFrame = span;
    key->outHandleValue = slope * static_cast<float>(span);
   }
+  key->brokenTangents = false;
   key->smooth = false;
   return true;
  }
@@ -709,7 +713,12 @@ void ArtifactCurveEditorWidget::setKeyEditingEnabled(bool enabled) {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyAutoTangents() {
+ if (!impl_) {
+  return false;
+ }
+ Q_EMIT interactionStarted();
  if (!impl_->setSelectedTangentsAuto()) {
+  Q_EMIT interactionFinished();
   return false;
  }
  update();
@@ -718,7 +727,12 @@ bool ArtifactCurveEditorWidget::setSelectedKeyAutoTangents() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyFlatTangents() {
+ if (!impl_) {
+  return false;
+ }
+ Q_EMIT interactionStarted();
  if (!impl_->setSelectedTangentsFlat()) {
+  Q_EMIT interactionFinished();
   return false;
  }
  update();
@@ -727,11 +741,50 @@ bool ArtifactCurveEditorWidget::setSelectedKeyFlatTangents() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyLinearTangents() {
+ if (!impl_) {
+  return false;
+ }
+ Q_EMIT interactionStarted();
  if (!impl_->setSelectedTangentsLinear()) {
+  Q_EMIT interactionFinished();
   return false;
  }
  update();
  Q_EMIT interactionFinished();
+ return true;
+}
+
+bool ArtifactCurveEditorWidget::promptSetSelectedKeyValue() {
+ if (!impl_ || !impl_->keyEditingEnabled_) {
+  return false;
+ }
+
+ const int trackIndex = impl_->selectedTrack_;
+ const int keyIndex = impl_->selectedKey_;
+ if (trackIndex < 0 || keyIndex < 0 ||
+     trackIndex >= static_cast<int>(impl_->tracks_.size()) ||
+     keyIndex >= static_cast<int>(impl_->tracks_[trackIndex].keys.size())) {
+  return false;
+ }
+
+ auto& key = impl_->tracks_[trackIndex].keys[keyIndex];
+ bool accepted = false;
+ const double nextValue = QInputDialog::getDouble(
+     this, QStringLiteral("Set Keyframe Value"), QStringLiteral("Value:"),
+     static_cast<double>(key.value), -1000000.0, 1000000.0, 3, &accepted);
+ if (!accepted) {
+  return false;
+ }
+
+ if (std::abs(static_cast<double>(key.value) - nextValue) < 0.0001) {
+  return false;
+ }
+
+ Q_EMIT interactionStarted();
+ key.value = static_cast<float>(nextValue);
+ Q_EMIT keyMoved(trackIndex, keyIndex, key.frame, key.value);
+ Q_EMIT interactionFinished();
+ update();
  return true;
 }
 
@@ -979,8 +1032,14 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
   case Impl::DragMode::MoveHandleIn: {
    QPointF data = impl_->pixelToData(pos);
    auto& key = impl_->tracks_[impl_->dragTrackIndex_].keys[impl_->dragKeyIndex_];
+   const bool wasBroken = key.brokenTangents;
    key.inHandleFrame = static_cast<int64_t>(data.x()) - key.frame;
    key.inHandleValue = static_cast<float>(data.y()) - key.value;
+   if (!wasBroken) {
+    key.outHandleFrame = -key.inHandleFrame;
+    key.outHandleValue = -key.inHandleValue;
+   }
+   key.brokenTangents = true;
    key.smooth = true;
    update();
    break;
@@ -989,8 +1048,14 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
   case Impl::DragMode::MoveHandleOut: {
    QPointF data = impl_->pixelToData(pos);
    auto& key = impl_->tracks_[impl_->dragTrackIndex_].keys[impl_->dragKeyIndex_];
+   const bool wasBroken = key.brokenTangents;
    key.outHandleFrame = static_cast<int64_t>(data.x()) - key.frame;
    key.outHandleValue = static_cast<float>(data.y()) - key.value;
+   if (!wasBroken) {
+    key.inHandleFrame = -key.outHandleFrame;
+    key.inHandleValue = -key.outHandleValue;
+   }
+   key.brokenTangents = true;
    key.smooth = true;
    update();
    break;

@@ -34,6 +34,7 @@ private slots:
     void onCancelClicked();
 
 private:
+    bool isSelectableItem(QTreeWidgetItem* item) const;
     void buildObjectTree();
     void filterObjectTree(const QString& filter);
     void addCompositionTree(QTreeWidgetItem* parent);

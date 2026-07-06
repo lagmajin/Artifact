@@ -420,6 +420,7 @@ public:
     QString propertyName() const;
     void setExpressionHandler(std::function<void()> handler);
     void setResetHandler(std::function<void()> handler);
+    void setAuxAction(std::function<void()> handler, const QString& label);
     void setKeyframeHandler(KeyFrameHandler handler);
     void setNavigationHandler(NavigationHandler handler);
     
@@ -460,12 +461,14 @@ private:
     
     std::function<void()> expressionHandler_;
     std::function<void()> resetHandler_;
+    std::function<void()> auxActionHandler_;
     std::function<void(bool)> favoriteHandler_;
     KeyFrameHandler keyframeHandler_;
     NavigationHandler navigationHandler_;
     std::function<void(ArtifactCore::KeyFrame::Anchor)> keyframeAnchorHandler_;
     std::function<void(ArtifactCore::KeyFrame::ColorLabel)> keyframeColorLabelHandler_;
     bool currentFrameKeyframed_ = false;
+    QString auxActionLabel_;
     
     bool scrubCandidate_ = false;
     bool scrubbing_ = false;

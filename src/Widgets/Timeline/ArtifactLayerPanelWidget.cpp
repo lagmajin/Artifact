@@ -4302,34 +4302,49 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       });
     }
     const auto matteRefs = layer->matteReferences();
-    if (!matteRefs.empty()) {
+    const auto selectedLayer =
+        ArtifactLayerSelectionManager::instance()
+            ? ArtifactLayerSelectionManager::instance()->currentLayer()
+            : ArtifactAbstractLayerPtr{};
+    const bool canUseSelectedMatteSource =
+        selectedLayer && selectedLayer->id() != layer->id() && comp &&
+        comp->containsLayerById(selectedLayer->id());
+    if (canUseSelectedMatteSource || !matteRefs.empty()) {
       QMenu *matteMenu = allMenu->addMenu(QStringLiteral("トラックマット"));
-      const QStringList typeLabels = {
-          QStringLiteral("アルファ"),
-          QStringLiteral("ルーマ"),
-          QStringLiteral("反転アルファ"),
-          QStringLiteral("反転ルーマ")};
-      for (int matteIndex = 0; matteIndex < static_cast<int>(matteRefs.size()); ++matteIndex) {
-        const auto &ref = matteRefs[matteIndex];
-        QString sourceName = QStringLiteral("<missing>");
-        if (comp && !ref.sourceLayerId.isNil()) {
-          if (auto source = comp->layerById(ref.sourceLayerId)) {
-            const QString name = source->layerName().trimmed();
-            sourceName = name.isEmpty() ? ref.sourceLayerId.toString() : name;
+      if (canUseSelectedMatteSource) {
+        QAction *addAction =
+            matteMenu->addAction(QStringLiteral("選択レイヤーをソースにする"));
+        addAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_add_selected")},
+                                       {QStringLiteral("selectedLayerId"), selectedLayer->id().toString()}});
+      }
+      if (!matteRefs.empty()) {
+        const QStringList typeLabels = {
+            QStringLiteral("アルファ"),
+            QStringLiteral("ルーマ"),
+            QStringLiteral("反転アルファ"),
+            QStringLiteral("反転ルーマ")};
+        for (int matteIndex = 0; matteIndex < static_cast<int>(matteRefs.size()); ++matteIndex) {
+          const auto &ref = matteRefs[matteIndex];
+          QString sourceName = QStringLiteral("<missing>");
+          if (comp && !ref.sourceLayerId.isNil()) {
+            if (auto source = comp->layerById(ref.sourceLayerId)) {
+              const QString name = source->layerName().trimmed();
+              sourceName = name.isEmpty() ? ref.sourceLayerId.toString() : name;
+            }
           }
-        }
-        QMenu *refMenu = matteMenu->addMenu(
-            QStringLiteral("マット %1: %2").arg(matteIndex + 1).arg(sourceName));
-        QAction *focusAction = refMenu->addAction(QStringLiteral("ソースにフォーカス"));
-        focusAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_focus")},
-                                         {QStringLiteral("index"), matteIndex}});
+          QMenu *refMenu = matteMenu->addMenu(
+              QStringLiteral("マット %1: %2").arg(matteIndex + 1).arg(sourceName));
+          QAction *focusAction = refMenu->addAction(QStringLiteral("ソースにフォーカス"));
+          focusAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_focus")},
+                                           {QStringLiteral("index"), matteIndex}});
 
-        QMenu *typeMenu = refMenu->addMenu(QStringLiteral("マット種別を設定"));
-        for (int typeIndex = 0; typeIndex < typeLabels.size(); ++typeIndex) {
-          QAction *typeAction = typeMenu->addAction(typeLabels[typeIndex]);
-          typeAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_type")},
-                                          {QStringLiteral("index"), matteIndex},
-                                          {QStringLiteral("type"), typeIndex}});
+          QMenu *typeMenu = refMenu->addMenu(QStringLiteral("マット種別を設定"));
+          for (int typeIndex = 0; typeIndex < typeLabels.size(); ++typeIndex) {
+            QAction *typeAction = typeMenu->addAction(typeLabels[typeIndex]);
+            typeAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_type")},
+                                            {QStringLiteral("index"), matteIndex},
+                                            {QStringLiteral("type"), typeIndex}});
+          }
         }
       }
     }
@@ -4756,7 +4771,21 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (!matteIndexOk) {
         return;
       }
-      if (kind == QStringLiteral("matte_focus")) {
+      if (kind == QStringLiteral("matte_add_selected")) {
+        const auto selectedLayerId =
+            LayerID(data.value(QStringLiteral("selectedLayerId")).toString());
+        if (selectedLayerId.isNil()) {
+          return;
+        }
+        auto beforeRefs = matteRefs;
+        auto afterRefs = beforeRefs;
+        afterRefs.push_back(makeDefaultMatteReference(selectedLayerId));
+        auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
+                                                          std::move(beforeRefs),
+                                                          std::move(afterRefs));
+        UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
+        updateLayout();
+      } else if (kind == QStringLiteral("matte_focus")) {
         if (matteIndex >= 0 && matteIndex < static_cast<int>(matteRefs.size())) {
           const auto &ref = matteRefs[matteIndex];
           if (!ref.sourceLayerId.isNil()) {
@@ -6036,7 +6065,9 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
                                                                       sourceLayer ? sourceLayer->id()
                                                                                   : LayerID());
         const QString badgeText = blocked ? QStringLiteral("MATTE BLOCKED")
-                                          : QStringLiteral("MATTE LINK");
+                                          : (row.kind == RowKind::MatteStack
+                                                 ? QStringLiteral("ADD MATTE")
+                                                 : QStringLiteral("MATTE LINK"));
         QFont badgeFont = p.font();
         badgeFont.setBold(true);
         badgeFont.setPointSizeF(std::max<qreal>(7.0, badgeFont.pointSizeF() - 1.0));
@@ -6051,6 +6082,34 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
         p.drawRoundedRect(badgeRect, 4, 4);
         p.setPen(blocked ? QColor(255, 236, 236) : mixColor(background, text, 0.95));
         p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft, badgeText);
+      }
+    }
+    if (impl_->dragMatteLinkMode) {
+      auto comp = safeCompositionLookup(impl_->compositionId);
+      const auto sourceLayer =
+          comp ? comp->layerById(impl_->draggedLayerId) : ArtifactAbstractLayerPtr{};
+      if (sourceLayer && row.layer && row.layer->id() == sourceLayer->id()) {
+        QColor sourceTint = mixColor(background, accent, 0.16);
+        sourceTint.setAlpha(96);
+        p.fillRect(0, y, width(), rowH, sourceTint);
+        p.fillRect(0, y, 4, rowH, accent.lighter(120));
+
+        QFont badgeFont = p.font();
+        badgeFont.setBold(true);
+        badgeFont.setPointSizeF(std::max<qreal>(7.0, badgeFont.pointSizeF() - 1.0));
+        p.setFont(badgeFont);
+        const QFontMetrics fm(badgeFont);
+        const QString badgeText = QStringLiteral("MATTE SOURCE");
+        const int badgeW = fm.horizontalAdvance(badgeText) + 18;
+        const QRect badgeRect(width() - badgeW - 10, y + 5, badgeW, rowH - 10);
+        QColor badgeFill = accent.darker(150);
+        badgeFill.setAlpha(210);
+        p.setPen(accent.darker(180));
+        p.setBrush(badgeFill);
+        p.drawRoundedRect(badgeRect, 4, 4);
+        p.setPen(mixColor(background, text, 0.96));
+        p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                   badgeText);
       }
     }
 
@@ -6155,9 +6214,33 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
         }
         // Pick Whip hover highlight
         if (ci == 5 && i == impl_->pickWhipHoverRow_) {
+          auto comp = safeCompositionLookup(impl_->compositionId);
+          const auto sourceLayer =
+              comp ? comp->layerById(impl_->pickWhipSourceLayerId_) : ArtifactAbstractLayerPtr{};
+          const bool blocked =
+              !row.layer || !sourceLayer ||
+              wouldCreateCycle(sourceLayer->id(), row.layer->id());
+          const QString badgeText = blocked ? QStringLiteral("PARENT BLOCKED")
+                                            : QStringLiteral("PARENT LINK");
           p.fillRect(curX, y, cw, rowH, QColor(255, 255, 255, 25));
           p.setPen(QPen(QColor(255, 255, 255, 80), 1));
           p.drawRect(curX + 2, y + 2, cw - 4, rowH - 4);
+
+          QFont badgeFont = p.font();
+          badgeFont.setBold(true);
+          badgeFont.setPointSizeF(std::max<qreal>(7.0, badgeFont.pointSizeF() - 1.0));
+          p.setFont(badgeFont);
+          const QFontMetrics fm(badgeFont);
+          const int badgeW = fm.horizontalAdvance(badgeText) + 18;
+          const QRect badgeRect(width() - badgeW - 10, y + 5, badgeW, rowH - 10);
+          QColor badgeFill = blocked ? QColor(160, 76, 76) : accent;
+          badgeFill.setAlpha(220);
+          p.setPen(blocked ? QColor(95, 38, 38) : accent.darker(180));
+          p.setBrush(badgeFill);
+          p.drawRoundedRect(badgeRect, 4, 4);
+          p.setPen(blocked ? QColor(255, 236, 236) : mixColor(background, text, 0.95));
+          p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft, badgeText);
+          p.setFont(font());
         }
         curX += cw;
         p.setOpacity(1.0);

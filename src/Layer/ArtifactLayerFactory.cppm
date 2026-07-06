@@ -30,6 +30,7 @@ import Artifact.Layer.Clone;
 import Artifact.Layer.SDF;
 import Artifact.Layer.Construction;
 import Artifact.Layer.CompositionBackground;
+import Artifact.Layer.Paint;
 import Artifact.Layers.Model3D;
 import Artifact.Layer.Composition;
 import Artifact.Layer.MaterialContainer;
@@ -149,6 +150,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
    ptr = ArtifactAbstractLayerPtr(audioLayer);
    break;
   }
+  case LayerType::Paint:
+   ptr = ArtifactAbstractLayerPtr(new ArtifactPaintLayer());
+   break;
   case LayerType::Video:
    ptr = ArtifactAbstractLayerPtr(new ArtifactVideoLayer());
    if (ptr) {

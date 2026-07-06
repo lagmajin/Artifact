@@ -2,10 +2,12 @@ module;
 #include <wobjectimpl.h>
 #include <algorithm>
 #include <cmath>
+#include <QByteArray>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMatrix4x4>
 #include <QImage>
+#include <QString>
 #include <QRectF>
 #include <QPainter>
 
@@ -18,6 +20,54 @@ import Image.ImageF32x4_RGBA;
 import FloatRGBA;
 
 namespace Artifact {
+
+namespace {
+
+QJsonObject frameBufferToJson(const ArtifactCore::ImageF32x4RGBAWithCache& buffer, int64_t frame)
+{
+    QJsonObject obj;
+    const auto& image = buffer.image();
+    obj["frame"] = static_cast<qint64>(frame);
+    obj["width"] = image.width();
+    obj["height"] = image.height();
+
+    const std::size_t byteCount = image.totalPixels() * 4u * sizeof(float);
+    if (byteCount > 0 && image.rgba32fData()) {
+        const QByteArray bytes(
+            reinterpret_cast<const char*>(image.rgba32fData()),
+            static_cast<qsizetype>(byteCount));
+        obj["pixels_b64"] = QString::fromLatin1(bytes.toBase64());
+    }
+    return obj;
+}
+
+bool frameBufferFromJson(const QJsonObject& obj, ArtifactCore::ImageF32x4RGBAWithCache& buffer)
+{
+    const int width = obj.value("width").toInt(0);
+    const int height = obj.value("height").toInt(0);
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+
+    buffer.image().resize(width, height);
+    buffer.image().fill(FloatRGBA{0, 0, 0, 0});
+
+    const QString pixelsB64 = obj.value("pixels_b64").toString();
+    if (pixelsB64.isEmpty()) {
+        return true;
+    }
+
+    const QByteArray bytes = QByteArray::fromBase64(pixelsB64.toLatin1());
+    const std::size_t requiredBytes = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u * sizeof(float);
+    if (bytes.size() < static_cast<qsizetype>(requiredBytes)) {
+        return false;
+    }
+
+    buffer.image().setFromRGBA32F(reinterpret_cast<const float*>(bytes.constData()), width, height);
+    return true;
+}
+
+} // namespace
 
 class ArtifactPaintLayer::Impl {
 public:
@@ -184,14 +234,10 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactPaintLayer::getLayerPropertyGro
 }
 
 QJsonObject ArtifactPaintLayer::toJson() const {
-    QJsonObject obj;
+    QJsonObject obj = ArtifactAbstract2DLayer::toJson();
     QJsonArray framesArr;
     for (const auto& [frame, buf] : impl_->frames_) {
-        QJsonObject fObj;
-        fObj["frame"] = static_cast<double>(frame);
-        fObj["width"] = buf.image().width();
-        fObj["height"] = buf.image().height();
-        framesArr.append(fObj);
+        framesArr.append(frameBufferToJson(buf, frame));
     }
     obj["frames"] = framesArr;
     obj["defaultWidth"] = impl_->defaultSize_.width();
@@ -199,10 +245,22 @@ QJsonObject ArtifactPaintLayer::toJson() const {
     return obj;
 }
 
-void ArtifactPaintLayer::fromJson(const QJsonObject& obj) {
+void ArtifactPaintLayer::fromJsonProperties(const QJsonObject& obj) {
+    ArtifactAbstract2DLayer::fromJsonProperties(obj);
     impl_->frames_.clear();
+    impl_->undoStacks_.clear();
     impl_->defaultSize_.setWidth(obj.value("defaultWidth").toInt(100));
     impl_->defaultSize_.setHeight(obj.value("defaultHeight").toInt(100));
+
+    const QJsonArray framesArr = obj.value("frames").toArray();
+    for (const auto& val : framesArr) {
+        const QJsonObject fObj = val.toObject();
+        const int64_t frame = fObj.value("frame").toVariant().toLongLong();
+        auto& buffer = impl_->frames_[frame];
+        if (!frameBufferFromJson(fObj, buffer)) {
+            impl_->frames_.erase(frame);
+        }
+    }
 }
 
 } // namespace Artifact

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QAbstractTextDocumentLayout>
 #include <QColor>
 #include <QFont>
@@ -1899,6 +1899,29 @@ QJsonObject ArtifactTextLayer::toJson() const {
   }
   obj["text.pathSegments"] = pathSegmentsArray;
 
+  if (const auto textProp = getProperty(QStringLiteral("text.value"))) {
+    const auto keyframes = textProp->getKeyFrames();
+    if (!keyframes.empty()) {
+      QJsonArray keyframeArray;
+      for (const auto& keyframe : keyframes) {
+        QJsonObject keyframeObj;
+        keyframeObj["timeValue"] = keyframe.time.value();
+        keyframeObj["timeScale"] = keyframe.time.scale();
+        keyframeObj["value"] = keyframe.value.toString();
+        keyframeObj["interpolation"] = static_cast<int>(keyframe.interpolation);
+        keyframeObj["cp1_x"] = keyframe.cp1_x;
+        keyframeObj["cp1_y"] = keyframe.cp1_y;
+        keyframeObj["cp2_x"] = keyframe.cp2_x;
+        keyframeObj["cp2_y"] = keyframe.cp2_y;
+        keyframeObj["roving"] = keyframe.roving;
+        keyframeObj["anchor"] = static_cast<int>(keyframe.anchor);
+        keyframeObj["colorLabel"] = static_cast<int>(keyframe.colorLabel);
+        keyframeArray.append(keyframeObj);
+      }
+      obj["text.sourceTextKeyframes"] = keyframeArray;
+    }
+  }
+
   obj["text.color"] = toQColor(impl_->textStyle_.fillColor).name(QColor::HexArgb);
   obj["text.strokeEnabled"] = isStrokeEnabled();
   obj["text.strokeColor"] =
@@ -1993,6 +2016,38 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
   if (obj.contains("text.paragraphSpacing")) {
     setParagraphSpacing(static_cast<float>(
         obj.value("text.paragraphSpacing").toDouble(paragraphSpacing())));
+  }
+
+  if (obj.contains("text.sourceTextKeyframes") &&
+      obj.value("text.sourceTextKeyframes").isArray()) {
+    const auto keyframeArray = obj.value("text.sourceTextKeyframes").toArray();
+    if (const auto textProp = getProperty(QStringLiteral("text.value"))) {
+      textProp->clearKeyFrames();
+      for (const auto& value : keyframeArray) {
+        if (!value.isObject()) {
+          continue;
+        }
+        const QJsonObject keyframeObj = value.toObject();
+        const RationalTime time(
+            keyframeObj.value("timeValue").toInteger(),
+            keyframeObj.value("timeScale").toInteger(1));
+        const auto interpolation = static_cast<InterpolationType>(
+            keyframeObj.value("interpolation").toInt(static_cast<int>(InterpolationType::Constant)));
+        const float cp1_x = static_cast<float>(keyframeObj.value("cp1_x").toDouble(0.42));
+        const float cp1_y = static_cast<float>(keyframeObj.value("cp1_y").toDouble(0.0));
+        const float cp2_x = static_cast<float>(keyframeObj.value("cp2_x").toDouble(0.58));
+        const float cp2_y = static_cast<float>(keyframeObj.value("cp2_y").toDouble(1.0));
+        const bool roving = keyframeObj.value("roving").toBool(false);
+        const auto anchor = static_cast<KeyFrame::Anchor>(
+            keyframeObj.value("anchor").toInt(static_cast<int>(KeyFrame::Anchor::Absolute)));
+        const auto colorLabel = static_cast<KeyFrame::ColorLabel>(
+            keyframeObj.value("colorLabel").toInt(static_cast<int>(KeyFrame::ColorLabel::None)));
+        const QString textValue = keyframeObj.value("value").toString();
+        textProp->addKeyFrame(time, textValue, interpolation, cp1_x, cp1_y, cp2_x, cp2_y, roving);
+        textProp->setKeyFrameAnchorAt(time, anchor);
+        textProp->setKeyFrameColorLabelAt(time, colorLabel);
+      }
+    }
   }
 
   if (obj.contains("text.pathStartOffset")) {
@@ -2409,9 +2464,26 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   if (const auto textProp = getProperty(QStringLiteral("text.value"))) {
     textProp->setDisplayLabel(QStringLiteral("Source Text"));
     textProp->setTooltip(
-        QStringLiteral("Animate this text string over time."));
+        QStringLiteral("Animate this text string over time. Use the timeline menu to add Source Text keyframes at the playhead."));
     textProp->setAnimatable(true);
   }
+  auto sourceTextAnimatedProp =
+      makeProp(QStringLiteral("text.sourceTextAnimated"),
+               ArtifactCore::PropertyType::Boolean,
+               hasSourceTextKeyframes(), -119);
+  sourceTextAnimatedProp->setDisplayLabel(QStringLiteral("Source Text Animated"));
+  sourceTextAnimatedProp->setTooltip(
+      QStringLiteral("True when Source Text has at least one keyframe."));
+  textGroup.addProperty(sourceTextAnimatedProp);
+
+  auto sourceTextKeyframeCountProp =
+      makeProp(QStringLiteral("text.sourceTextKeyframeCount"),
+               ArtifactCore::PropertyType::Integer,
+               sourceTextKeyframeFrames().size(), -118);
+  sourceTextKeyframeCountProp->setDisplayLabel(QStringLiteral("Source Text Keyframes"));
+  sourceTextKeyframeCountProp->setTooltip(
+      QStringLiteral("Number of keyframes stored on Source Text."));
+  textGroup.addProperty(sourceTextKeyframeCountProp);
   textGroup.addProperty(makeProp(QStringLiteral("text.fontFamily"),
                                  ArtifactCore::PropertyType::String,
                                  fontFamily().toQString(), -110));

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <QString>
 #include <QJsonObject>
@@ -63,7 +63,7 @@ public:
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
 
     QJsonObject toJson() const;
-    void fromJson(const QJsonObject& obj);
+    void fromJsonProperties(const QJsonObject& obj) override;
 };
 
 } // namespace Artifact

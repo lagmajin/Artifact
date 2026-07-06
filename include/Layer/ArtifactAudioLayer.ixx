@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <iostream>
 #include <vector>
@@ -33,6 +33,9 @@
 #include <QJsonObject>
 #include <QVariant>
 export module Artifact.Layer.Audio;
+
+namespace ArtifactCore { class LipSyncTrack; }
+namespace Artifact { class ArtifactSwitchLayer; }
 
 
 import Audio.Volume;
@@ -71,6 +74,8 @@ export namespace Artifact
   qint64 totalFrames() const;
   WaveformData buildWaveformData(int displayWidth) const;
   QString waveformPreviewSummary(int displayWidth = 128) const;
+  bool buildLipSyncTrack(ArtifactCore::LipSyncTrack& track, double frameRate) const;
+  bool applyLipSyncToSwitchLayer(ArtifactSwitchLayer& switchLayer, double frameRate) const;
 
   // Cache information
   size_t getCacheSize() const;

@@ -53,9 +53,14 @@ export namespace Artifact
    bool outgoingEased = false;
    bool incomingBezier = false;
    bool outgoingBezier = false;
-   bool bezier = false;
-   bool roving = false;
-   ArtifactCore::InterpolationType interpolation =
+    bool bezier = false;
+    bool brokenTangents = false;
+    bool roving = false;
+    double inHandleFrameOffset = 0.0;
+    double inHandleValueOffset = 0.0;
+    double outHandleFrameOffset = 0.0;
+    double outHandleValueOffset = 0.0;
+    ArtifactCore::InterpolationType interpolation =
        ArtifactCore::InterpolationType::Linear;
    ArtifactCore::KeyFrame::Anchor anchor =
        ArtifactCore::KeyFrame::Anchor::Absolute;
@@ -151,6 +156,8 @@ export namespace Artifact
   void setSelectedKeyframeKeys(const QSet<QString>& selectedKeys);
   bool setSelectedKeyframeAnchor(ArtifactCore::KeyFrame::Anchor anchor);
   bool setSelectedKeyframeColorLabel(ArtifactCore::KeyFrame::ColorLabel label);
+  bool hasNumericSelectedKeyframes() const;
+  bool promptSetSelectedKeyframeValue();
   bool deleteSelectedKeyframeMarkers();
   bool duplicateSelectedKeyframeMarkersAtCurrentFrame();
   bool distributeSelectedKeyframeMarkersEvenly();

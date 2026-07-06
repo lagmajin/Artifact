@@ -72,11 +72,14 @@ export namespace Artifact {
  };
 
  struct CompositionTransformField {
-  QString fieldId;
+ QString fieldId;
   QString displayName = QStringLiteral("Radial Transform Field");
   bool enabled = true;
   QPointF center;
   qreal radius = 1.0;
+  qreal strength = 1.0;
+  QString blendMode = QStringLiteral("normal");
+  bool invert = false;
   qreal expansion = 0.0;
   qreal edgeScale = 1.0;
   LayerID coordinateParentLayerId;
@@ -205,6 +208,8 @@ export namespace Artifact {
   void addTransformField(const CompositionTransformField& field);
   bool removeTransformField(const QString& fieldId);
   void clearTransformFields();
+  QString activeTransformFieldId() const;
+  void setActiveTransformFieldId(const QString& fieldId);
   CompositionFieldTransformAdjustment evaluateTransformFields(
       const LayerID& layerId, const QPointF& basePosition) const;
   bool applyExternalControlValue(const QString& address, double rawValue, bool resetSmoothing = false);

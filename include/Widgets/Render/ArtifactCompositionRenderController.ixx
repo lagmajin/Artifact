@@ -55,6 +55,7 @@ export namespace Artifact {
  enum class ViewportChannelDisplayMode {
  Color,
  Alpha,
+  ColorAlpha,
  Red,
  Green,
   Blue,

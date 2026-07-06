@@ -17,6 +17,7 @@ module;
 #include <QStringList>
 #include <QTransform>
 #include <QVector3D>
+#include <unordered_set>
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -30,6 +31,8 @@ import Artifact.Layer.Video;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Paint;
 import Artifact.Layer.CloneEffectSupport;
+import Artifact.Layers.Model3D;
+import Mesh;
 import Layer.Blend;
 import Artifact.Widgets.PieMenu;
 import ArtifactCore.Utils.PerformanceProfiler;
@@ -203,6 +206,71 @@ void presentOverlayImage(ArtifactIRenderer *renderer, const QImage &overlayImage
     renderer->setCanvasSize(static_cast<float>(restoreCanvasSize->width()),
                            static_cast<float>(restoreCanvasSize->height()));
   }
+}
+
+quint64 makeEdgeKey(int a, int b)
+{
+  const quint32 lo = static_cast<quint32>(std::min(a, b));
+  const quint32 hi = static_cast<quint32>(std::max(a, b));
+  return (static_cast<quint64>(lo) << 32) | static_cast<quint64>(hi);
+}
+
+void draw3DSelectionWireframeOverlay(ArtifactIRenderer *renderer,
+                                     const ArtifactAbstractLayerPtr &layer,
+                                     const QMatrix4x4 *cameraView,
+                                     const QMatrix4x4 *cameraProj)
+{
+  if (!renderer || !layer || !cameraView || !cameraProj) {
+    return;
+  }
+
+  const auto modelLayer = std::dynamic_pointer_cast<Artifact3DLayer>(layer);
+  if (!modelLayer) {
+    return;
+  }
+
+  const ArtifactCore::Mesh &mesh = modelLayer->mesh();
+  const auto positions = mesh.vertexAttributes().get<QVector3D>("position");
+  if (!positions || positions->data().isEmpty() || mesh.polygonCount() <= 0) {
+    return;
+  }
+
+  const QMatrix4x4 modelMatrix = layer->getGlobalTransform4x4();
+  const FloatColor wireColor{1.0f, 0.62f, 0.16f, 0.95f};
+  const float thickness = 2.0f;
+
+  renderer->set3DCameraMatrices(*cameraView, *cameraProj);
+
+  std::unordered_set<quint64> visitedEdges;
+  visitedEdges.reserve(static_cast<size_t>(mesh.polygonCount()) * 3u);
+
+  for (int polygonIndex = 0; polygonIndex < mesh.polygonCount(); ++polygonIndex) {
+    const QVector<int> polygon = mesh.getPolygonVertices(polygonIndex);
+    if (polygon.size() < 2) {
+      continue;
+    }
+
+    for (int i = 0; i < polygon.size(); ++i) {
+      const int a = polygon[i];
+      const int b = polygon[(i + 1) % polygon.size()];
+      if (a < 0 || b < 0 || a >= positions->size() || b >= positions->size()) {
+        continue;
+      }
+
+      const quint64 edgeKey = makeEdgeKey(a, b);
+      if (!visitedEdges.insert(edgeKey).second) {
+        continue;
+      }
+
+      const QVector3D start = modelMatrix.map((*positions)[a]);
+      const QVector3D end = modelMatrix.map((*positions)[b]);
+      renderer->draw3DLine({start.x(), start.y(), start.z()},
+                           {end.x(), end.y(), end.z()},
+                           wireColor, thickness);
+    }
+  }
+
+  renderer->reset3DCameraMatrices();
 }
 
 } // namespace
@@ -700,7 +768,9 @@ void drawTrackerPinOverlay(ArtifactIRenderer *renderer,
 }
 
 void drawSelectionOverlay(ArtifactIRenderer *renderer,
-                          const ArtifactAbstractLayerPtr &layer)
+                          const ArtifactAbstractLayerPtr &layer,
+                          const QMatrix4x4 *cameraView,
+                          const QMatrix4x4 *cameraProj)
 {
   if (!renderer || !layer) {
     return;
@@ -744,6 +814,10 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
   renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
                           {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
                           innerColor, 0.8f);
+
+  if (layer->is3D()) {
+    draw3DSelectionWireframeOverlay(renderer, layer, cameraView, cameraProj);
+  }
 
   const float zoom = std::max(0.001f, renderer->getZoom());
   const float nodeSize = std::max(4.5f, 7.5f / zoom);

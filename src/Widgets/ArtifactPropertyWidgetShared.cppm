@@ -4,6 +4,7 @@ module;
 #include <QLabel>
 #include <QLayout>
 #include <QLineEdit>
+#include <QInputDialog>
 #include <QMouseEvent>
 #include <QPalette>
 #include <QSettings>
@@ -33,6 +34,7 @@ import Artifact.Service.Playback;
 import Event.Bus;
 import Time.Rational;
 import Settings.Accessibility;
+import Undo.UndoManager;
 
 namespace Artifact {
 namespace detail {
@@ -980,8 +982,66 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
   editor->setPreviewHandler(applyPreviewValue);
   editor->setCommitHandler(applyCommitValue);
 
-  if (!meta.tooltip.isEmpty()) {
-    row->setEditorToolTip(meta.tooltip);
+  QString editorTooltip = meta.tooltip;
+  if (property.getName().compare(QStringLiteral("text.value"), Qt::CaseInsensitive) == 0) {
+    const QString sourceTextHint =
+        QStringLiteral("Source Text keyframes can be added from the timeline at the playhead, or edited from this row's menu.");
+    editorTooltip = editorTooltip.isEmpty()
+                        ? sourceTextHint
+                        : QStringLiteral("%1\n%2").arg(editorTooltip, sourceTextHint);
+    row->setSupplementaryText(QStringLiteral("Source Text uses timeline keyframes at the playhead. Use the row menu to edit the current text."));
+    row->setAuxAction(
+        [layer, currentTimeProvider, playback, editor, row]() {
+          const auto textProperty = layer ? layer->getProperty(QStringLiteral("text.value"))
+                                          : std::shared_ptr<ArtifactCore::AbstractProperty>{};
+          const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer);
+          if (!textLayer) {
+            return;
+          }
+          const auto nowTime = currentTimeProvider ? currentTimeProvider()
+                                                   : currentPlaybackTime(playback);
+          const qint64 frame = nowTime.value();
+          bool ok = false;
+          const QString currentText = textLayer->sourceTextAtFrame(frame);
+          const auto beforeKeyframes =
+              textProperty ? textProperty->getKeyFrames()
+                           : std::vector<ArtifactCore::KeyFrame>{};
+          const QString editedText = QInputDialog::getMultiLineText(
+              row, QStringLiteral("Edit Source Text"),
+              QStringLiteral("Source text at the playhead:"), currentText, &ok);
+          if (!ok) {
+            return;
+          }
+          auto afterKeyframes = beforeKeyframes;
+          ArtifactCore::KeyFrame editedKeyframe;
+          editedKeyframe.time = nowTime;
+          editedKeyframe.value = editedText;
+          editedKeyframe.interpolation = ArtifactCore::InterpolationType::Constant;
+          auto existing = std::find_if(afterKeyframes.begin(), afterKeyframes.end(),
+                                       [nowTime](const ArtifactCore::KeyFrame &keyframe) {
+                                         return keyframe.time == nowTime;
+                                       });
+          if (existing != afterKeyframes.end()) {
+            *existing = editedKeyframe;
+          } else {
+            afterKeyframes.push_back(editedKeyframe);
+          }
+          if (auto *mgr = UndoManager::instance()) {
+            mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                layer, QStringLiteral("text.value"), beforeKeyframes,
+                afterKeyframes, QStringLiteral("Edit Source Text")));
+          } else if (textLayer) {
+            textLayer->setSourceTextAtFrame(frame, editedText);
+          }
+          editor->setValueFromVariant(editedText);
+          row->setKeyframeModeEnabled(true);
+          row->setKeyframeChecked(true);
+          row->setNavigationEnabled(true);
+        },
+        QStringLiteral("Set Source Text at Playhead..."));
+  }
+  if (!editorTooltip.isEmpty()) {
+    row->setEditorToolTip(editorTooltip);
   }
 
   const QVariant defaultValue = property.getDefaultValue();

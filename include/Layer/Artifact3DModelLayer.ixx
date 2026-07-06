@@ -10,6 +10,10 @@ export module Artifact.Layers.Model3D;
 
 import Artifact.Layer.Abstract;
 
+namespace ArtifactCore {
+class Mesh;
+}
+
 export namespace Artifact {
 
  enum class RenderMode {
@@ -49,8 +53,9 @@ export namespace Artifact {
     FixedGeometry3D fixedGeometry() const;
 
    // Render mode
-   RenderMode renderMode() const;
-   void setRenderMode(RenderMode mode);
+    RenderMode renderMode() const;
+    void setRenderMode(RenderMode mode);
+    const ArtifactCore::Mesh& mesh() const;
 
     // ArtifactIRenderer interface
     void draw(ArtifactIRenderer* renderer) override;

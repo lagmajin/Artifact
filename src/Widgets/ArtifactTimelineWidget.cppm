@@ -680,6 +680,61 @@ struct KeyPatternTarget {
   QString propertyPath;
 };
 
+QVector<KeyframePropertyRef> collectCurveEditorPropertyRefs(
+    const QVector<CurveTrackBinding>& bindings)
+{
+  QVector<KeyframePropertyRef> refs;
+  QSet<QString> seen;
+  for (const auto& binding : bindings) {
+    if (binding.layerId.isNil() || binding.propertyPath.trimmed().isEmpty()) {
+      continue;
+    }
+    const QString key =
+        QStringLiteral("%1|%2").arg(binding.layerId.toString(), binding.propertyPath);
+    if (seen.contains(key)) {
+      continue;
+    }
+    seen.insert(key);
+    refs.push_back({binding.layerId, binding.propertyPath});
+  }
+  return refs;
+}
+
+QVector<KeyframePropertySnapshot> captureCurveEditorPropertySnapshots(
+    const ArtifactCompositionPtr& composition,
+    const QVector<CurveTrackBinding>& bindings)
+{
+  return captureKeyframePropertySnapshots(
+      composition, collectCurveEditorPropertyRefs(bindings));
+}
+
+bool sameCurveEditorSnapshots(const QVector<KeyframePropertySnapshot>& lhs,
+                              const QVector<KeyframePropertySnapshot>& rhs)
+{
+  if (lhs.size() != rhs.size()) {
+    return false;
+  }
+  for (int i = 0; i < lhs.size(); ++i) {
+    if (lhs[i].layerId != rhs[i].layerId ||
+        lhs[i].propertyPath != rhs[i].propertyPath ||
+        lhs[i].keyframes.size() != rhs[i].keyframes.size()) {
+      return false;
+    }
+    for (int k = 0; k < lhs[i].keyframes.size(); ++k) {
+      const auto& a = lhs[i].keyframes[k];
+      const auto& b = rhs[i].keyframes[k];
+      if (a.time != b.time || a.value != b.value ||
+          a.interpolation != b.interpolation || a.cp1_x != b.cp1_x ||
+          a.cp1_y != b.cp1_y || a.cp2_x != b.cp2_x || a.cp2_y != b.cp2_y ||
+          a.roving != b.roving || a.anchor != b.anchor ||
+          a.colorLabel != b.colorLabel) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 QSet<QString> keyframeSelectionKeysFromMarkers(
     const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers)
 {
@@ -3981,6 +4036,7 @@ public:
   QLabel *curveEditorSummaryLabel_ = nullptr;
   QToolButton *curveEditorModeButton_ = nullptr;
   QToolButton *curveEditorFitButton_ = nullptr;
+  QToolButton *curveEditorValueButton_ = nullptr;
   QToolButton *curveEditorHandleButton_ = nullptr;
   QToolButton *curveEditorAutoTangentButton_ = nullptr;
   QToolButton *curveEditorFlatTangentButton_ = nullptr;
@@ -4009,6 +4065,9 @@ public:
   bool syncingVerticalOffset_ = false;
   double currentFrame_ = 0.0;
   bool curveEditorDragging_ = false;
+  bool curveEditorUndoPending_ = false;
+  QVector<KeyframePropertySnapshot> curveEditorUndoBeforeSnapshots_;
+  QSet<QString> curveEditorUndoBeforeSelectionKeys_;
   ArtifactCore::EventBus::Subscription compositionChangedSubscription_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
@@ -4252,6 +4311,17 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
             : impl_->curveHandleEditingEnabled_
             ? QStringLiteral("Bezier handle editing is enabled")
             : QStringLiteral("Bezier handle editing is disabled for safer graph edits"));
+  }
+  if (impl_->curveEditorValueButton_) {
+    const bool hasSelection =
+        impl_->painterTrackView_ && impl_->painterTrackView_->hasNumericSelectedKeyframes();
+    impl_->curveEditorValueButton_->setEnabled(editableValueGraph && hasSelection);
+    impl_->curveEditorValueButton_->setToolTip(
+        !editableValueGraph
+            ? QStringLiteral("Speed Graph is read-only")
+            : (hasSelection
+                   ? QStringLiteral("Set the numeric value of selected keyframes")
+                   : QStringLiteral("Select one or more keyframes to set their value")));
   }
   for (auto *button : {impl_->curveEditorAutoTangentButton_,
                        impl_->curveEditorFlatTangentButton_,
@@ -5415,6 +5485,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       impl_->curveEditor_->fitToContent();
     }
   });
+  impl_->curveEditorValueButton_ = new QToolButton(curveHeader);
+  styleTimelineToolButton(impl_->curveEditorValueButton_);
+  impl_->curveEditorValueButton_->setText(QStringLiteral("Value..."));
+  impl_->curveEditorValueButton_->setToolTip(
+      QStringLiteral("Set the numeric value of selected keyframes"));
+  QObject::connect(impl_->curveEditorValueButton_, &QToolButton::clicked, this, [this]() {
+    if (impl_ && impl_->curveEditor_) {
+      impl_->curveEditor_->promptSetSelectedKeyValue();
+    }
+  });
   impl_->curveEditorHandleButton_ = new QToolButton(curveHeader);
   styleTimelineToolButton(impl_->curveEditorHandleButton_);
   impl_->curveEditorHandleButton_->setCheckable(true);
@@ -5491,6 +5571,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                    });
   curveHeaderLayout->addWidget(impl_->curveEditorModeButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorFitButton_);
+  curveHeaderLayout->addWidget(impl_->curveEditorValueButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorHandleButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorAutoTangentButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorFlatTangentButton_);
@@ -5931,6 +6012,21 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        return;
                      }
                      impl_->curveEditorDragging_ = true;
+                     impl_->curveEditorUndoPending_ = false;
+                     impl_->curveEditorUndoBeforeSnapshots_.clear();
+                     impl_->curveEditorUndoBeforeSelectionKeys_.clear();
+                     const auto composition = safeCompositionLookup(impl_->compositionId_);
+                     if (composition) {
+                       impl_->curveEditorUndoBeforeSnapshots_ =
+                           captureCurveEditorPropertySnapshots(
+                               composition, impl_->curveBindings_);
+                       if (impl_->painterTrackView_) {
+                         impl_->curveEditorUndoBeforeSelectionKeys_ =
+                             keyframeSelectionKeysFromMarkers(
+                                 impl_->painterTrackView_->selectedKeyframeMarkers());
+                       }
+                       impl_->curveEditorUndoPending_ = true;
+                     }
                      if (impl_->curveEditorRefreshTimer_) {
                        impl_->curveEditorRefreshTimer_->stop();
                      }
@@ -5957,19 +6053,65 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        return;
                      }
                      impl_->curveEditorDragging_ = false;
-                     if (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Value &&
-                         impl_->curveEditor_ &&
-                         impl_->curveBindings_.size() == impl_->curveEditor_->tracks().size()) {
-                       const auto composition = safeCompositionLookup(impl_->compositionId_);
-                       if (composition) {
-                         for (int i = 0; i < impl_->curveBindings_.size(); ++i) {
-                           applyCurveEditorTrackToProperty(
-                               composition, impl_->curveBindings_[i],
-                               impl_->curveEditor_->tracks()[static_cast<size_t>(i)]);
+                     const auto composition = safeCompositionLookup(impl_->compositionId_);
+                     const auto beforeSnapshots = impl_->curveEditorUndoBeforeSnapshots_;
+                     const auto beforeSelectionKeys = impl_->curveEditorUndoBeforeSelectionKeys_;
+                     bool pushedUndo = false;
+                     if (composition && impl_->curveEditorUndoPending_) {
+                       const auto afterSnapshots = captureCurveEditorPropertySnapshots(
+                           composition, impl_->curveBindings_);
+                       if (!sameCurveEditorSnapshots(beforeSnapshots, afterSnapshots)) {
+                         if (auto *mgr = UndoManager::instance()) {
+                           QPointer<ArtifactTimelineWidget> self(this);
+                           const auto trackRows = impl_->trackRows_;
+                           mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+                               QStringLiteral("Edit Curve Keyframes"),
+                               [self, composition, afterSnapshots, beforeSelectionKeys, trackRows]() {
+                                 applyKeyframePropertySnapshots(composition, afterSnapshots);
+                                 if (!self) {
+                                   return;
+                                 }
+                                 ArtifactLayerSelectionManager *selectionManager = nullptr;
+                                 if (auto *app = ArtifactApplicationManager::instance()) {
+                                   selectionManager = app->layerSelectionManager();
+                                 }
+                                 self->syncSelectionState(composition, selectionManager,
+                                                          trackRows, true);
+                                 if (self->impl_ && self->impl_->curveEditor_) {
+                                   self->refreshCurveEditorTracks();
+                                 }
+                                 if (self->impl_ && self->impl_->painterTrackView_) {
+                                   self->impl_->painterTrackView_->setSelectedKeyframeKeys(
+                                       beforeSelectionKeys);
+                                 }
+                               },
+                               [self, composition, beforeSnapshots, beforeSelectionKeys, trackRows]() {
+                                 applyKeyframePropertySnapshots(composition, beforeSnapshots);
+                                 if (!self) {
+                                   return;
+                                 }
+                                 ArtifactLayerSelectionManager *selectionManager = nullptr;
+                                 if (auto *app = ArtifactApplicationManager::instance()) {
+                                   selectionManager = app->layerSelectionManager();
+                                 }
+                                 self->syncSelectionState(composition, selectionManager,
+                                                          trackRows, true);
+                                 if (self->impl_ && self->impl_->curveEditor_) {
+                                   self->refreshCurveEditorTracks();
+                                 }
+                                 if (self->impl_ && self->impl_->painterTrackView_) {
+                                   self->impl_->painterTrackView_->setSelectedKeyframeKeys(
+                                       beforeSelectionKeys);
+                                 }
+                               }));
+                           pushedUndo = true;
                          }
                        }
                      }
                      refreshCurveEditorTracks();
+                     if (pushedUndo) {
+                       impl_->curveEditorUndoPending_ = false;
+                     }
                    });
   QObject::connect(curveEditor, &ArtifactCurveEditorWidget::keyMoved, this,
                    [this](int trackIndex, int keyIndex, int64_t newFrame, float newValue) {

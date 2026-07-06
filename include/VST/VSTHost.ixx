@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -103,6 +103,7 @@ public:
     void suspend(int pluginId);
     bool isPluginLoaded(int pluginId) const;
     int getLoadedPluginCount() const { return static_cast<int>(loadedPlugins_.size()); }
+    int getLoadedPluginIdByPath(const std::string& path) const;
 
     // エディタ
     void openEditor(int pluginId, void* window);
