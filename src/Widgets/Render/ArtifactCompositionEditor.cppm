@@ -1302,6 +1302,9 @@ public:
         [this, viewportPos]() {
           if (controller_) {
             controller_->placeWorkCursorAtViewportPos(viewportPos);
+            controller_->setInfoOverlayText(
+                QStringLiteral("Work Cursor"),
+                QStringLiteral("Placed at the active viewport position"));
           }
         });
     add(QStringLiteral("Center Work Cursor"),
@@ -1312,12 +1315,16 @@ public:
           const QSize size = comp->settings().compositionSize();
           controller_->setWorkCursorCanvasPosition(
               QPointF(size.width() * 0.5, size.height() * 0.5));
+          controller_->setInfoOverlayText(
+              QStringLiteral("Work Cursor"),
+              QStringLiteral("Centered in the composition"));
         },
         comp != nullptr);
     add(QStringLiteral("Clear Work Cursor"),
         [this]() {
           if (controller_) {
             controller_->clearWorkCursor();
+            controller_->clearInfoOverlayText();
           }
         },
         controller_->isWorkCursorVisible());
@@ -5120,66 +5127,77 @@ public:
 
   QString activePaneViewLabel() const {
     auto *controller = activeRenderController();
+    const int paneCount = activeViewportPaneCount();
+    const int paneIndex = std::clamp(activePaneId_ + 1, 1, std::max(1, paneCount));
+    const QString panePrefix = paneCount > 1
+                                   ? QStringLiteral("Pane %1/%2 · ")
+                                         .arg(paneIndex)
+                                         .arg(paneCount)
+                                   : QString{};
     if (!controller) {
-      return QStringLiteral("Active View");
+      return panePrefix.isEmpty() ? QStringLiteral("Active View")
+                                  : QStringLiteral("%1Active View").arg(panePrefix);
     }
+    const auto makeLabel = [&panePrefix](const QString &label) {
+      return panePrefix.isEmpty() ? label : QStringLiteral("%1%2").arg(panePrefix, label);
+    };
     switch (controller->viewportOrientation()) {
     case ArtifactCore::ViewOrientationHotspot::Top:
-      return QStringLiteral("Active: Top");
+      return makeLabel(QStringLiteral("Active: Top"));
     case ArtifactCore::ViewOrientationHotspot::Bottom:
-      return QStringLiteral("Active: Bottom");
+      return makeLabel(QStringLiteral("Active: Bottom"));
     case ArtifactCore::ViewOrientationHotspot::Left:
-      return QStringLiteral("Active: Left");
+      return makeLabel(QStringLiteral("Active: Left"));
     case ArtifactCore::ViewOrientationHotspot::Right:
-      return QStringLiteral("Active: Right");
+      return makeLabel(QStringLiteral("Active: Right"));
     case ArtifactCore::ViewOrientationHotspot::Back:
-      return QStringLiteral("Active: Back");
+      return makeLabel(QStringLiteral("Active: Back"));
     case ArtifactCore::ViewOrientationHotspot::Front:
-      return QStringLiteral("Active: Front");
+      return makeLabel(QStringLiteral("Active: Front"));
     case ArtifactCore::ViewOrientationHotspot::FrontTop:
-      return QStringLiteral("Active: Front Top");
+      return makeLabel(QStringLiteral("Active: Front Top"));
     case ArtifactCore::ViewOrientationHotspot::FrontBottom:
-      return QStringLiteral("Active: Front Bottom");
+      return makeLabel(QStringLiteral("Active: Front Bottom"));
     case ArtifactCore::ViewOrientationHotspot::FrontLeft:
-      return QStringLiteral("Active: Front Left");
+      return makeLabel(QStringLiteral("Active: Front Left"));
     case ArtifactCore::ViewOrientationHotspot::FrontRight:
-      return QStringLiteral("Active: Front Right");
+      return makeLabel(QStringLiteral("Active: Front Right"));
     case ArtifactCore::ViewOrientationHotspot::BackTop:
-      return QStringLiteral("Active: Back Top");
+      return makeLabel(QStringLiteral("Active: Back Top"));
     case ArtifactCore::ViewOrientationHotspot::BackBottom:
-      return QStringLiteral("Active: Back Bottom");
+      return makeLabel(QStringLiteral("Active: Back Bottom"));
     case ArtifactCore::ViewOrientationHotspot::BackLeft:
-      return QStringLiteral("Active: Back Left");
+      return makeLabel(QStringLiteral("Active: Back Left"));
     case ArtifactCore::ViewOrientationHotspot::BackRight:
-      return QStringLiteral("Active: Back Right");
+      return makeLabel(QStringLiteral("Active: Back Right"));
     case ArtifactCore::ViewOrientationHotspot::LeftTop:
-      return QStringLiteral("Active: Left Top");
+      return makeLabel(QStringLiteral("Active: Left Top"));
     case ArtifactCore::ViewOrientationHotspot::LeftBottom:
-      return QStringLiteral("Active: Left Bottom");
+      return makeLabel(QStringLiteral("Active: Left Bottom"));
     case ArtifactCore::ViewOrientationHotspot::RightTop:
-      return QStringLiteral("Active: Right Top");
+      return makeLabel(QStringLiteral("Active: Right Top"));
     case ArtifactCore::ViewOrientationHotspot::RightBottom:
-      return QStringLiteral("Active: Right Bottom");
+      return makeLabel(QStringLiteral("Active: Right Bottom"));
     case ArtifactCore::ViewOrientationHotspot::FrontTopLeft:
-      return QStringLiteral("Active: Front Top Left");
+      return makeLabel(QStringLiteral("Active: Front Top Left"));
     case ArtifactCore::ViewOrientationHotspot::FrontTopRight:
-      return QStringLiteral("Active: Front Top Right");
+      return makeLabel(QStringLiteral("Active: Front Top Right"));
     case ArtifactCore::ViewOrientationHotspot::FrontBottomLeft:
-      return QStringLiteral("Active: Front Bottom Left");
+      return makeLabel(QStringLiteral("Active: Front Bottom Left"));
     case ArtifactCore::ViewOrientationHotspot::FrontBottomRight:
-      return QStringLiteral("Active: Front Bottom Right");
+      return makeLabel(QStringLiteral("Active: Front Bottom Right"));
     case ArtifactCore::ViewOrientationHotspot::BackTopLeft:
-      return QStringLiteral("Active: Back Top Left");
+      return makeLabel(QStringLiteral("Active: Back Top Left"));
     case ArtifactCore::ViewOrientationHotspot::BackTopRight:
-      return QStringLiteral("Active: Back Top Right");
+      return makeLabel(QStringLiteral("Active: Back Top Right"));
     case ArtifactCore::ViewOrientationHotspot::BackBottomLeft:
-      return QStringLiteral("Active: Back Bottom Left");
+      return makeLabel(QStringLiteral("Active: Back Bottom Left"));
     case ArtifactCore::ViewOrientationHotspot::BackBottomRight:
-      return QStringLiteral("Active: Back Bottom Right");
+      return makeLabel(QStringLiteral("Active: Back Bottom Right"));
     case ArtifactCore::ViewOrientationHotspot::None:
-      return QStringLiteral("Active: Perspective");
+      return makeLabel(QStringLiteral("Active: Perspective"));
     }
-    return QStringLiteral("Active View");
+    return makeLabel(QStringLiteral("Active View"));
   }
 
   bool activePaneResizePending() const {
@@ -6816,6 +6834,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     }
     if (auto *controller = impl_->activeRenderController()) {
       controller->focusSelectedLayer();
+      controller->setInfoOverlayText(QStringLiteral("Frame Selected"),
+                                     impl_->activePaneViewLabel());
     }
   });
   QAction *frameAllAct = viewPresetMenu->addAction(QStringLiteral("Frame All"));
@@ -6827,6 +6847,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     }
     if (auto *controller = impl_->activeRenderController()) {
       controller->resetView();
+      controller->setInfoOverlayText(QStringLiteral("Frame All"),
+                                     impl_->activePaneViewLabel());
     }
   });
   viewPresetMenu->addSeparator();
