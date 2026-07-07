@@ -1302,6 +1302,9 @@ public:
         [this, viewportPos]() {
           if (controller_) {
             controller_->placeWorkCursorAtViewportPos(viewportPos);
+            controller_->setWorkCursorLabel(
+                QStringLiteral("Placed in %1").arg(impl_ ? impl_->activePaneViewLabel()
+                                                        : QStringLiteral("Active View")));
             controller_->setInfoOverlayText(
                 QStringLiteral("Work Cursor"),
                 QStringLiteral("Placed at the active viewport position"));
@@ -1315,6 +1318,8 @@ public:
           const QSize size = comp->settings().compositionSize();
           controller_->setWorkCursorCanvasPosition(
               QPointF(size.width() * 0.5, size.height() * 0.5));
+          controller_->setWorkCursorLabel(
+              QStringLiteral("Centered in %1").arg(impl_->activePaneViewLabel()));
           controller_->setInfoOverlayText(
               QStringLiteral("Work Cursor"),
               QStringLiteral("Centered in the composition"));

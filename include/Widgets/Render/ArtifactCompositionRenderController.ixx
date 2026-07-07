@@ -204,6 +204,8 @@ void showPieMenuOverlay(const PieMenuModel& model, const QPointF& viewportPos);
 bool placeWorkCursorAtViewportPos(const QPointF& viewportPos);
 void setWorkCursorCanvasPosition(const QPointF& canvasPos);
 QPointF workCursorCanvasPosition() const;
+void setWorkCursorLabel(const QString& label);
+QString workCursorLabel() const;
 void setWorkCursorVisible(bool visible);
 bool isWorkCursorVisible() const;
 void clearWorkCursor();

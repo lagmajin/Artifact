@@ -9636,6 +9636,8 @@ public:
 
   QPointF workCursorCanvasPos_;
 
+  QString workCursorLabel_;
+
   // Full-frame clear color used before composition content is drawn.
 
   FloatColor viewportClearColor_;
@@ -13505,6 +13507,36 @@ QPointF CompositionRenderController::workCursorCanvasPosition() const {
 
 }
 
+void CompositionRenderController::setWorkCursorLabel(const QString &label) {
+
+  if (!impl_) {
+
+    return;
+
+  }
+
+  const QString normalized = label.trimmed();
+
+  if (impl_->workCursorLabel_ == normalized) {
+
+    return;
+
+  }
+
+  impl_->workCursorLabel_ = normalized;
+
+  impl_->invalidateOverlayComposite();
+
+  markRenderDirty();
+
+}
+
+QString CompositionRenderController::workCursorLabel() const {
+
+  return impl_ ? impl_->workCursorLabel_ : QString();
+
+}
+
 void CompositionRenderController::setWorkCursorVisible(bool visible) {
 
   if (!impl_ || impl_->workCursorVisible_ == visible) {
@@ -13536,6 +13568,8 @@ void CompositionRenderController::clearWorkCursor() {
   }
 
   impl_->workCursorVisible_ = false;
+
+  impl_->workCursorLabel_.clear();
 
   impl_->invalidateOverlayComposite();
 
@@ -24389,8 +24423,8 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
   if (workCursorVisible_) {
 
     ::Artifact::drawViewportWorkCursorOverlay(renderer_.get(),
-
-                                              workCursorCanvasPos_);
+                                              workCursorCanvasPos_,
+                                              workCursorLabel_);
 
   }
 
