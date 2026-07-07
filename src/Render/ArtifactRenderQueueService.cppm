@@ -4260,6 +4260,15 @@ namespace Artifact
         registerRenderQueueContextSnapshot(snap.job, snap.composition, snap.frameNumber);
 
         if (snap.useGpuBackend) {
+            const auto compSize = snap.composition->effectiveCompositionSize();
+            const TileRenderMode tileMode = tileRenderMode_;
+            const int tileSz = tileSize_;
+            if (tileMode == TileRenderMode::Tiled) {
+                TileGrid grid(compSize.width(), compSize.height(), tileSz);
+                qInfo() << "[RenderQueue] Tile path active: grid="
+                        << grid.gridWidth << "x" << grid.gridHeight
+                        << " tileSize=" << tileSz;
+            }
             gpuRenderer_->setClearColor(snap.composition->backgroundColor());
             gpuRenderer_->clear();
             snap.composition->goToFrame(snap.frameNumber);
