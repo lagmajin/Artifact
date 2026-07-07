@@ -144,6 +144,8 @@ const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
       {WorkspaceMode::Default,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
         "Properties"},
+
+
        {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Note",
         "Layer Note", "Composition View (Software)",
         "Layer View (Diligent)", "Layer View (Software)"}},

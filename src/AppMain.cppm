@@ -134,6 +134,11 @@ import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.MarkdownNoteEditorWidget;
 import Artifact.Widgets.ProjectMemoWidget;
 import Artifact.Widgets.ClipBufferWidget;
+import Artifact.Widgets.CoordinateManager;
+import Artifact.Widgets.CoordinateManager;
+import Artifact.Widgets.PerformanceHUD;
+
+
 import Artifact.Widgets.ContextShortcutHelperWidget;
 import Artifact.Widgets.Render.QueueManager;
 import Artifact.Render.Queue.Service;
@@ -2106,6 +2111,12 @@ int main(int argc, char *argv[]) {
                    &ArtifactCompositionEditor::videoDebugMessage, status,
                    &ArtifactStatusBar::setTimelineDebugText);
 
+  // --- Performance HUD (C4D-style viewport overlay) ---
+  auto* perfHUD = new ArtifactPerformanceHUD(mw);
+  perfHUD->setController(compositionEditor->renderController());
+  perfHUD->setEnabled(true);
+
+
   const QRect playbackControlFloatingGeometry(120, 828, 720, 210);
   mw->addDockedWidgetFloating(
       QStringLiteral("Playback Control"), QStringLiteral("PlaybackControl"),
@@ -2113,6 +2124,18 @@ int main(int argc, char *argv[]) {
   mw->addDockedWidgetFloating(
       QStringLiteral("Playback Control Test"),
       QStringLiteral("PlaybackControlTest"),
+       new ArtifactPlaybackControlTestWidget(mw),
+       QRect(860, 828, 720, 210));
+
+
+  // --- Coordinate Manager (C4D-style) ---
+  const QRect coordManagerFloatingGeometry(120, 806, 380, 30);
+  auto* coordManager = new ArtifactCoordinateManagerWidget(mw);
+  mw->addDockedWidgetFloating(
+      QStringLiteral("Coordinate Manager"), QStringLiteral("CoordinateManager"),
+      coordManager, coordManagerFloatingGeometry);
+  mw->setDockVisible(QStringLiteral("Coordinate Manager"), true);
+
       new ArtifactPlaybackControlTestWidget(mw),
       QRect(860, 828, 720, 210));
 

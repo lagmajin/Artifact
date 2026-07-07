@@ -238,6 +238,9 @@ void zoomFill();
   bool cyclePresetLayerMaskForLayer(const ArtifactAbstractLayerPtr& layer, bool reverse = false);
   void setGizmoMode(TransformGizmo::Mode mode);
   TransformGizmo::Mode gizmoMode() const;
+  void setGizmoScale(float scale);
+  float gizmoScale() const;
+
   LayerID layerAtViewportPos(const QPointF& viewportPos) const;
   ArtifactIRenderer* renderer() const;
   QImage captureCurrentFrameImage() const;
