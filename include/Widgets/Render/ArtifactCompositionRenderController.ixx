@@ -107,11 +107,17 @@ export namespace Artifact {
   bool isRunning() const;
 
   void recreateSwapChain(QWidget* hostWidget);
-  void setViewportSize(float width, float height);
+void setViewportSize(float width, float height);
 void setPreviewQualityPreset(PreviewQualityPreset preset);
 void panBy(const QPointF& viewportDelta);
 void notifyViewportInteractionActivity();
 void finishViewportInteraction();
+void undoView();
+void redoView();
+bool canUndoView() const;
+bool canRedoView() const;
+QPointF viewportPan() const;
+float viewportZoom() const;
 
   void setComposition(ArtifactCompositionPtr composition);
   ArtifactCompositionPtr composition() const;
@@ -271,10 +277,11 @@ TransformGizmo* gizmo() const;
   float zoom = 0.0f;
  };
  CameraFrustumVisual cameraFrustumVisual() const;
- void setViewportOrientation(ArtifactCore::ViewOrientationHotspot hotspot);
- ArtifactCore::ViewOrientationHotspot viewportOrientation() const;
- QQuaternion viewportOrientationQuaternion() const;
- void setViewportOrientationQuaternion(const QQuaternion& orientation);
+void setViewportOrientation(ArtifactCore::ViewOrientationHotspot hotspot);
+ArtifactCore::ViewOrientationHotspot viewportOrientation() const;
+QQuaternion viewportOrientationQuaternion() const;
+void setViewportOrientationQuaternion(const QQuaternion& orientation);
+void pushViewHistory();
  Ray createPickingRay(const QPointF& viewportPos) const;
   Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos) const;
 

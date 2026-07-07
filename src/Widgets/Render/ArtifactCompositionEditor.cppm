@@ -4237,7 +4237,7 @@ protected:
     p.setRenderHint(QPainter::Antialiasing, true);
 
     const QRect frameRect = paneRect.adjusted(1, 1, -1, -1);
-    QPen framePen(QColor(110, 190, 255, 214), 2.0);
+    QPen framePen(QColor(124, 214, 255, 245), 3.0);
     if (resizeIndicatorProvider_ && resizeIndicatorProvider_()) {
       framePen.setStyle(Qt::DashLine);
       framePen.setDashPattern({5.0, 3.0});
@@ -8643,6 +8643,91 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
             impl_->eventBusDebugger_->raise();
           }
         });
+
+    auto *placeWorkCursorShortcut =
+        new QShortcut(QKeySequence(ArtifactCore::ShortcutBindings::instance()
+                                       .shortcut(ArtifactCore::ShortcutId::WorkCursorPlace)),
+                      this);
+    QObject::connect(placeWorkCursorShortcut, &QShortcut::activated, this,
+                     [this]() {
+                       if (!impl_ || !impl_->activeRenderController())
+                         return;
+                       auto *controller = impl_->activeRenderController();
+                       const auto view = impl_->activeViewport();
+                       if (!view) {
+                         return;
+                       }
+                       controller->placeWorkCursorAtViewportPos(
+                           QPointF(view->width() * 0.5, view->height() * 0.5));
+                       controller->setWorkCursorLabel(
+                           QStringLiteral("Placed in %1")
+                               .arg(impl_->activePaneViewLabel()));
+                       controller->setInfoOverlayText(
+                           QStringLiteral("Work Cursor"),
+                           QStringLiteral("Placed at the active viewport center"));
+                     });
+
+    auto *centerWorkCursorShortcut =
+        new QShortcut(QKeySequence(ArtifactCore::ShortcutBindings::instance()
+                                       .shortcut(ArtifactCore::ShortcutId::WorkCursorCenter)),
+                      this);
+    QObject::connect(centerWorkCursorShortcut, &QShortcut::activated, this,
+                     [this]() {
+                       if (!impl_ || !impl_->activeRenderController())
+                         return;
+                       if (auto *controller = impl_->activeRenderController()) {
+                         const auto comp = controller->composition();
+                         if (!comp) {
+                           return;
+                         }
+                         const QSize size = comp->settings().compositionSize();
+                         controller->setWorkCursorCanvasPosition(QPointF(
+                             size.width() * 0.5, size.height() * 0.5));
+                         controller->setWorkCursorLabel(
+                             QStringLiteral("Centered in %1")
+                                 .arg(impl_->activePaneViewLabel()));
+                         controller->setInfoOverlayText(
+                             QStringLiteral("Work Cursor"),
+                             QStringLiteral("Centered in the composition"));
+                       }
+                     });
+
+    auto *clearWorkCursorShortcut =
+        new QShortcut(QKeySequence(ArtifactCore::ShortcutBindings::instance()
+                                       .shortcut(ArtifactCore::ShortcutId::WorkCursorClear)),
+                      this);
+    QObject::connect(clearWorkCursorShortcut, &QShortcut::activated, this,
+                     [this]() {
+                       if (!impl_ || !impl_->activeRenderController())
+                         return;
+                       auto *controller = impl_->activeRenderController();
+                       controller->clearWorkCursor();
+                       controller->clearInfoOverlayText();
+                     });
+
+    auto *viewUndoShortcut =
+        new QShortcut(QKeySequence(ArtifactCore::ShortcutBindings::instance()
+                                       .shortcut(ArtifactCore::ShortcutId::ViewUndo)),
+                      this);
+    QObject::connect(viewUndoShortcut, &QShortcut::activated, this, [this]() {
+      if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+        controller->undoView();
+        controller->setInfoOverlayText(QStringLiteral("View Undo"),
+                                       impl_->activePaneViewLabel());
+      }
+    });
+
+    auto *viewRedoShortcut =
+        new QShortcut(QKeySequence(ArtifactCore::ShortcutBindings::instance()
+                                       .shortcut(ArtifactCore::ShortcutId::ViewRedo)),
+                      this);
+    QObject::connect(viewRedoShortcut, &QShortcut::activated, this, [this]() {
+      if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+        controller->redoView();
+        controller->setInfoOverlayText(QStringLiteral("View Redo"),
+                                       impl_->activePaneViewLabel());
+      }
+    });
   });
 
   qInfo() << "[CompositionEditor][Ctor] total ms=" << ctorTimer.elapsed();

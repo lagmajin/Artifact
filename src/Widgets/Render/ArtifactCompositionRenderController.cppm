@@ -9638,6 +9638,57 @@ public:
 
   QString workCursorLabel_;
 
+  struct ViewState {
+    QPointF pan;
+    float zoom = 1.0f;
+    QQuaternion orientation;
+    bool viewportOrientationActive = false;
+  };
+
+  std::vector<ViewState> viewUndoStack_;
+  std::vector<ViewState> viewRedoStack_;
+  bool restoringViewState_ = false;
+
+  ViewState captureViewState() const {
+    ViewState state;
+    if (renderer_) {
+      float panX = 0.0f;
+      float panY = 0.0f;
+      renderer_->getPan(panX, panY);
+      state.pan = QPointF(panX, panY);
+      state.zoom = renderer_->getZoom();
+    }
+    state.orientation = viewportOrientationNavigator_.currentOrientation();
+    state.viewportOrientationActive = viewportOrientationActive_;
+    return state;
+  }
+
+  void applyViewState(const ViewState &state) {
+    if (!renderer_) {
+      return;
+    }
+    restoringViewState_ = true;
+    renderer_->setPan(static_cast<float>(state.pan.x()),
+                      static_cast<float>(state.pan.y()));
+    renderer_->setZoom(state.zoom);
+    viewportOrientationNavigator_.setCurrentOrientation(state.orientation);
+    viewportOrientationActive_ = state.viewportOrientationActive;
+    restoringViewState_ = false;
+    invalidateOverlayComposite();
+    markRenderDirty();
+  }
+
+  void pushViewHistory() {
+    if (!renderer_ || restoringViewState_) {
+      return;
+    }
+    viewUndoStack_.push_back(captureViewState());
+    if (viewUndoStack_.size() > 32) {
+      viewUndoStack_.erase(viewUndoStack_.begin());
+    }
+    viewRedoStack_.clear();
+  }
+
   // Full-frame clear color used before composition content is drawn.
 
   FloatColor viewportClearColor_;
@@ -11830,6 +11881,10 @@ void CompositionRenderController::panBy(const QPointF &viewportDelta) {
 
   }
 
+  if (!impl_->restoringViewState_) {
+    impl_->pushViewHistory();
+  }
+
   impl_->renderer_->panBy((float)viewportDelta.x() * impl_->devicePixelRatio_,
 
                           (float)viewportDelta.y() * impl_->devicePixelRatio_);
@@ -13807,12 +13862,88 @@ bool CompositionRenderController::isGpuBlendEnabled() const {
 
 }
 
+QPointF CompositionRenderController::viewportPan() const {
+
+  if (!impl_ || !impl_->renderer_) {
+
+    return QPointF();
+
+  }
+
+  float panX = 0.0f;
+  float panY = 0.0f;
+  impl_->renderer_->getPan(panX, panY);
+  return QPointF(panX, panY);
+
+}
+
+float CompositionRenderController::viewportZoom() const {
+
+  return impl_ && impl_->renderer_ ? impl_->renderer_->getZoom() : 1.0f;
+
+}
+
+bool CompositionRenderController::canUndoView() const {
+
+  return impl_ && !impl_->viewUndoStack_.empty();
+
+}
+
+bool CompositionRenderController::canRedoView() const {
+
+  return impl_ && !impl_->viewRedoStack_.empty();
+
+}
+
+void CompositionRenderController::pushViewHistory() {
+
+  if (!impl_) {
+
+    return;
+
+  }
+
+  impl_->pushViewHistory();
+
+}
+
+void CompositionRenderController::undoView() {
+
+  if (!impl_ || impl_->viewUndoStack_.empty()) {
+
+    return;
+
+  }
+
+  impl_->viewRedoStack_.push_back(impl_->captureViewState());
+  const auto state = impl_->viewUndoStack_.back();
+  impl_->viewUndoStack_.pop_back();
+  impl_->applyViewState(state);
+
+}
+
+void CompositionRenderController::redoView() {
+
+  if (!impl_ || impl_->viewRedoStack_.empty()) {
+
+    return;
+
+  }
+
+  impl_->viewUndoStack_.push_back(impl_->captureViewState());
+  const auto state = impl_->viewRedoStack_.back();
+  impl_->viewRedoStack_.pop_back();
+  impl_->applyViewState(state);
+
+}
+
 
 
 void CompositionRenderController::resetView() {
 
   if (impl_->renderer_) {
 
+    impl_->pushViewHistory();
     impl_->renderer_->resetView();
 
     impl_->invalidateBaseComposite();
@@ -13829,6 +13960,7 @@ void CompositionRenderController::zoomInAt(const QPointF &viewportPos) {
 
   if (impl_->renderer_) {
 
+    impl_->pushViewHistory();
     zoomAtFactor(viewportPos, 1.1f);
 
   }
@@ -13841,6 +13973,7 @@ void CompositionRenderController::zoomOutAt(const QPointF &viewportPos) {
 
   if (impl_->renderer_) {
 
+    impl_->pushViewHistory();
     zoomAtFactor(viewportPos, 1.0f / 1.1f);
 
   }
@@ -13860,6 +13993,12 @@ void CompositionRenderController::zoomAtFactor(const QPointF &viewportPos,
   }
 
   notifyViewportInteractionActivity();
+
+  if (impl_->restoringViewState_) {
+    return;
+  }
+
+  impl_->pushViewHistory();
 
   const float currentZoom = impl_->renderer_->getZoom();
 
@@ -13885,6 +14024,7 @@ void CompositionRenderController::zoomFit() {
 
   if (impl_->renderer_) {
 
+    impl_->pushViewHistory();
     impl_->renderer_->fitToViewport(0.0f);
 
     impl_->invalidateBaseComposite();
@@ -13913,6 +14053,7 @@ void CompositionRenderController::zoomFill() {
 
   if (impl_->renderer_) {
 
+    impl_->pushViewHistory();
     impl_->renderer_->fillToViewport();
 
     impl_->invalidateBaseComposite();
@@ -13941,6 +14082,7 @@ void CompositionRenderController::zoom100() {
 
   if (impl_->renderer_) {
 
+    impl_->pushViewHistory();
     impl_->renderer_->setZoom(1.0f);
 
     // Center the canvas in the viewport at 100% zoom.
@@ -18504,6 +18646,7 @@ void CompositionRenderController::setViewportOrientation(
 
   }
 
+  impl_->pushViewHistory();
   impl_->viewportOrientationNavigator_.snapTo(hotspot, true);
 
   impl_->viewportOrientationActive_ = true;
@@ -18552,6 +18695,7 @@ void CompositionRenderController::setViewportOrientationQuaternion(
 
   }
 
+  impl_->pushViewHistory();
   impl_->viewportOrientationNavigator_.setCurrentOrientation(orientation);
 
   impl_->viewportOrientationActive_ = true;
