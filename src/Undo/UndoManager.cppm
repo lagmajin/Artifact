@@ -943,4 +943,36 @@ QString ChangeCompositionResolutionCommand::label() const {
     return QStringLiteral("Change Composition Resolution");
 }
 
+// --- LayoutSnapshotCommand ---
+LayoutSnapshotCommand::LayoutSnapshotCommand(QString label,
+                                             QByteArray beforeState,
+                                             QByteArray afterState,
+                                             RestoreFn restoreFn)
+    : label_(std::move(label)),
+      beforeState_(std::move(beforeState)),
+      afterState_(std::move(afterState)),
+      restoreFn_(std::move(restoreFn)) {}
+
+void LayoutSnapshotCommand::undo() {
+    if (restoreFn_) {
+        restoreFn_(beforeState_);
+    }
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+void LayoutSnapshotCommand::redo() {
+    if (restoreFn_) {
+        restoreFn_(afterState_);
+    }
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+QString LayoutSnapshotCommand::label() const {
+    return label_.isEmpty() ? QStringLiteral("Layout Change") : label_;
+}
+
 }

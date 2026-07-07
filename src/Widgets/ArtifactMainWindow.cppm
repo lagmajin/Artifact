@@ -71,6 +71,7 @@ import Artifact.Widgets.AI.ArtifactAICloudWidget;
 import Artifact.Workspace.Modes;
 import Application.AppSettings;
 import Settings.Accessibility;
+import Undo.UndoManager;
 #ifdef ARTIFACT_FEATURE_COMMAND_PALETTE
 import Command.Palette;
 #endif
@@ -467,6 +468,29 @@ void scheduleQuitIfNoVisibleDocks(ArtifactMainWindow *window) {
       qApp->quit();
     }
   });
+}
+
+void pushDockLayoutSnapshot(ArtifactMainWindow *window,
+                            const QByteArray &beforeState,
+                            const QString &label) {
+  if (!window || beforeState.isEmpty()) {
+    return;
+  }
+
+  const QByteArray afterState = window->saveDockManagerState();
+  if (afterState.isEmpty() || afterState == beforeState) {
+    return;
+  }
+
+  const QPointer<ArtifactMainWindow> windowGuard(window);
+  if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<LayoutSnapshotCommand>(
+        label, beforeState, afterState,
+        [windowGuard](const QByteArray &state) -> bool {
+          return windowGuard ? windowGuard->restoreDockManagerState(state)
+                             : false;
+        }));
+  }
 }
 
 void prepareFloatingDockContainer(ads::CFloatingDockContainer *floatingWidget,
@@ -1534,6 +1558,8 @@ void ArtifactMainWindow::moveDockToTabGroup(const QString &title,
       tabGroupPrefix.isEmpty())
     return;
 
+  const QByteArray beforeState = saveDockManagerState();
+
   CDockWidget *dockToMove = nullptr;
   ads::CDockAreaWidget *targetArea = nullptr;
 
@@ -1581,12 +1607,16 @@ void ArtifactMainWindow::moveDockToTabGroup(const QString &title,
   impl_->dockManager->addDockWidgetTabToArea(dockToMove, targetArea);
   dockToMove->toggleView(true);
   impl_->dockStyleManager->applyStyle();
+  pushDockLayoutSnapshot(this, beforeState,
+                         QStringLiteral("Move Dock: %1").arg(title));
 }
 
 void ArtifactMainWindow::setDockVisible(const QString &title,
                                         const bool visible) {
   if (!impl_)
     return;
+
+  const QByteArray beforeState = saveDockManagerState();
 
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
@@ -1617,6 +1647,10 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
           scheduleFloatingRefresh(floatingWidget);
         }
       }
+      pushDockLayoutSnapshot(
+          this, beforeState,
+          visible ? QStringLiteral("Show Dock: %1").arg(title)
+                  : QStringLiteral("Hide Dock: %1").arg(title));
       return;
     }
   }
@@ -1649,12 +1683,16 @@ void ArtifactMainWindow::activateDock(const QString &title) {
 bool ArtifactMainWindow::closeDock(const QString &title) {
   if (!impl_ || title.isEmpty())
     return false;
+
+  const QByteArray beforeState = saveDockManagerState();
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
       continue;
     if (dock->objectName() == title || dock->windowTitle() == title) {
       dock->closeDockWidget();
       impl_->dockStyleManager->applyStyle();
+      pushDockLayoutSnapshot(this, beforeState,
+                             QStringLiteral("Close Dock: %1").arg(title));
       return true;
     }
   }
@@ -1918,12 +1956,17 @@ void ArtifactMainWindow::setDockSplitterSizes(const QString &dockTitle,
                                               const QList<int> &sizes) {
   if (!impl_ || !impl_->dockManager)
     return;
+
+  const QByteArray beforeState = saveDockManagerState();
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
       continue;
     if (dock->objectName() == dockTitle || dock->windowTitle() == dockTitle) {
       if (auto *area = dock->dockAreaWidget()) {
         impl_->dockManager->setSplitterSizes(area, sizes);
+        pushDockLayoutSnapshot(
+            this, beforeState,
+            QStringLiteral("Resize Dock Splitter: %1").arg(dockTitle));
       }
       return;
     }

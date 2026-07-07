@@ -29,6 +29,7 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QByteArray>
 #include <wobjectdefs.h>
 #include <QString>
 #include <QStringList>
@@ -409,6 +410,24 @@ public:
 private:
     class Impl;
     Impl* impl_;
+};
+
+class LayoutSnapshotCommand : public UndoCommand {
+public:
+    using RestoreFn = std::function<bool(const QByteArray&)>;
+
+    LayoutSnapshotCommand(QString label,
+                          QByteArray beforeState,
+                          QByteArray afterState,
+                          RestoreFn restoreFn);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    QString label_;
+    QByteArray beforeState_;
+    QByteArray afterState_;
+    RestoreFn restoreFn_;
 };
 
 }
