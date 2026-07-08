@@ -47,6 +47,8 @@ QList<ArtifactShortcutHelpEntry> ArtifactContextShortcutProvider::getShortcutsFo
         addEntry(ArtifactCore::ShortcutId::TimelineJumpToLastKeyframe, QStringLiteral("Timeline Navigation"), QStringLiteral("Jump to last keyframe"));
         addEntry(ArtifactCore::ShortcutId::TimelineJumpToNextKeyframe, QStringLiteral("Timeline Navigation"), QStringLiteral("Jump to next keyframe"));
         addEntry(ArtifactCore::ShortcutId::TimelineJumpToPreviousKeyframe, QStringLiteral("Timeline Navigation"), QStringLiteral("Jump to previous keyframe"));
+        addEntry(ArtifactCore::ShortcutId::AnimationGoToNextKeyframe, QStringLiteral("Animation Navigation"), QStringLiteral("Jump to next keyframe"));
+        addEntry(ArtifactCore::ShortcutId::AnimationGoToPreviousKeyframe, QStringLiteral("Animation Navigation"), QStringLiteral("Jump to previous keyframe"));
     }
 
     if (mode == WorkspaceMode::Import) {

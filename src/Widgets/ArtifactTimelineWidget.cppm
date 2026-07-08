@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QBoxLayout>
 #include <QApplication>
@@ -2140,6 +2140,145 @@ QJsonArray serializeSelectedKeyframes(
   return keyframes;
 }
 
+QJsonArray serializeSelectedKeyframeEasing(
+    const ArtifactCompositionPtr& composition,
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers)
+{
+  QJsonArray easing;
+  if (!composition || markers.isEmpty()) {
+    return easing;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  QSet<QString> seen;
+  for (const auto& marker : markers) {
+    const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+    const QString dedupeKey =
+        QStringLiteral("%1|%2|%3").arg(marker.layerId.toString(), marker.propertyPath,
+                                        QString::number(frame));
+    if (seen.contains(dedupeKey)) {
+      continue;
+    }
+    seen.insert(dedupeKey);
+
+    const auto layer = composition->layerById(marker.layerId);
+    if (!layer) {
+      continue;
+    }
+    const auto property = findLayerPropertyByPath(layer, marker.propertyPath);
+    if (!property || !property->isAnimatable()) {
+      continue;
+    }
+
+    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const auto keyframesAtProperty = property->getKeyFrames();
+    const auto it = std::find_if(keyframesAtProperty.cbegin(), keyframesAtProperty.cend(),
+                                 [&time](const ArtifactCore::KeyFrame& keyframe) {
+                                   return keyframe.time == time;
+                                 });
+    if (it == keyframesAtProperty.cend()) {
+      continue;
+    }
+
+    QJsonObject record;
+    record.insert(QStringLiteral("layerId"), marker.layerId.toString());
+    record.insert(QStringLiteral("propertyPath"), marker.propertyPath);
+    record.insert(QStringLiteral("frame"), static_cast<qint64>(frame));
+    record.insert(QStringLiteral("interpolation"), static_cast<int>(it->interpolation));
+    record.insert(QStringLiteral("cp1_x"), it->cp1_x);
+    record.insert(QStringLiteral("cp1_y"), it->cp1_y);
+    record.insert(QStringLiteral("cp2_x"), it->cp2_x);
+    record.insert(QStringLiteral("cp2_y"), it->cp2_y);
+    easing.append(record);
+  }
+
+  return easing;
+}
+
+QVector<InterpolationChangeRecord> buildKeyframeEasingChangeRecords(
+    const ArtifactCompositionPtr& composition,
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers,
+    const QJsonArray& easingRecords)
+{
+  QVector<InterpolationChangeRecord> records;
+  if (!composition || markers.isEmpty() || easingRecords.isEmpty()) {
+    return records;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  QSet<QString> seen;
+  QVector<QJsonObject> sources;
+  sources.reserve(easingRecords.size());
+  for (const auto& value : easingRecords) {
+    if (!value.isObject()) {
+      continue;
+    }
+    const QJsonObject obj = value.toObject();
+    if (obj.value(QStringLiteral("propertyPath")).toString().trimmed().isEmpty()) {
+      continue;
+    }
+    sources.push_back(obj);
+  }
+  if (sources.isEmpty()) {
+    return records;
+  }
+
+  for (int markerIndex = 0; markerIndex < markers.size(); ++markerIndex) {
+    const auto& marker = markers[markerIndex];
+    const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+    const QString dedupeKey =
+        QStringLiteral("%1|%2|%3").arg(marker.layerId.toString(), marker.propertyPath,
+                                        QString::number(frame));
+    if (seen.contains(dedupeKey)) {
+      continue;
+    }
+    seen.insert(dedupeKey);
+
+    const auto layer = composition->layerById(marker.layerId);
+    if (!layer) {
+      continue;
+    }
+    const auto property = findLayerPropertyByPath(layer, marker.propertyPath);
+    if (!property || !property->isAnimatable()) {
+      continue;
+    }
+
+    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const auto keyframes = property->getKeyFrames();
+    const auto it = std::find_if(keyframes.cbegin(), keyframes.cend(),
+                                 [&time](const ArtifactCore::KeyFrame& keyframe) {
+                                   return keyframe.time == time;
+                                 });
+    if (it == keyframes.cend()) {
+      continue;
+    }
+
+    const QJsonObject source = sources[std::min(markerIndex, sources.size() - 1)];
+    const auto interpolationType =
+        static_cast<ArtifactCore::InterpolationType>(
+            source.value(QStringLiteral("interpolation"))
+                .toInt(static_cast<int>(ArtifactCore::InterpolationType::Linear)));
+    ArtifactCore::KeyFrame after = *it;
+    after.interpolation = interpolationType;
+    after.cp1_x = static_cast<float>(source.value(QStringLiteral("cp1_x")).toDouble(after.cp1_x));
+    after.cp1_y = static_cast<float>(source.value(QStringLiteral("cp1_y")).toDouble(after.cp1_y));
+    after.cp2_x = static_cast<float>(source.value(QStringLiteral("cp2_x")).toDouble(after.cp2_x));
+    after.cp2_y = static_cast<float>(source.value(QStringLiteral("cp2_y")).toDouble(after.cp2_y));
+
+    records.push_back(InterpolationChangeRecord{
+        layer,
+        marker.propertyPath,
+        time,
+        *it,
+        after,
+    });
+  }
+
+  return records;
+}
+
 bool pasteKeyframesToLayers(
     const ArtifactCompositionPtr& composition,
     const QVector<ArtifactAbstractLayerPtr>& targetLayers,
@@ -2191,6 +2330,9 @@ bool pasteKeyframesToLayers(
       const QString propertyPath = record.value(QStringLiteral("propertyPath")).toString();
       const auto property = findLayerPropertyByPath(layer, propertyPath);
       if (!property || !property->isAnimatable()) {
+        continue;
+      }
+      if (!timelinePropertyAllowedByKeyingSet(propertyPath)) {
         continue;
       }
 
@@ -2266,6 +2408,8 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr& composition,
           property->removeKeyFrame(nowTime);
           changed = true;
         }
+      } else if (!timelinePropertyAllowedByKeyingSet(property->getName())) {
+        continue;
       } else {
         const QVariant value = property->interpolateValue(nowTime);
         property->addKeyFrame(nowTime, value.isValid() ? value : property->getValue());
@@ -2307,6 +2451,8 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr& composition,
       property->removeKeyFrame(nowTime);
       changed = true;
     }
+  } else if (!timelinePropertyAllowedByKeyingSet(propertyPath)) {
+    return false;
   } else {
     const QVariant value = property->interpolateValue(nowTime);
     property->addKeyFrame(nowTime, value.isValid() ? value : property->getValue());
@@ -2346,6 +2492,38 @@ std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr& layer,
     const QString& propertyPath);
 
+bool timelinePropertyAllowedByKeyingSet(const QString& propertyName);
+
+bool timelinePropertyAllowedByKeyingSet(const QString& propertyName)
+{
+  const auto* settings = ArtifactCore::ArtifactAppSettings::instance();
+  if (!settings) {
+    return true;
+  }
+
+  const QString mode = settings->timelineKeyingSetModeText();
+  if (mode.compare(QStringLiteral("Transform Only"), Qt::CaseInsensitive) == 0) {
+    return propertyName.startsWith(QStringLiteral("transform."), Qt::CaseInsensitive) ||
+           propertyName.compare(QStringLiteral("layer.opacity"), Qt::CaseInsensitive) == 0;
+  }
+
+  if (mode.compare(QStringLiteral("Custom"), Qt::CaseInsensitive) == 0) {
+    const QStringList customPaths = settings->timelineCustomKeyingSetPropertyPaths();
+    if (customPaths.isEmpty()) {
+      return propertyName.startsWith(QStringLiteral("transform."), Qt::CaseInsensitive) ||
+             propertyName.compare(QStringLiteral("layer.opacity"), Qt::CaseInsensitive) == 0;
+    }
+    for (const auto& path : customPaths) {
+      if (propertyName.compare(path.trimmed(), Qt::CaseInsensitive) == 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  return true;
+}
+
 struct InterpolationChangeRecord {
   ArtifactAbstractLayerWeak layer;
   QString propertyPath;
@@ -2354,60 +2532,74 @@ struct InterpolationChangeRecord {
   ArtifactCore::KeyFrame after;
 };
 
-class ApplyInterpolationCommand final : public UndoCommand {
-public:
-  explicit ApplyInterpolationCommand(QVector<InterpolationChangeRecord> records)
-      : records_(std::move(records)) {}
-
-  void undo() override { apply(false); }
-  void redo() override { apply(true); }
-  QString label() const override { return QStringLiteral("Apply Interpolation"); }
-
-private:
-  void apply(const bool useAfter)
-  {
-    QSet<QString> changedLayerIds;
-    for (const auto& record : records_) {
-      auto layer = record.layer.lock();
-      if (!layer) {
-        continue;
-      }
-      const auto property = findLayerPropertyByPath(layer, record.propertyPath);
-      if (!property) {
-        continue;
-      }
-      const auto& keyframe = useAfter ? record.after : record.before;
-      property->addKeyFrame(keyframe.time,
-                            keyframe.value.isValid() ? keyframe.value : property->getValue(),
-                            keyframe.interpolation,
-                            keyframe.cp1_x,
-                            keyframe.cp1_y,
-                            keyframe.cp2_x,
-                            keyframe.cp2_y,
-                            keyframe.roving);
-      layer->changed();
-      changedLayerIds.insert(layer->id().toString());
+void applyInterpolationChangeRecords(
+    const QVector<InterpolationChangeRecord>& records,
+    const bool useAfter,
+    const bool notifyUndoManager)
+{
+  QSet<QString> changedLayerIds;
+  for (const auto& record : records) {
+    auto layer = record.layer.lock();
+    if (!layer) {
+      continue;
     }
-
-    for (const auto& record : records_) {
-      auto layer = record.layer.lock();
-      if (!layer) {
-        continue;
-      }
-      const QString layerKey = layer->id().toString();
-      if (!changedLayerIds.contains(layerKey)) {
-        continue;
-      }
-      if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
-        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                              LayerChangedEvent::ChangeType::Modified});
-      }
+    const auto property = findLayerPropertyByPath(layer, record.propertyPath);
+    if (!property) {
+      continue;
     }
+    const auto& keyframe = useAfter ? record.after : record.before;
+    property->addKeyFrame(keyframe.time,
+                          keyframe.value.isValid() ? keyframe.value : property->getValue(),
+                          keyframe.interpolation,
+                          keyframe.cp1_x,
+                          keyframe.cp1_y,
+                          keyframe.cp2_x,
+                          keyframe.cp2_y,
+                          keyframe.roving);
+    property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+    property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+    layer->changed();
+    changedLayerIds.insert(layer->id().toString());
+  }
 
+  for (const auto& record : records) {
+    auto layer = record.layer.lock();
+    if (!layer) {
+      continue;
+    }
+    const QString layerKey = layer->id().toString();
+    if (!changedLayerIds.contains(layerKey)) {
+      continue;
+    }
+    if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+    }
+  }
+
+  if (notifyUndoManager) {
     if (auto* mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
+  }
+}
+
+class ApplyInterpolationCommand final : public UndoCommand {
+public:
+  explicit ApplyInterpolationCommand(QVector<InterpolationChangeRecord> records,
+                                     QString label = QStringLiteral("Apply Interpolation"))
+      : records_(std::move(records)), label_(std::move(label)) {}
+
+  void undo() override { apply(false); }
+  void redo() override { apply(true); }
+  QString label() const override { return label_; }
+
+private:
+  QString label_;
+  void apply(const bool useAfter)
+  {
+    applyInterpolationChangeRecords(records_, useAfter, true);
   }
 
   QVector<InterpolationChangeRecord> records_;
@@ -2550,6 +2742,8 @@ bool applyKeyframeEditAtPlayhead(const ArtifactCompositionPtr& composition,
           property->removeKeyFrame(nowTime);
           changed = true;
         }
+      } else if (!timelinePropertyAllowedByKeyingSet(property->getName())) {
+        continue;
       } else {
         const QVariant value = property->interpolateValue(nowTime);
         property->addKeyFrame(nowTime, value.isValid() ? value : property->getValue());
@@ -3028,6 +3222,9 @@ bool applyCurveEditorMove(
   if (!property) {
     return false;
   }
+  if (!timelinePropertyAllowedByKeyingSet(binding.propertyPath)) {
+    return false;
+  }
 
   const CurveKey& oldKey = track.keys[keyIndex];
   const double fps =
@@ -3072,6 +3269,9 @@ bool applyCurveEditorTrackToProperty(
 
   const auto property = findLayerPropertyByPath(layer, binding.propertyPath);
   if (!property) {
+    return false;
+  }
+  if (!timelinePropertyAllowedByKeyingSet(binding.propertyPath)) {
     return false;
   }
 
@@ -4017,6 +4217,8 @@ public:
   QToolButton *keyframeEaseInButton_ = nullptr;
   QToolButton *keyframeEaseOutButton_ = nullptr;
   QToolButton *keyframeEaseInOutButton_ = nullptr;
+  QToolButton *keyframeEaseCopyButton_ = nullptr;
+  QToolButton *keyframeEasePasteButton_ = nullptr;
   QLabel *currentLayerLabel_ = nullptr;
   QLabel *recentLayerLabel_ = nullptr;
   QLabel *frameSummaryLabel_ = nullptr;
@@ -4468,6 +4670,160 @@ void ArtifactTimelineWidget::showKeyPatternDialog()
   dialog->show();
 }
 
+void ArtifactTimelineWidget::applyAnimationPreset(
+    const ArtifactCore::KeyframePatternPreset preset)
+{
+  if (!impl_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto *svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition || !impl_->layerTimelinePanel_) {
+    return;
+  }
+
+  ArtifactLayerSelectionManager *selectionManager = nullptr;
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+
+  const auto selectedLayers = selectedTimelineLayers(selectionManager);
+  const auto selectedMarkers =
+      impl_->painterTrackView_ ? impl_->painterTrackView_->selectedKeyframeMarkers()
+                               : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
+  const QString propertyPath = selectedPropertyPathForKeyPattern(
+      impl_->layerTimelinePanel_, impl_->painterTrackView_->keyframeMarkers(),
+      selectedMarkers);
+  const auto targets = collectKeyPatternTargets(selectedLayers, propertyPath);
+  if (targets.isEmpty()) {
+    Q_EMIT timelineDebugMessage(
+        QStringLiteral("Animation preset needs a selected property and at least one layer."));
+    return;
+  }
+
+  ArtifactCore::KeyframePatternRequest request;
+  request.preset = preset;
+  request.startFrame = std::max(0.0, impl_->currentFrame_);
+  request.endFrame = request.startFrame + 24.0;
+  request.cycles = 1.0;
+  request.amplitude = 60.0;
+  request.phase = 0.0;
+  request.delayFrames = 2.0;
+  request.bpm = composition->frameRate().framerate() > 0.0
+                    ? composition->frameRate().framerate() * 2.0
+                    : 120.0;
+  request.damping = 4.0;
+  request.settleOscillation = 3.0;
+  request.stepCount = 6;
+  request.sampleCount = 12;
+  request.seed = 1;
+  request.frameScale = std::max(
+      1, static_cast<int>(std::llround(composition->frameRate().framerate())));
+
+  switch (preset) {
+  case ArtifactCore::KeyframePatternPreset::Stagger:
+    request.delayFrames = 2.0;
+    break;
+  case ArtifactCore::KeyframePatternPreset::Pulse:
+    request.endFrame = request.startFrame + 12.0;
+    request.amplitude = 40.0;
+    break;
+  case ArtifactCore::KeyframePatternPreset::Bounce:
+    request.sampleCount = 8;
+    request.amplitude = 48.0;
+    break;
+  case ArtifactCore::KeyframePatternPreset::Shake:
+    request.sampleCount = 10;
+    request.amplitude = 14.0;
+    break;
+  case ArtifactCore::KeyframePatternPreset::Loop:
+  case ArtifactCore::KeyframePatternPreset::Wave:
+    request.cycles = 2.0;
+    request.sampleCount = 18;
+    request.amplitude = 32.0;
+    break;
+  case ArtifactCore::KeyframePatternPreset::Step:
+    request.stepCount = 6;
+    request.endFrame = request.startFrame + 18.0;
+    request.amplitude = 0.0;
+    break;
+  case ArtifactCore::KeyframePatternPreset::RandomHold:
+    request.sampleCount = 10;
+    request.amplitude = 20.0;
+    request.seed = static_cast<quint32>(std::max(1.0, std::round(impl_->currentFrame_)));
+    break;
+  case ArtifactCore::KeyframePatternPreset::Overshoot:
+    request.amplitude = 24.0;
+    request.endFrame = request.startFrame + 14.0;
+    break;
+  case ArtifactCore::KeyframePatternPreset::Settle:
+    request.amplitude = 18.0;
+    request.damping = 5.0;
+    request.settleOscillation = 3.0;
+    request.endFrame = request.startFrame + 18.0;
+    break;
+  case ArtifactCore::KeyframePatternPreset::BeatSync:
+    request.sampleCount = 8;
+    request.bpm = composition->frameRate().framerate() > 0.0
+                      ? composition->frameRate().framerate() * 2.0
+                      : 120.0;
+    request.endFrame = request.startFrame + 24.0;
+    break;
+  case ArtifactCore::KeyframePatternPreset::Ramp:
+  default:
+    break;
+  }
+
+  if (const auto firstLayer = targets.front().layer) {
+    if (const auto property = firstLayer->getProperty(propertyPath)) {
+      request.baseValue = property->getValue();
+      bool ok = false;
+      const double baseNumeric = request.baseValue.toDouble(&ok);
+      if (ok) {
+        switch (preset) {
+        case ArtifactCore::KeyframePatternPreset::Pulse:
+          request.targetValue = baseNumeric + std::max(1.0, request.amplitude);
+          break;
+        case ArtifactCore::KeyframePatternPreset::Shake:
+        case ArtifactCore::KeyframePatternPreset::RandomHold:
+          request.targetValue = request.baseValue;
+          break;
+        case ArtifactCore::KeyframePatternPreset::Settle:
+          request.targetValue = baseNumeric + request.amplitude;
+          break;
+        default:
+          request.targetValue = baseNumeric + request.amplitude;
+          break;
+        }
+      } else {
+        request.targetValue = request.baseValue;
+      }
+    }
+  }
+
+  QString message;
+  QPointer<ArtifactTimelineWidget> self(this);
+  if (applyKeyPatternToTargets(
+          composition, targets, request, &message,
+          [self]() {
+            if (!self) {
+              return;
+            }
+            self->refreshTracks();
+            self->updateKeyframeState();
+            self->updateSelectionState();
+          })) {
+    if (!message.isEmpty()) {
+      Q_EMIT timelineDebugMessage(message);
+    }
+  } else if (!message.isEmpty()) {
+    Q_EMIT timelineDebugMessage(message);
+  }
+}
+
 void ArtifactTimelineWidget::applyKeyPattern(
     const ArtifactCore::KeyframePatternRequest &request)
 {
@@ -4711,6 +5067,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto keyframeRemoveButton = new QToolButton();
   auto keyframeCopyButton = new QToolButton();
   auto keyframePasteButton = new QToolButton();
+  auto keyframeEaseCopyButton = new QToolButton();
+  auto keyframeEasePasteButton = new QToolButton();
   auto keyframeEaseInButton = new QToolButton();
   auto keyframeEaseOutButton = new QToolButton();
   auto keyframeEaseInOutButton = new QToolButton();
@@ -4732,10 +5090,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   keyframeCopyButton->setToolTip(QStringLiteral("Copy selected keyframes"));
   keyframePasteButton->setText(QStringLiteral("Paste"));
   keyframePasteButton->setToolTip(QStringLiteral("Paste keyframes at playhead"));
+  keyframeEaseCopyButton->setText(QStringLiteral("Ease Copy"));
+  keyframeEaseCopyButton->setToolTip(QStringLiteral("Copy easing from the selected keyframes"));
+  keyframeEasePasteButton->setText(QStringLiteral("Ease Paste"));
+  keyframeEasePasteButton->setToolTip(QStringLiteral("Paste easing onto the selected keyframes"));
   styleTimelineToolButton(keyframeAddButton);
   styleTimelineToolButton(keyframeRemoveButton);
   styleTimelineToolButton(keyframeCopyButton);
   styleTimelineToolButton(keyframePasteButton);
+  styleTimelineToolButton(keyframeEaseCopyButton);
+  styleTimelineToolButton(keyframeEasePasteButton);
   keyframeEaseInButton->setText(QStringLiteral("Ease In"));
   keyframeEaseInButton->setToolTip(QStringLiteral("Apply Ease In to selected keyframes"));
   keyframeEaseOutButton->setText(QStringLiteral("Ease Out"));
@@ -4759,6 +5123,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->keyframeEaseInButton_ = keyframeEaseInButton;
   impl_->keyframeEaseOutButton_ = keyframeEaseOutButton;
   impl_->keyframeEaseInOutButton_ = keyframeEaseInOutButton;
+  impl_->keyframeEaseCopyButton_ = keyframeEaseCopyButton;
+  impl_->keyframeEasePasteButton_ = keyframeEasePasteButton;
   impl_->currentLayerLabel_ = currentLayerLabel;
   impl_->recentLayerLabel_ = recentLayerLabel;
   impl_->frameSummaryLabel_ = frameSummaryLabel;
@@ -5323,6 +5689,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                    [this]() { copySelectedKeyframes(); });
   QObject::connect(keyframePasteButton, &QToolButton::clicked, this,
                    [this]() { pasteKeyframesAtPlayhead(); });
+  QObject::connect(keyframeEaseCopyButton, &QToolButton::clicked, this,
+                   [this]() { copySelectedKeyframeEasing(); });
+  QObject::connect(keyframeEasePasteButton, &QToolButton::clicked, this,
+                   [this]() { pasteKeyframeEasingToSelectedKeyframes(); });
   QObject::connect(keyframeEaseInButton, &QToolButton::clicked, this, [this]() {
     applyInterpolationToSelectedKeyframes(ArtifactCore::InterpolationType::EaseIn);
   });
@@ -5455,6 +5825,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curveHeaderLayout->addWidget(keyframeRemoveButton);
   curveHeaderLayout->addWidget(keyframeCopyButton);
   curveHeaderLayout->addWidget(keyframePasteButton);
+  curveHeaderLayout->addWidget(keyframeEaseCopyButton);
+  curveHeaderLayout->addWidget(keyframeEasePasteButton);
   curveHeaderLayout->addWidget(keyframeEaseInButton);
   curveHeaderLayout->addWidget(keyframeEaseOutButton);
   curveHeaderLayout->addWidget(keyframeEaseInOutButton);
@@ -7769,6 +8141,11 @@ void ArtifactTimelineWidget::updateKeyframeState()
     currentLayer = selectionManager->currentLayer();
     selectedCount = static_cast<int>(selectionManager->selectedLayers().size());
   }
+  const auto *appSettings = ArtifactCore::ArtifactAppSettings::instance();
+  const bool autoKeyEnabled =
+      appSettings ? appSettings->timelineAutoKeyEnabled() : false;
+  const QString autoKeyScope =
+      appSettings ? appSettings->timelineAutoKeyScopeText() : QStringLiteral("Global");
 
   const auto state = collectKeyframeNavigationState(
       composition, selectionManager,
@@ -7792,6 +8169,9 @@ void ArtifactTimelineWidget::updateKeyframeState()
   const qint64 currentFrameValue =
       static_cast<qint64>(std::llround(std::max(0.0, impl_->currentFrame_)));
   QString summary = formatKeyframeNavigationText(state);
+  summary += autoKeyEnabled
+                 ? QStringLiteral(" | Auto-Key: On (%1)").arg(autoKeyScope)
+                 : QStringLiteral(" | Auto-Key: Off");
   if (selectedKeyframeCount > 0) {
     summary += QStringLiteral(" | Selected keys: %1").arg(selectedKeyframeCount);
   }
@@ -7848,6 +8228,31 @@ void ArtifactTimelineWidget::updateKeyframeState()
         selectedArea
             ? QStringLiteral("Apply Ease In/Out to the selected area endpoints.")
             : QStringLiteral("Apply Ease In/Out to the selected keyframes."));
+  }
+  if (impl_->keyframeEaseCopyButton_) {
+    const bool hasSelection =
+        impl_->painterTrackView_ &&
+        !impl_->painterTrackView_->selectedKeyframeMarkers().isEmpty();
+    impl_->keyframeEaseCopyButton_->setEnabled(hasSelection);
+    impl_->keyframeEaseCopyButton_->setVisible(hasSelection);
+    impl_->keyframeEaseCopyButton_->setToolTip(
+        selectedArea
+            ? QStringLiteral("Copy easing from the selected area endpoints.")
+            : QStringLiteral("Copy easing from the selected keyframes."));
+  }
+  if (impl_->keyframeEasePasteButton_) {
+    const bool hasSelection =
+        impl_->painterTrackView_ &&
+        !impl_->painterTrackView_->selectedKeyframeMarkers().isEmpty();
+    const bool hasClipboardEasing = ClipboardManager::instance().hasKeyframeEasingData();
+    impl_->keyframeEasePasteButton_->setEnabled(hasSelection && hasClipboardEasing);
+    impl_->keyframeEasePasteButton_->setVisible(hasSelection);
+    impl_->keyframeEasePasteButton_->setToolTip(
+        hasClipboardEasing
+            ? (selectedArea
+                   ? QStringLiteral("Paste easing to the selected area endpoints.")
+                   : QStringLiteral("Paste easing to the selected keyframes."))
+            : QStringLiteral("Copy easing first, then paste it onto selected keyframes."));
   }
   if (impl_->keyPatternButton_) {
     const bool hasPropertyContext = impl_->layerTimelinePanel_ &&
@@ -8604,6 +9009,43 @@ void ArtifactTimelineWidget::copySelectedKeyframes()
                                      : QStringLiteral("keyframes")));
 }
 
+void ArtifactTimelineWidget::copySelectedKeyframeEasing()
+{
+  if (!impl_ || !impl_->painterTrackView_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return;
+  }
+
+  auto markers = impl_->painterTrackView_->selectedKeyframeMarkers();
+  if (markers.isEmpty()) {
+    const auto hovered = impl_->painterTrackView_->hoveredKeyframeMarker();
+    if (hovered.trackIndex >= 0) {
+      markers.push_back(hovered);
+    }
+  }
+  const QJsonArray easing = serializeSelectedKeyframeEasing(composition, markers);
+  if (easing.isEmpty()) {
+    return;
+  }
+
+  const QString layerId = markers.isEmpty() ? QString() : markers.front().layerId.toString();
+  const QString propertyPath = markers.isEmpty() ? QString() : markers.front().propertyPath;
+  ClipboardManager::instance().copyKeyframeEasing(propertyPath, easing, layerId);
+  Q_EMIT timelineDebugMessage(
+      QStringLiteral("Copied %1 %2 easing block%3 to clipboard")
+          .arg(easing.size())
+          .arg(easing.size() == 1 ? QStringLiteral("keyframe")
+                                  : QStringLiteral("keyframes"))
+          .arg(easing.size() == 1 ? QString() : QStringLiteral("s")));
+}
+
 void ArtifactTimelineWidget::pasteKeyframesAtPlayhead()
 {
   if (!impl_) {
@@ -8750,8 +9192,9 @@ bool ArtifactTimelineWidget::applyValueToSelectedKeyframeArea(
   for (const auto& marker : selectedMarkers) {
     if (marker.layerId != layerId || marker.propertyPath != propertyPath) {
       return false;
-    }
   }
+}
+
   if (!selectedMarkersFormFlatArea(impl_->painterTrackView_->keyframeMarkers(),
                                    selectedMarkers)) {
     return false;
@@ -8821,6 +9264,57 @@ bool ArtifactTimelineWidget::applyValueToSelectedKeyframeArea(
   Q_EMIT timelineDebugMessage(
       QStringLiteral("Applied area value to 2 keyframes for %1").arg(propertyPath));
   return true;
+}
+
+void ArtifactTimelineWidget::pasteKeyframeEasingToSelectedKeyframes()
+{
+  if (!impl_ || !impl_->painterTrackView_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return;
+  }
+
+  ClipboardManager::instance().syncFromSystemClipboard();
+  if (!ClipboardManager::instance().hasKeyframeEasingData()) {
+    return;
+  }
+
+  const auto targets = impl_->painterTrackView_->selectedKeyframeMarkers();
+  if (targets.isEmpty()) {
+    return;
+  }
+
+  const QJsonArray easing = ClipboardManager::instance().pasteKeyframeEasing();
+  const auto records = buildKeyframeEasingChangeRecords(composition, targets, easing);
+  if (records.isEmpty()) {
+    return;
+  }
+
+  const auto selectionKeys = keyframeSelectionKeysFromMarkers(targets);
+  if (auto* mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<ApplyInterpolationCommand>(
+        records, QStringLiteral("Paste Keyframe Easing")));
+  } else {
+    applyInterpolationChangeRecords(records, true, false);
+  }
+
+  refreshTracks();
+  if (impl_->painterTrackView_) {
+    impl_->painterTrackView_->setSelectedKeyframeKeys(selectionKeys);
+  }
+  updateKeyframeState();
+  updateSelectionState();
+  Q_EMIT timelineDebugMessage(
+      QStringLiteral("Pasted easing to %1 selected %2")
+          .arg(targets.size())
+          .arg(targets.size() == 1 ? QStringLiteral("keyframe")
+                                  : QStringLiteral("keyframes")));
 }
 
 }; // namespace Artifact

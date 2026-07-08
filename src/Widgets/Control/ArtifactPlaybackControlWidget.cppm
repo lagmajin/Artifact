@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <wobjectimpl.h>
 #include <QWidget>
 #include <QHBoxLayout>
@@ -15,6 +15,7 @@
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QSlider>
+#include <QSpinBox>
 #include <QFrame>
 #include <QFontMetrics>
 #include <QComboBox>
@@ -492,6 +493,12 @@ public:
     QCheckBox* ramCacheCheckbox_ = nullptr;
     QToolButton* previewWorkAreaButton_ = nullptr;
     QCheckBox* autoKeyCheckbox_ = nullptr;
+    QComboBox* autoKeyScopeCombo_ = nullptr;
+    QCheckBox* ghostingCheckbox_ = nullptr;
+    QSpinBox* ghostingFrameCountSpin_ = nullptr;
+    QSpinBox* ghostingOpacitySpin_ = nullptr;
+    QComboBox* keyingSetCombo_ = nullptr;
+    QLineEdit* keyingSetPathsEdit_ = nullptr;
     QCheckBox* mutePreviewCheckbox_ = nullptr;
     QToolButton* clearRamPreviewButton_ = nullptr;
     QComboBox* playbackRangeCombo_ = nullptr;
@@ -761,24 +768,185 @@ public:
         clearRamPreviewButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         clearRamPreviewButton_->setFixedSize(112, 24);
 
-    autoKeyCheckbox_ = new QCheckBox(QStringLiteral("Auto-Key"), owner_);
-    {
-        QFont font = autoKeyCheckbox_->font();
-        font.setPointSize(9);
-        autoKeyCheckbox_->setFont(font);
+        autoKeyCheckbox_ = new QCheckBox(QStringLiteral("Auto-Key"), owner_);
+        {
+            QFont font = autoKeyCheckbox_->font();
+            font.setPointSize(9);
+            autoKeyCheckbox_->setFont(font);
         QPalette pal = autoKeyCheckbox_->palette();
         pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
         autoKeyCheckbox_->setPalette(pal);
         autoKeyCheckbox_->setFixedHeight(24);
         autoKeyCheckbox_->setToolTip(QStringLiteral("ON: property changes auto-create keyframes"));
-    }
-    optionsRow->addWidget(autoKeyCheckbox_);
+        }
+        if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            autoKeyCheckbox_->setChecked(settings->timelineAutoKeyEnabled());
+        }
+        optionsRow->addWidget(autoKeyCheckbox_);
 
-    mutePreviewCheckbox_ = new QCheckBox(QStringLiteral("Mute Preview"), owner_);
-    {
-        QFont font = mutePreviewCheckbox_->font();
-        font.setPointSize(9);
-        mutePreviewCheckbox_->setFont(font);
+        autoKeyScopeCombo_ = new QComboBox(owner_);
+        autoKeyScopeCombo_->setFixedSize(132, 24);
+        autoKeyScopeCombo_->addItem(QStringLiteral("Global"));
+        autoKeyScopeCombo_->addItem(QStringLiteral("Current Layer"));
+        autoKeyScopeCombo_->addItem(QStringLiteral("Selected Layers"));
+        {
+            QPalette pal = autoKeyScopeCombo_->palette();
+            pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+            pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+            pal.setColor(QPalette::Button, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+            pal.setColor(QPalette::ButtonText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::Highlight, QColor(ArtifactCore::currentDCCTheme().selectionColor));
+            pal.setColor(QPalette::HighlightedText, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+            autoKeyScopeCombo_->setPalette(pal);
+            autoKeyScopeCombo_->setAutoFillBackground(true);
+            if (auto* view = autoKeyScopeCombo_->view()) {
+                view->setPalette(pal);
+                if (auto* viewport = view->viewport()) {
+                    viewport->setPalette(pal);
+                }
+            }
+        }
+        if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            const QString scope = settings->timelineAutoKeyScopeText();
+            const int scopeIndex =
+                scope.compare(QStringLiteral("Current Layer"), Qt::CaseInsensitive) == 0 ? 1 :
+                scope.compare(QStringLiteral("Selected Layers"), Qt::CaseInsensitive) == 0 ? 2 : 0;
+            autoKeyScopeCombo_->setCurrentIndex(scopeIndex);
+        }
+        autoKeyScopeCombo_->setToolTip(
+            QStringLiteral("Scope auto-key to the current layer or selected layers (per-layer override)."));
+        optionsRow->addWidget(autoKeyScopeCombo_);
+
+        ghostingCheckbox_ = new QCheckBox(QStringLiteral("Ghosting"), owner_);
+        {
+            QFont font = ghostingCheckbox_->font();
+            font.setPointSize(9);
+            ghostingCheckbox_->setFont(font);
+            QPalette pal = ghostingCheckbox_->palette();
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            ghostingCheckbox_->setPalette(pal);
+            ghostingCheckbox_->setFixedHeight(24);
+            ghostingCheckbox_->setToolTip(QStringLiteral("Show faint nearby timeline keyframes"));
+        }
+        if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            ghostingCheckbox_->setChecked(settings->timelineGhostingEnabled());
+        }
+        optionsRow->addWidget(ghostingCheckbox_);
+
+        auto* ghostingFrameLabel = new QLabel(QStringLiteral("Frames"), owner_);
+        {
+            QFont font = ghostingFrameLabel->font();
+            font.setPointSize(9);
+            ghostingFrameLabel->setFont(font);
+            ghostingFrameLabel->setFixedHeight(24);
+            applyThemeTextPalette(ghostingFrameLabel, QColor(ArtifactCore::currentDCCTheme().textColor));
+        }
+        optionsRow->addWidget(ghostingFrameLabel);
+
+        ghostingFrameCountSpin_ = new QSpinBox(owner_);
+        ghostingFrameCountSpin_->setRange(1, 5);
+        ghostingFrameCountSpin_->setFixedWidth(56);
+        ghostingFrameCountSpin_->setToolTip(QStringLiteral("Nearby keyframe count"));
+        if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            ghostingFrameCountSpin_->setValue(settings->timelineGhostingFrameCount());
+        } else {
+            ghostingFrameCountSpin_->setValue(3);
+        }
+        ghostingFrameCountSpin_->setEnabled(ghostingCheckbox_->isChecked());
+        optionsRow->addWidget(ghostingFrameCountSpin_);
+
+        auto* ghostingOpacityLabel = new QLabel(QStringLiteral("Opacity"), owner_);
+        {
+            QFont font = ghostingOpacityLabel->font();
+            font.setPointSize(9);
+            ghostingOpacityLabel->setFont(font);
+            ghostingOpacityLabel->setFixedHeight(24);
+            applyThemeTextPalette(ghostingOpacityLabel, QColor(ArtifactCore::currentDCCTheme().textColor));
+        }
+        optionsRow->addWidget(ghostingOpacityLabel);
+
+        ghostingOpacitySpin_ = new QSpinBox(owner_);
+        ghostingOpacitySpin_->setRange(4, 40);
+        ghostingOpacitySpin_->setFixedWidth(56);
+        ghostingOpacitySpin_->setToolTip(QStringLiteral("Ghost marker opacity percent"));
+        if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            ghostingOpacitySpin_->setValue(settings->timelineGhostingOpacity());
+        } else {
+            ghostingOpacitySpin_->setValue(18);
+        }
+        ghostingOpacitySpin_->setEnabled(ghostingCheckbox_->isChecked());
+        optionsRow->addWidget(ghostingOpacitySpin_);
+
+        auto* keyingSetLabel = new QLabel(QStringLiteral("Keying Set"), owner_);
+        {
+            QFont font = keyingSetLabel->font();
+            font.setPointSize(9);
+            keyingSetLabel->setFont(font);
+            keyingSetLabel->setFixedHeight(24);
+            applyThemeTextPalette(keyingSetLabel, QColor(ArtifactCore::currentDCCTheme().textColor));
+        }
+        optionsRow->addWidget(keyingSetLabel);
+
+        keyingSetCombo_ = new QComboBox(owner_);
+        keyingSetCombo_->setFixedSize(132, 24);
+        keyingSetCombo_->addItem(QStringLiteral("All Keyable"));
+        keyingSetCombo_->addItem(QStringLiteral("Transform Only"));
+        keyingSetCombo_->addItem(QStringLiteral("Custom"));
+        {
+            QPalette pal = keyingSetCombo_->palette();
+            pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+            pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+            pal.setColor(QPalette::Button, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+            pal.setColor(QPalette::ButtonText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::Highlight, QColor(ArtifactCore::currentDCCTheme().selectionColor));
+            pal.setColor(QPalette::HighlightedText, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+            keyingSetCombo_->setPalette(pal);
+            keyingSetCombo_->setAutoFillBackground(true);
+            if (auto* view = keyingSetCombo_->view()) {
+                view->setPalette(pal);
+                if (auto* viewport = view->viewport()) {
+                    viewport->setPalette(pal);
+                }
+            }
+        }
+        if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            const QString mode = settings->timelineKeyingSetModeText();
+            const int modeIndex =
+                mode.compare(QStringLiteral("Transform Only"), Qt::CaseInsensitive) == 0 ? 1 :
+                mode.compare(QStringLiteral("Custom"), Qt::CaseInsensitive) == 0 ? 2 : 0;
+            keyingSetCombo_->setCurrentIndex(modeIndex);
+        }
+        optionsRow->addWidget(keyingSetCombo_);
+
+        keyingSetPathsEdit_ = new QLineEdit(owner_);
+        keyingSetPathsEdit_->setPlaceholderText(QStringLiteral("Custom paths, comma-separated"));
+        keyingSetPathsEdit_->setFixedSize(220, 24);
+        keyingSetPathsEdit_->setToolTip(QStringLiteral("Only used when Keying Set is Custom"));
+        {
+            QPalette pal = keyingSetPathsEdit_->palette();
+            pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+            pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+            pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::Highlight, QColor(ArtifactCore::currentDCCTheme().selectionColor));
+            pal.setColor(QPalette::HighlightedText, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+            keyingSetPathsEdit_->setPalette(pal);
+        }
+        if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            keyingSetPathsEdit_->setText(settings->timelineCustomKeyingSetPropertyPaths().join(QStringLiteral(", ")));
+        }
+        keyingSetPathsEdit_->setEnabled(keyingSetCombo_->currentIndex() == 2);
+        optionsRow->addWidget(keyingSetPathsEdit_);
+
+        mutePreviewCheckbox_ = new QCheckBox(QStringLiteral("Mute Preview"), owner_);
+        {
+            QFont font = mutePreviewCheckbox_->font();
+            font.setPointSize(9);
+            mutePreviewCheckbox_->setFont(font);
         QPalette pal = mutePreviewCheckbox_->palette();
         pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
         mutePreviewCheckbox_->setPalette(pal);
@@ -1075,7 +1243,88 @@ public:
         });
 
         QObject::connect(autoKeyCheckbox_, &QCheckBox::toggled, owner_, [this](bool checked) {
-            // state stored in checkbox
+            if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                settings->setTimelineAutoKeyEnabled(checked);
+            }
+        });
+
+        QObject::connect(autoKeyScopeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), owner_,
+                         [this](int index) {
+                             if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                                 const QString scope =
+                                     index == 1 ? QStringLiteral("Current Layer") :
+                                     index == 2 ? QStringLiteral("Selected Layers") :
+                                                  QStringLiteral("Global");
+                                 settings->setTimelineAutoKeyScopeText(scope);
+                             }
+                         });
+
+        QObject::connect(ghostingCheckbox_, &QCheckBox::toggled, owner_, [this](bool checked) {
+            if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                settings->setTimelineGhostingEnabled(checked);
+            }
+            if (ghostingFrameCountSpin_) {
+                ghostingFrameCountSpin_->setEnabled(checked);
+            }
+            if (ghostingOpacitySpin_) {
+                ghostingOpacitySpin_->setEnabled(checked);
+            }
+        });
+
+        QObject::connect(ghostingFrameCountSpin_, QOverload<int>::of(&QSpinBox::valueChanged), owner_,
+                         [this](int value) {
+                             if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                                 settings->setTimelineGhostingFrameCount(value);
+                             }
+                         });
+
+        QObject::connect(ghostingOpacitySpin_, QOverload<int>::of(&QSpinBox::valueChanged), owner_,
+                         [this](int value) {
+                             if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                                 settings->setTimelineGhostingOpacity(value);
+                             }
+                         });
+
+        QObject::connect(keyingSetCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), owner_,
+                         [this](int index) {
+                             if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                                 const QString mode =
+                                     index == 1 ? QStringLiteral("Transform Only") :
+                                     index == 2 ? QStringLiteral("Custom") :
+                                                  QStringLiteral("All Keyable");
+                                 settings->setTimelineKeyingSetModeText(mode);
+                             }
+                             if (keyingSetPathsEdit_) {
+                                 keyingSetPathsEdit_->setEnabled(index == 2);
+                             }
+                         });
+
+        QObject::connect(keyingSetPathsEdit_, &QLineEdit::editingFinished, owner_, [this]() {
+            if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                const QStringList paths =
+                    keyingSetPathsEdit_->text().split(QStringLiteral(","), Qt::SkipEmptyParts);
+                QStringList normalized;
+                normalized.reserve(paths.size());
+                for (const auto& path : paths) {
+                    const QString trimmed = path.trimmed();
+                    if (!trimmed.isEmpty()) {
+                        normalized.push_back(trimmed);
+                    }
+                }
+                settings->setTimelineCustomKeyingSetPropertyPaths(normalized);
+                if (keyingSetCombo_ && keyingSetCombo_->currentIndex() != 2) {
+                    const QSignalBlocker blocker(keyingSetCombo_);
+                    keyingSetCombo_->setCurrentIndex(2);
+                    settings->setTimelineKeyingSetModeText(QStringLiteral("Custom"));
+                }
+                if (keyingSetPathsEdit_) {
+                    keyingSetPathsEdit_->setEnabled(true);
+                }
+                if (keyingSetPathsEdit_) {
+                    const QSignalBlocker blocker(keyingSetPathsEdit_);
+                    keyingSetPathsEdit_->setText(normalized.join(QStringLiteral(", ")));
+                }
+            }
         });
 
         QObject::connect(speedQuarterButton_, &QToolButton::clicked, owner_, [this]() {
@@ -1124,6 +1373,10 @@ public:
                 service->setPlaybackSkipMode(mode);
             }
         });
+
+        if (keyingSetPathsEdit_) {
+            keyingSetPathsEdit_->setEnabled(keyingSetCombo_ && keyingSetCombo_->currentIndex() == 2);
+        }
 
         QObject::connect(scrubSlider_, &QSlider::valueChanged, owner_, [this](int value) {
             if (auto* service = ArtifactPlaybackService::instance()) {
@@ -1526,7 +1779,11 @@ void ArtifactPlaybackControlWidget::setPlaybackSpeed(float speed)
 void ArtifactPlaybackControlWidget::setAutoKeyEnabled(bool enabled)
 {
   if (impl_->autoKeyCheckbox_) {
+    const QSignalBlocker blocker(impl_->autoKeyCheckbox_);
     impl_->autoKeyCheckbox_->setChecked(enabled);
+  }
+  if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    settings->setTimelineAutoKeyEnabled(enabled);
   }
 }
 

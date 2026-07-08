@@ -235,14 +235,41 @@ void draw3DSelectionWireframeOverlay(ArtifactIRenderer *renderer,
     return;
   }
 
-  const QMatrix4x4 modelMatrix = layer->getGlobalTransform4x4();
-  const FloatColor wireColor{1.0f, 0.62f, 0.16f, 0.95f};
-  const float thickness = 2.0f;
+  const auto &vertexPositions = positions->data();
+  if (vertexPositions.isEmpty()) {
+    return;
+  }
+
+  const QMatrix4x4 modelMatrix = modelLayer->getGlobalTransform4x4();
+  const FloatColor wireShadow{0.02f, 0.03f, 0.04f, 0.88f};
+  const FloatColor wireColor{1.0f, 0.56f, 0.18f, 0.98f};
+  const float shadowThickness = 3.4f;
+  const float thickness = 1.9f;
 
   renderer->set3DCameraMatrices(*cameraView, *cameraProj);
 
   std::unordered_set<quint64> visitedEdges;
   visitedEdges.reserve(static_cast<size_t>(mesh.polygonCount()) * 3u);
+
+  auto drawEdge = [&](int a, int b) {
+    if (a < 0 || b < 0 || a >= vertexPositions.size() || b >= vertexPositions.size()) {
+      return;
+    }
+
+    const quint64 edgeKey = makeEdgeKey(a, b);
+    if (!visitedEdges.insert(edgeKey).second) {
+      return;
+    }
+
+    const QVector3D start = modelMatrix.map(vertexPositions[a]);
+    const QVector3D end = modelMatrix.map(vertexPositions[b]);
+    renderer->draw3DLine({start.x(), start.y(), start.z()},
+                         {end.x(), end.y(), end.z()},
+                         wireShadow, shadowThickness);
+    renderer->draw3DLine({start.x(), start.y(), start.z()},
+                         {end.x(), end.y(), end.z()},
+                         wireColor, thickness);
+  };
 
   for (int polygonIndex = 0; polygonIndex < mesh.polygonCount(); ++polygonIndex) {
     const QVector<int> polygon = mesh.getPolygonVertices(polygonIndex);
@@ -251,22 +278,11 @@ void draw3DSelectionWireframeOverlay(ArtifactIRenderer *renderer,
     }
 
     for (int i = 0; i < polygon.size(); ++i) {
-      const int a = polygon[i];
-      const int b = polygon[(i + 1) % polygon.size()];
-      if (a < 0 || b < 0 || a >= positions->size() || b >= positions->size()) {
-        continue;
-      }
+      drawEdge(polygon[i], polygon[(i + 1) % polygon.size()]);
+    }
 
-      const quint64 edgeKey = makeEdgeKey(a, b);
-      if (!visitedEdges.insert(edgeKey).second) {
-        continue;
-      }
-
-      const QVector3D start = modelMatrix.map((*positions)[a]);
-      const QVector3D end = modelMatrix.map((*positions)[b]);
-      renderer->draw3DLine({start.x(), start.y(), start.z()},
-                           {end.x(), end.y(), end.z()},
-                           wireColor, thickness);
+    if (polygon.size() == 4) {
+      drawEdge(polygon[0], polygon[2]);
     }
   }
 

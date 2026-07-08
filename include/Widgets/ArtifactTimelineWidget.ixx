@@ -76,6 +76,8 @@ class ArtifactTimelineWidget :public QWidget {
   void reverseAllKeyframesInComposition();
   void copySelectedKeyframes();
   void pasteKeyframesAtPlayhead();
+  void copySelectedKeyframeEasing();
+  void pasteKeyframeEasingToSelectedKeyframes();
   bool hasSelectedKeyframeArea() const;
   QString selectedKeyframeAreaSummary() const;
   bool applyValueToSelectedKeyframeArea(const LayerID& layerId,
@@ -84,6 +86,7 @@ class ArtifactTimelineWidget :public QWidget {
   void showValueGraph();
   void showSpeedGraph();
   void showKeyPatternDialog();
+  void applyAnimationPreset(const ArtifactCore::KeyframePatternPreset preset);
   void applyKeyPattern(const ArtifactCore::KeyframePatternRequest& request);
   void jumpToSearchHit(int step);
   void jumpToKeyframeHit(int step);

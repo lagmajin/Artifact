@@ -561,9 +561,11 @@ QImage loadImageThumbnailViaOIIO(const QString& filePath, const QSize& targetSiz
       channelValues = {0.0f, 0.0f, 0.0f, 1.0f};
       rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder, channelValues);
     } else if (channelCount == 2) {
+      // 2-channel inputs still need an explicit alpha default or OIIO fills it with 0.
       rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder, channelValues);
     } else if (channelCount == 3) {
-      rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder);
+      // 3-channel inputs also need alpha=1 so thumbnails stay visible.
+      rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder, channelValues);
     } else if (channelCount >= 4) {
       rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder);
     } else {

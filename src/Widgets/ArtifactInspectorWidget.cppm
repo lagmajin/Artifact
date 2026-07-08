@@ -31,6 +31,7 @@ module;
 #include <QPushButton>
 #include <QScrollArea>
 #include <QKeyEvent>
+#include <QShortcut>
 #include <QScopeGuard>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -5369,7 +5370,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectsQuickAddButton = new QPushButton("+ Add Effect");
   applyInspectorButton(impl_->effectsQuickAddButton, true);
   impl_->effectsQuickAddButton->setToolTip(
-      QStringLiteral("Open a searchable picker and add an effect to the current target."));
+      QStringLiteral("Open a searchable picker and add an effect to the current target. Shortcut: Ctrl+Space."));
   effectsToolbarLayout->addWidget(impl_->effectsQuickAddButton);
   effectsToolbarLayout->addStretch(1);
   effectsHeaderLayout->addLayout(effectsToolbarLayout);
@@ -5557,6 +5558,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   effectsSplitter->setStretchFactor(1, 4);
   effectsLayout->addWidget(effectsSplitter, 1);
   QObject::connect(impl_->effectsQuickAddButton, &QPushButton::clicked, this,
+                   [this]() { impl_->handleAddEffectClicked(-1); });
+
+  auto *quickAddEffectShortcut =
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Space), this);
+  quickAddEffectShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  quickAddEffectShortcut->setObjectName(QStringLiteral("QuickAddEffectShortcut"));
+  QObject::connect(quickAddEffectShortcut, &QShortcut::activated, this,
                    [this]() { impl_->handleAddEffectClicked(-1); });
 
   effectsLayout->setContentsMargins(

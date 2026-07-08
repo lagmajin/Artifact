@@ -30,6 +30,8 @@ import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Text;
 import Artifact.Layer.InitParams;
+import Artifact.Layers.Selection.Manager;
+import Application.AppSettings;
 import Artifact.Service.Playback;
 import Event.Bus;
 import Time.Rational;
@@ -97,6 +99,66 @@ bool boolPropertyValue(
     return property->getValue().toBool();
   }
   return fallback;
+}
+
+bool timelineAutoKeyEnabled() {
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    return settings->timelineAutoKeyEnabled();
+  }
+  return false;
+}
+
+bool timelineAutoKeyAppliesToLayer(const ArtifactAbstractLayerPtr &layer) {
+  if (!layer) {
+    return false;
+  }
+  const auto *settings = ArtifactCore::ArtifactAppSettings::instance();
+  if (!settings) {
+    return true;
+  }
+  const QString scope = settings->timelineAutoKeyScopeText();
+  if (scope.compare(QStringLiteral("Current Layer"), Qt::CaseInsensitive) == 0) {
+    if (auto *selection = ArtifactLayerSelectionManager::instance()) {
+      return selection->currentLayer() == layer;
+    }
+    return false;
+  }
+  if (scope.compare(QStringLiteral("Selected Layers"), Qt::CaseInsensitive) == 0) {
+    if (auto *selection = ArtifactLayerSelectionManager::instance()) {
+      return selection->isSelected(layer);
+    }
+    return false;
+  }
+  return true;
+}
+
+bool timelinePropertyAllowedByKeyingSet(const ArtifactCore::AbstractProperty &property) {
+  const auto *settings = ArtifactCore::ArtifactAppSettings::instance();
+  if (!settings) {
+    return true;
+  }
+
+  const QString mode = settings->timelineKeyingSetModeText();
+  const QString propertyName = property.getName().trimmed();
+
+  if (mode.compare(QStringLiteral("Transform Only"), Qt::CaseInsensitive) == 0) {
+    return propertyName.startsWith(QStringLiteral("transform."), Qt::CaseInsensitive) ||
+           propertyName.compare(QStringLiteral("layer.opacity"), Qt::CaseInsensitive) == 0;
+  }
+
+  if (mode.compare(QStringLiteral("Custom"), Qt::CaseInsensitive) == 0) {
+    const QStringList customPaths = settings->timelineCustomKeyingSetPropertyPaths();
+    if (customPaths.isEmpty()) {
+      return propertyName.startsWith(QStringLiteral("transform."), Qt::CaseInsensitive) ||
+             propertyName.compare(QStringLiteral("layer.opacity"), Qt::CaseInsensitive) == 0;
+    }
+    return std::any_of(customPaths.begin(), customPaths.end(),
+                       [&propertyName](const QString &path) {
+                         return propertyName.compare(path.trimmed(), Qt::CaseInsensitive) == 0;
+                       });
+  }
+
+  return true;
 }
 
 int intPropertyValue(
@@ -926,29 +988,15 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
 
   const auto applyPreviewValue =
       [handler = previewValue ? previewValue : commitValue, propertyPtr,
-        playback, currentTimeProvider, keyframeChanged,
-        propertyName = property.getName(), row, rowValueChanged, layer](const QVariant &value) {
-         if (propertyPtr) {
-           propertyPtr->setValue(value);
-           if (row && row->isKeyframeModeEnabled() &&
-               propertyPtr && (playback || currentTimeProvider)) {
-             const auto nowTime = currentTimeProvider
-                                      ? currentTimeProvider()
-                                      : currentPlaybackTime(playback);
-           propertyPtr->setAnimatable(true);
-           propertyPtr->addKeyFrame(nowTime, value);
-           row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
-           row->setNavigationEnabled(true);
-            if (keyframeChanged) {
-              keyframeChanged(propertyName);
-            }
-           }
-         }
-         if (rowValueChanged) {
-           rowValueChanged(row, propertyPtr, value);
-         }
+       propertyName = property.getName(), row, rowValueChanged](const QVariant &value) {
+        if (propertyPtr) {
+          propertyPtr->setValue(value);
+        }
+        if (rowValueChanged) {
+          rowValueChanged(row, propertyPtr, value);
+        }
         handler(propertyName, value);
-  };
+      };
   const auto applyCommitValue =
       [commitValue, propertyPtr, playback, currentTimeProvider,
        propertyName = property.getName(), row, rowValueChanged,
@@ -964,15 +1012,25 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
         if (rowValueChanged) {
           rowValueChanged(row, propertyPtr, value);
         }
-        if (row && row->isKeyframeModeEnabled() &&
-            propertyPtr && (playback || currentTimeProvider)) {
+        const bool autoKey =
+            timelineAutoKeyEnabled() && timelineAutoKeyAppliesToLayer(layer);
+        const bool keyframeMode = row && row->isKeyframeModeEnabled();
+        const bool allowedByKeyingSet =
+            propertyPtr ? timelinePropertyAllowedByKeyingSet(*propertyPtr) : false;
+        if (propertyPtr && (autoKey || keyframeMode) &&
+            allowedByKeyingSet && (playback || currentTimeProvider)) {
           const auto nowTime = currentTimeProvider
                                    ? currentTimeProvider()
                                    : currentPlaybackTime(playback);
           propertyPtr->setAnimatable(true);
           propertyPtr->addKeyFrame(nowTime, value);
-          row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
-          row->setNavigationEnabled(true);
+          if (row) {
+            row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
+            row->setNavigationEnabled(true);
+            if (autoKey) {
+              row->setKeyframeModeEnabled(true);
+            }
+          }
           if (keyframeChanged) {
             keyframeChanged(propertyName);
           }
@@ -1082,10 +1140,14 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
     // キーフレームトグル (◆ボタン)
     row->setKeyframeHandler(
         [propertyPtr, playback, row, editor, keyframeChanged,
-         currentTimeProvider,
-         propertyName](bool checked) {
+         currentTimeProvider, propertyName](bool checked) {
           if (!propertyPtr)
             return;
+          if (checked && !timelinePropertyAllowedByKeyingSet(*propertyPtr)) {
+            row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(
+                currentTimeProvider ? currentTimeProvider() : currentPlaybackTime(playback)));
+            return;
+          }
           const auto nowTime = currentTimeProvider
                                    ? currentTimeProvider()
                                    : currentPlaybackTime(playback);

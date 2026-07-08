@@ -48,14 +48,26 @@ static QString interpolationLabelForCandidate(const ArtifactCore::EasingCandidat
         return QStringLiteral("maps to ease-out");
     case ArtifactCore::InterpolationType::EaseInOut:
         return QStringLiteral("maps to easy ease");
-    case ArtifactCore::InterpolationType::BackOut:
-        return QStringLiteral("maps to back-out");
-    case ArtifactCore::InterpolationType::Exponential:
-        return QStringLiteral("maps to expo");
+    case ArtifactCore::InterpolationType::BounceIn:
+        return QStringLiteral("maps to bounce-in");
+    case ArtifactCore::InterpolationType::BounceOut:
+        return QStringLiteral("maps to bounce-out");
+    case ArtifactCore::InterpolationType::BounceInOut:
+        return QStringLiteral("maps to bounce-in-out");
+    case ArtifactCore::InterpolationType::ElasticIn:
+        return QStringLiteral("maps to elastic-in");
+    case ArtifactCore::InterpolationType::ElasticOut:
+        return QStringLiteral("maps to elastic-out");
+    case ArtifactCore::InterpolationType::ElasticInOut:
+        return QStringLiteral("maps to elastic-in-out");
     case ArtifactCore::InterpolationType::BackIn:
         return QStringLiteral("maps to back-in");
+    case ArtifactCore::InterpolationType::BackOut:
+        return QStringLiteral("maps to back-out");
     case ArtifactCore::InterpolationType::BackInOut:
         return QStringLiteral("maps to back-in-out");
+    case ArtifactCore::InterpolationType::Exponential:
+        return QStringLiteral("maps to expo");
     case ArtifactCore::InterpolationType::Bezier:
         return QStringLiteral("maps to bezier");
     default:

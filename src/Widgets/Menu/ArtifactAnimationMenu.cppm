@@ -4,6 +4,7 @@ module;
 #include <QMenu>
 #include <QAction>
 #include <QActionGroup>
+#include <QHash>
 #include <QKeySequence>
 #include <QCursor>
 #include <QMetaObject>
@@ -250,6 +251,8 @@ bool hasActiveExpressionTarget(QWidget* root)
   QMenu* timeRemapMenu = nullptr;
   QMenu* expressionMenu = nullptr;
   QMenu* presetMenu = nullptr;
+  QMenu* presetLibraryMenu = nullptr;
+  QHash<QAction*, ArtifactCore::KeyframePatternPreset> presetLibraryActions_;
 
   void refreshEnabledState();
   void requestRefreshEnabledState();
@@ -362,7 +365,10 @@ bool hasActiveExpressionTarget(QWidget* root)
    loadAnimationPresetAction->setEnabled(hasLayer && hasExpressionTarget);
   }
   if (keyPatternAction) {
-   keyPatternAction->setEnabled(hasLayer);
+    keyPatternAction->setEnabled(hasLayer);
+  }
+  if (presetLibraryMenu) {
+   presetLibraryMenu->setEnabled(hasLayer);
   }
 }
 
@@ -531,6 +537,27 @@ bool hasActiveExpressionTarget(QWidget* root)
   impl_->presetMenu = addMenu("アニメーションプリセット(&P)");
   impl_->presetMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_bookmarks.svg")));
 
+  impl_->presetLibraryMenu = impl_->presetMenu->addMenu("プリセットライブラリ");
+  impl_->presetLibraryMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_bookmarks.svg")));
+  const auto addPresetLibraryAction = [this](const QString& label,
+                                             const ArtifactCore::KeyframePatternPreset preset) {
+    QAction* action = impl_->presetLibraryMenu->addAction(label);
+    action->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_bookmarks.svg")));
+    impl_->presetLibraryActions_.insert(action, preset);
+    return action;
+  };
+  addPresetLibraryAction("Ramp", ArtifactCore::KeyframePatternPreset::Ramp);
+  addPresetLibraryAction("Pulse", ArtifactCore::KeyframePatternPreset::Pulse);
+  addPresetLibraryAction("Bounce", ArtifactCore::KeyframePatternPreset::Bounce);
+  addPresetLibraryAction("Shake", ArtifactCore::KeyframePatternPreset::Shake);
+  addPresetLibraryAction("Loop", ArtifactCore::KeyframePatternPreset::Loop);
+  addPresetLibraryAction("Wave", ArtifactCore::KeyframePatternPreset::Wave);
+  addPresetLibraryAction("Overshoot", ArtifactCore::KeyframePatternPreset::Overshoot);
+  addPresetLibraryAction("Settle", ArtifactCore::KeyframePatternPreset::Settle);
+  addPresetLibraryAction("Beat Sync", ArtifactCore::KeyframePatternPreset::BeatSync);
+
+  impl_->presetMenu->addSeparator();
+
   impl_->saveAnimationPresetAction = impl_->presetMenu->addAction("アニメーションプリセットを保存...");
   impl_->saveAnimationPresetAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_save.svg")));
   impl_->loadAnimationPresetAction = impl_->presetMenu->addAction("アニメーションプリセットを適用...");
@@ -573,6 +600,12 @@ bool hasActiveExpressionTarget(QWidget* root)
   if (action == impl_->keyPatternAction) {
     if (auto* timeline = activeTimelineWidget(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr)) {
       timeline->showKeyPatternDialog();
+    }
+    return;
+  }
+  if (impl_->presetLibraryActions_.contains(action)) {
+    if (auto* timeline = activeTimelineWidget(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr)) {
+      timeline->applyAnimationPreset(impl_->presetLibraryActions_.value(action));
     }
     return;
   }

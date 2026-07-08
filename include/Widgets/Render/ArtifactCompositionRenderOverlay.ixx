@@ -35,6 +35,11 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
                           const QMatrix4x4 *cameraView = nullptr,
                           const QMatrix4x4 *cameraProj = nullptr);
 
+void draw3DSelectionWireframeOverlay(ArtifactIRenderer *renderer,
+                                     const ArtifactAbstractLayerPtr &layer,
+                                     const QMatrix4x4 *cameraView,
+                                     const QMatrix4x4 *cameraProj);
+
 void drawTrackerPinOverlay(ArtifactIRenderer *renderer,
                           float x,
                           float y,

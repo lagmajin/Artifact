@@ -2424,7 +2424,7 @@ protected:
       resizePending_ = true;
       if (resizeDebounceTimer_) {
         resizeDebounceTimer_->stop();
-        resizeDebounceTimer_->start(160);
+        resizeDebounceTimer_->start(32);
       }
       // Render is deferred to the debounce timer — no immediate
       // renderOneFrame() to avoid redundant work during continuous resize.
