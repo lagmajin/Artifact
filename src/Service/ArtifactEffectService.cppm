@@ -573,6 +573,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("bevel"), "Bevel"});
   effects.push_back({EffectID("linear_wipe"), "Linear Wipe"});
   effects.push_back({EffectID("displacement_map"), "Displacement Map"});
+  effects.push_back({EffectID("screen_shake"), "Screen Shake"});
   effects.push_back({EffectID("time_displacement"), "Time Displacement"});
   effects.push_back({EffectID("liquify"), "Liquify"});
   effects.push_back({EffectID("radio_waves"), "Radio Waves"});
