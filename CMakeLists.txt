@@ -1,8 +1,116 @@
 cmake_minimum_required(VERSION 3.30)
+
+set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444" CACHE STRING "Required for import std" FORCE)
+set(CMAKE_CXX_MODULE_STD ON CACHE BOOL "Enable import std support during toolchain detection" FORCE)
+set(CMAKE_CXX_STANDARD 23 CACHE STRING "Required for import std detection" FORCE)
+set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "" FORCE)
+
 project(Artifact)
+
+# Only the toolchain-detection phase needs the global import-std default.
+# Reset it before adding subdirectories so third-party targets do not inherit
+# CXX_MODULE_STD unless they opt in explicitly.
+set(CMAKE_CXX_MODULE_STD OFF CACHE BOOL "" FORCE)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    set(ARTIFACT_MSVC_STD_IXX "")
+
+    get_filename_component(_std_x64   "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_std_host  "${_std_x64}" DIRECTORY)
+    get_filename_component(_std_bin   "${_std_host}" DIRECTORY)
+    get_filename_component(_std_root  "${_std_bin}" DIRECTORY)
+    if(EXISTS "${_std_root}/modules/std.ixx")
+        set(ARTIFACT_MSVC_STD_IXX "${_std_root}/modules/std.ixx")
+    endif()
+
+    if(NOT ARTIFACT_MSVC_STD_IXX)
+        file(GLOB_RECURSE _std_ixx_cands LIST_DIRECTORIES FALSE
+            "C:/Program Files/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/14.*/modules/std.ixx"
+            "C:/Program Files/Microsoft Visual Studio/18/*/VC/Tools/MSVC/14.*/modules/std.ixx")
+        list(SORT _std_ixx_cands ORDER DESCENDING)
+        if(_std_ixx_cands)
+            list(GET _std_ixx_cands 0 ARTIFACT_MSVC_STD_IXX)
+        endif()
+    endif()
+
+    if(ARTIFACT_MSVC_STD_IXX)
+        configure_file(
+            "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/msvc-stdlib-modules.json.in"
+            "${CMAKE_BINARY_DIR}/msvc-stdlib-modules.json"
+            @ONLY)
+        set(CMAKE_CXX_STDLIB_MODULES_JSON
+            "${CMAKE_BINARY_DIR}/msvc-stdlib-modules.json"
+            CACHE FILEPATH "MSVC standard library module metadata override" FORCE)
+    endif()
+endif()
 
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
+
+function(artifact_enable_delay_load target)
+    if(NOT WIN32 OR NOT MSVC)
+        return()
+    endif()
+
+    cmake_parse_arguments(AEDL "" "" "DEBUG_DLLS;RELEASE_DLLS" ${ARGN})
+    if(NOT AEDL_DEBUG_DLLS AND NOT AEDL_RELEASE_DLLS)
+        return()
+    endif()
+
+    get_filename_component(_artifact_msvc_link_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_artifact_msvc_link_dir "${_artifact_msvc_link_dir}" DIRECTORY)
+    get_filename_component(_artifact_msvc_link_dir "${_artifact_msvc_link_dir}" DIRECTORY)
+    get_filename_component(_artifact_msvc_link_dir "${_artifact_msvc_link_dir}" DIRECTORY)
+    set(_artifact_delayimp_lib "${_artifact_msvc_link_dir}/lib/x64/delayimp.lib")
+    if(EXISTS "${_artifact_delayimp_lib}")
+        target_link_libraries(${target} PRIVATE "${_artifact_delayimp_lib}")
+    else()
+        target_link_libraries(${target} PRIVATE delayimp)
+    endif()
+    foreach(dllName IN LISTS AEDL_DEBUG_DLLS)
+        target_link_options(${target} PRIVATE "$<$<CONFIG:Debug>:/DELAYLOAD:${dllName}>")
+    endforeach()
+    foreach(dllName IN LISTS AEDL_RELEASE_DLLS)
+        target_link_options(${target} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/DELAYLOAD:${dllName}>")
+    endforeach()
+endfunction()
+
+set(ARTIFACT_COMPILER_MSVC_CL OFF)
+set(ARTIFACT_COMPILER_CLANG_CL OFF)
+set(ARTIFACT_COMPILER_INTELLLVM_CL OFF)
+set(ARTIFACT_COMPILER_INTELLLVM_GNU OFF)
+set(ARTIFACT_FRONTEND_MSVC OFF)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    set(ARTIFACT_COMPILER_MSVC_CL ON)
+    set(ARTIFACT_FRONTEND_MSVC ON)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND
+       CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    set(ARTIFACT_COMPILER_CLANG_CL ON)
+    set(ARTIFACT_FRONTEND_MSVC ON)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM" AND
+       CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    set(ARTIFACT_COMPILER_INTELLLVM_CL ON)
+    set(ARTIFACT_FRONTEND_MSVC ON)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
+    set(ARTIFACT_COMPILER_INTELLLVM_GNU ON)
+endif()
+
+if(NOT TARGET ArtifactCore)
+    if(NOT TARGET ufbx AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/ufbx/CMakeLists.txt")
+        add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../third_party/ufbx"
+                         "${CMAKE_CURRENT_BINARY_DIR}/ufbx"
+                         EXCLUDE_FROM_ALL)
+    endif()
+
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../ArtifactCore"
+                     "${CMAKE_CURRENT_BINARY_DIR}/ArtifactCore")
+endif()
+
+if(NOT TARGET ArtifactWidgets)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../ArtifactWidgets"
+                     "${CMAKE_CURRENT_BINARY_DIR}/ArtifactWidgets")
 endif()
 
 # ---------------------------------------------------------------------------

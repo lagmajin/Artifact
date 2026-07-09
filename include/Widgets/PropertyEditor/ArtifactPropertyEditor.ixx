@@ -447,6 +447,7 @@ public:
 private:
     void finishScrub(bool commitChanges);
     void updateKeyframeButtonIcon();
+    void updateRowVisualState();
 
     QLabel* label_ = nullptr;
     QWidget* scrubTarget_ = nullptr;
@@ -475,6 +476,8 @@ private:
     int scrubStartX_ = 0;
     int scrubThreshold_ = 4;
     QVariant scrubStartValue_;
+    bool hoverActive_ = false;
+    bool editorFocusActive_ = false;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

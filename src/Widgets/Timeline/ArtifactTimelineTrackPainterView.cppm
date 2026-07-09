@@ -3493,6 +3493,58 @@ int nearestMarkerIndexToCurrentFrame(
   return bestIndex;
 }
 
+int nearestMarkerIndexByFrameOrder(
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
+        &markers,
+    const QVector<int> &sortedIndices, const double currentFrame) {
+  if (sortedIndices.isEmpty()) {
+    return -1;
+  }
+
+  auto frameAt = [&markers, &sortedIndices](const int sortedIndex) {
+    return markers[sortedIndices[sortedIndex]].frame;
+  };
+
+  int lower = 0;
+  int upper = sortedIndices.size();
+  while (lower < upper) {
+    const int mid = lower + ((upper - lower) / 2);
+    if (frameAt(mid) < currentFrame) {
+      lower = mid + 1;
+    } else {
+      upper = mid;
+    }
+  }
+
+  int bestIndex = -1;
+  double bestDistance = std::numeric_limits<double>::max();
+  int left = lower - 1;
+  int right = lower;
+  while (left >= 0 || right < sortedIndices.size()) {
+    const double leftDistance =
+        left >= 0 ? std::abs(frameAt(left) - currentFrame)
+                  : std::numeric_limits<double>::max();
+    const double rightDistance =
+        right < sortedIndices.size()
+            ? std::abs(frameAt(right) - currentFrame)
+            : std::numeric_limits<double>::max();
+    const double nextDistance = std::min(leftDistance, rightDistance);
+    if (bestIndex >= 0 && nextDistance > bestDistance) {
+      break;
+    }
+
+    const bool useLeft = leftDistance <= rightDistance;
+    const int markerIndex = sortedIndices[useLeft ? left-- : right++];
+    if (markerAtCurrentFrame(markers[markerIndex], currentFrame)) {
+      continue;
+    }
+    bestIndex = markerIndex;
+    bestDistance = nextDistance;
+  }
+
+  return bestIndex;
+}
+
 QRect normalizedSelectionRect(const QPoint &anchor, const QPoint &current) {
   return QRect(anchor, current).normalized();
 }
@@ -4338,6 +4390,12 @@ public:
   QSet<QString> marqueeAnchorSelectionKeys_;
   QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
       keyframeMarkers_;
+  QVector<int> selectedMarkerFrameSortedIndices_;
+  QVector<int> selectedLayerMarkerFrameSortedIndices_;
+  QVector<int> normalMarkerFrameSortedIndices_;
+  QVector<int> keyframeCountsByTrack_;
+  QSet<int> selectedMarkerTracks_;
+  QSet<int> selectedKeyframeTracks_;
   QString hoverToolTipText_;
   bool selectionSyncDirty_ = true;
   const ArtifactAbstractComposition *lastSyncedComposition_ = nullptr;
@@ -4352,6 +4410,8 @@ public:
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   void rebuildTrackTopCache();
+  void rebuildMarkerCaches();
+  int nearestMarkerIndexForFrame(const double frame) const;
 };
 
 ArtifactTimelineTrackPainterView::Impl::Impl() {
@@ -4383,6 +4443,64 @@ void ArtifactTimelineTrackPainterView::Impl::rebuildTrackTopCache() {
     trackTops_[i] = currentY;
     currentY += trackHeights_[i] + kTrackSpacing;
   }
+}
+
+void ArtifactTimelineTrackPainterView::Impl::rebuildMarkerCaches() {
+  keyframeCountsByTrack_.resize(trackHeights_.size());
+  keyframeCountsByTrack_.fill(0);
+  selectedMarkerFrameSortedIndices_.clear();
+  selectedLayerMarkerFrameSortedIndices_.clear();
+  normalMarkerFrameSortedIndices_.clear();
+  selectedMarkerTracks_.clear();
+  selectedKeyframeTracks_.clear();
+
+  for (int i = 0; i < keyframeMarkers_.size(); ++i) {
+    const auto &marker = keyframeMarkers_[i];
+    if (marker.trackIndex >= 0 && marker.trackIndex < keyframeCountsByTrack_.size()) {
+      ++keyframeCountsByTrack_[marker.trackIndex];
+    }
+    if (marker.selected) {
+      selectedKeyframeTracks_.insert(marker.trackIndex);
+      selectedMarkerFrameSortedIndices_.push_back(i);
+    } else if (marker.selectedLayer) {
+      selectedLayerMarkerFrameSortedIndices_.push_back(i);
+    } else {
+      normalMarkerFrameSortedIndices_.push_back(i);
+    }
+    if (marker.selectedLayer) {
+      selectedMarkerTracks_.insert(marker.trackIndex);
+    }
+  }
+
+  auto sortByFrame = [this](QVector<int> &indices) {
+    std::sort(indices.begin(), indices.end(), [this](const int lhs, const int rhs) {
+      const auto &left = keyframeMarkers_[lhs];
+      const auto &right = keyframeMarkers_[rhs];
+      if (left.frame != right.frame) {
+        return left.frame < right.frame;
+      }
+      return lhs < rhs;
+    });
+  };
+  sortByFrame(selectedMarkerFrameSortedIndices_);
+  sortByFrame(selectedLayerMarkerFrameSortedIndices_);
+  sortByFrame(normalMarkerFrameSortedIndices_);
+}
+
+int ArtifactTimelineTrackPainterView::Impl::nearestMarkerIndexForFrame(
+    const double frame) const {
+  if (const int selected = nearestMarkerIndexByFrameOrder(
+          keyframeMarkers_, selectedMarkerFrameSortedIndices_, frame);
+      selected >= 0) {
+    return selected;
+  }
+  if (const int selectedLayer = nearestMarkerIndexByFrameOrder(
+          keyframeMarkers_, selectedLayerMarkerFrameSortedIndices_, frame);
+      selectedLayer >= 0) {
+    return selectedLayer;
+  }
+  return nearestMarkerIndexByFrameOrder(keyframeMarkers_,
+                                        normalMarkerFrameSortedIndices_, frame);
 }
 
 ArtifactTimelineTrackPainterView::ArtifactTimelineTrackPainterView(
@@ -4422,11 +4540,10 @@ void ArtifactTimelineTrackPainterView::setCurrentFrame(const double frame) {
     return;
   }
   const double oldFrame = impl_->currentFrame_;
-  const int oldNearestMarkerIndex =
-      nearestMarkerIndexToCurrentFrame(impl_->keyframeMarkers_, oldFrame);
+  const int oldNearestMarkerIndex = impl_->nearestMarkerIndexForFrame(oldFrame);
   impl_->currentFrame_ = sanitized;
   const int newNearestMarkerIndex =
-      nearestMarkerIndexToCurrentFrame(impl_->keyframeMarkers_, impl_->currentFrame_);
+      impl_->nearestMarkerIndexForFrame(impl_->currentFrame_);
   const double oldX =
       oldFrame * impl_->pixelsPerFrame_ - impl_->horizontalOffset_;
   const double newX =
@@ -4528,6 +4645,7 @@ void ArtifactTimelineTrackPainterView::setTrackCount(const int count) {
     impl_->trackHeights_[i] = kDefaultTrackHeight;
   }
   impl_->rebuildTrackTopCache();
+  impl_->rebuildMarkerCaches();
   updateGeometry();
   setVerticalOffset(impl_->verticalOffset_);
   update();
@@ -4563,6 +4681,7 @@ void ArtifactTimelineTrackPainterView::setTrackHeights(
         std::max(16, static_cast<int>(heights.value(i, kDefaultTrackHeight)));
   }
   impl_->rebuildTrackTopCache();
+  impl_->rebuildMarkerCaches();
   updateGeometry();
   setVerticalOffset(impl_->verticalOffset_);
   update();
@@ -4580,6 +4699,7 @@ void ArtifactTimelineTrackPainterView::setTrackHeight(const int trackIndex,
   impl_->selectionSyncDirty_ = true;
   impl_->trackHeights_[trackIndex] = sanitized;
   impl_->rebuildTrackTopCache();
+  impl_->rebuildMarkerCaches();
   updateGeometry();
   update();
 }
@@ -4617,12 +4737,14 @@ void ArtifactTimelineTrackPainterView::setKeyframeMarkers(
     impl_->selectionSyncDirty_ = false;
     if (reconcileMarkerSelection(impl_->keyframeMarkers_,
                                  impl_->selectedMarkerKeys_)) {
+      impl_->rebuildMarkerCaches();
       Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
       update();
     }
     return;
   }
   impl_->keyframeMarkers_ = markers;
+  impl_->rebuildMarkerCaches();
   const bool selectionChanged =
       reconcileMarkerSelection(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
   impl_->selectionSyncDirty_ = false;
@@ -4973,6 +5095,7 @@ void ArtifactTimelineTrackPainterView::selectAllKeyframeMarkers() {
   impl_->selectedMarkerKeys_ = std::move(selectedKeys);
   applyMarkerSelectionFlags(impl_->keyframeMarkers_,
                             impl_->selectedMarkerKeys_);
+  impl_->rebuildMarkerCaches();
   Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
   update();
 }
@@ -5013,6 +5136,7 @@ void ArtifactTimelineTrackPainterView::selectSamePropertyKeyframeMarkers() {
   impl_->selectedMarkerKeys_ = std::move(nextSelection);
   applyMarkerSelectionFlags(impl_->keyframeMarkers_,
                             impl_->selectedMarkerKeys_);
+  impl_->rebuildMarkerCaches();
   Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
   update();
 }
@@ -5045,6 +5169,7 @@ void ArtifactTimelineTrackPainterView::selectNeighborKeyframeMarkers() {
   impl_->selectedMarkerKeys_ = std::move(nextSelection);
   applyMarkerSelectionFlags(impl_->keyframeMarkers_,
                             impl_->selectedMarkerKeys_);
+  impl_->rebuildMarkerCaches();
   Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
   update();
 }
@@ -5056,6 +5181,7 @@ void ArtifactTimelineTrackPainterView::clearKeyframeSelection() {
   impl_->selectedMarkerKeys_.clear();
   applyMarkerSelectionFlags(impl_->keyframeMarkers_,
                             impl_->selectedMarkerKeys_);
+  impl_->rebuildMarkerCaches();
   Q_EMIT keyframeSelectionChanged(0);
   update();
 }
@@ -5071,6 +5197,7 @@ void ArtifactTimelineTrackPainterView::setSelectedKeyframeKeys(
   impl_->selectedMarkerKeys_ = selectedKeys;
   applyMarkerSelectionFlags(impl_->keyframeMarkers_,
                             impl_->selectedMarkerKeys_);
+  impl_->rebuildMarkerCaches();
   Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
   update();
 }
@@ -5803,6 +5930,9 @@ void ArtifactTimelineTrackPainterView::syncSelectionState(
     selectionChanged = reconcileMarkerSelection(impl_->keyframeMarkers_,
                                                 impl_->selectedMarkerKeys_);
   }
+  if (changed || selectionChanged) {
+    impl_->rebuildMarkerCaches();
+  }
 
   if (changed) {
     update((hasDirty ? dirtyRect : QRectF(rect()))
@@ -5852,19 +5982,29 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   const double ppf = impl_->pixelsPerFrame_;
   const double xOffset = impl_->horizontalOffset_;
   const double yOffset = impl_->verticalOffset_;
-
-  // Track rows (Virtualization)
-  QSet<int> keyframeTracksWithMarkers;
-  for (const auto &marker : impl_->keyframeMarkers_) {
-    if (marker.trackIndex >= 0 && marker.trackIndex < impl_->trackHeights_.size()) {
-      keyframeTracksWithMarkers.insert(marker.trackIndex);
+  int firstVisibleTrack = 0;
+  while (firstVisibleTrack < impl_->trackHeights_.size()) {
+    const int rowTop =
+        impl_->trackTops_.value(firstVisibleTrack) - static_cast<int>(std::round(yOffset));
+    const int rowBottom = rowTop + impl_->trackHeights_[firstVisibleTrack];
+    if (rowBottom >= dirtyRect.top()) {
+      break;
     }
+    ++firstVisibleTrack;
+  }
+  int lastVisibleTrack = impl_->trackHeights_.size() - 1;
+  while (lastVisibleTrack >= firstVisibleTrack) {
+    const int rowTop =
+        impl_->trackTops_.value(lastVisibleTrack) - static_cast<int>(std::round(yOffset));
+    if (rowTop <= dirtyRect.bottom()) {
+      break;
+    }
+    --lastVisibleTrack;
   }
 
-  for (int i = 0; i < impl_->trackHeights_.size(); ++i) {
+  for (int i = firstVisibleTrack; i <= lastVisibleTrack; ++i) {
     const int rowH = impl_->trackHeights_[i];
-    const double rowTop =
-        trackTopAt(impl_->trackTops_, impl_->trackHeights_, i) - yOffset;
+    const double rowTop = impl_->trackTops_.value(i) - yOffset;
     const auto &row =
         (i >= 0 && i < impl_->trackRows_.size()) ? impl_->trackRows_.at(i)
                                                  : TimelineRowDescriptor{};
@@ -5872,23 +6012,19 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         row.kind == TimelineRowKind::Property && !row.layerId.isNil() &&
         impl_->lastSyncedSelectedLayerIds_.contains(row.layerId);
 
-    // 画面外（dirtyRect外）の行は描画をスキップ
-    if (rowTop + rowH >= dirtyRect.top() && rowTop <= dirtyRect.bottom()) {
-      const QColor rowColor =
-          (i % 2 == 0) ? theme.surface.lighter(102) : theme.surface.darker(104);
-      p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), rowColor);
-      if (isSelectedPropertyLane) {
-        QColor laneTint = theme.accent;
-        laneTint.setAlpha(22);
-        p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), laneTint);
-        QColor laneStrip = theme.accent;
-        laneStrip.setAlpha(112);
-        p.fillRect(QRectF(0.0, rowTop, 3.0, rowH), laneStrip);
-
-      }
-      p.setPen(QPen(theme.border.darker(160), 1));
-      p.drawLine(0, rowTop + rowH, fullRect.width(), rowTop + rowH);
+    const QColor rowColor =
+        (i % 2 == 0) ? theme.surface.lighter(102) : theme.surface.darker(104);
+    p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), rowColor);
+    if (isSelectedPropertyLane) {
+      QColor laneTint = theme.accent;
+      laneTint.setAlpha(22);
+      p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), laneTint);
+      QColor laneStrip = theme.accent;
+      laneStrip.setAlpha(112);
+      p.fillRect(QRectF(0.0, rowTop, 3.0, rowH), laneStrip);
     }
+    p.setPen(QPen(theme.border.darker(160), 1));
+    p.drawLine(0, rowTop + rowH, fullRect.width(), rowTop + rowH);
   }
 
   // Vertical frame grid (tick lines only, no labels).
@@ -5921,9 +6057,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     const double clipW = clip.durationFrame * ppf;
 
     // Y座標を特定するために再度ループ（キャッシュしておくと高速だが、まずは単純に）
-    const int clipY =
-        trackTopAt(impl_->trackTops_, impl_->trackHeights_, clip.trackIndex) -
-        static_cast<int>(std::round(yOffset));
+    const int clipY = impl_->trackTops_.value(clip.trackIndex) -
+                      static_cast<int>(std::round(yOffset));
     const int clipH =
         (clip.trackIndex >= 0 && clip.trackIndex < impl_->trackHeights_.size())
             ? impl_->trackHeights_[clip.trackIndex]
@@ -5938,8 +6073,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     if (clip.trackIndex < 0 || clip.trackIndex >= impl_->trackHeights_.size()) {
       continue;
     }
-    const int trackTop =
-        trackTopAt(impl_->trackTops_, impl_->trackHeights_, clip.trackIndex);
+    const int trackTop = impl_->trackTops_.value(clip.trackIndex);
     const int trackH = impl_->trackHeights_[clip.trackIndex];
     const double x = clip.startFrame * ppf - xOffset;
     const double w = std::max(2.0, clip.durationFrame * ppf);
@@ -6077,34 +6211,23 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   }
 
   // Keyframe markers.
-  QSet<int> selectedMarkerTracks;
-  QSet<int> selectedKeyframeTracks;
-  QVector<int> keyframeCountsByTrack(impl_->trackHeights_.size(), 0);
   QVector<int> currentFrameKeyframeCountsByTrack(impl_->trackHeights_.size(), 0);
   for (const auto &marker : impl_->keyframeMarkers_) {
     if (marker.trackIndex >= 0 &&
-        marker.trackIndex < keyframeCountsByTrack.size()) {
-      ++keyframeCountsByTrack[marker.trackIndex];
+        marker.trackIndex < currentFrameKeyframeCountsByTrack.size()) {
       if (markerAtCurrentFrame(marker, impl_->currentFrame_)) {
         ++currentFrameKeyframeCountsByTrack[marker.trackIndex];
       }
     }
-    if (marker.selectedLayer) {
-      selectedMarkerTracks.insert(marker.trackIndex);
-    }
-    if (marker.selected) {
-      selectedKeyframeTracks.insert(marker.trackIndex);
-    }
   }
 
-  for (const int trackIndex : selectedMarkerTracks) {
+  for (const int trackIndex : impl_->selectedMarkerTracks_) {
     if (trackIndex < 0 || trackIndex >= impl_->trackHeights_.size()) {
       continue;
     }
-    const int trackTop =
-        trackTopAt(impl_->trackTops_, impl_->trackHeights_, trackIndex);
+    const int trackTop = impl_->trackTops_.value(trackIndex);
     const int trackH = impl_->trackHeights_[trackIndex];
-    const int keyframeCount = keyframeCountsByTrack.value(trackIndex, 0);
+    const int keyframeCount = impl_->keyframeCountsByTrack_.value(trackIndex, 0);
     const int currentFrameKeyframeCount =
         currentFrameKeyframeCountsByTrack.value(trackIndex, 0);
     const QRectF laneRect(
@@ -6214,12 +6337,11 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     }
   }
 
-  for (const int trackIndex : selectedKeyframeTracks) {
+  for (const int trackIndex : impl_->selectedKeyframeTracks_) {
     if (trackIndex < 0 || trackIndex >= impl_->trackHeights_.size()) {
       continue;
     }
-    const int trackTop =
-        trackTopAt(impl_->trackTops_, impl_->trackHeights_, trackIndex);
+    const int trackTop = impl_->trackTops_.value(trackIndex);
     const int trackH = impl_->trackHeights_[trackIndex];
     const QRectF laneRect(
         0.0, trackTop + 5.0 - yOffset, static_cast<qreal>(width()),
@@ -6360,7 +6482,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   }
 
   const int nearestMarkerIndex =
-      nearestMarkerIndexToCurrentFrame(impl_->keyframeMarkers_, impl_->currentFrame_);
+      impl_->nearestMarkerIndexForFrame(impl_->currentFrame_);
 
   for (int markerIndex = 0; markerIndex < impl_->keyframeMarkers_.size();
        ++markerIndex) {
@@ -6766,6 +6888,7 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
       }
       if (selectionChanged ||
           impl_->selectedMarkerKeys_.size() != previousSelectionCount) {
+        impl_->rebuildMarkerCaches();
         Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
       }
       if (selectionChanged) {
@@ -6907,6 +7030,7 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
       }
       if (applyMarkerSelectionSet(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_,
                                   nextSelection)) {
+        impl_->rebuildMarkerCaches();
         Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
       }
       impl_->dragAreaIndex_ = areaHit.areaIndex;
@@ -7075,6 +7199,7 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
       }
       if (applyMarkerSelectionSet(impl_->keyframeMarkers_,
                                   impl_->selectedMarkerKeys_, nextSelection)) {
+        impl_->rebuildMarkerCaches();
         Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
       }
       update();
@@ -7566,7 +7691,7 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
   if (!impl_->panning_) {
     QString tooltipText;
     const int nearestMarkerIndex =
-        nearestMarkerIndexToCurrentFrame(impl_->keyframeMarkers_, impl_->currentFrame_);
+        impl_->nearestMarkerIndexForFrame(impl_->currentFrame_);
     if (impl_->hoverMarkerIndex_ >= 0 &&
         impl_->hoverMarkerIndex_ < impl_->keyframeMarkers_.size()) {
       tooltipText = formatMarkerTooltip(
@@ -7714,6 +7839,7 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
       nextSelection.insert(singleClickKey);
       if (applyMarkerSelectionSet(impl_->keyframeMarkers_,
                                   impl_->selectedMarkerKeys_, nextSelection)) {
+        impl_->rebuildMarkerCaches();
         Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
         Q_EMIT timelineDebugMessage(
             QStringLiteral("Selected keyframe at F%1 for %2")
@@ -7902,6 +8028,7 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
     } else if (!nextSelectionKeys.isEmpty()) {
       applyMarkerSelectionSet(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_,
                               nextSelectionKeys);
+      impl_->rebuildMarkerCaches();
       Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
     }
 
@@ -8118,6 +8245,7 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
       }
       applyMarkerSelectionSet(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_,
                               nextSelectedKeys);
+      impl_->rebuildMarkerCaches();
       Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
       if (hasFrameChanges) {
         for (const auto &request : requests) {
@@ -10002,6 +10130,7 @@ void ArtifactTimelineTrackPainterView::keyPressEvent(QKeyEvent *event) {
 
   applyMarkerSelectionSet(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_,
                           nextSelectedKeys);
+  impl_->rebuildMarkerCaches();
   Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
   for (const auto &request : requests) {
     Q_EMIT keyframeMoveRequested(request.layerId, request.propertyPath,

@@ -18,6 +18,9 @@ module;
 #include <QHeaderView>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QTabWidget>
+#include <QTimer>
+#include <QApplication>
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
@@ -37,7 +40,13 @@ import Color.ScienceManager;
 import Color.LUT;
 import Artifact.Color.Palette;
 import Artifact.Color.OCIOManager;
+import Artifact.Widgets.CompositionEditor;
+import Artifact.Widgets.CompositionRenderController;
 import Color.LUTWriter;
+import HistgramWidget;
+import VectorScopeWidget;
+import WaveformScopeWidget;
+import ParadeScopeWidget;
 namespace Artifact {
 
 class ArtifactColorSciencePanel::Impl {
@@ -88,6 +97,14 @@ public:
   QPushButton *snapToPaletteButton_ = nullptr;
   QLineEdit *snapColorEdit_ = nullptr;
   QLabel *snapResultLabel_ = nullptr;
+  QTabWidget *scopeTabs_ = nullptr;
+  QLabel *scopeStatusLabel_ = nullptr;
+  ArtifactWidgets::HistgramWidget *histogramWidget_ = nullptr;
+  ArtifactWidgets::VectorScopeWidget *vectorScopeWidget_ = nullptr;
+  ArtifactWidgets::WaveformScopeWidget *waveformScopeWidget_ = nullptr;
+  ArtifactWidgets::ParadeScopeWidget *paradeScopeWidget_ = nullptr;
+  QTimer *scopeRefreshTimer_ = nullptr;
+  qint64 lastScopeFrameKey_ = 0;
 
   std::vector<LutEntry> lutEntries_;
   std::vector<ColorRuleRow> colorRules_;
@@ -98,6 +115,7 @@ public:
   void refreshLUTBrowser();
   void updateSelectedLUTPreview();
   void setupColorRulesSection(QWidget *parent, QVBoxLayout *layout);
+  void setupScopesSection(QWidget *parent, QVBoxLayout *layout);
   void refreshColorRuleTable();
   void syncColorRulesFromTable();
   QColor nearestPaletteColor(const QColor &input) const;
@@ -106,7 +124,38 @@ public:
                              const QString &title) const;
   QString lutDescriptionForSource(const QString &source) const;
   QString defaultLUTDirectory() const;
+  void refreshScopesFromViewport(QWidget *parent);
 };
+
+static ArtifactCompositionEditor *findActiveCompositionEditor(QWidget *origin) {
+  QWidget *window = origin ? origin->window() : nullptr;
+  if (!window) {
+    return nullptr;
+  }
+
+  const auto editors = window->findChildren<ArtifactCompositionEditor *>();
+  if (editors.isEmpty()) {
+    return nullptr;
+  }
+
+  QWidget *focus = QApplication::focusWidget();
+  for (ArtifactCompositionEditor *editor : editors) {
+    if (!editor || !editor->isVisible()) {
+      continue;
+    }
+    if (focus && (editor == focus || editor->isAncestorOf(focus))) {
+      return editor;
+    }
+  }
+
+  for (ArtifactCompositionEditor *editor : editors) {
+    if (editor && editor->isVisible()) {
+      return editor;
+    }
+  }
+
+  return editors.front();
+}
 
 ArtifactColorSciencePanel::ArtifactColorSciencePanel(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
@@ -248,9 +297,57 @@ void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
 
   layout->addWidget(hdrGroup);
 
+  setupScopesSection(parent, layout);
   setupColorRulesSection(parent, layout);
 
   layout->addStretch();
+}
+
+void ArtifactColorSciencePanel::Impl::setupScopesSection(QWidget *parent, QVBoxLayout *layout) {
+  auto *scopeGroup = new QGroupBox("Scopes", parent);
+  auto *scopeLayout = new QVBoxLayout(scopeGroup);
+
+  auto *scopeHeader = new QLabel(
+      "Auto-syncs to the active Composition Editor viewport preview.", scopeGroup);
+  scopeHeader->setWordWrap(true);
+  scopeLayout->addWidget(scopeHeader);
+
+  scopeTabs_ = new QTabWidget(scopeGroup);
+
+  histogramWidget_ = new ArtifactWidgets::HistgramWidget(scopeTabs_);
+  histogramWidget_->setMode(ArtifactWidgets::HistogramMode::Combined);
+  histogramWidget_->setLogScale(true);
+  scopeTabs_->addTab(histogramWidget_, QStringLiteral("Histogram"));
+
+  vectorScopeWidget_ = new ArtifactWidgets::VectorScopeWidget(scopeTabs_);
+  vectorScopeWidget_->setMode(ArtifactWidgets::VectorScopeMode::Skin);
+  vectorScopeWidget_->setIntensity(1.1f);
+  scopeTabs_->addTab(vectorScopeWidget_, QStringLiteral("Vectorscope"));
+
+  waveformScopeWidget_ = new ArtifactWidgets::WaveformScopeWidget(scopeTabs_);
+  waveformScopeWidget_->setMode(ArtifactWidgets::WaveformMode::RGB);
+  waveformScopeWidget_->setIntensity(1.0f);
+  scopeTabs_->addTab(waveformScopeWidget_, QStringLiteral("Waveform"));
+
+  paradeScopeWidget_ = new ArtifactWidgets::ParadeScopeWidget(scopeTabs_);
+  paradeScopeWidget_->setMode(ArtifactWidgets::ParadeMode::RGB);
+  paradeScopeWidget_->setIntensity(1.0f);
+  scopeTabs_->addTab(paradeScopeWidget_, QStringLiteral("Parade"));
+
+  scopeLayout->addWidget(scopeTabs_);
+
+  scopeStatusLabel_ = new QLabel(QStringLiteral("Waiting for Composition Editor preview"), scopeGroup);
+  scopeStatusLabel_->setWordWrap(true);
+  scopeLayout->addWidget(scopeStatusLabel_);
+
+  layout->addWidget(scopeGroup);
+
+  scopeRefreshTimer_ = new QTimer(parent);
+  scopeRefreshTimer_->setInterval(180);
+  QObject::connect(scopeRefreshTimer_, &QTimer::timeout, [this, parent]() {
+    refreshScopesFromViewport(parent);
+  });
+  scopeRefreshTimer_->start();
 }
 
 void ArtifactColorSciencePanel::Impl::setupColorRulesSection(QWidget *parent, QVBoxLayout *layout) {
@@ -654,6 +751,67 @@ void ArtifactColorSciencePanel::Impl::connectSignals() {
     connect(ocio, &ArtifactOCIOManager::configChanged, [this]() {
       updateUI();
     });
+  }
+}
+
+void ArtifactColorSciencePanel::Impl::refreshScopesFromViewport(QWidget *parent) {
+  if (!parent || !parent->isVisible()) {
+    return;
+  }
+
+  ArtifactCompositionEditor *editor = findActiveCompositionEditor(parent);
+  if (!editor) {
+    lastScopeFrameKey_ = 0;
+    if (scopeStatusLabel_) {
+      scopeStatusLabel_->setText(QStringLiteral("No visible Composition Editor"));
+    }
+    return;
+  }
+
+  CompositionRenderController *controller = editor->renderController();
+  if (!controller) {
+    if (scopeStatusLabel_) {
+      scopeStatusLabel_->setText(QStringLiteral("Composition Editor has no render controller"));
+    }
+    return;
+  }
+
+  const QImage frame = controller->captureCurrentFrameImage();
+  if (frame.isNull()) {
+    lastScopeFrameKey_ = 0;
+    if (scopeStatusLabel_) {
+      scopeStatusLabel_->setText(QStringLiteral("Viewport preview frame is not ready yet"));
+    }
+    return;
+  }
+
+  const qint64 frameKey = frame.cacheKey();
+  if (frameKey == lastScopeFrameKey_) {
+    if (scopeStatusLabel_) {
+      scopeStatusLabel_->setText(
+          QStringLiteral("Linked to viewport: %1 x %2").arg(frame.width()).arg(frame.height()));
+    }
+    return;
+  }
+
+  lastScopeFrameKey_ = frameKey;
+
+  if (histogramWidget_) {
+    histogramWidget_->updateFrame(frame);
+  }
+  if (vectorScopeWidget_) {
+    vectorScopeWidget_->updateFrame(frame);
+  }
+  if (waveformScopeWidget_) {
+    waveformScopeWidget_->updateFrame(frame);
+  }
+  if (paradeScopeWidget_) {
+    paradeScopeWidget_->updateFrame(frame);
+  }
+
+  if (scopeStatusLabel_) {
+    scopeStatusLabel_->setText(
+        QStringLiteral("Linked to viewport: %1 x %2").arg(frame.width()).arg(frame.height()));
   }
 }
 

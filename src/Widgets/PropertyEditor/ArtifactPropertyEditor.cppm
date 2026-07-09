@@ -155,6 +155,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   editor_->setParent(this);
   editor_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   applyPropertyFieldPalette(editor_);
+  editor_->installEventFilter(this);
 
   const QIcon prevIcon = loadPropertyIcon(
       QStringLiteral("Studio/property_key_previous.svg"),
@@ -314,6 +315,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       navigationHandler_(1);
     }
   });
+  updateRowVisualState();
 }
 
 ArtifactPropertyEditorRowWidget::~ArtifactPropertyEditorRowWidget() = default;
@@ -567,12 +569,18 @@ void ArtifactPropertyEditorRowWidget::setSupplementaryText(
 
 void ArtifactPropertyEditorRowWidget::setShowExpressionButton(
     const bool visible) {
+  if (expressionButton_->property("baseVisible").toBool() == visible) {
+    return;
+  }
   expressionButton_->setProperty("baseVisible", visible);
   updateAuxControlVisibility();
   update();
 }
 
 void ArtifactPropertyEditorRowWidget::setShowResetButton(const bool visible) {
+  if (resetButton_->property("baseVisible").toBool() == visible) {
+    return;
+  }
   resetButton_->setProperty("baseVisible", visible);
   updateAuxControlVisibility();
   update();
@@ -580,6 +588,9 @@ void ArtifactPropertyEditorRowWidget::setShowResetButton(const bool visible) {
 
 void ArtifactPropertyEditorRowWidget::setShowKeyframeButton(
     const bool visible) {
+  if (keyframeButton_->isVisible() == visible) {
+    return;
+  }
   keyframeButton_->setVisible(visible);
   updateKeyframeButtonIcon();
   updateAuxControlVisibility();
@@ -588,6 +599,9 @@ void ArtifactPropertyEditorRowWidget::setShowKeyframeButton(
 
 void ArtifactPropertyEditorRowWidget::setShowFavoriteButton(const bool visible) {
   if (!favoriteButton_) {
+    return;
+  }
+  if (favoriteButton_->property("baseVisible").toBool() == visible) {
     return;
   }
   favoriteButton_->setProperty("baseVisible", visible);
@@ -654,6 +668,9 @@ void ArtifactPropertyEditorRowWidget::updateKeyframeButtonIcon() {
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeChecked(const bool checked) {
+  if (currentFrameKeyframed_ == checked) {
+    return;
+  }
   currentFrameKeyframed_ = checked;
   updateKeyframeButtonIcon();
   update();
@@ -661,6 +678,9 @@ void ArtifactPropertyEditorRowWidget::setKeyframeChecked(const bool checked) {
 
 void ArtifactPropertyEditorRowWidget::setKeyframeModeEnabled(
     const bool enabled) {
+  if (keyframeButton_ && keyframeButton_->isChecked() == enabled) {
+    return;
+  }
   const QSignalBlocker blocker(keyframeButton_);
   keyframeButton_->setChecked(enabled);
   updateKeyframeButtonIcon();
@@ -672,12 +692,21 @@ bool ArtifactPropertyEditorRowWidget::isKeyframeModeEnabled() const {
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeEnabled(const bool enabled) {
+  if (keyframeButton_->isEnabled() == enabled) {
+    return;
+  }
   keyframeButton_->setEnabled(enabled);
   updateKeyframeButtonIcon();
   update();
 }
 
 void ArtifactPropertyEditorRowWidget::setNavigationEnabled(const bool enabled) {
+  const bool prevBaseVisible = prevKeyBtn_->property("baseVisible").toBool();
+  const bool nextBaseVisible = nextKeyBtn_->property("baseVisible").toBool();
+  if (prevBaseVisible == enabled && nextBaseVisible == enabled &&
+      prevKeyBtn_->isEnabled() == enabled && nextKeyBtn_->isEnabled() == enabled) {
+    return;
+  }
   prevKeyBtn_->setProperty("baseVisible", enabled);
   nextKeyBtn_->setProperty("baseVisible", enabled);
   prevKeyBtn_->setEnabled(enabled);
@@ -729,16 +758,28 @@ void ArtifactPropertyEditorRowWidget::updateAuxControlVisibility() {
   nextKeyBtn_->setEnabled(navVisible);
 }
 
+void ArtifactPropertyEditorRowWidget::updateRowVisualState() {
+  const bool nextHoverActive = underMouse();
+  const bool nextEditorFocusActive = editor_ && editor_->hasFocus();
+  if (hoverActive_ == nextHoverActive &&
+      editorFocusActive_ == nextEditorFocusActive) {
+    return;
+  }
+  hoverActive_ = nextHoverActive;
+  editorFocusActive_ = nextEditorFocusActive;
+  update();
+}
+
 void ArtifactPropertyEditorRowWidget::enterEvent(QEnterEvent *event) {
   QWidget::enterEvent(event);
   updateAuxControlVisibility();
-  update();
+  updateRowVisualState();
 }
 
 void ArtifactPropertyEditorRowWidget::leaveEvent(QEvent *event) {
   QWidget::leaveEvent(event);
   updateAuxControlVisibility();
-  update();
+  updateRowVisualState();
 }
 
 void ArtifactPropertyEditorRowWidget::contextMenuEvent(
@@ -846,52 +887,47 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
 }
 
 void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
-  QWidget::paintEvent(event);
-
+  Q_UNUSED(event);
   QPainter painter(this);
-  painter.setRenderHint(QPainter::Antialiasing, true);
+  const bool hovered = hoverActive_;
+  const bool focused = editorFocusActive_;
+  if (!(hovered || focused || currentFrameKeyframed_)) {
+    return;
+  }
 
   const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor accent =
       themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
-  const QColor selection =
-      themeColor(theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
-  const QColor border =
-      themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
-
-  const bool hovered = underMouse();
-  const bool focused = editor_ && editor_->hasFocus();
-  const bool keyframed = currentFrameKeyframed_;
-
-  const QRectF frame = rect().adjusted(0.5, 0.5, -0.5, -0.5);
-  const qreal radius = 7.0;
-  QPainterPath path;
-  path.addRoundedRect(frame, radius, radius);
 
   if (hovered || focused) {
+    const QColor selection =
+        themeColor(theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
+    const QColor border =
+        themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
     QColor fill = propertySurfaceColor(false);
     fill = focused ? blendColor(fill, selection, 0.18)
                    : blendColor(fill, accent, 0.025);
-    painter.fillPath(path, fill);
-
-    const QColor line =
-        focused ? blendColor(border, selection, 0.40)
-                : blendColor(border, accent, 0.10);
-    painter.setPen(QPen(line, 1.0));
-    painter.drawPath(path);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(QPen(focused ? blendColor(border, selection, 0.40)
+                                : blendColor(border, accent, 0.10),
+                        1.0));
+    painter.setBrush(fill);
+    painter.drawRoundedRect(rect().adjusted(0.5, 0.5, -0.5, -0.5), 7.0, 7.0);
   }
 
-  if (keyframed) {
-    painter.save();
+  if (currentFrameKeyframed_) {
     painter.setPen(Qt::NoPen);
     painter.setBrush(accent);
     painter.drawRoundedRect(QRectF(1.0, 3.0, 4.0, height() - 6.0), 2.0, 2.0);
-    painter.restore();
   }
 }
 
 bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,
                                                   QEvent *event) {
+  if (watched == editor_ &&
+      (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut)) {
+    updateRowVisualState();
+  }
   if (!editor_ || !editor_->supportsScrub()) {
     return QWidget::eventFilter(watched, event);
   }
