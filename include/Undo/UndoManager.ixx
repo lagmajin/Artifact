@@ -50,6 +50,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Matte;
 import Artifact.Mask.LayerMask;
 import Geometry.ResolutionRemap;
+import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {
  using namespace ArtifactCore;

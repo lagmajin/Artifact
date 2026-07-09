@@ -1996,6 +1996,7 @@ void ArtifactViewMenu::Impl::refreshCompareMenu()
    compareReferenceAction->setCheckable(true);
  compareReferenceAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
    compareMenu->addSeparator();
+   auto& shortcuts = ShortcutBindings::instance();
    xRayAction = compareMenu->addAction("X-Ray (透過)");
    xRayAction->setCheckable(true);
    xRayAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_color_palette.svg")));

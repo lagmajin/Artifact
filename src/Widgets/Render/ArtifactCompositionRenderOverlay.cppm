@@ -215,10 +215,10 @@ quint64 makeEdgeKey(int a, int b)
   return (static_cast<quint64>(lo) << 32) | static_cast<quint64>(hi);
 }
 
-void draw3DSelectionWireframeOverlay(ArtifactIRenderer *renderer,
-                                     const ArtifactAbstractLayerPtr &layer,
-                                     const QMatrix4x4 *cameraView,
-                                     const QMatrix4x4 *cameraProj)
+void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
+                                         const ArtifactAbstractLayerPtr &layer,
+                                         const QMatrix4x4 *cameraView,
+                                         const QMatrix4x4 *cameraProj)
 {
   if (!renderer || !layer || !cameraView || !cameraProj) {
     return;
@@ -832,7 +832,7 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
                           innerColor, 0.8f);
 
   if (layer->is3D()) {
-    draw3DSelectionWireframeOverlay(renderer, layer, cameraView, cameraProj);
+    draw3DSelectionWireframeOverlayImpl(renderer, layer, cameraView, cameraProj);
   }
 
   const float zoom = std::max(0.001f, renderer->getZoom());

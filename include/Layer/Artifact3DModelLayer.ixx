@@ -9,10 +9,7 @@ module;
 export module Artifact.Layers.Model3D;
 
 import Artifact.Layer.Abstract;
-
-namespace ArtifactCore {
-class Mesh;
-}
+import Mesh;
 
 export namespace Artifact {
 

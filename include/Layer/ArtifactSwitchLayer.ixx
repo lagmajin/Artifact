@@ -9,9 +9,8 @@ module;
 
 export module Artifact.Layer.Switch;
 
-namespace ArtifactCore { class LipSyncTrack; }
-
 import Artifact.Layers.Abstract._2D;
+import Audio.LipSyncTrack;
 import FloatRGBA;
 import Frame.Position;
 

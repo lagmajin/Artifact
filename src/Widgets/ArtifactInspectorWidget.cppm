@@ -46,6 +46,16 @@ module;
 #include <cstdlib>
 #include <wobjectimpl.h>
 
+#ifdef READ
+#undef READ
+#endif
+#ifdef WRITE
+#undef WRITE
+#endif
+#ifdef APPEND
+#undef APPEND
+#endif
+
 #include <opencv2/opencv.hpp>
 
 
@@ -1237,7 +1247,7 @@ protected:
         if (auto *selMgr = ArtifactLayerSelectionManager::instance()) {
           const auto selected = selMgr->currentLayer();
           if (selected && selected->id() != layerId_ &&
-              comp && comp->containsLayerById(selected->id())) {
+              composition && composition->containsLayerById(selected->id())) {
             QAction *useSelectedAction =
                 refMenu->addAction(QStringLiteral("Use selected layer as source"));
             useSelectedAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("use_selected")},
@@ -2398,8 +2408,9 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
     const auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer);
     const bool canShow = static_cast<bool>(audioLayer);
     bool canApply = false;
-    ArtifactSwitchLayerPtr switchTarget;
+    std::shared_ptr<ArtifactSwitchLayer> switchTarget;
     if (audioLayer) {
+      auto *projectService = ArtifactProjectService::instance();
       auto *selMgr = ArtifactLayerSelectionManager::instance();
       const auto selected = selMgr ? selMgr->selectedLayers() : QSet<ArtifactAbstractLayerPtr>{};
       for (const auto &selectedLayer : selected) {
@@ -2411,7 +2422,8 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
           break;
         }
       }
-      auto currentComposition = projectService->currentComposition().lock();
+      auto currentComposition = projectService ? projectService->currentComposition().lock()
+                                               : ArtifactCompositionPtr{};
       if (!switchTarget && currentComposition) {
         for (const auto &candidate : currentComposition->allLayer()) {
           if (!candidate || candidate == layer) {
@@ -2736,13 +2748,9 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
       return {};
     }
 
-    QImage layerPreview = sourceLayer->toQImage();
-    if (layerPreview.isNull()) {
-      return {};
-    }
-
-    const int maskW = layerPreview.width();
-    const int maskH = layerPreview.height();
+    const auto sourceSize = sourceLayer->sourceSize();
+    const int maskW = std::max(1, sourceSize.width);
+    const int maskH = std::max(1, sourceSize.height);
     if (maskW <= 0 || maskH <= 0) {
       return {};
     }
@@ -2777,7 +2785,9 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
 
   QAction *pickLayerMaskAction =
       menu.addAction("Pick Layer Mask Source...");
-  QObject::connect(pickLayerMaskAction, &QAction::triggered, [this, effectId]() {
+  QObject::connect(pickLayerMaskAction, &QAction::triggered,
+                   [this, effectId, buildEffectMaskImageFromLayer,
+                    captureEffectMaskImages]() {
     auto effect = currentEffectById(effectId);
     if (!effect) {
       QMessageBox::information(containerWidget, QStringLiteral("Effect Mask"),
@@ -2869,7 +2879,8 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
   QAction *clearMaskAction = nullptr;
   if (found && effect && effect->effectMaskImageCount() > 0) {
     clearMaskAction = menu.addAction("Clear Effect Mask Images");
-    QObject::connect(clearMaskAction, &QAction::triggered, [this, effectId]() {
+    QObject::connect(clearMaskAction, &QAction::triggered,
+                     [this, effectId, captureEffectMaskImages]() {
       auto effect = currentEffectById(effectId);
       if (!effect) {
         QMessageBox::information(containerWidget, QStringLiteral("Effect Mask"),
@@ -2897,7 +2908,8 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
 
   QAction *applyLayerMaskAction = menu.addAction(layerMaskActionLabel);
   QObject::connect(applyLayerMaskAction, &QAction::triggered,
-                   [this, effectId]() {
+                   [this, effectId, buildEffectMaskImageFromLayer,
+                    captureEffectMaskImages]() {
                      auto effect = currentEffectById(effectId);
                      if (!effect) {
                        QMessageBox::information(
@@ -4378,7 +4390,7 @@ void ArtifactInspectorWidget::Impl::handleApplyLipSyncToSwitchLayer() {
     return;
   }
 
-  ArtifactSwitchLayerPtr switchTarget;
+  std::shared_ptr<ArtifactSwitchLayer> switchTarget;
   auto *selMgr = ArtifactLayerSelectionManager::instance();
   const auto selected = selMgr ? selMgr->selectedLayers() : QSet<ArtifactAbstractLayerPtr>{};
   for (const auto &selectedLayer : selected) {
@@ -4409,7 +4421,7 @@ void ArtifactInspectorWidget::Impl::handleApplyLipSyncToSwitchLayer() {
   }
 
   const double frameRate = comp->frameRate().framerate();
-  if (!audio->applyLipSyncToSwitchLayer(*switchTarget, frameRate)) {
+  if (!audio->applyLipSyncToSwitchLayer(switchTarget.get(), frameRate)) {
     QMessageBox::warning(containerWidget, QStringLiteral("Lip Sync"),
                          QStringLiteral("Lip Sync の適用に失敗しました。"));
     return;

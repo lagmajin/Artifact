@@ -231,6 +231,35 @@ QImage downsampleForLOD(const QImage& image, DetailLevel lod)
   return image.scaled(targetW, targetH, Qt::IgnoreAspectRatio, Qt::FastTransformation);
 }
 
+ArtifactCore::ImageF32x4_RGBA downsampleForLOD(const ArtifactCore::ImageF32x4_RGBA& image,
+                                               DetailLevel lod)
+{
+  if (image.isEmpty() || lod == DetailLevel::High) {
+    return image;
+  }
+
+  const float scale = lodScale(lod);
+  const int targetW =
+      std::max(1, static_cast<int>(std::round(image.width() * scale)));
+  const int targetH =
+      std::max(1, static_cast<int>(std::round(image.height() * scale)));
+  if (targetW == image.width() && targetH == image.height()) {
+    return image;
+  }
+
+  cv::Mat resized;
+  cv::resize(image.toCVMat(),
+             resized,
+             cv::Size(targetW, targetH),
+             0.0,
+             0.0,
+             cv::INTER_LINEAR);
+
+  ArtifactCore::ImageF32x4_RGBA result;
+  result.setFromCVMat(resized);
+  return result;
+}
+
 QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
                                   const QImage& surface,
                                   int64_t frameNumber)
@@ -439,6 +468,87 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
   return true;
 }
 
+bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
+                                  const ArtifactCore::ImageF32x4_RGBA& surface,
+                                  ArtifactCore::ImageF32x4_RGBA* outBuffer)
+{
+  if (!targetLayer || surface.isEmpty() || !outBuffer) {
+    return false;
+  }
+
+  const bool hasMasks = targetLayer->hasMasks();
+  const bool hasMattes = !targetLayer->matteReferences().empty();
+  const auto effects = targetLayer->getEffects();
+  bool hasRasterizerEffect = false;
+  for (const auto& effect : effects) {
+    if (effect && effect->isEnabled() &&
+        effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
+      hasRasterizerEffect = true;
+      break;
+    }
+  }
+
+  if (!hasRasterizerEffect && !hasMasks && !hasMattes) {
+    return false;
+  }
+
+  cv::Mat mat = surface.toCVMat();
+
+  if (hasRasterizerEffect) {
+    ArtifactCore::ImageF32x4RGBAWithCache current(surface);
+
+    const bool isAdjustment = targetLayer->isAdjustmentLayer();
+
+    for (const auto& effect : effects) {
+      if (!effect || !effect->isEnabled() ||
+          effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
+        continue;
+      }
+
+      const EffectROIHint hint = effect->roiHint();
+      if (isAdjustment && !hint.requiresFullFrame) {
+        qDebug()
+            << "[Rasterizer][AdjLayer] effect"
+            << effect->displayName().toQString()
+            << "treated as full-frame due to adjustment layer";
+      } else if (!hint.isEmpty()) {
+        qDebug()
+            << "[Rasterizer] effect" << effect->displayName().toQString()
+            << "roiHint: kind=" << static_cast<int>(hint.kind)
+            << "expansionPx=" << hint.expansionPixels
+            << "fullFrame=" << hint.requiresFullFrame;
+      }
+
+      ArtifactCore::ImageF32x4RGBAWithCache next;
+      effect->setContext(makeLayerEffectContext(
+          targetLayer,
+          QRectF(0.0, 0.0, static_cast<qreal>(current.width()),
+                 static_cast<qreal>(current.height()))));
+      effect->applyConfigured(current, next);
+      current = next;
+    }
+
+    mat = current.image().toCVMat();
+  }
+
+  if (hasMasks) {
+    const QRectF lb = targetLayer->localBounds();
+    const float scaleX =
+        static_cast<float>(mat.cols) / std::max(1.0f, static_cast<float>(lb.width()));
+    const float scaleY =
+        static_cast<float>(mat.rows) / std::max(1.0f, static_cast<float>(lb.height()));
+    const float maskOffsetX = static_cast<float>(-lb.x() * scaleX);
+    const float maskOffsetY = static_cast<float>(-lb.y() * scaleY);
+    for (int m = 0; m < targetLayer->maskCount(); ++m) {
+      LayerMask mask = targetLayer->mask(m);
+      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY, scaleX, scaleY);
+    }
+  }
+
+  outBuffer->setFromCVMat(mat);
+  return true;
+}
+
 void applyRasterizerEffectsAndMasksToSurface(ArtifactAbstractLayer* targetLayer,
                                              QImage& surface,
                                              DetailLevel lod)
@@ -451,6 +561,24 @@ void applyRasterizerEffectsAndMasksToSurface(ArtifactAbstractLayer* targetLayer,
   ArtifactCore::ImageF32x4_RGBA buffer;
   if (buildRasterizedSurfaceBuffer(targetLayer, processedSurface, &buffer)) {
     surface = buffer.toQImage();
+  }
+}
+
+void applyRasterizerEffectsAndMasksToSurface(
+    ArtifactAbstractLayer* targetLayer,
+    ArtifactCore::ImageF32x4_RGBA& surface,
+    DetailLevel lod)
+{
+  ArtifactCore::ImageF32x4_RGBA processedSurface = downsampleForLOD(surface, lod);
+  if (processedSurface.isEmpty()) {
+    return;
+  }
+
+  ArtifactCore::ImageF32x4_RGBA buffer;
+  if (buildRasterizedSurfaceBuffer(targetLayer, processedSurface, &buffer)) {
+    surface = std::move(buffer);
+  } else {
+    surface = std::move(processedSurface);
   }
 }
 
@@ -1035,7 +1163,6 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     }
 
     ArtifactCore::ImageF32x4_RGBA frameBuffer;
-    QImage frame;
     bool usedSyncFallback = false;
     bool usedBufferFallback = false;
     QString reason;
@@ -1094,7 +1221,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       usedSyncFallback = !frameBuffer.isEmpty();
     }
     if (!frameBuffer.isEmpty()) {
-      frame = downsampleForLOD(frameBuffer.toQImage(), lod);
+      frameBuffer = downsampleForLOD(frameBuffer, lod);
     }
     if (videoDebugOut) {
       if (reason.isEmpty()) {
@@ -1129,8 +1256,22 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         .arg(op.framePosition())
         .arg(layer->currentFrame());
     }
-    if (!frame.isNull()) {
-      applySurfaceAndDraw(frame, localRect, true);
+    if (!frameBuffer.isEmpty()) {
+      if (hasRasterizer) {
+        applyRasterizerEffectsAndMasksToSurface(layer, frameBuffer, lod);
+      }
+      const float baseOpacity =
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(layer, globalTransform4x4,
+        [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+          renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
+                               static_cast<float>(localRect.y()),
+                               static_cast<float>(localRect.width()),
+                               static_cast<float>(localRect.height()),
+                               instanceTransform,
+                               frameBuffer,
+                               baseOpacity * instanceWeight);
+      });
       return;
     }
   }

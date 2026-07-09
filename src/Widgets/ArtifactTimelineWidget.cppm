@@ -680,6 +680,11 @@ struct KeyPatternTarget {
   QString propertyPath;
 };
 
+struct CurveTrackBinding {
+  LayerID layerId;
+  QString propertyPath;
+};
+
 QVector<KeyframePropertyRef> collectCurveEditorPropertyRefs(
     const QVector<CurveTrackBinding>& bindings)
 {
@@ -1867,11 +1872,6 @@ QColor curveTrackColor(const ArtifactAbstractLayerPtr &layer,
   color.setHsv(hue, sat, val, 255);
   return color;
 }
-
-struct CurveTrackBinding {
-  LayerID layerId;
-  QString propertyPath;
-};
 
 struct CurveEditorSnapshot {
   std::vector<ArtifactCore::CurveTrack> tracks;

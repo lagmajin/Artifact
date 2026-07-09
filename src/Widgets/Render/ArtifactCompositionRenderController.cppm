@@ -9675,7 +9675,10 @@ public:
     viewportOrientationActive_ = state.viewportOrientationActive;
     restoringViewState_ = false;
     invalidateOverlayComposite();
-    markRenderDirty();
+    renderDirty_.store(true, std::memory_order_release);
+    if (running_ && renderTickDriver_ && !renderTickDriver_->isRunning()) {
+      renderTickDriver_->start();
+    }
   }
 
   void pushViewHistory() {
@@ -24520,11 +24523,17 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
   if (selectedLayer) {
 
     if (!showGizmoOverlay_) {
+      const QMatrix4x4* overlayViewMatrix =
+          viewportOrientationMatricesValid_ ? &viewportOrientationViewForOverlay_
+                                            : nullptr;
+      const QMatrix4x4* overlayProjMatrix =
+          viewportOrientationMatricesValid_
+              ? &viewportOrientationProjectionForOverlay_
+              : nullptr;
 
       ::Artifact::drawSelectionOverlay(
-          renderer_.get(), selectedLayer,
-          has3DCamera ? &cameraViewMatrix : nullptr,
-          has3DCamera ? &cameraProjMatrix : nullptr);
+          renderer_.get(), selectedLayer, overlayViewMatrix,
+          overlayProjMatrix);
 
     }
 

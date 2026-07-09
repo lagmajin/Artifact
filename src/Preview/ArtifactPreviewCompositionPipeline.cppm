@@ -368,8 +368,11 @@ namespace Artifact
      });
      return;
     }
-    const QImage frame = videoLayer->currentFrameToQImage();
-    if (!frame.isNull()) {
+    ArtifactCore::ImageF32x4_RGBA frame = videoLayer->currentFrameBuffer();
+    if (frame.isEmpty()) {
+     frame = videoLayer->cachedFrameImageBuffer(layerPtr->currentFrame());
+    }
+    if (!frame.isEmpty()) {
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
      drawWithClonerEffect(layerPtr, baseTransform, [renderer, localRect, frame, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
       const float opacity = previewLayerOpacity(layerPtr);

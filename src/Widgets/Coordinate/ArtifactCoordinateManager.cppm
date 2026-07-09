@@ -35,7 +35,11 @@ class ArtifactCoordinateManagerWidget::Impl {
 public:
     explicit Impl(ArtifactCoordinateManagerWidget* parent)
         : parent_(parent) { buildUi(); subscribeEvents(); }
-    ~Impl() { for (auto& s : eventBusSubscriptions_) eventBus_.unsubscribe(s); }
+    ~Impl() {
+        for (auto& s : eventBusSubscriptions_) {
+            s.disconnect();
+        }
+    }
 
 
     void buildUi() {

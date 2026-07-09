@@ -242,7 +242,9 @@ AudioChannelStripWidget::AudioChannelStripWidget(std::shared_ptr<ArtifactCore::A
     layout->addLayout(fxLayout);
 
     // 1. Bus Name Label
-    QString busName = QString::fromStdString(bus->getName());
+    const auto busNameZero = bus->getName();
+    QString busName =
+        QString::fromUtf8(busNameZero.data(), static_cast<qsizetype>(busNameZero.length()));
     QLabel* nameLabel = new QLabel(busName, this);
     nameLabel->setAlignment(Qt::AlignCenter);
     QFont nameFont = nameLabel->font();

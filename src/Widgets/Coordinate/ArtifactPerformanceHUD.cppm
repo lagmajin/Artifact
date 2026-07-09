@@ -1,4 +1,11 @@
 ﻿module;
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
 #include <wobjectimpl.h>
 #include <QObject>
 #include <QTimer>
@@ -13,13 +20,6 @@ import std;
 import Artifact.Widgets.CompositionRenderController;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
-
-#if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#endif
 
 namespace Artifact {
 using namespace ArtifactCore;

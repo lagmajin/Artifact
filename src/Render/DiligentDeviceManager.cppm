@@ -13,8 +13,8 @@ module;
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <CommandQueue.h>
-#include <RenderDeviceVk.h>
-#include <CommandQueueVk.h>
+#include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/RenderDeviceVk.h>
+#include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/CommandQueueVk.h>
 #include <SwapChain.h>
 #include <RefCntAutoPtr.hpp>
 #include <d3d12.h>

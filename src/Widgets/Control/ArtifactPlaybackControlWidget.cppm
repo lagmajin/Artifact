@@ -75,6 +75,7 @@ module;
 module Artifact.Widgets.PlaybackControlWidget;
 
 import Utils;
+import Application.AppSettings;
 import Icon.SvgToIcon;
 import Frame.Range;
 import Playback.State;

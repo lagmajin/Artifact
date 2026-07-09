@@ -412,15 +412,19 @@ bool ArtifactAudioLayer::buildLipSyncTrack(ArtifactCore::LipSyncTrack& track,
   return track.analyze(segment, frameRate);
 }
 
-bool ArtifactAudioLayer::applyLipSyncToSwitchLayer(ArtifactSwitchLayer& switchLayer,
+bool ArtifactAudioLayer::applyLipSyncToSwitchLayer(ArtifactSwitchLayer* switchLayer,
                                                    double frameRate) const
 {
+  if (!switchLayer) {
+    return false;
+  }
+
   ArtifactCore::LipSyncTrack track;
   if (!buildLipSyncTrack(track, frameRate)) {
     return false;
   }
 
-  switchLayer.applyLipSyncTrack(track);
+  switchLayer->applyLipSyncTrack(track);
   return true;
 }
 

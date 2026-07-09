@@ -466,28 +466,36 @@ LayerComponentHost::validate() const {
         for (const auto& requiredTypeId : descriptor.requiredTypeIds) {
             const auto* dependency = findByType(requiredTypeId);
             if (!dependency) {
+                QString message = QStringLiteral(
+                    "%1 requires %2, but that component is missing.");
+                message = message.arg(componentLabel);
+                message = message.arg(requiredTypeId);
                 issues.push_back(
                     {descriptor.componentId,
-                     QStringLiteral(
-                         "%1 requires %2, but that component is missing.")
-                         .arg(componentLabel, requiredTypeId),
+                     message,
                      true});
             } else if (descriptor.enabled && !dependency->enabled) {
+                QString message = QStringLiteral(
+                    "%1 requires %2 to be enabled first.");
+                message = message.arg(componentLabel);
+                message = message.arg(requiredTypeId);
                 issues.push_back(
                     {descriptor.componentId,
-                     QStringLiteral(
-                         "%1 requires %2 to be enabled first.")
-                         .arg(componentLabel, requiredTypeId),
+                     message,
                      true});
             } else if (static_cast<int>(dependency->phase) >
                        static_cast<int>(descriptor.phase)) {
+                QString message = QStringLiteral(
+                    "%1 depends on %2, but %2 evaluates later (%3 -> %4).");
+                message = message.arg(componentLabel);
+                message = message.arg(requiredTypeId);
+                message = message.arg(
+                    layerComponentPhaseName(descriptor.phase));
+                message = message.arg(
+                    layerComponentPhaseName(dependency->phase));
                 issues.push_back(
                     {descriptor.componentId,
-                     QStringLiteral(
-                         "%1 depends on %2, but %2 evaluates later (%3 -> %4).")
-                         .arg(componentLabel, requiredTypeId,
-                              layerComponentPhaseName(descriptor.phase),
-                              layerComponentPhaseName(dependency->phase)),
+                     message,
                      true});
             }
         }

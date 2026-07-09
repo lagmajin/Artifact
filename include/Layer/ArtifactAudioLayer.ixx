@@ -75,7 +75,7 @@ export namespace Artifact
   WaveformData buildWaveformData(int displayWidth) const;
   QString waveformPreviewSummary(int displayWidth = 128) const;
   bool buildLipSyncTrack(ArtifactCore::LipSyncTrack& track, double frameRate) const;
-  bool applyLipSyncToSwitchLayer(ArtifactSwitchLayer& switchLayer, double frameRate) const;
+  bool applyLipSyncToSwitchLayer(ArtifactSwitchLayer* switchLayer, double frameRate) const;
 
   // Cache information
   size_t getCacheSize() const;

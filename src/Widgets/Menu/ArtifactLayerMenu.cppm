@@ -2019,9 +2019,9 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
         }
     }
 
-    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    auto* currentSelectionManager = app ? app->layerSelectionManager() : nullptr;
     const int selectedLayerCount =
-        selectionManager ? selectionManager->selectedLayers().size() : 0;
+        currentSelectionManager ? currentSelectionManager->selectedLayers().size() : 0;
     radialTransformAction->setEnabled(hasComp && selectedLayerCount >= 2);
     createLiveRadialFieldAction->setEnabled(hasComp && selectedLayerCount >= 2);
     const auto currentComposition =
@@ -3180,21 +3180,22 @@ void ArtifactLayerMenu::Impl::handleApplyLipSyncToSwitchLayer()
     }
 
     const auto audio = std::dynamic_pointer_cast<ArtifactAudioLayer>(audioLayer);
-    const auto switchTarget = std::dynamic_pointer_cast<ArtifactSwitchLayer>(switchLayer);
-    if (!audio || !switchTarget) {
+    auto switchTargetPtr = std::dynamic_pointer_cast<ArtifactSwitchLayer>(switchLayer);
+    if (!audio || !switchTargetPtr) {
         QMessageBox::warning(menu_->window(), QStringLiteral("Lip Sync"),
                              QStringLiteral("音声レイヤーと Switch Layer の両方を選択してください。"));
         return;
     }
 
     const double frameRate = comp->frameRate().framerate();
-    if (!audio->applyLipSyncToSwitchLayer(*switchTarget, frameRate)) {
+    ArtifactSwitchLayer& switchTarget = *switchTargetPtr;
+    if (!audio->applyLipSyncToSwitchLayer(&switchTarget, frameRate)) {
         QMessageBox::warning(menu_->window(), QStringLiteral("Lip Sync"),
                              QStringLiteral("Lip Sync の適用に失敗しました。"));
         return;
     }
 
-    switchTarget->changed();
+    switchTarget.changed();
     QMessageBox::information(menu_->window(), QStringLiteral("Lip Sync"),
                              QStringLiteral("Lip Sync を Switch Layer に適用しました。"));
 }
@@ -4026,9 +4027,10 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
     }
 
     const auto blendChoices = transformFieldBlendModeChoices();
-    const int currentBlendIndex = std::max(
+    const qsizetype currentBlendIndexValue = std::max<qsizetype>(
         0, blendChoices.indexOf(
                transformFieldBlendModeLabel(edited.blendMode).toLower()));
+    const int currentBlendIndex = static_cast<int>(currentBlendIndexValue);
     edited.blendMode = QInputDialog::getItem(
         menu_->window(), QStringLiteral("ライブFieldを編集"),
         QStringLiteral("Blend mode"), blendChoices, currentBlendIndex, false,
