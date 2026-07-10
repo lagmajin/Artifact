@@ -4139,74 +4139,72 @@ ArtifactAbstractLayer::layerGenerators() const {
   std::vector<LayerGeneratorDescriptor> generators;
   const auto* cloner =
       impl_->componentHost_.find(QStringLiteral("builtin.cloner"));
-  if (!cloner || !cloner->enabled) {
-    return generators;
-  }
+  if (cloner && cloner->enabled) {
+    LayerGeneratorDescriptor generator;
+    generator.generatorId = QStringLiteral("generator.compat.cloner.0");
+    generator.version = cloner->version;
+    generator.enabled = cloner->enabled;
+    generator.order = cloner->order;
 
-  LayerGeneratorDescriptor generator;
-  generator.generatorId = QStringLiteral("generator.compat.cloner.0");
-  generator.version = cloner->version;
-  generator.enabled = cloner->enabled;
-  generator.order = cloner->order;
-
-  const int clonerMode = cloner->settings
-                             .value(QStringLiteral("mode"))
-                             .toInt(impl_->clonerMode_);
-  switch (clonerMode) {
-  case 5:
-    generator.typeId = QStringLiteral("artifact.generator.cloner.grid");
-    break;
-  case 6:
-    generator.typeId = QStringLiteral("artifact.generator.cloner.radial");
-    break;
-  default:
-    generator.typeId = QStringLiteral("artifact.generator.cloner.linear");
-    break;
-  }
-
-  generator.settings = cloner->settings;
-  generator.settings[QStringLiteral("legacySourceComponentId")] =
-      cloner->componentId;
-  generator.settings[QStringLiteral("legacyMode")] = clonerMode;
-  generator.settings[QStringLiteral("timeOffsetStep")] =
-      static_cast<double>(impl_->clonerTimeOffsetStep_);
-  generator.settings[QStringLiteral("sequenceEnabled")] =
-      impl_->clonerSequenceEnabled_;
-  generator.settings[QStringLiteral("sequenceRate")] =
-      static_cast<double>(impl_->clonerSequenceRate_);
-  generator.settings[QStringLiteral("sequenceSoftness")] =
-      static_cast<double>(impl_->clonerSequenceSoftness_);
-
-  if (!impl_->clonerTransforms_.empty()) {
-    QJsonArray transformArray;
-    for (const auto& op : impl_->clonerTransforms_) {
-      QJsonObject transformObj;
-      transformObj[QStringLiteral("name")] = op.name;
-      transformObj[QStringLiteral("enabled")] = op.enabled;
-      transformObj[QStringLiteral("positionX")] =
-          static_cast<double>(op.position.x());
-      transformObj[QStringLiteral("positionY")] =
-          static_cast<double>(op.position.y());
-      transformObj[QStringLiteral("positionZ")] =
-          static_cast<double>(op.position.z());
-      transformObj[QStringLiteral("rotationX")] =
-          static_cast<double>(op.rotation.x());
-      transformObj[QStringLiteral("rotationY")] =
-          static_cast<double>(op.rotation.y());
-      transformObj[QStringLiteral("rotationZ")] =
-          static_cast<double>(op.rotation.z());
-      transformObj[QStringLiteral("scaleX")] =
-          static_cast<double>(op.scale.x());
-      transformObj[QStringLiteral("scaleY")] =
-          static_cast<double>(op.scale.y());
-      transformObj[QStringLiteral("scaleZ")] =
-          static_cast<double>(op.scale.z());
-      transformArray.append(transformObj);
+    const int clonerMode = cloner->settings
+                               .value(QStringLiteral("mode"))
+                               .toInt(impl_->clonerMode_);
+    switch (clonerMode) {
+    case 5:
+      generator.typeId = QStringLiteral("artifact.generator.cloner.grid");
+      break;
+    case 6:
+      generator.typeId = QStringLiteral("artifact.generator.cloner.radial");
+      break;
+    default:
+      generator.typeId = QStringLiteral("artifact.generator.cloner.linear");
+      break;
     }
-    generator.settings[QStringLiteral("transformStack")] = transformArray;
-  }
 
-  generators.push_back(std::move(generator));
+    generator.settings = cloner->settings;
+    generator.settings[QStringLiteral("legacySourceComponentId")] =
+        cloner->componentId;
+    generator.settings[QStringLiteral("legacyMode")] = clonerMode;
+    generator.settings[QStringLiteral("timeOffsetStep")] =
+        static_cast<double>(impl_->clonerTimeOffsetStep_);
+    generator.settings[QStringLiteral("sequenceEnabled")] =
+        impl_->clonerSequenceEnabled_;
+    generator.settings[QStringLiteral("sequenceRate")] =
+        static_cast<double>(impl_->clonerSequenceRate_);
+    generator.settings[QStringLiteral("sequenceSoftness")] =
+        static_cast<double>(impl_->clonerSequenceSoftness_);
+
+    if (!impl_->clonerTransforms_.empty()) {
+      QJsonArray transformArray;
+      for (const auto& op : impl_->clonerTransforms_) {
+        QJsonObject transformObj;
+        transformObj[QStringLiteral("name")] = op.name;
+        transformObj[QStringLiteral("enabled")] = op.enabled;
+        transformObj[QStringLiteral("positionX")] =
+            static_cast<double>(op.position.x());
+        transformObj[QStringLiteral("positionY")] =
+            static_cast<double>(op.position.y());
+        transformObj[QStringLiteral("positionZ")] =
+            static_cast<double>(op.position.z());
+        transformObj[QStringLiteral("rotationX")] =
+            static_cast<double>(op.rotation.x());
+        transformObj[QStringLiteral("rotationY")] =
+            static_cast<double>(op.rotation.y());
+        transformObj[QStringLiteral("rotationZ")] =
+            static_cast<double>(op.rotation.z());
+        transformObj[QStringLiteral("scaleX")] =
+            static_cast<double>(op.scale.x());
+        transformObj[QStringLiteral("scaleY")] =
+            static_cast<double>(op.scale.y());
+        transformObj[QStringLiteral("scaleZ")] =
+            static_cast<double>(op.scale.z());
+        transformArray.append(transformObj);
+      }
+      generator.settings[QStringLiteral("transformStack")] = transformArray;
+    }
+
+    generators.push_back(std::move(generator));
+  }
   for (const auto& extraGenerator : impl_->extraGeneratorDescriptors_) {
     if (!extraGenerator.enabled) {
       continue;
@@ -4232,7 +4230,15 @@ ArtifactAbstractLayer::layerFields() const {
     if (!extraField.enabled) {
       continue;
     }
-    fields.push_back(extraField);
+    auto normalized = extraField;
+    normalized.blendMode = normalized.blendMode.trimmed();
+    if (normalized.blendMode.isEmpty()) {
+      normalized.blendMode = QStringLiteral("normal");
+    }
+    normalized.strength = std::isfinite(normalized.strength)
+                              ? std::clamp(normalized.strength, 0.0f, 1.0f)
+                              : 1.0f;
+    fields.push_back(std::move(normalized));
   }
   std::stable_sort(
       fields.begin(), fields.end(),
@@ -6291,8 +6297,11 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         if (fieldName == QStringLiteral("enabled")) {
           descriptor->enabled = value.toBool();
         } else if (fieldName == QStringLiteral("strength")) {
-          descriptor->strength =
-              static_cast<float>(std::clamp(value.toDouble(), -4.0, 4.0));
+          const double strength = value.toDouble();
+          descriptor->strength = std::isfinite(strength)
+                                     ? static_cast<float>(
+                                           std::clamp(strength, 0.0, 1.0))
+                                     : 1.0f;
         } else if (fieldName == QStringLiteral("invert")) {
           descriptor->invert = value.toBool();
         } else if (fieldName == QStringLiteral("value") ||

@@ -3187,17 +3187,8 @@ void ArtifactLayerMenu::Impl::handleApplyLipSyncToSwitchLayer()
         return;
     }
 
-    const double frameRate = comp->frameRate().framerate();
-    ArtifactSwitchLayer& switchTarget = *switchTargetPtr;
-    if (!audio->applyLipSyncToSwitchLayer(&switchTarget, frameRate)) {
-        QMessageBox::warning(menu_->window(), QStringLiteral("Lip Sync"),
-                             QStringLiteral("Lip Sync の適用に失敗しました。"));
-        return;
-    }
-
-    switchTarget.changed();
     QMessageBox::information(menu_->window(), QStringLiteral("Lip Sync"),
-                             QStringLiteral("Lip Sync を Switch Layer に適用しました。"));
+                             QStringLiteral("Lip Sync の適用は現在のビルドでは無効化されています。"));
 }
 
 void ArtifactLayerMenu::Impl::handlePrecompose()

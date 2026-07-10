@@ -674,6 +674,19 @@ struct KeyframePropertySnapshot {
   std::vector<ArtifactCore::KeyFrame> keyframes;
 };
 
+QVector<KeyframePropertySnapshot> captureKeyframePropertySnapshots(
+    const ArtifactCompositionPtr& composition,
+    const QVector<KeyframePropertyRef>& refs);
+bool timelinePropertyAllowedByKeyingSet(const QString& propertyName);
+
+struct InterpolationChangeRecord {
+  ArtifactAbstractLayerWeak layer;
+  QString propertyPath;
+  RationalTime time;
+  ArtifactCore::KeyFrame before;
+  ArtifactCore::KeyFrame after;
+};
+
 struct KeyPatternTarget {
   ArtifactAbstractLayerPtr layer;
   LayerID layerId;
@@ -995,8 +1008,8 @@ QString selectedAreaSummaryText(
     return {};
   }
   const auto startFrame =
-      static_cast<qint64>(std::llround(std::min(selectedMarkers[0].frame,
-                                                selectedMarkers[1].frame)));
+      static_cast<qint64>(std::llround(qMin(selectedMarkers[0].frame,
+                                            selectedMarkers[1].frame)));
   const auto endFrame =
       static_cast<qint64>(std::llround(std::max(selectedMarkers[0].frame,
                                                 selectedMarkers[1].frame)));
@@ -2255,7 +2268,7 @@ QVector<InterpolationChangeRecord> buildKeyframeEasingChangeRecords(
       continue;
     }
 
-    const QJsonObject source = sources[std::min(markerIndex, sources.size() - 1)];
+    const QJsonObject source = sources[qMin(markerIndex, sources.size() - 1)];
     const auto interpolationType =
         static_cast<ArtifactCore::InterpolationType>(
             source.value(QStringLiteral("interpolation"))
@@ -2492,8 +2505,6 @@ std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr& layer,
     const QString& propertyPath);
 
-bool timelinePropertyAllowedByKeyingSet(const QString& propertyName);
-
 bool timelinePropertyAllowedByKeyingSet(const QString& propertyName)
 {
   const auto* settings = ArtifactCore::ArtifactAppSettings::instance();
@@ -2523,14 +2534,6 @@ bool timelinePropertyAllowedByKeyingSet(const QString& propertyName)
 
   return true;
 }
-
-struct InterpolationChangeRecord {
-  ArtifactAbstractLayerWeak layer;
-  QString propertyPath;
-  RationalTime time;
-  ArtifactCore::KeyFrame before;
-  ArtifactCore::KeyFrame after;
-};
 
 void applyInterpolationChangeRecords(
     const QVector<InterpolationChangeRecord>& records,
@@ -6447,8 +6450,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                                  if (auto *app = ArtifactApplicationManager::instance()) {
                                    selectionManager = app->layerSelectionManager();
                                  }
-                                 self->syncSelectionState(composition, selectionManager,
-                                                          trackRows, true);
+                                 if (self->impl_ && self->impl_->painterTrackView_) {
+                                   self->impl_->painterTrackView_->syncSelectionState(
+                                       composition, selectionManager, trackRows, true);
+                                 }
                                  if (self->impl_ && self->impl_->curveEditor_) {
                                    self->refreshCurveEditorTracks();
                                  }
@@ -6466,8 +6471,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                                  if (auto *app = ArtifactApplicationManager::instance()) {
                                    selectionManager = app->layerSelectionManager();
                                  }
-                                 self->syncSelectionState(composition, selectionManager,
-                                                          trackRows, true);
+                                 if (self->impl_ && self->impl_->painterTrackView_) {
+                                   self->impl_->painterTrackView_->syncSelectionState(
+                                       composition, selectionManager, trackRows, true);
+                                 }
                                  if (self->impl_ && self->impl_->curveEditor_) {
                                    self->refreshCurveEditorTracks();
                                  }

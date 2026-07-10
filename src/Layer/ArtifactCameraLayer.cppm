@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <QMatrix4x4>
 #include <QJsonObject>
 #include <QVariant>
@@ -65,6 +66,17 @@ struct ArtifactCameraLayer::Impl {
     // Clipping planes
     float nearClipPlane_ = 1.0f;
     float farClipPlane_ = 100000.0f;
+
+    QVector3D shakeOffset_;
+    QVector3D shakeRotation_;
+    float trauma_ = 0.0f;
+    float traumaDecay_ = 2.5f;
+    float shakeFrequency_ = 8.0f;
+    QVector3D shakePositionAmplitude_{1.0f, 1.0f, 1.0f};
+    QVector3D shakeRotationAmplitude_{1.0f, 1.0f, 1.0f};
+    std::uint32_t shakeSeed_ = 1;
+    bool hasLastShakeTime_ = false;
+    double lastShakeTime_ = 0.0;
 };
 
 ArtifactCameraLayer::ArtifactCameraLayer()
@@ -152,13 +164,22 @@ void ArtifactCameraLayer::draw(ArtifactIRenderer* renderer)
 }
 
 float ArtifactCameraLayer::zoom() const { return camImpl_->zoom_; }
-void ArtifactCameraLayer::setZoom(float z) { camImpl_->zoom_ = z; changed(); }
+void ArtifactCameraLayer::setZoom(float z) {
+    camImpl_->zoom_ = std::isfinite(z) ? std::max(0.001f, z) : 0.001f;
+    changed();
+}
 
 float ArtifactCameraLayer::focusDistance() const { return camImpl_->focusDistance_; }
-void ArtifactCameraLayer::setFocusDistance(float d) { camImpl_->focusDistance_ = d; changed(); }
+void ArtifactCameraLayer::setFocusDistance(float d) {
+    camImpl_->focusDistance_ = std::isfinite(d) ? std::max(0.001f, d) : 0.001f;
+    changed();
+}
 
 float ArtifactCameraLayer::aperture() const { return camImpl_->aperture_; }
-void ArtifactCameraLayer::setAperture(float a) { camImpl_->aperture_ = a; changed(); }
+void ArtifactCameraLayer::setAperture(float a) {
+    camImpl_->aperture_ = std::isfinite(a) ? std::max(0.0f, a) : 0.0f;
+    changed();
+}
 
 bool ArtifactCameraLayer::depthOfField() const { return camImpl_->depthOfField_; }
 void ArtifactCameraLayer::setDepthOfField(bool e) { camImpl_->depthOfField_ = e; changed(); }
@@ -167,7 +188,27 @@ bool ArtifactCameraLayer::motionBlur() const { return camImpl_->motionBlur_; }
 void ArtifactCameraLayer::setMotionBlur(bool e) { camImpl_->motionBlur_ = e; changed(); }
 
 float ArtifactCameraLayer::blurAmount() const { return camImpl_->blurAmount_; }
-void ArtifactCameraLayer::setBlurAmount(float a) { camImpl_->blurAmount_ = std::clamp(a, 0.0f, 100.0f); changed(); }
+void ArtifactCameraLayer::setBlurAmount(float a) {
+    camImpl_->blurAmount_ = std::isfinite(a) ? std::clamp(a, 0.0f, 100.0f) : 0.0f;
+    changed();
+}
+
+CameraDOFParameters ArtifactCameraLayer::depthOfFieldParameters() const {
+    CameraDOFParameters parameters;
+    parameters.enabled = camImpl_->depthOfField_;
+    parameters.focusDistance = std::max(0.001f, camImpl_->focusDistance_);
+    parameters.apertureSize = std::max(0.0f, camImpl_->aperture_);
+    parameters.focalLength = std::max(0.001f, camImpl_->zoom_);
+
+    // Keep authored blur as a normalized scale. Disabled DOF produces zero
+    // CoC values so a renderer can bypass the pass without image changes.
+    const float blurScale = std::clamp(camImpl_->blurAmount_ / 100.0f, 0.0f, 1.0f);
+    parameters.cocScale = parameters.enabled ? blurScale : 0.0f;
+    parameters.maxCoc = parameters.enabled
+        ? parameters.apertureSize * blurScale
+        : 0.0f;
+    return parameters;
+}
 
 ProjectionMode ArtifactCameraLayer::projectionMode() const { return camImpl_->projectionMode_; }
 void ArtifactCameraLayer::setProjectionMode(ProjectionMode mode) {
@@ -243,7 +284,115 @@ QMatrix4x4 ArtifactCameraLayer::viewMatrix() const
 {
     // In AE, camera looks along +Z, and -Z is towards the viewer.
     // The view matrix is the inverse of the camera's global transform.
-    return getGlobalTransform4x4().inverted();
+    const QMatrix4x4 global = getGlobalTransform4x4();
+    if (camImpl_->shakeOffset_.isNull() &&
+        camImpl_->shakeRotation_.isNull()) {
+        return global.inverted();
+    }
+
+    QMatrix4x4 shaken = global;
+    shaken.translate(camImpl_->shakeOffset_);
+    shaken.rotate(camImpl_->shakeRotation_.x(), 1.0f, 0.0f, 0.0f);
+    shaken.rotate(camImpl_->shakeRotation_.y(), 0.0f, 1.0f, 0.0f);
+    shaken.rotate(camImpl_->shakeRotation_.z(), 0.0f, 0.0f, 1.0f);
+    return shaken.inverted();
+}
+
+QVector3D ArtifactCameraLayer::shakeOffset() const {
+    return camImpl_->shakeOffset_;
+}
+
+void ArtifactCameraLayer::setShakeOffset(const QVector3D& offset) {
+    camImpl_->shakeOffset_ = offset;
+    changed();
+}
+
+QVector3D ArtifactCameraLayer::shakeRotation() const {
+    return camImpl_->shakeRotation_;
+}
+
+void ArtifactCameraLayer::setShakeRotation(const QVector3D& eulerDegrees) {
+    camImpl_->shakeRotation_ = eulerDegrees;
+    changed();
+}
+
+void ArtifactCameraLayer::clearShake() {
+    if (camImpl_->shakeOffset_.isNull() &&
+        camImpl_->shakeRotation_.isNull()) {
+        return;
+    }
+    camImpl_->shakeOffset_ = QVector3D();
+    camImpl_->shakeRotation_ = QVector3D();
+    changed();
+}
+
+void ArtifactCameraLayer::addTrauma(float amount) {
+    camImpl_->trauma_ = std::clamp(camImpl_->trauma_ + std::max(0.0f, amount),
+                                   0.0f, 1.0f);
+    changed();
+}
+
+float ArtifactCameraLayer::trauma() const { return camImpl_->trauma_; }
+
+void ArtifactCameraLayer::setTraumaDecay(float decayPerSecond) {
+    camImpl_->traumaDecay_ = std::max(0.0f, decayPerSecond);
+}
+
+float ArtifactCameraLayer::traumaDecay() const { return camImpl_->traumaDecay_; }
+
+void ArtifactCameraLayer::setShakeFrequency(float frequencyHz) {
+    camImpl_->shakeFrequency_ = std::max(0.0f, frequencyHz);
+}
+
+float ArtifactCameraLayer::shakeFrequency() const { return camImpl_->shakeFrequency_; }
+
+void ArtifactCameraLayer::setShakePositionAmplitude(const QVector3D& amplitude) {
+    camImpl_->shakePositionAmplitude_ = amplitude;
+}
+
+QVector3D ArtifactCameraLayer::shakePositionAmplitude() const {
+    return camImpl_->shakePositionAmplitude_;
+}
+
+void ArtifactCameraLayer::setShakeRotationAmplitude(const QVector3D& amplitudeDegrees) {
+    camImpl_->shakeRotationAmplitude_ = amplitudeDegrees;
+}
+
+QVector3D ArtifactCameraLayer::shakeRotationAmplitude() const {
+    return camImpl_->shakeRotationAmplitude_;
+}
+
+void ArtifactCameraLayer::setShakeSeed(std::uint32_t seed) {
+    camImpl_->shakeSeed_ = seed;
+}
+
+std::uint32_t ArtifactCameraLayer::shakeSeed() const { return camImpl_->shakeSeed_; }
+
+void ArtifactCameraLayer::advanceShake(double timeSeconds, double deltaSeconds) {
+    double effectiveDelta = 0.0;
+    if (!camImpl_->hasLastShakeTime_ || timeSeconds > camImpl_->lastShakeTime_) {
+        effectiveDelta = std::max(0.0, deltaSeconds);
+        camImpl_->lastShakeTime_ = timeSeconds;
+        camImpl_->hasLastShakeTime_ = true;
+    }
+    const float dt = static_cast<float>(effectiveDelta);
+    camImpl_->trauma_ = std::max(0.0f, camImpl_->trauma_ -
+                                           camImpl_->traumaDecay_ * dt);
+    const float intensity = camImpl_->trauma_ * camImpl_->trauma_;
+    const float phase = static_cast<float>(timeSeconds) * camImpl_->shakeFrequency_;
+    const float seed = static_cast<float>(camImpl_->shakeSeed_ & 0xffffu) * 0.0137f;
+    const auto noise = [phase, seed](float channel) {
+        return std::sin(phase * (1.0f + channel * 0.17f) + seed +
+                        channel * 2.31f);
+    };
+    camImpl_->shakeOffset_ = QVector3D(
+        noise(1.0f) * camImpl_->shakePositionAmplitude_.x() * intensity,
+        noise(2.0f) * camImpl_->shakePositionAmplitude_.y() * intensity,
+        noise(3.0f) * camImpl_->shakePositionAmplitude_.z() * intensity);
+    camImpl_->shakeRotation_ = QVector3D(
+        noise(4.0f) * camImpl_->shakeRotationAmplitude_.x() * intensity,
+        noise(5.0f) * camImpl_->shakeRotationAmplitude_.y() * intensity,
+        noise(6.0f) * camImpl_->shakeRotationAmplitude_.z() * intensity);
 }
 
 QMatrix4x4 ArtifactCameraLayer::projectionMatrix(float aspect) const
@@ -416,10 +565,45 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     apertureProp->setSoftRange(0.0, 250.0);
     apertureProp->setTooltip(QStringLiteral("Aperture / f-stop"));
     lensOptions.addProperty(apertureProp);
+
+    ArtifactCore::PropertyGroup shakeOptions("Camera Shake");
+    auto traumaProp = persistentLayerProperty(
+        QStringLiteral("Camera Shake/Trauma"), ArtifactCore::PropertyType::Float,
+        static_cast<double>(camImpl_->trauma_), -90);
+    traumaProp->setHardRange(0.0, 1.0);
+    shakeOptions.addProperty(traumaProp);
+    auto decayProp = persistentLayerProperty(
+        QStringLiteral("Camera Shake/Trauma Decay"), ArtifactCore::PropertyType::Float,
+        static_cast<double>(camImpl_->traumaDecay_), -89);
+    decayProp->setHardRange(0.0, 100.0);
+    shakeOptions.addProperty(decayProp);
+    auto frequencyProp = persistentLayerProperty(
+        QStringLiteral("Camera Shake/Frequency"), ArtifactCore::PropertyType::Float,
+        static_cast<double>(camImpl_->shakeFrequency_), -88);
+    frequencyProp->setHardRange(0.0, 240.0);
+    frequencyProp->setUnit(QStringLiteral("Hz"));
+    shakeOptions.addProperty(frequencyProp);
+    auto positionAmplitudeProp = persistentLayerProperty(
+        QStringLiteral("Camera Shake/Position Amplitude"), ArtifactCore::PropertyType::Float,
+        static_cast<double>(camImpl_->shakePositionAmplitude_.x()), -87);
+    positionAmplitudeProp->setHardRange(0.0, 10000.0);
+    positionAmplitudeProp->setUnit(QStringLiteral("px"));
+    shakeOptions.addProperty(positionAmplitudeProp);
+    auto rotationAmplitudeProp = persistentLayerProperty(
+        QStringLiteral("Camera Shake/Rotation Amplitude"), ArtifactCore::PropertyType::Float,
+        static_cast<double>(camImpl_->shakeRotationAmplitude_.x()), -86);
+    rotationAmplitudeProp->setHardRange(0.0, 360.0);
+    rotationAmplitudeProp->setUnit(QStringLiteral("deg"));
+    shakeOptions.addProperty(rotationAmplitudeProp);
+    auto seedProp = persistentLayerProperty(
+        QStringLiteral("Camera Shake/Seed"), ArtifactCore::PropertyType::Integer,
+        static_cast<int>(camImpl_->shakeSeed_), -85);
+    shakeOptions.addProperty(seedProp);
     
     groups.push_back(projectionOptions);
     groups.push_back(lensOptions);
     groups.push_back(clippingOptions);
+    groups.push_back(shakeOptions);
     return groups;
 }
 
@@ -470,6 +654,27 @@ bool ArtifactCameraLayer::setLayerPropertyValue(const QString& propertyPath, con
     } else if (propertyPath == "Camera Options/Aperture") {
         setAperture(value.toFloat());
         return true;
+    } else if (propertyPath == "Camera Shake/Trauma") {
+        camImpl_->trauma_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
+        changed();
+        return true;
+    } else if (propertyPath == "Camera Shake/Trauma Decay") {
+        setTraumaDecay(value.toFloat());
+        return true;
+    } else if (propertyPath == "Camera Shake/Frequency") {
+        setShakeFrequency(value.toFloat());
+        return true;
+    } else if (propertyPath == "Camera Shake/Position Amplitude") {
+        const float amplitude = std::max(0.0f, value.toFloat());
+        setShakePositionAmplitude(QVector3D(amplitude, amplitude, amplitude));
+        return true;
+    } else if (propertyPath == "Camera Shake/Rotation Amplitude") {
+        const float amplitude = std::max(0.0f, value.toFloat());
+        setShakeRotationAmplitude(QVector3D(amplitude, amplitude, amplitude));
+        return true;
+    } else if (propertyPath == "Camera Shake/Seed") {
+        setShakeSeed(static_cast<std::uint32_t>(std::max(0, value.toInt())));
+        return true;
     }
     
     return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
@@ -493,6 +698,12 @@ QJsonObject ArtifactCameraLayer::toJson() const
     obj["cameraNearClip"] = static_cast<double>(camImpl_->nearClipPlane_);
     obj["cameraFarClip"] = static_cast<double>(camImpl_->farClipPlane_);
     obj["cameraIpd"] = static_cast<double>(camImpl_->ipd_);
+    obj["cameraShakeTrauma"] = static_cast<double>(camImpl_->trauma_);
+    obj["cameraShakeTraumaDecay"] = static_cast<double>(camImpl_->traumaDecay_);
+    obj["cameraShakeFrequency"] = static_cast<double>(camImpl_->shakeFrequency_);
+    obj["cameraShakePositionAmplitude"] = static_cast<double>(camImpl_->shakePositionAmplitude_.x());
+    obj["cameraShakeRotationAmplitude"] = static_cast<double>(camImpl_->shakeRotationAmplitude_.x());
+    obj["cameraShakeSeed"] = static_cast<int>(camImpl_->shakeSeed_);
     return obj;
 }
 
@@ -543,6 +754,26 @@ void ArtifactCameraLayer::fromJsonProperties(const QJsonObject& obj)
     }
     if (obj.contains("cameraIpd")) {
         setIpd(static_cast<float>(obj.value("cameraIpd").toDouble(camImpl_->ipd_)));
+    }
+    if (obj.contains("cameraShakeTrauma")) {
+        camImpl_->trauma_ = std::clamp(static_cast<float>(obj.value("cameraShakeTrauma").toDouble()), 0.0f, 1.0f);
+    }
+    if (obj.contains("cameraShakeTraumaDecay")) {
+        setTraumaDecay(static_cast<float>(obj.value("cameraShakeTraumaDecay").toDouble()));
+    }
+    if (obj.contains("cameraShakeFrequency")) {
+        setShakeFrequency(static_cast<float>(obj.value("cameraShakeFrequency").toDouble()));
+    }
+    if (obj.contains("cameraShakePositionAmplitude")) {
+        const float amplitude = static_cast<float>(obj.value("cameraShakePositionAmplitude").toDouble());
+        setShakePositionAmplitude(QVector3D(amplitude, amplitude, amplitude));
+    }
+    if (obj.contains("cameraShakeRotationAmplitude")) {
+        const float amplitude = static_cast<float>(obj.value("cameraShakeRotationAmplitude").toDouble());
+        setShakeRotationAmplitude(QVector3D(amplitude, amplitude, amplitude));
+    }
+    if (obj.contains("cameraShakeSeed")) {
+        setShakeSeed(static_cast<std::uint32_t>(std::max(0, obj.value("cameraShakeSeed").toInt())));
     }
 }
 

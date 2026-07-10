@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <utility>
@@ -119,8 +120,14 @@ inline QJsonObject toJsonObject(const LayerFieldDescriptor& descriptor) {
     obj[QStringLiteral("version")] = static_cast<qint64>(descriptor.version);
     obj[QStringLiteral("enabled")] = descriptor.enabled;
     obj[QStringLiteral("order")] = descriptor.order;
-    obj[QStringLiteral("blendMode")] = descriptor.blendMode;
-    obj[QStringLiteral("strength")] = descriptor.strength;
+    const QString blendMode = descriptor.blendMode.trimmed().isEmpty()
+                                   ? QStringLiteral("normal")
+                                   : descriptor.blendMode.trimmed();
+    const float strength = std::isfinite(descriptor.strength)
+                               ? std::clamp(descriptor.strength, 0.0f, 1.0f)
+                               : 1.0f;
+    obj[QStringLiteral("blendMode")] = blendMode;
+    obj[QStringLiteral("strength")] = strength;
     obj[QStringLiteral("invert")] = descriptor.invert;
     obj[QStringLiteral("settings")] = descriptor.settings;
     return obj;
@@ -140,10 +147,16 @@ layerFieldDescriptorFromJson(const QJsonObject& obj) {
         std::max<qint64>(1, obj.value(QStringLiteral("version")).toInteger(1)));
     descriptor.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
     descriptor.order = obj.value(QStringLiteral("order")).toInt(0);
-    descriptor.blendMode =
-        obj.value(QStringLiteral("blendMode")).toString(QStringLiteral("normal"));
-    descriptor.strength =
-        static_cast<float>(obj.value(QStringLiteral("strength")).toDouble(1.0));
+    descriptor.blendMode = obj.value(QStringLiteral("blendMode"))
+                               .toString(QStringLiteral("normal"))
+                               .trimmed();
+    if (descriptor.blendMode.isEmpty()) {
+        descriptor.blendMode = QStringLiteral("normal");
+    }
+    const double strength = obj.value(QStringLiteral("strength")).toDouble(1.0);
+    descriptor.strength = std::isfinite(strength)
+                              ? static_cast<float>(std::clamp(strength, 0.0, 1.0))
+                              : 1.0f;
     descriptor.invert = obj.value(QStringLiteral("invert")).toBool(false);
     descriptor.settings = obj.value(QStringLiteral("settings")).toObject();
     return descriptor;

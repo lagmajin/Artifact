@@ -547,6 +547,17 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
     }
 
     if (hasEnabledCloner) {
+        // Effect-based cloners and component generators are independent
+        // stacks. Do not let the legacy effect path hide descriptor-based
+        // generators; append their generated instances using the canonical
+        // component merge rule.
+        const auto componentInstances =
+            clonerComponentInstances(layer, baseTransform);
+        if (componentInstances.size() > 1U) {
+            clonerInstances.insert(clonerInstances.end(),
+                                   componentInstances.begin() + 1,
+                                   componentInstances.end());
+        }
         instances.reserve(clonerInstances.size() + 1U);
         instances.push_back(CloneRenderInstance{baseTransform, 1.0f});
         instances.insert(instances.end(), clonerInstances.begin(), clonerInstances.end());

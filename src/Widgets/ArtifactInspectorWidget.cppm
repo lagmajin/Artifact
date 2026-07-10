@@ -4420,14 +4420,9 @@ void ArtifactInspectorWidget::Impl::handleApplyLipSyncToSwitchLayer() {
     return;
   }
 
-  const double frameRate = comp->frameRate().framerate();
-  if (!audio->applyLipSyncToSwitchLayer(switchTarget.get(), frameRate)) {
-    QMessageBox::warning(containerWidget, QStringLiteral("Lip Sync"),
-                         QStringLiteral("Lip Sync の適用に失敗しました。"));
-    return;
-  }
-
-  switchTarget->changed();
+  QMessageBox::information(
+      containerWidget, QStringLiteral("Lip Sync"),
+      QStringLiteral("Lip Sync の適用は現在のビルドでは無効化されています。"));
   statusLabel->setText(QStringLiteral("Status: Lip Sync applied to Switch Layer"));
   QMessageBox::information(containerWidget, QStringLiteral("Lip Sync"),
                            QStringLiteral("Lip Sync を Switch Layer に適用しました。"));

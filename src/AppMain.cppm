@@ -2136,9 +2136,6 @@ int main(int argc, char *argv[]) {
       coordManager, coordManagerFloatingGeometry);
   mw->setDockVisible(QStringLiteral("Coordinate Manager"), true);
 
-      new ArtifactPlaybackControlTestWidget(mw),
-      QRect(860, 828, 720, 210));
-
   QTimer::singleShot(
       0, mw,
       [=, &renderCenterWindow, &workspaceManager, &debugConsoleWidget,

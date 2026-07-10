@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.30)
 
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444" CACHE STRING "Required for import std" FORCE)
-set(CMAKE_CXX_MODULE_STD ON CACHE BOOL "Enable import std support during toolchain detection" FORCE)
+set(CMAKE_CXX_MODULE_STD OFF CACHE BOOL "Keep import std opt-in during toolchain detection" FORCE)
 set(CMAKE_CXX_STANDARD 23 CACHE STRING "Required for import std detection" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "" FORCE)
 
@@ -13,34 +13,62 @@ project(Artifact)
 set(CMAKE_CXX_MODULE_STD OFF CACHE BOOL "" FORCE)
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-    set(ARTIFACT_MSVC_STD_IXX "")
+    set(ARTIFACT_MSVC_MODULES_JSON "")
 
     get_filename_component(_std_x64   "${CMAKE_CXX_COMPILER}" DIRECTORY)
     get_filename_component(_std_host  "${_std_x64}" DIRECTORY)
     get_filename_component(_std_bin   "${_std_host}" DIRECTORY)
     get_filename_component(_std_root  "${_std_bin}" DIRECTORY)
-    if(EXISTS "${_std_root}/modules/std.ixx")
-        set(ARTIFACT_MSVC_STD_IXX "${_std_root}/modules/std.ixx")
+    if(EXISTS "${_std_root}/modules/modules.json")
+        set(ARTIFACT_MSVC_MODULES_JSON "${_std_root}/modules/modules.json")
     endif()
 
-    if(NOT ARTIFACT_MSVC_STD_IXX)
+    if(NOT ARTIFACT_MSVC_MODULES_JSON)
         file(GLOB_RECURSE _std_ixx_cands LIST_DIRECTORIES FALSE
-            "C:/Program Files/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/14.*/modules/std.ixx"
-            "C:/Program Files/Microsoft Visual Studio/18/*/VC/Tools/MSVC/14.*/modules/std.ixx")
+            "C:/Program Files/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/14.*/modules/modules.json"
+            "C:/Program Files/Microsoft Visual Studio/18/*/VC/Tools/MSVC/14.*/modules/modules.json")
         list(SORT _std_ixx_cands ORDER DESCENDING)
         if(_std_ixx_cands)
-            list(GET _std_ixx_cands 0 ARTIFACT_MSVC_STD_IXX)
+            list(GET _std_ixx_cands 0 ARTIFACT_MSVC_MODULES_JSON)
         endif()
     endif()
 
-    if(ARTIFACT_MSVC_STD_IXX)
-        configure_file(
-            "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/msvc-stdlib-modules.json.in"
-            "${CMAKE_BINARY_DIR}/msvc-stdlib-modules.json"
-            @ONLY)
+    if(ARTIFACT_MSVC_MODULES_JSON)
         set(CMAKE_CXX_STDLIB_MODULES_JSON
-            "${CMAKE_BINARY_DIR}/msvc-stdlib-modules.json"
+            "${ARTIFACT_MSVC_MODULES_JSON}"
             CACHE FILEPATH "MSVC standard library module metadata override" FORCE)
+    endif()
+
+    get_filename_component(_artifact_msvc_include_root "${_std_root}/include" ABSOLUTE)
+    file(GLOB _artifact_windows_sdk_include_versions LIST_DIRECTORIES TRUE
+        "C:/Program Files (x86)/Windows Kits/10/Include/10.*")
+    if(_artifact_windows_sdk_include_versions)
+        list(SORT _artifact_windows_sdk_include_versions ORDER DESCENDING)
+        list(GET _artifact_windows_sdk_include_versions 0 _artifact_windows_sdk_include_root)
+    endif()
+
+    set(_artifact_std_include_dirs "")
+    if(EXISTS "${_artifact_msvc_include_root}")
+        list(APPEND _artifact_std_include_dirs "${_artifact_msvc_include_root}")
+    endif()
+    foreach(_artifact_sdk_subdir IN ITEMS ucrt shared um winrt)
+        if(EXISTS "${_artifact_windows_sdk_include_root}/${_artifact_sdk_subdir}")
+            list(APPEND _artifact_std_include_dirs "${_artifact_windows_sdk_include_root}/${_artifact_sdk_subdir}")
+        endif()
+    endforeach()
+
+    if(_artifact_std_include_dirs)
+        foreach(_artifact_include_dir IN LISTS _artifact_std_include_dirs)
+            string(APPEND CMAKE_C_FLAGS   " /I\"${_artifact_include_dir}\"")
+            string(APPEND CMAKE_CXX_FLAGS " /I\"${_artifact_include_dir}\"")
+        endforeach()
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}" CACHE STRING "C flags with explicit MSVC include paths" FORCE)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}" CACHE STRING "CXX flags with explicit MSVC include paths" FORCE)
+        set(ENV{INCLUDE} "${_artifact_std_include_dirs};$ENV{INCLUDE}")
+
+        if(TARGET __cmake_cxx23)
+            target_include_directories(__cmake_cxx23 SYSTEM PRIVATE ${_artifact_std_include_dirs})
+        endif()
     endif()
 endif()
 
@@ -238,6 +266,13 @@ endif()
 list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Composition/ArtifactCompositionManager.cppm" _composition_manager_idx)
 if(_composition_manager_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Composition/ArtifactCompositionManager.cppm")
+endif()
+
+# SwitchLayer はインターフェースと同名の実装 module を持つため、
+# 自動分類や古い生成結果に依存せず実装を必ずターゲットへ含める。
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSwitchLayer.cppm" _switch_layer_impl_idx)
+if(_switch_layer_impl_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSwitchLayer.cppm")
 endif()
 
 # OffscreenCompositionRenderer は他モジュールから import される公開モジュールなので、
@@ -569,6 +604,11 @@ if(FFMPEG_FOUND)
         target_link_directories(Artifact PRIVATE ${FFMPEG_LIBRARY_DIRS})
     endif()
     target_link_libraries(Artifact PRIVATE ${FFMPEG_LIBRARIES})
+    # Some FFmpeg package configurations omit avutil even though codec/format
+    # objects expose helpers such as av_make_error_string that reference it.
+    # Keep the final Artifact link self-contained instead of relying only on
+    # transitive ArtifactCore linkage.
+    target_link_libraries(Artifact PRIVATE avutil)
 else()
     # Fallback for manual specification
     target_link_libraries(Artifact PRIVATE 

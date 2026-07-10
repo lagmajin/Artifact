@@ -650,7 +650,19 @@ private:
 class UnprecomposeUndoCommand : public UndoCommand {
 public:
   explicit UnprecomposeUndoCommand(LayerID precompLayerId, bool keepComposition)
-      : precompLayerId_(precompLayerId), keepComposition_(keepComposition) {}
+      : precompLayerId_(precompLayerId), keepComposition_(keepComposition) {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : ArtifactCompositionPtr{};
+    auto layer = comp ? comp->layerById(precompLayerId_) : ArtifactAbstractLayerPtr{};
+    auto compLayer =
+        layer ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer)
+              : nullptr;
+    if (compLayer) {
+      mode_ = compLayer->restoreMoveAllAttributes()
+                  ? PrecomposeMode::MoveAllAttributes
+                  : PrecomposeMode::MoveSelected;
+    }
+  }
 
   void redo() override {
     auto *svc = ArtifactProjectService::instance();
@@ -665,7 +677,6 @@ public:
     // valid right after a successful unprecompose.
     movedLayerIds_ = svc->lastUnprecomposeMovedLayerIds();
     childName_ = svc->lastUnprecomposeChildName();
-    precompLayerId_ = LayerID(); // consumed by the unprecompose
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
@@ -678,10 +689,12 @@ public:
     }
     // Re-create the precomp by precomposing the moved layers back together.
     // openNewComposition=false keeps the user's current focus.
-    svc->precomposeLayersInCurrentComposition(movedLayerIds_, childName_, false,
-                                              true, PrecomposeMode::MoveSelected);
-    movedLayerIds_.clear();
-    childName_ = UniString();
+    if (!svc->precomposeLayersInCurrentComposition(movedLayerIds_, childName_,
+                                                   false, true, mode_)) {
+      return;
+    }
+    const PrecomposeOutcome outcome = svc->lastPrecomposeOutcome();
+    precompLayerId_ = outcome.precompLayerId;
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
     }
@@ -696,6 +709,7 @@ private:
   bool keepComposition_;
   QVector<LayerID> movedLayerIds_;
   UniString childName_;
+  PrecomposeMode mode_ = PrecomposeMode::MoveSelected;
 };
 
 class AddEffectUndoCommand : public UndoCommand {
@@ -2542,6 +2556,18 @@ bool ArtifactProjectService::precomposeLayersInCurrentComposition(
 
   precompLayer->setLayerName(newCompositionName.toQString());
   precompLayer->setCompositionId(childCompId);
+  precompLayer->setRestoreMoveAllAttributes(moveAll);
+  precompLayer->clearRestoreExternalParents();
+  for (int i = 0; i < orderedLayers.size(); ++i) {
+    const auto &layer = orderedLayers[i];
+    if (!layer) {
+      continue;
+    }
+    const LayerID parentId = originalParentIds.value(i);
+    if (!parentId.isNil() && !containsLayerId(parentId)) {
+      precompLayer->setRestoreExternalParent(layer->id(), parentId);
+    }
+  }
   if (moveAll) {
     // The new child holds the whole original timeline verbatim (layers keep
     // their in/out), so the precomp layer plays it from frame 0 for the full
@@ -2609,14 +2635,30 @@ bool ArtifactProjectService::unprecomposeLayerInCurrentComposition(
     return false;
   }
 
-  // Snapshot what undo would need to re-create the precomp layer, before any
-  // mutation actually happens.
-  impl_->lastUnprecomposePrecompLayerId_ = layerId;
-  impl_->lastUnprecomposeChildCompId_ = childCompId;
-  impl_->lastUnprecomposeChildName_ =
-      UniString(childComp->settings().compositionName());
-
   const auto childLayers = childComp->allLayer();
+  if (childLayers.isEmpty()) {
+    // An empty precompose has no layer state to restore and should not be
+    // consumed by the command/undo path as a successful operation.
+    return false;
+  }
+  // Validate the complete restore set before mutating either composition.
+  // addLayerToComposition() can succeed for an early layer and fail later;
+  // rejecting collisions up front keeps unprecompose atomic at this layer.
+  QSet<QString> childLayerIdSet;
+  childLayerIdSet.reserve(childLayers.size());
+  for (const auto &childLayer : childLayers) {
+    if (!childLayer || childLayer->id().isNil() ||
+        childLayerIdSet.contains(childLayer->id().toString())) {
+      return false;
+    }
+    if (comp->containsLayerById(childLayer->id())) {
+      return false;
+    }
+    childLayerIdSet.insert(childLayer->id().toString());
+  }
+  const bool restoreMoveAll = compLayer->restoreMoveAllAttributes();
+  const qint64 timeOffsetFrames =
+      !restoreMoveAll ? compLayer->startTime().framePosition() : 0;
   int insertIndex = -1;
   const auto parentLayers = comp->allLayer();
   for (int i = 0; i < parentLayers.size(); ++i) {
@@ -2632,37 +2674,97 @@ bool ArtifactProjectService::unprecomposeLayerInCurrentComposition(
 
   QVector<LayerID> movedLayerIds;
   movedLayerIds.reserve(childLayers.size());
+  QSet<QString> movedLayerIdSet;
+  movedLayerIdSet.reserve(childLayers.size());
   for (const auto &childLayer : childLayers) {
     if (!childLayer) {
       continue;
     }
     movedLayerIds.push_back(childLayer->id());
+    movedLayerIdSet.insert(childLayer->id().toString());
     if (!project->addLayerToComposition(comp->id(), childLayer).success) {
+      for (const auto &addedId : movedLayerIds) {
+        project->removeLayerFromComposition(comp->id(), addedId);
+      }
       return false;
     }
   }
 
   if (!project->removeLayerFromComposition(comp->id(), layerId)) {
+    for (const auto &addedId : movedLayerIds) {
+      project->removeLayerFromComposition(comp->id(), addedId);
+      for (const auto &childLayer : childLayers) {
+        if (childLayer && childLayer->id() == addedId) {
+          project->addLayerToComposition(childCompId, childLayer);
+          break;
+        }
+      }
+    }
     return false;
   }
 
   for (int i = 0; i < movedLayerIds.size(); ++i) {
     const LayerID &movedId = movedLayerIds[i];
     if (!project->removeLayerFromComposition(childCompId, movedId)) {
+      for (const auto &addedId : movedLayerIds) {
+        project->removeLayerFromComposition(comp->id(), addedId);
+        for (const auto &childLayer : childLayers) {
+          if (childLayer && childLayer->id() == addedId) {
+            project->addLayerToComposition(childCompId, childLayer);
+            break;
+          }
+        }
+      }
       return false;
     }
     auto movedLayer = comp->layerById(movedId);
     if (movedLayer) {
       movedLayer->setComposition(comp.get());
+      if (timeOffsetFrames != 0) {
+        movedLayer->slideTimingBy(timeOffsetFrames);
+      }
+      const LayerID restoredExternalParent =
+          compLayer->restoreExternalParent(movedId);
+      if (!restoredExternalParent.isNil() &&
+          comp->containsLayerById(restoredExternalParent)) {
+        movedLayer->setParentById(restoredExternalParent);
+      } else {
+        const LayerID currentParentId = movedLayer->parentLayerId();
+        if (!currentParentId.isNil() &&
+            !movedLayerIdSet.contains(currentParentId.toString()) &&
+            !comp->containsLayerById(currentParentId)) {
+          movedLayer->clearParent();
+        }
+      }
     }
     comp->moveLayerToIndex(movedId, std::max(0, insertIndex + i));
   }
 
   // Record the moved layer ids for undo (re-precompose), after success.
+  impl_->lastUnprecomposePrecompLayerId_ = layerId;
+  impl_->lastUnprecomposeChildCompId_ = childCompId;
+  impl_->lastUnprecomposeChildName_ =
+      UniString(childComp->settings().compositionName());
   impl_->lastUnprecomposeMovedLayerIds_ = movedLayerIds;
 
   if (!keepComposition) {
-    removeComposition(childCompId);
+    if (!removeComposition(childCompId)) {
+      for (const auto &movedId : movedLayerIds) {
+        project->removeLayerFromComposition(comp->id(), movedId);
+        for (const auto &childLayer : childLayers) {
+          if (childLayer && childLayer->id() == movedId) {
+            project->addLayerToComposition(childCompId, childLayer);
+            break;
+          }
+        }
+      }
+      project->addLayerToComposition(comp->id(), compLayer);
+      impl_->lastUnprecomposePrecompLayerId_ = LayerID();
+      impl_->lastUnprecomposeChildCompId_ = CompositionID();
+      impl_->lastUnprecomposeChildName_ = UniString();
+      impl_->lastUnprecomposeMovedLayerIds_.clear();
+      return false;
+    }
   }
 
   if (!movedLayerIds.isEmpty()) {

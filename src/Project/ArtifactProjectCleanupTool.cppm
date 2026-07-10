@@ -2,11 +2,13 @@ module;
 #include <utility>
 
 #include <QStringList>
+#include <QVector>
 #include <QSet>
 #include <QDebug>
 #include <QFileInfo>
 #include <QVariant>
 #include <QMetaType>
+#include <functional>
 
 module Artifact.Project.Cleanup;
 
@@ -16,6 +18,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Property.Abstract;
 import Property.Group;
+import Artifact.Project.Statistics;
 
 namespace Artifact {
 
@@ -47,6 +50,16 @@ QStringList ArtifactProjectCleanupTool::findUnusedAssetPaths(ArtifactProject* pr
             usedAssetPaths.insert(fi.fileName()); // fallback match key
         }
     };
+
+    // Shared metadata traversal covers serialized sourcePath/filePath values.
+    // The legacy property-group scan below remains as a compatibility fallback
+    // for custom properties that are not serialized in layer JSON.
+    ProjectMetadataValueCollector metadataCollector;
+    const QVector<ArtifactCore::MetadataCollector*> collectors{&metadataCollector};
+    ArtifactProjectStatistics::collectMetadata(project, collectors);
+    for (const auto& path : metadataCollector.externalFiles()) {
+        maybeTrackPath(path);
+    }
 
     // 2. 使用中アセットの収集 (コンポジション内の全レイヤーを調査)
     std::function<void(ProjectItem*)> collectUsed = [&](ProjectItem* item) {

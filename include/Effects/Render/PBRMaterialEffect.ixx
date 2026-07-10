@@ -31,6 +31,7 @@
 #include <random>
 #include <QString>
 #include <QColor>
+#include <QVariant>
 export module Artifact.Effect.Render.PBRMaterial;
 
 
@@ -38,6 +39,7 @@ export module Artifact.Effect.Render.PBRMaterial;
 
 import Artifact.Effect.Abstract;
 import Utils.String.UniString;
+import Material.Material;
 
 export namespace Artifact {
 
@@ -60,10 +62,19 @@ export namespace Artifact {
         void setAlbedoColor(const QColor& color) { albedoColor_ = color; }
 
         float metallic() const { return metallic_; }
-        void setMetallic(float m) { metallic_ = m; }
+        void setMetallic(float m) { metallic_ = std::clamp(m, 0.0f, 1.0f); }
 
         float roughness() const { return roughness_; }
-        void setRoughness(float r) { roughness_ = r; }
+        void setRoughness(float r) { roughness_ = std::clamp(r, 0.0f, 1.0f); }
+
+        ArtifactCore::Material toMaterial() const {
+            ArtifactCore::Material material(ArtifactCore::MaterialType::PBR);
+            material.setName(ArtifactCore::UniString("PBR Material"));
+            material.setBaseColor(albedoColor_);
+            material.setMetallic(metallic_);
+            material.setRoughness(roughness_);
+            return material;
+        }
 
         std::vector<AbstractProperty> getProperties() const override {
             std::vector<AbstractProperty> props;
@@ -78,22 +89,28 @@ export namespace Artifact {
             metalProp.setName("Metallic");
             metalProp.setType(PropertyType::Float);
             metalProp.setValue(metallic_);
+            metalProp.setHardRange(0.0, 1.0);
+            metalProp.setSoftRange(0.0, 1.0);
 
             auto& roughProp = props.emplace_back();
             roughProp.setName("Roughness");
             roughProp.setType(PropertyType::Float);
             roughProp.setValue(roughness_);
+            roughProp.setHardRange(0.0, 1.0);
+            roughProp.setSoftRange(0.0, 1.0);
 
             return props;
         }
 
         void setPropertyValue(const UniString& name, const QVariant& value) override {
             if (name == UniString("Metallic")) {
-                metallic_ = value.toFloat();
+                setMetallic(value.toFloat());
             } else if (name == UniString("Roughness")) {
-                roughness_ = value.toFloat();
+                setRoughness(value.toFloat());
             } else if (name == UniString("Albedo Color")) {
-                // Not supported via generic variant binding in this mock yet
+                if (value.canConvert<QColor>()) {
+                    setAlbedoColor(value.value<QColor>());
+                }
             }
         }
     };

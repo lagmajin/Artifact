@@ -114,6 +114,8 @@ import Artifact.Render.Queue.Service;
 
 import Artifact.Render.Config;
 
+import Settings.Accessibility;
+
 import Artifact.Render.ROI;
 
 import Artifact.Render.Context;
@@ -2643,10 +2645,12 @@ void drawTransformFieldBadge(ArtifactIRenderer *renderer,
   const QPointF anchor =
       QPointF((displayCenter.x() + displayRadiusPoint.x()) * 0.5,
               (displayCenter.y() + displayRadiusPoint.y()) * 0.5);
+  const double accessibilityFontScale =
+      std::max(1.0f, Accessibility::fontScale());
   const float panelW =
       std::clamp(160.0f + static_cast<float>(badgeTitle.size()) * 4.5f, 160.0f,
                  320.0f);
-  const float panelH = 54.0f;
+  const float panelH = 54.0f * static_cast<float>(accessibilityFontScale);
   const float panelX = static_cast<float>(anchor.x()) + 12.0f;
   const float panelY = static_cast<float>(anchor.y()) - 10.0f - panelH;
 
@@ -2661,16 +2665,20 @@ void drawTransformFieldBadge(ArtifactIRenderer *renderer,
           ? FloatColor{1.0f, 0.55f, 0.18f, 0.96f}
           : isHoveredField ? FloatColor{1.0f, 0.83f, 0.32f, 0.94f}
                            : FloatColor{0.38f, 0.95f, 0.63f, 0.94f};
+  const float contrastScale = Accessibility::contrastScale();
 
   renderer->drawOverlayPanel(panelX, panelY, panelW, panelH, panelFill,
                              panelBorder);
 
   QFont titleFont = QApplication::font();
-  titleFont.setPointSizeF(std::max(9.0, static_cast<double>(titleFont.pointSizeF())));
+  titleFont.setPointSizeF(
+      std::max(9.0, static_cast<double>(titleFont.pointSizeF()) *
+                          accessibilityFontScale));
   titleFont.setWeight(QFont::DemiBold);
   QFont detailFont = QApplication::font();
   detailFont.setPointSizeF(
-      std::max(7.5, static_cast<double>(detailFont.pointSizeF()) - 0.5));
+      std::max(7.5, (static_cast<double>(detailFont.pointSizeF()) - 0.5) *
+                        accessibilityFontScale));
 
   renderer->drawText(
       QRectF(panelX + 10.0f, panelY + 6.0f, panelW - 20.0f, 16.0f),
@@ -2688,7 +2696,7 @@ void drawTransformFieldBadge(ArtifactIRenderer *renderer,
   const float tagSize = std::max(8.0f, 10.0f * inverseZoom);
   renderer->drawCircle(static_cast<float>(displayCenter.x()),
                        static_cast<float>(displayCenter.y()),
-                       tagSize * 1.4f, panelBorder, 1.4f, true);
+                       tagSize * 1.4f, panelBorder, 1.4f * contrastScale, true);
 }
 
 
@@ -6716,6 +6724,10 @@ void drawLayerForCompositionView(
 
 
   if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer)) {
+
+    // Apply persisted Master Property overrides once per change, immediately
+    // before the precomp surface is requested.
+    compLayer->applyExposedPropertyOverrides();
 
     if (auto childComp = compLayer->sourceComposition()) {
 
@@ -13565,6 +13577,18 @@ QPointF CompositionRenderController::workCursorCanvasPosition() const {
 
 }
 
+int motionPathAdaptiveSampleStep(int minFrame, int maxFrame, float zoom) {
+  const int64_t span = std::max<int64_t>(0, static_cast<int64_t>(maxFrame) -
+                                             static_cast<int64_t>(minFrame));
+  // Keep long work areas bounded while retaining one-frame precision for
+  // short paths. Keyframes are added separately, so this only controls the
+  // interpolated path samples between them.
+  const int64_t kTargetSamples = static_cast<int64_t>(std::clamp(
+      std::lround(240.0 * std::sqrt(std::max(1.0f, zoom))), 240LL, 960LL));
+  return static_cast<int>(std::max<int64_t>(1, (span + kTargetSamples - 1) /
+                                                kTargetSamples));
+}
+
 void CompositionRenderController::setWorkCursorLabel(const QString &label) {
 
   if (!impl_) {
@@ -15789,7 +15813,9 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
     if (!selectedLayerIds.isEmpty()) {
       const auto cPos = impl_->renderer_->viewportToCanvas(
           {(float)viewportPos.x(), (float)viewportPos.y()});
-      const float hitThreshold = 14.0f / impl_->renderer_->getZoom();
+      const float hitThreshold =
+          14.0f * Accessibility::targetScale() /
+          impl_->renderer_->getZoom();
       QString fieldId;
       TransformFieldDragMode dragMode = TransformFieldDragMode::None;
       if (hitTestTransformFieldHandle(comp, QPointF(cPos.x, cPos.y),
@@ -15955,7 +15981,8 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
       const float hitThreshold =
 
-          12.0f / impl_->renderer_->getZoom(); // widened for direct mask edits
+          12.0f * Accessibility::targetScale() /
+          impl_->renderer_->getZoom(); // widened for direct mask edits
 
       for (int m = 0; m < selectedLayer->maskCount(); ++m) {
 
@@ -16247,7 +16274,10 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
     MotionPathSample hitSample;
 
-    const float hitThreshold = std::max(8.0f, 12.0f / impl_->renderer_->getZoom());
+    const float hitThreshold = std::max(
+        8.0f * Accessibility::targetScale(),
+        12.0f * Accessibility::targetScale() /
+            impl_->renderer_->getZoom());
 
     if (hitTestMotionPathSample(motionPathSamples, QPointF(cPos.x, cPos.y),
 
@@ -17044,7 +17074,9 @@ void CompositionRenderController::handleMouseMove(
     if (!selectedLayerIds.isEmpty() && comp) {
       const auto cPos = impl_->renderer_->viewportToCanvas(
           {(float)viewportPos.x(), (float)viewportPos.y()});
-      const float hitThreshold = 14.0f / impl_->renderer_->getZoom();
+      const float hitThreshold =
+          14.0f * Accessibility::targetScale() /
+          impl_->renderer_->getZoom();
       if (impl_->updateTransformFieldHover(comp, QPointF(cPos.x, cPos.y),
                                           selectedLayerIds, hitThreshold)) {
         needsRender = true;
@@ -17368,7 +17400,9 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
           const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
 
-          const float hitThreshold = 12.0f / impl_->renderer_->getZoom();
+          const float hitThreshold =
+              12.0f * Accessibility::targetScale() /
+              impl_->renderer_->getZoom();
 
           impl_->penMaskPreviewCanvasPos_ = {cPos.x, cPos.y};
 
@@ -18842,7 +18876,8 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
         TransformFieldDragMode mode = TransformFieldDragMode::None;
         if (hitTestTransformFieldHandle(
                 comp, QPointF(canvasPos.x, canvasPos.y), selectedLayerIds,
-                14.0f / std::max(0.001f, impl_->renderer_->getZoom()),
+                14.0f * Accessibility::targetScale() /
+                    std::max(0.001f, impl_->renderer_->getZoom()),
                 fieldId, mode)) {
           if (mode == TransformFieldDragMode::Center) {
             return impl_->isDraggingTransformField_ &&
@@ -19838,6 +19873,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     const float aspect = std::max(0.001f, cw / std::max(0.001f, ch));
 
+    const double currentShakeTime = currentFrame.toSeconds();
+    const double frameDelta =
+        comp->frameRate().framerate() > 0.0
+            ? 1.0 / comp->frameRate().framerate()
+            : 0.0;
+    activeCamera->advanceShake(currentShakeTime, frameDelta);
+
 
 
     cameraViewMatrix = activeCamera->viewMatrix();
@@ -19848,9 +19890,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const int64_t currentFrameNumber = currentFrame.framePosition();
     if (currentFrameNumber > 0) {
       comp->goToFrame(currentFrameNumber - 1);
+      activeCamera->advanceShake(currentShakeTime - frameDelta, 0.0);
       previousCameraViewMatrix = activeCamera->viewMatrix();
       previousCameraProjMatrix = activeCamera->projectionMatrix(aspect);
       comp->goToFrame(currentFrameNumber);
+      activeCamera->advanceShake(currentShakeTime, 0.0);
     }
     if (activeCamera->stereoMode() != StereoMode::Mono) {
 
@@ -23083,13 +23127,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
 
-            if (hasPathSegment) {
+            if (hasPathSegment && minFrame <= maxFrame) {
 
-              for (int f = minFrame; f <= maxFrame; f += 2) {
-
-                if (f > maxFrame)
-
-                  f = maxFrame;
+              const int sampleStep =
+                  motionPathAdaptiveSampleStep(minFrame, maxFrame, zoom);
+              for (int f = minFrame;; f += sampleStep) {
+                if (f > maxFrame) f = maxFrame;
 
                 ArtifactCore::RationalTime t(f, rate);
 
@@ -23104,6 +23147,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 motionPathCache_.pathPoints.push_back(
 
                     {f, (float)wPos.x(), (float)wPos.y()});
+
+                if (f == maxFrame) break;
 
               }
 
@@ -23207,12 +23252,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             Detail::float2 lastPos;
 
             bool hasLastPos = false;
+            float previousDistance = 0.0f;
 
             for (const auto &pt : motionPathCache_.pathPoints) {
 
               Detail::float2 currentPos(pt.x, pt.y);
 
               if (hasLastPos) {
+                previousDistance = std::hypot(currentPos.x - lastPos.x,
+                                              currentPos.y - lastPos.y);
 
                 drawTaggedSolidLine(renderer_.get(),
 
@@ -23224,14 +23272,40 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               }
 
-              renderer_->drawPoint(pt.x, pt.y, dotRadius * 0.6f,
-
-                                   {0.8f, 0.8f, 0.8f, 0.7f});
+              const float speedRadius = std::clamp(
+                  dotRadius * (0.45f + previousDistance * 0.015f),
+                  dotRadius * 0.45f, dotRadius * 1.25f);
+              const FloatColor dotColor =
+                  pt.frame < currentFrameNum
+                      ? FloatColor{0.98f, 0.48f, 0.72f, 0.78f}
+                      : FloatColor{0.42f, 0.72f, 1.0f, 0.78f};
+              renderer_->drawPoint(pt.x, pt.y, speedRadius,
+                                   dotColor);
 
               lastPos = currentPos;
 
               hasLastPos = true;
 
+            }
+
+            // Evaluate the current marker directly instead of snapping it to
+            // the nearest adaptive sample.
+            if (currentFrameNum >= minFrame && currentFrameNum <= maxFrame) {
+              const ArtifactCore::RationalTime currentTime(
+                  static_cast<int64_t>(currentFrameNum), rate);
+              const QTransform currentTransform =
+                  layer->getGlobalTransformAt(currentFrameNum);
+              const QPointF currentPosition = currentTransform.map(
+                  QPointF(t3d.anchorXAt(currentTime),
+                          t3d.anchorYAt(currentTime)));
+              renderer_->drawPoint(static_cast<float>(currentPosition.x()),
+                                   static_cast<float>(currentPosition.y()),
+                                   dotRadius * 2.0f,
+                                   {0.12f, 0.10f, 0.02f, 0.85f});
+              renderer_->drawPoint(static_cast<float>(currentPosition.x()),
+                                   static_cast<float>(currentPosition.y()),
+                                   dotRadius * 1.25f,
+                                   {0.98f, 0.88f, 0.35f, 1.0f});
             }
 
           }
@@ -25938,11 +26012,11 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
           if (hasPathSegment) {
 
-            for (int f = minFrame; f <= maxFrame; f += 2) {
-
-              if (f > maxFrame)
-
-                f = maxFrame;
+            const int sampleStep =
+                motionPathAdaptiveSampleStep(minFrame, maxFrame,
+                                              renderer_->getZoom());
+            for (int f = minFrame;; f += sampleStep) {
+              if (f > maxFrame) f = maxFrame;
 
               ArtifactCore::RationalTime t(f, rate);
 
@@ -25957,6 +26031,8 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
               motionPathCache_.pathPoints.push_back(
 
                   {f, (float)wPos.x(), (float)wPos.y()});
+
+              if (f == maxFrame) break;
 
             }
 
@@ -26049,12 +26125,15 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
           Detail::float2 lastPos;
           int lastFrame = 0;
           bool hasLastPos = false;
+          float previousDistance = 0.0f;
           const int currentSampleFrame =
               currentFrameNum -
               ((currentFrameNum - minFrame) % 2 + 2) % 2;
           for (const auto &pt : motionPathCache_.pathPoints) {
             Detail::float2 currentPos(pt.x, pt.y);
             if (hasLastPos) {
+              previousDistance = std::hypot(currentPos.x - lastPos.x,
+                                            currentPos.y - lastPos.y);
               const bool isPastSegment =
                   (lastFrame + pt.frame) <= currentFrameNum * 2;
               const FloatColor segmentColor =
@@ -26071,13 +26150,17 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
             const bool showTimeDot =
                 ((pt.frame - minFrame) % 6 == 0) || isCurrentSample;
             if (showTimeDot) {
+              const float speedRadius = std::clamp(
+                  dotRadius * (0.45f + previousDistance * 0.015f),
+                  dotRadius * 0.45f, dotRadius * 1.25f);
               const FloatColor dotColor =
                   pt.frame <= currentFrameNum
                       ? FloatColor{1.0f, 0.72f, 0.86f, 0.86f}
                       : FloatColor{0.68f, 0.88f, 1.0f, 0.82f};
-              renderer_->drawPoint(pt.x, pt.y, dotRadius * 0.9f,
+              renderer_->drawPoint(pt.x, pt.y, speedRadius,
                                    pathShadowColor);
-              renderer_->drawPoint(pt.x, pt.y, dotRadius * 0.48f, dotColor);
+              renderer_->drawPoint(pt.x, pt.y, speedRadius * 0.53f,
+                                   dotColor);
             }
             if (isCurrentSample) {
               renderer_->drawPoint(pt.x, pt.y, dotRadius * 2.45f,
@@ -26090,6 +26173,23 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
             lastPos = currentPos;
             lastFrame = pt.frame;
             hasLastPos = true;
+          }
+          if (currentFrameNum >= minFrame && currentFrameNum <= maxFrame) {
+            const ArtifactCore::RationalTime currentTime(
+                static_cast<int64_t>(currentFrameNum), rate);
+            const QTransform currentTransform =
+                layer->getGlobalTransformAt(currentFrameNum);
+            const QPointF currentPosition = currentTransform.map(
+                QPointF(t3d.anchorXAt(currentTime),
+                        t3d.anchorYAt(currentTime)));
+            renderer_->drawPoint(static_cast<float>(currentPosition.x()),
+                                 static_cast<float>(currentPosition.y()),
+                                 dotRadius * 2.0f,
+                                 {0.12f, 0.10f, 0.02f, 0.85f});
+            renderer_->drawPoint(static_cast<float>(currentPosition.x()),
+                                 static_cast<float>(currentPosition.y()),
+                                 dotRadius * 1.25f,
+                                 {0.98f, 0.88f, 0.35f, 1.0f});
           }
         }
         for (const auto &pt : motionPathCache_.keyPoints) {

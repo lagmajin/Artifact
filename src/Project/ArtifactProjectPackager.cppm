@@ -3,6 +3,7 @@ module;
 
 #include <QString>
 #include <QStringList>
+#include <QVector>
 #include <QDir>
 #include <QHash>
 #include <QFileInfo>
@@ -18,6 +19,7 @@ module Artifact.Project.Packager;
 
 import Artifact.Project;
 import Artifact.Project.Items;
+import Artifact.Project.Statistics;
 
 namespace Artifact {
 
@@ -86,23 +88,11 @@ void rewriteFootagePaths(QJsonValue& value, const QHash<QString, QString>& pathM
 } // namespace
 
 QStringList ArtifactProjectPackager::getAllExternalFiles(ArtifactProject* project) {
-    QStringList files;
-    auto items = project->projectItems();
-    
-    std::function<void(ProjectItem*)> traverse = [&](ProjectItem* item) {
-        if (!item) return;
-        if (item->type() == eProjectItemType::Footage) {
-            auto* footage = static_cast<FootageItem*>(item);
-            if (!footage->filePath.isEmpty()) {
-                files.append(footage->filePath);
-            }
-        }
-        for (auto child : item->children) traverse(child);
-    };
-    for (auto root : items) traverse(root);
-    
-    files.removeDuplicates();
-    return files;
+    if (!project) return {};
+    ProjectMetadataValueCollector collector;
+    const QVector<ArtifactCore::MetadataCollector*> collectors{&collector};
+    ArtifactProjectStatistics::collectMetadata(project, collectors);
+    return collector.externalFiles();
 }
 
 bool ArtifactProjectPackager::collectAndPackage(ArtifactProject* project, const PackageSettings& settings) {

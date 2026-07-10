@@ -9,6 +9,7 @@ module;
 #include <QFileInfo>
 #include <QStringList>
 #include <QRegularExpression>
+#include <functional>
 
 module Artifact.Project.Health;
 

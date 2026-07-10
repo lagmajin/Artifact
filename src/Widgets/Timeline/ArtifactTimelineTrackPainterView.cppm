@@ -557,12 +557,16 @@ struct KeyframePropertySnapshot {
   std::vector<ArtifactCore::KeyFrame> keyframes;
 };
 
+QVector<KeyframePropertyRef> collectPropertyRefsFromMarkers(
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers);
 QVector<KeyframePropertySnapshot> captureKeyframePropertySnapshots(
     const ArtifactCompositionPtr &composition,
     const QVector<KeyframePropertyRef> &refs);
 void applyKeyframePropertySnapshots(
     const ArtifactCompositionPtr &composition,
     const QVector<KeyframePropertySnapshot> &snapshots);
+
+struct InterpolationChangeRecord;
 
 QSet<QString> keyframeSelectionSetForArea(const KeyframeAreaVisual &area) {
   QSet<QString> selection;
@@ -6920,6 +6924,9 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
       const bool modifiedSelection =
           event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier);
       if (!modifiedSelection && impl_->selectedMarkerKeys_.contains(key)) {
+        auto *svc = ArtifactProjectService::instance();
+        const auto composition = svc ? svc->currentComposition().lock()
+                                     : ArtifactCompositionPtr{};
         const bool keepGroupForPotentialDrag =
             clickedWasSelected && impl_->selectedMarkerKeys_.size() > 1;
         impl_->dragMarkerIndex_ = markerHit.markerIndex;
@@ -8965,15 +8972,17 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
           const RationalTime keyTime = keyframe.time;
           if (property->hasKeyFrameAt(keyTime)) {
             if (breakMode) {
-              // Break: make tangents independent by making inHandle = -outHandle for opposite side
-              keyframe.cp1_x = std::abs(keyframe.inHandleFrame) > 0 ? keyframe.inHandleFrame : static_cast<int64_t>(std::llround(static_cast<double>(scale) * 0.167));
-              keyframe.cp2_x = std::abs(keyframe.outHandleFrame) > 0 ? keyframe.outHandleFrame : static_cast<int64_t>(std::llround(static_cast<double>(scale) * 0.167));
-              keyframe.cp1_y = keyframe.inHandleValue;
-              keyframe.cp2_y = keyframe.outHandleValue;
+              keyframe.cp1_x = std::abs(keyframe.cp1_x) > 0
+                                   ? keyframe.cp1_x
+                                   : static_cast<int64_t>(
+                                         std::llround(static_cast<double>(scale) * 0.167));
+              keyframe.cp2_x = std::abs(keyframe.cp2_x) > 0
+                                   ? keyframe.cp2_x
+                                   : static_cast<int64_t>(
+                                         std::llround(static_cast<double>(scale) * 0.167));
             } else {
-              // Unify: set inHandle = -outHandle (mirror)
-              const int64_t mirrorFrame = std::max<int64_t>(0, keyframe.outHandleFrame);
-              const float mirrorValue = keyframe.outHandleValue;
+              const int64_t mirrorFrame = std::max<int64_t>(0, keyframe.cp2_x);
+              const float mirrorValue = keyframe.cp2_y;
               keyframe.cp1_x = -mirrorFrame;
               keyframe.cp1_y = -mirrorValue;
               keyframe.cp2_x = mirrorFrame;
