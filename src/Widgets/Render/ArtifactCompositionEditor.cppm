@@ -15,6 +15,7 @@ module;
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QDropEvent>
 #include <QElapsedTimer>
@@ -116,6 +117,7 @@ import Time.Rational;
 import Artifact.Layer.Video;
 import Artifact.Layer.Clone;
 import Artifact.Layer.Camera;
+import Artifact.Layer.ParametricComposition;
 import Artifact.Tool.Manager;
 import FloatColorPickerDialog;
 import Artifact.Widgets.CreateCameraLayerDialog;
@@ -1233,12 +1235,51 @@ public:
     if (!controller_) {
       return;
     }
+    const auto comp = currentComposition();
+    auto *service = ArtifactProjectService::instance();
+    auto *selection = ArtifactLayerSelectionManager::instance();
+    const auto selectedLayers = selection ? selection->selectedLayers()
+                                          : QSet<ArtifactAbstractLayerPtr>{};
+    const int selectedCount = static_cast<int>(selectedLayers.size());
+    QVector<ArtifactAbstractLayerPtr> orderedSelectedLayers;
+    if (comp && !selectedLayers.isEmpty()) {
+      for (const auto &layer : comp->allLayer()) {
+        if (layer && selectedLayers.contains(layer)) {
+          orderedSelectedLayers.push_back(layer);
+        }
+      }
+    }
     QStringList items;
     QVector<std::function<void()>> actions;
-    const auto add = [&](const QString &label, std::function<void()> action) {
+    const auto add = [&](const QString &label, std::function<void()> action,
+                         bool repeatable = false) {
       items.push_back(label);
-      actions.push_back(std::move(action));
+      actions.push_back([this, label, action = std::move(action), repeatable]() {
+        if (repeatable) {
+          lastRepeatableAction_ = action;
+          lastRepeatableActionLabel_ = label;
+        }
+        action();
+      });
     };
+    if (lastRepeatableAction_) {
+      add(QStringLiteral("Repeat Last Action: %1").arg(lastRepeatableActionLabel_),
+          [this]() { if (lastRepeatableAction_) lastRepeatableAction_(); });
+      add(QStringLiteral("Recipe: Save Last Action..."), [this]() {
+        if (!lastRepeatableAction_) return;
+        bool accepted = false;
+        const QString name = QInputDialog::getText(
+            this, QStringLiteral("Save Recipe"), QStringLiteral("Recipe name"),
+            QLineEdit::Normal, lastRepeatableActionLabel_, &accepted).trimmed();
+        if (!accepted || name.isEmpty()) return;
+        actionRecipes_.insert(name, lastRepeatableAction_);
+      });
+    }
+    for (auto it = actionRecipes_.cbegin(); it != actionRecipes_.cend(); ++it) {
+      const QString recipeName = it.key();
+      const auto recipeAction = it.value();
+      add(QStringLiteral("Recipe: %1").arg(recipeName), recipeAction, true);
+    }
     add(QStringLiteral("Reset View"), [this]() {
       if (controller_) controller_->resetView();
     });
@@ -1260,6 +1301,979 @@ public:
     add(QStringLiteral("Scale Tool"), [this]() {
       if (controller_) controller_->setGizmoMode(TransformGizmo::Mode::Scale);
     });
+    if (comp && selection && service) {
+      add(QStringLiteral("Smart Select: All Layers"), [comp, selection]() {
+        selection->clearSelection();
+        for (const auto &layer : comp->allLayer()) {
+          if (layer) selection->addToSelection(layer);
+        }
+      });
+      add(QStringLiteral("Smart Select: Visible Layers"),
+          [comp, selection, service]() {
+            selection->clearSelection();
+            for (const auto &layer : comp->allLayer()) {
+              if (layer && service->isLayerVisibleInCurrentComposition(layer->id())) {
+                selection->addToSelection(layer);
+              }
+            }
+          });
+      add(QStringLiteral("Smart Select: Locked Layers"),
+          [comp, selection, service]() {
+            selection->clearSelection();
+            for (const auto &layer : comp->allLayer()) {
+              if (layer && service->isLayerLockedInCurrentComposition(layer->id())) {
+                selection->addToSelection(layer);
+              }
+            }
+          });
+      add(QStringLiteral("Smart Select: Name Contains..."),
+          [this, comp, selection]() {
+            bool accepted = false;
+            const QString query = QInputDialog::getText(
+                this, QStringLiteral("Smart Select"),
+                QStringLiteral("Layer name contains"), QLineEdit::Normal,
+                QString(), &accepted).trimmed();
+            if (!accepted || query.isEmpty()) return;
+            selection->clearSelection();
+            for (const auto &layer : comp->allLayer()) {
+              if (layer && layer->layerName().contains(query, Qt::CaseInsensitive)) {
+                selection->addToSelection(layer);
+              }
+            }
+          });
+      if (selectedCount > 0 && !orderedSelectedLayers.isEmpty()) {
+        add(QStringLiteral("Find Similar / Select Related..."),
+            [this, comp, selection, orderedSelectedLayers]() {
+              const auto anchor = orderedSelectedLayers.front();
+              if (!anchor) return;
+              const QStringList criteria{
+                  QStringLiteral("Same Layer Type"),
+                  QStringLiteral("Same Source Media"),
+                  QStringLiteral("Same Parent"),
+                  QStringLiteral("Same Effect Set"),
+                  QStringLiteral("Same Font")};
+              bool accepted = false;
+              const QString criterion = QInputDialog::getItem(
+                  this, QStringLiteral("Find Similar"),
+                  QStringLiteral("Match criterion"), criteria, 0, false,
+                  &accepted);
+              if (!accepted) return;
+              const auto sourcePath = [](const ArtifactAbstractLayerPtr &layer) {
+                if (!layer) return QString();
+                const QJsonObject json = layer->toJson();
+                const QStringList keys{
+                    QStringLiteral("video.sourcePath"), QStringLiteral("image.sourcePath"),
+                    QStringLiteral("svg.sourcePath"), QStringLiteral("audio.sourcePath"),
+                    QStringLiteral("sourcePath")};
+                for (const QString &key : keys) {
+                  const QString path = json.value(key).toString().trimmed();
+                  if (!path.isEmpty()) {
+                    const QFileInfo info(path);
+                    const QString resolved = info.canonicalFilePath();
+                    return (resolved.isEmpty() ? info.absoluteFilePath() : resolved).toCaseFolded();
+                  }
+                }
+                return QString();
+              };
+              const auto effectIds = [](const ArtifactAbstractLayerPtr &layer) {
+                QSet<QString> ids;
+                if (!layer) return ids;
+                for (const auto &effect : layer->getEffects()) {
+                  if (effect) ids.insert(effect->effectID().toQString());
+                }
+                return ids;
+              };
+              const QString anchorSource = sourcePath(anchor);
+              const auto anchorParent = anchor->parentLayer();
+              const QSet<QString> anchorEffects = effectIds(anchor);
+              const auto anchorText = std::dynamic_pointer_cast<ArtifactTextLayer>(anchor);
+              const QString anchorFont = anchorText
+                  ? anchorText->fontFamily().toQString().trimmed().toCaseFolded()
+                  : QString();
+              selection->clearSelection();
+              int matched = 0;
+              for (const auto &candidate : comp->allLayer()) {
+                if (!candidate) continue;
+                bool match = false;
+                if (criterion == criteria.at(0)) {
+                  match = candidate->type_index() == anchor->type_index();
+                } else if (criterion == criteria.at(1)) {
+                  match = !anchorSource.isEmpty() && sourcePath(candidate) == anchorSource;
+                } else if (criterion == criteria.at(2)) {
+                  const auto candidateParent = candidate->parentLayer();
+                  match = (!anchorParent && !candidateParent) ||
+                          (anchorParent && candidateParent &&
+                           anchorParent->id() == candidateParent->id());
+                } else if (criterion == criteria.at(3)) {
+                  match = effectIds(candidate) == anchorEffects;
+                } else if (criterion == criteria.at(4)) {
+                  const auto text = std::dynamic_pointer_cast<ArtifactTextLayer>(candidate);
+                  match = text && !anchorFont.isEmpty() &&
+                          text->fontFamily().toQString().trimmed().toCaseFolded() == anchorFont;
+                }
+                if (match) {
+                  selection->addToSelection(candidate);
+                  ++matched;
+                }
+              }
+              if (matched == 0) selection->addToSelection(anchor);
+              QMessageBox::information(
+                  this, QStringLiteral("Find Similar"),
+                  QStringLiteral("Selected %1 related layer(s) by %2.")
+                      .arg(std::max(1, matched)).arg(criterion));
+            });
+        add(QStringLiteral("Property Link: Copy Stable Reference..."),
+            [this, comp, orderedSelectedLayers]() {
+              const auto layer = orderedSelectedLayers.front();
+              if (!layer || !comp) return;
+              QStringList labels;
+              QVector<QJsonObject> references;
+              for (const auto &group : layer->getLayerPropertyGroups()) {
+                for (const auto &property : group.allProperties()) {
+                  if (!property || property->getName().trimmed().isEmpty()) continue;
+                  labels.push_back(QStringLiteral("%1 / %2")
+                                       .arg(group.name(), property->getName()));
+                  QJsonObject reference;
+                  reference.insert(QStringLiteral("schema"),
+                                   QStringLiteral("artifact.property-reference.v1"));
+                  reference.insert(QStringLiteral("compositionId"), comp->id().toString());
+                  reference.insert(QStringLiteral("layerId"), layer->id().toString());
+                  reference.insert(QStringLiteral("propertyPath"), property->getName());
+                  reference.insert(QStringLiteral("propertyType"),
+                                   static_cast<int>(property->getType()));
+                  references.push_back(reference);
+                }
+              }
+              if (labels.isEmpty()) {
+                QMessageBox::information(this, QStringLiteral("Property Reference"),
+                                         QStringLiteral("This layer exposes no referenceable properties."));
+                return;
+              }
+              bool accepted = false;
+              const QString selected = QInputDialog::getItem(
+                  this, QStringLiteral("Copy Stable Property Reference"),
+                  QStringLiteral("Property"), labels, 0, false, &accepted);
+              const int index = labels.indexOf(selected);
+              if (!accepted || index < 0) return;
+              const QByteArray encoded = QJsonDocument(references.at(index))
+                                             .toJson(QJsonDocument::Compact);
+              if (auto *clipboard = QGuiApplication::clipboard()) {
+                clipboard->setText(QString::fromUtf8(encoded));
+              }
+              QMessageBox::information(
+                  this, QStringLiteral("Property Reference"),
+                  QStringLiteral("Copied stable reference for %1.").arg(selected));
+            });
+        add(QStringLiteral("Property Link: Resolve Reference from Clipboard"),
+            [this, comp, selection]() {
+              auto *clipboard = QGuiApplication::clipboard();
+              if (!clipboard || !comp) return;
+              QJsonParseError error;
+              const QJsonDocument document = QJsonDocument::fromJson(
+                  clipboard->text().toUtf8(), &error);
+              const QJsonObject reference = document.object();
+              if (error.error != QJsonParseError::NoError ||
+                  reference.value(QStringLiteral("schema")).toString() !=
+                      QStringLiteral("artifact.property-reference.v1")) {
+                QMessageBox::warning(this, QStringLiteral("Property Reference"),
+                                     QStringLiteral("Clipboard does not contain a valid property reference."));
+                return;
+              }
+              if (reference.value(QStringLiteral("compositionId")).toString() !=
+                  comp->id().toString()) {
+                QMessageBox::warning(this, QStringLiteral("Property Reference"),
+                                     QStringLiteral("The reference belongs to another composition."));
+                return;
+              }
+              const auto layer = comp->layerById(
+                  LayerID(reference.value(QStringLiteral("layerId")).toString()));
+              const QString propertyPath =
+                  reference.value(QStringLiteral("propertyPath")).toString();
+              bool found = false;
+              if (layer) {
+                for (const auto &group : layer->getLayerPropertyGroups()) {
+                  for (const auto &property : group.allProperties()) {
+                    if (property && property->getName() == propertyPath &&
+                        static_cast<int>(property->getType()) ==
+                            reference.value(QStringLiteral("propertyType")).toInt()) {
+                      found = true;
+                      break;
+                    }
+                  }
+                  if (found) break;
+                }
+              }
+              if (!layer || !found) {
+                QMessageBox::warning(this, QStringLiteral("Property Reference"),
+                                     QStringLiteral("The referenced layer or property no longer exists."));
+                return;
+              }
+              selection->clearSelection();
+              selection->addToSelection(layer);
+              if (controller_) controller_->setSelectedLayerId(layer->id());
+              QMessageBox::information(
+                  this, QStringLiteral("Property Reference"),
+                  QStringLiteral("Resolved %1 on %2.")
+                      .arg(propertyPath, layer->layerName()));
+            });
+      }
+      add(QStringLiteral("QA: Inspect Active Composition"),
+          [this, comp, selection]() {
+            QStringList issues;
+            ArtifactAbstractLayerPtr firstProblemLayer;
+            QHash<QString, int> nameCounts;
+            const FrameRange compRange = comp->frameRange();
+            const auto layers = comp->allLayer();
+            if (layers.isEmpty()) {
+              issues.push_back(QStringLiteral("Composition has no layers."));
+            }
+            for (const auto &layer : layers) {
+              if (!layer) continue;
+              const QString name = layer->layerName().trimmed();
+              if (name.isEmpty()) {
+                issues.push_back(QStringLiteral("Unnamed layer: %1").arg(layer->id().toString()));
+                if (!firstProblemLayer) firstProblemLayer = layer;
+              } else {
+                nameCounts[name.toCaseFolded()] += 1;
+              }
+              const qint64 inFrame = layer->inPoint().framePosition();
+              const qint64 outFrame = layer->outPoint().framePosition();
+              if (outFrame <= inFrame) {
+                issues.push_back(QStringLiteral("%1 has an empty or reversed timeline range.")
+                                     .arg(name.isEmpty() ? layer->id().toString() : name));
+                if (!firstProblemLayer) firstProblemLayer = layer;
+              } else if (outFrame <= compRange.start() || inFrame >= compRange.end()) {
+                issues.push_back(QStringLiteral("%1 is entirely outside the composition range.")
+                                     .arg(name.isEmpty() ? layer->id().toString() : name));
+                if (!firstProblemLayer) firstProblemLayer = layer;
+              }
+            }
+            for (auto it = nameCounts.cbegin(); it != nameCounts.cend(); ++it) {
+              if (it.value() > 1) {
+                issues.push_back(QStringLiteral("Duplicate layer name: %1 (%2 layers)")
+                                     .arg(it.key()).arg(it.value()));
+              }
+            }
+            if (firstProblemLayer) {
+              selection->clearSelection();
+              selection->addToSelection(firstProblemLayer);
+              if (controller_) controller_->setSelectedLayerId(firstProblemLayer->id());
+            }
+            QMessageBox::information(
+                this, QStringLiteral("Composition QA"),
+                issues.isEmpty()
+                    ? QStringLiteral("No basic composition issues found.")
+                    : QStringLiteral("%1 issue(s) found:\n\n%2")
+                          .arg(issues.size()).arg(issues.join(QStringLiteral("\n"))));
+          });
+    }
+    if (comp && service && selectedCount == 1 && *selectedLayers.cbegin()) {
+      const LayerID selectedId = (*selectedLayers.cbegin())->id();
+      add(QStringLiteral("Selected Layer: Duplicate"), [service, selectedId]() {
+        service->duplicateLayerInCurrentComposition(selectedId);
+      });
+      add(QStringLiteral("Selected Layer: Split at Playhead"),
+          [service, comp, selectedId]() {
+            service->splitLayerWithUndo(comp->id(), selectedId);
+          });
+    }
+    if (selectedCount > 0) {
+      add(QStringLiteral("Selection: Focus"), [this]() {
+        if (controller_) controller_->focusSelectedLayer();
+      });
+      add(QStringLiteral("Batch: Rename Selected Layers..."),
+          [this, service, orderedSelectedLayers]() {
+            if (!service || orderedSelectedLayers.isEmpty()) return;
+            bool accepted = false;
+            const QString baseName = QInputDialog::getText(
+                this, QStringLiteral("Batch Rename"),
+                QStringLiteral("Base name"), QLineEdit::Normal,
+                QStringLiteral("Layer"), &accepted).trimmed();
+            if (!accepted || baseName.isEmpty()) return;
+            int index = 1;
+            for (const auto &layer : orderedSelectedLayers) {
+              if (!layer || service->isLayerLockedInCurrentComposition(layer->id())) {
+                continue;
+              }
+              service->renameLayerInCurrentComposition(
+                  layer->id(), QStringLiteral("%1 %2").arg(baseName).arg(index++));
+            }
+          }, true);
+      add(QStringLiteral("Batch: Duplicate Selected Layers"),
+          [service, orderedSelectedLayers]() {
+            if (!service) return;
+            for (const auto &layer : orderedSelectedLayers) {
+              if (layer) service->duplicateLayerInCurrentComposition(layer->id());
+            }
+          }, true);
+      add(QStringLiteral("Batch: Trim Composition to Selection"),
+          [this, comp, orderedSelectedLayers]() {
+            if (!comp || orderedSelectedLayers.isEmpty()) return;
+            if (QMessageBox::question(
+                    this, QStringLiteral("Trim Composition"),
+                    QStringLiteral("Trim the composition and work area to the selected layers?"))
+                != QMessageBox::Yes) return;
+            qint64 minIn = std::numeric_limits<qint64>::max();
+            qint64 maxOut = std::numeric_limits<qint64>::min();
+            for (const auto &layer : orderedSelectedLayers) {
+              if (!layer || layer->isLocked()) continue;
+              minIn = std::min(minIn, layer->inPoint().framePosition());
+              maxOut = std::max(maxOut, layer->outPoint().framePosition());
+            }
+            if (minIn == std::numeric_limits<qint64>::max() ||
+                maxOut == std::numeric_limits<qint64>::min()) return;
+            const FrameRange range(std::max<qint64>(0, minIn),
+                                   std::max<qint64>(minIn + 1, maxOut));
+            comp->setFrameRange(range);
+            comp->setWorkAreaRange(range);
+          }, true);
+      auto &clipboard = ArtifactCore::ClipboardManager::instance();
+      clipboard.syncFromSystemClipboard();
+      if (clipboard.hasPropertyValue()) {
+        const QString propertyPath = clipboard.pastePropertyPath();
+        const QVariant propertyValue = clipboard.pastePropertyValue();
+        add(QStringLiteral("Paste Special: Property Value (%1)").arg(propertyPath),
+            [comp, orderedSelectedLayers, propertyPath, propertyValue]() {
+              if (!comp || propertyPath.trimmed().isEmpty()) return;
+              bool changed = false;
+              for (const auto &layer : orderedSelectedLayers) {
+                if (!layer || layer->isLocked()) continue;
+                if (layer->setLayerPropertyValue(propertyPath, propertyValue)) {
+                  layer->changed();
+                  changed = true;
+                }
+              }
+              if (changed) comp->changed();
+            }, true);
+      }
+    }
+    if (selectedCount > 1) {
+      add(QStringLiteral("Auto Stagger..."),
+          [this, comp, orderedSelectedLayers]() {
+            if (!comp || orderedSelectedLayers.size() < 2) return;
+            bool accepted = false;
+            const QStringList modes{
+                QStringLiteral("Layer Order"),
+                QStringLiteral("Reverse Layer Order"),
+                QStringLiteral("Center Out"),
+                QStringLiteral("Deterministic Random")};
+            const QString mode = QInputDialog::getItem(
+                this, QStringLiteral("Auto Stagger"), QStringLiteral("Order"),
+                modes, 0, false, &accepted);
+            if (!accepted) return;
+            const QStringList placementModes{
+                QStringLiteral("Start Interval"),
+                QStringLiteral("End Interval"),
+                QStringLiteral("Overlap by Frames")};
+            const QString placementMode = QInputDialog::getItem(
+                this, QStringLiteral("Auto Stagger"),
+                QStringLiteral("Placement"), placementModes, 0, false,
+                &accepted);
+            if (!accepted) return;
+            const QStringList anchorModes{
+                QStringLiteral("Earliest Selected In"),
+                QStringLiteral("Current Playhead"),
+                QStringLiteral("First in Applied Order")};
+            const QString anchorMode = QInputDialog::getItem(
+                this, QStringLiteral("Auto Stagger"), QStringLiteral("Anchor"),
+                anchorModes, 0, false, &accepted);
+            if (!accepted) return;
+            const int step = QInputDialog::getInt(
+                this, QStringLiteral("Auto Stagger"),
+                placementMode == placementModes.at(2)
+                    ? QStringLiteral("Overlap frames")
+                    : QStringLiteral("Frame interval"),
+                4, placementMode == placementModes.at(2) ? 0 : -100000,
+                100000, 1,
+                &accepted);
+            if (!accepted) return;
+            QVector<ArtifactAbstractLayerPtr> layers = orderedSelectedLayers;
+            if (mode == modes.at(1)) {
+              std::reverse(layers.begin(), layers.end());
+            } else if (mode == modes.at(2)) {
+              QVector<ArtifactAbstractLayerPtr> centerOut;
+              centerOut.reserve(layers.size());
+              int left = (layers.size() - 1) / 2;
+              int right = left + 1;
+              centerOut.push_back(layers.at(left--));
+              while (left >= 0 || right < layers.size()) {
+                if (right < layers.size()) centerOut.push_back(layers.at(right++));
+                if (left >= 0) centerOut.push_back(layers.at(left--));
+              }
+              layers = std::move(centerOut);
+            } else if (mode == modes.at(3)) {
+              std::sort(layers.begin(), layers.end(),
+                        [comp](const auto &lhs, const auto &rhs) {
+                          const QString seed = comp->id().toString();
+                          const uint lhsHash = qHash(seed + (lhs ? lhs->id().toString() : QString()));
+                          const uint rhsHash = qHash(seed + (rhs ? rhs->id().toString() : QString()));
+                          return lhsHash == rhsHash
+                              ? (lhs && rhs && lhs->id().toString() < rhs->id().toString())
+                              : lhsHash < rhsHash;
+                        });
+            }
+            qint64 anchorIn = layers.front()->inPoint().framePosition();
+            if (anchorMode == anchorModes.at(0)) {
+              for (const auto &layer : layers) {
+                if (layer) anchorIn = std::min(anchorIn, layer->inPoint().framePosition());
+              }
+            } else if (anchorMode == anchorModes.at(1)) {
+              if (auto *playback = ArtifactPlaybackService::instance()) {
+                anchorIn = playback->currentFrame().framePosition();
+              }
+            }
+            const qint64 firstDuration = std::max<qint64>(
+                1, layers.front()->outPoint().framePosition() -
+                       layers.front()->inPoint().framePosition());
+            const qint64 anchorOut = anchorIn + firstDuration;
+            qint64 overlapCursor = anchorIn;
+            int position = 0;
+            QJsonArray beforeRecords;
+            QJsonArray afterRecords;
+            QStringList staggerPreview;
+            QSet<qint64> targetStarts;
+            bool targetCollision = false;
+            for (const auto &layer : layers) {
+              if (!layer || layer->isLocked() || layer->isTimingLocked()) continue;
+              const qint64 duration = std::max<qint64>(
+                  1, layer->outPoint().framePosition() -
+                         layer->inPoint().framePosition());
+              qint64 target = anchorIn;
+              if (placementMode == placementModes.at(1)) {
+                target = anchorOut + static_cast<qint64>(position) * step - duration;
+              } else if (placementMode == placementModes.at(2)) {
+                target = overlapCursor;
+                overlapCursor += std::max<qint64>(1, duration - step);
+              } else {
+                target = anchorIn + static_cast<qint64>(position) * step;
+              }
+              ++position;
+              target = std::max<qint64>(0, target);
+              if (targetStarts.contains(target)) targetCollision = true;
+              targetStarts.insert(target);
+              const qint64 delta = target - layer->inPoint().framePosition();
+              if (delta == 0) continue;
+              QJsonObject before;
+              before.insert(QStringLiteral("id"), layer->id().toString());
+              before.insert(QStringLiteral("in"), layer->inPoint().framePosition());
+              before.insert(QStringLiteral("out"), layer->outPoint().framePosition());
+              before.insert(QStringLiteral("start"), layer->startTime().framePosition());
+              beforeRecords.append(before);
+              QJsonObject after = before;
+              after.insert(QStringLiteral("in"), before.value(QStringLiteral("in")).toVariant().toLongLong() + delta);
+              after.insert(QStringLiteral("out"), before.value(QStringLiteral("out")).toVariant().toLongLong() + delta);
+              after.insert(QStringLiteral("start"), before.value(QStringLiteral("start")).toVariant().toLongLong() + delta);
+              afterRecords.append(after);
+              staggerPreview.push_back(
+                  QStringLiteral("%1  %2 -> %3")
+                      .arg(layer->layerName())
+                      .arg(before.value(QStringLiteral("in")).toVariant().toLongLong())
+                      .arg(target));
+            }
+            if (afterRecords.isEmpty()) {
+              QMessageBox::information(this, QStringLiteral("Auto Stagger"),
+                                       QStringLiteral("No layer timing changes are required."));
+              return;
+            }
+            QString staggerPreviewText = staggerPreview.mid(0, 12).join(QStringLiteral("\n"));
+            if (staggerPreview.size() > 12) {
+              staggerPreviewText += QStringLiteral("\n... and %1 more")
+                                        .arg(staggerPreview.size() - 12);
+            }
+            const QString collisionWarning = targetCollision
+                ? QStringLiteral("\n\nWarning: multiple layers resolve to the same start frame.")
+                : QString();
+            if (QMessageBox::question(
+                    this, QStringLiteral("Confirm Auto Stagger"),
+                    QStringLiteral("Apply these timing changes?\n\n%1%2")
+                        .arg(staggerPreviewText, collisionWarning)) != QMessageBox::Yes) {
+              return;
+            }
+            const ArtifactCompositionWeakPtr weakComp(comp);
+            const auto restore = [weakComp](const QByteArray &state) {
+              const auto targetComp = weakComp.lock();
+              if (!targetComp) return false;
+              const QJsonArray records = QJsonDocument::fromJson(state).array();
+              for (const auto &value : records) {
+                const QJsonObject record = value.toObject();
+                const auto layer = targetComp->layerById(
+                    LayerID(record.value(QStringLiteral("id")).toString()));
+                if (!layer) continue;
+                layer->setTimelineWindow(
+                    FramePosition(record.value(QStringLiteral("in")).toVariant().toLongLong()),
+                    FramePosition(record.value(QStringLiteral("out")).toVariant().toLongLong()));
+                layer->setStartTime(FramePosition(
+                    record.value(QStringLiteral("start")).toVariant().toLongLong()));
+                layer->changed();
+              }
+              targetComp->changed();
+              return true;
+            };
+            UndoManager::instance()->push(std::make_unique<LayoutSnapshotCommand>(
+                QStringLiteral("Auto Stagger"),
+                QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact),
+                QJsonDocument(afterRecords).toJson(QJsonDocument::Compact),
+                restore));
+          }, true);
+      add(QStringLiteral("Batch: Sequence Layers End-to-End"),
+          [this, comp, orderedSelectedLayers]() {
+            if (!comp || orderedSelectedLayers.size() < 2) return;
+            if (QMessageBox::question(
+                    this, QStringLiteral("Sequence Layers"),
+                    QStringLiteral("Place selected layers end-to-end in layer order?"))
+                != QMessageBox::Yes) return;
+            qint64 cursor = orderedSelectedLayers.front()->outPoint().framePosition();
+            for (int i = 1; i < orderedSelectedLayers.size(); ++i) {
+              const auto &layer = orderedSelectedLayers[i];
+              if (!layer || layer->isLocked()) continue;
+              const qint64 delta = cursor - layer->inPoint().framePosition();
+              layer->slideTimingBy(delta);
+              layer->changed();
+              cursor = layer->outPoint().framePosition();
+            }
+            comp->changed();
+          }, true);
+      add(QStringLiteral("Batch: Match Duration to First Layer"),
+          [this, comp, orderedSelectedLayers]() {
+            if (!comp || orderedSelectedLayers.size() < 2 ||
+                !orderedSelectedLayers.front()) return;
+            if (QMessageBox::question(
+                    this, QStringLiteral("Match Layer Duration"),
+                    QStringLiteral("Match every selected layer to the first layer's duration?"))
+                != QMessageBox::Yes) return;
+            const qint64 duration = std::max<qint64>(
+                1, orderedSelectedLayers.front()->outPoint().framePosition() -
+                       orderedSelectedLayers.front()->inPoint().framePosition());
+            for (int i = 1; i < orderedSelectedLayers.size(); ++i) {
+              const auto &layer = orderedSelectedLayers[i];
+              if (!layer || layer->isLocked()) continue;
+              layer->setOutPoint(FramePosition(
+                  layer->inPoint().framePosition() + duration));
+              layer->changed();
+            }
+            comp->changed();
+          }, true);
+    }
+    if (selectedCount > 0) {
+      add(QStringLiteral("Keyframe Cleanup: Remove Redundant Keys"),
+          [this, orderedSelectedLayers]() {
+            auto macro = std::make_unique<MacroUndoCommand>(
+                QStringLiteral("Clean Redundant Keyframes"));
+            int removedTotal = 0;
+            for (const auto &layer : orderedSelectedLayers) {
+              if (!layer || layer->isLocked()) continue;
+              for (const auto &group : layer->getLayerPropertyGroups()) {
+                for (const auto &property : group.allProperties()) {
+                  if (!property || !property->isAnimatable()) continue;
+                  const auto before = property->getKeyFrames();
+                  if (before.size() < 3) continue;
+                  std::vector<ArtifactCore::KeyFrame> after;
+                  after.reserve(before.size());
+                  after.push_back(before.front());
+                  const auto approximatelyEqual = [](const QVariant &lhs,
+                                                     const QVariant &rhs) {
+                    if (!lhs.isValid() || !rhs.isValid()) return lhs == rhs;
+                    bool lhsNumeric = false;
+                    bool rhsNumeric = false;
+                    const double a = lhs.toDouble(&lhsNumeric);
+                    const double b = rhs.toDouble(&rhsNumeric);
+                    if (lhsNumeric && rhsNumeric) {
+                      const double scale = std::max({1.0, std::abs(a), std::abs(b)});
+                      return std::abs(a - b) <= 0.0001 * scale;
+                    }
+                    return lhs == rhs;
+                  };
+                  for (size_t i = 1; i + 1 < before.size(); ++i) {
+                    const QVariant previous = after.back().value.isValid()
+                        ? after.back().value : property->getValue();
+                    const QVariant current = before[i].value.isValid()
+                        ? before[i].value : property->getValue();
+                    const QVariant next = before[i + 1].value.isValid()
+                        ? before[i + 1].value : property->getValue();
+                    if (approximatelyEqual(previous, current) &&
+                        approximatelyEqual(current, next)) {
+                      ++removedTotal;
+                      continue;
+                    }
+                    after.push_back(before[i]);
+                  }
+                  after.push_back(before.back());
+                  if (after.size() == before.size()) continue;
+                  macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                      layer, property->getName(), before, after,
+                      QStringLiteral("Clean %1").arg(property->getName())));
+                }
+              }
+            }
+            if (removedTotal == 0) {
+              QMessageBox::information(this, QStringLiteral("Keyframe Cleanup"),
+                                       QStringLiteral("No redundant keyframes were found."));
+              return;
+            }
+            if (QMessageBox::question(
+                    this, QStringLiteral("Keyframe Cleanup"),
+                    QStringLiteral("Remove %1 redundant keyframe(s)?")
+                        .arg(removedTotal)) != QMessageBox::Yes) return;
+            UndoManager::instance()->push(std::move(macro));
+          }, true);
+      add(QStringLiteral("Adaptive Text Fit..."),
+          [this, comp, orderedSelectedLayers]() {
+            if (!comp) return;
+            QVector<std::shared_ptr<ArtifactTextLayer>> textLayers;
+            for (const auto &layer : orderedSelectedLayers) {
+              if (auto text = std::dynamic_pointer_cast<ArtifactTextLayer>(layer);
+                  text && !text->isLocked()) {
+                textLayers.push_back(text);
+              }
+            }
+            if (textLayers.isEmpty()) {
+              QMessageBox::information(this, QStringLiteral("Adaptive Text Fit"),
+                                       QStringLiteral("No editable text layers are selected."));
+              return;
+            }
+            bool accepted = false;
+            const double minimumSize = QInputDialog::getDouble(
+                this, QStringLiteral("Adaptive Text Fit"),
+                QStringLiteral("Minimum font size"), 12.0, 1.0, 512.0, 1,
+                &accepted);
+            if (!accepted) return;
+            const QSize compSize = comp->effectiveCompositionSize();
+            QJsonArray beforeRecords;
+            QJsonArray afterRecords;
+            QStringList preview;
+            for (const auto &text : textLayers) {
+              const QString content = text->text().toQString();
+              if (content.isEmpty()) continue;
+              const qreal targetWidth = text->maxWidth() > 0.0f
+                  ? text->maxWidth() : std::max(1.0, compSize.width() * 0.8);
+              const qreal targetHeight = text->boxHeight() > 0.0f
+                  ? text->boxHeight() : std::max(1.0, compSize.height() * 0.8);
+              const double oldSize = text->fontSize();
+              double fittedSize = oldSize;
+              while (fittedSize > minimumSize) {
+                QFont font(text->fontFamily().toQString());
+                font.setPointSizeF(fittedSize);
+                const QFontMetricsF metrics(font);
+                const QRectF measured = metrics.boundingRect(
+                    QRectF(0.0, 0.0, targetWidth, targetHeight * 4.0),
+                    Qt::TextWordWrap, content);
+                if (measured.width() <= targetWidth &&
+                    measured.height() <= targetHeight) break;
+                fittedSize = std::max(minimumSize, fittedSize - 1.0);
+              }
+              if (std::abs(fittedSize - oldSize) <= 0.001) continue;
+              QJsonObject before;
+              before.insert(QStringLiteral("id"), text->id().toString());
+              before.insert(QStringLiteral("size"), oldSize);
+              beforeRecords.append(before);
+              QJsonObject after = before;
+              after.insert(QStringLiteral("size"), fittedSize);
+              afterRecords.append(after);
+              preview.push_back(QStringLiteral("%1  %2 -> %3 pt")
+                                    .arg(text->layerName())
+                                    .arg(oldSize, 0, 'f', 1)
+                                    .arg(fittedSize, 0, 'f', 1));
+            }
+            if (afterRecords.isEmpty()) {
+              QMessageBox::information(this, QStringLiteral("Adaptive Text Fit"),
+                                       QStringLiteral("All selected text already fits."));
+              return;
+            }
+            if (QMessageBox::question(
+                    this, QStringLiteral("Adaptive Text Fit"),
+                    QStringLiteral("Apply font-size fitting?\n\n%1")
+                        .arg(preview.mid(0, 12).join(QStringLiteral("\n"))))
+                != QMessageBox::Yes) return;
+            const ArtifactCompositionWeakPtr weakComp(comp);
+            const auto restore = [weakComp](const QByteArray &state) {
+              const auto targetComp = weakComp.lock();
+              if (!targetComp) return false;
+              const QJsonArray records = QJsonDocument::fromJson(state).array();
+              for (const auto &value : records) {
+                const QJsonObject record = value.toObject();
+                const auto text = std::dynamic_pointer_cast<ArtifactTextLayer>(
+                    targetComp->layerById(LayerID(record.value(QStringLiteral("id")).toString())));
+                if (!text) continue;
+                text->setFontSize(static_cast<float>(
+                    record.value(QStringLiteral("size")).toDouble()));
+                text->changed();
+              }
+              targetComp->changed();
+              return true;
+            };
+            UndoManager::instance()->push(std::make_unique<LayoutSnapshotCommand>(
+                QStringLiteral("Adaptive Text Fit"),
+                QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact),
+                QJsonDocument(afterRecords).toJson(QJsonDocument::Compact),
+                restore));
+          }, true);
+      add(QStringLiteral("Quick Replace Selected Sources..."),
+          [this, service, comp, orderedSelectedLayers]() {
+            if (!service || !comp || orderedSelectedLayers.isEmpty()) return;
+            QString currentPath;
+            const QJsonObject firstJson = orderedSelectedLayers.front()->toJson();
+            const QStringList sourceKeys{
+                QStringLiteral("video.sourcePath"),
+                QStringLiteral("image.sourcePath"),
+                QStringLiteral("svg.sourcePath"),
+                QStringLiteral("audio.sourcePath"),
+                QStringLiteral("sourcePath")};
+            for (const QString &key : sourceKeys) {
+              currentPath = firstJson.value(key).toString().trimmed();
+              if (!currentPath.isEmpty()) break;
+            }
+            const QStringList paths = QFileDialog::getOpenFileNames(
+                this, QStringLiteral("Quick Replace Selected Sources"),
+                currentPath.isEmpty() ? QString()
+                                      : QFileInfo(currentPath).absolutePath(),
+                QStringLiteral("Media Files (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp *.exr *.svg *.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mpg *.mpeg *.mxf *.gif *.wav *.mp3 *.aac *.flac *.ogg);;All Files (*.*)"));
+            if (paths.isEmpty()) return;
+            QString mappingMode = QStringLiteral("One Source for All");
+            if (paths.size() > 1) {
+              const QStringList mappingModes{
+                  QStringLiteral("Layer Order"),
+                  QStringLiteral("Match Layer Name to Filename")};
+              bool mappingAccepted = false;
+              mappingMode = QInputDialog::getItem(
+                  this, QStringLiteral("Quick Replace"),
+                  QStringLiteral("File assignment"), mappingModes, 0, false,
+                  &mappingAccepted);
+              if (!mappingAccepted) return;
+            }
+            int replaced = 0;
+            int skipped = 0;
+            QJsonArray beforeRecords;
+            QJsonArray afterRecords;
+            QSet<QString> assignedPaths;
+            QStringList assignmentPreview;
+            const auto normalizedMatchName = [](const QString &text) {
+              QString normalized;
+              const QString folded = text.toCaseFolded();
+              normalized.reserve(folded.size());
+              for (const QChar ch : folded) {
+                if (ch.isLetterOrNumber()) normalized.append(ch);
+              }
+              return normalized;
+            };
+            for (int i = 0; i < orderedSelectedLayers.size(); ++i) {
+              const auto &layer = orderedSelectedLayers.at(i);
+              if (!layer || layer->isLocked()) {
+                ++skipped;
+                continue;
+              }
+              QString path;
+              if (paths.size() == 1) {
+                path = paths.front();
+              } else if (mappingMode == QStringLiteral("Layer Order")) {
+                if (i < paths.size()) path = paths.at(i);
+              } else {
+                const QString layerName = layer->layerName().trimmed();
+                const QString normalizedLayerName = normalizedMatchName(layerName);
+                for (const QString &candidate : paths) {
+                  const QString fileName = QFileInfo(candidate).completeBaseName().trimmed();
+                  const QString normalizedFileName = normalizedMatchName(fileName);
+                  if (!assignedPaths.contains(candidate) &&
+                      !normalizedLayerName.isEmpty() && !normalizedFileName.isEmpty() &&
+                      (normalizedLayerName == normalizedFileName ||
+                       normalizedLayerName.contains(normalizedFileName) ||
+                       normalizedFileName.contains(normalizedLayerName))) {
+                    path = candidate;
+                    break;
+                  }
+                }
+              }
+              if (path.isEmpty()) {
+                ++skipped;
+                continue;
+              }
+              const QJsonObject layerJson = layer->toJson();
+              QString sourceKey;
+              QString oldPath;
+              for (const QString &key : sourceKeys) {
+                if (!layerJson.contains(key)) continue;
+                sourceKey = key;
+                oldPath = layerJson.value(key).toString();
+                break;
+              }
+              if (sourceKey.isEmpty()) {
+                ++skipped;
+                continue;
+              }
+              const QString suffix = QFileInfo(path).suffix().toLower();
+              const QSet<QString> imageExtensions{
+                  QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
+                  QStringLiteral("bmp"), QStringLiteral("tif"), QStringLiteral("tiff"),
+                  QStringLiteral("webp"), QStringLiteral("exr"), QStringLiteral("gif")};
+              const QSet<QString> videoExtensions{
+                  QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("mkv"),
+                  QStringLiteral("avi"), QStringLiteral("webm"), QStringLiteral("m4v"),
+                  QStringLiteral("mpg"), QStringLiteral("mpeg"), QStringLiteral("mxf"),
+                  QStringLiteral("gif")};
+              const QSet<QString> audioExtensions{
+                  QStringLiteral("wav"), QStringLiteral("mp3"), QStringLiteral("aac"),
+                  QStringLiteral("flac"), QStringLiteral("ogg")};
+              const bool compatible =
+                  (sourceKey.startsWith(QStringLiteral("image.")) && imageExtensions.contains(suffix)) ||
+                  (sourceKey.startsWith(QStringLiteral("video.")) && videoExtensions.contains(suffix)) ||
+                  (sourceKey.startsWith(QStringLiteral("audio.")) && audioExtensions.contains(suffix)) ||
+                  (sourceKey.startsWith(QStringLiteral("svg.")) && suffix == QStringLiteral("svg")) ||
+                  (sourceKey == QStringLiteral("sourcePath"));
+              if (!compatible) {
+                ++skipped;
+                continue;
+              }
+              if (paths.size() > 1 &&
+                  mappingMode == QStringLiteral("Match Layer Name to Filename")) {
+                assignedPaths.insert(path);
+              }
+              QJsonObject before;
+              before.insert(QStringLiteral("id"), layer->id().toString());
+              before.insert(QStringLiteral("key"), sourceKey);
+              before.insert(QStringLiteral("path"), oldPath);
+              beforeRecords.append(before);
+              QJsonObject after = before;
+              after.insert(QStringLiteral("path"), path);
+              afterRecords.append(after);
+              assignmentPreview.push_back(
+                  QStringLiteral("%1  <-  %2")
+                      .arg(layer->layerName(), QFileInfo(path).fileName()));
+              ++replaced;
+            }
+            const ArtifactCompositionWeakPtr weakComp(comp);
+            const auto restore = [weakComp](const QByteArray &state) {
+              const auto targetComp = weakComp.lock();
+              if (!targetComp) return false;
+              bool allSucceeded = true;
+              const QJsonArray records = QJsonDocument::fromJson(state).array();
+              for (const auto &value : records) {
+                const QJsonObject record = value.toObject();
+                const auto layer = targetComp->layerById(
+                    LayerID(record.value(QStringLiteral("id")).toString()));
+                if (!layer || !layer->setLayerPropertyValue(
+                                  record.value(QStringLiteral("key")).toString(),
+                                  record.value(QStringLiteral("path")).toString())) {
+                  allSucceeded = false;
+                  continue;
+                }
+                layer->changed();
+              }
+              targetComp->changed();
+              return allSucceeded;
+            };
+            if (!afterRecords.isEmpty()) {
+              QString previewText = assignmentPreview.mid(0, 12).join(QStringLiteral("\n"));
+              if (assignmentPreview.size() > 12) {
+                previewText += QStringLiteral("\n... and %1 more")
+                                   .arg(assignmentPreview.size() - 12);
+              }
+              if (QMessageBox::question(
+                      this, QStringLiteral("Confirm Quick Replace"),
+                      QStringLiteral("Apply these source replacements?\n\n%1")
+                          .arg(previewText)) != QMessageBox::Yes) {
+                return;
+              }
+              UndoManager::instance()->push(std::make_unique<LayoutSnapshotCommand>(
+                  QStringLiteral("Quick Replace Sources"),
+                  QJsonDocument(beforeRecords).toJson(QJsonDocument::Compact),
+                  QJsonDocument(afterRecords).toJson(QJsonDocument::Compact),
+                  restore));
+            }
+            QMessageBox::information(
+                this, QStringLiteral("Quick Replace"),
+                QStringLiteral("Attempted replacement for %1 layer(s). Skipped %2 layer(s).\n"
+                               "%3\n"
+                               "Transform, timing, masks, effects, and parenting were preserved.")
+                    .arg(replaced).arg(skipped)
+                    .arg(paths.size() == 1
+                             ? QStringLiteral("One source was applied to every compatible layer.")
+                             : mappingMode == QStringLiteral("Layer Order")
+                                   ? QStringLiteral("Sources were assigned in layer order.")
+                                   : QStringLiteral("Sources were matched by layer and filename.")));
+          }, true);
+      add(QStringLiteral("Auto Precompose Package"),
+          [this, service, comp, orderedSelectedLayers]() {
+            if (!service || !comp || orderedSelectedLayers.isEmpty()) return;
+            bool accepted = false;
+            const QString defaultName = orderedSelectedLayers.front()
+                ? orderedSelectedLayers.front()->layerName() + QStringLiteral(" Package")
+                : QStringLiteral("Precomp Package");
+            const QString name = QInputDialog::getText(
+                this, QStringLiteral("Auto Precompose Package"),
+                QStringLiteral("Composition name"), QLineEdit::Normal,
+                defaultName, &accepted).trimmed();
+            if (!accepted || name.isEmpty()) return;
+            QVector<LayerID> ids;
+            for (const auto &layer : orderedSelectedLayers) {
+              if (layer && !layer->isLocked()) ids.push_back(layer->id());
+            }
+            if (ids.isEmpty() || !service->precomposeLayersWithUndo(
+                    ids, UniString(name), false, true,
+                    PrecomposeMode::MoveSelected)) {
+              QMessageBox::warning(this, QStringLiteral("Auto Precompose Package"),
+                                   QStringLiteral("Precompose failed."));
+            }
+          }, true);
+    }
+    if (selectedCount == 1 && !orderedSelectedLayers.isEmpty()) {
+      const auto parametricLayer = std::dynamic_pointer_cast<ArtifactParametricCompositionLayer>(
+          orderedSelectedLayers.front());
+      if (parametricLayer && parametricLayer->definition() &&
+          !parametricLayer->definition()->publishedControls().isEmpty()) {
+        add(QStringLiteral("Published Controls: Edit Override..."),
+            [this, parametricLayer]() {
+              const auto definition = parametricLayer->definition();
+              if (!definition) return;
+              QStringList labels;
+              for (const auto &control : definition->publishedControls()) {
+                labels.push_back(control.displayName.trimmed().isEmpty()
+                                     ? control.controlId : control.displayName);
+              }
+              bool accepted = false;
+              const QString selected = QInputDialog::getItem(
+                  this, QStringLiteral("Published Controls"),
+                  QStringLiteral("Control"), labels, 0, false, &accepted);
+              const int index = labels.indexOf(selected);
+              if (!accepted || index < 0) return;
+              const auto control = definition->publishedControls().at(index);
+              const QString valueText = QInputDialog::getText(
+                  this, QStringLiteral("Published Controls"),
+                  selected, QLineEdit::Normal,
+                  control.defaultValue.toString(), &accepted);
+              if (!accepted) return;
+              QVariant value = valueText;
+              if (control.defaultValue.metaType().id() == QMetaType::Bool) {
+                value = QVariant(valueText.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0 ||
+                                 valueText == QStringLiteral("1"));
+              } else if (control.defaultValue.canConvert<double>()) {
+                bool numeric = false;
+                const double number = valueText.toDouble(&numeric);
+                if (numeric) value = number;
+              }
+              parametricLayer->setPublishedControlOverride(control.controlId, value);
+              parametricLayer->changed();
+            }, true);
+      }
+    }
+    if (comp && !comp->responsiveLayoutVariants().isEmpty()) {
+      add(QStringLiteral("Responsive Preview Matrix..."), [this, comp]() {
+        const auto variants = comp->responsiveLayoutVariants();
+        QStringList labels;
+        for (const auto &variant : variants) {
+          labels.push_back(QStringLiteral("%1 — %2x%3")
+                               .arg(variant.displayName.trimmed().isEmpty()
+                                        ? variant.variantId : variant.displayName)
+                               .arg(variant.baseSize.width())
+                               .arg(variant.baseSize.height()));
+        }
+        bool accepted = false;
+        const QString selected = QInputDialog::getItem(
+            this, QStringLiteral("Responsive Preview Matrix"),
+            QStringLiteral("Preview variant"), labels, 0, false, &accepted);
+        const int index = labels.indexOf(selected);
+        if (!accepted || index < 0) return;
+        comp->setActiveResponsiveLayoutVariantId(variants.at(index).variantId);
+      }, true);
+    }
     viewportOverlayActions_ = actions;
     controller_->showCommandPaletteOverlay(QString(), items);
   }
@@ -3758,6 +4772,9 @@ protected:
   std::function<void(const QQuaternion &)> viewportOrientationChangedCallback_;
   QVector<std::function<void()>> viewportOverlayActions_;
   QVector<bool> viewportOverlayEnabledStates_;
+  std::function<void()> lastRepeatableAction_;
+  QString lastRepeatableActionLabel_;
+  QHash<QString, std::function<void()>> actionRecipes_;
   // 動画ファイルのキャンバスサイズキャッシュ（非同期取得）
   QHash<QString, QSize> videoDimensionCache_;
   QHash<QString, ArtifactCore::FileType> dragFileTypeCache_;
