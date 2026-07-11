@@ -107,6 +107,7 @@ private:
                                                        const void* bytes,
                                                        size_t memoryBytes);
     void pruneLocked();
+    void clearLocked();
     void eraseEntryByIdLocked(quint64 id);
 
     mutable QMutex mutex_;

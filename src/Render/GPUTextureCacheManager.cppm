@@ -149,7 +149,7 @@ void GPUTextureCacheManager::setDevice(RefCntAutoPtr<IRenderDevice> device,
                                        TEXTURE_FORMAT format)
 {
     QMutexLocker locker(&mutex_);
-    clear();
+    clearLocked();
     device_ = std::move(device);
     textureFormat_ = format;
 }
@@ -157,7 +157,7 @@ void GPUTextureCacheManager::setDevice(RefCntAutoPtr<IRenderDevice> device,
 void GPUTextureCacheManager::clearDevice()
 {
     QMutexLocker locker(&mutex_);
-    clear();
+    clearLocked();
     device_.Release();
 }
 
@@ -498,6 +498,11 @@ void GPUTextureCacheManager::invalidateOwner(const QString& ownerId)
 void GPUTextureCacheManager::clear()
 {
     QMutexLocker locker(&mutex_);
+    clearLocked();
+}
+
+void GPUTextureCacheManager::clearLocked()
+{
     entries_.clear();
     keyToId_.clear();
     ownerToIds_.clear();
