@@ -44,6 +44,7 @@ import Artifact.Project;
 import Artifact.Project.CreationDefaults;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
+import Asset.Manager;
 
 namespace Artifact
 {
@@ -241,6 +242,18 @@ namespace Artifact
    state.fromJson(root["creationDefaults"].toObject());
    projectPtr->setCreationDefaultsState(state);
    qDebug() << "[Importer] Creation defaults restored";
+  }
+
+  // Restore source identities and versions before layer construction. Older
+  // projects legitimately omit this section and rebuild it from source paths.
+  if (root.contains("assets") && root["assets"].isObject()) {
+   const QJsonObject assets = root["assets"].toObject();
+   if (assets.contains("sourceRegistry") && assets["sourceRegistry"].isObject()) {
+    if (!ArtifactCore::AssetManager::instance().restoreSourceRegistrySnapshot(
+            assets["sourceRegistry"].toObject())) {
+     qWarning() << "[Importer] Source registry snapshot contained invalid entries";
+    }
+   }
   }
 
   // エクスポーターが追加したAIメタデータセクション

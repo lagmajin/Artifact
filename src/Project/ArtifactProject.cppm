@@ -39,6 +39,7 @@ import Artifact.Layer.Svg;
 import Artifact.Project.CreationDefaults;
 import Property.SerializationBridge;
 import Application.AppSettings;
+import Asset.Manager;
 
 import Artifact.Project.Items;
 
@@ -711,6 +712,10 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   }
   result["creationDefaults"] = creationDefaultsState_.toJson();
   result["guideSet"] = guideSet_.toJson();
+  QJsonObject assets;
+  assets.insert(QStringLiteral("sourceRegistry"),
+                ArtifactCore::AssetManager::instance().sourceRegistrySnapshot());
+  result.insert(QStringLiteral("assets"), assets);
 
 QJsonArray compsArray;
    for (const auto& comp : container_.all()) {
