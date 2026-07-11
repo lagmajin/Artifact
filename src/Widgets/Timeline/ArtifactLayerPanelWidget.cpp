@@ -4167,6 +4167,37 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       addOutputModeAction(QStringLiteral("選択した子のみ (100%)"), GroupOutputMode::Single);
       addOutputModeAction(QStringLiteral("子で 100% を共有"), GroupOutputMode::Share);
       groupMenu->addSeparator();
+      QMenu *activeChildMenu = groupMenu->addMenu(QStringLiteral("Single の出力先"));
+      const auto children = groupLayer->children();
+      if (children.empty()) {
+        QAction *emptyAction = activeChildMenu->addAction(QStringLiteral("子レイヤーなし"));
+        emptyAction->setEnabled(false);
+      } else {
+        for (const auto& child : children) {
+          if (!child) {
+            continue;
+          }
+          const LayerID childId = child->id();
+          QAction *childAction = activeChildMenu->addAction(child->layerName(),
+              [this, layer, childId]() {
+                auto *group = dynamic_cast<ArtifactGroupLayer *>(layer.get());
+                if (!group) {
+                  return;
+                }
+                group->setActiveChildId(childId);
+                if (auto comp = safeCompositionLookup(impl_->compositionId)) {
+                  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                      LayerChangedEvent{comp->id().toString(), group->id().toString(),
+                                        LayerChangedEvent::ChangeType::Modified});
+                }
+                updateLayout();
+              });
+          childAction->setCheckable(true);
+          childAction->setChecked(groupLayer->activeChildId() == childId);
+          childAction->setEnabled(child->isVisible());
+        }
+      }
+      groupMenu->addSeparator();
       groupMenu->addAction(QStringLiteral("グループ名を変更..."), [triggerRenameLayer]() {
         triggerRenameLayer();
       });
