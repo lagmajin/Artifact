@@ -34,6 +34,7 @@ namespace Artifact
    bool muted_ = false;
    QString sourcePath_;
    QUuid sourceAssetId_;
+   std::uint64_t cachedSourceVersion_ = 0;
    ArtifactCore::SimpleWav wav_;
    std::shared_ptr<QVector<float>> sharedPcm_;
    int sourceSampleRate_ = 0;
@@ -59,6 +60,50 @@ namespace Artifact
    {
      static const QVector<float> empty;
      return sharedPcm_ ? *sharedPcm_ : empty;
+   }
+
+   bool refreshSourceVersionIfNeeded()
+   {
+     if (sourceAssetId_.isNull()) {
+       return false;
+     }
+     const auto currentVersion = ArtifactCore::AssetManager::instance().sourceVersion(
+         sourceAssetId_);
+     if (currentVersion == 0 || cachedSourceVersion_ == 0) {
+       cachedSourceVersion_ = currentVersion;
+       return false;
+     }
+     if (currentVersion == cachedSourceVersion_) {
+       return false;
+     }
+
+     cachedSourceVersion_ = currentVersion;
+     cache_.clear();
+     resampledCache_ = ResampledCache{};
+     if (sourcePath_.isEmpty() || !wav_.loadFromFile(sourcePath_)) {
+       sharedPcm_.reset();
+       isLoaded_ = false;
+       return true;
+     }
+
+     sharedPcm_ = std::static_pointer_cast<QVector<float>>(
+         ArtifactCore::AssetManager::instance().decodedPayload(
+             sourceAssetId_, currentVersion, QStringLiteral("audio.pcm.f32")));
+     if (!sharedPcm_) {
+       sharedPcm_ = std::make_shared<QVector<float>>(wav_.getAudioData());
+       sharedPcm_ = std::static_pointer_cast<QVector<float>>(
+           ArtifactCore::AssetManager::instance().publishDecodedPayload(
+               sourceAssetId_, currentVersion, QStringLiteral("audio.pcm.f32"),
+               sharedPcm_));
+     }
+     sourceSampleRate_ = wav_.sampleRate();
+     sourceChannelCount_ = std::max(1, wav_.channelCount());
+     totalFrames_ = wav_.frameCount();
+     duration_ = sourceSampleRate_ > 0
+                     ? static_cast<double>(totalFrames_) / sourceSampleRate_
+                     : 0.0;
+     isLoaded_ = totalFrames_ > 0 && sharedPcm_ && !sharedPcm_->isEmpty();
+     return true;
    }
 
    Impl() = default;
@@ -114,6 +159,7 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
   if (trimmed.isEmpty()) {
     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     impl_->sourceAssetId_ = {};
+    impl_->cachedSourceVersion_ = 0;
     impl_->isLoaded_ = false;
     impl_->sourcePath_.clear();
     impl_->sharedPcm_.reset();
@@ -137,6 +183,7 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
    }
    ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
    impl_->sourceAssetId_ = nextAssetId;
+   impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
 
    impl_->sourcePath_ = trimmed;
    const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
@@ -180,6 +227,7 @@ bool ArtifactAudioLayer::localizeSourceIdentity()
   const QUuid localizedId = ArtifactCore::AssetManager::instance().localizeSource(impl_->sourceAssetId_);
   if (localizedId.isNull()) return false;
   impl_->sourceAssetId_ = localizedId;
+  impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(localizedId);
   setDirty(LayerDirtyFlag::Property);
   Q_EMIT changed();
   return true;
@@ -193,6 +241,7 @@ bool ArtifactAudioLayer::relinkSourceIdentityToShared()
   if (sharedId.isNull()) return false;
   ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
   impl_->sourceAssetId_ = sharedId;
+  impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(sharedId);
   setDirty(LayerDirtyFlag::Property);
   Q_EMIT changed();
   return true;
@@ -235,6 +284,7 @@ void ArtifactAudioLayer::fromJsonProperties(const QJsonObject& obj)
     if (!savedId.isNull() && ArtifactCore::AssetManager::instance().acquireExistingSource(savedId)) {
       ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
       impl_->sourceAssetId_ = savedId;
+      impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(savedId);
       restored = true;
     }
     if (!restored) localizeSourceIdentity();
@@ -339,31 +389,37 @@ bool ArtifactAudioLayer::hasVideo() const
 
 bool ArtifactAudioLayer::hasAudio() const
 {
+  impl_->refreshSourceVersionIfNeeded();
   return impl_->isLoaded_;
 }
 
 double ArtifactAudioLayer::duration() const
 {
+  impl_->refreshSourceVersionIfNeeded();
   return impl_->duration_;
 }
 
 int ArtifactAudioLayer::sampleRate() const
 {
+  impl_->refreshSourceVersionIfNeeded();
   return impl_->sourceSampleRate_;
 }
 
 int ArtifactAudioLayer::channelCount() const
 {
+  impl_->refreshSourceVersionIfNeeded();
   return impl_->sourceChannelCount_;
 }
 
 qint64 ArtifactAudioLayer::totalFrames() const
 {
+  impl_->refreshSourceVersionIfNeeded();
   return impl_->totalFrames_;
 }
 
 WaveformData ArtifactAudioLayer::buildWaveformData(int displayWidth) const
 {
+  impl_->refreshSourceVersionIfNeeded();
   WaveformData data;
   data.width = displayWidth;
   data.sampleRate = impl_->sourceSampleRate_;
@@ -463,6 +519,7 @@ QString ArtifactAudioLayer::waveformPreviewSummary(int displayWidth) const
 bool ArtifactAudioLayer::buildLipSyncTrack(ArtifactCore::LipSyncTrack& track,
                                            double frameRate) const
 {
+  impl_->refreshSourceVersionIfNeeded();
   if (!impl_ || !impl_->isLoaded_ || impl_->sourceSampleRate_ <= 0 ||
       impl_->sourceChannelCount_ <= 0 || impl_->pcm().isEmpty()) {
     return false;
@@ -514,17 +571,20 @@ bool ArtifactAudioLayer::applyLipSyncToSwitchLayer(ArtifactSwitchLayer* switchLa
 
 size_t ArtifactAudioLayer::getCacheSize() const
 {
+  impl_->refreshSourceVersionIfNeeded();
   return impl_->cache_.getCacheSize();
 }
 
 size_t ArtifactAudioLayer::getCacheMemoryUsage() const
 {
+  impl_->refreshSourceVersionIfNeeded();
   return impl_->cache_.getMemoryUsage();
 }
 
 // フレーム単位のPCMをデコードしてキャッシュに追加
 bool ArtifactAudioLayer::decodeFrameToCache(qint64 frameNumber)
 {
+  impl_->refreshSourceVersionIfNeeded();
   ArtifactCore::ScopedPerformanceTimer timer("Audio/Layer/decodeFrameToCache");
   if (frameNumber < 0 || frameNumber >= impl_->totalFrames_) {
     return false;
