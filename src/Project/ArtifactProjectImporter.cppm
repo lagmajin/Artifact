@@ -201,6 +201,10 @@ namespace Artifact
    }
 
    qDebug() << "[Importer] Version check passed - file version:" << fileVersion << "min version:" << minVersion;
+  // Source leases and decoded payloads belong to the project being imported.
+  // Clear the previous project state before restoring the optional registry
+  // snapshot; older projects simply rebuild identities from their layer paths.
+  ArtifactCore::AssetManager::instance().resetSourceRegistry();
   auto projectPtr = std::make_shared<ArtifactProject>();
 
   // プロジェクト基本情報の読み込み
