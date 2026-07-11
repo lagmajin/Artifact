@@ -1620,6 +1620,19 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           }
         }
         groupPreviewOpacity->reset();
+      } else if (name.compare(QStringLiteral("source.localized"),
+                              Qt::CaseInsensitive) == 0) {
+        if (auto* service = ArtifactProjectService::instance()) {
+          for (const auto& tl : this->targetLayers) {
+            if (!tl) continue;
+            if (value.toBool()) {
+              service->localizeLayerSourceInCurrentComposition(tl->id());
+            } else {
+              service->relinkSharedLayerSourceInCurrentComposition(tl->id());
+            }
+          }
+        }
+        scheduleRebuild(0);
       } else {
         for (const auto &tl : this->targetLayers) {
           if (!tl) { continue; }
@@ -1646,6 +1659,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           if (!tl) { continue; }
           tl->setOpacity(newOpacity);
         }
+      } else if (name.compare(QStringLiteral("source.localized"),
+                              Qt::CaseInsensitive) == 0) {
+        // Identity changes are commit-only because they create an Undo command.
+        return;
       } else {
         for (const auto &tl : targetLayers) {
           if (!tl) { continue; }
@@ -2161,5 +2178,4 @@ void ArtifactPropertyWidget::Impl::scrollToGroupByName(const QString &groupName)
 }
 
 } // namespace Artifact
-
 

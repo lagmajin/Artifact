@@ -2289,6 +2289,49 @@ bool ArtifactProjectService::localizeLayerSourceInCurrentComposition(
   return isLocalized && isLocalized();
 }
 
+bool ArtifactProjectService::relinkSharedLayerSourceInCurrentComposition(
+    const LayerID& layerId) {
+  auto comp = currentComposition().lock();
+  if (!comp || layerId.isNil()) return false;
+  const auto layer = comp->layerById(layerId);
+  std::function<void()> localize;
+  std::function<void()> relinkShared;
+  std::function<bool()> isLocalized;
+
+  auto bindLayer = [&](auto typedLayer) {
+    using LayerT = typename decltype(typedLayer)::element_type;
+    if (!typedLayer || !typedLayer->isSourceIdentityLocalized()) return false;
+    std::weak_ptr<LayerT> weakLayer = typedLayer;
+    localize = [weakLayer]() {
+      if (auto locked = weakLayer.lock()) locked->localizeSourceIdentity();
+    };
+    relinkShared = [weakLayer]() {
+      if (auto locked = weakLayer.lock()) locked->relinkSourceIdentityToShared();
+    };
+    isLocalized = [weakLayer]() {
+      if (auto locked = weakLayer.lock()) return locked->isSourceIdentityLocalized();
+      return false;
+    };
+    return true;
+  };
+
+  const bool supported =
+      bindLayer(std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) ||
+      bindLayer(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) ||
+      bindLayer(std::dynamic_pointer_cast<ArtifactAudioLayer>(layer));
+  if (!supported) return false;
+
+  if (auto* undoManager = UndoManager::instance()) {
+    undoManager->push(std::make_unique<ToggleLocalizedSourceCommand>(
+        std::move(relinkShared), std::move(localize),
+        QStringLiteral("Relink Shared Layer Source")));
+  } else {
+    relinkShared();
+  }
+  notifyProjectMutation(impl_->projectManager());
+  return isLocalized && !isLocalized();
+}
+
 bool ArtifactProjectService::isLayerVisibleInCurrentComposition(
     const LayerID &layerId) {
   auto comp = currentComposition().lock();

@@ -256,6 +256,14 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAudioLayer::getLayerPropertyGro
   };
 
   audioGroup.addProperty(makeProp(QStringLiteral("audio.sourcePath"), ArtifactCore::PropertyType::String, impl_->sourcePath_, -130));
+  auto localizedProp = makeProp(QStringLiteral("source.localized"), ArtifactCore::PropertyType::Boolean,
+                                isSourceIdentityLocalized(), -129);
+  localizedProp->setDisplayLabel(QStringLiteral("Localized Source"));
+  audioGroup.addProperty(localizedProp);
+  auto useCountProp = makeProp(QStringLiteral("source.sharedUseCount"), ArtifactCore::PropertyType::Integer,
+                               ArtifactCore::AssetManager::instance().useCount(impl_->sourceAssetId_), -128);
+  useCountProp->setDisplayLabel(QStringLiteral("Source Uses"));
+  audioGroup.addProperty(useCountProp);
   auto volumeProp = makeProp(QStringLiteral("audio.volume"), ArtifactCore::PropertyType::Float, impl_->volume_, -120);
   volumeProp->setHardRange(0.0, 2.0);
   volumeProp->setSoftRange(0.0, 2.0);
@@ -280,6 +288,8 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAudioLayer::getLayerPropertyGro
 
 bool ArtifactAudioLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
 {
+  if (propertyPath == QStringLiteral("source.localized") ||
+      propertyPath == QStringLiteral("source.sharedUseCount")) return false;
   if (propertyPath == QStringLiteral("audio.sourcePath")) {
     return loadFromPath(value.toString());
   }

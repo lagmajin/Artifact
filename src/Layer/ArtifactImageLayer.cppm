@@ -460,6 +460,18 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     imageGroup.addProperty(makeProp(QStringLiteral("image.sourcePath"),
                                     ArtifactCore::PropertyType::String,
                                     sourcePath(), -150));
+    auto localizedProp = makeProp(QStringLiteral("source.localized"),
+                                  ArtifactCore::PropertyType::Boolean,
+                                  isSourceIdentityLocalized(), -149);
+    localizedProp->setDisplayLabel(QStringLiteral("Localized Source"));
+    localizedProp->setTooltip(QStringLiteral("Detach this layer from the shared source identity"));
+    imageGroup.addProperty(localizedProp);
+    auto useCountProp = makeProp(QStringLiteral("source.sharedUseCount"),
+                                 ArtifactCore::PropertyType::Integer,
+                                 ArtifactCore::AssetManager::instance().useCount(impl_->sourceAssetId_), -148);
+    useCountProp->setDisplayLabel(QStringLiteral("Source Uses"));
+    useCountProp->setTooltip(QStringLiteral("Loaded layers using this source identity"));
+    imageGroup.addProperty(useCountProp);
     imageGroup.addProperty(makeProp(QStringLiteral("image.fitToLayer"),
                                     ArtifactCore::PropertyType::Boolean,
                                     impl_->fitToLayer_, -140));
@@ -567,6 +579,10 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
 
 bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
 {
+    if (propertyPath == QStringLiteral("source.localized") ||
+        propertyPath == QStringLiteral("source.sharedUseCount")) {
+        return false;
+    }
     if (propertyPath == QStringLiteral("image.sourcePath") || propertyPath == QStringLiteral("sourcePath")) {
         return loadFromPath(value.toString());
     }

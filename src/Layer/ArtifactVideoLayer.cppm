@@ -2184,6 +2184,16 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactVideoLayer::getLayerPropertyGro
 
     videoGroup.addProperty(makeProp(QStringLiteral("video.sourcePath"),
                                     ArtifactCore::PropertyType::String, sourcePath(), -150));
+    auto localizedProp = makeProp(QStringLiteral("source.localized"),
+                                  ArtifactCore::PropertyType::Boolean,
+                                  isSourceIdentityLocalized(), -149);
+    localizedProp->setDisplayLabel(QStringLiteral("Localized Source"));
+    videoGroup.addProperty(localizedProp);
+    auto useCountProp = makeProp(QStringLiteral("source.sharedUseCount"),
+                                 ArtifactCore::PropertyType::Integer,
+                                 ArtifactCore::AssetManager::instance().useCount(impl_->sourceAssetId_), -148);
+    useCountProp->setDisplayLabel(QStringLiteral("Source Uses"));
+    videoGroup.addProperty(useCountProp);
     
     auto speedProp = makeProp(QStringLiteral("video.playbackSpeed"),
                               ArtifactCore::PropertyType::Float,
@@ -2346,6 +2356,8 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactVideoLayer::getLayerPropertyGro
 
 bool ArtifactVideoLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
 {
+    if (propertyPath == QStringLiteral("source.localized") ||
+        propertyPath == QStringLiteral("source.sharedUseCount")) return false;
     if (propertyPath == QStringLiteral("video.sourcePath")) {
         const auto path = value.toString().trimmed();
         if (!path.isEmpty()) {
