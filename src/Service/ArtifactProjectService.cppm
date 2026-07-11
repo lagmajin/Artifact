@@ -2248,24 +2248,36 @@ bool ArtifactProjectService::localizeLayerSourceInCurrentComposition(
   if (!comp || layerId.isNil()) {
     return false;
   }
-  auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(
-      comp->layerById(layerId));
-  if (!imageLayer || imageLayer->sourcePath().isEmpty() ||
-      imageLayer->isSourceIdentityLocalized()) {
-    return false;
-  }
+  const auto layer = comp->layerById(layerId);
+  std::function<void()> localize;
+  std::function<void()> relinkShared;
+  std::function<bool()> isLocalized;
 
-  std::weak_ptr<ArtifactImageLayer> weakLayer = imageLayer;
-  auto localize = [weakLayer]() {
-    if (auto layer = weakLayer.lock()) {
-      layer->localizeSourceIdentity();
+  auto bindLayer = [&](auto typedLayer) {
+    using LayerT = typename decltype(typedLayer)::element_type;
+    if (!typedLayer || typedLayer->sourcePath().isEmpty() ||
+        typedLayer->isSourceIdentityLocalized()) {
+      return false;
     }
+    std::weak_ptr<LayerT> weakLayer = typedLayer;
+    localize = [weakLayer]() {
+      if (auto locked = weakLayer.lock()) locked->localizeSourceIdentity();
+    };
+    relinkShared = [weakLayer]() {
+      if (auto locked = weakLayer.lock()) locked->relinkSourceIdentityToShared();
+    };
+    isLocalized = [weakLayer]() {
+      if (auto locked = weakLayer.lock()) return locked->isSourceIdentityLocalized();
+      return false;
+    };
+    return true;
   };
-  auto relinkShared = [weakLayer]() {
-    if (auto layer = weakLayer.lock()) {
-      layer->relinkSourceIdentityToShared();
-    }
-  };
+
+  const bool supported =
+      bindLayer(std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) ||
+      bindLayer(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) ||
+      bindLayer(std::dynamic_pointer_cast<ArtifactAudioLayer>(layer));
+  if (!supported) return false;
 
   if (auto* undoManager = UndoManager::instance()) {
     undoManager->push(std::make_unique<ToggleLocalizedSourceCommand>(
@@ -2274,7 +2286,7 @@ bool ArtifactProjectService::localizeLayerSourceInCurrentComposition(
     localize();
   }
   notifyProjectMutation(impl_->projectManager());
-  return imageLayer->isSourceIdentityLocalized();
+  return isLocalized && isLocalized();
 }
 
 bool ArtifactProjectService::isLayerVisibleInCurrentComposition(

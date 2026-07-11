@@ -1083,6 +1083,40 @@ QString ArtifactVideoLayer::sourcePath() const
     return impl_->sourcePath_;
 }
 
+QUuid ArtifactVideoLayer::sourceAssetId() const
+{
+    return impl_->sourceAssetId_;
+}
+
+bool ArtifactVideoLayer::localizeSourceIdentity()
+{
+    if (impl_->sourceAssetId_.isNull() || isSourceIdentityLocalized()) return false;
+    const QUuid localizedId = ArtifactCore::AssetManager::instance().localizeSource(impl_->sourceAssetId_);
+    if (localizedId.isNull()) return false;
+    impl_->sourceAssetId_ = localizedId;
+    setDirty(LayerDirtyFlag::Property);
+    Q_EMIT changed();
+    return true;
+}
+
+bool ArtifactVideoLayer::relinkSourceIdentityToShared()
+{
+    if (!isSourceIdentityLocalized() || impl_->sourcePath_.isEmpty()) return false;
+    const QUuid sharedId = ArtifactCore::AssetManager::instance().acquireSource(
+        impl_->sourcePath_, ArtifactCore::AssetType::Video);
+    if (sharedId.isNull()) return false;
+    ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+    impl_->sourceAssetId_ = sharedId;
+    setDirty(LayerDirtyFlag::Property);
+    Q_EMIT changed();
+    return true;
+}
+
+bool ArtifactVideoLayer::isSourceIdentityLocalized() const
+{
+    return ArtifactCore::AssetManager::instance().isLocalizedSource(impl_->sourceAssetId_);
+}
+
 bool ArtifactVideoLayer::isLoaded() const
 {
     return impl_->isLoaded_;
@@ -1824,6 +1858,8 @@ QJsonObject ArtifactVideoLayer::toJson() const
     obj["layerType"] = QStringLiteral("Video");
     obj["sourcePath"] = impl_->sourcePath_;
     obj["video.sourcePath"] = impl_->sourcePath_;
+    obj["video.sourceAssetId"] = impl_->sourceAssetId_.toString(QUuid::WithoutBraces);
+    obj["video.sourceLocalized"] = isSourceIdentityLocalized();
     obj["inPoint"] = static_cast<qint64>(inPoint());
     obj["outPoint"] = static_cast<qint64>(outPoint());
     obj["playbackSpeed"] = impl_->playbackSpeed_;
@@ -1874,12 +1910,23 @@ QJsonObject ArtifactVideoLayer::toJson() const
 std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObject& obj)
 {
     auto layer = std::make_shared<ArtifactVideoLayer>();
+    layer->ArtifactAbstractLayer::fromJsonProperties(obj);
     
     const QString sourcePath = obj.contains("video.sourcePath")
         ? obj["video.sourcePath"].toString()
         : obj.value("sourcePath").toString();
     if (!sourcePath.isEmpty()) {
         layer->loadFromPath(sourcePath);
+    }
+    if (obj.value(QStringLiteral("video.sourceLocalized")).toBool(false)) {
+        const QUuid savedId(obj.value(QStringLiteral("video.sourceAssetId")).toString());
+        bool restored = false;
+        if (!savedId.isNull() && ArtifactCore::AssetManager::instance().acquireExistingSource(savedId)) {
+            ArtifactCore::AssetManager::instance().releaseSource(layer->impl_->sourceAssetId_);
+            layer->impl_->sourceAssetId_ = savedId;
+            restored = true;
+        }
+        if (!restored) layer->localizeSourceIdentity();
     }
     
     if (obj.contains("inPoint")) {

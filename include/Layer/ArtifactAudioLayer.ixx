@@ -32,6 +32,7 @@ module;
 #include <random>
 #include <QJsonObject>
 #include <QVariant>
+#include <QUuid>
 export module Artifact.Layer.Audio;
 
 namespace ArtifactCore { class LipSyncTrack; }
@@ -65,6 +66,10 @@ export namespace Artifact
   void mute();
   bool loadFromPath(const QString& path);
   QString sourcePath() const;
+  QUuid sourceAssetId() const;
+  bool localizeSourceIdentity();
+  bool relinkSourceIdentityToShared();
+  bool isSourceIdentityLocalized() const;
   bool isLoaded() const;
 
   // Audio metadata

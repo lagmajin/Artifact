@@ -1,6 +1,8 @@
 ﻿module;
 #include <memory>
 #include <chrono>
+#include <cstdint>
+#include <QUuid>
 
 #include <iostream>
 #include <vector>
@@ -109,6 +111,10 @@ public:
     
     /// Get current source file path
     QString sourcePath() const;
+    QUuid sourceAssetId() const;
+    bool localizeSourceIdentity();
+    bool relinkSourceIdentityToShared();
+    bool isSourceIdentityLocalized() const;
     
     /// Check if video is loaded
     bool isLoaded() const;

@@ -322,19 +322,7 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
       }
       if ((type == LayerType::Video || json.value("type").toString() == QStringLiteral("VideoLayer")) &&
           (json.contains("video.sourcePath") || json.contains("sourcePath"))) {
-          ArtifactVideoInitParams videoParams(name);
-          if (json.contains("video.sourcePath")) {
-              videoParams.setVideoPath(json.value("video.sourcePath").toString());
-          } else {
-              videoParams.setVideoPath(json.value("sourcePath").toString());
-          }
-          auto result = factory.createLayer(videoParams);
-          if (result.success && result.layer) {
-              result.layer->fromJsonProperties(json);
-              ArtifactAbstractLayerPtr layer = result.layer;
-              return layer;
-          }
-          return nullptr;
+          return ArtifactVideoLayer::fromJson(json);
       }
       if (json.contains("svg.sourcePath") || json.contains("sourcePath")) {
           ArtifactSvgInitParams svgParams(name);

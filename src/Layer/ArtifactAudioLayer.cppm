@@ -157,6 +157,37 @@ QString ArtifactAudioLayer::sourcePath() const
   return impl_->sourcePath_;
 }
 
+QUuid ArtifactAudioLayer::sourceAssetId() const { return impl_->sourceAssetId_; }
+
+bool ArtifactAudioLayer::localizeSourceIdentity()
+{
+  if (impl_->sourceAssetId_.isNull() || isSourceIdentityLocalized()) return false;
+  const QUuid localizedId = ArtifactCore::AssetManager::instance().localizeSource(impl_->sourceAssetId_);
+  if (localizedId.isNull()) return false;
+  impl_->sourceAssetId_ = localizedId;
+  setDirty(LayerDirtyFlag::Property);
+  Q_EMIT changed();
+  return true;
+}
+
+bool ArtifactAudioLayer::relinkSourceIdentityToShared()
+{
+  if (!isSourceIdentityLocalized() || impl_->sourcePath_.isEmpty()) return false;
+  const QUuid sharedId = ArtifactCore::AssetManager::instance().acquireSource(
+      impl_->sourcePath_, ArtifactCore::AssetType::Audio);
+  if (sharedId.isNull()) return false;
+  ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+  impl_->sourceAssetId_ = sharedId;
+  setDirty(LayerDirtyFlag::Property);
+  Q_EMIT changed();
+  return true;
+}
+
+bool ArtifactAudioLayer::isSourceIdentityLocalized() const
+{
+  return ArtifactCore::AssetManager::instance().isLocalizedSource(impl_->sourceAssetId_);
+}
+
 bool ArtifactAudioLayer::isLoaded() const
 {
   return impl_->isLoaded_;
@@ -167,6 +198,8 @@ QJsonObject ArtifactAudioLayer::toJson() const
   QJsonObject obj = ArtifactAbstractLayer::toJson();
   obj["type"] = static_cast<int>(LayerType::Audio);
   obj["audio.sourcePath"] = impl_->sourcePath_;
+  obj["audio.sourceAssetId"] = impl_->sourceAssetId_.toString(QUuid::WithoutBraces);
+  obj["audio.sourceLocalized"] = isSourceIdentityLocalized();
   obj["audio.volume"] = static_cast<double>(impl_->volume_);
   obj["audio.pan"] = static_cast<double>(impl_->pan_);
   obj["audio.muted"] = impl_->muted_;
@@ -180,6 +213,16 @@ void ArtifactAudioLayer::fromJsonProperties(const QJsonObject& obj)
     loadFromPath(obj.value("audio.sourcePath").toString());
   } else if (obj.contains("sourcePath")) {
     loadFromPath(obj.value("sourcePath").toString());
+  }
+  if (obj.value(QStringLiteral("audio.sourceLocalized")).toBool(false)) {
+    const QUuid savedId(obj.value(QStringLiteral("audio.sourceAssetId")).toString());
+    bool restored = false;
+    if (!savedId.isNull() && ArtifactCore::AssetManager::instance().acquireExistingSource(savedId)) {
+      ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+      impl_->sourceAssetId_ = savedId;
+      restored = true;
+    }
+    if (!restored) localizeSourceIdentity();
   }
   if (obj.contains("audio.volume")) {
     setVolume(static_cast<float>(obj.value("audio.volume").toDouble(1.0)));
