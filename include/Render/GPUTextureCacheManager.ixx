@@ -82,6 +82,8 @@ public:
     void clear();
 
     GPUTextureCacheStats stats() const;
+    int ownerEntryCount(const QString& ownerId) const;
+    size_t ownerMemoryBytes(const QString& ownerId) const;
 
 private:
     struct Entry {

@@ -515,6 +515,32 @@ GPUTextureCacheStats GPUTextureCacheManager::stats() const
     };
 }
 
+int GPUTextureCacheManager::ownerEntryCount(const QString& ownerId) const
+{
+    if (ownerId.isEmpty()) {
+        return 0;
+    }
+    QMutexLocker locker(&mutex_);
+    return ownerToIds_.value(ownerId).size();
+}
+
+size_t GPUTextureCacheManager::ownerMemoryBytes(const QString& ownerId) const
+{
+    if (ownerId.isEmpty()) {
+        return 0;
+    }
+    QMutexLocker locker(&mutex_);
+    size_t bytes = 0;
+    const auto ids = ownerToIds_.value(ownerId);
+    for (const quint64 id : ids) {
+        const auto it = entries_.constFind(id);
+        if (it != entries_.cend()) {
+            bytes += it->memoryBytes;
+        }
+    }
+    return bytes;
+}
+
 void GPUTextureCacheManager::eraseEntryByIdLocked(quint64 id)
 {
     auto it = entries_.find(id);
