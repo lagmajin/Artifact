@@ -82,6 +82,7 @@ private:
     bool isCancelled_ = false;
     int progress_ = 0;
     QString description_;
+    QString deduplicationKey_;
     
 public:
     explicit RenderTask(const FrameRange& range, 
@@ -100,6 +101,11 @@ public:
     
     QString description() const { return description_; }
     void setDescription(const QString& desc) { description_ = desc; }
+
+    // Explicit stable identity for coalescing equivalent pending/in-flight work.
+    // Empty keeps the legacy behavior and never deduplicates the task.
+    QString deduplicationKey() const { return deduplicationKey_; }
+    void setDeduplicationKey(const QString& key) { deduplicationKey_ = key.trimmed(); }
     
 signals:
     void progressChanged(int progress) W_SIGNAL(progressChanged, progress);

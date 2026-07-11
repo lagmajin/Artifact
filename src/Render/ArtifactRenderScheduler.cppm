@@ -96,6 +96,7 @@ public:
     std::vector<RenderTask*> pendingTasks_;
     std::vector<RenderTask*> activeTasks_;
     std::vector<RenderTask*> completedTasks_;
+    std::unordered_set<std::string> scheduledDeduplicationKeys_;
     
     // Thread safety
     mutable QMutex mutex_;
@@ -254,7 +255,18 @@ bool RenderScheduler::isAdaptiveEnabled() const {
 }
 
 void RenderScheduler::submitTask(RenderTask* task) {
+    if (!task) {
+        return;
+    }
     QMutexLocker locker(&impl_->mutex_);
+    const QString key = task->deduplicationKey();
+    if (!key.isEmpty()) {
+        const std::string stableKey = key.toStdString();
+        if (!impl_->scheduledDeduplicationKeys_.insert(stableKey).second) {
+            task->cancel();
+            return;
+        }
+    }
     impl_->pendingTasks_.push_back(task);
     impl_->totalCount_++;
     
@@ -280,6 +292,10 @@ void RenderScheduler::cancelTask(RenderTask* task) {
     auto it = std::find(impl_->pendingTasks_.begin(), impl_->pendingTasks_.end(), task);
     if (it != impl_->pendingTasks_.end()) {
         impl_->pendingTasks_.erase(it);
+        const QString key = task->deduplicationKey();
+        if (!key.isEmpty()) {
+            impl_->scheduledDeduplicationKeys_.erase(key.toStdString());
+        }
     }
 }
 
@@ -297,6 +313,7 @@ void RenderScheduler::cancelAllTasks() {
     
     impl_->pendingTasks_.clear();
     impl_->activeTasks_.clear();
+    impl_->scheduledDeduplicationKeys_.clear();
 }
 
 void RenderScheduler::pauseTask(RenderTask* task) {
@@ -395,6 +412,10 @@ void RenderScheduler::processNextTask() {
             if (it != impl_->activeTasks_.end()) {
                 impl_->activeTasks_.erase(it);
             }
+            const QString key = task->deduplicationKey();
+            if (!key.isEmpty()) {
+                impl_->scheduledDeduplicationKeys_.erase(key.toStdString());
+            }
             impl_->dropCounts_[static_cast<int>(FrameDropReason::Cancelled)]++;
             emit frameDropped(FrameDropReason::Cancelled,
                               impl_->dropCounts_[static_cast<int>(FrameDropReason::Cancelled)]);
@@ -454,6 +475,10 @@ void RenderScheduler::processNextTask() {
                 auto it = std::find(self->impl_->activeTasks_.begin(), self->impl_->activeTasks_.end(), task);
                 if (it != self->impl_->activeTasks_.end()) {
                     self->impl_->activeTasks_.erase(it);
+                }
+                const QString key = task->deduplicationKey();
+                if (!key.isEmpty()) {
+                    self->impl_->scheduledDeduplicationKeys_.erase(key.toStdString());
                 }
                 self->impl_->completedTasks_.push_back(task);
                 self->impl_->completedCount_++;
@@ -566,6 +591,8 @@ void BatchRenderer::renderRange(const FrameRange& range, TaskPriority priority) 
     // Create tasks for each frame in range
         for (long long f = range.startPosition().framePosition(); f <= range.endPosition().framePosition(); ++f) {
         auto* task = new RenderTask(FrameRange(FramePosition(f), FramePosition(f)), priority);
+        task->setDeduplicationKey(
+            QStringLiteral("batch-frame:%1").arg(f));
         impl_->scheduler_->submitTask(task);
     }
     
