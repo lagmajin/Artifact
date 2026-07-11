@@ -29,6 +29,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
+import Asset.Manager;
 import Video.VideoFrame;
 import Artifact.Layer.Text;
 import Artifact.Layer.Solid2D;
@@ -1188,10 +1189,19 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       const ArtifactCore::GpuVideoFrame gpuFrame =
           videoLayer->decodeFrameToGpuFrame(targetFrame);
       if (gpuFrame.isValid()) {
-        const QString gpuCacheSignature =
-            QStringLiteral("video-gpu:%1").arg(targetFrame);
+        QString gpuOwnerId = layer->id().toString();
+        QString gpuCacheSignature = QStringLiteral("video-gpu:%1").arg(targetFrame);
+        const QUuid sourceAssetId = videoLayer->sourceAssetId();
+        if (!sourceAssetId.isNull()) {
+          const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(sourceAssetId);
+          gpuOwnerId = QStringLiteral("asset:%1").arg(
+              sourceAssetId.toString(QUuid::WithoutBraces));
+          gpuCacheSignature = QStringLiteral("video-gpu:v%1:f%2")
+                                  .arg(sourceVersion)
+                                  .arg(targetFrame);
+        }
         const auto handle = gpuTextureCacheManager->acquireOrCreate(
-            layer->id().toString(), gpuCacheSignature, gpuFrame);
+            gpuOwnerId, gpuCacheSignature, gpuFrame);
         const auto binding = gpuTextureCacheManager->bindingRecord(handle);
         if (binding.isValid()) {
           const float baseOpacity =
