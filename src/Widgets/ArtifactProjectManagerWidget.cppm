@@ -138,6 +138,7 @@ import Artifact.Project.Cleanup;
 import Input.Operator;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Video;
+import Asset.Manager;
 import Artifact.Layer.Composition;
 import Artifact.Layer.Search.Query;
 import Artifact.Event.Types;
@@ -457,6 +458,29 @@ int projectItemUsageCount(ProjectItem* item)
     }
 
     return usageCount;
+}
+
+int projectItemSourceUseCount(ProjectItem* item)
+{
+    if (!item || item->type() != eProjectItemType::Footage) {
+        return 0;
+    }
+
+    const auto* footage = static_cast<const FootageItem*>(item);
+    const QString path = footage->filePath.trimmed();
+    if (path.isEmpty()) {
+        return 0;
+    }
+
+    auto& assetManager = ArtifactCore::AssetManager::instance();
+    QUuid sourceId = assetManager.sourceId(path);
+    if (sourceId.isNull()) {
+        const QString absolutePath = QFileInfo(path).absoluteFilePath();
+        if (absolutePath != path) {
+            sourceId = assetManager.sourceId(absolutePath);
+        }
+    }
+    return sourceId.isNull() ? 0 : assetManager.useCount(sourceId);
 }
 }
 
@@ -1146,8 +1170,9 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
         } else {
             lines << QStringLiteral("Status: Missing");
         }
-        lines << QStringLiteral("Used In: %1")
-                     .arg(projectItemUsageCount(item));
+        lines << QStringLiteral("Used In: %1 layers • Source Uses: %2")
+                     .arg(projectItemUsageCount(item))
+                     .arg(projectItemSourceUseCount(item));
 
         QString lowerPath = path.toLower();
         if (exists) {
@@ -5636,6 +5661,7 @@ public:
         const QString proxyPath = isFootage ? proxyFilePathForFootage(static_cast<FootageItem*>(item)->filePath) : QString();
         const bool hasProxy = !proxyPath.isEmpty() && QFileInfo(proxyPath).exists();
         const QString proxySummaryText = isFootage ? proxySummaryForSelectedFootage() : QString();
+        const int sourceUseCount = isFootage ? projectItemSourceUseCount(item) : 0;
         const QString statusText = !item ? QStringLiteral("Select an item to inspect details")
             : isFootage ? (QFileInfo(static_cast<FootageItem*>(item)->filePath).exists() ? QStringLiteral("Available") : QStringLiteral("Missing"))
             : isFolder ? QStringLiteral("Folder")
@@ -5652,9 +5678,11 @@ public:
                         ? (hasProxy ? QStringLiteral("Proxy: Ready (%1)").arg(QFileInfo(proxyPath).fileName())
                                     : QStringLiteral("Proxy: Missing"))
                         : proxySummaryText;
-                    selectionDetailLabel->setText(QStringLiteral("Status: %1 | %2 | %3 | Preview")
-                                                      .arg(statusText, pathPart, proxyPart));
-                    selectionDetailLabel->setToolTip(QStringLiteral("Open the selected footage, reveal it, generate a proxy, or copy its path."));
+                    selectionDetailLabel->setText(QStringLiteral("Status: %1 | %2 | Source Uses: %3 | %4 | Preview")
+                                                      .arg(statusText, pathPart)
+                                                      .arg(sourceUseCount)
+                                                      .arg(proxyPart));
+                    selectionDetailLabel->setToolTip(QStringLiteral("Source Uses is the live AssetManager lease count. Open the selected footage, reveal it, generate a proxy, or copy its path."));
                 } else {
                     const QString batchPart = isComposition && selectedCompositionCountValue > 1
                         ? QStringLiteral(" | Batch FPS: %1 comps").arg(selectedCompositionCountValue)
