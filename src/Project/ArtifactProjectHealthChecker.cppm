@@ -647,6 +647,7 @@ void ArtifactProjectHealthChecker::checkMissingAssets(ArtifactProject* project, 
         const QString path = source.value(QStringLiteral("path")).toString();
         const QString id = source.value(QStringLiteral("id")).toString();
         const int useCount = source.value(QStringLiteral("useCount")).toInt();
+        const int livePayloadCount = source.value(QStringLiteral("livePayloadCount")).toInt();
         const bool localized = source.value(QStringLiteral("localized")).toBool(false);
         const QString canonicalPath = QDir::cleanPath(
             QFileInfo(path).canonicalFilePath().isEmpty()
@@ -685,6 +686,15 @@ void ArtifactProjectHealthChecker::checkMissingAssets(ArtifactProject* project, 
                 id,
                 QStringLiteral("AssetOrphan")
             });
+            if (livePayloadCount > 0) {
+                report.issues.push_back({
+                    HealthIssueSeverity::Info,
+                    QStringLiteral("Asset source has live decoded payloads without an active lease: %1")
+                        .arg(path),
+                    id,
+                    QStringLiteral("AssetPayloadLeak")
+                });
+            }
         }
         if (!versionOk || version == 0) {
             report.issues.push_back({

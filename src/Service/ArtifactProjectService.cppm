@@ -313,7 +313,8 @@ auto mapHealthCategoryToDiagnostic(const QString &category)
     return ArtifactCore::DiagnosticCategory::File;
   }
   if (category == QStringLiteral("AssetOrphan") ||
-      category == QStringLiteral("AssetDuplicateDecode")) {
+      category == QStringLiteral("AssetDuplicateDecode") ||
+      category == QStringLiteral("AssetPayloadLeak")) {
     return ArtifactCore::DiagnosticCategory::Performance;
   }
   if (category == QStringLiteral("AssetVersion")) {
@@ -343,6 +344,9 @@ auto convertProjectHealthReportToDiagnosticsImpl(const ProjectHealthReport &repo
     }
     if (category == QStringLiteral("AssetDuplicateDecode")) {
       return QStringLiteral("Relink duplicate source identities to one canonical asset entry");
+    }
+    if (category == QStringLiteral("AssetPayloadLeak")) {
+      return QStringLiteral("Release the stale source payload or reload the source");
     }
     if (category == QStringLiteral("AssetVersion")) {
       return QStringLiteral("Reload the source to rebuild its cache version");
