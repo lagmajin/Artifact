@@ -259,6 +259,23 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
         return {};
     }
 
+    const QString currentVersionToken =
+        (ownerId.startsWith(QStringLiteral("asset:")) &&
+         (cacheKey.startsWith(QStringLiteral("video-gpu:v")) ||
+          cacheKey.startsWith(QStringLiteral("image-f32:v"))))
+            ? cacheKey.section(QLatin1Char(':'), 1, 1)
+            : QString();
+    if (!currentVersionToken.isEmpty()) {
+        const auto ownerIds = ownerToIds_.value(ownerId);
+        for (const quint64 id : ownerIds) {
+            const auto entryIt = entries_.constFind(id);
+            if (entryIt != entries_.cend() &&
+                entryIt->cacheKey.section(QLatin1Char(':'), 1, 1) != currentVersionToken) {
+                eraseEntryByIdLocked(id);
+            }
+        }
+    }
+
     const QString key = makeKey(ownerId, cacheKey);
     const auto existingIdIt = keyToId_.find(key);
     if (existingIdIt != keyToId_.end()) {
@@ -339,6 +356,23 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const
     if (!device_) {
         ++missCount_;
         return {};
+    }
+
+    const QString currentVersionToken =
+        (ownerId.startsWith(QStringLiteral("asset:")) &&
+         (cacheKey.startsWith(QStringLiteral("video-gpu:v")) ||
+          cacheKey.startsWith(QStringLiteral("image-f32:v"))))
+            ? cacheKey.section(QLatin1Char(':'), 1, 1)
+            : QString();
+    if (!currentVersionToken.isEmpty()) {
+        const auto ownerIds = ownerToIds_.value(ownerId);
+        for (const quint64 id : ownerIds) {
+            const auto entryIt = entries_.constFind(id);
+            if (entryIt != entries_.cend() &&
+                entryIt->cacheKey.section(QLatin1Char(':'), 1, 1) != currentVersionToken) {
+                eraseEntryByIdLocked(id);
+            }
+        }
     }
 
     const QString key = makeKey(ownerId, cacheKey);
