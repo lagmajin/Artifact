@@ -92,6 +92,35 @@ QString SetPropertyCommand::label() const {
     return QStringLiteral("Set Property: %1").arg(name_.toQString());
 }
 
+ReplaceLayerSourceCommand::ReplaceLayerSourceCommand(
+    ArtifactAbstractLayerPtr layer, QString propertyPath,
+    QString oldSourcePath, QString newSourcePath)
+    : layer_(layer), propertyPath_(propertyPath),
+      oldSourcePath_(oldSourcePath),
+      newSourcePath_(newSourcePath) {}
+
+void ReplaceLayerSourceCommand::undo() {
+    if (auto layer = layer_.lock()) {
+        layer->setLayerPropertyValue(propertyPath_, oldSourcePath_);
+        if (auto* mgr = UndoManager::instance()) {
+            mgr->notifyAnythingChanged();
+        }
+    }
+}
+
+void ReplaceLayerSourceCommand::redo() {
+    if (auto layer = layer_.lock()) {
+        layer->setLayerPropertyValue(propertyPath_, newSourcePath_);
+        if (auto* mgr = UndoManager::instance()) {
+            mgr->notifyAnythingChanged();
+        }
+    }
+}
+
+QString ReplaceLayerSourceCommand::label() const {
+    return QStringLiteral("Replace Layer Source");
+}
+
 // --- MoveLayerCommand ---
 MoveLayerCommand::MoveLayerCommand(ArtifactAbstractLayerPtr layer, float deltaX, float deltaY, int64_t frame)
     : layer_(layer), dx_(deltaX), dy_(deltaY), frame_(frame) {}

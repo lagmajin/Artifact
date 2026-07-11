@@ -2203,25 +2203,38 @@ bool ArtifactProjectService::replaceLayerSourceInCurrentComposition(
   }
 
   const QString trimmed = sourcePath.trimmed();
-  if (trimmed.isEmpty()) {
+  const QFileInfo sourceInfo(trimmed);
+  if (trimmed.isEmpty() || !sourceInfo.exists() || !sourceInfo.isFile()) {
     return false;
   }
 
-  bool replaced = false;
+  QString oldSourcePath;
+  QString propertyPath;
   if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
-    replaced = imageLayer->loadFromPath(trimmed);
+    oldSourcePath = imageLayer->sourcePath();
+    propertyPath = QStringLiteral("image.sourcePath");
   } else if (auto svgLayer =
                  std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
-    replaced = svgLayer->loadFromPath(trimmed);
+    oldSourcePath = svgLayer->sourcePath();
+    propertyPath = QStringLiteral("svg.sourcePath");
   } else if (auto audioLayer =
                  std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
-    replaced = audioLayer->loadFromPath(trimmed);
+    oldSourcePath = audioLayer->sourcePath();
+    propertyPath = QStringLiteral("audio.sourcePath");
   } else if (auto videoLayer =
                  std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
-    replaced = videoLayer->loadFromPath(trimmed);
+    oldSourcePath = videoLayer->sourcePath();
+    propertyPath = QStringLiteral("video.sourcePath");
   }
 
-  if (!replaced) {
+  if (propertyPath.isEmpty() || oldSourcePath == trimmed) {
+    return false;
+  }
+
+  if (auto* undoManager = UndoManager::instance()) {
+    undoManager->push(std::make_unique<ReplaceLayerSourceCommand>(
+        layer, propertyPath, oldSourcePath, trimmed));
+  } else if (!layer->setLayerPropertyValue(propertyPath, trimmed)) {
     return false;
   }
 

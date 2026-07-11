@@ -159,6 +159,22 @@ private:
     QString label_;
 };
 
+class ReplaceLayerSourceCommand : public UndoCommand {
+public:
+    ReplaceLayerSourceCommand(ArtifactAbstractLayerPtr layer,
+                              QString propertyPath,
+                              QString oldSourcePath,
+                              QString newSourcePath);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    QString propertyPath_;
+    QString oldSourcePath_;
+    QString newSourcePath_;
+};
+
 class SetEffectMaskImagesCommand : public UndoCommand {
 public:
     SetEffectMaskImagesCommand(std::shared_ptr<ArtifactAbstractEffect> effect,
