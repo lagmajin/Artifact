@@ -4144,6 +4144,29 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           QStringLiteral("子レイヤー数: %1").arg(static_cast<int>(groupLayer->children().size())));
       showChildCountAct->setEnabled(false);
       groupMenu->addSeparator();
+      QMenu *outputModeMenu = groupMenu->addMenu(QStringLiteral("出力モード"));
+      const auto addOutputModeAction = [this, layer, groupLayer, outputModeMenu](
+                                           const QString& label, GroupOutputMode mode) {
+        QAction *action = outputModeMenu->addAction(label, [this, layer, mode]() {
+          auto *group = dynamic_cast<ArtifactGroupLayer *>(layer.get());
+          if (!group) {
+            return;
+          }
+          group->setOutputMode(mode);
+          if (auto comp = safeCompositionLookup(impl_->compositionId)) {
+            ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                LayerChangedEvent{comp->id().toString(), group->id().toString(),
+                                  LayerChangedEvent::ChangeType::Modified});
+          }
+          updateLayout();
+        });
+        action->setCheckable(true);
+        action->setChecked(groupLayer->outputMode() == mode);
+      };
+      addOutputModeAction(QStringLiteral("すべて表示 (各 100%)"), GroupOutputMode::All);
+      addOutputModeAction(QStringLiteral("選択した子のみ (100%)"), GroupOutputMode::Single);
+      addOutputModeAction(QStringLiteral("子で 100% を共有"), GroupOutputMode::Share);
+      groupMenu->addSeparator();
       groupMenu->addAction(QStringLiteral("グループ名を変更..."), [triggerRenameLayer]() {
         triggerRenameLayer();
       });
@@ -4560,6 +4583,20 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         if (auto* svc = ArtifactProjectService::instance()) {
           ArtifactLayerInitParams params(QStringLiteral("Group"), LayerType::Group);
           svc->addLayerToCurrentComposition(params, true, false);
+          updateLayout();
+        }
+      });
+      newSubMenu->addAction(QStringLiteral("マルチプレクサーグループ"), [this]() {
+        if (auto* svc = ArtifactProjectService::instance()) {
+          ArtifactLayerInitParams params(QStringLiteral("Multiplexer Group"), LayerType::Group);
+          svc->addLayerToCurrentComposition(params, true, false);
+          if (auto* selection = ArtifactLayerSelectionManager::instance()) {
+            if (auto created = selection->currentLayer()) {
+              if (auto* group = dynamic_cast<ArtifactGroupLayer*>(created.get())) {
+                group->setOutputMode(GroupOutputMode::Single);
+              }
+            }
+          }
           updateLayout();
         }
       });
