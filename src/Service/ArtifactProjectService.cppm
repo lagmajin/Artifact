@@ -2242,6 +2242,41 @@ bool ArtifactProjectService::replaceLayerSourceInCurrentComposition(
   return true;
 }
 
+bool ArtifactProjectService::localizeLayerSourceInCurrentComposition(
+    const LayerID& layerId) {
+  auto comp = currentComposition().lock();
+  if (!comp || layerId.isNil()) {
+    return false;
+  }
+  auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(
+      comp->layerById(layerId));
+  if (!imageLayer || imageLayer->sourcePath().isEmpty() ||
+      imageLayer->isSourceIdentityLocalized()) {
+    return false;
+  }
+
+  std::weak_ptr<ArtifactImageLayer> weakLayer = imageLayer;
+  auto localize = [weakLayer]() {
+    if (auto layer = weakLayer.lock()) {
+      layer->localizeSourceIdentity();
+    }
+  };
+  auto relinkShared = [weakLayer]() {
+    if (auto layer = weakLayer.lock()) {
+      layer->relinkSourceIdentityToShared();
+    }
+  };
+
+  if (auto* undoManager = UndoManager::instance()) {
+    undoManager->push(std::make_unique<ToggleLocalizedSourceCommand>(
+        std::move(localize), std::move(relinkShared)));
+  } else {
+    localize();
+  }
+  notifyProjectMutation(impl_->projectManager());
+  return imageLayer->isSourceIdentityLocalized();
+}
+
 bool ArtifactProjectService::isLayerVisibleInCurrentComposition(
     const LayerID &layerId) {
   auto comp = currentComposition().lock();

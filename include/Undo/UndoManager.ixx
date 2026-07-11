@@ -12,6 +12,7 @@
 #include <functional>
 #include <optional>
 #include <utility>
+#include <functional>
 #include <array>
 #include <chrono>
 #include <filesystem>
@@ -173,6 +174,20 @@ private:
     QString propertyPath_;
     QString oldSourcePath_;
     QString newSourcePath_;
+};
+
+class ToggleLocalizedSourceCommand : public UndoCommand {
+public:
+    ToggleLocalizedSourceCommand(std::function<void()> localize,
+                                 std::function<void()> relinkShared,
+                                 QString label = QStringLiteral("Localize Layer Source"));
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    std::function<void()> localize_;
+    std::function<void()> relinkShared_;
+    QString label_;
 };
 
 class SetEffectMaskImagesCommand : public UndoCommand {

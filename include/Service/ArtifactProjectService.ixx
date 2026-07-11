@@ -124,6 +124,7 @@ export namespace Artifact {
   bool duplicateLayerInCurrentComposition(const LayerID& layerId);
   bool renameLayerInCurrentComposition(const LayerID& layerId, const QString& newName);
   bool replaceLayerSourceInCurrentComposition(const LayerID& layerId, const QString& sourcePath);
+  bool localizeLayerSourceInCurrentComposition(const LayerID& layerId);
   bool isLayerVisibleInCurrentComposition(const LayerID& layerId);
   bool isLayerLockedInCurrentComposition(const LayerID& layerId);
   bool isLayerSoloInCurrentComposition(const LayerID& layerId);

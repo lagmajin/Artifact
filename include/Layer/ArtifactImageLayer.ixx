@@ -33,7 +33,11 @@ export namespace Artifact {
   QUuid sourceAssetId() const;
   std::uint64_t sourceVersion() const;
   bool canShareSourceGpuTexture() const;
+  bool localizeSourceIdentity();
+  bool relinkSourceIdentityToShared();
+  bool isSourceIdentityLocalized() const;
   QJsonObject toJson() const;
+  void fromJsonProperties(const QJsonObject& obj) override;
   void setFromQImage(const QImage& image);
   void setFromCvMat(const cv::Mat& mat);
   void setFromCvMat();

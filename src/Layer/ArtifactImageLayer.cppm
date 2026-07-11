@@ -346,11 +346,58 @@ bool ArtifactImageLayer::canShareSourceGpuTexture() const
            !hasMasks() && getEffects().empty();
 }
 
+bool ArtifactImageLayer::localizeSourceIdentity()
+{
+    if (impl_->sourceAssetId_.isNull() || isSourceIdentityLocalized()) {
+        return false;
+    }
+    const QUuid localizedId = ArtifactCore::AssetManager::instance().localizeSource(
+        impl_->sourceAssetId_);
+    if (localizedId.isNull()) {
+        return false;
+    }
+    impl_->sourceAssetId_ = localizedId;
+    setDirty(LayerDirtyFlag::Property);
+    Q_EMIT changed();
+    return true;
+}
+
+bool ArtifactImageLayer::isSourceIdentityLocalized() const
+{
+    return ArtifactCore::AssetManager::instance().isLocalizedSource(
+        impl_->sourceAssetId_);
+}
+
+bool ArtifactImageLayer::relinkSourceIdentityToShared()
+{
+    if (!isSourceIdentityLocalized() || impl_->sourcePath_.isEmpty()) {
+        return false;
+    }
+    const QUuid sharedId = ArtifactCore::AssetManager::instance().acquireSource(
+        impl_->sourcePath_, ArtifactCore::AssetType::Image);
+    if (sharedId.isNull()) {
+        return false;
+    }
+    ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+    impl_->sourceAssetId_ = sharedId;
+    if (impl_->cacheBuffer_) {
+        const auto version = ArtifactCore::AssetManager::instance().sourceVersion(sharedId);
+        impl_->cacheBuffer_ = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+            ArtifactCore::AssetManager::instance().publishDecodedPayload(
+                sharedId, version, kImageF32Representation, impl_->cacheBuffer_));
+    }
+    setDirty(LayerDirtyFlag::Property);
+    Q_EMIT changed();
+    return true;
+}
+
 QJsonObject ArtifactImageLayer::toJson() const
 {
     QJsonObject obj = ArtifactAbstract2DLayer::toJson();
     obj["type"] = static_cast<int>(LayerType::Image);
     obj["image.sourcePath"] = impl_->sourcePath_;
+    obj["image.sourceAssetId"] = impl_->sourceAssetId_.toString(QUuid::WithoutBraces);
+    obj["image.sourceLocalized"] = isSourceIdentityLocalized();
     obj["image.fitToLayer"] = impl_->fitToLayer_;
     obj["image.width"] = impl_->width_;
     obj["image.height"] = impl_->height_;
@@ -368,6 +415,36 @@ QJsonObject ArtifactImageLayer::toJson() const
     obj["sourceCrop.preserveAspect"] = impl_->sourceCrop_.preserveAspect();
     obj["sourceCrop"] = impl_->sourceCrop_.toJson();
     return obj;
+}
+
+void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
+{
+    ArtifactAbstract2DLayer::fromJsonProperties(obj);
+    const QString sourcePath = obj.value(QStringLiteral("image.sourcePath")).toString();
+    if (!sourcePath.isEmpty() && sourcePath != impl_->sourcePath_) {
+        loadFromPath(sourcePath);
+    }
+    impl_->fitToLayer_ = obj.value(QStringLiteral("image.fitToLayer"))
+                            .toBool(impl_->fitToLayer_);
+    if (obj.value(QStringLiteral("sourceCrop")).isObject()) {
+        impl_->sourceCrop_.fromJson(obj.value(QStringLiteral("sourceCrop")).toObject());
+        impl_->sourceCrop_.clampToSource(
+            QSizeF(impl_->width_, impl_->height_));
+    }
+
+    if (obj.value(QStringLiteral("image.sourceLocalized")).toBool(false)) {
+        const QUuid savedId(obj.value(QStringLiteral("image.sourceAssetId")).toString());
+        bool restored = false;
+        if (!savedId.isNull() &&
+            ArtifactCore::AssetManager::instance().acquireExistingSource(savedId)) {
+            ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+            impl_->sourceAssetId_ = savedId;
+            restored = true;
+        }
+        if (!restored) {
+            localizeSourceIdentity();
+        }
+    }
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGroups() const

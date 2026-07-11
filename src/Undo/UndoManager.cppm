@@ -121,6 +121,33 @@ QString ReplaceLayerSourceCommand::label() const {
     return QStringLiteral("Replace Layer Source");
 }
 
+ToggleLocalizedSourceCommand::ToggleLocalizedSourceCommand(
+    std::function<void()> localize, std::function<void()> relinkShared,
+    QString label)
+    : localize_(localize), relinkShared_(relinkShared), label_(label) {}
+
+void ToggleLocalizedSourceCommand::undo() {
+    if (relinkShared_) {
+        relinkShared_();
+    }
+    if (auto* mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+void ToggleLocalizedSourceCommand::redo() {
+    if (localize_) {
+        localize_();
+    }
+    if (auto* mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+QString ToggleLocalizedSourceCommand::label() const {
+    return label_;
+}
+
 // --- MoveLayerCommand ---
 MoveLayerCommand::MoveLayerCommand(ArtifactAbstractLayerPtr layer, float deltaX, float deltaY, int64_t frame)
     : layer_(layer), dx_(deltaX), dy_(deltaY), frame_(frame) {}
