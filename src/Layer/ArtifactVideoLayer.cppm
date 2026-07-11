@@ -1,5 +1,6 @@
 ﻿module;
 #include <QImage>
+#include <QUuid>
 #include <QMatrix4x4>
 #include <QSize>
 #include <QString>
@@ -82,6 +83,8 @@ import Utils.Id;
 import Property.Group;
 import Property;
 import MediaPlaybackController;
+import Asset.Manager;
+import AssetType;
 
 namespace Artifact {
 
@@ -492,6 +495,7 @@ public:
     int64_t lastAudioRequestTimelineFrame_ = std::numeric_limits<int64_t>::min();
     
     QString sourcePath_;
+    QUuid sourceAssetId_;
     bool isLoaded_ = false;
     
     double playbackSpeed_ = 1.0;
@@ -833,6 +837,7 @@ ArtifactVideoLayer::~ArtifactVideoLayer()
     if (impl_->playbackController_) {
         impl_->playbackController_->closeMedia();
     }
+    ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     delete impl_;
     qDebug() << "[VideoLayer] Destroyed";
 }
@@ -868,11 +873,18 @@ void ArtifactVideoLayer::setHasVideo(bool hasVideo)
 bool ArtifactVideoLayer::loadFromPath(const QString& path)
 {
     const QString normalizedPath = QFileInfo(path).absoluteFilePath();
+    const QUuid nextAssetId = ArtifactCore::AssetManager::instance().acquireSource(
+        normalizedPath, ArtifactCore::AssetType::Video);
+    if (nextAssetId.isNull()) {
+        return false;
+    }
     qDebug() << "[VideoLayer] loadFromPath:" << normalizedPath << threadIdTag();
     qCInfo(videoLayerLog) << "[VideoLayer] load begin"
                           << "path=" << normalizedPath
                           << "thread=" << threadIdTag();
 
+    ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+    impl_->sourceAssetId_ = nextAssetId;
     impl_->sourcePath_ = normalizedPath;
     impl_->cancelPendingDecode();
     impl_->streamInfo_ = VideoStreamInfo{};

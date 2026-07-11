@@ -4,6 +4,7 @@ module;
 #include <QDebug>
 #include <QJsonObject>
 #include <QVariant>
+#include <QUuid>
 
 module Artifact.Layer.Audio;
 
@@ -19,6 +20,8 @@ import Audio.Cache;
 import Artifact.Audio.Waveform;
 import Artifact.Layer.Switch;
 import Artifact.Composition.Abstract;
+import Asset.Manager;
+import AssetType;
 
 namespace Artifact
 {
@@ -30,6 +33,7 @@ namespace Artifact
    float pan_ = 0.0f;
    bool muted_ = false;
    QString sourcePath_;
+   QUuid sourceAssetId_;
    ArtifactCore::SimpleWav wav_;
    QVector<float> interleavedPcm_;
    int sourceSampleRate_ = 0;
@@ -61,6 +65,7 @@ ArtifactAudioLayer::ArtifactAudioLayer() : impl_(new Impl())
 
 ArtifactAudioLayer::~ArtifactAudioLayer()
 {
+  ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
   delete impl_;
 }
 
@@ -101,6 +106,8 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
 {
   const QString trimmed = path.trimmed();
   if (trimmed.isEmpty()) {
+    ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+    impl_->sourceAssetId_ = {};
     impl_->isLoaded_ = false;
     impl_->sourcePath_.clear();
     impl_->interleavedPcm_.clear();
@@ -115,6 +122,15 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
     qWarning() << "[AudioLayer] load failed path=" << trimmed;
     return false;
   }
+
+   const QUuid nextAssetId = ArtifactCore::AssetManager::instance().acquireSource(
+       trimmed, ArtifactCore::AssetType::Audio);
+   if (nextAssetId.isNull()) {
+     impl_->isLoaded_ = false;
+     return false;
+   }
+   ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+   impl_->sourceAssetId_ = nextAssetId;
 
    impl_->sourcePath_ = trimmed;
    impl_->interleavedPcm_ = impl_->wav_.getAudioData();

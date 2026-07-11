@@ -4,6 +4,7 @@ module;
 #include <algorithm>
 
 #include <QDebug>
+#include <QUuid>
 #include <QImage>
 #include <QJsonObject>
 #include <QMatrix4x4>
@@ -34,6 +35,8 @@ import Artifact.Layer.SourceCrop;
 import Core.Diagnostics.FallbackPolicy;
 import Image.ImageF32x4_RGBA;
 import Size;
+import Asset.Manager;
+import AssetType;
 
 namespace Artifact {
 namespace
@@ -202,6 +205,7 @@ public:
     int width_ = 0;
     int height_ = 0;
     QString sourcePath_;
+    QUuid sourceAssetId_;
     SourceCrop sourceCrop_;
     mutable std::shared_ptr<QImage> cache_;
     mutable std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> cacheBuffer_;
@@ -234,6 +238,7 @@ ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
 }
 
 ArtifactImageLayer::~ArtifactImageLayer() {
+    ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     delete impl_;
 }
 
@@ -277,6 +282,13 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         return false;
     }
 
+    const QUuid nextAssetId = ArtifactCore::AssetManager::instance().acquireSource(
+        path, ArtifactCore::AssetType::Image);
+    if (nextAssetId.isNull()) {
+        return false;
+    }
+    ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+    impl_->sourceAssetId_ = nextAssetId;
     impl_->sourcePath_ = path;
     impl_->cache_.reset();
     impl_->cacheBuffer_.reset();
