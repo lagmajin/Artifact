@@ -523,17 +523,20 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
         return instances;
     }
 
-    bool hasEnabledCloner = false;
-    std::vector<CloneRenderInstance> clonerInstances;
+    // ClonerGenerator used to be an Effect.  Keep this adapter only for
+    // projects that already serialized one; all new authoring goes through
+    // the layer component generator stack below.
+    bool hasLegacyEffectCloner = false;
+    std::vector<CloneRenderInstance> legacyEffectInstances;
     for (const auto& effect : layer->getEffects()) {
         const auto cloner = std::dynamic_pointer_cast<ClonerGenerator>(effect);
         if (!cloner || !cloner->isEnabled()) {
             continue;
         }
-        hasEnabledCloner = true;
+        hasLegacyEffectCloner = true;
 
         const auto clones = cloner->generateCloneData();
-        clonerInstances.reserve(clonerInstances.size() + clones.size());
+        legacyEffectInstances.reserve(legacyEffectInstances.size() + clones.size());
         for (const auto& clone : clones) {
             if (!clone.visible || clone.transform.isIdentity()) {
                 continue;
@@ -542,25 +545,23 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
             CloneRenderInstance instance;
             instance.transform = baseTransform * clone.transform;
             instance.weight = std::clamp(clone.weight, 0.0f, 1.0f);
-            clonerInstances.push_back(instance);
+            legacyEffectInstances.push_back(instance);
         }
     }
 
-    if (hasEnabledCloner) {
-        // Effect-based cloners and component generators are independent
-        // stacks. Do not let the legacy effect path hide descriptor-based
-        // generators; append their generated instances using the canonical
-        // component merge rule.
+    if (hasLegacyEffectCloner) {
+        // Compatibility projects may also contain component generators. Keep
+        // the historical append behavior until their Effect is migrated.
         const auto componentInstances =
             clonerComponentInstances(layer, baseTransform);
         if (componentInstances.size() > 1U) {
-            clonerInstances.insert(clonerInstances.end(),
+            legacyEffectInstances.insert(legacyEffectInstances.end(),
                                    componentInstances.begin() + 1,
                                    componentInstances.end());
         }
-        instances.reserve(clonerInstances.size() + 1U);
+        instances.reserve(legacyEffectInstances.size() + 1U);
         instances.push_back(CloneRenderInstance{baseTransform, 1.0f});
-        instances.insert(instances.end(), clonerInstances.begin(), clonerInstances.end());
+        instances.insert(instances.end(), legacyEffectInstances.begin(), legacyEffectInstances.end());
         applyLayoutComponent(layer, instances);
         applyCrowdComponent(layer, instances);
         applyInstanceCollisionComponent(layer, instances);

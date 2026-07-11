@@ -117,7 +117,6 @@ import Event.Bus;
 import Undo.UndoManager;
 import Input.Operator;
 import Generator.Effector;
-import Artifact.Effect.Generator.Cloner;
 import Artifact.Effect.Generator.FractalNoise;
 import Artifact.Effect.Generator.ProceduralTexture;
 import Artifact.Effect.Transform.Twist;
@@ -313,9 +312,6 @@ QString stageDisplayName(EffectPipelineStage stage) {
 
 std::vector<EffectCatalogEntry> buildEffectCatalogEntries() {
   return {
-      {EffectPipelineStage::Generator, QStringLiteral("cloner"),
-       QStringLiteral("Cloner"), QStringLiteral("Generator"),
-       QStringLiteral("Clone and distribute instances."), QStringLiteral("clone mograph instances layout")},
       {EffectPipelineStage::Generator, QStringLiteral("fractal_noise"),
        QStringLiteral("Fractal Noise"), QStringLiteral("Generator"),
        QStringLiteral("Procedural texture and noise source."), QStringLiteral("noise texture procedural")},
@@ -4180,9 +4176,7 @@ void ArtifactInspectorWidget::Impl::addSelectedEffectToCurrentTarget(
   }
 
   std::shared_ptr<ArtifactAbstractEffect> newEffect;
-  if (normalizedId == QStringLiteral("cloner")) {
-    newEffect = std::make_shared<ClonerGenerator>();
-  } else if (normalizedId == QStringLiteral("fractal_noise")) {
+  if (normalizedId == QStringLiteral("fractal_noise")) {
     newEffect = std::make_shared<FractalNoiseGenerator>();
   } else if (normalizedId == QStringLiteral("procedural_texture")) {
     newEffect = std::make_shared<ProceduralTextureGeneratorEffect>();
