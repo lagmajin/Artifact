@@ -1651,6 +1651,25 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
     bool hasAnyAudio = false;
     int activeAudioLayerCount = 0;
     int producedAudioLayerCount = 0;
+    const auto evaluationGainForLayer = [this](const LayerID& layerId) {
+        float gain = 1.0f;
+        auto current = impl_->layerMultiIndex_.findById(layerId);
+        QSet<QString> visited;
+        while (current) {
+            const LayerID parentId = current->parentLayerId();
+            if (parentId.isNil() || visited.contains(parentId.toString())) {
+                break;
+            }
+            visited.insert(parentId.toString());
+            const auto parent = impl_->layerMultiIndex_.findById(parentId);
+            if (!parent) {
+                break;
+            }
+            gain *= parent->childEvaluationGain(current->id());
+            current = parent;
+        }
+        return gain;
+    };
     
     // If mixer is active, use the mixer path for proper bus-based mixing.
     if (impl_->audioMixer_) {
@@ -1684,7 +1703,7 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                     } else if (auto vl = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
                         layerVol = static_cast<float>(vl->audioVolume());
                     }
-                    bus->addInput(layerSegment, layerVol);
+                    bus->addInput(layerSegment, layerVol * evaluationGainForLayer(layer->id()));
                     ++producedAudioLayerCount;
                     hasAnyAudio = true;
                 }
@@ -1715,13 +1734,14 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                 layer->isActiveAt(start) && layer->hasAudio()) {
                 ++activeAudioLayerCount;
                 if (layer->getAudio(layerSeg, start, frameCount, sampleRate)) {
+                    const float layerGain = evaluationGainForLayer(layer->id());
                     int chCount = std::min(outSegment.channelCount(), layerSeg.channelCount());
                     int fCount = std::min(outSegment.frameCount(), layerSeg.frameCount());
                     for (int ch = 0; ch < chCount; ++ch) {
                         float* outData = outSegment.channelData[ch].data();
                         const float* layerData = layerSeg.channelData[ch].constData();
                         for (int i = 0; i < fCount; ++i) {
-                            outData[i] += layerData[i];
+                            outData[i] += layerData[i] * layerGain;
                         }
                     }
                     ++producedAudioLayerCount;

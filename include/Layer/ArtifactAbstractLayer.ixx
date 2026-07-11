@@ -402,6 +402,7 @@ public:
   virtual bool isGroupLayer() const;
   virtual bool hasExclusiveChildSelection() const { return false; }
   virtual LayerID selectedChildIdForEvaluation() const { return LayerID(); }
+  virtual float childEvaluationGain(const LayerID&) const { return 1.0f; }
   virtual bool isNullLayer() const;
   virtual bool isCloneLayer() const;
   virtual bool isParticleLayer() const { return false; }
@@ -575,4 +576,3 @@ inline uint qHash(const Artifact::ArtifactAbstractLayerPtr &key,
 }
 
 } // namespace Artifact
-

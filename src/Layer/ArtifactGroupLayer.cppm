@@ -39,6 +39,7 @@ public:
 
     // Cached temporary render target for offscreen composition
     Diligent::RefCntAutoPtr<Diligent::ITexture> cachedTexture;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> cachedShareScratchTexture;
     Diligent::Uint32 cachedWidth = 0;
     Diligent::Uint32 cachedHeight = 0;
     Diligent::TEXTURE_FORMAT cachedFormat = Diligent::TEX_FORMAT_UNKNOWN;
@@ -120,6 +121,22 @@ LayerID ArtifactGroupLayer::selectedChildIdForEvaluation() const {
         }
     }
     return LayerID();
+}
+
+float ArtifactGroupLayer::childEvaluationGain(const LayerID& childId) const {
+    if (groupImpl_->outputMode != GroupOutputMode::Share || childId.isNil()) {
+        return 1.0f;
+    }
+
+    const auto renderChildren = childrenForRender();
+    const auto child = std::find_if(renderChildren.begin(), renderChildren.end(),
+        [&childId](const auto& candidate) {
+            return candidate && candidate->id() == childId;
+        });
+    if (child == renderChildren.end() || renderChildren.empty()) {
+        return 0.0f;
+    }
+    return 1.0f / static_cast<float>(renderChildren.size());
 }
 
 std::vector<ArtifactAbstractLayerPtr> ArtifactGroupLayer::childrenForRender() const {
@@ -278,15 +295,63 @@ void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
         return;
     }
 
-    // Draw children into temporary RT
+    // Draw children into the group composite. Share mode isolates each child in
+    // a scratch RT before adding it at 1/N opacity, keeping the whole group at
+    // 100% regardless of child count.
     renderer->setOverrideRTV(tempRTV);
     // Keep the renderer's clear color intact here; forcing alpha to 1.0 breaks
     // transparent group compositing and can leak opaque fill into the temp RT.
     const FloatColor oldClear = renderer->getClearColor();
     renderer->setClearColor(oldClear);
     renderer->clear();
-    for (const auto& child : childrenForRender()) {
-        child->draw(renderer);
+    const auto renderChildren = childrenForRender();
+    if (groupImpl_->outputMode == GroupOutputMode::Share && !renderChildren.empty()) {
+        auto scratchTex = groupImpl_->cachedShareScratchTexture;
+        if (!scratchTex || !cachedMatch) {
+            Diligent::RefCntAutoPtr<Diligent::ITexture> newScratch;
+            if (device) {
+                auto scratchDesc = texDesc;
+                scratchDesc.Name = "GroupLayer.ShareScratch";
+                device->CreateTexture(scratchDesc, nullptr, &newScratch);
+            }
+            if (!newScratch) {
+                // Preserve compositing correctness if the extra target cannot
+                // be allocated; do not silently attenuate partially rendered output.
+                for (const auto& child : renderChildren) {
+                    child->draw(renderer);
+                }
+            } else {
+                groupImpl_->cachedShareScratchTexture = newScratch;
+                scratchTex = newScratch;
+            }
+        }
+        if (scratchTex) {
+            auto scratchRTV = scratchTex->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
+            auto scratchSRV = scratchTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+            if (scratchRTV && scratchSRV) {
+                QMatrix4x4 screenIdentity;
+                screenIdentity.setToIdentity();
+                const float shareOpacity = 1.0f / static_cast<float>(renderChildren.size());
+                for (const auto& child : renderChildren) {
+                    renderer->setOverrideRTV(scratchRTV);
+                    renderer->clear();
+                    child->draw(renderer);
+                    renderer->setOverrideRTV(tempRTV);
+                    renderer->drawSpriteTransformed(0.0f, 0.0f,
+                                                    static_cast<float>(desc.Width),
+                                                    static_cast<float>(desc.Height),
+                                                    screenIdentity, scratchSRV, shareOpacity);
+                }
+            } else {
+                for (const auto& child : renderChildren) {
+                    child->draw(renderer);
+                }
+            }
+        }
+    } else {
+        for (const auto& child : renderChildren) {
+            child->draw(renderer);
+        }
     }
     // Restore previous clear color and RTV state
     renderer->setClearColor(oldClear);
@@ -623,14 +688,14 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactGroupLayer::getLayerPropertyGro
         static_cast<int>(groupImpl_->outputMode), -105);
     outputMode->setDisplayLabel(QStringLiteral("Output Mode"));
     outputMode->setTooltip(
-        QStringLiteral("0=All (each 100%), 1=Single (selected child 100%), 2=Share (total 100%)."));
+        QStringLiteral("0=All, 1=Single, 2=Share"));
     group.addProperty(outputMode);
     auto activeIndex = persistentLayerProperty(
         QStringLiteral("group.activeChildIndex"), ArtifactCore::PropertyType::Integer,
         std::max(0, childIndex(groupImpl_->activeChildId)), -100);
     activeIndex->setDisplayLabel(QStringLiteral("Active Child"));
     activeIndex->setTooltip(
-        QStringLiteral("Zero-based child index used when Multiplexer is enabled."));
+        QStringLiteral("Zero-based child index used by Single output mode."));
     group.addProperty(activeIndex);
     groups.push_back(std::move(group));
     return groups;

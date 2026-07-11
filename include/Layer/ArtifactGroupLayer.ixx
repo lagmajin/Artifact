@@ -39,6 +39,7 @@ public:
     bool isGroupLayer() const override;
     bool hasExclusiveChildSelection() const override;
     LayerID selectedChildIdForEvaluation() const override;
+    float childEvaluationGain(const LayerID& childId) const override;
     void setComposition(QObject *comp) override;
     void setComposition(void *comp) override;
     void draw(ArtifactIRenderer* renderer) override;
