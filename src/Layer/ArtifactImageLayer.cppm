@@ -41,6 +41,8 @@ import AssetType;
 namespace Artifact {
 namespace
 {
+const QString kImageF32Representation = QStringLiteral("image/f32x4-rgba-linear");
+
 ArtifactCore::ImageF32x4_RGBA toFrameBuffer(const QImage& image)
 {
     ArtifactCore::ImageF32x4_RGBA buffer;
@@ -227,6 +229,12 @@ ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
         if (!loaded.isNull()) {
             impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
             impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
+            const auto version = ArtifactCore::AssetManager::instance().sourceVersion(
+                impl_->sourceAssetId_);
+            impl_->cacheBuffer_ = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+                ArtifactCore::AssetManager::instance().publishDecodedPayload(
+                    impl_->sourceAssetId_, version, kImageF32Representation,
+                    impl_->cacheBuffer_));
             impl_->width_ = impl_->cache_->width();
             impl_->height_ = impl_->cache_->height();
             setSourceSize(Size_2D(impl_->width_, impl_->height_));
@@ -291,7 +299,10 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
     impl_->sourceAssetId_ = nextAssetId;
     impl_->sourcePath_ = path;
     impl_->cache_.reset();
-    impl_->cacheBuffer_.reset();
+    const auto version = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
+    impl_->cacheBuffer_ = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+        ArtifactCore::AssetManager::instance().decodedPayload(
+            nextAssetId, version, kImageF32Representation));
     impl_->prefetchDone_ = false;
     impl_->hasImage_ = true;
     impl_->width_ = spec.width;
@@ -692,6 +703,14 @@ const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() co
     static ArtifactCore::ImageF32x4_RGBA empty;
     if (impl_ && !impl_->cacheBuffer_ && impl_->cache_) {
         impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
+        const auto version = ArtifactCore::AssetManager::instance().sourceVersion(
+            impl_->sourceAssetId_);
+        if (version > 0) {
+            impl_->cacheBuffer_ = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+                ArtifactCore::AssetManager::instance().publishDecodedPayload(
+                    impl_->sourceAssetId_, version, kImageF32Representation,
+                    impl_->cacheBuffer_));
+        }
     }
     if (impl_ && impl_->cacheBuffer_) {
         return *impl_->cacheBuffer_;
