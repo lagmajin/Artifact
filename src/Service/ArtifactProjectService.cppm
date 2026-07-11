@@ -307,8 +307,15 @@ auto mapHealthCategoryToDiagnostic(const QString &category)
   if (category == QStringLiteral("CircularReference")) {
     return ArtifactCore::DiagnosticCategory::CircularDep;
   }
-  if (category == QStringLiteral("MissingAsset")) {
+  if (category == QStringLiteral("MissingAsset") ||
+      category == QStringLiteral("AssetPathMissing")) {
     return ArtifactCore::DiagnosticCategory::File;
+  }
+  if (category == QStringLiteral("AssetOrphan")) {
+    return ArtifactCore::DiagnosticCategory::Performance;
+  }
+  if (category == QStringLiteral("AssetVersion")) {
+    return ArtifactCore::DiagnosticCategory::Configuration;
   }
   if (category == QStringLiteral("FrameRange")) {
     return ArtifactCore::DiagnosticCategory::Configuration;
@@ -325,8 +332,15 @@ auto convertProjectHealthReportToDiagnosticsImpl(const ProjectHealthReport &repo
   diagnostics.reserve(static_cast<size_t>(report.issues.size()));
 
   const auto fixActionForCategory = [](const QString &category) {
-    if (category == QStringLiteral("MissingAsset")) {
+    if (category == QStringLiteral("MissingAsset") ||
+        category == QStringLiteral("AssetPathMissing")) {
       return QStringLiteral("Relink the missing asset or remove the footage entry");
+    }
+    if (category == QStringLiteral("AssetOrphan")) {
+      return QStringLiteral("Remove the unused source entry or relink a layer to it");
+    }
+    if (category == QStringLiteral("AssetVersion")) {
+      return QStringLiteral("Reload the source to rebuild its cache version");
     }
     if (category == QStringLiteral("BrokenReference")) {
       return QStringLiteral("Open the composition and replace or remove the broken reference");

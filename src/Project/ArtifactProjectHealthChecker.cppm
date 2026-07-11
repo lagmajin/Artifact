@@ -9,6 +9,9 @@ module;
 #include <QFileInfo>
 #include <QStringList>
 #include <QRegularExpression>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <functional>
 
 module Artifact.Project.Health;
@@ -20,6 +23,7 @@ import Artifact.Layer.Abstract;
 import Utils.Id;
 import Frame.Range;
 import Frame.Position;
+import Asset.Manager;
 
 namespace Artifact {
 
@@ -629,6 +633,46 @@ void ArtifactProjectHealthChecker::checkMissingAssets(ArtifactProject* project, 
 
     for (auto* root : items) {
         traverse(root);
+    }
+
+    const QJsonArray sourceHealth =
+        ArtifactCore::AssetManager::instance().sourceHealthSnapshot();
+    for (const QJsonValue& value : sourceHealth) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject source = value.toObject();
+        const QString path = source.value(QStringLiteral("path")).toString();
+        const QString id = source.value(QStringLiteral("id")).toString();
+        const int useCount = source.value(QStringLiteral("useCount")).toInt();
+        bool versionOk = false;
+        const auto version = source.value(QStringLiteral("version"))
+                                 .toString().toULongLong(&versionOk);
+        const QFileInfo sourceInfo(path);
+        if (!sourceInfo.exists() || !sourceInfo.isFile()) {
+            report.issues.push_back({
+                HealthIssueSeverity::Error,
+                QStringLiteral("Layer source file is missing: %1").arg(path),
+                id,
+                QStringLiteral("AssetPathMissing")
+            });
+        }
+        if (useCount == 0) {
+            report.issues.push_back({
+                HealthIssueSeverity::Info,
+                QStringLiteral("Asset source is not referenced by a loaded layer: %1").arg(path),
+                id,
+                QStringLiteral("AssetOrphan")
+            });
+        }
+        if (!versionOk || version == 0) {
+            report.issues.push_back({
+                HealthIssueSeverity::Warning,
+                QStringLiteral("Asset source has an invalid cache version: %1").arg(path),
+                id,
+                QStringLiteral("AssetVersion")
+            });
+        }
     }
 }
 
