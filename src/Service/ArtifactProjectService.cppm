@@ -311,7 +311,8 @@ auto mapHealthCategoryToDiagnostic(const QString &category)
       category == QStringLiteral("AssetPathMissing")) {
     return ArtifactCore::DiagnosticCategory::File;
   }
-  if (category == QStringLiteral("AssetOrphan")) {
+  if (category == QStringLiteral("AssetOrphan") ||
+      category == QStringLiteral("AssetDuplicateDecode")) {
     return ArtifactCore::DiagnosticCategory::Performance;
   }
   if (category == QStringLiteral("AssetVersion")) {
@@ -338,6 +339,9 @@ auto convertProjectHealthReportToDiagnosticsImpl(const ProjectHealthReport &repo
     }
     if (category == QStringLiteral("AssetOrphan")) {
       return QStringLiteral("Remove the unused source entry or relink a layer to it");
+    }
+    if (category == QStringLiteral("AssetDuplicateDecode")) {
+      return QStringLiteral("Relink duplicate source identities to one canonical asset entry");
     }
     if (category == QStringLiteral("AssetVersion")) {
       return QStringLiteral("Reload the source to rebuild its cache version");

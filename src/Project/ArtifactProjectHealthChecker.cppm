@@ -6,6 +6,7 @@ module;
 #include <QSet>
 #include <QStack>
 #include <QMap>
+#include <QDir>
 #include <QFileInfo>
 #include <QStringList>
 #include <QRegularExpression>
@@ -637,6 +638,7 @@ void ArtifactProjectHealthChecker::checkMissingAssets(ArtifactProject* project, 
 
     const QJsonArray sourceHealth =
         ArtifactCore::AssetManager::instance().sourceHealthSnapshot();
+    QHash<QString, QString> sourceIdsByCanonicalPath;
     for (const QJsonValue& value : sourceHealth) {
         if (!value.isObject()) {
             continue;
@@ -645,6 +647,25 @@ void ArtifactProjectHealthChecker::checkMissingAssets(ArtifactProject* project, 
         const QString path = source.value(QStringLiteral("path")).toString();
         const QString id = source.value(QStringLiteral("id")).toString();
         const int useCount = source.value(QStringLiteral("useCount")).toInt();
+        const bool localized = source.value(QStringLiteral("localized")).toBool(false);
+        const QString canonicalPath = QDir::cleanPath(
+            QFileInfo(path).canonicalFilePath().isEmpty()
+                ? QFileInfo(path).absoluteFilePath()
+                : QFileInfo(path).canonicalFilePath());
+        if (!localized && !canonicalPath.isEmpty()) {
+            const auto existing = sourceIdsByCanonicalPath.constFind(canonicalPath);
+            if (existing != sourceIdsByCanonicalPath.cend() && *existing != id) {
+                report.issues.push_back({
+                    HealthIssueSeverity::Info,
+                    QStringLiteral("Multiple shared source identities map to the same path: %1")
+                        .arg(path),
+                    id,
+                    QStringLiteral("AssetDuplicateDecode")
+                });
+            } else {
+                sourceIdsByCanonicalPath.insert(canonicalPath, id);
+            }
+        }
         bool versionOk = false;
         const auto version = source.value(QStringLiteral("version"))
                                  .toString().toULongLong(&versionOk);
