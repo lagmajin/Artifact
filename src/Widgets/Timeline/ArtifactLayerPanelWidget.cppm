@@ -95,11 +95,19 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     return descriptor;
   }
   if (layer->isGroupLayer()) {
-    descriptor.typeText = QStringLiteral("Group Layer");
-    descriptor.timelineBadgeText = QStringLiteral("Group");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · Group Layer");
-    descriptor.inspectorTypeLabel = QStringLiteral("Type: Group Layer");
-    descriptor.capabilitySummaryText = QStringLiteral("Container");
+    const bool isMultiplexer = layer->hasExclusiveChildSelection();
+    descriptor.typeText = isMultiplexer
+        ? QStringLiteral("Multiplexer Group") : QStringLiteral("Group Layer");
+    descriptor.timelineBadgeText = isMultiplexer
+        ? QStringLiteral("Mux") : QStringLiteral("Group");
+    descriptor.propertySummaryTitle = isMultiplexer
+        ? QStringLiteral("Summary · Multiplexer Group")
+        : QStringLiteral("Summary · Group Layer");
+    descriptor.inspectorTypeLabel = isMultiplexer
+        ? QStringLiteral("Type: Multiplexer Group")
+        : QStringLiteral("Type: Group Layer");
+    descriptor.capabilitySummaryText = isMultiplexer
+        ? QStringLiteral("Exclusive Child") : QStringLiteral("Container");
     descriptor.badgeTone = LayerPresentationBadgeTone::Container;
     descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;

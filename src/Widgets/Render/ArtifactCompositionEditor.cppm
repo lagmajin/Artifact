@@ -2580,7 +2580,9 @@ public:
         typeText = QStringLiteral("Adjustment Layer");
       } else if (targetLayer->isGroupLayer() ||
                  className.contains(QStringLiteral("Group"), Qt::CaseInsensitive)) {
-        typeText = QStringLiteral("Group Layer");
+        typeText = targetLayer->hasExclusiveChildSelection()
+            ? QStringLiteral("Multiplexer Group")
+            : QStringLiteral("Group Layer");
       } else if (targetLayer->isCloneLayer() ||
                  className.contains(QStringLiteral("Clone"), Qt::CaseInsensitive)) {
         typeText = QStringLiteral("Clone Layer");

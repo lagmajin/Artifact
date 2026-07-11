@@ -251,6 +251,8 @@ export namespace Artifact {
 
   QList<ArtifactAbstractLayerPtr> allLayer();
   const QList<ArtifactAbstractLayerPtr>& allLayerRef() const;
+  QList<ArtifactAbstractLayerPtr> childLayersOf(const LayerID& parentId) const;
+  bool shouldEvaluateLayer(const LayerID& layerId) const;
 
   // Asset usage tracking for unused asset detection
   QVector<ArtifactCore::AssetID> getUsedAssets() const;

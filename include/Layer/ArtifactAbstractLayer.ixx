@@ -350,6 +350,8 @@ public:
   void enableSoftBodyPhysicsGrid(int columns = 6, int rows = 6, float stiffness = 1.0f);
   void disableSoftBodyPhysics();
   void syncSoftBodyPhysicsColliderToBounds();
+  void enableMaterialPhysics(int preset = 0);
+  void disableMaterialPhysics();
   void enableRigidBodyPhysics();
   void disableRigidBodyPhysics();
   void syncRigidBodyPhysicsToBounds();
@@ -398,6 +400,8 @@ public:
   void clearParent();
   bool hasParent() const;
   virtual bool isGroupLayer() const;
+  virtual bool hasExclusiveChildSelection() const { return false; }
+  virtual LayerID selectedChildIdForEvaluation() const { return LayerID(); }
   virtual bool isNullLayer() const;
   virtual bool isCloneLayer() const;
   virtual bool isParticleLayer() const { return false; }
@@ -571,7 +575,4 @@ inline uint qHash(const Artifact::ArtifactAbstractLayerPtr &key,
 }
 
 } // namespace Artifact
-
-
-
 

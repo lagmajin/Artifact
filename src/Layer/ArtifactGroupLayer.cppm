@@ -24,13 +24,18 @@ import Artifact.Composition.Abstract;
 import Color.Float;
 import Graphics.Texture.Manager;
 import CvUtils;
+import Property.Abstract;
+import Property.Group;
 
 namespace Artifact {
 
 class ArtifactGroupLayer::GroupImpl {
 public:
     std::vector<ArtifactAbstractLayerPtr> children;
+    mutable std::vector<ArtifactAbstractLayerPtr> compositionChildrenCache;
     bool collapsed = false;
+    GroupOutputMode outputMode = GroupOutputMode::All;
+    LayerID activeChildId;
 
     // Cached temporary render target for offscreen composition
     Diligent::RefCntAutoPtr<Diligent::ITexture> cachedTexture;
@@ -97,22 +102,85 @@ bool ArtifactGroupLayer::isGroupLayer() const {
     return true;
 }
 
-void ArtifactGroupLayer::setComposition(QObject *comp) {
-    ArtifactAbstractLayer::setComposition(comp);
-    auto *composition = compositionObject();
-    for (auto& child : groupImpl_->children) {
-        if (child) {
-            child->setComposition(composition);
+bool ArtifactGroupLayer::hasExclusiveChildSelection() const {
+    return groupImpl_->outputMode == GroupOutputMode::Single;
+}
+
+LayerID ArtifactGroupLayer::selectedChildIdForEvaluation() const {
+    if (groupImpl_->outputMode != GroupOutputMode::Single) {
+        return LayerID();
+    }
+    const auto active = activeChild();
+    if (active && active->isVisible()) {
+        return active->id();
+    }
+    for (const auto& child : children()) {
+        if (child && child->isVisible()) {
+            return child->id();
         }
     }
+    return LayerID();
+}
+
+std::vector<ArtifactAbstractLayerPtr> ArtifactGroupLayer::childrenForRender() const {
+    std::vector<ArtifactAbstractLayerPtr> result;
+    std::vector<ArtifactAbstractLayerPtr> compositionChildren;
+    if (auto* composition =
+            dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        const auto children = composition->childLayersOf(id());
+        compositionChildren.assign(children.begin(), children.end());
+    }
+    const auto& children = compositionChildren.empty()
+        ? groupImpl_->children : compositionChildren;
+    if (groupImpl_->outputMode != GroupOutputMode::Single) {
+        for (const auto& child : children) {
+            if (child && child->isVisible()) {
+                result.push_back(child);
+            }
+        }
+        return result;
+    }
+
+    const auto active = activeChild();
+    if (active && active->isVisible()) {
+        result.push_back(active);
+        return result;
+    }
+    for (const auto& child : children) {
+        if (child && child->isVisible()) {
+            result.push_back(child);
+            break;
+        }
+    }
+    return result;
+}
+
+void ArtifactGroupLayer::setComposition(QObject *comp) {
+    ArtifactAbstractLayer::setComposition(comp);
+    promoteEmbeddedChildrenToComposition();
 }
 
 void ArtifactGroupLayer::setComposition(void *comp) {
     ArtifactAbstractLayer::setComposition(comp);
-    auto *composition = compositionObject();
-    for (auto& child : groupImpl_->children) {
-        if (child) {
-            child->setComposition(composition);
+    promoteEmbeddedChildrenToComposition();
+}
+
+void ArtifactGroupLayer::promoteEmbeddedChildrenToComposition() {
+    auto* composition =
+        dynamic_cast<ArtifactAbstractComposition*>(compositionObject());
+    if (!composition || groupImpl_->children.empty()) {
+        return;
+    }
+
+    auto embeddedChildren = std::move(groupImpl_->children);
+    groupImpl_->children.clear();
+    for (const auto& child : embeddedChildren) {
+        if (!child) {
+            continue;
+        }
+        child->setParentById(id());
+        if (!composition->containsLayerById(child->id())) {
+            composition->appendLayerTop(child);
         }
     }
 }
@@ -128,16 +196,16 @@ void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
     auto* origLayerRTV = renderer->layerRenderTargetView();
     if (!origLayerRTV) {
         // Fallback: draw children directly into current RT
-        for (auto& child : groupImpl_->children) {
-            if (child && child->isVisible()) child->draw(renderer);
+        for (const auto& child : childrenForRender()) {
+            child->draw(renderer);
         }
         return;
     }
 
     auto device = renderer->device();
     if (!device) {
-        for (auto& child : groupImpl_->children) {
-            if (child && child->isVisible()) child->draw(renderer);
+        for (const auto& child : childrenForRender()) {
+            child->draw(renderer);
         }
         return;
     }
@@ -145,8 +213,8 @@ void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
     // Derive size/format from the layer RT texture
     auto* origTex = origLayerRTV->GetTexture();
     if (!origTex) {
-        for (auto& child : groupImpl_->children) {
-            if (child && child->isVisible()) child->draw(renderer);
+        for (const auto& child : childrenForRender()) {
+            child->draw(renderer);
         }
         return;
     }
@@ -189,8 +257,8 @@ void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
         }
         if (!newTex) {
             // Allocation failed: fallback to direct draws
-            for (auto& child : groupImpl_->children) {
-                if (child && child->isVisible()) child->draw(renderer);
+            for (const auto& child : childrenForRender()) {
+                child->draw(renderer);
             }
             return;
         }
@@ -204,8 +272,8 @@ void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
     auto tempRTV = tempTex->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
     auto tempSRV = tempTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
     if (!tempRTV || !tempSRV) {
-        for (auto& child : groupImpl_->children) {
-            if (child && child->isVisible()) child->draw(renderer);
+        for (const auto& child : childrenForRender()) {
+            child->draw(renderer);
         }
         return;
     }
@@ -217,10 +285,8 @@ void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
     const FloatColor oldClear = renderer->getClearColor();
     renderer->setClearColor(oldClear);
     renderer->clear();
-    for (auto& child : groupImpl_->children) {
-        if (child && child->isVisible()) {
-            child->draw(renderer);
-        }
+    for (const auto& child : childrenForRender()) {
+        child->draw(renderer);
     }
     // Restore previous clear color and RTV state
     renderer->setClearColor(oldClear);
@@ -275,9 +341,15 @@ void ArtifactGroupLayer::addChild(ArtifactAbstractLayerPtr layer) {
 
     // Set parenting in the core system
     layer->setParentById(this->id());
-    layer->setComposition(compositionObject());
-    
-    groupImpl_->children.push_back(layer);
+    if (auto* composition =
+            dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        if (!composition->containsLayerById(layer->id())) {
+            composition->appendLayerTop(layer);
+        }
+    } else {
+        layer->setComposition(compositionObject());
+        groupImpl_->children.push_back(layer);
+    }
     // Invalidate cached RT
     groupImpl_->cachedTexture = nullptr;
     groupImpl_->cachedWidth = 0;
@@ -289,6 +361,15 @@ void ArtifactGroupLayer::addChild(ArtifactAbstractLayerPtr layer) {
 }
 
 void ArtifactGroupLayer::removeChild(const LayerID& id) {
+    bool removedCompositionChild = false;
+    if (auto* composition =
+            dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        const auto child = composition->layerById(id);
+        if (child && child->parentLayerId() == this->id()) {
+            child->clearParent();
+            removedCompositionChild = true;
+        }
+    }
     auto it = std::remove_if(groupImpl_->children.begin(), groupImpl_->children.end(), 
         [&](const auto& l) {
             if (!l || l->id() != id) {
@@ -301,6 +382,9 @@ void ArtifactGroupLayer::removeChild(const LayerID& id) {
     
     if (it != groupImpl_->children.end()) {
         groupImpl_->children.erase(it, groupImpl_->children.end());
+        removedCompositionChild = true;
+    }
+    if (removedCompositionChild) {
         // Invalidate cached RT
         groupImpl_->cachedTexture = nullptr;
         groupImpl_->cachedWidth = 0;
@@ -313,6 +397,14 @@ void ArtifactGroupLayer::removeChild(const LayerID& id) {
 }
 
 void ArtifactGroupLayer::clearChildren() {
+    if (auto* composition =
+            dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        for (const auto& child : composition->childLayersOf(id())) {
+            if (child) {
+                child->clearParent();
+            }
+        }
+    }
     for (auto& child : groupImpl_->children) {
         if (!child) {
             continue;
@@ -332,6 +424,15 @@ void ArtifactGroupLayer::clearChildren() {
 }
 
 const std::vector<ArtifactAbstractLayerPtr>& ArtifactGroupLayer::children() const {
+    if (auto* composition =
+            dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        const auto compositionChildren = composition->childLayersOf(id());
+        if (!compositionChildren.empty()) {
+            groupImpl_->compositionChildrenCache.assign(
+                compositionChildren.begin(), compositionChildren.end());
+            return groupImpl_->compositionChildrenCache;
+        }
+    }
     return groupImpl_->children;
 }
 
@@ -340,18 +441,34 @@ void ArtifactGroupLayer::insertChildAt(int index, ArtifactAbstractLayerPtr layer
     if (layer->id() == this->id()) return;
 
     layer->setParentById(this->id());
-    layer->setComposition(compositionObject());
-
-    if (index < 0) index = 0;
-    if (static_cast<size_t>(index) >= groupImpl_->children.size()) {
-        groupImpl_->children.push_back(layer);
+    if (auto* composition =
+            dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        if (!composition->containsLayerById(layer->id())) {
+            composition->appendLayerTop(layer);
+        }
     } else {
-        groupImpl_->children.insert(groupImpl_->children.begin() + index, layer);
+        layer->setComposition(compositionObject());
+        if (index < 0) index = 0;
+        if (static_cast<size_t>(index) >= groupImpl_->children.size()) {
+            groupImpl_->children.push_back(layer);
+        } else {
+            groupImpl_->children.insert(groupImpl_->children.begin() + index, layer);
+        }
     }
     Q_EMIT changed();
 }
 
 int ArtifactGroupLayer::childIndex(const LayerID& id) const {
+    if (auto* composition =
+            dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        const auto children = composition->childLayersOf(id());
+        for (int index = 0; index < children.size(); ++index) {
+            const auto& layer = children.at(index);
+            if (layer->id() == id) {
+                return index;
+            }
+        }
+    }
     for (int i = 0; i < static_cast<int>(groupImpl_->children.size()); ++i) {
         auto& c = groupImpl_->children[static_cast<size_t>(i)];
         if (c && c->id() == id) return i;
@@ -365,6 +482,60 @@ bool ArtifactGroupLayer::containsChild(const LayerID& id) const {
 
 bool ArtifactGroupLayer::isCollapsed() const {
     return groupImpl_->collapsed;
+}
+
+bool ArtifactGroupLayer::isMultiplexer() const {
+    return groupImpl_->outputMode != GroupOutputMode::All;
+}
+
+void ArtifactGroupLayer::setMultiplexer(const bool enabled) {
+    setOutputMode(enabled ? GroupOutputMode::Single : GroupOutputMode::All);
+}
+
+GroupOutputMode ArtifactGroupLayer::outputMode() const {
+    return groupImpl_->outputMode;
+}
+
+void ArtifactGroupLayer::setOutputMode(const GroupOutputMode mode) {
+    if (groupImpl_->outputMode == mode) return;
+    groupImpl_->outputMode = mode;
+    groupImpl_->cachedTexture = nullptr;
+    Q_EMIT changed();
+}
+
+LayerID ArtifactGroupLayer::activeChildId() const {
+    return groupImpl_->activeChildId;
+}
+
+void ArtifactGroupLayer::setActiveChildId(const LayerID& id) {
+    if (!id.isNil() && !containsChild(id)) {
+        return;
+    }
+    if (groupImpl_->activeChildId == id) {
+        return;
+    }
+    groupImpl_->activeChildId = id;
+    groupImpl_->cachedTexture = nullptr;
+    Q_EMIT changed();
+}
+
+ArtifactAbstractLayerPtr ArtifactGroupLayer::activeChild() const {
+    if (groupImpl_->activeChildId.isNil()) {
+        return nullptr;
+    }
+    if (auto* composition =
+            dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        const auto child = composition->layerById(groupImpl_->activeChildId);
+        if (child && child->parentLayerId() == id()) {
+            return child;
+        }
+    }
+    const auto it = std::find_if(
+        groupImpl_->children.begin(), groupImpl_->children.end(),
+        [this](const ArtifactAbstractLayerPtr& child) {
+            return child && child->id() == groupImpl_->activeChildId;
+        });
+    return it != groupImpl_->children.end() ? *it : nullptr;
 }
 
 void ArtifactGroupLayer::setCollapsed(bool collapsed) {
@@ -381,7 +552,7 @@ void ArtifactGroupLayer::setCollapsed(bool collapsed) {
 QRectF ArtifactGroupLayer::localBounds() const {
     // Group bounds depends on its children's transformed bounds
     QRectF bounds;
-    for (const auto& child : groupImpl_->children) {
+    for (const auto& child : children()) {
         if (child) {
             bounds = bounds.united(child->transformedBoundingBox());
         }
@@ -392,16 +563,24 @@ QRectF ArtifactGroupLayer::localBounds() const {
 QJsonObject ArtifactGroupLayer::toJson() const {
     QJsonObject obj = ArtifactAbstractLayer::toJson();
     obj["type"] = static_cast<int>(LayerType::Group);
-    obj["childCount"] = static_cast<int>(groupImpl_->children.size());
+    obj["childCount"] = static_cast<int>(children().size());
     obj["collapsed"] = static_cast<bool>(groupImpl_->collapsed);
+    obj["group.outputMode"] = static_cast<int>(groupImpl_->outputMode);
+    obj["group.renderPolicy"] = groupImpl_->outputMode == GroupOutputMode::Single
+        ? QStringLiteral("multiplex") : QStringLiteral("composite");
+    obj["group.activeChildId"] = groupImpl_->activeChildId.toString();
     
-    QJsonArray childrenArr;
-    for (const auto& child : groupImpl_->children) {
-        if (child) {
-            childrenArr.append(child->toJson());
+    // Composition-owned children are serialized by the composition itself.
+    // Keep embedded children only for detached, legacy group payloads.
+    if (dynamic_cast<ArtifactAbstractComposition*>(compositionObject()) == nullptr) {
+        QJsonArray childrenArr;
+        for (const auto& child : groupImpl_->children) {
+            if (child) {
+                childrenArr.append(child->toJson());
+            }
         }
+        obj["children"] = childrenArr;
     }
-    obj["children"] = childrenArr;
     
     return obj;
 }
@@ -413,6 +592,11 @@ void ArtifactGroupLayer::fromJsonProperties(const QJsonObject& obj) {
     if (obj.contains("collapsed")) {
         setCollapsed(obj["collapsed"].toBool());
     }
+    groupImpl_->outputMode = obj.contains("group.outputMode")
+        ? static_cast<GroupOutputMode>(std::clamp(obj.value("group.outputMode").toInt(), 0, 2))
+        : (obj.value("group.renderPolicy").toString() == QStringLiteral("multiplex")
+               ? GroupOutputMode::Single : GroupOutputMode::All);
+    groupImpl_->activeChildId = LayerID(obj.value("group.activeChildId").toString());
     
     if (obj.contains("children") && obj["children"].isArray()) {
         QJsonArray childrenArr = obj["children"].toArray();
@@ -424,6 +608,64 @@ void ArtifactGroupLayer::fromJsonProperties(const QJsonObject& obj) {
             }
         }
     }
+}
+
+std::vector<ArtifactCore::PropertyGroup> ArtifactGroupLayer::getLayerPropertyGroups() const {
+    auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+    ArtifactCore::PropertyGroup group(QStringLiteral("Group Output"));
+    auto multiplex = persistentLayerProperty(
+        QStringLiteral("group.multiplex"), ArtifactCore::PropertyType::Boolean,
+        isMultiplexer(), -110);
+    multiplex->setDisplayLabel(QStringLiteral("Multiplexer"));
+    group.addProperty(multiplex);
+    auto outputMode = persistentLayerProperty(
+        QStringLiteral("group.outputMode"), ArtifactCore::PropertyType::Integer,
+        static_cast<int>(groupImpl_->outputMode), -105);
+    outputMode->setDisplayLabel(QStringLiteral("Output Mode"));
+    outputMode->setTooltip(
+        QStringLiteral("0=All (each 100%), 1=Single (selected child 100%), 2=Share (total 100%)."));
+    group.addProperty(outputMode);
+    auto activeIndex = persistentLayerProperty(
+        QStringLiteral("group.activeChildIndex"), ArtifactCore::PropertyType::Integer,
+        std::max(0, childIndex(groupImpl_->activeChildId)), -100);
+    activeIndex->setDisplayLabel(QStringLiteral("Active Child"));
+    activeIndex->setTooltip(
+        QStringLiteral("Zero-based child index used when Multiplexer is enabled."));
+    group.addProperty(activeIndex);
+    groups.push_back(std::move(group));
+    return groups;
+}
+
+bool ArtifactGroupLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value) {
+    if (propertyPath == QStringLiteral("group.multiplex")) {
+        setMultiplexer(value.toBool());
+        return true;
+    }
+    if (propertyPath == QStringLiteral("group.outputMode")) {
+        setOutputMode(static_cast<GroupOutputMode>(std::clamp(value.toInt(), 0, 2)));
+        return true;
+    }
+    if (propertyPath == QStringLiteral("group.activeChildIndex")) {
+        const int index = value.toInt();
+        if (index < 0) {
+            return false;
+        }
+        if (auto* composition =
+                dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+            const auto children = composition->childLayersOf(id());
+            if (index < children.size() && children.at(index)) {
+                setActiveChildId(children.at(index)->id());
+                return true;
+            }
+        }
+        if (index >= static_cast<int>(groupImpl_->children.size()) ||
+            !groupImpl_->children[static_cast<size_t>(index)]) {
+            return false;
+        }
+        setActiveChildId(groupImpl_->children[static_cast<size_t>(index)]->id());
+        return true;
+    }
+    return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
 
 } // namespace Artifact

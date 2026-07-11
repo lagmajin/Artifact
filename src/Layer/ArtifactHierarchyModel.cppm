@@ -114,6 +114,26 @@ public:
     return result;
   }
 
+  std::vector<ArtifactAbstractLayerPtr> childLayers(
+      const ArtifactAbstractLayerPtr& parentLayer) const {
+    if (!parentLayer) return {};
+    auto comp = currentComposition();
+    if (!comp) return {};
+
+    std::vector<ArtifactAbstractLayerPtr> result;
+    const auto compositionChildren = comp->childLayersOf(parentLayer->id());
+    result.assign(compositionChildren.begin(), compositionChildren.end());
+    // Legacy Group JSON owns embedded children. Keep it readable until the
+    // project is saved through the composition-owned hierarchy path.
+    if (result.empty() && parentLayer->isGroupLayer()) {
+      if (const auto* group =
+              dynamic_cast<const ArtifactGroupLayer*>(parentLayer.get())) {
+        result = group->children();
+      }
+    }
+    return result;
+  }
+
   // Returns the QModelIndex for any layer (root or child).
   QModelIndex layerModelIndex(const ArtifactAbstractLayerPtr &layer) const {
     if (!layer) return {};
@@ -127,14 +147,12 @@ public:
         }
       }
     } else {
-      // Child layer: row is its index within the parent group's children
+      // Child layer: composition parentId is the primary hierarchy source.
       auto comp = currentComposition();
       if (!comp) return {};
       auto parentLayer = comp->layerById(parentId);
       if (!parentLayer || !parentLayer->isGroupLayer()) return {};
-      auto *group = dynamic_cast<ArtifactGroupLayer *>(parentLayer.get());
-      if (!group) return {};
-      const auto &children = group->children();
+      const auto children = childLayers(parentLayer);
       for (int row = 0; row < (int)children.size(); ++row) {
         if (children[row] && children[row]->id() == layer->id()) {
           return owner_->createIndex(row, 0, layer.get());
@@ -188,10 +206,8 @@ int ArtifactHierarchyModel::rowCount(const QModelIndex &parent) const {
 
   auto parentLayer = static_cast<ArtifactAbstractLayer*>(parent.internalPointer());
   if (parentLayer && parentLayer->isGroupLayer()) {
-    auto groupLayer = dynamic_cast<ArtifactGroupLayer*>(parentLayer);
-    if (groupLayer) {
-      return static_cast<int>(groupLayer->children().size());
-    }
+    return static_cast<int>(
+        impl_->childLayers(comp->layerById(parentLayer->id())).size());
   }
 
   return 0;
@@ -219,9 +235,10 @@ QModelIndex ArtifactHierarchyModel::index(int row, int column,
   } else {
     auto parentLayer = static_cast<ArtifactAbstractLayer*>(parent.internalPointer());
     if (parentLayer && parentLayer->isGroupLayer()) {
-      auto groupLayer = dynamic_cast<ArtifactGroupLayer*>(parentLayer);
-      if (groupLayer && row < groupLayer->children().size()) {
-        targetLayer = groupLayer->children()[row];
+      const auto children =
+          impl_->childLayers(comp->layerById(parentLayer->id()));
+      if (row < children.size()) {
+        targetLayer = children[row];
       }
     }
   }
@@ -259,8 +276,7 @@ QModelIndex ArtifactHierarchyModel::parent(const QModelIndex &child) const {
   } else {
     auto grandParent = comp->layerById(grandParentId);
     if (grandParent && grandParent->isGroupLayer()) {
-      auto group = dynamic_cast<ArtifactGroupLayer*>(grandParent.get());
-      auto &children = group->children();
+      const auto children = impl_->childLayers(grandParent);
       auto it = std::find_if(children.begin(), children.end(), [&](const ArtifactAbstractLayerPtr& l) { return l->id() == parentId; });
       row = (it != children.end()) ? (int)std::distance(children.begin(), it) : 0;
       return createIndex(row, 0, parentLayer.get());

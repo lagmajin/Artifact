@@ -1,5 +1,6 @@
 // ReSharper disable All
 module;
+#include <algorithm>
 #include <utility>
 #include <QJsonDocument>
 #include <QList>
@@ -49,6 +50,8 @@ import Audio.Bus;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import ArtifactCore.Control.External;
+import Physics.System;
+import Physics.Mpm2D;
 
 //import Playback.Clock;
 
@@ -907,9 +910,46 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     if (position_ == position) {
         return;
     }
+    const int64_t previousFrame = position_.framePosition();
+    const int64_t nextFrame = position.framePosition();
     // Playback updates only need the composition's current frame state.
     // Layer propagation is handled by goToFrame() for explicit timeline edits/seeks.
     position_ = position;
+    evaluateLayerCollisionPairs();
+
+    auto& physics = ArtifactCore::PhysicsSystem::instance();
+    const int64_t advancedFrames = nextFrame - previousFrame;
+    if (advancedFrames <= 0 || advancedFrames > 8) {
+        // Scrubbing and large seeks restore an exact cached state only.  A
+        // miss deliberately leaves the live solver untouched rather than
+        // integrating a non-deterministic jump.
+        physics.restoreSoftBodySnapshots(nextFrame);
+        return;
+    }
+
+    const double fps = std::max(1.0, frameRate_.framerate());
+    constexpr int64_t kMaxCatchUpSteps = 8;
+    const int64_t stepCount = std::min(advancedFrames, kMaxCatchUpSteps);
+    const float fixedDeltaSeconds = static_cast<float>(1.0 / fps);
+    physics.captureSoftBodySnapshots(previousFrame);
+    for (int64_t step = 0; step < stepCount; ++step) {
+        physics.update(fixedDeltaSeconds);
+        for (const auto& event : physics.takeMaterialFractureEvents()) {
+            const auto layer = layerMultiIndex_.findById(event.layerId);
+            if (!layer || event.fracturedParticleCount <= 0) {
+                continue;
+            }
+            const float ratio = static_cast<float>(event.fracturedParticleCount) /
+                                static_cast<float>(std::max(1, event.totalParticleCount));
+            FractureImpact impact;
+            impact.impulse = std::max(0.1f, ratio * 8.0f);
+            impact.stress = static_cast<float>(event.fracturedParticleCount);
+            impact.speed = ratio * 120.0f;
+            impact.area = std::max(1.0f, ratio * 100.0f);
+            layer->applyFractureImpact(impact);
+        }
+        physics.captureSoftBodySnapshots(previousFrame + step + 1);
+    }
  }
 
  const FramePosition ArtifactAbstractComposition::Impl::framePosition() const
@@ -923,6 +963,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     for (auto& layer : layerMultiIndex_) {
         if (layer) layer->goToFrame(frame);
     }
+    ArtifactCore::PhysicsSystem::instance().restoreSoftBodySnapshots(frame);
     evaluateLayerCollisionPairs();
   }
 
@@ -936,11 +977,59 @@ void ArtifactAbstractComposition::Impl::evaluateLayerCollisionPairs()
     if (!layer || !layer->isActiveAt(position_)) {
       continue;
     }
-    if (!layerBooleanProperty(
-            layer, QStringLiteral("component.collision.enabled"), false)) {
+    const bool isCollisionSource = layerBooleanProperty(
+        layer, QStringLiteral("component.collision.enabled"), false);
+    const bool isMaterialTarget = static_cast<bool>(
+        ArtifactCore::PhysicsSystem::instance().getMaterialSolver(layer->id()));
+    if (!isCollisionSource && !isMaterialTarget) {
       continue;
     }
     collisionLayers.push_back(layer);
+  }
+
+  auto& physics = ArtifactCore::PhysicsSystem::instance();
+  for (const auto& target : collisionLayers) {
+    if (!physics.getMaterialSolver(target->id())) {
+      continue;
+    }
+    physics.clearMaterialColliders(target->id());
+    bool invertible = false;
+    const QTransform inverseTarget = target->getGlobalTransform().inverted(&invertible);
+    if (!invertible) {
+      continue;
+    }
+    for (const auto& source : collisionLayers) {
+      if (source == target || !layerBooleanProperty(
+              source, QStringLiteral("component.collision.enabled"), false)) {
+        continue;
+      }
+      const QRectF sourceBounds = compositionCollisionBounds(source);
+      const QRectF localBounds = inverseTarget.mapRect(sourceBounds);
+      if (!localBounds.isValid() || localBounds.isEmpty()) {
+        continue;
+      }
+      ArtifactCore::MpmCollider2D collider;
+      collider.x = static_cast<float>(localBounds.center().x());
+      collider.y = static_cast<float>(localBounds.center().y());
+      const int sourceShape = layerIntProperty(
+          source, QStringLiteral("component.collision.shape"), 0);
+      if (sourceShape == 2) {
+        // A transformed circle can become an ellipse. The material solver's
+        // circle proxy deliberately uses the outer radius for stable contact.
+        collider.type = ArtifactCore::MpmCollider2D::Type::Circle;
+        collider.radius = static_cast<float>(
+            std::max(localBounds.width(), localBounds.height()) * 0.5);
+      } else {
+        collider.type = ArtifactCore::MpmCollider2D::Type::Box;
+        collider.width = static_cast<float>(localBounds.width());
+        collider.height = static_cast<float>(localBounds.height());
+      }
+      collider.restitution = std::clamp(
+          layerFloatProperty(source, QStringLiteral("physics.restitution"), 0.1f),
+          0.0f, 1.0f);
+      collider.friction = 0.2f;
+      physics.registerMaterialCollider(target->id(), collider);
+    }
   }
 
   for (std::size_t i = 0; i < collisionLayers.size(); ++i) {
@@ -1567,7 +1656,7 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
     if (impl_->audioMixer_) {
         AudioMixer& mixer = *impl_->audioMixer_;
         for (auto &layer : impl_->layerMultiIndex_) {
-            if (layer && layer->hasAudio()) {
+            if (layer && shouldEvaluateLayer(layer->id()) && layer->hasAudio()) {
                 const std::string busName = "layer_" + layer->id().toString().toStdString();
                 if (!mixer.findBusByName(busName)) {
                     mixer.createBus(busName);
@@ -1581,7 +1670,8 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
         mixOutput.zero();
         AudioSegment layerSegment;
         for (auto &layer : impl_->layerMultiIndex_) {
-            if (layer && layer->isActiveAt(start) && layer->hasAudio()) {
+            if (layer && shouldEvaluateLayer(layer->id()) &&
+                layer->isActiveAt(start) && layer->hasAudio()) {
                 ++activeAudioLayerCount;
                 const std::string busName = "layer_" + layer->id().toString().toStdString();
                 auto bus = mixer.findBusByName(busName);
@@ -1621,7 +1711,8 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
 
         AudioSegment layerSeg;
         for (auto &layer : impl_->layerMultiIndex_) {
-            if (layer && layer->isActiveAt(start) && layer->hasAudio()) {
+            if (layer && shouldEvaluateLayer(layer->id()) &&
+                layer->isActiveAt(start) && layer->hasAudio()) {
                 ++activeAudioLayerCount;
                 if (layer->getAudio(layerSeg, start, frameCount, sampleRate)) {
                     int chCount = std::min(outSegment.channelCount(), layerSeg.channelCount());
@@ -1678,6 +1769,50 @@ const QList<Artifact::ArtifactAbstractLayerPtr>&
 ArtifactAbstractComposition::allLayerRef() const
 {
   return impl_->layerMultiIndex_.all();
+}
+
+QList<ArtifactAbstractLayerPtr>
+ArtifactAbstractComposition::childLayersOf(const LayerID& parentId) const
+{
+  QList<ArtifactAbstractLayerPtr> children;
+  if (parentId.isNil()) {
+    return children;
+  }
+  for (const auto& layer : impl_->layerMultiIndex_.all()) {
+    if (layer && layer->parentLayerId() == parentId) {
+      children.append(layer);
+    }
+  }
+  return children;
+}
+
+bool ArtifactAbstractComposition::shouldEvaluateLayer(const LayerID& layerId) const
+{
+  auto current = impl_->layerMultiIndex_.findById(layerId);
+  QSet<QString> visited;
+  while (current) {
+    const LayerID parentId = current->parentLayerId();
+    if (parentId.isNil()) {
+      return true;
+    }
+    const QString parentKey = parentId.toString();
+    if (visited.contains(parentKey)) {
+      return false;
+    }
+    visited.insert(parentKey);
+    const auto parent = impl_->layerMultiIndex_.findById(parentId);
+    if (!parent) {
+      return true;
+    }
+    if (parent->hasExclusiveChildSelection()) {
+      const LayerID selectedChild = parent->selectedChildIdForEvaluation();
+      if (selectedChild.isNil() || selectedChild != current->id()) {
+        return false;
+      }
+    }
+    current = parent;
+  }
+  return false;
 }
 
 AppendLayerToCompositionResult ArtifactAbstractComposition::appendLayerTop(ArtifactAbstractLayerPtr layer)
