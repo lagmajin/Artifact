@@ -59,6 +59,7 @@ import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Service.ActiveContext;
 import Artifact.Service.Playback;
 import Artifact.Audio.ScrubController;
+import Asset.Manager;
 import Undo.UndoManager;
 // import Artifact.Render.FrameCache;
 
@@ -1191,6 +1192,7 @@ public:
   QFileSystemWatcher* fileWatcher_ = nullptr;
   QTimer* statusCheckTimer_ = nullptr;
   void setupFileWatcher(ArtifactProjectService* owner);
+  void refreshFileWatcherPaths();
   void updateAllAssetStatuses();
   void handleFileChanged(const QString& path);
 };
@@ -1209,6 +1211,48 @@ void ArtifactProjectService::Impl::setupFileWatcher(ArtifactProjectService* owne
   });
 
   statusCheckTimer_->start();
+  refreshFileWatcherPaths();
+}
+
+void ArtifactProjectService::Impl::refreshFileWatcherPaths() {
+  if (!fileWatcher_) {
+    return;
+  }
+
+  const QStringList watchedFiles = fileWatcher_->files();
+  if (!watchedFiles.isEmpty()) {
+    fileWatcher_->removePaths(watchedFiles);
+  }
+
+  auto project = projectManager().getCurrentProjectSharedPtr();
+  if (!project) {
+    return;
+  }
+
+  QStringList assetPaths;
+  std::function<void(ProjectItem*)> collectFootage = [&](ProjectItem* item) {
+    if (!item) {
+      return;
+    }
+    if (item->type() == eProjectItemType::Footage) {
+      const QString path = QFileInfo(static_cast<FootageItem*>(item)->filePath)
+                               .absoluteFilePath();
+      if (!path.isEmpty() && QFileInfo::exists(path)) {
+        assetPaths.append(path);
+      }
+    }
+    for (auto* child : item->children) {
+      collectFootage(child);
+    }
+  };
+
+  for (auto* root : project->projectItems()) {
+    collectFootage(root);
+  }
+  assetPaths.removeDuplicates();
+  if (!assetPaths.isEmpty()) {
+    fileWatcher_->addPaths(assetPaths);
+  }
 }
 
 void ArtifactProjectService::Impl::updateAllAssetStatuses() {
@@ -1237,7 +1281,15 @@ void ArtifactProjectService::Impl::updateAllAssetStatuses() {
 
 void ArtifactProjectService::Impl::handleFileChanged(const QString& path) {
   qDebug() << "[AssetMonitor] File modified:" << path;
-  // ここでキャッシュの破棄やプレビューの更新イベントを飛ばす
+  const QUuid sourceId = ArtifactCore::AssetManager::instance().sourceId(path);
+  if (!sourceId.isNull()) {
+    ArtifactCore::AssetManager::instance().invalidateSource(sourceId);
+  }
+  if (fileWatcher_ && QFileInfo::exists(path)) {
+    fileWatcher_->addPath(path);
+  }
+  // ここでプレビューの更新イベントを飛ばす。source versionの更新は
+  // decoded payload / GPU cacheの世代境界を先に確定させる。
   ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
 }
 
@@ -1824,13 +1876,16 @@ W_OBJECT_IMPL(ArtifactProjectService)
 
 ArtifactProjectService::ArtifactProjectService(QObject *parent)
     : QObject(parent), impl_(new Impl()) {
+  impl_->setupFileWatcher(this);
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<ProjectCreatedEvent>([this](const ProjectCreatedEvent&) {
         impl_->currentCompositionId_ = {};
+        impl_->refreshFileWatcherPaths();
         ArtifactRevisionService::instance()->noteProjectChanged();
       }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+        impl_->refreshFileWatcherPaths();
         ArtifactRevisionService::instance()->noteProjectChanged();
       }));
   impl_->installSelectionBridge(this);
