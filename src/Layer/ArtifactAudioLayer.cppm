@@ -35,7 +35,7 @@ namespace Artifact
    QString sourcePath_;
    QUuid sourceAssetId_;
    ArtifactCore::SimpleWav wav_;
-   QVector<float> interleavedPcm_;
+   std::shared_ptr<QVector<float>> sharedPcm_;
    int sourceSampleRate_ = 0;
    int sourceChannelCount_ = 0;
    bool isLoaded_ = false;
@@ -54,6 +54,12 @@ namespace Artifact
         ArtifactCore::AudioSegment segment;
     };
    ResampledCache resampledCache_;
+
+   const QVector<float>& pcm() const
+   {
+     static const QVector<float> empty;
+     return sharedPcm_ ? *sharedPcm_ : empty;
+   }
 
    Impl() = default;
    ~Impl() = default;
@@ -110,7 +116,7 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
     impl_->sourceAssetId_ = {};
     impl_->isLoaded_ = false;
     impl_->sourcePath_.clear();
-    impl_->interleavedPcm_.clear();
+    impl_->sharedPcm_.reset();
     impl_->sourceSampleRate_ = 0;
     impl_->sourceChannelCount_ = 0;
     Q_EMIT changed();
@@ -133,7 +139,16 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
    impl_->sourceAssetId_ = nextAssetId;
 
    impl_->sourcePath_ = trimmed;
-   impl_->interleavedPcm_ = impl_->wav_.getAudioData();
+   const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
+   impl_->sharedPcm_ = std::static_pointer_cast<QVector<float>>(
+       ArtifactCore::AssetManager::instance().decodedPayload(
+           nextAssetId, sourceVersion, QStringLiteral("audio.pcm.f32")));
+   if (!impl_->sharedPcm_) {
+     impl_->sharedPcm_ = std::make_shared<QVector<float>>(impl_->wav_.getAudioData());
+     impl_->sharedPcm_ = std::static_pointer_cast<QVector<float>>(
+         ArtifactCore::AssetManager::instance().publishDecodedPayload(
+             nextAssetId, sourceVersion, QStringLiteral("audio.pcm.f32"), impl_->sharedPcm_));
+   }
    impl_->sourceSampleRate_ = impl_->wav_.sampleRate();
    impl_->sourceChannelCount_ = std::max(1, impl_->wav_.channelCount());
    impl_->totalFrames_ = impl_->wav_.frameCount();
@@ -355,7 +370,7 @@ WaveformData ArtifactAudioLayer::buildWaveformData(int displayWidth) const
 
   if (!impl_->isLoaded_ || impl_->sourceSampleRate_ <= 0 ||
       impl_->sourceChannelCount_ <= 0 || displayWidth <= 0 ||
-      impl_->interleavedPcm_.isEmpty()) {
+      impl_->pcm().isEmpty()) {
     return data;
   }
 
@@ -370,7 +385,7 @@ WaveformData ArtifactAudioLayer::buildWaveformData(int displayWidth) const
   const qint64 sourceDurationFrames =
       std::max<qint64>(1, outPoint().framePosition() - inPoint().framePosition());
   const qint64 sourceFrameCount =
-      static_cast<qint64>(impl_->interleavedPcm_.size() /
+      static_cast<qint64>(impl_->pcm().size() /
                           std::max(1, impl_->sourceChannelCount_));
 
   const qint64 startSample = std::clamp<qint64>(
@@ -415,8 +430,8 @@ WaveformData ArtifactAudioLayer::buildWaveformData(int displayWidth) const
       float sample = 0.0f;
       for (int ch = 0; ch < channelCount; ++ch) {
         const int index = base + ch;
-        if (index < impl_->interleavedPcm_.size()) {
-          sample += impl_->interleavedPcm_[index];
+        if (index < impl_->pcm().size()) {
+          sample += impl_->pcm()[index];
         }
       }
       sample /= static_cast<float>(channelCount);
@@ -449,7 +464,7 @@ bool ArtifactAudioLayer::buildLipSyncTrack(ArtifactCore::LipSyncTrack& track,
                                            double frameRate) const
 {
   if (!impl_ || !impl_->isLoaded_ || impl_->sourceSampleRate_ <= 0 ||
-      impl_->sourceChannelCount_ <= 0 || impl_->interleavedPcm_.isEmpty()) {
+      impl_->sourceChannelCount_ <= 0 || impl_->pcm().isEmpty()) {
     return false;
   }
 
@@ -467,13 +482,13 @@ bool ArtifactAudioLayer::buildLipSyncTrack(ArtifactCore::LipSyncTrack& track,
 
   const int sourceFrames =
       static_cast<int>(std::min<qint64>(impl_->totalFrames_,
-                                        impl_->interleavedPcm_.size() /
+                                        impl_->pcm().size() /
                                             std::max(1, impl_->sourceChannelCount_)));
   for (int frame = 0; frame < sourceFrames; ++frame) {
     for (int ch = 0; ch < impl_->sourceChannelCount_; ++ch) {
       const int index = frame * impl_->sourceChannelCount_ + ch;
-      if (index < impl_->interleavedPcm_.size()) {
-        segment.channelData[ch][frame] = impl_->interleavedPcm_[index];
+      if (index < impl_->pcm().size()) {
+        segment.channelData[ch][frame] = impl_->pcm()[index];
       }
     }
   }
@@ -534,8 +549,8 @@ bool ArtifactAudioLayer::decodeFrameToCache(qint64 frameNumber)
   for (int ch = 0; ch < impl_->sourceChannelCount_; ++ch) {
     for (int s = 0; s < segment.frameCount(); ++s) {
       const int pcmIndex = baseIndex + s * impl_->sourceChannelCount_ + ch;
-      if (pcmIndex < impl_->interleavedPcm_.size()) {
-        segment.channelData[ch][s] = impl_->interleavedPcm_[pcmIndex];
+      if (pcmIndex < impl_->pcm().size()) {
+        segment.channelData[ch][s] = impl_->pcm()[pcmIndex];
       } else {
         segment.channelData[ch][s] = 0.0f;
       }
@@ -569,7 +584,7 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
   const double startSeconds = static_cast<double>(localFrame) / compositionFps;
   const qint64 startSample =
       static_cast<qint64>(std::floor(startSeconds * impl_->sourceSampleRate_));
-  const qint64 sourceFrameCount = impl_->interleavedPcm_.size() / std::max(1, impl_->sourceChannelCount_);
+  const qint64 sourceFrameCount = impl_->pcm().size() / std::max(1, impl_->sourceChannelCount_);
 
   const int outChannels = std::max(1, impl_->sourceChannelCount_);
   AudioChannelLayout outLayout = AudioChannelLayout::Stereo;
@@ -619,9 +634,9 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
 
     if (srcChannels == 1) {
       // Mono source: interpolate and distribute to all output channels
-      const float s0 = impl_->interleavedPcm_[base0];
+      const float s0 = impl_->pcm()[base0];
       const float s1 = (srcFrame1 < sourceFrameCount)
-          ? impl_->interleavedPcm_[base0]
+          ? impl_->pcm()[base0]
           : 0.0f;
       const float sample = (s0 + t * (s1 - s0)) * volume;
       for (int ch = 0; ch < outChannels; ++ch) {
@@ -631,9 +646,9 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
       // Multi-channel source: interpolate each channel independently
       const int copyCh = std::min(srcChannels, outChannels);
       for (int ch = 0; ch < copyCh; ++ch) {
-        const float s0 = impl_->interleavedPcm_[base0 + ch];
+        const float s0 = impl_->pcm()[base0 + ch];
         const float s1 = (srcFrame1 < sourceFrameCount)
-            ? impl_->interleavedPcm_[base1 + ch]
+            ? impl_->pcm()[base1 + ch]
             : 0.0f;
         outSegment.channelData[ch][i] = (s0 + t * (s1 - s0)) * volume;
       }
