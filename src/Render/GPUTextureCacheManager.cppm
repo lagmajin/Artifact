@@ -497,6 +497,7 @@ void GPUTextureCacheManager::invalidateOwner(const QString& ownerId)
 
 void GPUTextureCacheManager::clear()
 {
+    QMutexLocker locker(&mutex_);
     entries_.clear();
     keyToId_.clear();
     ownerToIds_.clear();
