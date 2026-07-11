@@ -1,9 +1,11 @@
 ﻿module;
 #include <utility>
+#include <cstdint>
 #include <QImage>
 #include <QJsonObject>
 #include <QRectF>
 #include <QVariant>
+#include <QUuid>
 #include <wobjectimpl.h>
 export module Artifact.Layer.Image;
 
@@ -28,6 +30,9 @@ export namespace Artifact {
   bool hasCurrentFrameBuffer() const;
   bool loadFromPath(const QString& path);
   QString sourcePath() const;
+  QUuid sourceAssetId() const;
+  std::uint64_t sourceVersion() const;
+  bool canShareSourceGpuTexture() const;
   QJsonObject toJson() const;
   void setFromQImage(const QImage& image);
   void setFromCvMat(const cv::Mat& mat);

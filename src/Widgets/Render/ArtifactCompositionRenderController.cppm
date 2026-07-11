@@ -49,6 +49,7 @@ module;
 #include <QSet>
 
 #include <QStringList>
+#include <QUuid>
 
 #include <QTimer>
 
@@ -5924,6 +5925,20 @@ void drawLayerForCompositionView(
 
     cacheSignature += matteSourceSignature;
 
+    QString gpuOwnerId = ownerId;
+    QString gpuCacheSignature = cacheSignature;
+    if (!allowSurfaceCache && matteSourceSignature.isEmpty()) {
+      if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer);
+          imageLayer && imageLayer->canShareSourceGpuTexture()) {
+        const auto version = imageLayer->sourceVersion();
+        if (version > 0) {
+          gpuOwnerId = QStringLiteral("asset:%1").arg(
+              imageLayer->sourceAssetId().toString(QUuid::WithoutBraces));
+          gpuCacheSignature = QStringLiteral("image-f32:v%1").arg(version);
+        }
+      }
+    }
+
     auto applyResolvedMattes = [&](QImage& targetSurface) {
       if (targetSurface.isNull() || resolvedMatteSources.isEmpty()) {
         return;
@@ -6031,13 +6046,13 @@ void drawLayerForCompositionView(
 
             entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(
 
-                ownerId, cacheSignature, *entry.processedBuffer);
+                gpuOwnerId, gpuCacheSignature, *entry.processedBuffer);
 
           } else {
 
             entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(
 
-                ownerId, cacheSignature, surface);
+                gpuOwnerId, gpuCacheSignature, surface);
 
           }
 
@@ -6113,7 +6128,7 @@ void drawLayerForCompositionView(
 
                     gpuTextureCacheManager->acquireOrCreate(
 
-                        layer->id().toString(), cacheSignature,
+                        gpuOwnerId, gpuCacheSignature,
 
                         *cacheEntry->processedBuffer);
 
@@ -6123,7 +6138,7 @@ void drawLayerForCompositionView(
 
                     gpuTextureCacheManager->acquireOrCreate(
 
-                        layer->id().toString(), cacheSignature, uploadSurface);
+                        gpuOwnerId, gpuCacheSignature, uploadSurface);
 
               }
 

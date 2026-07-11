@@ -329,6 +329,23 @@ QString ArtifactImageLayer::sourcePath() const
     return impl_->sourcePath_;
 }
 
+QUuid ArtifactImageLayer::sourceAssetId() const
+{
+    return impl_->sourceAssetId_;
+}
+
+std::uint64_t ArtifactImageLayer::sourceVersion() const
+{
+    return ArtifactCore::AssetManager::instance().sourceVersion(impl_->sourceAssetId_);
+}
+
+bool ArtifactImageLayer::canShareSourceGpuTexture() const
+{
+    return !impl_->sourceAssetId_.isNull() &&
+           !impl_->sourceCrop_.enabled() &&
+           !hasMasks() && getEffects().empty();
+}
+
 QJsonObject ArtifactImageLayer::toJson() const
 {
     QJsonObject obj = ArtifactAbstract2DLayer::toJson();
