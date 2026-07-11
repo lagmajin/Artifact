@@ -208,24 +208,73 @@ public:
     int height_ = 0;
     QString sourcePath_;
     QUuid sourceAssetId_;
+    mutable std::uint64_t cachedSourceVersion_ = 0;
     SourceCrop sourceCrop_;
     mutable std::shared_ptr<QImage> cache_;
     mutable std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> cacheBuffer_;
     // [Fix 1] バックグラウンド先読み用
-    mutable QFuture<QImage> prefetchFuture_;
-    mutable QFutureWatcher<QImage> prefetchWatcher_;
+    struct PrefetchResult {
+        std::uint64_t generation = 0;
+        QImage image;
+    };
+    mutable QFuture<PrefetchResult> prefetchFuture_;
+    mutable QFutureWatcher<PrefetchResult> prefetchWatcher_;
+    mutable std::uint64_t prefetchGeneration_ = 0;
     mutable bool prefetchDone_ = false;
+
+    void startPrefetch()
+    {
+        const auto generation = ++prefetchGeneration_;
+        prefetchDone_ = false;
+        const QString path = sourcePath_;
+        prefetchFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(),
+            [path, generation]() -> PrefetchResult {
+                ArtifactCore::ScopedThreadName threadName(
+                    QStringLiteral("ImageLayer/prefetch:%1").arg(QFileInfo(path).fileName()));
+                return PrefetchResult{generation, loadImageViaOIIO(path)};
+            });
+        prefetchWatcher_.setFuture(prefetchFuture_);
+    }
+
+    bool refreshSourceVersionIfNeeded()
+    {
+        if (sourceAssetId_.isNull()) {
+            return false;
+        }
+        const auto currentVersion = ArtifactCore::AssetManager::instance().sourceVersion(
+            sourceAssetId_);
+        if (currentVersion == 0 || cachedSourceVersion_ == 0) {
+            cachedSourceVersion_ = currentVersion;
+            return false;
+        }
+        if (currentVersion == cachedSourceVersion_) {
+            return false;
+        }
+
+        cachedSourceVersion_ = currentVersion;
+        cache_.reset();
+        cacheBuffer_.reset();
+        prefetchDone_ = false;
+        if (!sourcePath_.isEmpty()) {
+            startPrefetch();
+        }
+        return true;
+    }
 };
 
 W_OBJECT_IMPL(ArtifactImageLayer)
 
 ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
-    QObject::connect(&impl_->prefetchWatcher_, &QFutureWatcher<QImage>::finished, this, [this]() {
+    QObject::connect(&impl_->prefetchWatcher_, &QFutureWatcher<Impl::PrefetchResult>::finished, this, [this]() {
         if (!impl_) {
             return;
         }
 
-        QImage loaded = impl_->prefetchWatcher_.result();
+        const auto result = impl_->prefetchWatcher_.result();
+        if (result.generation != impl_->prefetchGeneration_) {
+            return;
+        }
+        QImage loaded = result.image;
         if (!loaded.isNull()) {
             impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
             impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
@@ -297,6 +346,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
     }
     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     impl_->sourceAssetId_ = nextAssetId;
+    impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
     impl_->sourcePath_ = path;
     impl_->cache_.reset();
     const auto version = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
@@ -311,12 +361,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
 
     // [Fix 1] OIIO 経由でバックグラウンド先読みし、初回 draw() 呼び出し時の
     // メインスレッドブロックを排除する
-    impl_->prefetchFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [path]() -> QImage {
-        ArtifactCore::ScopedThreadName threadName(
-            QStringLiteral("ImageLayer/prefetch:%1").arg(QFileInfo(path).fileName()));
-        return loadImageViaOIIO(path);
-    });
-    impl_->prefetchWatcher_.setFuture(impl_->prefetchFuture_);
+    impl_->startPrefetch();
     impl_->sourceCrop_.clampToSource(QSizeF(impl_->width_, impl_->height_));
 
     qDebug() << "[ArtifactImageLayer] OIIO prefetch started:" << path
@@ -357,6 +402,7 @@ bool ArtifactImageLayer::localizeSourceIdentity()
         return false;
     }
     impl_->sourceAssetId_ = localizedId;
+    impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(localizedId);
     setDirty(LayerDirtyFlag::Property);
     Q_EMIT changed();
     return true;
@@ -380,6 +426,7 @@ bool ArtifactImageLayer::relinkSourceIdentityToShared()
     }
     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     impl_->sourceAssetId_ = sharedId;
+    impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(sharedId);
     if (impl_->cacheBuffer_) {
         const auto version = ArtifactCore::AssetManager::instance().sourceVersion(sharedId);
         impl_->cacheBuffer_ = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
@@ -439,6 +486,7 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
             ArtifactCore::AssetManager::instance().acquireExistingSource(savedId)) {
             ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
             impl_->sourceAssetId_ = savedId;
+            impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(savedId);
             restored = true;
         }
         if (!restored) {
@@ -726,6 +774,7 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
 
 QImage ArtifactImageLayer::toQImage() const
 {
+    impl_->refreshSourceVersionIfNeeded();
     if (!impl_->hasImage_) {
         return makeMissingImagePlaceholder(QSize(256, 256), QStringLiteral("Missing image"));
     }
@@ -735,7 +784,10 @@ QImage ArtifactImageLayer::toQImage() const
     // メインスレッドのみ: 完了済みプリフェッチをキャッシュに取り込む
     // (バックグラウンドスレッドは impl_ を書かず future から直接返す)
     if (isMainThread && !impl_->prefetchDone_ && impl_->prefetchFuture_.isFinished()) {
-        QImage loaded = impl_->prefetchFuture_.result();
+        const auto result = impl_->prefetchFuture_.result();
+        QImage loaded = result.generation == impl_->prefetchGeneration_
+            ? result.image
+            : QImage();
         if (!loaded.isNull()) {
             impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
             impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
@@ -757,7 +809,10 @@ QImage ArtifactImageLayer::toQImage() const
                 // バックグラウンドスレッド: futureがある場合は待機して直接返す (impl_書き込み不要)
                 if (impl_->prefetchFuture_.isRunning() || impl_->prefetchFuture_.isFinished()) {
                     impl_->prefetchFuture_.waitForFinished();
-                    QImage img = impl_->prefetchFuture_.result();
+                    const auto result = impl_->prefetchFuture_.result();
+                    QImage img = result.generation == impl_->prefetchGeneration_
+                        ? result.image
+                        : QImage();
                     if (!img.isNull()) return img;
                 }
                 // futureが無い / 結果がnull: バックグラウンドで同期ロード (impl_非書き込み)
@@ -811,6 +866,7 @@ QImage ArtifactImageLayer::toQImage() const
 const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() const
 {
     static ArtifactCore::ImageF32x4_RGBA empty;
+    impl_->refreshSourceVersionIfNeeded();
     if (impl_ && !impl_->cacheBuffer_ && impl_->cache_) {
         impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
         const auto version = ArtifactCore::AssetManager::instance().sourceVersion(
@@ -830,6 +886,7 @@ const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() co
 
 bool ArtifactImageLayer::hasCurrentFrameBuffer() const
 {
+    impl_->refreshSourceVersionIfNeeded();
     return impl_ && ((impl_->cacheBuffer_ && !impl_->cacheBuffer_->isEmpty()) || impl_->cache_);
 }
 
