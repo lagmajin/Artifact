@@ -1,4 +1,5 @@
 module;
+#include <cstddef>
 #include <utility>
 #include <algorithm>
 #include <QPainter>
@@ -31,6 +32,9 @@ import Shape.Repeater;
 import Shape.AeOperators;
 import Shape.Types;
 import Shape.Path;
+import Physics.System;
+import Physics.SoftBody;
+import Physics.Mpm2D;
 
 namespace {
 
@@ -53,6 +57,116 @@ QPointF mapPoint(const QMatrix4x4& transform, const QPointF& point) {
   return QPointF(v.x() / v.w(), v.y() / v.w());
  }
  return QPointF(v.x(), v.y());
+}
+
+bool drawSoftBodyGrid(Artifact::ArtifactShapeLayer* layer,
+                      Artifact::ArtifactIRenderer* renderer,
+                      const QMatrix4x4& transform,
+                      const ArtifactCore::FloatColor& fill,
+                      const ArtifactCore::FloatColor& stroke,
+                      float strokeWidth,
+                      bool drawStroke) {
+ if (!layer || !renderer || !layer->hasSoftBodyPhysics()) {
+  return false;
+ }
+ const auto solver = ArtifactCore::PhysicsSystem::instance().getSoftBody(layer->id());
+ if (!solver) {
+  return false;
+ }
+ const int columns = solver->gridColumns();
+ const int rows = solver->gridRows();
+ const auto& points = solver->getPoints();
+ if (columns < 2 || rows < 2 ||
+     points.size() != static_cast<std::size_t>(columns * rows)) {
+  return false;
+ }
+
+ auto mappedPoint = [&transform](const ArtifactCore::SoftBodyPoint& point) {
+  return mapPoint(transform, QPointF(point.x, point.y));
+ };
+ for (int y = 0; y + 1 < rows; ++y) {
+  for (int x = 0; x + 1 < columns; ++x) {
+   const auto index = [columns](int px, int py) {
+    return static_cast<std::size_t>(py * columns + px);
+   };
+   const QPointF p0 = mappedPoint(points[index(x, y)]);
+   const QPointF p1 = mappedPoint(points[index(x + 1, y)]);
+   const QPointF p2 = mappedPoint(points[index(x + 1, y + 1)]);
+   const QPointF p3 = mappedPoint(points[index(x, y + 1)]);
+   renderer->drawQuadLocal({static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+                           {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
+                           {static_cast<float>(p2.x()), static_cast<float>(p2.y())},
+                           {static_cast<float>(p3.x()), static_cast<float>(p3.y())},
+                           fill);
+  }
+ }
+ if (drawStroke && strokeWidth > 0.0f) {
+  for (int y = 0; y < rows; ++y) {
+   for (int x = 0; x < columns; ++x) {
+    const QPointF point = mappedPoint(points[static_cast<std::size_t>(y * columns + x)]);
+    if (x + 1 < columns) {
+     const QPointF next = mappedPoint(points[static_cast<std::size_t>(y * columns + x + 1)]);
+     renderer->drawThickLineLocal({static_cast<float>(point.x()), static_cast<float>(point.y())},
+                                  {static_cast<float>(next.x()), static_cast<float>(next.y())},
+                                  strokeWidth, stroke);
+    }
+    if (y + 1 < rows) {
+     const QPointF next = mappedPoint(points[static_cast<std::size_t>((y + 1) * columns + x)]);
+     renderer->drawThickLineLocal({static_cast<float>(point.x()), static_cast<float>(point.y())},
+                                  {static_cast<float>(next.x()), static_cast<float>(next.y())},
+                                  strokeWidth, stroke);
+    }
+   }
+  }
+ }
+ return true;
+}
+
+bool drawMaterialGrid(Artifact::ArtifactShapeLayer* layer,
+                      Artifact::ArtifactIRenderer* renderer,
+                      const QMatrix4x4& transform,
+                      const ArtifactCore::FloatColor& fill,
+                      const ArtifactCore::FloatColor& stroke,
+                      float strokeWidth,
+                      bool drawStroke) {
+ if (!layer || !renderer) return false;
+ const auto solver = ArtifactCore::PhysicsSystem::instance().getMaterialSolver(layer->id());
+ if (!solver) return false;
+ const int columns = solver->particleGridColumns();
+ const int rows = solver->particleGridRows();
+ if (columns < 2 || rows < 2 ||
+     solver->particleCount() != columns * rows) return false;
+
+ auto mappedPoint = [&transform](const ArtifactCore::MpmParticle2D& particle) {
+  return mapPoint(transform, QPointF(particle.pos.x, particle.pos.y));
+ };
+ const auto index = [columns](int x, int y) {
+  return y * columns + x;
+ };
+ for (int y = 0; y + 1 < rows; ++y) {
+  for (int x = 0; x + 1 < columns; ++x) {
+   const auto& p0 = solver->particle(index(x, y));
+   const auto& p1 = solver->particle(index(x + 1, y));
+   const auto& p2 = solver->particle(index(x + 1, y + 1));
+   const auto& p3 = solver->particle(index(x, y + 1));
+   if (!p0.active || !p1.active || !p2.active || !p3.active) continue;
+   const QPointF v0 = mappedPoint(p0);
+   const QPointF v1 = mappedPoint(p1);
+   const QPointF v2 = mappedPoint(p2);
+   const QPointF v3 = mappedPoint(p3);
+   renderer->drawQuadLocal({static_cast<float>(v0.x()), static_cast<float>(v0.y())},
+                           {static_cast<float>(v1.x()), static_cast<float>(v1.y())},
+                           {static_cast<float>(v2.x()), static_cast<float>(v2.y())},
+                           {static_cast<float>(v3.x()), static_cast<float>(v3.y())}, fill);
+   if (drawStroke && strokeWidth > 0.0f) {
+    renderer->drawThickLineLocal({static_cast<float>(v0.x()), static_cast<float>(v0.y())},
+                                 {static_cast<float>(v1.x()), static_cast<float>(v1.y())}, strokeWidth, stroke);
+    renderer->drawThickLineLocal({static_cast<float>(v1.x()), static_cast<float>(v1.y())},
+                                 {static_cast<float>(v2.x()), static_cast<float>(v2.y())}, strokeWidth, stroke);
+   }
+  }
+ }
+ return true;
 }
 
 QString dashPatternToString(const std::vector<float>& pattern) {
@@ -1149,6 +1263,22 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
     const auto stroke = FloatColor(
         impl->strokeColor_.r(), impl->strokeColor_.g(), impl->strokeColor_.b(),
         impl->strokeColor_.a() * this->opacity() * weight);
+
+    // A soft-body grid owns the rectangle's local vertices.  Keep all other
+    // shape types on their existing path until they have a matching topology
+    // bridge instead of approximating curves with an unrelated cloth mesh.
+    if (impl->shapeType_ == Artifact::ShapeType::Rect &&
+        drawMaterialGrid(this, renderer, transform, fill, stroke,
+                         std::max(1.0f, impl->strokeWidth_),
+                         impl->strokeEnabled_)) {
+     return;
+    }
+    if (impl->shapeType_ == Artifact::ShapeType::Rect &&
+        drawSoftBodyGrid(this, renderer, transform, fill, stroke,
+                         std::max(1.0f, impl->strokeWidth_),
+                         impl->strokeEnabled_)) {
+     return;
+    }
 
     if (impl->shapeContentCacheDirty_) {
      impl->cachedShapePoints_ = buildRenderablePoints(

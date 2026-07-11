@@ -6217,6 +6217,11 @@ public:
     FourUp = 4,
   };
 
+  enum class WorkspaceMode {
+    Design,
+    Animate,
+  };
+
   static constexpr int kViewportPaneCount = 4;
 
   struct PaneState {
@@ -6244,6 +6249,8 @@ public:
   ViewOrientationWidget *viewOrientationWidget_ = nullptr;
   CompositionRenderController *renderController_ = nullptr;
   ViewportLayoutButton *viewportLayoutButton_ = nullptr;
+  ViewportLayoutButton *workspaceModeButton_ = nullptr;
+  WorkspaceMode workspaceMode_ = WorkspaceMode::Animate;
   ViewportLayoutMode viewportLayoutMode_ = ViewportLayoutMode::Single;
   int activePaneId_ = 0;
   // Top Toolbar (Zoom/View controls)
@@ -8370,6 +8377,50 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   addToolAction(QStringLiteral("Anchor"),
                 QStringLiteral("MaterialVS/neutral/transform.svg"),
                 ToolType::AnchorPoint, false);
+  impl_->workspaceModeButton_ = new ViewportLayoutButton(impl_->topToolbar_);
+  impl_->workspaceModeButton_->setObjectName(QStringLiteral("compositionWorkspaceModeButton"));
+  impl_->workspaceModeButton_->setText(QStringLiteral("Animate"));
+  impl_->workspaceModeButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  impl_->workspaceModeButton_->setToolTip(
+      QStringLiteral("Animate: AE-style transform and timeline editing. Click to switch to Design."));
+  impl_->workspaceModeButton_->setActivatedCallback([this]() {
+    if (!impl_ || !impl_->workspaceModeButton_) {
+      return;
+    }
+    const bool enterDesign =
+        impl_->workspaceMode_ == ArtifactCompositionEditor::Impl::WorkspaceMode::Animate;
+    impl_->workspaceMode_ = enterDesign
+                                ? ArtifactCompositionEditor::Impl::WorkspaceMode::Design
+                                : ArtifactCompositionEditor::Impl::WorkspaceMode::Animate;
+    const QString modeName = enterDesign ? QStringLiteral("Design")
+                                         : QStringLiteral("Animate");
+    impl_->workspaceModeButton_->setText(modeName);
+    impl_->workspaceModeButton_->setToolTip(
+        enterDesign
+            ? QStringLiteral("Design: Figma-style structure and layout editing. Click to switch to Animate.")
+            : QStringLiteral("Animate: AE-style transform and timeline editing. Click to switch to Design."));
+    setProperty("artifactWorkspaceMode", modeName);
+    for (auto &pane : impl_->panes_) {
+      if (pane.view) {
+        pane.view->setProperty("artifactWorkspaceMode", modeName);
+      }
+      if (pane.controller) {
+        pane.controller->setInfoOverlayText(
+            modeName,
+            enterDesign ? QStringLiteral("Layout and structure editing")
+                        : QStringLiteral("Transform and timeline editing"));
+      }
+    }
+    impl_->refreshViewportStateLabels();
+  });
+  setProperty("artifactWorkspaceMode", QStringLiteral("Animate"));
+  for (auto &pane : impl_->panes_) {
+    if (pane.view) {
+      pane.view->setProperty("artifactWorkspaceMode", QStringLiteral("Animate"));
+    }
+  }
+  impl_->topToolbar_->addWidget(impl_->workspaceModeButton_);
+
   impl_->toolModeButton_ = new QToolButton(this);
   impl_->toolModeButton_->setText(QStringLiteral("Select"));
   impl_->toolModeButton_->setMenu(toolMenu);

@@ -716,8 +716,10 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   bool isDraggingMaskHandle_ = false;
   bool isDraggingShapeVertex_ = false;
   int draggingShapeVertexIndex_ = -1;
-  int hoveredShapeVertexIndex_ = -1;
-  int hoveredShapeSegmentIndex_ = -1;
+   int hoveredShapeVertexIndex_ = -1;
+   int hoveredShapeSegmentIndex_ = -1;
+   std::vector<int> selectedShapeVertexIndices_;
+   std::vector<QPointF> selectedShapeDragBefore_;
   QPointF shapeContextMenuCanvasPos_;
   bool shapeEditPending_ = false;
   bool shapeEditDirty_ = false;
@@ -793,7 +795,9 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   int draggingPathTangentType_ = 0; // 0=in, 1=out
   int hoveredPathVertexIndex_ = -1;
   int hoveredPathTangentIndex_ = -1;
-  int hoveredPathTangentType_ = 0;
+   int hoveredPathTangentType_ = 0;
+   std::vector<int> selectedPathVertexIndices_;
+   std::vector<CustomPathVertex> selectedPathDragBefore_;
   bool pathEditPending_ = false;
   bool pathEditDirty_ = false;
   ArtifactAbstractLayerWeak pathEditLayer_;
@@ -1385,7 +1389,8 @@ void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractL
   const FloatColor segmentHoverColor = {0.42f, 0.86f, 1.0f, 0.90f};
   const FloatColor pointShadowColor = {0.0f, 0.0f, 0.0f, 0.42f};
   const FloatColor pointColor = {0.98f, 0.99f, 1.0f, 1.0f};
-  const FloatColor hoverColor = {1.0f, 0.76f, 0.28f, 1.0f};
+   const FloatColor hoverColor = {1.0f, 0.76f, 0.28f, 1.0f};
+   const FloatColor selectedColor = {0.28f, 0.78f, 1.0f, 1.0f};
   const FloatColor dragColor = {1.0f, 0.40f, 0.24f, 1.0f};
 
  Detail::float2 firstCanvasPos{};
@@ -1425,9 +1430,14 @@ void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractL
 
  for (int i = 0; i < static_cast<int>(points.size()); ++i) {
    const QPointF canvasPos = globalTransform.map(points[static_cast<size_t>(i)]);
-  FloatColor currentColor = pointColor;
-  float currentRadius = 16.0f;
-  if (isDraggingShapeVertex_ && draggingShapeVertexIndex_ == i) {
+   FloatColor currentColor = pointColor;
+   float currentRadius = 16.0f;
+   if (std::find(selectedShapeVertexIndices_.begin(), selectedShapeVertexIndices_.end(), i) !=
+       selectedShapeVertexIndices_.end()) {
+    currentColor = selectedColor;
+    currentRadius = 18.0f;
+   }
+   if (isDraggingShapeVertex_ && draggingShapeVertexIndex_ == i) {
    currentColor = dragColor;
    currentRadius = 20.0f;
   } else if (hoveredShapeVertexIndex_ == i) {
@@ -1796,10 +1806,16 @@ void ArtifactLayerEditorWidgetV2::Impl::drawCustomPathOverlay(const ArtifactAbst
        tR, hov ? FloatColor{1,0.7f,0,1} : FloatColor{0.8f,0.5f,1,0.9f}, 1.0f, true);
   }
   // Vertex handle
-  const bool hov = hoveredPathVertexIndex_ == i;
-  renderer_->drawCircle(
-      static_cast<float>(vp.x()), static_cast<float>(vp.y()),
-      vR, hov ? FloatColor{1,0.5f,0,1} : FloatColor{0.2f,0.8f,1,1}, 1.0f, true);
+   const bool hov = hoveredPathVertexIndex_ == i;
+   const bool selected = std::find(selectedPathVertexIndices_.begin(),
+                                   selectedPathVertexIndices_.end(), i) !=
+                         selectedPathVertexIndices_.end();
+   renderer_->drawCircle(
+       static_cast<float>(vp.x()), static_cast<float>(vp.y()),
+       selected ? vR * 1.35f : vR,
+       hov ? FloatColor{1,0.5f,0,1}
+           : (selected ? FloatColor{0.25f,0.85f,1,1} : FloatColor{0.2f,0.8f,1,1}),
+       1.0f, true);
   renderer_->drawCircle(
       static_cast<float>(vp.x()), static_cast<float>(vp.y()),
       vR, FloatColor{1,1,1,0.8f}, 1.0f, false);
@@ -2589,7 +2605,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
  impl_->resetProportionalDragState();
   impl_->isDraggingPathVertex_ = false;
   impl_->isDraggingPathTangent_ = false;
-  impl_->draggingPathVertexIndex_ = -1;
+    impl_->draggingPathVertexIndex_ = -1;
+     impl_->selectedPathDragBefore_.clear();
   impl_->hoveredPathVertexIndex_ = -1;
   impl_->hoveredPathTangentIndex_ = -1;
  if (impl_->renderer_) {
@@ -2768,10 +2785,27 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       event->accept();
       return;
      }
-     if (impl_->hitTestCustomPathVertex(layer, canvasPoint, vi)) {
-     impl_->beginPathEditTransaction(layer);
-     impl_->isDraggingPathVertex_ = true;
-     impl_->draggingPathVertexIndex_ = vi;
+      if (impl_->hitTestCustomPathVertex(layer, canvasPoint, vi)) {
+      const bool extendSelection = (event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) != 0;
+      auto selectedIt = std::find(impl_->selectedPathVertexIndices_.begin(),
+                                  impl_->selectedPathVertexIndices_.end(), vi);
+      if (extendSelection) {
+       if (selectedIt == impl_->selectedPathVertexIndices_.end())
+        impl_->selectedPathVertexIndices_.push_back(vi);
+       else
+        impl_->selectedPathVertexIndices_.erase(selectedIt);
+      } else if (selectedIt == impl_->selectedPathVertexIndices_.end()) {
+       impl_->selectedPathVertexIndices_ = {vi};
+      }
+      if (impl_->selectedPathVertexIndices_.empty()) {
+       impl_->requestRender();
+       event->accept();
+       return;
+      }
+      impl_->beginPathEditTransaction(layer);
+      impl_->isDraggingPathVertex_ = true;
+      impl_->draggingPathVertexIndex_ = vi;
+      impl_->selectedPathDragBefore_ = shape->customPathVertices();
       impl_->beginPathProportionalDragSnapshot(shape->customPathVertices(), vi);
       setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
                           Qt::ClosedHandCursor));
@@ -2779,6 +2813,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       return;
      }
      // Click on empty area → add new bezier vertex
+     impl_->selectedPathVertexIndices_.clear();
      impl_->beginPathEditTransaction(layer);
      const QTransform gt = layer->getGlobalTransform();
      bool invertible = false;
@@ -2798,10 +2833,27 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     }
 
     int vertexIndex = -1;
-    if (impl_->hitTestShapeVertex(layer, canvasPoint, vertexIndex)) {
-     impl_->beginShapeEditTransaction(layer);
-     impl_->isDraggingShapeVertex_ = true;
-     impl_->draggingShapeVertexIndex_ = vertexIndex;
+     if (impl_->hitTestShapeVertex(layer, canvasPoint, vertexIndex)) {
+      const bool extendSelection = (event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) != 0;
+      auto selectedIt = std::find(impl_->selectedShapeVertexIndices_.begin(),
+                                  impl_->selectedShapeVertexIndices_.end(), vertexIndex);
+      if (extendSelection) {
+       if (selectedIt == impl_->selectedShapeVertexIndices_.end())
+        impl_->selectedShapeVertexIndices_.push_back(vertexIndex);
+       else
+        impl_->selectedShapeVertexIndices_.erase(selectedIt);
+      } else if (selectedIt == impl_->selectedShapeVertexIndices_.end()) {
+       impl_->selectedShapeVertexIndices_ = {vertexIndex};
+      }
+      if (impl_->selectedShapeVertexIndices_.empty()) {
+       impl_->requestRender();
+       event->accept();
+       return;
+      }
+      impl_->beginShapeEditTransaction(layer);
+      impl_->isDraggingShapeVertex_ = true;
+      impl_->draggingShapeVertexIndex_ = vertexIndex;
+      impl_->selectedShapeDragBefore_ = shape->customPolygonPoints();
      impl_->beginShapeProportionalDragSnapshot(shape->customPolygonPoints(), vertexIndex);
      setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
                          Qt::ClosedHandCursor));
@@ -2821,7 +2873,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       }
     }
 
-    impl_->beginShapeEditTransaction(layer);
+     impl_->beginShapeEditTransaction(layer);
+     impl_->selectedShapeVertexIndices_.clear();
     std::vector<QPointF> points = shape->customPolygonPoints();
     const QTransform globalTransform = layer->getGlobalTransform();
     bool invertible = false;
@@ -3018,7 +3071,8 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
    }
    if (impl_->isDraggingShapeVertex_) {
    impl_->isDraggingShapeVertex_ = false;
-   impl_->draggingShapeVertexIndex_ = -1;
+    impl_->draggingShapeVertexIndex_ = -1;
+     impl_->selectedShapeDragBefore_.clear();
     impl_->resetProportionalDragState();
     impl_->commitShapeEditTransaction();
     unsetCursor();
@@ -3243,10 +3297,22 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
       const QTransform inv = gt.inverted(&invertible);
      if (invertible) {
        auto verts = shape->customPathVertices();
-       const int idx = impl_->draggingPathVertexIndex_;
-       if (idx < static_cast<int>(verts.size())) {
-       const QPointF localPos = inv.map(canvasPoint);
-       if (!impl_->applyPathProportionalDrag(*shape, localPos)) {
+        const int idx = impl_->draggingPathVertexIndex_;
+        if (idx < static_cast<int>(verts.size())) {
+        const QPointF localPos = inv.map(canvasPoint);
+        if (!impl_->proportionalEditingEnabled_ &&
+            impl_->selectedPathVertexIndices_.size() > 1 &&
+            impl_->selectedPathDragBefore_.size() == verts.size()) {
+         const QPointF delta = localPos - impl_->selectedPathDragBefore_[static_cast<size_t>(idx)].pos;
+         for (const int selectedIndex : impl_->selectedPathVertexIndices_) {
+          if (selectedIndex >= 0 && selectedIndex < static_cast<int>(verts.size())) {
+           verts[static_cast<size_t>(selectedIndex)].pos =
+               impl_->selectedPathDragBefore_[static_cast<size_t>(selectedIndex)].pos + delta;
+          }
+         }
+         shape->setCustomPathVertices(verts, shape->customPathClosed());
+         impl_->markPathEditDirty();
+        } else if (!impl_->applyPathProportionalDrag(*shape, localPos)) {
         verts[idx].pos = localPos;
         shape->setCustomPathVertices(verts, shape->customPathClosed());
         impl_->markPathEditDirty();
@@ -3315,9 +3381,25 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
       std::vector<QPointF> points = shape->customPolygonPoints();
       if (impl_->draggingShapeVertexIndex_ >= 0 &&
           impl_->draggingShapeVertexIndex_ < static_cast<int>(points.size())) {
-       const QPointF rawLocalPos = invTransform.map(canvasPoint);
-       impl_->beginShapeEditTransaction(layer);
-       if (!impl_->applyShapeProportionalDrag(layer, *shape, rawLocalPos)) {
+        const QPointF rawLocalPos = invTransform.map(canvasPoint);
+        impl_->beginShapeEditTransaction(layer);
+        if (!impl_->proportionalEditingEnabled_ &&
+            impl_->selectedShapeVertexIndices_.size() > 1 &&
+            impl_->selectedShapeDragBefore_.size() == points.size()) {
+         const int anchorIndex = impl_->draggingShapeVertexIndex_;
+         const QPointF delta = rawLocalPos -
+                               impl_->selectedShapeDragBefore_[static_cast<size_t>(anchorIndex)];
+         for (const int selectedIndex : impl_->selectedShapeVertexIndices_) {
+          if (selectedIndex >= 0 && selectedIndex < static_cast<int>(points.size())) {
+           const QPointF moved = impl_->selectedShapeDragBefore_[static_cast<size_t>(selectedIndex)] + delta;
+           points[static_cast<size_t>(selectedIndex)] = QPointF(
+               std::clamp(moved.x(), 0.0, static_cast<double>(shape->shapeWidth())),
+               std::clamp(moved.y(), 0.0, static_cast<double>(shape->shapeHeight())));
+          }
+         }
+         shape->setCustomPolygonPoints(points, shape->customPolygonClosed());
+         impl_->markShapeEditDirty();
+        } else if (!impl_->applyShapeProportionalDrag(layer, *shape, rawLocalPos)) {
         points[static_cast<size_t>(impl_->draggingShapeVertexIndex_)] = QPointF(
             std::clamp(rawLocalPos.x(), 0.0, static_cast<double>(shape->shapeWidth())),
             std::clamp(rawLocalPos.y(), 0.0, static_cast<double>(shape->shapeHeight())));
@@ -3787,6 +3869,10 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
  impl_->isDraggingShapeVertex_ = false;
  impl_->draggingShapeVertexIndex_ = -1;
  impl_->hoveredShapeVertexIndex_ = -1;
+ impl_->selectedShapeVertexIndices_.clear();
+ impl_->selectedShapeDragBefore_.clear();
+ impl_->selectedPathVertexIndices_.clear();
+ impl_->selectedPathDragBefore_.clear();
  const uint seed = qHash(id.toString());
  const auto channel = [seed](int shift) -> float {
   const int value = static_cast<int>((seed >> shift) & 0xFFu);
@@ -3889,7 +3975,11 @@ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, fl
    impl_->draggingMaskHandleType_ = -1;
    impl_->isDraggingShapeVertex_ = false;
    impl_->draggingShapeVertexIndex_ = -1;
-   impl_->hoveredShapeVertexIndex_ = -1;
+    impl_->hoveredShapeVertexIndex_ = -1;
+    impl_->selectedShapeVertexIndices_.clear();
+    impl_->selectedShapeDragBefore_.clear();
+    impl_->selectedPathVertexIndices_.clear();
+    impl_->selectedPathDragBefore_.clear();
    impl_->hoveredMaskHandleType_ = -1;
    if (impl_->shapeEditPending_) {
     impl_->commitShapeEditTransaction();

@@ -5066,6 +5066,8 @@ std::vector<RationalTime> motionPathPositionKeyTimes(
   return times;
 }
 
+int motionPathAdaptiveSampleStep(int minFrame, int maxFrame, float zoom);
+
 int motionPathPositionInterpolation(
     const ArtifactAbstractLayerPtr &layer, const RationalTime &time) {
   if (layer) {
@@ -8578,6 +8580,14 @@ public:
 
   bool gizmoDragActive_ = false;
 
+  bool designReorderActive_ = false;
+
+  LayerID designReorderLayerId_;
+
+  LayerID designReorderParentId_;
+
+  int designReorderTargetIndex_ = -1;
+
   bool textGizmoDragActive_ = false;
 
   bool trackerGizmoDragActive_ = false;
@@ -9586,10 +9596,20 @@ public:
       float frameH = 0.0f;
 
       bool hasFrameRect = false;
+      float inTangentX = 0.0f;
+      float inTangentY = 0.0f;
+      float outTangentX = 0.0f;
+      float outTangentY = 0.0f;
+      bool hasSpatialTangents = false;
 
     };
 
     std::vector<Pt> pathPoints;
+
+    // Equal-time samples used only for the velocity-reading dots. These stay
+    // independent of the adaptive path tessellation so the dot spacing keeps
+    // representing motion speed even where curvature adds line samples.
+    std::vector<Pt> timeDotPoints;
 
     std::vector<Pt> keyPoints;
 
@@ -13590,6 +13610,24 @@ QPointF CompositionRenderController::workCursorCanvasPosition() const {
 
 }
 
+bool isDesignWorkspace(const QObject *controller) {
+  if (!controller) {
+    return false;
+  }
+  const QObject *workspaceOwner = controller->parent();
+  return workspaceOwner &&
+         workspaceOwner->property("artifactWorkspaceMode").toString() ==
+             QStringLiteral("Design");
+}
+
+bool isAbsoluteLayoutLayer(const ArtifactAbstractLayerPtr &layer) {
+  const auto property = layer
+                            ? layer->getProperty(
+                                  QStringLiteral("component.layout.mode"))
+                            : nullptr;
+  return property && property->getValue().toInt() == 2;
+}
+
 void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
     const ArtifactAbstractLayerPtr &layer, const ArtifactCompositionPtr &comp,
     int currentFrameNum, float zoom, float invZoom,
@@ -13645,22 +13683,74 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
     motionPathCache_.framePos = static_cast<int64_t>(currentFrameNum);
     motionPathCache_.overlaySerial = overlayInvalidationSerial;
     motionPathCache_.pathPoints.clear();
+    motionPathCache_.timeDotPoints.clear();
     motionPathCache_.keyPoints.clear();
 
     if (hasPathSegment) {
       const int sampleStep =
           motionPathAdaptiveSampleStep(minFrame, maxFrame, zoom);
-      for (int f = minFrame;; f += sampleStep) {
-        if (f > maxFrame) {
-          f = maxFrame;
+      const float curvatureTolerance = std::max(0.75f, 1.5f * invZoom);
+      constexpr size_t kMaxCurveSamples = 2048;
+      const auto evaluatePoint = [&](int frame) {
+        const ArtifactCore::RationalTime t(frame, rate);
+        const QTransform transform = layer->getGlobalTransformAt(frame);
+        const QPointF position = transform.map(
+            QPointF(t3d.anchorXAt(t), t3d.anchorYAt(t)));
+        return MotionPathCacheEntry::Pt{frame, static_cast<float>(position.x()),
+                                        static_cast<float>(position.y())};
+      };
+      const auto appendAdaptiveSegment =
+          [&](auto &&self, const MotionPathCacheEntry::Pt &start,
+              const MotionPathCacheEntry::Pt &end, int depth) -> void {
+        if (motionPathCache_.pathPoints.size() >= kMaxCurveSamples) {
+          // Preserve the segment endpoint without growing the cache. The final
+          // retained segment becomes a coarse fallback once the safety cap is
+          // reached.
+          motionPathCache_.pathPoints.back() = end;
+          return;
         }
-        const ArtifactCore::RationalTime t(f, rate);
-        const QTransform gTrans = layer->getGlobalTransformAt(f);
-        const QPointF wPos =
-            gTrans.map(QPointF(t3d.anchorXAt(t), t3d.anchorYAt(t)));
-        motionPathCache_.pathPoints.push_back(
-            {f, static_cast<float>(wPos.x()), static_cast<float>(wPos.y())});
-        if (f == maxFrame) {
+        const int frameSpan = end.frame - start.frame;
+        if (frameSpan <= 1 || depth >= 7) {
+          motionPathCache_.pathPoints.push_back(end);
+          return;
+        }
+
+        const int midpointFrame = start.frame + frameSpan / 2;
+        const auto midpoint = evaluatePoint(midpointFrame);
+        const float chordMidX = (start.x + end.x) * 0.5f;
+        const float chordMidY = (start.y + end.y) * 0.5f;
+        const float deviation = std::hypot(midpoint.x - chordMidX,
+                                           midpoint.y - chordMidY);
+        if (deviation <= curvatureTolerance) {
+          motionPathCache_.pathPoints.push_back(end);
+          return;
+        }
+        self(self, start, midpoint, depth + 1);
+        self(self, midpoint, end, depth + 1);
+      };
+
+      auto previous = evaluatePoint(minFrame);
+      motionPathCache_.pathPoints.push_back(previous);
+      for (int frame = minFrame + sampleStep;; frame += sampleStep) {
+        const int nextFrame = std::min(frame, maxFrame);
+        const auto next = evaluatePoint(nextFrame);
+        appendAdaptiveSegment(appendAdaptiveSegment, previous, next, 0);
+        if (nextFrame == maxFrame) {
+          break;
+        }
+        previous = next;
+      }
+
+      constexpr int kTargetVelocityDots = 360;
+      const int64_t frameSpan = static_cast<int64_t>(maxFrame) - minFrame;
+      const int timeDotStep = static_cast<int>(std::max<int64_t>(
+          1, (frameSpan + kTargetVelocityDots - 1) / kTargetVelocityDots));
+      for (int frame = minFrame;; frame += timeDotStep) {
+        motionPathCache_.timeDotPoints.push_back(evaluatePoint(frame));
+        if (frame >= maxFrame - timeDotStep) {
+          if (frame != maxFrame) {
+            motionPathCache_.timeDotPoints.push_back(evaluatePoint(maxFrame));
+          }
           break;
         }
       }
@@ -13680,6 +13770,20 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
       pt.x = static_cast<float>(wPos.x());
       pt.y = static_cast<float>(wPos.y());
       pt.interpolation = motionPathPositionInterpolation(layer, kfTime);
+      ArtifactCore::PositionSpatialTangents tangents;
+      if (t3d.positionKeyFrameSpatialTangentsAt(kfTime, tangents)) {
+        const QPointF inHandle = gTrans.map(QPointF(
+            t3d.anchorXAt(kfTime) + tangents.inTangent.x,
+            t3d.anchorYAt(kfTime) + tangents.inTangent.y));
+        const QPointF outHandle = gTrans.map(QPointF(
+            t3d.anchorXAt(kfTime) + tangents.outTangent.x,
+            t3d.anchorYAt(kfTime) + tangents.outTangent.y));
+        pt.inTangentX = static_cast<float>(inHandle.x());
+        pt.inTangentY = static_cast<float>(inHandle.y());
+        pt.outTangentX = static_cast<float>(outHandle.x());
+        pt.outTangentY = static_cast<float>(outHandle.y());
+        pt.hasSpatialTangents = true;
+      }
       if (localBounds.isValid() && localBounds.width() > 0.0 &&
           localBounds.height() > 0.0) {
         const QPointF tl = gTrans.map(localBounds.topLeft());
@@ -13702,6 +13806,23 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
       }
       motionPathCache_.keyPoints.push_back(pt);
     }
+    for (size_t index = 0; index < motionPathCache_.keyPoints.size(); ++index) {
+      auto &key = motionPathCache_.keyPoints[index];
+      if (key.hasSpatialTangents || motionPathCache_.keyPoints.size() < 2) {
+        continue;
+      }
+      const auto &previous = motionPathCache_.keyPoints[
+          index == 0 ? index : index - 1];
+      const auto &next = motionPathCache_.keyPoints[
+          index + 1 == motionPathCache_.keyPoints.size() ? index : index + 1];
+      const float tangentX = (next.x - previous.x) / 6.0f;
+      const float tangentY = (next.y - previous.y) / 6.0f;
+      key.inTangentX = key.x - tangentX;
+      key.inTangentY = key.y - tangentY;
+      key.outTangentX = key.x + tangentX;
+      key.outTangentY = key.y + tangentY;
+      key.hasSpatialTangents = true;
+    }
     motionPathCache_.valid = true;
   }
 
@@ -13709,14 +13830,9 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
     Detail::float2 lastPos;
     int lastFrame = 0;
     bool hasLastPos = false;
-    float previousDistance = 0.0f;
-    const int currentSampleFrame =
-        currentFrameNum - ((currentFrameNum - minFrame) % 2 + 2) % 2;
     for (const auto &pt : motionPathCache_.pathPoints) {
       Detail::float2 currentPos(pt.x, pt.y);
       if (hasLastPos) {
-        previousDistance = std::hypot(currentPos.x - lastPos.x,
-                                      currentPos.y - lastPos.y);
         const bool isPastSegment =
             (lastFrame + pt.frame) <= currentFrameNum * 2;
         const FloatColor segmentColor =
@@ -13729,31 +13845,17 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
                             {currentPos.x, currentPos.y}, segmentColor,
                             lineThickness, true);
       }
-      const bool isCurrentSample = pt.frame == currentSampleFrame;
-      const bool showTimeDot =
-          ((pt.frame - minFrame) % 6 == 0) || isCurrentSample;
-      if (showTimeDot) {
-        const float speedRadius = std::clamp(
-            dotRadius * (0.45f + previousDistance * 0.015f),
-            dotRadius * 0.45f, dotRadius * 1.25f);
-        const FloatColor dotColor =
-            pt.frame <= currentFrameNum
-                ? FloatColor{1.0f, 0.72f, 0.86f, 0.86f}
-                : FloatColor{0.68f, 0.88f, 1.0f, 0.82f};
-        renderer_->drawPoint(pt.x, pt.y, speedRadius, pathShadowColor);
-        renderer_->drawPoint(pt.x, pt.y, speedRadius * 0.53f, dotColor);
-      }
-      if (isCurrentSample) {
-        renderer_->drawPoint(pt.x, pt.y, dotRadius * 2.45f,
-                                   {0.0f, 0.0f, 0.0f, 0.62f});
-        renderer_->drawPoint(pt.x, pt.y, dotRadius * 1.72f,
-                                   {1.0f, 0.88f, 0.30f, 1.0f});
-        renderer_->drawPoint(pt.x, pt.y, dotRadius * 0.72f,
-                                   {1.0f, 1.0f, 1.0f, 1.0f});
-      }
       lastPos = currentPos;
       lastFrame = pt.frame;
       hasLastPos = true;
+    }
+    for (const auto &dot : motionPathCache_.timeDotPoints) {
+      const FloatColor dotColor =
+          dot.frame <= currentFrameNum
+              ? FloatColor{1.0f, 0.72f, 0.86f, 0.86f}
+              : FloatColor{0.68f, 0.88f, 1.0f, 0.82f};
+      renderer_->drawPoint(dot.x, dot.y, dotRadius, pathShadowColor);
+      renderer_->drawPoint(dot.x, dot.y, dotRadius * 0.53f, dotColor);
     }
     if (currentFrameNum >= minFrame && currentFrameNum <= maxFrame) {
       const ArtifactCore::RationalTime currentTime(
@@ -13778,6 +13880,23 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
     const FloatColor keyShadow{0.0f, 0.0f, 0.0f, 0.45f};
     const FloatColor keyColor =
         motionPathInterpolationColor(pt.interpolation, isCurrent);
+    if (pt.hasSpatialTangents) {
+      const FloatColor tangentLine{0.50f, 0.88f, 1.0f,
+                                   isCurrent ? 0.92f : 0.58f};
+      const FloatColor tangentHandle{0.76f, 0.95f, 1.0f,
+                                     isCurrent ? 1.0f : 0.84f};
+      const float handleRadius = isCurrent ? dotRadius * 1.15f : dotRadius;
+      drawTaggedSolidLine(renderer_.get(), {pt.x, pt.y},
+                          {pt.inTangentX, pt.inTangentY}, tangentLine,
+                          std::max(1.0f, invZoom), true);
+      drawTaggedSolidLine(renderer_.get(), {pt.x, pt.y},
+                          {pt.outTangentX, pt.outTangentY}, tangentLine,
+                          std::max(1.0f, invZoom), true);
+      renderer_->drawPoint(pt.inTangentX, pt.inTangentY, handleRadius,
+                           tangentHandle);
+      renderer_->drawPoint(pt.outTangentX, pt.outTangentY, handleRadius,
+                           tangentHandle);
+    }
     if (pt.hasFrameRect) {
       const FloatColor frameShadow{0.0f, 0.0f, 0.0f,
                                    isCurrent ? 0.30f : 0.18f};
@@ -16678,6 +16797,43 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
       if (impl_->gizmo_->isDragging()) {
 
+        if (isDesignWorkspace(this) && !isAbsoluteLayoutLayer(gizmoLayer) &&
+            impl_->gizmo_->activeHandle() == TransformGizmo::HandleType::Move) {
+
+          impl_->gizmo_->handleMouseRelease();
+          impl_->gizmoDragActive_ = false;
+          impl_->designReorderActive_ = false;
+          impl_->designReorderTargetIndex_ = -1;
+          if (gizmoLayer && comp && !gizmoLayer->parentLayerId().isNil()) {
+            const auto layoutParent = comp->layerById(gizmoLayer->parentLayerId());
+            const auto enabledProperty = layoutParent
+                                             ? layoutParent->getProperty(
+                                                   QStringLiteral("component.layout.enabled"))
+                                             : nullptr;
+            if (enabledProperty && enabledProperty->getValue().toBool()) {
+              const auto layers = comp->allLayer();
+              for (int index = 0; index < layers.size(); ++index) {
+                if (layers.at(index) && layers.at(index)->id() == gizmoLayer->id()) {
+                  impl_->designReorderTargetIndex_ = index;
+                  break;
+                }
+              }
+              impl_->designReorderActive_ = impl_->designReorderTargetIndex_ >= 0;
+              impl_->designReorderLayerId_ = gizmoLayer->id();
+              impl_->designReorderParentId_ = gizmoLayer->parentLayerId();
+            }
+          }
+          setInfoOverlayText(
+              QStringLiteral("Design"),
+              impl_->designReorderActive_
+                  ? QStringLiteral("Drag across siblings to reorder")
+                  : QStringLiteral("Position is layout-owned; enable Auto Layout on the parent"));
+          impl_->invalidateOverlayComposite();
+          markRenderDirty();
+          return;
+
+        }
+
         impl_->gizmoDragActive_ = true;
 
         notifyViewportInteractionActivity();
@@ -17151,6 +17307,54 @@ void CompositionRenderController::handleMouseMove(
       toolManager ? toolManager->activeTool() : ToolType::Selection;
 
   bool needsRender = impl_->updateColorSamplerOverlay(this, viewportPos);
+
+  if (impl_->designReorderActive_) {
+    const auto comp = impl_->previewPipeline_.composition();
+    const auto parent = comp ? comp->layerById(impl_->designReorderParentId_)
+                             : ArtifactAbstractLayerPtr{};
+    const auto directionProperty = parent
+                                       ? parent->getProperty(
+                                             QStringLiteral("component.layout.stackDirection"))
+                                       : nullptr;
+    const bool vertical = directionProperty &&
+                          directionProperty->getValue().toInt() != 0;
+    const auto canvas = impl_->renderer_->viewportToCanvas(
+        {static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())});
+    const qreal pointerAxis = vertical ? static_cast<qreal>(canvas.y)
+                                       : static_cast<qreal>(canvas.x);
+    if (comp) {
+      const auto layers = comp->allLayer();
+      qreal closestDistance = std::numeric_limits<qreal>::max();
+      int closestIndex = impl_->designReorderTargetIndex_;
+      for (int index = 0; index < layers.size(); ++index) {
+        const auto &sibling = layers.at(index);
+        if (!sibling || sibling->parentLayerId() != impl_->designReorderParentId_) {
+          continue;
+        }
+        if (isAbsoluteLayoutLayer(sibling)) {
+          continue;
+        }
+        const QRectF bounds = sibling->getGlobalTransform().mapRect(
+            sibling->localBounds());
+        const qreal siblingAxis = vertical ? bounds.center().y()
+                                           : bounds.center().x();
+        const qreal distance = std::abs(pointerAxis - siblingAxis);
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestIndex = index;
+        }
+      }
+      if (closestIndex != impl_->designReorderTargetIndex_) {
+        impl_->designReorderTargetIndex_ = closestIndex;
+        setInfoOverlayText(QStringLiteral("Design"),
+                           QStringLiteral("Reorder target %1")
+                               .arg(closestIndex + 1));
+        impl_->invalidateOverlayComposite();
+        markRenderDirty();
+      }
+    }
+    return;
+  }
 
 
 
@@ -17904,6 +18108,27 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 void CompositionRenderController::handleMouseRelease() {
 
   qCDebug(compositionViewLog) << "[MouseRelease] ENTER";
+
+  if (impl_->designReorderActive_) {
+    const LayerID layerId = impl_->designReorderLayerId_;
+    const int targetIndex = impl_->designReorderTargetIndex_;
+    impl_->designReorderActive_ = false;
+    impl_->designReorderLayerId_ = LayerID::Nil();
+    impl_->designReorderParentId_ = LayerID::Nil();
+    impl_->designReorderTargetIndex_ = -1;
+    bool reordered = false;
+    if (targetIndex >= 0) {
+      if (auto *service = ArtifactProjectService::instance()) {
+        reordered = service->moveLayerInCurrentComposition(layerId, targetIndex);
+      }
+    }
+    setInfoOverlayText(QStringLiteral("Design"),
+                       reordered ? QStringLiteral("Auto Layout order updated")
+                                 : QStringLiteral("Auto Layout order unchanged"));
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return;
+  }
 
 
 

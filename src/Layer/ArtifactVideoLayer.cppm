@@ -523,17 +523,17 @@ public:
     std::deque<FrameOutcome> recentFrameOutcomes_;
 
     Impl() : playbackController_(std::make_shared<ArtifactCore::MediaPlaybackController>()), frameCache_(120) {}
-    ~Impl() {
-        // バックグラウンドフューチャーが残っていても放置（デストラクタをブロックしない）
-        // QFuture はスコープ離脱後も自動キャンセルされない点に注意
-    }
+    ~Impl() = default;
 
     void cancelPendingDecode() {
         decodeGeneration_.fetch_add(1, std::memory_order_acq_rel);
-        // Only clear decoding_ if it matches current generation
-        if (decoding_.load(std::memory_order_acquire)) {
-            decoding_ = false;
+        // QtConcurrent cancellation is cooperative and the decode lambda uses
+        // Impl state. Keep the future alive and join it before reusing or
+        // destroying that state.
+        if (decodeFuture_.isRunning()) {
+            decodeFuture_.waitForFinished();
         }
+        decoding_ = false;
         decodeTargetFrame_ = -1;
         decodeFuture_ = QFuture<ArtifactCore::ImageF32x4_RGBA>();
     }
@@ -825,6 +825,11 @@ ArtifactVideoLayer::ArtifactVideoLayer()
 
 ArtifactVideoLayer::~ArtifactVideoLayer()
 {
+    impl_->cancelPendingDecode();
+    ++impl_->openRequestId_;
+    if (impl_->openFuture_.isRunning()) {
+        impl_->openFuture_.waitForFinished();
+    }
     if (impl_->playbackController_) {
         impl_->playbackController_->closeMedia();
     }
@@ -1919,8 +1924,10 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!impl_->videoEnabled_ || !impl_->isLoaded_ || impl_->opening_.load()) return;
 #if VULKAN_SUPPORTED
-    constexpr bool kEnableVulkanVideoFrames = true;
-    if (kEnableVulkanVideoFrames && renderer && !impl_->vulkanDeviceConfigured_ && impl_->playbackController_) {
+    // Keep Vulkan hardware decode enabled. Until the renderer consumes
+    // GpuVideoFrame directly, MediaImageFrameDecoder downloads the decoded
+    // hardware frame to the CPU presentation buffer.
+    if (renderer && !impl_->vulkanDeviceConfigured_ && impl_->playbackController_) {
         auto device = renderer->device();
         auto context = renderer->immediateContext();
         if (device && context && device->GetDeviceInfo().Type == Diligent::RENDER_DEVICE_TYPE_VULKAN) {
@@ -2014,23 +2021,6 @@ void ArtifactVideoLayer::goToFrame(int64_t frameNumber)
     }
     if (needsDecode) {
         decodeCurrentFrame();
-    }
-    // 再生中の先行デコード（Look-ahead prefetch）
-    if (impl_->playbackSpeed_ > 1.0 && impl_->playbackController_ && needsDecode) {
-        const int64_t currentSource = impl_->currentSourceFrame_;
-        const int64_t nextSource = currentSource + 2; // 2フレーム先をプリフェッチ
-        if (nextSource < impl_->streamInfo_.frameCount) {
-            // 非同期で次フレームを先読み
-            [[maybe_unused]] const auto prefetchFuture = QtConcurrent::run(&sharedBackgroundThreadPool(), 
-                [this, nextSource]() {
-                    if (!impl_->playbackController_ || !impl_->isLoaded_) return;
-                    const auto rawFrame = impl_->playbackController_->getVideoFrameAtFrameDirectRaw(nextSource);
-                    const auto decoded = decodedVideoFrameToImageF32x4_RGBA(rawFrame);
-                    if (!decoded.isEmpty()) {
-                        impl_->frameCache_.put(nextSource, decoded);
-                    }
-                });
-        }
     }
 }
 

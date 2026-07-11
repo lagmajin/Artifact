@@ -76,6 +76,15 @@ import Artifact.Effect.Liquify;
 import Artifact.Effect.Kaleidoscope;
 import Artifact.Effect.Dithering;
 import Artifact.Effect.Kuwahara;
+import Artifact.Effect.Rasterizer.AnisotropicFlowBlur;
+import Artifact.Effect.Rasterizer.VectorFlowGlitch;
+import Artifact.Effect.Glow.PhysicalHalation;
+import Artifact.Effect.Rasterizer.ReactionDiffusionBlur;
+import Artifact.Effect.Glow.LuminescenceCaustics;
+import Artifact.Effect.Rasterizer.ApertureShapeBlur;
+import Artifact.Effect.Generate.SimpleRain;
+import Artifact.Effect.Rasterizer.ChromaticRelief;
+import Artifact.Effect.Rasterizer.FilmDamage;
 
 namespace Artifact
 {
@@ -495,6 +504,69 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Kuwahara"));
    return effect;
   }
+  if (effectId == QStringLiteral("anisotropic_flow_blur") ||
+      effectId == QStringLiteral("effect.blur.anisotropicflow")) {
+   auto effect = std::make_unique<AnisotropicFlowBlurEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Anisotropic Flow Blur"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("vector_flow_glitch") ||
+      effectId == QStringLiteral("effect.stylize.vectorflowglitch")) {
+   auto effect = std::make_unique<VectorFlowGlitchEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Vector Flow Glitch"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("physical_halation") ||
+      effectId == QStringLiteral("effect.glow.physicalhalation")) {
+   auto effect = std::make_unique<PhysicalHalationEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Physical Halation"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("reaction_diffusion_blur") ||
+      effectId == QStringLiteral("effect.blur.reactiondiffusion")) {
+   auto effect = std::make_unique<ReactionDiffusionBlurEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Reaction Diffusion Blur"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("luminescence_caustics") ||
+      effectId == QStringLiteral("effect.glow.luminescencecaustics")) {
+   auto effect = std::make_unique<LuminescenceCausticsEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Luminescence Caustics"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("aperture_shape_blur") ||
+      effectId == QStringLiteral("effect.blur.apertureshape")) {
+   auto effect = std::make_unique<ApertureShapeBlurEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Aperture Shape Blur"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("simple_rain") ||
+      effectId == QStringLiteral("effect.generate.simplerain")) {
+   auto effect = std::make_unique<SimpleRainEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Simple Rain"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("chromatic_relief") ||
+      effectId == QStringLiteral("effect.stylize.chromaticrelief")) {
+   auto effect = std::make_unique<ChromaticReliefEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Chromatic Relief"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("film_damage") ||
+      effectId == QStringLiteral("effect.stylize.filmdamage")) {
+   auto effect = std::make_unique<FilmDamageEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Film Damage"));
+   return effect;
+  }
   if (effectId.startsWith(QStringLiteral("ofx."))) {
    const QString pluginId = effectId.mid(QStringLiteral("ofx.").size());
    Artifact::Ofx::ArtifactOfxHost::instance().initialize();
@@ -579,6 +651,15 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("kaleidoscope"), "Kaleidoscope"});
   effects.push_back({EffectID("dithering"), "Dithering"});
   effects.push_back({EffectID("kuwahara"), "Kuwahara"});
+  effects.push_back({EffectID("anisotropic_flow_blur"), "Anisotropic Flow Blur"});
+  effects.push_back({EffectID("vector_flow_glitch"), "Vector Flow Glitch"});
+  effects.push_back({EffectID("physical_halation"), "Physical Halation"});
+  effects.push_back({EffectID("reaction_diffusion_blur"), "Reaction Diffusion Blur"});
+  effects.push_back({EffectID("luminescence_caustics"), "Luminescence Caustics"});
+  effects.push_back({EffectID("aperture_shape_blur"), "Aperture Shape Blur"});
+  effects.push_back({EffectID("simple_rain"), "Simple Rain"});
+  effects.push_back({EffectID("chromatic_relief"), "Chromatic Relief"});
+  effects.push_back({EffectID("film_damage"), "Film Damage"});
 
   Artifact::Ofx::ArtifactOfxHost::instance().initialize();
   for (const auto& plugin : Artifact::Ofx::ArtifactOfxHost::instance().getLoadedPlugins()) {

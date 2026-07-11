@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QListWidget>
 #include <QPushButton>
 #include <QLabel>
@@ -19,8 +19,13 @@
 #include <QFileInfo>
 #include <QByteArray>
 #include <QListWidgetItem>
+#include <QAbstractItemView>
 #include <QSignalBlocker>
 #include <QShortcut>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QFocusEvent>
+#include <QDropEvent>
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QSplitter>
@@ -33,6 +38,7 @@
 #include <QUrl>
 #include <QToolButton>
 #include <QDialog>
+#include <QFrame>
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
@@ -66,6 +72,216 @@ namespace Artifact
  using namespace ArtifactCore;
 
  namespace {
+ class RenderQueueSearchEdit final : public QLineEdit
+ {
+ public:
+   std::function<void(const QString&)> changed;
+   using QLineEdit::QLineEdit;
+
+ protected:
+   void keyReleaseEvent(QKeyEvent* event) override
+   {
+     QLineEdit::keyReleaseEvent(event);
+     if (event->key() == Qt::Key_Escape && !text().isEmpty()) {
+       clear();
+     }
+     if (changed) changed(text());
+   }
+ };
+
+ class RenderQueueActionButton final : public QPushButton
+ {
+ public:
+   std::function<void()> action;
+   using QPushButton::QPushButton;
+
+ protected:
+   void mouseReleaseEvent(QMouseEvent* event) override
+   {
+     QPushButton::mouseReleaseEvent(event);
+     if (event->button() == Qt::LeftButton && action) action();
+   }
+ };
+
+ class RenderQueueListWidget final : public QListWidget
+ {
+ public:
+   std::function<void(int, int)> reordered;
+   using QListWidget::QListWidget;
+
+ protected:
+   void dropEvent(QDropEvent* event) override
+   {
+     const int sourceRow = currentRow();
+     const int sourceId = sourceRow >= 0 && sourceRow < count()
+         ? item(sourceRow)->data(Qt::UserRole).toInt()
+         : -1;
+     QListWidget::dropEvent(event);
+     int resolvedTarget = -1;
+     if (sourceId >= 0) {
+       for (int row = 0; row < count(); ++row) {
+         if (item(row)->data(Qt::UserRole).toInt() == sourceId) {
+           resolvedTarget = row;
+           break;
+         }
+       }
+     }
+     if (reordered && sourceRow >= 0 && resolvedTarget >= 0 && sourceRow != resolvedTarget) {
+       reordered(sourceRow, resolvedTarget);
+     }
+   }
+ };
+
+ class RenderQueuePathEdit final : public QLineEdit
+ {
+ public:
+   std::function<void(const QString&)> committed;
+   using QLineEdit::QLineEdit;
+
+ protected:
+   void keyReleaseEvent(QKeyEvent* event) override
+   {
+     QLineEdit::keyReleaseEvent(event);
+     if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+       if (committed) committed(text());
+     }
+   }
+
+   void focusOutEvent(QFocusEvent* event) override
+   {
+     QLineEdit::focusOutEvent(event);
+   }
+ };
+
+ class RenderQueueIntSpinBox final : public QSpinBox
+ {
+ public:
+   std::function<void(int)> committed;
+   using QSpinBox::QSpinBox;
+ protected:
+   void keyReleaseEvent(QKeyEvent* event) override
+   {
+     QSpinBox::keyReleaseEvent(event);
+     if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+       if (committed) committed(value());
+     }
+   }
+   void focusOutEvent(QFocusEvent* event) override
+   {
+     QSpinBox::focusOutEvent(event);
+   }
+ };
+
+ class RenderQueueDoubleSpinBox final : public QDoubleSpinBox
+ {
+ public:
+   std::function<void(double)> committed;
+   using QDoubleSpinBox::QDoubleSpinBox;
+ protected:
+   void keyReleaseEvent(QKeyEvent* event) override
+   {
+     QDoubleSpinBox::keyReleaseEvent(event);
+     if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+       if (committed) committed(value());
+     }
+   }
+   void focusOutEvent(QFocusEvent* event) override
+   {
+     QDoubleSpinBox::focusOutEvent(event);
+   }
+ };
+
+ class RenderQueueJobCard final : public QFrame
+ {
+ public:
+   QLabel* statusLabel = nullptr;
+   QLabel* thumbnailLabel = nullptr;
+   QLabel* nameLabel = nullptr;
+   QLabel* outputLabel = nullptr;
+   QLabel* backendLabel = nullptr;
+   QProgressBar* progressBar = nullptr;
+
+   explicit RenderQueueJobCard(QWidget* parent = nullptr)
+       : QFrame(parent)
+   {
+     setFrameShape(QFrame::StyledPanel);
+     auto* root = new QHBoxLayout(this);
+     root->setContentsMargins(10, 8, 10, 8);
+     root->setSpacing(10);
+
+     statusLabel = new QLabel("WAIT");
+     statusLabel->setMinimumWidth(58);
+     statusLabel->setAlignment(Qt::AlignCenter);
+     root->addWidget(statusLabel);
+
+     thumbnailLabel = new QLabel(QStringLiteral("PREVIEW"));
+     thumbnailLabel->setFixedSize(112, 62);
+     thumbnailLabel->setAlignment(Qt::AlignCenter);
+     thumbnailLabel->setScaledContents(false);
+     thumbnailLabel->setAutoFillBackground(true);
+     QPalette thumbnailPalette = thumbnailLabel->palette();
+     thumbnailPalette.setColor(QPalette::Window, QColor(18, 24, 29));
+     thumbnailPalette.setColor(QPalette::WindowText, QColor(130, 145, 155));
+     thumbnailLabel->setPalette(thumbnailPalette);
+     root->addWidget(thumbnailLabel);
+
+     auto* body = new QVBoxLayout();
+     body->setSpacing(2);
+     nameLabel = new QLabel();
+     QFont nameFont = nameLabel->font();
+     nameFont.setBold(true);
+     nameLabel->setFont(nameFont);
+     outputLabel = new QLabel();
+     backendLabel = new QLabel();
+     body->addWidget(nameLabel);
+     body->addWidget(outputLabel);
+     body->addWidget(backendLabel);
+     root->addLayout(body, 1);
+
+     progressBar = new QProgressBar();
+     progressBar->setRange(0, 100);
+     progressBar->setTextVisible(true);
+     progressBar->setMinimumWidth(150);
+     progressBar->setMaximumWidth(220);
+     root->addWidget(progressBar);
+   }
+
+   void setJob(const QString& status, const QString& name, const QString& output,
+               const QString& backend, const QString& errorMessage,
+               int progress, const QColor& accent)
+   {
+     statusLabel->setText(status.toUpper());
+     nameLabel->setText(name);
+     outputLabel->setText(errorMessage.trimmed().isEmpty()
+         ? QStringLiteral("Output  •  %1").arg(output)
+         : QStringLiteral("Error  •  %1").arg(errorMessage));
+     QPalette outputPalette = outputLabel->palette();
+     outputPalette.setColor(QPalette::WindowText,
+         errorMessage.trimmed().isEmpty()
+             ? QColor(155, 165, 175)
+             : QColor(225, 95, 85));
+     outputLabel->setPalette(outputPalette);
+     backendLabel->setText(errorMessage.trimmed().isEmpty()
+         ? backend
+         : QStringLiteral("%1  |  action: retry").arg(backend));
+     progressBar->setValue(std::clamp(progress, 0, 100));
+     QPalette palette = statusLabel->palette();
+     palette.setColor(QPalette::WindowText, accent);
+     statusLabel->setPalette(palette);
+     QPalette barPalette = progressBar->palette();
+     barPalette.setColor(QPalette::Highlight, accent);
+     progressBar->setPalette(barPalette);
+   }
+
+   void setPreview(const QPixmap& pixmap)
+   {
+     if (!thumbnailLabel || pixmap.isNull()) return;
+     thumbnailLabel->setPixmap(pixmap.scaled(
+         thumbnailLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+     thumbnailLabel->setToolTip(QStringLiteral("Latest rendered frame"));
+   }
+ };
+
  QIcon loadIconWithFallback(const QString& fileName)
  {
    const QString resourcePath = ArtifactCore::resolveIconResourcePath(fileName);
@@ -98,43 +314,48 @@ namespace Artifact
   ArtifactCore::EventBus eventBus_;
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
-  QLineEdit* searchEdit = nullptr;
+  RenderQueueSearchEdit* searchEdit = nullptr;
+  QString searchQuery;
   QComboBox* filterCombo = nullptr;
   QComboBox* presetCombo = nullptr;
   QPushButton* savePresetButton = nullptr;
   QPushButton* loadPresetButton = nullptr;
   QPushButton* deletePresetButton = nullptr;
-  QListWidget* jobListWidget = nullptr;
+  RenderQueueListWidget* jobListWidget = nullptr;
   QPushButton* addButton = nullptr;
   QToolButton* duplicateButton = nullptr;
   QToolButton* moveUpButton = nullptr;
   QToolButton* moveDownButton = nullptr;
   QPushButton* removeButton = nullptr;
-  QPushButton* clearButton = nullptr;
+  RenderQueueActionButton* clearButton = nullptr;
   QPushButton* startButton = nullptr;
-  QPushButton* pauseButton = nullptr;
-  QPushButton* cancelButton = nullptr;
+  RenderQueueActionButton* pauseButton = nullptr;
+  RenderQueueActionButton* cancelButton = nullptr;
   QPushButton* rerunSelectedButton = nullptr;
-  QPushButton* rerunDoneFailedButton = nullptr;
+  RenderQueueActionButton* rerunDoneFailedButton = nullptr;
   QProgressBar* totalProgressBar = nullptr;
   QLabel* summaryLabel = nullptr;
   QLabel* statusLabel = nullptr;
+  QLabel* runningCountLabel = nullptr;
+  QLabel* queueStateLabel = nullptr;
+  QLabel* inspectorJobLabel = nullptr;
+  QLabel* preflightBadge = nullptr;
   QListWidget* historyListWidget = nullptr;
   QPushButton* clearHistoryButton = nullptr;
    QPushButton* exportHistoryButton = nullptr;
    QLabel* previewLabel = nullptr;
   QComboBox* progressLogStepCombo = nullptr;
-  QLineEdit* outputPathEdit = nullptr;
-  QPushButton* outputBrowseButton = nullptr;
+  RenderQueuePathEdit* outputPathEdit = nullptr;
+  RenderQueueActionButton* outputBrowseButton = nullptr;
   QLabel* outputSettingsSummaryLabel = nullptr;
   QPushButton* outputSettingsButton = nullptr;
   QLabel* errorLabel = nullptr;
-  QSpinBox* startFrameSpin = nullptr;
-  QSpinBox* endFrameSpin = nullptr;
-  QDoubleSpinBox* overlayXSpin = nullptr;
-  QDoubleSpinBox* overlayYSpin = nullptr;
-  QDoubleSpinBox* overlayScaleSpin = nullptr;
-  QDoubleSpinBox* overlayRotationSpin = nullptr;
+  RenderQueueIntSpinBox* startFrameSpin = nullptr;
+  RenderQueueIntSpinBox* endFrameSpin = nullptr;
+  RenderQueueDoubleSpinBox* overlayXSpin = nullptr;
+  RenderQueueDoubleSpinBox* overlayYSpin = nullptr;
+  RenderQueueDoubleSpinBox* overlayScaleSpin = nullptr;
+  RenderQueueDoubleSpinBox* overlayRotationSpin = nullptr;
   std::unique_ptr<ArtifactCore::FastSettingsStore> historyStore_;
   std::unique_ptr<ArtifactCore::FastSettingsStore> presetStore_;
   bool syncingTransformControls = false;
@@ -228,8 +449,13 @@ namespace Artifact
       jobs.append(e);
     }
     updateJobList();
-    if (jobListWidget && selectedSource >= 0 && selectedSource < jobListWidget->count()) {
-      jobListWidget->setCurrentRow(selectedSource);
+    if (jobListWidget && selectedSource >= 0) {
+      for (int row = 0; row < jobListWidget->count(); ++row) {
+        if (jobListWidget->item(row)->data(Qt::UserRole).toInt() == selectedSource) {
+          jobListWidget->setCurrentRow(row);
+          break;
+        }
+      }
     }
     updateSummary();
   }
@@ -290,22 +516,20 @@ namespace Artifact
       textColor = QColor(theme.textColor).darker(110);
     }
 
-    QString progressBar = "..........";
-    int filled = std::clamp(job.progress / 10, 0, 10);
-    for (int p = 0; p < filled; ++p) progressBar[p] = (status == "Rendering") ? '>' : '#';
-
     const QString outputPath = job.outputPath.trimmed();
     const QString outputName = outputPath.isEmpty()
         ? QStringLiteral("output")
         : QFileInfo(outputPath).fileName();
-    QString line = QString("%1  #%2  %3  [%4]  %5%  %6")
+    const QString progressText = status == QStringLiteral("Rendering")
+        ? QStringLiteral("Rendering  •  %1%")
+        : QStringLiteral("Progress  •  %1%");
+    QString line = QStringLiteral("%1  #%2  %3\n%4\n%5")
       .arg(statusTag)
       .arg(i + 1, 2, 10, QChar('0'))
-      .arg(job.name.left(28).leftJustified(28, QLatin1Char(' '), true))
-      .arg(progressBar)
-      .arg(job.progress, 3)
-      .arg(outputName);
-    QString lineSuffix = QStringLiteral("  enc:%1  rnd:%2")
+      .arg(job.name.left(42))
+      .arg(QStringLiteral("Output  •  %1").arg(outputName))
+      .arg(progressText.arg(job.progress));
+    QString lineSuffix = QStringLiteral("  |  enc:%1  |  render:%2")
         .arg(shortBackendLabel(job.encoderBackend))
         .arg(shortBackendLabel(job.renderBackend));
     line += lineSuffix;
@@ -334,9 +558,20 @@ namespace Artifact
       return;
     }
     const auto data = buildJobLineData(index);
-    item->setText(data.line);
-    item->setForeground(data.textColor);
     item->setToolTip(data.tooltip);
+    if (auto* card = static_cast<RenderQueueJobCard*>(jobListWidget->itemWidget(item))) {
+      const auto& job = jobs[index];
+      card->setJob(normalizeStatus(job.status), job.name,
+                   QFileInfo(job.outputPath).fileName(),
+                   QStringLiteral("enc:%1  |  render:%2")
+                       .arg(shortBackendLabel(job.encoderBackend))
+                       .arg(shortBackendLabel(job.renderBackend)),
+                   job.errorMessage,
+                   job.progress, data.textColor);
+    } else {
+      item->setText(data.line);
+      item->setForeground(data.textColor);
+    }
     updateSummary();
   }
 
@@ -346,14 +581,33 @@ namespace Artifact
     jobListWidget->clear();
     visibleToSource.clear();
 
+    const QString query = searchQuery.trimmed().toLower();
     for (int i = 0; i < jobs.size(); ++i) {
+      const auto& job = jobs[i];
+      if (!query.isEmpty()
+          && !job.name.toLower().contains(query)
+          && !job.outputPath.toLower().contains(query)
+          && !normalizeStatus(job.status).toLower().contains(query)
+          && !job.encoderBackend.toLower().contains(query)
+          && !job.renderBackend.toLower().contains(query)) {
+        continue;
+      }
       const auto data = buildJobLineData(i);
-      auto* item = new QListWidgetItem(data.line);
+      auto* item = new QListWidgetItem();
       item->setData(Qt::UserRole, i);
-      item->setFont(fixedFont_);
-      item->setForeground(data.textColor);
       item->setToolTip(data.tooltip);
       jobListWidget->addItem(item);
+      auto* card = new RenderQueueJobCard(jobListWidget);
+      const auto& job = jobs[i];
+      card->setJob(normalizeStatus(job.status), job.name,
+                   QFileInfo(job.outputPath).fileName(),
+                   QStringLiteral("enc:%1  |  render:%2")
+                       .arg(shortBackendLabel(job.encoderBackend))
+                       .arg(shortBackendLabel(job.renderBackend)),
+                   job.errorMessage,
+                   job.progress, data.textColor);
+      item->setSizeHint(QSize(0, 86));
+      jobListWidget->setItemWidget(item, card);
       visibleToSource.push_back(i);
     }
     updateSummary();
@@ -361,12 +615,14 @@ namespace Artifact
 
   void updateSummary() {
     if (!summaryLabel) return;
-    int done = 0, running = 0;
+    int done = 0, failed = 0, running = 0, pending = 0;
     int totalProgress = 0;
     for (const auto& j : jobs) {
         QString s = normalizeStatus(j.status);
         if (s == "Completed") done++;
+        else if (s == "Failed") failed++;
         else if (s == "Rendering") running++;
+        else if (s == "Pending" || s == "Paused") pending++;
         totalProgress += std::clamp(j.progress, 0, 100);
     }
     QString preflightText;
@@ -377,16 +633,37 @@ namespace Artifact
           .arg(preflight.getErrorCount())
           .arg(preflight.getWarningCount());
     }
-    summaryLabel->setText(QString("Jobs: %1 | Running: %2 | Done: %3%4")
+    summaryLabel->setText(QString("Jobs: %1 | Running: %2 | Queued: %3 | Done: %4 | Failed: %5%6")
                               .arg(jobs.size())
                               .arg(running)
+                              .arg(pending)
                               .arg(done)
+                              .arg(failed)
                               .arg(preflightText));
+    if (runningCountLabel) {
+      runningCountLabel->setText(QString("%1 RUNNING").arg(running));
+      const auto& theme = ArtifactCore::currentDCCTheme();
+      QPalette palette = runningCountLabel->palette();
+      palette.setColor(QPalette::WindowText,
+          running > 0 ? QColor(theme.accentColor).lighter(135)
+                      : QColor(theme.textColor).darker(125));
+      runningCountLabel->setPalette(palette);
+    }
+    if (queueStateLabel) {
+      queueStateLabel->setText(running > 0
+          ? QStringLiteral("Rendering %1 of %2 jobs").arg(running).arg(jobs.size())
+          : (jobs.isEmpty() ? QStringLiteral("Queue is empty")
+                            : QStringLiteral("Queue ready")));
+    }
     if (totalProgressBar) {
       totalProgressBar->setRange(0, 100);
       totalProgressBar->setValue(jobs.isEmpty() ? 0 : totalProgress / jobs.size());
     }
-    if (startButton) startButton->setEnabled(!jobs.isEmpty());
+    if (startButton) startButton->setEnabled(pending > 0 || running > 0);
+    if (pauseButton) pauseButton->setEnabled(running > 0);
+    if (cancelButton) cancelButton->setEnabled(running > 0);
+    if (clearButton) clearButton->setEnabled(done > 0);
+    if (rerunDoneFailedButton) rerunDoneFailedButton->setEnabled(done > 0 || failed > 0);
   }
 
   void handleJobSelected() {
@@ -394,12 +671,41 @@ namespace Artifact
     if (removeButton) removeButton->setEnabled(has);
     if (duplicateButton) duplicateButton->setEnabled(has);
     if (outputSettingsButton) outputSettingsButton->setEnabled(has);
+    if (jobListWidget) {
+      const auto& theme = ArtifactCore::currentDCCTheme();
+      for (int row = 0; row < jobListWidget->count(); ++row) {
+        auto* item = jobListWidget->item(row);
+        auto* card = static_cast<RenderQueueJobCard*>(jobListWidget->itemWidget(item));
+        if (!card) continue;
+        card->setAutoFillBackground(true);
+        QPalette palette = card->palette();
+        palette.setColor(QPalette::Window,
+            row == jobListWidget->currentRow()
+                ? QColor(theme.selectionColor).darker(125)
+                : QColor(theme.secondaryBackgroundColor));
+        card->setPalette(palette);
+        card->setFrameStyle(row == jobListWidget->currentRow()
+            ? QFrame::StyledPanel | QFrame::Sunken
+            : QFrame::StyledPanel | QFrame::Plain);
+      }
+    }
     updateSummary();
   }
 
   void syncDetailEditorsFromJob(int index) {
+    syncingJobDetails = true;
     if (!service || index < 0 || index >= service->jobCount()) {
+      if (inspectorJobLabel) inspectorJobLabel->setText(QStringLiteral("No job selected"));
+      if (preflightBadge) preflightBadge->setText(QStringLiteral("PREFLIGHT  •  SELECT A JOB"));
+      if (previewLabel) {
+        previewLabel->clear();
+        previewLabel->setText(QStringLiteral("Select a job to preview"));
+      }
+      syncingJobDetails = false;
       return;
+    }
+    if (inspectorJobLabel) {
+      inspectorJobLabel->setText(service->jobNameAt(index));
     }
 
     const QSignalBlocker blockPath(outputPathEdit);
@@ -436,7 +742,7 @@ namespace Artifact
           : QStringLiteral(" | Audio: off");
       const auto preflight = service->preflightRenderQueueAt(index);
       outputSettingsSummaryLabel->setText(
-          QString("Format: %1 | Codec: %2%3 | Encode: %4 | Render: %5%6 | Preflight: %7E/%8W")
+          QString("Format: %1 | Codec: %2%3\nBackends: Encode %4  •  Render %5%6\nPreflight: %7 errors  •  %8 warnings")
               .arg(outputFormat.isEmpty() ? QStringLiteral("MP4") : outputFormat)
               .arg(codec.isEmpty() ? QStringLiteral("H.264") : codec)
               .arg(codecProfile.trimmed().isEmpty() ? QString() : QStringLiteral(" (%1)").arg(codecProfile))
@@ -445,6 +751,21 @@ namespace Artifact
               .arg(audioInfo)
               .arg(preflight.getErrorCount())
               .arg(preflight.getWarningCount()));
+      if (preflightBadge) {
+        const int errors = preflight.getErrorCount();
+        const int warnings = preflight.getWarningCount();
+        preflightBadge->setText(errors > 0
+            ? QStringLiteral("PREFLIGHT  •  %1 ERRORS").arg(errors)
+            : (warnings > 0
+                ? QStringLiteral("PREFLIGHT  •  %1 WARNINGS").arg(warnings)
+                : QStringLiteral("PREFLIGHT  •  READY")));
+        QPalette badgePalette = preflightBadge->palette();
+        badgePalette.setColor(QPalette::WindowText,
+            errors > 0 ? QColor(220, 90, 80)
+                        : (warnings > 0 ? QColor(225, 175, 70)
+                                        : QColor(110, 205, 120)));
+        preflightBadge->setPalette(badgePalette);
+      }
     }
 
     int startFrame = 0;
@@ -464,6 +785,7 @@ namespace Artifact
       if (overlayScaleSpin) overlayScaleSpin->setValue(scale);
       if (overlayRotationSpin) overlayRotationSpin->setValue(rotationDeg);
     }
+    syncingJobDetails = false;
   }
  };
 
@@ -471,46 +793,120 @@ namespace Artifact
   : QWidget(parent), impl_(new Impl())
  {
   auto* layout = new QVBoxLayout(this);
+  layout->setContentsMargins(10, 10, 10, 8);
+  layout->setSpacing(8);
+
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  setAutoFillBackground(true);
+  {
+    QPalette palette = this->palette();
+    palette.setColor(QPalette::Window, QColor(theme.backgroundColor));
+    palette.setColor(QPalette::WindowText, QColor(theme.textColor));
+    setPalette(palette);
+  }
   
   // Header
   auto* top = new QHBoxLayout();
-  auto* title = new QLabel("RENDER QUEUE");
+  auto* title = new QLabel("RENDER MANAGER");
   title->setObjectName("renderQueueTitle");
-  impl_->searchEdit = new QLineEdit();
-  impl_->searchEdit->setPlaceholderText("Search...");
+  QFont titleFont = title->font();
+  titleFont.setPointSize(titleFont.pointSize() + 2);
+  titleFont.setBold(true);
+  title->setFont(titleFont);
+  impl_->runningCountLabel = new QLabel("0 RUNNING");
+  impl_->runningCountLabel->setMinimumWidth(96);
+  impl_->runningCountLabel->setAlignment(Qt::AlignCenter);
+  impl_->searchEdit = new RenderQueueSearchEdit();
+  impl_->searchEdit->setPlaceholderText("Search jobs...");
   impl_->searchEdit->setObjectName("renderQueueSearch");
+  impl_->searchEdit->changed = [this](const QString& text) {
+    if (!impl_) return;
+    impl_->searchQuery = text;
+    impl_->updateJobList();
+    impl_->handleJobSelected();
+  };
   top->addWidget(title);
+  top->addSpacing(12);
+  top->addWidget(impl_->runningCountLabel);
   top->addWidget(impl_->searchEdit, 1);
   layout->addLayout(top);
 
   // Main Splitter
   auto* splitter = new QSplitter(Qt::Horizontal);
   splitter->setChildrenCollapsible(false);
-  impl_->jobListWidget = new QListWidget();
+  impl_->jobListWidget = new RenderQueueListWidget();
   impl_->jobListWidget->setObjectName("renderQueueList");
   impl_->jobListWidget->setContextMenuPolicy(Qt::CustomContextMenu);
+  impl_->jobListWidget->setDragEnabled(true);
+  impl_->jobListWidget->setAcceptDrops(true);
+  impl_->jobListWidget->setDropIndicatorShown(true);
+  impl_->jobListWidget->setDragDropMode(QAbstractItemView::InternalMove);
+  impl_->jobListWidget->reordered = [this](int visibleFrom, int visibleTo) {
+    if (!impl_ || !impl_->service) return;
+    if (visibleFrom < 0 || visibleFrom >= impl_->visibleToSource.size()
+        || visibleTo < 0 || visibleTo >= impl_->visibleToSource.size()) return;
+    impl_->service->moveRenderQueue(impl_->visibleToSource[visibleFrom],
+                                    impl_->visibleToSource[visibleTo]);
+    impl_->syncJobsFromService();
+  };
+  impl_->jobListWidget->setAlternatingRowColors(true);
+  impl_->jobListWidget->setSpacing(4);
+  impl_->jobListWidget->setMinimumWidth(520);
   
   auto* leftSide = new QWidget();
-  leftSide->setMinimumWidth(360);
+  leftSide->setMinimumWidth(520);
   auto* leftLayout = new QVBoxLayout(leftSide);
+  leftLayout->setContentsMargins(0, 0, 0, 0);
+  auto* queueHeader = new QHBoxLayout();
+  auto* queueTitle = new QLabel(QStringLiteral("QUEUE"));
+  QFont queueTitleFont = queueTitle->font();
+  queueTitleFont.setBold(true);
+  queueTitle->setFont(queueTitleFont);
+  impl_->queueStateLabel = new QLabel(QStringLiteral("Queue is empty"));
+  QPalette queueStatePalette = impl_->queueStateLabel->palette();
+  queueStatePalette.setColor(QPalette::WindowText, QColor(theme.textColor).darker(125));
+  impl_->queueStateLabel->setPalette(queueStatePalette);
+  queueHeader->addWidget(queueTitle);
+  queueHeader->addStretch();
+  queueHeader->addWidget(impl_->queueStateLabel);
+  leftLayout->addLayout(queueHeader);
   leftLayout->addWidget(impl_->jobListWidget);
   
   auto* btnLayout = new QHBoxLayout();
-  impl_->addButton = new QPushButton("Add");
+  impl_->addButton = new QPushButton("+ Add Composition");
   impl_->removeButton = new QPushButton("Remove");
   impl_->duplicateButton = new QToolButton();
   impl_->duplicateButton->setText("D");
   btnLayout->addWidget(impl_->addButton);
 
-  auto* batchAllBtn = new QPushButton(QStringLiteral("All"));
+  auto* batchAllBtn = new QPushButton(QStringLiteral("Add All"));
   batchAllBtn->setToolTip(QStringLiteral("Add all compositions to queue"));
-  auto* batchTmplBtn = new QPushButton(QStringLiteral("Template"));
+  auto* batchTmplBtn = new QPushButton(QStringLiteral("Batch Template"));
   batchTmplBtn->setToolTip(QStringLiteral("Batch add using a template"));
   btnLayout->addWidget(batchAllBtn);
   btnLayout->addWidget(batchTmplBtn);
 
   btnLayout->addWidget(impl_->duplicateButton);
   btnLayout->addStretch();
+  impl_->clearButton = new RenderQueueActionButton(QStringLiteral("Clear Completed"));
+  impl_->clearButton->action = [this]() {
+    if (!impl_ || !impl_->service) return;
+    for (int index = impl_->service->jobCount() - 1; index >= 0; --index) {
+      if (Impl::normalizeStatus(impl_->service->jobStatusAt(index)) == QStringLiteral("Completed")) {
+        impl_->service->removeRenderQueueAt(index);
+      }
+    }
+    impl_->syncJobsFromService();
+  };
+  btnLayout->addWidget(impl_->clearButton);
+  impl_->rerunDoneFailedButton = new RenderQueueActionButton(QStringLiteral("Retry Failed"));
+  impl_->rerunDoneFailedButton->action = [this]() {
+    if (!impl_ || !impl_->service) return;
+    if (impl_->service->resetCompletedAndFailedJobsForRerun() > 0) {
+      impl_->service->startAllJobs();
+    }
+  };
+  btnLayout->addWidget(impl_->rerunDoneFailedButton);
   btnLayout->addWidget(impl_->removeButton);
   leftLayout->addLayout(btnLayout);
   
@@ -525,13 +921,73 @@ namespace Artifact
   detailWidget->setMinimumWidth(320);
   auto* detailLayout = new QVBoxLayout(detailWidget);
   detailLayout->setContentsMargins(8, 0, 8, 0);
-  detailLayout->setSpacing(12);
+  detailLayout->setSpacing(8);
+
+  auto* inspectorHeader = new QHBoxLayout();
+  auto* inspectorTitle = new QLabel(QStringLiteral("JOB SETTINGS"));
+  QFont inspectorTitleFont = inspectorTitle->font();
+  inspectorTitleFont.setBold(true);
+  inspectorTitle->setFont(inspectorTitleFont);
+  impl_->inspectorJobLabel = new QLabel(QStringLiteral("No job selected"));
+  QPalette inspectorJobPalette = impl_->inspectorJobLabel->palette();
+  inspectorJobPalette.setColor(QPalette::WindowText,
+                               QColor(theme.textColor).darker(115));
+  impl_->inspectorJobLabel->setPalette(inspectorJobPalette);
+  inspectorHeader->addWidget(inspectorTitle);
+  inspectorHeader->addStretch();
+  inspectorHeader->addWidget(impl_->inspectorJobLabel);
+  detailLayout->addLayout(inspectorHeader);
+
+  impl_->previewLabel = new QLabel("Select a job to preview");
+  impl_->previewLabel->setMinimumSize(320, 180);
+  impl_->previewLabel->setMaximumHeight(220);
+  {
+    QPalette pal = impl_->previewLabel->palette();
+    pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::WindowText, QColor(theme.textColor).darker(120));
+    impl_->previewLabel->setAutoFillBackground(true);
+    impl_->previewLabel->setPalette(pal);
+  }
+  impl_->previewLabel->setAlignment(Qt::AlignCenter);
+  impl_->previewLabel->setScaledContents(false);
+  detailLayout->addWidget(impl_->previewLabel);
+
+  impl_->preflightBadge = new QLabel(QStringLiteral("PREFLIGHT  •  SELECT A JOB"));
+  impl_->preflightBadge->setAlignment(Qt::AlignCenter);
+  impl_->preflightBadge->setMinimumHeight(26);
+  detailLayout->addWidget(impl_->preflightBadge);
 
   // Group: Output
   auto* outputGroup = new QGroupBox("Output Settings");
   auto* outputLayout = new QFormLayout(outputGroup);
-  impl_->outputPathEdit = new QLineEdit();
-  outputLayout->addRow("Path:", impl_->outputPathEdit);
+  impl_->outputPathEdit = new RenderQueuePathEdit();
+  impl_->outputPathEdit->committed = [this](const QString& path) {
+    if (!impl_ || impl_->syncingJobDetails || !impl_->service) return;
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) return;
+    impl_->service->setJobOutputPathAt(index, path.trimmed());
+    impl_->logUiEvent(QStringLiteral("Output path updated"), false);
+  };
+  auto* outputPathRow = new QWidget();
+  auto* outputPathRowLayout = new QHBoxLayout(outputPathRow);
+  outputPathRowLayout->setContentsMargins(0, 0, 0, 0);
+  outputPathRowLayout->addWidget(impl_->outputPathEdit, 1);
+  impl_->outputBrowseButton = new RenderQueueActionButton(QStringLiteral("Browse"));
+  impl_->outputBrowseButton->action = [this]() {
+    if (!impl_ || !impl_->service) return;
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) return;
+    const QString currentPath = impl_->service->jobOutputPathAt(index);
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Select render output"),
+        currentPath.isEmpty() ? QDir::homePath() : currentPath,
+        QStringLiteral("Video and image files (*.mp4 *.mov *.png *.exr);;All files (*)"));
+    if (path.isEmpty()) return;
+    impl_->outputPathEdit->setText(path);
+    impl_->outputPathEdit->committed(path);
+  };
+  outputPathRowLayout->addWidget(impl_->outputBrowseButton);
+  outputLayout->addRow("Path:", outputPathRow);
   impl_->outputSettingsButton = new QPushButton("Format...");
   outputLayout->addRow("Settings:", impl_->outputSettingsButton);
   impl_->outputSettingsSummaryLabel = new QLabel("Format: MP4 | Codec: H.264 | Encode: auto | Render: auto");
@@ -542,10 +998,19 @@ namespace Artifact
   // Group: Range
   auto* rangeGroup = new QGroupBox("Frame Range");
   auto* rangeLayout = new QFormLayout(rangeGroup);
-  impl_->startFrameSpin = new QSpinBox();
-  impl_->endFrameSpin = new QSpinBox();
+  impl_->startFrameSpin = new RenderQueueIntSpinBox();
+  impl_->endFrameSpin = new RenderQueueIntSpinBox();
   impl_->startFrameSpin->setRange(0, 1000000);
   impl_->endFrameSpin->setRange(0, 1000000);
+  auto commitFrameRange = [this]() {
+    if (!impl_ || impl_->syncingJobDetails || !impl_->service) return;
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) return;
+    impl_->service->setJobFrameRangeAt(index, impl_->startFrameSpin->value(),
+                                       impl_->endFrameSpin->value());
+  };
+  impl_->startFrameSpin->committed = [commitFrameRange](int) { commitFrameRange(); };
+  impl_->endFrameSpin->committed = [commitFrameRange](int) { commitFrameRange(); };
   rangeLayout->addRow("Start:", impl_->startFrameSpin);
   rangeLayout->addRow("End:", impl_->endFrameSpin);
   detailLayout->addWidget(rangeGroup);
@@ -553,11 +1018,25 @@ namespace Artifact
   // Group: Overlay
   auto* overlayGroup = new QGroupBox("Overlay Transform");
   auto* overlayLayout = new QFormLayout(overlayGroup);
-  impl_->overlayXSpin = new QDoubleSpinBox();
-  impl_->overlayYSpin = new QDoubleSpinBox();
-  impl_->overlayScaleSpin = new QDoubleSpinBox();
+  impl_->overlayXSpin = new RenderQueueDoubleSpinBox();
+  impl_->overlayYSpin = new RenderQueueDoubleSpinBox();
+  impl_->overlayScaleSpin = new RenderQueueDoubleSpinBox();
   impl_->overlayScaleSpin->setValue(1.0);
-  impl_->overlayRotationSpin = new QDoubleSpinBox();
+  impl_->overlayRotationSpin = new RenderQueueDoubleSpinBox();
+  auto commitOverlay = [this]() {
+    if (!impl_ || impl_->syncingJobDetails || !impl_->service) return;
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) return;
+    impl_->service->setJobOverlayTransform(index,
+        static_cast<float>(impl_->overlayXSpin->value()),
+        static_cast<float>(impl_->overlayYSpin->value()),
+        static_cast<float>(impl_->overlayScaleSpin->value()),
+        static_cast<float>(impl_->overlayRotationSpin->value()));
+  };
+  impl_->overlayXSpin->committed = [commitOverlay](double) { commitOverlay(); };
+  impl_->overlayYSpin->committed = [commitOverlay](double) { commitOverlay(); };
+  impl_->overlayScaleSpin->committed = [commitOverlay](double) { commitOverlay(); };
+  impl_->overlayRotationSpin->committed = [commitOverlay](double) { commitOverlay(); };
   overlayLayout->addRow("X Offset:", impl_->overlayXSpin);
   overlayLayout->addRow("Y Offset:", impl_->overlayYSpin);
   overlayLayout->addRow("Scale:", impl_->overlayScaleSpin);
@@ -572,25 +1051,6 @@ namespace Artifact
   splitter->setSizes({560, 380});
   layout->addWidget(splitter, 1);
 
-  // Live preview
-  impl_->previewLabel = new QLabel("No preview");
-  impl_->previewLabel->setFixedSize(320, 180);
-  {
-    const auto& theme = ArtifactCore::currentDCCTheme();
-    QPalette pal = impl_->previewLabel->palette();
-    pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
-    pal.setColor(QPalette::Base, QColor(theme.backgroundColor));
-    pal.setColor(QPalette::WindowText, QColor(theme.textColor));
-    pal.setColor(QPalette::Text, QColor(theme.textColor));
-    pal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
-    pal.setColor(QPalette::Mid, QColor(theme.borderColor));
-    impl_->previewLabel->setAutoFillBackground(true);
-    impl_->previewLabel->setPalette(pal);
-  }
-  impl_->previewLabel->setAlignment(Qt::AlignCenter);
-  impl_->previewLabel->setScaledContents(false);
-  layout->addWidget(impl_->previewLabel);
-
   auto* historyGroup = new QGroupBox("Render History / Log");
   auto* historyLayout = new QVBoxLayout(historyGroup);
   impl_->historyListWidget = new QListWidget();
@@ -603,20 +1063,41 @@ namespace Artifact
   historyButtonLayout->addWidget(impl_->exportHistoryButton);
   historyButtonLayout->addStretch();
   historyLayout->addLayout(historyButtonLayout);
-  layout->addWidget(historyGroup, 1);
+  historyGroup->setMaximumHeight(170);
+  layout->addWidget(historyGroup);
   impl_->loadHistory();
 
   // Bottom
   impl_->totalProgressBar = new QProgressBar();
   impl_->summaryLabel = new QLabel("Ready");
   impl_->statusLabel = new QLabel("No active jobs");
-  impl_->startButton = new QPushButton("START RENDER");
+  impl_->startButton = new QPushButton("Start Queue");
   impl_->startButton->setObjectName("renderStartBtn");
   
-  layout->addWidget(impl_->totalProgressBar);
-  layout->addWidget(impl_->summaryLabel);
-  layout->addWidget(impl_->statusLabel);
-  layout->addWidget(impl_->startButton);
+  auto* activityFrame = new QFrame();
+  activityFrame->setFrameShape(QFrame::StyledPanel);
+  auto* activityLayout = new QHBoxLayout(activityFrame);
+  activityLayout->setContentsMargins(10, 6, 6, 6);
+  auto* progressLayout = new QVBoxLayout();
+  progressLayout->setSpacing(2);
+  progressLayout->addWidget(impl_->summaryLabel);
+  progressLayout->addWidget(impl_->totalProgressBar);
+  progressLayout->addWidget(impl_->statusLabel);
+  activityLayout->addLayout(progressLayout, 1);
+  impl_->pauseButton = new RenderQueueActionButton(QStringLiteral("Pause"));
+  impl_->cancelButton = new RenderQueueActionButton(QStringLiteral("Stop"));
+  impl_->pauseButton->setEnabled(false);
+  impl_->cancelButton->setEnabled(false);
+  impl_->pauseButton->action = [this]() {
+    if (impl_ && impl_->service) impl_->service->pauseAllJobs();
+  };
+  impl_->cancelButton->action = [this]() {
+    if (impl_ && impl_->service) impl_->service->cancelAllJobs();
+  };
+  activityLayout->addWidget(impl_->pauseButton);
+  activityLayout->addWidget(impl_->cancelButton);
+  activityLayout->addWidget(impl_->startButton);
+  layout->addWidget(activityFrame);
 
   // Context Menu
   connect(impl_->jobListWidget, &QListWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
@@ -626,11 +1107,16 @@ namespace Artifact
     QString path = impl_->service->jobOutputPathAt(idx);
     auto* reveal = menu.addAction("Reveal in Explorer");
     auto* open = menu.addAction("Open File");
+    auto* retry = menu.addAction("Retry Job");
     menu.addSeparator();
     auto* copyPath = menu.addAction("Copy Path");
     auto* act = menu.exec(impl_->jobListWidget->mapToGlobal(pos));
     if (act == reveal) ArtifactCore::openInExplorer(path, true);
     else if (act == open) QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    else if (act == retry) {
+      impl_->service->resetJobForRerun(idx);
+      impl_->service->startRenderQueueAt(idx);
+    }
     else if (act == copyPath) QApplication::clipboard()->setText(path);
   });
 
@@ -797,8 +1283,19 @@ namespace Artifact
     connect(impl_->service, &ArtifactRenderQueueService::previewFrameReady, this, [this](int jobIndex, int frameNumber) {
         QImage frame = impl_->service->lastRenderedFrame();
         if (!frame.isNull() && impl_->previewLabel) {
-            impl_->previewLabel->setPixmap(QPixmap::fromImage(frame));
+            const QPixmap pixmap = QPixmap::fromImage(frame);
+            impl_->previewLabel->setPixmap(pixmap);
             impl_->previewLabel->setToolTip(QString("Job %1 | Frame %2").arg(jobIndex + 1).arg(frameNumber));
+            if (impl_->jobListWidget && jobIndex >= 0) {
+              for (int row = 0; row < impl_->jobListWidget->count(); ++row) {
+                auto* item = impl_->jobListWidget->item(row);
+                if (item->data(Qt::UserRole).toInt() != jobIndex) continue;
+                if (auto* card = static_cast<RenderQueueJobCard*>(impl_->jobListWidget->itemWidget(item))) {
+                  card->setPreview(pixmap);
+                }
+                break;
+              }
+            }
         }
     });
   }

@@ -47,6 +47,7 @@ import Artifact.Layer.Matte;
 import Geometry.Fracture;
 import Physics.Fluid;
 import Physics.System;
+import Physics.Mpm2D;
 import Layer.Matte;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
@@ -692,6 +693,9 @@ public:
 
     // Physics component
     PhysicsLayerComponent physicsComponent_;
+    bool softBodyPhysicsEnabled_ = false;
+    bool materialPhysicsEnabled_ = false;
+    int materialPhysicsPreset_ = 0;
     bool motionDynamicsEnabled_ = false;
     int motionDynamicsMode_ = 0;
     float motionDynamicsStiffness_ = 80.0f;
@@ -1598,18 +1602,130 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
   return transform;
 }
 
+QPointF parentAutoLayoutOffset(const ArtifactAbstractLayer *layer,
+                               const ArtifactAbstractLayerPtr &parent) {
+  if (!layer || !parent) {
+    return QPointF();
+  }
+  const auto enabled = parent->getProperty(
+      QStringLiteral("component.layout.enabled"));
+  if (!enabled || !enabled->getValue().toBool()) {
+    return QPointF();
+  }
+  const auto participation = layer->getProperty(
+      QStringLiteral("component.layout.mode"));
+  if (participation && participation->getValue().toInt() == 2) {
+    return QPointF();
+  }
+  auto *composition = static_cast<ArtifactAbstractComposition *>(
+      parent->composition());
+  if (!composition) {
+    return QPointF();
+  }
+  const auto direction = parent->getProperty(
+      QStringLiteral("component.layout.stackDirection"));
+  const auto alignmentProperty = parent->getProperty(
+      QStringLiteral("component.layout.anchorMode"));
+  const auto gapProperty = parent->getProperty(
+      QStringLiteral("component.layout.gap"));
+  const auto paddingXProperty = parent->getProperty(
+      QStringLiteral("component.layout.safeAreaPaddingX"));
+  const auto paddingYProperty = parent->getProperty(
+      QStringLiteral("component.layout.safeAreaPaddingY"));
+  const auto safeAreaEnabledProperty = parent->getProperty(
+      QStringLiteral("component.layout.safeAreaEnabled"));
+  const bool vertical = direction && direction->getValue().toInt() != 0;
+  const int alignment = alignmentProperty
+                            ? std::clamp(alignmentProperty->getValue().toInt(), 0, 2)
+                            : 0;
+  const qreal gap = gapProperty ? gapProperty->getValue().toDouble() : 0.0;
+  const bool usePadding = safeAreaEnabledProperty &&
+                          safeAreaEnabledProperty->getValue().toBool();
+  const QRectF parentBounds = parent->localBounds();
+  const qreal paddingX = usePadding && paddingXProperty
+                             ? paddingXProperty->getValue().toDouble()
+                             : 0.0;
+  const qreal paddingY = usePadding && paddingYProperty
+                             ? paddingYProperty->getValue().toDouble()
+                             : 0.0;
+  qreal cursorX = parentBounds.left() + paddingX;
+  qreal cursorY = parentBounds.top() + paddingY;
+  const auto siblings = composition->childLayersOf(parent->id());
+  for (const auto &sibling : siblings) {
+    if (!sibling) {
+      continue;
+    }
+    const auto siblingParticipation = sibling->getProperty(
+        QStringLiteral("component.layout.mode"));
+    if (siblingParticipation &&
+        siblingParticipation->getValue().toInt() == 2) {
+      continue;
+    }
+    const QRectF bounds = sibling->visualLocalBounds();
+    if (sibling.get() == layer) {
+      qreal targetX = cursorX - bounds.left();
+      qreal targetY = cursorY - bounds.top();
+      if (vertical) {
+        const qreal availableWidth = std::max<qreal>(
+            0.0, parentBounds.width() - paddingX * 2.0);
+        if (alignment == 1) {
+          targetX = parentBounds.left() + paddingX +
+                    (availableWidth - bounds.width()) * 0.5 - bounds.left();
+        } else if (alignment == 2) {
+          targetX = parentBounds.right() - paddingX - bounds.width() -
+                    bounds.left();
+        }
+      } else {
+        const qreal availableHeight = std::max<qreal>(
+            0.0, parentBounds.height() - paddingY * 2.0);
+        if (alignment == 1) {
+          targetY = parentBounds.top() + paddingY +
+                    (availableHeight - bounds.height()) * 0.5 - bounds.top();
+        } else if (alignment == 2) {
+          targetY = parentBounds.bottom() - paddingY - bounds.height() -
+                    bounds.top();
+        }
+      }
+      return QPointF(targetX, targetY);
+    }
+    if (vertical) {
+      cursorY += std::max<qreal>(0.0, bounds.height()) + gap;
+    } else {
+      cursorX += std::max<qreal>(0.0, bounds.width()) + gap;
+    }
+  }
+  return QPointF();
+}
+
 QTransform ArtifactAbstractLayer::getGlobalTransform() const {
   auto parent = parentLayer();
   const LayerID parentId = impl_->parentLayerId_;
   const quint64 parentRevision = parent ? parent->impl_->geometryRevision_ : 0;
   const int64_t frame = impl_->currentFrame_;
-  if (impl_->cachedGlobalTransformRevision_ == impl_->geometryRevision_ &&
+  const auto layoutEnabledProperty = parent
+                                         ? parent->getProperty(
+                                               QStringLiteral("component.layout.enabled"))
+                                         : nullptr;
+  const auto participationProperty = getProperty(
+      QStringLiteral("component.layout.mode"));
+  const bool layoutManaged = layoutEnabledProperty &&
+                             layoutEnabledProperty->getValue().toBool() &&
+                             (!participationProperty ||
+                              participationProperty->getValue().toInt() != 2);
+  const QPointF layoutOffset = layoutManaged
+                                   ? parentAutoLayoutOffset(this, parent)
+                                   : QPointF();
+  if (!layoutManaged &&
+      impl_->cachedGlobalTransformRevision_ == impl_->geometryRevision_ &&
       impl_->cachedGlobalTransformParentRevision_ == parentRevision &&
       impl_->cachedGlobalTransformFrame_ == frame &&
       impl_->cachedGlobalTransformParentId_ == parentId) {
     return impl_->cachedGlobalTransform_;
   }
   QTransform local = getLocalTransform();
+  if (layoutManaged) {
+    local = QTransform::fromTranslate(layoutOffset.x(), layoutOffset.y()) * local;
+  }
   impl_->cachedGlobalTransform_ =
       parent ? combineLayerTransform2D(local, parent->getGlobalTransform())
              : local;
@@ -1710,6 +1826,10 @@ QTransform ArtifactAbstractLayer::getGlobalTransformAt(int64_t frameNumber) cons
   QTransform local = getLocalTransformAt(frameNumber);
   auto parent = parentLayer();
   if (parent) {
+    const QPointF layoutOffset = parentAutoLayoutOffset(this, parent);
+    if (!layoutOffset.isNull()) {
+      local = QTransform::fromTranslate(layoutOffset.x(), layoutOffset.y()) * local;
+    }
     return combineLayerTransform2D(local, parent->getGlobalTransformAt(frameNumber)); // Time remapping on parent not considered here yet
   }
   return local;
@@ -2283,6 +2403,7 @@ void ArtifactAbstractLayer::applyFractureImpact(const FractureImpact& impact) {
 }
 
 void ArtifactAbstractLayer::enableSoftBodyPhysics() {
+  impl_->softBodyPhysicsEnabled_ = true;
   auto& physics = ArtifactCore::PhysicsSystem::instance();
   if (!physics.getSoftBody(id())) {
     physics.createSoftBody(id());
@@ -2291,6 +2412,7 @@ void ArtifactAbstractLayer::enableSoftBodyPhysics() {
 }
 
 void ArtifactAbstractLayer::enableSoftBodyPhysicsGrid(int columns, int rows, float stiffness) {
+  impl_->softBodyPhysicsEnabled_ = true;
   const QRectF bounds = localBounds();
   if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
     enableSoftBodyPhysics();
@@ -2298,6 +2420,10 @@ void ArtifactAbstractLayer::enableSoftBodyPhysicsGrid(int columns, int rows, flo
   }
 
   auto& physics = ArtifactCore::PhysicsSystem::instance();
+  // The grid starts inside its layer bounds.  Registering those same bounds
+  // as a collider would expel every particle on the first solve, so leave
+  // collision sources to explicitly registered external colliders.
+  physics.clearSoftBodyColliders(id());
   physics.createSoftBodyGrid(
       id(),
       static_cast<float>(bounds.left()),
@@ -2309,10 +2435,10 @@ void ArtifactAbstractLayer::enableSoftBodyPhysicsGrid(int columns, int rows, flo
       1.0f,
       stiffness,
       true);
-  syncSoftBodyPhysicsColliderToBounds();
 }
 
 void ArtifactAbstractLayer::disableSoftBodyPhysics() {
+  impl_->softBodyPhysicsEnabled_ = false;
   ArtifactCore::PhysicsSystem::instance().unregisterSoftBody(id());
 }
 
@@ -2328,6 +2454,24 @@ void ArtifactAbstractLayer::disableRigidBodyPhysics() {
   ArtifactCore::PhysicsSystem::instance().unregisterRigidWorld(id());
   impl_->rigidBodyColliderShape_ = -1;
   impl_->rigidBodyColliderRestitution_ = -1.0f;
+}
+
+void ArtifactAbstractLayer::enableMaterialPhysics(int preset) {
+  const QRectF bounds = localBounds();
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+    return;
+  }
+  impl_->materialPhysicsEnabled_ = true;
+  impl_->materialPhysicsPreset_ = std::clamp(preset, 0, 3);
+  ArtifactCore::PhysicsSystem::instance().createMaterialGrid(
+      id(), static_cast<float>(bounds.left()), static_cast<float>(bounds.top()),
+      static_cast<float>(bounds.width()), static_cast<float>(bounds.height()),
+      20, 20, static_cast<ArtifactCore::MpmMaterialPreset>(impl_->materialPhysicsPreset_));
+}
+
+void ArtifactAbstractLayer::disableMaterialPhysics() {
+  impl_->materialPhysicsEnabled_ = false;
+  ArtifactCore::PhysicsSystem::instance().unregisterMaterialSolver(id());
 }
 
 void ArtifactAbstractLayer::syncSoftBodyPhysicsColliderToBounds() {
@@ -2980,7 +3124,18 @@ QRectF ArtifactAbstractLayer::transformedBoundingBox() const {
   const LayerID parentId = impl_->parentLayerId_;
   const quint64 parentRevision = parent ? parent->impl_->geometryRevision_ : 0;
   const int64_t frame = impl_->currentFrame_;
-  if (impl_->cachedBoundingBoxRevision_ == impl_->geometryRevision_ &&
+  const auto layoutEnabledProperty = parent
+                                         ? parent->getProperty(
+                                               QStringLiteral("component.layout.enabled"))
+                                         : nullptr;
+  const auto participationProperty = getProperty(
+      QStringLiteral("component.layout.mode"));
+  const bool layoutManaged = layoutEnabledProperty &&
+                             layoutEnabledProperty->getValue().toBool() &&
+                             (!participationProperty ||
+                              participationProperty->getValue().toInt() != 2);
+  if (!layoutManaged &&
+      impl_->cachedBoundingBoxRevision_ == impl_->geometryRevision_ &&
       impl_->cachedBoundingBoxParentRevision_ == parentRevision &&
       impl_->cachedBoundingBoxFrame_ == frame &&
       impl_->cachedBoundingBoxParentId_ == parentId) {
@@ -3110,6 +3265,30 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   trans["ax"] = t3.anchorX();
   trans["ay"] = t3.anchorY();
   trans["az"] = t3.anchorZ();
+  QJsonArray positionKeyframes;
+  for (const auto &time : t3.getPositionKeyFrameTimes()) {
+    const auto frame = time.rescaledTo(24);
+    QJsonObject keyframe;
+    keyframe["frame"] = static_cast<qint64>(frame);
+    keyframe["x"] = t3.positionXAt(time);
+    keyframe["y"] = t3.positionYAt(time);
+    keyframe["xInterpolation"] = static_cast<int>(
+        t3.positionXKeyFrameInterpolationAt(time));
+    keyframe["yInterpolation"] = static_cast<int>(
+        t3.positionYKeyFrameInterpolationAt(time));
+    ArtifactCore::PositionSpatialTangents tangents;
+    if (t3.positionKeyFrameSpatialTangentsAt(time, tangents)) {
+      keyframe["inTangentX"] = tangents.inTangent.x;
+      keyframe["inTangentY"] = tangents.inTangent.y;
+      keyframe["outTangentX"] = tangents.outTangent.x;
+      keyframe["outTangentY"] = tangents.outTangent.y;
+      keyframe["tangentsLinked"] = tangents.linked;
+    }
+    positionKeyframes.append(keyframe);
+  }
+  if (!positionKeyframes.isEmpty()) {
+    trans["positionKeyframes"] = positionKeyframes;
+  }
   obj["transform"] = trans;
 
   // Modifiers and effects
@@ -3166,6 +3345,9 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["effects"] = effectsArr;
   obj["isAdjustment"] = impl_->isAdjustmentLayer_;
   obj["physics"] = impl_->physicsComponent_.settings().toJson();
+  obj["softBodyPhysicsEnabled"] = impl_->softBodyPhysicsEnabled_;
+  obj["materialPhysicsEnabled"] = impl_->materialPhysicsEnabled_;
+  obj["materialPhysicsPreset"] = impl_->materialPhysicsPreset_;
   QJsonObject motionObj;
   motionObj["enabled"] = impl_->motionDynamicsEnabled_;
   motionObj["mode"] = impl_->motionDynamicsMode_;
@@ -3572,6 +3754,42 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     if (trans.contains("ax"))
       t3.setAnchor(t0, trans["ax"].toDouble(), trans["ay"].toDouble(),
                    trans["az"].toDouble());
+    if (trans.contains("positionKeyframes") &&
+        trans["positionKeyframes"].isArray()) {
+      t3.clearPositionKeyFrames();
+      for (const auto &value : trans["positionKeyframes"].toArray()) {
+        if (!value.isObject()) {
+          continue;
+        }
+        const QJsonObject keyframe = value.toObject();
+        const ArtifactCore::RationalTime time(
+            keyframe["frame"].toInteger(), 24);
+        t3.setPositionKeyFrameValueAt(
+            time, static_cast<float>(keyframe["x"].toDouble()),
+            static_cast<float>(keyframe["y"].toDouble()));
+        t3.setPositionKeyFrameInterpolationAt(
+            time, static_cast<ArtifactCore::InterpolationType>(
+                      keyframe["xInterpolation"].toInt(
+                          static_cast<int>(ArtifactCore::InterpolationType::Linear))),
+            static_cast<ArtifactCore::InterpolationType>(
+                      keyframe["yInterpolation"].toInt(
+                          static_cast<int>(ArtifactCore::InterpolationType::Linear))));
+        if (keyframe.contains("inTangentX") ||
+            keyframe.contains("outTangentX")) {
+          ArtifactCore::PositionSpatialTangents tangents;
+          tangents.inTangent.x = static_cast<float>(
+              keyframe["inTangentX"].toDouble());
+          tangents.inTangent.y = static_cast<float>(
+              keyframe["inTangentY"].toDouble());
+          tangents.outTangent.x = static_cast<float>(
+              keyframe["outTangentX"].toDouble());
+          tangents.outTangent.y = static_cast<float>(
+              keyframe["outTangentY"].toDouble());
+          tangents.linked = keyframe["tangentsLinked"].toBool(true);
+          t3.setPositionKeyFrameSpatialTangentsAt(time, tangents);
+        }
+      }
+    }
   }
 
   if (obj.contains("modifiers") && obj["modifiers"].isArray()) {
@@ -3591,6 +3809,14 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   if (obj.contains("physics") && obj["physics"].isObject()) {
       impl_->physicsComponent_.settings().fromJson(obj["physics"].toObject());
       impl_->physicsComponent_.reset();
+  }
+  if (obj.contains("softBodyPhysicsEnabled") &&
+      obj["softBodyPhysicsEnabled"].toBool(false)) {
+      enableSoftBodyPhysicsGrid();
+  }
+  if (obj.contains("materialPhysicsEnabled") &&
+      obj["materialPhysicsEnabled"].toBool(false)) {
+      enableMaterialPhysics(obj["materialPhysicsPreset"].toInt(0));
   }
   if (obj.contains("motion") && obj["motion"].isObject()) {
       const QJsonObject motionObj = obj["motion"].toObject();
@@ -4621,6 +4847,32 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                impl_->physicsComponent_.settings().enabled, -100);
   physicsGroup.addProperty(physicsEnabledProp);
 
+  auto softBodyEnabledProp =
+      makeProp(QStringLiteral("physics.softBody.enabled"), PropertyType::Boolean,
+               impl_->softBodyPhysicsEnabled_, -99);
+  softBodyEnabledProp->setDisplayLabel(QStringLiteral("Soft Body Grid"));
+  softBodyEnabledProp->setTooltip(
+      QStringLiteral("Simulate rectangular Shape layers as a deformable grid."));
+  physicsGroup.addProperty(softBodyEnabledProp);
+
+  auto materialEnabledProp =
+      makeProp(QStringLiteral("physics.material.enabled"), PropertyType::Boolean,
+               impl_->materialPhysicsEnabled_, -98);
+  materialEnabledProp->setDisplayLabel(QStringLiteral("Material Simulation"));
+  materialEnabledProp->setTooltip(
+      QStringLiteral("Use the continuum material solver for flesh, foam, rubber, or wood."));
+  physicsGroup.addProperty(materialEnabledProp);
+
+  auto materialPresetProp =
+      makeProp(QStringLiteral("physics.material.preset"), PropertyType::Integer,
+               impl_->materialPhysicsPreset_, -97);
+  materialPresetProp->setDisplayLabel(QStringLiteral("Material Preset"));
+  materialPresetProp->setTooltip(
+      QStringLiteral("0=Flesh, 1=Foam, 2=Hard Rubber, 3=Wood."));
+  materialPresetProp->setHardRange(0.0, 3.0);
+  materialPresetProp->setSoftRange(0.0, 3.0);
+  physicsGroup.addProperty(materialPresetProp);
+
   auto stiffnessProp =
       makeProp(QStringLiteral("physics.stiffness"), PropertyType::Float,
                static_cast<double>(impl_->physicsComponent_.settings().stiffness), -99);
@@ -5034,12 +5286,22 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                PropertyType::Boolean, impl_->layoutComponentEnabled_, -89);
   layoutComponentEnabledProp->setDisplayLabel(QStringLiteral("Layout Enabled"));
   layoutGroup.addProperty(layoutComponentEnabledProp);
-  layoutGroup.addProperty(
-      makeProp(QStringLiteral("component.layout.mode"),
-                PropertyType::Integer, impl_->layoutMode_, -88));
-  layoutGroup.addProperty(
-      makeProp(QStringLiteral("component.layout.anchorMode"),
-                PropertyType::Integer, impl_->layoutAnchorMode_, -87));
+  auto layoutModeProp = makeProp(QStringLiteral("component.layout.mode"),
+                                 PropertyType::Integer,
+                                 impl_->layoutMode_, -88);
+  layoutModeProp->setDisplayLabel(QStringLiteral("Layout Mode"));
+  layoutModeProp->setTooltip(
+      QStringLiteral("0=Flow, 1=Offset, 2=Absolute."));
+  layoutModeProp->setHardRange(0.0, 2.0);
+  layoutGroup.addProperty(layoutModeProp);
+  auto layoutAlignmentProp = makeProp(
+      QStringLiteral("component.layout.anchorMode"), PropertyType::Integer,
+      impl_->layoutAnchorMode_, -87);
+  layoutAlignmentProp->setDisplayLabel(QStringLiteral("Cross Alignment"));
+  layoutAlignmentProp->setTooltip(
+      QStringLiteral("0=Start, 1=Center, 2=End."));
+  layoutAlignmentProp->setHardRange(0.0, 2.0);
+  layoutGroup.addProperty(layoutAlignmentProp);
   layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.horizontalPin"),
                 PropertyType::Integer, impl_->layoutHorizontalPin_, -86));
@@ -5060,13 +5322,19 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       makeProp(QStringLiteral("component.layout.safeAreaPaddingY"),
                 PropertyType::Float,
                 static_cast<double>(impl_->layoutSafeAreaPaddingY_), -81));
-  layoutGroup.addProperty(
-      makeProp(QStringLiteral("component.layout.stackDirection"),
-                PropertyType::Integer, impl_->layoutStackDirection_, -80));
-  layoutGroup.addProperty(
-      makeProp(QStringLiteral("component.layout.gap"),
-                PropertyType::Float,
-                static_cast<double>(impl_->layoutGap_), -79));
+  auto layoutDirectionProp = makeProp(
+      QStringLiteral("component.layout.stackDirection"),
+      PropertyType::Integer, impl_->layoutStackDirection_, -80);
+  layoutDirectionProp->setDisplayLabel(QStringLiteral("Direction"));
+  layoutDirectionProp->setTooltip(QStringLiteral("0=Horizontal, 1=Vertical."));
+  layoutDirectionProp->setHardRange(0.0, 1.0);
+  layoutGroup.addProperty(layoutDirectionProp);
+  auto layoutGapProp = makeProp(QStringLiteral("component.layout.gap"),
+                                PropertyType::Float,
+                                static_cast<double>(impl_->layoutGap_), -79);
+  layoutGapProp->setDisplayLabel(QStringLiteral("Gap"));
+  layoutGapProp->setSoftRange(0.0, 256.0);
+  layoutGroup.addProperty(layoutGapProp);
   layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.maxPerRow"),
                 PropertyType::Integer, impl_->layoutMaxPerRow_, -78));
@@ -5993,6 +6261,35 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
 
   // Physics properties
+  if (propertyPath == QStringLiteral("physics.softBody.enabled")) {
+    if (value.toBool()) {
+      enableSoftBodyPhysicsGrid();
+    } else {
+      disableSoftBodyPhysics();
+    }
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.material.enabled")) {
+    if (value.toBool()) {
+      enableMaterialPhysics(impl_->materialPhysicsPreset_);
+    } else {
+      disableMaterialPhysics();
+    }
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.material.preset")) {
+    impl_->materialPhysicsPreset_ = std::clamp(value.toInt(), 0, 3);
+    if (impl_->materialPhysicsEnabled_) {
+      enableMaterialPhysics(impl_->materialPhysicsPreset_);
+    }
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    return true;
+  }
   if (propertyPath == QStringLiteral("physics.enabled")) {
     const bool enabled = value.toBool();
     impl_->physicsComponent_.setEnabled(enabled);
