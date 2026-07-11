@@ -103,6 +103,7 @@ import Artifact.Project.Manager;
 import Artifact.Project.Cleanup;
 import Artifact.Project.PresetManager;
 import Artifact.Mask.LayerMask;
+import Asset.Manager;
 import AssetMenuModel;
 import AssetDirectoryModel;
 import Utils.String.UniString;
@@ -978,6 +979,8 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   bool isImportedAssetPath(const QString& filePath) const;
   bool isFavoriteAssetPath(const QString& filePath) const;
   bool isUnusedAssetPath(const QString& filePath) const;
+  int sourceUseCountForPath(const QString& filePath,
+                            const QStringList& sequencePaths = {}) const;
   bool isMissingAssetPath(const QString& filePath) const;
   void toggleFavoritePath(const QString& filePath);
   QStringList selectedAssetPaths() const;
@@ -1226,6 +1229,36 @@ bool ArtifactAssetBrowser::Impl::isUnusedAssetPath(const QString& filePath) cons
     : QFileInfo(filePath).canonicalFilePath();
   return unusedAssetPaths_.contains(QDir::cleanPath(canonicalPath))
     || unusedAssetPaths_.contains(QDir::cleanPath(filePath));
+}
+
+int ArtifactAssetBrowser::Impl::sourceUseCountForPath(
+    const QString& filePath, const QStringList& sequencePaths) const
+{
+  if (filePath.trimmed().isEmpty() || !isImportedAssetPath(filePath)) {
+    return 0;
+  }
+
+  auto& assetManager = ArtifactCore::AssetManager::instance();
+  const auto countForPath = [&assetManager](const QString& candidate) {
+    const QString trimmed = candidate.trimmed();
+    if (trimmed.isEmpty()) {
+      return 0;
+    }
+    QUuid sourceId = assetManager.sourceId(trimmed);
+    if (sourceId.isNull()) {
+      const QString absolutePath = QFileInfo(trimmed).absoluteFilePath();
+      if (absolutePath != trimmed) {
+        sourceId = assetManager.sourceId(absolutePath);
+      }
+    }
+    return sourceId.isNull() ? 0 : assetManager.useCount(sourceId);
+  };
+
+  int useCount = countForPath(filePath);
+  for (const QString& sequencePath : sequencePaths) {
+    useCount = std::max(useCount, countForPath(sequencePath));
+  }
+  return useCount;
 }
 
 bool ArtifactAssetBrowser::Impl::isMissingAssetPath(const QString& filePath) const
@@ -2092,6 +2125,28 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     }
    }
 
+   // Source use count is project state, so decorate the browser metadata only
+   // after the filesystem scan has completed. This keeps the parallel scan
+   // focused on filesystem/project filtering and avoids adding row widgets.
+   for (auto& item : items) {
+    if (item.isFolder) {
+     continue;
+    }
+    const QString path = item.path.toQString();
+    if (path.isEmpty()) {
+     continue;
+    }
+    const int sourceUseCount = sourceUseCountForPath(path, item.sequencePaths);
+    if (sourceUseCount <= 0 && !isImportedAssetPath(path)) {
+     continue;
+    }
+    QString typeText = item.type.toQString();
+    if (!typeText.contains(QStringLiteral("Source Uses:"))) {
+     typeText += QStringLiteral(" • Source Uses: %1").arg(sourceUseCount);
+     item.type = UniString::fromQString(typeText);
+    }
+   }
+
    // Sort items
    std::sort(items.begin(), items.end(), [this](const AssetMenuItem& a, const AssetMenuItem& b) {
     // Folders always first
@@ -2949,6 +3004,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
    info += QString("Favorite: %1<br>").arg(impl_->isFavoriteAssetPath(filePath) ? QStringLiteral("Yes") : QStringLiteral("No"));
    info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
+   info += QString("Source Uses: %1<br>").arg(impl_->sourceUseCountForPath(filePath));
    info += QString("Usage: %1<br>").arg(impl_->isUnusedAssetPath(filePath) ? QStringLiteral("Unused") : QStringLiteral("In Use"));
    info += QString("Status: %1<br>").arg(impl_->isMissingAssetPath(filePath) ? QStringLiteral("Missing") : QStringLiteral("OK"));
    info += QString("Thumbnail: %1<br>").arg(impl_->thumbnailDebugStatus(filePath).toHtmlEscaped());
