@@ -884,6 +884,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     if (removedLayer) {
      removedLayer->setComposition(static_cast<ArtifactAbstractComposition *>(nullptr));
      invalidateThumbnailCache();
+     recalculateFrameRange();
      ArtifactCore::globalEventBus().publish(LayerChangedEvent{
          owner_->id().toString(), id.toString(),
          LayerChangedEvent::ChangeType::Removed});
@@ -2792,7 +2793,11 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
             QJsonObject lobj = arr.at(i).toObject();
             if (lobj.contains("parentId")) {
                 LayerID pid(lobj["parentId"].toString());
-                layer->setParentById(pid);
+                if (pid != layer->id() && comp->containsLayerById(pid)) {
+                    layer->setParentById(pid);
+                } else {
+                    layer->clearParent();
+                }
             }
         }
     }
