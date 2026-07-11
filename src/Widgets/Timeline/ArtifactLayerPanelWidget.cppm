@@ -16,6 +16,7 @@ import Artifact.Layer.Image;
 import Artifact.Layer.Paint;
 import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
+import Artifact.Layer.Group;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.Video;
 
@@ -95,19 +96,27 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     return descriptor;
   }
   if (layer->isGroupLayer()) {
-    const bool isMultiplexer = layer->hasExclusiveChildSelection();
-    descriptor.typeText = isMultiplexer
-        ? QStringLiteral("Multiplexer Group") : QStringLiteral("Group Layer");
-    descriptor.timelineBadgeText = isMultiplexer
-        ? QStringLiteral("Mux") : QStringLiteral("Group");
-    descriptor.propertySummaryTitle = isMultiplexer
-        ? QStringLiteral("Summary · Multiplexer Group")
-        : QStringLiteral("Summary · Group Layer");
-    descriptor.inspectorTypeLabel = isMultiplexer
-        ? QStringLiteral("Type: Multiplexer Group")
-        : QStringLiteral("Type: Group Layer");
-    descriptor.capabilitySummaryText = isMultiplexer
-        ? QStringLiteral("Exclusive Child") : QStringLiteral("Container");
+    const auto* group = dynamic_cast<const ArtifactGroupLayer*>(layer.get());
+    const GroupOutputMode outputMode = group ? group->outputMode() : GroupOutputMode::All;
+    if (outputMode == GroupOutputMode::Single) {
+      descriptor.typeText = QStringLiteral("Multiplexer Group");
+      descriptor.timelineBadgeText = QStringLiteral("Mux");
+      descriptor.propertySummaryTitle = QStringLiteral("Summary · Multiplexer Group");
+      descriptor.inspectorTypeLabel = QStringLiteral("Type: Multiplexer Group");
+      descriptor.capabilitySummaryText = QStringLiteral("Exclusive Child");
+    } else if (outputMode == GroupOutputMode::Share) {
+      descriptor.typeText = QStringLiteral("Multiplexer Group (Share)");
+      descriptor.timelineBadgeText = QStringLiteral("Share");
+      descriptor.propertySummaryTitle = QStringLiteral("Summary · Multiplexer Group · Share");
+      descriptor.inspectorTypeLabel = QStringLiteral("Type: Multiplexer Group · Share");
+      descriptor.capabilitySummaryText = QStringLiteral("Children share 100%");
+    } else {
+      descriptor.typeText = QStringLiteral("Group Layer");
+      descriptor.timelineBadgeText = QStringLiteral("Group");
+      descriptor.propertySummaryTitle = QStringLiteral("Summary · Group Layer");
+      descriptor.inspectorTypeLabel = QStringLiteral("Type: Group Layer");
+      descriptor.capabilitySummaryText = QStringLiteral("Container");
+    }
     descriptor.badgeTone = LayerPresentationBadgeTone::Container;
     descriptor = applyMatteSummary(layer, std::move(descriptor));
     return descriptor;
