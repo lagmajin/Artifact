@@ -201,10 +201,6 @@ namespace Artifact
    }
 
    qDebug() << "[Importer] Version check passed - file version:" << fileVersion << "min version:" << minVersion;
-  // Source leases and decoded payloads belong to the project being imported.
-  // Clear the previous project state before restoring the optional registry
-  // snapshot; older projects simply rebuild identities from their layer paths.
-  ArtifactCore::AssetManager::instance().resetSourceRegistry();
   auto projectPtr = std::make_shared<ArtifactProject>();
 
   // プロジェクト基本情報の読み込み
@@ -250,6 +246,9 @@ namespace Artifact
 
   // Restore source identities and versions before layer construction. Older
   // projects legitimately omit this section and rebuild it from source paths.
+  // Reset only after the project metadata has passed the importer checks, so an
+  // early parse failure does not discard the currently loaded project's leases.
+  ArtifactCore::AssetManager::instance().resetSourceRegistry();
   if (root.contains("assets") && root["assets"].isObject()) {
    const QJsonObject assets = root["assets"].toObject();
    if (assets.contains("sourceRegistry") && assets["sourceRegistry"].isObject()) {
