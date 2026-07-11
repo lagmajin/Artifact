@@ -102,7 +102,15 @@ namespace Artifact
 
   const auto& item = impl_->items_.at(index.row());
   switch (role) {
-  case Qt::DisplayRole:
+  case Qt::DisplayRole: {
+   const QString name = item.name.toQString();
+   const QString type = item.type.toQString();
+   const int sourceUsesMarker = type.indexOf(QStringLiteral("Source Uses:"));
+   if (sourceUsesMarker >= 0) {
+    return name + QStringLiteral("  •  ") + type.mid(sourceUsesMarker);
+   }
+   return name;
+  }
   case static_cast<int>(AssetMenuRole::Name):
    return item.name.toQString();
   case Qt::DecorationRole:
