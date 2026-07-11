@@ -7,6 +7,8 @@ export module Artifact.TestRunner;
 import Artifact.Test.AIToolBridge;
 import Artifact.Test.AdjustmentLayer;
 import Artifact.Test.LayerGroup;
+import Artifact.Test.PreCompose;
+import Artifact.Test.PropertyKeyframe;
 import Artifact.Test.TimingEventView;
 
 export namespace Artifact {
@@ -20,6 +22,8 @@ int runAllTests()
     failures += runAIToolBridgeTests();
     failures += runAdjustmentLayerTests();
     failures += runLayerGroupTests();
+    failures += runPreComposeTests();
+    failures += runPropertyKeyframeTests();
 
     ArtifactTestTimingEventView timingEventViewTests;
     timingEventViewTests.runAllTests();

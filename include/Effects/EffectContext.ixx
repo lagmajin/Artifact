@@ -42,6 +42,7 @@ export namespace Artifact
   double frameRate = 30.0;
   double timeSeconds = 0.0;
   float resolutionScale = 1.0f;
+  float effectStrength = 1.0f;
   IEffectFrameSampler* sampler = nullptr;
  };
 };

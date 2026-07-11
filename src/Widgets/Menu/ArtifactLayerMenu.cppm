@@ -29,6 +29,7 @@ module;
 #include <QUuid>
 #include <QVariant>
 #include <cmath>
+#include <numbers>
 #include <wobjectimpl.h>
 
 module Artifact.Menu.Layer;
@@ -38,7 +39,6 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Service.Project;
 import Artifact.Service.ActiveContext;
-import Artifact.Layers.Selection.Manager;
 import Utils.Path;
 import Utils.Id;
 import Utils.String.UniString;
@@ -64,11 +64,13 @@ import Color.Float;
 import Artifact.Project.Manager;
 import Artifact.Project.PresetManager;
 import Artifact.Mask.LayerMask;
+import Artifact.Mask.Path;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Widgets.ArtifactPropertyWidget;
 import Artifact.Composition.Abstract;
 import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Widgets.CreatePlaneLayerDialog;
+import Artifact.Widgets.QuickLayerCreationDialog;
 import Artifact.Widgets.CreateCameraLayerDialog;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Tool.CameraTracker;
@@ -2158,17 +2160,55 @@ void ArtifactLayerMenu::Impl::handleCreateSolid()
     }
     auto* const menu = menu_;
     QWidget* parentWindow = mainWindow_ ? mainWindow_ : (menu_ ? menu_->window() : nullptr);
-    CreateSolidLayerSettingDialog dialog(layerCreationPlacementMode(), parentWindow);
+    QuickLayerCreationDialog dialog(parentWindow);
     dialog.setModal(true);
     if (dialog.exec() != QDialog::Accepted || !service) {
         return;
     }
-    const ArtifactSolidLayerInitParams params = dialog.submittedParams();
-    const bool placeAtCurrentFrame =
-        placeAtCurrentFrameRequested(dialog.submittedPlacementMode());
-    QTimer::singleShot(0, menu, [service, params, menu, placeAtCurrentFrame]() {
+    const QuickLayerCreationOptions options = dialog.submittedOptions();
+    const ArtifactSolidLayerInitParams params = options.solidParams;
+    const bool placeAtCurrentFrame = placeAtCurrentFrameRequested(layerCreationPlacementMode());
+    QTimer::singleShot(0, menu, [service, params, options, menu, placeAtCurrentFrame]() {
         Q_UNUSED(menu);
         service->addLayerToCurrentComposition(params, true, placeAtCurrentFrame);
+        auto layer = ArtifactLayerSelectionManager::instance()->currentLayer();
+        if (!layer) {
+            return;
+        }
+        if (options.envelope.enabled) {
+            layer->setEffectEnvelope(options.envelope);
+        }
+        if (options.maskShape == QuickLayerMaskShape::None) {
+            return;
+        }
+        const double width = static_cast<double>(params.width());
+        const double height = static_cast<double>(params.height());
+        const double cx = width * 0.5;
+        const double cy = height * 0.5;
+        const double rx = width * 0.5;
+        const double ry = height * 0.5;
+        MaskPath path;
+        if (options.maskShape == QuickLayerMaskShape::Rectangle) {
+            for (const QPointF point : {QPointF(0.0, 0.0), QPointF(width, 0.0),
+                                        QPointF(width, height), QPointF(0.0, height)}) {
+                path.addVertex(MaskVertex{point, QPointF(), QPointF()});
+            }
+        } else {
+            constexpr int samples = 32;
+            for (int i = 0; i < samples; ++i) {
+                const double angle = (2.0 * std::numbers::pi * i) / samples;
+                path.addVertex(MaskVertex{QPointF(cx + rx * std::cos(angle),
+                                                  cy + ry * std::sin(angle)),
+                                          QPointF(), QPointF()});
+            }
+        }
+        path.setClosed(true);
+        path.setFeather(options.maskFeather);
+        path.setName(UniString(QStringLiteral("Quick Mask")));
+        LayerMask mask;
+        mask.addMaskPath(path);
+        layer->addMask(mask);
+        layer->changed();
     });
 }
 

@@ -113,6 +113,10 @@ namespace Artifact
    ctx.timeSeconds = ctx.frameRate > 0.0
                          ? static_cast<double>(ctx.compositionFrame) / ctx.frameRate
                          : 0.0;
+   if (layer) {
+    ctx.effectStrength = layer->effectEnvelope()
+        .sample(ctx.layerFrame).effectStrength;
+   }
    return ctx;
   }
 

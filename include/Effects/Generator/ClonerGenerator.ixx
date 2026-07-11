@@ -222,7 +222,10 @@ public:
         } else if (mode_ == Mode::Radial) {
             const int total = std::max(1, radialCount_);
             clones.reserve(static_cast<size_t>(total));
-            const float angleStep = (endAngle_ - startAngle_) / static_cast<float>(total);
+            const float angleStep = total > 1
+                                        ? (endAngle_ - startAngle_) /
+                                              static_cast<float>(total - 1)
+                                        : 0.0f;
 
             for (int i = 0; i < total; ++i) {
                 CloneData clone;
@@ -338,11 +341,13 @@ public:
             };
             const int total = std::max(1, splineCount_);
             clones.reserve(static_cast<size_t>(total));
+            const float sampleDenominator =
+                static_cast<float>(std::max(1, total - 1));
             if (splinePoints_.size() >= 2) {
                 for (int i = 0; i < total; ++i) {
                     CloneData clone;
                     clone.index = i;
-                    float t = static_cast<float>(i) / static_cast<float>(total - 1);
+                    float t = static_cast<float>(i) / sampleDenominator;
                     QVector3D pos = catmullPos(splinePoints_, t);
                     clone.transform.setToIdentity();
                     clone.transform.translate(pos);
@@ -358,7 +363,7 @@ public:
                 for (int i = 0; i < total; ++i) {
                     CloneData clone;
                     clone.index = i;
-                    float x = (static_cast<float>(i) / static_cast<float>(total - 1) - 0.5f) * 400.0f;
+                    float x = (static_cast<float>(i) / sampleDenominator - 0.5f) * 400.0f;
                     clone.transform.setToIdentity();
                     clone.transform.translate(x, 0, 0);
                     clone.weight = std::clamp(1.0f - opacityDecay_ * static_cast<float>(i), 0.0f, 1.0f);

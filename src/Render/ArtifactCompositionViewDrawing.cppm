@@ -118,6 +118,10 @@ EffectContext makeLayerEffectContext(ArtifactAbstractLayer* layer,
   ctx.timeSeconds = ctx.frameRate > 0.0
                         ? static_cast<double>(ctx.compositionFrame) / ctx.frameRate
                         : 0.0;
+  if (layer) {
+    ctx.effectStrength = layer->effectEnvelope()
+        .sample(ctx.layerFrame).effectStrength;
+  }
   ctx.sampler = nullptr;
 
   return ctx;

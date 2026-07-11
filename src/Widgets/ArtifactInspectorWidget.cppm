@@ -3710,13 +3710,10 @@ void ArtifactInspectorWidget::Impl::setEffectRackEnabled(bool enabled) {
 }
 
 void ArtifactInspectorWidget::Impl::updateEffectRackVisibility() {
-  const bool restrictToLayerRaster =
-      !currentCompositionId_.isNil() && !currentLayerId_.isNil();
   const int visibleRackIndex = rasterizerRackIndex();
   for (int i = 0; i < kEffectRackCount; ++i) {
     if (racks[i].groupBox) {
-      racks[i].groupBox->setVisible(!restrictToLayerRaster ||
-                                    i == visibleRackIndex);
+      racks[i].groupBox->setVisible(i == visibleRackIndex);
     }
   }
 }
@@ -3835,13 +3832,21 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   auto effects = currentEffectStack();
   setEffectRackEnabled(true);
   int effectCount = 0;
+  int rasterEffectCount = 0;
   int maskedEffectCount = 0;
+  int rasterMaskedEffectCount = 0;
   std::array<std::vector<ArtifactAbstractEffectPtr>, kEffectRackCount>
       rackEffects;
 
   for (const auto &effect : effects) {
     if (effect) {
       ++effectCount;
+      if (effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
+        ++rasterEffectCount;
+        if (effect->hasMask()) {
+          ++rasterMaskedEffectCount;
+        }
+      }
       if (effect->hasMask()) {
         ++maskedEffectCount;
       }
@@ -3939,20 +3944,17 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   if (effectsStackSummaryLabel) {
     effectsStackSummaryLabel->setText(
         editingCompositionEffects()
-            ? (effectCount > 0
-                   ? QStringLiteral("%1 effect(s) across %2 pipeline stages, %3 with masks. Add into the rack that matches where the effect should run.")
-                         .arg(effectCount)
-                         .arg(kEffectRackCount)
-                         .arg(maskedEffectCount)
-                   : QStringLiteral("The stack is empty. Start by adding an effect into the stage where it belongs."))
+            ? (rasterEffectCount > 0
+                   ? QStringLiteral("%1 raster effect(s) on this composition, %2 with masks.")
+                         .arg(rasterEffectCount)
+                         .arg(rasterMaskedEffectCount)
+                   : QStringLiteral("This composition has no raster effects yet."))
             : (effectCount > 0
                    ? QStringLiteral("%1 raster effect(s) on this layer, %2 with masks.")
                          .arg(effectCount)
                          .arg(maskedEffectCount)
                    : QStringLiteral("This layer has no raster effects yet.")));
   }
-  refreshRackButtons();
-
   if (!focusedEffectId_.trimmed().isEmpty()) {
     suppressRackSelectionSync_ = true;
     for (int rackIndex = 0; rackIndex < kEffectRackCount; ++rackIndex) {
@@ -3975,6 +3977,10 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
     suppressRackSelectionSync_ = false;
   }
 
+  // The focused item is restored after the lists are rebuilt. Refresh after
+  // that restoration so Up/Down is immediately available for a newly added
+  // effect instead of remaining disabled until the user reselects it.
+  refreshRackButtons();
   syncEffectPropertyWidget();
 }
 
@@ -4610,6 +4616,16 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   secondaryComponentLayout->addWidget(impl_->applyLipSyncButton);
   componentsLayout->addLayout(secondaryComponentLayout);
 
+  auto *componentSettingsLabel = new QLabel(QStringLiteral("Settings"));
+  applyInspectorLabelPalette(componentSettingsLabel, true);
+  componentsLayout->addWidget(componentSettingsLabel);
+  impl_->componentPropertyWidget = new ArtifactPropertyWidget();
+  impl_->componentPropertyWidget->setVisible(false);
+  impl_->componentPropertyWidget->setMinimumHeight(120);
+  impl_->componentPropertyWidget->setFilterText(
+      QStringLiteral("physics|script|layout|cloner"));
+  componentsLayout->addWidget(impl_->componentPropertyWidget);
+
   auto generatorHeaderLayout = new QHBoxLayout();
   generatorHeaderLayout->addWidget(new QLabel(QStringLiteral("Generators")), 1);
   generatorHeaderLayout->addWidget(impl_->generatorComponentButton);
@@ -4652,12 +4668,6 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->cloneModifierListWidget->setSelectionMode(
       QAbstractItemView::SingleSelection);
   componentsLayout->addWidget(impl_->cloneModifierListWidget);
-  impl_->componentPropertyWidget = new ArtifactPropertyWidget();
-  impl_->componentPropertyWidget->setVisible(false);
-  impl_->componentPropertyWidget->setMinimumHeight(120);
-  impl_->componentPropertyWidget->setFilterText(
-      QStringLiteral("physics|script|layout|cloner"));
-  componentsLayout->addWidget(impl_->componentPropertyWidget);
   componentsLayout->setContentsMargins(
       kInspectorNoteMargin, kInspectorNoteMargin, kInspectorNoteMargin,
       kInspectorNoteMargin);

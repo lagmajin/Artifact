@@ -69,6 +69,68 @@ using namespace ArtifactCore;
 
 W_OBJECT_IMPL(ArtifactAbstractLayer)
 
+QJsonObject layerEffectEnvelopeToJson(const LayerEffectEnvelope &envelope) {
+  QJsonObject obj;
+  obj["enabled"] = envelope.enabled;
+  obj["entry"] = envelope.entry;
+  obj["exit"] = envelope.exit;
+  obj["timing"] = static_cast<int>(envelope.timing);
+  obj["curve"] = static_cast<int>(envelope.curve);
+  obj["durationFrames"] = static_cast<qint64>(envelope.durationFrames);
+  obj["effectStart"] = static_cast<double>(envelope.effectStart);
+  obj["effectEnd"] = static_cast<double>(envelope.effectEnd);
+  return obj;
+}
+
+LayerEffectEnvelope layerEffectEnvelopeFromJson(const QJsonObject &obj) {
+  LayerEffectEnvelope envelope;
+  envelope.enabled = obj.value(QStringLiteral("enabled")).toBool(false);
+  envelope.entry = obj.value(QStringLiteral("entry")).toBool(false);
+  envelope.exit = obj.value(QStringLiteral("exit")).toBool(false);
+  const int timing = std::clamp(obj.value(QStringLiteral("timing")).toInt(0), 0, 2);
+  envelope.timing = static_cast<LayerEnvelopeTiming>(timing);
+  const int curve = std::clamp(obj.value(QStringLiteral("curve")).toInt(0), 0, 4);
+  envelope.curve = static_cast<LayerEnvelopeCurve>(curve);
+  envelope.durationFrames = std::max<std::int64_t>(
+      1, obj.value(QStringLiteral("durationFrames")).toVariant().toLongLong());
+  envelope.effectStart = static_cast<float>(
+      std::clamp(obj.value(QStringLiteral("effectStart")).toDouble(0.0), 0.0, 1.0));
+  envelope.effectEnd = static_cast<float>(
+      std::clamp(obj.value(QStringLiteral("effectEnd")).toDouble(1.0), 0.0, 1.0));
+  return envelope;
+}
+
+float applyLayerEffectEnvelopeOpacity(const LayerEffectEnvelope &envelope,
+                                      const float opacity,
+                                      const std::int64_t currentFrame,
+                                      const FramePosition &inPoint,
+                                      const FramePosition &outPoint,
+                                      const FramePosition &startTime) {
+  if (!envelope.enabled || envelope.durationFrames <= 0) {
+    return std::clamp(opacity, 0.0f, 1.0f);
+  }
+
+  const std::int64_t layerDuration =
+      std::max<std::int64_t>(0, outPoint.framePosition() - inPoint.framePosition());
+  const std::int64_t visibleFrame = currentFrame - startTime.framePosition();
+  const std::int64_t clampedVisibleFrame =
+      std::clamp<std::int64_t>(visibleFrame, 0, layerDuration);
+  const std::int64_t duration =
+      std::max<std::int64_t>(1, envelope.durationFrames);
+
+  float multiplier = 1.0f;
+  if (envelope.entry && clampedVisibleFrame < duration) {
+    multiplier *= envelope.sample(clampedVisibleFrame, false).opacity;
+  }
+  if (envelope.exit) {
+    const std::int64_t framesToEnd = layerDuration - clampedVisibleFrame;
+    if (framesToEnd <= duration) {
+      multiplier *= envelope.sample(framesToEnd, false).opacity;
+    }
+  }
+  return std::clamp(opacity * multiplier, 0.0f, 1.0f);
+}
+
 bool isTimelineHiddenLayerPropertyGroup(const QString &groupName) {
   const QString normalized = groupName.trimmed();
   return normalized.compare(QStringLiteral("Parent"), Qt::CaseInsensitive) == 0 ||
@@ -626,6 +688,7 @@ public:
   LayerCachePolicy layerCachePolicy_ = LayerCachePolicy::Default;
   int labelColorIndex_ = 0;
   float opacity_ = 1.0f; // Opacity (0.0 - 1.0)
+  LayerEffectEnvelope effectEnvelope_;
 
     // Physics component
     PhysicsLayerComponent physicsComponent_;
@@ -664,6 +727,8 @@ public:
     float collisionRadius_ = 0.0f;
     float collisionOffsetX_ = 0.0f;
     float collisionOffsetY_ = 0.0f;
+    int rigidBodyColliderShape_ = -1;
+    float rigidBodyColliderRestitution_ = -1.0f;
     bool crowdComponentEnabled_ = false;
     float crowdCohesion_ = 0.5f;
     float crowdSeparation_ = 0.5f;
@@ -2261,6 +2326,8 @@ void ArtifactAbstractLayer::enableRigidBodyPhysics() {
 
 void ArtifactAbstractLayer::disableRigidBodyPhysics() {
   ArtifactCore::PhysicsSystem::instance().unregisterRigidWorld(id());
+  impl_->rigidBodyColliderShape_ = -1;
+  impl_->rigidBodyColliderRestitution_ = -1.0f;
 }
 
 void ArtifactAbstractLayer::syncSoftBodyPhysicsColliderToBounds() {
@@ -2270,7 +2337,7 @@ void ArtifactAbstractLayer::syncSoftBodyPhysicsColliderToBounds() {
     solver = physics.createSoftBody(id());
   }
 
-  const QRectF bounds = localBounds();
+  const QRectF bounds = layerCollisionLocalBounds(this);
   if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
     physics.clearSoftBodyColliders(id());
     return;
@@ -2283,7 +2350,8 @@ void ArtifactAbstractLayer::syncSoftBodyPhysicsColliderToBounds() {
   collider.y = static_cast<float>(bounds.center().y());
   collider.width = static_cast<float>(bounds.width());
   collider.height = static_cast<float>(bounds.height());
-  collider.restitution = 0.25f;
+  collider.restitution = std::clamp(
+      impl_->physicsComponent_.settings().restitution, 0.0f, 1.0f);
   collider.friction = 0.15f;
   physics.registerSoftBodyCollider(id(), collider);
   Q_UNUSED(solver);
@@ -2296,7 +2364,7 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
     world = physics.createRigidWorld(id());
   }
 
-  const QRectF bounds = localBounds();
+  const QRectF bounds = layerCollisionLocalBounds(this);
   if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
     return;
   }
@@ -2305,10 +2373,22 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
   const float cy = static_cast<float>(bounds.center().y());
   const float w = static_cast<float>(bounds.width());
   const float h = static_cast<float>(bounds.height());
+  const auto shapeProperty = getProperty(
+      QStringLiteral("component.collision.shape"));
+  const int shape = shapeProperty ? std::clamp(shapeProperty->getValue().toInt(), 0, 2) : 0;
+  const float restitution = std::clamp(
+      impl_->physicsComponent_.settings().restitution, 0.0f, 1.0f);
   auto bodies = world->getBodies();
   std::shared_ptr<ArtifactCore::RigidBody2D> body;
   if (!bodies.empty()) {
     body = bodies.front();
+    if (body && ((impl_->rigidBodyColliderShape_ >= 0 &&
+                  impl_->rigidBodyColliderShape_ != shape) ||
+                 (impl_->rigidBodyColliderRestitution_ >= 0.0f &&
+                  !qFuzzyCompare(impl_->rigidBodyColliderRestitution_, restitution)))) {
+      world->removeBody(body);
+      body.reset();
+    }
     if (body) {
       body->setTransform({cx, cy}, body->angle());
       body->setLinearVelocity({0.0f, 0.0f});
@@ -2316,9 +2396,19 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
     }
   }
   if (!body) {
-    body = world->addDynamicBox(cx, cy, w, h, 1.0f, 0.3f, 0.25f);
+    if (shape == 2) {
+      body = world->addDynamicCircle(
+          cx, cy, std::max(w, h) * 0.5f, 1.0f, 0.3f,
+          restitution);
+    } else {
+      body = world->addDynamicBox(
+          cx, cy, w, h, 1.0f, 0.3f,
+          restitution);
+    }
   }
   if (body) {
+    impl_->rigidBodyColliderShape_ = shape;
+    impl_->rigidBodyColliderRestitution_ = restitution;
     body->setLinearDamping(0.02f);
     body->setAngularDamping(0.02f);
     body->setFixedRotation(false);
@@ -2840,7 +2930,7 @@ QRectF ArtifactAbstractLayer::visualLocalBounds() const {
       }
     } else {
       const int count = std::max(1, impl_->clonerCloneCount_);
-      for (int i = 0; i < count; ++i) {
+      for (int i = 1; i <= count; ++i) {
         QTransform cloneTransform;
         cloneTransform.translate(impl_->clonerOffsetX_ * static_cast<float>(i),
                                  impl_->clonerOffsetY_ * static_cast<float>(i));
@@ -2999,6 +3089,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["isShy"] = impl_->isShy_;
   obj["labelColorIndex"] = impl_->labelColorIndex_;
   obj["opacity"] = static_cast<double>(impl_->opacity_);
+  obj["effectEnvelope"] = layerEffectEnvelopeToJson(impl_->effectEnvelope_);
 
   // Mattes
   QJsonArray mattesArr;
@@ -3436,6 +3527,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     setLabelColorIndex(obj["labelColorIndex"].toInt(0));
   if (obj.contains("opacity"))
     setOpacity(static_cast<float>(obj["opacity"].toDouble(1.0)));
+  if (obj.contains("effectEnvelope") && obj["effectEnvelope"].isObject())
+    setEffectEnvelope(layerEffectEnvelopeFromJson(obj["effectEnvelope"].toObject()));
   if (obj.contains("blendMode")) {
     const int mode = obj["blendMode"].toInt(
         static_cast<int>(LAYER_BLEND_TYPE::BLEND_NORMAL));
@@ -5936,6 +6029,12 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->physicsComponent_.settings().restitution =
         static_cast<float>(
             std::clamp(value.toDouble(), 0.0, 1.0));
+    if (hasSoftBodyPhysics()) {
+      syncSoftBodyPhysicsColliderToBounds();
+    }
+    if (hasRigidBodyPhysics()) {
+      syncRigidBodyPhysicsToBounds();
+    }
     return true;
   }
   if (propertyPath == QStringLiteral("physics.wiggleFreq")) {
@@ -6589,11 +6688,20 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
+    const auto resyncActiveCollisionPhysics = [this]() {
+      if (hasSoftBodyPhysics()) {
+        syncSoftBodyPhysicsColliderToBounds();
+      }
+      if (hasRigidBodyPhysics()) {
+        syncRigidBodyPhysicsToBounds();
+      }
+    };
     if (propertyPath == QStringLiteral("component.collision.enabled")) {
       impl_->collisionComponentEnabled_ = value.toBool();
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
       impl_->syncBuiltinComponentDescriptors();
+      resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -6603,6 +6711,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
       impl_->syncBuiltinComponentDescriptors();
+      resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -6613,6 +6722,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
       impl_->syncBuiltinComponentDescriptors();
+      resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -6623,6 +6733,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
       impl_->syncBuiltinComponentDescriptors();
+      resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -6633,6 +6744,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
       impl_->syncBuiltinComponentDescriptors();
+      resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -6643,6 +6755,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
       impl_->syncBuiltinComponentDescriptors();
+      resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -6653,6 +6766,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
       impl_->syncBuiltinComponentDescriptors();
+      resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;
@@ -7279,25 +7393,40 @@ MatteStack ArtifactAbstractLayer::buildMatteStack() const {
 }
 
 // Opacity
+const LayerEffectEnvelope& ArtifactAbstractLayer::effectEnvelope() const {
+  return impl_->effectEnvelope_;
+}
+
+void ArtifactAbstractLayer::setEffectEnvelope(const LayerEffectEnvelope& envelope) {
+  impl_->effectEnvelope_ = envelope;
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
+}
+
 float ArtifactAbstractLayer::opacity() const {
+  float baseOpacity = impl_->opacity_;
   const auto* var = getActiveVariant();
   if (var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Opacity) && var->opacityOverride.has_value()) {
-      return var->opacityOverride.value();
+      baseOpacity = var->opacityOverride.value();
+  } else {
+    const auto it =
+        impl_->propertyCache_.constFind(QStringLiteral("layer.opacity"));
+    if (it != impl_->propertyCache_.constEnd() && it.value()) {
+      const auto &property = *it.value();
+      if (property.isAnimatable() && !property.getKeyFrames().empty()) {
+        const RationalTime time = currentTimelineTime(this);
+        const QVariant animatedValue = property.interpolateValue(time);
+        if (animatedValue.isValid()) {
+          baseOpacity = static_cast<float>(animatedValue.toDouble());
+        }
+      }
+    }
   }
-
-  const auto it =
-      impl_->propertyCache_.constFind(QStringLiteral("layer.opacity"));
-  if (it == impl_->propertyCache_.constEnd() || !it.value()) {
-    return impl_->opacity_;
-  }
-  const auto &property = *it.value();
-  if (!property.isAnimatable() || property.getKeyFrames().empty()) {
-    return impl_->opacity_;
-  }
-  const RationalTime time = currentTimelineTime(this);
-  const QVariant animatedValue = property.interpolateValue(time);
-  return animatedValue.isValid() ? static_cast<float>(animatedValue.toDouble())
-                                 : impl_->opacity_;
+  return applyLayerEffectEnvelopeOpacity(impl_->effectEnvelope_, baseOpacity,
+                                         impl_->currentFrame_,
+                                         impl_->inPoint_,
+                                         impl_->outPoint_,
+                                         impl_->startTime_);
 }
 
 void ArtifactAbstractLayer::setOpacity(float value) {

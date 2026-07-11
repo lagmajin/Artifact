@@ -48,6 +48,7 @@ module;
 #include <QResizeEvent>
 #include <QRegion>
 #include <QSet>
+#include <QSettings>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QShortcut>
@@ -1258,8 +1259,19 @@ public:
         if (repeatable) {
           lastRepeatableAction_ = action;
           lastRepeatableActionLabel_ = label;
+          lastRecipeDescriptor_ = QJsonObject{};
         }
         action();
+        QSettings settings;
+        const QString usageKey = QStringLiteral("automation/commandUsage/%1")
+                                     .arg(QString::number(static_cast<qulonglong>(qHash(label)), 16));
+        settings.setValue(usageKey, settings.value(usageKey, 0).toInt() + 1);
+        QStringList recent = settings.value(
+            QStringLiteral("automation/recentCommands")).toStringList();
+        recent.removeAll(label);
+        recent.prepend(label);
+        while (recent.size() > 12) recent.removeLast();
+        settings.setValue(QStringLiteral("automation/recentCommands"), recent);
       });
     };
     if (lastRepeatableAction_) {
@@ -1273,6 +1285,26 @@ public:
             QLineEdit::Normal, lastRepeatableActionLabel_, &accepted).trimmed();
         if (!accepted || name.isEmpty()) return;
         actionRecipes_.insert(name, lastRepeatableAction_);
+        if (!lastRecipeDescriptor_.isEmpty()) {
+          QSettings settings;
+          const QByteArray stored = settings.value(
+              QStringLiteral("automation/parameterRecipes")).toByteArray();
+          QJsonArray recipes = QJsonDocument::fromJson(stored).array();
+          QJsonObject descriptor = lastRecipeDescriptor_;
+          descriptor.insert(QStringLiteral("name"), name);
+          bool replaced = false;
+          for (int i = 0; i < recipes.size(); ++i) {
+            if (recipes.at(i).toObject().value(QStringLiteral("name")).toString()
+                    .compare(name, Qt::CaseInsensitive) == 0) {
+              recipes[i] = descriptor;
+              replaced = true;
+              break;
+            }
+          }
+          if (!replaced) recipes.append(descriptor);
+          settings.setValue(QStringLiteral("automation/parameterRecipes"),
+                            QJsonDocument(recipes).toJson(QJsonDocument::Compact));
+        }
       });
     }
     for (auto it = actionRecipes_.cbegin(); it != actionRecipes_.cend(); ++it) {
@@ -1280,25 +1312,54 @@ public:
       const auto recipeAction = it.value();
       add(QStringLiteral("Recipe: %1").arg(recipeName), recipeAction, true);
     }
-    add(QStringLiteral("Reset View"), [this]() {
+    {
+      QSettings settings;
+      const QJsonArray recipes = QJsonDocument::fromJson(
+          settings.value(QStringLiteral("automation/parameterRecipes")).toByteArray()).array();
+      for (const auto &value : recipes) {
+        const QJsonObject descriptor = value.toObject();
+        const QString name = descriptor.value(QStringLiteral("name")).toString();
+        if (name.isEmpty() || actionRecipes_.contains(name)) continue;
+        if (descriptor.value(QStringLiteral("actionId")).toString() ==
+            QStringLiteral("batchRename")) {
+          const QString baseName = descriptor.value(QStringLiteral("baseName")).toString();
+          add(QStringLiteral("Recipe: %1 [Persistent]").arg(name),
+              [baseName]() {
+                auto *service = ArtifactProjectService::instance();
+                auto *selection = ArtifactLayerSelectionManager::instance();
+                const auto comp = service ? service->currentComposition().lock()
+                                          : ArtifactCompositionPtr{};
+                if (!service || !selection || !comp || baseName.isEmpty()) return;
+                const auto selected = selection->selectedLayers();
+                int index = 1;
+                for (const auto &layer : comp->allLayer()) {
+                  if (!layer || !selected.contains(layer) || layer->isLocked()) continue;
+                  service->renameLayerInCurrentComposition(
+                      layer->id(), QStringLiteral("%1 %2").arg(baseName).arg(index++));
+                }
+              }, true);
+        }
+      }
+    }
+    add(QStringLiteral("View: Reset View"), [this]() {
       if (controller_) controller_->resetView();
     });
-    add(QStringLiteral("Zoom Fit"), [this]() {
+    add(QStringLiteral("View: Zoom Fit"), [this]() {
       if (controller_) controller_->zoomFit();
     });
-    add(QStringLiteral("Zoom 100%"), [this]() {
+    add(QStringLiteral("View: Zoom 100%"), [this]() {
       if (controller_) controller_->zoom100();
     });
-    add(QStringLiteral("Focus Selected Layer"), [this]() {
+    add(QStringLiteral("Selection: Focus Selected Layer"), [this]() {
       if (controller_) controller_->focusSelectedLayer();
     });
-    add(QStringLiteral("Move Tool"), [this]() {
+    add(QStringLiteral("Tool: Move"), [this]() {
       if (controller_) controller_->setGizmoMode(TransformGizmo::Mode::Move);
     });
-    add(QStringLiteral("Rotate Tool"), [this]() {
+    add(QStringLiteral("Tool: Rotate"), [this]() {
       if (controller_) controller_->setGizmoMode(TransformGizmo::Mode::Rotate);
     });
-    add(QStringLiteral("Scale Tool"), [this]() {
+    add(QStringLiteral("Tool: Scale"), [this]() {
       if (controller_) controller_->setGizmoMode(TransformGizmo::Mode::Scale);
     });
     if (comp && selection && service) {
@@ -1590,6 +1651,10 @@ public:
                 QStringLiteral("Base name"), QLineEdit::Normal,
                 QStringLiteral("Layer"), &accepted).trimmed();
             if (!accepted || baseName.isEmpty()) return;
+            lastRecipeDescriptor_ = QJsonObject{
+                {QStringLiteral("schema"), QStringLiteral("artifact.parameter-recipe.v1")},
+                {QStringLiteral("actionId"), QStringLiteral("batchRename")},
+                {QStringLiteral("baseName"), baseName}};
             int index = 1;
             for (const auto &layer : orderedSelectedLayers) {
               if (!layer || service->isLayerLockedInCurrentComposition(layer->id())) {
@@ -1855,6 +1920,92 @@ public:
           }, true);
     }
     if (selectedCount > 0) {
+      add(QStringLiteral("Safety: Inspect and Delete Selected Layers..."),
+          [this, service, comp, selection, orderedSelectedLayers]() {
+            if (!service || !comp || orderedSelectedLayers.isEmpty()) return;
+            QSet<LayerID> selectedIds;
+            int selectedEffectCount = 0;
+            for (const auto &layer : orderedSelectedLayers) {
+              if (!layer) continue;
+              selectedIds.insert(layer->id());
+              selectedEffectCount += layer->effectCount();
+            }
+            QStringList dependencies;
+            for (const auto &candidate : comp->allLayer()) {
+              if (!candidate || selectedIds.contains(candidate->id())) continue;
+              if (selectedIds.contains(candidate->parentLayerId())) {
+                dependencies.push_back(QStringLiteral("Parent: %1 depends on a selected layer")
+                                           .arg(candidate->layerName()));
+              }
+              for (const auto &matte : candidate->matteReferences()) {
+                if (selectedIds.contains(LayerID(matte.sourceLayerId.toString()))) {
+                  dependencies.push_back(QStringLiteral("Matte: %1 uses a selected layer")
+                                             .arg(candidate->layerName()));
+                  break;
+                }
+              }
+              if (const auto parametric =
+                      std::dynamic_pointer_cast<ArtifactParametricCompositionLayer>(candidate)) {
+                for (const auto &binding : parametric->parametricInstance().inputBindings()) {
+                  if (selectedIds.contains(binding.sourceLayerId)) {
+                    dependencies.push_back(
+                        QStringLiteral("Published/Input Control: %1 uses a selected source layer")
+                            .arg(candidate->layerName()));
+                    break;
+                  }
+                }
+              }
+              for (const auto &group : candidate->getLayerPropertyGroups()) {
+                for (const auto &property : group.allProperties()) {
+                  if (!property || property->getExpression().trimmed().isEmpty()) continue;
+                  const QString expression = property->getExpression();
+                  bool referencesSelection = false;
+                  for (const auto &selectedLayer : orderedSelectedLayers) {
+                    if (selectedLayer &&
+                        (expression.contains(selectedLayer->id().toString()) ||
+                         expression.contains(selectedLayer->layerName()))) {
+                      referencesSelection = true;
+                      break;
+                    }
+                  }
+                  if (referencesSelection) {
+                    dependencies.push_back(
+                        QStringLiteral("Expression: %1 / %2 references the selection")
+                            .arg(candidate->layerName(), property->getName()));
+                  }
+                }
+              }
+            }
+            QString dependencyText = dependencies.mid(0, 16).join(QStringLiteral("\n"));
+            if (dependencies.size() > 16) {
+              dependencyText += QStringLiteral("\n... and %1 more")
+                                    .arg(dependencies.size() - 16);
+            }
+            if (dependencyText.isEmpty()) {
+              dependencyText = QStringLiteral("No external parent, matte, or expression references found.");
+            }
+            const QString warning = QStringLiteral(
+                "Selected layers: %1\nEffects removed with selection: %2\n\n%3\n\n"
+                "Delete the selected layers? The operation will be added to Undo history.")
+                    .arg(selectedIds.size()).arg(selectedEffectCount).arg(dependencyText);
+            if (QMessageBox::warning(
+                    this, QStringLiteral("Safe Delete Review"), warning,
+                    QMessageBox::Yes | QMessageBox::Cancel,
+                    QMessageBox::Cancel)
+                != QMessageBox::Yes) return;
+            auto macro = std::make_unique<MacroUndoCommand>(
+                QStringLiteral("Safe Delete Layers"));
+            int removed = 0;
+            for (const auto &layer : orderedSelectedLayers) {
+              if (!layer) continue;
+              macro->addChild(std::make_unique<RemoveLayerCommand>(comp, layer));
+              ++removed;
+            }
+            if (removed > 0) UndoManager::instance()->push(std::move(macro));
+            selection->clearSelection();
+            QMessageBox::information(this, QStringLiteral("Safe Delete"),
+                                     QStringLiteral("Removed %1 layer(s).").arg(removed));
+          });
       add(QStringLiteral("Keyframe Cleanup: Remove Redundant Keys"),
           [this, orderedSelectedLayers]() {
             auto macro = std::make_unique<MacroUndoCommand>(
@@ -2274,8 +2425,76 @@ public:
         comp->setActiveResponsiveLayoutVariantId(variants.at(index).variantId);
       }, true);
     }
-    viewportOverlayActions_ = actions;
-    controller_->showCommandPaletteOverlay(QString(), items);
+    const QStringList pinnableCommands = items;
+    add(QStringLiteral("Palette: Pin or Unpin Command..."),
+        [this, pinnableCommands]() {
+          if (pinnableCommands.isEmpty()) return;
+          QSettings settings;
+          QStringList favorites = settings.value(
+              QStringLiteral("automation/favoriteCommands")).toStringList();
+          QStringList choices;
+          choices.reserve(pinnableCommands.size());
+          for (const QString &command : pinnableCommands) {
+            choices.push_back(QStringLiteral("%1 %2")
+                                  .arg(favorites.contains(command)
+                                           ? QStringLiteral("[Pinned]")
+                                           : QStringLiteral("[ ]"),
+                                       command));
+          }
+          bool accepted = false;
+          const QString selected = QInputDialog::getItem(
+              this, QStringLiteral("Command Palette Favorites"),
+              QStringLiteral("Toggle command"), choices, 0, false, &accepted);
+          const int index = choices.indexOf(selected);
+          if (!accepted || index < 0) return;
+          const QString command = pinnableCommands.at(index);
+          if (favorites.contains(command)) favorites.removeAll(command);
+          else favorites.prepend(command);
+          settings.setValue(QStringLiteral("automation/favoriteCommands"), favorites);
+        });
+    add(QStringLiteral("Palette: Reset Usage Ranking"), [this]() {
+      if (QMessageBox::question(
+              this, QStringLiteral("Reset Command Ranking"),
+              QStringLiteral("Clear command usage and recent-command history?"))
+          != QMessageBox::Yes) return;
+      QSettings settings;
+      settings.beginGroup(QStringLiteral("automation/commandUsage"));
+      settings.remove(QString());
+      settings.endGroup();
+      settings.remove(QStringLiteral("automation/recentCommands"));
+    });
+
+    QVector<int> rankedIndices;
+    rankedIndices.reserve(items.size());
+    for (int i = 0; i < items.size(); ++i) rankedIndices.push_back(i);
+    QSettings usageSettings;
+    const QStringList recentCommands = usageSettings.value(
+        QStringLiteral("automation/recentCommands")).toStringList();
+    const QStringList favoriteCommands = usageSettings.value(
+        QStringLiteral("automation/favoriteCommands")).toStringList();
+    const auto commandScore = [&](const QString &label) {
+      const QString usageKey = QStringLiteral("automation/commandUsage/%1")
+                                   .arg(QString::number(static_cast<qulonglong>(qHash(label)), 16));
+      const int usage = usageSettings.value(usageKey, 0).toInt();
+      const int recentIndex = recentCommands.indexOf(label);
+      const int recentBoost = recentIndex >= 0 ? std::max(0, 12 - recentIndex) : 0;
+      const int favoriteBoost = favoriteCommands.contains(label) ? 1000000 : 0;
+      return favoriteBoost + usage * 100 + recentBoost;
+    };
+    std::stable_sort(rankedIndices.begin(), rankedIndices.end(),
+                     [&](int lhs, int rhs) {
+                       return commandScore(items.at(lhs)) > commandScore(items.at(rhs));
+                     });
+    QStringList rankedItems;
+    QVector<std::function<void()>> rankedActions;
+    rankedItems.reserve(items.size());
+    rankedActions.reserve(actions.size());
+    for (const int index : rankedIndices) {
+      rankedItems.push_back(items.at(index));
+      rankedActions.push_back(actions.at(index));
+    }
+    viewportOverlayActions_ = rankedActions;
+    controller_->showCommandPaletteOverlay(QString(), rankedItems);
   }
 
   void showViewportContextMenu(const QPointF &viewportPos) {
@@ -4774,6 +4993,7 @@ protected:
   QVector<bool> viewportOverlayEnabledStates_;
   std::function<void()> lastRepeatableAction_;
   QString lastRepeatableActionLabel_;
+  QJsonObject lastRecipeDescriptor_;
   QHash<QString, std::function<void()>> actionRecipes_;
   // 動画ファイルのキャンバスサイズキャッシュ（非同期取得）
   QHash<QString, QSize> videoDimensionCache_;

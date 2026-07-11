@@ -33,6 +33,7 @@ import Animation.Transform2D;
 import Animation.Transform3D;
 import Time.TimeRemap;
 import Artifact.Effect.Abstract;
+import Artifact.Animation.LayerEffectEnvelope;
 import Artifact.Mask.LayerMask;
 import Artifact.Layer.Matte;
 import Artifact.Layer.Component.System;
@@ -454,6 +455,8 @@ public:
   // Opacity
   float opacity() const;
   void setOpacity(float value);
+  const LayerEffectEnvelope& effectEnvelope() const;
+  void setEffectEnvelope(const LayerEffectEnvelope& envelope);
 
   // Dirty Management
   void setDirty(LayerDirtyFlag flag = LayerDirtyFlag::All);
@@ -568,7 +571,6 @@ inline uint qHash(const Artifact::ArtifactAbstractLayerPtr &key,
 }
 
 } // namespace Artifact
-
 
 
 

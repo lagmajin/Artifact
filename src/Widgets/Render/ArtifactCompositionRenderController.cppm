@@ -389,6 +389,12 @@ EffectContext makeControllerEffectContext(ArtifactAbstractLayer* layer, const QR
 
 
 
+  ctx.effectStrength = layer->effectEnvelope()
+
+      .sample(ctx.layerFrame).effectStrength;
+
+
+
   ctx.sampler = nullptr;
 
   return ctx;
@@ -8622,6 +8628,13 @@ public:
 
                                  const QPointF &canvasPos);
 
+  void renderMotionPathOverlayForLayer(
+      const ArtifactAbstractLayerPtr &layer, const ArtifactCompositionPtr &comp,
+      int currentFrameNum, float zoom, float invZoom,
+      const LayerID &selectedLayerId, const QVector<LayerID> &selectedIds,
+      bool hasSelectedIds, quint64 overlayInvalidationSerial,
+      bool useSelectedIdFilter);
+
 
 
   // MayaGradient sprite cache — regenerated only when bgColor changes
@@ -13575,6 +13588,224 @@ QPointF CompositionRenderController::workCursorCanvasPosition() const {
 
   return impl_ ? impl_->workCursorCanvasPos_ : QPointF();
 
+}
+
+void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
+    const ArtifactAbstractLayerPtr &layer, const ArtifactCompositionPtr &comp,
+    int currentFrameNum, float zoom, float invZoom,
+    const LayerID &selectedLayerId, const QVector<LayerID> &selectedIds,
+    bool hasSelectedIds, quint64 overlayInvalidationSerial,
+    bool useSelectedIdFilter) {
+  if (!layer || !comp || !renderer_) {
+    return;
+  }
+
+  if (hasSelectedIds) {
+    if (!isLayerSelected(selectedIds, layer)) {
+      return;
+    }
+  } else if (useSelectedIdFilter && (selectedLayerId.isNil() ||
+                                     layer->id() != selectedLayerId)) {
+    return;
+  }
+
+  const auto &t3d = layer->transform3D();
+  const int motionPathFps =
+      std::max(1, static_cast<int>(std::round(comp->frameRate().framerate())));
+  const auto posTimes = motionPathPositionKeyTimes(layer, motionPathFps);
+  if (posTimes.empty()) {
+    motionPathCache_.valid = false;
+    return;
+  }
+
+  const int keyMinFrame = static_cast<int>(posTimes.front().value());
+  const int keyMaxFrame = static_cast<int>(posTimes.back().value());
+  const int minFrame = keyMinFrame;
+  const int maxFrame = keyMaxFrame;
+  if (minFrame > maxFrame) {
+    return;
+  }
+
+  const int64_t rate = posTimes.front().scale();
+  const FloatColor pastPathColor{0.96f, 0.46f, 0.72f, 0.96f};
+  const FloatColor futurePathColor{0.42f, 0.76f, 1.0f, 0.92f};
+  const FloatColor pathShadowColor{0.0f, 0.0f, 0.0f, 0.52f};
+  const float lineThickness = std::max(1.0f, 1.5f * invZoom);
+  const float dotRadius = std::max(1.5f, 2.5f * invZoom);
+  const bool hasPathSegment = posTimes.size() >= 2;
+  const bool cacheHit =
+      motionPathCache_.valid &&
+      motionPathCache_.layerId == layer->id() &&
+      motionPathCache_.framePos == static_cast<int64_t>(currentFrameNum) &&
+      motionPathCache_.overlaySerial == overlayInvalidationSerial;
+
+  if (!cacheHit) {
+    motionPathCache_.valid = false;
+    motionPathCache_.layerId = layer->id();
+    motionPathCache_.framePos = static_cast<int64_t>(currentFrameNum);
+    motionPathCache_.overlaySerial = overlayInvalidationSerial;
+    motionPathCache_.pathPoints.clear();
+    motionPathCache_.keyPoints.clear();
+
+    if (hasPathSegment) {
+      const int sampleStep =
+          motionPathAdaptiveSampleStep(minFrame, maxFrame, zoom);
+      for (int f = minFrame;; f += sampleStep) {
+        if (f > maxFrame) {
+          f = maxFrame;
+        }
+        const ArtifactCore::RationalTime t(f, rate);
+        const QTransform gTrans = layer->getGlobalTransformAt(f);
+        const QPointF wPos =
+            gTrans.map(QPointF(t3d.anchorXAt(t), t3d.anchorYAt(t)));
+        motionPathCache_.pathPoints.push_back(
+            {f, static_cast<float>(wPos.x()), static_cast<float>(wPos.y())});
+        if (f == maxFrame) {
+          break;
+        }
+      }
+    }
+
+    const QRectF localBounds = layer->localBounds();
+    for (const auto &kfTime : posTimes) {
+      const int f = static_cast<int>(kfTime.value());
+      if (f < keyMinFrame || f > keyMaxFrame) {
+        continue;
+      }
+      const QTransform gTrans = layer->getGlobalTransformAt(f);
+      const QPointF wPos =
+          gTrans.map(QPointF(t3d.anchorXAt(kfTime), t3d.anchorYAt(kfTime)));
+      MotionPathCacheEntry::Pt pt;
+      pt.frame = f;
+      pt.x = static_cast<float>(wPos.x());
+      pt.y = static_cast<float>(wPos.y());
+      pt.interpolation = motionPathPositionInterpolation(layer, kfTime);
+      if (localBounds.isValid() && localBounds.width() > 0.0 &&
+          localBounds.height() > 0.0) {
+        const QPointF tl = gTrans.map(localBounds.topLeft());
+        const QPointF tr = gTrans.map(localBounds.topRight());
+        const QPointF br = gTrans.map(localBounds.bottomRight());
+        const QPointF bl = gTrans.map(localBounds.bottomLeft());
+        const float minX = static_cast<float>(
+            std::min(std::min(tl.x(), tr.x()), std::min(br.x(), bl.x())));
+        const float minY = static_cast<float>(
+            std::min(std::min(tl.y(), tr.y()), std::min(br.y(), bl.y())));
+        const float maxX = static_cast<float>(
+            std::max(std::max(tl.x(), tr.x()), std::max(br.x(), bl.x())));
+        const float maxY = static_cast<float>(
+            std::max(std::max(tl.y(), tr.y()), std::max(br.y(), bl.y())));
+        pt.frameX = minX;
+        pt.frameY = minY;
+        pt.frameW = std::max(0.0f, maxX - minX);
+        pt.frameH = std::max(0.0f, maxY - minY);
+        pt.hasFrameRect = true;
+      }
+      motionPathCache_.keyPoints.push_back(pt);
+    }
+    motionPathCache_.valid = true;
+  }
+
+  if (!motionPathCache_.pathPoints.empty()) {
+    Detail::float2 lastPos;
+    int lastFrame = 0;
+    bool hasLastPos = false;
+    float previousDistance = 0.0f;
+    const int currentSampleFrame =
+        currentFrameNum - ((currentFrameNum - minFrame) % 2 + 2) % 2;
+    for (const auto &pt : motionPathCache_.pathPoints) {
+      Detail::float2 currentPos(pt.x, pt.y);
+      if (hasLastPos) {
+        previousDistance = std::hypot(currentPos.x - lastPos.x,
+                                      currentPos.y - lastPos.y);
+        const bool isPastSegment =
+            (lastFrame + pt.frame) <= currentFrameNum * 2;
+        const FloatColor segmentColor =
+            isPastSegment ? pastPathColor : futurePathColor;
+        drawTaggedSolidLine(renderer_.get(), {lastPos.x, lastPos.y},
+                            {currentPos.x, currentPos.y}, pathShadowColor,
+                            lineThickness + std::max(1.5f, 2.0f * invZoom),
+                            true);
+        drawTaggedSolidLine(renderer_.get(), {lastPos.x, lastPos.y},
+                            {currentPos.x, currentPos.y}, segmentColor,
+                            lineThickness, true);
+      }
+      const bool isCurrentSample = pt.frame == currentSampleFrame;
+      const bool showTimeDot =
+          ((pt.frame - minFrame) % 6 == 0) || isCurrentSample;
+      if (showTimeDot) {
+        const float speedRadius = std::clamp(
+            dotRadius * (0.45f + previousDistance * 0.015f),
+            dotRadius * 0.45f, dotRadius * 1.25f);
+        const FloatColor dotColor =
+            pt.frame <= currentFrameNum
+                ? FloatColor{1.0f, 0.72f, 0.86f, 0.86f}
+                : FloatColor{0.68f, 0.88f, 1.0f, 0.82f};
+        renderer_->drawPoint(pt.x, pt.y, speedRadius, pathShadowColor);
+        renderer_->drawPoint(pt.x, pt.y, speedRadius * 0.53f, dotColor);
+      }
+      if (isCurrentSample) {
+        renderer_->drawPoint(pt.x, pt.y, dotRadius * 2.45f,
+                                   {0.0f, 0.0f, 0.0f, 0.62f});
+        renderer_->drawPoint(pt.x, pt.y, dotRadius * 1.72f,
+                                   {1.0f, 0.88f, 0.30f, 1.0f});
+        renderer_->drawPoint(pt.x, pt.y, dotRadius * 0.72f,
+                                   {1.0f, 1.0f, 1.0f, 1.0f});
+      }
+      lastPos = currentPos;
+      lastFrame = pt.frame;
+      hasLastPos = true;
+    }
+    if (currentFrameNum >= minFrame && currentFrameNum <= maxFrame) {
+      const ArtifactCore::RationalTime currentTime(
+          static_cast<int64_t>(currentFrameNum), rate);
+      const QTransform currentTransform =
+          layer->getGlobalTransformAt(currentFrameNum);
+      const QPointF currentPosition = currentTransform.map(
+          QPointF(t3d.anchorXAt(currentTime), t3d.anchorYAt(currentTime)));
+      renderer_->drawPoint(static_cast<float>(currentPosition.x()),
+                                 static_cast<float>(currentPosition.y()),
+                                 dotRadius * 2.0f,
+                                 {0.12f, 0.10f, 0.02f, 0.85f});
+      renderer_->drawPoint(static_cast<float>(currentPosition.x()),
+                                 static_cast<float>(currentPosition.y()),
+                                 dotRadius * 1.25f,
+                                 {0.98f, 0.88f, 0.35f, 1.0f});
+    }
+  }
+  for (const auto &pt : motionPathCache_.keyPoints) {
+    const bool isCurrent = pt.frame == currentFrameNum;
+    const bool isHovered = pt.frame == hoveredMotionPathFrame_;
+    const FloatColor keyShadow{0.0f, 0.0f, 0.0f, 0.45f};
+    const FloatColor keyColor =
+        motionPathInterpolationColor(pt.interpolation, isCurrent);
+    if (pt.hasFrameRect) {
+      const FloatColor frameShadow{0.0f, 0.0f, 0.0f,
+                                   isCurrent ? 0.30f : 0.18f};
+      const FloatColor frameColor =
+          isCurrent ? FloatColor{0.98f, 0.88f, 0.35f, 0.95f}
+                    : FloatColor{0.78f, 0.82f, 0.90f, 0.62f};
+      const float dashThickness =
+          isCurrent ? std::max(1.5f, 2.2f * invZoom)
+                    : std::max(1.0f, 1.6f * invZoom);
+      const float dashLen = std::max(6.0f, 10.0f * invZoom);
+      const float gapLen = std::max(4.0f, 7.0f * invZoom);
+      renderer_->drawDashedRectOutline(pt.frameX, pt.frameY, pt.frameW,
+                                             pt.frameH, frameShadow,
+                                             dashThickness * 1.8f, dashLen,
+                                             gapLen);
+      renderer_->drawDashedRectOutline(pt.frameX, pt.frameY, pt.frameW,
+                                             pt.frameH, frameColor,
+                                             dashThickness, dashLen, gapLen);
+    }
+    const float outerRadius =
+        isHovered ? dotRadius * 2.4f : dotRadius * 1.8f;
+    const float innerRadius =
+        isHovered ? dotRadius * 1.35f : dotRadius * 1.15f;
+    const FloatColor ringColor =
+        isHovered ? FloatColor{1.0f, 1.0f, 1.0f, 0.95f} : keyShadow;
+    renderer_->drawPoint(pt.x, pt.y, outerRadius, ringColor);
+    renderer_->drawPoint(pt.x, pt.y, innerRadius, keyColor);
+  }
 }
 
 int motionPathAdaptiveSampleStep(int minFrame, int maxFrame, float zoom) {
@@ -25922,343 +26153,14 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
       for (const auto &layer : layersForOverlay) {
 
-        if (!layer)
-
+        if (!layer) {
           continue;
-
-        if (!selectedIds.isEmpty()) {
-
-          if (!isLayerSelected(selectedIds, layer))
-
-            continue;
-
-        } else if (selectedLayerId_.isNil() ||
-
-                   layer->id() != selectedLayerId_) {
-
-          continue;
-
         }
 
-
-
-        const auto &t3d = layer->transform3D();
-
-        const int motionPathFps = std::max(
-            1, static_cast<int>(std::round(comp->frameRate().framerate())));
-        auto posTimes =
-            motionPathPositionKeyTimes(layer, motionPathFps);
-
-        if (posTimes.empty()) {
-
-          motionPathCache_.valid = false;
-
-          continue;
-
-        }
-
-
-
-        const int keyMinFrame = static_cast<int>(posTimes.front().value());
-
-        const int keyMaxFrame = static_cast<int>(posTimes.back().value());
-
-        int minFrame = keyMinFrame;
-
-        int maxFrame = keyMaxFrame;
-
-        const int currentFrameNum = currentFrame.framePosition();
-
-        const bool hasPathSegment = posTimes.size() >= 2;
-
-        if (minFrame > maxFrame)
-
-          continue;
-
-
-
-        const int64_t rate = posTimes.front().scale();
-
-        const FloatColor pastPathColor{0.96f, 0.46f, 0.72f, 0.96f};
-        const FloatColor futurePathColor{0.42f, 0.76f, 1.0f, 0.92f};
-        const FloatColor pathShadowColor{0.0f, 0.0f, 0.0f, 0.52f};
-        const float lineThickness = std::max(1.0f, 1.5f * invZoom);
-        const float dotRadius = std::max(1.5f, 2.5f * invZoom);
-        const bool cacheHit =
-
-            motionPathCache_.valid && motionPathCache_.layerId == layer->id() &&
-
-            motionPathCache_.framePos == static_cast<int64_t>(currentFrameNum) &&
-
-            motionPathCache_.overlaySerial == overlayInvalidationSerial_;
-
-
-
-        if (!cacheHit) {
-
-          motionPathCache_.valid = false;
-
-          motionPathCache_.layerId = layer->id();
-
-          motionPathCache_.framePos = static_cast<int64_t>(currentFrameNum);
-
-          motionPathCache_.overlaySerial = overlayInvalidationSerial_;
-
-          motionPathCache_.pathPoints.clear();
-
-          motionPathCache_.keyPoints.clear();
-
-
-
-          if (hasPathSegment) {
-
-            const int sampleStep =
-                motionPathAdaptiveSampleStep(minFrame, maxFrame,
-                                              renderer_->getZoom());
-            for (int f = minFrame;; f += sampleStep) {
-              if (f > maxFrame) f = maxFrame;
-
-              ArtifactCore::RationalTime t(f, rate);
-
-              QTransform gTrans = layer->getGlobalTransformAt(f);
-
-              float ax = t3d.anchorXAt(t);
-
-              float ay = t3d.anchorYAt(t);
-
-              QPointF wPos = gTrans.map(QPointF(ax, ay));
-
-              motionPathCache_.pathPoints.push_back(
-
-                  {f, (float)wPos.x(), (float)wPos.y()});
-
-              if (f == maxFrame) break;
-
-            }
-
-          }
-
-
-
-          for (const auto &kfTime : posTimes) {
-
-            int f = static_cast<int>(kfTime.value());
-
-            if (f < keyMinFrame || f > keyMaxFrame)
-
-              continue;
-
-            QTransform gTrans = layer->getGlobalTransformAt(f);
-
-            float ax = t3d.anchorXAt(kfTime);
-
-            float ay = t3d.anchorYAt(kfTime);
-
-            QPointF wPos = gTrans.map(QPointF(ax, ay));
-
-            const int interp =
-                motionPathPositionInterpolation(layer, kfTime);
-
-            MotionPathCacheEntry::Pt pt;
-
-            pt.frame = f;
-
-            pt.x = static_cast<float>(wPos.x());
-
-            pt.y = static_cast<float>(wPos.y());
-
-            pt.interpolation = interp;
-
-            const QRectF localBounds = layer->localBounds();
-
-            if (localBounds.isValid() && localBounds.width() > 0.0 &&
-
-                localBounds.height() > 0.0) {
-
-              const QPointF tl = gTrans.map(localBounds.topLeft());
-
-              const QPointF tr = gTrans.map(localBounds.topRight());
-
-              const QPointF br = gTrans.map(localBounds.bottomRight());
-
-              const QPointF bl = gTrans.map(localBounds.bottomLeft());
-
-              const float minX = static_cast<float>(
-
-                  std::min(std::min(tl.x(), tr.x()), std::min(br.x(), bl.x())));
-
-              const float minY = static_cast<float>(
-
-                  std::min(std::min(tl.y(), tr.y()), std::min(br.y(), bl.y())));
-
-              const float maxX = static_cast<float>(
-
-                  std::max(std::max(tl.x(), tr.x()), std::max(br.x(), bl.x())));
-
-              const float maxY = static_cast<float>(
-
-                  std::max(std::max(tl.y(), tr.y()), std::max(br.y(), bl.y())));
-
-              pt.frameX = minX;
-
-              pt.frameY = minY;
-
-              pt.frameW = std::max(0.0f, maxX - minX);
-
-              pt.frameH = std::max(0.0f, maxY - minY);
-
-              pt.hasFrameRect = true;
-
-            }
-
-            motionPathCache_.keyPoints.push_back(pt);
-
-          }
-
-          motionPathCache_.valid = true;
-
-        }
-
-
-
-        if (!motionPathCache_.pathPoints.empty()) {
-          Detail::float2 lastPos;
-          int lastFrame = 0;
-          bool hasLastPos = false;
-          float previousDistance = 0.0f;
-          const int currentSampleFrame =
-              currentFrameNum -
-              ((currentFrameNum - minFrame) % 2 + 2) % 2;
-          for (const auto &pt : motionPathCache_.pathPoints) {
-            Detail::float2 currentPos(pt.x, pt.y);
-            if (hasLastPos) {
-              previousDistance = std::hypot(currentPos.x - lastPos.x,
-                                            currentPos.y - lastPos.y);
-              const bool isPastSegment =
-                  (lastFrame + pt.frame) <= currentFrameNum * 2;
-              const FloatColor segmentColor =
-                  isPastSegment ? pastPathColor : futurePathColor;
-              drawTaggedSolidLine(renderer_.get(), {lastPos.x, lastPos.y},
-                                  {currentPos.x, currentPos.y}, pathShadowColor,
-                                  lineThickness + std::max(1.5f, 2.0f * invZoom),
-                                  true);
-              drawTaggedSolidLine(renderer_.get(), {lastPos.x, lastPos.y},
-                                  {currentPos.x, currentPos.y}, segmentColor,
-                                  lineThickness, true);
-            }
-            const bool isCurrentSample = pt.frame == currentSampleFrame;
-            const bool showTimeDot =
-                ((pt.frame - minFrame) % 6 == 0) || isCurrentSample;
-            if (showTimeDot) {
-              const float speedRadius = std::clamp(
-                  dotRadius * (0.45f + previousDistance * 0.015f),
-                  dotRadius * 0.45f, dotRadius * 1.25f);
-              const FloatColor dotColor =
-                  pt.frame <= currentFrameNum
-                      ? FloatColor{1.0f, 0.72f, 0.86f, 0.86f}
-                      : FloatColor{0.68f, 0.88f, 1.0f, 0.82f};
-              renderer_->drawPoint(pt.x, pt.y, speedRadius,
-                                   pathShadowColor);
-              renderer_->drawPoint(pt.x, pt.y, speedRadius * 0.53f,
-                                   dotColor);
-            }
-            if (isCurrentSample) {
-              renderer_->drawPoint(pt.x, pt.y, dotRadius * 2.45f,
-                                   {0.0f, 0.0f, 0.0f, 0.62f});
-              renderer_->drawPoint(pt.x, pt.y, dotRadius * 1.72f,
-                                   {1.0f, 0.88f, 0.30f, 1.0f});
-              renderer_->drawPoint(pt.x, pt.y, dotRadius * 0.72f,
-                                   {1.0f, 1.0f, 1.0f, 1.0f});
-            }
-            lastPos = currentPos;
-            lastFrame = pt.frame;
-            hasLastPos = true;
-          }
-          if (currentFrameNum >= minFrame && currentFrameNum <= maxFrame) {
-            const ArtifactCore::RationalTime currentTime(
-                static_cast<int64_t>(currentFrameNum), rate);
-            const QTransform currentTransform =
-                layer->getGlobalTransformAt(currentFrameNum);
-            const QPointF currentPosition = currentTransform.map(
-                QPointF(t3d.anchorXAt(currentTime),
-                        t3d.anchorYAt(currentTime)));
-            renderer_->drawPoint(static_cast<float>(currentPosition.x()),
-                                 static_cast<float>(currentPosition.y()),
-                                 dotRadius * 2.0f,
-                                 {0.12f, 0.10f, 0.02f, 0.85f});
-            renderer_->drawPoint(static_cast<float>(currentPosition.x()),
-                                 static_cast<float>(currentPosition.y()),
-                                 dotRadius * 1.25f,
-                                 {0.98f, 0.88f, 0.35f, 1.0f});
-          }
-        }
-        for (const auto &pt : motionPathCache_.keyPoints) {
-
-          const bool isCurrent = pt.frame == currentFrameNum;
-
-          const bool isHovered = pt.frame == hoveredMotionPathFrame_;
-
-          const FloatColor keyShadow{0.0f, 0.0f, 0.0f, 0.45f};
-
-          const FloatColor keyColor =
-
-              motionPathInterpolationColor(pt.interpolation, isCurrent);
-
-          if (pt.hasFrameRect) {
-
-            const FloatColor frameShadow{0.0f, 0.0f, 0.0f,
-
-                                         isCurrent ? 0.30f : 0.18f};
-
-            const FloatColor frameColor =
-
-                isCurrent ? FloatColor{0.98f, 0.88f, 0.35f, 0.95f}
-
-                          : FloatColor{0.78f, 0.82f, 0.90f, 0.62f};
-
-            const float dashThickness =
-
-                isCurrent ? std::max(1.5f, 2.2f * invZoom)
-
-                          : std::max(1.0f, 1.6f * invZoom);
-
-            const float dashLen = std::max(6.0f, 10.0f * invZoom);
-
-            const float gapLen = std::max(4.0f, 7.0f * invZoom);
-
-            renderer_->drawDashedRectOutline(
-
-                pt.frameX, pt.frameY, pt.frameW, pt.frameH, frameShadow,
-
-                dashThickness * 1.8f, dashLen, gapLen);
-
-            renderer_->drawDashedRectOutline(pt.frameX, pt.frameY, pt.frameW,
-
-                                             pt.frameH, frameColor,
-
-                                             dashThickness, dashLen, gapLen);
-
-          }
-
-          const float outerRadius =
-
-              isHovered ? dotRadius * 2.4f : dotRadius * 1.8f;
-
-          const float innerRadius =
-
-              isHovered ? dotRadius * 1.35f : dotRadius * 1.15f;
-
-          const FloatColor ringColor = isHovered
-
-                                           ? FloatColor{1.0f, 1.0f, 1.0f, 0.95f}
-
-                                           : keyShadow;
-
-          renderer_->drawPoint(pt.x, pt.y, outerRadius, ringColor);
-
-          renderer_->drawPoint(pt.x, pt.y, innerRadius, keyColor);
-
-        }
+        impl_->renderMotionPathOverlayForLayer(
+            layer, comp, currentFrame.framePosition(), zoom, invZoom,
+            selectedLayerId_, selectedIds, !selectedIds.isEmpty(),
+            overlayInvalidationSerial_, true);
 
       }
 
