@@ -519,6 +519,8 @@ public:
     mutable std::mutex frameStateMutex_;
     ArtifactCore::ImageF32x4_RGBA currentFrameBuffer_;
     std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> currentSharedFrame_;
+    mutable std::mutex sharedFramePayloadMutex_;
+    std::unordered_map<int64_t, std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>> sharedFramePayloads_;
     bool hasCurrentFrameBuffer_ = false;
     int64_t lastDecodedFrame_ = -1;
     int64_t currentTimelineFrame_ = 0;
@@ -534,6 +536,25 @@ public:
 
     Impl() : playbackController_(std::make_shared<ArtifactCore::MediaPlaybackController>()), frameCache_(120) {}
     ~Impl() = default;
+
+    void retainSharedFrame(const int64_t sourceFrame,
+                           const std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>& payload)
+    {
+        if (!payload || payload->isEmpty()) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(sharedFramePayloadMutex_);
+        sharedFramePayloads_[sourceFrame] = payload;
+        while (sharedFramePayloads_.size() > 120) {
+            sharedFramePayloads_.erase(sharedFramePayloads_.begin());
+        }
+    }
+
+    void clearSharedFrames()
+    {
+        std::lock_guard<std::mutex> lock(sharedFramePayloadMutex_);
+        sharedFramePayloads_.clear();
+    }
 
     void cancelPendingDecode() {
         decodeGeneration_.fetch_add(1, std::memory_order_acq_rel);
@@ -937,6 +958,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     impl_->isLoaded_ = false;
     impl_->lastAudioRequestTimelineFrame_ = std::numeric_limits<int64_t>::min();
     impl_->frameCache_.clear();
+    impl_->clearSharedFrames();
     setSourceSize(Size_2D(0, 0));
     impl_->sourceCrop_.clampToSource(QSizeF(0.0, 0.0));
 
@@ -1104,6 +1126,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
                         ArtifactCore::AssetManager::instance().publishDecodedPayload(
                             sourceAssetId, sourceVersion,
                             videoFramePayloadRepresentation(initialSourceFrame), sharedFrame));
+                    layer->impl_->retainSharedFrame(initialSourceFrame, sharedFrame);
                 }
                 layer->impl_->frameCache_.put(initialSourceFrame, frame);
                 {
@@ -1193,6 +1216,7 @@ void ArtifactVideoLayer::setStreamFrameRate(double fps)
     }
     impl_->decodeTargetFrame_ = -1;
     impl_->lastDecodeState_ = QStringLiteral("rate_changed");
+    impl_->clearSharedFrames();
     Q_EMIT changed();
 }
 
@@ -1480,6 +1504,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                     ArtifactCore::AssetManager::instance().publishDecodedPayload(
                         sourceAssetId, sourceVersion,
                         videoFramePayloadRepresentation(sourceFrame), publishedFrame));
+                impl_->retainSharedFrame(sourceFrame, publishedFrame);
             }
             impl_->frameCache_.put(sourceFrame, decoded);
             {
@@ -1639,6 +1664,26 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64
 
     // キャッシュにあれば返す
     ArtifactCore::ImageF32x4_RGBA frame;
+    if (!impl_->sourceAssetId_.isNull()) {
+        const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(
+            impl_->sourceAssetId_);
+        const auto sharedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+            ArtifactCore::AssetManager::instance().decodedPayload(
+                impl_->sourceAssetId_, sourceVersion,
+                videoFramePayloadRepresentation(sourceFrame)));
+        if (sharedFrame && !sharedFrame->isEmpty()) {
+            impl_->frameCache_.put(sourceFrame, *sharedFrame);
+            if (sourceFrame == currentSourceFrame(this)) {
+                std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
+                impl_->currentSharedFrame_ = sharedFrame;
+                impl_->currentFrameBuffer_ = *sharedFrame;
+                impl_->hasCurrentFrameBuffer_ = true;
+                impl_->lastDecodedFrame_ = sourceFrame;
+            }
+            impl_->lastDecodeState_ = QStringLiteral("shared-cache");
+            return *sharedFrame;
+        }
+    }
     if (impl_->frameCache_.get(sourceFrame, frame)) {
         impl_->lastDecodeState_ = QStringLiteral("cached");
         if (sourceFrame == currentSourceFrame(this)) {
@@ -1672,9 +1717,21 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64
     const ArtifactCore::ImageF32x4_RGBA decoded =
         decodedVideoFrameToImageF32x4_RGBA(rawDecoded);
     if (!decoded.isEmpty()) {
+        std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> sharedFrame;
+        if (!impl_->sourceAssetId_.isNull()) {
+            const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(
+                impl_->sourceAssetId_);
+            sharedFrame = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(decoded);
+            sharedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+                ArtifactCore::AssetManager::instance().publishDecodedPayload(
+                    impl_->sourceAssetId_, sourceVersion,
+                    videoFramePayloadRepresentation(sourceFrame), sharedFrame));
+            impl_->retainSharedFrame(sourceFrame, sharedFrame);
+        }
         impl_->frameCache_.put(sourceFrame, decoded);
         if (sourceFrame == currentSourceFrame(this)) {
             std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
+            impl_->currentSharedFrame_ = sharedFrame;
             impl_->currentFrameBuffer_ = decoded;
             impl_->hasCurrentFrameBuffer_ = true;
             impl_->lastDecodedFrame_ = sourceFrame;
@@ -1766,9 +1823,37 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
             sourceFrame >= 0 &&
             (!hasKnownFrameCount || sourceFrame < impl_->streamInfo_.frameCount)) {
             if (!impl_->frameCache_.contains(sourceFrame)) {
-                const ArtifactCore::ImageF32x4_RGBA frameData = decodedVideoFrameToImageF32x4_RGBA(
-                    impl_->playbackController_->getVideoFrameAtFrameDirectRaw(sourceFrame));
+                ArtifactCore::ImageF32x4_RGBA frameData;
+                if (!impl_->sourceAssetId_.isNull()) {
+                    const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(
+                        impl_->sourceAssetId_);
+                    const auto sharedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+                        ArtifactCore::AssetManager::instance().decodedPayload(
+                            impl_->sourceAssetId_, sourceVersion,
+                            videoFramePayloadRepresentation(sourceFrame)));
+                    if (sharedFrame && !sharedFrame->isEmpty()) {
+                        frameData = *sharedFrame;
+                    }
+                }
+                if (frameData.isEmpty()) {
+                    frameData = decodedVideoFrameToImageF32x4_RGBA(
+                        impl_->playbackController_->getVideoFrameAtFrameDirectRaw(sourceFrame));
+                }
                 if (!frameData.isEmpty()) {
+                    if (!impl_->sourceAssetId_.isNull()) {
+                        const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(
+                            impl_->sourceAssetId_);
+                        auto sharedFrame = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(frameData);
+                        const auto publishedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+                            ArtifactCore::AssetManager::instance().publishDecodedPayload(
+                                impl_->sourceAssetId_, sourceVersion,
+                                videoFramePayloadRepresentation(sourceFrame), sharedFrame));
+                        impl_->retainSharedFrame(sourceFrame, publishedFrame);
+                        if (sourceFrame == currentSourceFrame(this)) {
+                            std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
+                            impl_->currentSharedFrame_ = publishedFrame;
+                        }
+                    }
                     impl_->frameCache_.put(sourceFrame, frameData);
                 }
             }
