@@ -501,6 +501,7 @@ public:
     
     QString sourcePath_;
     QUuid sourceAssetId_;
+    std::uint64_t cachedSourceVersion_ = 0;
     bool isLoaded_ = false;
     
     double playbackSpeed_ = 1.0;
@@ -554,6 +555,37 @@ public:
     {
         std::lock_guard<std::mutex> lock(sharedFramePayloadMutex_);
         sharedFramePayloads_.clear();
+    }
+
+    bool refreshSourceVersionIfNeeded()
+    {
+        if (sourceAssetId_.isNull()) {
+            return false;
+        }
+        const auto currentVersion = ArtifactCore::AssetManager::instance().sourceVersion(
+            sourceAssetId_);
+        if (currentVersion == 0 || cachedSourceVersion_ == 0) {
+            cachedSourceVersion_ = currentVersion;
+            return false;
+        }
+        if (currentVersion == cachedSourceVersion_) {
+            return false;
+        }
+
+        cachedSourceVersion_ = currentVersion;
+        cancelPendingDecode();
+        frameCache_.clear();
+        clearSharedFrames();
+        {
+            std::lock_guard<std::mutex> lock(frameStateMutex_);
+            currentFrameBuffer_ = ArtifactCore::ImageF32x4_RGBA();
+            currentSharedFrame_.reset();
+            hasCurrentFrameBuffer_ = false;
+            lastDecodedFrame_ = -1;
+        }
+        decodeTargetFrame_ = -1;
+        lastDecodeState_ = QStringLiteral("source-invalidated");
+        return true;
     }
 
     void cancelPendingDecode() {
@@ -936,6 +968,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
 
     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     impl_->sourceAssetId_ = nextAssetId;
+    impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
     impl_->sourcePath_ = normalizedPath;
     impl_->cancelPendingDecode();
     impl_->streamInfo_ = VideoStreamInfo{};
@@ -1170,6 +1203,7 @@ bool ArtifactVideoLayer::localizeSourceIdentity()
     const QUuid localizedId = ArtifactCore::AssetManager::instance().localizeSource(impl_->sourceAssetId_);
     if (localizedId.isNull()) return false;
     impl_->sourceAssetId_ = localizedId;
+    impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(localizedId);
     setDirty(LayerDirtyFlag::Property);
     Q_EMIT changed();
     return true;
@@ -1183,6 +1217,7 @@ bool ArtifactVideoLayer::relinkSourceIdentityToShared()
     if (sharedId.isNull()) return false;
     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     impl_->sourceAssetId_ = sharedId;
+    impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(sharedId);
     setDirty(LayerDirtyFlag::Property);
     Q_EMIT changed();
     return true;
@@ -1558,6 +1593,7 @@ QImage ArtifactVideoLayer::currentFrameToQImage() const
 
 ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::currentFrameImageBuffer() const
 {
+    impl_->refreshSourceVersionIfNeeded();
     if (impl_->opening_.load()) {
         impl_->lastDecodeState_ = QStringLiteral("opening");
         std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
@@ -1644,6 +1680,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::cachedFrameImageBuffer(int64_t
 
 ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64_t frameNumber) const
 {
+    impl_->refreshSourceVersionIfNeeded();
     if (!impl_->isLoaded_) {
         impl_->lastDecodeState_ = QStringLiteral("not-loaded");
         return ArtifactCore::ImageF32x4_RGBA();
@@ -1787,6 +1824,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(doubl
 
 ArtifactCore::GpuVideoFrame ArtifactVideoLayer::decodeFrameToGpuFrame(int64_t frameNumber) const
 {
+    impl_->refreshSourceVersionIfNeeded();
     if (!impl_->isLoaded_ || impl_->opening_.load()) {
         return {};
     }
@@ -1810,6 +1848,7 @@ bool ArtifactVideoLayer::isFrameCached(int64_t frameNumber) const
 
 void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
 {
+    impl_->refreshSourceVersionIfNeeded();
     if (!impl_->isLoaded_ || impl_->opening_.load()) return;
     
     const int64_t startIdx = inPoint();
@@ -2084,6 +2123,7 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
         if (!savedId.isNull() && ArtifactCore::AssetManager::instance().acquireExistingSource(savedId)) {
             ArtifactCore::AssetManager::instance().releaseSource(layer->impl_->sourceAssetId_);
             layer->impl_->sourceAssetId_ = savedId;
+            layer->impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(savedId);
             restored = true;
         }
         if (!restored) layer->localizeSourceIdentity();
