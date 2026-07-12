@@ -1638,6 +1638,11 @@ int main(int argc, char *argv[]) {
   });
   ArtifactCore::Logger::instance()->install();
 
+  // Post-startup ingestion: prior crash reports are pulled into the
+  // Core DiagnosticRecorder via the crash-report Adapter (not inside the
+  // exception filter, which only writes the file and fires the callback).
+  ArtifactCore::CrashHandler::ingestPendingReports();
+
   qDebug() << "Artifact Debug Console Initialized. Hello ArtifactStudio!";
 
   const unsigned int startupParallelism =
