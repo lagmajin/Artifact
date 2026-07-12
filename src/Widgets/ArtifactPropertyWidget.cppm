@@ -1282,6 +1282,21 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     return;
   }
 
+  if (currentLayer) {
+    const QString layerName = currentLayer->layerName().toQString().trimmed();
+    auto *selectionHeader = new QLabel(
+        layerName.isEmpty() ? QStringLiteral("Layer Properties") : layerName);
+    selectionHeader->setObjectName(QStringLiteral("propertySelectionHeader"));
+    selectionHeader->setMinimumHeight(38);
+    selectionHeader->setContentsMargins(10, 4, 10, 4);
+    QFont headerFont = selectionHeader->font();
+    headerFont.setPointSize(12);
+    headerFont.setWeight(QFont::DemiBold);
+    selectionHeader->setFont(headerFont);
+    applyPropertySectionLabel(selectionHeader, true);
+    mainLayout->addWidget(selectionHeader);
+  }
+
   auto *searchEdit = new QLineEdit();
   searchEdit->setObjectName(QStringLiteral("propertyFilterEdit"));
   searchEdit->setPlaceholderText("Search properties...");
@@ -1292,13 +1307,14 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                      filterText = text;
                      scheduleRebuild(80);
                    });
-  mainLayout->addWidget(searchEdit);
 
-  // Favorite-only toggle
+  // Search and favorite filtering are one local browsing decision.
   auto *favRow = new QWidget();
-  favRow->setObjectName(QStringLiteral("favoriteToggleRow"));
+  favRow->setObjectName(QStringLiteral("propertySearchRow"));
   auto *favLayout = new QHBoxLayout(favRow);
-  favLayout->setContentsMargins(4, 2, 4, 2);
+  favLayout->setContentsMargins(0, 0, 0, 0);
+  favLayout->setSpacing(6);
+  favLayout->addWidget(searchEdit, 1);
   auto *favToggle = new QPushButton(favoriteOnly ? QStringLiteral("★ Only")
                                                   : QStringLiteral("☆ Only"));
   favToggle->setCheckable(true);
@@ -1307,8 +1323,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   favToggle->setFlat(true);
   favToggle->setCursor(Qt::PointingHandCursor);
   favToggle->setToolTip(QStringLiteral("Show only favorite properties"));
-  favLayout->addWidget(favToggle);
-  favLayout->addStretch();
+  favLayout->addWidget(favToggle, 0);
    QObject::connect(favToggle, &QPushButton::toggled, owner,
                     [this](bool checked) {
                       if (owner) {
@@ -2178,4 +2193,3 @@ void ArtifactPropertyWidget::Impl::scrollToGroupByName(const QString &groupName)
 }
 
 } // namespace Artifact
-
