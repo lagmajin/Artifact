@@ -4753,6 +4753,17 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->layoutComponentButton->setMinimumHeight(30);
   impl_->cloneComponentButton->setMinimumHeight(30);
   impl_->fluidComponentButton->setMinimumHeight(30);
+  // Component entries are the primary browse surface.  Give them a stable
+  // card-like rhythm so the active component reads separately from utilities.
+  for (auto *componentButton : {impl_->physicsComponentButton,
+                                impl_->scriptComponentButton,
+                                impl_->layoutComponentButton,
+                                impl_->cloneComponentButton,
+                                impl_->fluidComponentButton}) {
+    componentButton->setMinimumHeight(42);
+    componentButton->setSizePolicy(QSizePolicy::Expanding,
+                                   QSizePolicy::Preferred);
+  }
   applyInspectorButton(impl_->physicsComponentButton, false);
   applyInspectorButton(impl_->scriptComponentButton, false);
   applyInspectorButton(impl_->layoutComponentButton, false);
@@ -4814,11 +4825,14 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       new InspectorActionButton(QStringLiteral("+ Add Component"));
   applyInspectorButton(impl_->addComponentButton, false);
   impl_->addComponentButton->setMinimumHeight(30);
+  impl_->addComponentButton->setMaximumWidth(240);
+  impl_->addComponentButton->setSizePolicy(QSizePolicy::Preferred,
+                                           QSizePolicy::Preferred);
   impl_->addComponentButton->setToolTip(
       QStringLiteral("Add or enable a component on the selected layer."));
-  componentsLayout->addWidget(impl_->addComponentButton);
+  componentsLayout->addWidget(impl_->addComponentButton, 0, Qt::AlignHCenter);
   auto *primaryComponentLayout = new QVBoxLayout();
-  primaryComponentLayout->setSpacing(4);
+  primaryComponentLayout->setSpacing(6);
   primaryComponentLayout->addWidget(impl_->physicsComponentButton);
   primaryComponentLayout->addWidget(impl_->scriptComponentButton);
   primaryComponentLayout->addWidget(impl_->layoutComponentButton);

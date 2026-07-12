@@ -853,12 +853,12 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   refreshButton->setText(QStringLiteral("Refresh"));
   refreshButton->setToolTip(QStringLiteral("Refresh current folder"));
   impl_->gridViewButton->setObjectName(QStringLiteral("assetBrowserGridViewButton"));
-  impl_->gridViewButton->setText(QStringLiteral("Grid"));
+  impl_->gridViewButton->setText(QStringLiteral("▦"));
   impl_->gridViewButton->setToolTip(QStringLiteral("Show assets in grid view"));
   impl_->gridViewButton->setCheckable(true);
   impl_->gridViewButton->setChecked(true);
   impl_->listViewButton->setObjectName(QStringLiteral("assetBrowserListViewButton"));
-  impl_->listViewButton->setText(QStringLiteral("List"));
+  impl_->listViewButton->setText(QStringLiteral("☷"));
   impl_->listViewButton->setToolTip(QStringLiteral("Show assets in list view"));
   impl_->listViewButton->setCheckable(true);
   impl_->searchWidget->setPlaceholderText(QStringLiteral("Search files..."));
@@ -2274,6 +2274,14 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    statusFiltersLayout->addWidget(favoriteBtn);
    statusFiltersLayout->addWidget(missingBtn);
    statusFiltersLayout->addWidget(unusedBtn);
+
+   for (auto *filterButton : {allButton, imagesButton, videosButton,
+                              audioButton, fontsButton, statusAllBtn,
+                              importedBtn, favoriteBtn, missingBtn, unusedBtn}) {
+    filterButton->setAutoRaise(true);
+    filterButton->setMinimumHeight(26);
+    filterButton->setCursor(Qt::PointingHandCursor);
+   }
 
    // Sort separator
    auto* sortSep = new QFrame();

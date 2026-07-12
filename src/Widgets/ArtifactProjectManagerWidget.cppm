@@ -6576,7 +6576,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     chromeLayout->addWidget(impl_->compositionEditorPanel);
 
     impl_->searchBar = new QLineEdit(chromePanel);
-    impl_->searchBar->setPlaceholderText(QStringLiteral("Search project, tags, type..."));
+    impl_->searchBar->setPlaceholderText(QStringLiteral("Search project"));
     impl_->searchBar->setClearButtonEnabled(true);
     {
         QFont f = impl_->searchBar->font();
