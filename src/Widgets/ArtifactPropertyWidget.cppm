@@ -1284,8 +1284,11 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
   if (currentLayer) {
     const QString layerName = currentLayer->layerName().toQString().trimmed();
+    const QString selectionText = targetLayers.size() > 1
+        ? QStringLiteral("%1 Layers Selected").arg(targetLayers.size())
+        : (layerName.isEmpty() ? QStringLiteral("Layer Properties") : layerName);
     auto *selectionHeader = new QLabel(
-        layerName.isEmpty() ? QStringLiteral("Layer Properties") : layerName);
+        selectionText);
     selectionHeader->setObjectName(QStringLiteral("propertySelectionHeader"));
     selectionHeader->setMinimumHeight(38);
     selectionHeader->setContentsMargins(10, 4, 10, 4);
@@ -1373,22 +1376,6 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
     stateLayout->addStretch();
     mainLayout->addWidget(stateRow);
-  }
-
-  // Multi-selection badge
-  if (targetLayers.size() > 1) {
-    auto *multiBadge = new QLabel(
-        QStringLiteral("✏️ Editing %1 layers").arg(targetLayers.size()));
-    multiBadge->setObjectName(QStringLiteral("multiLayerBadge"));
-    multiBadge->setAlignment(Qt::AlignCenter);
-    {
-      QPalette pal = multiBadge->palette();
-      pal.setColor(QPalette::Window, QColor("#3C5B76"));
-      pal.setColor(QPalette::WindowText, QColor("#E3E7EC"));
-      multiBadge->setPalette(pal);
-      multiBadge->setAutoFillBackground(true);
-    }
-    mainLayout->addWidget(multiBadge);
   }
 
   if (!currentLayer) {
