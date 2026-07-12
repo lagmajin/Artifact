@@ -890,11 +890,26 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactProcedural3DLayer::getLayerProp
 
     ArtifactCore::PropertyGroup material(QStringLiteral("Material"));
     material.addProperty(property(QStringLiteral("procedural.baseColor"), ArtifactCore::PropertyType::Color, impl_->baseColor, -210));
+    auto emissionColor = property(
+        QStringLiteral("material.emission.color"),
+        ArtifactCore::PropertyType::Color,
+        impl_->material.emissionColor(),
+        -209);
+    emissionColor->setDisplayLabel(QStringLiteral("Emission Color"));
+    material.addProperty(emissionColor);
+    auto emissionStrength = property(
+        QStringLiteral("material.emissionStrength"),
+        ArtifactCore::PropertyType::Float,
+        impl_->material.emissionStrength(),
+        -208);
+    emissionStrength->setDisplayLabel(QStringLiteral("Emission Strength"));
+    emissionStrength->setTooltip(QStringLiteral("HDR emission intensity sent to the bloom pass."));
+    material.addProperty(emissionStrength);
     auto shadingProperty = property(
         QStringLiteral("procedural.shading"),
         ArtifactCore::PropertyType::Integer,
         static_cast<int>(impl_->shading),
-        -209);
+        -207);
     shadingProperty->setTooltip(
         QStringLiteral("0=Wire, 1=Solid, 2=Normal, 3=Lit"));
     material.addProperty(shadingProperty);
@@ -902,12 +917,12 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactProcedural3DLayer::getLayerProp
         QStringLiteral("procedural.wireThickness"),
         ArtifactCore::PropertyType::Float,
         impl_->wireThickness,
-        -208));
+        -206));
     material.addProperty(property(QStringLiteral("procedural.quality"), ArtifactCore::PropertyType::Integer,
                                   static_cast<int>(impl_->kind == Procedural3DLayerKind::Terrain
                                                        ? impl_->terrain.quality
                                                        : impl_->pathTube.quality),
-                                  -208));
+                                  -205));
     groups.push_back(material);
     return groups;
 }
@@ -926,6 +941,15 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
     }
     if (path == QStringLiteral("procedural.baseColor")) {
         impl_->baseColor = value.value<QColor>();
+        return commitChange();
+    }
+    if (path == QStringLiteral("material.emission.color")) {
+        impl_->material.setEmissionColor(value.value<QColor>());
+        return commitChange();
+    }
+    if (path == QStringLiteral("material.emissionStrength")) {
+        impl_->material.setEmissionStrength(
+            std::max(0.0f, static_cast<float>(value.toDouble())));
         return commitChange();
     }
     if (path == QStringLiteral("procedural.shading")) {
