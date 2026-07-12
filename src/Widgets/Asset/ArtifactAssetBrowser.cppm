@@ -2357,7 +2357,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   directoryView->setModel(directoryModel);
   directoryView->setHeaderHidden(true);
   directoryView->setIndentation(16);
-  directoryView->setMinimumWidth(176);
+  directoryView->setMinimumWidth(152);
   directoryView->setAlternatingRowColors(false);
   directoryView->setExpandsOnDoubleClick(true);
    directoryView->setAnimated(true);
@@ -2641,7 +2641,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   fileInfoLayout->addWidget(filePreviewLabel);
   fileInfoLayout->addWidget(fileInfoLabel);
   fileInfoGroup->setLayout(fileInfoLayout);
-  fileInfoGroup->setMaximumHeight(310);
+  fileInfoGroup->setMaximumHeight(270);
 
   // Initial load
   impl_->applyFilters();
