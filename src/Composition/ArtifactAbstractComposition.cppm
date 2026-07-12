@@ -748,6 +748,9 @@ class ArtifactAbstractComposition::Impl {
   mutable QImage thumbnailCache_;
   mutable QSize thumbnailCacheSize_;
   mutable bool thumbnailCacheValid_ = false;
+  // JSON restore is also used for private render snapshots.  It must not
+  // announce each restored layer as a user-visible creation.
+  bool suppressLayerChangedEvents_ = false;
   //PlaybackClock playbackClock_;  // 高精度再生クロック
   
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
@@ -838,9 +841,11 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
   result.error = AppendLayerToCompositionError::None;
   result.message = QString("Layer added successfully");
 
-  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-      owner_->id().toString(), id.toString(),
-      LayerChangedEvent::ChangeType::Created});
+  if (!suppressLayerChangedEvents_) {
+    ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+        owner_->id().toString(), id.toString(),
+        LayerChangedEvent::ChangeType::Created});
+  }
   return result;
   }
 
@@ -2695,6 +2700,7 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
         });
     }
     auto comp = ArtifactCore::makeShared<ArtifactAbstractComposition>(compId, params);
+    comp->impl_->suppressLayerChangedEvents_ = true;
     if (obj.contains("frameRange") && obj["frameRange"].isObject()) {
         comp->setFrameRange(FrameRange::fromJson(obj["frameRange"].toObject()));
     }
@@ -2801,6 +2807,7 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
             }
         }
     }
+    comp->impl_->suppressLayerChangedEvents_ = false;
     const int64_t restoredFrame = obj.contains("currentFrame")
         ? obj["currentFrame"].toVariant().toLongLong()
         : comp->frameRange().start();

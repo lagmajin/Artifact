@@ -2254,12 +2254,13 @@ int main(int argc, char *argv[]) {
                      updateStatusConsole);
     QObject::connect(Logger::instance(), &Logger::logsCleared, mw,
                      updateStatusConsole);
-    auto* softwareCompositionView =
-        new ArtifactSoftwareCompositionTestWidget(mw);
-    mw->addDockedWidgetTabbedWithId(
+    mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("Composition View (Software)"),
         QStringLiteral("Composition View (Software)"),
-        ads::CenterDockWidgetArea, softwareCompositionView,
+        ads::CenterDockWidgetArea,
+        [mw]() -> QWidget * {
+          return new ArtifactSoftwareCompositionTestWidget(mw);
+        },
         QStringLiteral("Composition Viewer"));
     auto *layerViewEditor = new ArtifactRenderLayerEditor(mw);
     layerViewEditor->setSizePolicy(QSizePolicy::Expanding,
@@ -2268,11 +2269,13 @@ int main(int argc, char *argv[]) {
     mw->addDockedWidgetTabbed(QStringLiteral("Layer View (Diligent)"),
                               ads::CenterDockWidgetArea, layerViewEditor,
                               QStringLiteral("Composition Viewer"));
-    auto* softwareLayerView = new ArtifactSoftwareLayerTestWidget(mw);
-    mw->addDockedWidgetTabbedWithId(
+    mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("Layer View (Software)"),
         QStringLiteral("Layer View (Software)"), ads::CenterDockWidgetArea,
-        softwareLayerView, QStringLiteral("Layer View (Diligent)"));
+        [mw]() -> QWidget * {
+          return new ArtifactSoftwareLayerTestWidget(mw);
+        },
+        QStringLiteral("Layer View (Diligent)"));
     auto *projectManagerWidget = new ArtifactProjectManagerWidget(mw);
     projectManagerWidget->setMinimumWidth(240);
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea,
@@ -3179,16 +3182,16 @@ int main(int argc, char *argv[]) {
     }
     recordLayoutRestoreResult(hasGeometry || hasState, geometryRestored,
                               stateRestored, resetApplied);
-    mw->setDockVisible(QStringLiteral("Composition Viewer"), true);
-    mw->activateDock(QStringLiteral("Composition Viewer"));
-    mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
-    mw->activateDock(QStringLiteral("Layer View (Diligent)"));
     // ADS の dock 配置を復元。全 dock が DockManager に登録された後でなければ
     // ならないため、setStartupLayoutFrozen(false) の直前で呼ぶ。
     // 古い version 1 のレイアウト（dockState 無し）はスキップされる。
     if (!layoutState.dockState.isEmpty()) {
       mw->restoreDockManagerState(layoutState.dockState);
     }
+    // The composition editor is the default central work surface.  This must
+    // happen after ADS restore; activating a layer test tab here hid it again.
+    mw->setDockVisible(QStringLiteral("Composition Viewer"), true);
+    mw->activateDock(QStringLiteral("Composition Viewer"));
     // Auxiliary note/AI surfaces remain available from the View menu, but
     // should never be reopened implicitly by a persisted startup layout.
     mw->setDockVisible(QStringLiteral("Composition Note"), false);

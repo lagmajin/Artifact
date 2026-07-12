@@ -6848,19 +6848,32 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<LayerChangedEvent>(
-          [this, scheduleRefresh, scheduleSelectionSync](const LayerChangedEvent& event) {
-            if (event.changeType == LayerChangedEvent::ChangeType::Created) {
-              onLayerCreated(CompositionID(event.compositionId), LayerID(event.layerId));
-            } else if (event.changeType == LayerChangedEvent::ChangeType::Removed) {
-              onLayerRemoved(CompositionID(event.compositionId), LayerID(event.layerId));
-            } else {
-              if (!impl_ || !impl_->painterTrackView_ ||
-                  impl_->compositionId_.isNil() ||
-                  event.compositionId != impl_->compositionId_.toString()) {
-                return;
-              }
-              scheduleSelectionSync(true);
-            }
+          [this, scheduleSelectionSync](const LayerChangedEvent& event) {
+            // The global bus is also used by render-worker snapshot creation.
+            // Always cross back to this widget's thread before touching tracks
+            // or tooltip state.
+            QMetaObject::invokeMethod(
+                this,
+                [this, event, scheduleSelectionSync]() {
+                  if (!impl_) {
+                    return;
+                  }
+                  if (event.changeType == LayerChangedEvent::ChangeType::Created) {
+                    onLayerCreated(CompositionID(event.compositionId),
+                                   LayerID(event.layerId));
+                  } else if (event.changeType == LayerChangedEvent::ChangeType::Removed) {
+                    onLayerRemoved(CompositionID(event.compositionId),
+                                   LayerID(event.layerId));
+                  } else {
+                    if (!impl_->painterTrackView_ ||
+                        impl_->compositionId_.isNil() ||
+                        event.compositionId != impl_->compositionId_.toString()) {
+                      return;
+                    }
+                    scheduleSelectionSync(true);
+                  }
+                },
+                Qt::QueuedConnection);
           }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<SelectionChangedEvent>(
