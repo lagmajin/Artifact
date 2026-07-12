@@ -122,7 +122,7 @@ using namespace ArtifactCore;
 namespace {
 constexpr int kAssetThumbnailMinPx = 25;
 constexpr int kAssetThumbnailMaxPx = 256;
-constexpr int kAssetThumbnailDefaultPx = 96;
+constexpr int kAssetThumbnailDefaultPx = 112;
 constexpr auto kAssetBrowserContext = "Panel.AssetBrowser";
 
 void applyAssetBrowserPanelPalette(QWidget* widget)
@@ -611,7 +611,7 @@ QSize assetGridSizeForThumbnail(const int thumbnailPx)
 {
   const int clamped = std::clamp(thumbnailPx, kAssetThumbnailMinPx,
                                  kAssetThumbnailMaxPx);
-  return QSize(clamped + 36, clamped + 36);
+  return QSize(clamped + 32, clamped + 56);
 }
 
 void applyAssetBrowserViewMode(QListView* view, const QListView::ViewMode mode,
@@ -630,13 +630,13 @@ void applyAssetBrowserViewMode(QListView* view, const QListView::ViewMode mode,
     view->setWrapping(false);
     view->setGridSize(QSize());
     view->setWordWrap(false);
-    view->setSpacing(3);
+    view->setSpacing(2);
   } else {
     view->setFlow(QListView::LeftToRight);
     view->setWrapping(true);
     view->setGridSize(assetGridSizeForThumbnail(clamped));
     view->setWordWrap(true);
-    view->setSpacing(5);
+    view->setSpacing(6);
   }
 }
 }
@@ -941,6 +941,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
    QLabel* leftHubRecentLabel_ = nullptr;
    QLabel* leftHubSelectionLabel_ = nullptr;
    QVector<RecentFolderButton*> recentFolderButtons_;
+   QLabel* filePreviewLabel_ = nullptr;
    QLabel* fileInfoLabel_ = nullptr;  // File details display
    QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
     QString currentDirectoryPath_;
@@ -1901,7 +1902,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   if (leftHubSelectionLabel_) {
    const QStringList paths = selectedAssetPaths();
    if (paths.isEmpty()) {
-    leftHubSelectionLabel_->setText(QStringLiteral("Select an asset to inspect details | Selection: 0 selected"));
+    leftHubSelectionLabel_->setText(QStringLiteral("No asset selected"));
     leftHubSelectionLabel_->setToolTip(QStringLiteral("Select an asset to inspect details."));
    } else {
     QString name = QFileInfo(paths.first()).fileName();
@@ -2197,9 +2198,12 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   auto* listViewButton = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserListViewButton"));
 
   // File type filter buttons
-  auto filterButtonsLayout = new QHBoxLayout();
-  filterButtonsLayout->setContentsMargins(0, 0, 0, 0);
-  filterButtonsLayout->setSpacing(4);
+  auto typeFiltersLayout = new QHBoxLayout();
+  typeFiltersLayout->setContentsMargins(0, 0, 0, 0);
+  typeFiltersLayout->setSpacing(4);
+  auto statusFiltersLayout = new QHBoxLayout();
+  statusFiltersLayout->setContentsMargins(0, 0, 0, 0);
+  statusFiltersLayout->setSpacing(4);
   impl_->filterButtonGroup_ = new QButtonGroup(this);
 
   auto allButton = new QToolButton();
@@ -2229,17 +2233,12 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   impl_->filterButtonGroup_->addButton(audioButton, 3);
   impl_->filterButtonGroup_->addButton(fontsButton, 4);
 
-   filterButtonsLayout->addWidget(allButton);
-   filterButtonsLayout->addWidget(imagesButton);
-   filterButtonsLayout->addWidget(videosButton);
-   filterButtonsLayout->addWidget(audioButton);
-   filterButtonsLayout->addWidget(fontsButton);
-
-   // Status filter: All / Imported / Missing / Unused
-   auto* sep = new QFrame();
-   sep->setFrameShape(QFrame::VLine);
-   sep->setFixedHeight(20);
-   filterButtonsLayout->addWidget(sep);
+   typeFiltersLayout->addWidget(allButton);
+   typeFiltersLayout->addWidget(imagesButton);
+   typeFiltersLayout->addWidget(videosButton);
+   typeFiltersLayout->addWidget(audioButton);
+   typeFiltersLayout->addWidget(fontsButton);
+   typeFiltersLayout->addStretch();
 
    auto statusAllBtn = new QToolButton();
    statusAllBtn->setText("Status: All");
@@ -2270,17 +2269,17 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    statusGroup->addButton(missingBtn, 3);
    statusGroup->addButton(unusedBtn, 4);
 
-   filterButtonsLayout->addWidget(statusAllBtn);
-   filterButtonsLayout->addWidget(importedBtn);
-   filterButtonsLayout->addWidget(favoriteBtn);
-   filterButtonsLayout->addWidget(missingBtn);
-   filterButtonsLayout->addWidget(unusedBtn);
+   statusFiltersLayout->addWidget(statusAllBtn);
+   statusFiltersLayout->addWidget(importedBtn);
+   statusFiltersLayout->addWidget(favoriteBtn);
+   statusFiltersLayout->addWidget(missingBtn);
+   statusFiltersLayout->addWidget(unusedBtn);
 
    // Sort separator
    auto* sortSep = new QFrame();
    sortSep->setFrameShape(QFrame::VLine);
    sortSep->setFixedHeight(20);
-   filterButtonsLayout->addWidget(sortSep);
+   statusFiltersLayout->addWidget(sortSep);
 
    // Sort by combo box
    auto* sortByCombo = new QComboBox();
@@ -2289,8 +2288,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    sortByCombo->addItem("Size", "size");
    sortByCombo->addItem("Type", "type");
    sortByCombo->setCurrentIndex(0);
-   sortByCombo->setFixedWidth(80);
-   filterButtonsLayout->addWidget(sortByCombo);
+   sortByCombo->setMinimumWidth(88);
+   sortByCombo->setToolTip(QStringLiteral("Sort visible assets"));
+   statusFiltersLayout->addWidget(sortByCombo);
 
    // Sort order toggle button
    auto* sortOrderBtn = new QToolButton();
@@ -2299,9 +2299,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    sortOrderBtn->setChecked(true);
    sortOrderBtn->setFixedWidth(30);
    sortOrderBtn->setToolTip("Sort Order: Ascending/Descending");
-   filterButtonsLayout->addWidget(sortOrderBtn);
+   statusFiltersLayout->addWidget(sortOrderBtn);
 
-   filterButtonsLayout->addStretch();
+   statusFiltersLayout->addStretch();
 
    connect(statusGroup, &QButtonGroup::idClicked, this, [this](int id) {
     switch (id) {
@@ -2327,8 +2327,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    });
 
   auto vLayout = new QVBoxLayout();
-  vLayout->setContentsMargins(6, 6, 6, 6);
-  vLayout->setSpacing(6);
+  vLayout->setContentsMargins(8, 8, 8, 8);
+  vLayout->setSpacing(8);
 
   auto layout = new QHBoxLayout();
   layout->setContentsMargins(0, 0, 0, 0);
@@ -2348,7 +2348,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
   directoryView->setModel(directoryModel);
   directoryView->setHeaderHidden(true);
-  directoryView->setIndentation(15);
+  directoryView->setIndentation(16);
+  directoryView->setMinimumWidth(176);
+  directoryView->setAlternatingRowColors(false);
   directoryView->setExpandsOnDoubleClick(true);
    directoryView->setAnimated(true);
    directoryView->setAcceptDrops(true);
@@ -2376,6 +2378,11 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   leftHubLayout->setContentsMargins(8, 6, 8, 6);
   leftHubLayout->setSpacing(4);
   auto* leftHubTitle = new QLabel(QStringLiteral("Library Hub"), leftHubCard);
+  {
+   QFont font = leftHubTitle->font();
+   font.setBold(true);
+   leftHubTitle->setFont(font);
+  }
   impl_->currentPathLabel_ = new QLabel(QStringLiteral("Current: %1").arg(desktopPath), leftHubCard);
   impl_->leftHubSummaryLabel_ = new QLabel(leftHubCard);
   impl_->leftHubRecentLabel_ = new QLabel(leftHubCard);
@@ -2430,6 +2437,17 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   fileView->viewport()->installEventFilter(this);
   applyAssetBrowserViewMode(fileView, QListView::IconMode,
                             impl_->thumbnailSizePx());
+  {
+   QPalette palette = fileView->palette();
+   const auto& theme = ArtifactCore::currentDCCTheme();
+   palette.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor).darker(106));
+   palette.setColor(QPalette::AlternateBase, QColor(theme.secondaryBackgroundColor));
+   palette.setColor(QPalette::Text, QColor(theme.textColor));
+   palette.setColor(QPalette::Highlight, QColor(theme.accentColor).darker(125));
+   palette.setColor(QPalette::HighlightedText, QColor(0xF5, 0xF7, 0xFA));
+   fileView->setPalette(palette);
+   fileView->viewport()->setAutoFillBackground(true);
+  }
 
   auto* viewModeGroup = new QButtonGroup(this);
   viewModeGroup->setExclusive(true);
@@ -2538,6 +2556,10 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     }
    } else if (impl_->fileInfoLabel_) {
     impl_->fileInfoLabel_->setText(QStringLiteral("Open a file to inspect details"));
+    if (impl_->filePreviewLabel_) {
+     impl_->filePreviewLabel_->setPixmap(QPixmap());
+     impl_->filePreviewLabel_->setText(QStringLiteral("Select an asset to preview"));
+    }
    }
    selectionChanged(selectedFiles);
    impl_->refreshLeftHubSummary();
@@ -2576,8 +2598,23 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   auto fileInfoGroup = makeAssetBrowserPanel(this);
   auto fileInfoLayout = new QVBoxLayout();
   fileInfoLayout->setContentsMargins(8, 6, 8, 6);
-  fileInfoLayout->setSpacing(4);
+  fileInfoLayout->setSpacing(6);
   auto* fileInfoTitle = new QLabel(QStringLiteral("File Details"), fileInfoGroup);
+
+  auto* filePreviewLabel = impl_->filePreviewLabel_ = new QLabel(fileInfoGroup);
+  filePreviewLabel->setAlignment(Qt::AlignCenter);
+  filePreviewLabel->setMinimumHeight(96);
+  filePreviewLabel->setMaximumHeight(156);
+  filePreviewLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+  filePreviewLabel->setText(QStringLiteral("Select an asset to preview"));
+  {
+   QPalette pal = filePreviewLabel->palette();
+   const auto& theme = ArtifactCore::currentDCCTheme();
+   pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor).darker(112));
+   pal.setColor(QPalette::WindowText, QColor(theme.textColor).darker(135));
+   filePreviewLabel->setAutoFillBackground(true);
+   filePreviewLabel->setPalette(pal);
+  }
 
   auto fileInfoLabel = impl_->fileInfoLabel_ = new QLabel(QStringLiteral("Open a file to inspect details"));
   fileInfoLabel->setWordWrap(true);
@@ -2593,9 +2630,10 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   applyAssetBrowserPanelPalette(fileInfoLabel);
 
   fileInfoLayout->addWidget(fileInfoTitle);
+  fileInfoLayout->addWidget(filePreviewLabel);
   fileInfoLayout->addWidget(fileInfoLabel);
   fileInfoGroup->setLayout(fileInfoLayout);
-  fileInfoGroup->setMaximumHeight(132);
+  fileInfoGroup->setMaximumHeight(310);
 
   // Initial load
   impl_->applyFilters();
@@ -2619,14 +2657,24 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   auto* navigationHeaderLayout = new QVBoxLayout(navigationHeader);
   navigationHeaderLayout->setContentsMargins(8, 6, 8, 6);
   navigationHeaderLayout->setSpacing(6);
+  auto* browserTitle = new QLabel(QStringLiteral("Asset Browser"), navigationHeader);
+  {
+   QFont font = browserTitle->font();
+   font.setPointSizeF(std::max<qreal>(10.0, font.pointSizeF()));
+   font.setBold(true);
+   browserTitle->setFont(font);
+   applyAssetBrowserPanelPalette(browserTitle);
+  }
+  navigationHeaderLayout->addWidget(browserTitle);
   navigationHeaderLayout->addWidget(breadcrumbBar);
   navigationHeaderLayout->addWidget(assetToolBar);
-  navigationHeaderLayout->addLayout(filterButtonsLayout);
+  navigationHeaderLayout->addLayout(typeFiltersLayout);
+  navigationHeaderLayout->addLayout(statusFiltersLayout);
 
   auto* browserSurface = makeAssetBrowserPanel(this);
   auto* VBoxLayout = new QVBoxLayout(browserSurface);
   VBoxLayout->setContentsMargins(0, 0, 0, 0);
-  VBoxLayout->setSpacing(6);
+  VBoxLayout->setSpacing(8);
   VBoxLayout->addWidget(impl_->syncStateLabel_);
   VBoxLayout->addWidget(fileView);
   VBoxLayout->addWidget(fileInfoGroup);
@@ -2640,7 +2688,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
   vLayout->addWidget(navigationHeader);
   layout->addLayout(leftColumnLayout, 1);
-  layout->addWidget(browserSurface, 3);
+  layout->addWidget(browserSurface, 4);
   vLayout->addLayout(layout);
   setLayout(vLayout);
 
@@ -2973,9 +3021,29 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
 
   QFileInfo fileInfo(filePath);
 
-  if (!fileInfo.exists()) {
+ if (!fileInfo.exists()) {
    impl_->fileInfoLabel_->setText("File not found");
+   if (impl_->filePreviewLabel_) {
+    impl_->filePreviewLabel_->setPixmap(QPixmap());
+    impl_->filePreviewLabel_->setText(QStringLiteral("Preview unavailable"));
+   }
    return;
+  }
+
+  if (impl_->filePreviewLabel_) {
+   const QSize previewSize(std::max(160, impl_->filePreviewLabel_->width() - 12), 144);
+   const QIcon previewIcon = impl_->getFileIcon(fileInfo.fileName(), filePath);
+   const QPixmap previewPixmap = previewIcon.pixmap(previewSize);
+   if (!previewPixmap.isNull()) {
+    impl_->filePreviewLabel_->setText(QString());
+    impl_->filePreviewLabel_->setPixmap(previewPixmap.scaled(
+        previewSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+   } else {
+    impl_->filePreviewLabel_->setPixmap(QPixmap());
+    impl_->filePreviewLabel_->setText(fileInfo.isDir()
+        ? QStringLiteral("Folder")
+        : QStringLiteral("Preview unavailable"));
+   }
   }
 
 // Build information string

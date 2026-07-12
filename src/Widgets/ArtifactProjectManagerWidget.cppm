@@ -1863,18 +1863,20 @@ public:
     };
 
     struct Colors {
-        static inline const QColor Background = QColor(0x28, 0x28, 0x28);
-        static inline const QColor HeaderBackground = QColor(0x25, 0x25, 0x26);
-        static inline const QColor HeaderText = QColor(0x8D, 0x99, 0xA6);
-        static inline const QColor HeaderSeparator = QColor(0x3E, 0x3E, 0x42);
-        static inline const QColor HeaderHover = QColor(0x2D, 0x2D, 0x30);
-        static inline const QColor RowHover = QColor(0x2A, 0x2A, 0x2C);
-        static inline const QColor RowSelected = QColor(0x09, 0x47, 0x71);
+        static inline const QColor Background = QColor(0x1C, 0x1F, 0x24);
+        static inline const QColor HeaderBackground = QColor(0x20, 0x23, 0x29);
+        static inline const QColor HeaderText = QColor(0x98, 0xA1, 0xAE);
+        static inline const QColor HeaderSeparator = QColor(0x34, 0x39, 0x43);
+        static inline const QColor HeaderHover = QColor(0x29, 0x2D, 0x34);
+        static inline const QColor RowHover = QColor(0x25, 0x29, 0x30);
+        static inline const QColor RowSelected = QColor(0x2D, 0x3B, 0x61);
         static inline const QColor RowSelectedText = QColor(0xF5, 0xF7, 0xFA);
-        static inline const QColor RowText = QColor(0xCC, 0xCC, 0xCC);
-        static inline const QColor RowBorder = QColor(0x28, 0x28, 0x28);
-        static inline const QColor BranchNormal = QColor(0x8D, 0x99, 0xA6);
-        static inline const QColor BranchHover = QColor(0xCC, 0xCC, 0xCC);
+        static inline const QColor RowText = QColor(0xD6, 0xDA, 0xE0);
+        static inline const QColor RowBorder = QColor(0x2A, 0x2E, 0x35);
+        static inline const QColor BranchNormal = QColor(0x72, 0x7B, 0x88);
+        static inline const QColor BranchHover = QColor(0xD6, 0xDC, 0xE5);
+        static inline const QColor SelectionAccent = QColor(0x6F, 0x8C, 0xFF);
+        static inline const QColor HierarchyGuide = QColor(0x3A, 0x40, 0x4A);
     };
 
     QAbstractItemModel* model = nullptr;
@@ -1888,7 +1890,7 @@ public:
     QString lastContextCommandLabel;
     QString lastNewCommandId;
     QString lastNewCommandLabel;
-    QVector<int> columnWidths = {260, 120, 120, 100, 140, 180};
+    QVector<int> columnWidths = {300, 120, 120, 110, 150, 180};
     QVector<VisibleRow> visibleRows;
     QSet<QString> expandedKeys;
     QVector<QMetaObject::Connection> modelConnections;
@@ -1901,20 +1903,20 @@ public:
     QModelIndex hoverBranchIndex;
     QLineEdit* nameEditor = nullptr;
     QModelIndex editingIndex;
-    int headerHeight = 24;
-    int rowHeight = 28;
-    int indentWidth = 16;
+    int headerHeight = 30;
+    int rowHeight = 32;
+    int indentWidth = 18;
     ArtifactProjectView::PresentationMode presentationMode = ArtifactProjectView::PresentationMode::List;
     QHash<QString, QPixmap> tilePreviewCache;
-    int tileMargin = 14;
-    int tileSpacing = 16;
-    int tileWidth = 214;
-    int tileHeight = 226;
-    int tilePreviewHeight = 120;
-    int tileContentTop = 34;
-    int tileContentBottom = 10;
-    int tileTextLines = 4;
-    int minTileWidth = 176;
+    int tileMargin = 12;
+    int tileSpacing = 12;
+    int tileWidth = 204;
+    int tileHeight = 214;
+    int tilePreviewHeight = 112;
+    int tileContentTop = 18;
+    int tileContentBottom = 12;
+    int tileTextLines = 3;
+    int minTileWidth = 168;
     int maxTileWidth = 320;
     int minTileHeight = 192;
     int maxTileHeight = 336;
@@ -2617,8 +2619,7 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
 
-    // Sync background fill (Modo style)
-    painter.fillRect(rect(), QColor(40, 40, 40));
+    painter.fillRect(rect(), Impl::Colors::Background);
 
     const int contentWidth = std::max(width(), impl_->totalColumnWidth());
 
@@ -2647,6 +2648,11 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
 
         const QColor rowFill = selected ? Impl::Colors::RowSelected : (hovered ? Impl::Colors::RowHover : Impl::Colors::Background);
         painter.fillRect(rowRect, rowFill);
+
+        if (selected) {
+            painter.fillRect(QRect(rowRect.left(), rowRect.top(), 3, rowRect.height()),
+                             Impl::Colors::SelectionAccent);
+        }
 
         painter.setPen(Impl::Colors::RowBorder);
         painter.drawLine(rowRect.bottomLeft(), rowRect.bottomRight());
@@ -2677,6 +2683,17 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
                 } else {
                     const int indent = visibleRow.depth * impl_->indentWidth;
                     const QRect contentRect = cellRect.adjusted(8 + indent, 0, -8, 0);
+                    if (visibleRow.depth > 0) {
+                        painter.save();
+                        painter.setPen(QPen(Impl::Colors::HierarchyGuide, 1.0));
+                        for (int depth = 0; depth < visibleRow.depth; ++depth) {
+                            const int guideX = cellRect.left() + 14 + depth * impl_->indentWidth;
+                            painter.drawLine(guideX, rowRect.top(), guideX, rowRect.bottom());
+                        }
+                        const int elbowX = cellRect.left() + 14 + (visibleRow.depth - 1) * impl_->indentWidth;
+                        painter.drawLine(elbowX, rowRect.center().y(), contentRect.left() - 4, rowRect.center().y());
+                        painter.restore();
+                    }
                     if (impl_->hasChildren(index0)) {
                         const QRect branchRect(contentRect.left(), contentRect.center().y() - 6, 12, 12);
                         const bool branchHovered = (impl_->hoverBranchIndex == index0);
@@ -2794,7 +2811,7 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
-    painter.fillRect(rect(), QColor(0x28, 0x28, 0x28));
+    painter.fillRect(rect(), Impl::Colors::Background);
 
     const QRect dirtyRect = event ? event->rect() : rect();
     const int viewWidth = std::max(1, width());
@@ -2830,18 +2847,18 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         const bool hasChildren = impl_->hasChildren(index0);
 
         QColor tileFill = selected ? Impl::Colors::RowSelected
-                                   : (hovered ? Impl::Colors::RowHover : QColor(0x2B, 0x2B, 0x2D));
+                                   : (hovered ? Impl::Colors::RowHover : QColor(0x20, 0x23, 0x29));
         if (type == eProjectItemType::Folder) {
             tileFill = tileFill.lighter(selected ? 110 : 104);
         }
 
-        QColor border = selected ? Impl::Colors::RowSelectedText
-                                 : QColor(0x44, 0x44, 0x49);
+        QColor border = selected ? Impl::Colors::SelectionAccent
+                                 : QColor(0x3A, 0x40, 0x4A);
         border.setAlpha(hovered ? 220 : 170);
 
-        painter.setPen(QPen(border, selected ? 2.0 : 1.0));
+        painter.setPen(QPen(border, selected ? 1.5 : 1.0));
         painter.setBrush(tileFill);
-        painter.drawRoundedRect(tileRect.adjusted(0, 0, -1, -1), 8, 8);
+        painter.drawRoundedRect(tileRect.adjusted(0, 0, -1, -1), 6, 6);
 
         QColor accent = QColor(88, 140, 198);
         if (type == eProjectItemType::Folder) {
@@ -2854,8 +2871,8 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         if (selected) {
             accent = accent.lighter(115);
         }
-        painter.fillRect(QRect(tileRect.left() + 1, tileRect.top() + 1,
-                               tileRect.width() - 2, 3), accent);
+        painter.fillRect(QRect(tileRect.left() + 1, tileRect.top() + 8, 3,
+                               tileRect.height() - 16), selected ? Impl::Colors::SelectionAccent : accent);
 
         const QRect previewRect = impl_->tilePreviewRect(tileRect);
         const QRect titleRect = impl_->tileTitleRect(tileRect);
@@ -5584,7 +5601,7 @@ public:
             : QStringLiteral("All items");
         const QString viewModeText = projectView_ && projectView_->presentationMode() == ArtifactProjectView::PresentationMode::Tile
             ? QStringLiteral("Tile")
-            : QStringLiteral("List");
+            : QStringLiteral("Tree");
         return QStringLiteral("View: %1 | Type: %2 | Scope: %3 | Search: %4")
             .arg(viewModeText)
             .arg(typeText)
@@ -5628,7 +5645,7 @@ public:
         if (viewModeBox && projectView_) {
             const QString desiredMode = projectView_->presentationMode() == ArtifactProjectView::PresentationMode::Tile
                                             ? QStringLiteral("Tile")
-                                            : QStringLiteral("List");
+                                            : QStringLiteral("Tree");
             if (viewModeBox->currentText() != desiredMode) {
                 const QSignalBlocker blocker(viewModeBox);
                 viewModeBox->setCurrentText(desiredMode);
@@ -6566,7 +6583,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     chromeLayout->addWidget(impl_->compositionEditorPanel);
 
     impl_->searchBar = new QLineEdit(chromePanel);
-    impl_->searchBar->setPlaceholderText(QStringLiteral("Search assets, tags, type:footage, unused:true"));
+    impl_->searchBar->setPlaceholderText(QStringLiteral("Search project, tags, type:footage, unused:true"));
     impl_->searchBar->setClearButtonEnabled(true);
     {
         QFont f = impl_->searchBar->font();
@@ -6634,7 +6651,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->typeFilterBox = new QComboBox(filterBarHost);
     impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage" << "Folder" << "Solid");
     impl_->viewModeBox = new QComboBox(filterBarHost);
-    impl_->viewModeBox->addItems(QStringList() << "List" << "Tile");
+    impl_->viewModeBox->addItems(QStringList() << "Tree" << "Tile");
+    impl_->viewModeBox->setToolTip(QStringLiteral("Switch between hierarchy-first Tree view and visual Tile view."));
     impl_->unusedOnlyCheck = new QCheckBox("Unused only", filterBarHost);
     impl_->proxyQueueProgress = new QProgressBar(filterBarHost);
     impl_->proxyQueueProgress->setVisible(false);
