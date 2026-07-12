@@ -56,8 +56,8 @@ ArtifactRenderCenterWindow::ArtifactRenderCenterWindow(QWidget* parent)
  : QMainWindow(parent), impl_(new Impl())
 {
  setObjectName(QStringLiteral("ArtifactRenderCenterWindow"));
- setWindowTitle(QStringLiteral("Render Queue - Artifact Studio"));
- resize(1100, 800);
+ setWindowTitle(QStringLiteral("Render Manager - Artifact Studio"));
+ resize(1440, 900);
 
 // Apply native dark title bar on Windows
 #if defined(_WIN32)
@@ -86,7 +86,7 @@ ArtifactRenderCenterWindow::ArtifactRenderCenterWindow(QWidget* parent)
   pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(150));
   statusBar()->setAutoFillBackground(true);
   statusBar()->setPalette(pal);
-  statusBar()->showMessage(QStringLiteral("Render Center Ready"));
+  statusBar()->showMessage(QStringLiteral("Render Manager Ready"));
  }
 }
 
