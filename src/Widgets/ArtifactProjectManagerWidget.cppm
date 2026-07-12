@@ -68,7 +68,9 @@
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QTreeWidget>
+#include <QGridLayout>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QDoubleSpinBox>
 #include <QDialogButtonBox>
 #include <QStyle>
@@ -5594,7 +5596,6 @@ public:
     }
 
     QString selectionSummaryText() const {
-        const QString searchText = searchBar ? searchBar->text().trimmed() : QString();
         const QString typeText = typeFilterBox ? typeFilterBox->currentText() : QStringLiteral("All");
         const QString unusedText = unusedOnlyCheck && unusedOnlyCheck->isChecked()
             ? QStringLiteral("Unused only")
@@ -5602,11 +5603,10 @@ public:
         const QString viewModeText = projectView_ && projectView_->presentationMode() == ArtifactProjectView::PresentationMode::Tile
             ? QStringLiteral("Tile")
             : QStringLiteral("Tree");
-        return QStringLiteral("View: %1 | Type: %2 | Scope: %3 | Search: %4")
+        return QStringLiteral("%1  ·  %2  ·  %3")
             .arg(viewModeText)
             .arg(typeText)
-            .arg(unusedText)
-            .arg(searchText.isEmpty() ? QStringLiteral("-") : searchText);
+            .arg(unusedText);
     }
 
     QString selectionStateText() const {
@@ -5615,26 +5615,23 @@ public:
             : 0;
         const int selectedCompositionCountValue = selectedCompositionCount();
         const int resultCount = proxyModel_ ? proxyModel_->visibleRowCount() : 0;
-        const QString proxyText = proxySummaryForSelectedFootage();
-        const QString proxyPart = proxyText.isEmpty() ? QString() : QStringLiteral(" | %1").arg(proxyText);
         const QString compositionPart = selectedCompositionCountValue > 0
-            ? QStringLiteral(" | Comps: %1").arg(selectedCompositionCountValue)
+            ? QStringLiteral(" · %1 comps").arg(selectedCompositionCountValue)
             : QString();
-        return QStringLiteral("Results: %1 | Selected: %2%3%4")
+        return QStringLiteral("%1 items  ·  %2 selected%3")
             .arg(resultCount)
             .arg(selectedCount)
-            .arg(compositionPart)
-            .arg(proxyPart);
+            .arg(compositionPart);
     }
 
     QString syncStateText() const {
-        return QStringLiteral("Status: Asset Browser linked");
+        return QStringLiteral("Asset Browser linked");
     }
 
     QString projectHealthText() const {
         auto* svc = ArtifactProjectService::instance();
         if (!svc || !svc->hasProject()) {
-            return QStringLiteral("Status: Open a project to inspect details");
+            return QStringLiteral("No project open");
         }
         const QString health = svc->currentProjectHealthSummaryText();
         const QString unused = QStringLiteral("Unused: %1").arg(unusedAssetPaths_.size());
@@ -5674,11 +5671,9 @@ public:
         const bool isFolder = item && item->type() == eProjectItemType::Folder;
         const bool isComposition = item && item->type() == eProjectItemType::Composition;
         const int selectedCompositionCountValue = selectedCompositionCount();
-        const QString pathText = selectedItemPath();
         const QString proxyPath = isFootage ? proxyFilePathForFootage(static_cast<FootageItem*>(item)->filePath) : QString();
         const bool hasProxy = !proxyPath.isEmpty() && QFileInfo(proxyPath).exists();
         const QString proxySummaryText = isFootage ? proxySummaryForSelectedFootage() : QString();
-        const int sourceUseCount = isFootage ? projectItemSourceUseCount(item) : 0;
         const QString statusText = !item ? QStringLiteral("Select an item to inspect details")
             : isFootage ? (QFileInfo(static_cast<FootageItem*>(item)->filePath).exists() ? QStringLiteral("Available") : QStringLiteral("Missing"))
             : isFolder ? QStringLiteral("Folder")
@@ -5686,29 +5681,23 @@ public:
             : QStringLiteral("Item");
         if (selectionDetailLabel) {
             if (!hasItem) {
-                selectionDetailLabel->setText(QStringLiteral("Open a project or search to inspect details | Click an item to open it."));
+                selectionDetailLabel->setText(QStringLiteral("Select an item to inspect details."));
                 selectionDetailLabel->setToolTip(QStringLiteral("Open a project or search, then click an item to inspect it."));
             } else {
-                const QString pathPart = pathText.isEmpty() ? QStringLiteral("-") : pathText;
                 if (isFootage) {
                     const QString proxyPart = proxySummaryText.isEmpty()
-                        ? (hasProxy ? QStringLiteral("Proxy: Ready (%1)").arg(QFileInfo(proxyPath).fileName())
-                                    : QStringLiteral("Proxy: Missing"))
+                        ? (hasProxy ? QStringLiteral("Proxy ready")
+                                    : QStringLiteral("No proxy"))
                         : proxySummaryText;
-                    selectionDetailLabel->setText(QStringLiteral("Status: %1 | %2 | Source Uses: %3 | %4 | Preview")
-                                                      .arg(statusText, pathPart)
-                                                      .arg(sourceUseCount)
-                                                      .arg(proxyPart));
-                    selectionDetailLabel->setToolTip(QStringLiteral("Source Uses is the live AssetManager lease count. Open the selected footage, reveal it, generate a proxy, or copy its path."));
+                    selectionDetailLabel->setText(QStringLiteral("%1  ·  %2")
+                                                      .arg(statusText, proxyPart));
+                    selectionDetailLabel->setToolTip(QStringLiteral("Open the selected footage, reveal it, generate a proxy, or copy its path."));
                 } else {
                     const QString batchPart = isComposition && selectedCompositionCountValue > 1
-                        ? QStringLiteral(" | Batch FPS: %1 comps").arg(selectedCompositionCountValue)
+                        ? QStringLiteral(" · %1 selected").arg(selectedCompositionCountValue)
                         : QString();
-                    const QString inlineEditPart = isComposition
-                        ? QStringLiteral(" | Inline edit ready")
-                        : QString();
-                    selectionDetailLabel->setText(QStringLiteral("Status: %1 | %2%3%4")
-                                                      .arg(statusText, pathPart, batchPart, inlineEditPart));
+                    selectionDetailLabel->setText(QStringLiteral("%1%2")
+                                                      .arg(statusText, batchPart));
                     selectionDetailLabel->setToolTip(isComposition
                         ? QStringLiteral("Click to focus the inline composition editor, or use the action buttons below.")
                         : QStringLiteral("Open the selected item or use the action buttons below."));
@@ -6261,12 +6250,12 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->infoPanel_ = new ProjectInfoPanel(chromePanel);
     chromeLayout->addWidget(impl_->infoPanel_);
 
-    impl_->projectNameLabel = new QLabel(QStringLiteral("Current: Project View"));
+    impl_->projectNameLabel = new QLabel(QStringLiteral("Project View"));
     impl_->projectNameLabel->setObjectName(QStringLiteral("projectManagerSectionLabel"));
     impl_->projectNameLabel->setMaximumHeight(24);
     chromeLayout->addWidget(impl_->projectNameLabel);
 
-    impl_->syncStateLabel = new QLabel(QStringLiteral("Status: Asset Browser linked"), chromePanel);
+    impl_->syncStateLabel = new QLabel(QStringLiteral("Asset Browser linked"), chromePanel);
     impl_->syncStateLabel->setObjectName(QStringLiteral("projectManagerSyncChip"));
     {
         QFont f = impl_->syncStateLabel->font();
@@ -6302,7 +6291,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     auto* selectionChromeLayout = new QVBoxLayout(selectionChrome);
     selectionChromeLayout->setContentsMargins(8, 0, 8, 5);
     selectionChromeLayout->setSpacing(2);
-    impl_->selectionSummaryLabel = new QLabel(QStringLiteral("View: List | Type: All | Scope: All items | Search: -"), selectionChrome);
+    impl_->selectionSummaryLabel = new QLabel(QStringLiteral("Tree  ·  All  ·  All items"), selectionChrome);
     impl_->selectionSummaryLabel->setWordWrap(true);
     impl_->selectionSummaryLabel->setMaximumHeight(40);
     impl_->selectionSummaryLabel->setToolTip(QStringLiteral("Current view mode, active filter scope, and search text."));
@@ -6315,7 +6304,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->selectionSummaryLabel->setPalette(pal);
     }
     selectionChromeLayout->addWidget(impl_->selectionSummaryLabel);
-    impl_->selectionStateLabel = new QLabel(QStringLiteral("Results: 0 | Selected: 0"), selectionChrome);
+    impl_->selectionStateLabel = new QLabel(QStringLiteral("0 items  ·  0 selected"), selectionChrome);
     impl_->selectionStateLabel->setWordWrap(true);
     impl_->selectionStateLabel->setMaximumHeight(40);
     impl_->selectionStateLabel->setToolTip(QStringLiteral("Filtered result count and selection-specific state."));
@@ -6355,9 +6344,10 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         }
     };
 
-    auto* selectionButtons = new QHBoxLayout();
+    auto* selectionButtons = new QGridLayout();
     selectionButtons->setContentsMargins(0, 0, 0, 0);
-    selectionButtons->setSpacing(3);
+    selectionButtons->setHorizontalSpacing(6);
+    selectionButtons->setVerticalSpacing(4);
     impl_->openSelectionButton = new QPushButton(QStringLiteral("Open"), selectionChrome);
     impl_->revealSelectionButton = new QPushButton(QStringLiteral("Reveal"), selectionChrome);
     impl_->generateProxyButton = new QPushButton(QStringLiteral("Proxy"), selectionChrome);
@@ -6457,20 +6447,23 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->proxyGlobalToggle_->setFont(proxyFont);
         impl_->proxyGlobalToggle_->setMaximumHeight(22);
     }
-    selectionButtons->addWidget(impl_->openSelectionButton);
-    selectionButtons->addWidget(impl_->revealSelectionButton);
-    selectionButtons->addWidget(impl_->generateProxyButton);
-    selectionButtons->addWidget(impl_->revealProxyButton);
-    selectionButtons->addWidget(impl_->clearProxyButton);
-    selectionButtons->addWidget(impl_->generateSelectedProxiesButton);
-    selectionButtons->addWidget(impl_->clearSelectedProxiesButton);
-    selectionButtons->addWidget(impl_->regenerateStaleProxiesButton);
-    selectionButtons->addWidget(impl_->relinkSelectionButton);
-    selectionButtons->addWidget(impl_->renameSelectionButton);
-    selectionButtons->addWidget(impl_->deleteSelectionButton);
-    selectionButtons->addWidget(impl_->copyPathButton);
-    selectionButtons->addWidget(impl_->proxyGlobalToggle_);
-    selectionButtons->addStretch();
+    // The detail pane intentionally keeps actions close to the selected item.
+    // A two-column grid avoids forcing the Project View wider than its content.
+    selectionButtons->addWidget(impl_->openSelectionButton, 0, 0);
+    selectionButtons->addWidget(impl_->revealSelectionButton, 0, 1);
+    selectionButtons->addWidget(impl_->generateProxyButton, 1, 0);
+    selectionButtons->addWidget(impl_->revealProxyButton, 1, 1);
+    selectionButtons->addWidget(impl_->clearProxyButton, 2, 0);
+    selectionButtons->addWidget(impl_->relinkSelectionButton, 2, 1);
+    selectionButtons->addWidget(impl_->generateSelectedProxiesButton, 3, 0);
+    selectionButtons->addWidget(impl_->clearSelectedProxiesButton, 3, 1);
+    selectionButtons->addWidget(impl_->regenerateStaleProxiesButton, 4, 0);
+    selectionButtons->addWidget(impl_->renameSelectionButton, 4, 1);
+    selectionButtons->addWidget(impl_->deleteSelectionButton, 5, 0);
+    selectionButtons->addWidget(impl_->copyPathButton, 5, 1);
+    selectionButtons->addWidget(impl_->proxyGlobalToggle_, 6, 0, 1, 2);
+    selectionButtons->setColumnStretch(0, 1);
+    selectionButtons->setColumnStretch(1, 1);
     selectionChromeLayout->addLayout(selectionButtons);
     chromeLayout->addWidget(selectionChrome);
 
@@ -6583,7 +6576,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     chromeLayout->addWidget(impl_->compositionEditorPanel);
 
     impl_->searchBar = new QLineEdit(chromePanel);
-    impl_->searchBar->setPlaceholderText(QStringLiteral("Search project, tags, type:footage, unused:true"));
+    impl_->searchBar->setPlaceholderText(QStringLiteral("Search project, tags, type..."));
     impl_->searchBar->setClearButtonEnabled(true);
     {
         QFont f = impl_->searchBar->font();
@@ -6598,55 +6591,11 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     }
     chromeLayout->addWidget(impl_->searchBar);
 
-    auto* searchGuide = new QLabel(impl_->searchBar);
-    searchGuide->setTextFormat(Qt::RichText);
-    searchGuide->setWordWrap(false);
-    searchGuide->setTextInteractionFlags(Qt::NoTextInteraction);
-    searchGuide->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    const QString accentHex = QColor(ArtifactCore::currentDCCTheme().accentColor).name();
-    searchGuide->setText(QStringLiteral(
-        "<span style=\"color:#9AA3AE;\">Search (</span> "
-        "<span style=\"color:%1; font-weight:600;\">type:footage</span> "
-        "<span style=\"color:#9AA3AE;\"> </span> "
-        "<span style=\"color:%1; font-weight:600;\">tag:png</span> "
-        "<span style=\"color:#9AA3AE;\"> </span> "
-        "<span style=\"color:%1; font-weight:600;\">regex:shot_.*</span> "
-        "<span style=\"color:#9AA3AE;\"> </span> "
-        "<span style=\"color:%1; font-weight:600;\">unused:true</span>"
-        "<span style=\"color:#9AA3AE;\">)...</span>")
-        .arg(accentHex));
-    {
-        QFont f = searchGuide->font();
-        f.setPointSizeF(std::max(8.5, f.pointSizeF() - 0.5));
-        searchGuide->setFont(f);
-        QPalette pal = searchGuide->palette();
-        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(135));
-        searchGuide->setPalette(pal);
-    }
-    QPointer<QLabel> searchGuidePtr(searchGuide);
-    const auto updateSearchGuide = [searchGuidePtr](const QString& text) {
-        if (!searchGuidePtr) {
-            return;
-        }
-        const bool showGuide = text.trimmed().isEmpty();
-        searchGuidePtr->setVisible(showGuide);
-        if (showGuide) {
-            searchGuidePtr->adjustSize();
-            const QRect barRect = searchGuidePtr->parentWidget() ? searchGuidePtr->parentWidget()->rect() : QRect();
-            const int x = 10;
-            const int y = std::max(0, (barRect.height() - searchGuidePtr->height()) / 2);
-            searchGuidePtr->move(x, y);
-            searchGuidePtr->raise();
-        }
-    };
-    updateSearchGuide(impl_->searchBar->text());
-    QObject::connect(impl_->searchBar, &QLineEdit::textChanged, chromePanel, updateSearchGuide);
-
     auto* filterBarHost = new QWidget(chromePanel);
     filterBarHost->setObjectName(QStringLiteral("projectManagerFilterBar"));
     filterBarHost->setAutoFillBackground(true);
     auto* filterBar = new QHBoxLayout(filterBarHost);
-    filterBar->setContentsMargins(10, 0, 10, 6);
+    filterBar->setContentsMargins(0, 0, 0, 0);
     filterBar->setSpacing(8);
     impl_->typeFilterBox = new QComboBox(filterBarHost);
     impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage" << "Folder" << "Solid");
@@ -6664,15 +6613,75 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     filterBar->addStretch();
     filterBar->addWidget(impl_->proxyQueueProgress, 1);
     chromeLayout->addWidget(filterBarHost);
+
+    // Search and filtering are one browse decision, so keep them on the same
+    // header row instead of using two stacked control bands.
+    chromeLayout->removeWidget(impl_->searchBar);
+    chromeLayout->removeWidget(filterBarHost);
+    auto* searchFilterRow = new QWidget(chromePanel);
+    auto* searchFilterLayout = new QHBoxLayout(searchFilterRow);
+    searchFilterLayout->setContentsMargins(10, 0, 10, 6);
+    searchFilterLayout->setSpacing(8);
+    searchFilterLayout->addWidget(impl_->searchBar, 1);
+    searchFilterLayout->addWidget(filterBarHost);
+    chromeLayout->addWidget(searchFilterRow);
+
+    // Keep the browse controls in the header.  Selection preview, detail, and
+    // item actions belong beside the project structure instead of consuming
+    // the vertical space needed to read the project at a glance.
+    chromeLayout->removeWidget(impl_->infoPanel_);
+    chromeLayout->removeWidget(impl_->syncStateLabel);
+    chromeLayout->removeWidget(impl_->projectHealthLabel);
     chromeLayout->removeWidget(selectionChrome);
     chromeLayout->removeWidget(impl_->compositionEditorPanel);
-    chromeLayout->addWidget(selectionChrome);
-    chromeLayout->addWidget(impl_->compositionEditorPanel);
     mainLayout->addWidget(chromePanel);
 
     impl_->projectView_ = new ArtifactProjectView(this);
     impl_->projectView_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    mainLayout->addWidget(impl_->projectView_);
+
+    auto* contentSplit = new QSplitter(Qt::Horizontal, this);
+    contentSplit->setChildrenCollapsible(false);
+
+    auto* projectPane = new QWidget(contentSplit);
+    projectPane->setObjectName(QStringLiteral("projectManagerBrowsePane"));
+    auto* projectPaneLayout = new QVBoxLayout(projectPane);
+    projectPaneLayout->setContentsMargins(0, 0, 0, 0);
+    projectPaneLayout->setSpacing(0);
+    auto* browseContextBar = new QWidget(projectPane);
+    auto* browseContextLayout = new QHBoxLayout(browseContextBar);
+    browseContextLayout->setContentsMargins(10, 4, 10, 4);
+    browseContextLayout->setSpacing(8);
+    // The list and tile content needs its own compact context row.  These
+    // labels describe the current presentation and result set, not selection
+    // details, so they belong directly above the browse surface.
+    selectionChromeLayout->removeWidget(impl_->selectionSummaryLabel);
+    selectionChromeLayout->removeWidget(impl_->selectionStateLabel);
+    browseContextLayout->addWidget(impl_->selectionSummaryLabel);
+    browseContextLayout->addStretch(1);
+    browseContextLayout->addWidget(impl_->selectionStateLabel);
+    projectPaneLayout->addWidget(browseContextBar);
+    projectPaneLayout->addWidget(impl_->projectView_, 1);
+    contentSplit->addWidget(projectPane);
+
+    auto* detailPanel = new QWidget(contentSplit);
+    detailPanel->setObjectName(QStringLiteral("projectManagerDetailPanel"));
+    detailPanel->setAutoFillBackground(true);
+    detailPanel->setMinimumWidth(260);
+    detailPanel->setMaximumWidth(380);
+    auto* detailLayout = new QVBoxLayout(detailPanel);
+    detailLayout->setContentsMargins(8, 8, 8, 8);
+    detailLayout->setSpacing(6);
+    detailLayout->addWidget(impl_->infoPanel_);
+    detailLayout->addWidget(selectionChrome);
+    detailLayout->addWidget(impl_->compositionEditorPanel);
+    detailLayout->addStretch(1);
+    detailLayout->addWidget(impl_->syncStateLabel);
+    detailLayout->addWidget(impl_->projectHealthLabel);
+    contentSplit->addWidget(detailPanel);
+    contentSplit->setStretchFactor(0, 1);
+    contentSplit->setStretchFactor(1, 0);
+    contentSplit->setSizes({720, 300});
+    mainLayout->addWidget(contentSplit, 1);
 
     impl_->toolBox = new ArtifactProjectManagerToolBox(this);
     mainLayout->addWidget(impl_->toolBox);

@@ -2986,16 +2986,19 @@ int main(int argc, char *argv[]) {
                           dockTitle, dockId, ads::BottomDockWidgetArea,
                           panel, QStringLiteral("timeline::"));
 
-                      auto *dopeSheetPanel =
-                          new ArtifactDopeSheetWidget(mw);
-                      dopeSheetPanel->setMinimumHeight(180);
-                      dopeSheetPanel->setComposition(compId);
-                      dopeSheetPanel->setWindowTitle(
-                          dopeSheetDockTitle(compId));
-                      mw->addDockedWidgetTabbedWithId(
+                      // Register the Dope Sheet for ADS layout restoration,
+                      // but construct it only when the user selects its tab.
+                      mw->addLazyDockedWidgetTabbedWithId(
                           dopeSheetDockTitle(compId),
                           dopeSheetDockObjectId(compId),
-                          ads::BottomDockWidgetArea, dopeSheetPanel,
+                          ads::BottomDockWidgetArea,
+                          [mw, compId, dopeSheetDockTitle]() -> QWidget * {
+                            auto *panel = new ArtifactDopeSheetWidget(mw);
+                            panel->setMinimumHeight(180);
+                            panel->setComposition(compId);
+                            panel->setWindowTitle(dopeSheetDockTitle(compId));
+                            return panel;
+                          },
                           QStringLiteral("timeline::"));
 
                       QTimer::singleShot(0, mw, [mw, dockId, panel]() {
