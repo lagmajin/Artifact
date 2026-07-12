@@ -861,7 +861,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   impl_->listViewButton->setText(QStringLiteral("☷"));
   impl_->listViewButton->setToolTip(QStringLiteral("Show assets in list view"));
   impl_->listViewButton->setCheckable(true);
-  impl_->searchWidget->setPlaceholderText(QStringLiteral("Search files..."));
+  impl_->searchWidget->setPlaceholderText(QStringLiteral("Search assets"));
   impl_->searchWidget->setClearButtonEnabled(true);
   impl_->searchWidget->setMinimumWidth(220);
   layout->setContentsMargins(0, 0, 0, 0);

@@ -5797,8 +5797,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     auto rackLayout = new QVBoxLayout();
 
     impl_->racks[i].listWidget = new QListWidget();
-    impl_->racks[i].listWidget->setMinimumHeight(72);
-    impl_->racks[i].listWidget->setMaximumHeight(180);
+    impl_->racks[i].listWidget->setMinimumHeight(56);
+    impl_->racks[i].listWidget->setMaximumHeight(132);
     impl_->racks[i].listWidget->setUniformItemSizes(true);
     impl_->racks[i].listWidget->setFrameShape(QFrame::NoFrame);
     impl_->racks[i].listWidget->setSpacing(3);
@@ -5821,7 +5821,9 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     applyInspectorButton(impl_->racks[i].removeButton, false);
     applyInspectorButton(impl_->racks[i].moveUpButton, false);
     applyInspectorButton(impl_->racks[i].moveDownButton, false);
-    impl_->racks[i].addButton->setVisible(false);
+    // Keep the stage-local add affordance visible; composition stages are
+    // intentionally readable without opening a separate picker first.
+    impl_->racks[i].addButton->setVisible(true);
     impl_->racks[i].addButton->setEnabled(false);
     btnLayout->addWidget(impl_->racks[i].addButton);
     btnLayout->addWidget(impl_->racks[i].moveUpButton);
