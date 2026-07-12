@@ -3927,7 +3927,7 @@ protected:
       const QPointF delta = event->position() - orbitDragStartPos_;
       controller_->notifyViewportInteractionActivity();
       const float yawDelta = static_cast<float>(delta.x()) * 0.55f;
-      const float pitchDelta = static_cast<float>(delta.y()) * 0.55f;
+      const float pitchDelta = static_cast<float>(-delta.y()) * 0.55f;
       const QQuaternion yaw =
           QQuaternion::fromAxisAndAngle(0.0f, 1.0f, 0.0f, yawDelta);
       const QVector3D localRight =
@@ -5753,7 +5753,7 @@ protected:
     if (dragActive_) {
       const QPointF delta = event->position() - dragStartPos_;
       const float yawDelta = static_cast<float>(delta.x()) * 0.55f;
-      const float pitchDelta = static_cast<float>(-delta.y()) * 0.55f;
+      const float pitchDelta = static_cast<float>(delta.y()) * 0.55f;
       const QQuaternion yaw =
           QQuaternion::fromAxisAndAngle(0.0f, 1.0f, 0.0f, yawDelta);
       const QVector3D localRight =
