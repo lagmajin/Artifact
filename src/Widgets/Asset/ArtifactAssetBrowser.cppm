@@ -866,13 +866,13 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   impl_->searchWidget->setMinimumWidth(220);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
-  layout->addWidget(upButton);
-  layout->addWidget(refreshButton);
+  // Discovery comes first: search, then presentation, then navigation.
+  layout->addWidget(impl_->searchWidget, 1);
   layout->addWidget(impl_->gridViewButton);
   layout->addWidget(impl_->listViewButton);
-  layout->addSpacing(10);
-  layout->addStretch(1);
-  layout->addWidget(impl_->searchWidget);
+  layout->addSpacing(6);
+  layout->addWidget(upButton);
+  layout->addWidget(refreshButton);
   setLayout(layout);
  }
 
