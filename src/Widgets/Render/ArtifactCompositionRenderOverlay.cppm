@@ -958,6 +958,76 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
   }
 }
 
+void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
+                               const ArtifactAbstractLayerPtr &layer,
+                               const FloatColor &color,
+                               float thickness,
+                               const QMatrix4x4 *cameraView,
+                               const QMatrix4x4 *cameraProj)
+{
+  if (!renderer || !layer) {
+    return;
+  }
+
+  const QRectF bounds = layer->localBounds();
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+    return;
+  }
+
+  const FloatColor shadow{0.01f, 0.02f, 0.03f, 0.88f};
+  const float safeThickness = std::max(0.75f, thickness);
+
+  if (layer->is3D()) {
+    const auto world = layer->getGlobalTransformMatrix();
+    const auto point = [&world](float x, float y) {
+      const auto transformed = world * Diligent::float4{x, y, 0.0f, 1.0f};
+      return Detail::float3{transformed.x, transformed.y, transformed.z};
+    };
+    const auto tl = point(static_cast<float>(bounds.left()),
+                          static_cast<float>(bounds.top()));
+    const auto tr = point(static_cast<float>(bounds.right()),
+                          static_cast<float>(bounds.top()));
+    const auto br = point(static_cast<float>(bounds.right()),
+                          static_cast<float>(bounds.bottom()));
+    const auto bl = point(static_cast<float>(bounds.left()),
+                          static_cast<float>(bounds.bottom()));
+    if (cameraView && cameraProj) {
+      renderer->set3DCameraMatrices(*cameraView, *cameraProj);
+    }
+    const auto edge = [&](const Detail::float3 &a, const Detail::float3 &b) {
+      renderer->draw3DLine(a, b, shadow, safeThickness + 1.8f);
+      renderer->draw3DLine(a, b, color, safeThickness);
+    };
+    edge(tl, tr);
+    edge(tr, br);
+    edge(br, bl);
+    edge(bl, tl);
+    renderer->flushGizmo3D();
+    if (cameraView && cameraProj) {
+      renderer->reset3DCameraMatrices();
+    }
+    return;
+  }
+
+  const QTransform transform = layer->getGlobalTransform();
+  const QPointF tl = transform.map(bounds.topLeft());
+  const QPointF tr = transform.map(bounds.topRight());
+  const QPointF br = transform.map(bounds.bottomRight());
+  const QPointF bl = transform.map(bounds.bottomLeft());
+  const auto edge = [&](const QPointF &a, const QPointF &b) {
+    renderer->drawSolidLine({static_cast<float>(a.x()), static_cast<float>(a.y())},
+                            {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                            shadow, safeThickness + 1.6f);
+    renderer->drawSolidLine({static_cast<float>(a.x()), static_cast<float>(a.y())},
+                            {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                            color, safeThickness);
+  };
+  edge(tl, tr);
+  edge(tr, br);
+  edge(br, bl);
+  edge(bl, tl);
+}
+
 void drawClonerFrameOverlay(ArtifactIRenderer *renderer,
                             const ArtifactAbstractLayerPtr &layer)
 {

@@ -12,7 +12,7 @@ module;
 #include <QLineEdit>
 #include <QMenu>
 #include <QDockWidget>
-#include <QMainWindow>
+#include <QWidget>
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -139,7 +139,7 @@ ArtifactPropertyWidget* activePropertyWidget(QWidget* root)
     return nullptr;
 }
 
-QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
+QDockWidget* findDockByTitle(QWidget* window, const QString& title)
 {
     if (!window) {
         return nullptr;
@@ -153,7 +153,7 @@ QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
     return nullptr;
 }
 
-void setDockVisible(QMainWindow* window, const QString& title, bool visible)
+void setDockVisible(QWidget* window, const QString& title, bool visible)
 {
     auto* dock = findDockByTitle(window, title);
     if (!dock) {
@@ -165,7 +165,7 @@ void setDockVisible(QMainWindow* window, const QString& title, bool visible)
     }
 }
 
-void activateDock(QMainWindow* window, const QString& title)
+void activateDock(QWidget* window, const QString& title)
 {
     auto* dock = findDockByTitle(window, title);
     if (!dock) {
@@ -989,7 +989,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createParticleAction = new QAction("パーティクル(&P)", createMenu);
     createParticleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
     createPaintAction = new QAction("ペイントレイヤー(&R)...", createMenu);
-    createPaintAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_brush.svg")));
+    createPaintAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_paint.svg")));
     createPaintAction->setToolTip(QStringLiteral("Create a frame-by-frame Paint Layer for brush work."));
     createFormParticleAction = new QAction("Form Particle(&F)", createMenu);
     createFormParticleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
@@ -2860,7 +2860,7 @@ void ArtifactLayerMenu::Impl::handleGenerateProxy()
         return;
     }
 
-    auto* window = qobject_cast<QMainWindow*>(mainWindow_);
+    auto* window = qobject_cast<QWidget*>(mainWindow_);
     if (!window) {
         return;
     }
@@ -2932,7 +2932,7 @@ void ArtifactLayerMenu::Impl::handleClearProxy()
     if (proxyPath.isEmpty()) {
         return;
     }
-    auto* window = qobject_cast<QMainWindow*>(mainWindow_);
+    auto* window = qobject_cast<QWidget*>(mainWindow_);
     auto* manager = window ? window->findChild<ArtifactProjectManagerWidget*>(QStringLiteral("artifactProjectManagerWidget")) : nullptr;
     if (manager) {
         if (!manager->clearProxyForFilePath(videoLayer->sourcePath())) {
@@ -3004,7 +3004,7 @@ void ArtifactLayerMenu::Impl::handleGenerateSelectedProxies()
         return;
     }
 
-    auto* window = qobject_cast<QMainWindow*>(mainWindow_);
+    auto* window = qobject_cast<QWidget*>(mainWindow_);
     if (!window) {
         return;
     }
@@ -3036,7 +3036,7 @@ void ArtifactLayerMenu::Impl::handleClearSelectedProxies()
         return;
     }
 
-    auto* window = qobject_cast<QMainWindow*>(mainWindow_);
+    auto* window = qobject_cast<QWidget*>(mainWindow_);
     if (!window) {
         return;
     }
@@ -3162,7 +3162,7 @@ void ArtifactLayerMenu::Impl::handleClearParent()
 
 void ArtifactLayerMenu::Impl::handleOpenInspector()
 {
-    auto* window = qobject_cast<QMainWindow*>(mainWindow_);
+    auto* window = qobject_cast<QWidget*>(mainWindow_);
     if (!window) {
         return;
     }
@@ -3172,7 +3172,7 @@ void ArtifactLayerMenu::Impl::handleOpenInspector()
 
 void ArtifactLayerMenu::Impl::handleOpenProperties()
 {
-    auto* window = qobject_cast<QMainWindow*>(mainWindow_);
+    auto* window = qobject_cast<QWidget*>(mainWindow_);
     if (!window) {
         return;
     }
@@ -3394,7 +3394,7 @@ void ArtifactLayerMenu::Impl::handleTrackCamera()
     }
 
     // 実行
-    auto* window = qobject_cast<QMainWindow*>(menu_ ? menu_->window() : nullptr);
+    auto* window = qobject_cast<QWidget*>(menu_ ? menu_->window() : nullptr);
     bool success = ArtifactCameraTrackerTool::run(
         comp.get(), layer,
         [window](const ArtifactCameraTrackerTool::ProgressUpdate& update) {
@@ -3411,7 +3411,9 @@ void ArtifactLayerMenu::Impl::handleTrackCamera()
                 window,
                 [window, status]() {
                     if (window) {
-                        window->statusBar()->showMessage(status, 1500);
+                        if (auto *statusBar = window->findChild<QStatusBar *>()) {
+                          statusBar->showMessage(status, 1500);
+                        }
                     }
                 },
                 Qt::QueuedConnection);

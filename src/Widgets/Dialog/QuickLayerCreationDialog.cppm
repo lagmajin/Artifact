@@ -10,6 +10,7 @@ module;
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QSettings>
+#include <QPushButton>
 #include <QVBoxLayout>
 #include <wobjectimpl.h>
 module Artifact.Widgets.QuickLayerCreationDialog;
@@ -121,8 +122,7 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
 QuickLayerCreationDialog::~QuickLayerCreationDialog() { delete impl_; }
 
 QuickLayerCreationOptions QuickLayerCreationDialog::submittedOptions() const {
-  QuickLayerCreationOptions options;
-  options.solidParams = ArtifactSolidLayerInitParams(impl_->name->text());
+  QuickLayerCreationOptions options{ArtifactSolidLayerInitParams(impl_->name->text())};
   options.solidParams.setWidth(impl_->width->value());
   options.solidParams.setHeight(impl_->height->value());
   options.maskShape = static_cast<QuickLayerMaskShape>(impl_->mask->currentData().toInt());

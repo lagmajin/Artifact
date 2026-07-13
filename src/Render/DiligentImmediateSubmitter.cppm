@@ -311,6 +311,16 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
     }
 
     {
+        BufferDesc desc;
+        desc.Name           = "DIS GradientCB";
+        desc.Size           = sizeof(GradientRectParams);
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_UNIFORM_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        device->CreateBuffer(desc, nullptr, &m_draw_gradient_cb);
+    }
+
+    {
         struct CBViewerHelper { float a, b; float2 pad; float4 c1, c2; };
         BufferDesc desc;
         desc.Name           = "DIS ViewerHelperCB";
@@ -457,6 +467,7 @@ void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
     m_glyph_sampler                         = sm.glyphAtlasSampler();
     m_draw_solid_rect_pso_and_srb           = sm.solidRectPsoAndSrb();
     m_draw_solid_rect_transform_pso_and_srb = sm.solidRectTransformPsoAndSrb();
+    m_draw_gradient_rect_pso_and_srb         = sm.gradientRectPsoAndSrb();
     m_draw_line_pso_and_srb                 = sm.linePsoAndSrb();
     m_draw_thick_line_pso_and_srb           = sm.thickLinePsoAndSrb();
     m_draw_dot_line_pso_and_srb             = sm.dotLinePsoAndSrb();
@@ -476,6 +487,7 @@ void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
         bindVar(m_draw_solid_rect_pso_and_srb.pSRB,           SHADER_TYPE_PIXEL,  "ColorBuffer",    m_draw_solid_rect_cb);
         bindVar(m_draw_solid_rect_transform_pso_and_srb.pSRB, SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_transform_matrix_cb);
         bindVar(m_draw_solid_rect_transform_pso_and_srb.pSRB, SHADER_TYPE_PIXEL,  "ColorBuffer",    m_draw_solid_rect_cb);
+        bindVar(m_draw_gradient_rect_pso_and_srb.pSRB,        SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_transform_matrix_cb);
         bindVar(m_draw_line_pso_and_srb.pSRB,                 SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_trnsform_cb);
         bindVar(m_draw_thick_line_pso_and_srb.pSRB,           SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_trnsform_cb);
         bindVar(m_draw_dot_line_pso_and_srb.pSRB,             SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_trnsform_cb);
@@ -487,6 +499,7 @@ void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
         bindVar(m_draw_grid_pso_and_srb.pSRB,                 SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_trnsform_cb);
         bindVar(m_draw_grid_pso_and_srb.pSRB,                 SHADER_TYPE_PIXEL,  "ColorBuffer",    m_draw_solid_rect_cb);
         bindVar(m_draw_grid_pso_and_srb.pSRB,                 SHADER_TYPE_PIXEL,  "ViewerHelperCB", m_draw_viewer_helper_cb);
+        bindVar(m_draw_gradient_rect_pso_and_srb.pSRB,        SHADER_TYPE_PIXEL,  "GradientCB", m_draw_gradient_cb);
         bindVar(m_draw_sprite_pso_and_srb.pSRB,               SHADER_TYPE_VERTEX, "TransformCB",    m_draw_sprite_cb);
         if (m_sprite_sampler)
             bindVar(m_draw_sprite_pso_and_srb.pSRB,           SHADER_TYPE_PIXEL,  "g_sampler",      m_sprite_sampler);
@@ -535,6 +548,7 @@ void DiligentImmediateSubmitter::destroy()
     m_draw_solid_rect_trnsform_cb           = nullptr;
     m_draw_solid_rect_transform_matrix_cb   = nullptr;
     m_draw_viewer_helper_cb                 = nullptr;
+    m_draw_gradient_cb                      = nullptr;
     m_draw_dot_line_cb                      = nullptr;
     m_draw_outline_params_cb                = nullptr;
     m_sprite_sampler                        = nullptr;
@@ -689,6 +703,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             } else {
                 flushSolidRectBatch(); // flush before switching to a different draw type
                 if constexpr      (std::is_same_v<T, SolidRectXformPkt>)  submitSolidRectXform(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, GradientRectPkt>)    submitGradientRect(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, LinePkt>)            submitLine(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, QuadPkt>)            submitQuad(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, DotLinePkt>)         submitDotLine(p, recordCtx, pRTV);
@@ -851,6 +866,38 @@ void DiligentImmediateSubmitter::submitSolidRectXform(const SolidRectXformPkt& p
     ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_solid_rect_transform_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_NONE);
+    recordDrawCall(m_frameCostStats_, true);
+    ctx->DrawIndexed(drawAttrs);
+}
+
+void DiligentImmediateSubmitter::submitGradientRect(const GradientRectPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+{
+    if (!pRTV || !m_draw_gradient_rect_pso_and_srb.pPSO || !m_draw_solid_rect_vertex_buffer ||
+        !m_draw_gradient_cb || !m_draw_solid_rect_transform_matrix_cb || !m_draw_solid_rect_index_buffer) {
+        return;
+    }
+
+    const float4 vertexColor = {1.0f, 1.0f, 1.0f, p.opacity};
+    RectVertex vertices[4] = {
+        {{0.0f, 0.0f}, vertexColor}, {{1.0f, 0.0f}, vertexColor},
+        {{0.0f, 1.0f}, vertexColor}, {{1.0f, 1.0f}, vertexColor},
+    };
+    mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+    mapWriteDiscard(ctx, m_draw_solid_rect_transform_matrix_cb, &p.mat, sizeof(p.mat), m_frameCostStats_);
+    mapWriteDiscard(ctx, m_draw_gradient_cb, &p.params, sizeof(p.params), m_frameCostStats_);
+
+    if (m_currentPSO_ != m_draw_gradient_rect_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_gradient_rect_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_gradient_rect_pso_and_srb.pPSO;
+    }
+    recordShaderResourceCommit(m_frameCostStats_);
+    ctx->CommitShaderResources(m_draw_gradient_rect_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    IBuffer* pBufs[] = { m_draw_solid_rect_vertex_buffer };
+    Uint64 offs[] = { 0 };
+    ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_NONE);
     recordDrawCall(m_frameCostStats_, true);
     ctx->DrawIndexed(drawAttrs);

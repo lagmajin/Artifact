@@ -122,12 +122,12 @@ void ArtifactProjectStatistics::collectMetadata(
             if (findResult.success) {
                 if (auto comp = findResult.ptr.lock()) {
                     const QString compId = compositionItem->compositionId.toString();
-                    visitor.visitComposition(compId, compositionItem->name.toQString());
+                    visitor.visitComposition(compId, compositionItem->name);
                     for (const auto& layer : comp->allLayer()) {
                         if (!layer) continue;
-                        visitor.visitLayer(layer->id().toString(),
-                                           layer->layerName().toQString(),
-                                           layer->className().toQString());
+                    visitor.visitLayer(layer->id().toString(),
+                                       layer->layerName(),
+                                       layer->className());
                         for (const auto& effect : layer->getEffects()) {
                             if (!effect) continue;
                             visitor.visitEffect(
@@ -139,7 +139,7 @@ void ArtifactProjectStatistics::collectMetadata(
                             [&](const QJsonValue& value, const QString& path) {
                                 if (value.isObject()) {
                                     const auto object = value.toObject();
-                                    for (auto it = object.cbegin(); it != object.cend(); ++it) {
+                                    for (auto it = object.begin(); it != object.end(); ++it) {
                                         const QString childPath = path.isEmpty()
                                             ? it.key() : path + QStringLiteral(".") + it.key();
                                         visitJson(it.value(), childPath);
@@ -336,11 +336,7 @@ void FontUsageCollector::onProperty(const ArtifactCore::MetadataNode& node) {
         if (!families_.contains(value)) families_.push_back(value);
 
         const QFont font(value);
-        const QRawFont rawFont = QRawFont::fromFont(font, QFontDatabase::Any);
-        const QString resolvedPath = rawFont.fileName();
-        if (!resolvedPath.isEmpty() && !files_.contains(resolvedPath)) {
-            files_.push_back(resolvedPath);
-        }
+        Q_UNUSED(QRawFont::fromFont(font, QFontDatabase::Any));
     } else if (key.endsWith(QStringLiteral("fontpath")) ||
                key.endsWith(QStringLiteral("fontfile"))) {
         if (!files_.contains(value)) files_.push_back(value);

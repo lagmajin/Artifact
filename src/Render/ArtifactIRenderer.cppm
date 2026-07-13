@@ -2896,6 +2896,21 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
  { impl_->drawSolidRectTransformed(x, y, w, h, transform, color, opacity); }
  void ArtifactIRenderer::drawSolidRectTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const FloatColor& color, float opacity)
  { impl_->primitiveRenderer_.drawSolidRectTransformed(x, y, w, h, transform, color, opacity); }
+ void ArtifactIRenderer::drawGradientRectTransformed(float x, float y, float w, float h,
+                                                     const QMatrix4x4& transform,
+                                                     const FloatColor& startColor,
+                                                     const FloatColor& endColor,
+                                                     int fillType,
+                                                     float angleDegrees,
+                                                     bool reverse,
+                                                     float centerX,
+                                                     float centerY,
+                                                     float scale,
+                                                     float offset,
+                                                     float opacity)
+ { impl_->primitiveRenderer_.drawGradientRectTransformed(x, y, w, h, transform, startColor, endColor,
+                                                          fillType, angleDegrees, reverse, centerX, centerY,
+                                                          scale, offset, opacity); }
  void ArtifactIRenderer::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
  { impl_->drawRectOutlineLocal(x, y, w, h, color); }
 void ArtifactIRenderer::drawThickLineLocal(Detail::float2 p1, Detail::float2 p2,

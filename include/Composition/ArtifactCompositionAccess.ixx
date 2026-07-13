@@ -1,13 +1,16 @@
 module;
+#include <memory>
 
 export module Artifact.Composition.Access;
 
-export import Artifact.Layer.Abstract;
 import Frame.Position;
 import Frame.Rate;
 import Utils.Id;
 
 export namespace Artifact {
+
+class ArtifactAbstractLayer;
+using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
 
 class ArtifactAbstractCompositionAccess {
 public:

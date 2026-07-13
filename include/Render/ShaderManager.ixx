@@ -42,6 +42,7 @@ public:
     PSOAndSRB outlinePsoAndSrb() const;
     PSOAndSRB solidRectPsoAndSrb() const;
     PSOAndSRB solidRectTransformPsoAndSrb() const;
+    PSOAndSRB gradientRectPsoAndSrb() const;
     PSOAndSRB spritePsoAndSrb() const;
     PSOAndSRB thickLinePsoAndSrb() const;
     PSOAndSRB dotLinePsoAndSrb() const;

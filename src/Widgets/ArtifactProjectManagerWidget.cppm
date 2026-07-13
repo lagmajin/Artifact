@@ -1865,20 +1865,20 @@ public:
     };
 
     struct Colors {
-        static inline const QColor Background = QColor(0x1C, 0x1F, 0x24);
-        static inline const QColor HeaderBackground = QColor(0x20, 0x23, 0x29);
-        static inline const QColor HeaderText = QColor(0x98, 0xA1, 0xAE);
-        static inline const QColor HeaderSeparator = QColor(0x34, 0x39, 0x43);
-        static inline const QColor HeaderHover = QColor(0x29, 0x2D, 0x34);
-        static inline const QColor RowHover = QColor(0x25, 0x29, 0x30);
-        static inline const QColor RowSelected = QColor(0x2D, 0x3B, 0x61);
+        static inline const QColor Background = QColor(0x0F, 0x17, 0x1F);
+        static inline const QColor HeaderBackground = QColor(0x14, 0x1E, 0x28);
+        static inline const QColor HeaderText = QColor(0xA8, 0xB4, 0xC1);
+        static inline const QColor HeaderSeparator = QColor(0x2D, 0x3D, 0x4D);
+        static inline const QColor HeaderHover = QColor(0x1D, 0x2B, 0x38);
+        static inline const QColor RowHover = QColor(0x1A, 0x29, 0x36);
+        static inline const QColor RowSelected = QColor(0x24, 0x4A, 0x82);
         static inline const QColor RowSelectedText = QColor(0xF5, 0xF7, 0xFA);
-        static inline const QColor RowText = QColor(0xD6, 0xDA, 0xE0);
-        static inline const QColor RowBorder = QColor(0x2A, 0x2E, 0x35);
-        static inline const QColor BranchNormal = QColor(0x72, 0x7B, 0x88);
-        static inline const QColor BranchHover = QColor(0xD6, 0xDC, 0xE5);
-        static inline const QColor SelectionAccent = QColor(0x6F, 0x8C, 0xFF);
-        static inline const QColor HierarchyGuide = QColor(0x3A, 0x40, 0x4A);
+        static inline const QColor RowText = QColor(0xD5, 0xDF, 0xE8);
+        static inline const QColor RowBorder = QColor(0x25, 0x35, 0x45);
+        static inline const QColor BranchNormal = QColor(0x73, 0x88, 0x9B);
+        static inline const QColor BranchHover = QColor(0xD6, 0xE2, 0xEE);
+        static inline const QColor SelectionAccent = QColor(0x4E, 0x91, 0xFF);
+        static inline const QColor HierarchyGuide = QColor(0x35, 0x4B, 0x5F);
     };
 
     QAbstractItemModel* model = nullptr;
@@ -6253,6 +6253,15 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->projectNameLabel = new QLabel(QStringLiteral("Project View"));
     impl_->projectNameLabel->setObjectName(QStringLiteral("projectManagerSectionLabel"));
     impl_->projectNameLabel->setMaximumHeight(24);
+    {
+        QFont titleFont = impl_->projectNameLabel->font();
+        titleFont.setPointSizeF(std::max<qreal>(13.0, titleFont.pointSizeF() + 1.0));
+        titleFont.setBold(true);
+        impl_->projectNameLabel->setFont(titleFont);
+        QPalette titlePalette = impl_->projectNameLabel->palette();
+        titlePalette.setColor(QPalette::WindowText, QColor(0xE5, 0xEC, 0xF4));
+        impl_->projectNameLabel->setPalette(titlePalette);
+    }
     chromeLayout->addWidget(impl_->projectNameLabel);
 
     impl_->syncStateLabel = new QLabel(QStringLiteral("Asset Browser linked"), chromePanel);
@@ -6603,6 +6612,24 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->viewModeBox->addItems(QStringList() << "Tree" << "Tile");
     impl_->viewModeBox->setToolTip(QStringLiteral("Switch between hierarchy-first Tree view and visual Tile view."));
     impl_->unusedOnlyCheck = new QCheckBox("Unused only", filterBarHost);
+    const auto applyProjectControlPalette = [](QWidget* control) {
+        if (!control) {
+            return;
+        }
+        QPalette pal = control->palette();
+        pal.setColor(QPalette::Base, QColor(0x0D, 0x13, 0x1A));
+        pal.setColor(QPalette::Button, QColor(0x18, 0x25, 0x31));
+        pal.setColor(QPalette::ButtonText, QColor(0xD5, 0xDF, 0xE8));
+        pal.setColor(QPalette::Text, QColor(0xD5, 0xDF, 0xE8));
+        pal.setColor(QPalette::PlaceholderText, QColor(0x7F, 0x91, 0xA2));
+        pal.setColor(QPalette::Highlight, QColor(0x2B, 0x6F, 0xC7));
+        pal.setColor(QPalette::HighlightedText, Qt::white);
+        control->setAutoFillBackground(true);
+        control->setPalette(pal);
+    };
+    applyProjectControlPalette(impl_->typeFilterBox);
+    applyProjectControlPalette(impl_->viewModeBox);
+    applyProjectControlPalette(impl_->unusedOnlyCheck);
     impl_->proxyQueueProgress = new QProgressBar(filterBarHost);
     impl_->proxyQueueProgress->setVisible(false);
     impl_->proxyQueueProgress->setTextVisible(true);
@@ -6979,7 +7006,7 @@ bool ArtifactProjectManagerWidget::clearProxyForFilePath(const QString& sourceFi
 void ArtifactProjectManagerWidget::paintEvent(QPaintEvent* event)
 {
     QPainter painter(this);
-    painter.fillRect(event->rect(), QColor(0x20, 0x25, 0x2C));
+    painter.fillRect(event->rect(), QColor(0x0F, 0x17, 0x1F));
     QWidget::paintEvent(event);
 }
 
@@ -7105,7 +7132,7 @@ ArtifactProjectManagerToolBox::~ArtifactProjectManagerToolBox() {}
 void ArtifactProjectManagerToolBox::paintEvent(QPaintEvent* event)
 {
     QPainter painter(this);
-    painter.fillRect(event->rect(), QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+    painter.fillRect(event->rect(), QColor(0x14, 0x1E, 0x28));
     QWidget::paintEvent(event);
 }
 void ArtifactProjectManagerToolBox::resizeEvent(QResizeEvent*) {}

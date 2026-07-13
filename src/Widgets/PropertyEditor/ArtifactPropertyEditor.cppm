@@ -164,11 +164,11 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       QStringLiteral("Studio/property_key_next.svg"),
       QStringLiteral("Studio/property_key_next.svg"));
   const QIcon resetIcon =
-      loadPropertyIcon(QStringLiteral("MaterialVS/neutral/undo.svg"),
-                       QString());
-  const QIcon expressionIcon =
-      loadPropertyIcon(QStringLiteral("MaterialVS/blue/code.svg"),
-                       QString());
+      loadPropertyIcon(QStringLiteral("Studio/replay.svg"), QString());
+  const QIcon expressionIcon = loadPropertyIcon(
+      QStringLiteral("Studio/effectmenu_code.svg"), QString());
+  const QIcon favoriteOutlineIcon = loadPropertyIcon(
+      QStringLiteral("Studio/property_fav_outline.svg"), QString());
 
   prevKeyBtn_->setFixedSize(kPropertyNavButtonWidth, kPropertyNavButtonHeight);
   nextKeyBtn_->setFixedSize(kPropertyNavButtonWidth, kPropertyNavButtonHeight);
@@ -233,18 +233,17 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   favoriteButton_->setFixedSize(kPropertyKeyButtonSize,
                                 kPropertyKeyButtonSize);
   favoriteButton_->setCheckable(true);
-  favoriteButton_->setText(QStringLiteral("\u2606"));
-  QFont starFont = favoriteButton_->font();
-  starFont.setPointSize(11);
-  favoriteButton_->setFont(starFont);
+  favoriteButton_->setIcon(favoriteOutlineIcon);
+  favoriteButton_->setIconSize(QSize(14, 14));
   favoriteButton_->setFlat(true);
   favoriteButton_->setVisible(false);
   favoriteButton_->setFocusPolicy(Qt::NoFocus);
   applyPropertyButtonPalette(favoriteButton_);
 
   auto *auxContainer = new QWidget(this);
-  auxContainer->setMaximumWidth(kAuxButtonAreaWidth);
-  auxContainer->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+  auxContainer->setObjectName(QStringLiteral("propertyRowActionCluster"));
+  auxContainer->setFixedWidth(kAuxButtonAreaWidth);
+  auxContainer->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   auxContainer->setAutoFillBackground(false);
   auto *auxLayout = new QHBoxLayout(auxContainer);
   auxLayout->setContentsMargins(0, 0, 0, 0);
@@ -290,9 +289,11 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   QObject::connect(favoriteButton_, &QPushButton::toggled, this,
                    [this](const bool checked) {
                      if (favoriteButton_) {
-                       favoriteButton_->setText(
-                           checked ? QStringLiteral("\u2605")
-                                   : QStringLiteral("\u2606"));
+                       favoriteButton_->setIcon(loadPropertyIcon(
+                           checked
+                               ? QStringLiteral("Studio/property_fav_filled.svg")
+                               : QStringLiteral("Studio/property_fav_outline.svg"),
+                           QString()));
                      }
                      if (favoriteHandler_) {
                        favoriteHandler_(checked);
@@ -614,9 +615,10 @@ void ArtifactPropertyEditorRowWidget::setFavoriteChecked(const bool checked) {
     return;
   }
   favoriteButton_->setChecked(checked);
-  favoriteButton_->setText(checked
-      ? QStringLiteral("\u2605")  // ★
-      : QStringLiteral("\u2606")); // ☆
+  favoriteButton_->setIcon(loadPropertyIcon(
+      checked ? QStringLiteral("Studio/property_fav_filled.svg")
+              : QStringLiteral("Studio/property_fav_outline.svg"),
+      QString()));
 }
 
 bool ArtifactPropertyEditorRowWidget::isFavoriteChecked() const {

@@ -18,6 +18,14 @@ import Frame.Position;
 
 namespace Artifact {
 
+using ArtifactCore::AbstractProperty;
+using ArtifactCore::AbstractPropertyPtr;
+using ArtifactCore::AnimatableValueT;
+using ArtifactCore::FramePosition;
+using ArtifactCore::PropertySerializationBridge;
+using ArtifactCore::PropertyType;
+using ArtifactCore::RationalTime;
+
 namespace {
 struct PropertyKeyframeTestReport {
     int failures = 0;

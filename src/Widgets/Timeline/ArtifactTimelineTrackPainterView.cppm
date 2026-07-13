@@ -5980,7 +5980,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   const TimelineThemeColors theme = timelineThemeColors();
 
   const QRect dirtyRect = event->rect();
-  p.fillRect(dirtyRect, theme.background);
+  QColor canvasColor = theme.surface.darker(112);
+  p.fillRect(dirtyRect, canvasColor);
 
   const QRect fullRect = rect();
   const double ppf = impl_->pixelsPerFrame_;
@@ -6016,18 +6017,20 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         row.kind == TimelineRowKind::Property && !row.layerId.isNil() &&
         impl_->lastSyncedSelectedLayerIds_.contains(row.layerId);
 
-    const QColor rowColor =
-        (i % 2 == 0) ? theme.surface.lighter(102) : theme.surface.darker(104);
+    QColor rowColor = canvasColor;
+    rowColor = (i % 2 == 0) ? rowColor.lighter(102) : rowColor.darker(102);
     p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), rowColor);
     if (isSelectedPropertyLane) {
       QColor laneTint = theme.accent;
-      laneTint.setAlpha(22);
+      laneTint.setAlpha(14);
       p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), laneTint);
       QColor laneStrip = theme.accent;
-      laneStrip.setAlpha(112);
-      p.fillRect(QRectF(0.0, rowTop, 3.0, rowH), laneStrip);
+      laneStrip.setAlpha(88);
+      p.fillRect(QRectF(0.0, rowTop, 2.0, rowH), laneStrip);
     }
-    p.setPen(QPen(theme.border.darker(160), 1));
+    QColor rowDivider = theme.border.darker(135);
+    rowDivider.setAlpha(150);
+    p.setPen(QPen(rowDivider, 1));
     p.drawLine(0, rowTop + rowH, fullRect.width(), rowTop + rowH);
   }
 
@@ -6045,8 +6048,10 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     if (!major && !minor) {
       continue;
     }
-    p.setPen(
-        QPen(major ? theme.border.lighter(112) : theme.border.darker(112), 1));
+    QColor gridColor = major ? theme.border.lighter(106)
+                             : theme.border.darker(118);
+    gridColor.setAlpha(major ? 150 : 82);
+    p.setPen(QPen(gridColor, 1));
     p.drawLine(QPointF(x, dirtyRect.top()), QPointF(x, dirtyRect.bottom()));
   }
 

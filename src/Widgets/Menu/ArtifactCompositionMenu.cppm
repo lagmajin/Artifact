@@ -43,6 +43,7 @@ import Artifact.Widgets.AppDialogs;
 import Widgets.Utils.CSS;
 import Geometry.ResolutionRemap;
 import Artifact.Widgets.ResolutionRemapDialog;
+import Artifact.Widgets.Dialog.CompositionShell;
 import Undo.UndoManager;
 import UI.ShortcutBindings;
 
@@ -206,7 +207,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  colorAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_background.svg")));
 
  sendAction = new QAction("メインプロジェクトへ送信(&T)...", menu);
- sendAction->setIcon(QIcon(resolveIconPath("Studio/upload.svg")));
+ sendAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_send_project.svg")));
 
  menu->addAction(createAction);
  menu->addMenu(presetMenu);
@@ -342,23 +343,26 @@ void ArtifactCompositionMenu::Impl::showSettings()
   return;
  }
 
- QDialog dialog(mainWindow_ ? mainWindow_ : menu_);
- dialog.setWindowTitle(QStringLiteral("Composition Settings"));
- dialog.setModal(true);
- dialog.resize(420, 320);
+ ArtifactCompositionDialogShell dialog(mainWindow_ ? mainWindow_ : menu_);
 
- auto* layout = new QVBoxLayout(&dialog);
- layout->setContentsMargins(12, 12, 12, 12);
- layout->setSpacing(10);
+ const auto& dialogTheme = ArtifactCore::currentDCCTheme();
+ dialog.setAutoFillBackground(true);
+ QPalette dialogPalette = dialog.palette();
+ dialogPalette.setColor(QPalette::Window, QColor(dialogTheme.backgroundColor));
+ dialogPalette.setColor(QPalette::Base, QColor(dialogTheme.secondaryBackgroundColor));
+ dialogPalette.setColor(QPalette::WindowText, QColor(dialogTheme.textColor));
+ dialogPalette.setColor(QPalette::Text, QColor(dialogTheme.textColor));
+ dialog.setPalette(dialogPalette);
+ auto* contentLayout = dialog.contentLayout();
 
  auto* nameLabel = new QLabel(QStringLiteral("Name"), &dialog);
  auto* nameEdit = new QLineEdit(current->settings().compositionName().toQString(), &dialog);
- layout->addWidget(nameLabel);
- layout->addWidget(nameEdit);
+ contentLayout->addWidget(nameLabel);
+ contentLayout->addWidget(nameEdit);
 
  const QSize initialSize = current->effectiveCompositionSize();
  auto* sizeLabel = new QLabel(QStringLiteral("Size"), &dialog);
- layout->addWidget(sizeLabel);
+ contentLayout->addWidget(sizeLabel);
  auto* sizeLayout = new QHBoxLayout();
  auto* widthSpin = new QSpinBox(&dialog);
  widthSpin->setRange(1, 32768);
@@ -370,10 +374,10 @@ void ArtifactCompositionMenu::Impl::showSettings()
  sizeLayout->addWidget(widthSpin);
  sizeLayout->addWidget(new QLabel(QStringLiteral("Height"), &dialog));
  sizeLayout->addWidget(heightSpin);
- layout->addLayout(sizeLayout);
+ contentLayout->addLayout(sizeLayout);
 
  auto* responsiveLabel = new QLabel(QStringLiteral("Responsive Layout"), &dialog);
- layout->addWidget(responsiveLabel);
+ contentLayout->addWidget(responsiveLabel);
  auto* responsiveCombo = new QComboBox(&dialog);
  const ResponsiveLayoutSet previewLayout = normalizedResponsiveLayoutForDialog(current);
  for (const auto& variant : previewLayout.variants) {
@@ -382,7 +386,7 @@ void ArtifactCompositionMenu::Impl::showSettings()
    responsiveCombo->setCurrentIndex(responsiveCombo->count() - 1);
   }
  }
- layout->addWidget(responsiveCombo);
+ contentLayout->addWidget(responsiveCombo);
  auto* responsiveHint = new QLabel(
   QStringLiteral("Select the active layout variant for this composition."), &dialog);
  {
@@ -391,20 +395,20 @@ void ArtifactCompositionMenu::Impl::showSettings()
                QColor(ArtifactCore::currentDCCTheme().textColor).darker(140));
   responsiveHint->setPalette(pal);
  }
- layout->addWidget(responsiveHint);
+ contentLayout->addWidget(responsiveHint);
 
  auto* fpsLabel = new QLabel(QStringLiteral("Frame Rate"), &dialog);
- layout->addWidget(fpsLabel);
+ contentLayout->addWidget(fpsLabel);
  auto* fpsSpin = new QDoubleSpinBox(&dialog);
  fpsSpin->setRange(1.0, 240.0);
  fpsSpin->setDecimals(3);
  fpsSpin->setSingleStep(0.5);
  fpsSpin->setValue(std::max(1.0, static_cast<double>(current->frameRate().framerate())));
- layout->addWidget(fpsSpin);
+ contentLayout->addWidget(fpsSpin);
 
  const FrameRange currentRange = current->frameRange().normalized();
  auto* rangeLabel = new QLabel(QStringLiteral("Frame Range"), &dialog);
- layout->addWidget(rangeLabel);
+ contentLayout->addWidget(rangeLabel);
  auto* rangeLayout = new QHBoxLayout();
  auto* startSpin = new QSpinBox(&dialog);
  startSpin->setRange(-1000000, 1000000);
@@ -416,7 +420,7 @@ void ArtifactCompositionMenu::Impl::showSettings()
  rangeLayout->addWidget(startSpin);
  rangeLayout->addWidget(new QLabel(QStringLiteral("End"), &dialog));
  rangeLayout->addWidget(endSpin);
- layout->addLayout(rangeLayout);
+ contentLayout->addLayout(rangeLayout);
 
  const QColor originalBackgroundColor = QColor::fromRgbF(current->backgroundColor().r(),
                                                          current->backgroundColor().g(),
@@ -475,7 +479,7 @@ void ArtifactCompositionMenu::Impl::showSettings()
  bgRow->addWidget(bgButton);
  bgRow->addWidget(bgPreview);
  bgRow->addStretch();
- layout->addLayout(bgRow);
+ contentLayout->addLayout(bgRow);
 
  auto* infoLabel = new QLabel(QStringLiteral("ID: %1").arg(current->id().toString()), &dialog);
  {
@@ -484,11 +488,11 @@ void ArtifactCompositionMenu::Impl::showSettings()
                QColor(ArtifactCore::currentDCCTheme().textColor).darker(135));
   infoLabel->setPalette(pal);
  }
- layout->addWidget(infoLabel);
+ contentLayout->addWidget(infoLabel);
 
  auto* buttons =
      new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
- layout->addWidget(buttons);
+ dialog.footerLayout()->addWidget(buttons);
 
  QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&]() {
   const QString trimmedName = nameEdit->text().trimmed();

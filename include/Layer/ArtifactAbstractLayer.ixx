@@ -20,6 +20,7 @@
 #include <QString>
 #include <QTransform>
 #include <QMatrix4x4>
+#include <DiligentCore/Common/interface/BasicMath.hpp>
 
 export module Artifact.Layer.Abstract;
 
@@ -49,6 +50,8 @@ export import Property.Group;
 export namespace Artifact {
 
 using namespace ArtifactCore;
+
+using float4x4 = Diligent::float4x4;
 
 // VariantOverrideFlags and LayerVariant live here to avoid a circular
 // module-import chain (Artifact.Layer.Variant used to forward-declare
@@ -344,6 +347,8 @@ public:
   QTransform getLocalTransformAt(int64_t frameNumber) const;
   QMatrix4x4 getGlobalTransform4x4() const;
   QMatrix4x4 getLocalTransform4x4() const;
+  float4x4 getGlobalTransformMatrix() const;
+  float4x4 getLocalTransformMatrix() const;
   bool hasSoftBodyPhysics() const;
   bool hasRigidBodyPhysics() const;
   void enableSoftBodyPhysics();

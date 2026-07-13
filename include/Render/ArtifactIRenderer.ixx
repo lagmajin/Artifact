@@ -281,6 +281,18 @@ public:
   void drawSolidRectTransformed(float x, float y, float w, float h,
                                 const QMatrix4x4 &transform,
                                 const FloatColor &color, float opacity = 1.0f);
+  void drawGradientRectTransformed(float x, float y, float w, float h,
+                                  const QMatrix4x4 &transform,
+                                  const FloatColor &startColor,
+                                  const FloatColor &endColor,
+                                  int fillType,
+                                  float angleDegrees,
+                                  bool reverse = false,
+                                  float centerX = 0.5f,
+                                  float centerY = 0.5f,
+                                  float scale = 1.0f,
+                                  float offset = 0.0f,
+                                  float opacity = 1.0f);
   void drawRectOutlineLocal(float x, float y, float w, float h,
                             const FloatColor &color);
   void drawThickLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness,

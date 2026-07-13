@@ -35,6 +35,13 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
                           const QMatrix4x4 *cameraView = nullptr,
                           const QMatrix4x4 *cameraProj = nullptr);
 
+void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
+                               const ArtifactAbstractLayerPtr &layer,
+                               const FloatColor &color,
+                               float thickness,
+                               const QMatrix4x4 *cameraView = nullptr,
+                               const QMatrix4x4 *cameraProj = nullptr);
+
 void draw3DSelectionWireframeOverlay(ArtifactIRenderer *renderer,
                                      const ArtifactAbstractLayerPtr &layer,
                                      const QMatrix4x4 *cameraView,

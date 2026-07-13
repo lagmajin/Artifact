@@ -115,7 +115,7 @@ export int runPreComposeTests()
                 if (layer) {
                     originalOrder.push_back(layer->id());
                 }
-                if (layer && layer->layerName().toQString().startsWith(QStringLiteral("Precompose Layer"))) {
+                if (layer && layer->layerName().startsWith(QStringLiteral("Precompose Layer"))) {
                     layerIds.push_back(layer->id());
                 }
             }
@@ -234,9 +234,9 @@ export int runPreComposeTests()
                             report.check(!comp->layerById(precompOutcome.precompLayerId),
                                          QStringLiteral("unprecompose removes the precompose layer"));
                             const auto restoredFirstLayer = comp->layerById(layerIds[0]);
-                            report.check(restoredFirstLayer,
+                            report.check(static_cast<bool>(restoredFirstLayer),
                                          QStringLiteral("first source layer restored after unprecompose"));
-                            report.check(comp->layerById(layerIds[1]),
+                            report.check(static_cast<bool>(comp->layerById(layerIds[1])),
                                          QStringLiteral("second source layer restored after unprecompose"));
                             if (restoredFirstLayer) {
                                 report.check(restoredFirstLayer->position3D() ==
@@ -267,8 +267,8 @@ export int runPreComposeTests()
                                      QStringLiteral("composition remains available after unprecompose undo"));
                         if (comp) {
                             const auto restoredPrecompLayer = comp->layerById(precompOutcome.precompLayerId);
-                            report.check(restoredPrecompLayer,
-                                         QStringLiteral("undo restores the precompose layer after unprecompose"));
+                            report.check(static_cast<bool>(restoredPrecompLayer),
+                                          QStringLiteral("undo restores the precompose layer after unprecompose"));
                             report.check(
                                 manager.getSourceCompositionId(precompOutcome.precompLayerId) ==
                                     precompOutcome.childCompId,
@@ -298,8 +298,8 @@ export int runPreComposeTests()
                                      QStringLiteral("composition remains available after restoring precompose undo"));
                         if (comp) {
                             const auto restoredPrecompLayer = comp->layerById(precompOutcome.precompLayerId);
-                            report.check(restoredPrecompLayer,
-                                         QStringLiteral("restoring precompose command recreates the precompose layer"));
+                            report.check(static_cast<bool>(restoredPrecompLayer),
+                                          QStringLiteral("restoring precompose command recreates the precompose layer"));
                         }
 
                         const auto childCompBeforeDrop =
@@ -324,11 +324,11 @@ export int runPreComposeTests()
                         report.check(static_cast<bool>(comp),
                                      QStringLiteral("composition remains available after keepComposition=false undo"));
                         if (comp) {
-                            report.check(comp->layerById(precompOutcome.precompLayerId),
-                                         QStringLiteral("undo restores the precompose layer after keepComposition=false"));
+                            report.check(static_cast<bool>(comp->layerById(precompOutcome.precompLayerId)),
+                                          QStringLiteral("undo restores the precompose layer after keepComposition=false"));
                         }
-                        report.check(service->findComposition(childCompBeforeDrop).ptr.lock(),
-                                     QStringLiteral("undo restores the child composition after keepComposition=false"));
+                        report.check(static_cast<bool>(service->findComposition(childCompBeforeDrop).ptr.lock()),
+                                      QStringLiteral("undo restores the child composition after keepComposition=false"));
                     }
                 }
             }

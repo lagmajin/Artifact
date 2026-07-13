@@ -51,7 +51,7 @@ import UI.ShortcutBindings;
 namespace Artifact {
  using namespace ArtifactCore;
  namespace {
-  ArtifactMainWindow* asArtifactMainWindow(QMainWindow* window)
+  ArtifactMainWindow* asArtifactMainWindow(QWidget* window)
   {
    return dynamic_cast<ArtifactMainWindow*>(window);
   }
@@ -69,7 +69,7 @@ namespace Artifact {
   return nullptr;
   }
 
-  QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
+  QDockWidget* findDockByTitle(QWidget* window, const QString& title)
   {
    if (!window) return nullptr;
    const auto docks = window->findChildren<QDockWidget*>();
@@ -81,7 +81,7 @@ namespace Artifact {
    return nullptr;
   }
 
-  QStringList dockTitles(QMainWindow* window)
+  QStringList dockTitles(QWidget* window)
   {
    if (auto* artifactWindow = asArtifactMainWindow(window)) {
     return artifactWindow->dockTitles();
@@ -100,7 +100,7 @@ namespace Artifact {
    return titles;
   }
 
-  bool isDockVisible(QMainWindow* window, const QString& title)
+  bool isDockVisible(QWidget* window, const QString& title)
   {
    if (auto* artifactWindow = asArtifactMainWindow(window)) {
     return artifactWindow->isDockVisible(title);
@@ -110,7 +110,7 @@ namespace Artifact {
    return dock ? dock->isVisible() : false;
   }
 
-  void setDockVisible(QMainWindow* window, const QString& title, bool visible)
+  void setDockVisible(QWidget* window, const QString& title, bool visible)
   {
    if (auto* artifactWindow = asArtifactMainWindow(window)) {
     artifactWindow->setDockVisible(title, visible);
@@ -125,7 +125,7 @@ namespace Artifact {
    }
   }
 
-  void activateDock(QMainWindow* window, const QString& title)
+  void activateDock(QWidget* window, const QString& title)
   {
    if (auto* artifactWindow = asArtifactMainWindow(window)) {
     artifactWindow->activateDock(title);
@@ -139,7 +139,7 @@ namespace Artifact {
    dock->activateWindow();
   }
 
-  void addFloatingDock(QMainWindow* window, const QString& title,
+  void addFloatingDock(QWidget* window, const QString& title,
                        const QString& dockId, QWidget* widget,
                        const QRect& floatingGeometry)
   {
@@ -149,7 +149,6 @@ namespace Artifact {
    dock->setWidget(widget);
    dock->setFloating(true);
    dock->setGeometry(floatingGeometry);
-   window->addDockWidget(Qt::RightDockWidgetArea, dock);
    dock->show();
   }
 
@@ -854,7 +853,7 @@ namespace Artifact {
    QMenu* windowPanelsMenu = nullptr;
    QStringList cachedWorkspacePresetNames_;
    QStringList cachedDockTitles_;
-   QMainWindow* mainWindow = nullptr;
+   QWidget* mainWindow = nullptr;
    QPointer<ArtifactReactiveEventEditorWindow> reactiveEventEditorWindow;
      int newBrowserCount_ = 1;
      QAction* openContentsViewerAction = nullptr;
@@ -1574,7 +1573,7 @@ namespace Artifact {
   });
  }
 
- void ArtifactViewMenu::setMainWindow(QMainWindow* mw)
+ void ArtifactViewMenu::setMainWindow(QWidget* mw)
  {
   impl_->mainWindow = mw;
   if (impl_) {

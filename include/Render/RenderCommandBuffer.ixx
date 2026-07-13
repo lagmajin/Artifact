@@ -44,6 +44,23 @@ struct SolidRectXformPkt {
     float4                 color;
 };
 
+struct GradientRectParams {
+    float4 startColor;
+    float4 endColor;
+    // x=fill type (1 linear, 2 radial, 3 conical), y=angle degrees,
+    // z=reverse flag, w=scale.
+    float4 mode;
+    // xy=center, z=linear offset, w=local-rect aspect ratio.
+    float4 centerOffset;
+};
+
+struct GradientRectPkt {
+    RenderSolidRectTransform2D mat;
+    GradientRectParams params;
+    float opacity;
+    float _pad[3];
+};
+
 struct LinePkt {
     RenderSolidTransform2D xform;
     float2 p1, p2;
@@ -188,7 +205,7 @@ struct GlyphTextXformPkt {
 };
 
 using DrawPacket = std::variant<
-    SolidRectPkt, SolidRectXformPkt,
+    SolidRectPkt, SolidRectXformPkt, GradientRectPkt,
     LinePkt, QuadPkt, DotLinePkt, SolidTriPkt, SolidCirclePkt,
     CheckerboardPkt, GridPkt, RectOutlinePkt,
     SpritePkt, SpriteXformPkt, MaskedSpritePkt,

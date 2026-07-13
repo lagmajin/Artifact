@@ -418,6 +418,56 @@ void PrimitiveRenderer2D::drawSolidRect(float x, float y, float w, float h, cons
     this->drawRectLocal(x, y, w, h, color, opacity);
 }
 
+void PrimitiveRenderer2D::drawGradientRectTransformed(float x, float y, float w, float h,
+                                                       const QMatrix4x4& transform,
+                                                       const FloatColor& startColor,
+                                                       const FloatColor& endColor,
+                                                       int fillType,
+                                                       float angleDegrees,
+                                                       bool reverse,
+                                                       float centerX,
+                                                       float centerY,
+                                                       float scale,
+                                                       float offset,
+                                                       float opacity)
+{
+    if (!impl_->cmdBuf_) return;
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+    const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    const float panX = viewportCB.offset.x, panY = viewportCB.offset.y;
+
+    QMatrix4x4 combined = transform;
+    combined.translate(x, y, 0);
+    combined.scale(w, h, 1.0f);
+    QMatrix4x4 finalMat;
+    if (impl_->useExternalMatrices_) {
+        finalMat = impl_->externalProjMatrix_ * impl_->externalViewMatrix_ * combined;
+    } else {
+        QMatrix4x4 canvasToNdc;
+        canvasToNdc.setToIdentity();
+        canvasToNdc.translate(-1.0f, 1.0f, 0.0f);
+        canvasToNdc.scale(2.0f / screenW, -2.0f / screenH, 1.0f);
+        canvasToNdc.scale(zoom, zoom, 1.0f);
+        canvasToNdc.translate(panX / zoom, panY / zoom, 0.0f);
+        finalMat = canvasToNdc * combined;
+    }
+
+    GradientRectPkt pkt{};
+    pkt.mat.row0 = {finalMat.row(0).x(), finalMat.row(0).y(), finalMat.row(0).z(), finalMat.row(0).w()};
+    pkt.mat.row1 = {finalMat.row(1).x(), finalMat.row(1).y(), finalMat.row(1).z(), finalMat.row(1).w()};
+    pkt.mat.row2 = {finalMat.row(2).x(), finalMat.row(2).y(), finalMat.row(2).z(), finalMat.row(2).w()};
+    pkt.mat.row3 = {finalMat.row(3).x(), finalMat.row(3).y(), finalMat.row(3).z(), finalMat.row(3).w()};
+    pkt.params.startColor = {startColor.r(), startColor.g(), startColor.b(), startColor.a()};
+    pkt.params.endColor = {endColor.r(), endColor.g(), endColor.b(), endColor.a()};
+    pkt.params.mode = {static_cast<float>(fillType), angleDegrees, reverse ? 1.0f : 0.0f, std::max(scale, 0.0001f)};
+    pkt.params.centerOffset = {centerX, centerY, offset,
+                               h > 0.0001f ? std::abs(w / h) : 1.0f};
+    pkt.opacity = opacity;
+    impl_->cmdBuf_->append(pkt);
+}
+
 void PrimitiveRenderer2D::drawLineLocal(float2 p1, float2 p2, const FloatColor& c1, const FloatColor& c2)
 {
     if (!impl_->cmdBuf_) return;

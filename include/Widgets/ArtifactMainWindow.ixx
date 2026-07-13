@@ -2,7 +2,8 @@ module;
 #include <utility>
 
 #include <QWidget>
-#include <QtWidgets/QMainWindow>
+#include <QVBoxLayout>
+#include <QStatusBar>
 #include <ads_globals.h>
 #include <functional>
 #include <memory> // Added for std::unique_ptr if used in Impl
@@ -19,7 +20,7 @@ export namespace Artifact {
 
 // struct ArtifactMainWindowPrivate;
 
-class ArtifactMainWindow : public QMainWindow {
+class ArtifactMainWindow : public QWidget {
   // ReSharper disable CppInspection
   W_OBJECT(ArtifactMainWindow)
   // ReSharper restore CppInspection
@@ -93,10 +94,11 @@ public /*slots*/:
   void setStatusFPS(double fps);
   void setStatusPreviewResolution(int percent);
   void setStatusReady();
+  void setStatusBar(QStatusBar *statusBar);
   void setDockSplitterSizes(const QString &dockTitle, const QList<int> &sizes);
 
   // ADS dock manager のレイアウト状態（dock 配置、タブグループ、splitter、floating 位置）の
-  // 保存・復元。QMainWindow::saveState() には ADS の配置が含まれないため別途扱う。
+  // 保存・復元。トップレベル QWidget の geometry と分離して扱う。
   // 保存はアプリ終了時、復元は起動時のレイアウト構築後に呼ぶ。
   // restore は「全ての dock が登録された後」でなければならない（ADS の制約）。
   QByteArray saveDockManagerState() const;

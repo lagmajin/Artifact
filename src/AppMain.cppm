@@ -39,7 +39,6 @@ module;
 #include <QImageReader>
 #include <QJsonDocument>
 #include <QLoggingCategory>
-#include <QMainWindow>
 #include <QMessageBox>
 #include <QMetaType>
 #include <QPointer>
@@ -173,7 +172,7 @@ using namespace Artifact;
 using namespace ArtifactCore;
 
 namespace {
-constexpr int kMainWindowLayoutVersion = 8;
+constexpr int kMainWindowLayoutVersion = 9;
 
 bool isArtifactProjectLaunchPath(const QString& filePath)
 {
@@ -2123,14 +2122,17 @@ int main(int argc, char *argv[]) {
 
 
   const QRect playbackControlFloatingGeometry(120, 828, 720, 210);
-  mw->addDockedWidgetFloating(
+  mw->addLazyDockedWidgetFloating(
       QStringLiteral("Playback Control"), QStringLiteral("PlaybackControl"),
-      new ArtifactPlaybackControlWidget(mw), playbackControlFloatingGeometry);
-  mw->addDockedWidgetFloating(
+      [mw]() -> QWidget * { return new ArtifactPlaybackControlWidget(mw); },
+      playbackControlFloatingGeometry);
+  mw->addLazyDockedWidgetFloating(
       QStringLiteral("Playback Control Test"),
       QStringLiteral("PlaybackControlTest"),
-       new ArtifactPlaybackControlTestWidget(mw),
-       QRect(860, 828, 720, 210));
+      [mw]() -> QWidget * {
+        return new ArtifactPlaybackControlTestWidget(mw);
+      },
+      QRect(860, 828, 720, 210));
 
 
   // --- Coordinate Manager (C4D-style) ---
@@ -2143,7 +2145,7 @@ int main(int argc, char *argv[]) {
 
   QTimer::singleShot(
       0, mw,
-      [=, &renderCenterWindow, &workspaceManager, &debugConsoleWidget,
+      [=, &renderCenterWindow, &debugConsoleWidget,
        &frameDebugWidget, &debugHarnessWidget]() {
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("Debug Console"), QStringLiteral("DebugConsole"),
@@ -2283,10 +2285,6 @@ int main(int argc, char *argv[]) {
     auto *assetBrowser = new ArtifactAssetBrowser(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Asset Browser"),
                               ads::LeftDockWidgetArea, assetBrowser,
-                              QStringLiteral("Project"));
-    auto *projectMemoWidget = new ArtifactProjectMemoWidget(mw);
-    mw->addDockedWidgetTabbed(QStringLiteral("Project Memo"),
-                              ads::LeftDockWidgetArea, projectMemoWidget,
                               QStringLiteral("Project"));
     auto *clipBufferWidget = new ArtifactClipBufferWidget(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Clip Buffer"),
@@ -2486,28 +2484,6 @@ int main(int argc, char *argv[]) {
                 }
               }
             }));
-    appEventSubscriptions.push_back(
-        appEventBus.subscribe<CurrentCompositionChangedEvent>(
-            [projectMemoWidget](const CurrentCompositionChangedEvent &event) {
-              if (projectMemoWidget) {
-                projectMemoWidget->setCompositionId(event.compositionId);
-              }
-            }));
-    appEventSubscriptions.push_back(
-        appEventBus.subscribe<FrameChangedEvent>(
-            [projectMemoWidget](const FrameChangedEvent &event) {
-              if (projectMemoWidget) {
-                projectMemoWidget->setCurrentFrame(event.frame);
-              }
-            }));
-    QObject::connect(projectMemoWidget, &ArtifactProjectMemoWidget::memoJumpRequested,
-                     mw, [](qint64 frame) {
-                       auto *service = ArtifactProjectService::instance();
-                       auto comp = service ? service->currentComposition().lock() : nullptr;
-                       const QString compositionId = comp ? comp->id().toString() : QString();
-                       ArtifactCore::globalEventBus().publish<FrameChangedEvent>(
-                           FrameChangedEvent{compositionId, frame});
-                     });
     QObject::connect(clipBufferWidget, &ArtifactClipBufferWidget::clipPasteRequested, mw, [](const QVariant &data) {
         if (!data.isValid()) return;
         const QJsonArray layersArray = data.toJsonArray();
@@ -2604,30 +2580,24 @@ int main(int argc, char *argv[]) {
     inspectorWidget->setMinimumWidth(240);
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea,
                         inspectorWidget);
-    auto *compositionNoteWidget = new ArtifactMarkdownNoteEditorWidget(
-        MarkdownNoteTarget::Composition, mw);
-    mw->addDockedWidgetTabbed(QStringLiteral("Composition Note"),
-                              ads::RightDockWidgetArea, compositionNoteWidget,
-                              QStringLiteral("Inspector"));
-    auto *layerNoteWidget =
-        new ArtifactMarkdownNoteEditorWidget(MarkdownNoteTarget::Layer, mw);
-    mw->addDockedWidgetTabbed(QStringLiteral("Layer Note"),
-                              ads::RightDockWidgetArea, layerNoteWidget,
-                              QStringLiteral("Inspector"));
     auto *propertyPanel = new ArtifactPropertyWidget(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"),
                               ads::RightDockWidgetArea, propertyPanel,
                               QStringLiteral("Inspector"));
-    mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea,
-                        new ArtifactCompositionAudioMixerWidget(mw));
-    auto* aiCloud = new ArtifactAICloudWidget(mw);
-    mw->addDockedWidgetTabbedWithId(
+    mw->addLazyDockedWidgetTabbedWithId(
+        QStringLiteral("Audio Mixer"), QStringLiteral("Audio Mixer"),
+        ads::RightDockWidgetArea,
+        [mw]() -> QWidget * {
+          return new ArtifactCompositionAudioMixerWidget(mw);
+        },
+        QStringLiteral("Inspector"));
+    mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("AI Cloud"), QStringLiteral("AI Cloud"),
-        ads::RightDockWidgetArea, aiCloud, QString());
+        ads::RightDockWidgetArea,
+        [mw]() -> QWidget * { return new ArtifactAICloudWidget(mw); },
+        QString());
     mw->setDockVisible(QStringLiteral("AI Cloud"), false);
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
-    mw->setDockVisible(QStringLiteral("Composition Note"), false);
-    mw->setDockVisible(QStringLiteral("Layer Note"), false);
     mw->setDockVisible(QStringLiteral("Composition View (Software)"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Software)"), false);
@@ -2857,18 +2827,40 @@ int main(int argc, char *argv[]) {
       }
         appEventSubscriptions.push_back(
            appEventBus.subscribe<CurrentCompositionChangedEvent>(
-                [compositionEditor, projectService, propertyPanel,
-                 layerViewEditor, status](const CurrentCompositionChangedEvent &event) {
-                 const CompositionID compId(event.compositionId);
+                [mw, compositionEditor, projectService, propertyPanel,
+                  layerViewEditor, status](const CurrentCompositionChangedEvent &event) {
+                const CompositionID compId(event.compositionId);
                 if (compositionEditor && projectService) {
                   const auto found = projectService->findComposition(compId);
                   if (found.success && !found.ptr.expired()) {
                     auto comp = found.ptr.lock();
-                    compositionEditor->setComposition(comp);
-                    const QString compName =
-                        comp->settings().compositionName().toQString();
-                    if (!compName.isEmpty()) {
-                      compositionEditor->setWindowTitle(compName);
+                    if (mw) {
+                      // ArtifactCompositionEditor already subscribes to
+                      // CurrentCompositionChangedEvent and applies the render
+                      // state itself. Do not call setComposition here as well:
+                      // doing so duplicated renderer initialization and made the
+                      // create-composition interaction appear to hang. Defer only
+                      // the dock/title update and ignore stale queued events.
+                      QTimer::singleShot(0, mw, [mw, compositionEditor,
+                                                 projectService, compId]() {
+                        if (!mw || !compositionEditor || !projectService) {
+                          return;
+                        }
+                        const auto current =
+                            projectService->currentComposition().lock();
+                        if (!current || current->id() != compId) {
+                          return;
+                        }
+                        const QString compName =
+                            current->settings().compositionName().toQString();
+                        if (!compName.isEmpty()) {
+                          compositionEditor->setWindowTitle(compName);
+                        }
+                        mw->setDockVisible(
+                            QStringLiteral("Composition Viewer"), true);
+                        mw->activateDock(
+                            QStringLiteral("Composition Viewer"));
+                      });
                     }
                   }
                 }
@@ -2962,35 +2954,23 @@ int main(int argc, char *argv[]) {
                       const QString dockTitle = timelineDockTitle(compId);
                       const QString dockId = timelineDockObjectId(compId);
                       if (mw->hasDock(dockId)) {
-                        mw->activateDock(dockId);
                         return;
                       }
-                      QElapsedTimer timelineTimer;
-                      timelineTimer.start();
-                      auto *panel = new ArtifactTimelineWidget(mw);
-                      qInfo() << "[AppMain][CompositionCreated] ArtifactTimelineWidget ctor ms="
-                              << timelineTimer.elapsed();
-                      timelineTimer.restart();
-                      panel->setMinimumHeight(200);
-                      panel->resize(1200, 350);
-                      panel->setComposition(compId);
-                      panel->setWindowTitle(dockTitle);
-                      qInfo() << "[AppMain][CompositionCreated] timeline setComposition ms="
-                              << timelineTimer.elapsed();
+                      // Register the docks in this single queued turn.  A delayed
+                      // second timer allowed duplicate CompositionCreated events to
+                      // enqueue multiple registrations before the first one became
+                      // visible, which caused dock windows to flash open and close.
+                      auto *service = ArtifactProjectService::instance();
+                      if (!service) {
+                        return;
+                      }
+                      const auto created = service->findComposition(compId);
+                      if (!created.success || created.ptr.expired()) {
+                        return;
+                      }
 
-                      QObject::connect(
-                          panel, &ArtifactTimelineWidget::zoomLevelChanged,
-                          status, &ArtifactStatusBar::setZoomPercent);
-                      QObject::connect(
-                          panel, &ArtifactTimelineWidget::timelineDebugMessage,
-                          status, &ArtifactStatusBar::setTimelineDebugText);
-
-                      mw->addDockedWidgetTabbedWithId(
-                          dockTitle, dockId, ads::BottomDockWidgetArea,
-                          panel, QStringLiteral("timeline::"));
-
-                      // Register the Dope Sheet for ADS layout restoration,
-                      // but construct it only when the user selects its tab.
+                      // Register the Dope Sheet for ADS layout restoration, but keep
+                      // it hidden until the user explicitly selects that tab.
                       mw->addLazyDockedWidgetTabbedWithId(
                           dopeSheetDockTitle(compId),
                           dopeSheetDockObjectId(compId),
@@ -3004,13 +2984,41 @@ int main(int argc, char *argv[]) {
                           },
                           QStringLiteral("timeline::"));
 
-                      QTimer::singleShot(0, mw, [mw, dockId, panel]() {
-                        mw->setDockSplitterSizes(dockId, {700, 350});
-                        if (panel) {
-                          panel->setFocus(Qt::OtherFocusReason);
+                      // Use the regular dock path for Timeline. The lazy path wraps
+                      // the widget in an auto-scroll area, which prevents the
+                      // timeline's nested track views from receiving their normal
+                      // geometry/paint pass. Construct it after the composition
+                      // viewer has returned to the event loop, then bind the
+                      // composition before the first visible paint.
+                      QTimer::singleShot(0, mw,
+                                         [mw, compId, dockTitle, dockId, status]() {
+                        if (!mw || mw->hasDock(dockId)) {
+                          return;
                         }
+                        auto *panel = new ArtifactTimelineWidget(mw);
+                        panel->setMinimumHeight(200);
+                        panel->resize(1200, 350);
+                        panel->setComposition(compId);
+                        panel->setWindowTitle(dockTitle);
+                        QObject::connect(
+                            panel,
+                            &ArtifactTimelineWidget::zoomLevelChanged,
+                            status,
+                            &ArtifactStatusBar::setZoomPercent);
+                        QObject::connect(
+                            panel,
+                            &ArtifactTimelineWidget::timelineDebugMessage,
+                            status,
+                            &ArtifactStatusBar::setTimelineDebugText);
+                        mw->addDockedWidgetTabbedWithId(
+                            dockTitle, dockId, ads::BottomDockWidgetArea,
+                            panel, QStringLiteral("timeline::"));
+                        mw->setDockSplitterSizes(dockId, {700, 350});
+                        mw->setDockVisible(dockId, true);
                         mw->activateDock(dockId);
+                        panel->setFocus(Qt::OtherFocusReason);
                       });
+
                     });
               }));
       appEventSubscriptions.push_back(
@@ -3153,23 +3161,21 @@ int main(int argc, char *argv[]) {
       layoutStore.sync();
       layoutState = UiLayoutState("ArtifactMainWindow");
     }
+    QElapsedTimer startupLayoutTimer;
+    startupLayoutTimer.start();
     bool geometryRestored = true;
-    bool stateRestored = true;
     const bool hasGeometry = !layoutState.geometry.isEmpty();
-    const bool hasState = !layoutState.state.isEmpty();
     if (!layoutState.geometry.isEmpty()) {
       geometryRestored = mw->restoreGeometry(layoutState.geometry);
     }
-    if (!layoutState.state.isEmpty()) {
-      stateRestored = mw->restoreState(layoutState.state);
-    }
-    const bool workspaceRestored = workspaceManager.restoreSession(mw);
-    if (!workspaceRestored) {
-      mw->setWorkspaceMode(workspaceModeFromSettings());
-    }
+    qInfo() << "[AppMain][Startup] window geometry restore ms="
+            << startupLayoutTimer.elapsed();
+    // ADS dockState is the sole authoritative workspace layout.  QMainWindow
+    // state is intentionally not restored because it can replay stale toolbar
+    // and dock geometry before ADS has reached its final graph.
+    mw->setWorkspaceMode(workspaceModeFromSettings());
     bool resetApplied = false;
-    if ((!layoutState.geometry.isEmpty() && !geometryRestored) ||
-        (!layoutState.state.isEmpty() && !stateRestored)) {
+    if (!layoutState.geometry.isEmpty() && !geometryRestored) {
       // Saved layout is likely incompatible with current dock/widget set.
       layoutStore.remove("MainWindow/layoutKey");
       layoutStore.remove("MainWindow/version");
@@ -3180,24 +3186,27 @@ int main(int argc, char *argv[]) {
       mw->resize(1600, 900);
       resetApplied = true;
     }
-    recordLayoutRestoreResult(hasGeometry || hasState, geometryRestored,
-                              stateRestored, resetApplied);
+    recordLayoutRestoreResult(hasGeometry, geometryRestored, true, resetApplied);
     // ADS の dock 配置を復元。全 dock が DockManager に登録された後でなければ
     // ならないため、setStartupLayoutFrozen(false) の直前で呼ぶ。
     // 古い version 1 のレイアウト（dockState 無し）はスキップされる。
+    startupLayoutTimer.restart();
     if (!layoutState.dockState.isEmpty()) {
       mw->restoreDockManagerState(layoutState.dockState);
     }
+    qInfo() << "[AppMain][Startup] ADS dock restore ms="
+            << startupLayoutTimer.elapsed();
     // The composition editor is the default central work surface.  This must
     // happen after ADS restore; activating a layer test tab here hid it again.
     mw->setDockVisible(QStringLiteral("Composition Viewer"), true);
     mw->activateDock(QStringLiteral("Composition Viewer"));
-    // Auxiliary note/AI surfaces remain available from the View menu, but
-    // should never be reopened implicitly by a persisted startup layout.
-    mw->setDockVisible(QStringLiteral("Composition Note"), false);
-    mw->setDockVisible(QStringLiteral("Layer Note"), false);
+    // Auxiliary AI surfaces should never be reopened implicitly by a persisted
+    // startup layout.
     mw->setDockVisible(QStringLiteral("AI Cloud"), false);
+    startupLayoutTimer.restart();
     mw->setStartupLayoutFrozen(false);
+    qInfo() << "[AppMain][Startup] layout finalize ms="
+            << startupLayoutTimer.elapsed();
   });
 
   QObject::connect(&a, &QCoreApplication::aboutToQuit, [mw, &workspaceManager]() {
@@ -3212,9 +3221,8 @@ int main(int argc, char *argv[]) {
     UiLayoutState layoutState("ArtifactMainWindow");
     layoutState.version = kMainWindowLayoutVersion;
     layoutState.geometry = mw->saveGeometry();
-    layoutState.state = mw->saveState();
-    // ADS の dock 配置（タブグループ、splitter、floating 位置）を保存。
-    // QMainWindow::saveState() には含まれないため別途保持する。
+    // ADS の dock 配置（タブグループ、splitter、floating 位置）だけを
+    // workspace 配置の正本として保存する。QMainWindow state は保存しない。
     layoutState.dockState = mw->saveDockManagerState();
     layoutState.saveToStore(layoutStore, "MainWindow");
     layoutStore.sync();

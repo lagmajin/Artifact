@@ -8,7 +8,7 @@ module;
 #include <QRect>
 #include <QStringList>
 #include <QDockWidget>
-#include <QMainWindow>
+#include <QWidget>
 #include <wobjectimpl.h>
 
 module Menu.Render;
@@ -28,7 +28,7 @@ namespace Artifact {
 using namespace ArtifactCore;
 
 namespace {
-QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
+QDockWidget* findDockByTitle(QWidget* window, const QString& title)
 {
  if (!window) return nullptr;
  const auto docks = window->findChildren<QDockWidget*>();
@@ -38,7 +38,7 @@ QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
  return nullptr;
 }
 
-void setDockVisible(QMainWindow* window, const QString& title, bool visible)
+void setDockVisible(QWidget* window, const QString& title, bool visible)
 {
  auto* dock = findDockByTitle(window, title);
  if (!dock) return;
@@ -46,7 +46,7 @@ void setDockVisible(QMainWindow* window, const QString& title, bool visible)
  if (visible) dock->raise();
 }
 
-void activateDock(QMainWindow* window, const QString& title)
+void activateDock(QWidget* window, const QString& title)
 {
  auto* dock = findDockByTitle(window, title);
  if (!dock) return;
@@ -55,7 +55,7 @@ void activateDock(QMainWindow* window, const QString& title)
  dock->activateWindow();
 }
 
-void addFloatingDock(QMainWindow* window, const QString& title,
+void addFloatingDock(QWidget* window, const QString& title,
                      const QString& dockId, QWidget* widget,
                      const QRect& floatingGeometry)
 {
@@ -65,7 +65,6 @@ void addFloatingDock(QMainWindow* window, const QString& title,
  dock->setWidget(widget);
  dock->setFloating(true);
  dock->setGeometry(floatingGeometry);
- window->addDockWidget(Qt::RightDockWidgetArea, dock);
  dock->show();
 }
 
@@ -182,7 +181,7 @@ eventBusSubscriptions_.push_back(eventBus.subscribe<RenderQueueChangedEvent>(
 
 void ArtifactRenderMenu::Impl::showScrollPoC()
 {
- if (auto* mw = qobject_cast<QMainWindow*>(mainWindow_)) {
+ if (auto* mw = qobject_cast<QWidget*>(mainWindow_)) {
   auto* poc = new ArtifactScrollPoCWidget();
   addFloatingDock(mw, QStringLiteral("Scroll PoC"),
                   QStringLiteral("scroll_poc_dock"), poc,

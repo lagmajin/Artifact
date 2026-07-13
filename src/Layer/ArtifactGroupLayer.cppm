@@ -526,7 +526,7 @@ void ArtifactGroupLayer::insertChildAt(int index, ArtifactAbstractLayerPtr layer
 int ArtifactGroupLayer::childIndex(const LayerID& id) const {
     if (auto* composition =
             dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
-        const auto children = composition->childLayersOf(id());
+        const auto children = composition->childLayersOf(this->id());
         for (int index = 0; index < children.size(); ++index) {
             const auto& layer = children.at(index);
             if (layer->id() == id) {

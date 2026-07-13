@@ -1,10 +1,11 @@
-﻿module;
+module;
 #include <utility>
 #include <algorithm>
 #include <cmath>
 #include <QAction>
 #include <QFont>
 #include <QFontMetrics>
+#include <QIcon>
 #include <QSize>
 #include <QSizePolicy>
 #include <QMenuBar>
@@ -190,6 +191,14 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  }
 #endif
  menuBar->addMenu(static_cast<QMenu*>(helpMenu));
+
+ // Top-level menu titles stay text-only. Icons are reserved for commands
+ // inside each menu, where they improve scanning without crowding the bar.
+ for (QAction* action : menuBar->actions()) {
+  if (action && action->menu()) {
+   action->setIcon(QIcon());
+  }
+ }
 
  // left-handed: align menus to the right side
  if (Accessibility::isLeftHanded()) {

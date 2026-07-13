@@ -22,6 +22,7 @@ module;
 #include <QCursor>
 #include <QHash>
 #include <QPixmap>
+#include <QPointer>
 #include <QStandardPaths>
 #include <QTransform>
 #include <memory>
@@ -664,7 +665,7 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   bool isPanning_=false;
   QPointF lastMousePos_;
   float zoomLevel_ = 1.0f;
-  QWidget* widget_;
+  QPointer<QWidget> widget_;
   //bool isPanning_ = false;
   bool isPlay_ = false;
   std::atomic_bool running_{ false };
@@ -871,6 +872,11 @@ ArtifactLayerEditorWidgetV2::Impl::Impl()
 
 void ArtifactLayerEditorWidgetV2::Impl::destroy()
 {
+  // Stop EventBus callbacks before invalidating the render receiver.  Hidden
+  // layer views can receive FrameChangedEvent before their first showEvent.
+  eventBusSubscriptions_.clear();
+  renderRequestPending_.store(false, std::memory_order_release);
+  renderRequestScheduled_ = false;
   stopRenderLoop();
   if (transformGizmo_) {
    transformGizmo_->setLayer(nullptr);
@@ -881,6 +887,7 @@ void ArtifactLayerEditorWidgetV2::Impl::destroy()
   }
   compositionRenderer_.reset();
   initialized_ = false;
+  widget_.clear();
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::defaultHandleKeyPressEvent(QKeyEvent* event)
@@ -2438,6 +2445,9 @@ void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChain(QWidget* window)
 
 ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
+  // requestRender() uses this object as the queued-call receiver.  Assign it at
+  // construction time rather than waiting for renderer initialization.
+  impl_->widget_ = this;
   setMinimumSize(1, 1);
 
   setFocusPolicy(Qt::StrongFocus);

@@ -37,6 +37,8 @@ module;
 #include <QToolBar>
 #include <QToolButton>
 #include <QTreeView>
+#include <QVariant>
+#include <QVBoxLayout>
 #include <QWidget>
 #include <QFileDialog>
 #include <wobjectimpl.h>
@@ -146,41 +148,36 @@ const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
         "Properties"},
 
 
-       {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Note",
-        "Layer Note", "Composition View (Software)",
+       {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition View (Software)",
         "Layer View (Diligent)", "Layer View (Software)"}},
       {WorkspaceMode::Import,
        {"Project", "Asset Browser", "Inspector", "Properties"},
-       {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Viewer",
-        "Composition Note", "Layer Note"}},
+       {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Viewer"}},
       {WorkspaceMode::Layout,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
         "Properties"},
-       {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Note",
-        "Layer Note"}},
+       {"Audio Mixer", "Contents Viewer", "AI Chat"}},
       {WorkspaceMode::Animation,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
         "Properties", "Composition View (Software)",
         "Layer View (Diligent)", "Layer View (Software)"},
        {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
-        "Playback Control", "Composition Note", "Layer Note"}},
+        "Playback Control"}},
       {WorkspaceMode::VFX,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
         "Properties", "Composition View (Software)",
         "Layer View (Diligent)", "Layer View (Software)"},
-       {"Audio Mixer", "Contents Viewer", "AI Chat", "Playback Control",
-        "Composition Note", "Layer Note"}},
+       {"Audio Mixer", "Contents Viewer", "AI Chat", "Playback Control"}},
       {WorkspaceMode::Compositing,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
         "Properties", "Layer View (Diligent)"},
        {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
         "Playback Control", "Composition View (Software)",
-        "Layer View (Software)", "Composition Note", "Layer Note"}},
+        "Layer View (Software)"}},
       {WorkspaceMode::Text,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
         "Properties", "Contents Viewer"},
-       {"Audio Mixer", "AI Cloud", "AI Chat", "Playback Control",
-        "Composition Note", "Layer Note"}},
+       {"Audio Mixer", "AI Cloud", "AI Chat", "Playback Control"}},
       {WorkspaceMode::Export,
        {"Project", "Asset Browser", "Inspector", "Properties",
         "Composition Viewer"},
@@ -189,7 +186,7 @@ const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
       {WorkspaceMode::Debug,
        {"Project", "Asset Browser", "Inspector", "Properties",
         "Contents Viewer", "AI Chat", "Playback Control"},
-       {"Audio Mixer", "Composition Note", "Layer Note"}},
+       {"Audio Mixer"}},
       {WorkspaceMode::Audio,
        {"Contents Viewer", "Audio Mixer", "Project", "Asset Browser",
         "Inspector", "Properties"},
@@ -303,16 +300,29 @@ void prepareDockDropOverlays(ads::CDockManager *dockManager) {
     return;
   }
 
-  enableDockDropPreview(dockManager);
-  for (auto *widget : dockManager->findChildren<QWidget *>()) {
-    if (!widget) {
-      continue;
-    }
-    const QString className = QString::fromLatin1(widget->metaObject()->className());
-    if (className.contains(QStringLiteral("DockOverlay"), Qt::CaseInsensitive)) {
-      prepareDockDropOverlayWindow(widget);
-    }
+  // Dock registration calls this repeatedly while the startup layout is being
+  // assembled.  A full descendant scan after every registration makes startup
+  // cost grow with the square of the dock count.  Coalesce the work and inspect
+  // the final QADS tree once when control returns to the event loop.
+  if (dockManager->property("artifactOverlayRefreshScheduled").toBool()) {
+    return;
   }
+  dockManager->setProperty("artifactOverlayRefreshScheduled", true);
+  QTimer::singleShot(0, dockManager, [dockManager]() {
+    dockManager->setProperty("artifactOverlayRefreshScheduled", false);
+    enableDockDropPreview(dockManager);
+    for (auto *widget : dockManager->findChildren<QWidget *>()) {
+      if (!widget) {
+        continue;
+      }
+      const QString className =
+          QString::fromLatin1(widget->metaObject()->className());
+      if (className.contains(QStringLiteral("DockOverlay"),
+                             Qt::CaseInsensitive)) {
+        prepareDockDropOverlayWindow(widget);
+      }
+    }
+  });
 }
 
 void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
@@ -425,7 +435,6 @@ void refreshDockWidgetSurface(ads::CDockWidget *dock) {
       layout->activate();
     }
     content->updateGeometry();
-    refreshFloatingWidgetTree(content);
     content->update();
   }
 }
@@ -446,29 +455,6 @@ void scheduleFloatingRefresh(ads::CFloatingDockContainer *floatingWidget) {
     QTimer::singleShot(16, floatingWidget, [floatingWidget]() {
       refreshFloatingWidgetTree(floatingWidget);
     });
-  });
-}
-
-void scheduleQuitIfNoVisibleDocks(ArtifactMainWindow *window) {
-  if (!window) {
-    return;
-  }
-
-  QTimer::singleShot(0, window, [window]() {
-    if (!window) {
-      return;
-    }
-
-    const auto dockTitles = window->dockTitles();
-    for (const auto &title : dockTitles) {
-      if (window->isDockVisible(title)) {
-        return;
-      }
-    }
-
-    if (qApp) {
-      qApp->quit();
-    }
   });
 }
 
@@ -520,9 +506,6 @@ void wireDockWidgetSignals(ads::CDockWidget *dock, QObject *owner) {
         if (auto *floatingWidget = findFloatingDockContainer(dock)) {
           scheduleFloatingRefresh(floatingWidget);
         }
-        if (auto *window = qobject_cast<ArtifactMainWindow *>(owner)) {
-          scheduleQuitIfNoVisibleDocks(window);
-        }
       });
 }
 
@@ -566,6 +549,9 @@ public:
   ArtifactToolOptionsBar *toolOptionsBar = nullptr;
   QToolBar *toolOptionsHost = nullptr;
   QToolButton *workspaceButton = nullptr;
+  QVBoxLayout *rootLayout = nullptr;
+  ArtifactMenuBar *menuBar = nullptr;
+  QStatusBar *statusBar = nullptr;
   QWidget *centralWidgetHost = nullptr;
   CDockWidget *primaryCenterDock = nullptr;
   bool primaryCenterDockAssigned = false;
@@ -580,6 +566,8 @@ public:
   bool initialLayoutApplied = false;
   bool startupRefreshScheduled = false;
   bool startupLayoutFrozen = true;
+  bool startupLayoutApplying = false;
+  bool recordLayoutMutations = true;
   ArtifactAICloudWidget *aiCloudWidget_ = nullptr;
   QLabel *previewResolutionLabel = nullptr;
   QHash<CDockWidget *, std::function<QWidget *()>> lazyDockFactories;
@@ -624,7 +612,6 @@ public:
     widget->show();
     widget->updateGeometry();
     widget->update();
-    refreshFloatingWidgetTree(widget);
     QTimer::singleShot(0, owner, [owner, dock]() {
       if (!owner || !dock) {
         return;
@@ -639,9 +626,6 @@ public:
     if (placeholder && placeholder != widget) {
       placeholder->deleteLater();
     }
-    refreshDockWidgetSurface(dock);
-    dock->updateGeometry();
-    dock->update();
     return true;
   }
 
@@ -736,8 +720,11 @@ public:
 };
 
 ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
-    : QMainWindow(parent), impl_(new Impl()) {
+    : QWidget(parent), impl_(new Impl()) {
   setUpdatesEnabled(false);
+  impl_->rootLayout = new QVBoxLayout(this);
+  impl_->rootLayout->setContentsMargins(0, 0, 0, 0);
+  impl_->rootLayout->setSpacing(0);
   CDockManager::setConfigFlags(CDockManager::DefaultOpaqueConfig);
   // CDockManager::setConfigFlag(CDockManager::RetainTabSizeWhenCloseButtonHidden,
   // true);
@@ -758,7 +745,10 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
     if (!impl_ || impl_->menuBarInitialized)
       return;
     auto *menuBar = new ArtifactMenuBar(this, this);
-    setMenuBar(menuBar);
+    impl_->menuBar = menuBar;
+    // The menu is created lazily to preserve the existing action bootstrap,
+    // but it must remain the first chrome row in the QWidget root layout.
+    impl_->rootLayout->insertWidget(0, menuBar);
 
     // Pass main window reference to view menu for dynamic panel listing
     if (auto *viewMenu = menuBar->findChild<ArtifactViewMenu *>()) {
@@ -769,7 +759,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   });
 
   auto *toolBar = new ArtifactToolBar(this);
-  addToolBar(toolBar);
+  impl_->rootLayout->addWidget(toolBar);
   impl_->toolBar = toolBar;
 
   auto *workspaceButton = new QToolButton(this);
@@ -817,8 +807,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
     impl_->toolOptionsHost->setPalette(pal);
   }
   impl_->toolOptionsHost->addWidget(impl_->toolOptionsBar);
-  addToolBarBreak();
-  addToolBar(impl_->toolOptionsHost);
+  impl_->rootLayout->addWidget(impl_->toolOptionsHost);
   toolBar->setToolOptionsBar(impl_->toolOptionsBar);
   toolBar->refreshFromApplicationState();
   QObject::connect(toolBar, &ArtifactToolBar::workspaceModeChanged, this,
@@ -1081,6 +1070,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->syncShapeToolOptions(this);
 
   impl_->dockManager = new CDockManager(this);
+  impl_->rootLayout->addWidget(impl_->dockManager, 1);
   prepareDockDropOverlays(impl_->dockManager);
   QTimer::singleShot(0, this, [this]() {
     if (impl_ && impl_->dockManager) {
@@ -1110,11 +1100,13 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   auto *centralDock = new CDockWidget(QStringLiteral("Workspace"), this);
   centralDock->setObjectName(QStringLiteral("ArtifactCentralDock"));
   centralDock->setWidget(impl_->centralWidgetHost);
-  centralDock->setFeatures(
-      ads::CDockWidget::AllDockWidgetFeatures); // Enable floating, etc.
+  centralDock->setFeatures(ads::CDockWidget::NoDockWidgetFeatures);
   impl_->dockManager->setCentralWidget(centralDock);
   impl_->primaryCenterDock = centralDock;
   impl_->dockStyleManager->applyStyle();
+
+  impl_->statusBar = new QStatusBar(this);
+  impl_->rootLayout->addWidget(impl_->statusBar);
 
   // Let Composition Viewer own the startup empty state so its
   // Create Composition action stays actionable.
@@ -1213,8 +1205,8 @@ void ArtifactMainWindow::applyUiFontSettings() {
   if (!impl_) {
     return;
   }
-  if (auto* bar = qobject_cast<ArtifactMenuBar*>(menuBar())) {
-    bar->refreshFontFromSettings();
+  if (impl_->menuBar) {
+    impl_->menuBar->refreshFontFromSettings();
   }
   if (impl_->dockStyleManager) {
     impl_->dockStyleManager->applyStyle();
@@ -1261,8 +1253,6 @@ void ArtifactMainWindow::addDockedWidget(const QString &title,
     impl_->primaryCenterDock->setWindowTitle(title);
     impl_->primaryCenterDock->setObjectName(title);
     impl_->primaryCenterDock->setWidget(widget);
-    impl_->primaryCenterDock->setFeatures(
-        ads::CDockWidget::AllDockWidgetFeatures);
     impl_->primaryCenterDockAssigned = true;
     if (!impl_->dockWidgets.contains(impl_->primaryCenterDock)) {
       impl_->dockWidgets.push_back(impl_->primaryCenterDock);
@@ -1437,7 +1427,7 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
           return;
         }
 
-        if (impl_->startupLayoutFrozen) {
+        if (impl_->startupLayoutFrozen || impl_->startupLayoutApplying) {
           dock->setProperty("artifactLazyWidgetStartupPending", true);
           return;
         }
@@ -1489,6 +1479,8 @@ void ArtifactMainWindow::addDockedWidgetFloating(
   impl_->dockWidgets.push_back(dock);
   if (!impl_->startupLayoutFrozen) {
     dock->toggleView(true);
+  } else {
+    dock->toggleView(false);
   }
   wireDockWidgetSignals(dock, this);
   prepareDockDropOverlays(impl_->dockManager);
@@ -1521,7 +1513,7 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
           return;
         }
 
-        if (impl_->startupLayoutFrozen) {
+        if (impl_->startupLayoutFrozen || impl_->startupLayoutApplying) {
           dock->setProperty("artifactLazyWidgetStartupPending", true);
           return;
         }
@@ -1618,12 +1610,17 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
   if (!impl_)
     return;
 
-  const QByteArray beforeState = saveDockManagerState();
+  const QByteArray beforeState =
+      impl_->recordLayoutMutations ? saveDockManagerState() : QByteArray{};
 
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
       continue;
     if (dock->objectName() == title || dock->windowTitle() == title) {
+      if (impl_->startupLayoutFrozen) {
+        dock->setProperty("artifactStartupVisibilityOverride", visible);
+        return;
+      }
       const bool isVisible = dock->isVisible() && !dock->isClosed();
       if (isVisible != visible) {
         dock->toggleView(visible);
@@ -1634,7 +1631,7 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
           !dock->property("artifactLazyWidgetCreated").toBool() &&
           !dock->property("artifactLazyWidgetCreationPending").toBool();
       if (needsLazyWidget) {
-        if (impl_->startupLayoutFrozen) {
+        if (impl_->startupLayoutFrozen || impl_->startupLayoutApplying) {
           dock->setProperty("artifactLazyWidgetStartupPending", true);
         } else {
           impl_->createLazyDockWidgetNow(this, dock);
@@ -1649,10 +1646,12 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
           scheduleFloatingRefresh(floatingWidget);
         }
       }
-      pushDockLayoutSnapshot(
-          this, beforeState,
-          visible ? QStringLiteral("Show Dock: %1").arg(title)
-                  : QStringLiteral("Hide Dock: %1").arg(title));
+      if (impl_->recordLayoutMutations) {
+        pushDockLayoutSnapshot(
+            this, beforeState,
+            visible ? QStringLiteral("Show Dock: %1").arg(title)
+                    : QStringLiteral("Hide Dock: %1").arg(title));
+      }
       return;
     }
   }
@@ -1665,10 +1664,14 @@ void ArtifactMainWindow::activateDock(const QString &title) {
     if (!dock)
       continue;
     if (dock->objectName() == title || dock->windowTitle() == title) {
+      if (impl_->startupLayoutFrozen) {
+        dock->setProperty("artifactStartupVisibilityOverride", true);
+        return;
+      }
       dock->toggleView(true);
       if (!dock->property("artifactLazyWidgetCreated").toBool() &&
           !dock->property("artifactLazyWidgetCreationPending").toBool()) {
-        if (impl_->startupLayoutFrozen) {
+        if (impl_->startupLayoutFrozen || impl_->startupLayoutApplying) {
           dock->setProperty("artifactLazyWidgetStartupPending", true);
         } else if (impl_->lazyDockFactories.contains(dock)) {
           impl_->createLazyDockWidgetNow(this, dock);
@@ -1805,7 +1808,7 @@ void ArtifactMainWindow::setDockImmersive(QWidget *widget, bool immersive) {
 
 void ArtifactMainWindow::showStatusMessage(const QString &message,
                                            int timeoutMs) {
-  statusBar()->showMessage(message, timeoutMs);
+  if (impl_ && impl_->statusBar) impl_->statusBar->showMessage(message, timeoutMs);
 }
 
 void ArtifactMainWindow::togglePanelsVisible(bool visible) {
@@ -1917,20 +1920,24 @@ bool ArtifactMainWindow::hasDock(const QString &title) const {
 }
 
 void ArtifactMainWindow::setStatusZoomLevel(float zoomPercent) {
-  statusBar()->showMessage(
+  if (!impl_ || !impl_->statusBar) return;
+  impl_->statusBar->showMessage(
       QStringLiteral("Zoom: %1%").arg(static_cast<int>(zoomPercent)), 1000);
 }
 
 void ArtifactMainWindow::setStatusCoordinates(int x, int y) {
-  statusBar()->showMessage(QStringLiteral("X: %1 Y: %2").arg(x).arg(y), 1000);
+  if (!impl_ || !impl_->statusBar) return;
+  impl_->statusBar->showMessage(QStringLiteral("X: %1 Y: %2").arg(x).arg(y), 1000);
 }
 
 void ArtifactMainWindow::setStatusMemoryUsage(uint64_t memoryMB) {
-  statusBar()->showMessage(QStringLiteral("Memory: %1 MB").arg(memoryMB), 1000);
+  if (!impl_ || !impl_->statusBar) return;
+  impl_->statusBar->showMessage(QStringLiteral("Memory: %1 MB").arg(memoryMB), 1000);
 }
 
 void ArtifactMainWindow::setStatusFPS(double fps) {
-  statusBar()->showMessage(
+  if (!impl_ || !impl_->statusBar) return;
+  impl_->statusBar->showMessage(
       QStringLiteral("FPS: %1").arg(QString::number(fps, 'f', 1)), 1000);
 }
 
@@ -1938,7 +1945,8 @@ void ArtifactMainWindow::setStatusPreviewResolution(int percent) {
   if (!impl_) {
     return;
   }
-  auto *status = statusBar();
+  auto *status = impl_->statusBar;
+  if (!status) return;
   if (!impl_->previewResolutionLabel || impl_->previewResolutionLabel->parent() != status) {
     impl_->previewResolutionLabel = new QLabel(status);
     impl_->previewResolutionLabel->setObjectName(
@@ -1951,7 +1959,22 @@ void ArtifactMainWindow::setStatusPreviewResolution(int percent) {
 }
 
 void ArtifactMainWindow::setStatusReady() {
-  statusBar()->showMessage(QStringLiteral("Ready"), 1500);
+  if (!impl_ || !impl_->statusBar) return;
+  impl_->statusBar->showMessage(QStringLiteral("Ready"), 1500);
+}
+
+void ArtifactMainWindow::setStatusBar(QStatusBar *statusBar) {
+  if (!impl_ || !impl_->rootLayout || !statusBar ||
+      impl_->statusBar == statusBar) {
+    return;
+  }
+  if (impl_->statusBar) {
+    impl_->rootLayout->removeWidget(impl_->statusBar);
+    impl_->statusBar->deleteLater();
+  }
+  statusBar->setParent(this);
+  impl_->statusBar = statusBar;
+  impl_->rootLayout->addWidget(statusBar);
 }
 
 void ArtifactMainWindow::setDockSplitterSizes(const QString &dockTitle,
@@ -1994,24 +2017,48 @@ void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {
     return;
   }
 
-  impl_->startupLayoutFrozen = frozen;
-  setUpdatesEnabled(!frozen);
-
   if (frozen) {
+    impl_->startupLayoutFrozen = true;
+    impl_->startupLayoutApplying = false;
+    setUpdatesEnabled(false);
     return;
   }
 
+  // Apply the restored workspace as one non-recording transaction.  Startup
+  // visibility changes are not user edits and must not serialize the full ADS
+  // state or populate layout undo history for every dock.
+  impl_->startupLayoutFrozen = false;
+  impl_->startupLayoutApplying = true;
+  impl_->recordLayoutMutations = false;
   impl_->startupRefreshScheduled = true;
   applyWorkspaceMode(this, impl_->workspaceMode_);
+
+  for (auto *dock : impl_->dockWidgets) {
+    if (!dock ||
+        !dock->property("artifactStartupVisibilityOverride").isValid()) {
+      continue;
+    }
+    const bool visible =
+        dock->property("artifactStartupVisibilityOverride").toBool();
+    dock->setProperty("artifactStartupVisibilityOverride", QVariant());
+    dock->toggleView(visible);
+    if (visible) {
+      dock->setAsCurrentTab();
+    }
+  }
+  impl_->startupLayoutApplying = false;
+  impl_->recordLayoutMutations = true;
+  setUpdatesEnabled(true);
 
   for (auto *dock : impl_->dockWidgets) {
     if (!dock) {
       continue;
     }
-    bool shouldCreateLazyWidget =
-        dock->property("artifactLazyWidgetStartupPending").toBool();
-    if (!shouldCreateLazyWidget &&
-        !dock->property("artifactLazyWidgetCreated").toBool()) {
+    // visibilityChanged may fire transiently while QADS restores its graph.
+    // Discard that historical hint and decide solely from the final layout.
+    dock->setProperty("artifactLazyWidgetStartupPending", false);
+    bool shouldCreateLazyWidget = false;
+    if (!dock->property("artifactLazyWidgetCreated").toBool()) {
       if (dock->property("artifactLazyFloatingDock").toBool()) {
         shouldCreateLazyWidget = dock->isVisible() && !dock->isClosed();
       } else if (auto *area = dock->dockAreaWidget()) {
@@ -2059,14 +2106,25 @@ void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {
       impl_->createLazyDockWidgetNow(this, dock);
     }
     applyDarkNativeTitleBar(this);
-    refreshFloatingWidgetTree(this);
     for (auto *dock : impl_->dockWidgets) {
-      wireDockWidgetSignals(dock, this);
-      refreshDockWidgetSurface(dock);
+      if (!dock || dock->isClosed()) {
+        continue;
+      }
+      const bool isVisibleSurface =
+          dock->property("artifactLazyFloatingDock").toBool()
+              ? dock->isVisible()
+              : (dock->dockAreaWidget() &&
+                 dock->dockAreaWidget()->currentDockWidget() == dock);
+      if (isVisibleSurface) {
+        refreshDockWidgetSurface(dock);
+      }
     }
     const auto floatingWidgets = impl_->dockManager->floatingWidgets();
     for (auto *floatingWidget : floatingWidgets) {
-      prepareFloatingDockContainer(floatingWidget, this);
+      if (floatingWidget && floatingWidget->isVisible() &&
+          !floatingWidget->isMinimized()) {
+        prepareFloatingDockContainer(floatingWidget, this);
+      }
     }
     if (!impl_->initialLayoutApplied) {
       impl_->initialLayoutApplied = true;
@@ -2118,11 +2176,11 @@ void ArtifactMainWindow::keyPressEvent(QKeyEvent *event) {
     }
   }
 #endif
-  QMainWindow::keyPressEvent(event);
+  QWidget::keyPressEvent(event);
 }
 
 void ArtifactMainWindow::keyReleaseEvent(QKeyEvent *event) {
-  QMainWindow::keyReleaseEvent(event);
+  QWidget::keyReleaseEvent(event);
 }
 
 void ArtifactMainWindow::closeEvent(QCloseEvent *event) {
@@ -2136,7 +2194,7 @@ void ArtifactMainWindow::closeEvent(QCloseEvent *event) {
 }
 
 void ArtifactMainWindow::showEvent(QShowEvent *event) {
-  QMainWindow::showEvent(event);
+  QWidget::showEvent(event);
   if (impl_ && (impl_->startupLayoutFrozen || impl_->startupRefreshScheduled)) {
     return;
   }
@@ -2193,7 +2251,7 @@ bool ArtifactMainWindow::eventFilter(QObject *watched, QEvent *event) {
     case QEvent::ZOrderChange:
       break;
     default:
-      return QMainWindow::eventFilter(watched, event);
+      return QWidget::eventFilter(watched, event);
     }
   }
 
@@ -2243,7 +2301,7 @@ bool ArtifactMainWindow::eventFilter(QObject *watched, QEvent *event) {
       }
   }
 
-  return QMainWindow::eventFilter(watched, event);
+  return QWidget::eventFilter(watched, event);
 }
 
 ArtifactAICloudWidget *ArtifactMainWindow::aiCloudWidget() const {

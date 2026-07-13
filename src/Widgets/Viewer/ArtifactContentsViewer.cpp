@@ -20,11 +20,12 @@
 #include <wobjectimpl.h>
 #include <QVBoxLayout>
 #include <QResizeEvent>
+#include <QImage>
 #include <QPixmap>
 #include <QScrollArea>
 #include <QStyle>
 #include <QSizePolicy>
-#include <QSplitter>
+#include <QPainter>
 #include <QWheelEvent>
 #include <QMouseEvent>
 #include <QFocusEvent>
@@ -103,6 +104,292 @@ import UI.ShortcutBindings;
 
 namespace Artifact
 {
+ namespace
+ {
+  struct CompareCanvasPanelState
+  {
+   QString path;
+   QString title;
+   QString body;
+   QPixmap pixmap;
+   bool isImage = false;
+  };
+
+  enum class CompareDisplayMode
+  {
+   Wipe,
+   Split,
+   Difference
+  };
+
+  QString compareDisplayModeLabel(CompareDisplayMode mode)
+  {
+   switch (mode) {
+   case CompareDisplayMode::Wipe:
+    return QStringLiteral("Wipe");
+   case CompareDisplayMode::Split:
+    return QStringLiteral("Split");
+   case CompareDisplayMode::Difference:
+    return QStringLiteral("Difference");
+   }
+   return QStringLiteral("Compare");
+  }
+
+  class CompareCanvasWidget final : public QWidget
+  {
+  public:
+   explicit CompareCanvasWidget(QWidget* parent = nullptr)
+       : QWidget(parent)
+   {
+    setMinimumSize(160, 120);
+    setMouseTracking(true);
+    setAutoFillBackground(true);
+   }
+
+   void setPanels(CompareCanvasPanelState left, CompareCanvasPanelState right)
+   {
+    left_ = std::move(left);
+    right_ = std::move(right);
+    update();
+   }
+
+   void setDisplayMode(CompareDisplayMode mode)
+   {
+    if (displayMode_ == mode) {
+     return;
+    }
+    displayMode_ = mode;
+    update();
+   }
+
+   CompareDisplayMode displayMode() const
+   {
+    return displayMode_;
+   }
+
+   void setWipePercent(int value)
+   {
+    const int clamped = std::clamp(value, 0, 100);
+    if (wipePercent_ == clamped) {
+     return;
+    }
+    wipePercent_ = clamped;
+    update();
+   }
+
+   int wipePercent() const
+   {
+    return wipePercent_;
+   }
+
+   std::function<void(int)> onWipeChanged;
+
+  protected:
+   void paintEvent(QPaintEvent*) override
+   {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.fillRect(rect(), palette().window());
+
+    const QRect canvasRect = rect().adjusted(8, 8, -8, -8);
+    if (canvasRect.width() <= 0 || canvasRect.height() <= 0) {
+     return;
+    }
+
+    painter.fillRect(canvasRect, palette().mid());
+    if (displayMode_ == CompareDisplayMode::Difference) {
+     paintDifference(painter, canvasRect);
+    } else {
+     const QRect leftRect = QRect(canvasRect.left(),
+                                  canvasRect.top(),
+                                  std::clamp((canvasRect.width() * wipePercent_) / 100, 0, canvasRect.width()),
+                                  canvasRect.height());
+     const QRect rightRect = QRect(leftRect.right() + 1,
+                                   canvasRect.top(),
+                                   std::max(0, canvasRect.right() - leftRect.right()),
+                                   canvasRect.height());
+
+     paintPanel(painter, displayMode_ == CompareDisplayMode::Split ? leftHalfRect(canvasRect)
+                                                                   : leftRect,
+                left_, true, canvasRect);
+     paintPanel(painter, displayMode_ == CompareDisplayMode::Split ? rightHalfRect(canvasRect)
+                                                                   : rightRect,
+                right_, false, canvasRect);
+    }
+
+    const int handleX = canvasRect.left() + (canvasRect.width() * wipePercent_) / 100;
+    painter.setClipping(false);
+    if (displayMode_ != CompareDisplayMode::Difference) {
+     painter.setPen(QPen(palette().highlight().color(), 2));
+     painter.drawLine(handleX, canvasRect.top(), handleX, canvasRect.bottom());
+
+     const QRect handleRect(handleX - 12, canvasRect.center().y() - 18, 24, 36);
+     painter.setPen(Qt::NoPen);
+     painter.setBrush(palette().base());
+     painter.drawRoundedRect(handleRect, 8, 8);
+     painter.setPen(palette().text().color());
+     painter.drawText(handleRect, Qt::AlignCenter, displayMode_ == CompareDisplayMode::Split
+                                                       ? QStringLiteral("A/B")
+                                                       : QStringLiteral("A|B"));
+    }
+   }
+
+   void mousePressEvent(QMouseEvent* event) override
+   {
+    if (event->button() == Qt::LeftButton && displayMode_ != CompareDisplayMode::Difference) {
+     dragging_ = true;
+     updateWipeFromPosition(event->position().toPoint().x());
+     event->accept();
+     return;
+    }
+    QWidget::mousePressEvent(event);
+   }
+
+   void mouseMoveEvent(QMouseEvent* event) override
+   {
+    if (dragging_) {
+     updateWipeFromPosition(event->position().toPoint().x());
+     event->accept();
+     return;
+    }
+    QWidget::mouseMoveEvent(event);
+   }
+
+   void mouseReleaseEvent(QMouseEvent* event) override
+   {
+    if (event->button() == Qt::LeftButton && dragging_) {
+     dragging_ = false;
+     updateWipeFromPosition(event->position().toPoint().x());
+     event->accept();
+     return;
+    }
+    QWidget::mouseReleaseEvent(event);
+   }
+
+  private:
+   static QRect leftHalfRect(const QRect& targetRect)
+   {
+    const int halfWidth = targetRect.width() / 2;
+    return QRect(targetRect.left(), targetRect.top(), halfWidth, targetRect.height());
+   }
+
+   static QRect rightHalfRect(const QRect& targetRect)
+   {
+    const int halfWidth = targetRect.width() / 2;
+    return QRect(targetRect.left() + halfWidth, targetRect.top(),
+                 targetRect.width() - halfWidth, targetRect.height());
+   }
+
+   static QRect fittedRect(const QSize& sourceSize, const QRect& targetRect)
+   {
+    if (!sourceSize.isValid() || targetRect.width() <= 0 || targetRect.height() <= 0) {
+     return targetRect;
+    }
+
+    const QSize scaled = sourceSize.scaled(targetRect.size(), Qt::KeepAspectRatio);
+    const int x = targetRect.left() + (targetRect.width() - scaled.width()) / 2;
+    const int y = targetRect.top() + (targetRect.height() - scaled.height()) / 2;
+    return QRect(QPoint(x, y), scaled);
+   }
+
+   void paintPanel(QPainter& painter,
+                   const QRect& clipRect,
+                   const CompareCanvasPanelState& panel,
+                   bool leftSide,
+                   const QRect& sharedCanvasRect)
+   {
+    if (clipRect.width() <= 0 || clipRect.height() <= 0) {
+     return;
+    }
+
+    painter.save();
+    painter.setClipRect(clipRect);
+
+    const QRect contentRect = sharedCanvasRect.adjusted(20, 20, -20, -20);
+    if (panel.isImage && !panel.pixmap.isNull()) {
+      const QSize sharedSize(std::max(left_.pixmap.width(), right_.pixmap.width()),
+                             std::max(left_.pixmap.height(), right_.pixmap.height()));
+      const QRect sharedRect = fittedRect(sharedSize, contentRect);
+      const QRect targetRect = fittedRect(panel.pixmap.size(), sharedRect);
+      painter.drawPixmap(targetRect, panel.pixmap);
+    } else {
+     painter.setPen(palette().text().color());
+     const QString badge = leftSide ? QStringLiteral("A") : QStringLiteral("B");
+     const QString text = QStringLiteral("%1\n%2\n%3")
+                              .arg(badge,
+                                   panel.title.isEmpty() ? QStringLiteral("Unassigned") : panel.title,
+                                   panel.body.isEmpty() ? QStringLiteral("Open a file to inspect it") : panel.body);
+     painter.drawText(contentRect.adjusted(16, 16, -16, -16),
+                      Qt::AlignCenter | Qt::TextWordWrap,
+                      text);
+    }
+
+    painter.restore();
+   }
+
+   void paintDifference(QPainter& painter, const QRect& canvasRect)
+   {
+    if (!(left_.isImage && right_.isImage) || left_.pixmap.isNull() || right_.pixmap.isNull()) {
+     painter.setPen(palette().text().color());
+     painter.drawText(canvasRect.adjusted(24, 24, -24, -24),
+                      Qt::AlignCenter | Qt::TextWordWrap,
+                      QStringLiteral("Difference view requires two image sources.\nAssign image sources to A and B to inspect their pixel delta."));
+     return;
+    }
+
+    const QRect contentRect = canvasRect.adjusted(20, 20, -20, -20);
+    const QSize sharedSize(std::max(left_.pixmap.width(), right_.pixmap.width()),
+                           std::max(left_.pixmap.height(), right_.pixmap.height()));
+    const QRect targetRect = fittedRect(sharedSize, contentRect);
+    QImage leftImage = left_.pixmap.toImage().convertToFormat(QImage::Format_RGBA8888);
+    QImage rightImage = right_.pixmap.toImage().convertToFormat(QImage::Format_RGBA8888);
+    if (leftImage.size() != targetRect.size()) {
+     leftImage = leftImage.scaled(targetRect.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+    if (rightImage.size() != targetRect.size()) {
+     rightImage = rightImage.scaled(targetRect.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+
+    QImage diffImage(targetRect.size(), QImage::Format_RGBA8888);
+    for (int y = 0; y < diffImage.height(); ++y) {
+     const QRgb* leftScan = reinterpret_cast<const QRgb*>(leftImage.constScanLine(y));
+     const QRgb* rightScan = reinterpret_cast<const QRgb*>(rightImage.constScanLine(y));
+     QRgb* diffScan = reinterpret_cast<QRgb*>(diffImage.scanLine(y));
+     for (int x = 0; x < diffImage.width(); ++x) {
+      const QColor leftColor = QColor::fromRgba(leftScan[x]);
+      const QColor rightColor = QColor::fromRgba(rightScan[x]);
+      diffScan[x] = qRgba(std::abs(leftColor.red() - rightColor.red()),
+                          std::abs(leftColor.green() - rightColor.green()),
+                          std::abs(leftColor.blue() - rightColor.blue()),
+                          255);
+     }
+    }
+
+    painter.drawImage(targetRect, diffImage);
+   }
+
+   void updateWipeFromPosition(int x)
+   {
+    const QRect canvasRect = rect().adjusted(8, 8, -8, -8);
+    if (canvasRect.width() <= 0) {
+     return;
+    }
+    const int clampedX = std::clamp(x, canvasRect.left(), canvasRect.right());
+    const int value = std::clamp(((clampedX - canvasRect.left()) * 100) / std::max(1, canvasRect.width()), 0, 100);
+    setWipePercent(value);
+    if (onWipeChanged) {
+     onWipeChanged(value);
+    }
+   }
+
+   CompareCanvasPanelState left_;
+   CompareCanvasPanelState right_;
+   CompareDisplayMode displayMode_ = CompareDisplayMode::Wipe;
+   int wipePercent_ = 50;
+   bool dragging_ = false;
+  };
+ } // namespace
+
   class ArtifactContentsViewer::Impl
   {
   public:
@@ -145,6 +432,7 @@ namespace Artifact
    void swapCompareSides();
    void assignCompareSource(bool leftSide);
    void updateCompareWipe();
+   void setCompareDisplayMode(CompareDisplayMode mode);
    void updateDisplayedPage();
    void syncModelViewerMode();
    void attachMediaOutputs();
@@ -156,8 +444,11 @@ namespace Artifact
    void openCompareSource(bool leftSide);
    void fitImageToWindow();
    void applyImageTransform();
+   void seekByMs(qint64 deltaMs);
+   void seekToMs(qint64 positionMs);
 
    static qint64 framesToMs(int64_t frame);
+   static qint64 msToFrame(qint64 ms);
    static QString humanFileSize(qint64 bytes);
    static QString formatDurationMs(qint64 ms);
 
@@ -171,6 +462,11 @@ namespace Artifact
    QLabel* stateLabel = nullptr;
    QLabel* channelMetaLabel = nullptr;
    QLabel* surfaceMetaLabel = nullptr;
+   QWidget* transportStrip = nullptr;
+   QLabel* transportTimeLabel = nullptr;
+   QLabel* transportFrameLabel = nullptr;
+   QLabel* transportRangeLabel = nullptr;
+   QLabel* transportCompareLabel = nullptr;
    QToolButton* fitButton = nullptr;
    QToolButton* rotateLeftButton = nullptr;
    QToolButton* rotateRightButton = nullptr;
@@ -187,8 +483,11 @@ namespace Artifact
    QToolButton* compareSwapButton = nullptr;
    QToolButton* compareAssignAButton = nullptr;
    QToolButton* compareAssignBButton = nullptr;
+   QToolButton* compareWipeModeButton = nullptr;
+   QToolButton* compareSplitModeButton = nullptr;
+   QToolButton* compareDifferenceModeButton = nullptr;
    QSlider* compareWipeSlider = nullptr;
-   QSplitter* compareSplitter = nullptr;
+   CompareCanvasWidget* compareCanvas = nullptr;
    QSlider* seekSlider = nullptr;
    QStackedWidget* stackedWidget = nullptr;
    QScrollArea* imageScrollArea = nullptr;
@@ -211,8 +510,6 @@ namespace Artifact
    QVector<float> audioWaveformSamples;
    std::unique_ptr<ArtifactCore::AudioAnalyzer> audioAnalyzer_;
    QWidget* comparePage = nullptr;
-   QLabel* compareSourceLabel = nullptr;
-   QLabel* compareFinalLabel = nullptr;
    QLabel* compareSourceHeader = nullptr;
    QLabel* compareFinalHeader = nullptr;
    QLabel* infoLabel = nullptr;
@@ -236,6 +533,7 @@ namespace Artifact
    qint64 audioPlaybackPositionMs = 0;
    QByteArray audioPendingBuffer;
    bool compareSidesSwapped = false;
+   CompareDisplayMode compareDisplayMode = CompareDisplayMode::Wipe;
    int compareWipePercent = 50;
    int viewerAssignment = 1;
    bool viewerHasFocus = false;
@@ -251,6 +549,45 @@ namespace Artifact
   {
    constexpr double kDefaultFps = 30.0;
    return static_cast<qint64>(std::llround((static_cast<double>(frame) / kDefaultFps) * 1000.0));
+  }
+
+  qint64 ArtifactContentsViewer::Impl::msToFrame(qint64 ms)
+  {
+   constexpr double kDefaultFps = 30.0;
+   return static_cast<qint64>(std::llround((static_cast<double>(ms) / 1000.0) * kDefaultFps));
+  }
+
+  void ArtifactContentsViewer::Impl::seekToMs(qint64 positionMs)
+  {
+   const qint64 clampedPosition = std::max<qint64>(0, positionMs);
+   if (currentFileType == ArtifactCore::FileType::Video && mediaPlayer) {
+    mediaPlayer->setPosition(clampedPosition);
+    updatePlaybackState();
+    return;
+   }
+   if (currentFileType == ArtifactCore::FileType::Audio && audioController_ && audioController_->isMediaOpen()) {
+    const qint64 duration = audioController_->getDuration();
+    const qint64 bounded = duration > 0 ? std::clamp<qint64>(clampedPosition, 0, duration) : clampedPosition;
+    audioController_->seek(bounded);
+    audioPlaybackPositionMs = bounded;
+    audioPendingBuffer.clear();
+    if (seekSlider) {
+     QSignalBlocker blocker(seekSlider);
+     seekSlider->setValue(static_cast<int>(std::clamp<qint64>(audioPlaybackPositionMs, 0, std::numeric_limits<int>::max())));
+    }
+    updatePlaybackState();
+   }
+  }
+
+  void ArtifactContentsViewer::Impl::seekByMs(qint64 deltaMs)
+  {
+   if (currentFileType == ArtifactCore::FileType::Video && mediaPlayer) {
+    seekToMs(mediaPlayer->position() + deltaMs);
+    return;
+   }
+   if (currentFileType == ArtifactCore::FileType::Audio && audioController_ && audioController_->isMediaOpen()) {
+    seekToMs(audioPlaybackPositionMs + deltaMs);
+   }
   }
 
   QString ArtifactContentsViewer::Impl::humanFileSize(qint64 bytes)
@@ -1040,51 +1377,50 @@ namespace Artifact
     hintLabel->setPalette(pal);
    }
 
-   auto makePanel = [this](const QString& headerText, QLabel*& headerOut, QLabel*& contentOut) {
+   auto makeHeader = [this](const QString& headerText, QLabel*& headerOut) {
     auto* panel = new QWidget(comparePage);
     auto* panelLayout = new QVBoxLayout(panel);
     panelLayout->setContentsMargins(0, 0, 0, 0);
     panelLayout->setSpacing(6);
 
-   headerOut = new QLabel(headerText, panel);
-   {
-    QFont headerFont = headerOut->font();
-    headerFont.setPointSize(11);
-    headerFont.setWeight(QFont::DemiBold);
+    headerOut = new QLabel(headerText, panel);
+    {
+     QFont headerFont = headerOut->font();
+     headerFont.setPointSize(11);
+     headerFont.setWeight(QFont::DemiBold);
      headerOut->setFont(headerFont);
      QPalette pal = headerOut->palette();
      pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
      headerOut->setPalette(pal);
     }
     headerOut->setCursor(Qt::PointingHandCursor);
-
-    contentOut = new QLabel(panel);
-    contentOut->setAlignment(Qt::AlignCenter);
-    contentOut->setWordWrap(true);
-    contentOut->setMinimumSize(0, 0);
-    contentOut->setScaledContents(true);
-    contentOut->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    contentOut->setFrameShape(QFrame::StyledPanel);
-    contentOut->setFrameShadow(QFrame::Sunken);
-    {
-     QPalette pal = contentOut->palette();
-     pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
-     pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
-     contentOut->setPalette(pal);
-    }
-    contentOut->setAutoFillBackground(true);
-
     panelLayout->addWidget(headerOut, 0, Qt::AlignLeft);
-    panelLayout->addWidget(contentOut, 1);
     return panel;
    };
 
-   compareSplitter = new QSplitter(Qt::Horizontal, comparePage);
-   compareSplitter->setChildrenCollapsible(false);
-   compareSplitter->addWidget(makePanel(QStringLiteral("A"), compareSourceHeader, compareSourceLabel));
-   compareSplitter->addWidget(makePanel(QStringLiteral("B"), compareFinalHeader, compareFinalLabel));
-   compareSplitter->setStretchFactor(0, 1);
-   compareSplitter->setStretchFactor(1, 1);
+   auto* headerRow = new QHBoxLayout();
+   headerRow->setContentsMargins(0, 0, 0, 0);
+   headerRow->setSpacing(12);
+   headerRow->addWidget(makeHeader(QStringLiteral("A"), compareSourceHeader), 1);
+   headerRow->addWidget(makeHeader(QStringLiteral("B"), compareFinalHeader), 1);
+
+   compareCanvas = new CompareCanvasWidget(comparePage);
+   {
+    QPalette pal = compareCanvas->palette();
+    pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+    pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+    pal.setColor(QPalette::Mid, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor).lighter(108));
+    pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+    pal.setColor(QPalette::Highlight, QColor(ArtifactCore::currentDCCTheme().accentColor));
+    compareCanvas->setPalette(pal);
+   }
+   compareCanvas->onWipeChanged = [this](int value) {
+    compareWipePercent = std::clamp(value, 0, 100);
+    saveCompareSurfaceState();
+    if (compareWipeSlider && compareWipeSlider->value() != compareWipePercent) {
+     compareWipeSlider->setValue(compareWipePercent);
+    }
+   };
 
    compareWipeSlider = new QSlider(Qt::Horizontal, comparePage);
    compareWipeSlider->setRange(0, 100);
@@ -1102,26 +1438,47 @@ namespace Artifact
    });
 
    layout->addWidget(hintLabel, 0);
-  layout->addWidget(compareSplitter, 1);
-  layout->addWidget(compareWipeSlider, 0);
-  stackedWidget->addWidget(comparePage);
-  updateCompareWipe();
+   layout->addLayout(headerRow, 0);
+   layout->addWidget(compareCanvas, 1);
+   layout->addWidget(compareWipeSlider, 0);
+   stackedWidget->addWidget(comparePage);
+   updateCompareWipe();
 
   }
 
   void ArtifactContentsViewer::Impl::updateCompareWipe()
   {
-   if (!compareSplitter) {
+   if (!compareCanvas) {
     return;
    }
-   const int total = std::max(1, compareSplitter->width());
-   const int left = std::clamp((total * compareWipePercent) / 100, 1, std::max(1, total - 1));
-   compareSplitter->setSizes({left, std::max(1, total - left)});
+   compareCanvas->setDisplayMode(compareDisplayMode);
+   compareCanvas->setWipePercent(compareWipePercent);
+  }
+
+  void ArtifactContentsViewer::Impl::setCompareDisplayMode(CompareDisplayMode mode)
+  {
+   if (mode == CompareDisplayMode::Difference) {
+    ArtifactCore::FileTypeDetector detector;
+    const bool compareAIsImage = !compareSourceAPath.isEmpty()
+                                     && detector.detectByExtension(compareSourceAPath) == ArtifactCore::FileType::Image;
+    const bool compareBIsImage = !compareSourceBPath.isEmpty()
+                                     && detector.detectByExtension(compareSourceBPath) == ArtifactCore::FileType::Image;
+    if (!(compareAIsImage && compareBIsImage)) {
+     mode = CompareDisplayMode::Split;
+    }
+   }
+   if (compareDisplayMode == mode) {
+    return;
+   }
+   compareDisplayMode = mode;
+   updateCompareWipe();
+   updateSurfaceMeta();
+   updateActionAvailability();
   }
 
   void ArtifactContentsViewer::Impl::updateCompareSurface()
   {
-   if (!comparePage || !compareSourceLabel || !compareFinalLabel) {
+   if (!comparePage || !compareCanvas) {
     return;
    }
 
@@ -1150,39 +1507,11 @@ namespace Artifact
                                                    : detector.detectByExtension(logicalLeftPath);
    const auto rightType = logicalRightPath.isEmpty() ? ArtifactCore::FileType::Unknown
                                                      : detector.detectByExtension(logicalRightPath);
-
-   auto applyTextPanel = [&](QLabel* label, const QString& title, const QString& body) {
-    if (!label) {
-     return;
-    }
-    label->setPixmap(QPixmap());
-    label->setScaledContents(false);
-    label->setMinimumSize(1, 1);
-    label->setAlignment(Qt::AlignCenter);
-    label->setWordWrap(true);
-    const QString escapedBody = body.toHtmlEscaped().replace(QStringLiteral("\n"), QStringLiteral("<br>"));
-    label->setText(QStringLiteral("<b>%1</b><br>%2").arg(title, escapedBody));
-    label->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    label->setToolTip(body);
-   };
-
-   auto applyImagePanel = [&](QLabel* label, const QString& path, const QString& title, const QString& role) {
-    if (!label) {
-     return;
-    }
-    QPixmap pixmap(path);
-    if (pixmap.isNull()) {
-     applyTextPanel(label, title, QStringLiteral("%1\n%2").arg(role, path.isEmpty() ? QStringLiteral("Open a file to inspect it") : path));
-     return;
-    }
-    label->setText({});
-    label->setPixmap(pixmap);
-    label->setAlignment(Qt::AlignCenter);
-    label->setScaledContents(true);
-    label->setMinimumSize(1, 1);
-    label->setToolTip(path);
-    label->setTextInteractionFlags(Qt::NoTextInteraction);
-   };
+   if (compareDisplayMode == CompareDisplayMode::Difference &&
+       !(leftType == ArtifactCore::FileType::Image && rightType == ArtifactCore::FileType::Image)) {
+    compareDisplayMode = CompareDisplayMode::Split;
+    updateCompareWipe();
+   }
 
    auto buildFallbackBody = [&](const QString& path, ArtifactCore::FileType type) {
    if (path.isEmpty()) {
@@ -1215,9 +1544,6 @@ namespace Artifact
     }
     return lines.join(QStringLiteral("\n"));
    };
-
-   QLabel* leftLabel = compareSidesSwapped ? compareFinalLabel : compareSourceLabel;
-   QLabel* rightLabel = compareSidesSwapped ? compareSourceLabel : compareFinalLabel;
    QLabel* leftHeader = compareSidesSwapped ? compareFinalHeader : compareSourceHeader;
    QLabel* rightHeader = compareSidesSwapped ? compareSourceHeader : compareFinalHeader;
 
@@ -1228,22 +1554,31 @@ namespace Artifact
     rightHeader->setText(QStringLiteral("%1 · %2").arg(rightBadge, rightTitle.isEmpty() ? QStringLiteral("Unassigned") : rightTitle));
    }
 
-   if (leftType == ArtifactCore::FileType::Image || rightType == ArtifactCore::FileType::Image) {
-    if (leftType == ArtifactCore::FileType::Image) {
-     applyImagePanel(leftLabel, logicalLeftPath, leftTitle, QStringLiteral("A"));
-    } else {
-     applyTextPanel(leftLabel, leftTitle, buildFallbackBody(logicalLeftPath, leftType));
+   CompareCanvasPanelState leftPanel;
+   leftPanel.path = logicalLeftPath;
+   leftPanel.title = leftTitle;
+   leftPanel.body = buildFallbackBody(logicalLeftPath, leftType);
+   leftPanel.isImage = leftType == ArtifactCore::FileType::Image;
+   if (leftPanel.isImage) {
+    leftPanel.pixmap = QPixmap(logicalLeftPath);
+    if (leftPanel.pixmap.isNull()) {
+     leftPanel.isImage = false;
     }
-
-    if (rightType == ArtifactCore::FileType::Image) {
-     applyImagePanel(rightLabel, logicalRightPath, rightTitle, QStringLiteral("B"));
-    } else {
-     applyTextPanel(rightLabel, rightTitle, buildFallbackBody(logicalRightPath, rightType));
-    }
-   } else {
-    applyTextPanel(leftLabel, leftTitle, buildFallbackBody(logicalLeftPath, leftType));
-    applyTextPanel(rightLabel, rightTitle, buildFallbackBody(logicalRightPath, rightType));
    }
+
+   CompareCanvasPanelState rightPanel;
+   rightPanel.path = logicalRightPath;
+   rightPanel.title = rightTitle;
+   rightPanel.body = buildFallbackBody(logicalRightPath, rightType);
+   rightPanel.isImage = rightType == ArtifactCore::FileType::Image;
+   if (rightPanel.isImage) {
+    rightPanel.pixmap = QPixmap(logicalRightPath);
+    if (rightPanel.pixmap.isNull()) {
+     rightPanel.isImage = false;
+    }
+   }
+
+   compareCanvas->setPanels(std::move(leftPanel), std::move(rightPanel));
   }
 
   void ArtifactContentsViewer::Impl::swapCompareSides()
@@ -1469,7 +1804,7 @@ namespace Artifact
 
   void ArtifactContentsViewer::Impl::updateHeader()
   {
-   if (!titleLabel || !typeBadgeLabel || !metaLabel || !stateLabel) {
+   if (!titleLabel || !typeBadgeLabel || !metaLabel) {
     return;
    }
 
@@ -1506,10 +1841,12 @@ namespace Artifact
    QStringList metaParts;
    if (info.exists()) {
     metaParts << humanFileSize(info.size());
-    metaParts << info.absoluteFilePath();
+    const QString format = info.suffix().toUpper();
+    if (!format.isEmpty() && currentFileType != ArtifactCore::FileType::Model3D) {
+     metaParts << format;
+    }
    } else if (!currentFilePath.isEmpty()) {
     metaParts << QStringLiteral("Missing");
-    metaParts << currentFilePath;
   } else {
     metaParts << QStringLiteral("Open a file to inspect it, or choose a recent source");
    }
@@ -1588,7 +1925,8 @@ namespace Artifact
 
   void ArtifactContentsViewer::Impl::openCompareSource(bool leftSide)
   {
-   const QString path = leftSide ? compareSourceAPath : compareSourceBPath;
+   const bool openSourceA = compareSidesSwapped ? !leftSide : leftSide;
+   const QString path = openSourceA ? compareSourceAPath : compareSourceBPath;
    if (path.trimmed().isEmpty() || !owner_) {
     return;
    }
@@ -1689,6 +2027,7 @@ namespace Artifact
     chips << QStringLiteral("Final");
    } else if (currentMode == ContentsViewerMode::Compare) {
     chips << QStringLiteral("Compare");
+    chips << compareDisplayModeLabel(compareDisplayMode);
     if (!compareSourceAPath.isEmpty()) {
      chips << QStringLiteral("A %1").arg(QFileInfo(compareSourceAPath).fileName());
     }
@@ -1699,7 +2038,7 @@ namespace Artifact
 
    surfaceMetaLabel->setText(chips.join(QStringLiteral("  •  ")));
    if (currentMode == ContentsViewerMode::Compare) {
-    surfaceMetaLabel->setToolTip(QStringLiteral("Compare mode. Click the A/B chips to reopen their sources, or use Tab to swap sides."));
+    surfaceMetaLabel->setToolTip(QStringLiteral("Compare mode. Click the A/B headers to reopen their sources, use Tab to swap sides, and use Wipe/Split/Diff to change the compare view."));
    } else {
     surfaceMetaLabel->setToolTip(QStringLiteral("Viewer state summary"));
    }
@@ -1781,8 +2120,16 @@ namespace Artifact
    }
 
    QString stateText = QStringLiteral("Idle");
+   QString transportTimeText = QStringLiteral("Time -- / --");
+   QString transportFrameText = QStringLiteral("Frame -- / --");
+   QString transportRangeText = QStringLiteral("Range Off");
+   QString transportCompareText = QStringLiteral("Compare Idle");
   if (currentFileType == ArtifactCore::FileType::Image) {
     stateText = QStringLiteral("Image preview");
+    if (!originalImage.isNull()) {
+     transportFrameText = QStringLiteral("Frame 0 / 0");
+     transportTimeText = QStringLiteral("Time 00:00.000 / 00:00.000");
+    }
    } else if (currentFileType == ArtifactCore::FileType::Video && mediaPlayer) {
     switch (mediaPlayer->playbackState()) {
     case QMediaPlayer::PlayingState:
@@ -1800,6 +2147,9 @@ namespace Artifact
      stateText += QStringLiteral(" | Range %1-%2")
                      .arg(formatDurationMs(playbackRangeStartMs))
                      .arg(formatDurationMs(playbackRangeEndMs));
+     transportRangeText = QStringLiteral("Range %1-%2")
+                              .arg(formatDurationMs(playbackRangeStartMs))
+                              .arg(formatDurationMs(playbackRangeEndMs));
     }
     const qint64 position = mediaPlayer->position();
     const qint64 duration = mediaPlayer->duration();
@@ -1807,6 +2157,12 @@ namespace Artifact
      stateText += QStringLiteral(" | %1 / %2")
                      .arg(formatDurationMs(position))
                      .arg(formatDurationMs(duration));
+     transportTimeText = QStringLiteral("Time %1 / %2")
+                             .arg(formatDurationMs(position))
+                             .arg(formatDurationMs(duration));
+     transportFrameText = QStringLiteral("Frame %1 / %2")
+                              .arg(msToFrame(position))
+                              .arg(msToFrame(duration));
     }
    } else if (currentFileType == ArtifactCore::FileType::Audio && audioController_ && audioController_->isMediaOpen()) {
     switch (audioController_->getState()) {
@@ -1825,15 +2181,26 @@ namespace Artifact
      stateText += QStringLiteral(" | Range %1-%2")
                      .arg(formatDurationMs(playbackRangeStartMs))
                      .arg(formatDurationMs(playbackRangeEndMs));
+     transportRangeText = QStringLiteral("Range %1-%2")
+                              .arg(formatDurationMs(playbackRangeStartMs))
+                              .arg(formatDurationMs(playbackRangeEndMs));
     }
     const qint64 duration = audioController_->getDuration();
     if (duration > 0) {
      stateText += QStringLiteral(" | %1 / %2")
                      .arg(formatDurationMs(audioPlaybackPositionMs))
                      .arg(formatDurationMs(duration));
+     transportTimeText = QStringLiteral("Time %1 / %2")
+                             .arg(formatDurationMs(audioPlaybackPositionMs))
+                             .arg(formatDurationMs(duration));
+     transportFrameText = QStringLiteral("Frame %1 / %2")
+                              .arg(msToFrame(audioPlaybackPositionMs))
+                              .arg(msToFrame(duration));
     }
   } else if (currentFileType == ArtifactCore::FileType::Model3D) {
    stateText = QStringLiteral("3D preview");
+   transportTimeText = QStringLiteral("Time Static");
+   transportFrameText = QStringLiteral("Frame Static");
     if (modelViewer && modelViewer->hasModel()) {
      switch (modelViewer->displayMode()) {
      case Artifact3DModelViewer::DisplayMode::Wireframe:
@@ -1859,13 +2226,33 @@ namespace Artifact
    }
    if (currentMode == ContentsViewerMode::Source) {
     stateText += QStringLiteral(" | Source");
+    transportCompareText = QStringLiteral("Compare Source");
    } else if (currentMode == ContentsViewerMode::Final) {
     stateText += QStringLiteral(" | Final");
+    transportCompareText = QStringLiteral("Compare Final");
    } else if (currentMode == ContentsViewerMode::Compare) {
     stateText += QStringLiteral(" | Compare");
+    transportCompareText = QStringLiteral("Compare %1").arg(compareDisplayModeLabel(compareDisplayMode));
+    if (compareDisplayMode != CompareDisplayMode::Difference) {
+     transportCompareText += QStringLiteral("  %1%").arg(compareWipePercent);
+    }
    }
 
-   stateLabel->setText(QStringLiteral("State: %1").arg(stateText));
+   if (stateLabel) {
+    stateLabel->setText(QStringLiteral("State: %1").arg(stateText));
+   }
+   if (transportTimeLabel) {
+    transportTimeLabel->setText(transportTimeText);
+   }
+   if (transportFrameLabel) {
+    transportFrameLabel->setText(transportFrameText);
+   }
+   if (transportRangeLabel) {
+    transportRangeLabel->setText(transportRangeText);
+   }
+   if (transportCompareLabel) {
+    transportCompareLabel->setText(transportCompareText);
+   }
 
    const bool isVideo = currentFileType == ArtifactCore::FileType::Video;
    const bool isAudio = currentFileType == ArtifactCore::FileType::Audio;
@@ -1937,6 +2324,11 @@ namespace Artifact
   void ArtifactContentsViewer::Impl::updateActionAvailability()
   {
    const bool isModel = currentFileType == ArtifactCore::FileType::Model3D;
+   ArtifactCore::FileTypeDetector detector;
+   const bool compareAIsImage = !compareSourceAPath.isEmpty()
+                                    && detector.detectByExtension(compareSourceAPath) == ArtifactCore::FileType::Image;
+   const bool compareBIsImage = !compareSourceBPath.isEmpty()
+                                    && detector.detectByExtension(compareSourceBPath) == ArtifactCore::FileType::Image;
    if (fitButton) {
     if (isModel) {
      fitButton->setText(QStringLiteral("Reset 3D"));
@@ -1952,7 +2344,14 @@ namespace Artifact
    if (compareSwapButton) compareSwapButton->setVisible(!isModel && currentMode == ContentsViewerMode::Compare);
    if (compareAssignAButton) compareAssignAButton->setVisible(!isModel && currentMode == ContentsViewerMode::Compare);
    if (compareAssignBButton) compareAssignBButton->setVisible(!isModel && currentMode == ContentsViewerMode::Compare);
-   if (compareWipeSlider) compareWipeSlider->setVisible(!isModel && currentMode == ContentsViewerMode::Compare);
+   if (compareWipeModeButton) compareWipeModeButton->setVisible(!isModel && currentMode == ContentsViewerMode::Compare);
+   if (compareSplitModeButton) compareSplitModeButton->setVisible(!isModel && currentMode == ContentsViewerMode::Compare);
+   if (compareDifferenceModeButton) compareDifferenceModeButton->setVisible(!isModel && currentMode == ContentsViewerMode::Compare);
+   if (compareDifferenceModeButton) {
+    compareDifferenceModeButton->setEnabled(currentMode == ContentsViewerMode::Compare && compareAIsImage && compareBIsImage);
+   }
+   if (compareWipeSlider) compareWipeSlider->setVisible(!isModel && currentMode == ContentsViewerMode::Compare
+                                                         && compareDisplayMode != CompareDisplayMode::Difference);
    if (fitButton) fitButton->setVisible(isModel || currentFileType == ArtifactCore::FileType::Image);
    if (rotateLeftButton) rotateLeftButton->setVisible(currentFileType == ArtifactCore::FileType::Image);
    if (rotateRightButton) rotateRightButton->setVisible(currentFileType == ArtifactCore::FileType::Image);
@@ -1961,16 +2360,19 @@ namespace Artifact
 
   void ArtifactContentsViewer::Impl::updateModeButtons()
   {
-  if (sourceButton) sourceButton->setChecked(currentMode == ContentsViewerMode::Source);
-  if (finalButton) finalButton->setChecked(currentMode == ContentsViewerMode::Final);
-  if (compareButton) compareButton->setChecked(currentMode == ContentsViewerMode::Compare);
-  if (compareSwapButton) compareSwapButton->setEnabled(currentMode == ContentsViewerMode::Compare);
-  if (compareAssignAButton) compareAssignAButton->setEnabled(currentMode == ContentsViewerMode::Compare && !currentFilePath.isEmpty());
-  if (compareAssignBButton) compareAssignBButton->setEnabled(currentMode == ContentsViewerMode::Compare && !currentFilePath.isEmpty());
-  updateDisplayedPage();
-  syncModelViewerMode();
-  updateActionAvailability();
- }
+   if (sourceButton) sourceButton->setChecked(currentMode == ContentsViewerMode::Source);
+   if (finalButton) finalButton->setChecked(currentMode == ContentsViewerMode::Final);
+   if (compareButton) compareButton->setChecked(currentMode == ContentsViewerMode::Compare);
+   if (compareSwapButton) compareSwapButton->setEnabled(currentMode == ContentsViewerMode::Compare);
+   if (compareAssignAButton) compareAssignAButton->setEnabled(currentMode == ContentsViewerMode::Compare && !currentFilePath.isEmpty());
+   if (compareAssignBButton) compareAssignBButton->setEnabled(currentMode == ContentsViewerMode::Compare && !currentFilePath.isEmpty());
+   if (compareWipeModeButton) compareWipeModeButton->setChecked(compareDisplayMode == CompareDisplayMode::Wipe);
+   if (compareSplitModeButton) compareSplitModeButton->setChecked(compareDisplayMode == CompareDisplayMode::Split);
+   if (compareDifferenceModeButton) compareDifferenceModeButton->setChecked(compareDisplayMode == CompareDisplayMode::Difference);
+   updateDisplayedPage();
+   syncModelViewerMode();
+   updateActionAvailability();
+  }
 
   ArtifactContentsViewer::Impl::Impl(ArtifactContentsViewer* parent)
    : owner_(parent)
@@ -2064,26 +2466,6 @@ namespace Artifact
     metaLabel->setPalette(pal);
    }
    metaLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-   stateLabel = new QLabel(QStringLiteral("State: Idle"), headerWidget);
-   {
-    QFont stateFont = stateLabel->font();
-    stateFont.setPointSize(10);
-    stateLabel->setFont(stateFont);
-    QPalette pal = stateLabel->palette();
-    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(120));
-    stateLabel->setPalette(pal);
-   }
-   channelMetaLabel = new QLabel(QStringLiteral("RGBA • Hover to probe pixels"), headerWidget);
-   {
-    QFont channelFont = channelMetaLabel->font();
-    channelFont.setPointSize(10);
-    channelMetaLabel->setFont(channelFont);
-    QPalette pal = channelMetaLabel->palette();
-    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(110));
-    channelMetaLabel->setPalette(pal);
-   }
-   channelMetaLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-
    auto* titleRow = new QHBoxLayout();
    titleRow->setContentsMargins(0, 0, 0, 0);
    titleRow->setSpacing(8);
@@ -2093,8 +2475,6 @@ namespace Artifact
 
    textColumn->addLayout(titleRow);
    textColumn->addWidget(metaLabel);
-   textColumn->addWidget(stateLabel);
-   textColumn->addWidget(channelMetaLabel);
 
    auto* badgeColumn = new QVBoxLayout();
    badgeColumn->setContentsMargins(0, 0, 0, 0);
@@ -2138,9 +2518,15 @@ namespace Artifact
    finalButton = createButton(QStringLiteral("Final"), QStringLiteral("Show final output view"));
    compareButton = createButton(QStringLiteral("Compare"), QStringLiteral("Show compare view"));
    compareSwapButton = createButton(QStringLiteral("Swap"), QStringLiteral("Swap compare sides"));
+   compareWipeModeButton = createButton(QStringLiteral("Wipe"), QStringLiteral("Show wipe compare"));
+   compareSplitModeButton = createButton(QStringLiteral("Split"), QStringLiteral("Show split compare"));
+   compareDifferenceModeButton = createButton(QStringLiteral("Diff"), QStringLiteral("Show difference compare"));
    sourceButton->setCheckable(true);
    finalButton->setCheckable(true);
    compareButton->setCheckable(true);
+   compareWipeModeButton->setCheckable(true);
+   compareSplitModeButton->setCheckable(true);
+   compareDifferenceModeButton->setCheckable(true);
    seekSlider = new QSlider(Qt::Horizontal, parent);
    seekSlider->setRange(0, 0);
    seekSlider->setSingleStep(1000);
@@ -2168,30 +2554,44 @@ namespace Artifact
    buttonRow->addWidget(finalButton);
    buttonRow->addWidget(compareButton);
    buttonRow->addWidget(compareSwapButton);
+   buttonRow->addWidget(compareWipeModeButton);
+   buttonRow->addWidget(compareSplitModeButton);
+   buttonRow->addWidget(compareDifferenceModeButton);
    compareAssignAButton = createButton(QStringLiteral("A"), QStringLiteral("Assign current source to compare A"));
    compareAssignBButton = createButton(QStringLiteral("B"), QStringLiteral("Assign current source to compare B"));
    buttonRow->addWidget(compareAssignAButton);
    buttonRow->addWidget(compareAssignBButton);
 
-   auto* surfaceMetaRow = new QHBoxLayout();
-   surfaceMetaRow->setContentsMargins(0, 0, 0, 0);
-   surfaceMetaRow->setSpacing(6);
-   surfaceMetaLabel = new QLabel(QStringLiteral("Viewer • Idle"), headerWidget);
-   {
-    QFont surfaceFont = surfaceMetaLabel->font();
-    surfaceFont.setPointSize(10);
-    surfaceMetaLabel->setFont(surfaceFont);
-    QPalette pal = surfaceMetaLabel->palette();
-    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
-    surfaceMetaLabel->setPalette(pal);
-   }
-   surfaceMetaRow->addWidget(surfaceMetaLabel, 1);
+   transportStrip = new QWidget(parent);
+   auto* transportLayout = new QHBoxLayout(transportStrip);
+   transportLayout->setContentsMargins(8, 4, 8, 4);
+   transportLayout->setSpacing(10);
+
+   auto createTransportLabel = [this, parent](const QString& text) {
+    auto* label = new QLabel(text, parent);
+    QFont font = label->font();
+    font.setPointSize(9);
+    label->setFont(font);
+    QPalette pal = label->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(108));
+    label->setPalette(pal);
+    label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    return label;
+   };
+
+   transportTimeLabel = createTransportLabel(QStringLiteral("Time 00:00.000 / 00:00.000"));
+   transportFrameLabel = createTransportLabel(QStringLiteral("Frame 0 / 0"));
+   transportRangeLabel = createTransportLabel(QStringLiteral("Range Off"));
+   transportCompareLabel = createTransportLabel(QStringLiteral("Compare Wipe"));
+   transportLayout->addWidget(transportTimeLabel, 1);
+   transportLayout->addWidget(transportFrameLabel, 0);
+   transportLayout->addWidget(transportRangeLabel, 0);
+   transportLayout->addWidget(transportCompareLabel, 0);
 
    infoRow->addLayout(textColumn, 1);
    infoRow->addLayout(badgeColumn, 0);
    headerLayout->addLayout(infoRow);
    headerLayout->addLayout(buttonRow);
-   headerLayout->addLayout(surfaceMetaRow);
 
      QObject::connect(fitButton, &QToolButton::clicked, parent, [this]() {
        fitImageToWindow();
@@ -2501,12 +2901,22 @@ namespace Artifact
    if (compareSwapButton) {
     compareSwapButton->setToolTip(QStringLiteral("Swap compare sides (Tab)"));
    }
+   if (compareWipeModeButton) {
+    compareWipeModeButton->setToolTip(QStringLiteral("Overlay compare with draggable wipe"));
+   }
+   if (compareSplitModeButton) {
+    compareSplitModeButton->setToolTip(QStringLiteral("Show A and B in a fixed split compare"));
+   }
+   if (compareDifferenceModeButton) {
+    compareDifferenceModeButton->setToolTip(QStringLiteral("Show pixel difference for two image sources"));
+   }
 
    auto layout = new QVBoxLayout(parent);
    layout->setContentsMargins(0, 0, 0, 0);
    layout->setSpacing(0);
    layout->addWidget(headerWidget);
    layout->addWidget(seekSlider);
+   layout->addWidget(transportStrip);
    layout->addWidget(stackedWidget);
    parent->setLayout(layout);
 
@@ -2562,6 +2972,15 @@ namespace Artifact
    if (compareFinalHeader) {
     compareFinalHeader->installEventFilter(owner_);
    }
+   if (compareWipeModeButton) {
+    compareWipeModeButton->installEventFilter(owner_);
+   }
+   if (compareSplitModeButton) {
+    compareSplitModeButton->installEventFilter(owner_);
+   }
+   if (compareDifferenceModeButton) {
+    compareDifferenceModeButton->installEventFilter(owner_);
+   }
 
    eventFiltersInstalled = true;
   }
@@ -2579,6 +2998,24 @@ namespace Artifact
      const bool isLeft = watched == impl_->compareSourceHeader;
      impl_->openCompareSource(isLeft);
      return true;
+    }
+   }
+
+   if ((watched == impl_->compareWipeModeButton ||
+        watched == impl_->compareSplitModeButton ||
+        watched == impl_->compareDifferenceModeButton) &&
+       event->type() == QEvent::MouseButtonRelease) {
+    auto* mouseEvent = static_cast<QMouseEvent*>(event);
+    if (mouseEvent->button() == Qt::LeftButton) {
+     if (watched == impl_->compareWipeModeButton) {
+      impl_->setCompareDisplayMode(CompareDisplayMode::Wipe);
+     } else if (watched == impl_->compareSplitModeButton) {
+      impl_->setCompareDisplayMode(CompareDisplayMode::Split);
+     } else if (watched == impl_->compareDifferenceModeButton) {
+      impl_->setCompareDisplayMode(CompareDisplayMode::Difference);
+     }
+     impl_->updateModeButtons();
+     return false;
     }
    }
 
@@ -2718,6 +3155,9 @@ ArtifactContentsViewer::ArtifactContentsViewer(QWidget* parent/*=nullptr*/) :QWi
     QWidget::keyPressEvent(event);
     return;
    }
+   const bool shiftOnly = (event->modifiers() & Qt::ShiftModifier) &&
+                          !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
+   const bool noModifiers = event->modifiers() == Qt::NoModifier;
    if ((event->modifiers() & Qt::ControlModifier) &&
        !(event->modifiers() & (Qt::ShiftModifier | Qt::AltModifier | Qt::MetaModifier))) {
     if (event->key() == Qt::Key_0) {
@@ -2729,6 +3169,49 @@ ArtifactContentsViewer::ArtifactContentsViewer(QWidget* parent/*=nullptr*/) :QWi
      impl_->zoomLevel = 1.0;
      impl_->imageFitMode = false;
      impl_->applyImageTransform();
+     event->accept();
+     return;
+    }
+   }
+   if ((noModifiers || shiftOnly) &&
+       (impl_->currentFileType == ArtifactCore::FileType::Video ||
+        (impl_->currentFileType == ArtifactCore::FileType::Audio && impl_->audioController_ && impl_->audioController_->isMediaOpen()))) {
+    const qint64 stepMs = shiftOnly ? ArtifactContentsViewer::Impl::framesToMs(10) : ArtifactContentsViewer::Impl::framesToMs(1);
+    if (event->key() == Qt::Key_Left) {
+     impl_->seekByMs(-stepMs);
+     event->accept();
+     return;
+    }
+    if (event->key() == Qt::Key_Right) {
+     impl_->seekByMs(stepMs);
+     event->accept();
+     return;
+    }
+    if (noModifiers && event->key() == Qt::Key_K) {
+     if (impl_->owner_) {
+      impl_->owner_->stop();
+     }
+     event->accept();
+     return;
+    }
+    if (noModifiers && event->key() == Qt::Key_L) {
+      if (impl_->currentFileType == ArtifactCore::FileType::Video && impl_->mediaPlayer) {
+       impl_->mediaPlayer->setPlaybackRate(1.0);
+      }
+      if (impl_->owner_) {
+       impl_->owner_->play();
+      }
+      event->accept();
+      return;
+    }
+    if (noModifiers && event->key() == Qt::Key_J) {
+     if (impl_->currentFileType == ArtifactCore::FileType::Video && impl_->mediaPlayer) {
+      impl_->mediaPlayer->pause();
+     } else if (impl_->currentFileType == ArtifactCore::FileType::Audio &&
+                impl_->audioController_ && impl_->audioController_->isMediaOpen()) {
+      impl_->owner_->pause();
+     }
+     impl_->seekByMs(-ArtifactContentsViewer::Impl::framesToMs(12));
      event->accept();
      return;
     }

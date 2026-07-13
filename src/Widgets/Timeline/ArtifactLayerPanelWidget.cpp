@@ -40,7 +40,7 @@ module;
 #include <QInputDialog>
 #include <QFileDialog>
 #include <QDockWidget>
-#include <QMainWindow>
+#include <QWidget>
 #include <QMetaObject>
 #include <QToolTip>
 #include <QTimer>
@@ -139,7 +139,7 @@ inline QMenu* addIconMenu(QMenu* menu, const QString& text, const QString& iconP
   return subMenu;
 }
 
-QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
+QDockWidget* findDockByTitle(QWidget* window, const QString& title)
 {
   if (!window) {
     return nullptr;
@@ -153,7 +153,7 @@ QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
   return nullptr;
 }
 
-void setDockVisible(QMainWindow* window, const QString& title, bool visible)
+void setDockVisible(QWidget* window, const QString& title, bool visible)
 {
   auto* dock = findDockByTitle(window, title);
   if (!dock) {
@@ -165,7 +165,7 @@ void setDockVisible(QMainWindow* window, const QString& title, bool visible)
   }
 }
 
-void activateDock(QMainWindow* window, const QString& title)
+void activateDock(QWidget* window, const QString& title)
 {
   auto* dock = findDockByTitle(window, title);
   if (!dock) {
@@ -3928,7 +3928,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     };
 
     auto triggerOpenInspector = [this]() {
-      auto* mainWindow = qobject_cast<QMainWindow*>(this->window());
+      auto* mainWindow = qobject_cast<QWidget*>(this->window());
       if (!mainWindow) {
         return;
       }
@@ -3937,7 +3937,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     };
 
     auto triggerOpenProperties = [this]() {
-      auto* mainWindow = qobject_cast<QMainWindow*>(this->window());
+      auto* mainWindow = qobject_cast<QWidget*>(this->window());
       if (!mainWindow) {
         return;
       }
@@ -4001,7 +4001,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         return;
       }
 
-      auto* window = qobject_cast<QMainWindow*>(this->window());
+      auto* window = qobject_cast<QWidget*>(this->window());
       if (!window) {
         return;
       }
@@ -4064,7 +4064,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         return;
       }
 
-      auto* window = qobject_cast<QMainWindow*>(this->window());
+      auto* window = qobject_cast<QWidget*>(this->window());
       auto* projectDock = window
                               ? window->findChild<ArtifactProjectManagerWidget*>(
                                     QStringLiteral("artifactProjectManagerWidget"))

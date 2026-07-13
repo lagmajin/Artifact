@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 
 #include <memory>
@@ -105,7 +105,8 @@ private:
                                                        Diligent::Uint32 height,
                                                        Diligent::Uint64 stride,
                                                        const void* bytes,
-                                                       size_t memoryBytes);
+                                                       size_t memoryBytes,
+                                                       Diligent::TEXTURE_FORMAT format);
     void pruneLocked();
     void clearLocked();
     void eraseEntryByIdLocked(quint64 id);

@@ -7210,11 +7210,9 @@ void ArtifactTimelineWidget::refreshTracks() {
       visual.trimMaxEndFrame = clipStart + clipDuration;
       visual.title = layer->layerName();
       visual.fillColor = layerTimelineColor(layer);
-      if (layer->hasAudio()) {
+      if (audioLayer) {
         ++audioTrackCount;
-        visual.kind = audioLayer
-                          ? ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio
-                          : ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video;
+        visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio;
         const QString cacheKey = audioWaveformCacheKey(impl_->compositionId_, row.layerId);
         const QString signature = audioWaveformSignatureForLayer(*layer, compositionFps);
         auto cachedIt = impl_->audioWaveformCache_.find(cacheKey);
@@ -7232,9 +7230,7 @@ void ArtifactTimelineWidget::refreshTracks() {
           visual.waveformRms = cachedIt->rms;
           ++waveformReadyCount;
           if (firstWaveformPreview.isEmpty()) {
-            firstWaveformPreview = audioLayer
-                                       ? audioLayer->waveformPreviewSummary()
-                                       : waveformPreviewSummary(cachedIt->peaks, cachedIt->rms);
+            firstWaveformPreview = audioLayer->waveformPreviewSummary();
           }
         }
       } else if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {

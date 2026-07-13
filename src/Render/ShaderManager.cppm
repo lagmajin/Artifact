@@ -89,6 +89,8 @@ public:
     RenderShaderPair outlineShaders_;
     RenderShaderPair solidShaders_;
     RenderShaderPair solidRectTransformShaders_;
+    RenderShaderPair gradientShaders_;
+    RenderShaderPair gradientTransformShaders_;
     RenderShaderPair spriteShaders_;
     RenderShaderPair thickLineShaders_;
     RenderShaderPair dotLineShaders_;
@@ -108,6 +110,7 @@ public:
     PSOAndSRB outlinePsoAndSrb_;
     PSOAndSRB solidRectPsoAndSrb_;
     PSOAndSRB solidRectTransformPsoAndSrb_;
+    PSOAndSRB gradientRectPsoAndSrb_;
     PSOAndSRB spritePsoAndSrb_;
     PSOAndSRB thickLinePsoAndSrb_;
     PSOAndSRB dotLinePsoAndSrb_;
@@ -289,6 +292,59 @@ float4 main(PS_INPUT input) : SV_TARGET
     return float4(input.Color.rgb * alpha, input.Color.a * alpha);
 }
 )";
+
+    const QByteArray gradientPsSource = R"(
+cbuffer GradientCB {
+    float4 StartColor;
+    float4 EndColor;
+    float4 Mode;          // x=type, y=angle degrees, z=reverse, w=scale
+    float4 CenterOffset;  // xy=center, zw=offset
+};
+struct PS_INPUT {
+    float4 Position : SV_POSITION;
+    float2 TexCoord : TEXCOORD0;
+    float4 Color    : COLOR0;
+};
+float gradientT(float2 uv)
+{
+    const float pi = 3.14159265359;
+    float type = Mode.x;
+    float t = 0.0;
+    if (type < 1.5) {
+        float radians = Mode.y * pi / 180.0;
+        float2 dir = float2(cos(radians), -sin(radians));
+        float aspect = max(CenterOffset.w, 0.0001);
+        float2 local = (uv - CenterOffset.xy) * float2(aspect, 1.0);
+        float halfSpan = max(0.0001, 0.5 * sqrt(aspect * aspect + 1.0) * Mode.w);
+        t = dot(local, dir) / (2.0 * halfSpan) + 0.5 + CenterOffset.z;
+    } else if (type < 2.5) {
+        float2 center = CenterOffset.xy;
+        float aspect = max(CenterOffset.w, 0.0001);
+        float2 local = (uv - center) * float2(aspect, 1.0);
+        float radius = max(0.0001, 0.5 * sqrt(aspect * aspect + 1.0) * Mode.w);
+        t = length(local) / radius;
+    } else {
+        float2 center = CenterOffset.xy;
+        float2 d = uv - center;
+        t = atan2(d.y, d.x) / (2.0 * pi) + 0.5 + Mode.y / 360.0;
+    }
+    t = saturate(t);
+    return Mode.z > 0.5 ? 1.0 - t : t;
+}
+float4 main(PS_INPUT input) : SV_TARGET
+{
+    float4 color = lerp(StartColor, EndColor, gradientT(input.TexCoord));
+    color.a *= input.Color.a;
+    color.rgb *= input.Color.a;
+    return color;
+}
+)";
+    ShaderCreateInfo gradientPsInfo;
+    gradientPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    gradientPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+    gradientPsInfo.Desc.Name = "GradientRectPixelShader";
+    gradientPsInfo.Source = gradientPsSource.constData();
+    gradientPsInfo.SourceLength = gradientPsSource.length();
     ShaderCreateInfo glyphQuadPsInfo;
     glyphQuadPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
     glyphQuadPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
@@ -392,6 +448,10 @@ float4 main(PS_INPUT input) : SV_TARGET
     createShaderOrWarn(solidRectPsInfo2,          solidShaders_.PS);
     createShaderOrWarn(solidRectTransformVsInfo,   solidRectTransformShaders_.VS);
     createShaderOrWarn(solidRectPsInfo2,          solidRectTransformShaders_.PS);
+    createShaderOrWarn(gradientPsInfo,             gradientShaders_.PS);
+    gradientShaders_.VS = solidShaders_.VS;
+    gradientTransformShaders_.VS = solidRectTransformShaders_.VS;
+    gradientTransformShaders_.PS = gradientShaders_.PS;
     createShaderOrWarn(spriteTransformVsInfo,     spriteTransformShaders_.VS);
     createShaderOrWarn(spriteTransformVsInfo,     maskedSpriteShaders_.VS);
     createShaderOrWarn(maskedSpritePsInfo,        maskedSpriteShaders_.PS);
@@ -656,6 +716,21 @@ void ShaderManager::Impl::createLineFamilyPSOs()
     device_->CreateGraphicsPipelineState(transformInfo, &solidRectTransformPsoAndSrb_.pPSO);
     if (solidRectTransformPsoAndSrb_.pPSO) {
         solidRectTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidRectTransformPsoAndSrb_.pSRB, true);
+    }
+
+    static const ShaderResourceVariableDesc gradientVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "GradientCB",  SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+    };
+    GraphicsPipelineStateCreateInfo gradientInfo = transformInfo;
+    gradientInfo.PSODesc.Name = "DrawGradientRect PSO";
+    gradientInfo.pVS = gradientTransformShaders_.VS;
+    gradientInfo.pPS = gradientTransformShaders_.PS;
+    gradientInfo.PSODesc.ResourceLayout.Variables = gradientVars;
+    gradientInfo.PSODesc.ResourceLayout.NumVariables = _countof(gradientVars);
+    device_->CreateGraphicsPipelineState(gradientInfo, &gradientRectPsoAndSrb_.pPSO);
+    if (gradientRectPsoAndSrb_.pPSO) {
+        gradientRectPsoAndSrb_.pPSO->CreateShaderResourceBinding(&gradientRectPsoAndSrb_.pSRB, true);
     }
 
     // SolidTriangle PSO uses thickLine shaders (pos+color per vertex) so that canvas-space
@@ -1187,6 +1262,7 @@ void ShaderManager::Impl::destroy()
     clearPso(outlinePsoAndSrb_);
     clearPso(solidRectPsoAndSrb_);
     clearPso(solidRectTransformPsoAndSrb_);
+    clearPso(gradientRectPsoAndSrb_);
     clearPso(spritePsoAndSrb_);
     clearPso(maskedSpritePsoAndSrb_);
     clearPso(glyphQuadPsoAndSrb_);
@@ -1206,6 +1282,8 @@ void ShaderManager::Impl::destroy()
     clearShaderPair(outlineShaders_);
     clearShaderPair(solidShaders_);
     clearShaderPair(solidRectTransformShaders_);
+    clearShaderPair(gradientShaders_);
+    clearShaderPair(gradientTransformShaders_);
     clearShaderPair(spriteShaders_);
     clearShaderPair(spriteTransformShaders_);
     clearShaderPair(maskedSpriteShaders_);
@@ -1333,6 +1411,11 @@ PSOAndSRB ShaderManager::solidRectPsoAndSrb() const
 PSOAndSRB ShaderManager::solidRectTransformPsoAndSrb() const
 {
     return impl_->solidRectTransformPsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::gradientRectPsoAndSrb() const
+{
+    return impl_->gradientRectPsoAndSrb_;
 }
 
 PSOAndSRB ShaderManager::spritePsoAndSrb() const

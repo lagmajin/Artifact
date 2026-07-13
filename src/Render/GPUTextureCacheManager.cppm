@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <variant>
@@ -42,7 +43,24 @@ struct UploadImageData
     Uint32 width = 0;
     Uint32 height = 0;
     Uint64 stride = 0;
+    TEXTURE_FORMAT format = TEX_FORMAT_UNKNOWN;
 };
+
+float decodeSrgbBoundary(float value)
+{
+    if (!std::isfinite(value)) {
+        return 0.0f;
+    }
+    // CPU/QImage raster surfaces enter this boundary with display-encoded
+    // values in the SDR range. Preserve explicit extended-range values; their
+    // producer is responsible for declaring them scene-linear.
+    if (value < 0.0f || value > 1.0f) {
+        return value;
+    }
+    return value <= 0.04045f
+               ? value / 12.92f
+               : std::pow((value + 0.055f) / 1.055f, 2.4f);
+}
 
 UploadImageData makeUploadImageData(const ArtifactCore::ImageF32x4_RGBA& image)
 {
@@ -55,10 +73,13 @@ UploadImageData makeUploadImageData(const ArtifactCore::ImageF32x4_RGBA& image)
 
     if (const float* rgba32 = image.rgba32fData()) {
         // Internal mat is CV_32FC4 stored as BGRA (from qImageToCvMat+BGR2BGRA).
-        // GPU texture is TEX_FORMAT_RGBA8_UNORM_SRGB, so convert float->uint8 and swap B<->R.
+        // Keep the effect result in float/HDR form and swap B<->R only at this
+        // upload boundary. Alpha remains bounded; finite RGB values may exceed
+        // 1.0 for the scene-linear pipeline.
         upload.width  = static_cast<Uint32>(width);
         upload.height = static_cast<Uint32>(height);
-        upload.stride = static_cast<Uint64>(upload.width) * 4ull;  // 4 bytes/pixel (RGBA8)
+        upload.stride = static_cast<Uint64>(upload.width) * 4ull * sizeof(float);
+        upload.format = TEX_FORMAT_RGBA32_FLOAT;
         const size_t totalBytes = static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height);
         upload.bytes.resize(totalBytes);
         const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
@@ -68,11 +89,13 @@ UploadImageData makeUploadImageData(const ArtifactCore::ImageF32x4_RGBA& image)
             const float srcG = rgba32[i * 4u + 1];
             const float srcR = rgba32[i * 4u + 2];
             const float srcA = rgba32[i * 4u + 3];
-            // Dest layout: [R, G, B, A] as uint8 (RGBA8_UNORM)
-            upload.bytes[i * 4u + 0] = static_cast<uint8_t>(std::clamp(srcR, 0.0f, 1.0f) * 255.0f + 0.5f);
-            upload.bytes[i * 4u + 1] = static_cast<uint8_t>(std::clamp(srcG, 0.0f, 1.0f) * 255.0f + 0.5f);
-            upload.bytes[i * 4u + 2] = static_cast<uint8_t>(std::clamp(srcB, 0.0f, 1.0f) * 255.0f + 0.5f);
-            upload.bytes[i * 4u + 3] = static_cast<uint8_t>(std::clamp(srcA, 0.0f, 1.0f) * 255.0f + 0.5f);
+            const float dst[4] = {
+                decodeSrgbBoundary(srcR),
+                decodeSrgbBoundary(srcG),
+                decodeSrgbBoundary(srcB),
+                std::isfinite(srcA) ? std::clamp(srcA, 0.0f, 1.0f) : 0.0f,
+            };
+            std::memcpy(upload.bytes.data() + i * sizeof(dst), dst, sizeof(dst));
         }
         return upload;
     }
@@ -193,9 +216,14 @@ QString GPUTextureCacheManager::makeKey(const QString& ownerId, const QString& c
 }
 
 GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& ownerId,
-                                                             const QString& cacheKey,
-                                                             const QImage& image)
+                                                              const QString& cacheKey,
+                                                              const QImage& image)
 {
+    TEXTURE_FORMAT configuredFormat = TEX_FORMAT_UNKNOWN;
+    {
+        QMutexLocker locker(&mutex_);
+        configuredFormat = textureFormat_;
+    }
     const QImage rgba = (image.format() == QImage::Format_RGBA8888)
                             ? image
                             : image.convertToFormat(QImage::Format_RGBA8888);
@@ -203,23 +231,29 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
                                         cacheKey,
                                         static_cast<Uint32>(rgba.width()),
                                         static_cast<Uint32>(rgba.height()),
-                                        static_cast<Uint64>(rgba.bytesPerLine()),
-                                        rgba.constBits(),
-                                        bytesForImage(rgba));
+                                         static_cast<Uint64>(rgba.bytesPerLine()),
+                                         rgba.constBits(),
+                                         bytesForImage(rgba),
+                                         configuredFormat);
 }
 
 GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& ownerId,
                                                              const QString& cacheKey,
                                                              const ArtifactCore::ImageF32x4_RGBA& image)
 {
-    const UploadImageData upload = makeUploadImageData(image);
+    UploadImageData upload = makeUploadImageData(image);
+    if (upload.format == TEX_FORMAT_UNKNOWN) {
+        QMutexLocker locker(&mutex_);
+        upload.format = textureFormat_;
+    }
     return acquireOrCreateFromRgbaBytes(ownerId,
                                         cacheKey,
                                         upload.width,
                                         upload.height,
-                                        upload.stride,
-                                        upload.bytes.data(),
-                                        upload.bytes.size());
+                                         upload.stride,
+                                         upload.bytes.data(),
+                                         upload.bytes.size(),
+                                         upload.format);
 }
 
 GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& ownerId,
@@ -344,9 +378,11 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const
                                                                            Uint32 height,
                                                                            Uint64 stride,
                                                                            const void* bytes,
-                                                                           size_t memoryBytes)
+                                                                           size_t memoryBytes,
+                                                                           TEXTURE_FORMAT format)
 {
-    if (ownerId.isEmpty() || cacheKey.isEmpty() || !bytes || width == 0 || height == 0 || stride == 0) {
+    if (ownerId.isEmpty() || cacheKey.isEmpty() || !bytes || width == 0 ||
+        height == 0 || stride == 0 || format == TEX_FORMAT_UNKNOWN) {
         QMutexLocker locker(&mutex_);
         ++missCount_;
         return {};
@@ -375,7 +411,8 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const
         }
     }
 
-    const QString key = makeKey(ownerId, cacheKey);
+    const QString key = makeKey(ownerId, cacheKey) +
+                        QStringLiteral("|format:%1").arg(static_cast<int>(format));
     const auto existingIdIt = keyToId_.find(key);
     if (existingIdIt != keyToId_.end()) {
         auto entryIt = entries_.find(existingIdIt.value());
@@ -397,7 +434,7 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const
     texDesc.Width = width;
     texDesc.Height = height;
     texDesc.MipLevels = 1;
-    texDesc.Format = textureFormat_;
+    texDesc.Format = format;
     texDesc.Usage = USAGE_IMMUTABLE;
     texDesc.BindFlags = BIND_SHADER_RESOURCE;
     texDesc.CPUAccessFlags = CPU_ACCESS_NONE;
@@ -418,6 +455,7 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const
                    << "cacheKey=" << cacheKey
                    << "size=" << width << "x" << height
                    << "stride=" << stride
+                   << "format=" << static_cast<int>(format)
                    << "bytes=" << static_cast<qulonglong>(memoryBytes);
         ++missCount_;
         return {};

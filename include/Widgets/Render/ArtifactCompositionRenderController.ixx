@@ -88,6 +88,16 @@ export namespace Artifact {
   Unknown
  };
 
+ struct WorkCursorState {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+  float rotationX = 0.0f;
+  float rotationY = 0.0f;
+  float rotationZ = 0.0f;
+  bool spatial = false;
+ };
+
  class CompositionRenderController : public QObject
  {
  W_OBJECT(CompositionRenderController)
@@ -210,6 +220,10 @@ void showPieMenuOverlay(const PieMenuModel& model, const QPointF& viewportPos);
 bool placeWorkCursorAtViewportPos(const QPointF& viewportPos);
 void setWorkCursorCanvasPosition(const QPointF& canvasPos);
 QPointF workCursorCanvasPosition() const;
+void setWorkCursorWorldPosition(float x, float y, float z);
+WorkCursorState workCursorState() const;
+bool moveWorkCursorToSelection();
+void moveWorkCursorToWorldOrigin();
 void setWorkCursorLabel(const QString& label);
 QString workCursorLabel() const;
 void setWorkCursorVisible(bool visible);
@@ -278,6 +292,7 @@ TransformGizmo* gizmo() const;
  };
  CameraFrustumVisual cameraFrustumVisual() const;
 void setViewportOrientation(ArtifactCore::ViewOrientationHotspot hotspot);
+void clearViewportOrientation();
 ArtifactCore::ViewOrientationHotspot viewportOrientation() const;
 QQuaternion viewportOrientationQuaternion() const;
 void setViewportOrientationQuaternion(const QQuaternion& orientation);

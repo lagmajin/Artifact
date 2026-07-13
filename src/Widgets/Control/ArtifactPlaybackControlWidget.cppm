@@ -505,6 +505,7 @@ public:
     QComboBox* playbackRangeCombo_ = nullptr;
     QComboBox* playbackSkipCombo_ = nullptr;
     QSlider* scrubSlider_ = nullptr;
+    std::array<QLabel*, 6> scrubRulerLabels_{};
     class PlaybackTimecodeFrame* timecodeFrame_ = nullptr;
     
     // State
@@ -690,12 +691,48 @@ public:
 
         mainLayout->addLayout(transportRow);
 
-        scrubSlider_ = new QSlider(Qt::Horizontal, owner_);
+        auto* scrubRuler = new QWidget(owner_);
+        auto* scrubRulerLayout = new QVBoxLayout(scrubRuler);
+        scrubRulerLayout->setContentsMargins(4, 5, 4, 2);
+        scrubRulerLayout->setSpacing(1);
+
+        auto* scrubLabelRow = new QHBoxLayout();
+        scrubLabelRow->setContentsMargins(5, 0, 5, 0);
+        scrubLabelRow->setSpacing(0);
+        for (std::size_t i = 0; i < scrubRulerLabels_.size(); ++i) {
+            auto* label = new QLabel(QStringLiteral("00:00:00:00"), scrubRuler);
+            QFont labelFont = label->font();
+            labelFont.setPointSize(8);
+            label->setFont(labelFont);
+            label->setAlignment(i == 0 ? Qt::AlignLeft
+                                       : (i + 1 == scrubRulerLabels_.size()
+                                              ? Qt::AlignRight
+                                              : Qt::AlignHCenter));
+            QPalette labelPalette = label->palette();
+            labelPalette.setColor(QPalette::WindowText,
+                                  QColor(ArtifactCore::currentDCCTheme().textColor).darker(135));
+            label->setPalette(labelPalette);
+            scrubRulerLabels_[i] = label;
+            scrubLabelRow->addWidget(label, 1);
+        }
+        scrubRulerLayout->addLayout(scrubLabelRow);
+
+        scrubSlider_ = new QSlider(Qt::Horizontal, scrubRuler);
         scrubSlider_->setRange(0, 300);
         scrubSlider_->setTracking(true);
-        scrubSlider_->setMinimumHeight(18);
-        scrubSlider_->setToolTip(QStringLiteral("Current frame scrubber"));
-        mainLayout->addWidget(scrubSlider_);
+        scrubSlider_->setTickPosition(QSlider::TicksAbove);
+        scrubSlider_->setTickInterval(60);
+        scrubSlider_->setMinimumHeight(30);
+        scrubSlider_->setToolTip(QStringLiteral("Drag the playhead to seek"));
+        {
+            QPalette scrubPalette = scrubSlider_->palette();
+            const QColor accent(ArtifactCore::currentDCCTheme().accentColor);
+            scrubPalette.setColor(QPalette::Highlight, accent);
+            scrubPalette.setColor(QPalette::Button, accent);
+            scrubSlider_->setPalette(scrubPalette);
+        }
+        scrubRulerLayout->addWidget(scrubSlider_);
+        mainLayout->addWidget(scrubRuler);
 
         auto* speedLayout = new QHBoxLayout();
         speedLayout->setSpacing(4);
@@ -1137,6 +1174,21 @@ public:
             QSignalBlocker blocker(scrubSlider_);
             scrubSlider_->setRange(static_cast<int>(startFrame), static_cast<int>(std::max(startFrame, endFrame)));
             scrubSlider_->setValue(static_cast<int>(clampedCurrent));
+            const qint64 frameSpan = std::max<qint64>(1, endFrame - startFrame);
+            scrubSlider_->setTickInterval(
+                static_cast<int>(std::max<qint64>(1, frameSpan / 5)));
+        }
+
+        for (std::size_t i = 0; i < scrubRulerLabels_.size(); ++i) {
+            if (!scrubRulerLabels_[i]) {
+                continue;
+            }
+            const qint64 frameSpan = std::max<qint64>(0, endFrame - startFrame);
+            const qint64 frame = startFrame +
+                static_cast<qint64>(std::llround(
+                    static_cast<double>(frameSpan) * static_cast<double>(i) /
+                    static_cast<double>(scrubRulerLabels_.size() - 1)));
+            scrubRulerLabels_[i]->setText(formatTimecode(frame, fps));
         }
 
         if (timecodeFrame_) {

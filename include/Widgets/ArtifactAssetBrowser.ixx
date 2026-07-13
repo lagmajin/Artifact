@@ -43,6 +43,9 @@ private:
 public:
   explicit ArtifactAssetBrowserToolBar(QWidget* parent = nullptr);
   ~ArtifactAssetBrowserToolBar();
+
+  void addSeparator();
+  void addWidget(QWidget* widget, int stretch = 0);
 };
 
 class ArtifactBreadcrumbWidget : public QFrame

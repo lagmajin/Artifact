@@ -1,7 +1,7 @@
 module;
 #include <QString>
 #include <QStringList>
-#include <QMainWindow>
+#include <QWidget>
 
 export module Artifact.Workspace.Manager;
 
@@ -20,10 +20,10 @@ public:
   QStringList presetNames() const;
   bool presetExists(const QString &presetName) const;
 
-  bool saveSession(const QMainWindow *window) const;
-  bool restoreSession(QMainWindow *window) const;
-  bool savePreset(const QString &presetName, const QMainWindow *window) const;
-  bool restorePreset(const QString &presetName, QMainWindow *window) const;
+  bool saveSession(const QWidget *window) const;
+  bool restoreSession(QWidget *window) const;
+  bool savePreset(const QString &presetName, const QWidget *window) const;
+  bool restorePreset(const QString &presetName, QWidget *window) const;
   bool deletePreset(const QString &presetName) const;
   bool renamePreset(const QString &oldName, const QString &newName) const;
 

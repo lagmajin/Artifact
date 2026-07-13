@@ -2182,33 +2182,9 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
 void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!impl_->videoEnabled_ || !impl_->isLoaded_ || impl_->opening_.load()) return;
-#if VULKAN_SUPPORTED
-    // Keep Vulkan hardware decode enabled. Until the renderer consumes
-    // GpuVideoFrame directly, MediaImageFrameDecoder downloads the decoded
-    // hardware frame to the CPU presentation buffer.
-    if (renderer && !impl_->vulkanDeviceConfigured_ && impl_->playbackController_) {
-        auto device = renderer->device();
-        auto context = renderer->immediateContext();
-        if (device && context && device->GetDeviceInfo().Type == Diligent::RENDER_DEVICE_TYPE_VULKAN) {
-            auto commandQueue = context->LockCommandQueue();
-            if (commandQueue) {
-                Diligent::RefCntAutoPtr<Diligent::ICommandQueueVk> queueVk{commandQueue, Diligent::IID_CommandQueueVk};
-                if (queueVk) {
-                    auto deviceVk = Diligent::RefCntAutoPtr<Diligent::IRenderDeviceVk>{device, Diligent::IID_RenderDeviceVk};
-                    if (deviceVk) {
-                        impl_->playbackController_->setVulkanDevice(
-                            deviceVk->GetVkInstance(),
-                            deviceVk->GetVkPhysicalDevice(),
-                            deviceVk->GetVkDevice(),
-                            queueVk->GetQueueFamilyIndex());
-                        impl_->vulkanDeviceConfigured_ = true;
-                    }
-                }
-                context->UnlockCommandQueue();
-            }
-        }
-    }
-#endif
+    // This layer consumes ImageF32x4_RGBA only. Enabling Vulkan hardware decode
+    // here can reopen the media with a hardware-only pixel format and leave the
+    // CPU presentation buffer empty when frame download is unavailable.
     const int64_t sourceFrame = currentSourceFrame(this);
     const int64_t timelineFrame = impl_->currentTimelineFrame_;
 

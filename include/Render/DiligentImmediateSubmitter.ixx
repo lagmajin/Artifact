@@ -64,6 +64,7 @@ private:
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_cb;
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_trnsform_cb;
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_transform_matrix_cb;
+    RefCntAutoPtr<IBuffer> m_draw_gradient_cb;
     RefCntAutoPtr<IBuffer> m_draw_viewer_helper_cb;
     RefCntAutoPtr<IBuffer> m_draw_dot_line_cb;
     RefCntAutoPtr<IBuffer> m_draw_outline_params_cb;
@@ -114,6 +115,7 @@ private:
     PSOAndSRB m_draw_glyph_transform_pso_and_srb;
     PSOAndSRB m_draw_solid_rect_pso_and_srb;
     PSOAndSRB m_draw_solid_rect_transform_pso_and_srb;
+    PSOAndSRB m_draw_gradient_rect_pso_and_srb;
     PSOAndSRB m_draw_line_pso_and_srb;
     PSOAndSRB m_draw_thick_line_pso_and_srb;
     PSOAndSRB m_draw_dot_line_pso_and_srb;
@@ -126,6 +128,7 @@ private:
     // ---- Submit helpers (one per packet type) ----
     void submitSolidRect     (const SolidRectPkt&,      IDeviceContext*, ITextureView*);
     void submitSolidRectXform(const SolidRectXformPkt&, IDeviceContext*, ITextureView*);
+    void submitGradientRect(const GradientRectPkt&, IDeviceContext*, ITextureView*);
     void submitLine          (const LinePkt&,           IDeviceContext*, ITextureView*);
     void submitQuad          (const QuadPkt&,           IDeviceContext*, ITextureView*);
     void submitDotLine       (const DotLinePkt&,        IDeviceContext*, ITextureView*);

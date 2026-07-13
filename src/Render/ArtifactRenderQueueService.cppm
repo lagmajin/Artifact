@@ -2446,6 +2446,12 @@ namespace Artifact
         int gpuRendererWidth_ = 0;
         int gpuRendererHeight_ = 0;
 
+        // A composition seek mutates the composition, its layers, and shared physics
+        // state. Frame workers may prepare/encode concurrently, but they must never
+        // render the same mutable snapshot concurrently. Keep this guard at the
+        // render boundary so new dispatch paths cannot reintroduce that race.
+        std::mutex compositionFrameStateMutex_;
+
         // Render backend selection
         enum class RenderBackend { Auto, CPU, GPU };
         RenderBackend renderBackend_ = RenderBackend::Auto;
@@ -4257,6 +4263,12 @@ namespace Artifact
             return false;
         }
 
+        // goToFrame() updates shared mutable state (FramePosition, layers, and
+        // PhysicsSystem). A single job snapshot is intentionally shared by the
+        // scheduler, so serialise its render-state transition and consumption.
+        // Output buffering/encoding remain outside this critical section.
+        std::lock_guard<std::mutex> frameStateLock(compositionFrameStateMutex_);
+
         registerRenderQueueContextSnapshot(snap.job, snap.composition, snap.frameNumber);
 
         if (snap.useGpuBackend) {
@@ -4753,6 +4765,12 @@ namespace Artifact
     void ArtifactRenderQueueService::startAllJobs() {
         if (impl_->isRendering_.exchange(true, std::memory_order_acq_rel)) return;
         impl_->shutdownRequested_.store(false, std::memory_order_release);
+
+        // Promote pending jobs before either queue backend starts.  Leaving
+        // them pending made the UI say the queue had started while the core
+        // renderer still observed an idle queue.
+        impl_->queueManager.startAllJobs();
+        impl_->syncCoreQueueModel();
 
         // 既存のワーカースレッドがあれば待機
         if (impl_->workerThread_.joinable()) {

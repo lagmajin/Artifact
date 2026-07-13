@@ -60,6 +60,7 @@ module;
 #include <QVector4D>
 
 #include <QVector>
+#include <Layer/ArtifactSolidGradientUtil.hpp>
 
 #include <deque>
 
@@ -6210,8 +6211,19 @@ void drawLayerForCompositionView(
           std::max(1, static_cast<int>(std::ceil(localRect.height()))));
 
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-
-      surface.fill(toQColor(color));
+      if (solid2D->fillType() != ArtifactSolidFillType::Solid) {
+        surface = ArtifactSolidGradientUtil::makeSolidGradientImage(
+            surfaceSize,
+            QColor::fromRgbF(solid2D->gradientStartColor().r(), solid2D->gradientStartColor().g(),
+                             solid2D->gradientStartColor().b(), solid2D->gradientStartColor().a()),
+            QColor::fromRgbF(solid2D->gradientEndColor().r(), solid2D->gradientEndColor().g(),
+                             solid2D->gradientEndColor().b(), solid2D->gradientEndColor().a()),
+            static_cast<int>(solid2D->fillType()), solid2D->gradientAngleDegrees(),
+            solid2D->gradientReverse(), solid2D->gradientCenterX(), solid2D->gradientCenterY(),
+            solid2D->gradientScale(), solid2D->gradientOffset());
+      } else {
+        surface.fill(toQColor(color));
+      }
 
       applySurfaceAndDraw(surface, localRect, true);
 
@@ -6220,6 +6232,21 @@ void drawLayerForCompositionView(
       const float baseOpacity =
 
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+
+      if (solid2D->fillType() != ArtifactSolidFillType::Solid) {
+        drawWithClonerEffect(
+            layer, globalTransform4x4,
+            [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
+              renderer->drawGradientRectTransformed(
+                  static_cast<float>(localRect.x()), static_cast<float>(localRect.y()),
+                  static_cast<float>(localRect.width()), static_cast<float>(localRect.height()),
+                  instanceTransform, solid2D->gradientStartColor(), solid2D->gradientEndColor(),
+                  static_cast<int>(solid2D->fillType()), solid2D->gradientAngleDegrees(),
+                  solid2D->gradientReverse(), solid2D->gradientCenterX(), solid2D->gradientCenterY(),
+                  solid2D->gradientScale(), solid2D->gradientOffset(), baseOpacity * instanceWeight);
+            });
+        return;
+      }
 
       drawWithClonerEffect(
 
@@ -6261,8 +6288,11 @@ void drawLayerForCompositionView(
           std::max(1, static_cast<int>(std::ceil(localRect.height()))));
 
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-
-      surface.fill(toQColor(color));
+      if (solidImage->fillType() != ArtifactSolidFillType::Solid) {
+        surface = solidImage->toQImage();
+      } else {
+        surface.fill(toQColor(color));
+      }
 
       applySurfaceAndDraw(surface, localRect, true);
 
@@ -6271,6 +6301,21 @@ void drawLayerForCompositionView(
       const float baseOpacity =
 
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+
+      if (solidImage->fillType() != ArtifactSolidFillType::Solid) {
+        drawWithClonerEffect(
+            layer, globalTransform4x4,
+            [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
+              renderer->drawGradientRectTransformed(
+                  static_cast<float>(localRect.x()), static_cast<float>(localRect.y()),
+                  static_cast<float>(localRect.width()), static_cast<float>(localRect.height()),
+                  instanceTransform, solidImage->gradientStartColor(), solidImage->gradientEndColor(),
+                  static_cast<int>(solidImage->fillType()), solidImage->gradientAngleDegrees(),
+                  solidImage->gradientReverse(), solidImage->gradientCenterX(), solidImage->gradientCenterY(),
+                  solidImage->gradientScale(), solidImage->gradientOffset(), baseOpacity * instanceWeight);
+            });
+        return;
+      }
 
       drawWithClonerEffect(
 
@@ -8113,15 +8158,15 @@ public:
 
     if (!convertedLayerToFloat) {
 
-      qWarning() << "[CompositionView] layer-to-float conversion failed; "
+      qCritical() << "[CompositionView] layer-to-float conversion failed; "
 
-                    "falling back to legacy layer SRV"
+                     "rejecting incompatible blend input"
 
                  << "layer=" << layer->id().toString()
 
                  << "layerName=" << layer->layerName();
 
-      return layerSRV;
+      return nullptr;
 
     }
 
@@ -8297,6 +8342,27 @@ public:
 
     result.convertedLayerToFloat = convertedLayerToFloat;
 
+    (void)renderPipeline;
+    (void)layerSRV;
+    (void)cw;
+    (void)ch;
+    (void)blendRetryNormalCount;
+    (void)directBlendFallbackCount;
+
+    if (!convertedLayerToFloat || !preparedBlendSRV) {
+
+      ++blendFailureCount;
+
+      qCritical() << "[CompositionView] blend input does not satisfy the "
+                     "canonical float/straight-alpha contract"
+                  << "layer=" << layer->id().toString()
+                  << "layerName=" << layer->layerName()
+                  << "mode=" << static_cast<int>(blendMode);
+
+      return result;
+
+    }
+
     ++blendDispatchCount;
 
     result.blended = renderer_->blendLayers(blendPipeline_.get(),
@@ -8307,39 +8373,12 @@ public:
 
                                             opacity);
 
-    if (!result.blended && blendMode != ArtifactCore::BlendMode::Normal) {
-
-      ++blendRetryNormalCount;
-
-      qWarning() << "[CompositionView] blend failed; retrying with Normal"
-
-                 << "layer=" << layer->id().toString()
-
-                 << "layerName=" << layer->layerName()
-
-                 << "mode=" << static_cast<int>(blendMode)
-
-                 << "opacity=" << opacity;
-
-      ++blendDispatchCount;
-
-      result.blended = renderer_->blendLayers(
-
-          blendPipeline_.get(), preparedBlendSRV, accumSRV, tempUAV,
-
-          ArtifactCore::BlendMode::Normal, opacity);
-
-    }
-
     if (!result.blended) {
 
       ++blendFailureCount;
 
-      ++directBlendFallbackCount;
-
-      result.directFallbackUsed = true;
-
-      qWarning() << "[CompositionView] blend failed; falling back to direct sprite"
+      qCritical() << "[CompositionView] requested blend failed; accumulator "
+                     "left unchanged"
 
                  << "layer=" << layer->id().toString()
 
@@ -8348,14 +8387,6 @@ public:
                  << "mode=" << static_cast<int>(blendMode)
 
                  << "opacity=" << opacity;
-
-      renderer_->setOverrideRTV(renderPipeline.accumRTV());
-
-      renderer_->drawSprite(0.0f, 0.0f, cw, ch, layerSRV, opacity);
-
-      renderer_->flush();
-
-      renderer_->setOverrideRTV(nullptr);
 
       return result;
 
@@ -9256,7 +9287,7 @@ public:
 
       const bool hasGpuBlendJustification,
 
-      const bool hasGpuBlendBlocker,
+      const bool hasCpuRasterizerUpload,
 
       const bool gpuBlendPathRequested,
 
@@ -9267,6 +9298,8 @@ public:
       const bool acquireHazard,
 
       const bool transparentCompositionBackgroundRequested) {
+
+    (void)hasCpuRasterizerUpload;
 
     if (!gpuBlendEnabled) {
 
@@ -9283,12 +9316,6 @@ public:
     if (!hasGpuBlendJustification) {
 
       return QStringLiteral("no-multi-layer-blend-work");
-
-    }
-
-    if (hasGpuBlendBlocker) {
-
-      return QStringLiteral("cpu-rasterizer-layer-present");
 
     }
 
@@ -9601,16 +9628,6 @@ public:
       float x, y;
 
       int interpolation = static_cast<int>(ArtifactCore::InterpolationType::Linear);
-
-      float frameX = 0.0f;
-
-      float frameY = 0.0f;
-
-      float frameW = 0.0f;
-
-      float frameH = 0.0f;
-
-      bool hasFrameRect = false;
       float inTangentX = 0.0f;
       float inTangentY = 0.0f;
       float outTangentX = 0.0f;
@@ -9695,6 +9712,8 @@ public:
   bool workCursorVisible_ = false;
 
   QPointF workCursorCanvasPos_;
+
+  WorkCursorState workCursorState_;
 
   QString workCursorLabel_;
 
@@ -9792,7 +9811,7 @@ public:
 
   static constexpr qint64 kRenderDebounceIntervalMs = 16; // ~60fps baseline
 
-  
+
 
   // Render tick infrastructure
 
@@ -10414,7 +10433,14 @@ public:
 
 
 
-    if (gizmo3D_ && layer && layer->is3D()) {
+    if (layer && !layer->is3D() && viewportOrientationActive_) {
+      viewportOrientationActive_ = false;
+      viewportOrientationMatricesValid_ = false;
+      invalidateOverlayComposite();
+    }
+
+    if (gizmo3D_ && layer &&
+        (layer->is3D() || viewportOrientationActive_)) {
 
       syncGizmo3DFromLayer(layer);
 
@@ -13579,7 +13605,11 @@ bool CompositionRenderController::placeWorkCursorAtViewportPos(
 
       {static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())});
 
-  setWorkCursorCanvasPosition(QPointF(canvasPos.x, canvasPos.y));
+  if (impl_->viewportOrientationActive_) {
+    setWorkCursorWorldPosition(canvasPos.x, canvasPos.y, 0.0f);
+  } else {
+    setWorkCursorCanvasPosition(QPointF(canvasPos.x, canvasPos.y));
+  }
 
   return true;
 
@@ -13603,13 +13633,19 @@ void CompositionRenderController::setWorkCursorCanvasPosition(
 
   if (impl_->workCursorVisible_ &&
 
-      impl_->workCursorCanvasPos_ == normalized) {
+      impl_->workCursorCanvasPos_ == normalized &&
+      !impl_->workCursorState_.spatial) {
 
     return;
 
   }
 
   impl_->workCursorCanvasPos_ = normalized;
+
+  impl_->workCursorState_.x = static_cast<float>(normalized.x());
+  impl_->workCursorState_.y = static_cast<float>(normalized.y());
+  impl_->workCursorState_.z = 0.0f;
+  impl_->workCursorState_.spatial = false;
 
   impl_->workCursorVisible_ = true;
 
@@ -13623,6 +13659,82 @@ QPointF CompositionRenderController::workCursorCanvasPosition() const {
 
   return impl_ ? impl_->workCursorCanvasPos_ : QPointF();
 
+}
+
+void CompositionRenderController::setWorkCursorWorldPosition(
+    const float x, const float y, const float z) {
+  if (!impl_) {
+    return;
+  }
+  const auto finiteOrZero = [](const float value) {
+    return std::isfinite(value) ? value : 0.0f;
+  };
+  WorkCursorState next = impl_->workCursorState_;
+  next.x = finiteOrZero(x);
+  next.y = finiteOrZero(y);
+  next.z = finiteOrZero(z);
+  next.spatial = true;
+  if (impl_->workCursorVisible_ &&
+      next.x == impl_->workCursorState_.x &&
+      next.y == impl_->workCursorState_.y &&
+      next.z == impl_->workCursorState_.z &&
+      impl_->workCursorState_.spatial) {
+    return;
+  }
+  impl_->workCursorState_ = next;
+  impl_->workCursorCanvasPos_ = QPointF(next.x, next.y);
+  impl_->workCursorVisible_ = true;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+WorkCursorState CompositionRenderController::workCursorState() const {
+  return impl_ ? impl_->workCursorState_ : WorkCursorState{};
+}
+
+bool CompositionRenderController::moveWorkCursorToSelection() {
+  if (!impl_) {
+    return false;
+  }
+  auto *selection = ArtifactLayerSelectionManager::instance();
+  if (!selection) {
+    return false;
+  }
+  const auto selected = selection->selectedLayers();
+  if (selected.isEmpty()) {
+    return false;
+  }
+  Diligent::float3 center{0.0f, 0.0f, 0.0f};
+  int count = 0;
+  bool spatial = false;
+  for (const auto &layer : selected) {
+    if (!layer) {
+      continue;
+    }
+    const auto world = layer->getGlobalTransformMatrix();
+    const auto point = world * Diligent::float4{0.0f, 0.0f, 0.0f, 1.0f};
+    center.x += point.x;
+    center.y += point.y;
+    center.z += point.z;
+    spatial = spatial || layer->is3D();
+    ++count;
+  }
+  if (count <= 0) {
+    return false;
+  }
+  const float invCount = 1.0f / static_cast<float>(count);
+  if (spatial) {
+    setWorkCursorWorldPosition(center.x * invCount, center.y * invCount,
+                               center.z * invCount);
+  } else {
+    setWorkCursorCanvasPosition(
+        QPointF(center.x * invCount, center.y * invCount));
+  }
+  return true;
+}
+
+void CompositionRenderController::moveWorkCursorToWorldOrigin() {
+  setWorkCursorWorldPosition(0.0f, 0.0f, 0.0f);
 }
 
 bool isDesignWorkspace(const QObject *controller) {
@@ -13654,7 +13766,7 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
   }
 
   if (hasSelectedIds) {
-    if (!isLayerSelected(selectedIds, layer)) {
+    if (!selectedIds.contains(layer->id())) {
       return;
     }
   } else if (useSelectedIdFilter && (selectedLayerId.isNil() ||
@@ -13756,7 +13868,7 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
         previous = next;
       }
 
-      constexpr int kTargetVelocityDots = 360;
+      constexpr int kTargetVelocityDots = 72;
       const int64_t frameSpan = static_cast<int64_t>(maxFrame) - minFrame;
       const int timeDotStep = static_cast<int>(std::max<int64_t>(
           1, (frameSpan + kTargetVelocityDots - 1) / kTargetVelocityDots));
@@ -13771,7 +13883,6 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
       }
     }
 
-    const QRectF localBounds = layer->localBounds();
     for (const auto &kfTime : posTimes) {
       const int f = static_cast<int>(kfTime.value());
       if (f < keyMinFrame || f > keyMaxFrame) {
@@ -13799,46 +13910,15 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
         pt.outTangentY = static_cast<float>(outHandle.y());
         pt.hasSpatialTangents = true;
       }
-      if (localBounds.isValid() && localBounds.width() > 0.0 &&
-          localBounds.height() > 0.0) {
-        const QPointF tl = gTrans.map(localBounds.topLeft());
-        const QPointF tr = gTrans.map(localBounds.topRight());
-        const QPointF br = gTrans.map(localBounds.bottomRight());
-        const QPointF bl = gTrans.map(localBounds.bottomLeft());
-        const float minX = static_cast<float>(
-            std::min(std::min(tl.x(), tr.x()), std::min(br.x(), bl.x())));
-        const float minY = static_cast<float>(
-            std::min(std::min(tl.y(), tr.y()), std::min(br.y(), bl.y())));
-        const float maxX = static_cast<float>(
-            std::max(std::max(tl.x(), tr.x()), std::max(br.x(), bl.x())));
-        const float maxY = static_cast<float>(
-            std::max(std::max(tl.y(), tr.y()), std::max(br.y(), bl.y())));
-        pt.frameX = minX;
-        pt.frameY = minY;
-        pt.frameW = std::max(0.0f, maxX - minX);
-        pt.frameH = std::max(0.0f, maxY - minY);
-        pt.hasFrameRect = true;
-      }
       motionPathCache_.keyPoints.push_back(pt);
     }
-    for (size_t index = 0; index < motionPathCache_.keyPoints.size(); ++index) {
-      auto &key = motionPathCache_.keyPoints[index];
-      if (key.hasSpatialTangents || motionPathCache_.keyPoints.size() < 2) {
-        continue;
-      }
-      const auto &previous = motionPathCache_.keyPoints[
-          index == 0 ? index : index - 1];
-      const auto &next = motionPathCache_.keyPoints[
-          index + 1 == motionPathCache_.keyPoints.size() ? index : index + 1];
-      const float tangentX = (next.x - previous.x) / 6.0f;
-      const float tangentY = (next.y - previous.y) / 6.0f;
-      key.inTangentX = key.x - tangentX;
-      key.inTangentY = key.y - tangentY;
-      key.outTangentX = key.x + tangentX;
-      key.outTangentY = key.y + tangentY;
-      key.hasSpatialTangents = true;
-    }
     motionPathCache_.valid = true;
+  }
+
+  if (viewportOrientationMatricesValid_) {
+    renderer_->setViewMatrix(viewportOrientationViewForOverlay_);
+    renderer_->setProjectionMatrix(viewportOrientationProjectionForOverlay_);
+    renderer_->setUseExternalMatrices(true);
   }
 
   if (!motionPathCache_.pathPoints.empty()) {
@@ -13892,7 +13972,6 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
   for (const auto &pt : motionPathCache_.keyPoints) {
     const bool isCurrent = pt.frame == currentFrameNum;
     const bool isHovered = pt.frame == hoveredMotionPathFrame_;
-    const FloatColor keyShadow{0.0f, 0.0f, 0.0f, 0.45f};
     const FloatColor keyColor =
         motionPathInterpolationColor(pt.interpolation, isCurrent);
     if (pt.hasSpatialTangents) {
@@ -13912,33 +13991,18 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
       renderer_->drawPoint(pt.outTangentX, pt.outTangentY, handleRadius,
                            tangentHandle);
     }
-    if (pt.hasFrameRect) {
-      const FloatColor frameShadow{0.0f, 0.0f, 0.0f,
-                                   isCurrent ? 0.30f : 0.18f};
-      const FloatColor frameColor =
-          isCurrent ? FloatColor{0.98f, 0.88f, 0.35f, 0.95f}
-                    : FloatColor{0.78f, 0.82f, 0.90f, 0.62f};
-      const float dashThickness =
-          isCurrent ? std::max(1.5f, 2.2f * invZoom)
-                    : std::max(1.0f, 1.6f * invZoom);
-      const float dashLen = std::max(6.0f, 10.0f * invZoom);
-      const float gapLen = std::max(4.0f, 7.0f * invZoom);
-      renderer_->drawDashedRectOutline(pt.frameX, pt.frameY, pt.frameW,
-                                             pt.frameH, frameShadow,
-                                             dashThickness * 1.8f, dashLen,
-                                             gapLen);
-      renderer_->drawDashedRectOutline(pt.frameX, pt.frameY, pt.frameW,
-                                             pt.frameH, frameColor,
-                                             dashThickness, dashLen, gapLen);
-    }
     const float outerRadius =
-        isHovered ? dotRadius * 2.4f : dotRadius * 1.8f;
+        isHovered ? dotRadius * 3.4f : dotRadius * 2.8f;
     const float innerRadius =
-        isHovered ? dotRadius * 1.35f : dotRadius * 1.15f;
+        isHovered ? dotRadius * 2.0f : dotRadius * 1.65f;
     const FloatColor ringColor =
-        isHovered ? FloatColor{1.0f, 1.0f, 1.0f, 0.95f} : keyShadow;
+        isHovered ? FloatColor{1.0f, 1.0f, 1.0f, 0.95f}
+                  : FloatColor{0.96f, 0.96f, 1.0f, 0.92f};
     renderer_->drawPoint(pt.x, pt.y, outerRadius, ringColor);
     renderer_->drawPoint(pt.x, pt.y, innerRadius, keyColor);
+  }
+  if (viewportOrientationMatricesValid_) {
+    renderer_->setUseExternalMatrices(false);
   }
 }
 
@@ -13948,7 +14012,7 @@ int motionPathAdaptiveSampleStep(int minFrame, int maxFrame, float zoom) {
   // Keep long work areas bounded while retaining one-frame precision for
   // short paths. Keyframes are added separately, so this only controls the
   // interpolated path samples between them.
-  const int64_t kTargetSamples = static_cast<int64_t>(std::clamp(
+  const int64_t kTargetSamples = static_cast<int64_t>(std::clamp<long long>(
       std::lround(240.0 * std::sqrt(std::max(1.0f, zoom))), 240LL, 960LL));
   return static_cast<int>(std::max<int64_t>(1, (span + kTargetSamples - 1) /
                                                 kTargetSamples));
@@ -16089,7 +16153,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
 
 
-  
+
 
   // MotionSketch tool
 
@@ -19134,6 +19198,16 @@ CompositionRenderController::cameraFrustumVisual() const {
 
 }
 
+void CompositionRenderController::clearViewportOrientation() {
+  if (!impl_ || !impl_->viewportOrientationActive_) {
+    return;
+  }
+  impl_->viewportOrientationActive_ = false;
+  impl_->viewportOrientationMatricesValid_ = false;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
 
 
 void CompositionRenderController::setViewportOrientation(
@@ -19203,8 +19277,19 @@ void CompositionRenderController::setViewportOrientationQuaternion(
 
   }
 
-  impl_->pushViewHistory();
-  impl_->viewportOrientationNavigator_.setCurrentOrientation(orientation);
+  const QQuaternion normalized = orientation.normalized();
+  const QQuaternion current =
+      impl_->viewportOrientationNavigator_.currentOrientation();
+  if (std::abs(QQuaternion::dotProduct(current, normalized)) > 0.999999f) {
+
+    return;
+
+  }
+
+  // Continuous view-cube/orbit updates must not append one history entry per
+  // mouse move. Discrete hotspot snaps still record history in
+  // setViewportOrientation().
+  impl_->viewportOrientationNavigator_.setCurrentOrientation(normalized);
 
   impl_->viewportOrientationActive_ = true;
 
@@ -20344,7 +20429,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     const float aspect = std::max(0.001f, cw / std::max(0.001f, ch));
 
-    const double currentShakeTime = currentFrame.toSeconds();
+    const double currentShakeTime = currentFrame.toSeconds(comp->frameRate().framerate());
     const double frameDelta =
         comp->frameRate().framerate() > 0.0
             ? 1.0 / comp->frameRate().framerate()
@@ -20741,15 +20826,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                       }
 
-                      return layer->layerBlendType() !=
+                       return layer->layerBlendType() !=
 
-                                 ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL &&
-
-                             !layerHasCpuRasterizerWork(layer.get());
+                                  ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL;
 
                     });
 
-    const bool hasGpuBlendBlocker =
+    const bool hasCpuRasterizerUpload =
 
         std::any_of(layers.begin(), layers.end(),
 
@@ -20767,7 +20850,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     const bool gpuBlendPathRequested =
 
-        gpuBlendRequested && hasGpuBlendJustification && !hasGpuBlendBlocker;
+        gpuBlendRequested && hasGpuBlendJustification;
 
 
 
@@ -21001,7 +21084,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         gpuBlendEnabled_, blendPipelineReady_, hasGpuBlendJustification,
 
-        hasGpuBlendBlocker, gpuBlendPathRequested, renderPipeline.ready(),
+        hasCpuRasterizerUpload, gpuBlendPathRequested, renderPipeline.ready(),
 
         previewRenderSlot.depthTargetView != nullptr,
 
@@ -23787,8 +23870,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             const bool isHovered = pt.frame == hoveredMotionPathFrame_;
 
-            const FloatColor keyShadow{0.0f, 0.0f, 0.0f, 0.45f};
-
             const FloatColor keyColor =
 
                 motionPathInterpolationColor(pt.interpolation, isCurrent);
@@ -23831,17 +23912,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             const float outerRadius =
 
-                isHovered ? dotRadius * 2.4f : dotRadius * 1.8f;
+                isHovered ? dotRadius * 3.4f : dotRadius * 2.8f;
 
             const float innerRadius =
 
-                isHovered ? dotRadius * 1.35f : dotRadius * 1.15f;
+                isHovered ? dotRadius * 2.0f : dotRadius * 1.65f;
 
             const FloatColor ringColor = isHovered
 
                                               ? FloatColor{1.0f, 1.0f, 1.0f, 0.95f}
 
-                                              : keyShadow;
+                                              : FloatColor{0.96f, 0.96f, 1.0f, 0.92f};
 
             renderer_->drawPoint(pt.x, pt.y, outerRadius, ringColor);
 
@@ -24409,7 +24490,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             "skippedInactive=%8 skippedRoi=%9 skippedLod=%10 opacityZero=%11 "
 
-            "frameOutOfRange=%12 gpuBlendBlocker=%13 "
+            "frameOutOfRange=%12 cpuRasterizerUpload=%13 "
 
             "forceContinuousRedraw=%14 viewportInteracting=%15 "
 
@@ -24441,7 +24522,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             .arg(frameOutOfRange ? 1 : 0)
 
-            .arg(hasGpuBlendBlocker ? 1 : 0)
+            .arg(hasCpuRasterizerUpload ? 1 : 0)
 
             .arg(forceContinuousRedraw ? 1 : 0)
 
@@ -24449,9 +24530,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             .arg(layerToFloatConvertCount)
 
-            .arg(hasGpuBlendBlocker
+            .arg(hasCpuRasterizerUpload
 
-                     ? QStringLiteral("gpuBlendBlockedByCpuRasterizerWork")
+                     ? QStringLiteral("gpuBlendUsesCpuRasterizerUpload")
 
                      : QStringLiteral("none"));
 
@@ -25118,7 +25199,7 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
   }
 
-  if (workCursorVisible_) {
+  if (workCursorVisible_ && !workCursorState_.spatial) {
 
     ::Artifact::drawViewportWorkCursorOverlay(renderer_.get(),
                                               workCursorCanvasPos_,
@@ -26174,7 +26255,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
       gizmo_->setMode(gizmoMode_);
 
-      if (!selectedLayer->is3D()) {
+      if (!selectedLayer->is3D() && !viewportOrientationActive_) {
 
         ArtifactCore::ProfileScope _profG2D(
 
@@ -26230,7 +26311,8 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
 
 
-      if (gizmo3D_ && selectedLayer->is3D()) {
+      if (gizmo3D_ &&
+          (selectedLayer->is3D() || viewportOrientationActive_)) {
 
         ArtifactCore::ProfileScope _profG3D(
 
@@ -26259,16 +26341,16 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
 
           QMatrix4x4 view;
-
-          view.translate(panX, panY, 0.0f);
-
-          view.scale(zoom, zoom, 1.0f);
-
-
-
           QMatrix4x4 proj;
-
-          proj.ortho(0.0f, viewportW, viewportH, 0.0f, -1000.0f, 1000.0f);
+          if (viewportOrientationMatricesValid_) {
+            view = viewportOrientationViewForOverlay_;
+            proj = viewportOrientationProjectionForOverlay_;
+          } else {
+            view.translate(panX, panY, 0.0f);
+            view.scale(zoom, zoom, 1.0f);
+            proj.ortho(0.0f, viewportW, viewportH, 0.0f, -1000.0f,
+                       1000.0f);
+          }
 
 
 
@@ -26348,6 +26430,41 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
 
 
+  if (renderer_ && workCursorVisible_ && workCursorState_.spatial) {
+    const Detail::float3 center{workCursorState_.x, workCursorState_.y,
+                                workCursorState_.z};
+    const float cursorSize = 18.0f;
+    const FloatColor shadow{0.01f, 0.02f, 0.03f, 0.88f};
+    const FloatColor accent{1.0f, 0.34f, 0.12f, 1.0f};
+    const FloatColor white{0.96f, 0.98f, 1.0f, 0.96f};
+    const auto line = [this, &shadow, &white](const Detail::float3 &a,
+                                              const Detail::float3 &b) {
+      renderer_->drawGizmoLine(a, b, shadow, 3.0f);
+      renderer_->drawGizmoLine(a, b, white, 1.4f);
+    };
+    const QMatrix4x4 &cursorView = viewportOrientationMatricesValid_
+        ? viewportOrientationViewForOverlay_
+        : renderer_->getViewMatrix();
+    const QMatrix4x4 &cursorProjection = viewportOrientationMatricesValid_
+        ? viewportOrientationProjectionForOverlay_
+        : renderer_->getProjectionMatrix();
+    renderer_->set3DCameraMatrices(cursorView, cursorProjection);
+    renderer_->drawGizmoRing(center, {1.0f, 0.0f, 0.0f}, cursorSize,
+                             accent, 1.5f);
+    renderer_->drawGizmoRing(center, {0.0f, 1.0f, 0.0f}, cursorSize,
+                             accent, 1.5f);
+    renderer_->drawGizmoRing(center, {0.0f, 0.0f, 1.0f}, cursorSize,
+                             accent, 1.5f);
+    line({center.x - cursorSize * 1.35f, center.y, center.z},
+         {center.x + cursorSize * 1.35f, center.y, center.z});
+    line({center.x, center.y - cursorSize * 1.35f, center.z},
+         {center.x, center.y + cursorSize * 1.35f, center.z});
+    line({center.x, center.y, center.z - cursorSize * 1.35f},
+         {center.x, center.y, center.z + cursorSize * 1.35f});
+    renderer_->flushGizmo3D();
+    renderer_->reset3DCameraMatrices();
+  }
+
   if (renderer_ && renderer_->getZoom() >= 8.0f) {
 
     const float zoom = renderer_->getZoom();
@@ -26387,6 +26504,12 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
                                              ArtifactCore::ProfileCategory::Render);
 
+      QVector<LayerID> selectedLayerIds;
+      selectedLayerIds.reserve(selectedIds.size());
+      for (const auto &selectedId : selectedIds) {
+        selectedLayerIds.emplace_back(selectedId);
+      }
+
       const float zoom = renderer_->getZoom();
 
       const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
@@ -26397,9 +26520,9 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
           continue;
         }
 
-        impl_->renderMotionPathOverlayForLayer(
+        renderMotionPathOverlayForLayer(
             layer, comp, currentFrame.framePosition(), zoom, invZoom,
-            selectedLayerId_, selectedIds, !selectedIds.isEmpty(),
+            selectedLayerId_, selectedLayerIds, !selectedLayerIds.isEmpty(),
             overlayInvalidationSerial_, true);
 
       }
@@ -26415,8 +26538,6 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
           "BoundingBox", ArtifactCore::ProfileCategory::Render);
 
       if (showGizmoOverlay_ && showGuides_) {
-
-        const FloatColor primaryColor{1.0f, 0.72f, 0.22f, 1.0f};
 
         const FloatColor secondaryColor{0.28f, 0.74f, 1.0f, 0.85f};
 
@@ -26448,39 +26569,21 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
               !selectedLayerId_.isNil() && layer->id() == selectedLayerId_;
 
-          const QTransform globalTransform = layer->getGlobalTransform();
+          // The primary layer owns the normal interactive gizmo.  This pass
+          // only adds non-interactive frames for the rest of a multi-selection.
+          if (primary) {
+            continue;
+          }
 
-          const QPointF tl = globalTransform.map(localBounds.topLeft());
-
-          const QPointF tr = globalTransform.map(localBounds.topRight());
-
-          const QPointF br = globalTransform.map(localBounds.bottomRight());
-
-          const QPointF bl = globalTransform.map(localBounds.bottomLeft());
-
-          const FloatColor color = primary ? primaryColor : secondaryColor;
-
-          const float thickness = primary ? 1.9f : 1.4f;
-
-          const bool showBounds =
-
-              owner->isLineDebugKindVisible(LineDebugKind::Bounds);
-
-          drawTaggedSolidLine(renderer_.get(), tl, tr, color, thickness,
-
-                              showBounds);
-
-          drawTaggedSolidLine(renderer_.get(), tr, br, color, thickness,
-
-                              showBounds);
-
-          drawTaggedSolidLine(renderer_.get(), br, bl, color, thickness,
-
-                              showBounds);
-
-          drawTaggedSolidLine(renderer_.get(), bl, tl, color, thickness,
-
-                              showBounds);
+          const QMatrix4x4 frameView = viewportOrientationMatricesValid_
+              ? viewportOrientationViewForOverlay_
+              : renderer_->getViewMatrix();
+          const QMatrix4x4 frameProjection = viewportOrientationMatricesValid_
+              ? viewportOrientationProjectionForOverlay_
+              : renderer_->getProjectionMatrix();
+          ::Artifact::drawSelectionFrameOverlay(
+              renderer_.get(), layer, secondaryColor, 1.4f, &frameView,
+              &frameProjection);
 
         }
 

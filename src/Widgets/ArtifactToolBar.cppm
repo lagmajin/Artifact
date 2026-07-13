@@ -159,6 +159,9 @@ QIcon loadIconWithFallback(const QStringList &fileNames) {
     if (!icon.isNull()) {
       return icon;
     }
+    if (fileName.startsWith(QStringLiteral("Studio/"))) {
+      return QIcon();
+    }
   }
   return QIcon();
 }

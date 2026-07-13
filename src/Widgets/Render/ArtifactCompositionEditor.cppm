@@ -69,7 +69,7 @@ module;
 #include <QApplication>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
-#include <QMainWindow>
+#include <QWidget>
 #include <QWidgetAction>
 #include <QtSVG/QSvgRenderer>
 #include <algorithm>
@@ -151,7 +151,7 @@ W_OBJECT_IMPL(ArtifactCompositionEditor)
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview");
 
 namespace {
-QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
+QDockWidget* findDockByTitle(QWidget* window, const QString& title)
 {
   if (!window) {
     return nullptr;
@@ -165,7 +165,7 @@ QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
   return nullptr;
 }
 
-void activateDock(QMainWindow* window, const QString& title)
+void activateDock(QWidget* window, const QString& title)
 {
   auto* dock = findDockByTitle(window, title);
   if (!dock) {
@@ -190,7 +190,7 @@ void openContentsViewerCompareSurfaceImpl()
   }
 
   for (QWidget *widget : QApplication::topLevelWidgets()) {
-    if (auto *mainWindow = qobject_cast<QMainWindow *>(widget)) {
+    if (auto *mainWindow = qobject_cast<QWidget *>(widget)) {
       activateDock(mainWindow, QStringLiteral("Contents Viewer"));
       break;
     }
@@ -2557,6 +2557,26 @@ public:
               QStringLiteral("Centered in the composition"));
         },
         comp != nullptr);
+    add(QStringLiteral("Cursor to Selection"),
+        [this]() {
+          if (controller_ && controller_->moveWorkCursorToSelection()) {
+            controller_->setWorkCursorLabel(QStringLiteral("Selection"));
+            controller_->setInfoOverlayText(
+                QStringLiteral("3D Cursor"),
+                QStringLiteral("Moved to selection center"));
+          }
+        },
+        selectedCount > 0);
+    add(QStringLiteral("Cursor to World Origin"),
+        [this]() {
+          if (controller_) {
+            controller_->moveWorkCursorToWorldOrigin();
+            controller_->setWorkCursorLabel(QStringLiteral("World Origin"));
+            controller_->setInfoOverlayText(
+                QStringLiteral("3D Cursor"),
+                QStringLiteral("Moved to world origin"));
+          }
+        });
     add(QStringLiteral("Clear Work Cursor"),
         [this]() {
           if (controller_) {
@@ -5610,7 +5630,7 @@ public:
     orbitChangedCallback_ = std::move(callback);
   }
 
-  QSize sizeHint() const override { return {138, 164}; }
+  QSize sizeHint() const override { return {124, 132}; }
 
 protected:
   void paintEvent(QPaintEvent *) override {
@@ -5620,11 +5640,7 @@ protected:
     const QRectF panelRect = rect().adjusted(1, 1, -1, -1);
     p.setPen(QPen(QColor(255, 255, 255, isEnabled() ? 42 : 24), 1.0));
     p.setBrush(QColor(14, 18, 26, 156));
-    p.drawRoundedRect(panelRect, 12.0, 12.0);
-
-    p.setPen(QColor(210, 225, 240, isEnabled() ? 168 : 80));
-    p.drawText(QRectF(0.0, 8.0, width(), 18.0), Qt::AlignCenter,
-               QStringLiteral("View"));
+    p.drawRoundedRect(panelRect, 9.0, 9.0);
     const auto faces = projectedFaces();
     for (const auto &face : faces) {
       if (!face.visible) {
@@ -5655,7 +5671,7 @@ protected:
 
       QFont faceFont = p.font();
       faceFont.setBold(true);
-      faceFont.setPointSizeF(20.0);
+      faceFont.setPointSizeF(12.0);
       QPolygonF insetFace;
       insetFace.reserve(4);
       for (const auto &point : face.polygon) {
@@ -5736,8 +5752,20 @@ protected:
       p.drawEllipse(target.center, target.radius, target.radius);
     }
 
-    p.setPen(QColor(255, 255, 255, 35));
-    p.drawRoundedRect(panelRect.adjusted(4.0, 22.0, -4.0, -4.0), 10.0, 10.0);
+    const QPointF axisOrigin(20.0, height() - 18.0);
+    const auto drawAxis = [&p, &axisOrigin](const QPointF &delta,
+                                            const QColor &color,
+                                            const QString &label) {
+      p.setPen(QPen(color, 2.0, Qt::SolidLine, Qt::RoundCap));
+      p.drawLine(axisOrigin, axisOrigin + delta);
+      p.setPen(color.lighter(125));
+      p.drawText(QRectF(axisOrigin + delta - QPointF(6.0, 7.0),
+                        QSizeF(12.0, 14.0)),
+                 Qt::AlignCenter, label);
+    };
+    drawAxis(QPointF(15.0, 0.0), QColor(232, 92, 92), QStringLiteral("X"));
+    drawAxis(QPointF(0.0, -15.0), QColor(96, 205, 132), QStringLiteral("Y"));
+    drawAxis(QPointF(-8.0, 8.0), QColor(92, 154, 232), QStringLiteral("Z"));
   }
 
   void mouseMoveEvent(QMouseEvent *event) override {
@@ -5921,8 +5949,8 @@ private:
   }
 
   std::array<CubeFaceProjection, 6> projectedFaces() const {
-    const QRectF bounds = rect().adjusted(16.0, 28.0, -16.0, -16.0);
-    const QPointF center(bounds.center().x(), bounds.center().y() + 4.0);
+    const QRectF bounds = rect().adjusted(16.0, 14.0, -16.0, -20.0);
+    const QPointF center(bounds.center().x(), bounds.center().y());
     const float cubeRadius =
         static_cast<float>(std::max(24.0, std::min(bounds.width(), bounds.height()) * 0.28));
     const auto rotate = [this](float x, float y, float z) {
@@ -6003,8 +6031,8 @@ private:
   }
 
   std::vector<CubeSnapTarget> projectedSnapTargets() const {
-    const QRectF bounds = rect().adjusted(16.0, 28.0, -16.0, -16.0);
-    const QPointF center(bounds.center().x(), bounds.center().y() + 4.0);
+    const QRectF bounds = rect().adjusted(16.0, 14.0, -16.0, -20.0);
+    const QPointF center(bounds.center().x(), bounds.center().y());
     const float cubeRadius = static_cast<float>(
         std::max(24.0, std::min(bounds.width(), bounds.height()) * 0.28));
     const auto project = [center, cubeRadius](const QVector3D &v) {
@@ -6069,8 +6097,8 @@ private:
   }
 
   std::vector<CubeCornerTarget> projectedCornerTargets() const {
-    const QRectF bounds = rect().adjusted(16.0, 28.0, -16.0, -16.0);
-    const QPointF center(bounds.center().x(), bounds.center().y() + 4.0);
+    const QRectF bounds = rect().adjusted(16.0, 14.0, -16.0, -20.0);
+    const QPointF center(bounds.center().x(), bounds.center().y());
     const float cubeRadius = static_cast<float>(
         std::max(24.0, std::min(bounds.width(), bounds.height()) * 0.28));
     const auto project = [center, cubeRadius](const QVector3D &v) {
@@ -6255,6 +6283,8 @@ public:
   int activePaneId_ = 0;
   // Top Toolbar (Zoom/View controls)
   QToolBar *topToolbar_ = nullptr;
+  QToolBar *toolHud_ = nullptr;
+  QToolBar *zoomHud_ = nullptr;
   QFrame *chromeStrip_ = nullptr;
   QLabel *chromeTitleLabel_ = nullptr;
   QLabel *chromeDetailLabel_ = nullptr;
@@ -6300,6 +6330,8 @@ public:
   bool previewOrbitMode_ = false;
   ViewportChannelDisplayMode viewportChannelDisplayMode_ =
       ViewportChannelDisplayMode::Color;
+  std::optional<QQuaternion> pendingViewCubeOrientation_;
+  bool viewCubeUpdateQueued_ = false;
 
   PaneState *pane(int paneId) {
     if (paneId < 0 || paneId >= kViewportPaneCount) {
@@ -6693,51 +6725,12 @@ public:
                                          ? current->id().toString()
                                          : current->layerName().trimmed())
                                   : QStringLiteral("<none>");
-    const QString viewName = activePaneViewLabel();
-    const QString channelName = viewportChannelDisplayLabel();
-    auto *playback = ArtifactPlaybackService::instance();
-    const QString playState =
-        playback && playback->isPlaying() ? QStringLiteral("Playing")
-                                          : QStringLiteral("Idle");
-    const QString controllerState =
-        renderController_ && renderController_->isRunning()
-            ? QStringLiteral("Render hot")
-            : QStringLiteral("Render paused");
-    const QString gizmoState =
-        viewportToggleLabel(QStringLiteral("Gizmo"),
-                            !gizmoVisibleAction_ ||
-                                gizmoVisibleAction_->isChecked());
-    const QString xRayState =
-        viewportToggleLabel(QStringLiteral("X-Ray"),
-                            xRayAction_ && xRayAction_->isChecked());
-    const QString isolationState =
-        viewportToggleLabel(QStringLiteral("Isolate"),
-                            isolationAction_ && isolationAction_->isChecked());
-    const QString previewState =
-        viewportToggleLabel(QStringLiteral("Preview"), previewOrbitMode_);
-    const QString renderSuspendState =
-        viewportToggleLabel(QStringLiteral("Hold"),
-                            renderSuspendAction_ &&
-                                renderSuspendAction_->isChecked());
-    const QString lockViewState =
-        viewportToggleLabel(QStringLiteral("Lock"), lockViewToSelection_);
-
     chromeTitleLabel_->setText(QStringLiteral("Composition: %1").arg(compName));
     chromeDetailLabel_->setText(
-        QStringLiteral("Layer: %1  |  Selection: %2  |  View: %3  |  Channel: %4")
+        QStringLiteral("Layer: %1  |  Selection: %2")
             .arg(layerName)
-            .arg(selectedCount)
-            .arg(viewName)
-            .arg(channelName));
-    chromeMetaLabel_->setText(QStringLiteral("%1  |  %2  |  %3  |  %4  |  %5  |  %6  |  %7  |  %8")
-                                  .arg(controllerState)
-                                  .arg(playState)
-                                  .arg(gizmoState)
-                                  .arg(xRayState)
-                                  .arg(isolationState)
-                                  .arg(previewState)
-                                  .arg(renderSuspendState)
-                                  .arg(lockViewState));
+            .arg(selectedCount));
+    chromeMetaLabel_->hide();
   }
 
   void openCreateCompositionDialog(ArtifactCompositionEditor *owner) {
@@ -7119,6 +7112,30 @@ public:
     const QPoint viewportTopLeft =
         overlayViewport->mapTo(owner, QPoint(0, 0));
     const QRect viewportGeometry(viewportTopLeft, overlayViewport->size());
+    const int overlayInset = 14;
+
+    const auto placeHud = [&](QWidget *hud, const QPoint &position) {
+      if (!hud) {
+        return;
+      }
+      hud->adjustSize();
+      hud->move(position);
+      hud->setVisible(hasComposition);
+      if (hud->isVisible()) {
+        hud->raise();
+      }
+    };
+    if (toolHud_) {
+      toolHud_->adjustSize();
+      placeHud(toolHud_, QPoint(viewportGeometry.left() + 42,
+                                viewportGeometry.top() + 34));
+    }
+    if (zoomHud_) {
+      zoomHud_->adjustSize();
+      placeHud(zoomHud_, QPoint(viewportGeometry.center().x() -
+                                    zoomHud_->width() / 2,
+                                viewportGeometry.top() + 34));
+    }
 
     if (overlayView_) {
       overlayView_->setGeometry(viewportGeometry);
@@ -7151,10 +7168,8 @@ public:
     }
     if (viewOrientationWidget_) {
       const QSize sz = viewOrientationWidget_->sizeHint();
-      const int x =
-          viewportGeometry.left() +
-          std::max(12, overlayViewport->width() - sz.width() - 12);
-      const int y = viewportGeometry.top() + 12;
+      const int x = viewportGeometry.right() - sz.width() - overlayInset;
+      const int y = viewportGeometry.top() + 24;
       viewOrientationWidget_->setGeometry(x, y, sz.width(), sz.height());
       if (auto *controller = activeRenderController()) {
         viewOrientationWidget_->setOrientationQuaternion(
@@ -7165,6 +7180,29 @@ public:
       viewOrientationWidget_->setEnabledState(showNavigator);
       if (viewOrientationWidget_->isVisible()) {
         viewOrientationWidget_->raise();
+      }
+    }
+    if (chromeStrip_) {
+      chromeStrip_->adjustSize();
+      const int width = std::min(440, chromeStrip_->sizeHint().width());
+      chromeStrip_->setGeometry(viewportGeometry.left() + overlayInset,
+                                viewportGeometry.bottom() -
+                                    chromeStrip_->sizeHint().height() - overlayInset,
+                                width, chromeStrip_->sizeHint().height());
+      chromeStrip_->setVisible(hasComposition);
+      if (chromeStrip_->isVisible()) {
+        chromeStrip_->raise();
+      }
+    }
+    if (bottomBar_) {
+      bottomBar_->adjustSize();
+      const QSize sz = bottomBar_->sizeHint();
+      bottomBar_->setGeometry(viewportGeometry.right() - sz.width() - overlayInset,
+                              viewportGeometry.bottom() - sz.height() - overlayInset,
+                              sz.width(), sz.height());
+      bottomBar_->setVisible(hasComposition);
+      if (bottomBar_->isVisible()) {
+        bottomBar_->raise();
       }
     }
     if (profilerOverlay_) {
@@ -7625,9 +7663,7 @@ public:
       return;
     }
     immersiveMode_ = immersive;
-    if (auto *mw = qobject_cast<QMainWindow *>(owner->window())) {
-      mw->setDockNestingEnabled(immersive);
-    } else if (auto *topLevel = owner->window()) {
+    if (auto *topLevel = owner->window()) {
       if (immersive) {
         topLevel->showFullScreen();
       } else {
@@ -7914,14 +7950,31 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       });
   impl_->viewOrientationWidget_->setOrbitChangedCallback(
       [this](const QQuaternion &orientation) {
-        if (impl_) {
+        if (!impl_) {
+          return;
+        }
+        impl_->pendingViewCubeOrientation_ = orientation;
+        if (impl_->viewCubeUpdateQueued_) {
+          return;
+        }
+        impl_->viewCubeUpdateQueued_ = true;
+        QTimer::singleShot(0, this, [this]() {
+          if (!impl_) {
+            return;
+          }
+          impl_->viewCubeUpdateQueued_ = false;
+          const auto pending = impl_->pendingViewCubeOrientation_;
+          impl_->pendingViewCubeOrientation_.reset();
+          if (!pending) {
+            return;
+          }
           if (auto *controller = impl_->activeRenderController()) {
-            controller->setViewportOrientationQuaternion(orientation);
+            controller->setViewportOrientationQuaternion(*pending);
             if (impl_->overlayView_) {
               impl_->overlayView_->update();
             }
           }
-        }
+        });
       });
   impl_->viewOrientationWidget_->show();
   for (int i = 0; i < ArtifactCompositionEditor::Impl::kViewportPaneCount; ++i) {
@@ -7939,6 +7992,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->topToolbar_->setMovable(false);
   impl_->topToolbar_->setToolButtonStyle(Qt::ToolButtonTextOnly);
   impl_->topToolbar_->setIconSize(QSize(18, 18));
+  impl_->topToolbar_->setFixedHeight(38);
   {
     QPalette pal = impl_->topToolbar_->palette();
     pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
@@ -7967,7 +8021,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     const auto composition = impl_->renderController_
                                  ? impl_->renderController_->composition()
                                  : ArtifactCompositionPtr{};
-    impl_->forEachSecondaryController(
+    // Only active panes need a composition transition.  Updating all three
+    // secondary render controllers on every layout change made Four-Up entry
+    // pay the full renderer setup cost even for panes that were not visible.
+    impl_->forEachActiveSecondaryController(
         [&composition](CompositionRenderController *controller) {
           controller->stop();
           controller->setComposition(composition);
@@ -7977,13 +8034,24 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       impl_->applyFourUpDefaultOrientations();
     }
     if (composition) {
-      impl_->forEachActiveSecondaryController(
-          [](CompositionRenderController *controller) { controller->start(); });
-      impl_->forEachActiveViewport([](CompositionViewport *view, int index) {
-        if (index > 0) {
-          view->requestInitialFit();
-        }
-      });
+      // Starting several renderer/controller pairs synchronously makes Four-Up
+      // entry block the editor. Stagger secondary starts across event-loop
+      // turns so the primary viewport remains responsive while they warm up.
+      const int activeCount = impl_->activeViewportPaneCount();
+      for (int i = 1; i < activeCount; ++i) {
+        QTimer::singleShot((i - 1) * 16, this, [this, i]() {
+          if (!impl_ || i >= impl_->activeViewportPaneCount()) {
+            return;
+          }
+          if (auto *paneState = impl_->pane(i);
+              paneState && paneState->controller) {
+            paneState->controller->start();
+            if (paneState->view) {
+              paneState->view->requestInitialFit();
+            }
+          }
+        });
+      }
     }
     impl_->syncOverlayGeometry(this);
   };
@@ -8297,12 +8365,12 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->viewportRenderOutputAction_->setShortcut(
       QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_S));
   impl_->viewportRenderOutputAction_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-  impl_->screenshotButton_ = new QToolButton(this);
+  impl_->screenshotButton_ = new QToolButton(impl_->topToolbar_);
   impl_->screenshotButton_->setText(QStringLiteral("Screenshot"));
   impl_->screenshotButton_->setMenu(screenshotMenu);
   impl_->screenshotButton_->setPopupMode(QToolButton::InstantPopup);
   impl_->topToolbar_->addWidget(impl_->screenshotButton_);
-  impl_->viewportRenderOutputButton_ = new QToolButton(this);
+  impl_->viewportRenderOutputButton_ = new QToolButton(impl_->topToolbar_);
   impl_->viewportRenderOutputButton_->setText(QStringLiteral("Render Output"));
   impl_->viewportRenderOutputButton_->setToolTip(
       QStringLiteral("Open the viewport render output export dialog"));
@@ -8350,7 +8418,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       action->setToolTip(QStringLiteral("Enter Anchor editing; drag the anchor point directly in the viewport."));
     }
     toolGroup->addAction(action);
-    connect(action, &QAction::triggered, this, [this, toolType, text]() {
+    connect(action, &QAction::triggered, this,
+            [this, toolType, text, iconName]() {
       if (auto *toolManager =
               ArtifactApplicationManager::instance()
                   ? ArtifactApplicationManager::instance()->toolManager()
@@ -8359,23 +8428,24 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       }
       if (impl_->toolModeButton_) {
         impl_->toolModeButton_->setText(text);
+        impl_->toolModeButton_->setIcon(loadIconWithFallback(iconName));
       }
     });
   };
   addToolAction(QStringLiteral("Select"),
-                QStringLiteral("MaterialVS/neutral/select.svg"),
+                QStringLiteral("Studio/toolbar_tool_select.svg"),
                 ToolType::Selection, true);
   addToolAction(QStringLiteral("Hand"),
-                QStringLiteral("MaterialVS/neutral/hand.svg"), ToolType::Hand,
+                QStringLiteral("Studio/toolbar_tool_hand.svg"), ToolType::Hand,
                 false);
   addToolAction(QStringLiteral("Mask"),
-                QStringLiteral("MaterialVS/neutral/draw.svg"), ToolType::Pen,
+                QStringLiteral("Studio/toolbar_tool_pen.svg"), ToolType::Pen,
                 false);
   addToolAction(QStringLiteral("Shape"),
-                QStringLiteral("MaterialVS/neutral/select.svg"), ToolType::Shape,
+                QStringLiteral("Studio/toolbar_tool_shape.svg"), ToolType::Shape,
                 false);
   addToolAction(QStringLiteral("Anchor"),
-                QStringLiteral("MaterialVS/neutral/transform.svg"),
+                QStringLiteral("Studio/toolbar_tool_anchor.svg"),
                 ToolType::AnchorPoint, false);
   impl_->workspaceModeButton_ = new ViewportLayoutButton(impl_->topToolbar_);
   impl_->workspaceModeButton_->setObjectName(QStringLiteral("compositionWorkspaceModeButton"));
@@ -8421,8 +8491,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   }
   impl_->topToolbar_->addWidget(impl_->workspaceModeButton_);
 
-  impl_->toolModeButton_ = new QToolButton(this);
+  impl_->toolModeButton_ = new QToolButton(impl_->topToolbar_);
   impl_->toolModeButton_->setText(QStringLiteral("Select"));
+  impl_->toolModeButton_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/toolbar_tool_select.svg")));
+  impl_->toolModeButton_->setToolButtonStyle(Qt::ToolButtonIconOnly);
   impl_->toolModeButton_->setMenu(toolMenu);
   impl_->toolModeButton_->setPopupMode(QToolButton::InstantPopup);
   impl_->toolModeButton_->setToolTip(QStringLiteral("Select current editing tool. Mask opens mask editing. Anchor opens pivot editing."));
@@ -8477,7 +8550,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                          });
                      impl_->refreshViewportStateLabels();
                    });
-  impl_->gizmoModeButton_ = new QToolButton(this);
+  impl_->gizmoModeButton_ = new QToolButton(impl_->topToolbar_);
   impl_->gizmoModeButton_->setText(impl_->gizmoButtonLabel());
   impl_->gizmoModeButton_->setMenu(gizmoMenu);
   impl_->gizmoModeButton_->setIcon(
@@ -8490,8 +8563,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->chromeStrip_->setFrameShape(QFrame::StyledPanel);
   impl_->chromeStrip_->setFrameShadow(QFrame::Plain);
   impl_->chromeStrip_->setAutoFillBackground(true);
-  impl_->chromeStrip_->setMinimumHeight(44);
-  impl_->chromeStrip_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+  impl_->chromeStrip_->setMinimumHeight(40);
+  impl_->chromeStrip_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
   {
     QPalette pal = impl_->chromeStrip_->palette();
     pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
@@ -8512,6 +8585,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->chromeMetaLabel_ =
       new QLabel(QStringLiteral("Render paused  |  No focus"),
                  impl_->chromeStrip_);
+  impl_->chromeMetaLabel_->hide();
   QFont titleFont = impl_->chromeTitleLabel_->font();
   titleFont.setBold(true);
   titleFont.setPointSize(std::max(8, titleFont.pointSize()));
@@ -8578,7 +8652,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   };
   addPivotAction(QStringLiteral("Pivot: Center"), true, false);
   addPivotAction(QStringLiteral("Pivot: Top Left"), false, false);
-  impl_->pivotModeButton_ = new QToolButton(this);
+  impl_->pivotModeButton_ = new QToolButton(impl_->topToolbar_);
   impl_->pivotModeButton_->setText(QStringLiteral("Pivot"));
   impl_->pivotModeButton_->setMenu(pivotMenu);
   impl_->pivotModeButton_->setPopupMode(QToolButton::InstantPopup);
@@ -8615,10 +8689,92 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      }
                    });
 
+  const auto configureHud = [&theme](QToolBar *hud) {
+    hud->setMovable(false);
+    hud->setFloatable(false);
+    hud->setIconSize(QSize(20, 20));
+    hud->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    hud->setAutoFillBackground(true);
+    QPalette pal = hud->palette();
+    pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::WindowText, QColor(theme.textColor));
+    pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
+    hud->setPalette(pal);
+    hud->hide();
+  };
+  const auto moveToolbarWidget = [](QToolBar *from, QToolBar *to,
+                                    QWidget *widget) {
+    if (!from || !to || !widget) {
+      return;
+    }
+    const auto actions = from->actions();
+    for (QAction *action : actions) {
+      if (from->widgetForAction(action) == widget) {
+        from->removeAction(action);
+        to->addAction(action);
+        return;
+      }
+    }
+  };
+
+  impl_->toolHud_ = new QToolBar(this);
+  configureHud(impl_->toolHud_);
+  moveToolbarWidget(impl_->topToolbar_, impl_->toolHud_, impl_->toolModeButton_);
+  moveToolbarWidget(impl_->topToolbar_, impl_->toolHud_, impl_->gizmoModeButton_);
+  moveToolbarWidget(impl_->topToolbar_, impl_->toolHud_, impl_->pivotModeButton_);
+  impl_->gizmoModeButton_->setToolButtonStyle(Qt::ToolButtonIconOnly);
+  impl_->gizmoModeButton_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/toolbar_tool_move.svg")));
+  impl_->pivotModeButton_->setToolButtonStyle(Qt::ToolButtonIconOnly);
+  impl_->pivotModeButton_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/toolbar_tool_anchor.svg")));
+  impl_->editTextAction_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/toolbar_tool_text.svg")));
+  impl_->motionPathAction_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/toolbar_tool_pen.svg")));
+  impl_->toolHud_->addAction(impl_->editTextAction_);
+  impl_->toolHud_->addAction(impl_->motionPathAction_);
+
+  impl_->zoomHud_ = new QToolBar(this);
+  configureHud(impl_->zoomHud_);
+  impl_->resetAction_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/toolbar_home_surface.svg")));
+  impl_->zoomInAction_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/toolbar_zoom_in.svg")));
+  impl_->zoomOutAction_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/toolbar_zoom_out.svg")));
+  impl_->zoomFitAction_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/toolbar_zoom_fit.svg")));
+  impl_->zoom100Action_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/toolbar_zoom_100.svg")));
+  impl_->immersiveAction_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/fit_screen.svg")));
+  for (QAction *action : {impl_->resetAction_, impl_->zoomOutAction_,
+                          impl_->zoomInAction_, impl_->zoomFitAction_,
+                          impl_->zoom100Action_, impl_->immersiveAction_}) {
+    impl_->topToolbar_->removeAction(action);
+    impl_->zoomHud_->addAction(action);
+  }
+
+  const auto topActions = impl_->topToolbar_->actions();
+  for (QAction *action : topActions) {
+    QWidget *widget = impl_->topToolbar_->widgetForAction(action);
+    const bool keep = action == impl_->previewOrbitAction_ ||
+                      widget == impl_->viewportLayoutButton_ ||
+                      widget == impl_->viewPresetButton_ ||
+                      widget == impl_->workspaceModeButton_ ||
+                      widget == impl_->viewportRenderOutputButton_;
+    if (!keep) {
+      impl_->topToolbar_->removeAction(action);
+    }
+  }
+  impl_->viewportRenderOutputButton_->setText(QStringLiteral("Render"));
+
   // Bottom Bar (Viewer Controls)
   impl_->bottomBar_ = new QWidget(this);
   impl_->bottomBar_->setMinimumHeight(28);
-  impl_->bottomBar_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+  impl_->bottomBar_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
   impl_->bottomBar_->setAutoFillBackground(true);
   {
     QPalette pal = impl_->bottomBar_->palette();
@@ -8651,7 +8807,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   // Fast Preview Button (Lightning)
   impl_->fastPreviewBtn_ = new QToolButton(impl_->bottomBar_);
-  impl_->fastPreviewBtn_->setText("⚡"); // Lightning icon
+  impl_->fastPreviewBtn_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/quality_preview.svg")));
   impl_->fastPreviewBtn_->setToolTip("Fast Preview (Lightning)");
   impl_->fastPreviewBtn_->setPopupMode(QToolButton::InstantPopup);
   {
@@ -8692,7 +8849,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   // Display Options Button (Background / Grid / Guides)
   impl_->displayOptionsBtn_ = new QToolButton(impl_->bottomBar_);
-  impl_->displayOptionsBtn_->setText("👁"); // View options icon
+  impl_->displayOptionsBtn_->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/viewmenu_panels.svg")));
   impl_->displayOptionsBtn_->setToolTip(
       "Choose background, grid, and guide options");
   impl_->displayOptionsBtn_->setPopupMode(QToolButton::InstantPopup);
@@ -9485,9 +9643,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   // Assembly
   mainLayout->addWidget(impl_->topToolbar_);
-  mainLayout->addWidget(impl_->chromeStrip_);
   mainLayout->addWidget(impl_->viewportHost_, 1);
-  mainLayout->addWidget(impl_->bottomBar_);
   impl_->topToolbar_->setAutoFillBackground(true);
   QPalette topPalette = impl_->topToolbar_->palette();
   topPalette.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
@@ -10032,7 +10188,21 @@ void ArtifactCompositionEditor::resizeEvent(QResizeEvent *event) {
   installEventFilter(this);
 }
 
-ArtifactCompositionEditor::~ArtifactCompositionEditor() { delete impl_; }
+ArtifactCompositionEditor::~ArtifactCompositionEditor() {
+  // QToolBar::addWidget() creates QWidgetAction wrappers.  Tear those wrappers
+  // down while Impl and every toolbar-owned widget are still valid instead of
+  // leaving their release order to QWidget's generic child cleanup.
+  if (impl_) {
+    delete impl_->toolHud_;
+    impl_->toolHud_ = nullptr;
+    delete impl_->zoomHud_;
+    impl_->zoomHud_ = nullptr;
+    delete impl_->topToolbar_;
+    impl_->topToolbar_ = nullptr;
+  }
+  delete impl_;
+  impl_ = nullptr;
+}
 
 bool ArtifactCompositionEditor::event(QEvent *event) {
   // internal event を正規経路にして、Qt signal/slot 直結へ戻しにくくする。

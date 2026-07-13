@@ -70,6 +70,18 @@ public:
     void drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
     void drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity = 1.0f);
     void drawSolidRectTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const FloatColor& color, float opacity = 1.0f);
+    void drawGradientRectTransformed(float x, float y, float w, float h,
+                                     const QMatrix4x4& transform,
+                                     const FloatColor& startColor,
+                                     const FloatColor& endColor,
+                                     int fillType,
+                                     float angleDegrees,
+                                     bool reverse = false,
+                                     float centerX = 0.5f,
+                                     float centerY = 0.5f,
+                                     float scale = 1.0f,
+                                     float offset = 0.0f,
+                                     float opacity = 1.0f);
     void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
     void drawLineLocal(float2 p1, float2 p2, const FloatColor& c1, const FloatColor& c2);
     // Quad vertices are expected in triangle-strip order.

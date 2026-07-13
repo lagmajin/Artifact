@@ -1,7 +1,7 @@
 ﻿module;
 #include <utility>
 #include <QMenu>
-#include <QMainWindow>
+#include <QWidget>
 #include <wobjectimpl.h>
 export module Artifact.Menu.View;
 
@@ -16,7 +16,7 @@ export namespace Artifact {
   explicit ArtifactViewMenu(QWidget*parent=nullptr);
   ~ArtifactViewMenu();
 
-  void setMainWindow(QMainWindow* mw);
+  void setMainWindow(QWidget* mw);
 
  public /*slots*/:
   void registerView(const QString& name, QWidget* view);

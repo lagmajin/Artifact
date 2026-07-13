@@ -5,7 +5,7 @@ module;
 #include <QIcon>
 #include <QMenu>
 #include <QRect>
-#include <QMainWindow>
+#include <QWidget>
 #include <QString>
 #include <QWidget>
 #include <wobjectimpl.h>
@@ -22,7 +22,7 @@ import Utils.Path;
 namespace Artifact {
 
 namespace {
-QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
+QDockWidget* findDockByTitle(QWidget* window, const QString& title)
 {
  if (!window) return nullptr;
  const auto docks = window->findChildren<QDockWidget*>();
@@ -34,7 +34,7 @@ QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
  return nullptr;
 }
 
-void setDockVisible(QMainWindow* window, const QString& title, bool visible)
+void setDockVisible(QWidget* window, const QString& title, bool visible)
 {
  auto* dock = findDockByTitle(window, title);
  if (!dock) return;
@@ -42,7 +42,7 @@ void setDockVisible(QMainWindow* window, const QString& title, bool visible)
  if (visible) dock->raise();
 }
 
-void activateDock(QMainWindow* window, const QString& title)
+void activateDock(QWidget* window, const QString& title)
 {
  auto* dock = findDockByTitle(window, title);
  if (!dock) return;
@@ -51,7 +51,7 @@ void activateDock(QMainWindow* window, const QString& title)
  dock->activateWindow();
 }
 
-void addFloatingDock(QMainWindow* window, const QString& title,
+void addFloatingDock(QWidget* window, const QString& title,
                      const QString& dockId, QWidget* widget,
                      const QRect& floatingGeometry)
 {
@@ -61,7 +61,6 @@ void addFloatingDock(QMainWindow* window, const QString& title,
  dock->setWidget(widget);
  dock->setFloating(true);
  dock->setGeometry(floatingGeometry);
- window->addDockWidget(Qt::RightDockWidgetArea, dock);
  dock->show();
 }
 
@@ -231,7 +230,7 @@ ArtifactTimeMenu::Impl::Impl(ArtifactTimeMenu* menu)
 
 void ArtifactTimeMenu::Impl::showPlaybackControl()
 {
-  if (auto* mw = qobject_cast<QMainWindow*>(menu_ ? menu_->window() : nullptr)) {
+  if (auto* mw = qobject_cast<QWidget*>(menu_ ? menu_->window() : nullptr)) {
     const QString dockTitle = QStringLiteral("Playback Control");
     if (findDockByTitle(mw, dockTitle)) {
       setDockVisible(mw, dockTitle, true);

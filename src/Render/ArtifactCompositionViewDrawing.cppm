@@ -11,6 +11,7 @@ module;
 #include <QSizeF>
 #include <QString>
 #include <QUuid>
+#include <Layer/ArtifactSolidGradientUtil.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -407,6 +408,24 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
     mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
   }
 
+  if (hasMasks) {
+    // Layer masks define the source alpha seen by rasterizer effects. Applying
+    // them first prevents effects such as Drop Shadow from sampling pixels
+    // that the layer mask has already removed.
+    const QRectF lb = targetLayer->localBounds();
+    const float scaleX = static_cast<float>(mat.cols) /
+                         std::max(1.0f, static_cast<float>(lb.width()));
+    const float scaleY = static_cast<float>(mat.rows) /
+                         std::max(1.0f, static_cast<float>(lb.height()));
+    const float maskOffsetX = static_cast<float>(-lb.x() * scaleX);
+    const float maskOffsetY = static_cast<float>(-lb.y() * scaleY);
+    for (int m = 0; m < targetLayer->maskCount(); ++m) {
+      LayerMask mask = targetLayer->mask(m);
+      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY,
+                        scaleX, scaleY);
+    }
+  }
+
   if (hasRasterizerEffect) {
     ArtifactCore::ImageF32x4_RGBA cpuImage;
     cpuImage.setFromCVMat(mat);
@@ -456,20 +475,6 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
     mat = current.image().toCVMat();
   }
 
-  if (hasMasks) {
-    // Mask vertices are stored in layer-local space (centered at 0,0).
-    // Translate to pixel space: pixel = localPos - localBounds.topLeft()
-    const QRectF lb = targetLayer->localBounds();
-    const float scaleX = static_cast<float>(mat.cols) / std::max(1.0f, static_cast<float>(lb.width()));
-    const float scaleY = static_cast<float>(mat.rows) / std::max(1.0f, static_cast<float>(lb.height()));
-    const float maskOffsetX = static_cast<float>(-lb.x() * scaleX);
-    const float maskOffsetY = static_cast<float>(-lb.y() * scaleY);
-    for (int m = 0; m < targetLayer->maskCount(); ++m) {
-      LayerMask mask = targetLayer->mask(m);
-      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY, scaleX, scaleY);
-    }
-  }
-
   outBuffer->setFromCVMat(mat);
   return true;
 }
@@ -499,6 +504,21 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
   }
 
   cv::Mat mat = surface.toCVMat();
+
+  if (hasMasks) {
+    const QRectF lb = targetLayer->localBounds();
+    const float scaleX = static_cast<float>(mat.cols) /
+                         std::max(1.0f, static_cast<float>(lb.width()));
+    const float scaleY = static_cast<float>(mat.rows) /
+                         std::max(1.0f, static_cast<float>(lb.height()));
+    const float maskOffsetX = static_cast<float>(-lb.x() * scaleX);
+    const float maskOffsetY = static_cast<float>(-lb.y() * scaleY);
+    for (int m = 0; m < targetLayer->maskCount(); ++m) {
+      LayerMask mask = targetLayer->mask(m);
+      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY,
+                        scaleX, scaleY);
+    }
+  }
 
   if (hasRasterizerEffect) {
     ArtifactCore::ImageF32x4RGBAWithCache current(surface);
@@ -535,20 +555,6 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
     }
 
     mat = current.image().toCVMat();
-  }
-
-  if (hasMasks) {
-    const QRectF lb = targetLayer->localBounds();
-    const float scaleX =
-        static_cast<float>(mat.cols) / std::max(1.0f, static_cast<float>(lb.width()));
-    const float scaleY =
-        static_cast<float>(mat.rows) / std::max(1.0f, static_cast<float>(lb.height()));
-    const float maskOffsetX = static_cast<float>(-lb.x() * scaleX);
-    const float maskOffsetY = static_cast<float>(-lb.y() * scaleY);
-    for (int m = 0; m < targetLayer->maskCount(); ++m) {
-      LayerMask mask = targetLayer->mask(m);
-      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY, scaleX, scaleY);
-    }
   }
 
   outBuffer->setFromCVMat(mat);
@@ -1033,11 +1039,37 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           std::max(1, static_cast<int>(std::ceil(localRect.width()))),
           std::max(1, static_cast<int>(std::ceil(localRect.height()))));
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-      surface.fill(toQColor(color));
+      if (solid2D->fillType() != ArtifactSolidFillType::Solid) {
+        surface = ArtifactSolidGradientUtil::makeSolidGradientImage(
+            surfaceSize,
+            QColor::fromRgbF(solid2D->gradientStartColor().r(), solid2D->gradientStartColor().g(),
+                             solid2D->gradientStartColor().b(), solid2D->gradientStartColor().a()),
+            QColor::fromRgbF(solid2D->gradientEndColor().r(), solid2D->gradientEndColor().g(),
+                             solid2D->gradientEndColor().b(), solid2D->gradientEndColor().a()),
+            static_cast<int>(solid2D->fillType()), solid2D->gradientAngleDegrees(),
+            solid2D->gradientReverse(), solid2D->gradientCenterX(), solid2D->gradientCenterY(),
+            solid2D->gradientScale(), solid2D->gradientOffset());
+      } else {
+        surface.fill(toQColor(color));
+      }
       applySurfaceAndDraw(surface, localRect, true);
     } else {
       const float baseOpacity =
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      if (solid2D->fillType() != ArtifactSolidFillType::Solid) {
+        drawWithClonerEffect(
+            layer, globalTransform4x4,
+            [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+              renderer->drawGradientRectTransformed(
+                  static_cast<float>(localRect.x()), static_cast<float>(localRect.y()),
+                  static_cast<float>(localRect.width()), static_cast<float>(localRect.height()),
+                  instanceTransform, solid2D->gradientStartColor(), solid2D->gradientEndColor(),
+                  static_cast<int>(solid2D->fillType()), solid2D->gradientAngleDegrees(),
+                  solid2D->gradientReverse(), solid2D->gradientCenterX(), solid2D->gradientCenterY(),
+                  solid2D->gradientScale(), solid2D->gradientOffset(), baseOpacity * instanceWeight);
+            });
+        return;
+      }
       drawWithClonerEffect(
           layer, globalTransform4x4,
           [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
@@ -1066,8 +1098,19 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       }
       applySurfaceAndDraw(surface, localRect, true);
     } else if (gradientEnabled) {
-      const QImage surface = solidImage->toQImage();
-      applySurfaceAndDraw(surface, localRect, true);
+      const float baseOpacity =
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(
+          layer, globalTransform4x4,
+          [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+            renderer->drawGradientRectTransformed(
+                static_cast<float>(localRect.x()), static_cast<float>(localRect.y()),
+                static_cast<float>(localRect.width()), static_cast<float>(localRect.height()),
+                instanceTransform, solidImage->gradientStartColor(), solidImage->gradientEndColor(),
+                static_cast<int>(solidImage->fillType()), solidImage->gradientAngleDegrees(),
+                solidImage->gradientReverse(), solidImage->gradientCenterX(), solidImage->gradientCenterY(),
+                solidImage->gradientScale(), solidImage->gradientOffset(), baseOpacity * instanceWeight);
+          });
     } else {
       const float baseOpacity =
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());

@@ -933,7 +933,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
         return;
     }
 
-    const double fps = std::max(1.0, frameRate_.framerate());
+    const double fps = std::max<double>(1.0, frameRate_.framerate());
     constexpr int64_t kMaxCatchUpSteps = 8;
     const int64_t stepCount = std::min(advancedFrames, kMaxCatchUpSteps);
     const float fixedDeltaSeconds = static_cast<float>(1.0 / fps);

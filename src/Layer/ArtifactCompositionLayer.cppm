@@ -266,7 +266,7 @@ void ArtifactCompositionLayer::fromJsonProperties(const QJsonObject &obj) {
   impl_->exposedPropertyOverrides_.clear();
   const QJsonObject overrides =
       obj.value("masterPropertyOverrides").toObject();
-  for (auto it = overrides.cbegin(); it != overrides.cend(); ++it) {
+  for (auto it = overrides.begin(); it != overrides.end(); ++it) {
     if (impl_->exposedProperties_.contains(it.key())) {
       impl_->exposedPropertyOverrides_.insert(it.key(), it.value().toVariant());
     }

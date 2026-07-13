@@ -35,12 +35,11 @@ module;
 #include <QUuid>
 export module Artifact.Layer.Audio;
 
-namespace ArtifactCore { class LipSyncTrack; }
 namespace Artifact { class ArtifactSwitchLayer; }
-
 
 import Audio.Volume;
 import Audio.Segment;
+import Audio.LipSyncTrack;
 import Artifact.Audio.Waveform;
 import Artifact.Layer.Abstract;
 

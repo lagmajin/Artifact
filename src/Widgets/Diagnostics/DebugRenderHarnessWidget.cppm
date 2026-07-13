@@ -207,6 +207,8 @@ public:
     QLabel* reportMeta_ = nullptr;
     QLabel* healthState_ = nullptr;
     QLabel* healthReason_ = nullptr;
+    QLabel* failureSummary_ = nullptr;
+    QLabel* failureDetails_ = nullptr;
     QPlainTextEdit* overview_ = nullptr;
     QToolButton* copyReportButton_ = nullptr;
     QToolButton* saveReportButton_ = nullptr;
@@ -252,6 +254,14 @@ public:
         auto* headerText = new QVBoxLayout();
         headerText->setContentsMargins(0, 0, 0, 0);
         headerText->setSpacing(2);
+        auto* headerTitle = new QLabel(QStringLiteral("DEBUG RENDER HARNESS"), header);
+        headerTitle->setPalette(headerPalette);
+        QFont headerTitleFont = headerTitle->font();
+        headerTitleFont.setBold(true);
+        headerTitleFont.setPointSize(std::max(11, headerTitleFont.pointSize() + 2));
+        headerTitle->setFont(headerTitleFont);
+        headerText->addWidget(headerTitle);
+
         summary_ = new QLabel(header);
         summary_->setPalette(headerPalette);
         summary_->setTextFormat(Qt::PlainText);
@@ -272,17 +282,17 @@ public:
         headerLayout->addLayout(headerText, 1);
 
         copyReportButton_ = new QToolButton(header);
-        copyReportButton_->setText(QStringLiteral("Copy"));
+        copyReportButton_->setText(QStringLiteral("Copy Report"));
         copyReportButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         copyReportButton_->setToolTip(QStringLiteral("Copy the current smoke report to the clipboard"));
-        copyReportButton_->setFixedWidth(72);
+        copyReportButton_->setFixedWidth(108);
         headerLayout->addWidget(copyReportButton_);
 
         saveReportButton_ = new QToolButton(header);
-        saveReportButton_->setText(QStringLiteral("Save"));
+        saveReportButton_->setText(QStringLiteral("Save Report"));
         saveReportButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         saveReportButton_->setToolTip(QStringLiteral("Save the current smoke report to a text file"));
-        saveReportButton_->setFixedWidth(72);
+        saveReportButton_->setFixedWidth(108);
         headerLayout->addWidget(saveReportButton_);
 
         layout->addWidget(header);
@@ -347,7 +357,24 @@ public:
         auto* reportLayout = new QVBoxLayout(reportPanel);
         reportLayout->setContentsMargins(8, 8, 8, 8);
         reportLayout->setSpacing(6);
-        auto* reportTitle = new QLabel(QStringLiteral("RAW REPORT"), reportPanel);
+        auto* failureTitle = new QLabel(QStringLiteral("FAILURE SUMMARY"), reportPanel);
+        failureTitle->setFont(sectionFont);
+        reportLayout->addWidget(failureTitle);
+
+        failureSummary_ = new QLabel(reportPanel);
+        QFont failureFont = failureSummary_->font();
+        failureFont.setBold(true);
+        failureFont.setPointSize(std::max(11, failureFont.pointSize() + 2));
+        failureSummary_->setFont(failureFont);
+        failureSummary_->setWordWrap(true);
+        reportLayout->addWidget(failureSummary_);
+
+        failureDetails_ = new QLabel(reportPanel);
+        failureDetails_->setWordWrap(true);
+        failureDetails_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        reportLayout->addWidget(failureDetails_);
+
+        auto* reportTitle = new QLabel(QStringLiteral("REPORT DETAILS"), reportPanel);
         reportTitle->setFont(sectionFont);
         reportLayout->addWidget(reportTitle);
 
@@ -404,7 +431,7 @@ public:
         splitter->setSizes({170, 760, 300});
         contentSplitter->setStretchFactor(0, 3);
         contentSplitter->setStretchFactor(1, 2);
-        contentSplitter->setSizes({430, 250});
+        contentSplitter->setSizes({470, 300});
         layout->addWidget(splitter, 1);
 
         QObject::connect(copyReportButton_, &QToolButton::clicked, owner_, [this]() {
@@ -885,9 +912,10 @@ public:
             preview_->update();
         }
         if (reportMeta_) {
-            reportMeta_->setText(QStringLiteral("%1  |  %2  |  viewport %3x%4")
-                                     .arg(reportId)
+            reportMeta_->setText(QStringLiteral("Preset %1  |  %2  |  %3  |  viewport %4x%5")
+                                     .arg(scenePreset_)
                                      .arg(statusText)
+                                     .arg(reportId)
                                      .arg(previewSize().width())
                                      .arg(previewSize().height()));
         }
@@ -923,7 +951,7 @@ public:
                 hasSnapshot_ && snapshot_.failed
                     ? QStringLiteral("FAILED")
                     : (previewImage.isNull() ? QStringLiteral("NEEDS ATTENTION")
-                                             : QStringLiteral("HEALTHY"));
+                                             : QStringLiteral("READY"));
             healthState_->setText(healthText);
             QPalette healthPalette = healthState_->palette();
             healthPalette.setColor(
@@ -942,7 +970,42 @@ public:
                            : snapshot_.failureReason)
                     : (previewImage.isNull()
                            ? QStringLiteral("Diagnostics are available, but the preview image is missing.")
-                           : QStringLiteral("Preview and frame diagnostics are available.")));
+                    : QStringLiteral("Preview and frame diagnostics are available.")));
+        }
+        if (failureSummary_ && failureDetails_) {
+            const bool failed = hasSnapshot_ && snapshot_.failed;
+            const bool missingPreview = previewImage.isNull();
+            const QString frameText = hasSnapshot_
+                ? QString::number(snapshot_.frame.framePosition())
+                : QStringLiteral("-");
+            const QString backendText = hasSnapshot_ && !snapshot_.renderBackend.isEmpty()
+                ? snapshot_.renderBackend
+                : QStringLiteral("<none>");
+            const QString cacheText = hasSnapshot_ ? cacheHealthText() : QStringLiteral("unknown");
+            const QString videoText = hasSnapshot_ ? videoStateText() : QStringLiteral("none");
+            const QString headline = failed
+                ? QStringLiteral("FAILED — %1")
+                      .arg(snapshot_.failureReason.isEmpty()
+                               ? QStringLiteral("Captured frame reported a failure")
+                               : snapshot_.failureReason)
+                : (missingPreview
+                       ? QStringLiteral("NEEDS ATTENTION — Preview unavailable")
+                       : QStringLiteral("READY — Preview and diagnostics captured"));
+            failureSummary_->setText(headline);
+            failureDetails_->setText(
+                failed
+                    ? QStringLiteral("Frame %1  |  %2  |  videoState=%3  |  cacheHealth=%4\nThe frame was captured, but one or more render resources did not complete. Use Report Details to identify the first failing state.")
+                          .arg(frameText, backendText, videoText, cacheText)
+                    : (missingPreview
+                           ? QStringLiteral("Diagnostics are available, but the preview image is missing.")
+                           : QStringLiteral("Frame %1  |  %2\nUse Copy Report or Save Report to share this capture with the frame debugger.")
+                                 .arg(frameText, backendText)));
+            QPalette failurePalette = failureSummary_->palette();
+            failurePalette.setColor(QPalette::WindowText,
+                                    failed ? QColor::fromRgb(255, 105, 105)
+                                           : (missingPreview ? QColor::fromRgb(255, 196, 92)
+                                                             : QColor::fromRgb(106, 218, 148)));
+            failureSummary_->setPalette(failurePalette);
         }
         if (overview_) {
             const auto* videoResource = capturedVideoResource();

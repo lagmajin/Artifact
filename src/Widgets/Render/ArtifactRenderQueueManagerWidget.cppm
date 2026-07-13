@@ -72,6 +72,8 @@ namespace Artifact
  using namespace ArtifactCore;
 
  namespace {
+ QIcon loadIconWithFallback(const QString& fileName);
+
  class RenderQueueSearchEdit final : public QLineEdit
  {
  public:
@@ -195,6 +197,7 @@ namespace Artifact
  {
  public:
    QLabel* statusLabel = nullptr;
+   QLabel* statusIconLabel = nullptr;
    QLabel* thumbnailLabel = nullptr;
    QLabel* nameLabel = nullptr;
    QLabel* outputLabel = nullptr;
@@ -206,16 +209,18 @@ namespace Artifact
    {
      setFrameShape(QFrame::StyledPanel);
      auto* root = new QHBoxLayout(this);
-     root->setContentsMargins(10, 8, 10, 8);
-     root->setSpacing(10);
+     root->setContentsMargins(12, 10, 14, 10);
+     root->setSpacing(14);
 
      statusLabel = new QLabel("WAIT");
-     statusLabel->setMinimumWidth(58);
+     statusLabel->setMinimumWidth(86);
      statusLabel->setAlignment(Qt::AlignCenter);
-     root->addWidget(statusLabel);
+     statusIconLabel = new QLabel();
+     statusIconLabel->setFixedSize(18, 18);
+     statusIconLabel->setAlignment(Qt::AlignCenter);
 
      thumbnailLabel = new QLabel(QStringLiteral("PREVIEW"));
-     thumbnailLabel->setFixedSize(112, 62);
+     thumbnailLabel->setFixedSize(280, 172);
      thumbnailLabel->setAlignment(Qt::AlignCenter);
      thumbnailLabel->setScaledContents(false);
      thumbnailLabel->setAutoFillBackground(true);
@@ -226,24 +231,31 @@ namespace Artifact
      root->addWidget(thumbnailLabel);
 
      auto* body = new QVBoxLayout();
-     body->setSpacing(2);
+     body->setSpacing(7);
      nameLabel = new QLabel();
      QFont nameFont = nameLabel->font();
+     nameFont.setPointSize(nameFont.pointSize() + 2);
      nameFont.setBold(true);
      nameLabel->setFont(nameFont);
      outputLabel = new QLabel();
      backendLabel = new QLabel();
-     body->addWidget(nameLabel);
+     outputLabel->setWordWrap(true);
+     backendLabel->setWordWrap(true);
+     auto* cardHeader = new QHBoxLayout();
+     cardHeader->setContentsMargins(0, 0, 0, 0);
+     cardHeader->addWidget(nameLabel, 1);
+     cardHeader->addWidget(statusIconLabel);
+     cardHeader->addWidget(statusLabel);
+     body->addLayout(cardHeader);
      body->addWidget(outputLabel);
      body->addWidget(backendLabel);
-     root->addLayout(body, 1);
-
+     body->addStretch();
      progressBar = new QProgressBar();
      progressBar->setRange(0, 100);
      progressBar->setTextVisible(true);
-     progressBar->setMinimumWidth(150);
-     progressBar->setMaximumWidth(220);
-     root->addWidget(progressBar);
+     progressBar->setMinimumWidth(190);
+     body->addWidget(progressBar);
+     root->addLayout(body, 1);
    }
 
    void setJob(const QString& status, const QString& name, const QString& output,
@@ -251,6 +263,18 @@ namespace Artifact
                int progress, const QColor& accent)
    {
      statusLabel->setText(status.toUpper());
+     QString statusIcon = QStringLiteral("Studio/animationmenu_schedule.svg");
+     if (status.compare(QStringLiteral("Rendering"), Qt::CaseInsensitive) == 0) {
+       statusIcon = QStringLiteral("Studio/figma_media_play.svg");
+     } else if (status.compare(QStringLiteral("Completed"), Qt::CaseInsensitive) == 0) {
+       statusIcon = QStringLiteral("Studio/check_circle.svg");
+     } else if (status.compare(QStringLiteral("Failed"), Qt::CaseInsensitive) == 0) {
+       statusIcon = QStringLiteral("Studio/asset_missing_small.svg");
+     } else if (status.compare(QStringLiteral("Paused"), Qt::CaseInsensitive) == 0) {
+       statusIcon = QStringLiteral("Studio/animationmenu_pause.svg");
+     }
+     statusIconLabel->setPixmap(
+         loadIconWithFallback(statusIcon).pixmap(QSize(16, 16)));
      nameLabel->setText(name);
      outputLabel->setText(errorMessage.trimmed().isEmpty()
          ? QStringLiteral("Output  •  %1").arg(output)
@@ -338,8 +362,14 @@ namespace Artifact
   QLabel* statusLabel = nullptr;
   QLabel* runningCountLabel = nullptr;
   QLabel* queueStateLabel = nullptr;
+  QLabel* filterAllLabel = nullptr;
+  QLabel* filterRunningLabel = nullptr;
+  QLabel* filterQueuedLabel = nullptr;
+  QLabel* filterCompletedLabel = nullptr;
+  QLabel* filterFailedLabel = nullptr;
   QLabel* inspectorJobLabel = nullptr;
-  QLabel* preflightBadge = nullptr;
+   QLabel* preflightBadge = nullptr;
+   QLabel* previewSummaryLabel = nullptr;
   QListWidget* historyListWidget = nullptr;
   QPushButton* clearHistoryButton = nullptr;
    QPushButton* exportHistoryButton = nullptr;
@@ -598,7 +628,6 @@ namespace Artifact
       item->setToolTip(data.tooltip);
       jobListWidget->addItem(item);
       auto* card = new RenderQueueJobCard(jobListWidget);
-      const auto& job = jobs[i];
       card->setJob(normalizeStatus(job.status), job.name,
                    QFileInfo(job.outputPath).fileName(),
                    QStringLiteral("enc:%1  |  render:%2")
@@ -606,7 +635,7 @@ namespace Artifact
                        .arg(shortBackendLabel(job.renderBackend)),
                    job.errorMessage,
                    job.progress, data.textColor);
-      item->setSizeHint(QSize(0, 86));
+      item->setSizeHint(QSize(0, 196));
       jobListWidget->setItemWidget(item, card);
       visibleToSource.push_back(i);
     }
@@ -655,6 +684,11 @@ namespace Artifact
           : (jobs.isEmpty() ? QStringLiteral("Queue is empty")
                             : QStringLiteral("Queue ready")));
     }
+    if (filterAllLabel) filterAllLabel->setText(QStringLiteral("All   %1").arg(jobs.size()));
+    if (filterRunningLabel) filterRunningLabel->setText(QStringLiteral("Running   %1").arg(running));
+    if (filterQueuedLabel) filterQueuedLabel->setText(QStringLiteral("Queued   %1").arg(pending));
+    if (filterCompletedLabel) filterCompletedLabel->setText(QStringLiteral("Completed   %1").arg(done));
+    if (filterFailedLabel) filterFailedLabel->setText(QStringLiteral("Failed   %1").arg(failed));
     if (totalProgressBar) {
       totalProgressBar->setRange(0, 100);
       totalProgressBar->setValue(jobs.isEmpty() ? 0 : totalProgress / jobs.size());
@@ -701,6 +735,7 @@ namespace Artifact
         previewLabel->clear();
         previewLabel->setText(QStringLiteral("Select a job to preview"));
       }
+      if (previewSummaryLabel) previewSummaryLabel->clear();
       syncingJobDetails = false;
       return;
     }
@@ -741,6 +776,20 @@ namespace Artifact
                 .arg(service->jobAudioChannelModeAt(index), audioRateText)
           : QStringLiteral(" | Audio: off");
       const auto preflight = service->preflightRenderQueueAt(index);
+      if (previewSummaryLabel) {
+        int previewStartFrame = 0;
+        int previewEndFrame = 0;
+        service->jobFrameRangeAt(index, &previewStartFrame, &previewEndFrame);
+        previewSummaryLabel->setText(
+            QStringLiteral("Format: %1 (%2)\nResolution: %3 × %4\nFrame Rate: %5 FPS\nFrames: %6 – %7")
+                .arg(outputFormat.isEmpty() ? QStringLiteral("MP4") : outputFormat)
+                .arg(codec.isEmpty() ? QStringLiteral("H.264") : codec)
+                .arg(width > 0 ? QString::number(width) : QStringLiteral("Auto"))
+                .arg(height > 0 ? QString::number(height) : QStringLiteral("Auto"))
+                .arg(fps > 0.0 ? QString::number(fps, 'f', 2) : QStringLiteral("Auto"))
+                .arg(previewStartFrame)
+                .arg(previewEndFrame));
+      }
       outputSettingsSummaryLabel->setText(
           QString("Format: %1 | Codec: %2%3\nBackends: Encode %4  •  Render %5%6\nPreflight: %7 errors  •  %8 warnings")
               .arg(outputFormat.isEmpty() ? QStringLiteral("MP4") : outputFormat)
@@ -807,6 +856,8 @@ namespace Artifact
   
   // Header
   auto* top = new QHBoxLayout();
+  top->setContentsMargins(4, 0, 4, 4);
+  top->setSpacing(12);
   auto* title = new QLabel("RENDER MANAGER");
   title->setObjectName("renderQueueTitle");
   QFont titleFont = title->font();
@@ -819,21 +870,107 @@ namespace Artifact
   impl_->searchEdit = new RenderQueueSearchEdit();
   impl_->searchEdit->setPlaceholderText("Search jobs...");
   impl_->searchEdit->setObjectName("renderQueueSearch");
+  impl_->searchEdit->setMaximumWidth(440);
   impl_->searchEdit->changed = [this](const QString& text) {
     if (!impl_) return;
     impl_->searchQuery = text;
     impl_->updateJobList();
     impl_->handleJobSelected();
   };
+  impl_->addButton = new QPushButton("+  Add Composition");
+  impl_->addButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/add.svg")));
+  {
+    QPalette buttonPalette = impl_->addButton->palette();
+    buttonPalette.setColor(QPalette::Button, QColor(theme.selectionColor));
+    buttonPalette.setColor(QPalette::ButtonText, QColor(theme.textColor));
+    impl_->addButton->setAutoFillBackground(true);
+    impl_->addButton->setPalette(buttonPalette);
+  }
+  auto* batchAllBtn = new QPushButton(QStringLiteral("Add All"));
+  batchAllBtn->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/playlist_add.svg")));
+  batchAllBtn->setToolTip(QStringLiteral("Add all compositions to queue"));
+  auto* batchTmplBtn = new QPushButton(QStringLiteral("Batch Template"));
+  batchTmplBtn->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/compositionmenu_presets.svg")));
+  batchTmplBtn->setToolTip(QStringLiteral("Batch add using a template"));
+  auto* presetButton = new QToolButton();
+  presetButton->setText(QStringLiteral("Preset:  H.264 High Quality"));
+  presetButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/compositionmenu_presets.svg")));
+  presetButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   top->addWidget(title);
-  top->addSpacing(12);
   top->addWidget(impl_->runningCountLabel);
   top->addWidget(impl_->searchEdit, 1);
+  top->addWidget(impl_->addButton);
+  top->addWidget(batchAllBtn);
+  top->addWidget(presetButton);
   layout->addLayout(top);
 
   // Main Splitter
   auto* splitter = new QSplitter(Qt::Horizontal);
   splitter->setChildrenCollapsible(false);
+
+  auto* filterSide = new QFrame();
+  filterSide->setFrameShape(QFrame::StyledPanel);
+  filterSide->setMinimumWidth(216);
+  filterSide->setMaximumWidth(244);
+  auto* filterLayout = new QVBoxLayout(filterSide);
+  filterLayout->setContentsMargins(12, 12, 12, 12);
+  filterLayout->setSpacing(8);
+  auto* filtersTitle = new QLabel(QStringLiteral("FILTERS"));
+  QFont filtersTitleFont = filtersTitle->font();
+  filtersTitleFont.setBold(true);
+  filtersTitle->setFont(filtersTitleFont);
+  filterLayout->addWidget(filtersTitle);
+  const auto addFilterLabel = [&filterLayout, &theme](
+                                  const QString& text,
+                                  const QString& iconName,
+                                  bool active = false) -> QLabel* {
+    auto* rowHost = new QWidget();
+    auto* rowLayout = new QHBoxLayout(rowHost);
+    rowLayout->setContentsMargins(8, 0, 8, 0);
+    rowLayout->setSpacing(9);
+    auto* icon = new QLabel();
+    icon->setFixedSize(18, 18);
+    icon->setPixmap(loadIconWithFallback(iconName).pixmap(QSize(16, 16)));
+    auto* row = new QLabel(text);
+    row->setMinimumHeight(34);
+    row->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+    if (active) {
+      rowHost->setAutoFillBackground(true);
+      QPalette rowPalette = rowHost->palette();
+      rowPalette.setColor(QPalette::Window, QColor(theme.selectionColor).darker(130));
+      rowPalette.setColor(QPalette::WindowText, QColor(theme.textColor));
+      rowHost->setPalette(rowPalette);
+    }
+    rowLayout->addWidget(icon);
+    rowLayout->addWidget(row, 1);
+    filterLayout->addWidget(rowHost);
+    return row;
+  };
+  impl_->filterAllLabel = addFilterLabel(
+      QStringLiteral("All"), QStringLiteral("Studio/effectmenu_layers.svg"), true);
+  impl_->filterRunningLabel = addFilterLabel(
+      QStringLiteral("Running"), QStringLiteral("Studio/figma_media_play.svg"));
+  impl_->filterQueuedLabel = addFilterLabel(
+      QStringLiteral("Queued"), QStringLiteral("Studio/animationmenu_schedule.svg"));
+  impl_->filterCompletedLabel = addFilterLabel(
+      QStringLiteral("Completed"), QStringLiteral("Studio/check_circle.svg"));
+  impl_->filterFailedLabel = addFilterLabel(
+      QStringLiteral("Failed"), QStringLiteral("Studio/asset_missing_small.svg"));
+  auto* filterDivider = new QFrame();
+  filterDivider->setFrameShape(QFrame::HLine);
+  filterDivider->setFrameShadow(QFrame::Sunken);
+  filterLayout->addWidget(filterDivider);
+  addFilterLabel(QStringLiteral("Presets"),
+                 QStringLiteral("Studio/effectmenu_tune.svg"));
+  addFilterLabel(QStringLiteral("History"),
+                 QStringLiteral("Studio/editmenu_history.svg"));
+  filterLayout->addStretch();
+  splitter->addWidget(filterSide);
+
   impl_->jobListWidget = new RenderQueueListWidget();
   impl_->jobListWidget->setObjectName("renderQueueList");
   impl_->jobListWidget->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -851,10 +988,10 @@ namespace Artifact
   };
   impl_->jobListWidget->setAlternatingRowColors(true);
   impl_->jobListWidget->setSpacing(4);
-  impl_->jobListWidget->setMinimumWidth(520);
+  impl_->jobListWidget->setMinimumWidth(560);
   
   auto* leftSide = new QWidget();
-  leftSide->setMinimumWidth(520);
+  leftSide->setMinimumWidth(560);
   auto* leftLayout = new QVBoxLayout(leftSide);
   leftLayout->setContentsMargins(0, 0, 0, 0);
   auto* queueHeader = new QHBoxLayout();
@@ -873,22 +1010,19 @@ namespace Artifact
   leftLayout->addWidget(impl_->jobListWidget);
   
   auto* btnLayout = new QHBoxLayout();
-  impl_->addButton = new QPushButton("+ Add Composition");
   impl_->removeButton = new QPushButton("Remove");
+  impl_->removeButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/delete.svg")));
   impl_->duplicateButton = new QToolButton();
-  impl_->duplicateButton->setText("D");
-  btnLayout->addWidget(impl_->addButton);
-
-  auto* batchAllBtn = new QPushButton(QStringLiteral("Add All"));
-  batchAllBtn->setToolTip(QStringLiteral("Add all compositions to queue"));
-  auto* batchTmplBtn = new QPushButton(QStringLiteral("Batch Template"));
-  batchTmplBtn->setToolTip(QStringLiteral("Batch add using a template"));
-  btnLayout->addWidget(batchAllBtn);
+  impl_->duplicateButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/editmenu_duplicate.svg")));
+  impl_->duplicateButton->setToolTip(QStringLiteral("Duplicate selected job"));
   btnLayout->addWidget(batchTmplBtn);
-
   btnLayout->addWidget(impl_->duplicateButton);
   btnLayout->addStretch();
   impl_->clearButton = new RenderQueueActionButton(QStringLiteral("Clear Completed"));
+  impl_->clearButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/clear_all.svg")));
   impl_->clearButton->action = [this]() {
     if (!impl_ || !impl_->service) return;
     for (int index = impl_->service->jobCount() - 1; index >= 0; --index) {
@@ -900,6 +1034,8 @@ namespace Artifact
   };
   btnLayout->addWidget(impl_->clearButton);
   impl_->rerunDoneFailedButton = new RenderQueueActionButton(QStringLiteral("Retry Failed"));
+  impl_->rerunDoneFailedButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/replay.svg")));
   impl_->rerunDoneFailedButton->action = [this]() {
     if (!impl_ || !impl_->service) return;
     if (impl_->service->resetCompletedAndFailedJobsForRerun() > 0) {
@@ -939,8 +1075,8 @@ namespace Artifact
   detailLayout->addLayout(inspectorHeader);
 
   impl_->previewLabel = new QLabel("Select a job to preview");
-  impl_->previewLabel->setMinimumSize(320, 180);
-  impl_->previewLabel->setMaximumHeight(220);
+  impl_->previewLabel->setMinimumSize(176, 104);
+  impl_->previewLabel->setMaximumSize(220, 132);
   {
     QPalette pal = impl_->previewLabel->palette();
     pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
@@ -950,7 +1086,22 @@ namespace Artifact
   }
   impl_->previewLabel->setAlignment(Qt::AlignCenter);
   impl_->previewLabel->setScaledContents(false);
-  detailLayout->addWidget(impl_->previewLabel);
+  impl_->previewSummaryLabel = new QLabel();
+  impl_->previewSummaryLabel->setWordWrap(true);
+  {
+    QPalette summaryPalette = impl_->previewSummaryLabel->palette();
+    summaryPalette.setColor(QPalette::WindowText, QColor(theme.textColor).darker(110));
+    impl_->previewSummaryLabel->setPalette(summaryPalette);
+  }
+  auto* previewCard = new QFrame();
+  previewCard->setFrameShape(QFrame::StyledPanel);
+  auto* previewCardLayout = new QHBoxLayout(previewCard);
+  previewCardLayout->setContentsMargins(8, 8, 8, 8);
+  previewCardLayout->setSpacing(12);
+  previewCardLayout->addWidget(impl_->previewLabel);
+  previewCardLayout->addWidget(impl_->previewSummaryLabel, 1,
+                               Qt::AlignTop);
+  detailLayout->addWidget(previewCard);
 
   impl_->preflightBadge = new QLabel(QStringLiteral("PREFLIGHT  •  SELECT A JOB"));
   impl_->preflightBadge->setAlignment(Qt::AlignCenter);
@@ -973,6 +1124,8 @@ namespace Artifact
   outputPathRowLayout->setContentsMargins(0, 0, 0, 0);
   outputPathRowLayout->addWidget(impl_->outputPathEdit, 1);
   impl_->outputBrowseButton = new RenderQueueActionButton(QStringLiteral("Browse"));
+  impl_->outputBrowseButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/animationmenu_folder_open.svg")));
   impl_->outputBrowseButton->action = [this]() {
     if (!impl_ || !impl_->service) return;
     const int index = impl_->selectedSourceIndex();
@@ -989,6 +1142,8 @@ namespace Artifact
   outputPathRowLayout->addWidget(impl_->outputBrowseButton);
   outputLayout->addRow("Path:", outputPathRow);
   impl_->outputSettingsButton = new QPushButton("Format...");
+  impl_->outputSettingsButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/compositionmenu_settings.svg")));
   outputLayout->addRow("Settings:", impl_->outputSettingsButton);
   impl_->outputSettingsSummaryLabel = new QLabel("Format: MP4 | Codec: H.264 | Encode: auto | Render: auto");
   impl_->outputSettingsSummaryLabel->setWordWrap(true);
@@ -1046,9 +1201,10 @@ namespace Artifact
   detailLayout->addStretch();
   detailScroll->setWidget(detailWidget);
   splitter->addWidget(detailScroll);
-  splitter->setStretchFactor(0, 3);
-  splitter->setStretchFactor(1, 2);
-  splitter->setSizes({560, 380});
+  splitter->setStretchFactor(0, 0);
+  splitter->setStretchFactor(1, 3);
+  splitter->setStretchFactor(2, 2);
+  splitter->setSizes({224, 760, 400});
   layout->addWidget(splitter, 1);
 
   auto* historyGroup = new QGroupBox("Render History / Log");
@@ -1059,11 +1215,15 @@ namespace Artifact
   auto* historyButtonLayout = new QHBoxLayout();
   impl_->clearHistoryButton = new QPushButton("Clear");
   impl_->exportHistoryButton = new QPushButton("Export...");
+  impl_->clearHistoryButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/clear_all.svg")));
+  impl_->exportHistoryButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/figma_render_export.svg")));
   historyButtonLayout->addWidget(impl_->clearHistoryButton);
   historyButtonLayout->addWidget(impl_->exportHistoryButton);
   historyButtonLayout->addStretch();
   historyLayout->addLayout(historyButtonLayout);
-  historyGroup->setMaximumHeight(170);
+  historyGroup->setFixedHeight(78);
   layout->addWidget(historyGroup);
   impl_->loadHistory();
 
@@ -1073,6 +1233,15 @@ namespace Artifact
   impl_->statusLabel = new QLabel("No active jobs");
   impl_->startButton = new QPushButton("Start Queue");
   impl_->startButton->setObjectName("renderStartBtn");
+  impl_->startButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/figma_media_play.svg")));
+  {
+    QPalette buttonPalette = impl_->startButton->palette();
+    buttonPalette.setColor(QPalette::Button, QColor(theme.selectionColor));
+    buttonPalette.setColor(QPalette::ButtonText, QColor(theme.textColor));
+    impl_->startButton->setAutoFillBackground(true);
+    impl_->startButton->setPalette(buttonPalette);
+  }
   
   auto* activityFrame = new QFrame();
   activityFrame->setFrameShape(QFrame::StyledPanel);
@@ -1086,6 +1255,10 @@ namespace Artifact
   activityLayout->addLayout(progressLayout, 1);
   impl_->pauseButton = new RenderQueueActionButton(QStringLiteral("Pause"));
   impl_->cancelButton = new RenderQueueActionButton(QStringLiteral("Stop"));
+  impl_->pauseButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/animationmenu_pause.svg")));
+  impl_->cancelButton->setIcon(
+      loadIconWithFallback(QStringLiteral("Studio/figma_media_stop.svg")));
   impl_->pauseButton->setEnabled(false);
   impl_->cancelButton->setEnabled(false);
   impl_->pauseButton->action = [this]() {

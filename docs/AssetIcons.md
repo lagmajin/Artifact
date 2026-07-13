@@ -27,6 +27,7 @@ AI が同じメニューを何度も刷新しないための作業ログ。
 | 2026-06-03 | Script menu | `scriptmenu_` | 完了 | 専用 SVG セット化済み。 |
 | 2026-06-03 | Help menu | `helpmenu_` | 完了 | 専用 SVG セット化済み。 |
 | 2026-06-03 | Time menu | `timemenu_` | 完了 | Playback / step / marker / In-Out / loop / timer を専用 SVG 化。欠落参照だった `timer.svg` と `keyboard_double_arrow_*.svg` も解消。 |
+| 2026-07-13 | Animation menu | `animationmenu_` | 完了 | 旧式の色付きタイルを廃止し、透明背景・グレー骨格・意味色アクセントの専用 SVG へ統一。 |
 
 ### 再刷新ルール
 

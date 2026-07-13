@@ -26,7 +26,6 @@ import Container.MultiIndex;
 import Composition.Context;
 import Artifact.Composition.Access;
 import Artifact.Composition.InitParams;
-export import Artifact.Layer.Abstract;
 import Artifact.Composition.Result;
 import Composition.Settings;
 import Audio.Analyze;
@@ -43,6 +42,8 @@ export namespace Artifact {
 
  using namespace ArtifactCore;
 
+ class ArtifactAbstractLayer;
+ using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
  class ArtifactAbstractComposition;
  using ArtifactCompositionPtr = ArtifactCore::SharedPtr<ArtifactAbstractComposition>;
  using ArtifactCompositionWeakPtr = ArtifactCore::WeakPtr<ArtifactAbstractComposition>;

@@ -238,6 +238,19 @@ bool isExpandedInspectorSection(const QString &groupName);
 bool shouldHideInspectorPropertyGroup(const QString &groupName);
 bool isClonerSection(const QString &groupName);
 bool isSourceReframeSection(const QString &groupName);
+
+struct PropertyPresentationProfile {
+  QString id;
+  QStringList visibleGroups;
+};
+
+PropertyPresentationProfile
+propertyPresentationProfile(const ArtifactAbstractLayerPtr &layer);
+bool presentationAllowsGroup(const PropertyPresentationProfile &profile,
+                             const QString &groupName);
+void applyPresentationPropertyRules(
+    const PropertyPresentationProfile &profile, const QString &groupName,
+    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &properties);
 std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
 applyFavoriteFilter(
     const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
@@ -281,6 +294,61 @@ void addRowsFromProperties(
 } // namespace detail
 
 using namespace detail;
+
+namespace detail {
+
+PropertyPresentationProfile
+propertyPresentationProfile(const ArtifactAbstractLayerPtr &layer) {
+  if (layer && layer->getProperty(QStringLiteral("solid.color"))) {
+    return {QStringLiteral("solid"),
+            {QStringLiteral("Initial"), QStringLiteral("Transform"),
+             QStringLiteral("Solid")}};
+  }
+  return {QStringLiteral("default"), {}};
+}
+
+bool presentationAllowsGroup(const PropertyPresentationProfile &profile,
+                             const QString &groupName) {
+  if (profile.visibleGroups.isEmpty()) {
+    return true;
+  }
+  return profile.visibleGroups.contains(groupName.trimmed(),
+                                        Qt::CaseInsensitive);
+}
+
+void applyPresentationPropertyRules(
+    const PropertyPresentationProfile &profile, const QString &groupName,
+    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &properties) {
+  if (profile.id != QStringLiteral("solid") ||
+      groupName.compare(QStringLiteral("Solid"), Qt::CaseInsensitive) != 0) {
+    return;
+  }
+
+  const auto fillMode = std::find_if(
+      properties.begin(), properties.end(), [](const auto &property) {
+        return property && property->getName().compare(
+                               QStringLiteral("solid.fillType"),
+                               Qt::CaseInsensitive) == 0;
+      });
+  const bool usesGradient =
+      fillMode != properties.end() && (*fillMode)->getValue().toInt() != 0;
+  if (usesGradient) {
+    return;
+  }
+
+  std::erase_if(properties, [](const auto &property) {
+    if (!property) {
+      return true;
+    }
+    const QString name = property->getName();
+    return name.compare(QStringLiteral("solid.color"),
+                        Qt::CaseInsensitive) != 0 &&
+           name.compare(QStringLiteral("solid.fillType"),
+                        Qt::CaseInsensitive) != 0;
+  });
+}
+
+} // namespace detail
 
 
 W_OBJECT_IMPL(ArtifactPropertyWidget)
@@ -493,6 +561,12 @@ QString ArtifactPropertyWidget::Impl::computeRebuildSignature() const {
       signature += QStringLiteral("property:");
       signature += property->getName();
       signature += QLatin1Char('\n');
+      if (property->getName().compare(QStringLiteral("solid.fillType"),
+                                      Qt::CaseInsensitive) == 0) {
+        signature += QStringLiteral("structural_value:");
+        signature += property->getValue().toString();
+        signature += QLatin1Char('\n');
+      }
     }
   }
 
@@ -1271,6 +1345,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
   clearLayoutRecursive(mainLayout);
   propertyEditors.clear();
+  const bool embeddedComponentEditor =
+      owner && owner->property("artifactEmbeddedComponentEditor").toBool();
 
   if (!currentLayer && compositionEffects.empty()) {
     QLabel *emptyLabel = new QLabel("Select a layer or composition effect to edit properties");
@@ -1282,8 +1358,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     return;
   }
 
-  if (currentLayer) {
-    const QString layerName = currentLayer->layerName().toQString().trimmed();
+  if (currentLayer && !embeddedComponentEditor) {
+    const QString layerName = currentLayer->layerName().trimmed();
     const QString selectionText = targetLayers.size() > 1
         ? QStringLiteral("%1 Layers Selected").arg(targetLayers.size())
         : (layerName.isEmpty() ? QStringLiteral("Layer Properties") : layerName);
@@ -1300,44 +1376,49 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     mainLayout->addWidget(selectionHeader);
   }
 
-  auto *searchEdit = new QLineEdit();
-  searchEdit->setObjectName(QStringLiteral("propertyFilterEdit"));
-  searchEdit->setPlaceholderText("Search properties...");
-  searchEdit->setText(filterText);
-  applyPropertySearchPalette(searchEdit);
-  QObject::connect(searchEdit, &QLineEdit::textChanged,
-                   [this](const QString &text) {
-                     filterText = text;
-                     scheduleRebuild(80);
-                   });
+  if (!embeddedComponentEditor) {
+    auto *searchEdit = new QLineEdit();
+    searchEdit->setObjectName(QStringLiteral("propertyFilterEdit"));
+    searchEdit->setPlaceholderText("Search properties...");
+    searchEdit->setText(filterText);
+    applyPropertySearchPalette(searchEdit);
+    QObject::connect(searchEdit, &QLineEdit::textChanged,
+                     [this](const QString &text) {
+                       filterText = text;
+                       scheduleRebuild(80);
+                     });
 
-  // Search and favorite filtering are one local browsing decision.
-  auto *favRow = new QWidget();
-  favRow->setObjectName(QStringLiteral("propertySearchRow"));
-  auto *favLayout = new QHBoxLayout(favRow);
-  favLayout->setContentsMargins(0, 0, 0, 0);
-  favLayout->setSpacing(6);
-  favLayout->addWidget(searchEdit, 1);
-  auto *favToggle = new QPushButton(favoriteOnly ? QStringLiteral("★ Only")
-                                                  : QStringLiteral("☆ Only"));
-  favToggle->setCheckable(true);
-  favToggle->setChecked(favoriteOnly);
-  favToggle->setObjectName(QStringLiteral("favoriteToggleButton"));
-  favToggle->setFlat(true);
-  favToggle->setCursor(Qt::PointingHandCursor);
-  favToggle->setToolTip(QStringLiteral("Show only favorite properties"));
-  favLayout->addWidget(favToggle, 0);
-   QObject::connect(favToggle, &QPushButton::toggled, owner,
-                    [this](bool checked) {
-                      if (owner) {
-                        owner->setFavoriteOnly(checked);
-                      }
-                    });
-  mainLayout->addWidget(favRow);
+    // Search and favorite filtering are one local browsing decision.
+    auto *favRow = new QWidget();
+    favRow->setObjectName(QStringLiteral("propertySearchRow"));
+    auto *favLayout = new QHBoxLayout(favRow);
+    favLayout->setContentsMargins(0, 0, 0, 0);
+    favLayout->setSpacing(6);
+    favLayout->addWidget(searchEdit, 1);
+    auto *favToggle = new QPushButton(QStringLiteral("Favorites"));
+    favToggle->setCheckable(true);
+    favToggle->setChecked(favoriteOnly);
+    favToggle->setObjectName(QStringLiteral("favoriteToggleButton"));
+    favToggle->setFlat(true);
+    favToggle->setCursor(Qt::PointingHandCursor);
+    favToggle->setToolTip(QStringLiteral("Show only favorite properties"));
+    favLayout->addWidget(favToggle, 0);
+    QObject::connect(favToggle, &QPushButton::toggled, owner,
+                     [this](bool checked) {
+                       if (owner) {
+                         owner->setFavoriteOnly(checked);
+                       }
+                     });
+    mainLayout->addWidget(favRow);
+  }
 
-  if (currentLayer) {
+  if (currentLayer && !embeddedComponentEditor) {
     auto *stateRow = new QWidget();
     stateRow->setObjectName(QStringLiteral("layerStateToggleRow"));
+    // Visibility/lock/timing state already belongs to the layer panel. Keep
+    // the controls alive for compatibility, but do not spend Property Editor
+    // vertical space on a duplicate toolbar.
+    stateRow->setVisible(false);
     auto *stateLayout = new QHBoxLayout(stateRow);
     stateLayout->setContentsMargins(4, 2, 4, 2);
     stateLayout->setSpacing(4);
@@ -1527,11 +1608,15 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
   const auto effects = layer->getEffects();
   const bool hasFocusedEffect = !focusedEffectId.trimmed().isEmpty();
+  const auto presentationProfile = propertyPresentationProfile(layer);
 
   for (const auto &groupDef : layerGroups) {
     const QString groupName =
         groupDef.name().isEmpty() ? QStringLiteral("Layer") : groupDef.name();
     if (shouldHideInspectorPropertyGroup(groupName)) {
+      continue;
+    }
+    if (!presentationAllowsGroup(presentationProfile, groupName)) {
       continue;
     }
     const bool isSourceReframe = isSourceReframeSection(groupName);
@@ -1540,12 +1625,16 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         applyFavoriteFilter(filteredGroupProperties(
             layer, groupName, inspectorProperties(groupDef.sortedProperties())),
             favoriteOnly);
+    applyPresentationPropertyRules(presentationProfile, groupName, sortedProps);
     if (sortedProps.empty()) {
       continue;
     }
 
+    const bool usesCollapsibleHeader = isExpandedInspectorSection(groupName);
     QGroupBox *group = new QGroupBox(
-        isSourceReframe ? QStringLiteral("Crop / Pan") : groupName);
+        usesCollapsibleHeader
+            ? QString()
+            : (isSourceReframe ? QStringLiteral("Crop / Pan") : groupName));
     auto *groupLayout = new QVBoxLayout(group);
     groupLayout->setContentsMargins(10, 8, 10, 8);
     groupLayout->setSpacing(5);
@@ -1586,7 +1675,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
     QWidget *sectionBody = group;
     CollapsibleSectionButton *collapseButton = nullptr;
-    if (isExpandedInspectorSection(groupName)) {
+    if (usesCollapsibleHeader) {
       collapseButton = new CollapsibleSectionButton(group);
       collapseButton->setText(groupName);
       collapseButton->setChecked(false);
@@ -1877,9 +1966,33 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                              return;
                            }
                            ScopedPropertyEditGuard guard(localPropertyEditDepth);
+                           const auto sourceSize = layer->sourceSize();
+                           const auto cropWidth = layer->getProperty(
+                               QStringLiteral("sourceCrop.cropWidth"));
+                           const auto cropHeight = layer->getProperty(
+                               QStringLiteral("sourceCrop.cropHeight"));
+                           const bool needsInitialCrop =
+                               sourceSize.width > 0 && sourceSize.height > 0 &&
+                               (!cropWidth || !cropHeight ||
+                                cropWidth->getValue().toDouble() <= 0.0 ||
+                                cropHeight->getValue().toDouble() <= 0.0);
                            layer->setLayerPropertyValue(
                                QStringLiteral("sourceCrop.enabled"), true);
+                           if (needsInitialCrop) {
+                             layer->setLayerPropertyValue(
+                                 QStringLiteral("sourceCrop.cropX"), 0.0);
+                             layer->setLayerPropertyValue(
+                                 QStringLiteral("sourceCrop.cropY"), 0.0);
+                             layer->setLayerPropertyValue(
+                                 QStringLiteral("sourceCrop.cropWidth"), sourceSize.width);
+                             layer->setLayerPropertyValue(
+                                 QStringLiteral("sourceCrop.cropHeight"), sourceSize.height);
+                           }
                            notifyLayerPropertyAnimationChanged(layer);
+                           rebuildSignature.clear();
+                           invalidatePropertyValueCache();
+                           pendingScrollGroupName = QStringLiteral("Crop / Pan");
+                           scheduleRebuild(0);
                          });
 
         auto *note = new QLabel(
@@ -1939,6 +2052,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropHeight"), sourceSize.height);
         }
         notifyLayerPropertyAnimationChanged(layer);
+        invalidatePropertyValueCache();
       });
 
       QObject::connect(disableButton, &QPushButton::clicked, group, [this, layer]() {
@@ -1948,6 +2062,9 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         ScopedPropertyEditGuard guard(localPropertyEditDepth);
         layer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"), false);
         notifyLayerPropertyAnimationChanged(layer);
+        rebuildSignature.clear();
+        invalidatePropertyValueCache();
+        scheduleRebuild(0);
       });
 
       auto collectProps = [](const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &src,
@@ -2042,9 +2159,35 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           return;
         }
         ScopedPropertyEditGuard guard(localPropertyEditDepth);
+        const auto enabledProperty =
+            layer->getProperty(QStringLiteral("sourceCrop.enabled"));
+        const bool wasEnabled =
+            enabledProperty && enabledProperty->getValue().toBool();
+        const auto sourceSize = layer->sourceSize();
+        const auto cropWidth =
+            layer->getProperty(QStringLiteral("sourceCrop.cropWidth"));
+        const auto cropHeight =
+            layer->getProperty(QStringLiteral("sourceCrop.cropHeight"));
+        const bool needsInitialCrop =
+            !wasEnabled && sourceSize.width > 0 && sourceSize.height > 0 &&
+            (!cropWidth || !cropHeight ||
+             cropWidth->getValue().toDouble() <= 0.0 ||
+             cropHeight->getValue().toDouble() <= 0.0);
         layer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"), true);
+        if (needsInitialCrop) {
+          layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"), 0.0);
+          layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"), 0.0);
+          layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropWidth"),
+                                       sourceSize.width);
+          layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropHeight"),
+                                       sourceSize.height);
+        }
         notifyLayerPropertyAnimationChanged(layer);
         pendingScrollGroupName = QStringLiteral("Crop / Pan");
+        if (!wasEnabled) {
+          rebuildSignature.clear();
+        }
+        invalidatePropertyValueCache();
         scheduleRebuild(0);
       });
       addedGroupProperties = true;

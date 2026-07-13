@@ -21,6 +21,7 @@ module;
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QVariant>
+#include <DiligentCore/Common/interface/BasicMath.hpp>
 #include <limits>
 
 module Artifact.Layer.Abstract;
@@ -67,6 +68,8 @@ import Event.Bus;
 namespace Artifact {
 
 using namespace ArtifactCore;
+
+using float4x4 = Diligent::float4x4;
 
 W_OBJECT_IMPL(ArtifactAbstractLayer)
 
@@ -2564,6 +2567,26 @@ QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4() const {
   auto parent = parentLayer();
   if (parent) {
     return combineLayerTransform3D(local, parent->getGlobalTransform4x4());
+  }
+  return local;
+}
+
+float4x4 ArtifactAbstractLayer::getLocalTransformMatrix() const {
+  // Transitional boundary: preserve the established layer evaluation
+  // (physics, modifiers and animated property overrides), then leave Qt math
+  // before entering render/gizmo code.
+  const QMatrix4x4 source = getLocalTransform4x4();
+  return float4x4{
+      source(0, 0), source(0, 1), source(0, 2), source(0, 3),
+      source(1, 0), source(1, 1), source(1, 2), source(1, 3),
+      source(2, 0), source(2, 1), source(2, 2), source(2, 3),
+      source(3, 0), source(3, 1), source(3, 2), source(3, 3)};
+}
+
+float4x4 ArtifactAbstractLayer::getGlobalTransformMatrix() const {
+  const float4x4 local = getLocalTransformMatrix();
+  if (const auto parent = parentLayer()) {
+    return parent->getGlobalTransformMatrix() * local;
   }
   return local;
 }

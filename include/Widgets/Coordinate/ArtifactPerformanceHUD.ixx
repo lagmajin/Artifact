@@ -6,10 +6,9 @@
 
 export module Artifact.Widgets.PerformanceHUD;
 
-export namespace Artifact {
+import Artifact.Widgets.CompositionRenderController;
 
-// Forward declaration (imported by .cppm)
-class CompositionRenderController;
+export namespace Artifact {
 
 /// C4D風ビューポート HUD
 /// FPS / レイヤー数 / メモリ / ズーム率をビューポート隅に常時表示する。
