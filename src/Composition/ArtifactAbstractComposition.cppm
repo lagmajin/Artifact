@@ -1,7 +1,10 @@
 // ReSharper disable All
 module;
 #include <algorithm>
+#include <cstdint>
 #include <utility>
+#include <QByteArray>
+#include <QChar>
 #include <QJsonDocument>
 #include <QList>
 #include <qforeach.h>
@@ -1467,6 +1470,98 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
     LayerEvaluationState state;
     state.intents = std::move(entry.intents);
     state.contacts = std::move(entry.contacts);
+    QSet<QString> previousContactKeys;
+    const bool canDeduplicateEvents = componentSimulation_.valid &&
+        (frameNumber == componentSimulation_.frame || sequential);
+    const auto previous = previousStates.constFind(entry.layer->id().toString());
+    const auto entityKey = [](const SimulationEntityId& entity) {
+      return QStringLiteral("%1:%2:%3:%4")
+          .arg(entity.ownerLayerId, entity.componentId)
+          .arg(static_cast<qulonglong>(entity.localId))
+          .arg(entity.generation);
+    };
+    const auto contactKey = [&entityKey](const LayerContactEvent& contact) {
+      QString first = entityKey(contact.first);
+      QString second = entityKey(contact.second);
+      if (second < first) {
+        std::swap(first, second);
+      }
+      return first + QLatin1Char('|') + second;
+    };
+    if (canDeduplicateEvents && previous != previousStates.cend()) {
+      for (const auto& contact : previous->contacts) {
+        previousContactKeys.insert(contactKey(contact));
+      }
+    }
+
+    const bool fractureEnabled = layerBooleanProperty(
+        entry.layer, QStringLiteral("fracture.enabled"), false);
+    const bool emitterEnabled = layerBooleanProperty(
+        entry.layer, QStringLiteral("component.particleEmitter.enabled"), false);
+    const float crackThreshold = std::max(
+        0.0f, layerFloatProperty(
+                  entry.layer, QStringLiteral("fracture.crackThreshold"), 0.35f));
+    const float impactSensitivity = std::max(
+        0.0f, layerFloatProperty(
+                  entry.layer, QStringLiteral("fracture.impactSensitivity"), 1.0f));
+    const auto fragmentCount = static_cast<std::uint32_t>(std::clamp(
+        static_cast<int>(std::llround(layerFloatProperty(
+            entry.layer, QStringLiteral("fracture.shardCount"), 12.0f))),
+        1, 4096));
+    const auto particleCount = static_cast<std::uint32_t>(std::clamp(
+        static_cast<int>(std::llround(layerFloatProperty(
+            entry.layer, QStringLiteral("component.particleEmitter.count"), 16.0f))),
+        0, 100000));
+    const float particleSpeed = std::max(
+        0.0f, layerFloatProperty(
+                  entry.layer, QStringLiteral("component.particleEmitter.speed"), 120.0f));
+    const auto deterministicEventSeed = [frameNumber](
+        const QString& layerId, const std::uint64_t localId) {
+      std::uint32_t hash = 2166136261u;
+      const QByteArray bytes = layerId.toUtf8();
+      for (const char byte : bytes) {
+        hash ^= static_cast<std::uint8_t>(byte);
+        hash *= 16777619u;
+      }
+      hash ^= static_cast<std::uint32_t>(frameNumber);
+      hash *= 16777619u;
+      hash ^= static_cast<std::uint32_t>(localId);
+      return hash;
+    };
+    for (const auto& contact : state.contacts) {
+      if (previousContactKeys.contains(contactKey(contact))) {
+        continue;
+      }
+      const bool ownsFirst =
+          contact.first.ownerLayerId == entry.layer->id().toString();
+      const bool ownsSecond =
+          contact.second.ownerLayerId == entry.layer->id().toString();
+      if (!ownsFirst && !ownsSecond) {
+        continue;
+      }
+      const SimulationEntityId source = ownsFirst ? contact.first : contact.second;
+      const QVector3D outwardNormal = ownsFirst ? -contact.normal : contact.normal;
+      const float damage = std::max(0.0f, contact.impulse * impactSensitivity);
+      if (fractureEnabled && damage >= crackThreshold) {
+        LayerFractureEvent fracture;
+        fracture.source = source;
+        fracture.position = contact.position;
+        fracture.impulse = outwardNormal * contact.impulse;
+        fracture.damage = damage;
+        fracture.requestedFragmentCount = fragmentCount;
+        state.pendingFractures.push_back(std::move(fracture));
+      }
+      if (emitterEnabled && particleCount > 0U) {
+        LayerParticleSpawnEvent spawn;
+        spawn.source = source;
+        spawn.position = contact.position;
+        spawn.velocity = outwardNormal * particleSpeed;
+        spawn.count = particleCount;
+        spawn.seed = deterministicEventSeed(
+            entry.layer->id().toString(), source.localId);
+        state.pendingParticleSpawns.push_back(std::move(spawn));
+      }
+    }
     state.instances.reserve(entry.instances.size());
     for (std::size_t index = 0; index < entry.instances.size(); ++index) {
       LayerInstanceState instanceState;
@@ -3956,7 +4051,9 @@ QImage ArtifactAbstractComposition::getThumbnailAtFrame(int64_t frameNumber,
     // own state at that frame. This deliberately bypasses the cross-frame
     // thumbnail cache used by getThumbnail(), because the cached entry is tied
     // to a single representative frame and must not be reused for other times.
-    goToFrame(frameNumber);
+    if (framePosition().framePosition() != frameNumber) {
+        goToFrame(frameNumber);
+    }
 
     const auto layers = impl_->allLayerBackToFront();
     for (const auto& layer : layers) {

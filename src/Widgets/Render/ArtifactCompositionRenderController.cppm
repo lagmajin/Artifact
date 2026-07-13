@@ -6863,14 +6863,20 @@ void drawLayerForCompositionView(
       // Master Properties are instance overrides. Apply them only while this
       // precomp instance is sampled, then restore the shared child composition
       // so sibling instances cannot leak values into one another.
-      const bool overrideScopeActive =
-          compLayer->beginExposedPropertyOverrideScope();
       const int64_t childFrame =
           cacheFrameNumber == std::numeric_limits<int64_t>::min()
               ? childComp->framePosition().framePosition()
               : static_cast<int64_t>(std::llround(
                     layer->getSourceFrameAtCompFrame(cacheFrameNumber)));
       const FramePosition childRestoreFrame = childComp->framePosition();
+      if (childRestoreFrame.framePosition() != childFrame) {
+        childComp->goToFrame(childFrame);
+      }
+      // Resolve authored animation/expression state first. The instance scope
+      // is then the final value layer for this sample, including recursively
+      // exposed Master Properties on nested precomp layers.
+      const bool overrideScopeActive =
+          compLayer->beginExposedPropertyOverrideScope();
       QImage childImage = childComp->getThumbnailAtFrame(
           childFrame, childSize.width(), childSize.height());
       if (overrideScopeActive) {
