@@ -20,8 +20,12 @@ module;
 #include <QUuid>
 #include <QPointF>
 #include <QRectF>
+#include <QMatrix4x4>
 #include <QTransform>
+#include <QVector3D>
+#include <QVector4D>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 module Artifact.Composition.Abstract;
@@ -38,13 +42,12 @@ import Composition.Settings;
 import Artifact.Composition.InitParams;
 import Artifact.Composition.Result;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.CloneEffectSupport;
 import Artifact.Layer.Factory;
 import Artifact.Effect.Abstract;
 import Artifact.Render.CompositionViewDrawing;
 import Artifact.Event.Types;
 import Event.Bus;
-import Audio.Mixer;
-import Audio.Bus;
 import Audio.Mixer;
 import Audio.Bus;
 import Artifact.Layer.Audio;
@@ -95,6 +98,89 @@ QString uniqueStateVariantId(const QVector<Artifact::CompositionStateVariant>& s
         candidate = QStringLiteral("%1_%2").arg(stateId).arg(suffix++);
     }
     return candidate;
+}
+
+QString uniqueAudioBindingId(
+    const QVector<Artifact::CompositionAudioReactiveBinding>& bindings,
+    const QString& requestedId)
+{
+    const QString base = requestedId.trimmed().isEmpty()
+        ? QStringLiteral("audio_binding")
+        : requestedId.trimmed();
+    QString candidate = base;
+    int suffix = 2;
+    const auto containsId = [&bindings](const QString& id) {
+        return std::any_of(bindings.cbegin(), bindings.cend(),
+                           [&id](const auto& binding) {
+                               return binding.bindingId == id;
+                           });
+    };
+    while (containsId(candidate)) {
+        candidate = QStringLiteral("%1_%2").arg(base).arg(suffix++);
+    }
+    return candidate;
+}
+
+qreal evaluateCompositionFieldWeight(
+    const Artifact::CompositionTransformField& field,
+    const QPointF& samplePosition)
+{
+    const QPointF delta = samplePosition - field.center;
+    qreal normalizedDistance = 0.0;
+    if (field.shape == QStringLiteral("box")) {
+        normalizedDistance = std::clamp<qreal>(
+            std::max(std::abs(delta.x()) / std::max<qreal>(0.0001, field.radius),
+                     std::abs(delta.y()) /
+                         std::max<qreal>(0.0001, field.secondaryRadius)),
+            0.0, 1.0);
+    } else if (field.shape == QStringLiteral("linear")) {
+        const qreal angleRadians =
+            field.rotationDegrees * (std::acos(-1.0) / 180.0);
+        const QPointF direction(std::cos(angleRadians), std::sin(angleRadians));
+        const qreal projection =
+            delta.x() * direction.x() + delta.y() * direction.y();
+        normalizedDistance = std::clamp<qreal>(
+            0.5 + projection /
+                      (2.0 * std::max<qreal>(0.0001, field.radius)),
+            0.0, 1.0);
+    } else {
+        normalizedDistance = std::clamp<qreal>(
+            std::hypot(delta.x(), delta.y()) /
+                std::max<qreal>(0.0001, field.radius),
+            0.0, 1.0);
+    }
+
+    qreal influence = normalizedDistance * normalizedDistance *
+                      (3.0 - 2.0 * normalizedDistance);
+    if (field.invert) {
+        influence = 1.0 - influence;
+    }
+    return std::clamp<qreal>(
+        influence * std::max<qreal>(0.0, field.strength), 0.0, 4.0);
+}
+
+void blendCompositionFieldWeight(
+    Artifact::CompositionFieldInfluenceSample& sample,
+    const Artifact::CompositionTransformField& field,
+    qreal fieldWeight)
+{
+    fieldWeight = std::clamp<qreal>(fieldWeight, 0.0, 1.0);
+    if (!sample.affected) {
+        sample.weight = fieldWeight;
+        sample.affected = true;
+        return;
+    }
+
+    const QString blendMode = field.blendMode.trimmed().toLower();
+    if (blendMode == QStringLiteral("additive")) {
+        sample.weight = std::clamp<qreal>(sample.weight + fieldWeight, 0.0, 1.0);
+    } else if (blendMode == QStringLiteral("multiply")) {
+        sample.weight *= fieldWeight;
+    } else if (blendMode == QStringLiteral("screen")) {
+        sample.weight = 1.0 - (1.0 - sample.weight) * (1.0 - fieldWeight);
+    } else {
+        sample.weight = fieldWeight;
+    }
 }
 
 // transform 系プロパティの keyframe 値を解像度変更に合わせて再計算する。
@@ -724,6 +810,12 @@ class ArtifactAbstractComposition::Impl {
   QString activeTransformFieldId_;
   QVector<CompositionStateVariant> stateVariants_;
   QString activeStateVariantId_;
+  QString stateComparisonAId_;
+  QString stateComparisonBId_;
+  QVector<CompositionAudioReactiveBinding> audioReactiveBindings_;
+  QHash<QString, double> audioReactiveSmoothedValues_;
+  QHash<QString, double> audioReactiveEnvelopeValues_;
+  QHash<QString, CompositionAudioReactiveMonitor> audioReactiveMonitors_;
   struct RecordedPropertySnapshot {
     LayerID layerId;
     QString propertyPath;
@@ -751,6 +843,11 @@ class ArtifactAbstractComposition::Impl {
   // JSON restore is also used for private render snapshots.  It must not
   // announce each restored layer as a user-visible creation.
   bool suppressLayerChangedEvents_ = false;
+  struct ComponentSimulationSession {
+    int64_t frame = std::numeric_limits<int64_t>::min();
+    QHash<QString, LayerEvaluationState> statesByLayerId;
+    bool valid = false;
+  } componentSimulation_;
   //PlaybackClock playbackClock_;  // 高精度再生クロック
   
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
@@ -787,7 +884,10 @@ class ArtifactAbstractComposition::Impl {
 
     // Asset usage tracking
     QVector<ArtifactCore::AssetID> getUsedAssets() const;
-    void evaluateLayerCollisionPairs();
+  void evaluateLayerCollisionPairs();
+  void evaluateLayerComponentSimulation(const FramePosition& frame,
+                                        bool interactive);
+  void resetLayerComponentSimulation();
   };
 
  ArtifactAbstractComposition::Impl::Impl(ArtifactAbstractComposition* owner) : owner_(owner)
@@ -1079,6 +1179,315 @@ void ArtifactAbstractComposition::Impl::evaluateLayerCollisionPairs()
   activeCollisionPairs_ = std::move(nextPairs);
 }
 
+void ArtifactAbstractComposition::Impl::resetLayerComponentSimulation()
+{
+  for (const auto& layer : layerMultiIndex_) {
+    if (layer) {
+      layer->clearAuthoritativeComponentEvaluationState();
+    }
+  }
+  componentSimulation_.statesByLayerId.clear();
+  componentSimulation_.frame = std::numeric_limits<int64_t>::min();
+  componentSimulation_.valid = false;
+}
+
+void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
+    const FramePosition& frame, const bool interactive)
+{
+  const int64_t frameNumber = frame.framePosition();
+  const bool sequential = componentSimulation_.valid &&
+      frameNumber == componentSimulation_.frame + 1;
+  const auto previousStates = componentSimulation_.statesByLayerId;
+  const float fps = std::max(
+      1.0f, static_cast<float>(frameRate_.framerate()));
+  const float fixedDeltaSeconds = 1.0f / fps;
+
+  struct SimulationLayerEntry {
+    ArtifactAbstractLayerPtr layer;
+    std::vector<CloneRenderInstance> instances;
+    std::vector<QVector3D> velocities;
+    std::vector<LayerMotionIntent> intents;
+    std::vector<LayerContactEvent> contacts;
+    bool crowdEnabled = false;
+    bool collisionEnabled = false;
+  };
+  std::vector<SimulationLayerEntry> entries;
+
+  for (const auto& layer : layerMultiIndex_) {
+    if (!layer || !layer->isActiveAt(frame)) {
+      if (layer) {
+        layer->clearAuthoritativeComponentEvaluationState();
+      }
+      continue;
+    }
+    const bool crowdEnabled = layerBooleanProperty(
+        layer, QStringLiteral("component.crowd.enabled"), false);
+    const bool collisionEnabled = layerBooleanProperty(
+        layer, QStringLiteral("component.collision.enabled"), false);
+    if (!crowdEnabled && !collisionEnabled) {
+      layer->clearAuthoritativeComponentEvaluationState();
+      continue;
+    }
+
+    layer->goToFrame(frameNumber);
+    SimulationLayerEntry entry;
+    entry.layer = layer;
+    entry.crowdEnabled = crowdEnabled;
+    entry.collisionEnabled = collisionEnabled;
+    entry.instances = cloneRenderInstancesForSimulation(
+        layer.get(), layer->getGlobalTransform4x4());
+    if (entry.instances.empty()) {
+      layer->clearAuthoritativeComponentEvaluationState();
+      continue;
+    }
+    entry.velocities.resize(entry.instances.size(), QVector3D());
+
+    const auto previous = previousStates.constFind(layer->id().toString());
+    if (sequential && previous != previousStates.cend() &&
+        previous->instances.size() == entry.instances.size()) {
+      for (std::size_t index = 0; index < entry.instances.size(); ++index) {
+        entry.instances[index].transform = previous->instances[index].transform;
+        entry.velocities[index] = previous->instances[index].linearVelocity;
+      }
+    }
+
+    if (crowdEnabled && entry.instances.size() > 1U) {
+      QVector3D centroid;
+      for (const auto& instance : entry.instances) {
+        centroid += instance.transform.column(3).toVector3D();
+      }
+      centroid /= static_cast<float>(entry.instances.size());
+
+      const float cohesion = layerFloatProperty(
+          layer, QStringLiteral("component.crowd.cohesion"), 0.5f);
+      const float separation = layerFloatProperty(
+          layer, QStringLiteral("component.crowd.separation"), 0.5f);
+      const float alignment = layerFloatProperty(
+          layer, QStringLiteral("component.crowd.alignment"), 0.5f);
+      const float maxSpeed = std::max(
+          0.0f, layerFloatProperty(
+                    layer, QStringLiteral("component.crowd.maxSpeed"), 120.0f));
+      const float jitter = layerFloatProperty(
+          layer, QStringLiteral("component.crowd.jitter"), 0.1f);
+      const float timeSeconds = static_cast<float>(frameNumber) / fps;
+
+      for (std::size_t index = 0; index < entry.instances.size(); ++index) {
+        auto& instance = entry.instances[index];
+        const QVector3D position = instance.transform.column(3).toVector3D();
+        QVector3D towardCenter = centroid - position;
+        QVector3D awayFromCenter = position - centroid;
+        if (!towardCenter.isNull()) {
+          towardCenter.normalize();
+        }
+        if (!awayFromCenter.isNull()) {
+          awayFromCenter.normalize();
+        }
+        const float phase = static_cast<float>(index) * 1.61803398875f;
+        QVector3D sharedHeading(std::cos(timeSeconds * 0.7f),
+                                std::sin(timeSeconds * 0.7f), 0.0f);
+        QVector3D jitterHeading(
+            std::sin(timeSeconds * 2.1f + phase),
+            std::cos(timeSeconds * 1.7f + phase * 0.5f), 0.0f);
+        QVector3D desired = towardCenter * cohesion +
+                            awayFromCenter * separation +
+                            sharedHeading * alignment +
+                            jitterHeading * jitter;
+        if (!desired.isNull()) {
+          desired.normalize();
+          desired *= maxSpeed;
+        }
+        const float response = interactive ? 0.35f : 0.2f;
+        entry.velocities[index] =
+            entry.velocities[index] * (1.0f - response) + desired * response;
+        QMatrix4x4 delta;
+        delta.translate(entry.velocities[index] * fixedDeltaSeconds);
+        instance.transform = delta * instance.transform;
+
+        LayerMotionIntent intent;
+        intent.entityId.ownerLayerId = layer->id().toString();
+        intent.entityId.componentId = QStringLiteral("builtin.crowd");
+        intent.entityId.localId = index;
+        intent.desiredVelocity = desired;
+        intent.desiredFacing = desired.isNull()
+            ? QVector3D(1.0f, 0.0f, 0.0f)
+            : desired.normalized();
+        intent.weight = 1.0f;
+        entry.intents.push_back(intent);
+      }
+    }
+    entries.push_back(std::move(entry));
+  }
+
+  const auto boundsForInstance = [](const SimulationLayerEntry& entry,
+                                    const CloneRenderInstance& instance) {
+    const QRectF local = entry.layer ? entry.layer->localBounds() : QRectF{};
+    if (!local.isValid()) {
+      return QRectF{};
+    }
+    const QVector3D topLeft = instance.transform.map(
+        QVector3D(static_cast<float>(local.left()),
+                  static_cast<float>(local.top()), 0.0f));
+    const QVector3D topRight = instance.transform.map(
+        QVector3D(static_cast<float>(local.right()),
+                  static_cast<float>(local.top()), 0.0f));
+    const QVector3D bottomLeft = instance.transform.map(
+        QVector3D(static_cast<float>(local.left()),
+                  static_cast<float>(local.bottom()), 0.0f));
+    const QVector3D bottomRight = instance.transform.map(
+        QVector3D(static_cast<float>(local.right()),
+                  static_cast<float>(local.bottom()), 0.0f));
+    const qreal minX = std::min({static_cast<qreal>(topLeft.x()),
+                                 static_cast<qreal>(topRight.x()),
+                                 static_cast<qreal>(bottomLeft.x()),
+                                 static_cast<qreal>(bottomRight.x())});
+    const qreal maxX = std::max({static_cast<qreal>(topLeft.x()),
+                                 static_cast<qreal>(topRight.x()),
+                                 static_cast<qreal>(bottomLeft.x()),
+                                 static_cast<qreal>(bottomRight.x())});
+    const qreal minY = std::min({static_cast<qreal>(topLeft.y()),
+                                 static_cast<qreal>(topRight.y()),
+                                 static_cast<qreal>(bottomLeft.y()),
+                                 static_cast<qreal>(bottomRight.y())});
+    const qreal maxY = std::max({static_cast<qreal>(topLeft.y()),
+                                 static_cast<qreal>(topRight.y()),
+                                 static_cast<qreal>(bottomLeft.y()),
+                                 static_cast<qreal>(bottomRight.y())});
+    return QRectF(minX, minY, maxX - minX, maxY - minY);
+  };
+
+  const float floorY = static_cast<float>(settings_.compositionSize().height());
+  for (auto& entry : entries) {
+    if (!entry.collisionEnabled) {
+      continue;
+    }
+    for (std::size_t index = 0; index < entry.instances.size(); ++index) {
+      const QRectF bounds = boundsForInstance(entry, entry.instances[index]);
+      if (!bounds.isValid() || bounds.bottom() <= floorY) {
+        continue;
+      }
+      QMatrix4x4 correction;
+      correction.translate(0.0f,
+          floorY - static_cast<float>(bounds.bottom()), 0.0f);
+      entry.instances[index].transform =
+          correction * entry.instances[index].transform;
+      entry.velocities[index].setY(
+          -entry.velocities[index].y() * 0.25f);
+    }
+  }
+
+  for (int pass = 0; pass < 2; ++pass) {
+    bool resolvedAny = false;
+    for (std::size_t firstEntryIndex = 0;
+         firstEntryIndex < entries.size(); ++firstEntryIndex) {
+      auto& firstEntry = entries[firstEntryIndex];
+      if (!firstEntry.collisionEnabled) {
+        continue;
+      }
+      for (std::size_t firstIndex = 0;
+           firstIndex < firstEntry.instances.size(); ++firstIndex) {
+        const QRectF firstBounds = boundsForInstance(
+            firstEntry, firstEntry.instances[firstIndex]);
+        if (!firstBounds.isValid()) {
+          continue;
+        }
+        for (std::size_t secondEntryIndex = firstEntryIndex;
+             secondEntryIndex < entries.size(); ++secondEntryIndex) {
+          auto& secondEntry = entries[secondEntryIndex];
+          if (!secondEntry.collisionEnabled) {
+            continue;
+          }
+          const std::size_t secondStart =
+              secondEntryIndex == firstEntryIndex ? firstIndex + 1 : 0;
+          for (std::size_t secondIndex = secondStart;
+               secondIndex < secondEntry.instances.size(); ++secondIndex) {
+            const QRectF secondBounds = boundsForInstance(
+                secondEntry, secondEntry.instances[secondIndex]);
+            if (!secondBounds.isValid() ||
+                !firstBounds.intersects(secondBounds)) {
+              continue;
+            }
+            const QRectF overlap = firstBounds.intersected(secondBounds);
+            if (!overlap.isValid() || overlap.isEmpty()) {
+              continue;
+            }
+            QMatrix4x4 correction;
+            QVector3D normal;
+            if (overlap.width() <= overlap.height()) {
+              const float direction = firstBounds.center().x() <=
+                      secondBounds.center().x() ? 1.0f : -1.0f;
+              correction.translate(
+                  direction * static_cast<float>(overlap.width() + 0.5),
+                  0.0f, 0.0f);
+              normal = QVector3D(direction, 0.0f, 0.0f);
+              secondEntry.velocities[secondIndex].setX(
+                  0.0f);
+            } else {
+              const float direction = firstBounds.center().y() <=
+                      secondBounds.center().y() ? 1.0f : -1.0f;
+              correction.translate(
+                  0.0f,
+                  direction * static_cast<float>(overlap.height() + 0.5),
+                  0.0f);
+              normal = QVector3D(0.0f, direction, 0.0f);
+              secondEntry.velocities[secondIndex].setY(
+                  0.0f);
+            }
+            secondEntry.instances[secondIndex].transform =
+                correction * secondEntry.instances[secondIndex].transform;
+
+            LayerContactEvent contact;
+            contact.first.ownerLayerId = firstEntry.layer->id().toString();
+            contact.first.componentId = QStringLiteral("builtin.collision");
+            contact.first.localId = firstIndex;
+            contact.second.ownerLayerId = secondEntry.layer->id().toString();
+            contact.second.componentId = QStringLiteral("builtin.collision");
+            contact.second.localId = secondIndex;
+            contact.position = QVector3D(
+                static_cast<float>(overlap.center().x()),
+                static_cast<float>(overlap.center().y()), 0.0f);
+            contact.normal = normal;
+            contact.impulse = static_cast<float>(
+                std::max(overlap.width(), overlap.height()));
+            firstEntry.contacts.push_back(contact);
+            if (secondEntryIndex != firstEntryIndex) {
+              secondEntry.contacts.push_back(contact);
+            }
+            resolvedAny = true;
+          }
+        }
+      }
+    }
+    if (!resolvedAny) {
+      break;
+    }
+  }
+
+  componentSimulation_.statesByLayerId.clear();
+  for (auto& entry : entries) {
+    LayerEvaluationState state;
+    state.intents = std::move(entry.intents);
+    state.contacts = std::move(entry.contacts);
+    state.instances.reserve(entry.instances.size());
+    for (std::size_t index = 0; index < entry.instances.size(); ++index) {
+      LayerInstanceState instanceState;
+      instanceState.entityId.ownerLayerId = entry.layer->id().toString();
+      instanceState.entityId.componentId = QStringLiteral("builtin.cloner");
+      instanceState.entityId.localId = index;
+      instanceState.transform = entry.instances[index].transform;
+      instanceState.linearVelocity = entry.velocities[index];
+      instanceState.opacity = entry.instances[index].weight;
+      instanceState.active = true;
+      state.instances.push_back(std::move(instanceState));
+    }
+    entry.layer->setAuthoritativeComponentEvaluationState(
+        state, entry.layer->currentFrame());
+    componentSimulation_.statesByLayerId.insert(
+        entry.layer->id().toString(), std::move(state));
+  }
+  componentSimulation_.frame = frameNumber;
+  componentSimulation_.valid = true;
+}
+
  QList<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayer() const
  {
   return layerMultiIndex_.all();
@@ -1334,13 +1743,23 @@ QJsonObject CompositionTransformField::toJson() const
     QJsonObject obj;
     obj.insert(QStringLiteral("fieldId"), fieldId);
     obj.insert(QStringLiteral("displayName"), displayName);
-    obj.insert(QStringLiteral("type"), QStringLiteral("radial-transform"));
+    const QString requestedShape = shape.trimmed().toLower();
+    const QString normalizedShape =
+        requestedShape == QStringLiteral("box") ||
+                requestedShape == QStringLiteral("linear")
+            ? requestedShape
+            : QStringLiteral("radial");
+    obj.insert(QStringLiteral("type"), normalizedShape + QStringLiteral("-transform"));
+    obj.insert(QStringLiteral("shape"), normalizedShape);
     obj.insert(QStringLiteral("enabled"), enabled);
     obj.insert(QStringLiteral("center"), QJsonObject{
         {QStringLiteral("x"), center.x()},
         {QStringLiteral("y"), center.y()},
     });
     obj.insert(QStringLiteral("radius"), radius);
+    obj.insert(QStringLiteral("secondaryRadius"), secondaryRadius);
+    obj.insert(QStringLiteral("rotationDegrees"), rotationDegrees);
+    obj.insert(QStringLiteral("timeOffsetSeconds"), timeOffsetSeconds);
     obj.insert(QStringLiteral("strength"), strength);
     obj.insert(QStringLiteral("blendMode"), blendMode);
     obj.insert(QStringLiteral("invert"), invert);
@@ -1363,6 +1782,27 @@ CompositionTransformField CompositionTransformField::fromJson(const QJsonObject&
     field.fieldId = obj.value(QStringLiteral("fieldId")).toString();
     field.displayName = obj.value(QStringLiteral("displayName"))
                             .toString(QStringLiteral("Radial Transform Field"));
+    field.shape = obj.value(QStringLiteral("shape")).toString().trimmed().toLower();
+    if (field.shape.isEmpty()) {
+        const QString legacyType = obj.value(QStringLiteral("type")).toString().trimmed().toLower();
+        field.shape = legacyType.startsWith(QStringLiteral("box"))
+                          ? QStringLiteral("box")
+                          : legacyType.startsWith(QStringLiteral("linear"))
+                                ? QStringLiteral("linear")
+                                : QStringLiteral("radial");
+    }
+    if (field.shape != QStringLiteral("box") &&
+        field.shape != QStringLiteral("linear")) {
+        field.shape = QStringLiteral("radial");
+    }
+    if (!obj.contains(QStringLiteral("displayName")) ||
+        field.displayName.trimmed().isEmpty()) {
+        field.displayName = field.shape == QStringLiteral("box")
+                                ? QStringLiteral("Box Transform Field")
+                                : field.shape == QStringLiteral("linear")
+                                      ? QStringLiteral("Linear Transform Field")
+                                      : QStringLiteral("Radial Transform Field");
+    }
     field.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
     const QJsonObject centerObj = obj.value(QStringLiteral("center")).toObject();
     field.center = QPointF(
@@ -1370,6 +1810,11 @@ CompositionTransformField CompositionTransformField::fromJson(const QJsonObject&
         centerObj.value(QStringLiteral("y")).toDouble(0.0));
     field.radius = std::max<qreal>(
         0.0001, obj.value(QStringLiteral("radius")).toDouble(1.0));
+    field.secondaryRadius = std::max<qreal>(
+        0.0001, obj.value(QStringLiteral("secondaryRadius")).toDouble(field.radius));
+    field.rotationDegrees = obj.value(QStringLiteral("rotationDegrees")).toDouble(0.0);
+    field.timeOffsetSeconds =
+        obj.value(QStringLiteral("timeOffsetSeconds")).toDouble(0.0);
     field.strength = obj.value(QStringLiteral("strength")).toDouble(1.0);
     field.blendMode = obj.value(QStringLiteral("blendMode"))
                           .toString(QStringLiteral("normal"))
@@ -1395,7 +1840,57 @@ CompositionTransformField CompositionTransformField::fromJson(const QJsonObject&
     return field;
 }
 
-QJsonObject CompositionStatePropertyOverride::toJson() const
+QJsonObject CompositionAudioReactiveBinding::toJson() const
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("bindingId"), bindingId);
+    obj.insert(QStringLiteral("source"), source);
+    obj.insert(QStringLiteral("layerId"), layerId.toString());
+    obj.insert(QStringLiteral("propertyPath"), propertyPath);
+    obj.insert(QStringLiteral("gain"), gain);
+    obj.insert(QStringLiteral("offset"), offset);
+    obj.insert(QStringLiteral("clampEnabled"), clampEnabled);
+    obj.insert(QStringLiteral("clampMinimum"), clampMinimum);
+    obj.insert(QStringLiteral("clampMaximum"), clampMaximum);
+    obj.insert(QStringLiteral("smoothing"), smoothing);
+    obj.insert(QStringLiteral("attackSeconds"), attackSeconds);
+    obj.insert(QStringLiteral("releaseSeconds"), releaseSeconds);
+    obj.insert(QStringLiteral("invert"), invert);
+    obj.insert(QStringLiteral("enabled"), enabled);
+    return obj;
+}
+
+CompositionAudioReactiveBinding CompositionAudioReactiveBinding::fromJson(
+    const QJsonObject& obj)
+{
+    CompositionAudioReactiveBinding binding;
+    binding.bindingId = obj.value(QStringLiteral("bindingId")).toString();
+    binding.source = obj.value(QStringLiteral("source"))
+                         .toString(QStringLiteral("amplitude"))
+                         .trimmed().toLower();
+    binding.layerId = LayerID(obj.value(QStringLiteral("layerId")).toString());
+    binding.propertyPath =
+        obj.value(QStringLiteral("propertyPath")).toString().trimmed();
+    binding.gain = obj.value(QStringLiteral("gain")).toDouble(1.0);
+    binding.offset = obj.value(QStringLiteral("offset")).toDouble(0.0);
+    binding.clampEnabled =
+        obj.value(QStringLiteral("clampEnabled")).toBool(false);
+    binding.clampMinimum =
+        obj.value(QStringLiteral("clampMinimum")).toDouble(0.0);
+    binding.clampMaximum =
+        obj.value(QStringLiteral("clampMaximum")).toDouble(1.0);
+    binding.smoothing = std::clamp(
+        obj.value(QStringLiteral("smoothing")).toDouble(0.0), 0.0, 1.0);
+    binding.attackSeconds = std::max(
+        0.0, obj.value(QStringLiteral("attackSeconds")).toDouble(0.0));
+    binding.releaseSeconds = std::max(
+        0.0, obj.value(QStringLiteral("releaseSeconds")).toDouble(0.0));
+    binding.invert = obj.value(QStringLiteral("invert")).toBool(false);
+    binding.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
+    return binding;
+}
+
+ QJsonObject CompositionStatePropertyOverride::toJson() const
 {
     QJsonObject obj;
     obj.insert(QStringLiteral("layerId"), layerId.toString());
@@ -1626,10 +2121,27 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
   impl_->goToEndFrame();
  }
 
- void ArtifactAbstractComposition::goToFrame(int64_t frameNumber /*= 0*/)
- {
+void ArtifactAbstractComposition::goToFrame(int64_t frameNumber /*= 0*/)
+{
   impl_->goToFrame(frameNumber);
- }
+}
+
+void ArtifactAbstractComposition::evaluateLayerComponentSimulation(
+    const FramePosition& frame, const bool interactive)
+{
+  impl_->evaluateLayerComponentSimulation(frame, interactive);
+}
+
+void ArtifactAbstractComposition::resetLayerComponentSimulation()
+{
+  impl_->resetLayerComponentSimulation();
+}
+
+bool ArtifactAbstractComposition::hasAuthoritativeLayerComponentSimulation() const
+{
+  return impl_->componentSimulation_.valid &&
+         !impl_->componentSimulation_.statesByLayerId.isEmpty();
+}
 
   FrameRange ArtifactAbstractComposition::frameRange() const
   {
@@ -1709,7 +2221,8 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                     } else if (auto vl = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
                         layerVol = static_cast<float>(vl->audioVolume());
                     }
-                    bus->addInput(layerSegment, layerVol * evaluationGainForLayer(layer->id()));
+                    bus->setVolume(20.0f * std::log10(std::max(0.001f, layerVol)));
+                    bus->addInput(layerSegment, evaluationGainForLayer(layer->id()));
                     ++producedAudioLayerCount;
                     hasAnyAudio = true;
                 }
@@ -2286,15 +2799,7 @@ ArtifactAbstractComposition::evaluateTransformFields(
             continue;
         }
         const QPointF delta = basePosition - field.center;
-        const qreal normalizedDistance = std::clamp<qreal>(
-            std::hypot(delta.x(), delta.y()) / field.radius, 0.0, 1.0);
-        qreal influence = normalizedDistance * normalizedDistance *
-                          (3.0 - 2.0 * normalizedDistance);
-        if (field.invert) {
-            influence = 1.0 - influence;
-        }
-        influence = std::clamp<qreal>(influence * std::max<qreal>(0.0, field.strength),
-                                      0.0, 4.0);
+        const qreal influence = evaluateCompositionFieldWeight(field, basePosition);
         qreal positionInfluence = influence;
         qreal scaleInfluence = influence;
         const QString blendMode = field.blendMode.trimmed().toLower();
@@ -2314,6 +2819,67 @@ ArtifactAbstractComposition::evaluateTransformFields(
         adjustment.affected = true;
     }
     return adjustment;
+}
+
+CompositionFieldInfluenceSample ArtifactAbstractComposition::evaluateFieldInfluence(
+    const LayerID& layerId, const QPointF& samplePosition) const
+{
+    CompositionFieldInfluenceSample sample;
+    for (const auto& field : impl_->transformFields_) {
+        if (!field.enabled || field.radius <= 0.0001 ||
+            !field.targetsLayer(layerId)) {
+            continue;
+        }
+
+        blendCompositionFieldWeight(
+            sample, field, evaluateCompositionFieldWeight(field, samplePosition));
+    }
+    return sample;
+}
+
+CompositionFieldInfluenceSample
+ArtifactAbstractComposition::evaluateFieldInfluenceAtCanvasPoint(
+    const LayerID& layerId, const QPointF& canvasPosition) const
+{
+    const auto channels =
+        evaluateFieldChannelsAtCanvasPoint(layerId, canvasPosition);
+    return CompositionFieldInfluenceSample{channels.weight, channels.affected};
+}
+
+CompositionFieldChannelSample
+ArtifactAbstractComposition::evaluateFieldChannelsAtCanvasPoint(
+    const LayerID& layerId, const QPointF& canvasPosition) const
+{
+    CompositionFieldChannelSample channels;
+    CompositionFieldInfluenceSample influence;
+    for (const auto& field : impl_->transformFields_) {
+        if (!field.enabled || field.radius <= 0.0001 ||
+            !field.targetsLayer(layerId)) {
+            continue;
+        }
+
+        QPointF fieldPosition = canvasPosition;
+        if (!field.coordinateParentLayerId.isNil()) {
+            if (const auto parentLayer = layerById(field.coordinateParentLayerId)) {
+                bool invertible = false;
+                const QTransform inverse =
+                    parentLayer->getGlobalTransform().inverted(&invertible);
+                if (!invertible) {
+                    continue;
+                }
+                fieldPosition = inverse.map(canvasPosition);
+            }
+        }
+        const qreal fieldWeight = std::clamp<qreal>(
+            evaluateCompositionFieldWeight(field, fieldPosition), 0.0, 1.0);
+        blendCompositionFieldWeight(influence, field, fieldWeight);
+        channels.scaleMultiplier *= std::lerp<qreal>(
+            1.0, field.edgeScale, fieldWeight);
+        channels.timeOffsetSeconds += field.timeOffsetSeconds * fieldWeight;
+        channels.affected = true;
+    }
+    channels.weight = influence.affected ? influence.weight : 1.0;
+    return channels;
 }
 
 bool ArtifactAbstractComposition::applyExternalControlValue(
@@ -2424,6 +2990,128 @@ bool ArtifactAbstractComposition::applyAudioAnalysis(
     applied = applyExternalControlValue(prefix + QStringLiteral(".high"),
                                         analysis.highIntensity,
                                         resetSmoothing) || applied;
+
+    for (const auto& binding : impl_->audioReactiveBindings_) {
+        if (!binding.enabled) {
+            continue;
+        }
+        double rawValue = analysis.rms;
+        if (binding.source == QStringLiteral("peak")) {
+            rawValue = analysis.peak;
+        } else if (binding.source == QStringLiteral("low")) {
+            rawValue = analysis.lowIntensity;
+        } else if (binding.source == QStringLiteral("mid")) {
+            rawValue = analysis.midIntensity;
+        } else if (binding.source == QStringLiteral("high")) {
+            rawValue = analysis.highIntensity;
+        }
+        const QString envelopeKey = binding.bindingId.trimmed().isEmpty()
+            ? recordingSnapshotKey(binding.layerId, binding.propertyPath)
+            : binding.bindingId;
+        if (resetSmoothing) {
+            impl_->audioReactiveEnvelopeValues_.remove(envelopeKey);
+        }
+        double envelopeValue = rawValue;
+        const auto previousEnvelope =
+            impl_->audioReactiveEnvelopeValues_.constFind(envelopeKey);
+        if (previousEnvelope != impl_->audioReactiveEnvelopeValues_.constEnd()) {
+            const double tau = rawValue >= previousEnvelope.value()
+                ? binding.attackSeconds
+                : binding.releaseSeconds;
+            if (tau > 0.0) {
+                const double dt = 1.0 / std::max(
+                    1.0, static_cast<double>(frameRate().framerate()));
+                const double alpha = 1.0 - std::exp(-dt / tau);
+                envelopeValue = previousEnvelope.value() +
+                    (rawValue - previousEnvelope.value()) * alpha;
+            }
+        }
+        impl_->audioReactiveEnvelopeValues_.insert(envelopeKey, envelopeValue);
+        double processedValue = binding.invert ? 1.0 - envelopeValue
+                                               : envelopeValue;
+        processedValue = processedValue * binding.gain + binding.offset;
+        if (binding.clampEnabled) {
+            processedValue = std::clamp(
+                processedValue,
+                std::min(binding.clampMinimum, binding.clampMaximum),
+                std::max(binding.clampMinimum, binding.clampMaximum));
+        }
+        const QString runtimeKey = binding.bindingId.trimmed().isEmpty()
+            ? recordingSnapshotKey(binding.layerId, binding.propertyPath)
+            : binding.bindingId;
+        if (resetSmoothing) {
+            impl_->audioReactiveSmoothedValues_.remove(runtimeKey);
+        }
+        const auto previous =
+            impl_->audioReactiveSmoothedValues_.constFind(runtimeKey);
+        const double smoothing = std::clamp(binding.smoothing, 0.0, 1.0);
+        if (previous != impl_->audioReactiveSmoothedValues_.constEnd() &&
+            smoothing > 0.0) {
+            processedValue = previous.value() +
+                (processedValue - previous.value()) * (1.0 - smoothing);
+        }
+        impl_->audioReactiveSmoothedValues_.insert(runtimeKey, processedValue);
+        impl_->audioReactiveMonitors_.insert(
+            runtimeKey,
+            CompositionAudioReactiveMonitor{rawValue, processedValue, true});
+
+        const auto targetLayer = layerById(binding.layerId);
+        const auto property = targetLayer
+            ? targetLayer->getProperty(binding.propertyPath)
+            : nullptr;
+        if (!targetLayer || !property) {
+            continue;
+        }
+        auto& recording = impl_->liveControlRecording_;
+        const QString sourceAddress =
+            prefix + QStringLiteral(".") + binding.source;
+        const bool shouldRecord = recording.active && property->isAnimatable() &&
+            (recording.options.addresses.isEmpty() ||
+             recording.options.addresses.contains(sourceAddress) ||
+             recording.options.addresses.contains(binding.bindingId));
+        const QString snapshotKey =
+            recordingSnapshotKey(binding.layerId, binding.propertyPath);
+        if (shouldRecord &&
+            !recording.snapshotsByAddress.contains(snapshotKey)) {
+            Impl::RecordedPropertySnapshot snapshot;
+            snapshot.layerId = binding.layerId;
+            snapshot.propertyPath = binding.propertyPath;
+            snapshot.value = property->getValue();
+            snapshot.keyframes = property->getKeyFrames();
+            recording.snapshotsByAddress.insert(snapshotKey, snapshot);
+        }
+        if (!targetLayer->setLayerPropertyValue(
+                binding.propertyPath, QVariant(processedValue))) {
+            continue;
+        }
+        applied = true;
+        if (!shouldRecord) {
+            continue;
+        }
+        const qint64 currentFrame = framePosition().framePosition();
+        const int frameStride =
+            std::max(1, recording.options.sampleEveryNFrames);
+        const auto lastFrame =
+            recording.lastRecordedFrameByAddress.constFind(runtimeKey);
+        if (lastFrame != recording.lastRecordedFrameByAddress.constEnd() &&
+            std::abs(currentFrame - lastFrame.value()) < frameStride) {
+            continue;
+        }
+        const auto lastValue =
+            recording.lastRecordedValueByAddress.constFind(runtimeKey);
+        if (lastValue != recording.lastRecordedValueByAddress.constEnd() &&
+            std::abs(processedValue - lastValue.value()) <
+                recording.options.deadZone) {
+            continue;
+        }
+        const RationalTime keyTime(
+            currentFrame,
+            static_cast<int64_t>(std::max<double>(
+                1.0, static_cast<double>(frameRate().framerate()))));
+        property->addKeyFrame(keyTime, QVariant(processedValue));
+        recording.lastRecordedFrameByAddress.insert(runtimeKey, currentFrame);
+        recording.lastRecordedValueByAddress.insert(runtimeKey, processedValue);
+    }
     return applied;
 }
 
@@ -2456,13 +3144,36 @@ LiveControlRecordingOptions ArtifactAbstractComposition::liveControlRecordingOpt
     return impl_->liveControlRecording_.options;
 }
 
-void ArtifactAbstractComposition::commitLiveControlRecording()
+QVector<LiveControlRecordingPropertyChange>
+ArtifactAbstractComposition::commitLiveControlRecording()
 {
+    QVector<LiveControlRecordingPropertyChange> changes;
     if (!impl_->liveControlRecording_.active) {
-        return;
+        return changes;
+    }
+    const auto recording = impl_->liveControlRecording_;
+    changes.reserve(recording.snapshotsByAddress.size());
+    for (auto it = recording.snapshotsByAddress.constBegin();
+         it != recording.snapshotsByAddress.constEnd(); ++it) {
+        const auto layer = layerById(it.value().layerId);
+        const auto property = layer
+            ? layer->getProperty(it.value().propertyPath)
+            : nullptr;
+        if (!property) {
+            continue;
+        }
+        LiveControlRecordingPropertyChange change;
+        change.layerId = it.value().layerId;
+        change.propertyPath = it.value().propertyPath;
+        change.beforeValue = it.value().value;
+        change.beforeKeyframes = it.value().keyframes;
+        change.afterValue = property->getValue();
+        change.afterKeyframes = property->getKeyFrames();
+        changes.append(std::move(change));
     }
     impl_->liveControlRecording_ = Impl::LiveControlRecordingState{};
     Q_EMIT changed();
+    return changes;
 }
 
 void ArtifactAbstractComposition::cancelLiveControlRecording()
@@ -2504,6 +3215,240 @@ void ArtifactAbstractComposition::cancelLiveControlRecording()
     Q_EMIT changed();
 }
 
+QVector<CompositionAudioReactiveBinding>
+ArtifactAbstractComposition::audioReactiveBindings() const
+{
+    return impl_->audioReactiveBindings_;
+}
+
+void ArtifactAbstractComposition::setAudioReactiveBindings(
+    const QVector<CompositionAudioReactiveBinding>& bindings)
+{
+    QVector<CompositionAudioReactiveBinding> normalized;
+    normalized.reserve(bindings.size());
+    for (auto binding : bindings) {
+        if (binding.layerId.isNil() || binding.propertyPath.trimmed().isEmpty()) {
+            continue;
+        }
+        binding.bindingId = uniqueAudioBindingId(normalized, binding.bindingId);
+        binding.source = binding.source.trimmed().toLower();
+        if (binding.source != QStringLiteral("peak") &&
+            binding.source != QStringLiteral("low") &&
+            binding.source != QStringLiteral("mid") &&
+            binding.source != QStringLiteral("high")) {
+            binding.source = QStringLiteral("amplitude");
+        }
+        binding.smoothing = std::clamp(binding.smoothing, 0.0, 1.0);
+        binding.attackSeconds = std::max(0.0, binding.attackSeconds);
+        binding.releaseSeconds = std::max(0.0, binding.releaseSeconds);
+        normalized.append(binding);
+    }
+    impl_->audioReactiveBindings_ = normalized;
+    impl_->audioReactiveSmoothedValues_.clear();
+    impl_->audioReactiveEnvelopeValues_.clear();
+    impl_->audioReactiveMonitors_.clear();
+    Q_EMIT changed();
+}
+
+void ArtifactAbstractComposition::addAudioReactiveBinding(
+    const CompositionAudioReactiveBinding& binding)
+{
+    CompositionAudioReactiveBinding normalized = binding;
+    if (normalized.layerId.isNil() ||
+        normalized.propertyPath.trimmed().isEmpty()) {
+        return;
+    }
+    normalized.source = normalized.source.trimmed().toLower();
+    if (normalized.source != QStringLiteral("peak") &&
+        normalized.source != QStringLiteral("low") &&
+        normalized.source != QStringLiteral("mid") &&
+        normalized.source != QStringLiteral("high")) {
+        normalized.source = QStringLiteral("amplitude");
+    }
+    normalized.smoothing = std::clamp(normalized.smoothing, 0.0, 1.0);
+    normalized.attackSeconds = std::max(0.0, normalized.attackSeconds);
+    normalized.releaseSeconds = std::max(0.0, normalized.releaseSeconds);
+    const auto existing = std::find_if(
+        impl_->audioReactiveBindings_.begin(),
+        impl_->audioReactiveBindings_.end(),
+        [&normalized](const auto& item) {
+            return !normalized.bindingId.trimmed().isEmpty() &&
+                   item.bindingId == normalized.bindingId;
+        });
+    if (existing != impl_->audioReactiveBindings_.end()) {
+        *existing = normalized;
+    } else {
+        normalized.bindingId = uniqueAudioBindingId(
+            impl_->audioReactiveBindings_, normalized.bindingId);
+        impl_->audioReactiveBindings_.append(normalized);
+    }
+    impl_->audioReactiveSmoothedValues_.remove(normalized.bindingId);
+    impl_->audioReactiveEnvelopeValues_.remove(normalized.bindingId);
+    impl_->audioReactiveMonitors_.remove(normalized.bindingId);
+    Q_EMIT changed();
+}
+
+bool ArtifactAbstractComposition::removeAudioReactiveBinding(
+    const QString& bindingId)
+{
+    const auto existing = std::find_if(
+        impl_->audioReactiveBindings_.begin(),
+        impl_->audioReactiveBindings_.end(),
+        [&bindingId](const auto& binding) {
+            return binding.bindingId == bindingId;
+        });
+    if (existing == impl_->audioReactiveBindings_.end()) {
+        return false;
+    }
+    impl_->audioReactiveBindings_.erase(existing);
+    impl_->audioReactiveSmoothedValues_.remove(bindingId);
+    impl_->audioReactiveEnvelopeValues_.remove(bindingId);
+    impl_->audioReactiveMonitors_.remove(bindingId);
+    Q_EMIT changed();
+    return true;
+}
+
+CompositionAudioReactiveMonitor
+ArtifactAbstractComposition::evaluateAudioReactiveBindingValue(
+    const QString& bindingId, double rawValue, bool resetSmoothing)
+{
+    const auto binding = std::find_if(
+        impl_->audioReactiveBindings_.cbegin(),
+        impl_->audioReactiveBindings_.cend(),
+        [&bindingId](const auto& item) {
+            return item.bindingId == bindingId && item.enabled;
+        });
+    if (binding == impl_->audioReactiveBindings_.cend()) {
+        return {};
+    }
+    if (resetSmoothing) {
+        impl_->audioReactiveEnvelopeValues_.remove(bindingId);
+    }
+    double envelopeValue = rawValue;
+    const auto previousEnvelope =
+        impl_->audioReactiveEnvelopeValues_.constFind(bindingId);
+    if (previousEnvelope != impl_->audioReactiveEnvelopeValues_.constEnd()) {
+        const double tau = rawValue >= previousEnvelope.value()
+            ? binding->attackSeconds
+            : binding->releaseSeconds;
+        if (tau > 0.0) {
+            const double dt = 1.0 / std::max(
+                1.0, static_cast<double>(frameRate().framerate()));
+            const double alpha = 1.0 - std::exp(-dt / tau);
+            envelopeValue = previousEnvelope.value() +
+                (rawValue - previousEnvelope.value()) * alpha;
+        }
+    }
+    impl_->audioReactiveEnvelopeValues_.insert(bindingId, envelopeValue);
+    double processedValue = binding->invert ? 1.0 - envelopeValue
+                                            : envelopeValue;
+    processedValue = processedValue * binding->gain + binding->offset;
+    if (binding->clampEnabled) {
+        processedValue = std::clamp(
+            processedValue,
+            std::min(binding->clampMinimum, binding->clampMaximum),
+            std::max(binding->clampMinimum, binding->clampMaximum));
+    }
+    if (resetSmoothing) {
+        impl_->audioReactiveSmoothedValues_.remove(bindingId);
+    }
+    const auto previous =
+        impl_->audioReactiveSmoothedValues_.constFind(bindingId);
+    const double smoothing = std::clamp(binding->smoothing, 0.0, 1.0);
+    if (previous != impl_->audioReactiveSmoothedValues_.constEnd() &&
+        smoothing > 0.0) {
+        processedValue = previous.value() +
+            (processedValue - previous.value()) * (1.0 - smoothing);
+    }
+    impl_->audioReactiveSmoothedValues_.insert(bindingId, processedValue);
+    const CompositionAudioReactiveMonitor monitor{
+        rawValue, processedValue, true};
+    impl_->audioReactiveMonitors_.insert(bindingId, monitor);
+    return monitor;
+}
+
+bool ArtifactAbstractComposition::applyAudioReactiveBindingValue(
+    const QString& bindingId, double rawValue, bool resetSmoothing)
+{
+    const auto binding = std::find_if(
+        impl_->audioReactiveBindings_.cbegin(),
+        impl_->audioReactiveBindings_.cend(),
+        [&bindingId](const auto& item) {
+            return item.bindingId == bindingId && item.enabled;
+        });
+    if (binding == impl_->audioReactiveBindings_.cend()) {
+        return false;
+    }
+    const auto monitor = evaluateAudioReactiveBindingValue(
+        bindingId, rawValue, resetSmoothing);
+    if (!monitor.valid) {
+        return false;
+    }
+    const auto targetLayer = layerById(binding->layerId);
+    const auto property = targetLayer
+        ? targetLayer->getProperty(binding->propertyPath)
+        : nullptr;
+    if (!targetLayer || !property) {
+        return false;
+    }
+    auto& recording = impl_->liveControlRecording_;
+    const QString sourceAddress =
+        QStringLiteral("audio.") + binding->source;
+    const bool shouldRecord = recording.active && property->isAnimatable() &&
+        (recording.options.addresses.isEmpty() ||
+         recording.options.addresses.contains(sourceAddress) ||
+         recording.options.addresses.contains(bindingId));
+    const QString snapshotKey =
+        recordingSnapshotKey(binding->layerId, binding->propertyPath);
+    if (shouldRecord &&
+        !recording.snapshotsByAddress.contains(snapshotKey)) {
+        Impl::RecordedPropertySnapshot snapshot;
+        snapshot.layerId = binding->layerId;
+        snapshot.propertyPath = binding->propertyPath;
+        snapshot.value = property->getValue();
+        snapshot.keyframes = property->getKeyFrames();
+        recording.snapshotsByAddress.insert(snapshotKey, snapshot);
+    }
+    if (!targetLayer->setLayerPropertyValue(
+            binding->propertyPath, QVariant(monitor.processedValue))) {
+        return false;
+    }
+    if (!shouldRecord) {
+        return true;
+    }
+    const qint64 currentFrame = framePosition().framePosition();
+    const int frameStride = std::max(1, recording.options.sampleEveryNFrames);
+    const auto lastFrame =
+        recording.lastRecordedFrameByAddress.constFind(bindingId);
+    if (lastFrame != recording.lastRecordedFrameByAddress.constEnd() &&
+        std::abs(currentFrame - lastFrame.value()) < frameStride) {
+        return true;
+    }
+    const auto lastValue =
+        recording.lastRecordedValueByAddress.constFind(bindingId);
+    if (lastValue != recording.lastRecordedValueByAddress.constEnd() &&
+        std::abs(monitor.processedValue - lastValue.value()) <
+            recording.options.deadZone) {
+        return true;
+    }
+    const RationalTime keyTime(
+        currentFrame,
+        static_cast<int64_t>(std::max<double>(
+            1.0, static_cast<double>(frameRate().framerate()))));
+    property->addKeyFrame(keyTime, QVariant(monitor.processedValue));
+    recording.lastRecordedFrameByAddress.insert(bindingId, currentFrame);
+    recording.lastRecordedValueByAddress.insert(
+        bindingId, monitor.processedValue);
+    return true;
+}
+
+CompositionAudioReactiveMonitor
+ArtifactAbstractComposition::audioReactiveBindingMonitor(
+    const QString& bindingId) const
+{
+    return impl_->audioReactiveMonitors_.value(bindingId);
+}
+
 QVector<CompositionStateVariant> ArtifactAbstractComposition::stateVariants() const
 {
     return impl_->stateVariants_;
@@ -2525,6 +3470,14 @@ void ArtifactAbstractComposition::setStateVariants(
     if (!impl_->activeStateVariantId_.isEmpty() &&
         findStateVariantById(impl_->stateVariants_, impl_->activeStateVariantId_) == nullptr) {
         impl_->activeStateVariantId_.clear();
+    }
+    if (!impl_->stateComparisonAId_.isEmpty() &&
+        findStateVariantById(impl_->stateVariants_, impl_->stateComparisonAId_) == nullptr) {
+        impl_->stateComparisonAId_.clear();
+    }
+    if (!impl_->stateComparisonBId_.isEmpty() &&
+        findStateVariantById(impl_->stateVariants_, impl_->stateComparisonBId_) == nullptr) {
+        impl_->stateComparisonBId_.clear();
     }
     Q_EMIT changed();
 }
@@ -2550,6 +3503,12 @@ bool ArtifactAbstractComposition::removeStateVariant(const QString& stateId)
         impl_->stateVariants_.removeAt(index);
         if (impl_->activeStateVariantId_ == stateId) {
             impl_->activeStateVariantId_.clear();
+        }
+        if (impl_->stateComparisonAId_ == stateId) {
+            impl_->stateComparisonAId_.clear();
+        }
+        if (impl_->stateComparisonBId_ == stateId) {
+            impl_->stateComparisonBId_.clear();
         }
         Q_EMIT changed();
         return true;
@@ -2619,6 +3578,37 @@ bool ArtifactAbstractComposition::setActiveStateVariantId(const QString& stateId
     return true;
 }
 
+QString ArtifactAbstractComposition::stateComparisonAId() const
+{
+    return impl_->stateComparisonAId_;
+}
+
+QString ArtifactAbstractComposition::stateComparisonBId() const
+{
+    return impl_->stateComparisonBId_;
+}
+
+bool ArtifactAbstractComposition::setStateComparisonPair(
+    const QString& stateAId, const QString& stateBId)
+{
+    const QString normalizedA = stateAId.trimmed();
+    const QString normalizedB = stateBId.trimmed();
+    if ((!normalizedA.isEmpty() &&
+         findStateVariantById(impl_->stateVariants_, normalizedA) == nullptr) ||
+        (!normalizedB.isEmpty() &&
+         findStateVariantById(impl_->stateVariants_, normalizedB) == nullptr)) {
+        return false;
+    }
+    if (impl_->stateComparisonAId_ == normalizedA &&
+        impl_->stateComparisonBId_ == normalizedB) {
+        return true;
+    }
+    impl_->stateComparisonAId_ = normalizedA;
+    impl_->stateComparisonBId_ = normalizedB;
+    Q_EMIT changed();
+    return true;
+}
+
 QJsonDocument ArtifactAbstractComposition::toJson() const{
     QJsonObject obj;
     obj["id"] = id().toString();
@@ -2640,6 +3630,13 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
     obj["backgroundColor"] = backgroundColorObj;
     obj["responsiveLayout"] = impl_->responsiveLayout_.toJson();
     obj["activeStateVariantId"] = impl_->activeStateVariantId_;
+    obj["stateComparisonAId"] = impl_->stateComparisonAId_;
+    obj["stateComparisonBId"] = impl_->stateComparisonBId_;
+    QJsonArray audioBindingsArray;
+    for (const auto& binding : impl_->audioReactiveBindings_) {
+        audioBindingsArray.append(binding.toJson());
+    }
+    obj["audioReactiveBindings"] = audioBindingsArray;
     QJsonArray stateVariantsArray;
     for (const auto& state : impl_->stateVariants_) {
         stateVariantsArray.append(state.toJson());
@@ -2738,10 +3735,37 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
     }
     comp->impl_->activeStateVariantId_ =
         obj.value("activeStateVariantId").toString();
+    comp->impl_->stateComparisonAId_ =
+        obj.value("stateComparisonAId").toString();
+    comp->impl_->stateComparisonBId_ =
+        obj.value("stateComparisonBId").toString();
+    if (obj.contains("audioReactiveBindings") &&
+        obj.value("audioReactiveBindings").isArray()) {
+        QVector<CompositionAudioReactiveBinding> bindings;
+        const QJsonArray array = obj.value("audioReactiveBindings").toArray();
+        bindings.reserve(array.size());
+        for (const auto& value : array) {
+            if (value.isObject()) {
+                bindings.append(
+                    CompositionAudioReactiveBinding::fromJson(value.toObject()));
+            }
+        }
+        comp->setAudioReactiveBindings(bindings);
+    }
     if (!comp->impl_->activeStateVariantId_.isEmpty() &&
         findStateVariantById(comp->impl_->stateVariants_,
                              comp->impl_->activeStateVariantId_) == nullptr) {
         comp->impl_->activeStateVariantId_.clear();
+    }
+    if (!comp->impl_->stateComparisonAId_.isEmpty() &&
+        findStateVariantById(comp->impl_->stateVariants_,
+                             comp->impl_->stateComparisonAId_) == nullptr) {
+        comp->impl_->stateComparisonAId_.clear();
+    }
+    if (!comp->impl_->stateComparisonBId_.isEmpty() &&
+        findStateVariantById(comp->impl_->stateVariants_,
+                             comp->impl_->stateComparisonBId_) == nullptr) {
+        comp->impl_->stateComparisonBId_.clear();
     }
     if (obj.contains("transformFields") && obj["transformFields"].isArray()) {
         const QJsonArray transformFieldsArray = obj["transformFields"].toArray();

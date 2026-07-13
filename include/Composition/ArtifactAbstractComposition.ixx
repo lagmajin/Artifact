@@ -9,6 +9,8 @@ module;
 #include <QRectF>
 #include <QSize>
 #include <QVector>
+#include <QVariant>
+#include <vector>
 
 export module Artifact.Composition.Abstract;
 import std;
@@ -30,8 +32,9 @@ import Artifact.Composition.Result;
 import Composition.Settings;
 import Audio.Analyze;
 import Audio.Segment;
-import Audio.Segment;
 import Audio.Mixer;
+import Property.Abstract;
+import Artifact.Layer.Abstract;
 
 import Geometry.ResolutionRemap;
 import Artifact.Effect.Abstract;
@@ -41,9 +44,6 @@ import Artifact.Effect.Abstract;
 export namespace Artifact {
 
  using namespace ArtifactCore;
-
- class ArtifactAbstractLayer;
- using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
  class ArtifactAbstractComposition;
  using ArtifactCompositionPtr = ArtifactCore::SharedPtr<ArtifactAbstractComposition>;
  using ArtifactCompositionWeakPtr = ArtifactCore::WeakPtr<ArtifactAbstractComposition>;
@@ -73,11 +73,15 @@ export namespace Artifact {
  };
 
  struct CompositionTransformField {
- QString fieldId;
+  QString fieldId;
   QString displayName = QStringLiteral("Radial Transform Field");
+  QString shape = QStringLiteral("radial");
   bool enabled = true;
   QPointF center;
   qreal radius = 1.0;
+  qreal secondaryRadius = 1.0;
+  qreal rotationDegrees = 0.0;
+  qreal timeOffsetSeconds = 0.0;
   qreal strength = 1.0;
   QString blendMode = QStringLiteral("normal");
   bool invert = false;
@@ -94,6 +98,18 @@ export namespace Artifact {
  struct CompositionFieldTransformAdjustment {
   QPointF positionOffset;
   qreal scaleMultiplier = 1.0;
+  bool affected = false;
+ };
+
+ struct CompositionFieldInfluenceSample {
+  qreal weight = 0.0;
+  bool affected = false;
+ };
+
+ struct CompositionFieldChannelSample {
+  qreal weight = 1.0;
+  qreal scaleMultiplier = 1.0;
+  qreal timeOffsetSeconds = 0.0;
   bool affected = false;
  };
 
@@ -124,6 +140,41 @@ export namespace Artifact {
   int sampleEveryNFrames = 1;
   double deadZone = 0.001;
   bool restoreOnCancel = true;
+ };
+
+ struct LiveControlRecordingPropertyChange {
+  LayerID layerId;
+  QString propertyPath;
+  QVariant beforeValue;
+  QVariant afterValue;
+  std::vector<ArtifactCore::KeyFrame> beforeKeyframes;
+  std::vector<ArtifactCore::KeyFrame> afterKeyframes;
+ };
+
+ struct CompositionAudioReactiveBinding {
+  QString bindingId;
+  QString source = QStringLiteral("amplitude");
+  LayerID layerId;
+  QString propertyPath;
+  double gain = 1.0;
+  double offset = 0.0;
+  bool clampEnabled = false;
+  double clampMinimum = 0.0;
+  double clampMaximum = 1.0;
+  double smoothing = 0.0;
+  double attackSeconds = 0.0;
+  double releaseSeconds = 0.0;
+  bool invert = false;
+  bool enabled = true;
+
+  QJsonObject toJson() const;
+  static CompositionAudioReactiveBinding fromJson(const QJsonObject& obj);
+ };
+
+ struct CompositionAudioReactiveMonitor {
+  double rawValue = 0.0;
+  double processedValue = 0.0;
+  bool valid = false;
  };
 
  class ArtifactAbstractComposition:public QObject, public ArtifactAbstractCompositionAccess {
@@ -213,6 +264,12 @@ export namespace Artifact {
   void setActiveTransformFieldId(const QString& fieldId);
   CompositionFieldTransformAdjustment evaluateTransformFields(
       const LayerID& layerId, const QPointF& basePosition) const;
+  CompositionFieldInfluenceSample evaluateFieldInfluence(
+      const LayerID& layerId, const QPointF& samplePosition) const;
+  CompositionFieldInfluenceSample evaluateFieldInfluenceAtCanvasPoint(
+      const LayerID& layerId, const QPointF& canvasPosition) const;
+  CompositionFieldChannelSample evaluateFieldChannelsAtCanvasPoint(
+      const LayerID& layerId, const QPointF& canvasPosition) const;
   bool applyExternalControlValue(const QString& address, double rawValue, bool resetSmoothing = false);
   bool applyAudioAnalysis(const ArtifactCore::AudioAnalyzer::AnalysisResult& analysis,
                           const QString& addressPrefix = QStringLiteral("audio"),
@@ -220,14 +277,32 @@ export namespace Artifact {
   bool beginLiveControlRecording(const LiveControlRecordingOptions& options = {});
   bool isLiveControlRecordingActive() const;
   LiveControlRecordingOptions liveControlRecordingOptions() const;
-  void commitLiveControlRecording();
+  QVector<LiveControlRecordingPropertyChange> commitLiveControlRecording();
   void cancelLiveControlRecording();
+  QVector<CompositionAudioReactiveBinding> audioReactiveBindings() const;
+  void setAudioReactiveBindings(
+      const QVector<CompositionAudioReactiveBinding>& bindings);
+  void addAudioReactiveBinding(const CompositionAudioReactiveBinding& binding);
+  bool removeAudioReactiveBinding(const QString& bindingId);
+  CompositionAudioReactiveMonitor evaluateAudioReactiveBindingValue(
+      const QString& bindingId, double rawValue, bool resetSmoothing = false);
+  bool applyAudioReactiveBindingValue(
+      const QString& bindingId, double rawValue, bool resetSmoothing = false);
+  CompositionAudioReactiveMonitor audioReactiveBindingMonitor(
+      const QString& bindingId) const;
   QVector<CompositionStateVariant> stateVariants() const;
   void setStateVariants(const QVector<CompositionStateVariant>& states);
   void addStateVariant(const CompositionStateVariant& state);
   bool removeStateVariant(const QString& stateId);
   QString activeStateVariantId() const;
   bool setActiveStateVariantId(const QString& stateId);
+  QString stateComparisonAId() const;
+  QString stateComparisonBId() const;
+  bool setStateComparisonPair(const QString& stateAId, const QString& stateBId);
+  void evaluateLayerComponentSimulation(const FramePosition& frame,
+                                        bool interactive = false);
+  void resetLayerComponentSimulation();
+  bool hasAuthoritativeLayerComponentSimulation() const;
   	
   bool hasVideo() const;
   bool hasAudio() const;

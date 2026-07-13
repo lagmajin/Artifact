@@ -49,6 +49,7 @@ module;
 #include <QSet>
 
 #include <QStringList>
+#include <QString>
 #include <QUuid>
 
 #include <QTimer>
@@ -2499,7 +2500,7 @@ std::array<QPointF, 4> rectCorners(const QRectF &rect)
 
 
 
-enum class TransformFieldDragMode { None, Center, Radius };
+enum class TransformFieldDragMode { None, Center, Radius, SecondaryRadius };
 
 
 
@@ -2537,7 +2538,13 @@ QPointF transformFieldDisplayCenter(const ArtifactCompositionPtr &comp,
 QPointF transformFieldDisplayRadiusPoint(const ArtifactCompositionPtr &comp,
                                          const CompositionTransformField &field)
 {
-  const QPointF radiusPoint = field.center + QPointF(field.radius, 0.0);
+  const qreal angleRadians =
+      field.rotationDegrees * (std::acos(-1.0) / 180.0);
+  const QPointF radiusDirection = field.shape == QStringLiteral("linear")
+                                      ? QPointF(std::cos(angleRadians),
+                                                std::sin(angleRadians))
+                                      : QPointF(1.0, 0.0);
+  const QPointF radiusPoint = field.center + radiusDirection * field.radius;
   if (!comp || field.coordinateParentLayerId.isNil()) {
     return radiusPoint;
   }
@@ -2545,6 +2552,41 @@ QPointF transformFieldDisplayRadiusPoint(const ArtifactCompositionPtr &comp,
     return parentLayer->getGlobalTransform().map(radiusPoint);
   }
   return radiusPoint;
+}
+
+QPointF transformFieldDisplaySecondaryRadiusPoint(
+    const ArtifactCompositionPtr &comp, const CompositionTransformField &field)
+{
+  const QPointF radiusPoint =
+      field.center + QPointF(0.0, field.secondaryRadius);
+  if (!comp || field.coordinateParentLayerId.isNil()) {
+    return radiusPoint;
+  }
+  if (const auto parentLayer = comp->layerById(field.coordinateParentLayerId)) {
+    return parentLayer->getGlobalTransform().map(radiusPoint);
+  }
+  return radiusPoint;
+}
+
+std::array<QPointF, 4> transformFieldDisplayBoxCorners(
+    const ArtifactCompositionPtr &comp, const CompositionTransformField &field)
+{
+  std::array<QPointF, 4> corners = {
+      field.center + QPointF(-field.radius, -field.secondaryRadius),
+      field.center + QPointF(field.radius, -field.secondaryRadius),
+      field.center + QPointF(field.radius, field.secondaryRadius),
+      field.center + QPointF(-field.radius, field.secondaryRadius),
+  };
+  if (!comp || field.coordinateParentLayerId.isNil()) {
+    return corners;
+  }
+  if (const auto parentLayer = comp->layerById(field.coordinateParentLayerId)) {
+    const QTransform transform = parentLayer->getGlobalTransform();
+    for (auto &corner : corners) {
+      corner = transform.map(corner);
+    }
+  }
+  return corners;
 }
 
 
@@ -2593,6 +2635,8 @@ bool hitTestTransformFieldHandle(
 
     const QPointF displayCenter = transformFieldDisplayCenter(comp, field);
     const QPointF displayRadiusPoint = transformFieldDisplayRadiusPoint(comp, field);
+    const QPointF displaySecondaryRadiusPoint =
+        transformFieldDisplaySecondaryRadiusPoint(comp, field);
 
     const qreal centerDistance = std::hypot(canvasPos.x() - displayCenter.x(),
                                             canvasPos.y() - displayCenter.y());
@@ -2609,6 +2653,18 @@ bool hitTestTransformFieldHandle(
       bestDistance = radiusDistance;
       outFieldId = field.fieldId;
       outMode = TransformFieldDragMode::Radius;
+    }
+
+    if (field.shape == QStringLiteral("box")) {
+      const qreal secondaryRadiusDistance = std::hypot(
+          canvasPos.x() - displaySecondaryRadiusPoint.x(),
+          canvasPos.y() - displaySecondaryRadiusPoint.y());
+      if (secondaryRadiusDistance <= hitThreshold &&
+          secondaryRadiusDistance < bestDistance) {
+        bestDistance = secondaryRadiusDistance;
+        outFieldId = field.fieldId;
+        outMode = TransformFieldDragMode::SecondaryRadius;
+      }
     }
   }
 
@@ -2640,15 +2696,22 @@ void drawTransformFieldBadge(ArtifactIRenderer *renderer,
                 : blendMode == QStringLiteral("screen")
                       ? QStringLiteral("Screen")
                       : QStringLiteral("Normal");
-  const QString badgeSubtitle = QStringLiteral("%1 / %2 / %3")
-                                   .arg(QStringLiteral("ACTIVE"), blendLabel,
+  const QString shapeLabel = field.shape == QStringLiteral("box")
+                                 ? QStringLiteral("BOX")
+                                 : field.shape == QStringLiteral("linear")
+                                       ? QStringLiteral("LINEAR")
+                                       : QStringLiteral("RADIAL");
+  const QString badgeSubtitle = QStringLiteral("%1 / %2 / %3 / %4")
+                                   .arg(QStringLiteral("ACTIVE"), shapeLabel, blendLabel,
                                         field.enabled ? QStringLiteral("enabled")
                                                       : QStringLiteral("disabled"));
-  const QString badgeDetails = QStringLiteral("%1 / %2")
+  const QString badgeDetails = QStringLiteral("%1 / %2 / scale %3 / time %4s")
                                    .arg(QStringLiteral("strength %1")
                                             .arg(QString::number(field.strength, 'f', 1)),
-                                        field.invert ? QStringLiteral("invert on")
-                                                     : QStringLiteral("invert off"));
+                                         field.invert ? QStringLiteral("invert on")
+                                                     : QStringLiteral("invert off"),
+                                         QString::number(field.edgeScale, 'f', 2),
+                                         QString::number(field.timeOffsetSeconds, 'f', 2));
 
   const QPointF anchor =
       QPointF((displayCenter.x() + displayRadiusPoint.x()) * 0.5,
@@ -6793,17 +6856,29 @@ void drawLayerForCompositionView(
 
   if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer)) {
 
-    // Apply persisted Master Property overrides once per change, immediately
-    // before the precomp surface is requested.
-    compLayer->applyExposedPropertyOverrides();
-
     if (auto childComp = compLayer->sourceComposition()) {
 
       const QSize childSize = childComp->settings().compositionSize();
 
-      QImage childImage =
-
-          childComp->getThumbnail(childSize.width(), childSize.height());
+      // Master Properties are instance overrides. Apply them only while this
+      // precomp instance is sampled, then restore the shared child composition
+      // so sibling instances cannot leak values into one another.
+      const bool overrideScopeActive =
+          compLayer->beginExposedPropertyOverrideScope();
+      const int64_t childFrame =
+          cacheFrameNumber == std::numeric_limits<int64_t>::min()
+              ? childComp->framePosition().framePosition()
+              : static_cast<int64_t>(std::llround(
+                    layer->getSourceFrameAtCompFrame(cacheFrameNumber)));
+      const FramePosition childRestoreFrame = childComp->framePosition();
+      QImage childImage = childComp->getThumbnailAtFrame(
+          childFrame, childSize.width(), childSize.height());
+      if (overrideScopeActive) {
+        compLayer->endExposedPropertyOverrideScope();
+      }
+      if (childRestoreFrame.framePosition() != childFrame) {
+        childComp->goToFrame(childRestoreFrame.framePosition());
+      }
 
 
 
@@ -7509,6 +7584,8 @@ public:
   bool renderScheduled_ = false;
 
   CompositionCompareMode compareMode_ = CompositionCompareMode::Off;
+  QString compareRestoreStateId_;
+  bool stateCompareSessionActive_ = false;
 
   bool referencePinned_ = false;
 
@@ -7530,11 +7607,90 @@ public:
 
   bool blendPipelineReady_ = false;
 
-  bool blendPipelineInitAttempted_ = false;
+  bool blendPipelineInitScheduled_ = false;
+
+  bool blendPipelineInitInProgress_ = false;
+
+  int blendPipelineInitAttemptCount_ = 0;
+
+  quint64 blendPipelineInitGeneration_ = 0;
+
+  static constexpr int kBlendPipelineMaxInitAttempts = 3;
+
+  QString blendPipelineInitState_ = QStringLiteral("not-scheduled");
 
   bool gpuBlendEnabled_ =
 
       !qEnvironmentVariableIsSet("ARTIFACT_COMPOSITION_DISABLE_GPU_BLEND");
+
+  void scheduleBlendPipelineInitialization(
+      CompositionRenderController* owner, int delayMs, const QString& reason) {
+    if (!owner || !initialized_ || !gpuBlendEnabled_ || blendPipelineReady_ ||
+        blendPipelineInitScheduled_ || blendPipelineInitInProgress_ ||
+        blendPipelineInitAttemptCount_ >= kBlendPipelineMaxInitAttempts) {
+      return;
+    }
+
+    blendPipelineInitScheduled_ = true;
+    blendPipelineInitState_ = QStringLiteral("scheduled:%1").arg(reason);
+    QTimer::singleShot(std::max(0, delayMs), owner,
+                       [this, owner, reason,
+                        generation = blendPipelineInitGeneration_]() {
+      if (generation != blendPipelineInitGeneration_) {
+        return;
+      }
+      blendPipelineInitScheduled_ = false;
+      if (!initialized_ || !gpuBlendEnabled_ || blendPipelineReady_) {
+        return;
+      }
+
+      auto* renderer = renderer_.get();
+      if (!renderer || !renderer->device() || !renderer->immediateContext()) {
+        blendPipelineInitState_ = QStringLiteral("waiting-for-device");
+        scheduleBlendPipelineInitialization(
+            owner, 250, QStringLiteral("device-not-ready"));
+        return;
+      }
+
+      blendPipelineInitInProgress_ = true;
+      ++blendPipelineInitAttemptCount_;
+      blendPipelineInitState_ = QStringLiteral("initializing:%1").arg(reason);
+
+      if (!blendPipeline_) {
+        blendPipeline_ = renderer->createLayerBlendPipeline();
+      }
+
+      QElapsedTimer timer;
+      timer.start();
+      blendPipelineReady_ = blendPipeline_ && blendPipeline_->initialize() &&
+                            blendPipeline_->ready();
+      blendPipelineInitInProgress_ = false;
+
+      if (blendPipelineReady_) {
+        blendPipelineInitState_ = QStringLiteral("ready");
+        qInfo() << "[CompositionView][Startup] blend pipeline init"
+                << "attempt=" << blendPipelineInitAttemptCount_
+                << "reason=" << reason << "ms=" << timer.elapsed();
+        invalidateBaseComposite();
+        owner->markRenderDirty();
+        return;
+      }
+
+      blendPipeline_.reset();
+      blendPipelineInitState_ = QStringLiteral("failed:%1/%2")
+                                    .arg(blendPipelineInitAttemptCount_)
+                                    .arg(kBlendPipelineMaxInitAttempts);
+      qWarning() << "[CompositionView] LayerBlendPipeline initialization failed"
+                 << "attempt=" << blendPipelineInitAttemptCount_
+                 << "reason=" << reason;
+
+      if (blendPipelineInitAttemptCount_ < kBlendPipelineMaxInitAttempts) {
+        scheduleBlendPipelineInitialization(
+            owner, 500 * blendPipelineInitAttemptCount_,
+            QStringLiteral("retry-after-failure"));
+      }
+    });
+  }
 
   QString lastVideoDebug_;
 
@@ -8308,9 +8464,11 @@ public:
 
     if (!allMatted) {
 
-      qWarning() << "[CompositionView] GPU track matte partial/failure for"
+      qCritical() << "[CompositionView] GPU track matte failed; layer blend skipped for"
 
                  << layer->layerName();
+
+      return nullptr;
 
     }
 
@@ -9295,9 +9453,7 @@ public:
 
       const bool hasDepthSlot,
 
-      const bool acquireHazard,
-
-      const bool transparentCompositionBackgroundRequested) {
+      const bool acquireHazard) {
 
     (void)hasCpuRasterizerUpload;
 
@@ -9340,12 +9496,6 @@ public:
     if (acquireHazard) {
 
       return QStringLiteral("submitted-slot-hazard");
-
-    }
-
-    if (transparentCompositionBackgroundRequested) {
-
-      return QStringLiteral("transparent-background");
 
     }
 
@@ -9523,7 +9673,8 @@ public:
 
     int32_t gizmoMode = -1, gizmoHover = -1, gizmoActive = -1;
 
-    uint8_t gpuBlend = 0, showGrid = 0, showGuides = 0, showSafeMargins = 0,
+    uint8_t gpuBlend = 0, gpuBlendReady = 0, showGrid = 0, showGuides = 0,
+            showSafeMargins = 0,
 
             showAnchorCenter = 0, showCameraFrustum = 0, showXRay = 0,
             showIsolation = 0,
@@ -9574,7 +9725,8 @@ public:
 
              gizmoHover == o.gizmoHover && gizmoActive == o.gizmoActive &&
 
-             gpuBlend == o.gpuBlend && showGrid == o.showGrid &&
+             gpuBlend == o.gpuBlend && gpuBlendReady == o.gpuBlendReady &&
+             showGrid == o.showGrid &&
 
              showGuides == o.showGuides &&
 
@@ -10623,9 +10775,25 @@ public:
       if (draggingTransformFieldMode_ == TransformFieldDragMode::Center) {
         field.center = localPoint;
       } else if (draggingTransformFieldMode_ == TransformFieldDragMode::Radius) {
-        field.radius = std::max<qreal>(
-            0.01, std::hypot(localPoint.x() - field.center.x(),
-                              localPoint.y() - field.center.y()));
+        field.radius = field.shape == QStringLiteral("box")
+                           ? std::max<qreal>(
+                                 0.01, std::abs(localPoint.x() - field.center.x()))
+                           : std::max<qreal>(
+                                 0.01, std::hypot(localPoint.x() - field.center.x(),
+                                                  localPoint.y() - field.center.y()));
+        if (field.shape == QStringLiteral("linear")) {
+          field.rotationDegrees = std::atan2(
+                                      localPoint.y() - field.center.y(),
+                                      localPoint.x() - field.center.x()) *
+                                  (180.0 / std::acos(-1.0));
+        }
+      } else if (draggingTransformFieldMode_ ==
+                 TransformFieldDragMode::SecondaryRadius) {
+        if (field.shape != QStringLiteral("box")) {
+          return false;
+        }
+        field.secondaryRadius = std::max<qreal>(
+            0.01, std::abs(localPoint.y() - field.center.y()));
       } else {
         return false;
       }
@@ -11585,88 +11753,30 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   // inside renderOneFrameImpl would stall the render timer for hundreds of ms.
 
   if (impl_->gpuBlendEnabled_) {
-
-    QTimer::singleShot(1500, this, [this]() {
-
-      if (!impl_ || !impl_->initialized_)
-
-        return;
-
-      if (impl_->blendPipelineReady_ || impl_->blendPipelineInitAttempted_)
-
-        return;
-
-      impl_->blendPipelineInitAttempted_ = true;
-
-      auto *renderer = impl_->renderer_.get();
-
-      if (!renderer)
-
-        return;
-
-      auto device = renderer->device();
-
-      if (!device)
-
-        return;
-
-      if (!impl_->blendPipeline_)
-
-        impl_->blendPipeline_ = renderer->createLayerBlendPipeline();
-
-      if (impl_->blendPipeline_) {
-
-        QElapsedTimer t;
-
-        t.start();
-
-        impl_->blendPipelineReady_ = impl_->blendPipeline_->initialize();
-
-        if (impl_->blendPipelineReady_) {
-
-          qInfo() << "[CompositionView][Startup] blend pipeline lazy init ms="
-
-                  << t.elapsed();
-
-        } else {
-
-          qWarning()
-
-              << "[CompositionView] LayerBlendPipeline FAILED to initialize.";
-
-        }
-
-      }
-
-      // Lazily initialize GPU mask cutout pipeline
-
-      if (!impl_->maskCutoutPipeline_) {
-
-        auto ctx = std::make_unique<ArtifactCore::GpuContext>(
-
-            renderer->device(), renderer->immediateContext());
-
-        impl_->maskCutoutPipeline_ =
-
-            std::make_unique<ArtifactCore::MaskCutoutPipeline>(*ctx);
-
-        ctx.release();
-
-        if (impl_->maskCutoutPipeline_->initialize()) {
-
-          qInfo() << "[CompositionView][Startup] mask cutout pipeline init OK";
-
-        } else {
-
-          qWarning() << "[CompositionView] MaskCutoutPipeline FAILED to init.";
-
-        }
-
-      }
-
-    });
-
+    impl_->scheduleBlendPipelineInitialization(
+        this, 1500, QStringLiteral("startup"));
   }
+
+  // Mask cutout is an independent capability. Its initialization must not
+  // decide whether standard Add/Multiply composition is available.
+  QTimer::singleShot(1500, this, [this]() {
+    if (!impl_ || !impl_->initialized_ || !impl_->renderer_ ||
+        !impl_->renderer_->device() || !impl_->renderer_->immediateContext()) {
+      return;
+    }
+    if (!impl_->maskCutoutPipeline_) {
+      auto ctx = std::make_unique<ArtifactCore::GpuContext>(
+          impl_->renderer_->device(), impl_->renderer_->immediateContext());
+      impl_->maskCutoutPipeline_ =
+          std::make_unique<ArtifactCore::MaskCutoutPipeline>(*ctx);
+      ctx.release();
+      if (impl_->maskCutoutPipeline_->initialize()) {
+        qInfo() << "[CompositionView][Startup] mask cutout pipeline init OK";
+      } else {
+        qWarning() << "[CompositionView] MaskCutoutPipeline FAILED to init.";
+      }
+    }
+  });
 
 }
 
@@ -11718,7 +11828,15 @@ void CompositionRenderController::destroy() {
 
   impl_->blendPipelineReady_ = false;
 
-  impl_->blendPipelineInitAttempted_ = false;
+  impl_->blendPipelineInitScheduled_ = false;
+
+  impl_->blendPipelineInitInProgress_ = false;
+
+  impl_->blendPipelineInitAttemptCount_ = 0;
+
+  ++impl_->blendPipelineInitGeneration_;
+
+  impl_->blendPipelineInitState_ = QStringLiteral("not-scheduled");
 
   impl_->maskCutoutPipeline_.reset();
 
@@ -12146,6 +12264,14 @@ void CompositionRenderController::setComposition(
 
   }
 
+  if (impl_->stateCompareSessionActive_ && currentComposition) {
+    currentComposition->setActiveStateVariantId(
+        impl_->compareRestoreStateId_);
+  }
+  impl_->stateCompareSessionActive_ = false;
+  impl_->compareRestoreStateId_.clear();
+  impl_->compareMode_ = CompositionCompareMode::Off;
+
 
 
   for (auto &connection : impl_->layerChangedConnections_) {
@@ -12249,6 +12375,35 @@ LayerID CompositionRenderController::selectedLayerId() const {
 
 
 void CompositionRenderController::setCompareMode(CompositionCompareMode mode) {
+  const auto composition = impl_->previewPipeline_.composition();
+  if (composition) {
+    if (mode == CompositionCompareMode::Off) {
+      if (impl_->stateCompareSessionActive_) {
+        composition->setActiveStateVariantId(
+            impl_->compareRestoreStateId_);
+      }
+      impl_->stateCompareSessionActive_ = false;
+      impl_->compareRestoreStateId_.clear();
+    } else if (mode == CompositionCompareMode::A ||
+               mode == CompositionCompareMode::B) {
+      const QString targetStateId = mode == CompositionCompareMode::A
+          ? composition->stateComparisonAId()
+          : composition->stateComparisonBId();
+      const bool hasConfiguredPair =
+          !composition->stateComparisonAId().isEmpty() ||
+          !composition->stateComparisonBId().isEmpty();
+      if (hasConfiguredPair) {
+        if (!impl_->stateCompareSessionActive_) {
+          impl_->compareRestoreStateId_ =
+              composition->activeStateVariantId();
+          impl_->stateCompareSessionActive_ = true;
+        }
+        if (!composition->setActiveStateVariantId(targetStateId)) {
+          return;
+        }
+      }
+    }
+  }
 
   impl_->compareMode_ = mode;
 
@@ -13704,18 +13859,15 @@ bool CompositionRenderController::moveWorkCursorToSelection() {
   if (selected.isEmpty()) {
     return false;
   }
-  Diligent::float3 center{0.0f, 0.0f, 0.0f};
+  QVector3D center{0.0f, 0.0f, 0.0f};
   int count = 0;
   bool spatial = false;
   for (const auto &layer : selected) {
     if (!layer) {
       continue;
     }
-    const auto world = layer->getGlobalTransformMatrix();
-    const auto point = world * Diligent::float4{0.0f, 0.0f, 0.0f, 1.0f};
-    center.x += point.x;
-    center.y += point.y;
-    center.z += point.z;
+    const auto point = layer->getGlobalTransform4x4().map(QVector3D(0.0f, 0.0f, 0.0f));
+    center += point;
     spatial = spatial || layer->is3D();
     ++count;
   }
@@ -13724,11 +13876,11 @@ bool CompositionRenderController::moveWorkCursorToSelection() {
   }
   const float invCount = 1.0f / static_cast<float>(count);
   if (spatial) {
-    setWorkCursorWorldPosition(center.x * invCount, center.y * invCount,
-                               center.z * invCount);
+    setWorkCursorWorldPosition(center.x() * invCount, center.y() * invCount,
+                               center.z() * invCount);
   } else {
     setWorkCursorCanvasPosition(
-        QPointF(center.x * invCount, center.y * invCount));
+        QPointF(center.x() * invCount, center.y() * invCount));
   }
   return true;
 }
@@ -14287,6 +14439,17 @@ void CompositionRenderController::setGpuBlendEnabled(bool enabled) {
   }
 
   impl_->gpuBlendEnabled_ = enabled;
+
+  if (enabled && !impl_->blendPipelineReady_) {
+    impl_->blendPipelineInitAttemptCount_ = 0;
+    impl_->blendPipelineInitState_ = QStringLiteral("re-enabled");
+    impl_->scheduleBlendPipelineInitialization(
+        this, 0, QStringLiteral("user-enabled"));
+  } else if (!enabled) {
+    ++impl_->blendPipelineInitGeneration_;
+    impl_->blendPipelineInitScheduled_ = false;
+    impl_->blendPipelineInitState_ = QStringLiteral("disabled");
+  }
 
   if (auto *playback = ArtifactPlaybackService::instance()) {
 
@@ -16224,7 +16387,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   }
 
   if (event->button() == Qt::LeftButton && activeTool == ToolType::Selection &&
-      comp && impl_->renderer_) {
+      event->modifiers().testFlag(Qt::AltModifier) && comp && impl_->renderer_) {
     QSet<LayerID> selectedLayerIds;
     if (auto *selection = ArtifactApplicationManager::instance()
                               ? ArtifactApplicationManager::instance()->layerSelectionManager()
@@ -17569,7 +17732,9 @@ void CompositionRenderController::handleMouseMove(
 
   }
 
-  if (activeTool == ToolType::Selection && impl_->renderer_ &&
+  if (activeTool == ToolType::Selection &&
+      QApplication::keyboardModifiers().testFlag(Qt::AltModifier) &&
+      impl_->renderer_ &&
       !impl_->isDraggingTransformField_) {
     auto comp = impl_->previewPipeline_.composition();
     QSet<LayerID> selectedLayerIds;
@@ -18300,6 +18465,15 @@ void CompositionRenderController::handleMouseRelease() {
             field.center != impl_->draggingTransformFieldBefore_.center ||
             std::abs(field.radius - impl_->draggingTransformFieldBefore_.radius) >
                 0.0001 ||
+            std::abs(field.secondaryRadius -
+                     impl_->draggingTransformFieldBefore_.secondaryRadius) >
+                0.0001 ||
+            std::abs(field.rotationDegrees -
+                     impl_->draggingTransformFieldBefore_.rotationDegrees) >
+                0.0001 ||
+            std::abs(field.timeOffsetSeconds -
+                     impl_->draggingTransformFieldBefore_.timeOffsetSeconds) >
+                0.0001 ||
             std::abs(field.strength - impl_->draggingTransformFieldBefore_.strength) >
                 0.0001 ||
             std::abs(field.expansion -
@@ -18315,6 +18489,7 @@ void CompositionRenderController::handleMouseRelease() {
                 impl_->draggingTransformFieldBefore_.coordinateParentLayerId ||
             field.targetLayerIds !=
                 impl_->draggingTransformFieldBefore_.targetLayerIds ||
+            field.shape != impl_->draggingTransformFieldBefore_.shape ||
             field.displayName != impl_->draggingTransformFieldBefore_.displayName;
         if (changed) {
           if (auto *mgr = UndoManager::instance()) {
@@ -19409,7 +19584,8 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
   }
 
-  if (activeTool == ToolType::Selection) {
+  if (activeTool == ToolType::Selection &&
+      QApplication::keyboardModifiers().testFlag(Qt::AltModifier)) {
     auto comp = impl_->previewPipeline_.composition();
     if (comp) {
       QSet<LayerID> selectedLayerIds;
@@ -19448,6 +19624,13 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
                                TransformFieldDragMode::Radius
                        ? Qt::ClosedHandCursor
                        : Qt::SizeHorCursor;
+          }
+          if (mode == TransformFieldDragMode::SecondaryRadius) {
+            return impl_->isDraggingTransformField_ &&
+                           impl_->draggingTransformFieldMode_ ==
+                               TransformFieldDragMode::SecondaryRadius
+                       ? Qt::ClosedHandCursor
+                       : Qt::SizeVerCursor;
           }
         }
       }
@@ -20256,6 +20439,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   }
 
+  // Crowd and clone collision are owned by a composition-wide fixed-step
+  // session. The layer-local code remains only as a fallback for isolated
+  // layer previews that do not have a composition owner.
+  comp->evaluateLayerComponentSimulation(currentFrame, viewportInteracting_);
+
 
 
   const int sceneLightFps = std::max(
@@ -20475,6 +20663,35 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     has3DCamera = true;
 
+  }
+
+  // A newly created 3D layer is centered in the composition, but a normal
+  // 2D composition has no camera layer yet. Keep that first 3D object visible
+  // until an explicit camera or viewport orientation takes ownership.
+  if (!has3DCamera) {
+    const QSize compSize = comp->settings().compositionSize();
+    const float fallbackWidth =
+        static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920);
+    const float fallbackHeight =
+        static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
+    constexpr float fallbackFovDegrees = 45.0f;
+    constexpr float degreesToRadians =
+        3.14159265358979323846f / 180.0f;
+    const float fallbackDistance =
+        (fallbackHeight * 0.5f) /
+        std::tan(fallbackFovDegrees * 0.5f * degreesToRadians);
+    const QVector3D fallbackTarget(fallbackWidth * 0.5f,
+                                   fallbackHeight * 0.5f, 0.0f);
+    cameraViewMatrix.lookAt(
+        fallbackTarget + QVector3D(0.0f, 0.0f, fallbackDistance),
+        fallbackTarget, QVector3D(0.0f, 1.0f, 0.0f));
+    cameraProjMatrix.perspective(fallbackFovDegrees,
+                                 fallbackWidth / fallbackHeight, 1.0f,
+                                 100000.0f);
+    cameraProjMatrix(1, 1) = -cameraProjMatrix(1, 1);
+    previousCameraViewMatrix = cameraViewMatrix;
+    previousCameraProjMatrix = cameraProjMatrix;
+    has3DCamera = true;
   }
 
   viewportOrientationMatricesValid_ = false;
@@ -20768,6 +20985,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       static_cast<uint8_t>(gpuBlendEnabled_ ? 1 : 0),
 
+      static_cast<uint8_t>(blendPipelineReady_ ? 1 : 0),
+
       static_cast<uint8_t>(showGrid_ ? 1 : 0),
 
       static_cast<uint8_t>(showGuides_ ? 1 : 0),
@@ -20845,6 +21064,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                              layerHasCpuRasterizerWork(layer.get());
 
                     });
+
+    if (gpuBlendEnabled_ && hasGpuBlendJustification &&
+        !blendPipelineReady_) {
+      scheduleBlendPipelineInitialization(
+          owner, 0, QStringLiteral("non-normal-layer-visible"));
+    }
 
     const bool gpuBlendRequested = gpuBlendEnabled_ && blendPipelineReady_;
 
@@ -20936,10 +21161,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
 
-    const bool transparentCompositionBackgroundRequested =
-
-        currentBgColor.a() < 0.999f;
-
     const bool previewRenderSlotAcquireHazard =
 
         lastPreviewRenderPipelineAcquireHazard_;
@@ -20950,9 +21171,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         previewRenderSlot.depthTargetView != nullptr &&
 
-        !previewRenderSlotAcquireHazard &&
-
-        !transparentCompositionBackgroundRequested;
+        !previewRenderSlotAcquireHazard;
 
     if (!pipelineEnabled) {
 
@@ -21088,9 +21307,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         previewRenderSlot.depthTargetView != nullptr,
 
-        previewRenderSlotAcquireHazard,
-
-        transparentCompositionBackgroundRequested);
+        previewRenderSlotAcquireHazard);
 
     const int pipelineStateMask = (gpuBlendEnabled_ ? 0x1 : 0x0) |
 
@@ -21112,17 +21329,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                          .arg(layers.size()));
 
-    if (transparentCompositionBackgroundRequested && gpuBlendPathRequested &&
-
-        renderPipeline.ready()) {
-
-      qCDebug(compositionViewLog)
-
-          << "[CompositionView] transparent composition background forces fallback path"
-
-          << "alpha=" << currentBgColor.a();
-
-    } else if (previewRenderSlotAcquireHazard && gpuBlendPathRequested &&
+    if (previewRenderSlotAcquireHazard && gpuBlendPathRequested &&
 
                renderPipeline.ready()) {
 
@@ -24466,6 +24673,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             .arg(renderer_->rayTracingDebugState());
 
+    lastRenderPathSummary_ +=
+        QStringLiteral(" gpuBlendInitState=%1 gpuBlendInitAttempts=%2 transparentOutput=%3")
+            .arg(blendPipelineInitState_)
+            .arg(blendPipelineInitAttemptCount_)
+            .arg(currentBgColor.a() < 0.999f ? 1 : 0);
+
     const QString visibilityState =
 
         frameOutOfRange
@@ -25058,17 +25271,12 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
         continue;
       }
 
-      QPointF displayCenter = field.center;
-      QPointF displayRadiusPoint =
-          field.center + QPointF(field.radius, 0.0);
-      if (!field.coordinateParentLayerId.isNil()) {
-        if (const auto parentLayer =
-                comp->layerById(field.coordinateParentLayerId)) {
-          const QTransform parentTransform = parentLayer->getGlobalTransform();
-          displayCenter = parentTransform.map(displayCenter);
-          displayRadiusPoint = parentTransform.map(displayRadiusPoint);
-        }
-      }
+      const QPointF displayCenter = transformFieldDisplayCenter(comp, field);
+      const QPointF displayRadiusPoint =
+          transformFieldDisplayRadiusPoint(comp, field);
+      const QPointF displaySecondaryRadiusPoint =
+          transformFieldDisplaySecondaryRadiusPoint(comp, field);
+      auto displayBoxCorners = transformFieldDisplayBoxCorners(comp, field);
       const float displayRadius = static_cast<float>(
           std::hypot(displayRadiusPoint.x() - displayCenter.x(),
                      displayRadiusPoint.y() - displayCenter.y()));
@@ -25106,6 +25314,14 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
           {static_cast<float>(displayRadiusPoint.x()),
            static_cast<float>(displayRadiusPoint.y())},
           guideColor, std::max(1.0f, 1.2f * inverseZoom));
+      if (field.shape == QStringLiteral("box")) {
+        renderer_->drawSolidLine(
+            {static_cast<float>(displayCenter.x()),
+             static_cast<float>(displayCenter.y())},
+            {static_cast<float>(displaySecondaryRadiusPoint.x()),
+             static_cast<float>(displaySecondaryRadiusPoint.y())},
+            guideColor, std::max(1.0f, 1.2f * inverseZoom));
+      }
       const float centerHandleRadius =
           isDraggingField ? std::max(5.5f, 8.0f * inverseZoom)
                           : isHoveredField ? std::max(4.5f, 6.5f * inverseZoom)
@@ -25114,10 +25330,48 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
           isDraggingField ? std::max(4.8f, 7.0f * inverseZoom)
                           : isHoveredField ? std::max(4.0f, 5.8f * inverseZoom)
                                            : std::max(3.0f, 4.8f * inverseZoom);
-      renderer_->drawCircle(
-          static_cast<float>(displayCenter.x()),
-          static_cast<float>(displayCenter.y()), displayRadius, fieldColor,
-          strokeWidth, false);
+      if (field.shape == QStringLiteral("box")) {
+        for (size_t cornerIndex = 0; cornerIndex < displayBoxCorners.size();
+             ++cornerIndex) {
+          const QPointF &from = displayBoxCorners[cornerIndex];
+          const QPointF &to =
+              displayBoxCorners[(cornerIndex + 1) % displayBoxCorners.size()];
+          renderer_->drawSolidLine(
+              {static_cast<float>(from.x()), static_cast<float>(from.y())},
+              {static_cast<float>(to.x()), static_cast<float>(to.y())},
+              fieldColor, strokeWidth);
+        }
+      } else if (field.shape == QStringLiteral("linear")) {
+        const QPointF direction = displayRadiusPoint - displayCenter;
+        const qreal directionLength =
+            std::max<qreal>(0.0001, std::hypot(direction.x(), direction.y()));
+        const QPointF unitDirection = direction / directionLength;
+        const QPointF perpendicular(-unitDirection.y(), unitDirection.x());
+        const QPointF negativeEdge = displayCenter - direction;
+        const qreal crossbarLength = std::max<qreal>(
+            12.0 * inverseZoom,
+            std::hypot(displaySecondaryRadiusPoint.x() - displayCenter.x(),
+                       displaySecondaryRadiusPoint.y() - displayCenter.y()));
+        renderer_->drawSolidLine(
+            {static_cast<float>(negativeEdge.x()),
+             static_cast<float>(negativeEdge.y())},
+            {static_cast<float>(displayRadiusPoint.x()),
+             static_cast<float>(displayRadiusPoint.y())},
+            fieldColor, strokeWidth);
+        for (const QPointF edge : {negativeEdge, displayRadiusPoint}) {
+          const QPointF from = edge - perpendicular * crossbarLength;
+          const QPointF to = edge + perpendicular * crossbarLength;
+          renderer_->drawSolidLine(
+              {static_cast<float>(from.x()), static_cast<float>(from.y())},
+              {static_cast<float>(to.x()), static_cast<float>(to.y())},
+              fieldColor, strokeWidth);
+        }
+      } else {
+        renderer_->drawCircle(
+            static_cast<float>(displayCenter.x()),
+            static_cast<float>(displayCenter.y()), displayRadius, fieldColor,
+            strokeWidth, false);
+      }
       renderer_->drawCircle(
           static_cast<float>(displayCenter.x()),
           static_cast<float>(displayCenter.y()),
@@ -25126,6 +25380,12 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
           static_cast<float>(displayRadiusPoint.x()),
           static_cast<float>(displayRadiusPoint.y()),
           radiusHandleRadius, fieldColor, 1.0f, true);
+      if (field.shape == QStringLiteral("box")) {
+        renderer_->drawCircle(
+            static_cast<float>(displaySecondaryRadiusPoint.x()),
+            static_cast<float>(displaySecondaryRadiusPoint.y()),
+            radiusHandleRadius, fieldColor, 1.0f, true);
+      }
       drawTransformFieldBadge(renderer_.get(), field, displayCenter,
                               displayRadiusPoint, isHoveredField,
                               isDraggingField, isActiveField, inverseZoom);

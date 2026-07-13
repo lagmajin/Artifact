@@ -1,8 +1,16 @@
 module;
+#include <algorithm>
 #include <compare>
 #include <cmath>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <random>
+#include <string>
+#include <typeindex>
 #include <utility>
+#include <vector>
 #include <QDebug>
 #include <QImage>
 #include <QPointF>
@@ -26,8 +34,6 @@ module;
 
 module Artifact.Layer.Abstract;
 
-import std;
-
 import Utils;
 import Layer.State;
 import Animation.Transform2D;
@@ -35,6 +41,7 @@ import Animation.Dynamics;
 import Frame.Position;
 import Time.Rational;
 import Frame.Rate;
+import Artifact.Render.IRenderer;
 import Animation.Value;
 import Transform.Hlper;
 
@@ -47,6 +54,7 @@ import Artifact.Layer.Modifier;
 import Artifact.Layer.Matte;
 import Geometry.Fracture;
 import Physics.Fluid;
+import Physics.SoftBody;
 import Physics.System;
 import Physics.Mpm2D;
 import Layer.Matte;
@@ -763,6 +771,9 @@ public:
     mutable int64_t lastCollisionImpactFrame_ =
         std::numeric_limits<int64_t>::min();
     LayerComponentHost componentHost_;
+    std::optional<LayerEvaluationState> authoritativeComponentState_;
+    int64_t authoritativeComponentFrame_ =
+        std::numeric_limits<int64_t>::min();
     int layoutMode_ = 0;
     int layoutAnchorMode_ = 0;
     int layoutHorizontalPin_ = 0;
@@ -1439,6 +1450,32 @@ void *ArtifactAbstractLayer::composition() const {
 QObject *ArtifactAbstractLayer::compositionObject() const {
   std::lock_guard<std::mutex> lock(impl_->compositionMutex_);
   return impl_->composition_.data();
+}
+
+float ArtifactAbstractLayer::compositionFieldInfluenceAtCanvasPoint(
+    const QPointF& canvasPosition, bool* affected) const {
+  const auto channels = compositionFieldChannelsAtCanvasPoint(canvasPosition);
+  if (affected) {
+    *affected = channels.affected;
+  }
+  return channels.weight;
+}
+
+LayerFieldChannelSample
+ArtifactAbstractLayer::compositionFieldChannelsAtCanvasPoint(
+    const QPointF& canvasPosition) const {
+  const auto* composition =
+      dynamic_cast<const ArtifactAbstractComposition*>(compositionObject());
+  if (!composition) {
+    return {};
+  }
+  const auto sample =
+      composition->evaluateFieldChannelsAtCanvasPoint(id(), canvasPosition);
+  return LayerFieldChannelSample{
+      std::clamp(static_cast<float>(sample.weight), 0.0f, 1.0f),
+      static_cast<float>(sample.scaleMultiplier),
+      static_cast<float>(sample.timeOffsetSeconds),
+      sample.affected};
 }
 
 QSizeF ArtifactAbstractLayer::compositionSizeHint() const {
@@ -4637,6 +4674,27 @@ std::vector<LayerComponentValidationIssue>
 ArtifactAbstractLayer::validateLayerComponents() const {
   impl_->syncBuiltinComponentDescriptors();
   return impl_->componentHost_.validate();
+}
+
+void ArtifactAbstractLayer::setAuthoritativeComponentEvaluationState(
+    const LayerEvaluationState& state, const std::int64_t frame) {
+  impl_->authoritativeComponentState_ = state;
+  impl_->authoritativeComponentFrame_ = frame;
+}
+
+std::optional<LayerEvaluationState>
+ArtifactAbstractLayer::authoritativeComponentEvaluationState() const {
+  if (!impl_->authoritativeComponentState_ ||
+      impl_->authoritativeComponentFrame_ != impl_->currentFrame_) {
+    return std::nullopt;
+  }
+  return impl_->authoritativeComponentState_;
+}
+
+void ArtifactAbstractLayer::clearAuthoritativeComponentEvaluationState() {
+  impl_->authoritativeComponentState_.reset();
+  impl_->authoritativeComponentFrame_ =
+      std::numeric_limits<int64_t>::min();
 }
 
 QJsonObject ArtifactAbstractLayer::scriptBinding() const {

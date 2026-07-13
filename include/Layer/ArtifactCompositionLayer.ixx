@@ -71,6 +71,8 @@ public:
   QVariant effectiveExposedPropertyValue(const QString& id) const;
   void clearExposedPropertyOverride(const QString& id);
   bool applyExposedPropertyOverrides();
+  bool beginExposedPropertyOverrideScope();
+  void endExposedPropertyOverrideScope();
   QJsonObject toJson() const override;
   void fromJsonProperties(const QJsonObject &obj) override;
 

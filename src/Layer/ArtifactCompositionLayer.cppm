@@ -64,6 +64,13 @@ public:
   ArtifactCore::ExposedPropertyRegistry exposedProperties_;
   QMap<QString, QVariant> exposedPropertyOverrides_;
   bool exposedPropertyOverridesDirty_ = false;
+  struct ExposedPropertySourceSnapshot {
+    LayerID layerId;
+    QString propertyPath;
+    QVariant value;
+  };
+  std::vector<ExposedPropertySourceSnapshot> exposedPropertySourceSnapshots_;
+  bool exposedPropertyOverrideScopeActive_ = false;
 };
 
 ArtifactCompositionLayer::ArtifactCompositionLayer() : impl_(new Impl()) {}
@@ -119,9 +126,17 @@ ArtifactCompositionLayer::exposedProperties() const {
 
 void ArtifactCompositionLayer::setExposedProperties(
     const ArtifactCore::ExposedPropertyRegistry& registry) {
+  const auto previousOverrides = impl_->exposedPropertyOverrides_;
   impl_->exposedProperties_ = registry;
   impl_->exposedPropertyOverrides_.clear();
-  impl_->exposedPropertyOverridesDirty_ = false;
+  for (auto it = previousOverrides.cbegin();
+       it != previousOverrides.cend(); ++it) {
+    if (impl_->exposedProperties_.contains(it.key())) {
+      impl_->exposedPropertyOverrides_.insert(it.key(), it.value());
+    }
+  }
+  impl_->exposedPropertyOverridesDirty_ =
+      !impl_->exposedPropertyOverrides_.isEmpty();
   Q_EMIT changed();
 }
 
@@ -180,7 +195,6 @@ void ArtifactCompositionLayer::clearExposedPropertyOverride(const QString& id) {
 }
 
 bool ArtifactCompositionLayer::applyExposedPropertyOverrides() {
-  if (!impl_->exposedPropertyOverridesDirty_) return true;
   const auto source = sourceComposition();
   if (!source) return false;
 
@@ -206,6 +220,70 @@ bool ArtifactCompositionLayer::applyExposedPropertyOverrides() {
     impl_->exposedPropertyOverridesDirty_ = false;
   }
   return applied && succeeded;
+}
+
+bool ArtifactCompositionLayer::beginExposedPropertyOverrideScope() {
+  if (impl_->exposedPropertyOverrideScopeActive_) {
+    return false;
+  }
+  const auto source = sourceComposition();
+  if (!source) {
+    return false;
+  }
+
+  impl_->exposedPropertySourceSnapshots_.clear();
+  bool applied = false;
+  for (const auto& binding : impl_->exposedProperties_.bindings()) {
+    if (binding.targetLayerId.trimmed().isEmpty() ||
+        binding.internalPath.trimmed().isEmpty()) {
+      continue;
+    }
+    const LayerID targetLayerId(binding.targetLayerId);
+    const auto target = source->layerById(targetLayerId);
+    const auto property = target
+        ? target->getProperty(binding.internalPath)
+        : std::shared_ptr<ArtifactCore::AbstractProperty>{};
+    if (!target || !property) {
+      continue;
+    }
+    impl_->exposedPropertySourceSnapshots_.push_back(
+        {targetLayerId, binding.internalPath, property->getValue()});
+    if (!target->setLayerPropertyValue(
+            binding.internalPath, effectiveExposedPropertyValue(binding.id))) {
+      for (auto snapshot = impl_->exposedPropertySourceSnapshots_.rbegin();
+           snapshot != impl_->exposedPropertySourceSnapshots_.rend(); ++snapshot) {
+        if (const auto restoreTarget = source->layerById(snapshot->layerId)) {
+          restoreTarget->setLayerPropertyValue(
+              snapshot->propertyPath, snapshot->value);
+        }
+      }
+      impl_->exposedPropertySourceSnapshots_.clear();
+      return false;
+    }
+    applied = true;
+  }
+  impl_->exposedPropertyOverrideScopeActive_ = applied;
+  if (applied) {
+    impl_->exposedPropertyOverridesDirty_ = false;
+  }
+  return applied;
+}
+
+void ArtifactCompositionLayer::endExposedPropertyOverrideScope() {
+  if (!impl_->exposedPropertyOverrideScopeActive_) {
+    return;
+  }
+  const auto source = sourceComposition();
+  if (source) {
+    for (auto snapshot = impl_->exposedPropertySourceSnapshots_.rbegin();
+         snapshot != impl_->exposedPropertySourceSnapshots_.rend(); ++snapshot) {
+      if (const auto target = source->layerById(snapshot->layerId)) {
+        target->setLayerPropertyValue(snapshot->propertyPath, snapshot->value);
+      }
+    }
+  }
+  impl_->exposedPropertySourceSnapshots_.clear();
+  impl_->exposedPropertyOverrideScopeActive_ = false;
 }
 
 QJsonObject ArtifactCompositionLayer::toJson() const {

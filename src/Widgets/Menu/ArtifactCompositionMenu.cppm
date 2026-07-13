@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <algorithm>
 #include <QColor>
+#include <QChar>
 #include <QMenu>
 #include <QAction>
 #include <QDebug>
@@ -9,20 +10,26 @@ module;
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
+#include <QHash>
 #include <QLabel>
 #include <QComboBox>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMetaType>
 #include <QPushButton>
 #include <QPalette>
+#include <QPair>
 #include <QPointF>
 #include <QRectF>
+#include <QSet>
 #include <QSpinBox>
 #include <QSize>
+#include <QStringList>
 #include <QJsonObject>
 #include <QVBoxLayout>
 #include <QTimer>
+#include <QVariant>
 #include <numeric>
 #include <wobjectimpl.h>
 
@@ -33,10 +40,15 @@ import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Artifact.Application.ProjectBundleIpc;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Composition;
+import Artifact.Project.Items;
 import Utils.Path;
 import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
 import Artifact.Widgets.SoftwareRenderInspectors;
+import Artifact.Widgets.ArtifactPropertyWidget;
+import Property.Abstract;
+import Property.ExposedPropertyRegistry;
 import Dialog.Composition;
 import FloatColorPickerDialog;
 import Artifact.Widgets.AppDialogs;
@@ -51,6 +63,59 @@ namespace Artifact {
 using namespace ArtifactCore;
 
 namespace {
+
+ArtifactPropertyWidget* activePropertyWidget(QWidget* root)
+{
+ if (!root) {
+  return nullptr;
+ }
+ const auto widgets = root->findChildren<ArtifactPropertyWidget*>();
+ for (auto* widget : widgets) {
+  if (widget && widget->isVisible() && widget->hasActiveExpressionTarget()) {
+   return widget;
+  }
+ }
+ return nullptr;
+}
+
+QVariant stateOverrideValueFromText(const QString& text,
+                                    const QVariant& typeTemplate,
+                                    bool* converted)
+{
+ if (converted) {
+  *converted = false;
+ }
+ if (!typeTemplate.isValid()) {
+  if (converted) {
+   *converted = true;
+  }
+  return text;
+ }
+ if (typeTemplate.metaType().id() == QMetaType::Bool) {
+  const QString normalized = text.trimmed().toLower();
+  if (normalized == QStringLiteral("true") || normalized == QStringLiteral("1") ||
+      normalized == QStringLiteral("on") || normalized == QStringLiteral("yes")) {
+   if (converted) {
+    *converted = true;
+   }
+   return true;
+  }
+  if (normalized == QStringLiteral("false") || normalized == QStringLiteral("0") ||
+      normalized == QStringLiteral("off") || normalized == QStringLiteral("no")) {
+   if (converted) {
+    *converted = true;
+   }
+   return false;
+  }
+  return {};
+ }
+ QVariant value(text);
+ const bool ok = value.convert(typeTemplate.metaType());
+ if (converted) {
+  *converted = ok;
+ }
+ return ok ? value : QVariant{};
+}
 
 QString aspectRatioLabel(const QSize& size)
 {
@@ -96,6 +161,151 @@ QString responsiveVariantLabel(const ResponsiveLayoutVariant& variant)
   : QStringLiteral("custom");
  const QString ratioLabel = aspectRatioLabel(variant.baseSize);
  return QStringLiteral("%1  (%2, %3)").arg(name, sizeLabel, ratioLabel);
+}
+
+QString uniqueCompositionStateId(const QVector<CompositionStateVariant>& states,
+                                 const QString& requestedName)
+{
+ const QString base = requestedName.trimmed().isEmpty()
+  ? QStringLiteral("state")
+  : requestedName.trimmed().toLower().replace(' ', '_');
+ QString candidate = base;
+ int suffix = 2;
+ const auto containsId = [&states](const QString& id) {
+  return std::any_of(states.cbegin(), states.cend(), [&id](const auto& state) {
+   return state.stateId == id;
+  });
+ };
+ while (containsId(candidate)) {
+  candidate = QStringLiteral("%1_%2").arg(base).arg(suffix++);
+ }
+ return candidate;
+}
+
+class ChangeCompositionStatesCommand final : public UndoCommand {
+public:
+ ChangeCompositionStatesCommand(ArtifactCompositionWeakPtr composition,
+                                QVector<CompositionStateVariant> beforeStates,
+                                QString beforeActiveId,
+                                QVector<CompositionStateVariant> afterStates,
+                                QString afterActiveId,
+                                QString beforeComparisonAId,
+                                QString beforeComparisonBId,
+                                QString afterComparisonAId,
+                                QString afterComparisonBId,
+                                QString label)
+  : composition_(std::move(composition)),
+    beforeStates_(std::move(beforeStates)),
+    beforeActiveId_(std::move(beforeActiveId)),
+    afterStates_(std::move(afterStates)),
+    afterActiveId_(std::move(afterActiveId)),
+    beforeComparisonAId_(std::move(beforeComparisonAId)),
+    beforeComparisonBId_(std::move(beforeComparisonBId)),
+    afterComparisonAId_(std::move(afterComparisonAId)),
+    afterComparisonBId_(std::move(afterComparisonBId)),
+    label_(std::move(label))
+ {
+ }
+
+ void undo() override {
+  apply(beforeStates_, beforeActiveId_, beforeComparisonAId_,
+        beforeComparisonBId_);
+ }
+ void redo() override {
+  apply(afterStates_, afterActiveId_, afterComparisonAId_,
+        afterComparisonBId_);
+ }
+ QString label() const override { return label_; }
+
+private:
+ void apply(const QVector<CompositionStateVariant>& states,
+            const QString& activeId, const QString& comparisonAId,
+            const QString& comparisonBId)
+ {
+  if (const auto composition = composition_.lock()) {
+   composition->setActiveStateVariantId(QString());
+   composition->setStateVariants(states);
+   composition->setStateComparisonPair(comparisonAId, comparisonBId);
+   composition->setActiveStateVariantId(activeId);
+   if (auto* manager = UndoManager::instance()) {
+    manager->notifyAnythingChanged();
+   }
+  }
+ }
+
+ ArtifactCompositionWeakPtr composition_;
+ QVector<CompositionStateVariant> beforeStates_;
+ QString beforeActiveId_;
+ QVector<CompositionStateVariant> afterStates_;
+ QString afterActiveId_;
+ QString beforeComparisonAId_;
+ QString beforeComparisonBId_;
+ QString afterComparisonAId_;
+ QString afterComparisonBId_;
+ QString label_;
+};
+
+struct MasterPropertyRegistryChange {
+ CompositionID parentCompositionId;
+ LayerID precompLayerId;
+ ExposedPropertyRegistry before;
+ ExposedPropertyRegistry after;
+ QHash<QString, QVariant> beforeOverrides;
+ QHash<QString, QVariant> afterOverrides;
+};
+
+class ChangeMasterPropertiesCommand final : public UndoCommand {
+public:
+ ChangeMasterPropertiesCommand(QVector<MasterPropertyRegistryChange> changes,
+                               QString label)
+  : changes_(std::move(changes)), label_(std::move(label)) {}
+
+ void undo() override { apply(false); }
+ void redo() override { apply(true); }
+ QString label() const override { return label_; }
+
+private:
+ void apply(const bool useAfter) {
+  auto* service = ArtifactProjectService::instance();
+  if (!service) {
+   return;
+  }
+  for (const auto& change : changes_) {
+   const auto parent = service->findComposition(change.parentCompositionId).ptr.lock();
+   const auto layer = parent
+    ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(
+       parent->layerById(change.precompLayerId))
+    : std::shared_ptr<ArtifactCompositionLayer>{};
+   if (layer) {
+    layer->setExposedProperties(useAfter ? change.after : change.before);
+    const auto& overrides = useAfter
+     ? change.afterOverrides
+     : change.beforeOverrides;
+    for (auto it = overrides.cbegin(); it != overrides.cend(); ++it) {
+     layer->setExposedPropertyOverride(it.key(), it.value());
+    }
+   }
+  }
+ }
+
+ QVector<MasterPropertyRegistryChange> changes_;
+ QString label_;
+};
+
+QString masterPropertyId(const LayerID& layerId, const QString& propertyPath)
+{
+ QString normalizedPath = propertyPath.trimmed().toLower();
+ for (auto& character : normalizedPath) {
+  if (!character.isLetterOrNumber()) {
+   character = QChar('_');
+  }
+ }
+ while (normalizedPath.contains(QStringLiteral("__"))) {
+  normalizedPath.replace(QStringLiteral("__"), QStringLiteral("_"));
+ }
+ return QStringLiteral("layer_%1_%2")
+  .arg(layerId.toString(), normalizedPath)
+  .left(180);
 }
 
 ResponsiveLayoutSet normalizedResponsiveLayoutForDialog(const ArtifactCompositionPtr& current)
@@ -397,6 +607,101 @@ void ArtifactCompositionMenu::Impl::showSettings()
  }
  contentLayout->addWidget(responsiveHint);
 
+ auto* stateLabel = new QLabel(QStringLiteral("Composition State"), &dialog);
+ contentLayout->addWidget(stateLabel);
+ auto* stateCombo = new QComboBox(&dialog);
+ stateCombo->addItem(QStringLiteral("None (baseline)"), QString());
+ const auto initialStates = current->stateVariants();
+ const QString initialActiveStateId = current->activeStateVariantId();
+ for (const auto& state : initialStates) {
+  const QString stateName = state.displayName.trimmed().isEmpty()
+   ? state.stateId
+   : state.displayName;
+  stateCombo->addItem(
+   state.stateId == initialActiveStateId
+    ? QStringLiteral("%1  [active]  ·  %2 overrides")
+       .arg(stateName).arg(state.overrides.size())
+    : QStringLiteral("%1  ·  %2 overrides")
+       .arg(stateName).arg(state.overrides.size()),
+   state.stateId);
+ }
+ const int activeStateIndex = stateCombo->findData(initialActiveStateId);
+ stateCombo->setCurrentIndex(std::max(0, activeStateIndex));
+ contentLayout->addWidget(stateCombo);
+
+ auto* stateOperationCombo = new QComboBox(&dialog);
+ stateOperationCombo->addItem(QStringLiteral("No state change"), QStringLiteral("none"));
+ stateOperationCombo->addItem(QStringLiteral("Create new state"), QStringLiteral("create"));
+ stateOperationCombo->addItem(QStringLiteral("Duplicate selected state"), QStringLiteral("duplicate"));
+ stateOperationCombo->addItem(QStringLiteral("Rename selected state"), QStringLiteral("rename"));
+ stateOperationCombo->addItem(QStringLiteral("Delete selected state"), QStringLiteral("delete"));
+ stateOperationCombo->addItem(QStringLiteral("Activate selected state"), QStringLiteral("activate"));
+ stateOperationCombo->addItem(QStringLiteral("Deactivate state / restore baseline"), QStringLiteral("deactivate"));
+ stateOperationCombo->addItem(QStringLiteral("Capture focused property override"), QStringLiteral("capture"));
+ stateOperationCombo->addItem(QStringLiteral("Remove focused property override"), QStringLiteral("remove_override"));
+ stateOperationCombo->addItem(QStringLiteral("Compare selected state A/B properties"), QStringLiteral("compare"));
+ contentLayout->addWidget(stateOperationCombo);
+ auto* stateNameEdit = new QLineEdit(&dialog);
+ stateNameEdit->setPlaceholderText(QStringLiteral("State name for create, duplicate, or rename"));
+ contentLayout->addWidget(stateNameEdit);
+ auto* comparisonStateCombo = new QComboBox(&dialog);
+ comparisonStateCombo->addItem(QStringLiteral("Compare with baseline"), QString());
+ for (const auto& state : initialStates) {
+  const QString stateName = state.displayName.trimmed().isEmpty()
+   ? state.stateId
+   : state.displayName;
+  comparisonStateCombo->addItem(
+   QStringLiteral("Compare with %1").arg(stateName), state.stateId);
+ }
+ const int comparisonStateIndex =
+  comparisonStateCombo->findData(current->stateComparisonBId());
+ comparisonStateCombo->setCurrentIndex(std::max(0, comparisonStateIndex));
+ contentLayout->addWidget(comparisonStateCombo);
+ QWidget* propertyRoot = mainWindow_ ? mainWindow_ : menu_->window();
+ auto* focusedPropertyWidget = activePropertyWidget(propertyRoot);
+ const auto focusedPropertyLayer = focusedPropertyWidget
+  ? focusedPropertyWidget->activePropertyLayer()
+  : ArtifactAbstractLayerPtr{};
+ const QString focusedPropertyPath = focusedPropertyWidget
+  ? focusedPropertyWidget->activePropertyPath().trimmed()
+  : QString{};
+ const auto focusedProperty = focusedPropertyLayer && !focusedPropertyPath.isEmpty()
+  ? focusedPropertyLayer->getProperty(focusedPropertyPath)
+  : std::shared_ptr<ArtifactCore::AbstractProperty>{};
+ const QVariant focusedPropertyBaseline = focusedProperty
+  ? focusedProperty->getValue()
+  : QVariant{};
+ auto* focusedPropertyLabel = new QLabel(
+  focusedProperty
+   ? QStringLiteral("Focused property: %1").arg(focusedPropertyPath)
+   : QStringLiteral("Focused property: none"),
+  &dialog);
+ contentLayout->addWidget(focusedPropertyLabel);
+ auto* stateOverrideValueEdit = new QLineEdit(
+  focusedPropertyBaseline.toString(), &dialog);
+ stateOverrideValueEdit->setPlaceholderText(
+  QStringLiteral("Override value for the focused property"));
+ contentLayout->addWidget(stateOverrideValueEdit);
+
+ auto* masterPropertyLabel = new QLabel(QStringLiteral("Master Properties"), &dialog);
+ contentLayout->addWidget(masterPropertyLabel);
+ auto* masterPropertyOperationCombo = new QComboBox(&dialog);
+ masterPropertyOperationCombo->addItem(
+  QStringLiteral("No Master Property change"), QStringLiteral("none"));
+ masterPropertyOperationCombo->addItem(
+  QStringLiteral("Expose focused property to parent precomps"),
+  QStringLiteral("expose"));
+ masterPropertyOperationCombo->addItem(
+  QStringLiteral("Remove focused property from parent precomps"),
+  QStringLiteral("remove"));
+ contentLayout->addWidget(masterPropertyOperationCombo);
+ auto* masterPropertyNameEdit = new QLineEdit(&dialog);
+ masterPropertyNameEdit->setPlaceholderText(
+  QStringLiteral("Display name for the exposed property"));
+ masterPropertyNameEdit->setText(
+  focusedPropertyPath.section(QChar('/'), -1).section(QChar('.'), -1));
+ contentLayout->addWidget(masterPropertyNameEdit);
+
  auto* fpsLabel = new QLabel(QStringLiteral("Frame Rate"), &dialog);
  contentLayout->addWidget(fpsLabel);
  auto* fpsSpin = new QDoubleSpinBox(&dialog);
@@ -512,6 +817,198 @@ void ArtifactCompositionMenu::Impl::showSettings()
    return;
   }
 
+  const QString requestedStateOperation =
+   stateOperationCombo->currentData().toString();
+  const QString requestedStateId = stateCombo->currentData().toString();
+  if ((requestedStateOperation == QStringLiteral("capture") ||
+       requestedStateOperation == QStringLiteral("remove_override")) &&
+      (requestedStateId.isEmpty() || requestedStateId != initialActiveStateId ||
+       !focusedProperty)) {
+   QMessageBox::information(
+    &dialog, QStringLiteral("Composition State"),
+    QStringLiteral("Activate a state and focus an editable property before capturing or removing an override."));
+   return;
+  }
+  QVariant requestedOverrideValue;
+  if (requestedStateOperation == QStringLiteral("capture")) {
+   bool converted = false;
+   requestedOverrideValue = stateOverrideValueFromText(
+    stateOverrideValueEdit->text(), focusedPropertyBaseline, &converted);
+   if (!converted) {
+    QMessageBox::warning(
+     &dialog, QStringLiteral("Composition State"),
+     QStringLiteral("Override value could not be converted to the property type."));
+    return;
+   }
+  }
+  QVector<MasterPropertyRegistryChange> masterPropertyChanges;
+  QString masterPropertyCommandLabel;
+  const QString requestedMasterPropertyOperation =
+   masterPropertyOperationCombo->currentData().toString();
+  if (requestedMasterPropertyOperation != QStringLiteral("none")) {
+   if (!focusedProperty || !focusedPropertyLayer ||
+       !current->containsLayerById(focusedPropertyLayer->id())) {
+    QMessageBox::information(
+     &dialog, QStringLiteral("Master Properties"),
+     QStringLiteral("Focus an editable property inside this composition first."));
+    return;
+   }
+
+   QVector<ProjectItem*> pendingItems = service->projectItems();
+   QSet<ProjectItem*> visitedItems;
+   QVector<CompositionID> compositionIds;
+   while (!pendingItems.isEmpty()) {
+    ProjectItem* item = pendingItems.takeLast();
+    if (!item || visitedItems.contains(item)) {
+     continue;
+    }
+    visitedItems.insert(item);
+    pendingItems += item->children;
+    if (auto* compositionItem = dynamic_cast<CompositionItem*>(item)) {
+     compositionIds.append(compositionItem->compositionId);
+    }
+   }
+
+   const QString bindingId = masterPropertyId(
+    focusedPropertyLayer->id(), focusedPropertyPath);
+   for (const auto& compositionId : compositionIds) {
+    const auto parent = service->findComposition(compositionId).ptr.lock();
+    if (!parent) {
+     continue;
+    }
+    for (const auto& candidate : parent->allLayerRef()) {
+     const auto precompLayer =
+      std::dynamic_pointer_cast<ArtifactCompositionLayer>(candidate);
+     if (!precompLayer || precompLayer->sourceCompositionId() != current->id()) {
+      continue;
+     }
+     MasterPropertyRegistryChange change;
+     change.parentCompositionId = parent->id();
+     change.precompLayerId = precompLayer->id();
+     change.before = precompLayer->exposedProperties();
+     change.after = change.before;
+     for (const auto& binding : change.before.bindings()) {
+      if (precompLayer->hasExposedPropertyOverride(binding.id)) {
+       change.beforeOverrides.insert(
+        binding.id, precompLayer->exposedPropertyOverride(binding.id));
+      }
+     }
+
+     if (requestedMasterPropertyOperation == QStringLiteral("expose")) {
+      ExposedPropertyBinding binding;
+      binding.id = bindingId;
+      binding.label = masterPropertyNameEdit->text().trimmed().isEmpty()
+       ? focusedPropertyPath
+       : masterPropertyNameEdit->text().trimmed();
+      binding.targetLayerId = focusedPropertyLayer->id().toString();
+      binding.internalPath = focusedPropertyPath;
+      binding.defaultValue = focusedPropertyBaseline;
+      change.after.replace(std::move(binding));
+      masterPropertyCommandLabel = QStringLiteral("Expose Master Property");
+     } else {
+      for (const auto& binding : change.before.bindings()) {
+       if (binding.targetLayerId == focusedPropertyLayer->id().toString() &&
+           binding.internalPath == focusedPropertyPath) {
+        change.after.remove(binding.id);
+       }
+      }
+      masterPropertyCommandLabel = QStringLiteral("Remove Master Property");
+     }
+
+     if (change.before.toJson() != change.after.toJson()) {
+      for (const auto& binding : change.after.bindings()) {
+       if (precompLayer->hasExposedPropertyOverride(binding.id)) {
+        change.afterOverrides.insert(
+         binding.id, precompLayer->exposedPropertyOverride(binding.id));
+       }
+      }
+      masterPropertyChanges.append(std::move(change));
+     }
+    }
+   }
+
+   if (masterPropertyChanges.isEmpty()) {
+    QMessageBox::information(
+     &dialog, QStringLiteral("Master Properties"),
+     requestedMasterPropertyOperation == QStringLiteral("expose")
+      ? QStringLiteral("No parent precomp instance references this composition, or the property is already exposed.")
+      : QStringLiteral("The focused property is not exposed on any parent precomp instance."));
+    return;
+   }
+  }
+  if (requestedStateOperation == QStringLiteral("compare")) {
+   const QString stateAId = stateCombo->currentData().toString();
+   const QString stateBId = comparisonStateCombo->currentData().toString();
+   current->setStateComparisonPair(stateAId, stateBId);
+   const auto findState = [&initialStates](const QString& stateId)
+       -> const CompositionStateVariant* {
+    const auto found = std::find_if(
+     initialStates.cbegin(), initialStates.cend(), [&stateId](const auto& state) {
+      return state.stateId == stateId;
+     });
+    return found == initialStates.cend() ? nullptr : &(*found);
+   };
+   const auto* stateA = findState(stateAId);
+   const auto* stateB = findState(stateBId);
+   QVector<QPair<LayerID, QString>> propertyKeys;
+   const auto collectKeys = [&propertyKeys](const CompositionStateVariant* state) {
+    if (!state) {
+     return;
+    }
+    for (const auto& item : state->overrides) {
+     if (!item.enabled) {
+      continue;
+     }
+     const QPair<LayerID, QString> key(item.layerId, item.propertyPath);
+     if (!propertyKeys.contains(key)) {
+      propertyKeys.append(key);
+     }
+    }
+   };
+   collectKeys(stateA);
+   collectKeys(stateB);
+   const auto findOverride = [](const CompositionStateVariant* state,
+                                const LayerID& layerId,
+                                const QString& propertyPath)
+       -> const CompositionStatePropertyOverride* {
+    if (!state) {
+     return nullptr;
+    }
+    const auto found = std::find_if(
+     state->overrides.cbegin(), state->overrides.cend(),
+     [&layerId, &propertyPath](const auto& item) {
+      return item.enabled && item.layerId == layerId &&
+             item.propertyPath == propertyPath;
+     });
+    return found == state->overrides.cend() ? nullptr : &(*found);
+   };
+   QStringList changedProperties;
+   for (const auto& key : propertyKeys) {
+    const auto* overrideA = findOverride(stateA, key.first, key.second);
+    const auto* overrideB = findOverride(stateB, key.first, key.second);
+    const QVariant valueA = overrideA
+     ? overrideA->value
+     : (overrideB ? overrideB->baselineValue : QVariant{});
+    const QVariant valueB = overrideB
+     ? overrideB->value
+     : (overrideA ? overrideA->baselineValue : QVariant{});
+    if (valueA == valueB) {
+     continue;
+    }
+    const auto layer = current->layerById(key.first);
+    const QString layerName = layer ? layer->layerName() : key.first.toString();
+    changedProperties.append(
+     QStringLiteral("%1 · %2\n    A: %3\n    B: %4")
+      .arg(layerName, key.second, valueA.toString(), valueB.toString()));
+   }
+   QMessageBox::information(
+    &dialog, QStringLiteral("Composition State Comparison"),
+    changedProperties.isEmpty()
+     ? QStringLiteral("No property differences between the selected states.")
+     : changedProperties.join(QStringLiteral("\n\n")));
+   return;
+  }
+
   current->setCompositionName(UniString::fromQString(trimmedName));
   ResponsiveLayoutSet responsiveLayout = normalizedResponsiveLayoutForDialog(current);
   const QString selectedVariantId = responsiveCombo->currentData().toString();
@@ -583,6 +1080,132 @@ void ArtifactCompositionMenu::Impl::showSettings()
                                          backgroundColor.greenF(),
                                          backgroundColor.blueF(),
                                          backgroundColor.alphaF()));
+
+  const QString stateOperation = stateOperationCombo->currentData().toString();
+  if (stateOperation != QStringLiteral("none")) {
+   QVector<CompositionStateVariant> afterStates = initialStates;
+   QString afterActiveStateId = initialActiveStateId;
+   QString afterComparisonAId = current->stateComparisonAId();
+   QString afterComparisonBId = current->stateComparisonBId();
+   const QString selectedStateId = stateCombo->currentData().toString();
+   const QString requestedStateName = stateNameEdit->text().trimmed();
+   QString stateCommandLabel;
+   auto selectedState = std::find_if(
+    afterStates.begin(), afterStates.end(), [&selectedStateId](const auto& state) {
+     return state.stateId == selectedStateId;
+    });
+
+   if (stateOperation == QStringLiteral("create")) {
+    CompositionStateVariant state;
+    state.displayName = requestedStateName.isEmpty()
+     ? QStringLiteral("State %1").arg(afterStates.size() + 1)
+     : requestedStateName;
+    state.stateId = uniqueCompositionStateId(afterStates, state.displayName);
+    afterStates.append(state);
+    afterActiveStateId = state.stateId;
+    stateCommandLabel = QStringLiteral("Create Composition State");
+   } else if (stateOperation == QStringLiteral("duplicate") &&
+              selectedState != afterStates.end()) {
+    CompositionStateVariant duplicate = *selectedState;
+    duplicate.displayName = requestedStateName.isEmpty()
+     ? QStringLiteral("%1 Copy").arg(duplicate.displayName)
+     : requestedStateName;
+    duplicate.stateId = uniqueCompositionStateId(afterStates, duplicate.displayName);
+    afterStates.append(duplicate);
+    afterActiveStateId = duplicate.stateId;
+    stateCommandLabel = QStringLiteral("Duplicate Composition State");
+   } else if (stateOperation == QStringLiteral("rename") &&
+              selectedState != afterStates.end() && !requestedStateName.isEmpty()) {
+    selectedState->displayName = requestedStateName;
+    stateCommandLabel = QStringLiteral("Rename Composition State");
+   } else if (stateOperation == QStringLiteral("delete") &&
+              selectedState != afterStates.end()) {
+    afterStates.erase(selectedState);
+    if (afterActiveStateId == selectedStateId) {
+     afterActiveStateId.clear();
+    }
+    if (afterComparisonAId == selectedStateId) {
+     afterComparisonAId.clear();
+    }
+    if (afterComparisonBId == selectedStateId) {
+     afterComparisonBId.clear();
+    }
+    stateCommandLabel = QStringLiteral("Delete Composition State");
+   } else if (stateOperation == QStringLiteral("activate") &&
+              selectedState != afterStates.end()) {
+    afterActiveStateId = selectedStateId;
+    stateCommandLabel = QStringLiteral("Activate Composition State");
+   } else if (stateOperation == QStringLiteral("deactivate")) {
+    afterActiveStateId.clear();
+    stateCommandLabel = QStringLiteral("Deactivate Composition State");
+   } else if ((stateOperation == QStringLiteral("capture") ||
+               stateOperation == QStringLiteral("remove_override")) &&
+              selectedState != afterStates.end() &&
+              selectedStateId == initialActiveStateId && focusedProperty) {
+    auto overrideItem = std::find_if(
+     selectedState->overrides.begin(), selectedState->overrides.end(),
+     [&focusedPropertyLayer, &focusedPropertyPath](const auto& item) {
+      return item.layerId == focusedPropertyLayer->id() &&
+             item.propertyPath == focusedPropertyPath;
+     });
+    if (stateOperation == QStringLiteral("remove_override")) {
+     if (overrideItem != selectedState->overrides.end()) {
+      selectedState->overrides.erase(overrideItem);
+      stateCommandLabel = QStringLiteral("Remove Composition State Override");
+     }
+    } else {
+     if (overrideItem == selectedState->overrides.end()) {
+      CompositionStatePropertyOverride item;
+      item.layerId = focusedPropertyLayer->id();
+      item.propertyPath = focusedPropertyPath;
+      item.baselineValue = focusedPropertyBaseline;
+      item.value = requestedOverrideValue;
+      selectedState->overrides.append(item);
+     } else {
+      overrideItem->value = requestedOverrideValue;
+      overrideItem->enabled = true;
+     }
+     stateCommandLabel = QStringLiteral("Capture Composition State Override");
+    }
+   }
+
+   if (!stateCommandLabel.isEmpty()) {
+    if (auto* manager = UndoManager::instance()) {
+     manager->push(std::make_unique<ChangeCompositionStatesCommand>(
+     current, initialStates, initialActiveStateId, afterStates,
+      afterActiveStateId, current->stateComparisonAId(),
+      current->stateComparisonBId(), afterComparisonAId,
+      afterComparisonBId, stateCommandLabel));
+    } else {
+     current->setActiveStateVariantId(QString());
+     current->setStateVariants(afterStates);
+     current->setStateComparisonPair(afterComparisonAId, afterComparisonBId);
+     current->setActiveStateVariantId(afterActiveStateId);
+    }
+   }
+  }
+
+  if (!masterPropertyChanges.isEmpty()) {
+   if (auto* manager = UndoManager::instance()) {
+    manager->push(std::make_unique<ChangeMasterPropertiesCommand>(
+     masterPropertyChanges, masterPropertyCommandLabel));
+   } else {
+    for (const auto& change : masterPropertyChanges) {
+     const auto parent = service->findComposition(change.parentCompositionId).ptr.lock();
+     const auto precompLayer = parent
+      ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(
+         parent->layerById(change.precompLayerId))
+      : std::shared_ptr<ArtifactCompositionLayer>{};
+     if (precompLayer) {
+      precompLayer->setExposedProperties(change.after);
+      for (auto it = change.afterOverrides.cbegin();
+           it != change.afterOverrides.cend(); ++it) {
+       precompLayer->setExposedPropertyOverride(it.key(), it.value());
+      }
+     }
+    }
+   }
+  }
 
   if (!service->renameComposition(current->id(), UniString::fromQString(trimmedName))) {
    QMessageBox::warning(&dialog,

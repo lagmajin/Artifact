@@ -1,5 +1,6 @@
 module;
 #include <array>
+#include <cstddef>
 #include <utility>
 #include <algorithm>
 #include <cmath>
@@ -51,7 +52,7 @@ inline void populateCloneInstanceGeometry(
     const std::array<QPointF, 4> localCorners{
         localBounds.topLeft(), localBounds.topRight(),
         localBounds.bottomRight(), localBounds.bottomLeft()};
-    for (auto& instance : instances) {
+    const auto updateGeometry = [&localCorners](CloneRenderInstance& instance) {
         for (std::size_t i = 0; i < localCorners.size(); ++i) {
             const QPointF& point = localCorners[i];
             const QVector3D mapped = instance.transform.map(
@@ -72,6 +73,31 @@ inline void populateCloneInstanceGeometry(
             maxY = std::max(maxY, instance.canvasCorners[i].y());
         }
         instance.canvasBounds = QRectF(minX, minY, maxX - minX, maxY - minY);
+    };
+    for (std::size_t instanceIndex = 0; instanceIndex < instances.size();
+         ++instanceIndex) {
+        auto& instance = instances[instanceIndex];
+        updateGeometry(instance);
+        if (instanceIndex > 0) {
+            const auto channels = layer->compositionFieldChannelsAtCanvasPoint(
+                instance.canvasBounds.center());
+            if (channels.affected) {
+                instance.weight = std::clamp(
+                    instance.weight * channels.weight, 0.0f, 1.0f);
+                if (std::abs(channels.scaleMultiplier - 1.0f) > 0.0001f) {
+                    const QPointF localCenter = localBounds.center();
+                    instance.transform.translate(
+                        static_cast<float>(localCenter.x()),
+                        static_cast<float>(localCenter.y()));
+                    instance.transform.scale(channels.scaleMultiplier);
+                    instance.transform.translate(
+                        static_cast<float>(-localCenter.x()),
+                        static_cast<float>(-localCenter.y()));
+                    updateGeometry(instance);
+                }
+                instance.timeOffset += channels.timeOffsetSeconds;
+            }
+        }
     }
 }
 
@@ -515,8 +541,28 @@ inline float cloneModifierTimeOffset(
     return timeOffsetStep * static_cast<float>(cloneIndex);
 }
 
-export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstractLayer* layer,
-                                                             const QMatrix4x4& baseTransform)
+inline bool applyAuthoritativeComponentState(
+    const ArtifactAbstractLayer* layer,
+    std::vector<CloneRenderInstance>& instances)
+{
+    if (!layer) {
+        return false;
+    }
+    const auto state = layer->authoritativeComponentEvaluationState();
+    if (!state || state->instances.size() != instances.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < instances.size(); ++index) {
+        instances[index].transform = state->instances[index].transform;
+        instances[index].weight = std::clamp(
+            state->instances[index].opacity, 0.0f, 1.0f);
+    }
+    return true;
+}
+
+inline std::vector<CloneRenderInstance> cloneRenderInstancesImpl(
+    const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform,
+    const bool useAuthoritativeState, const bool applyPreviewDynamics)
 {
     std::vector<CloneRenderInstance> instances;
     if (!layer) {
@@ -563,8 +609,12 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
         instances.push_back(CloneRenderInstance{baseTransform, 1.0f});
         instances.insert(instances.end(), legacyEffectInstances.begin(), legacyEffectInstances.end());
         applyLayoutComponent(layer, instances);
-        applyCrowdComponent(layer, instances);
-        applyInstanceCollisionComponent(layer, instances);
+        const bool authoritative = useAuthoritativeState &&
+            applyAuthoritativeComponentState(layer, instances);
+        if (!authoritative && applyPreviewDynamics) {
+            applyCrowdComponent(layer, instances);
+            applyInstanceCollisionComponent(layer, instances);
+        }
         populateCloneInstanceGeometry(layer, instances);
         return instances;
     }
@@ -572,18 +622,38 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
     instances = clonerComponentInstances(layer, baseTransform);
     if (!instances.empty()) {
         applyLayoutComponent(layer, instances);
-        applyCrowdComponent(layer, instances);
-        applyInstanceCollisionComponent(layer, instances);
+        const bool authoritative = useAuthoritativeState &&
+            applyAuthoritativeComponentState(layer, instances);
+        if (!authoritative && applyPreviewDynamics) {
+            applyCrowdComponent(layer, instances);
+            applyInstanceCollisionComponent(layer, instances);
+        }
         populateCloneInstanceGeometry(layer, instances);
         return instances;
     }
 
     instances.push_back(CloneRenderInstance{baseTransform, 1.0f});
     applyLayoutComponent(layer, instances);
-    applyCrowdComponent(layer, instances);
-    applyInstanceCollisionComponent(layer, instances);
+    const bool authoritative = useAuthoritativeState &&
+        applyAuthoritativeComponentState(layer, instances);
+    if (!authoritative && applyPreviewDynamics) {
+        applyCrowdComponent(layer, instances);
+        applyInstanceCollisionComponent(layer, instances);
+    }
     populateCloneInstanceGeometry(layer, instances);
     return instances;
+}
+
+export std::vector<CloneRenderInstance> cloneRenderInstances(
+    const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform)
+{
+    return cloneRenderInstancesImpl(layer, baseTransform, true, true);
+}
+
+export std::vector<CloneRenderInstance> cloneRenderInstancesForSimulation(
+    const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform)
+{
+    return cloneRenderInstancesImpl(layer, baseTransform, false, false);
 }
 
 export void drawWithClonerEffect(const ArtifactAbstractLayer* layer,

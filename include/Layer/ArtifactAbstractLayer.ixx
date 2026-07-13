@@ -3,7 +3,6 @@
 #include <memory>
 #include <typeindex>
 #include <vector>
-#include <functional>
 #include <optional>
 #include <cstdint>
 #include <string>
@@ -15,6 +14,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QPointer>
+#include <QPointF>
 #include <QRectF>
 #include <QSizeF>
 #include <QString>
@@ -38,7 +38,6 @@ import Artifact.Animation.LayerEffectEnvelope;
 import Artifact.Mask.LayerMask;
 import Artifact.Layer.Matte;
 import Artifact.Layer.Component.System;
-import Physics.SoftBody;
 import Geometry.Fracture;
 import Layer.Matte;
 import Frame.Position;
@@ -48,6 +47,13 @@ export import Property.Abstract;
 export import Property.Group;
 
 export namespace Artifact {
+
+ struct LayerFieldChannelSample {
+  float weight = 1.0f;
+  float scaleMultiplier = 1.0f;
+  float timeOffsetSeconds = 0.0f;
+  bool affected = false;
+ };
 
 using namespace ArtifactCore;
 
@@ -307,6 +313,10 @@ public:
   virtual void setComposition(void *comp);
   void *composition() const;
   QObject *compositionObject() const;
+  float compositionFieldInfluenceAtCanvasPoint(
+      const QPointF& canvasPosition, bool* affected = nullptr) const;
+  LayerFieldChannelSample compositionFieldChannelsAtCanvasPoint(
+      const QPointF& canvasPosition) const;
   QSizeF compositionSizeHint() const;
 
   LAYER_BLEND_TYPE layerBlendType() const;
@@ -519,6 +529,11 @@ public:
   std::vector<LayerModifierDescriptor> layerCloneModifiers() const;
   std::vector<LayerComponentValidationIssue>
   validateLayerComponents() const;
+  void setAuthoritativeComponentEvaluationState(
+      const LayerEvaluationState& state, std::int64_t frame);
+  std::optional<LayerEvaluationState>
+  authoritativeComponentEvaluationState() const;
+  void clearAuthoritativeComponentEvaluationState();
   /*Components*/
 
   /*Script*/
