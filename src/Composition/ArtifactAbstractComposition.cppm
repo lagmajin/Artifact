@@ -2295,12 +2295,13 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                 }
             }
         }
-        AudioSegment mixOutput;
-        mixOutput.sampleRate = sampleRate;
-        mixOutput.channelData.resize(2);
-        mixOutput.setFrameCount(frameCount);
-        mixOutput.zero();
-        AudioSegment layerSegment;
+        struct PendingAudioInput {
+            std::shared_ptr<AudioBus> bus;
+            AudioSegment segment;
+            float gain = 1.0f;
+        };
+        std::vector<PendingAudioInput> pendingInputs;
+        int outputChannels = 2;
         for (auto &layer : impl_->layerMultiIndex_) {
             if (layer && shouldEvaluateLayer(layer->id()) &&
                 layer->isActiveAt(start) && layer->hasAudio()) {
@@ -2308,7 +2309,7 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                 const std::string busName = "layer_" + layer->id().toString().toStdString();
                 auto bus = mixer.findBusByName(busName);
                 if (!bus) continue;
-                bus->clearInput(frameCount, sampleRate);
+                AudioSegment layerSegment;
                 if (layer->getAudio(layerSegment, start, frameCount, sampleRate)) {
                     float layerVol = 1.0f;
                     if (auto al = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
@@ -2317,11 +2318,32 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                         layerVol = static_cast<float>(vl->audioVolume());
                     }
                     bus->setVolume(20.0f * std::log10(std::max(0.001f, layerVol)));
-                    bus->addInput(layerSegment, evaluationGainForLayer(layer->id()));
+                    outputChannels = std::max(outputChannels, layerSegment.channelCount());
+                    pendingInputs.push_back(
+                        {bus, std::move(layerSegment), evaluationGainForLayer(layer->id())});
                     ++producedAudioLayerCount;
                     hasAnyAudio = true;
                 }
             }
+        }
+        const AudioChannelLayout outputLayout = outputChannels >= 8
+            ? AudioChannelLayout::Surround71
+            : outputChannels >= 6 ? AudioChannelLayout::Surround51
+            : AudioChannelLayout::Stereo;
+        AudioSegment mixOutput;
+        mixOutput.sampleRate = sampleRate;
+        mixOutput.layout = outputLayout;
+        mixOutput.channelData.resize(outputChannels >= 8 ? 8 : outputChannels >= 6 ? 6 : 2);
+        mixOutput.setFrameCount(frameCount);
+        mixOutput.zero();
+        if (auto masterBus = mixer.getMasterBus()) {
+            masterBus->setLayout(outputLayout);
+            masterBus->clearInput(frameCount, sampleRate);
+        }
+        for (auto& pending : pendingInputs) {
+            pending.bus->setLayout(outputLayout);
+            pending.bus->clearInput(frameCount, sampleRate);
+            pending.bus->addInput(pending.segment, pending.gain);
         }
         if (hasAnyAudio) {
             mixer.process(mixOutput);
@@ -2348,6 +2370,19 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                 layer->isActiveAt(start) && layer->hasAudio()) {
                 ++activeAudioLayerCount;
                 if (layer->getAudio(layerSeg, start, frameCount, sampleRate)) {
+                    const int sourceChannels = layerSeg.channelCount();
+                    const int requestedChannels = sourceChannels >= 8 ? 8
+                        : sourceChannels >= 6 ? 6 : 2;
+                    const int targetChannels =
+                        std::max(outSegment.channelCount(), requestedChannels);
+                    if (outSegment.channelCount() < targetChannels) {
+                        outSegment.channelData.resize(targetChannels);
+                        outSegment.setFrameCount(frameCount);
+                    }
+                    outSegment.layout = targetChannels == 8
+                        ? AudioChannelLayout::Surround71
+                        : targetChannels == 6 ? AudioChannelLayout::Surround51
+                        : AudioChannelLayout::Stereo;
                     const float layerGain = evaluationGainForLayer(layer->id());
                     int chCount = std::min(outSegment.channelCount(), layerSeg.channelCount());
                     int fCount = std::min(outSegment.frameCount(), layerSeg.frameCount());

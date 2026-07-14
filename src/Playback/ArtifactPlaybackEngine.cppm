@@ -418,6 +418,19 @@ public:
                            << "bufferedFrames=" << audioRenderer_->bufferedFrames()
                            << "targetBufferedFrames=" << audioTargetBufferedFrames_;
             }
+            const double probeFrameRate = std::max<double>(
+                1e-6, static_cast<double>(frameRate_.framerate()));
+            const int probeFrames = std::max(
+                1, static_cast<int>(std::round(
+                       static_cast<double>(audioSampleRate_) / probeFrameRate)));
+            AudioSegment probeSegment;
+            if (composition_->getAudio(
+                    probeSegment, FramePosition(audioNextFrame_), probeFrames,
+                    audioSampleRate_)) {
+                const int sourceChannels = probeSegment.channelCount();
+                audioRenderer_->setPreferredChannelCount(
+                    sourceChannels >= 8 ? 8 : sourceChannels >= 6 ? 6 : 2);
+            }
             if (!audioRenderer_->openDevice("")) {
                 return;
             }

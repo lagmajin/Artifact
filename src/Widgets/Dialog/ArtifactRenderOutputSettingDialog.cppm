@@ -1131,8 +1131,9 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->audioChannelCombo->addItem(QStringLiteral("Mono"), QStringLiteral("mono"));
     impl_->audioChannelCombo->addItem(QStringLiteral("Stereo（配布向け推奨）"), QStringLiteral("stereo"));
     impl_->audioChannelCombo->addItem(QStringLiteral("5.1"), QStringLiteral("5.1"));
+    impl_->audioChannelCombo->addItem(QStringLiteral("7.1"), QStringLiteral("7.1"));
     impl_->audioChannelCombo->setToolTip(QStringLiteral(
-        "ソース準拠ではチャンネル数を引き継ぎます。Mono・Stereo・5.1を選ぶとFFmpegで変換します。"));
+        "ソース準拠ではチャンネル数を引き継ぎます。Mono・Stereo・5.1・7.1を選ぶとFFmpegで変換します。"));
     formLayout->addRow(QStringLiteral("音声チャンネル:"), impl_->audioChannelCombo);
 
     impl_->audioSampleRateCombo = new QComboBox(this);
