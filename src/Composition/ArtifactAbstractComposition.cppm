@@ -2,11 +2,13 @@
 module;
 #include <algorithm>
 #include <cstdint>
+#include <cstddef>
 #include <utility>
 #include <QByteArray>
 #include <QChar>
 #include <QJsonDocument>
 #include <QList>
+#include <QMap>
 #include <qforeach.h>
 #include <QHash>
 #include <QVector>
@@ -478,6 +480,178 @@ float layerFloatProperty(const ArtifactAbstractLayerPtr& layer,
   return property ? property->getValue().toFloat() : fallback;
 }
 
+QJsonObject simulationEntityIdToJson(const SimulationEntityId& id)
+{
+  return {{QStringLiteral("ownerLayerId"), id.ownerLayerId},
+          {QStringLiteral("componentId"), id.componentId},
+          {QStringLiteral("localId"), QString::number(id.localId)},
+          {QStringLiteral("generation"), static_cast<int>(id.generation)}};
+}
+
+SimulationEntityId simulationEntityIdFromJson(const QJsonObject& object)
+{
+  SimulationEntityId id;
+  id.ownerLayerId = object.value(QStringLiteral("ownerLayerId")).toString();
+  id.componentId = object.value(QStringLiteral("componentId")).toString();
+  bool ok = false;
+  id.localId = object.value(QStringLiteral("localId")).toString()
+                   .toULongLong(&ok);
+  if (!ok) {
+    id.localId = 0;
+  }
+  id.generation = static_cast<std::uint32_t>(
+      std::max(0, object.value(QStringLiteral("generation")).toInt()));
+  return id;
+}
+
+QJsonArray simulationVectorToJson(const QVector3D& value)
+{
+  return {value.x(), value.y(), value.z()};
+}
+
+QVector3D simulationVectorFromJson(const QJsonValue& value)
+{
+  const QJsonArray array = value.toArray();
+  if (array.size() != 3) {
+    return {};
+  }
+  return {static_cast<float>(array.at(0).toDouble()),
+          static_cast<float>(array.at(1).toDouble()),
+          static_cast<float>(array.at(2).toDouble())};
+}
+
+QJsonArray simulationMatrixToJson(const QMatrix4x4& matrix)
+{
+  QJsonArray array;
+  const float* values = matrix.constData();
+  for (int index = 0; index < 16; ++index) {
+    array.append(values[index]);
+  }
+  return array;
+}
+
+QMatrix4x4 simulationMatrixFromJson(const QJsonValue& value)
+{
+  const QJsonArray array = value.toArray();
+  if (array.size() != 16) {
+    return {};
+  }
+  float values[16]{};
+  for (int index = 0; index < 16; ++index) {
+    values[index] = static_cast<float>(array.at(index).toDouble());
+  }
+  return QMatrix4x4(values);
+}
+
+QJsonObject layerEvaluationStateToJson(const LayerEvaluationState& state)
+{
+  QJsonArray instances;
+  for (const auto& instance : state.instances) {
+    instances.append(QJsonObject{
+        {QStringLiteral("entity"), simulationEntityIdToJson(instance.entityId)},
+        {QStringLiteral("transform"), simulationMatrixToJson(instance.transform)},
+        {QStringLiteral("linearVelocity"),
+         simulationVectorToJson(instance.linearVelocity)},
+        {QStringLiteral("opacity"), instance.opacity},
+        {QStringLiteral("active"), instance.active}});
+  }
+  QJsonArray intents;
+  for (const auto& intent : state.intents) {
+    intents.append(QJsonObject{
+        {QStringLiteral("entity"), simulationEntityIdToJson(intent.entityId)},
+        {QStringLiteral("desiredVelocity"),
+         simulationVectorToJson(intent.desiredVelocity)},
+        {QStringLiteral("desiredFacing"),
+         simulationVectorToJson(intent.desiredFacing)},
+        {QStringLiteral("weight"), intent.weight}});
+  }
+  QJsonArray contacts;
+  for (const auto& contact : state.contacts) {
+    contacts.append(QJsonObject{
+        {QStringLiteral("first"), simulationEntityIdToJson(contact.first)},
+        {QStringLiteral("second"), simulationEntityIdToJson(contact.second)},
+        {QStringLiteral("position"), simulationVectorToJson(contact.position)},
+        {QStringLiteral("normal"), simulationVectorToJson(contact.normal)},
+        {QStringLiteral("impulse"), contact.impulse}});
+  }
+  return {{QStringLiteral("instances"), instances},
+          {QStringLiteral("intents"), intents},
+          {QStringLiteral("contacts"), contacts}};
+}
+
+bool layerEvaluationStateFromJson(const QJsonObject& object,
+                                  LayerEvaluationState& state)
+{
+  constexpr qsizetype kMaxEntries = 1000000;
+  const QJsonArray instances = object.value(QStringLiteral("instances")).toArray();
+  const QJsonArray intents = object.value(QStringLiteral("intents")).toArray();
+  const QJsonArray contacts = object.value(QStringLiteral("contacts")).toArray();
+  if (instances.size() > kMaxEntries || intents.size() > kMaxEntries ||
+      contacts.size() > kMaxEntries) {
+    return false;
+  }
+  for (const auto& value : instances) {
+    if (!value.isObject()) return false;
+    const QJsonObject item = value.toObject();
+    LayerInstanceState instance;
+    instance.entityId = simulationEntityIdFromJson(
+        item.value(QStringLiteral("entity")).toObject());
+    instance.transform = simulationMatrixFromJson(
+        item.value(QStringLiteral("transform")));
+    instance.linearVelocity = simulationVectorFromJson(
+        item.value(QStringLiteral("linearVelocity")));
+    instance.opacity = static_cast<float>(
+        item.value(QStringLiteral("opacity")).toDouble(1.0));
+    instance.active = item.value(QStringLiteral("active")).toBool(true);
+    state.instances.push_back(std::move(instance));
+  }
+  for (const auto& value : intents) {
+    if (!value.isObject()) return false;
+    const QJsonObject item = value.toObject();
+    LayerMotionIntent intent;
+    intent.entityId = simulationEntityIdFromJson(
+        item.value(QStringLiteral("entity")).toObject());
+    intent.desiredVelocity = simulationVectorFromJson(
+        item.value(QStringLiteral("desiredVelocity")));
+    intent.desiredFacing = simulationVectorFromJson(
+        item.value(QStringLiteral("desiredFacing")));
+    intent.weight = static_cast<float>(
+        item.value(QStringLiteral("weight")).toDouble(1.0));
+    state.intents.push_back(std::move(intent));
+  }
+  for (const auto& value : contacts) {
+    if (!value.isObject()) return false;
+    const QJsonObject item = value.toObject();
+    LayerContactEvent contact;
+    contact.first = simulationEntityIdFromJson(
+        item.value(QStringLiteral("first")).toObject());
+    contact.second = simulationEntityIdFromJson(
+        item.value(QStringLiteral("second")).toObject());
+    contact.position = simulationVectorFromJson(
+        item.value(QStringLiteral("position")));
+    contact.normal = simulationVectorFromJson(
+        item.value(QStringLiteral("normal")));
+    contact.impulse = static_cast<float>(
+        item.value(QStringLiteral("impulse")).toDouble());
+    state.contacts.push_back(std::move(contact));
+  }
+  return true;
+}
+
+QJsonObject layerComponentBakeAuthoringState(
+    const ArtifactAbstractLayerPtr& layer)
+{
+  if (!layer) return {};
+  QJsonObject object = layer->toJson();
+  QJsonObject fracture = object.value(QStringLiteral("fracture")).toObject();
+  fracture.remove(QStringLiteral("stateKind"));
+  fracture.remove(QStringLiteral("stateDamage"));
+  fracture.remove(QStringLiteral("stateLastImpact"));
+  fracture.remove(QStringLiteral("stateCrackProgress"));
+  object.insert(QStringLiteral("fracture"), fracture);
+  return object;
+}
+
 QString recordingSnapshotKey(const LayerID& layerId, const QString& propertyPath)
 {
   return layerId.toString() + QStringLiteral("::") + propertyPath;
@@ -847,8 +1021,16 @@ class ArtifactAbstractComposition::Impl {
   // announce each restored layer as a user-visible creation.
   bool suppressLayerChangedEvents_ = false;
   struct ComponentSimulationSession {
+    struct Snapshot {
+      QHash<QString, LayerEvaluationState> statesByLayerId;
+      QHash<QString, LayerComponentRuntimeSnapshot> runtimeByLayerId;
+      std::size_t estimatedBytes = 0;
+    };
     int64_t frame = std::numeric_limits<int64_t>::min();
     QHash<QString, LayerEvaluationState> statesByLayerId;
+    QMap<int64_t, Snapshot> snapshots;
+    std::size_t snapshotBytes = 0;
+    int64_t snapshotInterval = 1;
     bool valid = false;
   } componentSimulation_;
   //PlaybackClock playbackClock_;  // 高精度再生クロック
@@ -1163,19 +1345,9 @@ void ArtifactAbstractComposition::Impl::evaluateLayerCollisionPairs()
         continue;
       }
 
-      const QRectF overlap = firstBounds.intersected(secondBounds);
-      const QPointF center = overlap.center();
-      const float overlapExtent = static_cast<float>(
-          std::max(overlap.width(), overlap.height()));
-
-      FractureImpact impact;
-      impact.impulse = std::max(0.1f, overlapExtent / 64.0f);
-      impact.speed = overlapExtent;
-      impact.stress = impact.impulse;
-      impact.area = std::max(1.0f, static_cast<float>(overlap.width() * overlap.height()));
-
-      first->applyFractureImpact(impact);
-      second->applyFractureImpact(impact);
+      // This pass only maintains material-solver collider registration and
+      // pair lifetime. Topology/emit mutation is consumed from the
+      // authoritative component event queues after dynamics evaluation.
     }
   }
 
@@ -1190,6 +1362,9 @@ void ArtifactAbstractComposition::Impl::resetLayerComponentSimulation()
     }
   }
   componentSimulation_.statesByLayerId.clear();
+  componentSimulation_.snapshots.clear();
+  componentSimulation_.snapshotBytes = 0;
+  componentSimulation_.snapshotInterval = 1;
   componentSimulation_.frame = std::numeric_limits<int64_t>::min();
   componentSimulation_.valid = false;
 }
@@ -1198,8 +1373,95 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
     const FramePosition& frame, const bool interactive)
 {
   const int64_t frameNumber = frame.framePosition();
+  if (componentSimulation_.valid &&
+      (componentSimulation_.snapshotInterval <= 1 ||
+       componentSimulation_.frame % componentSimulation_.snapshotInterval == 0)) {
+    ComponentSimulationSession::Snapshot snapshot;
+    snapshot.statesByLayerId = componentSimulation_.statesByLayerId;
+    for (auto it = componentSimulation_.statesByLayerId.cbegin();
+         it != componentSimulation_.statesByLayerId.cend(); ++it) {
+      snapshot.estimatedBytes +=
+          sizeof(LayerEvaluationState) +
+          it->instances.size() * sizeof(LayerInstanceState) +
+          it->intents.size() * sizeof(LayerMotionIntent) +
+          it->contacts.size() * sizeof(LayerContactEvent) +
+          it->pendingFractures.size() * sizeof(LayerFractureEvent) +
+          it->pendingParticleSpawns.size() * sizeof(LayerParticleSpawnEvent);
+      if (const auto layer = layerMultiIndex_.findById(LayerID(it.key()))) {
+        auto runtime = layer->captureComponentRuntimeSnapshot();
+        snapshot.estimatedBytes += runtime.estimatedBytes;
+        snapshot.runtimeByLayerId.insert(it.key(), std::move(runtime));
+      }
+    }
+    const auto existing = componentSimulation_.snapshots.constFind(
+        componentSimulation_.frame);
+    if (existing != componentSimulation_.snapshots.cend()) {
+      componentSimulation_.snapshotBytes -= std::min(
+          componentSimulation_.snapshotBytes, existing->estimatedBytes);
+    }
+    componentSimulation_.snapshotBytes += snapshot.estimatedBytes;
+    componentSimulation_.snapshots.insert(
+        componentSimulation_.frame, std::move(snapshot));
+    constexpr std::size_t kSnapshotByteBudget = 64U * 1024U * 1024U;
+    while (componentSimulation_.snapshots.size() > 120 ||
+           componentSimulation_.snapshotBytes > kSnapshotByteBudget) {
+      componentSimulation_.snapshotBytes -= std::min(
+          componentSimulation_.snapshotBytes,
+          componentSimulation_.snapshots.begin()->estimatedBytes);
+      componentSimulation_.snapshots.erase(
+          componentSimulation_.snapshots.begin());
+    }
+  }
+
+  if (componentSimulation_.valid &&
+      frameNumber != componentSimulation_.frame) {
+    const auto cached = componentSimulation_.snapshots.constFind(frameNumber);
+    if (cached != componentSimulation_.snapshots.cend()) {
+      bool restored = true;
+      QHash<QString, LayerEvaluationState> restoredStates;
+      for (auto it = cached->statesByLayerId.cbegin();
+           it != cached->statesByLayerId.cend(); ++it) {
+        const auto layer = layerMultiIndex_.findById(LayerID(it.key()));
+        const auto runtime = cached->runtimeByLayerId.constFind(it.key());
+        if (!layer || runtime == cached->runtimeByLayerId.cend()) {
+          restored = false;
+          break;
+        }
+        layer->goToFrame(frameNumber);
+        if (!layer->restoreComponentRuntimeSnapshot(*runtime)) {
+          restored = false;
+          break;
+        }
+        LayerEvaluationState state = it.value();
+        state.pendingFractures.clear();
+        state.pendingParticleSpawns.clear();
+        layer->setAuthoritativeComponentEvaluationState(
+            state, layer->currentFrame());
+        restoredStates.insert(it.key(), std::move(state));
+      }
+      if (restored) {
+        componentSimulation_.statesByLayerId = std::move(restoredStates);
+        componentSimulation_.frame = frameNumber;
+        componentSimulation_.valid = true;
+        return;
+      }
+      componentSimulation_.snapshotBytes -= std::min(
+          componentSimulation_.snapshotBytes, cached->estimatedBytes);
+      componentSimulation_.snapshots.remove(frameNumber);
+    }
+  }
+
+  if (componentSimulation_.valid &&
+      frameNumber == componentSimulation_.frame) {
+    // A same-frame re-evaluation may be caused by an authoring edit. Older
+    // snapshots can no longer be assumed to match the current descriptors.
+    componentSimulation_.snapshots.clear();
+    componentSimulation_.snapshotBytes = 0;
+  }
   const bool sequential = componentSimulation_.valid &&
       frameNumber == componentSimulation_.frame + 1;
+  const bool discontinuousSeek = componentSimulation_.valid &&
+      frameNumber != componentSimulation_.frame && !sequential;
   const auto previousStates = componentSimulation_.statesByLayerId;
   const float fps = std::max(
       1.0f, static_cast<float>(frameRate_.framerate()));
@@ -1217,6 +1479,13 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
   std::vector<SimulationLayerEntry> entries;
 
   for (const auto& layer : layerMultiIndex_) {
+    if (discontinuousSeek && layer &&
+        (layerBooleanProperty(
+             layer, QStringLiteral("fracture.enabled"), false) ||
+         layerBooleanProperty(
+             layer, QStringLiteral("component.particleEmitter.enabled"), false))) {
+      layer->resetFractureState();
+    }
     if (!layer || !layer->isActiveAt(frame)) {
       if (layer) {
         layer->clearAuthoritativeComponentEvaluationState();
@@ -2238,7 +2507,313 @@ bool ArtifactAbstractComposition::hasAuthoritativeLayerComponentSimulation() con
          !impl_->componentSimulation_.statesByLayerId.isEmpty();
 }
 
-  FrameRange ArtifactAbstractComposition::frameRange() const
+bool ArtifactAbstractComposition::usesLayerComponentSimulation() const
+{
+  return std::any_of(
+      impl_->layerMultiIndex_.begin(), impl_->layerMultiIndex_.end(),
+      [](const ArtifactAbstractLayerPtr& layer) {
+        return layerBooleanProperty(
+                   layer, QStringLiteral("component.crowd.enabled"), false) ||
+               layerBooleanProperty(
+                   layer, QStringLiteral("component.collision.enabled"), false);
+      });
+}
+
+QJsonObject ArtifactAbstractComposition::exportLayerComponentSimulationBake() const
+{
+  if (!impl_->componentSimulation_.valid) {
+    return {};
+  }
+
+  const auto descriptorHash = [this]() {
+    QJsonArray descriptors;
+    for (const auto& layer : impl_->layerMultiIndex_) {
+      if (!layer) continue;
+      descriptors.append(QJsonObject{
+          {QStringLiteral("layerId"), layer->id().toString()},
+          {QStringLiteral("authoring"),
+           layerComponentBakeAuthoringState(layer)}});
+    }
+    const QSize size = impl_->settings_.compositionSize();
+    const QJsonObject authoring{
+        {QStringLiteral("width"), size.width()},
+        {QStringLiteral("height"), size.height()},
+        {QStringLiteral("layers"), descriptors}};
+    return QString::fromLatin1(QCryptographicHash::hash(
+        QJsonDocument(authoring).toJson(QJsonDocument::Compact),
+        QCryptographicHash::Sha256).toHex());
+  };
+
+  auto snapshots = impl_->componentSimulation_.snapshots;
+  Impl::ComponentSimulationSession::Snapshot current;
+  current.statesByLayerId = impl_->componentSimulation_.statesByLayerId;
+  for (auto it = current.statesByLayerId.cbegin();
+       it != current.statesByLayerId.cend(); ++it) {
+    const auto layer = impl_->layerMultiIndex_.findById(LayerID(it.key()));
+    if (!layer) continue;
+    auto runtime = layer->captureComponentRuntimeSnapshot();
+    current.estimatedBytes += sizeof(LayerEvaluationState) +
+        it->instances.size() * sizeof(LayerInstanceState) +
+        it->intents.size() * sizeof(LayerMotionIntent) +
+        it->contacts.size() * sizeof(LayerContactEvent) +
+        runtime.estimatedBytes;
+    current.runtimeByLayerId.insert(it.key(), std::move(runtime));
+  }
+  snapshots.insert(impl_->componentSimulation_.frame, std::move(current));
+  std::size_t exportedBytes = 0;
+  for (auto it = snapshots.cbegin(); it != snapshots.cend(); ++it) {
+    exportedBytes += it->estimatedBytes;
+  }
+  constexpr std::size_t kBakeByteBudget = 64U * 1024U * 1024U;
+  while ((snapshots.size() > 120 || exportedBytes > kBakeByteBudget) &&
+         snapshots.size() > 1) {
+    auto oldest = snapshots.begin();
+    if (oldest.key() == impl_->componentSimulation_.frame) {
+      ++oldest;
+    }
+    if (oldest == snapshots.end()) break;
+    exportedBytes -= std::min(exportedBytes, oldest->estimatedBytes);
+    snapshots.erase(oldest);
+  }
+  if (exportedBytes > kBakeByteBudget) {
+    return {};
+  }
+
+  QJsonArray frames;
+  for (auto frameIt = snapshots.cbegin(); frameIt != snapshots.cend();
+       ++frameIt) {
+    QJsonArray layers;
+    for (auto stateIt = frameIt->statesByLayerId.cbegin();
+         stateIt != frameIt->statesByLayerId.cend(); ++stateIt) {
+      const auto layer = impl_->layerMultiIndex_.findById(LayerID(stateIt.key()));
+      const auto runtime = frameIt->runtimeByLayerId.constFind(stateIt.key());
+      if (!layer || runtime == frameIt->runtimeByLayerId.cend()) continue;
+      const QJsonObject runtimeObject =
+          layer->serializeComponentRuntimeSnapshot(*runtime);
+      if (runtimeObject.isEmpty()) continue;
+      layers.append(QJsonObject{
+          {QStringLiteral("layerId"), stateIt.key()},
+          {QStringLiteral("evaluation"),
+           layerEvaluationStateToJson(stateIt.value())},
+          {QStringLiteral("runtime"), runtimeObject}});
+    }
+    frames.append(QJsonObject{
+        {QStringLiteral("frame"), QString::number(frameIt.key())},
+        {QStringLiteral("layers"), layers}});
+  }
+
+  return {{QStringLiteral("version"), 1},
+          {QStringLiteral("compositionId"), id().toString()},
+          {QStringLiteral("descriptorHash"), descriptorHash()},
+          {QStringLiteral("frameRate"), impl_->frameRate_.framerate()},
+          {QStringLiteral("currentFrame"),
+           QString::number(impl_->componentSimulation_.frame)},
+          {QStringLiteral("frames"), frames}};
+}
+
+bool ArtifactAbstractComposition::importLayerComponentSimulationBake(
+    const QJsonObject& bake)
+{
+  if (bake.value(QStringLiteral("version")).toInt() != 1 ||
+      bake.value(QStringLiteral("compositionId")).toString() != id().toString()) {
+    return false;
+  }
+  QJsonArray descriptors;
+  for (const auto& layer : impl_->layerMultiIndex_) {
+    if (!layer) continue;
+    descriptors.append(QJsonObject{
+        {QStringLiteral("layerId"), layer->id().toString()},
+        {QStringLiteral("authoring"),
+         layerComponentBakeAuthoringState(layer)}});
+  }
+  const QSize size = impl_->settings_.compositionSize();
+  const QJsonObject authoring{
+      {QStringLiteral("width"), size.width()},
+      {QStringLiteral("height"), size.height()},
+      {QStringLiteral("layers"), descriptors}};
+  const QString descriptorHash = QString::fromLatin1(
+      QCryptographicHash::hash(
+          QJsonDocument(authoring).toJson(QJsonDocument::Compact),
+          QCryptographicHash::Sha256).toHex());
+  if (bake.value(QStringLiteral("descriptorHash")).toString() != descriptorHash) {
+    return false;
+  }
+  if (std::abs(bake.value(QStringLiteral("frameRate")).toDouble() -
+               impl_->frameRate_.framerate()) > 0.000001) {
+    return false;
+  }
+
+  const QJsonArray frames = bake.value(QStringLiteral("frames")).toArray();
+  if (frames.isEmpty() || frames.size() > 120) {
+    return false;
+  }
+  QMap<int64_t, Impl::ComponentSimulationSession::Snapshot> snapshots;
+  std::size_t totalBytes = 0;
+  constexpr std::size_t kSnapshotByteBudget = 64U * 1024U * 1024U;
+  for (const auto& frameValue : frames) {
+    if (!frameValue.isObject()) return false;
+    const QJsonObject frameObject = frameValue.toObject();
+    bool frameOk = false;
+    const int64_t frame = frameObject.value(QStringLiteral("frame"))
+                              .toString().toLongLong(&frameOk);
+    if (!frameOk || snapshots.contains(frame)) return false;
+    Impl::ComponentSimulationSession::Snapshot snapshot;
+    const QJsonArray layers = frameObject.value(QStringLiteral("layers")).toArray();
+    for (const auto& layerValue : layers) {
+      if (!layerValue.isObject()) return false;
+      const QJsonObject layerObject = layerValue.toObject();
+      const QString layerId =
+          layerObject.value(QStringLiteral("layerId")).toString();
+      const auto layer = impl_->layerMultiIndex_.findById(LayerID(layerId));
+      if (!layer || snapshot.statesByLayerId.contains(layerId)) return false;
+      LayerEvaluationState state;
+      if (!layerEvaluationStateFromJson(
+              layerObject.value(QStringLiteral("evaluation")).toObject(),
+              state)) {
+        return false;
+      }
+      auto runtime = layer->deserializeComponentRuntimeSnapshot(
+          layerObject.value(QStringLiteral("runtime")).toObject());
+      if (!runtime.isValid()) return false;
+      snapshot.estimatedBytes += sizeof(LayerEvaluationState) +
+          state.instances.size() * sizeof(LayerInstanceState) +
+          state.intents.size() * sizeof(LayerMotionIntent) +
+          state.contacts.size() * sizeof(LayerContactEvent) +
+          runtime.estimatedBytes;
+      snapshot.statesByLayerId.insert(layerId, std::move(state));
+      snapshot.runtimeByLayerId.insert(layerId, std::move(runtime));
+    }
+    totalBytes += snapshot.estimatedBytes;
+    if (totalBytes > kSnapshotByteBudget) return false;
+    snapshots.insert(frame, std::move(snapshot));
+  }
+
+  bool currentOk = false;
+  const int64_t currentFrame = bake.value(QStringLiteral("currentFrame"))
+                                   .toString().toLongLong(&currentOk);
+  const auto current = snapshots.constFind(currentFrame);
+  if (!currentOk || current == snapshots.cend()) return false;
+  QHash<QString, LayerEvaluationState> restoredStates;
+  for (auto it = current->statesByLayerId.cbegin();
+       it != current->statesByLayerId.cend(); ++it) {
+    const auto layer = impl_->layerMultiIndex_.findById(LayerID(it.key()));
+    const auto runtime = current->runtimeByLayerId.constFind(it.key());
+    if (!layer || runtime == current->runtimeByLayerId.cend()) {
+      return false;
+    }
+    layer->goToFrame(currentFrame);
+    if (!layer->restoreComponentRuntimeSnapshot(*runtime)) {
+      return false;
+    }
+    LayerEvaluationState state = it.value();
+    state.pendingFractures.clear();
+    state.pendingParticleSpawns.clear();
+    layer->setAuthoritativeComponentEvaluationState(state, currentFrame);
+    restoredStates.insert(it.key(), std::move(state));
+  }
+  impl_->componentSimulation_.snapshots = std::move(snapshots);
+  impl_->componentSimulation_.snapshotBytes = totalBytes;
+  impl_->componentSimulation_.statesByLayerId = std::move(restoredStates);
+  impl_->componentSimulation_.frame = currentFrame;
+  impl_->componentSimulation_.valid = true;
+  impl_->position_ = FramePosition(currentFrame);
+  return true;
+}
+
+bool ArtifactAbstractComposition::hasLayerComponentSimulationSnapshot(
+    std::int64_t frame) const
+{
+  return impl_->componentSimulation_.valid &&
+      (impl_->componentSimulation_.frame == frame ||
+       impl_->componentSimulation_.snapshots.contains(frame));
+}
+
+std::optional<std::int64_t>
+ArtifactAbstractComposition::layerComponentSimulationSnapshotAtOrBefore(
+    std::int64_t frame) const
+{
+  if (!impl_->componentSimulation_.valid) {
+    return std::nullopt;
+  }
+  if (impl_->componentSimulation_.frame <= frame) {
+    return impl_->componentSimulation_.frame;
+  }
+  auto it = impl_->componentSimulation_.snapshots.upperBound(frame);
+  if (it == impl_->componentSimulation_.snapshots.begin()) {
+    return std::nullopt;
+  }
+  --it;
+  return it.key();
+}
+
+bool ArtifactAbstractComposition::bakeLayerComponentSimulation(
+    const FrameRange& range,
+    const std::function<bool(std::int64_t, std::int64_t)>& progress)
+{
+  if (!usesLayerComponentSimulation()) {
+    return false;
+  }
+  const int64_t start = std::max(range.start(), impl_->frameRange_.start());
+  const int64_t end = std::min(range.end(), impl_->frameRange_.end());
+  if (end <= start) {
+    return false;
+  }
+
+  const auto previousSession = impl_->componentSimulation_;
+  const FramePosition previousPosition = impl_->position_;
+  QHash<QString, LayerComponentRuntimeSnapshot> previousRuntime;
+  for (const auto& layer : impl_->layerMultiIndex_) {
+    if (layer) {
+      previousRuntime.insert(
+          layer->id().toString(), layer->captureComponentRuntimeSnapshot());
+    }
+  }
+
+  impl_->resetLayerComponentSimulation();
+  for (const auto& layer : impl_->layerMultiIndex_) {
+    if (layer) {
+      layer->resetFractureState();
+    }
+  }
+  const int64_t totalFrames = end - start;
+  constexpr int64_t kMaximumPersistedCheckpoints = 119;
+  impl_->componentSimulation_.snapshotInterval = std::max<int64_t>(
+      1, (totalFrames + kMaximumPersistedCheckpoints - 1) /
+             kMaximumPersistedCheckpoints);
+  for (int64_t frame = start; frame < end; ++frame) {
+    impl_->goToFrame(frame);
+    impl_->evaluateLayerComponentSimulation(FramePosition(frame), false);
+    if (progress && !progress(frame - start + 1, totalFrames)) {
+      impl_->componentSimulation_ = previousSession;
+      impl_->position_ = previousPosition;
+      for (const auto& layer : impl_->layerMultiIndex_) {
+        if (!layer) continue;
+        layer->goToFrame(previousPosition.framePosition());
+        const auto runtime = previousRuntime.constFind(layer->id().toString());
+        if (runtime != previousRuntime.cend()) {
+          layer->restoreComponentRuntimeSnapshot(*runtime);
+        }
+        const auto state = previousSession.statesByLayerId.constFind(
+            layer->id().toString());
+        if (previousSession.valid &&
+            state != previousSession.statesByLayerId.cend()) {
+          LayerEvaluationState restoredState = state.value();
+          restoredState.pendingFractures.clear();
+          restoredState.pendingParticleSpawns.clear();
+          layer->setAuthoritativeComponentEvaluationState(
+              restoredState, layer->currentFrame());
+        } else {
+          layer->clearAuthoritativeComponentEvaluationState();
+        }
+      }
+      return false;
+    }
+  }
+  impl_->componentSimulation_.snapshotInterval = 1;
+  return true;
+}
+
+FrameRange ArtifactAbstractComposition::frameRange() const
   {
    return impl_->frameRange_;
   }
@@ -3745,6 +4320,7 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
     obj["frameRange"] = impl_->frameRange_.toJson();
     obj["workAreaRange"] = impl_->workAreaRange_.toJson();
     obj["currentFrame"] = impl_->position_.framePosition();
+    obj["frameRate"] = impl_->frameRate_.framerate();
     obj["playbackSpeed"] = impl_->playbackSpeed_;
     obj["looping"] = impl_->looping_;
     obj["isPlaying"] = impl_->isPlaying_;
@@ -3816,6 +4392,9 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
     }
     if (obj.contains("width") && obj.contains("height")) {
         params.setResolution(obj["width"].toInt(), obj["height"].toInt());
+    }
+    if (obj.contains("frameRate")) {
+        params.setFrameRate(obj["frameRate"].toDouble(30.0));
     }
     if (obj.contains("backgroundColor") && obj["backgroundColor"].isObject()) {
         const QJsonObject backgroundColorObj = obj["backgroundColor"].toObject();

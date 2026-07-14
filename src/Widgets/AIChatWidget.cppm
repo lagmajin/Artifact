@@ -485,36 +485,47 @@ void AIChatWidget::Impl::dispatchMessage(const QString& txt, AIClient* client)
 
 AIChatWidget::AIChatWidget(QWidget* parent) : QWidget(parent), impl_(new Impl()) {
     impl_->splitter = new QSplitter(this);
+    impl_->splitter->setObjectName(QStringLiteral("aiChatSplitter"));
 
     auto* leftPanel = new QWidget(this);
+    leftPanel->setObjectName(QStringLiteral("aiChatSessionPanel"));
     auto* leftLayout = new QVBoxLayout(leftPanel);
     impl_->newSessionButton = new QPushButton(QStringLiteral("New Session"), leftPanel);
+    impl_->newSessionButton->setObjectName(QStringLiteral("aiChatNewSessionButton"));
     impl_->sessionList = new QListWidget(leftPanel);
+    impl_->sessionList->setObjectName(QStringLiteral("aiChatSessionList"));
     impl_->sessionList->setSelectionMode(QAbstractItemView::SingleSelection);
     leftLayout->addWidget(impl_->newSessionButton);
     leftLayout->addWidget(impl_->sessionList, 1);
 
     auto* rightPanel = new QWidget(this);
+    rightPanel->setObjectName(QStringLiteral("aiChatConversationPanel"));
     auto* rightLayout = new QVBoxLayout(rightPanel);
     rightLayout->setSpacing(4);
 
     // Model loading toolbar
     auto* modelBar = new QWidget(rightPanel);
+    modelBar->setObjectName(QStringLiteral("aiChatModelBar"));
     auto* modelBarLayout = new QHBoxLayout(modelBar);
     modelBarLayout->setContentsMargins(0, 0, 0, 0);
     modelBarLayout->setSpacing(4);
     impl_->providerCombo = new QComboBox(modelBar);
+    impl_->providerCombo->setObjectName(QStringLiteral("aiChatProviderCombo"));
     impl_->providerCombo->addItem(QStringLiteral("GGUF / llama.cpp"), QStringLiteral("local"));
     impl_->providerCombo->addItem(QStringLiteral("ONNX + DirectML"), QStringLiteral("onnx-dml"));
     impl_->providerCombo->setFixedWidth(124);
     impl_->providerCombo->setToolTip(QStringLiteral("Select the local AI backend."));
     impl_->modelPathEdit = new QLineEdit(modelBar);
+    impl_->modelPathEdit->setObjectName(QStringLiteral("aiChatModelPathEdit"));
     impl_->modelPathEdit->setReadOnly(true);
     impl_->browseButton = new QPushButton(QStringLiteral("Browse…"), modelBar);
+    impl_->browseButton->setObjectName(QStringLiteral("aiChatBrowseButton"));
     impl_->browseButton->setFixedWidth(70);
     impl_->loadButton = new QPushButton(QStringLiteral("Load"), modelBar);
+    impl_->loadButton->setObjectName(QStringLiteral("aiChatLoadButton"));
     impl_->loadButton->setFixedWidth(50);
     impl_->unloadButton = new QPushButton(QStringLiteral("Unload"), modelBar);
+    impl_->unloadButton->setObjectName(QStringLiteral("aiChatUnloadButton"));
     impl_->unloadButton->setFixedWidth(60);
     impl_->modelStatusLabel = new QLabel(QStringLiteral("Not loaded"), modelBar);
     impl_->modelStatusLabel->setMinimumWidth(70);
@@ -527,18 +538,23 @@ AIChatWidget::AIChatWidget(QWidget* parent) : QWidget(parent), impl_(new Impl())
     rightLayout->addWidget(modelBar);
 
     impl_->history = new QTextEdit(rightPanel);
+    impl_->history->setObjectName(QStringLiteral("aiChatHistoryView"));
     impl_->history->setReadOnly(true);
     impl_->input = new QLineEdit(rightPanel);
+    impl_->input->setObjectName(QStringLiteral("aiChatInputEdit"));
     impl_->input->setPlaceholderText(QStringLiteral("Type a message and press Enter"));
 
     // Send / Cancel row
     auto* sendRow = new QWidget(rightPanel);
+    sendRow->setObjectName(QStringLiteral("aiChatSendRow"));
     auto* sendRowLayout = new QHBoxLayout(sendRow);
     sendRowLayout->setContentsMargins(0, 0, 0, 0);
     sendRowLayout->setSpacing(4);
     impl_->send = new QPushButton(QStringLiteral("Send"), sendRow);
+    impl_->send->setObjectName(QStringLiteral("aiChatSendButton"));
     impl_->send->setDefault(true);
     impl_->cancel = new QPushButton(QStringLiteral("Cancel"), sendRow);
+    impl_->cancel->setObjectName(QStringLiteral("aiChatCancelButton"));
     impl_->cancel->setVisible(false);
     sendRowLayout->addStretch();
     sendRowLayout->addWidget(impl_->send);

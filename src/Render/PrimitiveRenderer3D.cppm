@@ -2,6 +2,7 @@ module;
 
 #include <QImage>
 #include <QMatrix4x4>
+#include <QRectF>
 #include <QVector2D>
 #include <QVector3D>
 #include <QDebug>
@@ -112,6 +113,112 @@ float4 main(PSIn In) : SV_Target
 }
 )";
 
+constexpr const char* kCardVSSource = R"(
+cbuffer CardCB : register(b0)
+{
+    float4x4 g_View;
+    float4x4 g_Proj;
+    float4x4 g_Model;
+    float4   g_LocalRect;
+    float4   g_TintOpacity;
+    float4   g_AlphaControl;
+};
+
+struct VSOut
+{
+    float4 Pos   : SV_Position;
+    float2 UV    : TEXCOORD0;
+    float4 Color : COLOR0;
+};
+
+static const float2 kCorners[4] = {
+    float2(0.0, 0.0),
+    float2(0.0, 1.0),
+    float2(1.0, 0.0),
+    float2(1.0, 1.0)
+};
+
+VSOut main(uint vertexID : SV_VertexID)
+{
+    VSOut Out;
+    const float2 corner = kCorners[vertexID];
+    const float2 localPos = g_LocalRect.xy + corner * g_LocalRect.zw;
+    const float4 worldPos = mul(float4(localPos, 0.0, 1.0), g_Model);
+    const float4 viewPos = mul(worldPos, g_View);
+    Out.Pos = mul(viewPos, g_Proj);
+    Out.UV = corner;
+    Out.Color = g_TintOpacity;
+    return Out;
+}
+)";
+
+constexpr const char* kCardPSSource = R"(
+cbuffer CardCB : register(b0)
+{
+    float4x4 g_View;
+    float4x4 g_Proj;
+    float4x4 g_Model;
+    float4   g_LocalRect;
+    float4   g_TintOpacity;
+    float4   g_AlphaControl;
+};
+
+struct PSIn
+{
+    float4 Pos   : SV_Position;
+    float2 UV    : TEXCOORD0;
+    float4 Color : COLOR0;
+};
+
+Texture2D g_texture : register(t0);
+SamplerState g_sampler : register(s0);
+
+float4 main(PSIn In) : SV_Target
+{
+    const float4 color = g_texture.Sample(g_sampler, In.UV) * In.Color;
+    const float threshold = g_AlphaControl.x;
+    const float mode = g_AlphaControl.y;
+    if (mode > 1.5 && color.a < threshold) discard;
+    if (mode > 0.5 && mode < 1.5 && color.a >= threshold) discard;
+    return color;
+}
+)";
+
+constexpr const char* kShapeCardVSSource = R"(
+cbuffer CardCB : register(b0)
+{
+    float4x4 g_View;
+    float4x4 g_Proj;
+    float4x4 g_Model;
+    float4   g_LocalRect;
+    float4   g_TintOpacity;
+    float4   g_AlphaControl;
+};
+
+struct VSInput
+{
+    float2 Pos : ATTRIB0;
+};
+
+struct VSOut
+{
+    float4 Pos   : SV_Position;
+    float2 UV    : TEXCOORD0;
+    float4 Color : COLOR0;
+};
+
+VSOut main(VSInput In)
+{
+    VSOut Out;
+    const float4 worldPos = mul(float4(In.Pos, 0.0, 1.0), g_Model);
+    const float4 viewPos = mul(worldPos, g_View);
+    Out.Pos = mul(viewPos, g_Proj);
+    Out.UV = float2(0.5, 0.5);
+    Out.Color = g_TintOpacity;
+    return Out;
+}
+)";
+
 struct BillboardConstants
 {
     float viewMatrix[16];
@@ -119,6 +226,21 @@ struct BillboardConstants
     float centerAndRoll[4];
     float sizeAndOpacity[4];
     float tint[4];
+};
+
+struct CardConstants
+{
+    float viewMatrix[16];
+    float projMatrix[16];
+    float modelMatrix[16];
+    float localRect[4];
+    float tintOpacity[4];
+    float alphaControl[4];
+};
+
+struct ShapeCardVertex
+{
+    float position[2];
 };
 
 struct GizmoLineVertex
@@ -164,6 +286,20 @@ public:
     RefCntAutoPtr<IPipelineState> pso_;
     RefCntAutoPtr<IShaderResourceBinding> srb_;
     RefCntAutoPtr<IBuffer> constantBuffer_;
+    RefCntAutoPtr<IShader> cardVS_;
+    RefCntAutoPtr<IShader> cardPS_;
+    RefCntAutoPtr<IShader> shapeCardVS_;
+    RefCntAutoPtr<IPipelineState> cardDepthWritePSO_;
+    RefCntAutoPtr<IPipelineState> cardTransparentPSO_;
+    RefCntAutoPtr<IShaderResourceBinding> cardDepthWriteSRB_;
+    RefCntAutoPtr<IShaderResourceBinding> cardTransparentSRB_;
+    RefCntAutoPtr<IBuffer> cardConstantBuffer_;
+    RefCntAutoPtr<IPipelineState> shapeDepthWritePSO_;
+    RefCntAutoPtr<IPipelineState> shapeTransparentPSO_;
+    RefCntAutoPtr<IShaderResourceBinding> shapeDepthWriteSRB_;
+    RefCntAutoPtr<IShaderResourceBinding> shapeTransparentSRB_;
+    RefCntAutoPtr<IBuffer> shapeVertexBuffer_;
+    Uint32 shapeVertexCapacity_ = 0;
     RefCntAutoPtr<ISampler> sampler_;
     RefCntAutoPtr<ITexture> defaultTexture_;
     RefCntAutoPtr<ITextureView> defaultTextureSRV_;
@@ -183,6 +319,7 @@ public:
     QMatrix4x4 projMatrix_;
 
     BillboardConstants constants_{};
+    CardConstants cardConstants_{};
     GizmoLineConstants gizmoLineConstants_{};
 
     struct CachedTexture {
@@ -258,6 +395,21 @@ public:
 
         device_->CreateShader(vsInfo, &vs_);
         device_->CreateShader(psInfo, &ps_);
+
+        vsInfo.Desc.Name = "PrimitiveRenderer3D_CardVS";
+        vsInfo.Source = kCardVSSource;
+        vsInfo.SourceLength = std::strlen(kCardVSSource);
+        device_->CreateShader(vsInfo, &cardVS_);
+
+        psInfo.Desc.Name = "PrimitiveRenderer3D_CardPS";
+        psInfo.Source = kCardPSSource;
+        psInfo.SourceLength = std::strlen(kCardPSSource);
+        device_->CreateShader(psInfo, &cardPS_);
+
+        vsInfo.Desc.Name = "PrimitiveRenderer3D_ShapeCardVS";
+        vsInfo.Source = kShapeCardVSSource;
+        vsInfo.SourceLength = std::strlen(kShapeCardVSSource);
+        device_->CreateShader(vsInfo, &shapeCardVS_);
     }
 
     void createDefaultTexture()
@@ -305,6 +457,21 @@ public:
         cbDesc.BindFlags = BIND_UNIFORM_BUFFER;
         cbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
         device_->CreateBuffer(cbDesc, nullptr, &constantBuffer_);
+
+        cbDesc.Name = "PrimitiveRenderer3D Card CB";
+        cbDesc.Size = sizeof(CardConstants);
+        device_->CreateBuffer(cbDesc, nullptr, &cardConstantBuffer_);
+
+        BufferDesc shapeVBDesc;
+        shapeVBDesc.Name = "PrimitiveRenderer3D Shape Card VB";
+        shapeVBDesc.Usage = USAGE_DYNAMIC;
+        shapeVBDesc.BindFlags = BIND_VERTEX_BUFFER;
+        shapeVBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        shapeVBDesc.Size = sizeof(ShapeCardVertex) * 256;
+        device_->CreateBuffer(shapeVBDesc, nullptr, &shapeVertexBuffer_);
+        if (shapeVertexBuffer_) {
+            shapeVertexCapacity_ = 256;
+        }
 
         SamplerDesc samplerDesc;
         samplerDesc.MinFilter = FILTER_TYPE_LINEAR;
@@ -394,6 +561,100 @@ public:
             }
         }
         pso_->CreateShaderResourceBinding(&srb_, true);
+
+        if (!cardVS_ || !cardPS_ || !cardConstantBuffer_) {
+            return;
+        }
+
+        auto createCardPSO = [&](const char* name, bool writeDepth,
+                                 IShader* vertexShader,
+                                 const LayoutElement* layoutElements,
+                                 Uint32 layoutElementCount,
+                                 PRIMITIVE_TOPOLOGY topology,
+                                 RefCntAutoPtr<IPipelineState>& cardPSO,
+                                 RefCntAutoPtr<IShaderResourceBinding>& cardSRB) {
+            GraphicsPipelineStateCreateInfo cardCI;
+            cardCI.PSODesc.Name = name;
+            cardCI.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+            cardCI.PSODesc.ResourceLayout.DefaultVariableType =
+                SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+
+            static ShaderResourceVariableDesc cardVars[] = {
+                { SHADER_TYPE_VERTEX, "CardCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC },
+                { SHADER_TYPE_PIXEL, "CardCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC },
+                { SHADER_TYPE_PIXEL, "g_texture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+                { SHADER_TYPE_PIXEL, "g_sampler", SHADER_RESOURCE_VARIABLE_TYPE_STATIC }
+            };
+            cardCI.PSODesc.ResourceLayout.Variables = cardVars;
+            cardCI.PSODesc.ResourceLayout.NumVariables = _countof(cardVars);
+            cardCI.pVS = vertexShader;
+            cardCI.pPS = cardPS_;
+
+            auto& cardGP = cardCI.GraphicsPipeline;
+            cardGP.NumRenderTargets = 1;
+            cardGP.RTVFormats[0] = rtvFormat_;
+            cardGP.DSVFormat = TEX_FORMAT_D32_FLOAT;
+            cardGP.PrimitiveTopology = topology;
+            cardGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+            cardGP.DepthStencilDesc.DepthEnable = True;
+            cardGP.DepthStencilDesc.DepthWriteEnable = writeDepth ? True : False;
+            cardGP.DepthStencilDesc.DepthFunc = COMPARISON_FUNC_LESS_EQUAL;
+            cardGP.InputLayout.LayoutElements = layoutElements;
+            cardGP.InputLayout.NumElements = layoutElementCount;
+
+            auto& cardBlend = cardGP.BlendDesc.RenderTargets[0];
+            cardBlend.BlendEnable = True;
+            cardBlend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
+            cardBlend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
+            cardBlend.BlendOp = BLEND_OPERATION_ADD;
+            cardBlend.SrcBlendAlpha = BLEND_FACTOR_ONE;
+            cardBlend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
+            cardBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
+            cardBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
+
+            device_->CreateGraphicsPipelineState(cardCI, &cardPSO);
+            if (!cardPSO) {
+                return;
+            }
+            if (auto* cbVar = cardPSO->GetStaticVariableByName(
+                    SHADER_TYPE_VERTEX, "CardCB")) {
+                cbVar->Set(cardConstantBuffer_);
+            }
+            if (auto* cbVar = cardPSO->GetStaticVariableByName(
+                    SHADER_TYPE_PIXEL, "CardCB")) {
+                cbVar->Set(cardConstantBuffer_);
+            }
+            if (sampler_) {
+                if (auto* sampVar = cardPSO->GetStaticVariableByName(
+                        SHADER_TYPE_PIXEL, "g_sampler")) {
+                    sampVar->Set(sampler_);
+                }
+            }
+            cardPSO->CreateShaderResourceBinding(&cardSRB, true);
+        };
+
+        createCardPSO("PrimitiveRenderer3D Card Depth Write PSO", true,
+                      cardVS_, nullptr, 0,
+                      PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP,
+                      cardDepthWritePSO_, cardDepthWriteSRB_);
+        createCardPSO("PrimitiveRenderer3D Card Transparent PSO", false,
+                      cardVS_, nullptr, 0,
+                      PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP,
+                      cardTransparentPSO_, cardTransparentSRB_);
+
+        if (shapeCardVS_) {
+            static const LayoutElement shapeLayout[] = {
+                LayoutElement{0, 0, 2, VT_FLOAT32, false}
+            };
+            createCardPSO("PrimitiveRenderer3D Shape Depth Write PSO", true,
+                          shapeCardVS_, shapeLayout, _countof(shapeLayout),
+                          PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                          shapeDepthWritePSO_, shapeDepthWriteSRB_);
+            createCardPSO("PrimitiveRenderer3D Shape Transparent PSO", false,
+                          shapeCardVS_, shapeLayout, _countof(shapeLayout),
+                          PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                          shapeTransparentPSO_, shapeTransparentSRB_);
+        }
     }
 
     RefCntAutoPtr<ITexture> textureFromImage(const QImage& image)
@@ -466,6 +727,32 @@ public:
         constants_.tint[1] = tint.g();
         constants_.tint[2] = tint.b();
         constants_.tint[3] = tint.a();
+    }
+
+    void setCardConstants(const QRectF& localRect,
+                          const QMatrix4x4& modelMatrix,
+                          const FloatColor& tint, float opacity,
+                          float alphaMode)
+    {
+        const QMatrix4x4 viewRows = viewMatrix_.transposed();
+        const QMatrix4x4 projRows = projMatrix_.transposed();
+        const QMatrix4x4 modelRows = modelMatrix.transposed();
+        std::memcpy(cardConstants_.viewMatrix, viewRows.constData(), sizeof(float) * 16);
+        std::memcpy(cardConstants_.projMatrix, projRows.constData(), sizeof(float) * 16);
+        std::memcpy(cardConstants_.modelMatrix, modelRows.constData(), sizeof(float) * 16);
+
+        cardConstants_.localRect[0] = static_cast<float>(localRect.x());
+        cardConstants_.localRect[1] = static_cast<float>(localRect.y());
+        cardConstants_.localRect[2] = static_cast<float>(localRect.width());
+        cardConstants_.localRect[3] = static_cast<float>(localRect.height());
+        cardConstants_.tintOpacity[0] = tint.r();
+        cardConstants_.tintOpacity[1] = tint.g();
+        cardConstants_.tintOpacity[2] = tint.b();
+        cardConstants_.tintOpacity[3] = tint.a() * opacity;
+        cardConstants_.alphaControl[0] = 0.9999f;
+        cardConstants_.alphaControl[1] = alphaMode;
+        cardConstants_.alphaControl[2] = 0.0f;
+        cardConstants_.alphaControl[3] = 0.0f;
     }
 
     void updateGizmoLineConstants()
@@ -896,6 +1183,167 @@ public:
         drawAttrs.Flags = DRAW_FLAG_NONE;
         ctx_->Draw(drawAttrs);
     }
+
+    void drawCardPass(const QRectF& localRect, const QMatrix4x4& modelMatrix,
+                      ITextureView* textureView, const FloatColor& tint,
+                      float opacity, bool writeDepth, float alphaMode)
+    {
+        auto* cardPSO = writeDepth ? cardDepthWritePSO_.RawPtr()
+                                   : cardTransparentPSO_.RawPtr();
+        auto* cardSRB = writeDepth ? cardDepthWriteSRB_.RawPtr()
+                                   : cardTransparentSRB_.RawPtr();
+        if (!hasRenderTarget() || !ctx_ || !cardPSO || !cardSRB ||
+            !cardConstantBuffer_) {
+            return;
+        }
+
+        if (!textureView) {
+            textureView = defaultTextureSRV_.RawPtr();
+        }
+        if (!textureView) {
+            return;
+        }
+
+        setCardConstants(localRect, modelMatrix, tint, opacity, alphaMode);
+        void* mapped = nullptr;
+        ctx_->MapBuffer(cardConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+        if (!mapped) {
+            return;
+        }
+        std::memcpy(mapped, &cardConstants_, sizeof(CardConstants));
+        ctx_->UnmapBuffer(cardConstantBuffer_, MAP_WRITE);
+
+        auto* rtv = currentRTV();
+        auto* dsv = currentDSV();
+        ctx_->SetRenderTargets(1, &rtv, dsv,
+                               RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        ctx_->SetPipelineState(cardPSO);
+        if (auto* texVar = cardSRB->GetVariableByName(
+                SHADER_TYPE_PIXEL, "g_texture")) {
+            texVar->Set(textureView);
+        }
+        if (auto* cbVar = cardSRB->GetVariableByName(
+                SHADER_TYPE_VERTEX, "CardCB")) {
+            cbVar->Set(cardConstantBuffer_);
+        }
+        ctx_->CommitShaderResources(cardSRB,
+                                    RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+        DrawAttribs drawAttrs;
+        drawAttrs.NumVertices = 4;
+        drawAttrs.Flags = DRAW_FLAG_NONE;
+        ctx_->Draw(drawAttrs);
+    }
+
+    void drawCard(const QRectF& localRect, const QMatrix4x4& modelMatrix,
+                  const FloatColor& tint, float opacity, bool writeDepth)
+    {
+        drawCardPass(localRect, modelMatrix, defaultTextureSRV_.RawPtr(), tint, opacity,
+                     writeDepth, 0.0f);
+    }
+
+    void drawTexturedCard(const QRectF& localRect,
+                          const QMatrix4x4& modelMatrix,
+                          ITextureView* textureView, const FloatColor& tint,
+                          float opacity)
+    {
+        drawCardPass(localRect, modelMatrix, textureView, tint, opacity,
+                     true, 2.0f);
+        drawCardPass(localRect, modelMatrix, textureView, tint, opacity,
+                     false, 1.0f);
+    }
+
+    void ensureShapeVertexCapacity(Uint32 requiredVertices)
+    {
+        if (requiredVertices <= shapeVertexCapacity_ || !device_) {
+            return;
+        }
+        const Uint32 newCapacity = std::max(
+            requiredVertices, std::max<Uint32>(shapeVertexCapacity_ * 2, 256));
+        BufferDesc desc;
+        desc.Name = "PrimitiveRenderer3D Shape Card VB";
+        desc.Usage = USAGE_DYNAMIC;
+        desc.BindFlags = BIND_VERTEX_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size = sizeof(ShapeCardVertex) * newCapacity;
+        RefCntAutoPtr<IBuffer> buffer;
+        device_->CreateBuffer(desc, nullptr, &buffer);
+        if (buffer) {
+            shapeVertexBuffer_ = buffer;
+            shapeVertexCapacity_ = newCapacity;
+        }
+    }
+
+    void drawShapeTriangles(const std::vector<QVector2D>& vertices,
+                            const QMatrix4x4& modelMatrix,
+                            const FloatColor& color, float opacity,
+                            bool writeDepth)
+    {
+        if (vertices.empty() || vertices.size() % 3 != 0 || !ctx_ ||
+            !hasRenderTarget() || !cardConstantBuffer_ || !defaultTextureSRV_) {
+            return;
+        }
+        auto* pso = writeDepth ? shapeDepthWritePSO_.RawPtr()
+                               : shapeTransparentPSO_.RawPtr();
+        auto* srb = writeDepth ? shapeDepthWriteSRB_.RawPtr()
+                               : shapeTransparentSRB_.RawPtr();
+        if (!pso || !srb) {
+            return;
+        }
+
+        const auto vertexCount = static_cast<Uint32>(vertices.size());
+        ensureShapeVertexCapacity(vertexCount);
+        if (!shapeVertexBuffer_) {
+            return;
+        }
+        std::vector<ShapeCardVertex> gpuVertices;
+        gpuVertices.reserve(vertices.size());
+        for (const auto& vertex : vertices) {
+            gpuVertices.push_back({{vertex.x(), vertex.y()}});
+        }
+
+        void* vertexMapped = nullptr;
+        ctx_->MapBuffer(shapeVertexBuffer_, MAP_WRITE, MAP_FLAG_DISCARD,
+                        vertexMapped);
+        if (!vertexMapped) {
+            return;
+        }
+        std::memcpy(vertexMapped, gpuVertices.data(),
+                    sizeof(ShapeCardVertex) * gpuVertices.size());
+        ctx_->UnmapBuffer(shapeVertexBuffer_, MAP_WRITE);
+
+        setCardConstants(QRectF(), modelMatrix, color, opacity, 0.0f);
+        void* constantsMapped = nullptr;
+        ctx_->MapBuffer(cardConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD,
+                        constantsMapped);
+        if (!constantsMapped) {
+            return;
+        }
+        std::memcpy(constantsMapped, &cardConstants_, sizeof(CardConstants));
+        ctx_->UnmapBuffer(cardConstantBuffer_, MAP_WRITE);
+
+        auto* rtv = currentRTV();
+        auto* dsv = currentDSV();
+        ctx_->SetRenderTargets(1, &rtv, dsv,
+                               RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        ctx_->SetPipelineState(pso);
+        IBuffer* buffers[] = {shapeVertexBuffer_};
+        Uint64 offsets[] = {0};
+        ctx_->SetVertexBuffers(0, 1, buffers, offsets,
+                               RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                               SET_VERTEX_BUFFERS_FLAG_RESET);
+        if (auto* textureVar = srb->GetVariableByName(
+                SHADER_TYPE_PIXEL, "g_texture")) {
+            textureVar->Set(defaultTextureSRV_.RawPtr());
+        }
+        ctx_->CommitShaderResources(srb,
+                                    RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+        DrawAttribs drawAttrs;
+        drawAttrs.NumVertices = vertexCount;
+        drawAttrs.Flags = DRAW_FLAG_NONE;
+        ctx_->Draw(drawAttrs);
+    }
 };
 
 PrimitiveRenderer3D::PrimitiveRenderer3D()
@@ -971,6 +1419,20 @@ void PrimitiveRenderer3D::destroy()
     impl_->defaultTextureSRV_ = nullptr;
     impl_->defaultTexture_ = nullptr;
     impl_->sampler_ = nullptr;
+    impl_->cardTransparentSRB_ = nullptr;
+    impl_->cardDepthWriteSRB_ = nullptr;
+    impl_->cardTransparentPSO_ = nullptr;
+    impl_->cardDepthWritePSO_ = nullptr;
+    impl_->cardConstantBuffer_ = nullptr;
+    impl_->shapeTransparentSRB_ = nullptr;
+    impl_->shapeDepthWriteSRB_ = nullptr;
+    impl_->shapeTransparentPSO_ = nullptr;
+    impl_->shapeDepthWritePSO_ = nullptr;
+    impl_->shapeVertexBuffer_ = nullptr;
+    impl_->shapeVertexCapacity_ = 0;
+    impl_->shapeCardVS_ = nullptr;
+    impl_->cardPS_ = nullptr;
+    impl_->cardVS_ = nullptr;
     impl_->constantBuffer_ = nullptr;
     impl_->gizmoLineConstantBuffer_ = nullptr;
     impl_->gizmoLineVertexBuffer_ = nullptr;
@@ -1109,6 +1571,30 @@ void PrimitiveRenderer3D::drawBillboardQuadImmediate(const QVector3D& center, co
     drawBillboardQuadImmediate(center, size, image,
                                FloatColor{tint.r(), tint.g(), tint.b(), tint.a()},
                                opacity, rollDegrees);
+}
+
+void PrimitiveRenderer3D::drawCardQuadImmediate(const QRectF& localRect,
+                                                const QMatrix4x4& modelMatrix,
+                                                const FloatColor& tint,
+                                                float opacity,
+                                                bool writeDepth)
+{
+    impl_->drawCard(localRect, modelMatrix, tint, opacity, writeDepth);
+}
+
+void PrimitiveRenderer3D::drawTexturedCardQuadImmediate(
+    const QRectF& localRect, const QMatrix4x4& modelMatrix,
+    ITextureView* texture, const FloatColor& tint, float opacity)
+{
+    impl_->drawTexturedCard(localRect, modelMatrix, texture, tint, opacity);
+}
+
+void PrimitiveRenderer3D::drawShapeTrianglesImmediate(
+    const std::vector<QVector2D>& vertices, const QMatrix4x4& modelMatrix,
+    const FloatColor& color, float opacity, bool writeDepth)
+{
+    impl_->drawShapeTriangles(vertices, modelMatrix, color, opacity,
+                              writeDepth);
 }
 
 void PrimitiveRenderer3D::draw3DLine(const QVector3D& start, const QVector3D& end,

@@ -142,22 +142,28 @@ bool TranslationManager::loadFromDirectory(const QString& dirPath)
 
  impl_->loadedDir_ = dirPath;
  impl_->scanAvailableLocales(dirPath);
+ impl_->strings_.clear();
+ impl_->fallbacks_.clear();
  if (impl_->locale_ == QStringLiteral("en") && !impl_->availableLocales_.contains(QStringLiteral("en"))) {
   impl_->locale_ = impl_->availableLocales_.isEmpty() ? QStringLiteral("en") : impl_->availableLocales_.first();
  }
 
  const QString fallbackPath = dir.filePath(QStringLiteral("en.json"));
  if (QFile::exists(fallbackPath)) {
-  impl_->loadLocaleFile(fallbackPath, impl_->fallbacks_);
+  if (!impl_->loadLocaleFile(fallbackPath, impl_->fallbacks_)) {
+   return false;
+  }
  }
 
  const QString localePath = dir.filePath(impl_->locale_ + QStringLiteral(".json"));
  if (QFile::exists(localePath)) {
-  impl_->strings_.clear();
-  impl_->loadLocaleFile(localePath, impl_->strings_);
+  if (!impl_->loadLocaleFile(localePath, impl_->strings_)) {
+   return false;
+  }
   qDebug() << "[TranslationManager] loaded" << impl_->strings_.size() << "strings for locale" << impl_->locale_;
  } else {
   qWarning() << "[TranslationManager] locale file not found:" << localePath;
+  return impl_->locale_ == QStringLiteral("en") && !impl_->fallbacks_.isEmpty();
  }
 
  return true;
@@ -165,26 +171,34 @@ bool TranslationManager::loadFromDirectory(const QString& dirPath)
 
 bool TranslationManager::loadFromFile(const QString& filePath)
 {
- impl_->strings_.clear();
- return impl_->loadLocaleFile(filePath, impl_->strings_);
+ QMap<QString, QString> loadedStrings;
+ if (!impl_->loadLocaleFile(filePath, loadedStrings)) {
+  return false;
+ }
+ impl_->strings_ = std::move(loadedStrings);
+ return true;
 }
 
 void TranslationManager::setLocale(const QString& locale)
 {
  const QString normalized = Impl::normalizeLocale(locale);
  if (normalized == impl_->locale_) return;
- impl_->locale_ = normalized;
 
  if (!impl_->loadedDir_.isEmpty()) {
-  impl_->strings_.clear();
-  const QString localePath = QDir(impl_->loadedDir_).filePath(impl_->locale_ + QStringLiteral(".json"));
+  const QString localePath = QDir(impl_->loadedDir_).filePath(normalized + QStringLiteral(".json"));
   if (QFile::exists(localePath)) {
-   impl_->loadLocaleFile(localePath, impl_->strings_);
-   qDebug() << "[TranslationManager] switched to locale" << locale << "(" << impl_->strings_.size() << "strings)";
+   QMap<QString, QString> loadedStrings;
+   if (impl_->loadLocaleFile(localePath, loadedStrings)) {
+    impl_->locale_ = normalized;
+    impl_->strings_ = std::move(loadedStrings);
+    qDebug() << "[TranslationManager] switched to locale" << locale << "(" << impl_->strings_.size() << "strings)";
+   }
   } else {
    qWarning() << "[TranslationManager] locale file not found:" << localePath;
   }
+  return;
  }
+ impl_->locale_ = normalized;
 }
 
 QString TranslationManager::locale() const
@@ -239,9 +253,11 @@ QStringList TranslationManager::availableLocales() const
 
 QStringList TranslationManager::loadedKeys() const
 {
- QStringList keys;
+ QStringList keys = impl_->fallbacks_.keys();
  for (auto it = impl_->strings_.constBegin(); it != impl_->strings_.constEnd(); ++it) {
-  keys.append(it.key());
+  if (!keys.contains(it.key())) {
+   keys.append(it.key());
+  }
  }
  keys.sort();
  return keys;

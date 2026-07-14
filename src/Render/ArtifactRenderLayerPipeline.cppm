@@ -73,14 +73,22 @@ namespace Artifact
     return false;
    }
 
-   bundle.srv = bundle.texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-   bundle.uav = (bindFlags & BIND_UNORDERED_ACCESS) != 0
+   const bool needsSrv = (bindFlags & BIND_SHADER_RESOURCE) != 0;
+   const bool needsUav = (bindFlags & BIND_UNORDERED_ACCESS) != 0;
+   const bool needsRtv = (bindFlags & BIND_RENDER_TARGET) != 0;
+
+   bundle.srv = needsSrv
+                    ? bundle.texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
+                    : nullptr;
+   bundle.uav = needsUav
                     ? bundle.texture->GetDefaultView(TEXTURE_VIEW_UNORDERED_ACCESS)
                     : nullptr;
-   bundle.rtv = bundle.texture->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
+   bundle.rtv = needsRtv
+                    ? bundle.texture->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET)
+                    : nullptr;
 
-   const bool needsUav = (bindFlags & BIND_UNORDERED_ACCESS) != 0;
-   if (!bundle.srv || !bundle.rtv || (needsUav && !bundle.uav))
+   if ((needsSrv && !bundle.srv) || (needsUav && !bundle.uav) ||
+       (needsRtv && !bundle.rtv))
    {
     qWarning() << "[RenderPipeline] Missing default views for" << name;
     bundle = {};

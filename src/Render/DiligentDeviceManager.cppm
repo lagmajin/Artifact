@@ -415,6 +415,24 @@ void releaseSharedRenderDevice()
     shared.type = RENDER_DEVICE_TYPE_UNDEFINED;
 }
 
+bool invalidateSharedRenderDeviceIfExclusive(IRenderDevice* expectedDevice)
+{
+    auto& shared = sharedRenderDeviceState();
+    std::lock_guard<std::mutex> lock(shared.mutex);
+    if (!expectedDevice || shared.device.RawPtr() != expectedDevice ||
+        shared.refCount.load() != 1) {
+        return false;
+    }
+
+    // A lost device must not be flushed or waited. Drop the shared registry so
+    // the next acquire creates a fresh backend device and context.
+    shared.immediateContext.Release();
+    shared.device.Release();
+    shared.type = RENDER_DEVICE_TYPE_UNDEFINED;
+    shared.refCount = 0;
+    return true;
+}
+
 RENDER_DEVICE_TYPE sharedRenderDeviceType()
 {
     auto& shared = sharedRenderDeviceState();
@@ -432,6 +450,7 @@ public:
     HWND renderParentHwnd_ = nullptr;
     QWidget* widget_ = nullptr;
     bool initialized_ = false;
+    bool deviceLost_ = false;
     bool usingSharedDevice_ = false;
     int currentPhysicalWidth_ = 0;
     int currentPhysicalHeight_ = 0;
@@ -784,12 +803,14 @@ bool DiligentDeviceManager::Impl::createSwapChainForBackend(HWND hwnd, int width
 
 void DiligentDeviceManager::Impl::destroy()
 {
-    if (immediateContext_) {
+    if (immediateContext_ && !deviceLost_) {
         immediateContext_->Flush();
         immediateContext_->WaitForIdle();
     }
 
-    reportLiveD3D12Objects(device_.RawPtr());
+    if (!deviceLost_) {
+        reportLiveD3D12Objects(device_.RawPtr());
+    }
 
     swapChain_.Release();
 
@@ -807,6 +828,7 @@ void DiligentDeviceManager::Impl::destroy()
         usingSharedDevice_ = false;
     }
     initialized_ = false;
+    deviceLost_ = false;
 }
 
 DiligentDeviceManager::DiligentDeviceManager()
@@ -843,6 +865,11 @@ void DiligentDeviceManager::createSwapChain(QWidget* widget)
 void DiligentDeviceManager::recreateSwapChain(QWidget* widget)
 {
     impl_->recreateSwapChain(widget);
+}
+
+void DiligentDeviceManager::markDeviceLost()
+{
+    impl_->deviceLost_ = true;
 }
 
 void DiligentDeviceManager::destroy()

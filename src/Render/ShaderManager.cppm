@@ -144,7 +144,7 @@ public:
     void createPSOCache();
     QString psoCacheFilePath() const;
     void savePSOCache() const;
-    void destroy();
+    void destroy(bool persistCache);
 
     void createLineFamilyPSOs();
     void createSkyboxPSO();
@@ -1247,8 +1247,13 @@ void ShaderManager::Impl::createPSOs()
     savePSOCache();
 }
 
-void ShaderManager::Impl::destroy()
+void ShaderManager::Impl::destroy(bool persistCache)
 {
+    // Persist PSOs created after startup as well (for example MeshRenderer PSOs
+    // that join this shared cache lazily on the first 3D draw).
+    if (persistCache) {
+        savePSOCache();
+    }
     auto clearPso = [](auto& pair) {
         pair.pPSO = nullptr;
         pair.pSRB = nullptr;
@@ -1340,7 +1345,12 @@ void ShaderManager::createPSOs()
 
 void ShaderManager::destroy()
 {
-    impl_->destroy();
+    impl_->destroy(true);
+}
+
+void ShaderManager::abandonDeviceResources()
+{
+    impl_->destroy(false);
 }
 
 RenderShaderPair ShaderManager::lineShaders() const
@@ -1505,6 +1515,11 @@ RefCntAutoPtr<ISampler> ShaderManager::spriteSampler() const
 RefCntAutoPtr<ISampler> ShaderManager::glyphAtlasSampler() const
 {
     return impl_->glyphAtlasSampler_;
+}
+
+IPipelineStateCache* ShaderManager::pipelineStateCache() const
+{
+    return impl_->psoCache_.RawPtr();
 }
 
 bool ShaderManager::isInitialized() const

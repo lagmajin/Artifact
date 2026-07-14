@@ -21,6 +21,7 @@
 #include <QVBoxLayout>
 #include <QResizeEvent>
 #include <QImage>
+#include <QImageReader>
 #include <QPixmap>
 #include <QScrollArea>
 #include <QStyle>
@@ -31,6 +32,7 @@
 #include <QFocusEvent>
 #include <QScrollBar>
 #include <QDebug>
+#include <QFile>
 #include <QFileInfo>
 #include <QUrl>
 #include <QSignalBlocker>
@@ -45,6 +47,8 @@
 #include <QVector>
 #include <QShortcut>
 #include <QKeySequence>
+#include <OpenImageIO/imagebuf.h>
+#include <OpenImageIO/imagebufalgo.h>
 
 #include <iostream>
 #include <vector>
@@ -133,6 +137,74 @@ namespace Artifact
     return QStringLiteral("Difference");
    }
    return QStringLiteral("Compare");
+  }
+
+  QPixmap loadInspectableImage(const QString& filepath, QString* errorOut = nullptr)
+  {
+   QImageReader reader(filepath);
+   reader.setAutoTransform(true);
+   const QImage qtImage = reader.read();
+   if (!qtImage.isNull()) {
+    return QPixmap::fromImage(qtImage);
+   }
+
+   const QString qtError = reader.errorString();
+   try {
+    const QByteArray utf8Path = QFile::encodeName(filepath);
+    OIIO::ImageBuf source(utf8Path.constData());
+    if (!source.read(0, 0, true, OIIO::TypeDesc::UINT8)) {
+     if (errorOut) {
+      *errorOut = QString::fromStdString(source.geterror());
+     }
+     return {};
+    }
+
+    OIIO::ImageBuf oriented = OIIO::ImageBufAlgo::reorient(source);
+    const OIIO::ImageSpec& spec = oriented.spec();
+    if (spec.width <= 0 || spec.height <= 0 || spec.nchannels <= 0) {
+     if (errorOut) {
+      *errorOut = QStringLiteral("Invalid image dimensions or channels.");
+     }
+     return {};
+    }
+
+    QImage rgba(spec.width, spec.height, QImage::Format_RGBA8888);
+    if (rgba.isNull()) {
+     if (errorOut) {
+      *errorOut = QStringLiteral("Unable to allocate the preview image.");
+     }
+     return {};
+    }
+
+    const int channelOrder[4] = {0, std::min(1, spec.nchannels - 1),
+                                 std::min(2, spec.nchannels - 1), 3};
+    const float channelValues[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    OIIO::ImageBuf normalized;
+    if (spec.nchannels >= 4) {
+     normalized = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder);
+    } else {
+     normalized = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder,
+                                                channelValues);
+    }
+    if (!normalized.get_pixels(OIIO::ROI::All(), OIIO::TypeDesc::UINT8,
+                               rgba.bits())) {
+     if (errorOut) {
+      *errorOut = QString::fromStdString(normalized.geterror());
+     }
+     return {};
+    }
+    return QPixmap::fromImage(rgba);
+   } catch (const std::exception& error) {
+    if (errorOut) {
+     *errorOut = QString::fromUtf8(error.what());
+    }
+   } catch (...) {
+    if (errorOut) {
+     *errorOut = qtError.isEmpty() ? QStringLiteral("Unknown image decode error.")
+                                   : qtError;
+    }
+   }
+   return {};
   }
 
   class CompareCanvasWidget final : public QWidget
@@ -823,8 +895,8 @@ namespace Artifact
 
    audioPage = new QWidget(owner_);
    auto* layout = new QVBoxLayout(audioPage);
-   layout->setContentsMargins(12, 12, 12, 12);
-   layout->setSpacing(8);
+   layout->setContentsMargins(0, 0, 0, 0);
+   layout->setSpacing(0);
 
    audioWaveformLabel = new QLabel(QStringLiteral("Audio waveform preview"), audioPage);
    {
@@ -1364,24 +1436,14 @@ namespace Artifact
 
    comparePage = new QWidget(owner_);
    auto* layout = new QVBoxLayout(comparePage);
-   layout->setContentsMargins(12, 12, 12, 12);
-   layout->setSpacing(8);
-
-   auto* hintLabel = new QLabel(QStringLiteral("Drag the center divider to wipe compare."), comparePage);
-   {
-    QFont hintFont = hintLabel->font();
-    hintFont.setPointSize(10);
-    hintLabel->setFont(hintFont);
-    QPalette pal = hintLabel->palette();
-    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(120));
-    hintLabel->setPalette(pal);
-   }
+   layout->setContentsMargins(0, 0, 0, 0);
+   layout->setSpacing(0);
 
    auto makeHeader = [this](const QString& headerText, QLabel*& headerOut) {
     auto* panel = new QWidget(comparePage);
     auto* panelLayout = new QVBoxLayout(panel);
-    panelLayout->setContentsMargins(0, 0, 0, 0);
-    panelLayout->setSpacing(6);
+    panelLayout->setContentsMargins(8, 6, 8, 6);
+    panelLayout->setSpacing(0);
 
     headerOut = new QLabel(headerText, panel);
     {
@@ -1390,7 +1452,9 @@ namespace Artifact
      headerFont.setWeight(QFont::DemiBold);
      headerOut->setFont(headerFont);
      QPalette pal = headerOut->palette();
+     pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
      pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+     headerOut->setAutoFillBackground(true);
      headerOut->setPalette(pal);
     }
     headerOut->setCursor(Qt::PointingHandCursor);
@@ -1400,7 +1464,7 @@ namespace Artifact
 
    auto* headerRow = new QHBoxLayout();
    headerRow->setContentsMargins(0, 0, 0, 0);
-   headerRow->setSpacing(12);
+   headerRow->setSpacing(1);
    headerRow->addWidget(makeHeader(QStringLiteral("A"), compareSourceHeader), 1);
    headerRow->addWidget(makeHeader(QStringLiteral("B"), compareFinalHeader), 1);
 
@@ -1437,10 +1501,8 @@ namespace Artifact
     updateCompareWipe();
    });
 
-   layout->addWidget(hintLabel, 0);
    layout->addLayout(headerRow, 0);
    layout->addWidget(compareCanvas, 1);
-   layout->addWidget(compareWipeSlider, 0);
    stackedWidget->addWidget(comparePage);
    updateCompareWipe();
 
@@ -1559,11 +1621,15 @@ namespace Artifact
    leftPanel.title = leftTitle;
    leftPanel.body = buildFallbackBody(logicalLeftPath, leftType);
    leftPanel.isImage = leftType == ArtifactCore::FileType::Image;
-   if (leftPanel.isImage) {
-    leftPanel.pixmap = QPixmap(logicalLeftPath);
-    if (leftPanel.pixmap.isNull()) {
-     leftPanel.isImage = false;
-    }
+    if (leftPanel.isImage) {
+     QString decodeError;
+     leftPanel.pixmap = loadInspectableImage(logicalLeftPath, &decodeError);
+     if (leftPanel.pixmap.isNull()) {
+      leftPanel.isImage = false;
+      if (!decodeError.isEmpty()) {
+       leftPanel.body += QStringLiteral("\nDecode error: %1").arg(decodeError);
+      }
+     }
    }
 
    CompareCanvasPanelState rightPanel;
@@ -1571,11 +1637,15 @@ namespace Artifact
    rightPanel.title = rightTitle;
    rightPanel.body = buildFallbackBody(logicalRightPath, rightType);
    rightPanel.isImage = rightType == ArtifactCore::FileType::Image;
-   if (rightPanel.isImage) {
-    rightPanel.pixmap = QPixmap(logicalRightPath);
-    if (rightPanel.pixmap.isNull()) {
-     rightPanel.isImage = false;
-    }
+    if (rightPanel.isImage) {
+     QString decodeError;
+     rightPanel.pixmap = loadInspectableImage(logicalRightPath, &decodeError);
+     if (rightPanel.pixmap.isNull()) {
+      rightPanel.isImage = false;
+      if (!decodeError.isEmpty()) {
+       rightPanel.body += QStringLiteral("\nDecode error: %1").arg(decodeError);
+      }
+     }
    }
 
    compareCanvas->setPanels(std::move(leftPanel), std::move(rightPanel));
@@ -1665,11 +1735,16 @@ namespace Artifact
     return;
    }
 
-   QPixmap pixmap(info.absoluteFilePath());
-   if (pixmap.isNull()) {
-    showInfoMessage("Failed to load image:\n" + filepath);
-    return;
-   }
+    QString decodeError;
+    QPixmap pixmap = loadInspectableImage(info.absoluteFilePath(), &decodeError);
+    if (pixmap.isNull()) {
+     QString message = QStringLiteral("Failed to load image:\n%1").arg(filepath);
+     if (!decodeError.isEmpty()) {
+      message += QStringLiteral("\n%1").arg(decodeError);
+     }
+     showInfoMessage(message);
+     return;
+    }
 
    clearPlaybackRange();
    originalImage = pixmap;
@@ -1706,9 +1781,9 @@ namespace Artifact
    clearPlaybackRange();
    ensureVideoWidgets();
    attachMediaOutputs();
-   updateDisplayedPage();
-   mediaPlayer->setSource(QUrl::fromLocalFile(info.absoluteFilePath()));
-   mediaPlayer->play();
+    updateDisplayedPage();
+    mediaPlayer->setSource(QUrl::fromLocalFile(info.absoluteFilePath()));
+    mediaPlayer->setPosition(0);
    updateHeader();
    updatePlaybackState();
    updateActionAvailability();
@@ -2350,8 +2425,7 @@ namespace Artifact
    if (compareDifferenceModeButton) {
     compareDifferenceModeButton->setEnabled(currentMode == ContentsViewerMode::Compare && compareAIsImage && compareBIsImage);
    }
-   if (compareWipeSlider) compareWipeSlider->setVisible(!isModel && currentMode == ContentsViewerMode::Compare
-                                                         && compareDisplayMode != CompareDisplayMode::Difference);
+   if (compareWipeSlider) compareWipeSlider->setVisible(false);
    if (fitButton) fitButton->setVisible(isModel || currentFileType == ArtifactCore::FileType::Image);
    if (rotateLeftButton) rotateLeftButton->setVisible(currentFileType == ArtifactCore::FileType::Image);
    if (rotateRightButton) rotateRightButton->setVisible(currentFileType == ArtifactCore::FileType::Image);
@@ -2535,32 +2609,32 @@ namespace Artifact
    seekSlider->setVisible(false);
    seekSlider->setToolTip(QStringLiteral("Scrub media position"));
 
-   buttonRow->addWidget(fitButton);
-   buttonRow->addWidget(rotateLeftButton);
-   buttonRow->addWidget(rotateRightButton);
-   buttonRow->addWidget(resetButton);
-   buttonRow->addSpacing(4);
-   buttonRow->addWidget(playButton);
-   buttonRow->addWidget(pauseButton);
-   buttonRow->addWidget(stopButton);
-   buttonRow->addSpacing(4);
-   buttonRow->addWidget(copyPathButton);
-   buttonRow->addWidget(revealButton);
-#if defined(Q_OS_MACOS)
-   buttonRow->addWidget(previewButton);
-#endif
-   buttonRow->addSpacing(4);
-   buttonRow->addWidget(sourceButton);
-   buttonRow->addWidget(finalButton);
-   buttonRow->addWidget(compareButton);
+    buttonRow->addWidget(sourceButton);
+    buttonRow->addWidget(finalButton);
+    buttonRow->addWidget(compareButton);
    buttonRow->addWidget(compareSwapButton);
    buttonRow->addWidget(compareWipeModeButton);
    buttonRow->addWidget(compareSplitModeButton);
    buttonRow->addWidget(compareDifferenceModeButton);
-   compareAssignAButton = createButton(QStringLiteral("A"), QStringLiteral("Assign current source to compare A"));
-   compareAssignBButton = createButton(QStringLiteral("B"), QStringLiteral("Assign current source to compare B"));
-   buttonRow->addWidget(compareAssignAButton);
-   buttonRow->addWidget(compareAssignBButton);
+    compareAssignAButton = createButton(QStringLiteral("A"), QStringLiteral("Assign current source to compare A"));
+    compareAssignBButton = createButton(QStringLiteral("B"), QStringLiteral("Assign current source to compare B"));
+    buttonRow->addWidget(compareAssignAButton);
+    buttonRow->addWidget(compareAssignBButton);
+    buttonRow->addSpacing(6);
+    buttonRow->addWidget(fitButton);
+    buttonRow->addWidget(rotateLeftButton);
+    buttonRow->addWidget(rotateRightButton);
+    buttonRow->addWidget(resetButton);
+    buttonRow->addSpacing(4);
+    buttonRow->addWidget(playButton);
+    buttonRow->addWidget(pauseButton);
+    buttonRow->addWidget(stopButton);
+    buttonRow->addSpacing(4);
+    buttonRow->addWidget(copyPathButton);
+    buttonRow->addWidget(revealButton);
+#if defined(Q_OS_MACOS)
+    buttonRow->addWidget(previewButton);
+#endif
 
    transportStrip = new QWidget(parent);
    auto* transportLayout = new QHBoxLayout(transportStrip);

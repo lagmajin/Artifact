@@ -12,6 +12,7 @@ module Artifact.Widgets.ObjectPicker;
 
 import std;
 import Artifact.Service.Project;
+import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Artifact.Project.Items;
 

@@ -28,6 +28,7 @@ import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.PropertyEditor;
 import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 import Artifact.Layer.Text;
 import Artifact.Layer.InitParams;
 import Artifact.Layers.Selection.Manager;
@@ -170,6 +171,20 @@ int intPropertyValue(
   return fallback;
 }
 
+bool isComponentActivationProperty(const QString &propertyName) {
+  static const QStringList activationProperties = {
+      QStringLiteral("physics.enabled"),
+      QStringLiteral("component.script.enabled"),
+      QStringLiteral("component.layout.enabled"),
+      QStringLiteral("component.cloner.enabled"),
+      QStringLiteral("component.collision.enabled"),
+      QStringLiteral("component.crowd.enabled"),
+      QStringLiteral("component.particleEmitter.enabled"),
+      QStringLiteral("component.fluid.enabled"),
+  };
+  return activationProperties.contains(propertyName, Qt::CaseInsensitive);
+}
+
 std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProperties(
     const ArtifactAbstractLayerPtr &layer, const QString &groupName,
     const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &properties) {
@@ -212,10 +227,20 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProper
     return {};
   }
 
+  // Component activation is controlled by the Components tab item itself.
+  // Showing the same On/Off row above its settings duplicates that control.
+  std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> visibleProperties;
+  visibleProperties.reserve(properties.size());
+  for (const auto &property : properties) {
+    if (property && !isComponentActivationProperty(property->getName())) {
+      visibleProperties.push_back(property);
+    }
+  }
+
   if (normalizedGroup.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0) {
     std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filtered;
-    filtered.reserve(properties.size());
-    for (const auto &property : properties) {
+    filtered.reserve(visibleProperties.size());
+    for (const auto &property : visibleProperties) {
       if (!property) {
         continue;
       }
@@ -259,8 +284,8 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProper
     }
     const int mode = groupInt(QStringLiteral("component.cloner.mode"), 0);
     std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filtered;
-    filtered.reserve(properties.size());
-    for (const auto &property : properties) {
+    filtered.reserve(visibleProperties.size());
+    for (const auto &property : visibleProperties) {
       if (!property) {
         continue;
       }
@@ -368,7 +393,7 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProper
     }
   }
 
-  return properties;
+  return visibleProperties;
 }
 
 int64_t playbackFrameRateValue(ArtifactPlaybackService *playback) {
@@ -980,6 +1005,37 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
   const QString rowLabel = labelText;
   auto *row = new ArtifactPropertyEditorRowWidget(rowLabel, editor,
                                                   property.getName(), parent);
+  QString activeStateOverrideName;
+  QString audioReactiveSource;
+  if (layer) {
+    const auto *composition =
+        dynamic_cast<const ArtifactAbstractComposition *>(layer->compositionObject());
+    if (composition && !composition->activeStateVariantId().isEmpty()) {
+      const QString activeStateId = composition->activeStateVariantId();
+      const auto states = composition->stateVariants();
+      const auto activeState = std::find_if(
+          states.cbegin(), states.cend(), [&activeStateId](const auto &state) {
+            return state.stateId == activeStateId;
+          });
+      if (activeState != states.cend() &&
+          activeState->hasOverride(layer->id(), property.getName())) {
+        activeStateOverrideName = activeState->displayName.trimmed().isEmpty()
+                                      ? activeState->stateId
+                                      : activeState->displayName;
+      }
+    }
+    if (composition) {
+      const auto bindings = composition->audioReactiveBindings();
+      const auto binding = std::find_if(
+          bindings.cbegin(), bindings.cend(), [&layer, &property](const auto &item) {
+            return item.enabled && item.layerId == layer->id() &&
+                   item.propertyPath == property.getName();
+          });
+      if (binding != bindings.cend()) {
+        audioReactiveSource = binding->source;
+      }
+    }
+  }
   if (!contextLabel.isEmpty()) {
     row->setProperty("propertyScope", contextLabel);
   }
@@ -1047,7 +1103,16 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
     editorTooltip = editorTooltip.isEmpty()
                         ? sourceTextHint
                         : QStringLiteral("%1\n%2").arg(editorTooltip, sourceTextHint);
-    row->setSupplementaryText(QStringLiteral("Source Text uses timeline keyframes at the playhead. Use the row menu to edit the current text."));
+    row->setSupplementaryText(
+        activeStateOverrideName.isEmpty() && audioReactiveSource.isEmpty()
+            ? QStringLiteral("Source Text uses timeline keyframes at the playhead. Use the row menu to edit the current text.")
+            : QStringLiteral("%1%2Source Text uses timeline keyframes at the playhead.")
+                  .arg(activeStateOverrideName.isEmpty()
+                           ? QString()
+                           : QStringLiteral("STATE · "),
+                       audioReactiveSource.isEmpty()
+                           ? QString()
+                           : QStringLiteral("AUDIO · ")));
     row->setAuxAction(
         [layer, currentTimeProvider, playback, editor, row]() {
           const auto textProperty = layer ? layer->getProperty(QStringLiteral("text.value"))
@@ -1097,6 +1162,32 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           row->setNavigationEnabled(true);
         },
         QStringLiteral("Set Source Text at Playhead..."));
+  }
+  if (!activeStateOverrideName.isEmpty() || !audioReactiveSource.isEmpty()) {
+    if (property.getName().compare(QStringLiteral("text.value"),
+                                   Qt::CaseInsensitive) != 0) {
+      QStringList badges;
+      if (!activeStateOverrideName.isEmpty()) {
+        badges.append(QStringLiteral("STATE"));
+      }
+      if (!audioReactiveSource.isEmpty()) {
+        badges.append(QStringLiteral("AUDIO"));
+      }
+      row->setSupplementaryText(badges.join(QStringLiteral(" · ")));
+    }
+    QStringList bindingHints;
+    if (!activeStateOverrideName.isEmpty()) {
+      bindingHints.append(QStringLiteral("Overridden by composition state: %1")
+                              .arg(activeStateOverrideName));
+    }
+    if (!audioReactiveSource.isEmpty()) {
+      bindingHints.append(QStringLiteral("Audio reactive source: %1")
+                              .arg(audioReactiveSource));
+    }
+    const QString bindingHint = bindingHints.join(QStringLiteral("\n"));
+    editorTooltip = editorTooltip.isEmpty()
+                        ? bindingHint
+                        : QStringLiteral("%1\n%2").arg(editorTooltip, bindingHint);
   }
   if (!editorTooltip.isEmpty()) {
     row->setEditorToolTip(editorTooltip);

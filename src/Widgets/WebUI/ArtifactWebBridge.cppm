@@ -1,9 +1,11 @@
-﻿module;
+module;
 #include <wobjectimpl.h>
+#include <QByteArray>
 #include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonParseError>
 
 #include <iostream>
 #include <vector>
@@ -44,6 +46,8 @@ module Artifact.Widgets.WebBridge;
 
 
 import Artifact.Service.Project;
+import Artifact.Service.Effect;
+import Artifact.Project.Manager;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Composition.Abstract;
@@ -85,38 +89,47 @@ namespace Artifact {
     {
         qDebug() << "[WebBridge] setEffectProperty:" << effectId << propertyName << jsonValue;
 
-        QJsonDocument doc = QJsonDocument::fromJson(jsonValue.toUtf8());
-        QVariant val;
-        if (doc.isObject()) {
-            val = doc.object().toVariantMap();
-        } else {
-            val = QVariant(jsonValue);
+        QJsonParseError parseError;
+        const QJsonDocument wrappedValue = QJsonDocument::fromJson(
+            QByteArrayLiteral("[") + jsonValue.toUtf8() + QByteArrayLiteral("]"),
+            &parseError);
+        const QVariant value = parseError.error == QJsonParseError::NoError &&
+                wrappedValue.isArray() && wrappedValue.array().size() == 1
+            ? wrappedValue.array().at(0).toVariant()
+            : QVariant(jsonValue);
+
+        auto* selection = ArtifactLayerSelectionManager::instance();
+        const auto layer = selection ? selection->currentLayer()
+                                     : ArtifactAbstractLayerPtr{};
+        if (!layer) {
+            qWarning() << "[WebBridge] setEffectProperty requires a selected layer";
+            return;
         }
 
-        if (auto* service = ArtifactProjectService::instance()) {
-            const auto comp = service->currentComposition().lock();
-            if (comp) {
-                for (const auto& layer : comp->allLayerRef()) {
-                    if (!layer) {
-                        continue;
-                    }
-                    for (const auto& effect : layer->getEffects()) {
-                        if (!effect) {
-                            continue;
-                        }
-                        const QString currentEffectId = QString(effect->effectID());
-                        const QString currentEffectName = QString(effect->displayName());
-                        if (currentEffectId == effectId || currentEffectName == effectId) {
-                            effect->setPropertyValue(ArtifactCore::UniString(propertyName.toStdString()), val);
-                            emit propertyUpdated(effectId, propertyName, jsonValue);
-                            return;
-                        }
-                    }
-                }
+        QString resolvedEffectId;
+        for (const auto& effect : layer->getEffects()) {
+            if (!effect) {
+                continue;
+            }
+            const QString currentEffectId = effect->effectID().toQString();
+            const QString currentEffectName = effect->displayName().toQString();
+            if (currentEffectId == effectId || currentEffectName == effectId) {
+                resolvedEffectId = currentEffectId;
+                break;
             }
         }
+        if (resolvedEffectId.isEmpty()) {
+            qWarning() << "[WebBridge] effect not found on selected layer:" << effectId;
+            return;
+        }
 
-        emit propertyUpdated(effectId, propertyName, jsonValue);
+        const auto result = ArtifactEffectService::instance()->setEffectProperty(
+            layer->id(), resolvedEffectId, propertyName, value);
+        if (!result.success) {
+            qWarning() << "[WebBridge] setEffectProperty failed:" << result.message;
+            return;
+        }
+        emit propertyUpdated(resolvedEffectId, propertyName, jsonValue);
     }
 
     QString ArtifactWebBridge::getProjectInfo()
@@ -128,10 +141,12 @@ namespace Artifact {
 
         auto* service = ArtifactProjectService::instance();
         if (service) {
-            info["hasProject"] = true;
+            info["hasProject"] = service->hasProject();
             const auto comp = service->currentComposition().lock();
             info["hasComposition"] = static_cast<bool>(comp);
-            info["compositionCount"] = comp ? 1 : 0;
+            info["compositionCount"] = service->hasProject()
+                ? ArtifactProjectManager::getInstance().compositionCount()
+                : 0;
             info["layerCount"] = comp ? static_cast<int>(comp->allLayerRef().size()) : 0;
         } else {
             info["hasProject"] = false;

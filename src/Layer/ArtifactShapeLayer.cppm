@@ -11,6 +11,7 @@ module;
 #include <QConicalGradient>
 #include <QImage>
 #include <QRectF>
+#include <QTransform>
 #include <QLineF>
 #include <QMatrix4x4>
 #include <QVector4D>
@@ -57,6 +58,15 @@ QPointF mapPoint(const QMatrix4x4& transform, const QPointF& point) {
   return QPointF(v.x() / v.w(), v.y() / v.w());
  }
  return QPointF(v.x(), v.y());
+}
+
+float compositionFieldContentWeight(const Artifact::ArtifactShapeLayer* layer) {
+ if (!layer) {
+  return 1.0f;
+ }
+ const QPointF localCenter = layer->localBounds().center();
+ const QPointF canvasPoint = layer->getGlobalTransform().map(localCenter);
+ return layer->compositionFieldInfluenceAtCanvasPoint(canvasPoint);
 }
 
 bool drawSoftBodyGrid(Artifact::ArtifactShapeLayer* layer,
@@ -1031,6 +1041,59 @@ void ArtifactShapeLayer::setStrokeGradientEndColor(const FloatColor& color) {
 }
 FloatColor ArtifactShapeLayer::strokeGradientEndColor() const { return impl_->strokeGradientEndColor_; }
 
+std::vector<QPointF> ArtifactShapeLayer::direct3DCardFillPoints() const {
+ if (impl_->useCachePipeline() || !impl_->fillEnabled_ ||
+     impl_->fillType_ != ArtifactSolidFillType::Solid ||
+     impl_->shapeType_ == ShapeType::Line ||
+     (impl_->shapeType_ == ShapeType::Polygon &&
+      impl_->customPolygonPoints_.size() >= 3 &&
+      !impl_->customPolygonClosed_)) {
+  return {};
+ }
+ if (impl_->shapeContentCacheDirty_) {
+  impl_->cachedShapePoints_ = buildRenderablePoints(
+      impl_->shapeType_, impl_->width_, impl_->height_, impl_->cornerRadius_,
+      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_,
+      impl_->customPolygonPoints_, impl_->customPolygonClosed_);
+  impl_->shapeContentCacheDirty_ = false;
+ }
+ return impl_->cachedShapePoints_;
+}
+
+FloatColor ArtifactShapeLayer::direct3DCardFillColor() const {
+ const float weight = compositionFieldContentWeight(this);
+ return FloatColor{impl_->fillColor_.r(), impl_->fillColor_.g(),
+                   impl_->fillColor_.b(), impl_->fillColor_.a() * weight};
+}
+
+std::vector<QPointF> ArtifactShapeLayer::direct3DCardStrokePoints() const {
+ if (impl_->useCachePipeline() || !impl_->strokeEnabled_ ||
+     impl_->strokeWidth_ <= 0.0f) {
+  return {};
+ }
+ if (impl_->shapeContentCacheDirty_) {
+  impl_->cachedShapePoints_ = buildRenderablePoints(
+      impl_->shapeType_, impl_->width_, impl_->height_, impl_->cornerRadius_,
+      impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_,
+      impl_->customPolygonPoints_, impl_->customPolygonClosed_);
+  impl_->shapeContentCacheDirty_ = false;
+ }
+ return impl_->cachedShapePoints_;
+}
+
+FloatColor ArtifactShapeLayer::direct3DCardStrokeColor() const {
+ const float weight = compositionFieldContentWeight(this);
+ return FloatColor{impl_->strokeColor_.r(), impl_->strokeColor_.g(),
+                   impl_->strokeColor_.b(), impl_->strokeColor_.a() * weight};
+}
+
+bool ArtifactShapeLayer::direct3DCardStrokeClosed() const {
+ return impl_->shapeType_ != ShapeType::Line &&
+        !(impl_->shapeType_ == ShapeType::Polygon &&
+          impl_->customPolygonPoints_.size() >= 3 &&
+          !impl_->customPolygonClosed_);
+}
+
 // ============================================================
 // Shape Params
 // ============================================================
@@ -1237,12 +1300,13 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
  if (!renderer) {
   return;
  }
- const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+  const float contentFieldWeight = compositionFieldContentWeight(this);
  auto* impl = impl_;
  // When bezier path or non-default stroke styles are active, render via QImage cache
  if (impl->useCachePipeline()) {
   impl->rebuildCache();
-  const float layerOpacity = opacity();
+   const float layerOpacity = opacity() * contentFieldWeight;
   drawWithClonerEffect(this, baseTransform,
                        [renderer, impl, layerOpacity](const QMatrix4x4& transform, float weight) {
    renderer->drawSpriteTransformed(
@@ -1256,13 +1320,13 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
   return;
  }
   drawWithClonerEffect(this, baseTransform,
-                       [renderer, impl, this](const QMatrix4x4& transform, float weight) {
+                       [renderer, impl, this, contentFieldWeight](const QMatrix4x4& transform, float weight) {
     const auto fill = FloatColor(
         impl->fillColor_.r(), impl->fillColor_.g(), impl->fillColor_.b(),
-        impl->fillColor_.a() * this->opacity() * weight);
+        impl->fillColor_.a() * this->opacity() * contentFieldWeight * weight);
     const auto stroke = FloatColor(
         impl->strokeColor_.r(), impl->strokeColor_.g(), impl->strokeColor_.b(),
-        impl->strokeColor_.a() * this->opacity() * weight);
+        impl->strokeColor_.a() * this->opacity() * contentFieldWeight * weight);
 
     // A soft-body grid owns the rectangle's local vertices.  Keep all other
     // shape types on their existing path until they have a matching topology
@@ -1328,7 +1392,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
      }
     }
   });
- drawFractureOverlay(renderer, baseTransform, QSizeF(impl_->width_, impl_->height_), opacity());
+  drawFractureOverlay(renderer, baseTransform, QSizeF(impl_->width_, impl_->height_),
+                      opacity() * contentFieldWeight);
 }
 
 // ============================================================

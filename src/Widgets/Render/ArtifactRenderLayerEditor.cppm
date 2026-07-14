@@ -1,10 +1,14 @@
-﻿module;
+module;
 #include <QToolBar>
 #include <QToolButton>
 #include <QMenu>
 #include <QActionGroup>
 #include <QVBoxLayout>
 #include <QAction>
+#include <QColor>
+#include <QIcon>
+#include <QPalette>
+#include <QSize>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -43,8 +47,10 @@
 module Artifact.Widgets.RenderLayerEditor;
 
 import Artifact.Widgets.RenderLayerWidgetv2;
+import Artifact.Service.Application;
 import Color.Float;
 import Utils.Id;
+import Utils.Path;
 
 namespace Artifact {
 
@@ -65,17 +71,38 @@ namespace Artifact {
   : QWidget(parent), impl_(new Impl())
  {
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  setWindowTitle(QStringLiteral("Layer Solo View"));
   auto layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
 
   impl_->view = new ArtifactLayerEditorWidgetV2(this);
+  impl_->view->setWindowTitle(QStringLiteral("Layer Solo View"));
   impl_->toolbar = new QToolBar(this);
   impl_->toolbar->setMovable(false);
+  impl_->toolbar->setFloatable(false);
+  impl_->toolbar->setIconSize(QSize(18, 18));
+  impl_->toolbar->setFixedHeight(42);
+  QPalette toolbarPalette = impl_->toolbar->palette();
+  toolbarPalette.setColor(QPalette::Window, QColor(20, 23, 27));
+  toolbarPalette.setColor(QPalette::WindowText, QColor(229, 233, 238));
+  toolbarPalette.setColor(QPalette::Button, QColor(31, 36, 42));
+  toolbarPalette.setColor(QPalette::ButtonText, QColor(229, 233, 238));
+  toolbarPalette.setColor(QPalette::Highlight, QColor(42, 130, 218));
+  toolbarPalette.setColor(QPalette::HighlightedText, Qt::white);
+  impl_->toolbar->setPalette(toolbarPalette);
+  impl_->toolbar->setAutoFillBackground(true);
 
   impl_->playAction = impl_->toolbar->addAction("Play");
   impl_->stopAction = impl_->toolbar->addAction("Stop");
-  impl_->screenshotAction = impl_->toolbar->addAction("Screenshot");
+  impl_->screenshotAction = impl_->toolbar->addAction("Capture");
+  impl_->playAction->setIcon(QIcon(ArtifactCore::resolveIconPath(
+      QStringLiteral("Studio/figma_media_play.svg"))));
+  impl_->stopAction->setIcon(QIcon(ArtifactCore::resolveIconPath(
+      QStringLiteral("Studio/figma_media_stop.svg"))));
+  impl_->screenshotAction->setIcon(QIcon(ArtifactCore::resolveIconPath(
+      QStringLiteral("Studio/figma_tool_camera.svg"))));
+  impl_->toolbar->addSeparator();
 
   auto* editMenu = new QMenu(impl_->toolbar);
   auto* editGroup = new QActionGroup(this);
@@ -104,7 +131,10 @@ namespace Artifact {
                 QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_P));
   addEditAction(QStringLiteral("Mask"), EditMode::Mask, false);
   impl_->editModeButton = new QToolButton(this);
-  impl_->editModeButton->setText(QStringLiteral("Edit Mode"));
+  impl_->editModeButton->setPalette(toolbarPalette);
+  impl_->editModeButton->setIcon(QIcon(ArtifactCore::resolveIconPath(
+      QStringLiteral("Studio/figma_tool_select.svg"))));
+  impl_->editModeButton->setText(QStringLiteral("Edit"));
   impl_->editModeButton->setMenu(editMenu);
   impl_->editModeButton->setPopupMode(QToolButton::InstantPopup);
   impl_->editModeButton->setToolTip(QStringLiteral("Edit Mode (Ctrl+Alt+P = Shape)"));
@@ -122,6 +152,11 @@ namespace Artifact {
     if (impl_ && impl_->view) {
      impl_->view->setDisplayMode(mode);
     }
+    if (auto *app = Artifact::ApplicationService::instance()) {
+     if (auto *toolService = app->toolService()) {
+      toolService->setDisplayMode(mode);
+     }
+    }
    });
   };
   addDisplayAction(QStringLiteral("Color"), DisplayMode::Color, true);
@@ -129,13 +164,16 @@ namespace Artifact {
   addDisplayAction(QStringLiteral("Mask"), DisplayMode::Mask, false);
   addDisplayAction(QStringLiteral("Wireframe"), DisplayMode::Wireframe, false);
   impl_->displayModeButton = new QToolButton(this);
-  impl_->displayModeButton->setText(QStringLiteral("Display"));
+  impl_->displayModeButton->setPalette(toolbarPalette);
+  impl_->displayModeButton->setIcon(QIcon(ArtifactCore::resolveIconPath(
+      QStringLiteral("Studio/fit_screen.svg"))));
+  impl_->displayModeButton->setText(QStringLiteral("Final"));
   impl_->displayModeButton->setMenu(displayMenu);
   impl_->displayModeButton->setPopupMode(QToolButton::InstantPopup);
   impl_->toolbar->addWidget(impl_->displayModeButton);
 
-  layout->addWidget(impl_->view, 1);
   layout->addWidget(impl_->toolbar);
+  layout->addWidget(impl_->view, 1);
 
   connect(impl_->playAction, &QAction::triggered, this, &ArtifactRenderLayerEditor::play);
   connect(impl_->stopAction, &QAction::triggered, this, &ArtifactRenderLayerEditor::stop);

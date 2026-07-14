@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -36,11 +36,13 @@
 module Artifact.Widgets.CompositionAudioMixer;
 
 import Artifact.Audio.Mixer;
+import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
 import Artifact.Service.Effect;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Artifact.Service.Audio;
 import Event.Bus;
 import std;
 
@@ -2084,15 +2086,15 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
   if (auto *playbackService = ArtifactPlaybackService::instance()) {
     if (auto *masterBus = impl_->mixer_->masterBus()) {
       QObject::connect(masterBus, &AudioMixerMasterBus::volumeChanged, this,
-                       [playbackService](const float volume) {
-                         playbackService->setAudioMasterVolume(volume);
+                       [](const float volume) {
+                         ArtifactAudioService::instance()->setMasterVolume(volume);
                        });
       QObject::connect(masterBus, &AudioMixerMasterBus::muteChanged, this,
-                       [playbackService](const bool muted) {
-                         playbackService->setAudioMasterMuted(muted);
+                       [](const bool muted) {
+                         ArtifactAudioService::instance()->setMasterMuted(muted);
                        });
-      playbackService->setAudioMasterVolume(masterBus->volume());
-      playbackService->setAudioMasterMuted(masterBus->isMuted());
+      ArtifactAudioService::instance()->setMasterVolume(masterBus->volume());
+      ArtifactAudioService::instance()->setMasterMuted(masterBus->isMuted());
     }
 
     QObject::connect(
@@ -2109,6 +2111,7 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
   rootLayout->setSpacing(0);
 
   auto *header = new QWidget(this);
+  header->setObjectName(QStringLiteral("audioMixerHeader"));
   header->setAutoFillBackground(true);
   {
     QPalette headerPalette = header->palette();
@@ -2157,6 +2160,7 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
   headerLayout->addWidget(impl_->summaryLabel_, 0, Qt::AlignRight);
 
   auto *scrollArea = new QScrollArea(this);
+  scrollArea->setObjectName(QStringLiteral("audioMixerScrollArea"));
   scrollArea->setWidgetResizable(true);
   scrollArea->setFrameShape(QFrame::NoFrame);
   scrollArea->viewport()->setAutoFillBackground(true);
@@ -2167,6 +2171,7 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
   }
 
   impl_->contentWidget_ = new QWidget(scrollArea);
+  impl_->contentWidget_->setObjectName(QStringLiteral("audioMixerContentWidget"));
   impl_->contentWidget_->setAutoFillBackground(true);
   {
     QPalette contentPalette = impl_->contentWidget_->palette();
@@ -2210,6 +2215,9 @@ void ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition() {
   if (auto *service = ArtifactProjectService::instance()) {
     composition = service->currentComposition().lock();
   }
+  ArtifactAudioService::instance()->syncCurrentComposition();
+  impl_->mixer_->connectToCoreMixer(
+      composition ? composition->getAudioMixer() : nullptr);
 
   impl_->mixer_->syncFromComposition(composition);
   impl_->clearRows();

@@ -66,6 +66,7 @@ export namespace Artifact {
     // Properties
     bool affectedByLights() const;
     void setAffectedByLights(bool enabled);
+    bool hasTransparentMaterial() const;
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
     bool setLayerPropertyValue(const QString &propertyPath, const QVariant &value) override;
     QString materialSignature() const;

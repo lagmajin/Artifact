@@ -93,6 +93,8 @@ public:
   QString sourcePath_;
   bool meshLoaded_ = false;
   bool affectedByLights_ = true;
+  bool useTextureInSolid_ = false;
+  bool wireOverlay_ = false;
   Impl() {}
   ~Impl() {}
 };
@@ -243,6 +245,8 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["type"] = static_cast<int>(LayerType::Model3D);
   obj["sourcePath"] = impl_->sourcePath_;
   obj["renderMode"] = static_cast<int>(impl_->renderMode_);
+  obj["render.useTextureInSolid"] = impl_->useTextureInSolid_;
+  obj["render.wireOverlay"] = impl_->wireOverlay_;
   obj["fixedGeometry"] = static_cast<int>(impl_->fixedGeometry_);
   obj["geometry.width"] = impl_->geometryWidth_;
   obj["geometry.height"] = impl_->geometryHeight_;
@@ -283,6 +287,10 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
   if (obj.contains("renderMode")) {
     setRenderMode(static_cast<RenderMode>(obj.value("renderMode").toInt()));
   }
+  impl_->useTextureInSolid_ =
+      obj.value("render.useTextureInSolid").toBool(impl_->useTextureInSolid_);
+  impl_->wireOverlay_ =
+      obj.value("render.wireOverlay").toBool(impl_->wireOverlay_);
 
   const QString baseColorTexture = obj.contains("material.baseColorTexture")
                                        ? obj.value("material.baseColorTexture").toString()
@@ -693,23 +701,28 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
 
   const FloatColor wireframeColor{1.0f, 1.0f, 1.0f, opacity()};
   const float thickness = 2.0f;
-
-  if (impl_->renderMode_ == RenderMode::Solid) {
-    const QString cacheKey = sourcePath().isEmpty() ? id().toString() : sourcePath();
-    renderer->drawMesh(cacheKey, impl_->mesh_, impl_->material_, modelMatrix,
-                       opacity(), 3, &previousModelMatrix);
-  } else {
-    // Wireframe mode: draw edges
-    const FloatColor color = wireframeColor;
+  const auto drawEdges = [&](const FloatColor &color, float lineThickness) {
     for (int i = 0; i < impl_->mesh_.polygonCount(); ++i) {
       const auto vertexIndices = impl_->mesh_.getPolygonVertices(i);
       for (size_t j = 0; j < vertexIndices.size(); ++j) {
         const QVector3D &v0 = transformedVertices[vertexIndices[j]];
         const QVector3D &v1 =
             transformedVertices[vertexIndices[(j + 1) % vertexIndices.size()]];
-        renderer->draw3DLine(toFloat3(v0), toFloat3(v1), color, thickness);
+        renderer->draw3DLine(toFloat3(v0), toFloat3(v1), color, lineThickness);
       }
     }
+  };
+
+  if (impl_->renderMode_ == RenderMode::Solid) {
+    const QString cacheKey = sourcePath().isEmpty() ? id().toString() : sourcePath();
+    const int solidShadingMode = impl_->useTextureInSolid_ ? 3 : 8;
+    renderer->drawMesh(cacheKey, impl_->mesh_, impl_->material_, modelMatrix,
+                       opacity(), solidShadingMode, &previousModelMatrix);
+    if (impl_->wireOverlay_) {
+      drawEdges(FloatColor{0.04f, 0.05f, 0.06f, opacity() * 0.72f}, 1.0f);
+    }
+  } else {
+    drawEdges(wireframeColor, thickness);
   }
 
   drawFractureOverlay(renderer, modelMatrix,
@@ -801,6 +814,21 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   affectedByLightsProp->setDisplayLabel(QStringLiteral("Affected By Lights"));
   affectedByLightsProp->setTooltip(QStringLiteral("Disable to ignore all scene lights for this 3D layer"));
   renderGroup.addProperty(affectedByLightsProp);
+
+  auto useTextureInSolidProp = persistentLayerProperty(
+      QStringLiteral("render.useTextureInSolid"), PropertyType::Boolean,
+      impl_->useTextureInSolid_, -53);
+  useTextureInSolidProp->setDisplayLabel(QStringLiteral("Use Texture in Solid"));
+  useTextureInSolidProp->setTooltip(
+      QStringLiteral("Use the base-color texture instead of Blender-style material color"));
+  renderGroup.addProperty(useTextureInSolidProp);
+
+  auto wireOverlayProp = persistentLayerProperty(
+      QStringLiteral("render.wireOverlay"), PropertyType::Boolean,
+      impl_->wireOverlay_, -52);
+  wireOverlayProp->setDisplayLabel(QStringLiteral("Wire Overlay"));
+  wireOverlayProp->setTooltip(QStringLiteral("Draw mesh edges over the solid viewport"));
+  renderGroup.addProperty(wireOverlayProp);
 
   PropertyGroup materialGroup(QStringLiteral("Material"));
 
@@ -974,6 +1002,14 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
   } else if (propertyPath == QStringLiteral("render.affectedByLights")) {
     setAffectedByLights(value.toBool());
     return true;
+  } else if (propertyPath == QStringLiteral("render.useTextureInSolid")) {
+    impl_->useTextureInSolid_ = value.toBool();
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("render.wireOverlay")) {
+    impl_->wireOverlay_ = value.toBool();
+    Q_EMIT changed();
+    return true;
   } else if (propertyPath == QStringLiteral("material.base.color")) {
     impl_->material_.setBaseColor(value.value<QColor>());
     Q_EMIT changed();
@@ -1037,6 +1073,12 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
 
 bool Artifact3DLayer::affectedByLights() const { return impl_->affectedByLights_; }
 
+bool Artifact3DLayer::hasTransparentMaterial() const {
+  return impl_->material_.opacity() < 0.9999f ||
+         impl_->material_.baseColor().alphaF() < 0.9999f ||
+         impl_->material_.hasOpacityTexture();
+}
+
 QString Artifact3DLayer::materialSignature() const
 {
   const QColor baseColor = impl_->material_.baseColor();
@@ -1044,7 +1086,8 @@ QString Artifact3DLayer::materialSignature() const
   return QStringLiteral(
              "src=%1|baseTex=%2|mrTex=%3|normalTex=%4|emissionTex=%5|occTex=%6|opacityTex=%7|"
              "base=%8,%9,%10,%11|emission=%12,%13,%14,%15|metallic=%16|roughness=%17|"
-             "emissionStrength=%18|opacity=%19|normalStrength=%20|occlusionStrength=%21")
+             "emissionStrength=%18|opacity=%19|normalStrength=%20|occlusionStrength=%21|"
+             "solidTexture=%22|wireOverlay=%23")
       .arg(impl_->sourcePath_)
       .arg(impl_->material_.baseColorTexture().toQString())
       .arg(impl_->material_.metallicRoughnessTexture().toQString())
@@ -1065,7 +1108,9 @@ QString Artifact3DLayer::materialSignature() const
       .arg(impl_->material_.emissionStrength(), 0, 'f', 6)
       .arg(impl_->material_.opacity(), 0, 'f', 6)
       .arg(impl_->material_.normalStrength(), 0, 'f', 6)
-      .arg(impl_->material_.occlusionStrength(), 0, 'f', 6);
+      .arg(impl_->material_.occlusionStrength(), 0, 'f', 6)
+      .arg(impl_->useTextureInSolid_ ? 1 : 0)
+      .arg(impl_->wireOverlay_ ? 1 : 0);
 }
 
 void Artifact3DLayer::setAffectedByLights(bool enabled)

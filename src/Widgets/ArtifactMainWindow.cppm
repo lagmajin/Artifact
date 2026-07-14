@@ -204,6 +204,7 @@ const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
 
 QWidget *createLazyDockPlaceholder(QWidget *parent) {
   auto *placeholder = new QWidget(parent);
+  placeholder->setObjectName(QStringLiteral("ArtifactLazyDockPlaceholder"));
   placeholder->setAutoFillBackground(true);
   QPalette palette = placeholder->palette();
   palette.setColor(QPalette::Window, QColor(32, 34, 38));
@@ -785,6 +786,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->toolOptionsBar->clearTextOptions();
   impl_->toolOptionsBar->clearShapeOptions();
   impl_->toolOptionsHost = new QToolBar(this);
+  impl_->toolOptionsHost->setObjectName(QStringLiteral("ArtifactToolOptionsBar"));
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
     impl_->workspaceMode_ = Artifact::workspaceModeInfoForText(
                                 settings->projectDefaultWorkspaceModeText())
@@ -1095,6 +1097,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->dockStyleManager->setGlowIntensity(0.72f);
   // Dock styling now comes from the global theme and DockStyleManager.
   impl_->centralWidgetHost = new QWidget(this);
+  impl_->centralWidgetHost->setObjectName(QStringLiteral("ArtifactCentralWidgetHost"));
   impl_->centralWidgetHost->setSizePolicy(QSizePolicy::Expanding,
                                           QSizePolicy::Expanding);
   auto *centralDock = new CDockWidget(QStringLiteral("Workspace"), this);

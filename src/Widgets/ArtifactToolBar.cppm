@@ -20,6 +20,7 @@ module Widgets.ToolBar;
 import Utils;
 import Icon.SvgToIcon;
 import Widgets.ToolOptionsBar;
+import Tool;
 import Artifact.Tool.Manager;
 import Artifact.Event.Types;
 import Event.Bus;
@@ -111,6 +112,8 @@ QString toolLabelForType(Artifact::ToolType type)
     case Artifact::ToolType::Ellipse:     return QStringLiteral("シェイプ");
     case Artifact::ToolType::Move:        return QStringLiteral("移動");
     case Artifact::ToolType::Scale:       return QStringLiteral("スケール");
+    case Artifact::ToolType::Brush:       return QStringLiteral("ブラシ");
+    case Artifact::ToolType::Eraser:      return QStringLiteral("消しゴム");
     default:                              return {};
   }
 }
@@ -487,6 +490,30 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
   auto setTool = [](ToolType type) {
     if (auto *app = Artifact::ApplicationService::instance()) {
       if (auto *toolService = app->toolService()) {
+        EditMode editMode = EditMode::Transform;
+        switch (type) {
+        case ToolType::Hand:
+        case ToolType::Zoom:
+        case ToolType::ScrubPreview:
+          editMode = EditMode::View;
+          break;
+        case ToolType::Pen:
+          editMode = EditMode::Mask;
+          break;
+        case ToolType::Brush:
+        case ToolType::Eraser:
+          editMode = EditMode::Paint;
+          break;
+        case ToolType::Shape:
+        case ToolType::Rectangle:
+        case ToolType::Ellipse:
+        case ToolType::Text:
+          editMode = EditMode::Shape;
+          break;
+        default:
+          break;
+        }
+        toolService->setEditMode(editMode);
         toolService->setActiveTool(type);
         return;
       }
@@ -533,10 +560,12 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                        setTool(ToolType::Text);
                      } else if (action == impl_->brushTool_) {
                        brushToolRequested();
+                       setTool(ToolType::Brush);
                      } else if (action == impl_->cloneStampTool_) {
                        cloneStampToolRequested();
                      } else if (action == impl_->eraserTool_) {
                        eraserToolRequested();
+                       setTool(ToolType::Eraser);
                      } else if (action == impl_->puppetTool_) {
                        puppetToolRequested();
                        setTool(ToolType::Puppet);

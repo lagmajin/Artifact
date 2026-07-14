@@ -12,6 +12,7 @@ module;
 #include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
+#include <QFont>
 #include <QAction>
 #include <QApplication>
 #include <QImage>
@@ -96,6 +97,10 @@ QString displayModeLabel(DisplayMode mode)
   switch (mode) {
   case DisplayMode::Mask:
     return QStringLiteral("Mask");
+  case DisplayMode::Alpha:
+    return QStringLiteral("Alpha");
+  case DisplayMode::Wireframe:
+    return QStringLiteral("Wireframe");
   case DisplayMode::Color:
   default:
     return QStringLiteral("Color");
@@ -689,6 +694,7 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   EditMode editMode_ = EditMode::View;
   DisplayMode displayMode_ = DisplayMode::Color;
   DisplayMode displayModeBeforeMask_ = DisplayMode::Color;
+  int hoveredChromeControl_ = -1;
   QImage cachedMayaGradientSprite_;
   QSize cachedMayaGradientSize_;
   LayerID targetLayerId_{};
@@ -811,6 +817,9 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   bool hitTestStarInnerRadiusHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos) const;
   void drawShapeParamHandles(const ArtifactAbstractLayerPtr& layer);
   void drawTransformHUD(const ArtifactAbstractLayerPtr& layer);
+  void drawViewportChrome(const ArtifactAbstractLayerPtr& layer);
+  bool handleViewportChromePress(const QPointF& viewportPos);
+  bool updateViewportChromeHover(const QPointF& viewportPos);
   void drawCustomPathOverlay(const ArtifactAbstractLayerPtr& layer);
   void beginPathEditTransaction(const ArtifactAbstractLayerPtr& layer);
   void markPathEditDirty();
@@ -1670,6 +1679,377 @@ void ArtifactLayerEditorWidgetV2::Impl::drawTransformHUD(const ArtifactAbstractL
                      FloatColor{1,1,1,1}, Qt::AlignLeft | Qt::AlignVCenter, 1.0f);
 }
 
+void ArtifactLayerEditorWidgetV2::Impl::drawViewportChrome(
+    const ArtifactAbstractLayerPtr& layer)
+{
+ if (!renderer_ || !widget_) return;
+
+ const QSize viewportSize = physicalViewportSize(widget_);
+ const float viewportW = static_cast<float>(std::max(1, viewportSize.width()));
+ const float viewportH = static_cast<float>(std::max(1, viewportSize.height()));
+ const float currentZoom = renderer_->getZoom();
+ float currentPanX = 0.0f;
+ float currentPanY = 0.0f;
+ renderer_->getPan(currentPanX, currentPanY);
+
+ renderer_->setViewportSize(viewportW, viewportH);
+ renderer_->setCanvasSize(viewportW, viewportH);
+ renderer_->setZoom(1.0f);
+ renderer_->setPan(0.0f, 0.0f);
+ renderer_->setUseExternalMatrices(false);
+ renderer_->resetGizmoCameraMatrices();
+ renderer_->reset3DCameraMatrices();
+
+ const FloatColor panelFill{0.045f, 0.055f, 0.067f, 0.90f};
+ const FloatColor panelStroke{0.22f, 0.25f, 0.29f, 0.96f};
+ const FloatColor textColor{0.93f, 0.95f, 0.98f, 1.0f};
+ const FloatColor mutedText{0.68f, 0.72f, 0.77f, 1.0f};
+ const FloatColor blueAccent{0.18f, 0.55f, 0.94f, 1.0f};
+ const FloatColor amberAccent{1.0f, 0.52f, 0.10f, 1.0f};
+
+ QFont uiFont = QApplication::font();
+ uiFont.setPixelSize(12);
+ QFont compactFont = uiFont;
+ compactFont.setPixelSize(11);
+
+ if (viewportW >= 1000.0f) {
+  constexpr float toolPanelX = 16.0f;
+  constexpr float toolPanelY = 16.0f;
+  constexpr float toolPanelW = 320.0f;
+  constexpr float toolPanelH = 38.0f;
+  constexpr float toolInset = 4.0f;
+  constexpr float toolW = 78.0f;
+  struct ToolItem {
+   EditMode mode;
+   const char* label;
+  };
+  const ToolItem tools[] = {
+      {EditMode::View, "View"},
+      {EditMode::Transform, "Move"},
+      {EditMode::Shape, "Shape"},
+      {EditMode::Mask, "Mask"},
+  };
+  renderer_->drawRoundedPanel(toolPanelX, toolPanelY, toolPanelW, toolPanelH,
+                              6.0f, panelFill, panelStroke);
+  for (int i = 0; i < 4; ++i) {
+   const float itemX = toolPanelX + toolInset + toolW * static_cast<float>(i);
+   const bool selected = editMode_ == tools[i].mode;
+   const bool hovered = hoveredChromeControl_ == i;
+   if (selected || hovered) {
+    renderer_->drawRoundedPanel(itemX, toolPanelY + toolInset,
+                                toolW - 2.0f, toolPanelH - toolInset * 2.0f,
+                                4.0f,
+                                selected
+                                    ? FloatColor{0.10f, 0.38f, 0.69f, 0.96f}
+                                    : FloatColor{0.18f, 0.21f, 0.25f, 0.94f},
+                                selected ? blueAccent : panelStroke);
+   }
+   renderer_->drawText(
+       QRectF(itemX + 3.0f, toolPanelY + 3.0f,
+              toolW - 8.0f, toolPanelH - 6.0f),
+       QString::fromLatin1(tools[i].label), compactFont,
+       selected ? textColor : mutedText, Qt::AlignCenter);
+  }
+ }
+
+ const float zoomPanelW = 174.0f;
+ const float zoomPanelH = 38.0f;
+ const float zoomPanelX = (viewportW - zoomPanelW) * 0.5f;
+ const float zoomPanelY = 16.0f;
+ renderer_->drawRoundedPanel(zoomPanelX, zoomPanelY, zoomPanelW, zoomPanelH,
+                             6.0f, panelFill, panelStroke);
+ if (hoveredChromeControl_ >= 20 && hoveredChromeControl_ <= 23) {
+  const int zoomIndex = hoveredChromeControl_ - 20;
+  const float segmentX[] = {0.0f, 42.0f, 105.0f, 142.0f};
+  const float segmentW[] = {42.0f, 63.0f, 37.0f, 32.0f};
+  renderer_->drawRoundedPanel(zoomPanelX + segmentX[zoomIndex] + 2.0f,
+                              zoomPanelY + 4.0f,
+                              segmentW[zoomIndex] - 4.0f,
+                              zoomPanelH - 8.0f,
+                              4.0f,
+                              FloatColor{0.18f, 0.21f, 0.25f, 0.94f},
+                              panelStroke);
+ }
+ renderer_->drawText(
+     QRectF(zoomPanelX + 10.0f, zoomPanelY + 3.0f,
+            zoomPanelW - 20.0f, zoomPanelH - 6.0f),
+     QStringLiteral("−     %1%     +     Fit")
+         .arg(QString::number(currentZoom * 100.0f, 'f', 0)),
+     uiFont, textColor, Qt::AlignCenter);
+
+ const float modePanelW = 292.0f;
+ const float modePanelH = 38.0f;
+ const float modePanelX = std::max(12.0f, viewportW - modePanelW - 16.0f);
+ const float modePanelY = 16.0f;
+ if (viewportW >= 860.0f) {
+  struct DisplayItem {
+   DisplayMode mode;
+   const char* label;
+  };
+  const DisplayItem displayItems[] = {
+      {DisplayMode::Color, "Color"},
+      {DisplayMode::Alpha, "Alpha"},
+      {DisplayMode::Mask, "Mask"},
+      {DisplayMode::Wireframe, "Wire"},
+  };
+  constexpr float modeInset = 4.0f;
+  constexpr float modeItemW = 71.0f;
+  renderer_->drawRoundedPanel(modePanelX, modePanelY, modePanelW, modePanelH,
+                              6.0f, panelFill, panelStroke);
+  for (int i = 0; i < 4; ++i) {
+   const float itemX = modePanelX + modeInset + modeItemW * static_cast<float>(i);
+   const bool selected = displayMode_ == displayItems[i].mode;
+   const bool hovered = hoveredChromeControl_ == 10 + i;
+   if (selected || hovered) {
+    renderer_->drawRoundedPanel(itemX, modePanelY + modeInset,
+                                modeItemW - 2.0f, modePanelH - modeInset * 2.0f,
+                                4.0f,
+                                selected
+                                    ? FloatColor{0.10f, 0.38f, 0.69f, 0.96f}
+                                    : FloatColor{0.18f, 0.21f, 0.25f, 0.94f},
+                                selected ? blueAccent : panelStroke);
+   }
+   renderer_->drawText(
+       QRectF(itemX + 2.0f, modePanelY + 3.0f,
+              modeItemW - 6.0f, modePanelH - 6.0f),
+       QString::fromLatin1(displayItems[i].label), compactFont,
+       selected ? textColor : mutedText, Qt::AlignCenter);
+  }
+
+  if (layer) {
+   const float cubeSize = 54.0f;
+   const float cubeX = viewportW - cubeSize - 16.0f;
+   const float cubeY = modePanelY + modePanelH + 10.0f;
+   renderer_->drawRoundedPanel(cubeX, cubeY, cubeSize, cubeSize,
+                               6.0f, panelFill, panelStroke);
+   renderer_->drawRoundedPanel(cubeX + 8.0f, cubeY + 8.0f,
+                               cubeSize - 16.0f, 25.0f,
+                               4.0f,
+                               FloatColor{0.10f, 0.34f, 0.61f, 0.94f},
+                               blueAccent);
+   renderer_->drawText(QRectF(cubeX + 8.0f, cubeY + 7.0f,
+                              cubeSize - 16.0f, 27.0f),
+                       layer->is3D() ? QStringLiteral("3D") : QStringLiteral("2D"),
+                       compactFont, textColor, Qt::AlignCenter);
+   renderer_->drawText(QRectF(cubeX + 5.0f, cubeY + 33.0f,
+                              cubeSize - 10.0f, 16.0f),
+                       layer->is3D() ? QStringLiteral("Layer")
+                                     : QStringLiteral("Front"),
+                       compactFont,
+                       mutedText, Qt::AlignCenter);
+  }
+ }
+
+ const float bottomY = std::max(68.0f, viewportH - 52.0f);
+ const float cardH = 36.0f;
+ const float edge = 14.0f;
+ const bool compactLayout = viewportW < 980.0f;
+ const float leftW = compactLayout
+     ? std::max(180.0f, (viewportW - edge * 2.0f - 12.0f) * 0.5f)
+     : std::clamp(viewportW * 0.29f, 260.0f, 410.0f);
+ const float centerW = std::clamp(viewportW * 0.22f, 220.0f, 310.0f);
+ const float rightW = compactLayout
+     ? leftW
+     : std::clamp(viewportW * 0.31f, 280.0f, 430.0f);
+
+ QString layerName = QStringLiteral("No layer selected");
+ QString layerType = QStringLiteral("—");
+ QString stateText = QStringLiteral("Hidden     Unlocked     Solo     Inactive");
+ QString detailText = QStringLiteral("Opacity: —   |   Blend: —   |   Cache: Idle");
+ bool solo = false;
+ bool active = false;
+ if (layer) {
+  layerName = layer->name().toQString();
+  layerType = layer->is3D() ? QStringLiteral("3D") : layer->className().toQString();
+  solo = layer->isSolo();
+  active = ArtifactPlaybackService::instance()
+      ? layer->isActiveAt(ArtifactPlaybackService::instance()->currentFrame())
+      : true;
+  stateText = QStringLiteral("%1     %2     %3     %4")
+      .arg(layer->isVisible() ? QStringLiteral("Visible") : QStringLiteral("Hidden"))
+      .arg(layer->isLocked() ? QStringLiteral("Locked") : QStringLiteral("Unlocked"))
+      .arg(solo ? QStringLiteral("Solo") : QStringLiteral("Solo off"))
+      .arg(active ? QStringLiteral("Active") : QStringLiteral("Inactive"));
+  detailText = QStringLiteral("Opacity: %1%   |   Blend: %2   |   Cache: n/a")
+      .arg(QString::number(std::clamp(layer->opacity() * 100.0f, 0.0f, 100.0f),
+                           'f', 0))
+      .arg(ArtifactCore::BlendModeUtils::toString(
+          ArtifactCore::toBlendMode(layer->layerBlendType())));
+ }
+
+ const float leftX = edge;
+ const float centerX = (viewportW - centerW) * 0.5f;
+ const float rightX = std::max(edge, viewportW - rightW - edge);
+ renderer_->drawRoundedPanel(leftX, bottomY, leftW, cardH,
+                             6.0f, panelFill, panelStroke);
+ renderer_->drawText(
+     QRectF(leftX + 12.0f, bottomY + 3.0f, leftW - 24.0f, cardH - 6.0f),
+     QStringLiteral("Layer: %1   |   %2   |   Solo").arg(layerName, layerType),
+     compactFont, textColor, Qt::AlignLeft | Qt::AlignVCenter);
+
+ if (!compactLayout) {
+  renderer_->drawRoundedPanel(centerX, bottomY, centerW, cardH,
+                              6.0f, panelFill,
+                              solo ? amberAccent : panelStroke);
+  renderer_->drawText(
+      QRectF(centerX + 10.0f, bottomY + 3.0f,
+             centerW - 20.0f, cardH - 6.0f),
+      stateText, compactFont, solo ? amberAccent : mutedText, Qt::AlignCenter);
+ }
+
+ renderer_->drawRoundedPanel(rightX, bottomY, rightW, cardH,
+                             6.0f, panelFill,
+                             active ? blueAccent : panelStroke);
+ renderer_->drawText(
+     QRectF(rightX + 12.0f, bottomY + 3.0f,
+            rightW - 30.0f, cardH - 6.0f),
+     detailText, compactFont, textColor, Qt::AlignLeft | Qt::AlignVCenter);
+ renderer_->drawCircle(rightX + rightW - 14.0f, bottomY + cardH * 0.5f,
+                       4.0f,
+                       active ? FloatColor{0.10f, 0.88f, 0.48f, 1.0f}
+                              : FloatColor{0.46f, 0.49f, 0.54f, 1.0f},
+                       1.0f, true);
+
+ renderer_->setZoom(currentZoom);
+ renderer_->setPan(currentPanX, currentPanY);
+ if (auto* service = ArtifactProjectService::instance()) {
+  if (auto composition = service->currentComposition().lock()) {
+   const QSize compSize = composition->settings().compositionSize();
+   if (compSize.width() > 0 && compSize.height() > 0) {
+    renderer_->setCanvasSize(static_cast<float>(compSize.width()),
+                             static_cast<float>(compSize.height()));
+   }
+  }
+ }
+}
+
+bool ArtifactLayerEditorWidgetV2::Impl::handleViewportChromePress(
+    const QPointF& viewportPos)
+{
+ if (!renderer_ || !widget_) return false;
+
+ const qreal dpr = widget_->devicePixelRatioF();
+ const QPointF pos = viewportPos * dpr;
+ const float viewportW = static_cast<float>(physicalViewportSize(widget_).width());
+
+ if (viewportW >= 1000.0f) {
+  const QRectF toolRect(16.0, 16.0, 320.0, 38.0);
+  if (toolRect.contains(pos)) {
+   const int index = std::clamp(
+       static_cast<int>((pos.x() - toolRect.left() - 4.0) / 78.0), 0, 3);
+   const EditMode modes[] = {
+       EditMode::View, EditMode::Transform, EditMode::Shape, EditMode::Mask};
+   static_cast<ArtifactLayerEditorWidgetV2*>(widget_.data())->setEditMode(
+       modes[index]);
+   return true;
+  }
+ }
+
+ if (viewportW >= 860.0f) {
+  const QRectF modeRect(viewportW - 292.0f - 16.0f, 16.0f, 292.0f, 38.0f);
+  if (modeRect.contains(pos)) {
+   const int index = std::clamp(
+       static_cast<int>((pos.x() - modeRect.left() - 4.0) / 71.0), 0, 3);
+   const DisplayMode modes[] = {
+       DisplayMode::Color, DisplayMode::Alpha,
+       DisplayMode::Mask, DisplayMode::Wireframe};
+   static_cast<ArtifactLayerEditorWidgetV2*>(widget_.data())->setDisplayMode(
+       modes[index]);
+   if (auto* app = Artifact::ApplicationService::instance()) {
+    if (auto* toolService = app->toolService()) {
+     toolService->setDisplayMode(modes[index]);
+    }
+   }
+   return true;
+  }
+ }
+
+ const QRectF zoomRect((viewportW - 174.0f) * 0.5f, 16.0f, 174.0f, 38.0f);
+ if (!zoomRect.contains(pos)) return false;
+
+ const float relativeX = static_cast<float>(pos.x() - zoomRect.left());
+ const QPointF center(widget_->width() * 0.5 * dpr,
+                      widget_->height() * 0.5 * dpr);
+ if (relativeX < 42.0f) {
+  zoomLevel_ = std::clamp(renderer_->getZoom() / 1.1f, 0.05f, 32.0f);
+  renderer_->zoomAroundViewportPoint(
+      {static_cast<float>(center.x()), static_cast<float>(center.y())},
+      zoomLevel_);
+ } else if (relativeX < 105.0f) {
+  zoomLevel_ = 1.0f;
+  renderer_->zoomAroundViewportPoint(
+      {static_cast<float>(center.x()), static_cast<float>(center.y())},
+      zoomLevel_);
+ } else if (relativeX < 142.0f) {
+  zoomLevel_ = std::clamp(renderer_->getZoom() * 1.1f, 0.05f, 32.0f);
+  renderer_->zoomAroundViewportPoint(
+      {static_cast<float>(center.x()), static_cast<float>(center.y())},
+      zoomLevel_);
+ } else {
+  renderer_->fitToViewport();
+  zoomLevel_ = renderer_->getZoom();
+ }
+ requestRender();
+ return true;
+}
+
+bool ArtifactLayerEditorWidgetV2::Impl::updateViewportChromeHover(
+    const QPointF& viewportPos)
+{
+ if (!widget_) return false;
+
+ const qreal dpr = widget_->devicePixelRatioF();
+ const QPointF pos = viewportPos * dpr;
+ const float viewportW = static_cast<float>(physicalViewportSize(widget_).width());
+ int nextControl = -1;
+
+ if (viewportW >= 1000.0f) {
+  const QRectF toolRect(16.0, 16.0, 320.0, 38.0);
+  if (toolRect.contains(pos)) {
+   nextControl = std::clamp(
+       static_cast<int>((pos.x() - toolRect.left() - 4.0) / 78.0), 0, 3);
+  }
+ }
+
+ if (nextControl < 0 && viewportW >= 860.0f) {
+  const QRectF modeRect(viewportW - 292.0f - 16.0f, 16.0f, 292.0f, 38.0f);
+  if (modeRect.contains(pos)) {
+   nextControl = 10 + std::clamp(
+       static_cast<int>((pos.x() - modeRect.left() - 4.0) / 71.0), 0, 3);
+  }
+ }
+
+ if (nextControl < 0) {
+  const QRectF zoomRect((viewportW - 174.0f) * 0.5f,
+                        16.0f, 174.0f, 38.0f);
+  if (zoomRect.contains(pos)) {
+   const float relativeX = static_cast<float>(pos.x() - zoomRect.left());
+   nextControl = relativeX < 42.0f ? 20
+       : relativeX < 105.0f ? 21
+       : relativeX < 142.0f ? 22
+       : 23;
+  }
+ }
+
+ const int previousControl = hoveredChromeControl_;
+ if (previousControl != nextControl) {
+  hoveredChromeControl_ = nextControl;
+  requestRender();
+ }
+ if (nextControl >= 0) {
+  widget_->setCursor(Qt::PointingHandCursor);
+  return true;
+ }
+ if (previousControl >= 0) {
+  if (isMaskEditingMode(editMode_)) {
+   widget_->setCursor(Qt::CrossCursor);
+  } else {
+   widget_->unsetCursor();
+  }
+ }
+ return false;
+}
+
 // ============================================================
 // Phase 5: Bezier path overlay + transactions
 // ============================================================
@@ -2329,7 +2709,7 @@ void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
  renderer_->resetGizmoCameraMatrices();
  renderer_->reset3DCameraMatrices();
  if (backgroundMode_ == LayerBackgroundMode::Alpha) {
-  renderer_->drawCheckerboard(0.0f, 0.0f, viewportW, viewportH, 16.0f,
+  renderer_->drawCheckerboard(0.0f, 0.0f, viewportW, viewportH, 48.0f,
                               FloatColor(0.24f, 0.24f, 0.26f, 1.0f),
                               FloatColor(0.16f, 0.16f, 0.18f, 1.0f));
  } else if (backgroundMode_ == LayerBackgroundMode::MayaGradient) {
@@ -2352,6 +2732,7 @@ void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
  }
  renderer_->setZoom(prevZoom);
  renderer_->setPan(prevPanX, prevPanY);
+ ArtifactAbstractLayerPtr displayedLayer;
   if (!targetLayerId_.isNil()) {
    if (auto* service = ArtifactProjectService::instance()) {
     if (auto composition = service->currentComposition().lock()) {
@@ -2362,6 +2743,7 @@ void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
      }
 
      if (auto layer = composition->layerById(targetLayerId_)) {
+      displayedLayer = layer;
       const auto currentFrame = ArtifactPlaybackService::instance()
           ? ArtifactPlaybackService::instance()->currentFrame()
           : composition->framePosition();
@@ -2398,6 +2780,7 @@ void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
    transformGizmo_->setLayer(nullptr);
   }
  }
+ drawViewportChrome(displayedLayer);
  renderer_->flush();
  renderer_->present();
 }
@@ -2451,6 +2834,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   setMinimumSize(1, 1);
 
   setFocusPolicy(Qt::StrongFocus);
+  setMouseTracking(true);
   setAttribute(Qt::WA_NativeWindow);
   setAttribute(Qt::WA_PaintOnScreen);
   setAttribute(Qt::WA_NoSystemBackground);
@@ -2716,6 +3100,12 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
  void ArtifactLayerEditorWidgetV2::mousePressEvent(QMouseEvent* event)
  {
+  if (event->button() == Qt::LeftButton &&
+      impl_->handleViewportChromePress(event->position())) {
+   event->accept();
+   return;
+  }
+
   if (event->button() == Qt::MiddleButton ||
    (event->button() == Qt::RightButton && event->modifiers() & Qt::AltModifier))
   {
@@ -3143,6 +3533,12 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
    const QPointF delta = currentPos - impl_->lastMousePos_;
    impl_->lastMousePos_ = currentPos;
    panBy(delta);
+   event->accept();
+   return;
+  }
+
+  if (event->buttons() == Qt::NoButton &&
+      impl_->updateViewportChromeHover(event->position())) {
    event->accept();
    return;
   }
@@ -3801,8 +4197,13 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
 }
 
 void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
-{
+ {
  QWidget::showEvent(event);
+ if (auto *app = Artifact::ApplicationService::instance()) {
+  if (auto *toolService = app->toolService()) {
+   setDisplayMode(toolService->displayMode());
+  }
+ }
   qCDebug(layerViewPerfLog) << "[LayerView][Show]"
                             << "initialized=" << impl_->initialized_
                             << "visible=" << isVisible()
@@ -3852,7 +4253,12 @@ void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
 
  void ArtifactLayerEditorWidgetV2::focusInEvent(QFocusEvent* event)
  {
-
+  QWidget::focusInEvent(event);
+  if (auto *app = Artifact::ApplicationService::instance()) {
+   if (auto *toolService = app->toolService()) {
+    setDisplayMode(toolService->displayMode());
+   }
+  }
  }
 
  void ArtifactLayerEditorWidgetV2::focusOutEvent(QFocusEvent* event)

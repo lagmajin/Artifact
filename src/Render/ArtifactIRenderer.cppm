@@ -24,6 +24,7 @@ module;
 #include <QtConcurrent>
 #include <QTransform>
 #include <QMatrix4x4>
+#include <QVector2D>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -78,6 +79,23 @@ namespace Artifact
  using float2 = Diligent::float2;
 
 namespace {
+  class ScopedGpuDebugGroup {
+  public:
+   ScopedGpuDebugGroup(IDeviceContext* context, const char* name)
+       : context_(context)
+   {
+    if (context_ && name) context_->BeginDebugGroup(name);
+   }
+   ~ScopedGpuDebugGroup()
+   {
+    if (context_) context_->EndDebugGroup();
+   }
+   ScopedGpuDebugGroup(const ScopedGpuDebugGroup&) = delete;
+   ScopedGpuDebugGroup& operator=(const ScopedGpuDebugGroup&) = delete;
+  private:
+   IDeviceContext* context_ = nullptr;
+  };
+
   void reportLiveD3D12Objects(Diligent::IRenderDevice* device)
   {
 #if D3D12_SUPPORTED
@@ -369,7 +387,14 @@ namespace {
   PrimitiveRenderer2D primitiveRenderer_;
   mutable PrimitiveRenderer3D primitiveRenderer3D_;
   mutable std::map<QString, std::unique_ptr<ArtifactCore::MeshRenderer>> meshRenderers_;
-  mutable std::map<QString, std::pair<size_t, size_t>> meshRendererGeometry_;
+  struct MeshGeometryState {
+   const ArtifactCore::Mesh* meshIdentity = nullptr;
+   std::uint64_t meshRevision = 0;
+   size_t vertexCount = 0;
+   size_t indexCount = 0;
+   std::uint64_t contentHash = 0;
+  };
+  mutable std::map<QString, MeshGeometryState> meshRendererGeometry_;
   std::unique_ptr<ArtifactCore::IRayTracingManager> rayTracingManager_;
   std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
   std::unique_ptr<ArtifactCore::ParticleRenderer> particleRenderer_;
@@ -471,6 +496,8 @@ namespace {
   quint64 presentFailureCount_ = 0;
   quint64 presentSkippedCount_ = 0;
   QString lastPresentStatus_ = QStringLiteral("never-presented");
+  bool deviceRecoveryAttempted_ = false;
+  bool deviceLossTeardown_ = false;
   std::vector<ArtifactCore::Light> m_sceneLights;
   LODManager::DetailLevel detailLevel_ = LODManager::DetailLevel::High;
   bool particle3DCameraActive_ = false;
@@ -486,6 +513,8 @@ namespace {
   void createLayerRT(QWidget* window);
   ITextureView* activeColorView() const;
   ITextureView* activeDepthView() const;
+  void bindActiveRenderTargets(IDeviceContext* context) const;
+  void setRenderTargetOverrides(ITextureView* colorRTV, ITextureView* depthDSV);
   float upscaleRenderScale() const { return m_upscaleEnabled ? m_upscaleScale : 1.0f; }
   void submitQueuedDraws(IDeviceContext* ctx) const
   {
@@ -510,6 +539,7 @@ namespace {
                                                                deviceManager_.immediateContext());
     }
     auto renderer = std::make_unique<ArtifactCore::MeshRenderer>(*gpuContext_);
+    renderer->setPipelineStateCache(shaderManager_.pipelineStateCache());
     auto* raw = renderer.get();
     meshRenderers_.emplace(key, std::move(renderer));
     return raw;
@@ -526,63 +556,108 @@ namespace {
       return;
     }
 
-    const auto data = mesh.generateRenderData();
-    if (data.positions.isEmpty()) {
-      return;
-    }
+    const auto cachedGeometry = meshRendererGeometry_.find(cacheKey);
+    const auto meshRevision = mesh.revision();
+    const bool geometryCacheCurrent =
+        cachedGeometry != meshRendererGeometry_.end() &&
+        cachedGeometry->second.meshIdentity == &mesh &&
+        cachedGeometry->second.meshRevision == meshRevision;
+    if (!geometryCacheCurrent) {
+      const auto data = mesh.generateRenderData();
+      if (data.positions.isEmpty()) {
+        return;
+      }
 
     const size_t vertexCount = static_cast<size_t>(data.positions.size());
     const size_t indexCount = static_cast<size_t>(data.indices.size());
-    const auto geometryIt = meshRendererGeometry_.find(cacheKey);
-    if (geometryIt == meshRendererGeometry_.end() ||
-        geometryIt->second.first != vertexCount ||
-        geometryIt->second.second != indexCount) {
+    std::uint64_t geometryHash = 1469598103934665603ull;
+    const auto hashBytes = [&geometryHash](const void* bytes, size_t size) {
+      const auto* dataBytes = static_cast<const std::uint8_t*>(bytes);
+      for (size_t i = 0; i < size; ++i) {
+        geometryHash ^= dataBytes[i];
+        geometryHash *= 1099511628211ull;
+      }
+    };
+    for (const auto& position : data.positions) {
+      const float values[] = {position.x(), position.y(), position.z()};
+      hashBytes(values, sizeof(values));
+    }
+    for (const auto& normal : data.normals) {
+      const float values[] = {normal.x(), normal.y(), normal.z()};
+      hashBytes(values, sizeof(values));
+    }
+    for (const auto& uv : data.uvs) {
+      const float values[] = {uv.x(), uv.y()};
+      hashBytes(values, sizeof(values));
+    }
+    for (const auto index : data.indices) {
+      hashBytes(&index, sizeof(index));
+    }
+    const auto geometryIt = cachedGeometry;
+    const bool geometrySizeChanged =
+        geometryIt == meshRendererGeometry_.end() ||
+        geometryIt->second.vertexCount != vertexCount ||
+        geometryIt->second.indexCount != indexCount;
+    const bool geometryContentChanged =
+        geometrySizeChanged || geometryIt->second.contentHash != geometryHash;
+    if (geometrySizeChanged) {
       renderer->setFrameCostStats(&m_currentFrameCostStats_);
       renderer->initialize(1, vertexCount, indexCount);
-      meshRendererGeometry_[cacheKey] = {vertexCount, indexCount};
     }
 
-    std::vector<float> positions;
-    positions.reserve(vertexCount * 3u);
-    for (const auto& p : data.positions) {
-      positions.push_back(p.x());
-      positions.push_back(p.y());
-      positions.push_back(p.z());
-    }
-
-    std::vector<float> normals(vertexCount * 3u, 0.0f);
-    const bool hasNormals = data.normals.size() == data.positions.size() && !data.normals.isEmpty();
-    if (hasNormals) {
-      normals.reserve(vertexCount * 3u);
-      normals.clear();
-      for (const auto& n : data.normals) {
-        normals.push_back(n.x());
-        normals.push_back(n.y());
-        normals.push_back(n.z());
+    if (geometryContentChanged) {
+      std::vector<float> positions;
+      positions.reserve(vertexCount * 3u);
+      for (const auto& p : data.positions) {
+        positions.push_back(p.x());
+        positions.push_back(p.y());
+        positions.push_back(p.z());
       }
-    } else {
-      for (size_t i = 0; i < vertexCount; ++i) {
-        normals[i * 3u + 0u] = 0.0f;
-        normals[i * 3u + 1u] = 0.0f;
-        normals[i * 3u + 2u] = 1.0f;
-      }
-    }
 
-    std::vector<float> uvs(vertexCount * 2u, 0.0f);
-    const bool hasUvs = data.uvs.size() == data.positions.size() && !data.uvs.isEmpty();
-    if (hasUvs) {
-      uvs.reserve(vertexCount * 2u);
-      uvs.clear();
-      for (const auto& uv : data.uvs) {
-        uvs.push_back(uv.x());
-        uvs.push_back(uv.y());
+      std::vector<float> normals(vertexCount * 3u, 0.0f);
+      const bool hasNormals = data.normals.size() == data.positions.size() && !data.normals.isEmpty();
+      if (hasNormals) {
+        normals.reserve(vertexCount * 3u);
+        normals.clear();
+        for (const auto& n : data.normals) {
+          normals.push_back(n.x());
+          normals.push_back(n.y());
+          normals.push_back(n.z());
+        }
+      } else {
+        for (size_t i = 0; i < vertexCount; ++i) {
+          normals[i * 3u + 0u] = 0.0f;
+          normals[i * 3u + 1u] = 0.0f;
+          normals[i * 3u + 2u] = 1.0f;
+        }
       }
-    }
 
-    std::vector<uint32_t> indices;
-    indices.reserve(indexCount);
-    for (const auto idx : data.indices) {
-      indices.push_back(static_cast<uint32_t>(idx));
+      std::vector<float> uvs(vertexCount * 2u, 0.0f);
+      const bool hasUvs = data.uvs.size() == data.positions.size() && !data.uvs.isEmpty();
+      if (hasUvs) {
+        uvs.reserve(vertexCount * 2u);
+        uvs.clear();
+        for (const auto& uv : data.uvs) {
+          uvs.push_back(uv.x());
+          uvs.push_back(uv.y());
+        }
+      }
+
+      std::vector<uint32_t> indices;
+      indices.reserve(indexCount);
+      for (const auto idx : data.indices) {
+        indices.push_back(static_cast<uint32_t>(idx));
+      }
+      renderer->updateMeshGeometry(positions.data(), normals.data(), uvs.data(),
+                                   indices.data());
+      meshRendererGeometry_[cacheKey] = {
+          &mesh, meshRevision, vertexCount, indexCount, geometryHash};
+    }
+    if (!geometryContentChanged) {
+      auto& state = meshRendererGeometry_[cacheKey];
+      state.meshIdentity = &mesh;
+      state.meshRevision = meshRevision;
+    }
     }
 
     renderer->setViewMatrix(meshViewMatrix_.constData());
@@ -590,14 +665,18 @@ namespace {
     renderer->setPreviousViewMatrix(previousMeshViewMatrix_.constData());
     renderer->setPreviousProjectionMatrix(previousMeshProjMatrix_.constData());
     renderer->setBaseColorTexture(material.baseColorTexture().toQString());
+    renderer->setOpacityTexture(material.opacityTexture().toQString());
     renderer->setEmissionTexture(material.emissionTexture().toQString());
     renderer->setEmissionColor(material.emissionColor(),
                                material.emissionStrength());
-    renderer->updateMeshGeometry(positions.data(),
-                                 normals.data(),
-                                 uvs.data(),
-                                 indices.data());
-
+    renderer->setPbrFactors(material.metallic(), material.roughness(),
+                            material.normalStrength(),
+                            material.occlusionStrength());
+    renderer->setMetallicRoughnessTexture(
+        material.metallicRoughnessTexture().toQString());
+    renderer->setNormalTexture(material.normalTexture().toQString());
+    renderer->setOcclusionTexture(material.occlusionTexture().toQString());
+    renderer->setSceneLights(m_sceneLights);
     ArtifactCore::InstanceData instance{};
     const float* modelData = modelMatrix.constData();
     const QMatrix4x4& previousMatrix =
@@ -612,6 +691,7 @@ namespace {
     }
     const QColor color = material.baseColor();
     const float alpha = std::clamp(opacity * material.opacity() * color.alphaF(), 0.0f, 1.0f);
+    renderer->setTransparentPass(alpha < 0.9999f || material.hasOpacityTexture());
     if (meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ||
         meshIdPassChannel_ == ArtifactIRenderer::ChannelType::MaterialId) {
       instance.color[0] = meshIdPassEncodedValue_;
@@ -632,7 +712,7 @@ namespace {
         meshNormalOnlyPass_ ? 2 :
         meshVelocityOnlyPass_ ? 7 :
         meshAlbedoOnlyPass_ ? 1
-                            : std::clamp(shadingMode, 1, 3);
+                            : std::clamp(shadingMode, 1, 8);
     instance.timeOffset = static_cast<float>(effectiveShadingMode);
     renderer->updateInstanceData(&instance, 1);
 
@@ -640,6 +720,8 @@ namespace {
     if (!ctx) {
       return;
     }
+    ScopedGpuDebugGroup debugGroup(ctx.RawPtr(), "ArtifactIRenderer.Mesh");
+    bindActiveRenderTargets(ctx.RawPtr());
     renderer->prepare(ctx.RawPtr());
     renderer->draw(ctx.RawPtr(), 1);
   }
@@ -1284,8 +1366,8 @@ namespace {
   depthDesc.Width     = static_cast<Uint32>(width);
   depthDesc.Height    = static_cast<Uint32>(height);
   depthDesc.MipLevels = 1;
-  depthDesc.Format    = TEX_FORMAT_D32_FLOAT;
-  depthDesc.BindFlags = BIND_DEPTH_STENCIL;
+  depthDesc.Format    = TEX_FORMAT_R32_TYPELESS;
+  depthDesc.BindFlags = BIND_DEPTH_STENCIL | BIND_SHADER_RESOURCE;
   deviceManager_.device()->CreateTexture(depthDesc, nullptr, &m_layerDepthTex);
 
   auto* rtv = m_layerRT ? m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET) : nullptr;
@@ -1703,7 +1785,7 @@ bool ArtifactIRenderer::Impl::readbackDepthToFloatBuffer(
     stagDesc.Width          = srcWidth;
     stagDesc.Height         = srcHeight;
     stagDesc.MipLevels      = 1;
-    stagDesc.Format         = TEX_FORMAT_D32_FLOAT;
+    stagDesc.Format         = TEX_FORMAT_R32_FLOAT;
     stagDesc.Usage          = USAGE_STAGING;
     stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
     stagDesc.BindFlags      = BIND_NONE;
@@ -2118,8 +2200,8 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   depthDesc.Width     = targetWidth;
   depthDesc.Height    = targetHeight;
   depthDesc.MipLevels = 1;
-  depthDesc.Format    = TEX_FORMAT_D32_FLOAT;
-  depthDesc.BindFlags = BIND_DEPTH_STENCIL;
+  depthDesc.Format    = TEX_FORMAT_R32_TYPELESS;
+  depthDesc.BindFlags = BIND_DEPTH_STENCIL | BIND_SHADER_RESOURCE;
   deviceManager_.device()->CreateTexture(depthDesc, nullptr, &m_layerDepthTex);
   m_layerRTWidth = targetWidth;
   m_layerRTHeight = targetHeight;
@@ -2137,6 +2219,33 @@ Diligent::ITextureView* ArtifactIRenderer::Impl::activeDepthView() const
    return sc->GetDepthBufferDSV();
   }
   return nullptr;
+}
+
+void ArtifactIRenderer::Impl::bindActiveRenderTargets(IDeviceContext* context) const
+{
+  if (!context) return;
+  auto* rtv = activeColorView();
+  auto* dsv = activeDepthView();
+  if (rtv) {
+    context->SetRenderTargets(1, &rtv, dsv,
+                              RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  } else {
+    context->SetRenderTargets(0, nullptr, dsv,
+                              RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  }
+}
+
+void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
+                                                        ITextureView* depthDSV)
+{
+  if (auto context = deviceManager_.immediateContext()) {
+    submitQueuedDraws(context);
+  }
+  m_overrideColorRTV = colorRTV;
+  m_overrideDepthDSV = depthDSV;
+  primitiveRenderer_.setOverrideRTV(colorRTV);
+  primitiveRenderer3D_.setOverrideRTV(colorRTV);
+  primitiveRenderer3D_.setOverrideDSV(depthDSV);
 }
 
  Diligent::ITextureView* ArtifactIRenderer::Impl::activeColorView() const
@@ -2295,11 +2404,12 @@ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDe
 
  void ArtifactIRenderer::Impl::clear()
  {
+  ScopedGpuDebugGroup debugGroup(deviceManager_.immediateContext(),
+                                 "ArtifactIRenderer.Clear");
   primitiveRenderer_.clear(deviceManager_.immediateContext(), clearColor_);
   if (auto ctx = deviceManager_.immediateContext()) {
+   bindActiveRenderTargets(ctx);
    if (auto* dsv = activeDepthView()) {
-    ctx->SetRenderTargets(0, nullptr, dsv,
-                          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     ctx->ClearDepthStencil(dsv, Diligent::CLEAR_DEPTH_FLAG, 1.0f, 0,
                            Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
    }
@@ -2423,9 +2533,14 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   primitiveRenderer3D_.destroy();
   particleRenderer_.reset();
   gpuContext_.reset();
-  shaderManager_.destroy();
-  reportLiveD3D12Objects(deviceManager_.device().RawPtr());
+  if (deviceLossTeardown_) {
+   shaderManager_.abandonDeviceResources();
+  } else {
+   shaderManager_.destroy();
+   reportLiveD3D12Objects(deviceManager_.device().RawPtr());
+  }
   deviceManager_.destroy();
+  deviceLossTeardown_ = false;
   widget_                = nullptr;
   m_initialized          = false;
   m_frameQueryInitialized = false;
@@ -2441,6 +2556,7 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
        sc->Present();
        ++presentSuccessCount_;
        lastPresentStatus_ = QStringLiteral("ok");
+       deviceRecoveryAttempted_ = false;
      } catch (const std::exception& ex) {
      ++presentFailureCount_;
      const QString msg = QString::fromLocal8Bit(ex.what());
@@ -2451,8 +2567,46 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
          msg.contains(QStringLiteral("ERROR_SURFACE_LOST_KHR"), Qt::CaseInsensitive) ||
          msg.contains(QStringLiteral("surface lost"), Qt::CaseInsensitive) ||
          msg.contains(QStringLiteral("Failed to query physical device surface capabilities"), Qt::CaseInsensitive);
+     const bool deviceLost =
+         msg.contains(QStringLiteral("DXGI_ERROR_DEVICE_REMOVED"), Qt::CaseInsensitive) ||
+         msg.contains(QStringLiteral("DXGI_ERROR_DEVICE_RESET"), Qt::CaseInsensitive) ||
+         msg.contains(QStringLiteral("DXGI_ERROR_DEVICE_HUNG"), Qt::CaseInsensitive) ||
+         msg.contains(QStringLiteral("VK_ERROR_DEVICE_LOST"), Qt::CaseInsensitive) ||
+         msg.contains(QStringLiteral("device lost"), Qt::CaseInsensitive);
 
-     if (surfaceLost && widget_ && deviceManager_.device()) {
+     if (auto context = deviceManager_.immediateContext()) {
+      context->InsertDebugLabel(deviceLost ? "ArtifactIRenderer.DeviceLost"
+                                           : "ArtifactIRenderer.PresentFailure");
+     }
+
+     if (deviceLost && widget_ && !deviceRecoveryAttempted_) {
+      deviceRecoveryAttempted_ = true;
+      QWidget* recoveryWidget = widget_;
+      qWarning() << "[ArtifactIRenderer] attempting one-shot renderer recovery after device loss";
+      try {
+       auto lostDevice = deviceManager_.device();
+       if (!invalidateSharedRenderDeviceIfExclusive(lostDevice.RawPtr())) {
+        lastPresentStatus_ = QStringLiteral("device-recovery-deferred-shared");
+        qWarning() << "[ArtifactIRenderer] device recovery deferred because the lost shared device"
+                      " still has other owners";
+        return;
+       }
+       deviceManager_.markDeviceLost();
+       deviceLossTeardown_ = true;
+       destroy();
+       initialize(recoveryWidget);
+       lastPresentStatus_ = isInitialized()
+                                ? QStringLiteral("device-recovered")
+                                : QStringLiteral("device-recovery-failed");
+      } catch (const std::exception& recoveryEx) {
+       lastPresentStatus_ = QStringLiteral("device-recovery-exception: %1")
+                                .arg(QString::fromLocal8Bit(recoveryEx.what()));
+       qWarning() << "[ArtifactIRenderer] device recovery failed:"
+                  << QString::fromLocal8Bit(recoveryEx.what());
+      }
+     }
+
+     if (!deviceLost && surfaceLost && widget_ && deviceManager_.device()) {
       qWarning() << "[ArtifactIRenderer] attempting swapchain recreation after surface loss";
       try {
        recreateSwapChain(widget_);
@@ -2523,6 +2677,16 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   return impl_->readbackTextureViewToImage(textureView);
  }
  QImage ArtifactIRenderer::readbackDepthToImage() const { return impl_->readbackDepthToImage(); }
+ Diligent::ITextureView* ArtifactIRenderer::liveDepthShaderResourceView() const
+ {
+  auto* dsv = impl_->activeDepthView();
+  auto* texture = dsv ? dsv->GetTexture() : nullptr;
+  if (!texture ||
+      (texture->GetDesc().BindFlags & Diligent::BIND_SHADER_RESOURCE) == 0) {
+   return nullptr;
+  }
+  return texture->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+ }
  void ArtifactIRenderer::readbackTextureViewToImageAsync(
      Diligent::ITextureView* textureView,
      ReadbackCallback callback) const
@@ -3328,6 +3492,45 @@ void ArtifactIRenderer::draw3DCircle(Detail::float3 center, Detail::float3 norma
 { drawGizmoRing(center, normal, radius, color, thickness); }
 void ArtifactIRenderer::draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail::float3 v2, Detail::float3 v3, const FloatColor& color)
 { impl_->primitiveRenderer3D_.draw3DQuad({v0.x, v0.y, v0.z}, {v1.x, v1.y, v1.z}, {v2.x, v2.y, v2.z}, {v3.x, v3.y, v3.z}, color); }
+void ArtifactIRenderer::draw3DCard(const QRectF& localRect,
+                                   const QMatrix4x4& modelMatrix,
+                                   const FloatColor& color, float opacity,
+                                   bool writeDepth)
+{
+ impl_->primitiveRenderer3D_.setOverrideDSV(impl_->activeDepthView());
+ impl_->primitiveRenderer3D_.drawCardQuadImmediate(
+     localRect, modelMatrix, color, opacity, writeDepth);
+ impl_->primitiveRenderer3D_.setOverrideDSV(impl_->m_overrideDepthDSV);
+}
+void ArtifactIRenderer::draw3DTexturedCard(
+    const QRectF& localRect, const QMatrix4x4& modelMatrix,
+    Diligent::ITextureView* texture, float opacity)
+{
+ impl_->primitiveRenderer3D_.setOverrideDSV(impl_->activeDepthView());
+ impl_->primitiveRenderer3D_.drawTexturedCardQuadImmediate(
+     localRect, modelMatrix, texture,
+     FloatColor{1.0f, 1.0f, 1.0f, 1.0f}, opacity);
+ impl_->primitiveRenderer3D_.setOverrideDSV(impl_->m_overrideDepthDSV);
+}
+void ArtifactIRenderer::draw3DShape(
+    const std::vector<Detail::float2>& points,
+    const QMatrix4x4& modelMatrix, const FloatColor& color,
+    float opacity, bool writeDepth)
+{
+ const auto triangles = triangulatePolygon(points);
+ std::vector<QVector2D> vertices;
+ vertices.reserve(triangles.size() * 3);
+ for (const auto& triangle : triangles) {
+  for (const int index : triangle) {
+   const auto& point = points[static_cast<size_t>(index)];
+   vertices.emplace_back(point.x, point.y);
+  }
+ }
+ impl_->primitiveRenderer3D_.setOverrideDSV(impl_->activeDepthView());
+ impl_->primitiveRenderer3D_.drawShapeTrianglesImmediate(
+     vertices, modelMatrix, color, opacity, writeDepth);
+ impl_->primitiveRenderer3D_.setOverrideDSV(impl_->m_overrideDepthDSV);
+}
 void ArtifactIRenderer::drawMesh(const QString& cacheKey, const ArtifactCore::Mesh& mesh,
                                  const ArtifactCore::Material& material,
                                  const QMatrix4x4& modelMatrix, float opacity,
@@ -3422,21 +3625,12 @@ bool ArtifactIRenderer::applyTrackMatte(
  { return impl_->rayTracingManager_.get(); }
  void ArtifactIRenderer::setOverrideRTV(Diligent::ITextureView* rtv)
  {
-  if (auto ctx = impl_->deviceManager_.immediateContext()) {
-   impl_->submitQueuedDraws(ctx);
-  }
-  impl_->m_overrideColorRTV = rtv;
-  impl_->primitiveRenderer_.setOverrideRTV(rtv);
-  impl_->primitiveRenderer3D_.setOverrideRTV(rtv);
+  impl_->setRenderTargetOverrides(rtv, impl_->m_overrideDepthDSV);
  }
 
  void ArtifactIRenderer::setOverrideDSV(Diligent::ITextureView* dsv)
  {
-  if (auto ctx = impl_->deviceManager_.immediateContext()) {
-   impl_->submitQueuedDraws(ctx);
-  }
-  impl_->m_overrideDepthDSV = dsv;
-  impl_->primitiveRenderer3D_.setOverrideDSV(dsv);
+  impl_->setRenderTargetOverrides(impl_->m_overrideColorRTV, dsv);
  }
 
  // Offscreen rendering for group layers
@@ -3474,9 +3668,9 @@ bool ArtifactIRenderer::applyTrackMatte(
   desc.Width = static_cast<Diligent::Uint32>(width);
   desc.Height = static_cast<Diligent::Uint32>(height);
   desc.MipLevels = 1;
-  desc.Format = Diligent::TEX_FORMAT_D32_FLOAT;
+  desc.Format = Diligent::TEX_FORMAT_R32_TYPELESS;
   desc.Usage = Diligent::USAGE_DEFAULT;
-  desc.BindFlags = Diligent::BIND_DEPTH_STENCIL;
+  desc.BindFlags = Diligent::BIND_DEPTH_STENCIL | Diligent::BIND_SHADER_RESOURCE;
 
   impl_->deviceManager_.device()->CreateTexture(desc, nullptr, &texture);
   if (!texture) return nullptr;
@@ -3485,6 +3679,16 @@ bool ArtifactIRenderer::applyTrackMatte(
   if (!view) return nullptr;
   view->AddRef();
   return static_cast<void*>(view);
+ }
+
+ Diligent::ITextureView* ArtifactIRenderer::offscreenTextureShaderResourceView(
+     void* textureView) const
+ {
+  auto* rtv = static_cast<Diligent::ITextureView*>(textureView);
+  auto* texture = rtv ? rtv->GetTexture() : nullptr;
+  return texture ? texture->GetDefaultView(
+                       Diligent::TEXTURE_VIEW_SHADER_RESOURCE)
+                 : nullptr;
  }
 
  void ArtifactIRenderer::destroyOffscreenTexture(void* textureView)
@@ -3505,27 +3709,20 @@ bool ArtifactIRenderer::applyTrackMatte(
   if (!textureView && !depthTextureView) return;
   impl_->m_renderTargetStack.push_back(
       {impl_->m_overrideColorRTV, impl_->m_overrideDepthDSV});
-  if (textureView) {
-   auto* colorView = static_cast<Diligent::ITextureView*>(textureView);
-   setOverrideRTV(colorView);
-  }
-  if (depthTextureView || impl_->m_overrideDepthDSV) {
-   auto* depthView = static_cast<Diligent::ITextureView*>(depthTextureView);
-   setOverrideDSV(depthView);
-  }
+  impl_->setRenderTargetOverrides(
+      static_cast<Diligent::ITextureView*>(textureView),
+      static_cast<Diligent::ITextureView*>(depthTextureView));
  }
 
  void ArtifactIRenderer::popRenderTarget()
  {
   if (impl_->m_renderTargetStack.empty()) {
-   setOverrideRTV(nullptr);
-   setOverrideDSV(nullptr);
+   impl_->setRenderTargetOverrides(nullptr, nullptr);
    return;
   }
   const auto previous = impl_->m_renderTargetStack.back();
   impl_->m_renderTargetStack.pop_back();
-  setOverrideRTV(previous.colorRTV);
-  setOverrideDSV(previous.depthDSV);
+  impl_->setRenderTargetOverrides(previous.colorRTV, previous.depthDSV);
  }
 
  void ArtifactIRenderer::clearRenderTarget(const FloatColor& color)
@@ -3535,7 +3732,7 @@ bool ArtifactIRenderer::applyTrackMatte(
   auto* rtv = impl_->activeColorView();
   if (!rtv) return;
   const float clearColor[] = { color.r(), color.g(), color.b(), color.a() };
-  ctx->SetRenderTargets(1, &rtv, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  impl_->bindActiveRenderTargets(ctx);
   ctx->ClearRenderTarget(rtv, clearColor, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
  }
 
@@ -3557,8 +3754,14 @@ bool ArtifactIRenderer::applyTrackMatte(
   if (!ctx || !depthTextureView) return;
   auto* dsv = static_cast<Diligent::ITextureView*>(depthTextureView);
   auto clearDepth = std::clamp(depth, 0.0f, 1.0f);
-  ctx->SetRenderTargets(0, nullptr, dsv,
-                        Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  auto* rtv = impl_->activeColorView();
+  if (rtv) {
+   ctx->SetRenderTargets(1, &rtv, dsv,
+                         Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  } else {
+   ctx->SetRenderTargets(0, nullptr, dsv,
+                         Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  }
   ctx->ClearDepthStencil(dsv, Diligent::CLEAR_DEPTH_FLAG, clearDepth, 0,
                          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
  }

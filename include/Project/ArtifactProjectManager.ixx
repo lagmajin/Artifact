@@ -58,6 +58,8 @@ export namespace Artifact {
    void loadFromFile(const QString& fullpath);
    ArtifactProjectExporterResult saveToFile(const QString& fullpath);
    ArtifactProjectExporterResult saveIncremental(const QString& fullpath);
+   bool persistComponentSimulationBakes();
+   bool discardComponentSimulationBake(const CompositionID& compositionId);
 
    // Async versions (non-blocking, with progress callback)
    using ProjectProgressFn = std::function<void(int progress, int total, const QString& phase)>;

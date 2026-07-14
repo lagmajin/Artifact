@@ -653,12 +653,18 @@ std::optional<CompositionTransformField> chooseTransformField(
         const QString displayName = field.displayName.trimmed().isEmpty()
                                         ? QStringLiteral("Radial Transform Field")
                                         : field.displayName.trimmed();
-        const QString state = QStringLiteral("%1 / %2 / %3")
+        const QString shapeLabel = field.shape == QStringLiteral("box")
+                                       ? QStringLiteral("box")
+                                       : field.shape == QStringLiteral("linear")
+                                             ? QStringLiteral("linear")
+                                             : QStringLiteral("radial");
+        const QString state = QStringLiteral("%1 / %2 / %3 / %4")
                                   .arg(field.enabled ? QStringLiteral("有効")
                                                      : QStringLiteral("無効"),
                                        field.fieldId == activeFieldId
                                            ? QStringLiteral("active")
                                            : QStringLiteral("inactive"),
+                                       shapeLabel,
                                        QStringLiteral("%1 %2%3")
                                            .arg(transformFieldBlendModeLabel(field.blendMode),
                                                 transformFieldStrengthLabel(field.strength),
@@ -687,6 +693,24 @@ std::optional<CompositionTransformField> chooseTransformField(
         return std::nullopt;
     }
     return fields.at(index);
+}
+
+std::optional<CompositionTransformField> activeOrChosenTransformField(
+    QWidget* parent, const ArtifactCompositionPtr& composition,
+    const QString& title)
+{
+    if (!composition) {
+        return std::nullopt;
+    }
+    const QString activeFieldId = composition->activeTransformFieldId().trimmed();
+    if (!activeFieldId.isEmpty()) {
+        for (const auto& field : composition->transformFields()) {
+            if (field.fieldId == activeFieldId) {
+                return field;
+            }
+        }
+    }
+    return chooseTransformField(parent, composition, title);
 }
 
 std::optional<QPair<QVector<CompositionTransformField>, int>>
@@ -853,6 +877,8 @@ public:
     QAction* distributeSpacingAction = nullptr;
     QAction* radialTransformAction = nullptr;
     QAction* createLiveRadialFieldAction = nullptr;
+    QAction* createLiveBoxFieldAction = nullptr;
+    QAction* createLiveLinearFieldAction = nullptr;
     QMenu* liveFieldMenu = nullptr;
     QAction* selectLiveRadialFieldAction = nullptr;
     QAction* activatePreviousLiveRadialFieldAction = nullptr;
@@ -935,7 +961,7 @@ public:
     void handleDistribute(ArtifactCore::DistributeType type);
     void handleDistributeSpacing();
     void handleRadialTransform();
-    void handleCreateLiveRadialField();
+    void handleCreateLiveTransformField(const QString& shape);
     void handleSelectLiveRadialField();
     void handleActivateLiveRadialField(int direction);
     void handleActivateLiveFieldById(const QString& fieldId);
@@ -1240,6 +1266,18 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createLiveRadialFieldAction->setToolTip(
         QStringLiteral("元のTransformを保ったまま、選択レイヤーへ放射状変形を適用します"));
     arrangeMenu->addAction(createLiveRadialFieldAction);
+    createLiveBoxFieldAction = new QAction("ライブBox Fieldを作成...", arrangeMenu);
+    createLiveBoxFieldAction->setIcon(
+        QIcon(resolveIconPath("Studio/layermenu_arrange.svg")));
+    createLiveBoxFieldAction->setToolTip(
+        QStringLiteral("元のTransformを保ったまま、選択レイヤーへ矩形範囲の変形を適用します"));
+    arrangeMenu->addAction(createLiveBoxFieldAction);
+    createLiveLinearFieldAction = new QAction("ライブLinear Fieldを作成...", arrangeMenu);
+    createLiveLinearFieldAction->setIcon(
+        QIcon(resolveIconPath("Studio/layermenu_arrange.svg")));
+    createLiveLinearFieldAction->setToolTip(
+        QStringLiteral("元のTransformを保ったまま、選択レイヤーへ方向付きField変形を適用します"));
+    arrangeMenu->addAction(createLiveLinearFieldAction);
     liveFieldMenu = new QMenu("Live Fields", arrangeMenu);
     liveFieldMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
     arrangeMenu->addMenu(liveFieldMenu);
@@ -1256,6 +1294,14 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     moveLiveRadialFieldUpAction = new QAction("ライブFieldを上へ...", arrangeMenu);
     moveLiveRadialFieldDownAction = new QAction("ライブFieldを下へ...", arrangeMenu);
     removeLiveRadialFieldAction = new QAction("ライブFieldを削除...", arrangeMenu);
+    liveFieldMenu->addAction(editLiveRadialFieldAction);
+    liveFieldMenu->addAction(toggleLiveRadialFieldAction);
+    liveFieldMenu->addSeparator();
+    liveFieldMenu->addAction(moveActiveLiveRadialFieldUpAction);
+    liveFieldMenu->addAction(moveActiveLiveRadialFieldDownAction);
+    liveFieldMenu->addSeparator();
+    liveFieldMenu->addAction(removeLiveRadialFieldAction);
+    liveFieldMenu->addSeparator();
     arrangeMenu->addAction(editLiveRadialFieldAction);
     arrangeMenu->addAction(toggleLiveRadialFieldAction);
     arrangeMenu->addAction(moveActiveLiveRadialFieldUpAction);
@@ -1703,7 +1749,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == sendBackwardAction) { handleSendBackward(); return; }
         if (action == sendToBackAction) { handleSendToBack(); return; }
         if (action == radialTransformAction) { handleRadialTransform(); return; }
-        if (action == createLiveRadialFieldAction) { handleCreateLiveRadialField(); return; }
+        if (action == createLiveRadialFieldAction) { handleCreateLiveTransformField(QStringLiteral("radial")); return; }
+        if (action == createLiveBoxFieldAction) { handleCreateLiveTransformField(QStringLiteral("box")); return; }
+        if (action == createLiveLinearFieldAction) { handleCreateLiveTransformField(QStringLiteral("linear")); return; }
         if (action == selectLiveRadialFieldAction) { handleSelectLiveRadialField(); return; }
         if (action == activatePreviousLiveRadialFieldAction) { handleActivateLiveRadialField(-1); return; }
         if (action == activateNextLiveRadialFieldAction) { handleActivateLiveRadialField(1); return; }
@@ -2026,6 +2074,8 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
         currentSelectionManager ? currentSelectionManager->selectedLayers().size() : 0;
     radialTransformAction->setEnabled(hasComp && selectedLayerCount >= 2);
     createLiveRadialFieldAction->setEnabled(hasComp && selectedLayerCount >= 2);
+    createLiveBoxFieldAction->setEnabled(hasComp && selectedLayerCount >= 2);
+    createLiveLinearFieldAction->setEnabled(hasComp && selectedLayerCount >= 2);
     const auto currentComposition =
         service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
     const bool hasLiveFields =
@@ -2075,18 +2125,24 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
         const QString activeFieldId = currentComposition->activeTransformFieldId();
         for (const auto& field : fields) {
             const QString blendLabel = transformFieldBlendModeLabel(field.blendMode);
+            const QString shapeLabel = field.shape == QStringLiteral("box")
+                                           ? QStringLiteral("box")
+                                           : field.shape == QStringLiteral("linear")
+                                                 ? QStringLiteral("linear")
+                                                 : QStringLiteral("radial");
             auto* action = new QAction(
-                QStringLiteral("%1  [%2 / %3 / %4 / %5%6]")
+                QStringLiteral("%1  [%2 / %3 / %4 / %5 / %6%7]")
                     .arg(field.displayName.trimmed().isEmpty()
                              ? QStringLiteral("Radial Transform Field")
                              : field.displayName.trimmed(),
                          field.fieldId == activeFieldId ? QStringLiteral("active")
                                                         : QStringLiteral("inactive"),
-                         field.enabled ? QStringLiteral("enabled")
-                                       : QStringLiteral("disabled"),
-                         blendLabel,
-                         transformFieldStrengthLabel(field.strength),
-                         field.invert ? QStringLiteral(" / inv") : QString()),
+                          field.enabled ? QStringLiteral("enabled")
+                                        : QStringLiteral("disabled"),
+                          shapeLabel,
+                          blendLabel,
+                          transformFieldStrengthLabel(field.strength),
+                          field.invert ? QStringLiteral(" / inv") : QString()),
                 liveFieldMenu);
             action->setCheckable(true);
             action->setChecked(field.fieldId == activeFieldId);
@@ -3802,8 +3858,18 @@ void ArtifactLayerMenu::Impl::handleRadialTransform()
     }
 }
 
-void ArtifactLayerMenu::Impl::handleCreateLiveRadialField()
+void ArtifactLayerMenu::Impl::handleCreateLiveTransformField(const QString& requestedShape)
 {
+    const QString normalizedShape = requestedShape.trimmed().toLower();
+    const QString shape = normalizedShape == QStringLiteral("box") ||
+                                  normalizedShape == QStringLiteral("linear")
+                              ? normalizedShape
+                              : QStringLiteral("radial");
+    const QString dialogTitle = shape == QStringLiteral("box")
+                                    ? QStringLiteral("ライブBox Field")
+                                    : shape == QStringLiteral("linear")
+                                          ? QStringLiteral("ライブLinear Field")
+                                          : QStringLiteral("ライブ放射状Field");
     auto* selection = ArtifactLayerSelectionManager::instance();
     if (!selection) {
         return;
@@ -3821,7 +3887,7 @@ void ArtifactLayerMenu::Impl::handleCreateLiveRadialField()
     }
     if (layers.size() < 2) {
         QMessageBox::information(
-            menu_->window(), QStringLiteral("ライブ放射状Field"),
+            menu_->window(), dialogTitle,
             QStringLiteral("変形ロックされていないレイヤーを2つ以上選択してください。"));
         return;
     }
@@ -3830,7 +3896,7 @@ void ArtifactLayerMenu::Impl::handleCreateLiveRadialField()
     for (const auto& layer : layers) {
         if (layer->parentLayerId() != commonParentId) {
             QMessageBox::information(
-                menu_->window(), QStringLiteral("ライブ放射状Field"),
+                menu_->window(), dialogTitle,
                 QStringLiteral("異なる親を持つレイヤーは座標系が異なるため、同じ親のレイヤーだけを選択してください。"));
             return;
         }
@@ -3838,21 +3904,21 @@ void ArtifactLayerMenu::Impl::handleCreateLiveRadialField()
 
     bool accepted = false;
     const double expansionPercent = QInputDialog::getDouble(
-        menu_->window(), QStringLiteral("ライブ放射状Field"),
+        menu_->window(), dialogTitle,
         QStringLiteral("外側レイヤーの移動量 (%)"),
         25.0, -90.0, 500.0, 1, &accepted);
     if (!accepted) {
         return;
     }
     const double edgeScalePercent = QInputDialog::getDouble(
-        menu_->window(), QStringLiteral("ライブ放射状Field"),
+        menu_->window(), dialogTitle,
         QStringLiteral("最外周のスケール (%)"),
         70.0, 1.0, 500.0, 1, &accepted);
     if (!accepted) {
         return;
     }
     const double strength = QInputDialog::getDouble(
-        menu_->window(), QStringLiteral("ライブ放射状Field"),
+        menu_->window(), dialogTitle,
         QStringLiteral("強さ (strength)"),
         1.0, 0.0, 4.0, 2, &accepted);
     if (!accepted) {
@@ -3861,14 +3927,14 @@ void ArtifactLayerMenu::Impl::handleCreateLiveRadialField()
 
     const auto blendChoices = transformFieldBlendModeChoices();
     const QString blendMode = QInputDialog::getItem(
-        menu_->window(), QStringLiteral("ライブ放射状Field"),
+        menu_->window(), dialogTitle,
         QStringLiteral("Blend mode"), blendChoices, 0, false, &accepted);
     if (!accepted) {
         return;
     }
 
     const auto invertChoice = QMessageBox::question(
-        menu_->window(), QStringLiteral("ライブ放射状Field"),
+        menu_->window(), dialogTitle,
         QStringLiteral("Field を反転しますか?"),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     const bool invert = invertChoice == QMessageBox::Yes;
@@ -3882,9 +3948,15 @@ void ArtifactLayerMenu::Impl::handleCreateLiveRadialField()
     center /= static_cast<qreal>(layers.size());
 
     qreal radius = 0.0;
+    qreal secondaryRadius = 0.0;
     CompositionTransformField field;
     field.fieldId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    field.displayName = QStringLiteral("Radial Transform Field");
+    field.shape = shape;
+    field.displayName = shape == QStringLiteral("box")
+                            ? QStringLiteral("Box Transform Field")
+                            : shape == QStringLiteral("linear")
+                                  ? QStringLiteral("Linear Transform Field")
+                                  : QStringLiteral("Radial Transform Field");
     field.center = center;
     field.expansion = expansionPercent / 100.0;
     field.edgeScale = edgeScalePercent / 100.0;
@@ -3896,17 +3968,41 @@ void ArtifactLayerMenu::Impl::handleCreateLiveRadialField()
         const QPointF position(
             static_cast<qreal>(layer->transform3D().positionX()),
             static_cast<qreal>(layer->transform3D().positionY()));
-        radius = std::max(radius, std::hypot(
-            position.x() - center.x(), position.y() - center.y()));
+        if (shape == QStringLiteral("box") || shape == QStringLiteral("linear")) {
+            radius = std::max(radius, std::abs(position.x() - center.x()));
+            secondaryRadius =
+                std::max(secondaryRadius, std::abs(position.y() - center.y()));
+        } else {
+            radius = std::max(radius, std::hypot(
+                position.x() - center.x(), position.y() - center.y()));
+        }
         field.targetLayerIds.append(layer->id());
     }
-    if (radius <= 0.0001) {
+    if (shape == QStringLiteral("linear") && secondaryRadius > radius) {
+        std::swap(radius, secondaryRadius);
+        field.rotationDegrees = 90.0;
+    }
+    if (shape == QStringLiteral("box") || shape == QStringLiteral("linear")) {
+        if (radius <= 0.0001 && secondaryRadius > 0.0001) {
+            radius = secondaryRadius * 0.5;
+        }
+        if (secondaryRadius <= 0.0001 && radius > 0.0001) {
+            secondaryRadius = radius * 0.5;
+        }
+    }
+    if (radius <= 0.0001 ||
+        ((shape == QStringLiteral("box") || shape == QStringLiteral("linear")) &&
+         secondaryRadius <= 0.0001)) {
         QMessageBox::information(
-            menu_->window(), QStringLiteral("ライブ放射状Field"),
+            menu_->window(), dialogTitle,
             QStringLiteral("選択レイヤーが同じ位置にあるため、Fieldを作成できません。"));
         return;
     }
     field.radius = radius;
+    field.secondaryRadius = shape == QStringLiteral("box") ||
+                                    shape == QStringLiteral("linear")
+                                ? secondaryRadius
+                                : radius;
 
     if (auto* manager = UndoManager::instance()) {
         manager->push(std::make_unique<AddCompositionTransformFieldCommand>(
@@ -4022,7 +4118,7 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
         ArtifactProjectService::instance()
             ? ArtifactProjectService::instance()->currentComposition().lock()
             : ArtifactCompositionPtr{};
-    auto selected = chooseTransformField(
+    auto selected = activeOrChosenTransformField(
         menu_->window(), composition, QStringLiteral("ライブFieldを編集"));
     if (!selected.has_value()) {
         return;
@@ -4032,9 +4128,35 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
     bool accepted = false;
     edited.radius = QInputDialog::getDouble(
         menu_->window(), QStringLiteral("ライブFieldを編集"),
-        QStringLiteral("半径"), edited.radius, 0.01, 100000.0, 2, &accepted);
+        edited.shape == QStringLiteral("box")
+            ? QStringLiteral("X半径")
+            : edited.shape == QStringLiteral("linear")
+                  ? QStringLiteral("グラデーション半幅")
+                  : QStringLiteral("半径"),
+        edited.radius, 0.01, 100000.0, 2, &accepted);
     if (!accepted) {
         return;
+    }
+    if (edited.shape == QStringLiteral("box") ||
+        edited.shape == QStringLiteral("linear")) {
+        edited.secondaryRadius = QInputDialog::getDouble(
+            menu_->window(), QStringLiteral("ライブFieldを編集"),
+            edited.shape == QStringLiteral("box") ? QStringLiteral("Y半径")
+                                                    : QStringLiteral("ガイド長"),
+            edited.secondaryRadius, 0.01, 100000.0,
+            2, &accepted);
+        if (!accepted) {
+            return;
+        }
+    }
+    if (edited.shape == QStringLiteral("linear")) {
+        edited.rotationDegrees = QInputDialog::getDouble(
+            menu_->window(), QStringLiteral("ライブFieldを編集"),
+            QStringLiteral("方向 (degrees)"), edited.rotationDegrees,
+            -360.0, 360.0, 1, &accepted);
+        if (!accepted) {
+            return;
+        }
     }
     edited.expansion = QInputDialog::getDouble(
         menu_->window(), QStringLiteral("ライブFieldを編集"),
@@ -4047,6 +4169,13 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
         menu_->window(), QStringLiteral("ライブFieldを編集"),
         QStringLiteral("最外周のスケール (%)"),
         edited.edgeScale * 100.0, 1.0, 500.0, 1, &accepted) / 100.0;
+    if (!accepted) {
+        return;
+    }
+    edited.timeOffsetSeconds = QInputDialog::getDouble(
+        menu_->window(), QStringLiteral("ライブFieldを編集"),
+        QStringLiteral("Clone time offset (seconds)"),
+        edited.timeOffsetSeconds, -60.0, 60.0, 3, &accepted);
     if (!accepted) {
         return;
     }
@@ -4093,7 +4222,7 @@ void ArtifactLayerMenu::Impl::handleToggleLiveRadialField()
         ArtifactProjectService::instance()
             ? ArtifactProjectService::instance()->currentComposition().lock()
             : ArtifactCompositionPtr{};
-    auto selected = chooseTransformField(
+    auto selected = activeOrChosenTransformField(
         menu_->window(), composition, QStringLiteral("ライブFieldを有効/無効"));
     if (!selected.has_value()) {
         return;
@@ -4210,7 +4339,7 @@ void ArtifactLayerMenu::Impl::handleRemoveLiveRadialField()
         ArtifactProjectService::instance()
             ? ArtifactProjectService::instance()->currentComposition().lock()
             : ArtifactCompositionPtr{};
-    auto selected = chooseTransformField(
+    auto selected = activeOrChosenTransformField(
         menu_->window(), composition, QStringLiteral("ライブFieldを削除"));
     if (!selected.has_value()) {
         return;

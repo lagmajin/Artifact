@@ -4,9 +4,11 @@ module;
 #include <QColor>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QSaveFile>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QStringList>
@@ -65,6 +67,114 @@ namespace Artifact {
   void appendProjectValidationDiagnostics(const std::shared_ptr<ArtifactProject>& projectPtr,
                                           QStringList& warnings,
                                           QStringList& errors);
+
+  QString componentBakeSidecarPath(const QString& projectPath)
+  {
+    return projectPath + QStringLiteral(".component-bake.json");
+  }
+
+  template <typename Callback>
+  void forEachProjectComposition(
+      const std::shared_ptr<ArtifactProject>& projectPtr, Callback&& callback)
+  {
+    if (!projectPtr) return;
+    for (auto* root : projectPtr->projectItems()) {
+      std::function<void(ProjectItem*)> walk = [&](ProjectItem* item) {
+        if (!item) return;
+        if (item->type() == eProjectItemType::Composition) {
+          auto* compositionItem = static_cast<CompositionItem*>(item);
+          const auto result = projectPtr->findComposition(
+              compositionItem->compositionId);
+          if (result.success) {
+            if (auto composition = result.ptr.lock()) {
+              callback(composition);
+            }
+          }
+        }
+        for (auto* child : item->children) walk(child);
+      };
+      walk(root);
+    }
+  }
+
+  bool saveComponentBakeSidecar(
+      const std::shared_ptr<ArtifactProject>& projectPtr,
+      const QString& projectPath)
+  {
+    QJsonArray compositions;
+    forEachProjectComposition(projectPtr, [&](const ArtifactCompositionPtr& composition) {
+      const QJsonObject bake =
+          composition->exportLayerComponentSimulationBake();
+      if (!bake.isEmpty()) {
+        compositions.append(QJsonObject{
+            {QStringLiteral("compositionId"), composition->id().toString()},
+            {QStringLiteral("bake"), bake}});
+      }
+    });
+
+    const QString sidecarPath = componentBakeSidecarPath(projectPath);
+    if (compositions.isEmpty()) {
+      return !QFile::exists(sidecarPath) || QFile::remove(sidecarPath);
+    }
+    QSaveFile file(sidecarPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+      return false;
+    }
+    const QJsonObject root{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("projectFile"), QFileInfo(projectPath).fileName()},
+        {QStringLiteral("compositions"), compositions}};
+    if (file.write(QJsonDocument(root).toJson(QJsonDocument::Compact)) < 0) {
+      file.cancelWriting();
+      return false;
+    }
+    return file.commit();
+  }
+
+  int loadComponentBakeSidecar(
+      const std::shared_ptr<ArtifactProject>& projectPtr,
+      const QString& projectPath)
+  {
+    QFile file(componentBakeSidecarPath(projectPath));
+    if (!file.exists()) return 0;
+    constexpr qint64 kMaxSidecarBytes = 512LL * 1024LL * 1024LL;
+    if (file.size() <= 0 || file.size() > kMaxSidecarBytes ||
+        !file.open(QIODevice::ReadOnly)) {
+      return 0;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument document =
+        QJsonDocument::fromJson(file.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError ||
+        !document.isObject()) {
+      return 0;
+    }
+    const QJsonObject root = document.object();
+    const QJsonArray compositions =
+        root.value(QStringLiteral("compositions")).toArray();
+    if (root.value(QStringLiteral("version")).toInt() != 1 ||
+        root.value(QStringLiteral("projectFile")).toString() !=
+            QFileInfo(projectPath).fileName() ||
+        compositions.size() > 10000) {
+      return 0;
+    }
+    int restored = 0;
+    for (const auto& value : compositions) {
+      if (!value.isObject()) continue;
+      const QJsonObject item = value.toObject();
+      const CompositionID compositionId(
+          item.value(QStringLiteral("compositionId")).toString());
+      const auto result = projectPtr->findComposition(compositionId);
+      if (!result.success) continue;
+      if (auto composition = result.ptr.lock()) {
+        if (composition->importLayerComponentSimulationBake(
+                item.value(QStringLiteral("bake")).toObject())) {
+          ++restored;
+        }
+      }
+    }
+    return restored;
+  }
 
   QString defaultProjectDisplayName()
   {
@@ -518,6 +628,13 @@ void ArtifactProjectManager::loadFromFile(const QString& fullpath)
    return;
   }
 
+  const int restoredComponentBakes =
+      loadComponentBakeSidecar(importResult.project, fullpath);
+  if (restoredComponentBakes > 0) {
+    qInfo() << "[loadFromFile] Restored component simulation bakes:"
+            << restoredComponentBakes;
+  }
+
   impl_->currentProjectPtr_.reset();
   impl_->currentProjectPtr_ = importResult.project;
   impl_->currentProjectPath_ = fullpath;
@@ -727,6 +844,10 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& 
   result = exporter.exportProject();
 
   if (result.success) {
+   if (!saveComponentBakeSidecar(projectPtr, fullpath)) {
+    qWarning() << "[saveToFile] Failed to save component bake sidecar for:"
+               << fullpath;
+   }
    impl_->currentProjectPath_ = fullpath;
    runProjectHookScript(QStringLiteral("after_project_export"), fullpath);
   } else {
@@ -756,6 +877,38 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveIncremental(const QStr
   }
 
   return saveToFile(targetPath);
+}
+
+bool ArtifactProjectManager::persistComponentSimulationBakes()
+{
+  if (!impl_ || !impl_->currentProjectPtr_ ||
+      impl_->currentProjectPath_.trimmed().isEmpty()) {
+    return false;
+  }
+  return saveComponentBakeSidecar(
+      impl_->currentProjectPtr_, impl_->currentProjectPath_);
+}
+
+bool ArtifactProjectManager::discardComponentSimulationBake(
+    const CompositionID& compositionId)
+{
+  if (!impl_ || !impl_->currentProjectPtr_) {
+    return false;
+  }
+  const auto result = impl_->currentProjectPtr_->findComposition(compositionId);
+  if (!result.success) {
+    return false;
+  }
+  const auto composition = result.ptr.lock();
+  if (!composition) {
+    return false;
+  }
+  composition->resetLayerComponentSimulation();
+  if (impl_->currentProjectPath_.trimmed().isEmpty()) {
+    return true;
+  }
+  return saveComponentBakeSidecar(
+      impl_->currentProjectPtr_, impl_->currentProjectPath_);
 }
 
 // ─────────────────────────────────────────────
@@ -805,6 +958,13 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
 
     if (!importResult.success || !importResult.project) {
       return importResult;
+    }
+
+    const int restoredComponentBakes =
+        loadComponentBakeSidecar(importResult.project, fullpath);
+    if (restoredComponentBakes > 0) {
+      qInfo() << "[loadFromFileAsync] Restored component simulation bakes:"
+              << restoredComponentBakes;
     }
 
     if (onProgress) onProgress(60, 100, QStringLiteral("Health check..."));
@@ -899,6 +1059,10 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
     result = exporter.exportProject();
 
     if (result.success) {
+      if (!saveComponentBakeSidecar(projectPtr, fullpath)) {
+        qWarning() << "[saveToFileAsync] Failed to save component bake sidecar for:"
+                   << fullpath;
+      }
       if (onProgress) onProgress(100, 100, QStringLiteral("Saved"));
     } else {
       if (onProgress) onProgress(100, 100, QStringLiteral("Save failed"));

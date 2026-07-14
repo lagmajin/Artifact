@@ -17,6 +17,7 @@ module;
 #include <QStringList>
 #include <QTransform>
 #include <QVector3D>
+#include <DiligentCore/Common/interface/BasicMath.hpp>
 #include <unordered_set>
 #include <algorithm>
 #include <cmath>
@@ -979,9 +980,9 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
 
   if (layer->is3D()) {
     const auto world = layer->getGlobalTransformMatrix();
-    const auto point = [&world](float x, float y) {
+    const auto point = [&world](float x, float y) -> Detail::float3 {
       const auto transformed = world * Diligent::float4{x, y, 0.0f, 1.0f};
-      return Detail::float3{transformed.x, transformed.y, transformed.z};
+      return Detail::float3(transformed.x, transformed.y, transformed.z);
     };
     const auto tl = point(static_cast<float>(bounds.left()),
                           static_cast<float>(bounds.top()));

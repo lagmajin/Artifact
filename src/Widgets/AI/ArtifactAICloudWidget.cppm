@@ -222,6 +222,7 @@ struct SectionCard {
 SectionCard makeSectionCard(QWidget *parent, const QString &title,
                             const QString &subtitle = QString()) {
   auto *frame = new QFrame(parent);
+  frame->setObjectName(QStringLiteral("aiCloudSectionCard"));
   frame->setFrameShape(QFrame::StyledPanel);
   frame->setFrameShadow(QFrame::Plain);
 
@@ -1036,14 +1037,17 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   layout->setSpacing(10);
 
   auto *splitter = new QSplitter(Qt::Horizontal, this);
+  splitter->setObjectName(QStringLiteral("aiCloudMainSplitter"));
   splitter->setChildrenCollapsible(false);
 
   auto *leftPanel = new QWidget(splitter);
+  leftPanel->setObjectName(QStringLiteral("aiCloudLeftPanel"));
   auto *leftLayout = new QVBoxLayout(leftPanel);
   leftLayout->setContentsMargins(0, 0, 0, 0);
   leftLayout->setSpacing(10);
 
   auto *headerFrame = new QFrame(leftPanel);
+  headerFrame->setObjectName(QStringLiteral("aiCloudHeaderFrame"));
   headerFrame->setFrameShape(QFrame::StyledPanel);
   headerFrame->setFrameShadow(QFrame::Plain);
   auto *headerLayout = new QVBoxLayout(headerFrame);
@@ -1070,6 +1074,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   leftLayout->addWidget(headerFrame);
 
   providerCombo_ = new QComboBox(leftPanel);
+  providerCombo_->setObjectName(QStringLiteral("aiCloudProviderCombo"));
   providerCombo_->addItem(QStringLiteral("OpenAI"),
                           static_cast<int>(AIProvider::OpenAI));
   providerCombo_->addItem(QStringLiteral("Grok"),
@@ -1084,27 +1089,32 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
 
   baseUrlLabel_ = new QLabel(QStringLiteral("Base URL"), leftPanel);
   baseUrlEdit_ = new QLineEdit(leftPanel);
+  baseUrlEdit_->setObjectName(QStringLiteral("aiCloudBaseUrlEdit"));
   baseUrlEdit_->setPlaceholderText(QStringLiteral("https://api.openai.com/v1"));
   baseUrlLabel_->setVisible(false);
   baseUrlEdit_->setVisible(false);
 
   apiKeyEdit_ = new QLineEdit(leftPanel);
+  apiKeyEdit_->setObjectName(QStringLiteral("aiCloudApiKeyEdit"));
   apiKeyEdit_->setEchoMode(QLineEdit::Password);
   apiKeyEdit_->setPlaceholderText(QStringLiteral("API key / bearer token"));
   apiKeyEdit_->setVisible(false);
 
   modelFilterEdit_ = new QLineEdit(leftPanel);
+  modelFilterEdit_->setObjectName(QStringLiteral("aiCloudModelFilterEdit"));
   modelFilterEdit_->setPlaceholderText(QStringLiteral("Filter models..."));
   modelFilterEdit_->setClearButtonEnabled(true);
   modelFilterEdit_->setVisible(false);
 
   modelCombo_ = new QComboBox(leftPanel);
+  modelCombo_->setObjectName(QStringLiteral("aiCloudModelCombo"));
   modelCombo_->setVisible(false);
 
   auto *advancedToggleRow = new QHBoxLayout();
   advancedToggleRow->setContentsMargins(0, 0, 0, 0);
   advancedToggleRow->setSpacing(6);
   auto *advancedToggle = new QPushButton(QStringLiteral("More"), leftPanel);
+  advancedToggle->setObjectName(QStringLiteral("aiCloudAdvancedToggleButton"));
   advancedToggle->setCheckable(true);
   advancedToggle->setChecked(false);
   advancedToggle->setFlat(true);
@@ -1115,6 +1125,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   leftLayout->addLayout(advancedToggleRow);
 
   auto *advancedPanel = new QWidget(leftPanel);
+  advancedPanel->setObjectName(QStringLiteral("aiCloudAdvancedPanel"));
   auto *advancedLayout = new QVBoxLayout(advancedPanel);
   advancedLayout->setContentsMargins(0, 0, 0, 0);
   advancedLayout->setSpacing(10);
@@ -1130,6 +1141,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   approvalForm->setHorizontalSpacing(8);
   approvalForm->setVerticalSpacing(6);
   toolApprovalModeCombo_ = new QComboBox(leftPanel);
+  toolApprovalModeCombo_->setObjectName(QStringLiteral("aiCloudToolApprovalModeCombo"));
   toolApprovalModeCombo_->addItem(QStringLiteral("Ask Every Time"));
   toolApprovalModeCombo_->addItem(QStringLiteral("Auto-Approve"));
   toolApprovalModeCombo_->addItem(QStringLiteral("YOLO"));
@@ -1161,6 +1173,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   toolCountLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   auto *refreshToolsButton =
       new QPushButton(QStringLiteral("Refresh"), leftPanel);
+  refreshToolsButton->setObjectName(QStringLiteral("aiCloudRefreshToolsButton"));
   refreshToolsButton->setFixedWidth(82);
   toolHeaderRow->addWidget(toolCountLabel_);
   toolHeaderRow->addStretch();
@@ -1168,6 +1181,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   toolsCard.body->addLayout(toolHeaderRow);
 
   toolSchemaPreview_ = new QTextEdit(leftPanel);
+  toolSchemaPreview_->setObjectName(QStringLiteral("aiCloudToolSchemaPreview"));
   toolSchemaPreview_->setReadOnly(true);
   toolSchemaPreview_->setAcceptRichText(false);
   toolSchemaPreview_->setMinimumHeight(180);
@@ -1183,6 +1197,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   auto *toolLogLabel = new QLabel(QStringLiteral("Tool Log"), leftPanel);
   auto *clearToolLogButton =
       new QPushButton(QStringLiteral("Clear"), leftPanel);
+  clearToolLogButton->setObjectName(QStringLiteral("aiCloudClearToolLogButton"));
   clearToolLogButton->setFixedWidth(72);
   toolLogHeaderRow->addWidget(toolLogLabel);
   toolLogHeaderRow->addStretch();
@@ -1190,6 +1205,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   toolsCard.body->addLayout(toolLogHeaderRow);
 
   toolLogView_ = new QTextEdit(leftPanel);
+  toolLogView_->setObjectName(QStringLiteral("aiCloudToolLogView"));
   toolLogView_->setReadOnly(true);
   toolLogView_->setAcceptRichText(false);
   toolLogView_->setMinimumHeight(160);
@@ -1209,6 +1225,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   auto *mcpLabel = new QLabel(QStringLiteral("Bridge"), leftPanel);
   auto *refreshMcpButton =
       new QPushButton(QStringLiteral("Refresh"), leftPanel);
+  refreshMcpButton->setObjectName(QStringLiteral("aiCloudRefreshMcpButton"));
   refreshMcpButton->setFixedWidth(82);
   mcpHeaderRow->addWidget(mcpLabel);
   mcpHeaderRow->addStretch();
@@ -1216,6 +1233,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   mcpCard.body->addLayout(mcpHeaderRow);
 
   mcpPreview_ = new QTextEdit(leftPanel);
+  mcpPreview_->setObjectName(QStringLiteral("aiCloudMcpPreview"));
   mcpPreview_->setReadOnly(true);
   mcpPreview_->setAcceptRichText(false);
   mcpPreview_->setMinimumHeight(220);
@@ -1237,10 +1255,12 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   transportCard.body->addLayout(transportForm);
 
   mcpProgramEdit_ = new QLineEdit(leftPanel);
+  mcpProgramEdit_->setObjectName(QStringLiteral("aiCloudMcpProgramEdit"));
   mcpProgramEdit_->setPlaceholderText(QStringLiteral("mcp-server.exe"));
   transportForm->addRow(QStringLiteral("Program"), mcpProgramEdit_);
 
   mcpArgsEdit_ = new QLineEdit(leftPanel);
+  mcpArgsEdit_->setObjectName(QStringLiteral("aiCloudMcpArgsEdit"));
   mcpArgsEdit_->setPlaceholderText(QStringLiteral("--stdio"));
   transportForm->addRow(QStringLiteral("Args"), mcpArgsEdit_);
   mcpProgramEdit_->setText(QCoreApplication::applicationFilePath());
@@ -1254,12 +1274,17 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   transportButtons->setContentsMargins(0, 0, 0, 0);
   transportButtons->setSpacing(6);
   mcpStartButton_ = new QPushButton(QStringLiteral("Start"), leftPanel);
+  mcpStartButton_->setObjectName(QStringLiteral("aiCloudMcpStartButton"));
   mcpStopButton_ = new QPushButton(QStringLiteral("Stop"), leftPanel);
+  mcpStopButton_->setObjectName(QStringLiteral("aiCloudMcpStopButton"));
   mcpInitializeButton_ =
       new QPushButton(QStringLiteral("Initialize"), leftPanel);
+  mcpInitializeButton_->setObjectName(QStringLiteral("aiCloudMcpInitializeButton"));
   mcpListToolsButton_ =
       new QPushButton(QStringLiteral("List Tools"), leftPanel);
+  mcpListToolsButton_->setObjectName(QStringLiteral("aiCloudMcpListToolsButton"));
   mcpPingButton_ = new QPushButton(QStringLiteral("Ping"), leftPanel);
+  mcpPingButton_->setObjectName(QStringLiteral("aiCloudMcpPingButton"));
   transportButtons->addWidget(mcpStartButton_);
   transportButtons->addWidget(mcpStopButton_);
   transportButtons->addWidget(mcpInitializeButton_);
@@ -1275,15 +1300,18 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   transportCard.body->addLayout(mcpToolForm);
 
   mcpToolClassEdit_ = new QLineEdit(leftPanel);
+  mcpToolClassEdit_->setObjectName(QStringLiteral("aiCloudMcpToolClassEdit"));
   mcpToolClassEdit_->setPlaceholderText(
       QStringLiteral("ArtifactProjectService"));
   mcpToolForm->addRow(QStringLiteral("Tool Class"), mcpToolClassEdit_);
 
   mcpToolMethodEdit_ = new QLineEdit(leftPanel);
+  mcpToolMethodEdit_->setObjectName(QStringLiteral("aiCloudMcpToolMethodEdit"));
   mcpToolMethodEdit_->setPlaceholderText(QStringLiteral("currentComposition"));
   mcpToolForm->addRow(QStringLiteral("Tool Method"), mcpToolMethodEdit_);
 
   mcpToolArgsEdit_ = new QTextEdit(leftPanel);
+  mcpToolArgsEdit_->setObjectName(QStringLiteral("aiCloudMcpToolArgsEdit"));
   mcpToolArgsEdit_->setAcceptRichText(false);
   mcpToolArgsEdit_->setFont(
       QFontDatabase::systemFont(QFontDatabase::FixedFont));
@@ -1296,6 +1324,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   mcpToolCallRow->setContentsMargins(0, 0, 0, 0);
   mcpToolCallRow->setSpacing(6);
   mcpToolCallButton_ = new QPushButton(QStringLiteral("Call Tool"), leftPanel);
+  mcpToolCallButton_->setObjectName(QStringLiteral("aiCloudMcpToolCallButton"));
   mcpToolCallRow->addStretch();
   mcpToolCallRow->addWidget(mcpToolCallButton_);
   transportCard.body->addLayout(mcpToolCallRow);
@@ -1304,6 +1333,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   mcpSelectorRow->setContentsMargins(0, 0, 0, 0);
   mcpSelectorRow->setSpacing(6);
   mcpToolSelector_ = new QComboBox(leftPanel);
+  mcpToolSelector_->setObjectName(QStringLiteral("aiCloudMcpToolSelector"));
   mcpToolSelector_->setEditable(true);
   mcpToolSelector_->setInsertPolicy(QComboBox::NoInsert);
   mcpToolSelector_->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
@@ -1311,6 +1341,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   transportCard.body->addLayout(mcpSelectorRow);
 
   mcpLogView_ = new QTextEdit(leftPanel);
+  mcpLogView_->setObjectName(QStringLiteral("aiCloudMcpLogView"));
   mcpLogView_->setReadOnly(true);
   mcpLogView_->setAcceptRichText(false);
   mcpLogView_->setMinimumHeight(140);
@@ -1330,6 +1361,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
           });
 
   auto *rightPanel = new QWidget(splitter);
+  rightPanel->setObjectName(QStringLiteral("aiCloudRightPanel"));
   auto *rightLayout = new QVBoxLayout(rightPanel);
   rightLayout->setContentsMargins(0, 0, 0, 0);
   rightLayout->setSpacing(10);
@@ -1339,6 +1371,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   panelControlRow->setSpacing(6);
   auto *panelToggleButton =
       new QPushButton(QStringLiteral("Show Cloud Panel"), rightPanel);
+  panelToggleButton->setObjectName(QStringLiteral("aiCloudPanelToggleButton"));
   panelToggleButton->setToolTip(
       QStringLiteral("Show or hide the left-side cloud controls panel"));
   panelToggleButton->setCheckable(true);
@@ -1347,6 +1380,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   panelControlRow->addStretch();
   openSettingsButton_ = new QPushButton(QStringLiteral("Cloud Settings..."),
                                         rightPanel);
+  openSettingsButton_->setObjectName(QStringLiteral("aiCloudOpenSettingsButton"));
   panelControlRow->addWidget(openSettingsButton_);
   rightLayout->addLayout(panelControlRow);
 
@@ -1369,14 +1403,17 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   transcriptToolbar->addStretch();
   copyTranscriptButton_ =
       new QPushButton(QStringLiteral("Copy Conversation"), rightPanel);
+  copyTranscriptButton_->setObjectName(QStringLiteral("aiCloudCopyTranscriptButton"));
   transcriptToolbar->addWidget(copyTranscriptButton_);
   transcriptCard.body->addLayout(transcriptToolbar);
 
   transcriptScrollArea_ = new QScrollArea(rightPanel);
+  transcriptScrollArea_->setObjectName(QStringLiteral("aiCloudTranscriptScrollArea"));
   transcriptScrollArea_->setWidgetResizable(true);
   transcriptScrollArea_->setFrameShape(QFrame::StyledPanel);
   transcriptScrollArea_->setFrameShadow(QFrame::Plain);
   transcriptContent_ = new QWidget(transcriptScrollArea_);
+  transcriptContent_->setObjectName(QStringLiteral("aiCloudTranscriptContent"));
   transcriptContent_->setAutoFillBackground(true);
   {
     QPalette tp = transcriptContent_->palette();
@@ -1398,6 +1435,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
       QStringLiteral(
           "Write a prompt, then send or cancel from the same button."));
   promptEdit_ = new QTextEdit(rightPanel);
+  promptEdit_->setObjectName(QStringLiteral("aiCloudPromptEdit"));
   promptEdit_->setPlaceholderText(QStringLiteral("Enter your prompt here..."));
   promptEdit_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
   promptEdit_->setMinimumHeight(140);
@@ -1414,6 +1452,7 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   sendRow->addWidget(sendHint, 1);
   sendRow->addStretch();
   sendButton_ = new QPushButton(QStringLiteral("Send to AI"), rightPanel);
+  sendButton_->setObjectName(QStringLiteral("aiCloudSendButton"));
   sendButton_->setMinimumWidth(120);
   sendButton_->setMinimumHeight(30);
   sendButton_->setEnabled(false);
@@ -2218,6 +2257,7 @@ void Artifact::ArtifactAICloudWidget::appendTranscriptMessage(
   }
 
   auto *row = new QWidget(transcriptContent_);
+  row->setObjectName(QStringLiteral("aiCloudTranscriptRow"));
   auto *rowLayout = new QHBoxLayout(row);
   rowLayout->setContentsMargins(0, 0, 0, 0);
   rowLayout->setSpacing(0);
@@ -2326,6 +2366,7 @@ void Artifact::ArtifactAICloudWidget::openModelSelectionPopup() {
   layout->setSpacing(6);
 
   auto *combo = new QComboBox(popup);
+  combo->setObjectName(QStringLiteral("aiCloudPopupCombo"));
   combo->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
   combo->setMinimumWidth(std::max(260, modelSelectionLabel_->width() + 36));
   layout->addWidget(combo);

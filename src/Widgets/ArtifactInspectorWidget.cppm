@@ -32,7 +32,9 @@ module;
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSettings>
 #include <QKeyEvent>
+#include <QRadioButton>
 #include <QShortcut>
 #include <QScopeGuard>
 #include <QSignalBlocker>
@@ -74,6 +76,7 @@ module;
 #include <functional>
 #include <iostream>
 #include <list>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -107,8 +110,10 @@ import Artifact.Service.Project;
 import Artifact.Service.Effect;
 import Artifact.Project.PresetManager;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
 import Artifact.Layer.Component.System;
 import Artifact.Effect.Abstract;
+import Property.Abstract;
 import Artifact.Mask.LayerMask;
 import Image.ImageF32x4_RGBA;
 import Artifact.Widgets.ObjectPicker;
@@ -704,6 +709,187 @@ void applyInspectorComponentStateButton(QPushButton *button,
   button->setPalette(pal);
 }
 
+enum class RasterizerInitialSettingsMode {
+  KeepDefaults,
+  FitToSource,
+  AskWhenAdding,
+};
+
+constexpr auto kRasterizerInitialSettingsKey =
+    "Effects/RasterizerInitialSettingsMode";
+
+RasterizerInitialSettingsMode rasterizerInitialSettingsModeFromValue(
+    const QString &value) {
+  if (value == QStringLiteral("fit")) {
+    return RasterizerInitialSettingsMode::FitToSource;
+  }
+  if (value == QStringLiteral("defaults")) {
+    return RasterizerInitialSettingsMode::KeepDefaults;
+  }
+  return RasterizerInitialSettingsMode::AskWhenAdding;
+}
+
+QString rasterizerInitialSettingsModeValue(
+    const RasterizerInitialSettingsMode mode) {
+  switch (mode) {
+  case RasterizerInitialSettingsMode::KeepDefaults:
+    return QStringLiteral("defaults");
+  case RasterizerInitialSettingsMode::FitToSource:
+    return QStringLiteral("fit");
+  case RasterizerInitialSettingsMode::AskWhenAdding:
+    return QStringLiteral("ask");
+  }
+  return QStringLiteral("ask");
+}
+
+RasterizerInitialSettingsMode rasterizerInitialSettingsModeFromSettings() {
+  QSettings settings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
+  return rasterizerInitialSettingsModeFromValue(
+      settings.value(QString::fromLatin1(kRasterizerInitialSettingsKey),
+                     QStringLiteral("ask"))
+          .toString());
+}
+
+class RasterizerInitialSettingsActionButton final : public QPushButton {
+public:
+  RasterizerInitialSettingsActionButton(const QString &text, QDialog *dialog,
+                                        const int dialogResult)
+      : QPushButton(text, dialog), dialog_(dialog), dialogResult_(dialogResult) {}
+
+protected:
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    const bool activate = event && event->button() == Qt::LeftButton &&
+                          rect().contains(event->position().toPoint());
+    QPushButton::mouseReleaseEvent(event);
+    if (activate && dialog_) {
+      dialog_->done(dialogResult_);
+    }
+  }
+
+private:
+  QDialog *dialog_ = nullptr;
+  int dialogResult_ = QDialog::Rejected;
+};
+
+class RasterizerInitialSettingsDialog final : public QDialog {
+public:
+  RasterizerInitialSettingsDialog(const QSize &sourceSize, QWidget *parent)
+      : QDialog(parent) {
+    setWindowTitle(QStringLiteral("Rasterizer Effect Initial Settings"));
+    setModal(true);
+
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(14, 14, 14, 14);
+    layout->setSpacing(10);
+    auto *description = new QLabel(
+        QStringLiteral("Choose how to initialize pixel-based settings for this effect. "
+                       "Auto Fit uses the source size (%1 x %2) only once; it will not "
+                       "change the effect after it is added.")
+            .arg(sourceSize.width())
+            .arg(sourceSize.height()),
+        this);
+    description->setWordWrap(true);
+    applyInspectorLabelPalette(description, false);
+    layout->addWidget(description);
+
+    defaultsButton_ = new QRadioButton(QStringLiteral("Keep effect defaults"), this);
+    fitButton_ = new QRadioButton(QStringLiteral("Auto Fit to source size"), this);
+    defaultsButton_->setChecked(true);
+    layout->addWidget(defaultsButton_);
+    layout->addWidget(fitButton_);
+
+    rememberChoice_ = new QCheckBox(
+        QStringLiteral("Use this choice automatically for future rasterizer effects"),
+        this);
+    layout->addWidget(rememberChoice_);
+
+    auto *buttons = new QHBoxLayout();
+    buttons->addStretch();
+    auto *cancelButton = new RasterizerInitialSettingsActionButton(
+        QStringLiteral("Cancel"), this, QDialog::Rejected);
+    auto *addButton = new RasterizerInitialSettingsActionButton(
+        QStringLiteral("Add Effect"), this, QDialog::Accepted);
+    applyInspectorButton(cancelButton, false);
+    applyInspectorButton(addButton, true);
+    buttons->addWidget(cancelButton);
+    buttons->addWidget(addButton);
+    layout->addLayout(buttons);
+  }
+
+  RasterizerInitialSettingsMode selectedMode() const {
+    return fitButton_ && fitButton_->isChecked()
+               ? RasterizerInitialSettingsMode::FitToSource
+               : RasterizerInitialSettingsMode::KeepDefaults;
+  }
+
+  bool rememberChoice() const {
+    return rememberChoice_ && rememberChoice_->isChecked();
+  }
+
+protected:
+  void keyPressEvent(QKeyEvent *event) override {
+    if (event && (event->key() == Qt::Key_Return ||
+                  event->key() == Qt::Key_Enter)) {
+      done(QDialog::Accepted);
+      return;
+    }
+    QDialog::keyPressEvent(event);
+  }
+
+private:
+  QRadioButton *defaultsButton_ = nullptr;
+  QRadioButton *fitButton_ = nullptr;
+  QCheckBox *rememberChoice_ = nullptr;
+};
+
+bool isSourceScaledRasterizerProperty(const QString &name) {
+  const QString key = name.toLower();
+  return key.contains(QStringLiteral("radius")) ||
+         key.contains(QStringLiteral("blur")) ||
+         key.contains(QStringLiteral("distance")) ||
+         key.contains(QStringLiteral("offset")) ||
+         key.contains(QStringLiteral("shift")) ||
+         key.contains(QStringLiteral("width")) ||
+         key.contains(QStringLiteral("height")) ||
+         key.contains(QStringLiteral("size")) ||
+         key.contains(QStringLiteral("thickness"));
+}
+
+int applyRasterizerSourceFit(ArtifactAbstractEffect *effect,
+                             const QSize &sourceSize) {
+  if (!effect || sourceSize.width() <= 0 || sourceSize.height() <= 0) {
+    return 0;
+  }
+  const double scale = std::clamp(
+      std::sqrt((static_cast<double>(sourceSize.width()) * sourceSize.height()) /
+                (1920.0 * 1080.0)),
+      0.25, 4.0);
+  int adjustedCount = 0;
+  for (const auto &property : effect->getProperties()) {
+    const QString name = property.getName();
+    const QVariant value = property.getValue();
+    if (!isSourceScaledRasterizerProperty(name) ||
+        (property.getType() != PropertyType::Float &&
+         property.getType() != PropertyType::Integer) ||
+        !value.isValid()) {
+      continue;
+    }
+    const double scaled = std::clamp(
+        value.toDouble() * scale, property.getMinValue().isValid()
+                                      ? property.getMinValue().toDouble()
+                                      : -std::numeric_limits<double>::max(),
+        property.getMaxValue().isValid()
+            ? property.getMaxValue().toDouble()
+            : std::numeric_limits<double>::max());
+    effect->setPropertyValue(UniString::fromQString(name),
+                             property.getType() == PropertyType::Integer
+                                 ? QVariant(qRound(scaled))
+                                 : QVariant(scaled));
+    ++adjustedCount;
+  }
+  return adjustedCount;
+}
+
 class EffectPickerDialog final : public QDialog {
 public:
   EffectPickerDialog(const std::vector<EffectCatalogEntry> &entries,
@@ -733,12 +919,14 @@ public:
     layout->addWidget(subHeader);
 
     searchEdit_ = new QLineEdit(this);
+    searchEdit_->setObjectName(QStringLiteral("inspectorSearchEdit"));
     searchEdit_->setPlaceholderText(
         QStringLiteral("Search effects for this stage"));
     applyInspectorPalette(searchEdit_, true);
     layout->addWidget(searchEdit_);
 
     auto *contentFrame = new QFrame(this);
+    contentFrame->setObjectName(QStringLiteral("inspectorContentFrame"));
     applyInspectorPalette(contentFrame, true);
     auto *contentLayout = new QVBoxLayout(contentFrame);
     contentLayout->setContentsMargins(8, 8, 8, 8);
@@ -1566,6 +1754,8 @@ public:
   InspectorActionButton *cloneModifierMoveUpButton = nullptr;
   InspectorActionButton *cloneModifierMoveDownButton = nullptr;
   InspectorSelectionList *cloneModifierListWidget = nullptr;
+  QWidget *clonerStructureWidget = nullptr;
+  QLabel *componentUtilitiesLabel = nullptr;
   InspectorActionButton *openScriptButton = nullptr;
   InspectorActionButton *applyLipSyncButton = nullptr;
   ArtifactPropertyWidget *componentPropertyWidget = nullptr;
@@ -2055,6 +2245,25 @@ QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
   return filters.join(QStringLiteral("|"));
 }
 
+QString componentInspectorFilter(const QString &componentName) {
+  if (componentName == QStringLiteral("Physics")) {
+    return QStringLiteral("physics.");
+  }
+  if (componentName == QStringLiteral("Script")) {
+    return QStringLiteral("component.script.");
+  }
+  if (componentName == QStringLiteral("Layout")) {
+    return QStringLiteral("component.layout.");
+  }
+  if (componentName == QStringLiteral("Cloner")) {
+    return QStringLiteral("component.cloner.");
+  }
+  if (componentName == QStringLiteral("Fluid")) {
+    return QStringLiteral("component.fluid.");
+  }
+  return {};
+}
+
 QString generatorItemFilterText(const QListWidgetItem *item) {
   if (!item) {
     return {};
@@ -2145,106 +2354,132 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   const LayerTabComponentState state = collectLayerTabComponentState(layer);
   const bool hasLayer = state.hasLayer;
   const bool canEditComponents = state.canEditComponents;
+  QString activeName;
+
+  if (!hasLayer ||
+      (!focusedComponentLayerId_.isNil() &&
+       focusedComponentLayerId_ != currentLayerId_)) {
+    focusedComponentName_.clear();
+    focusedComponentLayerId_ = LayerID{};
+  }
+  if (focusedComponentName_ == QStringLiteral("Generator") &&
+      state.generatorCount > 0) {
+    activeName = focusedComponentName_;
+  } else if (focusedComponentName_ == QStringLiteral("Field") &&
+             state.fieldCount > 0) {
+    activeName = focusedComponentName_;
+  } else if (focusedComponentName_ == QStringLiteral("Clone Modifier") &&
+             state.cloneModifierCount > 0) {
+    activeName = focusedComponentName_;
+  } else if (focusedComponentName_ == QStringLiteral("Cloner") &&
+             state.cloneEnabled) {
+    activeName = focusedComponentName_;
+  } else if (focusedComponentName_ == QStringLiteral("Layout") &&
+             state.layoutEnabled) {
+    activeName = focusedComponentName_;
+  } else if (focusedComponentName_ == QStringLiteral("Physics") &&
+             state.physicsEnabled) {
+    activeName = focusedComponentName_;
+  } else if (focusedComponentName_ == QStringLiteral("Fluid") &&
+             state.fluidEnabled) {
+    activeName = focusedComponentName_;
+  } else if (focusedComponentName_ == QStringLiteral("Script") &&
+             state.scriptEnabled) {
+    activeName = focusedComponentName_;
+  } else if (state.cloneEnabled) {
+    activeName = QStringLiteral("Cloner");
+  } else if (state.layoutEnabled) {
+    activeName = QStringLiteral("Layout");
+  } else if (state.physicsEnabled) {
+    activeName = QStringLiteral("Physics");
+  } else if (state.fluidEnabled) {
+    activeName = QStringLiteral("Fluid");
+  } else if (state.scriptEnabled) {
+    activeName = QStringLiteral("Script");
+  }
 
   if (componentsGroup) {
     componentsGroup->setEnabled(canEditComponents);
   }
+  if (clonerStructureWidget) {
+    const bool showsClonerStructure =
+        activeName == QStringLiteral("Cloner") ||
+        activeName == QStringLiteral("Generator") ||
+        activeName == QStringLiteral("Field") ||
+        activeName == QStringLiteral("Clone Modifier");
+    clonerStructureWidget->setVisible(
+        hasLayer && state.cloneEnabled && showsClonerStructure);
+  }
   if (activeComponentLabel) {
-    if (!hasLayer ||
-        (!focusedComponentLayerId_.isNil() &&
-         focusedComponentLayerId_ != currentLayerId_)) {
-      focusedComponentName_.clear();
-      focusedComponentLayerId_ = LayerID{};
-    }
-    QString activeName;
-    if (focusedComponentName_ == QStringLiteral("Generator") &&
-        state.generatorCount > 0) {
-      activeName = focusedComponentName_;
-    } else if (focusedComponentName_ == QStringLiteral("Field") &&
-               state.fieldCount > 0) {
-      activeName = focusedComponentName_;
-    } else if (focusedComponentName_ == QStringLiteral("Clone Modifier") &&
-               state.cloneModifierCount > 0) {
-      activeName = focusedComponentName_;
-    } else if (focusedComponentName_ == QStringLiteral("Cloner") &&
-               state.cloneEnabled) {
-      activeName = focusedComponentName_;
-    } else if (focusedComponentName_ == QStringLiteral("Layout") &&
-               state.layoutEnabled) {
-      activeName = focusedComponentName_;
-    } else if (focusedComponentName_ == QStringLiteral("Physics") &&
-               state.physicsEnabled) {
-      activeName = focusedComponentName_;
-    } else if (focusedComponentName_ == QStringLiteral("Fluid") &&
-               state.fluidEnabled) {
-      activeName = focusedComponentName_;
-    } else if (focusedComponentName_ == QStringLiteral("Script") &&
-               state.scriptEnabled) {
-      activeName = focusedComponentName_;
-    } else if (state.cloneEnabled) {
-      activeName = QStringLiteral("Cloner");
-    } else if (state.layoutEnabled) {
-      activeName = QStringLiteral("Layout");
-    } else if (state.physicsEnabled) {
-      activeName = QStringLiteral("Physics");
-    } else if (state.fluidEnabled) {
-      activeName = QStringLiteral("Fluid");
-    } else if (state.scriptEnabled) {
-      activeName = QStringLiteral("Script");
-    }
     activeComponentLabel->setText(
         activeName.isEmpty()
             ? QStringLiteral("Active Component  |  None")
             : QStringLiteral("Active Component  |  %1").arg(activeName));
+    activeComponentLabel->setVisible(hasLayer);
   }
   if (physicsComponentButton) {
     physicsComponentButton->setEnabled(canEditComponents);
-    physicsComponentButton->setChecked(state.physicsEnabled);
+    physicsComponentButton->setChecked(activeName == QStringLiteral("Physics"));
+    physicsComponentButton->setProperty("artifactComponentEnabled",
+                                        state.physicsEnabled);
     physicsComponentButton->setText(QStringLiteral("Physics"));
     applyInspectorComponentStateButton(physicsComponentButton,
-                                       state.physicsEnabled);
+                                       activeName == QStringLiteral("Physics"));
+    physicsComponentButton->setVisible(state.physicsEnabled);
     physicsComponentButton->setToolTip(
-        canEditComponents ? QStringLiteral("Toggle the layer physics component.")
+        canEditComponents ? QStringLiteral("Show the Physics component settings.")
                           : QStringLiteral("Select a layer inside a composition to add Physics."));
   }
   if (scriptComponentButton) {
     scriptComponentButton->setEnabled(canEditComponents);
-    scriptComponentButton->setChecked(state.scriptEnabled);
+    scriptComponentButton->setChecked(activeName == QStringLiteral("Script"));
+    scriptComponentButton->setProperty("artifactComponentEnabled",
+                                       state.scriptEnabled);
     scriptComponentButton->setText(QStringLiteral("Script"));
     applyInspectorComponentStateButton(scriptComponentButton,
-                                       state.scriptEnabled);
+                                       activeName == QStringLiteral("Script"));
+    scriptComponentButton->setVisible(state.scriptEnabled);
     scriptComponentButton->setToolTip(
-        canEditComponents ? QStringLiteral("Toggle the layer script component.")
+        canEditComponents ? QStringLiteral("Show the Script component settings.")
                           : QStringLiteral("Select a layer inside a composition to add Script."));
   }
   if (layoutComponentButton) {
     layoutComponentButton->setEnabled(canEditComponents);
-    layoutComponentButton->setChecked(state.layoutEnabled);
+    layoutComponentButton->setChecked(activeName == QStringLiteral("Layout"));
+    layoutComponentButton->setProperty("artifactComponentEnabled",
+                                       state.layoutEnabled);
     layoutComponentButton->setText(QStringLiteral("Layout"));
     applyInspectorComponentStateButton(layoutComponentButton,
-                                       state.layoutEnabled);
+                                       activeName == QStringLiteral("Layout"));
+    layoutComponentButton->setVisible(state.layoutEnabled);
     layoutComponentButton->setToolTip(
-        canEditComponents ? QStringLiteral("Toggle the layer Layout component.")
+        canEditComponents ? QStringLiteral("Show the Layout component settings.")
                           : QStringLiteral("Select a layer inside a composition to add Layout."));
   }
   if (cloneComponentButton) {
     cloneComponentButton->setEnabled(canEditComponents);
-    cloneComponentButton->setChecked(state.cloneEnabled);
+    cloneComponentButton->setChecked(activeName == QStringLiteral("Cloner"));
+    cloneComponentButton->setProperty("artifactComponentEnabled",
+                                      state.cloneEnabled);
     cloneComponentButton->setText(QStringLiteral("Cloner"));
     applyInspectorComponentStateButton(cloneComponentButton,
-                                       state.cloneEnabled);
+                                       activeName == QStringLiteral("Cloner"));
+    cloneComponentButton->setVisible(state.cloneEnabled);
     cloneComponentButton->setToolTip(
-        canEditComponents ? QStringLiteral("Toggle the layer Cloner component.")
+        canEditComponents ? QStringLiteral("Show the Cloner component settings.")
                           : QStringLiteral("Select a layer inside a composition to add Cloner."));
   }
   if (fluidComponentButton) {
     fluidComponentButton->setEnabled(canEditComponents);
-    fluidComponentButton->setChecked(state.fluidEnabled);
+    fluidComponentButton->setChecked(activeName == QStringLiteral("Fluid"));
+    fluidComponentButton->setProperty("artifactComponentEnabled",
+                                      state.fluidEnabled);
     fluidComponentButton->setText(QStringLiteral("Fluid"));
     applyInspectorComponentStateButton(fluidComponentButton,
-                                       state.fluidEnabled);
+                                       activeName == QStringLiteral("Fluid"));
+    fluidComponentButton->setVisible(state.fluidEnabled);
     fluidComponentButton->setToolTip(
-        canEditComponents ? QStringLiteral("Toggle the layer Fluid component.")
+        canEditComponents ? QStringLiteral("Show the Fluid component settings.")
                           : QStringLiteral("Select a layer inside a composition to add Fluid."));
   }
   if (generatorComponentButton) {
@@ -2559,7 +2794,7 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   }
 
   if (componentPropertyWidget) {
-    componentPropertyWidget->setVisible(hasLayer);
+    componentPropertyWidget->setVisible(hasLayer && !activeName.isEmpty());
     if (!hasLayer) {
       componentPropertyWidget->clear();
     } else {
@@ -2571,9 +2806,20 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
       } else {
         componentPropertyWidget->setLayer(layer);
       }
-      if (componentPropertyWidget->filterText().trimmed().isEmpty()) {
-        componentPropertyWidget->setFilterText(
-            defaultComponentInspectorFilter(layer));
+      QString desiredFilter = componentInspectorFilter(activeName);
+      if (activeName == QStringLiteral("Generator")) {
+        desiredFilter = generatorItemFilterText(
+            generatorListWidget ? generatorListWidget->currentItem() : nullptr);
+      } else if (activeName == QStringLiteral("Field")) {
+        desiredFilter = fieldItemFilterText(
+            fieldListWidget ? fieldListWidget->currentItem() : nullptr);
+      } else if (activeName == QStringLiteral("Clone Modifier")) {
+        desiredFilter = cloneModifierItemFilterText(
+            cloneModifierListWidget ? cloneModifierListWidget->currentItem()
+                                    : nullptr);
+      }
+      if (componentPropertyWidget->filterText() != desiredFilter) {
+        componentPropertyWidget->setFilterText(desiredFilter);
       } else {
         componentPropertyWidget->updateProperties();
       }
@@ -2584,7 +2830,8 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
     const QString scriptPath = resolveScriptBindingPath(layer);
     const bool canOpen = hasLayer && !scriptPath.trimmed().isEmpty();
     openScriptButton->setEnabled(canOpen);
-    openScriptButton->setVisible(hasLayer);
+    openScriptButton->setVisible(
+        canOpen && activeName == QStringLiteral("Script"));
     openScriptButton->setText(canOpen ? QStringLiteral("Open Script")
                                       : QStringLiteral("Open Script"));
     openScriptButton->setToolTip(
@@ -2631,7 +2878,13 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
     applyLipSyncButton->setToolTip(
         canApply ? QStringLiteral("Build a lip sync track from this audio layer and apply it to the selected Switch Layer.")
                  : (canShow ? QStringLiteral("Select a Switch Layer in the same composition to enable Lip Sync.")
-                            : QStringLiteral("Select an audio layer to enable Lip Sync.")));
+                             : QStringLiteral("Select an audio layer to enable Lip Sync.")));
+  }
+  if (componentUtilitiesLabel) {
+    const bool hasVisibleUtility =
+        (openScriptButton && !openScriptButton->isHidden()) ||
+        (applyLipSyncButton && !applyLipSyncButton->isHidden());
+    componentUtilitiesLabel->setVisible(hasVisibleUtility);
   }
 }
 
@@ -4419,6 +4672,38 @@ void ArtifactInspectorWidget::Impl::addSelectedEffectToCurrentTarget(
     newEffect->setPipelineStage(EffectPipelineStage::Rasterizer);
   }
 
+  if (newEffect->pipelineStage() == EffectPipelineStage::Rasterizer) {
+    QSize sourceSize = comp->settings().compositionSize();
+    if (!editingCompositionEffects()) {
+      if (auto targetLayer = comp->layerById(currentLayerId_)) {
+        const auto layerSourceSize = targetLayer->sourceSize();
+        if (layerSourceSize.width > 0 && layerSourceSize.height > 0) {
+          sourceSize = QSize(layerSourceSize.width, layerSourceSize.height);
+        }
+      }
+    }
+
+    RasterizerInitialSettingsMode initialMode =
+        rasterizerInitialSettingsModeFromSettings();
+    if (initialMode == RasterizerInitialSettingsMode::AskWhenAdding) {
+      RasterizerInitialSettingsDialog dialog(
+          sourceSize, containerWidget ? containerWidget : tabWidget);
+      if (dialog.exec() != QDialog::Accepted) {
+        return;
+      }
+      initialMode = dialog.selectedMode();
+      if (dialog.rememberChoice()) {
+        QSettings settings(QStringLiteral("ArtifactStudio"),
+                           QStringLiteral("Artifact"));
+        settings.setValue(QString::fromLatin1(kRasterizerInitialSettingsKey),
+                          rasterizerInitialSettingsModeValue(initialMode));
+      }
+    }
+    if (initialMode == RasterizerInitialSettingsMode::FitToSource) {
+      applyRasterizerSourceFit(newEffect.get(), sourceSize);
+    }
+  }
+
   bool added = editingCompositionEffects()
                    ? projectService->addEffectToCurrentComposition(newEffect)
                    : projectService->addEffectToLayerWithUndo(currentLayerId_,
@@ -4693,14 +4978,17 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   // メインレイアウト
   auto mainLayout = new QVBoxLayout();
   impl_->containerWidget = new QWidget();
+  impl_->containerWidget->setObjectName(QStringLiteral("inspectorContainer"));
   applyInspectorPalette(impl_->containerWidget);
 
   // タブウィジェットを作成
   impl_->tabWidget = new QTabWidget();
+  impl_->tabWidget->setObjectName(QStringLiteral("inspectorTabWidget"));
   applyInspectorPalette(impl_->tabWidget);
 
   // ================== Layer Info Tab ==================
   auto layerInfoWidget = new QWidget();
+  layerInfoWidget->setObjectName(QStringLiteral("inspectorLayerInfoWidget"));
   auto layerInfoLayout = new QVBoxLayout();
 
   // ステータスラベル
@@ -4811,15 +5099,15 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   applyInspectorButton(impl_->openScriptButton, false);
   applyInspectorButton(impl_->applyLipSyncButton, false);
   impl_->physicsComponentButton->setToolTip(
-      QStringLiteral("Toggle the layer physics component."));
+      QStringLiteral("Show the Physics component settings."));
   impl_->scriptComponentButton->setToolTip(
-      QStringLiteral("Toggle the layer script component."));
+      QStringLiteral("Show the Script component settings."));
   impl_->layoutComponentButton->setToolTip(
-      QStringLiteral("Toggle the layer Layout component."));
+      QStringLiteral("Show the Layout component settings."));
   impl_->cloneComponentButton->setToolTip(
-      QStringLiteral("Toggle the layer Cloner component."));
+      QStringLiteral("Show the Cloner component settings."));
   impl_->fluidComponentButton->setToolTip(
-      QStringLiteral("Toggle the layer Fluid component."));
+      QStringLiteral("Show the Fluid component settings."));
   impl_->generatorComponentButton->setToolTip(
       QStringLiteral("Add an extra generator to the layer."));
   impl_->removeGeneratorComponentButton->setToolTip(
@@ -4882,15 +5170,41 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->componentPropertyWidget->setMinimumHeight(120);
   // The active component filter is selected from the layer state during refresh.
   impl_->componentPropertyWidget->setFilterText(QString());
-  componentsLayout->addWidget(impl_->componentPropertyWidget, 1);
 
   auto *componentStackHeader = new QHBoxLayout();
-  auto *componentStackLabel = new QLabel(QStringLiteral("Component Stack"));
+  auto *componentStackLabel = new QLabel(QStringLiteral("Layer Components"));
   applyInspectorLabelPalette(componentStackLabel, true);
   componentStackHeader->addWidget(componentStackLabel, 1);
-  componentStackHeader->addWidget(impl_->addComponentButton);
   componentsLayout->addLayout(componentStackHeader);
   componentsLayout->addWidget(impl_->componentsSummaryLabel);
+  componentsLayout->addWidget(impl_->cloneComponentButton);
+  componentsLayout->addWidget(impl_->layoutComponentButton);
+  componentsLayout->addWidget(impl_->physicsComponentButton);
+  componentsLayout->addWidget(impl_->fluidComponentButton);
+  componentsLayout->addWidget(impl_->scriptComponentButton);
+
+  auto *addComponentLayout = new QHBoxLayout();
+  addComponentLayout->addStretch(1);
+  addComponentLayout->addWidget(impl_->addComponentButton);
+  addComponentLayout->addStretch(1);
+  componentsLayout->addLayout(addComponentLayout);
+
+  auto *componentDivider = new QFrame(impl_->componentsGroup);
+  componentDivider->setObjectName(QStringLiteral("inspectorComponentDivider"));
+  componentDivider->setFrameShape(QFrame::HLine);
+  componentDivider->setFrameShadow(QFrame::Plain);
+  applyInspectorPalette(componentDivider, false);
+  componentsLayout->addWidget(componentDivider);
+  componentsLayout->addWidget(impl_->activeComponentLabel);
+  componentsLayout->addWidget(impl_->componentPropertyWidget, 1);
+
+  impl_->clonerStructureWidget = new QWidget(impl_->componentsGroup);
+  auto *clonerStructureLayout = new QVBoxLayout(impl_->clonerStructureWidget);
+  clonerStructureLayout->setContentsMargins(0, 4, 0, 0);
+  clonerStructureLayout->setSpacing(6);
+  auto *clonerStructureLabel = new QLabel(QStringLiteral("Cloner Structure"));
+  applyInspectorLabelPalette(clonerStructureLabel, true);
+  clonerStructureLayout->addWidget(clonerStructureLabel);
 
   auto generatorHeaderLayout = new QHBoxLayout();
   auto *generatorHeaderLabel = new QLabel(QStringLiteral("Generators"));
@@ -4900,7 +5214,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   generatorHeaderLayout->addWidget(impl_->generatorMoveUpButton);
   generatorHeaderLayout->addWidget(impl_->generatorMoveDownButton);
   generatorHeaderLayout->addWidget(impl_->removeGeneratorComponentButton);
-  componentsLayout->addLayout(generatorHeaderLayout);
+  clonerStructureLayout->addLayout(generatorHeaderLayout);
   impl_->generatorListWidget = new InspectorSelectionList();
   impl_->generatorListWidget->setVisible(false);
   impl_->generatorListWidget->setMaximumHeight(96);
@@ -4910,7 +5224,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->generatorListWidget->setAlternatingRowColors(false);
   impl_->generatorListWidget->setFrameShape(QFrame::NoFrame);
   impl_->generatorListWidget->setSpacing(2);
-  componentsLayout->addWidget(impl_->generatorListWidget);
+  clonerStructureLayout->addWidget(impl_->generatorListWidget);
 
   auto fieldHeaderLayout = new QHBoxLayout();
   auto *fieldHeaderLabel = new QLabel(QStringLiteral("Fields"));
@@ -4920,7 +5234,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   fieldHeaderLayout->addWidget(impl_->fieldMoveUpButton);
   fieldHeaderLayout->addWidget(impl_->fieldMoveDownButton);
   fieldHeaderLayout->addWidget(impl_->removeFieldComponentButton);
-  componentsLayout->addLayout(fieldHeaderLayout);
+  clonerStructureLayout->addLayout(fieldHeaderLayout);
   impl_->fieldListWidget = new InspectorSelectionList();
   impl_->fieldListWidget->setVisible(false);
   impl_->fieldListWidget->setMaximumHeight(96);
@@ -4930,7 +5244,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->fieldListWidget->setAlternatingRowColors(false);
   impl_->fieldListWidget->setFrameShape(QFrame::NoFrame);
   impl_->fieldListWidget->setSpacing(2);
-  componentsLayout->addWidget(impl_->fieldListWidget);
+  clonerStructureLayout->addWidget(impl_->fieldListWidget);
 
   auto cloneModifierHeaderLayout = new QHBoxLayout();
   auto *cloneModifierHeaderLabel =
@@ -4941,7 +5255,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   cloneModifierHeaderLayout->addWidget(impl_->cloneModifierMoveUpButton);
   cloneModifierHeaderLayout->addWidget(impl_->cloneModifierMoveDownButton);
   cloneModifierHeaderLayout->addWidget(impl_->removeCloneModifierButton);
-  componentsLayout->addLayout(cloneModifierHeaderLayout);
+  clonerStructureLayout->addLayout(cloneModifierHeaderLayout);
   impl_->cloneModifierListWidget = new InspectorSelectionList();
   impl_->cloneModifierListWidget->setVisible(false);
   impl_->cloneModifierListWidget->setMaximumHeight(96);
@@ -4951,7 +5265,16 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->cloneModifierListWidget->setAlternatingRowColors(false);
   impl_->cloneModifierListWidget->setFrameShape(QFrame::NoFrame);
   impl_->cloneModifierListWidget->setSpacing(2);
-  componentsLayout->addWidget(impl_->cloneModifierListWidget);
+  clonerStructureLayout->addWidget(impl_->cloneModifierListWidget);
+  impl_->clonerStructureWidget->setVisible(false);
+  componentsLayout->addWidget(impl_->clonerStructureWidget);
+
+  impl_->componentUtilitiesLabel = new QLabel(QStringLiteral("Layer Utilities"));
+  applyInspectorLabelPalette(impl_->componentUtilitiesLabel, true);
+  impl_->componentUtilitiesLabel->setVisible(false);
+  componentsLayout->addWidget(impl_->componentUtilitiesLabel);
+  componentsLayout->addWidget(impl_->openScriptButton);
+  componentsLayout->addWidget(impl_->applyLipSyncButton);
   componentsLayout->setContentsMargins(
       kInspectorNoteMargin, kInspectorNoteMargin, kInspectorNoteMargin,
       kInspectorNoteMargin);
@@ -4992,8 +5315,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     if (layer->setLayerPropertyValue(propertyPath, nextEnabled)) {
       impl_->focusedComponentName_ = displayName;
       impl_->focusedComponentLayerId_ = impl_->currentLayerId_;
-      impl_->focusComponentProperties(layer,
-                                      defaultComponentInspectorFilter(layer));
+      impl_->focusComponentProperties(
+          layer, nextEnabled ? componentInspectorFilter(displayName) : QString());
       impl_->updateComponentControls(layer);
       impl_->lastLayerInfoSignature_.clear();
       impl_->scheduleRefresh(
@@ -5006,6 +5329,28 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                               : QStringLiteral("disabled")));
       }
     }
+  };
+  auto selectComponent = [this](const QString &displayName) {
+    if (impl_->currentCompositionId_.isNil() || impl_->currentLayerId_.isNil()) {
+      return;
+    }
+    auto projectService = ArtifactProjectService::instance();
+    if (!projectService) {
+      return;
+    }
+    auto findResult =
+        projectService->findComposition(impl_->currentCompositionId_);
+    auto comp = findResult.success ? findResult.ptr.lock()
+                                   : ArtifactCompositionPtr{};
+    auto layer = comp ? comp->layerById(impl_->currentLayerId_)
+                      : ArtifactAbstractLayerPtr{};
+    if (!layer) {
+      return;
+    }
+    impl_->focusedComponentName_ = displayName;
+    impl_->focusedComponentLayerId_ = impl_->currentLayerId_;
+    impl_->updateComponentControls(layer);
+    impl_->focusComponentProperties(layer, componentInspectorFilter(displayName));
   };
   impl_->addComponentButton->setAction([this, toggleComponent]() {
     if (!impl_->addComponentButton || !impl_->componentsGroup ||
@@ -5023,7 +5368,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
         return;
       }
       action->setCheckable(true);
-      action->setChecked(button->isChecked());
+      action->setChecked(button->property("artifactComponentEnabled").toBool());
     };
     markState(physicsAction, impl_->physicsComponentButton);
     markState(scriptAction, impl_->scriptComponentButton);
@@ -5069,25 +5414,20 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       impl_->applyLipSyncButton->triggerAction();
     }
   });
-  impl_->physicsComponentButton->setAction([toggleComponent]() {
-                     toggleComponent(QStringLiteral("physics.enabled"),
-                                     QStringLiteral("Physics"));
+  impl_->physicsComponentButton->setAction([selectComponent]() {
+                     selectComponent(QStringLiteral("Physics"));
                    });
-  impl_->scriptComponentButton->setAction([toggleComponent]() {
-                     toggleComponent(QStringLiteral("component.script.enabled"),
-                                     QStringLiteral("Script"));
+  impl_->scriptComponentButton->setAction([selectComponent]() {
+                     selectComponent(QStringLiteral("Script"));
                    });
-  impl_->layoutComponentButton->setAction([toggleComponent]() {
-                     toggleComponent(QStringLiteral("component.layout.enabled"),
-                                     QStringLiteral("Layout"));
+  impl_->layoutComponentButton->setAction([selectComponent]() {
+                     selectComponent(QStringLiteral("Layout"));
                    });
-  impl_->cloneComponentButton->setAction([toggleComponent]() {
-                     toggleComponent(QStringLiteral("component.cloner.enabled"),
-                                     QStringLiteral("Cloner"));
+  impl_->cloneComponentButton->setAction([selectComponent]() {
+                     selectComponent(QStringLiteral("Cloner"));
                    });
-  impl_->fluidComponentButton->setAction([toggleComponent]() {
-                     toggleComponent(QStringLiteral("component.fluid.enabled"),
-                                     QStringLiteral("Fluid"));
+  impl_->fluidComponentButton->setAction([selectComponent]() {
+                     selectComponent(QStringLiteral("Fluid"));
                    });
   impl_->generatorComponentButton->setAction([this]() {
                      if (impl_->currentCompositionId_.isNil() ||
@@ -5720,10 +6060,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
 
   // ================== Effects Pipeline Tab ==================
   impl_->effectsScrollArea = new QScrollArea();
+  impl_->effectsScrollArea->setObjectName(QStringLiteral("inspectorEffectsScrollArea"));
   impl_->effectsScrollArea->setWidgetResizable(true);
   impl_->effectsTabWidget = new QWidget();
+  impl_->effectsTabWidget->setObjectName(QStringLiteral("inspectorEffectsTabWidget"));
   auto effectsLayout = new QVBoxLayout();
   auto *effectsHeaderFrame = new QFrame();
+  effectsHeaderFrame->setObjectName(QStringLiteral("inspectorEffectsHeaderFrame"));
   applyInspectorPalette(effectsHeaderFrame, false);
   auto *effectsHeaderLayout = new QVBoxLayout(effectsHeaderFrame);
   effectsHeaderLayout->setContentsMargins(10, 10, 10, 10);
@@ -5745,6 +6088,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   effectsToolbarLayout->setContentsMargins(0, 0, 0, 0);
   effectsToolbarLayout->setSpacing(8);
   impl_->effectsQuickAddButton = new QPushButton("+ Add Effect");
+  impl_->effectsQuickAddButton->setObjectName(QStringLiteral("inspectorEffectsQuickAddButton"));
   applyInspectorButton(impl_->effectsQuickAddButton, true);
   impl_->effectsQuickAddButton->setToolTip(
       QStringLiteral("Open a searchable picker and add an effect to the current target. Shortcut: Ctrl+Space."));
@@ -5753,30 +6097,30 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   effectsHeaderLayout->addLayout(effectsToolbarLayout);
   effectsLayout->addWidget(effectsHeaderFrame);
 
-  // Retain the existing controller handle for selection synchronization, but
-  // present the editor as one continuous surface instead of nested tabs.
-  impl_->effectsModeTabs = new QTabWidget(impl_->effectsTabWidget);
-  applyInspectorPalette(impl_->effectsModeTabs, false);
-  impl_->effectsModeTabs->setVisible(false);
+  // AE-style Effect Controls is one continuous browse-and-edit surface.  Do
+  // not insert a second Stack / Editor page switch inside the Effects tab.
+  impl_->effectsModeTabs = nullptr;
 
   auto *stackPanel = new QFrame();
+  stackPanel->setObjectName(QStringLiteral("inspectorEffectsStackPanel"));
   applyInspectorPalette(stackPanel, false);
   auto *stackPanelLayout = new QVBoxLayout(stackPanel);
   stackPanelLayout->setContentsMargins(8, 8, 8, 8);
   stackPanelLayout->setSpacing(8);
 
-  impl_->effectsStackSummaryLabel = new QLabel("Effect Stack");
+  impl_->effectsStackSummaryLabel = new QLabel("Effect Controls");
   impl_->effectsStackSummaryLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectsStackSummaryLabel, false);
   stackPanelLayout->addWidget(impl_->effectsStackSummaryLabel);
 
   auto *detailPanel = new QFrame();
+  detailPanel->setObjectName(QStringLiteral("inspectorEffectsDetailPanel"));
   applyInspectorPalette(detailPanel, false);
   auto *detailPanelLayout = new QVBoxLayout(detailPanel);
   detailPanelLayout->setContentsMargins(8, 8, 8, 8);
   detailPanelLayout->setSpacing(8);
 
-  impl_->effectEditorTitleLabel = new QLabel("Active Effect");
+  impl_->effectEditorTitleLabel = new QLabel("Selected Effect Controls");
   applyInspectorLabelPalette(impl_->effectEditorTitleLabel, true);
   detailPanelLayout->addWidget(impl_->effectEditorTitleLabel);
 
@@ -5791,7 +6135,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   detailPanelLayout->addWidget(impl_->effectEnableButton);
 
   impl_->effectParametersHintLabel =
-      new QLabel("The selected effect's controls are edited here.");
+      new QLabel("Select an effect above to reveal its parameters here.");
   impl_->effectParametersHintLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectParametersHintLabel, false);
   detailPanelLayout->addWidget(impl_->effectParametersHintLabel);
@@ -5841,8 +6185,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     auto rackLayout = new QVBoxLayout();
 
     impl_->racks[i].listWidget = new QListWidget();
-    impl_->racks[i].listWidget->setMinimumHeight(64);
-    impl_->racks[i].listWidget->setMaximumHeight(148);
+    impl_->racks[i].listWidget->setMinimumHeight(38);
+    impl_->racks[i].listWidget->setMaximumHeight(132);
     impl_->racks[i].listWidget->setUniformItemSizes(true);
     impl_->racks[i].listWidget->setFrameShape(QFrame::NoFrame);
     impl_->racks[i].listWidget->setSpacing(5);
@@ -5857,10 +6201,14 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     }
 
     auto btnLayout = new QHBoxLayout();
-    impl_->racks[i].addButton = new QPushButton("+ Add");
-    impl_->racks[i].removeButton = new QPushButton("- Remove");
-    impl_->racks[i].moveUpButton = new QPushButton("Up");
-    impl_->racks[i].moveDownButton = new QPushButton("Down");
+  impl_->racks[i].addButton = new QPushButton("+ Add");
+  impl_->racks[i].addButton->setObjectName(QStringLiteral("inspectorRackAddButton"));
+  impl_->racks[i].removeButton = new QPushButton("Remove");
+  impl_->racks[i].removeButton->setObjectName(QStringLiteral("inspectorRackRemoveButton"));
+  impl_->racks[i].moveUpButton = new QPushButton(QStringLiteral("Move Up"));
+  impl_->racks[i].moveUpButton->setObjectName(QStringLiteral("inspectorRackMoveUpButton"));
+  impl_->racks[i].moveDownButton = new QPushButton(QStringLiteral("Move Down"));
+  impl_->racks[i].moveDownButton->setObjectName(QStringLiteral("inspectorRackMoveDownButton"));
     applyInspectorButton(impl_->racks[i].addButton, false);
     applyInspectorButton(impl_->racks[i].removeButton, false);
     applyInspectorButton(impl_->racks[i].moveUpButton, false);

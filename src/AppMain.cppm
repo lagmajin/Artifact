@@ -1674,6 +1674,7 @@ int main(int argc, char *argv[]) {
     printf("  --plugin-info <id>  Show details for a specific plugin and exit\n");
     printf("\nEnvironment:\n");
     printf("  ARTIFACT_RUN_BUILTIN_TESTS  Run built-in tests and exit\n");
+    printf("  ARTIFACT_RUN_GPU_BLEND_TESTS  Run headless GPU blend tests and exit\n");
     return 0;
   }
 
@@ -1843,6 +1844,10 @@ int main(int argc, char *argv[]) {
     if (builtinTestFailures != 0) {
       return builtinTestFailures;
     }
+  }
+
+  if (qEnvironmentVariableIsSet("ARTIFACT_RUN_GPU_BLEND_TESTS")) {
+    return Artifact::runGpuBlendTests();
   }
 
   // Initialize environment variable manager
@@ -2509,16 +2514,22 @@ int main(int argc, char *argv[]) {
     // Dynamically update shortcutHelperWidget's WorkspaceMode on focus/workspace updates if required
     // (Workspace modes changes can trigger shortcutHelperWidget->setWorkspaceMode)
     QObject::connect(assetBrowser, &ArtifactAssetBrowser::selectionChanged, mw,
-                     [projectManagerWidget,
+                     [projectManagerWidget, contentsViewer,
                       selectionSyncGuard](const QStringList &selectedFiles) {
-                       if (projectManagerWidget && selectionSyncGuard &&
-                           !*selectionSyncGuard) {
-                         *selectionSyncGuard = true;
-                         projectManagerWidget->selectItemsByFilePaths(
-                             selectedFiles);
-                         *selectionSyncGuard = false;
-                       }
-                     });
+                        if (projectManagerWidget && selectionSyncGuard &&
+                            !*selectionSyncGuard) {
+                          *selectionSyncGuard = true;
+                          projectManagerWidget->selectItemsByFilePaths(
+                              selectedFiles);
+                          *selectionSyncGuard = false;
+                        }
+                        // Selection updates the Viewer source without opening or
+                        // playing it. Double-click remains the explicit open action.
+                        if (contentsViewer && selectedFiles.size() == 1 &&
+                            QFileInfo(selectedFiles.front()).isFile()) {
+                          contentsViewer->setFilePath(selectedFiles.front());
+                        }
+                      });
     if (auto *projectView = projectManagerWidget
                                 ? projectManagerWidget->projectView()
                                 : nullptr) {

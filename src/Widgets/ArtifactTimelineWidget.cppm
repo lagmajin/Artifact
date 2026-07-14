@@ -4033,6 +4033,7 @@ public:
     rightPanelLayout->setContentsMargins(0, 0, 0, 0);
 
     timelinePainterPage_ = new QWidget(this);
+    timelinePainterPage_->setObjectName(QStringLiteral("timelinePainterPage"));
     auto *timelinePainterLayout = new QVBoxLayout(timelinePainterPage_);
     timelinePainterLayout->setContentsMargins(0, 0, 0, 0);
     timelinePainterLayout->setSpacing(0);
@@ -4041,6 +4042,7 @@ public:
     }
 
     curveEditorPage_ = new QWidget(this);
+    curveEditorPage_->setObjectName(QStringLiteral("timelineCurveEditorPage"));
     auto *curvePanelLayout = new QVBoxLayout(curveEditorPage_);
     curvePanelLayout->setContentsMargins(0, 0, 0, 0);
     curvePanelLayout->setSpacing(0);
@@ -5059,22 +5061,44 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto leftHeader = new ArtifactTimeCodeWidget();             // Timecode
   auto searchBar = new ArtifactTimelineSearchBarWidget();     // Search
   auto searchModeCombo = new QComboBox();                     // Search mode
+  searchModeCombo->setObjectName(QStringLiteral("timelineSearchModeCombo"));
   auto displayModeCombo = new QComboBox();                    // Layer display mode
+  displayModeCombo->setObjectName(QStringLiteral("timelineDisplayModeCombo"));
   auto densityCombo = new QComboBox();                        // Row density
+  densityCombo->setObjectName(QStringLiteral("timelineDensityCombo"));
   auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE Switches
+  auto miniKeyEditorButton = new TimelineToolCallbackButton();
+  miniKeyEditorButton->setObjectName(QStringLiteral("timelineMiniKeyEditorButton"));
+  miniKeyEditorButton->setText(QStringLiteral("Mini"));
+  miniKeyEditorButton->setToolTip(QStringLiteral(
+      "Show a lightweight curve for the current property. Press Tab for the full Curve Editor."));
+  miniKeyEditorButton->setCheckable(true);
+  miniKeyEditorButton->setChecked(false);
+  styleTimelineToolButton(miniKeyEditorButton);
   auto searchStatusLabel = new QLabel();
   auto keyframeStatusLabel = new QLabel();
   auto easingLabButton = new QToolButton();
+  easingLabButton->setObjectName(QStringLiteral("timelineEasingLabButton"));
   auto keyPatternButton = new QToolButton();
+  keyPatternButton->setObjectName(QStringLiteral("timelineKeyPatternButton"));
   auto keyframeAddButton = new QToolButton();
+  keyframeAddButton->setObjectName(QStringLiteral("timelineKeyframeAddButton"));
   auto keyframeRemoveButton = new QToolButton();
+  keyframeRemoveButton->setObjectName(QStringLiteral("timelineKeyframeRemoveButton"));
   auto keyframeCopyButton = new QToolButton();
+  keyframeCopyButton->setObjectName(QStringLiteral("timelineKeyframeCopyButton"));
   auto keyframePasteButton = new QToolButton();
+  keyframePasteButton->setObjectName(QStringLiteral("timelineKeyframePasteButton"));
   auto keyframeEaseCopyButton = new QToolButton();
+  keyframeEaseCopyButton->setObjectName(QStringLiteral("timelineKeyframeEaseCopyButton"));
   auto keyframeEasePasteButton = new QToolButton();
+  keyframeEasePasteButton->setObjectName(QStringLiteral("timelineKeyframeEasePasteButton"));
   auto keyframeEaseInButton = new QToolButton();
+  keyframeEaseInButton->setObjectName(QStringLiteral("timelineKeyframeEaseInButton"));
   auto keyframeEaseOutButton = new QToolButton();
+  keyframeEaseOutButton->setObjectName(QStringLiteral("timelineKeyframeEaseOutButton"));
   auto keyframeEaseInOutButton = new QToolButton();
+  keyframeEaseInOutButton->setObjectName(QStringLiteral("timelineKeyframeEaseInOutButton"));
   easingLabButton->setText(QStringLiteral("Ease+"));
   easingLabButton->setToolTip(QStringLiteral("Open Easing Lab (Comparison Tool)"));
   easingLabButton->setAutoRaise(true);
@@ -5490,6 +5514,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->addWidget(easingLabButton);
   searchBarLayout->addWidget(keyPatternButton);
   searchBarLayout->addStretch(1);
+  searchBarLayout->addWidget(miniKeyEditorButton);
   searchBarLayout->addWidget(globalSwitches);
   searchBarLayout->setStretch(0, 0);
   searchBarLayout->setStretch(1, 0);
@@ -5525,6 +5550,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           }));
 
   auto headerWidget = new QWidget();
+  headerWidget->setObjectName(QStringLiteral("timelineHeaderWidget"));
   headerWidget->setLayout(searchBarLayout);
   headerWidget->setFixedHeight(kTimelineHeaderRowHeight);
 
@@ -5707,17 +5733,20 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   });
 
   auto leftTopSpacer = new QWidget();
+  leftTopSpacer->setObjectName(QStringLiteral("timelineLeftTopSpacer"));
   leftTopSpacer->setFixedHeight(kTimelineTopRowHeight);
   leftTopSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   leftTopSpacer->setAutoFillBackground(true);
 
   auto leftSubHeaderSpacer = new QWidget();
+  leftSubHeaderSpacer->setObjectName(QStringLiteral("timelineLeftSubHeaderSpacer"));
   leftSubHeaderSpacer->setFixedHeight(0);
   leftSubHeaderSpacer->setSizePolicy(QSizePolicy::Expanding,
                                      QSizePolicy::Fixed);
   leftSubHeaderSpacer->setAutoFillBackground(true);
 
   auto *curvePropertyPanel = impl_->curvePropertyPanel_ = new QWidget();
+  curvePropertyPanel->setObjectName(QStringLiteral("timelineCurvePropertyPanel"));
   auto *curvePropertyLayout = new QVBoxLayout(curvePropertyPanel);
   curvePropertyLayout->setContentsMargins(8, 8, 8, 8);
   curvePropertyLayout->setSpacing(6);
@@ -5785,6 +5814,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   leftLayout->addWidget(curvePropertyPanel, 0);
 
   auto leftPanel = new QWidget();
+  leftPanel->setObjectName(QStringLiteral("timelineLeftPanel"));
   leftPanel->setLayout(leftLayout);
 
   auto timeNavigatorWidget = impl_->navigator_ =
@@ -5794,6 +5824,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto painterTrackView = impl_->painterTrackView_ =
       new ArtifactTimelineTrackPainterView();
+  painterTrackView->setProperty("timelineMiniEditorEnabled", false);
+  miniKeyEditorButton->setCallback([this, miniKeyEditorButton]() {
+    if (!impl_ || !impl_->painterTrackView_) {
+      return;
+    }
+    impl_->painterTrackView_->setProperty(
+        "timelineMiniEditorEnabled", miniKeyEditorButton->isChecked());
+    impl_->painterTrackView_->update();
+    updateKeyframeState();
+  });
   workAreaWidget->setProperty("timelineDrawPlayhead", false);
   scrubBar->setProperty("timelineDrawPlayhead", false);
   painterTrackView->setProperty("timelineDrawPlayhead", false);
@@ -5809,6 +5849,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->curveEditorGraphMode_ = curveEditorGraphModeFromSettings();
 
   auto *curveHeader = new QWidget();
+  curveHeader->setObjectName(QStringLiteral("timelineCurveHeader"));
   curveHeader->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   {
     QPalette pal = curveHeader->palette();
@@ -5834,6 +5875,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curveHeaderLayout->addWidget(keyframeEaseOutButton);
   curveHeaderLayout->addWidget(keyframeEaseInOutButton);
   impl_->curveEditorModeButton_ = new QToolButton(curveHeader);
+  impl_->curveEditorModeButton_->setObjectName(QStringLiteral("timelineCurveEditorModeButton"));
   styleTimelineToolButton(impl_->curveEditorModeButton_);
   impl_->curveEditorModeButton_->setCursor(Qt::PointingHandCursor);
   impl_->curveEditorModeButton_->setToolTip(QStringLiteral("Switch between Value and Speed graph modes"));
@@ -5852,6 +5894,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           ? QStringLiteral("Speed")
           : QStringLiteral("Value"));
   impl_->curveEditorFitButton_ = new QToolButton(curveHeader);
+  impl_->curveEditorFitButton_->setObjectName(QStringLiteral("timelineCurveEditorFitButton"));
   impl_->curveEditorFitButton_->setText(QStringLiteral("Fit"));
   styleTimelineToolButton(impl_->curveEditorFitButton_);
   impl_->curveEditorFitButton_->setToolTip(QStringLiteral("表示中のカーブに合わせてビューを調整"));
@@ -5861,6 +5904,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     }
   });
   impl_->curveEditorValueButton_ = new QToolButton(curveHeader);
+  impl_->curveEditorValueButton_->setObjectName(QStringLiteral("timelineCurveEditorValueButton"));
   styleTimelineToolButton(impl_->curveEditorValueButton_);
   impl_->curveEditorValueButton_->setText(QStringLiteral("Value..."));
   impl_->curveEditorValueButton_->setToolTip(
@@ -5871,6 +5915,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     }
   });
   impl_->curveEditorHandleButton_ = new QToolButton(curveHeader);
+  impl_->curveEditorHandleButton_->setObjectName(QStringLiteral("timelineCurveEditorHandleButton"));
   styleTimelineToolButton(impl_->curveEditorHandleButton_);
   impl_->curveEditorHandleButton_->setCheckable(true);
   impl_->curveEditorHandleButton_->setChecked(true);
@@ -5922,6 +5967,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         }
       });
   impl_->curveEditorPinButton_ = new QToolButton(curveHeader);
+  impl_->curveEditorPinButton_->setObjectName(QStringLiteral("timelineCurveEditorPinButton"));
   styleTimelineToolButton(impl_->curveEditorPinButton_);
   impl_->curveEditorPinButton_->setCheckable(true);
   impl_->curveEditorPinButton_->setChecked(false);
@@ -6773,6 +6819,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   // Ŝ̃^CCXvb^[
   auto mainSplitter = new QSplitter(Qt::Horizontal);
+  mainSplitter->setObjectName(QStringLiteral("timelineMainSplitter"));
   mainSplitter->setHandleWidth(4);
   mainSplitter->addWidget(leftPanel);
   mainSplitter->addWidget(rightPanel);

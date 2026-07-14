@@ -13,11 +13,14 @@ module;
 #include <QHash>
 #include <QLabel>
 #include <QComboBox>
+#include <QCoreApplication>
+#include <QEventLoop>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMetaType>
 #include <QPushButton>
+#include <QProgressDialog>
 #include <QPalette>
 #include <QPair>
 #include <QPointF>
@@ -42,6 +45,7 @@ import Artifact.Application.ProjectBundleIpc;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Composition;
 import Artifact.Project.Items;
+import Artifact.Project.Manager;
 import Utils.Path;
 import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
@@ -63,6 +67,28 @@ namespace Artifact {
 using namespace ArtifactCore;
 
 namespace {
+
+class CompositionSettingsResultButton final : public QPushButton {
+public:
+ CompositionSettingsResultButton(
+     const QString& text, QDialog* dialog, int resultCode)
+  : QPushButton(text, dialog), dialog_(dialog), resultCode_(resultCode) {}
+
+protected:
+ void nextCheckState() override
+ {
+  if (dialog_) {
+   dialog_->done(resultCode_);
+  }
+ }
+
+private:
+ QDialog* dialog_ = nullptr;
+ int resultCode_ = QDialog::Rejected;
+};
+
+constexpr int kBakeComponentSimulationResult = 1001;
+constexpr int kClearComponentSimulationBakeResult = 1002;
 
 ArtifactPropertyWidget* activePropertyWidget(QWidget* root)
 {
@@ -795,6 +821,33 @@ void ArtifactCompositionMenu::Impl::showSettings()
  }
  contentLayout->addWidget(infoLabel);
 
+ auto* simulationCacheLabel = new QLabel(
+  current->hasAuthoritativeLayerComponentSimulation()
+   ? QStringLiteral("Component Simulation Cache: ready (bounded to 120 frames / 64 MiB)")
+   : QStringLiteral("Component Simulation Cache: not evaluated"),
+  &dialog);
+ contentLayout->addWidget(simulationCacheLabel);
+ auto* simulationCacheRow = new QHBoxLayout();
+ auto* bakeSimulationButton = new CompositionSettingsResultButton(
+ QStringLiteral("Bake Simulation Cache"), &dialog,
+  kBakeComponentSimulationResult);
+ bakeSimulationButton->setAutoDefault(false);
+ bakeSimulationButton->setEnabled(current->usesLayerComponentSimulation());
+ bakeSimulationButton->setToolTip(QStringLiteral(
+  "Persist the current bounded component simulation session beside the project file."));
+ auto* clearSimulationBakeButton = new CompositionSettingsResultButton(
+ QStringLiteral("Clear Bake"), &dialog,
+  kClearComponentSimulationBakeResult);
+ clearSimulationBakeButton->setAutoDefault(false);
+ clearSimulationBakeButton->setEnabled(
+  current->hasAuthoritativeLayerComponentSimulation());
+ clearSimulationBakeButton->setToolTip(QStringLiteral(
+  "Discard the current composition simulation cache and update its sidecar."));
+ simulationCacheRow->addWidget(bakeSimulationButton);
+ simulationCacheRow->addWidget(clearSimulationBakeButton);
+ simulationCacheRow->addStretch();
+ contentLayout->addLayout(simulationCacheRow);
+
  auto* buttons =
      new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
  dialog.footerLayout()->addWidget(buttons);
@@ -1232,7 +1285,73 @@ void ArtifactCompositionMenu::Impl::showSettings()
  });
  QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
- dialog.exec();
+ const int dialogResult = dialog.exec();
+ if (dialogResult == kBakeComponentSimulationResult ||
+     dialogResult == kClearComponentSimulationBakeResult) {
+  current->setBackGroundColor(FloatColor(originalBackgroundColor.redF(),
+                                         originalBackgroundColor.greenF(),
+                                         originalBackgroundColor.blueF(),
+                                         originalBackgroundColor.alphaF()));
+ }
+ if (dialogResult == kBakeComponentSimulationResult) {
+  const FrameRange bakeRange = current->frameRange();
+  const int64_t totalFrames = std::max<int64_t>(
+   1, bakeRange.end() - bakeRange.start());
+  const int progressMaximum = static_cast<int>(std::min<int64_t>(
+   totalFrames, std::numeric_limits<int>::max()));
+  QProgressDialog progress(
+   QStringLiteral("Baking component simulation checkpoints..."),
+   QStringLiteral("Cancel"), 0, progressMaximum,
+   mainWindow_ ? mainWindow_ : menu_);
+  progress.setWindowTitle(QStringLiteral("Component Simulation Bake"));
+  progress.setWindowModality(Qt::WindowModal);
+  progress.setMinimumDuration(0);
+  const bool completed = current->bakeLayerComponentSimulation(
+   bakeRange, [&progress, progressMaximum](int64_t completedFrames,
+                                           int64_t total) {
+    int value = progressMaximum;
+    if (total > 0) {
+     const long double scaled =
+      (static_cast<long double>(completedFrames) * progressMaximum) /
+      static_cast<long double>(total);
+     value = static_cast<int>(std::clamp<long double>(
+      scaled, 0.0L, static_cast<long double>(progressMaximum)));
+    }
+    progress.setValue(value);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    return !progress.wasCanceled();
+   });
+  if (!completed) {
+   QMessageBox::information(mainWindow_ ? mainWindow_ : menu_,
+                            QStringLiteral("Component Simulation Bake"),
+                            QStringLiteral("The bake was canceled. The previous simulation cache was restored."));
+   return;
+  }
+  progress.setValue(progressMaximum);
+  const bool saved = ArtifactProjectManager::getInstance()
+                         .persistComponentSimulationBakes();
+  if (saved) {
+   QMessageBox::information(mainWindow_ ? mainWindow_ : menu_,
+                            QStringLiteral("Component Simulation Bake"),
+                            QStringLiteral("The current bounded simulation cache was saved."));
+  } else {
+   QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
+                        QStringLiteral("Component Simulation Bake"),
+                        QStringLiteral("Save the project before creating a persistent bake."));
+  }
+ } else if (dialogResult == kClearComponentSimulationBakeResult) {
+  const bool cleared = ArtifactProjectManager::getInstance()
+                           .discardComponentSimulationBake(current->id());
+  if (cleared) {
+   QMessageBox::information(mainWindow_ ? mainWindow_ : menu_,
+                            QStringLiteral("Component Simulation Bake"),
+                            QStringLiteral("The simulation bake was cleared."));
+  } else {
+   QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
+                        QStringLiteral("Component Simulation Bake"),
+                        QStringLiteral("The simulation bake could not be cleared."));
+  }
+ }
 }
 
 void ArtifactCompositionMenu::Impl::showColor()

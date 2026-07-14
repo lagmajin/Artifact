@@ -345,6 +345,135 @@ bool layerHasRasterizerEffectsOrMasks(ArtifactAbstractLayer* targetLayer) {
   return false;
 }
 
+bool solid3DCardColor(ArtifactAbstractLayer* layer, FloatColor& color) {
+  if (!layer || !layer->is3D() || layer->isAdjustmentLayer() ||
+      layer->layerBlendType() !=
+          ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL ||
+      layerHasRasterizerEffectsOrMasks(layer) || layer->hasModifiers() ||
+      !layer->matteReferences().empty()) {
+    return false;
+  }
+
+  if (auto* solid2D = dynamic_cast<ArtifactSolid2DLayer*>(layer)) {
+    if (solid2D->fillType() != ArtifactSolidFillType::Solid) {
+      return false;
+    }
+    color = solid2D->color();
+    return true;
+  }
+  if (auto* solidImage = dynamic_cast<ArtifactSolidImageLayer*>(layer)) {
+    if (solidImage->fillType() != ArtifactSolidFillType::Solid) {
+      return false;
+    }
+    color = solidImage->color();
+    return true;
+  }
+  return false;
+}
+
+bool isOpaqueSolid3DCard(ArtifactAbstractLayer* layer) {
+  FloatColor color;
+  return solid3DCardColor(layer, color) && color.a() >= 0.9999f;
+}
+
+struct DirectShape3DCard {
+  std::vector<Detail::float2> fillPoints;
+  std::vector<Detail::float2> strokePoints;
+  FloatColor fillColor;
+  FloatColor strokeColor;
+  float strokeWidth = 0.0f;
+  bool strokeClosed = false;
+};
+
+bool directShape3DCard(ArtifactAbstractLayer* layer,
+                       DirectShape3DCard& card) {
+  if (!layer || !layer->is3D() || layer->isAdjustmentLayer() ||
+      layer->layerBlendType() !=
+          ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL ||
+      layerHasRasterizerEffectsOrMasks(layer) || layer->hasModifiers() ||
+      !layer->matteReferences().empty()) {
+    return false;
+  }
+  auto* shapeLayer = dynamic_cast<ArtifactShapeLayer*>(layer);
+  if (!shapeLayer) {
+    return false;
+  }
+  const auto appendPoints = [](const std::vector<QPointF>& source,
+                               std::vector<Detail::float2>& destination) {
+    destination.clear();
+    destination.reserve(source.size());
+    for (const auto& point : source) {
+      destination.push_back({static_cast<float>(point.x()),
+                             static_cast<float>(point.y())});
+    }
+  };
+  appendPoints(shapeLayer->direct3DCardFillPoints(), card.fillPoints);
+  appendPoints(shapeLayer->direct3DCardStrokePoints(), card.strokePoints);
+  card.fillColor = shapeLayer->direct3DCardFillColor();
+  card.strokeColor = shapeLayer->direct3DCardStrokeColor();
+  card.strokeWidth = shapeLayer->strokeWidth();
+  card.strokeClosed = shapeLayer->direct3DCardStrokeClosed();
+  return card.fillPoints.size() >= 3 || card.strokePoints.size() >= 2;
+}
+
+std::vector<Detail::float2> makeDirectShapeStrokeQuad(
+    const Detail::float2& start, const Detail::float2& end, float width) {
+  const float dx = end.x - start.x;
+  const float dy = end.y - start.y;
+  const float length = std::sqrt(dx * dx + dy * dy);
+  if (length <= 0.0001f || width <= 0.0f) {
+    return {};
+  }
+  const float halfWidth = width * 0.5f;
+  const float nx = -dy / length * halfWidth;
+  const float ny = dx / length * halfWidth;
+  return {{start.x + nx, start.y + ny}, {end.x + nx, end.y + ny},
+          {end.x - nx, end.y - ny}, {start.x - nx, start.y - ny}};
+}
+
+const ArtifactCore::ImageF32x4_RGBA* textured3DCardBuffer(
+    ArtifactAbstractLayer* layer, QString* sourceKind = nullptr) {
+  if (!layer || !layer->is3D() || layer->isAdjustmentLayer() ||
+      layer->layerBlendType() !=
+          ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL ||
+      layerHasRasterizerEffectsOrMasks(layer) || layer->hasModifiers() ||
+      !layer->matteReferences().empty()) {
+    return nullptr;
+  }
+  if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer);
+      imageLayer && imageLayer->hasCurrentFrameBuffer()) {
+    if (sourceKind) *sourceKind = QStringLiteral("image");
+    return &imageLayer->currentFrameBuffer();
+  }
+  if (auto* svgLayer = dynamic_cast<ArtifactSvgLayer*>(layer);
+      svgLayer && svgLayer->isLoaded() && svgLayer->hasCurrentFrameBuffer()) {
+    if (sourceKind) *sourceKind = QStringLiteral("svg");
+    return &svgLayer->currentFrameBuffer();
+  }
+  if (auto* textLayer = dynamic_cast<ArtifactTextLayer*>(layer);
+      textLayer && textLayer->hasCurrentFrameBuffer()) {
+    if (sourceKind) *sourceKind = QStringLiteral("text");
+    return &textLayer->currentFrameBuffer();
+  }
+  return nullptr;
+}
+
+ArtifactVideoLayer* readyVideo3DCardLayer(ArtifactAbstractLayer* layer,
+                                          int64_t timelineFrame) {
+  if (!layer || !layer->is3D() || layer->isAdjustmentLayer() ||
+      layer->layerBlendType() !=
+          ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL ||
+      layerHasRasterizerEffectsOrMasks(layer) || layer->hasModifiers() ||
+      !layer->matteReferences().empty()) {
+    return nullptr;
+  }
+  auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer);
+  return videoLayer && videoLayer->isLoaded() &&
+                 videoLayer->isFrameCached(timelineFrame)
+             ? videoLayer
+             : nullptr;
+}
+
 
 EffectContext makeControllerEffectContext(ArtifactAbstractLayer* layer, const QRectF& roi = QRectF()) {
 
@@ -3877,17 +4006,9 @@ ArtifactCore::Light makeSceneLightFromLayer(const ArtifactLightLayer* layer,
 
 
 
-  const auto& t3 = layer->transform3D();
-
-  const QVector3D position(
-
-      static_cast<float>(t3.positionXAt(time)),
-
-      static_cast<float>(t3.positionYAt(time)),
-
-      static_cast<float>(t3.positionZAt(time)));
-
   const QMatrix4x4 globalMat = layer->getGlobalTransform4x4();
+
+  const QVector3D position = globalMat.map(QVector3D(0.0f, 0.0f, 0.0f));
 
   QVector3D direction = globalMat.mapVector(QVector3D(0.0f, 0.0f, 1.0f));
 
@@ -3911,7 +4032,7 @@ ArtifactCore::Light makeSceneLightFromLayer(const ArtifactLightLayer* layer,
 
 
 
-  if (layer->lightType() == LightType::Point || layer->lightType() == LightType::Spot) {
+  if (layer->lightType() == LightType::Point) {
 
     light.setRange(std::max(10.0f, layer->shadowRadius() * 10.0f));
 
@@ -3919,7 +4040,15 @@ ArtifactCore::Light makeSceneLightFromLayer(const ArtifactLightLayer* layer,
 
   if (layer->lightType() == LightType::Spot) {
 
-    light.setSpotAngle(45.0f);
+    light.setRange(layer->coneLength());
+
+    const float outerHalfAngle = layer->coneAngle() * 0.5f;
+
+    const float innerHalfAngle =
+
+        std::max(0.0f, layer->coneAngle() - layer->coneFeather()) * 0.5f;
+
+    light.setCutoff(innerHalfAngle, outerHalfAngle);
 
   }
 
@@ -4461,6 +4590,13 @@ struct MotionPathInterpolationSnapshot {
 
 };
 
+enum class MotionPathTangentHandle { None, In, Out };
+
+struct MotionPathTangentSnapshot {
+  bool present = false;
+  ArtifactCore::PositionSpatialTangents tangents;
+};
+
 
 
 class MotionPathUndoCommand final : public UndoCommand {
@@ -4545,6 +4681,44 @@ private:
 
   MotionPathPositionSnapshot after_;
 
+};
+
+class MotionPathTangentUndoCommand final : public UndoCommand {
+public:
+  MotionPathTangentUndoCommand(ArtifactAbstractLayerPtr layer, int64_t frame,
+                               MotionPathTangentSnapshot before,
+                               MotionPathTangentSnapshot after)
+      : layer_(layer), frame_(frame), before_(before), after_(after) {}
+
+  void undo() override { apply(before_); }
+  void redo() override { apply(after_); }
+  QString label() const override { return QStringLiteral("Edit Motion Path Tangent"); }
+
+private:
+  void apply(const MotionPathTangentSnapshot &snapshot) {
+    auto layer = layer_.lock();
+    if (!layer) return;
+    const ArtifactCore::RationalTime time(frame_, 24);
+    auto &t3d = layer->transform3D();
+    if (snapshot.present) {
+      t3d.setPositionKeyFrameSpatialTangentsAt(time, snapshot.tangents);
+    } else {
+      t3d.removePositionKeyFrameSpatialTangentsAt(time);
+    }
+    layer->setDirty(LayerDirtyFlag::Transform);
+    layer->changed();
+    if (auto *comp = static_cast<ArtifactAbstractComposition *>(layer->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+    }
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  ArtifactAbstractLayerWeak layer_;
+  int64_t frame_ = 0;
+  MotionPathTangentSnapshot before_;
+  MotionPathTangentSnapshot after_;
 };
 
 
@@ -5796,7 +5970,10 @@ void drawLayerForCompositionView(
     const std::vector<SceneLightEntry> *sceneLights = nullptr,
 
     bool interactiveDraft = false, bool applyViewportCameraTo2D = false,
-    quint64 surfaceGeneration = 1) {
+    quint64 surfaceGeneration = 1,
+    const std::function<Diligent::ITextureView*(ArtifactCompositionLayer*,
+                                                int64_t, const QSize&)>*
+        precompGpuResolver = nullptr) {
 
   if (!layer || !renderer) {
 
@@ -5843,6 +6020,241 @@ void drawLayerForCompositionView(
   const QTransform globalTransform = layer->getGlobalTransform();
 
   const QMatrix4x4 globalTransform4x4 = layer->getGlobalTransform4x4();
+
+
+  FloatColor cardColor;
+
+  if (solid3DCardColor(layer, cardColor)) {
+
+    const float cardOpacity =
+
+        opacityOverride >= 0.0f ? opacityOverride : layer->opacity();
+
+    const bool writeDepth = cardOpacity * cardColor.a() >= 0.9999f;
+
+    if (cameraView && cameraProj) {
+
+      renderer->set3DCameraMatrices(*cameraView, *cameraProj);
+
+    }
+
+    renderer->draw3DCard(localRect, globalTransform4x4, cardColor,
+
+                         cardOpacity, writeDepth);
+
+    if (cameraView && cameraProj) {
+
+      renderer->reset3DCameraMatrices();
+
+    }
+
+    return;
+
+  }
+
+  DirectShape3DCard shapeCard;
+
+  if (directShape3DCard(layer, shapeCard)) {
+
+    const float cardOpacity =
+
+        opacityOverride >= 0.0f ? opacityOverride : layer->opacity();
+
+    const bool fillWriteDepth =
+
+        cardOpacity * shapeCard.fillColor.a() >= 0.9999f;
+
+    const bool strokeWriteDepth =
+
+        cardOpacity * shapeCard.strokeColor.a() >= 0.9999f;
+
+    if (cameraView && cameraProj) {
+
+      renderer->set3DCameraMatrices(*cameraView, *cameraProj);
+
+    }
+
+    if (shapeCard.fillPoints.size() >= 3) {
+
+      renderer->draw3DShape(shapeCard.fillPoints, globalTransform4x4,
+
+                            shapeCard.fillColor, cardOpacity,
+
+                            fillWriteDepth);
+
+    }
+
+    if (shapeCard.strokePoints.size() >= 2 &&
+
+        shapeCard.strokeWidth > 0.0f) {
+
+      const size_t strokeSegmentCount =
+
+          shapeCard.strokeClosed ? shapeCard.strokePoints.size()
+
+                                 : shapeCard.strokePoints.size() - 1;
+
+      for (size_t segment = 0; segment < strokeSegmentCount; ++segment) {
+
+        const auto& start = shapeCard.strokePoints[segment];
+
+        const auto& end = shapeCard.strokePoints[
+
+            (segment + 1) % shapeCard.strokePoints.size()];
+
+        const auto quad = makeDirectShapeStrokeQuad(
+
+            start, end, shapeCard.strokeWidth);
+
+        if (quad.size() == 4) {
+
+          renderer->draw3DShape(quad, globalTransform4x4,
+
+                                shapeCard.strokeColor, cardOpacity,
+
+                                strokeWriteDepth);
+
+        }
+
+      }
+
+    }
+
+    if (cameraView && cameraProj) {
+
+      renderer->reset3DCameraMatrices();
+
+    }
+
+    return;
+
+  }
+
+  QString texturedCardKind;
+
+  if (const auto* cardBuffer =
+
+          textured3DCardBuffer(layer, &texturedCardKind);
+
+      cardBuffer && gpuTextureCacheManager) {
+
+    QString textureOwner = layer->id().toString();
+
+    QString textureKey = QStringLiteral("3d-card:%1:g%2:f%3")
+
+                             .arg(texturedCardKind)
+
+                             .arg(surfaceGeneration)
+
+                             .arg(cacheFrameNumber);
+
+    if (auto* imageCard = dynamic_cast<ArtifactImageLayer*>(layer);
+
+        imageCard && imageCard->canShareSourceGpuTexture() &&
+
+        !imageCard->sourceAssetId().isNull() &&
+
+        imageCard->sourceVersion() > 0) {
+
+      textureOwner = QStringLiteral("asset:%1").arg(
+
+          imageCard->sourceAssetId().toString(QUuid::WithoutBraces));
+
+      textureKey = QStringLiteral("image-f32:v%1|3d-card")
+
+                       .arg(imageCard->sourceVersion());
+
+    }
+
+    const auto handle = gpuTextureCacheManager->acquireOrCreate(
+
+        textureOwner, textureKey, *cardBuffer);
+
+    const auto binding = gpuTextureCacheManager->bindingRecord(handle);
+
+    if (binding.isValid()) {
+
+      const float cardOpacity =
+
+          opacityOverride >= 0.0f ? opacityOverride : layer->opacity();
+
+      if (cameraView && cameraProj) {
+
+        renderer->set3DCameraMatrices(*cameraView, *cameraProj);
+
+      }
+
+      renderer->draw3DTexturedCard(localRect, globalTransform4x4,
+
+                                   binding.srv, cardOpacity);
+
+      if (cameraView && cameraProj) {
+
+        renderer->reset3DCameraMatrices();
+
+      }
+
+      return;
+
+    }
+
+  }
+
+  if (auto* videoCard = readyVideo3DCardLayer(layer, cacheFrameNumber);
+
+      videoCard && gpuTextureCacheManager) {
+
+    const auto frameBuffer =
+
+        videoCard->cachedFrameImageBuffer(cacheFrameNumber);
+
+    if (!frameBuffer.isEmpty()) {
+
+      const QString textureOwner = layer->id().toString();
+
+      const QString textureKey = QStringLiteral("3d-card:video:s%1:g%2")
+
+                                     .arg(videoCard->currentSourceFrameValue())
+
+                                     .arg(surfaceGeneration);
+
+      const auto handle = gpuTextureCacheManager->acquireOrCreate(
+
+          textureOwner, textureKey, frameBuffer);
+
+      const auto binding = gpuTextureCacheManager->bindingRecord(handle);
+
+      if (binding.isValid()) {
+
+        const float cardOpacity =
+
+            opacityOverride >= 0.0f ? opacityOverride : layer->opacity();
+
+        videoCard->markFrameRenderQueued(cacheFrameNumber);
+
+        if (cameraView && cameraProj) {
+
+          renderer->set3DCameraMatrices(*cameraView, *cameraProj);
+
+        }
+
+        renderer->draw3DTexturedCard(localRect, globalTransform4x4,
+
+                                     binding.srv, cardOpacity);
+
+        if (cameraView && cameraProj) {
+
+          renderer->reset3DCameraMatrices();
+
+        }
+
+        return;
+
+      }
+
+    }
+
+  }
 
 
 
@@ -6868,6 +7280,17 @@ void drawLayerForCompositionView(
               ? childComp->framePosition().framePosition()
               : static_cast<int64_t>(std::llround(
                     layer->getSourceFrameAtCompFrame(cacheFrameNumber)));
+      if (layer->is3D() && precompGpuResolver) {
+        if (auto* childSRV = (*precompGpuResolver)(compLayer, childFrame,
+                                                   childSize)) {
+          renderer->draw3DTexturedCard(localRect, layer->getGlobalTransform4x4(),
+                                       childSRV,
+                                       opacityOverride >= 0.0f
+                                           ? opacityOverride
+                                           : layer->opacity());
+          return;
+        }
+      }
       const FramePosition childRestoreFrame = childComp->framePosition();
       if (childRestoreFrame.framePosition() != childFrame) {
         childComp->goToFrame(childFrame);
@@ -7278,6 +7701,113 @@ class CompositionRenderController::Impl {
 public:
 
   std::unique_ptr<ArtifactIRenderer> renderer_;
+
+  struct PrecompGpuOutputEntry {
+    void* colorTargetView = nullptr;
+    void* depthTargetView = nullptr;
+    Diligent::ITextureView* colorShaderResourceView = nullptr;
+    QSize size;
+    qint64 frame = std::numeric_limits<qint64>::min();
+    quint64 generation = 0;
+    bool ready = false;
+  };
+
+  QHash<QString, PrecompGpuOutputEntry> precompGpuOutputs_;
+
+  void clearPrecompGpuOutputs() {
+    if (renderer_) {
+      for (auto& entry : precompGpuOutputs_) {
+        renderer_->destroyOffscreenTexture(entry.colorTargetView);
+        renderer_->destroyOffscreenTexture(entry.depthTargetView);
+      }
+    }
+    precompGpuOutputs_.clear();
+  }
+
+  PrecompGpuOutputEntry* preparePrecompGpuOutput(
+      const QString& compositionId, qint64 frame, const QSize& size,
+      quint64 generation) {
+    if (!renderer_ || compositionId.isEmpty() || size.width() <= 0 ||
+        size.height() <= 0) {
+      return nullptr;
+    }
+    auto& entry = precompGpuOutputs_[compositionId];
+    if (entry.size != size || !entry.colorTargetView ||
+        !entry.depthTargetView || !entry.colorShaderResourceView) {
+      renderer_->destroyOffscreenTexture(entry.colorTargetView);
+      renderer_->destroyOffscreenTexture(entry.depthTargetView);
+      entry = {};
+      entry.colorTargetView =
+          renderer_->createOffscreenTexture(size.width(), size.height());
+      entry.depthTargetView =
+          renderer_->createOffscreenDepthTexture(size.width(), size.height());
+      entry.colorShaderResourceView =
+          renderer_->offscreenTextureShaderResourceView(entry.colorTargetView);
+      entry.size = size;
+    }
+    entry.frame = frame;
+    entry.generation = generation;
+    entry.ready = false;
+    return entry.colorTargetView && entry.depthTargetView &&
+                   entry.colorShaderResourceView
+               ? &entry
+               : nullptr;
+  }
+
+  Diligent::ITextureView* renderPrecomp2DGpuOutput(
+      ArtifactCompositionLayer* precompLayer, qint64 childFrame,
+      const QSize& childSize, float restoreViewportW, float restoreViewportH,
+      float restoreCanvasW, float restoreCanvasH) {
+    if (!precompLayer || !renderer_ || !gpuTextureCacheManager_) return nullptr;
+    const auto child = precompLayer->sourceComposition();
+    if (!child || childSize.isEmpty()) return nullptr;
+    const auto layers = child->allLayerRef();
+    for (const auto& layer : layers) {
+      if (!layer || layer->is3D() || layer->isAdjustmentLayer() ||
+          layer->maskCount() != 0 || layer->layerBlendType() !=
+              ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL ||
+          layerHasRasterizerEffectsOrMasks(layer.get()) ||
+          dynamic_cast<ArtifactCompositionLayer*>(layer.get()) != nullptr) {
+        return nullptr;
+      }
+    }
+    auto* output = preparePrecompGpuOutput(
+        child->id().toString(), childFrame, childSize, renderFrameCounter_);
+    if (!output) return nullptr;
+    const auto savedFrame = child->framePosition();
+    const float savedZoom = renderer_->getZoom();
+    float savedPanX = 0.0f, savedPanY = 0.0f;
+    renderer_->getPan(savedPanX, savedPanY);
+    child->goToFrame(childFrame);
+    const bool scopeActive = precompLayer->beginExposedPropertyOverrideScope();
+    renderer_->pushRenderTarget(output->colorTargetView, output->depthTargetView);
+    renderer_->setViewportRect(childSize.width(), childSize.height());
+    renderer_->setCanvasSize(childSize.width(), childSize.height());
+    renderer_->setPan(0.0f, 0.0f);
+    renderer_->setZoom(1.0f);
+    renderer_->clearRenderTarget(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+    renderer_->clearDepthRenderTarget(output->depthTargetView);
+    for (const auto& layer : layers) {
+      if (layer && child->shouldEvaluateLayer(layer->id()) &&
+          layer->isActiveAt(FramePosition(childFrame)) && layer->isVisible() &&
+          layer->shouldIncludeInFinalRender()) {
+        drawLayerForCompositionView(layer.get(), renderer_.get(), 1.0f,
+                                    &lastVideoDebug_, &surfaceCache_,
+                                    gpuTextureCacheManager_.get(), childFrame,
+                                    true, DetailLevel::High);
+      }
+    }
+    renderer_->flush();
+    renderer_->popRenderTarget();
+    renderer_->setViewportRect(restoreViewportW, restoreViewportH);
+    renderer_->setCanvasSize(restoreCanvasW, restoreCanvasH);
+    renderer_->setPan(savedPanX, savedPanY);
+    renderer_->setZoom(savedZoom);
+    if (scopeActive) precompLayer->endExposedPropertyOverrideScope();
+    child->goToFrame(savedFrame.framePosition());
+    output->ready = true;
+    return output->colorShaderResourceView;
+  }
 
   std::unique_ptr<CompositionRenderer> compositionRenderer_;
 
@@ -8082,7 +8612,9 @@ public:
 
       const std::vector<SceneLightEntry>& sceneLights, bool has3DCamera,
 
-      const QMatrix4x4& cameraViewMatrix, const QMatrix4x4& cameraProjMatrix) {
+      const QMatrix4x4& cameraViewMatrix, const QMatrix4x4& cameraProjMatrix,
+
+      bool preserveSceneDepth) {
 
     renderer_->setOverrideRTV(layerRTV);
 
@@ -8128,6 +8660,15 @@ public:
 
       }
 
+    } else if (preserveSceneDepth) {
+
+      // A contiguous 3D scene bin keeps the shared depth attachment alive while
+      // each layer continues through the existing per-layer color compositor.
+      // Clearing only color lets later geometry depth-test against earlier
+      // geometry without carrying the previous layer color into layerRTV.
+      renderer_->clearRenderTarget(
+          layerRTV, FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+
     } else {
 
       renderer_->clear();
@@ -8137,6 +8678,16 @@ public:
 
 
     QString* dbgOut = &lastVideoDebug_;
+
+    const std::function<Diligent::ITextureView*(ArtifactCompositionLayer*,
+                                                int64_t, const QSize&)>
+        precompGpuResolver =
+            [this, rcw, rch, cw, ch](ArtifactCompositionLayer* precomp,
+                                     int64_t childFrame,
+                                     const QSize& childSize) {
+              return renderPrecomp2DGpuOutput(precomp, childFrame, childSize,
+                                               rcw, rch, cw, ch);
+            };
 
     drawLayerForCompositionView(
 
@@ -8152,7 +8703,8 @@ public:
 
             previewDownsample_ >= interactivePreviewDownsampleFloor_,
 
-        viewportOrientationActive_, surfaceGeneration(layer));
+        viewportOrientationActive_, surfaceGeneration(layer),
+        &precompGpuResolver);
 
     renderer_->flush();
 
@@ -9821,6 +10373,13 @@ public:
 
   int hoveredMotionPathFrame_ = -1;
 
+  bool isDraggingMotionPathTangent_ = false;
+  ArtifactAbstractLayerWeak draggingMotionPathTangentLayer_;
+  int64_t draggingMotionPathTangentFrame_ = 0;
+  MotionPathTangentHandle draggingMotionPathTangentHandle_ =
+      MotionPathTangentHandle::None;
+  MotionPathTangentSnapshot draggingMotionPathTangentBefore_;
+
   bool dropGhostVisible_ = false;
 
   QRectF dropGhostRect_;
@@ -10439,6 +10998,109 @@ public:
 
     return true;
 
+  }
+
+  bool hitTestMotionPathTangent(const QPointF &canvasPos, float threshold,
+                                int64_t &outFrame,
+                                MotionPathTangentHandle &outHandle) const {
+    const float thresholdSq = threshold * threshold;
+    float bestDistanceSq = thresholdSq;
+    bool found = false;
+    for (const auto &point : motionPathCache_.keyPoints) {
+      if (!point.hasSpatialTangents) continue;
+      const auto testHandle = [&](float x, float y,
+                                  MotionPathTangentHandle handle) {
+        const QPointF delta = QPointF(x, y) - canvasPos;
+        const float distanceSq =
+            static_cast<float>(QPointF::dotProduct(delta, delta));
+        if (distanceSq <= bestDistanceSq) {
+          bestDistanceSq = distanceSq;
+          outFrame = point.frame;
+          outHandle = handle;
+          found = true;
+        }
+      };
+      testHandle(point.inTangentX, point.inTangentY,
+                 MotionPathTangentHandle::In);
+      testHandle(point.outTangentX, point.outTangentY,
+                 MotionPathTangentHandle::Out);
+    }
+    return found;
+  }
+
+  void beginMotionPathTangentDrag(const ArtifactAbstractLayerPtr &layer,
+                                  int64_t frame,
+                                  MotionPathTangentHandle handle) {
+    draggingMotionPathTangentLayer_ = layer;
+    draggingMotionPathTangentFrame_ = frame;
+    draggingMotionPathTangentHandle_ = handle;
+    draggingMotionPathTangentBefore_ = {};
+    if (layer) {
+      const ArtifactCore::RationalTime time(frame, 24);
+      draggingMotionPathTangentBefore_.present =
+          layer->transform3D().positionKeyFrameSpatialTangentsAt(
+              time, draggingMotionPathTangentBefore_.tangents);
+    }
+    isDraggingMotionPathTangent_ = true;
+  }
+
+  void clearMotionPathTangentDragState() {
+    isDraggingMotionPathTangent_ = false;
+    draggingMotionPathTangentLayer_.reset();
+    draggingMotionPathTangentFrame_ = 0;
+    draggingMotionPathTangentHandle_ = MotionPathTangentHandle::None;
+    draggingMotionPathTangentBefore_ = {};
+  }
+
+  bool applyMotionPathTangentDrag(const QPointF &canvasPos) {
+    auto layer = draggingMotionPathTangentLayer_.lock();
+    if (!layer || !isDraggingMotionPathTangent_ ||
+        draggingMotionPathTangentHandle_ == MotionPathTangentHandle::None) {
+      return false;
+    }
+
+    QPointF localHandlePos = canvasPos;
+    if (const auto parent = layer->parentLayer()) {
+      const QTransform parentGlobal =
+          parent->getGlobalTransformAt(draggingMotionPathTangentFrame_);
+      bool invertible = false;
+      const QTransform inverseParent = parentGlobal.inverted(&invertible);
+      if (!invertible) return false;
+      localHandlePos = inverseParent.map(canvasPos);
+    }
+
+    auto &t3d = layer->transform3D();
+    const ArtifactCore::RationalTime time(draggingMotionPathTangentFrame_, 24);
+    const QPointF keyPosition(t3d.positionXAt(time), t3d.positionYAt(time));
+    const QPointF delta = localHandlePos - keyPosition;
+    ArtifactCore::PositionSpatialTangents tangents;
+    if (!t3d.positionKeyFrameSpatialTangentsAt(time, tangents)) {
+      tangents.linked = true;
+    }
+    if (draggingMotionPathTangentHandle_ == MotionPathTangentHandle::In) {
+      tangents.inTangent = {static_cast<float>(delta.x()),
+                            static_cast<float>(delta.y())};
+      if (tangents.linked) {
+        tangents.outTangent = {-tangents.inTangent.x, -tangents.inTangent.y};
+      }
+    } else {
+      tangents.outTangent = {static_cast<float>(delta.x()),
+                             static_cast<float>(delta.y())};
+      if (tangents.linked) {
+        tangents.inTangent = {-tangents.outTangent.x, -tangents.outTangent.y};
+      }
+    }
+    if (!t3d.setPositionKeyFrameSpatialTangentsAt(time, tangents)) return false;
+    layer->setDirty(LayerDirtyFlag::Transform);
+    layer->changed();
+    if (auto *comp = static_cast<ArtifactAbstractComposition *>(layer->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+    }
+    motionPathCache_.valid = false;
+    invalidateOverlayComposite();
+    return true;
   }
 
 
@@ -11818,6 +12480,8 @@ void CompositionRenderController::destroy() {
 
   impl_->compositionRenderer_.reset();
 
+  impl_->clearPrecompGpuOutputs();
+
   impl_->surfaceCache_.clear();
 
   impl_->surfaceGenerations_.clear();
@@ -12291,6 +12955,8 @@ void CompositionRenderController::setComposition(
   impl_->compositionChangedSubscription_.disconnect();
 
   impl_->surfaceCache_.clear();
+
+  impl_->clearPrecompGpuOutputs();
 
   impl_->surfaceGenerations_.clear();
 
@@ -13950,6 +14616,62 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
   }
 
   const int64_t rate = posTimes.front().scale();
+
+  // Camera layers need a world-space path. The standard path overlay below is
+  // intentionally 2D so it can offer handle editing for regular layers; using
+  // it for a camera makes depth movement appear flattened into the canvas.
+  if (dynamic_cast<ArtifactCameraLayer *>(layer.get())) {
+    using namespace Artifact::Detail;
+    const auto cameraPositionAt = [&t3d, rate](const int frame) {
+      const ArtifactCore::RationalTime time(frame, rate);
+      return QVector3D(static_cast<float>(t3d.positionXAt(time)),
+                       static_cast<float>(t3d.positionYAt(time)),
+                       static_cast<float>(t3d.positionZAt(time)));
+    };
+    const float lineThickness = std::max(1.0f, 1.6f * invZoom);
+    const float markerSize = std::max(3.0f, 7.0f * invZoom);
+    const int sampleStep = motionPathAdaptiveSampleStep(minFrame, maxFrame, zoom);
+    const FloatColor pastPathColor{1.0f, 0.60f, 0.16f, 0.95f};
+    const FloatColor futurePathColor{0.38f, 0.82f, 1.0f, 0.92f};
+
+    QVector3D previous = cameraPositionAt(minFrame);
+    int previousFrame = minFrame;
+    for (int frame = minFrame + sampleStep;; frame += sampleStep) {
+      const int nextFrame = std::min(frame, maxFrame);
+      const QVector3D current = cameraPositionAt(nextFrame);
+      const FloatColor color = (previousFrame + nextFrame) <= currentFrameNum * 2
+          ? pastPathColor
+          : futurePathColor;
+      renderer_->drawGizmoLine(float3{previous.x(), previous.y(), previous.z()},
+                               float3{current.x(), current.y(), current.z()},
+                               color, lineThickness);
+      if (nextFrame == maxFrame) {
+        break;
+      }
+      previous = current;
+      previousFrame = nextFrame;
+    }
+
+    for (const auto &keyTime : posTimes) {
+      const int frame = static_cast<int>(keyTime.value());
+      const QVector3D keyPosition = cameraPositionAt(frame);
+      const bool isCurrent = frame == currentFrameNum;
+      renderer_->drawGizmoCube(
+          float3{keyPosition.x(), keyPosition.y(), keyPosition.z()},
+          isCurrent ? markerSize * 0.72f : markerSize * 0.45f,
+          isCurrent ? FloatColor{1.0f, 0.92f, 0.30f, 1.0f}
+                    : FloatColor{0.95f, 0.72f, 0.30f, 0.90f});
+    }
+
+    if (currentFrameNum >= minFrame && currentFrameNum <= maxFrame) {
+      const QVector3D current = cameraPositionAt(currentFrameNum);
+      renderer_->drawGizmoRing(float3{current.x(), current.y(), current.z()},
+                               float3{0.0f, 1.0f, 0.0f}, markerSize * 1.25f,
+                               FloatColor{1.0f, 0.96f, 0.38f, 0.95f}, 1.4f);
+    }
+    return;
+  }
+
   const FloatColor pastPathColor{0.96f, 0.46f, 0.72f, 0.96f};
   const FloatColor futurePathColor{0.42f, 0.76f, 1.0f, 0.92f};
   const FloatColor pathShadowColor{0.0f, 0.0f, 0.0f, 0.52f};
@@ -14056,12 +14778,18 @@ void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
       pt.interpolation = motionPathPositionInterpolation(layer, kfTime);
       ArtifactCore::PositionSpatialTangents tangents;
       if (t3d.positionKeyFrameSpatialTangentsAt(kfTime, tangents)) {
-        const QPointF inHandle = gTrans.map(QPointF(
-            t3d.anchorXAt(kfTime) + tangents.inTangent.x,
-            t3d.anchorYAt(kfTime) + tangents.inTangent.y));
-        const QPointF outHandle = gTrans.map(QPointF(
-            t3d.anchorXAt(kfTime) + tangents.outTangent.x,
-            t3d.anchorYAt(kfTime) + tangents.outTangent.y));
+        QTransform tangentTransform;
+        if (const auto parent = layer->parentLayer()) {
+          tangentTransform = parent->getGlobalTransformAt(f);
+        }
+        const QPointF tangentOrigin = tangentTransform.map(QPointF(0.0, 0.0));
+        const auto mapTangent = [&](const auto &tangent) {
+          const QPointF transformed = tangentTransform.map(
+              QPointF(tangent.x, tangent.y));
+          return wPos + (transformed - tangentOrigin);
+        };
+        const QPointF inHandle = mapTangent(tangents.inTangent);
+        const QPointF outHandle = mapTangent(tangents.outTangent);
         pt.inTangentX = static_cast<float>(inHandle.x());
         pt.inTangentY = static_cast<float>(inHandle.y());
         pt.outTangentX = static_cast<float>(outHandle.x());
@@ -16877,6 +17605,19 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
         12.0f * Accessibility::targetScale() /
             impl_->renderer_->getZoom());
 
+    int64_t tangentFrame = 0;
+    MotionPathTangentHandle tangentHandle = MotionPathTangentHandle::None;
+    if (impl_->hitTestMotionPathTangent(QPointF(cPos.x, cPos.y),
+                                        hitThreshold, tangentFrame,
+                                        tangentHandle)) {
+      impl_->beginMotionPathTangentDrag(selectedLayer, tangentFrame,
+                                        tangentHandle);
+      setInfoOverlayText(QStringLiteral("Motion Path"),
+                         QStringLiteral("Drag tangent to shape the path"));
+      event->accept();
+      return;
+    }
+
     if (hitTestMotionPathSample(motionPathSamples, QPointF(cPos.x, cPos.y),
 
                                 hitThreshold, hitSample)) {
@@ -16884,6 +17625,16 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
       const auto &t3d = selectedLayer->transform3D();
 
       const ArtifactCore::RationalTime time(hitSample.framePosition, 24);
+
+      if (event->modifiers().testFlag(Qt::ControlModifier)) {
+        impl_->beginMotionPathTangentDrag(selectedLayer,
+                                          hitSample.framePosition,
+                                          MotionPathTangentHandle::Out);
+        setInfoOverlayText(QStringLiteral("Motion Path"),
+                           QStringLiteral("Drag to create linked tangents"));
+        event->accept();
+        return;
+      }
 
       if (event->modifiers().testFlag(Qt::AltModifier)) {
 
@@ -17636,6 +18387,17 @@ void CompositionRenderController::handleMouseMove(
 
     }
 
+  }
+
+  if (impl_->isDraggingMotionPathTangent_) {
+    if (impl_->renderer_) {
+      const auto canvasPos = impl_->renderer_->viewportToCanvas(
+          {static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())});
+      if (impl_->applyMotionPathTangentDrag(QPointF(canvasPos.x, canvasPos.y))) {
+        markRenderDirty();
+        return;
+      }
+    }
   }
 
   if (impl_->isDraggingMotionPathKeyframe_) {
@@ -18396,6 +19158,33 @@ void CompositionRenderController::handleMouseRelease() {
 
     }
 
+  }
+
+  if (impl_->isDraggingMotionPathTangent_) {
+    auto layer = impl_->draggingMotionPathTangentLayer_.lock();
+    if (layer) {
+      const ArtifactCore::RationalTime time(
+          impl_->draggingMotionPathTangentFrame_, 24);
+      MotionPathTangentSnapshot after;
+      after.present = layer->transform3D().positionKeyFrameSpatialTangentsAt(
+          time, after.tangents);
+      const auto &before = impl_->draggingMotionPathTangentBefore_;
+      const bool changed = before.present != after.present ||
+          std::abs(before.tangents.inTangent.x - after.tangents.inTangent.x) > 0.0001f ||
+          std::abs(before.tangents.inTangent.y - after.tangents.inTangent.y) > 0.0001f ||
+          std::abs(before.tangents.outTangent.x - after.tangents.outTangent.x) > 0.0001f ||
+          std::abs(before.tangents.outTangent.y - after.tangents.outTangent.y) > 0.0001f;
+      if (changed) {
+        if (auto *mgr = UndoManager::instance()) {
+          mgr->push(std::make_unique<MotionPathTangentUndoCommand>(
+              layer, impl_->draggingMotionPathTangentFrame_, before, after));
+        }
+      }
+    }
+    impl_->clearMotionPathTangentDragState();
+    impl_->motionPathCache_.valid = false;
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
   }
 
   if (impl_->isDraggingMotionPathKeyframe_) {
@@ -21989,6 +22778,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             lod)); // Pass LOD to renderer/effects
 
+        bool shared3DSceneDepthOpen = false;
+
         for (const auto &layer : layers) {
 
           if (!isLayerEffectivelyVisible(layer)) {
@@ -22152,6 +22943,40 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           }
 
+          // Model3D, solid/vector cards and alpha-split still/video cards share
+          // one depth attachment while retaining the layer blend pipeline.
+          const auto* sceneModelLayer =
+              dynamic_cast<Artifact3DLayer*>(layer.get());
+          const bool opaqueSolidCard = isOpaqueSolid3DCard(layer.get());
+          DirectShape3DCard shapeCard;
+          const bool opaqueShapeCard =
+              directShape3DCard(layer.get(), shapeCard) &&
+              (shapeCard.fillPoints.empty() ||
+               shapeCard.fillColor.a() >= 0.9999f) &&
+              (shapeCard.strokePoints.empty() ||
+               shapeCard.strokeColor.a() >= 0.9999f);
+          const bool texturedCard =
+              gpuTextureCacheManager_ &&
+              textured3DCardBuffer(layer.get()) != nullptr;
+          const bool videoCard =
+              gpuTextureCacheManager_ &&
+              readyVideo3DCardLayer(layer.get(), currentFrame.framePosition()) !=
+                  nullptr;
+          const bool shared3DSceneDepthMember =
+              ((sceneModelLayer != nullptr &&
+                !sceneModelLayer->hasTransparentMaterial()) ||
+               opaqueSolidCard || opaqueShapeCard || texturedCard ||
+               videoCard) &&
+              !layer->isAdjustmentLayer() &&
+              blendMode == ArtifactCore::BlendMode::Normal &&
+              opacity >= 0.9999f && layerMaskCount == 0 &&
+              layer->matteReferences().empty();
+          const bool preserveSceneDepth =
+              shared3DSceneDepthMember && shared3DSceneDepthOpen;
+          if (!shared3DSceneDepthMember) {
+            shared3DSceneDepthOpen = false;
+          }
+
 
 
           RenderPassContext passContext{renderer_.get(), renderFrameCounter_};
@@ -22182,7 +23007,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     rch, cw, ch, lod, currentFrame, matteResolver, sceneLights,
 
-                    has3DCamera, cameraViewMatrix, cameraProjMatrix);
+                    has3DCamera, cameraViewMatrix, cameraProjMatrix,
+
+                    preserveSceneDepth);
 
                 if (!draftRendering && emissionRTV) {
 
@@ -22340,15 +23167,21 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                                           passResources)) {
 
+            shared3DSceneDepthOpen = false;
+
             continue;
 
           }
 
           if (!blendResult.blended) {
 
+            shared3DSceneDepthOpen = false;
+
             continue;
 
           }
+
+          shared3DSceneDepthOpen = shared3DSceneDepthMember;
 
           if (blendMaskLayerNotes.size() < 4 &&
 

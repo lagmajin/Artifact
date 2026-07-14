@@ -51,6 +51,9 @@ struct ArtifactLightLayer::Impl {
     LightType type_ = LightType::Point;
     ArtifactCore::FloatColor color_{1.0f, 1.0f, 1.0f, 1.0f};
     float intensity_ = 100.0f;
+    float coneAngle_ = 45.0f;
+    float coneFeather_ = 10.0f;
+    float coneLength_ = 300.0f;
     float shadowRadius_ = 10.0f;
     bool castsShadows_ = true;
     LightLinkMode linkMode_ = LightLinkMode::All;
@@ -145,6 +148,36 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
                             float3{tip.x(), tip.y(), tip.z()}, tintColor, 1.0f);
     renderer->drawGizmoRing(float3{tip.x(), tip.y(), tip.z()}, float3{0, 1, 0},
                             baseSize * 0.75f, tintColor, 1.0f);
+
+    const float coneLength = std::max(1.0f, lightImpl_->coneLength_);
+    const float coneRadius = std::tan(std::clamp(lightImpl_->coneAngle_, 0.1f, 179.0f)
+                                      * 3.14159265f / 360.0f) * coneLength;
+    QVector3D coneSide = m.mapVector(QVector3D(1, 0, 0));
+    QVector3D coneUp = m.mapVector(QVector3D(0, 1, 0));
+    if (coneSide.lengthSquared() <= 0.000001f) coneSide = QVector3D(1, 0, 0);
+    if (coneUp.lengthSquared() <= 0.000001f) coneUp = QVector3D(0, 1, 0);
+    coneSide.normalize();
+    coneUp.normalize();
+    const QVector3D coneCenter = pos + forward * coneLength;
+    const ArtifactCore::FloatColor coneColor{lightColor.r(), lightColor.g(), lightColor.b(), 0.72f};
+    const ArtifactCore::FloatColor featherColor{lightColor.r(), lightColor.g(), lightColor.b(), 0.30f};
+    renderer->drawGizmoRing(float3{coneCenter.x(), coneCenter.y(), coneCenter.z()},
+                            float3{forward.x(), forward.y(), forward.z()}, coneRadius, coneColor, 1.2f);
+    for (const float signX : {-1.0f, 1.0f}) {
+      for (const float signY : {-1.0f, 1.0f}) {
+        const QVector3D edge = coneCenter + coneSide * (coneRadius * signX)
+                               + coneUp * (coneRadius * signY);
+        renderer->drawGizmoLine(float3{pos.x(), pos.y(), pos.z()},
+                                float3{edge.x(), edge.y(), edge.z()}, coneColor, 1.0f);
+      }
+    }
+    const float featherAngle = std::max(0.0f, lightImpl_->coneAngle_ - lightImpl_->coneFeather_);
+    if (featherAngle > 0.1f && featherAngle < lightImpl_->coneAngle_) {
+      const float innerRadius = std::tan(featherAngle * 3.14159265f / 360.0f) * coneLength;
+      renderer->drawGizmoRing(float3{coneCenter.x(), coneCenter.y(), coneCenter.z()},
+                              float3{forward.x(), forward.y(), forward.z()}, innerRadius,
+                              featherColor, 1.0f);
+    }
   } else if (type == LightType::Parallel) {
     renderer->drawGizmoLine(float3{pos.x(), pos.y(), pos.z()},
                             float3{tip.x(), tip.y(), tip.z()}, tintColor, 1.0f);
@@ -162,6 +195,28 @@ void ArtifactLightLayer::setColor(const ArtifactCore::FloatColor& c) { lightImpl
 
 float ArtifactLightLayer::intensity() const { return lightImpl_->intensity_; }
 void ArtifactLightLayer::setIntensity(float i) { lightImpl_->intensity_ = i; changed(); }
+
+float ArtifactLightLayer::coneAngle() const { return lightImpl_->coneAngle_; }
+void ArtifactLightLayer::setConeAngle(float degrees)
+{
+  lightImpl_->coneAngle_ = std::clamp(degrees, 0.1f, 179.0f);
+  lightImpl_->coneFeather_ = std::clamp(lightImpl_->coneFeather_, 0.0f, lightImpl_->coneAngle_);
+  changed();
+}
+
+float ArtifactLightLayer::coneFeather() const { return lightImpl_->coneFeather_; }
+void ArtifactLightLayer::setConeFeather(float degrees)
+{
+  lightImpl_->coneFeather_ = std::clamp(degrees, 0.0f, lightImpl_->coneAngle_);
+  changed();
+}
+
+float ArtifactLightLayer::coneLength() const { return lightImpl_->coneLength_; }
+void ArtifactLightLayer::setConeLength(float length)
+{
+  lightImpl_->coneLength_ = std::max(1.0f, length);
+  changed();
+}
 
 float ArtifactLightLayer::shadowRadius() const { return lightImpl_->shadowRadius_; }
 void ArtifactLightLayer::setShadowRadius(float r) { lightImpl_->shadowRadius_ = r; changed(); }
@@ -214,6 +269,33 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     intensityProp->setSoftRange(0.0, 250.0);
     intensityProp->setUnit(QStringLiteral("%"));
     lightOptions.addProperty(intensityProp);
+
+    auto coneAngleProp = persistentLayerProperty(QStringLiteral("Light/Cone Angle"),
+                                                  ArtifactCore::PropertyType::Float,
+                                                  static_cast<double>(lightImpl_->coneAngle_), -138);
+    coneAngleProp->setHardRange(0.1, 179.0);
+    coneAngleProp->setSoftRange(1.0, 120.0);
+    coneAngleProp->setUnit(QStringLiteral("deg"));
+    coneAngleProp->setTooltip(QStringLiteral("Spot-light outer cone angle"));
+    lightOptions.addProperty(coneAngleProp);
+
+    auto coneFeatherProp = persistentLayerProperty(QStringLiteral("Light/Cone Feather"),
+                                                    ArtifactCore::PropertyType::Float,
+                                                    static_cast<double>(lightImpl_->coneFeather_), -137);
+    coneFeatherProp->setHardRange(0.0, 179.0);
+    coneFeatherProp->setSoftRange(0.0, 60.0);
+    coneFeatherProp->setUnit(QStringLiteral("deg"));
+    coneFeatherProp->setTooltip(QStringLiteral("Soft edge width inside the spot cone"));
+    lightOptions.addProperty(coneFeatherProp);
+
+    auto coneLengthProp = persistentLayerProperty(QStringLiteral("Light/Cone Length"),
+                                                   ArtifactCore::PropertyType::Float,
+                                                   static_cast<double>(lightImpl_->coneLength_), -136);
+    coneLengthProp->setHardRange(1.0, 10000.0);
+    coneLengthProp->setSoftRange(25.0, 1000.0);
+    coneLengthProp->setUnit(QStringLiteral("px"));
+    coneLengthProp->setTooltip(QStringLiteral("Spot-light cone range in composition space"));
+    lightOptions.addProperty(coneLengthProp);
 
     auto shadowProp = persistentLayerProperty(
         QStringLiteral("Light/Shadows"),
@@ -275,6 +357,15 @@ bool ArtifactLightLayer::setLayerPropertyValue(const QString& propertyPath, cons
         return true;
     } else if (propertyPath == "Light/Intensity") {
         setIntensity(value.toFloat());
+        return true;
+    } else if (propertyPath == "Light/Cone Angle") {
+        setConeAngle(value.toFloat());
+        return true;
+    } else if (propertyPath == "Light/Cone Feather") {
+        setConeFeather(value.toFloat());
+        return true;
+    } else if (propertyPath == "Light/Cone Length") {
+        setConeLength(value.toFloat());
         return true;
     } else if (propertyPath == "Light/Shadows") {
         setCastsShadows(value.toBool());

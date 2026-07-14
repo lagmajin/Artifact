@@ -106,6 +106,7 @@ public:
   QImage readbackToImage() const;
   QImage readbackTextureViewToImage(Diligent::ITextureView *textureView) const;
   QImage readbackDepthToImage() const;
+  Diligent::ITextureView *liveDepthShaderResourceView() const;
   ArtifactCore::MultiChannelImage readbackToMultiChannelImage() const;
 
   // Async readback: returns immediately, calls callback when ready
@@ -341,6 +342,16 @@ public:
                     const FloatColor &color, float thickness = 1.0f);
   void draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail::float3 v2,
                   Detail::float3 v3, const FloatColor &color);
+  void draw3DCard(const QRectF &localRect, const QMatrix4x4 &modelMatrix,
+                  const FloatColor &color, float opacity = 1.0f,
+                  bool writeDepth = true);
+  void draw3DTexturedCard(const QRectF &localRect,
+                          const QMatrix4x4 &modelMatrix,
+                          Diligent::ITextureView *texture,
+                          float opacity = 1.0f);
+  void draw3DShape(const std::vector<Detail::float2> &points,
+                   const QMatrix4x4 &modelMatrix, const FloatColor &color,
+                   float opacity = 1.0f, bool writeDepth = true);
   void drawMesh(const QString &cacheKey, const ArtifactCore::Mesh &mesh,
                 const ArtifactCore::Material &material,
                 const QMatrix4x4 &modelMatrix, float opacity = 1.0f,
@@ -353,6 +364,10 @@ public:
   // Offscreen rendering for group layers
   void *createOffscreenTexture(int width, int height);
   void *createOffscreenDepthTexture(int width, int height);
+  // Returns the shader-resource view owned by an offscreen color RTV. The
+  // caller must keep the source RTV alive and must not Release this view.
+  Diligent::ITextureView *offscreenTextureShaderResourceView(
+      void *textureView) const;
   void destroyOffscreenTexture(void *textureView);
   void pushRenderTarget(void *textureView);
   void pushRenderTarget(void *textureView, void *depthTextureView);

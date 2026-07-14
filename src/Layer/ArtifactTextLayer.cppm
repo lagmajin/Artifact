@@ -9,6 +9,7 @@ module;
 #include <QHash>
 #include <QLocale>
 #include <QPointF>
+#include <QTransform>
 #include <QMatrix4x4>
 #include <QPainter>
 #include <QPainterPath>
@@ -612,7 +613,7 @@ QString textFieldPreviewSummary(const ArtifactTextLayer *layer) {
 }
 
 std::vector<float> fieldDrivenGlyphWeights(const ArtifactTextLayer *layer,
-                                           const std::vector<GlyphItem> &glyphs) {
+                                            const std::vector<GlyphItem> &glyphs) {
   std::vector<float> weights;
   if (!layer || glyphs.empty()) {
     return weights;
@@ -633,24 +634,30 @@ std::vector<float> fieldDrivenGlyphWeights(const ArtifactTextLayer *layer,
     }
     supportedFields.push_back(&field);
   }
-  if (supportedFields.empty()) {
-    return weights;
-  }
-
   weights.assign(glyphs.size(), 1.0f);
+  const QTransform layerToCanvas = layer->getGlobalTransform();
+  bool hasAnyFieldInfluence = !supportedFields.empty();
   for (size_t glyphIndex = 0; glyphIndex < glyphs.size(); ++glyphIndex) {
     const auto &glyph = glyphs[glyphIndex];
     const QPointF point = glyph.basePosition + glyph.bounds.center();
-    float combined = 0.0f;
+    float combined = supportedFields.empty() ? 1.0f : 0.0f;
     for (const auto *field : supportedFields) {
       if (!field) {
         continue;
       }
       combined = std::max(combined, textFieldInfluenceAtPoint(*field, point));
     }
+    bool compositionFieldAffected = false;
+    const float compositionFieldWeight =
+        layer->compositionFieldInfluenceAtCanvasPoint(
+            layerToCanvas.map(point), &compositionFieldAffected);
+    if (compositionFieldAffected) {
+      combined *= compositionFieldWeight;
+      hasAnyFieldInfluence = true;
+    }
     weights[glyphIndex] = std::clamp(combined, 0.0f, 1.0f);
   }
-  return weights;
+  return hasAnyFieldInfluence ? weights : std::vector<float>{};
 }
 
 QString textUnitBadgeForState(const QString &displayText,

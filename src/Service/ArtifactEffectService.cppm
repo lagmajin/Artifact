@@ -26,6 +26,7 @@ import Artifact.Effect.Creative;
 import Artifact.Effect.DirectionalGlow;
 import Artifact.Effect.Rasterizer.Sharpen;
 import Artifact.Effect.Rasterizer.FindEdges;
+import Artifact.Effect.Rasterizer.Edge;
 import Artifact.Effect.Rasterizer.RadialBlur;
 import Artifact.Effect.Rasterizer.AddNoise;
 import Artifact.Effect.Rasterizer.RadialShadow;
@@ -462,6 +463,13 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Displacement Map"));
    return effect;
   }
+  if (effectId == QStringLiteral("rim_light") ||
+      effectId == QStringLiteral("effect.stylize.rimlight")) {
+   auto effect = std::make_unique<RimLightEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Rim Light / Edge Light"));
+   return effect;
+  }
   if (effectId == QStringLiteral("time_displacement") ||
       effectId == QStringLiteral("effect.distort.timedisplacement")) {
    auto effect = std::make_unique<TimeDisplacementEffect>();
@@ -636,6 +644,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("halftone"), "Halftone"});
   effects.push_back({EffectID("sharpen"), "Sharpen"});
   effects.push_back({EffectID("find_edges"), "Find Edges"});
+  effects.push_back({EffectID("rim_light"), "Rim Light / Edge Light"});
   effects.push_back({EffectID("radial_blur"), "Radial Blur"});
   effects.push_back({EffectID("add_noise"), "Add Noise"});
   effects.push_back({EffectID("radial_shadow"), "Radial Shadow"});

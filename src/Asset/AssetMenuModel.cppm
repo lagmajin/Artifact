@@ -105,11 +105,28 @@ namespace Artifact
   case Qt::DisplayRole: {
    const QString name = item.name.toQString();
    const QString type = item.type.toQString();
-   const int sourceUsesMarker = type.indexOf(QStringLiteral("Source Uses:"));
-   if (sourceUsesMarker >= 0) {
-    return name + QStringLiteral("  •  ") + type.mid(sourceUsesMarker);
+   if (type.isEmpty()) {
+    return name;
    }
-   return name;
+   QStringList subtitleParts;
+   const QStringList typeParts = type.split(QStringLiteral(" • "), Qt::SkipEmptyParts);
+   for (const QString& part : typeParts) {
+    if (part == QStringLiteral("Favorite") ||
+        part == QStringLiteral("Imported") ||
+        part == QStringLiteral("Unused")) {
+     continue;
+    }
+    if (part.startsWith(QStringLiteral("Source Uses:"))) {
+     subtitleParts.append(QStringLiteral("%1 uses").arg(
+         part.mid(QStringLiteral("Source Uses:").size()).trimmed()));
+    } else {
+     subtitleParts.append(part);
+    }
+   }
+   if (subtitleParts.isEmpty()) {
+    subtitleParts.append(typeParts.constLast());
+   }
+   return name + QStringLiteral("\n") + subtitleParts.join(QStringLiteral(" • "));
   }
   case static_cast<int>(AssetMenuRole::Name):
    return item.name.toQString();

@@ -32,6 +32,7 @@ module;
 module Artifact.Widgets.CreateCameraLayerDialog;
 
 import Artifact.Layer.Camera;
+import Artifact.Layer.Abstract;
 import Artifact.Service.Project;
 import Widgets.Utils.CSS;
 

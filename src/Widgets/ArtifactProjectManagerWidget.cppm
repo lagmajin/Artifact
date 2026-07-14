@@ -603,23 +603,32 @@ bool editResponsiveLayoutVariantDialog(QWidget* parent,
     auto* form = new QFormLayout();
 
     auto* nameEdit = new QLineEdit(&dialog);
+    nameEdit->setObjectName(QStringLiteral("projectVariantNameEdit"));
+    nameEdit->setObjectName(QStringLiteral("projectVariantNameEdit"));
     nameEdit->setText(variant->displayName.isEmpty() ? variant->variantId : variant->displayName);
     form->addRow(QStringLiteral("Name"), nameEdit);
 
     auto* idEdit = new QLineEdit(&dialog);
+    idEdit->setObjectName(QStringLiteral("projectVariantIdEdit"));
+    idEdit->setObjectName(QStringLiteral("projectVariantIdEdit"));
     idEdit->setText(variant->variantId);
     form->addRow(QStringLiteral("Variant ID"), idEdit);
 
     auto* widthSpin = new QSpinBox(&dialog);
+    widthSpin->setObjectName(QStringLiteral("projectVariantWidthSpin"));
+    widthSpin->setObjectName(QStringLiteral("projectVariantWidthSpin"));
     widthSpin->setRange(1, 32768);
     widthSpin->setValue(std::max(1, variant->baseSize.width()));
     auto* heightSpin = new QSpinBox(&dialog);
+    heightSpin->setObjectName(QStringLiteral("projectVariantHeightSpin"));
+    heightSpin->setObjectName(QStringLiteral("projectVariantHeightSpin"));
     heightSpin->setRange(1, 32768);
     heightSpin->setValue(std::max(1, variant->baseSize.height()));
     form->addRow(QStringLiteral("Width"), widthSpin);
     form->addRow(QStringLiteral("Height"), heightSpin);
 
     auto* enabledCheck = new QCheckBox(QStringLiteral("Enabled"), &dialog);
+    enabledCheck->setObjectName(QStringLiteral("projectVariantEnabledCheck"));
     enabledCheck->setChecked(variant->enabled);
     form->addRow(QString(), enabledCheck);
 
@@ -703,23 +712,32 @@ bool addResponsiveLayoutVariantDialog(QWidget* parent,
     auto* form = new QFormLayout();
 
     auto* nameEdit = new QLineEdit(&dialog);
+    nameEdit->setObjectName(QStringLiteral("projectDraftNameEdit"));
+    nameEdit->setObjectName(QStringLiteral("projectDraftNameEdit"));
     nameEdit->setText(draft.displayName);
     form->addRow(QStringLiteral("Name"), nameEdit);
 
     auto* idEdit = new QLineEdit(&dialog);
+    idEdit->setObjectName(QStringLiteral("projectDraftIdEdit"));
+    idEdit->setObjectName(QStringLiteral("projectDraftIdEdit"));
     idEdit->setText(draft.variantId);
     form->addRow(QStringLiteral("Variant ID"), idEdit);
 
     auto* widthSpin = new QSpinBox(&dialog);
+    widthSpin->setObjectName(QStringLiteral("projectDraftWidthSpin"));
+    widthSpin->setObjectName(QStringLiteral("projectDraftWidthSpin"));
     widthSpin->setRange(1, 32768);
     widthSpin->setValue(std::max(1, draft.baseSize.width()));
     auto* heightSpin = new QSpinBox(&dialog);
+    heightSpin->setObjectName(QStringLiteral("projectDraftHeightSpin"));
+    heightSpin->setObjectName(QStringLiteral("projectDraftHeightSpin"));
     heightSpin->setRange(1, 32768);
     heightSpin->setValue(std::max(1, draft.baseSize.height()));
     form->addRow(QStringLiteral("Width"), widthSpin);
     form->addRow(QStringLiteral("Height"), heightSpin);
 
     auto* enabledCheck = new QCheckBox(QStringLiteral("Enabled"), &dialog);
+    enabledCheck->setObjectName(QStringLiteral("projectDraftEnabledCheck"));
     enabledCheck->setChecked(draft.enabled);
     form->addRow(QString(), enabledCheck);
 
@@ -3137,6 +3155,7 @@ void ArtifactProjectView::editIndex(const QModelIndex& index) {
     
     if (!impl_->nameEditor) {
         QLineEdit* editor = new QLineEdit(this);
+        editor->setObjectName(QStringLiteral("projectNameEditor"));
         impl_->nameEditor = editor;
         {
             QPalette pal = impl_->nameEditor->palette();
@@ -3739,14 +3758,17 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 auto* layout = new QVBoxLayout(dialog);
                 auto* nameLabel = new QLabel(QStringLiteral("Name"), dialog);
                 auto* nameEdit = new QLineEdit(composition->settings().compositionName().toQString(), dialog);
+                nameEdit->setObjectName(QStringLiteral("compositionSettingsNameEdit"));
                 layout->addWidget(nameLabel);
                 layout->addWidget(nameEdit);
 
                 auto* sizeLayout = new QHBoxLayout();
                 auto* widthSpin = new QSpinBox(dialog);
+                widthSpin->setObjectName(QStringLiteral("compositionSettingsWidthSpin"));
                 widthSpin->setRange(1, 32768);
                 widthSpin->setValue(std::max(1, composition->settings().compositionSize().width()));
                 auto* heightSpin = new QSpinBox(dialog);
+                heightSpin->setObjectName(QStringLiteral("compositionSettingsHeightSpin"));
                 heightSpin->setRange(1, 32768);
                 heightSpin->setValue(std::max(1, composition->settings().compositionSize().height()));
                 sizeLayout->addWidget(new QLabel(QStringLiteral("Width"), dialog));
@@ -3757,6 +3779,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
                 auto* fpsLayout = new QHBoxLayout();
                 auto* fpsSpin = new QDoubleSpinBox(dialog);
+                fpsSpin->setObjectName(QStringLiteral("compositionSettingsFpsSpin"));
                 fpsSpin->setRange(1.0, 240.0);
                 fpsSpin->setDecimals(3);
                 fpsSpin->setSingleStep(0.5);
@@ -3768,9 +3791,11 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 const FrameRange currentRange = composition->frameRange().normalized();
                 auto* rangeLayout = new QHBoxLayout();
                 auto* startSpin = new QSpinBox(dialog);
+                startSpin->setObjectName(QStringLiteral("compositionSettingsStartSpin"));
                 startSpin->setRange(-1000000, 1000000);
                 startSpin->setValue(static_cast<int>(currentRange.start()));
                 auto* endSpin = new QSpinBox(dialog);
+                endSpin->setObjectName(QStringLiteral("compositionSettingsEndSpin"));
                 endSpin->setRange(-1000000, 1000000);
                 endSpin->setValue(static_cast<int>(currentRange.end()));
                 rangeLayout->addWidget(new QLabel(QStringLiteral("Start"), dialog));
@@ -3953,6 +3978,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 auto* fpsRow = new QHBoxLayout();
                 fpsRow->addWidget(new QLabel(QStringLiteral("Source frame rate"), dialog));
                 auto* fpsSpin = new QDoubleSpinBox(dialog);
+                fpsSpin->setObjectName(QStringLiteral("compositionPreserveFpsSpin"));
                 fpsSpin->setRange(1.0, 240.0);
                 fpsSpin->setDecimals(3);
                 fpsSpin->setSingleStep(0.5);
@@ -3963,6 +3989,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 auto* preserveRow = new QHBoxLayout();
                 preserveRow->addWidget(new QLabel(QStringLiteral("Preserve mode"), dialog));
                 auto* preserveCombo = new QComboBox(dialog);
+                preserveCombo->setObjectName(QStringLiteral("compositionPreserveModeCombo"));
                 preserveCombo->addItem(QStringLiteral("Keep Keyframes"));
                 preserveCombo->addItem(QStringLiteral("Keep Time"));
                 preserveCombo->addItem(QStringLiteral("Re-sample"));
@@ -5791,6 +5818,7 @@ public:
             auto* dl = new QVBoxLayout(&dlg);
             dl->addWidget(new QLabel(QStringLiteral("Select proxy resolution:"), &dlg));
             auto* combo = new QComboBox(&dlg);
+            combo->setObjectName(QStringLiteral("projectProxyResolutionCombo"));
             combo->addItem(QStringLiteral("1/4 (Quarter)"), static_cast<int>(ProjectProxyQuality::Quarter));
             combo->addItem(QStringLiteral("1/2 (Half)"), static_cast<int>(ProjectProxyQuality::Half));
             combo->addItem(QStringLiteral("Full (1:1)"), static_cast<int>(ProjectProxyQuality::Full));
@@ -5837,6 +5865,7 @@ public:
             auto* dl = new QVBoxLayout(&dlg);
             dl->addWidget(new QLabel(QStringLiteral("Select proxy resolution:"), &dlg));
             auto* combo = new QComboBox(&dlg);
+            combo->setObjectName(QStringLiteral("projectProxyResolutionCombo"));
             combo->addItem(QStringLiteral("1/4 (Quarter)"), static_cast<int>(ProjectProxyQuality::Quarter));
             combo->addItem(QStringLiteral("1/2 (Half)"), static_cast<int>(ProjectProxyQuality::Half));
             combo->addItem(QStringLiteral("Full (1:1)"), static_cast<int>(ProjectProxyQuality::Full));
@@ -6297,6 +6326,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     chromeLayout->addWidget(impl_->projectHealthLabel);
 
     auto* selectionChrome = new QWidget(chromePanel);
+    selectionChrome->setObjectName(QStringLiteral("projectManagerSelectionChrome"));
     auto* selectionChromeLayout = new QVBoxLayout(selectionChrome);
     selectionChromeLayout->setContentsMargins(8, 0, 8, 5);
     selectionChromeLayout->setSpacing(2);
@@ -6358,18 +6388,31 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     selectionButtons->setHorizontalSpacing(6);
     selectionButtons->setVerticalSpacing(4);
     impl_->openSelectionButton = new QPushButton(QStringLiteral("Open"), selectionChrome);
+    impl_->openSelectionButton->setObjectName(QStringLiteral("projectManagerOpenSelectionButton"));
     impl_->revealSelectionButton = new QPushButton(QStringLiteral("Reveal"), selectionChrome);
+    impl_->revealSelectionButton->setObjectName(QStringLiteral("projectManagerRevealSelectionButton"));
     impl_->generateProxyButton = new QPushButton(QStringLiteral("Proxy"), selectionChrome);
+    impl_->generateProxyButton->setObjectName(QStringLiteral("projectManagerGenerateProxyButton"));
     impl_->revealProxyButton = new QPushButton(QStringLiteral("Reveal Proxy"), selectionChrome);
+    impl_->revealProxyButton->setObjectName(QStringLiteral("projectManagerRevealProxyButton"));
     impl_->clearProxyButton = new QPushButton(QStringLiteral("Clear Proxy"), selectionChrome);
+    impl_->clearProxyButton->setObjectName(QStringLiteral("projectManagerClearProxyButton"));
     impl_->generateSelectedProxiesButton = new QPushButton(QStringLiteral("Gen Selected"), selectionChrome);
+    impl_->generateSelectedProxiesButton->setObjectName(QStringLiteral("projectManagerGenerateSelectedProxiesButton"));
     impl_->clearSelectedProxiesButton = new QPushButton(QStringLiteral("Clear Selected"), selectionChrome);
+    impl_->clearSelectedProxiesButton->setObjectName(QStringLiteral("projectManagerClearSelectedProxiesButton"));
     impl_->regenerateStaleProxiesButton = new QPushButton(QStringLiteral("Re-gen Stale"), selectionChrome);
+    impl_->regenerateStaleProxiesButton->setObjectName(QStringLiteral("projectManagerRegenerateStaleProxiesButton"));
     impl_->renameSelectionButton = new QPushButton(QStringLiteral("Rename"), selectionChrome);
+    impl_->renameSelectionButton->setObjectName(QStringLiteral("projectManagerRenameSelectionButton"));
     impl_->deleteSelectionButton = new QPushButton(QStringLiteral("Delete"), selectionChrome);
+    impl_->deleteSelectionButton->setObjectName(QStringLiteral("projectManagerDeleteSelectionButton"));
     impl_->relinkSelectionButton = new QPushButton(QStringLiteral("Relink"), selectionChrome);
+    impl_->relinkSelectionButton->setObjectName(QStringLiteral("projectManagerRelinkSelectionButton"));
     impl_->copyPathButton = new QPushButton(QStringLiteral("Copy Path"), selectionChrome);
+    impl_->copyPathButton->setObjectName(QStringLiteral("projectManagerCopyPathButton"));
     impl_->proxyGlobalToggle_ = new QCheckBox(QStringLiteral("Global Proxy"), selectionChrome);
+    impl_->proxyGlobalToggle_->setObjectName(QStringLiteral("projectManagerGlobalProxyToggle"));
     impl_->proxyGlobalToggle_->setChecked(impl_->proxyGlobalEnabled_);
     impl_->proxyGlobalToggle_->setToolTip(QStringLiteral("Enable or disable proxy playback for all footage. When disabled, layers fall back to original source."));
     QObject::connect(impl_->proxyGlobalToggle_, &QCheckBox::toggled, [this](bool checked) {
@@ -6509,21 +6552,28 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     compositionForm->setVerticalSpacing(6);
 
     impl_->compositionNameEdit = new QLineEdit(impl_->compositionEditorPanel);
+    impl_->compositionNameEdit->setObjectName(QStringLiteral("projectCompositionNameEdit"));
     impl_->compositionWidthSpin = new QSpinBox(impl_->compositionEditorPanel);
+    impl_->compositionWidthSpin->setObjectName(QStringLiteral("projectCompositionWidthSpin"));
     impl_->compositionWidthSpin->setRange(1, 32768);
     impl_->compositionHeightSpin = new QSpinBox(impl_->compositionEditorPanel);
+    impl_->compositionHeightSpin->setObjectName(QStringLiteral("projectCompositionHeightSpin"));
     impl_->compositionHeightSpin->setRange(1, 32768);
     impl_->compositionFrameRateSpin = new QDoubleSpinBox(impl_->compositionEditorPanel);
+    impl_->compositionFrameRateSpin->setObjectName(QStringLiteral("projectCompositionFrameRateSpin"));
     impl_->compositionFrameRateSpin->setRange(1.0, 240.0);
     impl_->compositionFrameRateSpin->setDecimals(3);
     impl_->compositionFrameRateSpin->setSingleStep(0.5);
     impl_->compositionStartFrameSpin = new QSpinBox(impl_->compositionEditorPanel);
+    impl_->compositionStartFrameSpin->setObjectName(QStringLiteral("projectCompositionStartFrameSpin"));
     impl_->compositionStartFrameSpin->setRange(-1000000, 1000000);
     impl_->compositionEndFrameSpin = new QSpinBox(impl_->compositionEditorPanel);
+    impl_->compositionEndFrameSpin->setObjectName(QStringLiteral("projectCompositionEndFrameSpin"));
     impl_->compositionEndFrameSpin->setRange(-1000000, 1000000);
     impl_->compositionBackgroundButton = new CompositionBackgroundColorButton(QColor(0, 0, 0), impl_->compositionEditorPanel);
 
     auto* sizeRow = new QWidget(impl_->compositionEditorPanel);
+    sizeRow->setObjectName(QStringLiteral("projectCompositionSizeRow"));
     auto* sizeLayout = new QHBoxLayout(sizeRow);
     sizeLayout->setContentsMargins(0, 0, 0, 0);
     sizeLayout->setSpacing(6);
@@ -6533,6 +6583,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     sizeLayout->addWidget(impl_->compositionHeightSpin);
 
     auto* rangeRow = new QWidget(impl_->compositionEditorPanel);
+    rangeRow->setObjectName(QStringLiteral("projectCompositionRangeRow"));
     auto* rangeLayout = new QHBoxLayout(rangeRow);
     rangeLayout->setContentsMargins(0, 0, 0, 0);
     rangeLayout->setSpacing(6);
@@ -6551,8 +6602,10 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     auto* compositionActionRow = new QHBoxLayout();
     compositionActionRow->setSpacing(6);
     impl_->compositionApplyButton = new QPushButton(QStringLiteral("Apply Settings"), impl_->compositionEditorPanel);
+    impl_->compositionApplyButton->setObjectName(QStringLiteral("projectCompositionApplyButton"));
     impl_->compositionApplyFrameRateButton = new QPushButton(
         QStringLiteral("Apply FPS to Selection"), impl_->compositionEditorPanel);
+    impl_->compositionApplyFrameRateButton->setObjectName(QStringLiteral("projectCompositionApplyFrameRateButton"));
     impl_->compositionApplyButton->setToolTip(
         QStringLiteral("Apply the inline composition settings to the selected composition."));
     impl_->compositionApplyFrameRateButton->setToolTip(
@@ -6585,6 +6638,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     chromeLayout->addWidget(impl_->compositionEditorPanel);
 
     impl_->searchBar = new QLineEdit(chromePanel);
+    impl_->searchBar->setObjectName(QStringLiteral("projectManagerSearchBar"));
     impl_->searchBar->setPlaceholderText(QStringLiteral("Search project"));
     impl_->searchBar->setClearButtonEnabled(true);
     {
@@ -6607,11 +6661,14 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     filterBar->setContentsMargins(0, 0, 0, 0);
     filterBar->setSpacing(8);
     impl_->typeFilterBox = new QComboBox(filterBarHost);
+    impl_->typeFilterBox->setObjectName(QStringLiteral("projectManagerTypeFilterBox"));
     impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage" << "Folder" << "Solid");
     impl_->viewModeBox = new QComboBox(filterBarHost);
+    impl_->viewModeBox->setObjectName(QStringLiteral("projectManagerViewModeBox"));
     impl_->viewModeBox->addItems(QStringList() << "Tree" << "Tile");
     impl_->viewModeBox->setToolTip(QStringLiteral("Switch between hierarchy-first Tree view and visual Tile view."));
     impl_->unusedOnlyCheck = new QCheckBox("Unused only", filterBarHost);
+    impl_->unusedOnlyCheck->setObjectName(QStringLiteral("projectManagerUnusedOnlyCheck"));
     const auto applyProjectControlPalette = [](QWidget* control) {
         if (!control) {
             return;
@@ -6646,6 +6703,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     chromeLayout->removeWidget(impl_->searchBar);
     chromeLayout->removeWidget(filterBarHost);
     auto* searchFilterRow = new QWidget(chromePanel);
+    searchFilterRow->setObjectName(QStringLiteral("projectManagerSearchFilterRow"));
     auto* searchFilterLayout = new QHBoxLayout(searchFilterRow);
     searchFilterLayout->setContentsMargins(10, 0, 10, 6);
     searchFilterLayout->setSpacing(8);
@@ -6667,6 +6725,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->projectView_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     auto* contentSplit = new QSplitter(Qt::Horizontal, this);
+    contentSplit->setObjectName(QStringLiteral("projectManagerContentSplit"));
     contentSplit->setChildrenCollapsible(false);
 
     auto* projectPane = new QWidget(contentSplit);
@@ -6675,6 +6734,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     projectPaneLayout->setContentsMargins(0, 0, 0, 0);
     projectPaneLayout->setSpacing(0);
     auto* browseContextBar = new QWidget(projectPane);
+    browseContextBar->setObjectName(QStringLiteral("projectManagerBrowseContextBar"));
     auto* browseContextLayout = new QHBoxLayout(browseContextBar);
     browseContextLayout->setContentsMargins(10, 4, 10, 4);
     browseContextLayout->setSpacing(8);
@@ -7090,6 +7150,8 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
 
     auto createBtn = [](const QString& tip, const QString& iconPath, QStyle::StandardPixmap fallbackIcon, const QString& fallbackText) {
         auto b = new QPushButton();
+        const QString objectName = QStringLiteral("projectManagerToolbarButton_%1").arg(fallbackText);
+        b->setObjectName(objectName.simplified().replace(' ', '_'));
         b->setFixedSize(22, 22);
         b->setToolTip(tip);
         QIcon icon = loadProjectViewIcon(iconPath);

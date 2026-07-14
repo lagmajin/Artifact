@@ -643,6 +643,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
         m_deferredCtx_->Begin(ctx->GetDesc().ContextId);
         recordCtx = m_deferredCtx_.RawPtr();
     }
+    recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D");
     recordCtx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION); // H2
     m_currentPSO_ = nullptr; // H3: reset PSO dedup state per submit
     m_batchSolidRectCount_ = 0;
@@ -726,6 +727,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
         }, pkt);
     }
     flushSolidRectBatch(); // flush any remaining
+    recordCtx->EndDebugGroup();
     if (m_deferredCtx_) {
         RefCntAutoPtr<ICommandList> pCmdList;
         m_deferredCtx_->FinishCommandList(&pCmdList);
@@ -1217,8 +1219,8 @@ void DiligentImmediateSubmitter::submitRectOutline(const RectOutlinePkt& p, IDev
 
 void DiligentImmediateSubmitter::submitSprite(const SpritePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
-    if (!pRTV || !p.pSRV || !m_draw_sprite_pso_and_srb.pPSO) return;
-    if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_cb) return;
+    if (!pRTV || !p.pSRV || !m_draw_sprite_pso_and_srb.pPSO || !m_draw_sprite_pso_and_srb.pSRB) return;
+    if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_cb || !m_var_sprite_gTexture_ || !m_sprite_sampler) return;
 
     IBuffer* vb;
     if (p.opacity == 1.0f && m_sprite_unit_quad_vb_) {
@@ -1255,8 +1257,18 @@ void DiligentImmediateSubmitter::submitSprite(const SpritePkt& p, IDeviceContext
 
 void DiligentImmediateSubmitter::submitSpriteXform(const SpriteXformPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
-    if (!pRTV || !p.pSRV || !m_draw_sprite_transform_pso_and_srb.pPSO) return;
-    if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_transform_matrix_cb) return;
+    if (!pRTV || !p.pSRV || !m_draw_sprite_transform_pso_and_srb.pPSO || !m_draw_sprite_transform_pso_and_srb.pSRB) {
+        qWarning() << "[DiligentImmediateSubmitter] submitSpriteXform skipped: missing RTV/SRV/PSO/SRB";
+        return;
+    }
+    if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_transform_matrix_cb || !m_var_spriteXform_gTexture_ || !m_sprite_sampler) {
+        qWarning() << "[DiligentImmediateSubmitter] submitSpriteXform skipped: missing VB/CB/textureVar/sampler"
+                   << "vb=" << (m_draw_sprite_vertex_buffer != nullptr)
+                   << "cb=" << (m_draw_sprite_transform_matrix_cb != nullptr)
+                   << "textureVar=" << (m_var_spriteXform_gTexture_ != nullptr)
+                   << "sampler=" << (m_sprite_sampler != nullptr);
+        return;
+    }
 
     FrameDebugPassRecord debugPass;
     debugPass.name = QStringLiteral("Sprite Xform");
@@ -1301,8 +1313,8 @@ void DiligentImmediateSubmitter::submitSpriteXform(const SpriteXformPkt& p, IDev
 
 void DiligentImmediateSubmitter::submitAtlasSprite(const AtlasSpritePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
-    if (!pRTV || !p.pSRV || !m_draw_sprite_pso_and_srb.pPSO) return;
-    if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_cb) return;
+    if (!pRTV || !p.pSRV || !m_draw_sprite_pso_and_srb.pPSO || !m_draw_sprite_pso_and_srb.pSRB) return;
+    if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_cb || !m_var_sprite_gTexture_ || !m_sprite_sampler) return;
 
     SpriteVertex vertices[4] = {
         {{0.0f,0.0f}, {p.uvRect.x, p.uvRect.y}, p.color},
@@ -1334,8 +1346,8 @@ void DiligentImmediateSubmitter::submitAtlasSprite(const AtlasSpritePkt& p, IDev
 
 void DiligentImmediateSubmitter::submitAtlasSpriteXform(const AtlasSpriteXformPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
-    if (!pRTV || !p.pSRV || !m_draw_sprite_transform_pso_and_srb.pPSO) return;
-    if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_transform_matrix_cb) return;
+    if (!pRTV || !p.pSRV || !m_draw_sprite_transform_pso_and_srb.pPSO || !m_draw_sprite_transform_pso_and_srb.pSRB) return;
+    if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_transform_matrix_cb || !m_var_spriteXform_gTexture_ || !m_sprite_sampler) return;
 
     SpriteVertex vertices[4] = {
         {{0,0}, {p.uvRect.x, p.uvRect.y}, p.color},

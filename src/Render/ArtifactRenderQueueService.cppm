@@ -2810,6 +2810,13 @@ namespace Artifact
                 visitedIds.push_back(compositionId);
 
                 QJsonObject snapshotObject = composition->toJson().object();
+                const QJsonObject componentBake =
+                    composition->exportLayerComponentSimulationBake();
+                if (!componentBake.isEmpty()) {
+                    snapshotObject.insert(
+                        QStringLiteral("layerComponentSimulationBake"),
+                        componentBake);
+                }
                 QJsonArray nestedCompositions;
                 const auto layers = composition->allLayerRef();
                 for (const auto& layer : layers) {
@@ -3367,7 +3374,15 @@ namespace Artifact
                 return {};
             }
             const QJsonDocument snapshotDoc = composition->toJson();
-            return ArtifactAbstractComposition::fromJson(snapshotDoc);
+            auto clone = ArtifactAbstractComposition::fromJson(snapshotDoc);
+            if (clone) {
+                const QJsonObject componentBake =
+                    composition->exportLayerComponentSimulationBake();
+                if (!componentBake.isEmpty()) {
+                    clone->importLayerComponentSimulationBake(componentBake);
+                }
+            }
+            return clone;
         }
 
         QImage renderSingleFrameComposition(const ArtifactRenderJob& job, const ArtifactCompositionPtr& composition, int frameNumber) const
@@ -3376,7 +3391,15 @@ namespace Artifact
                 return renderSingleFrameDummy(job, frameNumber);
             }
 
+            const bool reuseComponentFrame =
+                composition->hasAuthoritativeLayerComponentSimulation() &&
+                composition->framePosition().framePosition() == frameNumber &&
+                composition->hasLayerComponentSimulationSnapshot(frameNumber);
             composition->goToFrame(frameNumber);
+            if (!reuseComponentFrame) {
+                composition->evaluateLayerComponentSimulation(
+                    ArtifactCore::FramePosition(frameNumber), false);
+            }
             const QSize compSize = composition->effectiveCompositionSize();
             const int compW = std::max(16, compSize.width());
             const int compH = std::max(16, compSize.height());
@@ -4424,7 +4447,17 @@ namespace Artifact
             configureRendererChannelsForRenderQueueJob(*gpuRenderer_, snap.job);
             gpuRenderer_->setClearColor(snap.composition->backgroundColor());
             gpuRenderer_->clear();
+            const bool reuseComponentFrame =
+                snap.composition->hasAuthoritativeLayerComponentSimulation() &&
+                snap.composition->framePosition().framePosition() ==
+                    snap.frameNumber &&
+                snap.composition->hasLayerComponentSimulationSnapshot(
+                    snap.frameNumber);
             snap.composition->goToFrame(snap.frameNumber);
+            if (!reuseComponentFrame) {
+                snap.composition->evaluateLayerComponentSimulation(
+                    ArtifactCore::FramePosition(snap.frameNumber), false);
+            }
             const auto& gpuLayers = snap.composition->allLayerRef();
             const ArtifactCore::FramePosition gpuPos(snap.frameNumber);
             for (const auto& layer : gpuLayers) {
@@ -4486,7 +4519,60 @@ namespace Artifact
         const QString& ext,
         std::atomic<bool>& success,
         QString& failureReason) {
-        const bool useMfr = !useGpuBackend && totalFrames > 1;
+        const bool usesComponentSimulation =
+            compositionForRender &&
+            compositionForRender->usesLayerComponentSimulation();
+        if (usesComponentSimulation) {
+            // The queue clone owns an isolated deterministic simulation
+            // session. Warm it from the composition start so sub-range renders
+            // reproduce the same state as a full-range render.
+            const int64_t warmupStart =
+                compositionForRender->frameRange().start();
+            const int64_t warmupTarget = static_cast<int64_t>(startF) - 1;
+            int64_t replayFrame = warmupStart;
+            bool seededFromBake = false;
+            bool seededAtRenderStart = false;
+            if (warmupTarget >= warmupStart) {
+                const auto checkpoint = compositionForRender
+                    ->layerComponentSimulationSnapshotAtOrBefore(warmupTarget);
+                if (checkpoint && *checkpoint >= warmupStart) {
+                    if (compositionForRender->framePosition().framePosition() !=
+                        *checkpoint) {
+                        compositionForRender->goToFrame(*checkpoint);
+                        compositionForRender->evaluateLayerComponentSimulation(
+                            ArtifactCore::FramePosition(*checkpoint), false);
+                    }
+                    replayFrame = *checkpoint + 1;
+                    seededFromBake = true;
+                }
+            }
+            if (!seededFromBake &&
+                compositionForRender->hasLayerComponentSimulationSnapshot(
+                    startF)) {
+                if (compositionForRender->framePosition().framePosition() !=
+                    startF) {
+                    compositionForRender->goToFrame(startF);
+                    compositionForRender->evaluateLayerComponentSimulation(
+                        ArtifactCore::FramePosition(startF), false);
+                }
+                seededAtRenderStart = true;
+            }
+            if (!seededFromBake && !seededAtRenderStart) {
+                compositionForRender->resetLayerComponentSimulation();
+                replayFrame = warmupStart;
+            }
+            if (!seededAtRenderStart) {
+                for (int64_t frame = replayFrame; frame < startF; ++frame) {
+                    compositionForRender->goToFrame(frame);
+                    compositionForRender->evaluateLayerComponentSimulation(
+                        ArtifactCore::FramePosition(frame), false);
+                }
+            }
+        }
+        // Component simulation mutates a frame-to-frame session. Keep that
+        // path ordered; independent compositions and stateless jobs retain MFR.
+        const bool useMfr = !useGpuBackend && totalFrames > 1 &&
+            !usesComponentSimulation;
         const int numWorkers = useMfr ? std::min(maxInFlightFrames_, totalFrames) : 1;
 
         FrameRenderSnapshot baseSnap;

@@ -2,6 +2,7 @@
 #include <DeviceContext.h>
 #include <QImage>
 #include <QMatrix4x4>
+#include <QRectF>
 #include <QVector2D>
 #include <QVector3D>
 #include <RefCntAutoPtr.hpp>
@@ -83,6 +84,20 @@ public:
   void drawBillboardQuadImmediate(const QVector3D &center, const QVector2D &size,
                                   const QImage &image, const FloatRGBA &tint,
                                   float opacity = 1.0f, float rollDegrees = 0.0f);
+  void drawCardQuadImmediate(const QRectF &localRect,
+                             const QMatrix4x4 &modelMatrix,
+                             const FloatColor &tint, float opacity = 1.0f,
+                             bool writeDepth = true);
+  void drawTexturedCardQuadImmediate(const QRectF &localRect,
+                                     const QMatrix4x4 &modelMatrix,
+                                     ITextureView *texture,
+                                     const FloatColor &tint,
+                                     float opacity = 1.0f);
+  void drawShapeTrianglesImmediate(const std::vector<QVector2D> &vertices,
+                                   const QMatrix4x4 &modelMatrix,
+                                   const FloatColor &color,
+                                   float opacity = 1.0f,
+                                   bool writeDepth = true);
   void draw3DLine(const QVector3D &start, const QVector3D &end,
                   const FloatColor &color, float thickness = 1.0f);
   void draw3DArrow(const QVector3D &start, const QVector3D &end,

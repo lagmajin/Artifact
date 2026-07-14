@@ -2840,7 +2840,7 @@ QString formatMarkerTooltip(
   }
   if (marker.bezier || marker.incomingBezier || marker.outgoingBezier) {
     tooltip += QStringLiteral("\n") +
-        tt("timeline.bezier_active", "Bezier handles active (edit in Curve Editor)");
+        tt("timeline.bezier_active", "Bezier handles available in Mini or Curve Editor");
   }
   return tooltip;
 }
@@ -5980,7 +5980,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   const TimelineThemeColors theme = timelineThemeColors();
 
   const QRect dirtyRect = event->rect();
-  QColor canvasColor = theme.surface.darker(112);
+  const QColor canvasColor = theme.background;
   p.fillRect(dirtyRect, canvasColor);
 
   const QRect fullRect = rect();
@@ -6017,19 +6017,16 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         row.kind == TimelineRowKind::Property && !row.layerId.isNil() &&
         impl_->lastSyncedSelectedLayerIds_.contains(row.layerId);
 
-    QColor rowColor = canvasColor;
-    rowColor = (i % 2 == 0) ? rowColor.lighter(102) : rowColor.darker(102);
-    p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), rowColor);
     if (isSelectedPropertyLane) {
       QColor laneTint = theme.accent;
-      laneTint.setAlpha(14);
+      laneTint.setAlpha(10);
       p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), laneTint);
       QColor laneStrip = theme.accent;
-      laneStrip.setAlpha(88);
+      laneStrip.setAlpha(104);
       p.fillRect(QRectF(0.0, rowTop, 2.0, rowH), laneStrip);
     }
-    QColor rowDivider = theme.border.darker(135);
-    rowDivider.setAlpha(150);
+    QColor rowDivider = theme.border;
+    rowDivider.setAlpha(62);
     p.setPen(QPen(rowDivider, 1));
     p.drawLine(0, rowTop + rowH, fullRect.width(), rowTop + rowH);
   }
@@ -6048,9 +6045,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     if (!major && !minor) {
       continue;
     }
-    QColor gridColor = major ? theme.border.lighter(106)
-                             : theme.border.darker(118);
-    gridColor.setAlpha(major ? 150 : 82);
+    QColor gridColor = theme.border;
+    gridColor.setAlpha(major ? 76 : 30);
     p.setPen(QPen(gridColor, 1));
     p.drawLine(QPointF(x, dirtyRect.top()), QPointF(x, dirtyRect.bottom()));
   }
@@ -6285,8 +6281,33 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     }
   }
 
+  const bool miniEditorEnabled =
+      property("timelineMiniEditorEnabled").toBool();
+  LayerID miniEditorLayerId = impl_->contextLayerId_;
+  QString miniEditorPropertyPath = impl_->contextPropertyPath_.trimmed();
+  if (miniEditorPropertyPath.isEmpty()) {
+    for (const auto &marker : impl_->keyframeMarkers_) {
+      if (!marker.selected) {
+        continue;
+      }
+      miniEditorLayerId = marker.layerId;
+      miniEditorPropertyPath = marker.propertyPath.trimmed();
+      break;
+    }
+  }
+  QVector<KeyframeMarkerVisual> miniEditorMarkers;
+  if (miniEditorEnabled && !miniEditorLayerId.isNil() &&
+      !miniEditorPropertyPath.isEmpty()) {
+    miniEditorMarkers.reserve(impl_->keyframeMarkers_.size());
+    for (const auto &marker : impl_->keyframeMarkers_) {
+      if (marker.layerId == miniEditorLayerId &&
+          marker.propertyPath.trimmed() == miniEditorPropertyPath) {
+        miniEditorMarkers.push_back(marker);
+      }
+    }
+  }
   const QVector<KeyframeConnectionSegment> connectionSegments =
-      collectKeyframeConnectionSegments(impl_->keyframeMarkers_,
+      collectKeyframeConnectionSegments(miniEditorMarkers,
                                         impl_->trackHeights_, impl_->trackTops_,
                                         ppf, xOffset, yOffset);
   for (const auto &segment : connectionSegments) {
@@ -6667,7 +6688,10 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.drawEllipse(center, marker.selectedLayer ? 2.8 : 2.4,
                     marker.selectedLayer ? 2.8 : 2.4);
     }
-    if (marker.bezier) {
+    const bool isMiniEditorMarker =
+        miniEditorEnabled && marker.layerId == miniEditorLayerId &&
+        marker.propertyPath.trimmed() == miniEditorPropertyPath;
+    if (isMiniEditorMarker && marker.bezier) {
       QColor bezierColor = marker.selectedLayer ? theme.accent.lighter(135)
                                                 : marker.color.lighter(135);
       bezierColor.setAlpha(marker.selected ? 190 : 130);
@@ -6810,7 +6834,13 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
     if (markerHit.markerIndex >= 0) {
       const auto &marker = impl_->keyframeMarkers_[markerHit.markerIndex];
       // ハンドルヒットテスト（選択済みのベジェマーカーに対して）
-      if (marker.selected && (marker.incomingBezier || marker.outgoingBezier)) {
+      const bool miniEditorEnabled =
+          property("timelineMiniEditorEnabled").toBool();
+      const bool isMiniEditorMarker =
+          miniEditorEnabled && marker.layerId == impl_->contextLayerId_ &&
+          marker.propertyPath.trimmed() == impl_->contextPropertyPath_.trimmed();
+      if (isMiniEditorMarker && marker.selected &&
+          (marker.incomingBezier || marker.outgoingBezier)) {
         const double ppf = impl_->pixelsPerFrame_;
         const QPointF center = markerCenterFor(
             marker, impl_->trackHeights_, impl_->trackTops_, ppf,

@@ -2057,11 +2057,40 @@ void ArtifactViewMenu::Impl::refreshCompareMenu()
  const auto editor =
      activeCompositionEditor(mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
  const auto controller = editor ? editor->renderController() : nullptr;
+ const auto composition = currentViewportComposition(editor);
+ const auto stateLabel = [&composition](const QString& stateId) {
+  if (stateId.isEmpty()) {
+   return QStringLiteral("Baseline");
+  }
+  if (composition) {
+   const auto states = composition->stateVariants();
+   const auto found = std::find_if(
+       states.cbegin(), states.cend(), [&stateId](const auto& state) {
+         return state.stateId == stateId;
+       });
+   if (found != states.cend()) {
+    return found->displayName.trimmed().isEmpty()
+               ? found->stateId
+               : found->displayName;
+   }
+  }
+  return stateId;
+ };
+ if (composition) {
+  compareAAction->setText(
+      QStringLiteral("Compare: A — %1")
+          .arg(stateLabel(composition->stateComparisonAId())));
+  compareBAction->setText(
+      QStringLiteral("Compare: B — %1")
+          .arg(stateLabel(composition->stateComparisonBId())));
+  compareOffAction->setToolTip(
+      QStringLiteral("Leave state comparison and restore the state active before comparison."));
+ }
  const auto mode = controller ? controller->compareMode() : CompositionCompareMode::Off;
  const bool pinned = controller && controller->isReferencePinned();
  const bool hasControl = controller != nullptr;
 
- compareSurfaceAction->setEnabled(editor != nullptr && currentViewportComposition(editor));
+ compareSurfaceAction->setEnabled(editor != nullptr && composition);
  compareOffAction->setChecked(mode == CompositionCompareMode::Off);
  compareAAction->setChecked(mode == CompositionCompareMode::A);
  compareBAction->setChecked(mode == CompositionCompareMode::B);

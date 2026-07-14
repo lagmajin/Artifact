@@ -47,6 +47,15 @@ export namespace Artifact {
   float intensity() const;
   void setIntensity(float intensity);
 
+  // Spot-light cone. These are authored in composition-space units and are
+  // also the source values for a future volumetric-light render bridge.
+  float coneAngle() const;
+  void setConeAngle(float degrees);
+  float coneFeather() const;
+  void setConeFeather(float degrees);
+  float coneLength() const;
+  void setConeLength(float length);
+
   // RT Shadow specific: Larger radius = Softer shadows
   float shadowRadius() const;
   void setShadowRadius(float radius);

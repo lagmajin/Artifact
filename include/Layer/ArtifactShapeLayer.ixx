@@ -88,6 +88,11 @@ public:
   FloatColor strokeGradientStartColor() const;
   void setStrokeGradientEndColor(const FloatColor &color);
   FloatColor strokeGradientEndColor() const;
+  std::vector<QPointF> direct3DCardFillPoints() const;
+  FloatColor direct3DCardFillColor() const;
+  std::vector<QPointF> direct3DCardStrokePoints() const;
+  FloatColor direct3DCardStrokeColor() const;
+  bool direct3DCardStrokeClosed() const;
 
   // Stroke styles (cap, join, align, dash) — Phase 3
   void setStrokeCap(StrokeCap cap);

@@ -1,4 +1,7 @@
 module;
+#include <cmath>
+#include <numeric>
+#include <vector>
 #include <utility>
 #include <QIcon>
 #include <QMenu>
@@ -6,11 +9,16 @@ module;
 #include <QActionGroup>
 #include <QHash>
 #include <QKeySequence>
+#include <QInputDialog>
+#include <QLineEdit>
+#include <QMessageBox>
 #include <QCursor>
 #include <QMetaObject>
 #include <QPoint>
 #include <QSignalBlocker>
 #include <QThread>
+#include <QStringList>
+#include <QVector>
 #include <wobjectimpl.h>
 
 module Menu.Animation;
@@ -20,6 +28,14 @@ import Event.Bus;
 import Application.AppSettings;
 import Artifact.Event.Types;
 import Artifact.Service.Project;
+import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
+import Audio.Analyze;
+import Audio.Segment;
+import Frame.Position;
+import Frame.Range;
+import Time.Rational;
+import Property.Abstract;
 import Artifact.Widgets.ArtifactPropertyWidget;
 import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Widgets.Timeline;
@@ -28,12 +44,608 @@ import Utils.Id;
 import Utils.Path;
 import Math.Interpolate;
 import UI.ShortcutBindings;
+import Undo.UndoManager;
 
 W_OBJECT_IMPL(Artifact::ArtifactAnimationMenu)
 
 namespace Artifact {
 
 namespace {
+class ChangeAudioReactiveBindingsCommand final : public UndoCommand {
+public:
+ ChangeAudioReactiveBindingsCommand(
+     ArtifactCompositionWeakPtr composition,
+     QVector<CompositionAudioReactiveBinding> before,
+     QVector<CompositionAudioReactiveBinding> after,
+     QString label)
+  : composition_(std::move(composition)), before_(std::move(before)),
+    after_(std::move(after)), label_(std::move(label)) {}
+
+ void undo() override { apply(before_); }
+ void redo() override { apply(after_); }
+ QString label() const override { return label_; }
+
+private:
+ void apply(const QVector<CompositionAudioReactiveBinding>& bindings) {
+  if (const auto composition = composition_.lock()) {
+   composition->setAudioReactiveBindings(bindings);
+   if (auto* manager = UndoManager::instance()) {
+    manager->notifyAnythingChanged();
+   }
+  }
+ }
+ ArtifactCompositionWeakPtr composition_;
+ QVector<CompositionAudioReactiveBinding> before_;
+ QVector<CompositionAudioReactiveBinding> after_;
+ QString label_;
+};
+
+class BakeAudioReactiveBindingCommand final : public UndoCommand {
+public:
+ BakeAudioReactiveBindingCommand(
+     ArtifactAbstractLayerWeak layer, QString propertyPath,
+     std::vector<ArtifactCore::KeyFrame> before,
+     std::vector<ArtifactCore::KeyFrame> after,
+     QVariant beforeValue, QVariant afterValue)
+  : layer_(std::move(layer)), propertyPath_(std::move(propertyPath)),
+    before_(std::move(before)), after_(std::move(after)),
+    beforeValue_(std::move(beforeValue)), afterValue_(std::move(afterValue)) {}
+
+ void undo() override { apply(before_, beforeValue_); }
+ void redo() override { apply(after_, afterValue_); }
+ QString label() const override {
+  return QStringLiteral("Bake Audio Reactive Binding");
+ }
+
+private:
+ void apply(const std::vector<ArtifactCore::KeyFrame>& keyframes,
+            const QVariant& value) {
+  if (const auto layer = layer_.lock()) {
+   const auto property = layer->getProperty(propertyPath_);
+   if (!property) {
+    return;
+   }
+   property->clearKeyFrames();
+   for (const auto& keyframe : keyframes) {
+    property->addKeyFrame(
+        keyframe.time, keyframe.value, keyframe.interpolation,
+        keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
+        keyframe.roving);
+    property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+    property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+   }
+   property->setValue(value);
+   layer->changed();
+   if (auto* manager = UndoManager::instance()) {
+    manager->notifyAnythingChanged();
+   }
+  }
+ }
+ ArtifactAbstractLayerWeak layer_;
+ QString propertyPath_;
+ std::vector<ArtifactCore::KeyFrame> before_;
+ std::vector<ArtifactCore::KeyFrame> after_;
+ QVariant beforeValue_;
+ QVariant afterValue_;
+};
+
+class CommitAudioReactiveRecordingCommand final : public UndoCommand {
+public:
+ CommitAudioReactiveRecordingCommand(
+     ArtifactCompositionWeakPtr composition,
+     QVector<LiveControlRecordingPropertyChange> changes)
+  : composition_(std::move(composition)), changes_(std::move(changes)) {}
+
+ void undo() override { apply(true); }
+ void redo() override { apply(false); }
+ QString label() const override {
+  return QStringLiteral("Commit Audio Reactive Recording");
+ }
+
+private:
+ void apply(const bool before) {
+  const auto composition = composition_.lock();
+  if (!composition) {
+   return;
+  }
+  for (const auto& change : changes_) {
+   const auto layer = composition->layerById(change.layerId);
+   const auto property = layer ? layer->getProperty(change.propertyPath) : nullptr;
+   if (!property) {
+    continue;
+   }
+   const auto& keyframes = before ? change.beforeKeyframes
+                                  : change.afterKeyframes;
+   property->clearKeyFrames();
+   for (const auto& keyframe : keyframes) {
+    property->addKeyFrame(
+        keyframe.time, keyframe.value, keyframe.interpolation,
+        keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
+        keyframe.roving);
+    property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+    property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+   }
+   property->setValue(before ? change.beforeValue : change.afterValue);
+   layer->changed();
+  }
+  if (auto* manager = UndoManager::instance()) {
+   manager->notifyAnythingChanged();
+  }
+ }
+ ArtifactCompositionWeakPtr composition_;
+ QVector<LiveControlRecordingPropertyChange> changes_;
+};
+
+std::vector<std::size_t> reducedLinearSampleIndexes(
+    const std::vector<std::pair<qint64, double>>& samples,
+    const double tolerance)
+{
+ if (samples.size() <= 2 || tolerance <= 0.0) {
+  std::vector<std::size_t> all(samples.size());
+  std::iota(all.begin(), all.end(), std::size_t{0});
+  return all;
+ }
+ std::vector<bool> keep(samples.size(), false);
+ keep.front() = true;
+ keep.back() = true;
+ const auto reduceRange = [&](const auto& self, const std::size_t begin,
+                              const std::size_t end) -> void {
+  if (end <= begin + 1) {
+   return;
+  }
+  const double startFrame = static_cast<double>(samples[begin].first);
+  const double endFrame = static_cast<double>(samples[end].first);
+  const double frameSpan = endFrame - startFrame;
+  double maxError = -1.0;
+  std::size_t maxIndex = begin;
+  for (std::size_t index = begin + 1; index < end; ++index) {
+   const double alpha = frameSpan == 0.0
+       ? 0.0
+       : (static_cast<double>(samples[index].first) - startFrame) / frameSpan;
+   const double interpolated = samples[begin].second +
+       (samples[end].second - samples[begin].second) * alpha;
+   const double error = std::abs(samples[index].second - interpolated);
+   if (error > maxError) {
+    maxError = error;
+    maxIndex = index;
+   }
+  }
+  if (maxError > tolerance) {
+   keep[maxIndex] = true;
+   self(self, begin, maxIndex);
+   self(self, maxIndex, end);
+  }
+ };
+ reduceRange(reduceRange, 0, samples.size() - 1);
+ std::vector<std::size_t> result;
+ for (std::size_t index = 0; index < keep.size(); ++index) {
+  if (keep[index]) {
+   result.push_back(index);
+  }
+ }
+ return result;
+}
+
+ArtifactPropertyWidget* activePropertyWidget(QWidget* root)
+{
+ if (!root) {
+  return nullptr;
+ }
+ const auto widgets = root->findChildren<ArtifactPropertyWidget*>();
+ for (auto* widget : widgets) {
+  if (widget && widget->isVisible() && widget->hasActiveExpressionTarget()) {
+   return widget;
+  }
+ }
+ return nullptr;
+}
+
+bool configureActiveAudioReactiveBinding(QWidget* root)
+{
+ auto* propertyWidget = activePropertyWidget(root);
+ auto* service = ArtifactProjectService::instance();
+ const auto composition = service ? service->currentComposition().lock()
+                                  : ArtifactCompositionPtr{};
+ const auto layer = propertyWidget ? propertyWidget->activePropertyLayer()
+                                   : ArtifactAbstractLayerPtr{};
+ const QString propertyPath = propertyWidget
+  ? propertyWidget->activePropertyPath().trimmed()
+  : QString{};
+ const auto property = layer && !propertyPath.isEmpty()
+  ? layer->getProperty(propertyPath)
+  : std::shared_ptr<ArtifactCore::AbstractProperty>{};
+ if (!composition || !layer || !property || !property->isAnimatable() ||
+     !property->getValue().canConvert<double>()) {
+  QMessageBox::information(
+      root, QStringLiteral("Audio Reactive Binding"),
+      QStringLiteral("Focus an animatable numeric property first."));
+  return false;
+ }
+
+ auto before = composition->audioReactiveBindings();
+ auto existing = std::find_if(
+     before.cbegin(), before.cend(), [&layer, &propertyPath](const auto& binding) {
+      return binding.layerId == layer->id() &&
+             binding.propertyPath == propertyPath;
+     });
+ CompositionAudioReactiveBinding binding =
+     existing == before.cend() ? CompositionAudioReactiveBinding{} : *existing;
+ const QStringList sources{QStringLiteral("amplitude"), QStringLiteral("peak"),
+                           QStringLiteral("low"), QStringLiteral("mid"),
+                           QStringLiteral("high")};
+ bool accepted = false;
+  const int currentSource = std::max<int>(0, static_cast<int>(sources.indexOf(binding.source)));
+ binding.source = QInputDialog::getItem(
+     root, QStringLiteral("Audio Reactive Binding"),
+     QStringLiteral("Audio source"), sources, currentSource, false,
+     &accepted).trimmed().toLower();
+ if (!accepted) return false;
+ binding.gain = QInputDialog::getDouble(
+     root, QStringLiteral("Audio Reactive Binding"), QStringLiteral("Gain"),
+     binding.gain, -100000.0, 100000.0, 4, &accepted);
+ if (!accepted) return false;
+ binding.offset = QInputDialog::getDouble(
+     root, QStringLiteral("Audio Reactive Binding"), QStringLiteral("Offset"),
+     binding.offset, -100000.0, 100000.0, 4, &accepted);
+ if (!accepted) return false;
+ binding.smoothing = QInputDialog::getDouble(
+     root, QStringLiteral("Audio Reactive Binding"),
+     QStringLiteral("Smoothing (0..1)"), binding.smoothing, 0.0, 1.0, 3,
+     &accepted);
+ if (!accepted) return false;
+ binding.attackSeconds = QInputDialog::getDouble(
+     root, QStringLiteral("Audio Reactive Binding"),
+     QStringLiteral("Attack (seconds)"), binding.attackSeconds, 0.0,
+     60.0, 4, &accepted);
+ if (!accepted) return false;
+ binding.releaseSeconds = QInputDialog::getDouble(
+     root, QStringLiteral("Audio Reactive Binding"),
+     QStringLiteral("Release (seconds)"), binding.releaseSeconds, 0.0,
+     60.0, 4, &accepted);
+ if (!accepted) return false;
+ const QString clampChoice = QInputDialog::getItem(
+     root, QStringLiteral("Audio Reactive Binding"), QStringLiteral("Clamp"),
+     {QStringLiteral("Off"), QStringLiteral("On")},
+     binding.clampEnabled ? 1 : 0, false, &accepted);
+ if (!accepted) return false;
+ binding.clampEnabled = clampChoice == QStringLiteral("On");
+ if (binding.clampEnabled) {
+  binding.clampMinimum = QInputDialog::getDouble(
+      root, QStringLiteral("Audio Reactive Binding"),
+      QStringLiteral("Clamp minimum"), binding.clampMinimum, -100000.0,
+      100000.0, 4, &accepted);
+  if (!accepted) return false;
+  binding.clampMaximum = QInputDialog::getDouble(
+      root, QStringLiteral("Audio Reactive Binding"),
+      QStringLiteral("Clamp maximum"), binding.clampMaximum, -100000.0,
+      100000.0, 4, &accepted);
+  if (!accepted) return false;
+ }
+ const QString invertChoice = QInputDialog::getItem(
+     root, QStringLiteral("Audio Reactive Binding"), QStringLiteral("Invert"),
+     {QStringLiteral("Off"), QStringLiteral("On")}, binding.invert ? 1 : 0,
+     false, &accepted);
+ if (!accepted) return false;
+ binding.invert = invertChoice == QStringLiteral("On");
+ binding.layerId = layer->id();
+ binding.propertyPath = propertyPath;
+ binding.enabled = true;
+
+ auto after = before;
+ if (existing == before.cend()) {
+  after.append(binding);
+ } else {
+  after[std::distance(before.cbegin(), existing)] = binding;
+ }
+ if (auto* manager = UndoManager::instance()) {
+  manager->push(std::make_unique<ChangeAudioReactiveBindingsCommand>(
+      composition, before, after, QStringLiteral("Configure Audio Reactive Binding")));
+ } else {
+  composition->setAudioReactiveBindings(after);
+ }
+ return true;
+}
+
+bool removeActiveAudioReactiveBinding(QWidget* root)
+{
+ auto* propertyWidget = activePropertyWidget(root);
+ auto* service = ArtifactProjectService::instance();
+ const auto composition = service ? service->currentComposition().lock()
+                                  : ArtifactCompositionPtr{};
+ const auto layer = propertyWidget ? propertyWidget->activePropertyLayer()
+                                   : ArtifactAbstractLayerPtr{};
+ const QString propertyPath = propertyWidget
+  ? propertyWidget->activePropertyPath().trimmed()
+  : QString{};
+ if (!composition || !layer || propertyPath.isEmpty()) {
+  return false;
+ }
+ const auto before = composition->audioReactiveBindings();
+ auto after = before;
+ after.erase(std::remove_if(
+     after.begin(), after.end(), [&layer, &propertyPath](const auto& binding) {
+      return binding.layerId == layer->id() &&
+             binding.propertyPath == propertyPath;
+     }), after.end());
+ if (after.size() == before.size()) {
+  return false;
+ }
+ if (auto* manager = UndoManager::instance()) {
+  manager->push(std::make_unique<ChangeAudioReactiveBindingsCommand>(
+      composition, before, after, QStringLiteral("Remove Audio Reactive Binding")));
+ } else {
+  composition->setAudioReactiveBindings(after);
+ }
+ return true;
+}
+
+bool previewActiveAudioReactiveBinding(QWidget* root)
+{
+ auto* propertyWidget = activePropertyWidget(root);
+ auto* service = ArtifactProjectService::instance();
+ const auto composition = service ? service->currentComposition().lock()
+                                  : ArtifactCompositionPtr{};
+ const auto layer = propertyWidget ? propertyWidget->activePropertyLayer()
+                                   : ArtifactAbstractLayerPtr{};
+ const QString propertyPath = propertyWidget
+  ? propertyWidget->activePropertyPath().trimmed()
+  : QString{};
+ if (!composition || !layer || propertyPath.isEmpty()) {
+  return false;
+ }
+ const auto bindings = composition->audioReactiveBindings();
+ const auto binding = std::find_if(
+     bindings.cbegin(), bindings.cend(), [&layer, &propertyPath](const auto& item) {
+      return item.enabled && item.layerId == layer->id() &&
+             item.propertyPath == propertyPath;
+     });
+ if (binding == bindings.cend()) {
+  QMessageBox::information(
+      root, QStringLiteral("Audio Reactive Preview"),
+      QStringLiteral("The focused property has no Audio Reactive binding."));
+  return false;
+ }
+ const auto property = layer->getProperty(propertyPath);
+ if (!property) {
+  return false;
+ }
+ bool accepted = false;
+ const double rawValue = QInputDialog::getDouble(
+     root, QStringLiteral("Audio Reactive Preview"),
+     QStringLiteral("Raw %1 value").arg(binding->source), 0.5, 0.0,
+     100000.0, 4, &accepted);
+ if (!accepted) {
+  return false;
+ }
+ const QVariant previousValue = property->getValue();
+ if (!composition->applyAudioReactiveBindingValue(
+         binding->bindingId, rawValue, true)) {
+  return false;
+ }
+ const auto monitor =
+     composition->audioReactiveBindingMonitor(binding->bindingId);
+ QMessageBox::information(
+     root, QStringLiteral("Audio Reactive Preview"),
+     QStringLiteral("Source: %1\nRaw: %2\nProcessed: %3\nProperty: %4")
+         .arg(binding->source,
+              QString::number(monitor.rawValue, 'f', 4),
+              QString::number(monitor.processedValue, 'f', 4),
+              propertyPath));
+ layer->setLayerPropertyValue(propertyPath, previousValue);
+ return true;
+}
+
+bool bakeActiveAudioReactiveBinding(QWidget* root)
+{
+ auto* propertyWidget = activePropertyWidget(root);
+ auto* service = ArtifactProjectService::instance();
+ const auto composition = service ? service->currentComposition().lock()
+                                  : ArtifactCompositionPtr{};
+ const auto layer = propertyWidget ? propertyWidget->activePropertyLayer()
+                                   : ArtifactAbstractLayerPtr{};
+ const QString propertyPath = propertyWidget
+  ? propertyWidget->activePropertyPath().trimmed()
+  : QString{};
+ const auto property = layer && !propertyPath.isEmpty()
+  ? layer->getProperty(propertyPath)
+  : std::shared_ptr<ArtifactCore::AbstractProperty>{};
+ if (!composition || !layer || !property || !property->isAnimatable()) {
+  return false;
+ }
+ const auto bindings = composition->audioReactiveBindings();
+ const auto binding = std::find_if(
+     bindings.cbegin(), bindings.cend(), [&layer, &propertyPath](const auto& item) {
+      return item.enabled && item.layerId == layer->id() &&
+             item.propertyPath == propertyPath;
+     });
+ if (binding == bindings.cend()) {
+  QMessageBox::information(
+      root, QStringLiteral("Audio Reactive Bake"),
+      QStringLiteral("The focused property has no Audio Reactive binding."));
+  return false;
+ }
+
+ bool accepted = false;
+ const QString rangeMode = QInputDialog::getItem(
+     root, QStringLiteral("Audio Reactive Bake"), QStringLiteral("Bake range"),
+     {QStringLiteral("Work Area"), QStringLiteral("Layer Range"),
+      QStringLiteral("Custom")}, 0, false, &accepted);
+ if (!accepted) return false;
+ FrameRange requestedRange = rangeMode == QStringLiteral("Layer Range")
+     ? FrameRange(layer->inPoint(), layer->outPoint())
+     : composition->workAreaRange();
+ if (rangeMode == QStringLiteral("Custom")) {
+  const int start = QInputDialog::getInt(
+      root, QStringLiteral("Audio Reactive Bake"), QStringLiteral("Start frame"),
+      static_cast<int>(requestedRange.start()), -1000000, 1000000, 1,
+      &accepted);
+  if (!accepted) return false;
+  const int end = QInputDialog::getInt(
+      root, QStringLiteral("Audio Reactive Bake"), QStringLiteral("End frame"),
+      static_cast<int>(requestedRange.end()), -1000000, 1000000, 1,
+      &accepted);
+  if (!accepted) return false;
+  requestedRange = FrameRange(FramePosition(start), FramePosition(end));
+ }
+ requestedRange = requestedRange.normalized();
+ qint64 startFrame = std::max<qint64>(
+     requestedRange.start(), layer->inPoint().framePosition());
+ qint64 endFrame = std::min<qint64>(
+     requestedRange.end(), layer->outPoint().framePosition());
+ if (endFrame < startFrame) {
+  QMessageBox::warning(
+      root, QStringLiteral("Audio Reactive Bake"),
+      QStringLiteral("The requested range does not overlap the layer."));
+  return false;
+ }
+ const double tolerance = QInputDialog::getDouble(
+     root, QStringLiteral("Audio Reactive Bake"),
+     QStringLiteral("Keyframe reduction tolerance"), 0.001, 0.0,
+     100000.0, 6, &accepted);
+ if (!accepted) return false;
+
+ constexpr int sampleRate = 48000;
+ const double fps = std::max(
+     1.0, static_cast<double>(composition->frameRate().framerate()));
+ const int frameScale = std::max(1, static_cast<int>(std::lround(fps)));
+ const int samplesPerFrame =
+     std::max(1, static_cast<int>(std::lround(sampleRate / fps)));
+ ArtifactCore::AudioAnalyzer analyzer(1024);
+ std::vector<std::pair<qint64, double>> samples;
+ samples.reserve(static_cast<std::size_t>(endFrame - startFrame + 1));
+ for (qint64 frame = startFrame; frame <= endFrame; ++frame) {
+  ArtifactCore::AudioSegment segment;
+  if (!composition->getAudio(
+          segment, FramePosition(frame), samplesPerFrame, sampleRate)) {
+   segment.sampleRate = sampleRate;
+   segment.channelData.resize(1);
+   segment.setFrameCount(samplesPerFrame);
+   segment.zero();
+  }
+  const auto analysis = analyzer.analyze(segment);
+  double rawValue = analysis.rms;
+  if (binding->source == QStringLiteral("peak")) {
+   rawValue = analysis.peak;
+  } else if (binding->source == QStringLiteral("low")) {
+   rawValue = analysis.lowIntensity;
+  } else if (binding->source == QStringLiteral("mid")) {
+   rawValue = analysis.midIntensity;
+  } else if (binding->source == QStringLiteral("high")) {
+   rawValue = analysis.highIntensity;
+  }
+  const auto monitor = composition->evaluateAudioReactiveBindingValue(
+      binding->bindingId, rawValue, frame == startFrame);
+  if (!monitor.valid) {
+   return false;
+  }
+  samples.emplace_back(frame, monitor.processedValue);
+ }
+ if (samples.empty()) {
+  return false;
+ }
+ const auto keptIndexes = reducedLinearSampleIndexes(samples, tolerance);
+ std::vector<ArtifactCore::KeyFrame> bakedKeyframes;
+ bakedKeyframes.reserve(keptIndexes.size());
+ for (const std::size_t index : keptIndexes) {
+  ArtifactCore::KeyFrame keyframe;
+  keyframe.time = RationalTime(samples[index].first, frameScale);
+  keyframe.value = samples[index].second;
+  keyframe.interpolation = ArtifactCore::InterpolationType::Linear;
+  bakedKeyframes.push_back(std::move(keyframe));
+ }
+ const auto beforeKeyframes = property->getKeyFrames();
+ const QVariant beforeValue = property->getValue();
+ const QVariant afterValue = samples.back().second;
+ if (auto* manager = UndoManager::instance()) {
+  manager->push(std::make_unique<BakeAudioReactiveBindingCommand>(
+      layer, propertyPath, beforeKeyframes, bakedKeyframes,
+      beforeValue, afterValue));
+ } else {
+  BakeAudioReactiveBindingCommand command(
+      layer, propertyPath, beforeKeyframes, bakedKeyframes,
+      beforeValue, afterValue);
+  command.redo();
+ }
+ QMessageBox::information(
+     root, QStringLiteral("Audio Reactive Bake"),
+     QStringLiteral("Baked %1 frames to %2 keyframes (tolerance %3).")
+         .arg(samples.size()).arg(bakedKeyframes.size())
+         .arg(QString::number(tolerance, 'g', 6)));
+ return true;
+}
+
+bool beginActiveAudioReactiveRecording(QWidget* root)
+{
+ auto* propertyWidget = activePropertyWidget(root);
+ auto* service = ArtifactProjectService::instance();
+ const auto composition = service ? service->currentComposition().lock()
+                                  : ArtifactCompositionPtr{};
+ const auto layer = propertyWidget ? propertyWidget->activePropertyLayer()
+                                   : ArtifactAbstractLayerPtr{};
+ const QString propertyPath = propertyWidget
+  ? propertyWidget->activePropertyPath().trimmed()
+  : QString{};
+ if (!composition || !layer || propertyPath.isEmpty() ||
+     composition->isLiveControlRecordingActive()) {
+  return false;
+ }
+ const auto bindings = composition->audioReactiveBindings();
+ const auto binding = std::find_if(
+     bindings.cbegin(), bindings.cend(), [&layer, &propertyPath](const auto& item) {
+      return item.enabled && item.layerId == layer->id() &&
+             item.propertyPath == propertyPath;
+     });
+ if (binding == bindings.cend()) {
+  return false;
+ }
+ bool accepted = false;
+ const int sampleStride = QInputDialog::getInt(
+     root, QStringLiteral("Audio Reactive Recording"),
+     QStringLiteral("Sample every N frames"), 1, 1, 1000, 1, &accepted);
+ if (!accepted) return false;
+ const double deadZone = QInputDialog::getDouble(
+     root, QStringLiteral("Audio Reactive Recording"),
+     QStringLiteral("Value dead zone"), 0.001, 0.0, 100000.0, 6,
+     &accepted);
+ if (!accepted) return false;
+ LiveControlRecordingOptions options;
+ options.addresses.append(binding->bindingId);
+ options.sampleEveryNFrames = sampleStride;
+ options.deadZone = deadZone;
+ options.restoreOnCancel = true;
+ return composition->beginLiveControlRecording(options);
+}
+
+bool commitAudioReactiveRecording()
+{
+ auto* service = ArtifactProjectService::instance();
+ const auto composition = service ? service->currentComposition().lock()
+                                  : ArtifactCompositionPtr{};
+ if (!composition || !composition->isLiveControlRecordingActive()) {
+  return false;
+ }
+ auto changes = composition->commitLiveControlRecording();
+ if (!changes.isEmpty()) {
+  if (auto* manager = UndoManager::instance()) {
+   manager->push(std::make_unique<CommitAudioReactiveRecordingCommand>(
+       composition, std::move(changes)));
+  }
+ }
+ return true;
+}
+
+bool cancelAudioReactiveRecording()
+{
+ auto* service = ArtifactProjectService::instance();
+ const auto composition = service ? service->currentComposition().lock()
+                                  : ArtifactCompositionPtr{};
+ if (!composition || !composition->isLiveControlRecordingActive()) {
+  return false;
+ }
+ composition->cancelLiveControlRecording();
+ return true;
+}
+
 QIcon menuIcon(const QString& path)
 {
   return QIcon(resolveIconPath(path));
@@ -241,6 +853,13 @@ bool hasActiveExpressionTarget(QWidget* root)
   QAction* removeExpressionAction = nullptr;
   QAction* convertToKeyframesAction = nullptr;
   QAction* bakeLiveToKeyframesAction = nullptr;
+  QAction* configureAudioReactiveAction = nullptr;
+  QAction* removeAudioReactiveAction = nullptr;
+  QAction* previewAudioReactiveAction = nullptr;
+  QAction* bakeAudioReactiveAction = nullptr;
+  QAction* armAudioReactiveAction = nullptr;
+  QAction* commitAudioReactiveAction = nullptr;
+  QAction* cancelAudioReactiveAction = nullptr;
 
   QAction* saveAnimationPresetAction = nullptr;
   QAction* loadAnimationPresetAction = nullptr;
@@ -250,6 +869,7 @@ bool hasActiveExpressionTarget(QWidget* root)
   QMenu* navigationMenu = nullptr;
   QMenu* timeRemapMenu = nullptr;
   QMenu* expressionMenu = nullptr;
+  QMenu* audioReactiveMenu = nullptr;
   QMenu* presetMenu = nullptr;
   QMenu* presetLibraryMenu = nullptr;
   QHash<QAction*, ArtifactCore::KeyframePatternPreset> presetLibraryActions_;
@@ -366,6 +986,36 @@ bool hasActiveExpressionTarget(QWidget* root)
   }
   if (keyPatternAction) {
     keyPatternAction->setEnabled(hasLayer);
+  }
+  if (audioReactiveMenu) {
+   audioReactiveMenu->setEnabled(hasLayer);
+  }
+  const auto currentComposition = service
+      ? service->currentComposition().lock()
+      : ArtifactCompositionPtr{};
+  const bool recordingActive = currentComposition &&
+      currentComposition->isLiveControlRecordingActive();
+  if (configureAudioReactiveAction) {
+   configureAudioReactiveAction->setEnabled(hasLayer && hasExpressionTarget);
+  }
+  if (removeAudioReactiveAction) {
+   removeAudioReactiveAction->setEnabled(hasLayer && hasExpressionTarget);
+  }
+  if (previewAudioReactiveAction) {
+   previewAudioReactiveAction->setEnabled(hasLayer && hasExpressionTarget);
+  }
+  if (bakeAudioReactiveAction) {
+   bakeAudioReactiveAction->setEnabled(hasLayer && hasExpressionTarget);
+  }
+  if (armAudioReactiveAction) {
+   armAudioReactiveAction->setEnabled(
+       hasLayer && hasExpressionTarget && !recordingActive);
+  }
+  if (commitAudioReactiveAction) {
+   commitAudioReactiveAction->setEnabled(recordingActive);
+  }
+  if (cancelAudioReactiveAction) {
+   cancelAudioReactiveAction->setEnabled(recordingActive);
   }
   if (presetLibraryMenu) {
    presetLibraryMenu->setEnabled(hasLayer);
@@ -532,6 +1182,32 @@ bool hasActiveExpressionTarget(QWidget* root)
   impl_->convertToKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
   impl_->bakeLiveToKeyframesAction = impl_->expressionMenu->addAction("現在PropertyをキーフレームにBake...");
   impl_->bakeLiveToKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
+  impl_->audioReactiveMenu = impl_->expressionMenu->addMenu(
+      QStringLiteral("Audio Reactive"));
+  impl_->audioReactiveMenu->setIcon(
+      menuIcon(QStringLiteral("Studio/animationmenu_tune.svg")));
+  impl_->configureAudioReactiveAction =
+      impl_->audioReactiveMenu->addAction(
+          QStringLiteral("Configure focused property binding..."));
+  impl_->removeAudioReactiveAction =
+      impl_->audioReactiveMenu->addAction(
+          QStringLiteral("Remove focused property binding"));
+  impl_->previewAudioReactiveAction =
+      impl_->audioReactiveMenu->addAction(
+          QStringLiteral("Preview focused property binding..."));
+  impl_->bakeAudioReactiveAction =
+      impl_->audioReactiveMenu->addAction(
+          QStringLiteral("Bake focused property binding..."));
+  impl_->audioReactiveMenu->addSeparator();
+  impl_->armAudioReactiveAction =
+      impl_->audioReactiveMenu->addAction(
+          QStringLiteral("Arm focused binding recording..."));
+  impl_->commitAudioReactiveAction =
+      impl_->audioReactiveMenu->addAction(
+          QStringLiteral("Commit Audio Reactive recording"));
+  impl_->cancelAudioReactiveAction =
+      impl_->audioReactiveMenu->addAction(
+          QStringLiteral("Cancel Audio Reactive recording"));
   addSeparator();
 
   impl_->presetMenu = addMenu("アニメーションプリセット(&P)");
@@ -621,6 +1297,13 @@ bool hasActiveExpressionTarget(QWidget* root)
    if (action == impl_->removeExpressionAction) { clearActiveExpression(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->convertToKeyframesAction) { convertActiveExpressionToKeyframes(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->bakeLiveToKeyframesAction) { bakeActivePropertyToKeyframes(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->configureAudioReactiveAction) { configureActiveAudioReactiveBinding(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->removeAudioReactiveAction) { removeActiveAudioReactiveBinding(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->previewAudioReactiveAction) { previewActiveAudioReactiveBinding(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->bakeAudioReactiveAction) { bakeActiveAudioReactiveBinding(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->armAudioReactiveAction) { beginActiveAudioReactiveRecording(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->commitAudioReactiveAction) { commitAudioReactiveRecording(); return; }
+   if (action == impl_->cancelAudioReactiveAction) { cancelAudioReactiveRecording(); return; }
    if (action == impl_->saveAnimationPresetAction) { saveActiveExpressionPreset(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
    if (action == impl_->loadAnimationPresetAction) { loadActiveExpressionPreset(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
   };

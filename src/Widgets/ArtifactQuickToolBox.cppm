@@ -38,6 +38,7 @@ ArtifactQuickToolBox::ArtifactQuickToolBox(QWidget* parent)
 
     // Tab widget
     impl_->tabWidget = new QTabWidget(this);
+    impl_->tabWidget->setObjectName(QStringLiteral("quickToolBoxTabs"));
 
     auto* anchorTab = new ArtifactAnchorPointTool(impl_->tabWidget);
     impl_->tabWidget->addTab(anchorTab, QStringLiteral("Anchor"));
@@ -46,6 +47,7 @@ ArtifactQuickToolBox::ArtifactQuickToolBox(QWidget* parent)
     impl_->tabWidget->addTab(alignTab, QStringLiteral("Align"));
 
     auto* transformTab = new QWidget(impl_->tabWidget);
+    transformTab->setObjectName(QStringLiteral("quickToolBoxTransformTab"));
     {
         auto* layout = new QVBoxLayout(transformTab);
         layout->setContentsMargins(12, 12, 12, 12);
@@ -55,6 +57,7 @@ ArtifactQuickToolBox::ArtifactQuickToolBox(QWidget* parent)
     impl_->tabWidget->addTab(transformTab, QStringLiteral("Transform"));
 
     auto* calcTab = new QWidget(impl_->tabWidget);
+    calcTab->setObjectName(QStringLiteral("quickToolBoxCalcTab"));
     {
         auto* layout = new QVBoxLayout(calcTab);
         layout->setContentsMargins(12, 12, 12, 12);

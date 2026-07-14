@@ -5,6 +5,7 @@
 #include <vector>
 #include <optional>
 #include <cstdint>
+#include <cstddef>
 #include <string>
 
 #include <qtypes.h>
@@ -53,6 +54,13 @@ export namespace Artifact {
   float scaleMultiplier = 1.0f;
   float timeOffsetSeconds = 0.0f;
   bool affected = false;
+ };
+
+ struct LayerComponentRuntimeSnapshot {
+  std::shared_ptr<const void> storage;
+  std::size_t estimatedBytes = 0;
+
+  bool isValid() const noexcept { return static_cast<bool>(storage); }
  };
 
 using namespace ArtifactCore;
@@ -534,6 +542,13 @@ public:
   std::optional<LayerEvaluationState>
   authoritativeComponentEvaluationState() const;
   void clearAuthoritativeComponentEvaluationState();
+  LayerComponentRuntimeSnapshot captureComponentRuntimeSnapshot() const;
+  bool restoreComponentRuntimeSnapshot(
+      const LayerComponentRuntimeSnapshot& snapshot);
+  QJsonObject serializeComponentRuntimeSnapshot(
+      const LayerComponentRuntimeSnapshot& snapshot) const;
+  LayerComponentRuntimeSnapshot deserializeComponentRuntimeSnapshot(
+      const QJsonObject& object) const;
   /*Components*/
 
   /*Script*/

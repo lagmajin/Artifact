@@ -3,6 +3,7 @@ module;
 #include <RenderDevice.h>
 #include <Shader.h>
 #include <PipelineState.h>
+#include <PipelineStateCache.h>
 #include <Sampler.h>
 #include <RefCntAutoPtr.hpp>
 
@@ -26,6 +27,7 @@ public:
     void createShaders();
     void createPSOs();
     void destroy();
+    void abandonDeviceResources();
 
     RenderShaderPair lineShaders() const;
     RenderShaderPair outlineShaders() const;
@@ -65,6 +67,7 @@ public:
     /// Glyph quad PSO for GPU text rendering
     RefCntAutoPtr<ISampler> spriteSampler() const;
     RefCntAutoPtr<ISampler> glyphAtlasSampler() const;
+    IPipelineStateCache* pipelineStateCache() const;
 
     bool isInitialized() const;
 

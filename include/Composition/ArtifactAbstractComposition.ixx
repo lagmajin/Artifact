@@ -303,6 +303,15 @@ export namespace Artifact {
                                         bool interactive = false);
   void resetLayerComponentSimulation();
   bool hasAuthoritativeLayerComponentSimulation() const;
+  bool usesLayerComponentSimulation() const;
+  QJsonObject exportLayerComponentSimulationBake() const;
+  bool importLayerComponentSimulationBake(const QJsonObject& bake);
+  bool hasLayerComponentSimulationSnapshot(std::int64_t frame) const;
+  std::optional<std::int64_t> layerComponentSimulationSnapshotAtOrBefore(
+      std::int64_t frame) const;
+  bool bakeLayerComponentSimulation(
+      const FrameRange& range,
+      const std::function<bool(std::int64_t, std::int64_t)>& progress = {});
   	
   bool hasVideo() const;
   bool hasAudio() const;

@@ -18,6 +18,7 @@ bool acquireSharedRenderDeviceForCurrentBackend(
     RefCntAutoPtr<IRenderDevice>& outDevice,
     RefCntAutoPtr<IDeviceContext>& outImmediateContext);
 void releaseSharedRenderDevice();
+bool invalidateSharedRenderDeviceIfExclusive(IRenderDevice* expectedDevice);
 RENDER_DEVICE_TYPE sharedRenderDeviceType();
 
 class DiligentDeviceManager {
@@ -31,6 +32,7 @@ public:
     void initializeHeadless();
     void createSwapChain(QWidget* widget);
     void recreateSwapChain(QWidget* widget);
+    void markDeviceLost();
     void destroy();
     bool createSwapChainForCurrentBackend(QWidget* widget, HWND hwnd, 
                                           RefCntAutoPtr<IRenderDevice> device,

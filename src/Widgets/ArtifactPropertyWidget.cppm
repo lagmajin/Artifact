@@ -304,7 +304,8 @@ propertyPresentationProfile(const ArtifactAbstractLayerPtr &layer) {
             {QStringLiteral("Initial"), QStringLiteral("Transform"),
              QStringLiteral("Solid")}};
   }
-  return {QStringLiteral("default"), {}};
+  return {QStringLiteral("basic"),
+          {QStringLiteral("Initial"), QStringLiteral("Transform")}};
 }
 
 bool presentationAllowsGroup(const PropertyPresentationProfile &profile,
@@ -1608,7 +1609,12 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
   const auto effects = layer->getEffects();
   const bool hasFocusedEffect = !focusedEffectId.trimmed().isEmpty();
-  const auto presentationProfile = propertyPresentationProfile(layer);
+  // The dedicated Components tab owns component configuration. Its embedded
+  // editor intentionally bypasses the normal layer-property whitelist.
+  const auto presentationProfile =
+      embeddedComponentEditor
+          ? PropertyPresentationProfile{QStringLiteral("components"), {}}
+          : propertyPresentationProfile(layer);
 
   for (const auto &groupDef : layerGroups) {
     const QString groupName =
@@ -2138,7 +2144,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         layer && layer->getProperty(QStringLiteral("sourceCrop.enabled")) &&
         layer->getProperty(QStringLiteral("sourceCrop.cropX")) &&
         layer->getProperty(QStringLiteral("sourceCrop.panX"));
-    if (groupName.compare(QStringLiteral("Transform"), Qt::CaseInsensitive) == 0 &&
+    if (!embeddedComponentEditor &&
+        groupName.compare(QStringLiteral("Transform"), Qt::CaseInsensitive) == 0 &&
         hasSourceCrop) {
       auto *buttonRow = new QWidget(group);
       auto *buttonLayout = new QHBoxLayout(buttonRow);
