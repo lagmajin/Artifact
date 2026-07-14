@@ -616,6 +616,55 @@ namespace Artifact
             return std::nullopt;
         }
 
+        QStringList sanitizeMultiChannelExportChannelKeys(
+            const QStringList& requestedChannels);
+
+        ArtifactCore::ChannelType coreChannelFromRendererChannel(RendererChannel channel)
+        {
+            switch (channel) {
+            case RendererChannel::Red: return ArtifactCore::ChannelType::Red;
+            case RendererChannel::Green: return ArtifactCore::ChannelType::Green;
+            case RendererChannel::Blue: return ArtifactCore::ChannelType::Blue;
+            case RendererChannel::Alpha: return ArtifactCore::ChannelType::Alpha;
+            case RendererChannel::Depth: return ArtifactCore::ChannelType::Depth;
+            case RendererChannel::NormalX: return ArtifactCore::ChannelType::NormalX;
+            case RendererChannel::NormalY: return ArtifactCore::ChannelType::NormalY;
+            case RendererChannel::NormalZ: return ArtifactCore::ChannelType::NormalZ;
+            case RendererChannel::VelocityX: return ArtifactCore::ChannelType::VelocityX;
+            case RendererChannel::VelocityY: return ArtifactCore::ChannelType::VelocityY;
+            case RendererChannel::ObjectId: return ArtifactCore::ChannelType::ObjectId;
+            case RendererChannel::MaterialId: return ArtifactCore::ChannelType::MaterialId;
+            case RendererChannel::AlbedoR: return ArtifactCore::ChannelType::AlbedoR;
+            case RendererChannel::AlbedoG: return ArtifactCore::ChannelType::AlbedoG;
+            case RendererChannel::AlbedoB: return ArtifactCore::ChannelType::AlbedoB;
+            case RendererChannel::Emission: return ArtifactCore::ChannelType::Emission;
+            case RendererChannel::Custom: return ArtifactCore::ChannelType::Custom;
+            }
+            return ArtifactCore::ChannelType::Custom;
+        }
+
+        QStringList missingRequestedMultiChannelChannels(
+            const ArtifactRenderJob& job,
+            const ArtifactCore::MultiChannelImage& image)
+        {
+            QStringList missing;
+            const size_t expectedSamples = static_cast<size_t>(image.width()) * image.height();
+            for (const auto& key : sanitizeMultiChannelExportChannelKeys(
+                     job.multiChannelExportChannels)) {
+                const auto rendererChannel = rendererChannelFromKey(key);
+                if (!rendererChannel) {
+                    missing.push_back(key);
+                    continue;
+                }
+                const auto channel = image.getChannel(
+                    coreChannelFromRendererChannel(*rendererChannel));
+                if (!channel || !channel->data() || channel->size() != expectedSamples) {
+                    missing.push_back(key);
+                }
+            }
+            return missing;
+        }
+
         QStringList defaultMultiChannelExportChannelKeys()
         {
             QStringList names;
@@ -747,6 +796,7 @@ namespace Artifact
             renderer.setMultiChannelEnabled(job.multiChannelExportEnabled);
             for (const auto channel : kAllRendererChannels) {
                 renderer.setChannelEnabled(channel, false);
+                renderer.setAuxiliaryChannelSource(channel, nullptr);
             }
 
             if (!job.multiChannelExportEnabled) {
@@ -865,6 +915,49 @@ namespace Artifact
             }
         }
 
+        QImage makeMultiChannelPreview(
+            const ArtifactCore::MultiChannelImage& image, const QSize& previewSize)
+        {
+            if (image.isEmpty() || previewSize.isEmpty()) return {};
+            const auto red = image.getChannel(ArtifactCore::ChannelType::Red);
+            const auto green = image.getChannel(ArtifactCore::ChannelType::Green);
+            const auto blue = image.getChannel(ArtifactCore::ChannelType::Blue);
+            const auto fallbackTypes = image.channelTypes();
+            decltype(red) fallback;
+            if (!fallbackTypes.empty()) {
+                fallback = image.getChannel(fallbackTypes.front());
+            }
+            if ((!red || !green || !blue) && !fallback) return {};
+
+            QImage preview(previewSize, QImage::Format_RGBA8888);
+            for (int y = 0; y < preview.height(); ++y) {
+                auto* dst = preview.scanLine(y);
+                const int sourceY = std::clamp(
+                    y * image.height() / preview.height(), 0, image.height() - 1);
+                for (int x = 0; x < preview.width(); ++x) {
+                    const int sourceX = std::clamp(
+                        x * image.width() / preview.width(), 0, image.width() - 1);
+                    const size_t pixel = static_cast<size_t>(sourceY) * image.width() + sourceX;
+                    const auto sample = [pixel](const auto& channel) {
+                        return channel && channel->data() && channel->size() > pixel
+                            ? channel->data()[pixel] : 0.0f;
+                    };
+                    const float gray = sample(fallback);
+                    const auto toByte = [](float value) {
+                        return static_cast<uint8_t>(
+                            std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+                    };
+                    dst[x * 4 + 0] = toByte(red ? sample(red) : gray);
+                    dst[x * 4 + 1] = toByte(green ? sample(green) : gray);
+                    dst[x * 4 + 2] = toByte(blue ? sample(blue) : gray);
+                    dst[x * 4 + 3] = 255;
+                }
+            }
+            return preview;
+        }
+
+        static QString deriveContainerFromJob(const ArtifactRenderJob& job);
+
         void appendUnsupportedAovWarnings(const ArtifactRenderJob& job,
                                            const QString& compId,
                                            ArtifactCore::DiagnosticResult& result)
@@ -872,6 +965,34 @@ namespace Artifact
             if (!job.multiChannelExportEnabled) {
                 return;
             }
+
+            if (deriveContainerFromJob(job) != QStringLiteral("exr")) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Multi-channel output requires EXR"),
+                    QStringLiteral("Named AOV channels are only serialized by the EXR image-sequence path."),
+                    QStringLiteral("Choose EXR Sequence for this render job"),
+                    compId));
+            }
+            const QString requestedBackend = job.renderBackend.trimmed().toLower();
+            if (requestedBackend == QStringLiteral("cpu") ||
+                requestedBackend == QStringLiteral("external")) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Multi-channel output requires GPU rendering"),
+                    QStringLiteral("The CPU composition path does not produce named AOV attachments."),
+                    QStringLiteral("Choose Auto or GPU as the render backend"),
+                    compId));
+            }
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Info,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("AOV export uses the scene render boundary"),
+                QStringLiteral("Beauty and named AOVs are captured before composition final-image effects. This keeps Depth, Normal, Velocity, and ID channels spatially aligned."),
+                QStringLiteral("Bake final-image effects into layers when they must affect the exported Beauty channel"),
+                compId));
 
             const QStringList channels =
                 sanitizeMultiChannelExportChannelKeys(job.multiChannelExportChannels);
@@ -2479,7 +2600,24 @@ namespace Artifact
             QStringList* htmlFrameFiles = nullptr;
         };
 
-        bool renderSingleFrame(const FrameRenderSnapshot& snap, QImage& outImage, QString& failureReason);
+        struct FrameRenderOutput {
+            QImage beauty;
+            ArtifactCore::MultiChannelImage channels;
+
+            bool isValid(bool requireChannels) const {
+                return requireChannels ? !channels.isEmpty() : !beauty.isNull();
+            }
+
+            int width(bool requireChannels) const {
+                return requireChannels ? channels.width() : beauty.width();
+            }
+
+            int height(bool requireChannels) const {
+                return requireChannels ? channels.height() : beauty.height();
+            }
+        };
+
+        bool renderSingleFrame(const FrameRenderSnapshot& snap, FrameRenderOutput& output, QString& failureReason);
         void processFramesForJob(
             ArtifactRenderQueueService* service,
             int jobIndex,
@@ -4259,7 +4397,7 @@ namespace Artifact
         return frameNumbers.size();
     }
 
-    bool ArtifactRenderQueueService::Impl::renderSingleFrame(const FrameRenderSnapshot& snap, QImage& outImage, QString& failureReason) {
+    bool ArtifactRenderQueueService::Impl::renderSingleFrame(const FrameRenderSnapshot& snap, FrameRenderOutput& output, QString& failureReason) {
         if (!snap.composition) {
             failureReason = QStringLiteral("Null composition in frame snapshot");
             return false;
@@ -4283,6 +4421,7 @@ namespace Artifact
                         << grid.gridWidth << "x" << grid.gridHeight
                         << " tileSize=" << tileSz;
             }
+            configureRendererChannelsForRenderQueueJob(*gpuRenderer_, snap.job);
             gpuRenderer_->setClearColor(snap.composition->backgroundColor());
             gpuRenderer_->clear();
             snap.composition->goToFrame(snap.frameNumber);
@@ -4295,14 +4434,31 @@ namespace Artifact
                                             snap.gpuSurfaceCache, snap.gpuTextureCacheManager, snap.frameNumber, true);
             }
             gpuRenderer_->flush();
-            outImage = gpuRenderer_->readbackToImage();
-            applyCompositionFinalEffectsToImage(snap.composition.get(), outImage);
+            if (snap.job.multiChannelExportEnabled) {
+                output.channels = gpuRenderer_->readbackToMultiChannelImage();
+                const QStringList missing = missingRequestedMultiChannelChannels(
+                    snap.job, output.channels);
+                if (!missing.isEmpty()) {
+                    failureReason = QStringLiteral("Requested AOV channels were not generated: %1")
+                        .arg(missing.join(QStringLiteral(", ")));
+                    return false;
+                }
+            } else {
+                output.beauty = gpuRenderer_->readbackToImage();
+                applyCompositionFinalEffectsToImage(snap.composition.get(), output.beauty);
+            }
         } else {
-            outImage = renderSingleFrameComposition(snap.job, snap.composition, snap.frameNumber);
+            if (snap.job.multiChannelExportEnabled) {
+                failureReason = QStringLiteral("Multi-channel output requires the GPU render backend");
+                return false;
+            }
+            output.beauty = renderSingleFrameComposition(snap.job, snap.composition, snap.frameNumber);
         }
 
-        if (outImage.isNull()) {
-            failureReason = QStringLiteral("Rendered frame is null");
+        if (!output.isValid(snap.job.multiChannelExportEnabled)) {
+            failureReason = snap.job.multiChannelExportEnabled
+                ? QStringLiteral("Rendered multi-channel frame is empty")
+                : QStringLiteral("Rendered frame is null");
             return false;
         }
 
@@ -4352,7 +4508,7 @@ namespace Artifact
         std::mutex outputBufferMutex;
         std::condition_variable outputBufferCv;
         std::condition_variable bufferSpaceCv;
-        std::map<int, QImage> outputBuffer;
+        std::map<int, FrameRenderOutput> outputBuffer;
         std::atomic<size_t> outputBufferMemory{0};
         std::atomic<int> nextFrameToRender{startF};
         std::atomic<bool> anyWorkerFailed{false};
@@ -4377,11 +4533,11 @@ namespace Artifact
 
             FrameRenderSnapshot snap = baseSnap;
             snap.frameNumber = f;
-            QImage frameImage;
+            FrameRenderOutput frameOutput;
             QString frameError;
             bool ok = false;
             try {
-                ok = renderSingleFrame(snap, frameImage, frameError);
+                ok = renderSingleFrame(snap, frameOutput, frameError);
             } catch (const std::exception& e) {
                 frameError = QString::fromUtf8(e.what());
             } catch (...) {
@@ -4391,12 +4547,16 @@ namespace Artifact
             {
                 std::lock_guard<std::mutex> lock(outputBufferMutex);
                 if (ok) {
-                    const size_t frameBytes = static_cast<size_t>(frameImage.width()) *
-                        static_cast<size_t>(frameImage.height()) * 4;
+                    const size_t channelMultiplier = snap.job.multiChannelExportEnabled
+                        ? std::max<size_t>(1, frameOutput.channels.channelCount()) : 1;
+                    const size_t frameBytes = static_cast<size_t>(
+                        frameOutput.width(snap.job.multiChannelExportEnabled)) *
+                        static_cast<size_t>(frameOutput.height(snap.job.multiChannelExportEnabled)) *
+                        4 * channelMultiplier;
                     outputBufferMemory.fetch_add(frameBytes, std::memory_order_relaxed);
                 }
                 // Always write to buffer so consumer can proceed
-                outputBuffer[f] = ok ? std::move(frameImage) : QImage();
+                outputBuffer[f] = ok ? std::move(frameOutput) : FrameRenderOutput{};
                 if (!ok && !anyWorkerFailed.load(std::memory_order_relaxed)) {
                     // First failure for this frame — log it
                     workerFailureReasons.push_back(
@@ -4574,7 +4734,7 @@ namespace Artifact
 
         // Consumer loop (shared by both paths; start may be checkpoint-adjusted)
         for (int f = consumerStartF; f < endF; ++f) {
-            QImage qimg;
+            FrameRenderOutput frameOutput;
             {
                 std::unique_lock<std::mutex> lock(outputBufferMutex);
                 outputBufferCv.wait(lock, [&]() {
@@ -4599,10 +4759,14 @@ namespace Artifact
                     failureReason = QStringLiteral("Frame %1: missing output").arg(f);
                     break;
                 }
-                qimg = std::move(it->second);
+                frameOutput = std::move(it->second);
                 outputBuffer.erase(it);
-                const size_t frameBytes = static_cast<size_t>(qimg.width()) *
-                    static_cast<size_t>(qimg.height()) * 4;
+                const size_t channelMultiplier = job.multiChannelExportEnabled
+                    ? std::max<size_t>(1, frameOutput.channels.channelCount()) : 1;
+                const size_t frameBytes = static_cast<size_t>(
+                    frameOutput.width(job.multiChannelExportEnabled)) *
+                    static_cast<size_t>(frameOutput.height(job.multiChannelExportEnabled)) *
+                    4 * channelMultiplier;
                 outputBufferMemory.fetch_sub(frameBytes, std::memory_order_relaxed);
             }
             bufferSpaceCv.notify_all();
@@ -4611,7 +4775,7 @@ namespace Artifact
                 gpuSurfaceCache.clear();
             }
 
-            if (qimg.isNull()) {
+            if (!frameOutput.isValid(job.multiChannelExportEnabled)) {
                 if (useFarm) {
                     // Farm path: retries might be in progress.
                     // Poll for up to ~60s total for the retried frame to arrive.
@@ -4622,9 +4786,9 @@ namespace Artifact
                         std::lock_guard<std::mutex> lock(outputBufferMutex);
                         auto it = outputBuffer.find(f);
                         if (it != outputBuffer.end()) {
-                            qimg = std::move(it->second);
+                            frameOutput = std::move(it->second);
                             outputBuffer.erase(it);
-                            if (!qimg.isNull()) {
+                            if (frameOutput.isValid(job.multiChannelExportEnabled)) {
                                 resolved = true;
                                 break;
                             }
@@ -4646,10 +4810,15 @@ namespace Artifact
                 }
             }
 
+            QImage qimg = std::move(frameOutput.beauty);
+            QImage previewImage = job.multiChannelExportEnabled
+                ? makeMultiChannelPreview(frameOutput.channels, QSize(320, 180))
+                : qimg.scaled(320, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
             {
                 ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactRenderQueueService::previewMutex_"));
                 std::lock_guard<std::mutex> lock(previewMutex_);
-                lastPreviewFrame_ = qimg.scaled(320, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                lastPreviewFrame_ = std::move(previewImage);
                 lastPreviewFrameNumber_ = f;
                 lastPreviewJobIndex_ = jobIndex;
             }
@@ -4711,7 +4880,29 @@ namespace Artifact
                 ArtifactCore::ImageExporter exporter;
                 ArtifactCore::ImageExportOptions imgOpts;
                 imgOpts.format = frameExt;
-                const auto result = exporter.write(qimg, framePath, imgOpts);
+                if (job.multiChannelExportEnabled) {
+                    imgOpts.colorSpace = QStringLiteral("Linear");
+                    imgOpts.compression = QStringLiteral("zip");
+                    imgOpts.creator = QStringLiteral("ArtifactStudio");
+                    imgOpts.stringAttributes.insert(
+                        QStringLiteral("artifact/aov/normal_space"),
+                        QStringLiteral("view"));
+                    imgOpts.stringAttributes.insert(
+                        QStringLiteral("artifact/aov/velocity_encoding"),
+                        QStringLiteral("ndc_delta_xy"));
+                    imgOpts.stringAttributes.insert(
+                        QStringLiteral("artifact/aov/depth_encoding"),
+                        QStringLiteral("device_depth_0_1"));
+                    imgOpts.stringAttributes.insert(
+                        QStringLiteral("artifact/frame"), QString::number(f));
+                    imgOpts.stringAttributes.insert(
+                        QStringLiteral("artifact/frame_rate"),
+                        QString::number(job.frameRate, 'g', 12));
+                    populateCryptomatteDraftAttributes(job, compositionForRender, imgOpts);
+                }
+                const auto result = job.multiChannelExportEnabled
+                    ? exporter.writeMultiChannel(frameOutput.channels, framePath, imgOpts)
+                    : exporter.write(qimg, framePath, imgOpts);
                 if (!result.success) {
                     success.store(false, std::memory_order_relaxed);
                     failureReason = QStringLiteral("Failed to save image sequence frame: %1").arg(result.errorMessage);

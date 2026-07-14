@@ -659,6 +659,10 @@ namespace {
   bool readbackDepthToFloatBuffer(std::vector<float>& outDepth,
                                   int& outWidth,
                                   int& outHeight) const;
+  bool readbackTextureViewToFloatBuffer(ITextureView* textureView,
+                                        std::vector<float>& outRgba,
+                                        int& outWidth,
+                                        int& outHeight) const;
   QImage readbackTextureViewToImage(ITextureView* textureView) const;
   void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
@@ -1516,6 +1520,134 @@ QImage ArtifactIRenderer::Impl::readbackDepthToImage() const
    }
   }
   return result;
+}
+
+bool ArtifactIRenderer::Impl::readbackTextureViewToFloatBuffer(
+    ITextureView* textureView, std::vector<float>& outRgba,
+    int& outWidth, int& outHeight) const
+{
+  outRgba.clear();
+  outWidth = 0;
+  outHeight = 0;
+  std::lock_guard<std::mutex> guard(m_readbackMutex);
+
+  auto ctx = deviceManager_.immediateContext();
+  auto device = deviceManager_.device();
+  if (!ctx || !device) return false;
+
+  ITexture* srcTex = nullptr;
+  Uint32 srcWidth = 0;
+  Uint32 srcHeight = 0;
+  if (!resolveReadbackSourceTexture(textureView, m_layerRT,
+                                    m_offlineWidth, m_offlineHeight,
+                                    deviceManager_.swapChain(),
+                                    srcTex, srcWidth, srcHeight)) {
+    return false;
+  }
+
+  const TEXTURE_FORMAT srcFormat = srcTex->GetDesc().Format;
+  const bool isRgba8 = srcFormat == TEX_FORMAT_RGBA8_UNORM ||
+                       srcFormat == TEX_FORMAT_RGBA8_UNORM_SRGB;
+  const bool isRgba16f = srcFormat == TEX_FORMAT_RGBA16_FLOAT;
+  const bool isRgba32f = srcFormat == TEX_FORMAT_RGBA32_FLOAT;
+  if (!isRgba8 && !isRgba16f && !isRgba32f) {
+    return false;
+  }
+
+  ReadbackSlot& slot = m_readbackRing[m_readbackRingIndex];
+  m_readbackRingIndex = (m_readbackRingIndex + 1) % kReadbackRingSize;
+  if (slot.fence && slot.signaledValue > slot.completedValue) {
+    slot.fence->Wait(slot.signaledValue);
+    slot.completedValue = slot.signaledValue;
+  }
+  const bool slotNeedsRealloc =
+      !slot.staging || !slot.fence || slot.width != srcWidth ||
+      slot.height != srcHeight || slot.format != srcFormat;
+  if (slotNeedsRealloc) {
+    slot.staging = nullptr;
+    slot.fence = nullptr;
+    slot.signaledValue = 0;
+    slot.completedValue = 0;
+
+    TextureDesc desc = srcTex->GetDesc();
+    desc.Name = "MultiChannelFloatReadback";
+    desc.Width = srcWidth;
+    desc.Height = srcHeight;
+    desc.MipLevels = 1;
+    desc.Usage = USAGE_STAGING;
+    desc.CPUAccessFlags = CPU_ACCESS_READ;
+    desc.BindFlags = BIND_NONE;
+    desc.SampleCount = 1;
+    desc.ClearValue.Format = TEX_FORMAT_UNKNOWN;
+    device->CreateTexture(desc, nullptr, &slot.staging);
+    if (!slot.staging) return false;
+
+    FenceDesc fenceDesc;
+    fenceDesc.Name = "MultiChannelFloatReadbackFence";
+    fenceDesc.Type = FENCE_TYPE_GENERAL;
+    device->CreateFence(fenceDesc, &slot.fence);
+    if (!slot.fence) {
+      slot.staging = nullptr;
+      return false;
+    }
+    slot.width = srcWidth;
+    slot.height = srcHeight;
+    slot.format = srcFormat;
+  }
+
+  submitQueuedDraws(ctx);
+  ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
+  CopyTextureAttribs copyAttribs;
+  copyAttribs.pSrcTexture = srcTex;
+  copyAttribs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  copyAttribs.pDstTexture = slot.staging;
+  copyAttribs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  ctx->CopyTexture(copyAttribs);
+
+  const Uint64 waitValue = ++slot.signaledValue;
+  ctx->EnqueueSignal(slot.fence, waitValue);
+  ctx->Flush();
+  slot.fence->Wait(waitValue);
+  slot.completedValue = waitValue;
+
+  MappedTextureSubresource mapped = {};
+  ctx->MapTextureSubresource(slot.staging, 0, 0, MAP_READ,
+                             MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
+  if (!mapped.pData) return false;
+
+  const size_t bytesPerPixel = isRgba8 ? 4u : isRgba16f ? 8u : 16u;
+  const size_t rowBytes = static_cast<size_t>(srcWidth) * bytesPerPixel;
+  if (mapped.Stride < rowBytes) {
+    ctx->UnmapTextureSubresource(slot.staging, 0, 0);
+    return false;
+  }
+
+  outRgba.resize(static_cast<size_t>(srcWidth) * srcHeight * 4u);
+  for (Uint32 y = 0; y < srcHeight; ++y) {
+    const auto* row = static_cast<const uint8_t*>(mapped.pData) +
+                      static_cast<size_t>(y) * mapped.Stride;
+    float* dst = outRgba.data() + static_cast<size_t>(y) * srcWidth * 4u;
+    if (isRgba8) {
+      for (Uint32 x = 0; x < srcWidth * 4u; ++x) {
+        dst[x] = static_cast<float>(row[x]) / 255.0f;
+      }
+    } else if (isRgba16f) {
+      const auto* src = reinterpret_cast<const uint16_t*>(row);
+      for (Uint32 x = 0; x < srcWidth * 4u; ++x) {
+        const float value = Float16::HalfBitsToFloat(src[x]);
+        dst[x] = std::isfinite(value) ? value : 0.0f;
+      }
+    } else {
+      const auto* src = reinterpret_cast<const float*>(row);
+      for (Uint32 x = 0; x < srcWidth * 4u; ++x) {
+        dst[x] = std::isfinite(src[x]) ? src[x] : 0.0f;
+      }
+    }
+  }
+  ctx->UnmapTextureSubresource(slot.staging, 0, 0);
+  outWidth = static_cast<int>(srcWidth);
+  outHeight = static_cast<int>(srcHeight);
+  return true;
 }
 
 bool ArtifactIRenderer::Impl::readbackDepthToFloatBuffer(
@@ -2424,6 +2556,122 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
       impl_->isChannelEnabled(ChannelType::VelocityX) ||
       impl_->isChannelEnabled(ChannelType::VelocityY);
 
+  struct FloatReadback {
+    std::vector<float> rgba;
+    int width = 0;
+    int height = 0;
+    bool valid() const {
+      return width > 0 && height > 0 &&
+          rgba.size() == static_cast<size_t>(width) * height * 4u;
+    }
+  };
+  auto readFloat = [&](ITextureView* view) {
+    FloatReadback result;
+    if (!view) return result;
+    impl_->readbackTextureViewToFloatBuffer(
+        view, result.rgba, result.width, result.height);
+    return result;
+  };
+  auto auxiliaryView = [&](ChannelType channel) -> ITextureView* {
+    const auto index = static_cast<size_t>(channel);
+    return index < impl_->m_auxiliaryChannelSources.size()
+        ? impl_->m_auxiliaryChannelSources[index] : nullptr;
+  };
+
+  FloatReadback beauty;
+  if (needRgba) beauty = readFloat(impl_->activeColorView());
+  FloatReadback emission;
+  if (needEmission) emission = readFloat(auxiliaryView(ChannelType::Emission));
+  FloatReadback objectId;
+  if (needObjectId) objectId = readFloat(auxiliaryView(ChannelType::ObjectId));
+  FloatReadback materialId;
+  if (needMaterialId) materialId = readFloat(auxiliaryView(ChannelType::MaterialId));
+  FloatReadback albedo;
+  if (needAlbedo) albedo = readFloat(auxiliaryView(ChannelType::AlbedoR));
+  FloatReadback normal;
+  if (needNormal) normal = readFloat(auxiliaryView(ChannelType::NormalX));
+  FloatReadback velocity;
+  if (needVelocity) velocity = readFloat(auxiliaryView(ChannelType::VelocityX));
+
+  std::vector<float> depthValues;
+  int depthWidth = 0;
+  int depthHeight = 0;
+  if (needDepth) {
+    impl_->readbackDepthToFloatBuffer(depthValues, depthWidth, depthHeight);
+  }
+
+  int width = 0;
+  int height = 0;
+  const auto adoptSize = [&](const FloatReadback& source) {
+    if (width == 0 && source.valid()) {
+      width = source.width;
+      height = source.height;
+    }
+  };
+  adoptSize(beauty);
+  if (width == 0 && depthWidth > 0 && depthHeight > 0) {
+    width = depthWidth;
+    height = depthHeight;
+  }
+  adoptSize(emission);
+  adoptSize(objectId);
+  adoptSize(materialId);
+  adoptSize(albedo);
+  adoptSize(normal);
+  adoptSize(velocity);
+  if (width <= 0 || height <= 0) return {};
+
+  ArtifactCore::MultiChannelImage floatImage(width, height);
+  constexpr std::array<ChannelType, 4> baseChannels = {
+      ChannelType::Red, ChannelType::Green, ChannelType::Blue, ChannelType::Alpha};
+  for (const ChannelType channel : baseChannels) {
+    if (!impl_->isChannelEnabled(channel)) {
+      floatImage.removeChannel(toCoreChannel(channel));
+    }
+  }
+  const auto writeComponent = [&](ChannelType channel, const FloatReadback& source,
+                                  int component, float scale = 1.0f,
+                                  float bias = 0.0f) {
+    if (!impl_->isChannelEnabled(channel) || !source.valid() ||
+        source.width != width || source.height != height) return;
+    const auto coreChannel = toCoreChannel(channel);
+    if (!floatImage.hasChannel(coreChannel)) floatImage.addChannel(coreChannel);
+    auto destination = floatImage.getChannel(coreChannel);
+    if (!destination) return;
+    const size_t pixels = static_cast<size_t>(width) * height;
+    for (size_t pixel = 0; pixel < pixels; ++pixel) {
+      destination->data()[pixel] =
+          source.rgba[pixel * 4u + static_cast<size_t>(component)] * scale + bias;
+    }
+  };
+
+  writeComponent(ChannelType::Red, beauty, 0);
+  writeComponent(ChannelType::Green, beauty, 1);
+  writeComponent(ChannelType::Blue, beauty, 2);
+  writeComponent(ChannelType::Alpha, beauty, 3);
+  writeComponent(ChannelType::Emission, emission, 0);
+  writeComponent(ChannelType::ObjectId, objectId, 0);
+  writeComponent(ChannelType::MaterialId, materialId, 0);
+  writeComponent(ChannelType::AlbedoR, albedo, 0);
+  writeComponent(ChannelType::AlbedoG, albedo, 1);
+  writeComponent(ChannelType::AlbedoB, albedo, 2);
+  writeComponent(ChannelType::NormalX, normal, 0, 2.0f, -1.0f);
+  writeComponent(ChannelType::NormalY, normal, 1, 2.0f, -1.0f);
+  writeComponent(ChannelType::NormalZ, normal, 2, 2.0f, -1.0f);
+  writeComponent(ChannelType::VelocityX, velocity, 0, 2.0f, -1.0f);
+  writeComponent(ChannelType::VelocityY, velocity, 1, 2.0f, -1.0f);
+  if (needDepth && depthWidth == width && depthHeight == height &&
+      depthValues.size() == static_cast<size_t>(width) * height) {
+    floatImage.addChannel(ArtifactCore::ChannelType::Depth);
+    if (auto depth = floatImage.getChannel(ArtifactCore::ChannelType::Depth)) {
+      std::memcpy(depth->data(), depthValues.data(),
+                  depthValues.size() * sizeof(float));
+    }
+  }
+  return floatImage;
+
+#if 0 // Legacy QImage AOV conversion retained temporarily for reference.
+
   QImage rgba;
   if (needRgba) {
    const QImage color = impl_->readbackToImage();
@@ -2700,6 +2948,7 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
   }
 
   return image;
+#endif
 }
  void ArtifactIRenderer::readbackToImageAsync(ReadbackCallback callback) const {
   impl_->readbackToImageAsync(std::move(callback));
