@@ -20,6 +20,7 @@ module;
 #include <QContextMenuEvent>
 #include <QEnterEvent>
 #include <QMouseEvent>
+#include <QResizeEvent>
 #include <QLineEdit>
 #include <QSlider>
 #include <QSpinBox>
@@ -448,6 +449,7 @@ private:
     void finishScrub(bool commitChanges);
     void updateKeyframeButtonIcon();
     void updateRowVisualState();
+    void updateOwnedGeometry();
 
     QLabel* label_ = nullptr;
     QWidget* scrubTarget_ = nullptr;
@@ -469,6 +471,7 @@ private:
     std::function<void(ArtifactCore::KeyFrame::Anchor)> keyframeAnchorHandler_;
     std::function<void(ArtifactCore::KeyFrame::ColorLabel)> keyframeColorLabelHandler_;
     bool currentFrameKeyframed_ = false;
+    bool keyframeModeEnabled_ = false;
     QString auxActionLabel_;
     
     bool scrubCandidate_ = false;
@@ -484,6 +487,8 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void enterEvent(QEnterEvent* event) override;
     void leaveEvent(QEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
 

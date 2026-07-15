@@ -1093,7 +1093,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     impl_->cmdBuf_->append(pkt);
 }
 
-void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity)
+void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity, const QRectF& uvRect)
 {
     if (!impl_->cmdBuf_ || image.isNull() || !impl_->pDevice_) return;
 
@@ -1169,17 +1169,26 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         finalMat = canvasToNdc * combined;
     }
 
-    SpriteXformPkt pkt;
+    const QRectF clampedUv = uvRect.normalized().intersected(QRectF(0.0, 0.0, 1.0, 1.0));
+    if (!clampedUv.isValid() || clampedUv.width() <= 0.0 || clampedUv.height() <= 0.0) {
+        return;
+    }
+
+    AtlasSpriteXformPkt pkt;
     pkt.mat.row0 = { finalMat.row(0).x(), finalMat.row(0).y(), finalMat.row(0).z(), finalMat.row(0).w() };
     pkt.mat.row1 = { finalMat.row(1).x(), finalMat.row(1).y(), finalMat.row(1).z(), finalMat.row(1).w() };
     pkt.mat.row2 = { finalMat.row(2).x(), finalMat.row(2).y(), finalMat.row(2).z(), finalMat.row(2).w() };
     pkt.mat.row3 = { finalMat.row(3).x(), finalMat.row(3).y(), finalMat.row(3).z(), finalMat.row(3).w() };
     pkt.pSRV     = pSRV;
-    pkt.opacity  = opacity;
+    pkt.uvRect = {static_cast<float>(clampedUv.left()),
+                  static_cast<float>(clampedUv.top()),
+                  static_cast<float>(clampedUv.right()),
+                  static_cast<float>(clampedUv.bottom())};
+    pkt.color = {1.0f, 1.0f, 1.0f, opacity};
     impl_->cmdBuf_->append(pkt);
 }
 
-void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const ArtifactCore::ImageF32x4_RGBA& image, float opacity)
+void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const ArtifactCore::ImageF32x4_RGBA& image, float opacity, const QRectF& uvRect)
 {
     if (!impl_->cmdBuf_ || image.isEmpty() || !impl_->pDevice_) {
         return;
@@ -1285,13 +1294,22 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         finalMat = canvasToNdc * combined;
     }
 
-    SpriteXformPkt pkt;
+    const QRectF clampedUv = uvRect.normalized().intersected(QRectF(0.0, 0.0, 1.0, 1.0));
+    if (!clampedUv.isValid() || clampedUv.width() <= 0.0 || clampedUv.height() <= 0.0) {
+        return;
+    }
+
+    AtlasSpriteXformPkt pkt;
     pkt.mat.row0 = { finalMat.row(0).x(), finalMat.row(0).y(), finalMat.row(0).z(), finalMat.row(0).w() };
     pkt.mat.row1 = { finalMat.row(1).x(), finalMat.row(1).y(), finalMat.row(1).z(), finalMat.row(1).w() };
     pkt.mat.row2 = { finalMat.row(2).x(), finalMat.row(2).y(), finalMat.row(2).z(), finalMat.row(2).w() };
     pkt.mat.row3 = { finalMat.row(3).x(), finalMat.row(3).y(), finalMat.row(3).z(), finalMat.row(3).w() };
     pkt.pSRV = pSRV;
-    pkt.opacity = opacity;
+    pkt.uvRect = {static_cast<float>(clampedUv.left()),
+                  static_cast<float>(clampedUv.top()),
+                  static_cast<float>(clampedUv.right()),
+                  static_cast<float>(clampedUv.bottom())};
+    pkt.color = {1.0f, 1.0f, 1.0f, opacity};
     impl_->cmdBuf_->append(pkt);
 }
 

@@ -19,6 +19,7 @@ module;
 #include <QColor>
 #include <QPainter>
 #include <QRectF>
+#include <QSize>
 #include <QElapsedTimer>
 #include <QDebug>
 #include <QtConcurrent>
@@ -1781,16 +1782,23 @@ bool ArtifactIRenderer::Impl::readbackDepthToFloatBuffer(
 
   if (!srcTex || srcWidth == 0 || srcHeight == 0) return false;
 
+  constexpr TEXTURE_FORMAT depthReadbackFormat = TEX_FORMAT_D32_FLOAT;
   if (!m_depthReadbackStaging ||
       m_depthReadbackWidth != srcWidth ||
-      m_depthReadbackHeight != srcHeight) {
+      m_depthReadbackHeight != srcHeight ||
+      m_depthReadbackStaging->GetDesc().Format != depthReadbackFormat) {
+    m_depthReadbackStaging = nullptr;
     TextureDesc stagDesc;
     stagDesc.Name           = "DepthReadbackStagingTexture";
     stagDesc.Type           = RESOURCE_DIM_TEX_2D;
     stagDesc.Width          = srcWidth;
     stagDesc.Height         = srcHeight;
     stagDesc.MipLevels      = 1;
-    stagDesc.Format         = TEX_FORMAT_R32_FLOAT;
+    // Vulkan derives the copy aspect from the destination format. A color
+    // R32 staging texture makes vkCmdCopyImageToBuffer use COLOR for the
+    // D32 source image, which is invalid. Keep the staging resource depth-
+    // typed; the mapped payload is still one 32-bit float per pixel.
+    stagDesc.Format         = depthReadbackFormat;
     stagDesc.Usage          = USAGE_STAGING;
     stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
     stagDesc.BindFlags      = BIND_NONE;
@@ -3297,13 +3305,13 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
   // Direct delegation to primitive renderer for transformed sprite drawing
   impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, image, opacity);
  }
- void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity)
+ void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity, const QRectF& uvRect)
  {
-  impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, image, opacity);
+  impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, image, opacity, uvRect);
  }
- void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const ArtifactCore::ImageF32x4_RGBA& image, float opacity)
+ void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const ArtifactCore::ImageF32x4_RGBA& image, float opacity, const QRectF& uvRect)
  {
-  impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, image, opacity);
+  impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, image, opacity, uvRect);
  }
  void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, Diligent::ITextureView* texture, float opacity)
  {
@@ -3764,11 +3772,28 @@ bool ArtifactIRenderer::applyTrackMatte(
   if (!ctx || !depthTextureView) return;
   auto* dsv = static_cast<Diligent::ITextureView*>(depthTextureView);
   auto clearDepth = std::clamp(depth, 0.0f, 1.0f);
+  // Keep the depth view bound while clearing. Some backends require this and
+  // Vulkan can otherwise take the generic texture-transition path for a
+  // typeless depth resource.
   auto* rtv = impl_->activeColorView();
-  if (rtv) {
+  const auto* colorTexture = rtv ? rtv->GetTexture() : nullptr;
+  const auto* depthTexture = dsv->GetTexture();
+  const bool attachmentsMatch = colorTexture && depthTexture &&
+      colorTexture->GetDesc().Width == depthTexture->GetDesc().Width &&
+      colorTexture->GetDesc().Height == depthTexture->GetDesc().Height;
+  if (attachmentsMatch) {
    ctx->SetRenderTargets(1, &rtv, dsv,
                          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   } else {
+   if (rtv && colorTexture && depthTexture) {
+    qWarning() << "[ArtifactIRenderer] depth clear ignored mismatched color target"
+               << "color="
+               << QSize(static_cast<int>(colorTexture->GetDesc().Width),
+                        static_cast<int>(colorTexture->GetDesc().Height))
+               << "depth="
+               << QSize(static_cast<int>(depthTexture->GetDesc().Width),
+                        static_cast<int>(depthTexture->GetDesc().Height));
+   }
    ctx->SetRenderTargets(0, nullptr, dsv,
                          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   }

@@ -81,6 +81,11 @@ export bool layerUsesStaticLayerGpuCacheForCompositionView(ArtifactAbstractLayer
 export bool applyCompositionFinalEffectsToImage(ArtifactAbstractComposition* composition,
                                                 QImage& image,
                                                 DetailLevel lod = DetailLevel::High);
+export void applyRasterizerEffectsAndMasksToSurface(
+    ArtifactAbstractLayer* targetLayer, QImage& surface, DetailLevel lod);
+export void applyRasterizerEffectsAndMasksToSurface(
+    ArtifactAbstractLayer* targetLayer,
+    ArtifactCore::ImageF32x4_RGBA& surface, DetailLevel lod);
 export void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                         ArtifactIRenderer *renderer,
                                         float opacityOverride = -1.0f,
@@ -561,9 +566,8 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
   return true;
 }
 
-void applyRasterizerEffectsAndMasksToSurface(ArtifactAbstractLayer* targetLayer,
-                                             QImage& surface,
-                                             DetailLevel lod)
+void applyRasterizerEffectsAndMasksToSurfaceImpl(
+    ArtifactAbstractLayer* targetLayer, QImage& surface, DetailLevel lod)
 {
   // Feature 1: Effect LOD Integration
   // Downsample surface based on LOD before applying effects to reduce cost.
@@ -576,7 +580,7 @@ void applyRasterizerEffectsAndMasksToSurface(ArtifactAbstractLayer* targetLayer,
   }
 }
 
-void applyRasterizerEffectsAndMasksToSurface(
+void applyRasterizerEffectsAndMasksToSurfaceImpl(
     ArtifactAbstractLayer* targetLayer,
     ArtifactCore::ImageF32x4_RGBA& surface,
     DetailLevel lod)
@@ -712,6 +716,19 @@ QImage applyMatteStackToSurface(const QImage& surface,
 }
 
 } // namespace
+
+void applyRasterizerEffectsAndMasksToSurface(
+    ArtifactAbstractLayer* targetLayer, QImage& surface, DetailLevel lod)
+{
+  applyRasterizerEffectsAndMasksToSurfaceImpl(targetLayer, surface, lod);
+}
+
+void applyRasterizerEffectsAndMasksToSurface(
+    ArtifactAbstractLayer* targetLayer,
+    ArtifactCore::ImageF32x4_RGBA& surface, DetailLevel lod)
+{
+  applyRasterizerEffectsAndMasksToSurfaceImpl(targetLayer, surface, lod);
+}
 
 bool layerHasCpuRasterizerWork(ArtifactAbstractLayer* layer)
 {
@@ -1353,8 +1370,9 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       return;
     }
     if (textLayer->hasCurrentFrameBuffer()) {
-      const ArtifactCore::ImageF32x4_RGBA& buffer =
-          textLayer->currentFrameBuffer();
+      ArtifactCore::ImageF32x4_RGBA buffer =
+          textLayer->currentFrameBuffer().DeepCopy();
+      applyRasterizerEffectsAndMasksToSurface(layer, buffer, lod);
       const float baseOpacity =
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
       drawWithClonerEffect(layer, globalTransform4x4,

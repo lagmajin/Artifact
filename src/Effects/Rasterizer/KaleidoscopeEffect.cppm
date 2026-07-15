@@ -53,13 +53,13 @@ public:
     }
 };
 
-KaleidoscopeEffect::KaleidoscopeEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();}
-KaleidoscopeEffect::~KaleidoscopeEffect()=default;
-int KaleidoscopeEffect::segments()const{return segments_;}void KaleidoscopeEffect::setSegments(int v){segments_=std::clamp(v,2,32);syncImpls();}
-float KaleidoscopeEffect::rotation()const{return rotation_;}void KaleidoscopeEffect::setRotation(float v){rotation_=v;syncImpls();}
-float KaleidoscopeEffect::centerX()const{return cx_;}void KaleidoscopeEffect::setCenterX(float v){cx_=std::clamp(v,0.0f,1.0f);syncImpls();}
-float KaleidoscopeEffect::centerY()const{return cy_;}void KaleidoscopeEffect::setCenterY(float v){cy_=std::clamp(v,0.0f,1.0f);syncImpls();}
-std::vector<AbstractProperty> KaleidoscopeEffect::getProperties()const{
+RasterizerKaleidoscopeEffect::RasterizerKaleidoscopeEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();}
+RasterizerKaleidoscopeEffect::~RasterizerKaleidoscopeEffect()=default;
+int RasterizerKaleidoscopeEffect::segments()const{return segments_;}void RasterizerKaleidoscopeEffect::setSegments(int v){segments_=std::clamp(v,2,32);syncImpls();}
+float RasterizerKaleidoscopeEffect::rotation()const{return rotation_;}void RasterizerKaleidoscopeEffect::setRotation(float v){rotation_=v;syncImpls();}
+float RasterizerKaleidoscopeEffect::centerX()const{return cx_;}void RasterizerKaleidoscopeEffect::setCenterX(float v){cx_=std::clamp(v,0.0f,1.0f);syncImpls();}
+float RasterizerKaleidoscopeEffect::centerY()const{return cy_;}void RasterizerKaleidoscopeEffect::setCenterY(float v){cy_=std::clamp(v,0.0f,1.0f);syncImpls();}
+std::vector<AbstractProperty> RasterizerKaleidoscopeEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(4);
 
@@ -93,6 +93,6 @@ std::vector<AbstractProperty> KaleidoscopeEffect::getProperties()const{
     addFloat("centerY", cy_, 0.0f, 1.0f);
     return props;
 }
-void KaleidoscopeEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="segments")setSegments(v.toInt());else if(k=="rotation")setRotation(v.toFloat());else if(k=="centerX")setCenterX(v.toFloat());else if(k=="centerY")setCenterY(v.toFloat());}
-void KaleidoscopeEffect::syncImpls(){auto c=std::make_shared<KaleidoscopeCPUImpl>();c->segments_=segments_;c->rotation_=rotation_;c->cx_=cx_;c->cy_=cy_;setCPUImpl(c);}
+void RasterizerKaleidoscopeEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="segments")setSegments(v.toInt());else if(k=="rotation")setRotation(v.toFloat());else if(k=="centerX")setCenterX(v.toFloat());else if(k=="centerY")setCenterY(v.toFloat());}
+void RasterizerKaleidoscopeEffect::syncImpls(){auto c=std::make_shared<KaleidoscopeCPUImpl>();c->segments_=segments_;c->rotation_=rotation_;c->cx_=cx_;c->cy_=cy_;setCPUImpl(c);}
 } // namespace Artifact

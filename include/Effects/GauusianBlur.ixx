@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -80,11 +80,14 @@ public:
 
 class GaussianBlurGPUImpl : public ArtifactEffectImplBase {
 private:
+    class Resources;
     float sigma_ = 5.0f;
+    std::unique_ptr<Resources> resources_;
 
 public:
-    GaussianBlurGPUImpl() = default;
-    explicit GaussianBlurGPUImpl(float sigma) : sigma_(sigma) {}
+    GaussianBlurGPUImpl();
+    explicit GaussianBlurGPUImpl(float sigma);
+    ~GaussianBlurGPUImpl() override;
 
     void setSigma(float sigma) {
         sigma_ = sigma;

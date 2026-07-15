@@ -149,7 +149,7 @@ const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
 
 
        {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition View (Software)",
-        "Layer View (Diligent)", "Layer View (Software)"}},
+        "Layer Solo View", "Layer View (Software)"}},
       {WorkspaceMode::Import,
        {"Project", "Asset Browser", "Inspector", "Properties"},
        {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Viewer"}},
@@ -160,17 +160,17 @@ const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
       {WorkspaceMode::Animation,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
         "Properties", "Composition View (Software)",
-        "Layer View (Diligent)", "Layer View (Software)"},
+        "Layer Solo View", "Layer View (Software)"},
        {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
         "Playback Control"}},
       {WorkspaceMode::VFX,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
         "Properties", "Composition View (Software)",
-        "Layer View (Diligent)", "Layer View (Software)"},
+        "Layer Solo View", "Layer View (Software)"},
        {"Audio Mixer", "Contents Viewer", "AI Chat", "Playback Control"}},
       {WorkspaceMode::Compositing,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Properties", "Layer View (Diligent)"},
+        "Properties", "Layer Solo View"},
        {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
         "Playback Control", "Composition View (Software)",
         "Layer View (Software)"}},
@@ -191,7 +191,7 @@ const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
        {"Contents Viewer", "Audio Mixer", "Project", "Asset Browser",
         "Inspector", "Properties"},
        {"AI Cloud", "AI Chat", "Composition Viewer",
-        "Composition View (Software)", "Layer View (Diligent)",
+        "Composition View (Software)", "Layer Solo View",
         "Layer View (Software)"}},
   };
   for (const auto &rule : rules) {
@@ -556,6 +556,9 @@ public:
   QWidget *centralWidgetHost = nullptr;
   CDockWidget *primaryCenterDock = nullptr;
   bool primaryCenterDockAssigned = false;
+  QVBoxLayout *centralWorkspaceLayout = nullptr;
+  QWidget *centralWorkspaceWidget = nullptr;
+  QString centralWorkspaceTitle;
   QList<CDockWidget *> dockWidgets;
   WorkspaceMode workspaceMode_ = WorkspaceMode::Default;
   bool immersiveMode_ = false;
@@ -586,6 +589,9 @@ public:
     }
     if (!lazyDockFactories.contains(dock)) {
       dock->setProperty("artifactLazyWidgetCreationPending", false);
+      dock->setProperty("artifactLazyFactoryAvailable", false);
+      dock->setProperty("artifactLazyWidgetLastError",
+                        QStringLiteral("factory is not registered"));
       return false;
     }
 
@@ -593,18 +599,33 @@ public:
     auto factory = lazyDockFactories.take(dock);
     QWidget *widget = factory ? factory() : nullptr;
     if (!widget) {
+      // A failed factory must remain retryable. Previously take() permanently
+      // removed it, leaving an uncreated dock with no way to recover.
+      const bool factoryRestored = static_cast<bool>(factory);
+      if (factoryRestored) {
+        lazyDockFactories.insert(dock, std::move(factory));
+      }
+      dock->setProperty("artifactLazyFactoryAvailable", factoryRestored);
       dock->setProperty("artifactLazyWidgetCreationPending", false);
+      dock->setProperty("artifactLazyWidgetLastError",
+                        QStringLiteral("factory returned null"));
       return false;
     }
 
     QWidget *placeholder = dock->widget();
     dock->setProperty("artifactLazyWidgetCreated", true);
+    dock->setProperty("artifactLazyFactoryAvailable", false);
     dock->setProperty("artifactLazyWidgetCreationPending", false);
     dock->setProperty("artifactLazyWidgetStartupPending", false);
+    dock->setProperty("artifactLazyWidgetLastError", QVariant());
     applyLazyDockSurfacePalette(widget);
-    const auto insertMode = dock->property("artifactLazyFloatingDock").toBool()
-                                ? CDockWidget::ForceNoScrollArea
-                                : CDockWidget::AutoScrollArea;
+    const bool forceNoScrollArea =
+        dock->property("artifactLazyForceNoScrollArea").toBool();
+    const auto insertMode =
+        dock->property("artifactLazyFloatingDock").toBool() ||
+                forceNoScrollArea
+            ? CDockWidget::ForceNoScrollArea
+            : CDockWidget::AutoScrollArea;
     dock->setWidget(widget, insertMode);
     if (auto *layout = widget->layout()) {
       layout->activate();
@@ -1100,6 +1121,9 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->centralWidgetHost->setObjectName(QStringLiteral("ArtifactCentralWidgetHost"));
   impl_->centralWidgetHost->setSizePolicy(QSizePolicy::Expanding,
                                           QSizePolicy::Expanding);
+  impl_->centralWorkspaceLayout = new QVBoxLayout(impl_->centralWidgetHost);
+  impl_->centralWorkspaceLayout->setContentsMargins(0, 0, 0, 0);
+  impl_->centralWorkspaceLayout->setSpacing(0);
   auto *centralDock = new CDockWidget(QStringLiteral("Workspace"), this);
   centralDock->setObjectName(QStringLiteral("ArtifactCentralDock"));
   centralDock->setWidget(impl_->centralWidgetHost);
@@ -1204,6 +1228,41 @@ ArtifactMainWindow::~ArtifactMainWindow() {
 
 void ArtifactMainWindow::addWidget() {}
 
+void ArtifactMainWindow::setCentralWorkspace(const QString &title,
+                                             QWidget *widget) {
+  if (!impl_ || !impl_->centralWidgetHost ||
+      !impl_->centralWorkspaceLayout || !widget) {
+    return;
+  }
+  if (impl_->centralWorkspaceWidget == widget) {
+    return;
+  }
+  if (impl_->centralWorkspaceWidget) {
+    impl_->centralWorkspaceLayout->removeWidget(impl_->centralWorkspaceWidget);
+    impl_->centralWorkspaceWidget->hide();
+  }
+  impl_->centralWorkspaceTitle = title;
+  impl_->centralWorkspaceWidget = widget;
+  if (impl_->primaryCenterDock) {
+    impl_->primaryCenterDock->setWindowTitle(title);
+    if (!impl_->dockWidgets.contains(impl_->primaryCenterDock)) {
+      impl_->dockWidgets.push_back(impl_->primaryCenterDock);
+    }
+    wireDockWidgetSignals(impl_->primaryCenterDock, this);
+  }
+  widget->setParent(impl_->centralWidgetHost);
+  impl_->centralWorkspaceLayout->addWidget(widget);
+  widget->show();
+  impl_->primaryCenterDockAssigned = true;
+  if (impl_->dockStyleManager) {
+    impl_->dockStyleManager->applyStyle();
+  }
+  prepareDockDropOverlays(impl_->dockManager);
+  if (impl_->welcomeWidget) {
+    impl_->welcomeWidget->raise();
+  }
+}
+
 void ArtifactMainWindow::applyUiFontSettings() {
   if (!impl_) {
     return;
@@ -1253,16 +1312,7 @@ void ArtifactMainWindow::addDockedWidget(const QString &title,
     return;
   if (area == ads::CenterDockWidgetArea && impl_->primaryCenterDock &&
       !impl_->primaryCenterDockAssigned) {
-    impl_->primaryCenterDock->setWindowTitle(title);
-    impl_->primaryCenterDock->setObjectName(title);
-    impl_->primaryCenterDock->setWidget(widget);
-    impl_->primaryCenterDockAssigned = true;
-    if (!impl_->dockWidgets.contains(impl_->primaryCenterDock)) {
-      impl_->dockWidgets.push_back(impl_->primaryCenterDock);
-    }
-    wireDockWidgetSignals(impl_->primaryCenterDock, this);
-    prepareDockDropOverlays(impl_->dockManager);
-    impl_->dockStyleManager->applyStyle();
+    setCentralWorkspace(title, widget);
     if (title == "AI Cloud") {
       impl_->aiCloudWidget_ = qobject_cast<ArtifactAICloudWidget *>(widget);
     }
@@ -1371,9 +1421,14 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
 
   auto *dock = new CDockWidget(title, this);
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
+  dock->setProperty("artifactLazyDock", true);
+  if (dock->objectName().startsWith(QStringLiteral("timeline::"))) {
+    dock->setProperty("artifactLazyForceNoScrollArea", true);
+  }
   auto *placeholder = createLazyDockPlaceholder(dock);
   dock->setWidget(placeholder);
   impl_->lazyDockFactories.insert(dock, std::move(factory));
+  dock->setProperty("artifactLazyFactoryAvailable", true);
 
   ads::CDockAreaWidget *targetArea = nullptr;
   if (!tabGroupPrefix.isEmpty()) {
@@ -1502,10 +1557,12 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
 
   auto *dock = new CDockWidget(title, this);
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
+  dock->setProperty("artifactLazyDock", true);
   dock->setProperty("artifactLazyFloatingDock", true);
   auto *placeholder = createLazyDockPlaceholder(dock);
   dock->setWidget(placeholder, CDockWidget::ForceNoScrollArea);
   impl_->lazyDockFactories.insert(dock, std::move(factory));
+  dock->setProperty("artifactLazyFactoryAvailable", true);
 
   QObject::connect(
       dock, &ads::CDockWidget::visibilityChanged, this,
@@ -1612,6 +1669,17 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
                                         const bool visible) {
   if (!impl_)
     return;
+  if (title == impl_->centralWorkspaceTitle &&
+      impl_->centralWorkspaceWidget) {
+    // The central workspace is structural, not a toggleable tool panel.
+    // Keeping it visible prevents workspace-mode changes from leaving the
+    // main window with an empty QADS central area.
+    impl_->centralWorkspaceWidget->show();
+    if (impl_->primaryCenterDock) {
+      impl_->primaryCenterDock->toggleView(true);
+    }
+    return;
+  }
 
   const QByteArray beforeState =
       impl_->recordLayoutMutations ? saveDockManagerState() : QByteArray{};
@@ -1663,6 +1731,13 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
 void ArtifactMainWindow::activateDock(const QString &title) {
   if (!impl_)
     return;
+  if (title == impl_->centralWorkspaceTitle &&
+      impl_->centralWorkspaceWidget) {
+    impl_->centralWorkspaceWidget->show();
+    impl_->centralWorkspaceWidget->raise();
+    impl_->centralWorkspaceWidget->setFocus(Qt::OtherFocusReason);
+    return;
+  }
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
       continue;
@@ -1691,6 +1766,9 @@ void ArtifactMainWindow::activateDock(const QString &title) {
 bool ArtifactMainWindow::closeDock(const QString &title) {
   if (!impl_ || title.isEmpty())
     return false;
+  if (title == impl_->centralWorkspaceTitle) {
+    return false;
+  }
 
   const QByteArray beforeState = saveDockManagerState();
   for (auto *dock : impl_->dockWidgets) {
@@ -1711,7 +1789,7 @@ void ArtifactMainWindow::closeAllDocks() {
   if (!impl_)
     return;
   for (auto *dock : impl_->dockWidgets) {
-    if (dock)
+    if (dock && dock != impl_->primaryCenterDock)
       dock->closeDockWidget();
   }
 }
@@ -1819,7 +1897,7 @@ void ArtifactMainWindow::togglePanelsVisible(bool visible) {
     return;
   qDebug() << "[MainWindow] togglePanelsVisible visible=" << visible;
   for (auto *dock : impl_->dockWidgets) {
-    if (dock)
+    if (dock && dock != impl_->primaryCenterDock)
       dock->setVisible(visible);
   }
 }
@@ -1895,6 +1973,10 @@ QStringList ArtifactMainWindow::dockTitles() const {
 bool ArtifactMainWindow::isDockVisible(const QString &title) const {
   if (!impl_)
     return false;
+  if (title == impl_->centralWorkspaceTitle &&
+      impl_->centralWorkspaceWidget) {
+    return impl_->centralWorkspaceWidget->isVisible();
+  }
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
       continue;

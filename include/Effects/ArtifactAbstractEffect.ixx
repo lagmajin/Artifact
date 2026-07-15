@@ -49,9 +49,22 @@ export namespace Artifact {
 
 using namespace ArtifactCore;
 
-class EffectID : public Id {
+class EffectID {
 public:
-    using Id::Id; // Idのコンストラクタを継承
+    EffectID() = default;
+    EffectID(const QString& value) : value_(value) {}
+    EffectID(const char* value) : value_(QString::fromUtf8(value ? value : "")) {}
+
+    const QString& toString() const noexcept { return value_; }
+    bool isEmpty() const noexcept { return value_.isEmpty(); }
+
+    friend bool operator==(const EffectID& lhs, const EffectID& rhs) {
+        return lhs.value_ == rhs.value_;
+    }
+
+private:
+    // Factory IDs are stable string keys (for example "blur"), not UUIDs.
+    QString value_;
 };
 
 enum class ComputeMode {
@@ -143,6 +156,12 @@ public:
     // Property interface (use ArtifactCore::AbstractProperty)
     virtual std::vector<ArtifactCore::AbstractProperty> getProperties() const;
     virtual void setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value);
+
+    // Stable property objects used by editors and animation. getProperties()
+    // remains the effect-specific value description API; these objects retain
+    // keyframes and expressions across inspector rebuilds.
+    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> editableProperties();
+    std::shared_ptr<ArtifactCore::AbstractProperty> editableProperty(const QString& name);
 
     // ROI hint for partial evaluation
     virtual EffectROIHint roiHint() const { return EffectROIHint{}; }

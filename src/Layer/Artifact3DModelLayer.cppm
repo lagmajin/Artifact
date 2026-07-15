@@ -319,50 +319,66 @@ void Artifact3DLayer::createCubeMesh() {
   const float halfWidth = impl_->geometryWidth_ * 0.5f;
   const float halfHeight = impl_->geometryHeight_ * 0.5f;
   const float halfDepth = impl_->geometryDepth_ * 0.5f;
-  QVector<QVector3D> positions = {
-      QVector3D(-halfWidth, -halfHeight, -halfDepth),
-      QVector3D(halfWidth, -halfHeight, -halfDepth),
-      QVector3D(halfWidth, halfHeight, -halfDepth),
-      QVector3D(-halfWidth, halfHeight, -halfDepth),
-      QVector3D(-halfWidth, -halfHeight, halfDepth),
-      QVector3D(halfWidth, -halfHeight, halfDepth),
-      QVector3D(halfWidth, halfHeight, halfDepth),
-      QVector3D(-halfWidth, halfHeight, halfDepth)
+  QVector<QVector3D> positions;
+  QVector<QVector3D> normals;
+  QVector<QVector2D> uvs;
+  positions.reserve(24);
+  normals.reserve(24);
+  uvs.reserve(24);
+
+  const auto addFace = [&](const QVector3D &normal,
+                           const QVector3D &bottomLeft,
+                           const QVector3D &bottomRight,
+                           const QVector3D &topRight,
+                           const QVector3D &topLeft) {
+    const int first = positions.size();
+    positions << bottomLeft << bottomRight << topRight << topLeft;
+    normals << normal << normal << normal << normal;
+    uvs << QVector2D(0.0f, 0.0f) << QVector2D(1.0f, 0.0f)
+        << QVector2D(1.0f, 1.0f) << QVector2D(0.0f, 1.0f);
+    impl_->mesh_.addPolygon({first, first + 1, first + 2});
+    impl_->mesh_.addPolygon({first, first + 2, first + 3});
   };
 
-  impl_->mesh_.setVertexCount(8);
+  addFace(QVector3D(0.0f, 0.0f, 1.0f),
+          QVector3D(-halfWidth, -halfHeight, halfDepth),
+          QVector3D(halfWidth, -halfHeight, halfDepth),
+          QVector3D(halfWidth, halfHeight, halfDepth),
+          QVector3D(-halfWidth, halfHeight, halfDepth));
+  addFace(QVector3D(0.0f, 0.0f, -1.0f),
+          QVector3D(halfWidth, -halfHeight, -halfDepth),
+          QVector3D(-halfWidth, -halfHeight, -halfDepth),
+          QVector3D(-halfWidth, halfHeight, -halfDepth),
+          QVector3D(halfWidth, halfHeight, -halfDepth));
+  addFace(QVector3D(1.0f, 0.0f, 0.0f),
+          QVector3D(halfWidth, -halfHeight, halfDepth),
+          QVector3D(halfWidth, -halfHeight, -halfDepth),
+          QVector3D(halfWidth, halfHeight, -halfDepth),
+          QVector3D(halfWidth, halfHeight, halfDepth));
+  addFace(QVector3D(-1.0f, 0.0f, 0.0f),
+          QVector3D(-halfWidth, -halfHeight, -halfDepth),
+          QVector3D(-halfWidth, -halfHeight, halfDepth),
+          QVector3D(-halfWidth, halfHeight, halfDepth),
+          QVector3D(-halfWidth, halfHeight, -halfDepth));
+  addFace(QVector3D(0.0f, 1.0f, 0.0f),
+          QVector3D(-halfWidth, halfHeight, halfDepth),
+          QVector3D(halfWidth, halfHeight, halfDepth),
+          QVector3D(halfWidth, halfHeight, -halfDepth),
+          QVector3D(-halfWidth, halfHeight, -halfDepth));
+  addFace(QVector3D(0.0f, -1.0f, 0.0f),
+          QVector3D(-halfWidth, -halfHeight, -halfDepth),
+          QVector3D(halfWidth, -halfHeight, -halfDepth),
+          QVector3D(halfWidth, -halfHeight, halfDepth),
+          QVector3D(-halfWidth, -halfHeight, halfDepth));
+
+  impl_->mesh_.setVertexCount(positions.size());
   auto &vertexAttrs = impl_->mesh_.vertexAttributes();
   auto positionAttr = vertexAttrs.add<QVector3D>("position");
   positionAttr->data() = positions;
   auto normalAttr = vertexAttrs.add<QVector3D>("normal");
+  normalAttr->data() = normals;
   auto uvAttr = vertexAttrs.add<QVector2D>("uv");
-  for (int i = 0; i < positions.size(); ++i) {
-    const QVector3D normal = positions[i].normalized();
-    (*normalAttr)[i] = normal;
-    (*uvAttr)[i] = QVector2D(
-        impl_->geometryWidth_ > 0.0f ? (positions[i].x() + halfWidth) / impl_->geometryWidth_ : 0.5f,
-        impl_->geometryHeight_ > 0.0f ? (positions[i].y() + halfHeight) / impl_->geometryHeight_ : 0.5f);
-  }
-
-  // Add polygons (triangulated for simplicity)
-  // Bottom face
-  impl_->mesh_.addPolygon({0, 1, 2});
-  impl_->mesh_.addPolygon({0, 2, 3});
-  // Top face
-  impl_->mesh_.addPolygon({4, 5, 6});
-  impl_->mesh_.addPolygon({4, 6, 7});
-  // Front face
-  impl_->mesh_.addPolygon({0, 1, 5});
-  impl_->mesh_.addPolygon({0, 5, 4});
-  // Back face
-  impl_->mesh_.addPolygon({3, 2, 6});
-  impl_->mesh_.addPolygon({3, 6, 7});
-  // Left face
-  impl_->mesh_.addPolygon({0, 3, 7});
-  impl_->mesh_.addPolygon({0, 7, 4});
-  // Right face
-  impl_->mesh_.addPolygon({1, 2, 6});
-  impl_->mesh_.addPolygon({1, 6, 5});
+  uvAttr->data() = uvs;
 }
 
 void Artifact3DLayer::createPlaneMesh()

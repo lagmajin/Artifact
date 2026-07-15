@@ -978,7 +978,10 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
   const FloatColor shadow{0.01f, 0.02f, 0.03f, 0.88f};
   const float safeThickness = std::max(0.75f, thickness);
 
-  if (layer->is3D()) {
+  // View-cube navigation rotates the composition plane even for ordinary 2D
+  // layers. In that mode the selection frame must follow the supplied camera
+  // matrices instead of falling back to the unrotated 2D canvas transform.
+  if (layer->is3D() || (cameraView && cameraProj)) {
     const auto world = layer->getGlobalTransformMatrix();
     const auto point = [&world](float x, float y) -> Detail::float3 {
       const auto transformed = world * Diligent::float4{x, y, 0.0f, 1.0f};

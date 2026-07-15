@@ -1,8 +1,5 @@
 module;
 #include <QToolBar>
-#include <QToolButton>
-#include <QMenu>
-#include <QActionGroup>
 #include <QVBoxLayout>
 #include <QAction>
 #include <QColor>
@@ -47,7 +44,6 @@ module;
 module Artifact.Widgets.RenderLayerEditor;
 
 import Artifact.Widgets.RenderLayerWidgetv2;
-import Artifact.Service.Application;
 import Color.Float;
 import Utils.Id;
 import Utils.Path;
@@ -63,8 +59,6 @@ namespace Artifact {
   QAction* playAction = nullptr;
   QAction* stopAction = nullptr;
   QAction* screenshotAction = nullptr;
-  QToolButton* editModeButton = nullptr;
-  QToolButton* displayModeButton = nullptr;
  };
 
  ArtifactRenderLayerEditor::ArtifactRenderLayerEditor(QWidget* parent)
@@ -102,76 +96,6 @@ namespace Artifact {
       QStringLiteral("Studio/figma_media_stop.svg"))));
   impl_->screenshotAction->setIcon(QIcon(ArtifactCore::resolveIconPath(
       QStringLiteral("Studio/figma_tool_camera.svg"))));
-  impl_->toolbar->addSeparator();
-
-  auto* editMenu = new QMenu(impl_->toolbar);
-  auto* editGroup = new QActionGroup(this);
-  editGroup->setExclusive(true);
-  const auto addEditAction = [&](const QString& text,
-                                 EditMode mode,
-                                 bool checked,
-                                 const QKeySequence& shortcut = QKeySequence()) {
-   QAction* action = editMenu->addAction(text);
-   action->setCheckable(true);
-   action->setChecked(checked);
-   if (!shortcut.isEmpty()) {
-    action->setShortcut(shortcut);
-    action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-   }
-   editGroup->addAction(action);
-   connect(action, &QAction::triggered, this, [this, mode]() {
-    if (impl_ && impl_->view) {
-     impl_->view->setEditMode(mode);
-    }
-   });
-  };
-  addEditAction(QStringLiteral("View"), EditMode::View, true);
-  addEditAction(QStringLiteral("Transform"), EditMode::Transform, false);
-  addEditAction(QStringLiteral("Shape"), EditMode::Shape, false,
-                QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_P));
-  addEditAction(QStringLiteral("Mask"), EditMode::Mask, false);
-  impl_->editModeButton = new QToolButton(this);
-  impl_->editModeButton->setPalette(toolbarPalette);
-  impl_->editModeButton->setIcon(QIcon(ArtifactCore::resolveIconPath(
-      QStringLiteral("Studio/figma_tool_select.svg"))));
-  impl_->editModeButton->setText(QStringLiteral("Edit"));
-  impl_->editModeButton->setMenu(editMenu);
-  impl_->editModeButton->setPopupMode(QToolButton::InstantPopup);
-  impl_->editModeButton->setToolTip(QStringLiteral("Edit Mode (Ctrl+Alt+P = Shape)"));
-  impl_->toolbar->addWidget(impl_->editModeButton);
-
-  auto* displayMenu = new QMenu(impl_->toolbar);
-  auto* displayGroup = new QActionGroup(this);
-  displayGroup->setExclusive(true);
-  const auto addDisplayAction = [&](const QString& text, DisplayMode mode, bool checked) {
-   QAction* action = displayMenu->addAction(text);
-   action->setCheckable(true);
-   action->setChecked(checked);
-   displayGroup->addAction(action);
-   connect(action, &QAction::triggered, this, [this, mode]() {
-    if (impl_ && impl_->view) {
-     impl_->view->setDisplayMode(mode);
-    }
-    if (auto *app = Artifact::ApplicationService::instance()) {
-     if (auto *toolService = app->toolService()) {
-      toolService->setDisplayMode(mode);
-     }
-    }
-   });
-  };
-  addDisplayAction(QStringLiteral("Color"), DisplayMode::Color, true);
-  addDisplayAction(QStringLiteral("Alpha"), DisplayMode::Alpha, false);
-  addDisplayAction(QStringLiteral("Mask"), DisplayMode::Mask, false);
-  addDisplayAction(QStringLiteral("Wireframe"), DisplayMode::Wireframe, false);
-  impl_->displayModeButton = new QToolButton(this);
-  impl_->displayModeButton->setPalette(toolbarPalette);
-  impl_->displayModeButton->setIcon(QIcon(ArtifactCore::resolveIconPath(
-      QStringLiteral("Studio/fit_screen.svg"))));
-  impl_->displayModeButton->setText(QStringLiteral("Final"));
-  impl_->displayModeButton->setMenu(displayMenu);
-  impl_->displayModeButton->setPopupMode(QToolButton::InstantPopup);
-  impl_->toolbar->addWidget(impl_->displayModeButton);
-
   layout->addWidget(impl_->toolbar);
   layout->addWidget(impl_->view, 1);
 

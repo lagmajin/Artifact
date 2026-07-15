@@ -15,10 +15,10 @@ using namespace ArtifactCore;
 
 /// Classic bloom/glow effect: extracts bright areas and blurs
 /// them back over the original for a soft luminous look.
-class GlowEffect : public ArtifactAbstractEffect {
+class RasterizerGlowEffect : public ArtifactAbstractEffect {
 public:
-    GlowEffect();
-    ~GlowEffect() override;
+    RasterizerGlowEffect();
+    ~RasterizerGlowEffect() override;
 
     float threshold() const;
     void  setThreshold(float v);

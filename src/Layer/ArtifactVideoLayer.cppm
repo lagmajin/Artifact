@@ -308,25 +308,6 @@ QRect sourceCropToRect(const Artifact::SourceCrop& crop, const QSize& sourceSize
         QRect(0, 0, sourceSize.width(), sourceSize.height()));
 }
 
-ArtifactCore::ImageF32x4_RGBA makeTransparentCropCanvas(
-    const ArtifactCore::ImageF32x4_RGBA& source, const QRect& cropRect)
-{
-    if (source.isEmpty() || !cropRect.isValid() || cropRect.width() <= 0 || cropRect.height() <= 0) {
-        return source;
-    }
-
-    ArtifactCore::ImageF32x4_RGBA canvas;
-    canvas.resize(source.width(), source.height());
-    canvas.fill(ArtifactCore::FloatRGBA(0.0f, 0.0f, 0.0f, 0.0f));
-    for (int y = 0; y < cropRect.height(); ++y) {
-        for (int x = 0; x < cropRect.width(); ++x) {
-            canvas.setPixel(cropRect.x() + x, cropRect.y() + y,
-                            source.getPixel(cropRect.x() + x, cropRect.y() + y));
-        }
-    }
-    return canvas;
-}
-
 void publishVideoLayerModified(ArtifactVideoLayer* layer)
 {
     if (!layer) {
@@ -1170,6 +1151,16 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
                     layer->impl_->lastDecodedFrame_ = initialSourceFrame;
                 }
                 layer->impl_->lastDecodeState_ = QStringLiteral("ready");
+                QMetaObject::invokeMethod(
+                    layer,
+                    [layer, decodeGeneration]() {
+                        if (layer && layer->impl_ &&
+                            decodeGeneration == layer->impl_->decodeGeneration_.load(
+                                std::memory_order_acquire)) {
+                            publishVideoLayerModified(layer);
+                        }
+                    },
+                    Qt::QueuedConnection);
             }
             if (decodeGeneration == layer->impl_->decodeGeneration_.load(std::memory_order_acquire)) {
                 layer->impl_->decoding_ = false;
@@ -2217,15 +2208,35 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
     const QRect cropRect = sourceCropToRect(impl_->sourceCrop_, QSize(size.width, size.height));
     const bool useCrop = cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0;
     const QMatrix4x4 baseTransform = getGlobalTransform4x4();
-    const ArtifactCore::ImageF32x4_RGBA renderBuffer =
-        useCrop ? makeTransparentCropCanvas(frameBuffer, cropRect)
-                : frameBuffer;
-    drawWithClonerEffect(this, baseTransform, [renderer, renderBuffer, size, this](const QMatrix4x4& transform, float weight) {
-        renderer->drawSpriteTransformed(0.0f, 0.0f,
-                                        static_cast<float>(size.width),
-                                        static_cast<float>(size.height),
-                                        transform, renderBuffer,
-                                        this->opacity() * weight);
+    const QRectF uvRect = useCrop
+        ? QRectF(static_cast<qreal>(cropRect.x()) / frameBuffer.width(),
+                 static_cast<qreal>(cropRect.y()) / frameBuffer.height(),
+                 static_cast<qreal>(cropRect.width()) / frameBuffer.width(),
+                 static_cast<qreal>(cropRect.height()) / frameBuffer.height())
+        : QRectF(0.0, 0.0, 1.0, 1.0);
+    const QRectF drawRect = useCrop
+        ? QRectF(cropRect)
+        : QRectF(0.0, 0.0, size.width, size.height);
+    QMatrix4x4 cropTransform = baseTransform;
+    if (useCrop && std::abs(impl_->sourceCrop_.rotation()) > 1e-6) {
+        const QPointF anchor = impl_->sourceCrop_.anchor();
+        const QPointF pivot(
+            drawRect.x() + drawRect.width() * anchor.x(),
+            drawRect.y() + drawRect.height() * anchor.y());
+        cropTransform.translate(static_cast<float>(pivot.x()),
+                                static_cast<float>(pivot.y()), 0.0f);
+        cropTransform.rotate(static_cast<float>(impl_->sourceCrop_.rotation()),
+                             0.0f, 0.0f, 1.0f);
+        cropTransform.translate(static_cast<float>(-pivot.x()),
+                                static_cast<float>(-pivot.y()), 0.0f);
+    }
+    drawWithClonerEffect(this, cropTransform, [renderer, frameBuffer, drawRect, uvRect, this](const QMatrix4x4& transform, float weight) {
+        renderer->drawSpriteTransformed(
+            static_cast<float>(drawRect.x()),
+            static_cast<float>(drawRect.y()),
+            static_cast<float>(drawRect.width()),
+            static_cast<float>(drawRect.height()),
+            transform, frameBuffer, this->opacity() * weight, uvRect);
     });
     drawFractureOverlay(renderer, baseTransform, QSizeF(size.width, size.height), opacity());
 }

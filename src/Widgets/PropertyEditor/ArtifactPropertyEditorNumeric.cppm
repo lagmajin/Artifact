@@ -1,10 +1,9 @@
 ﻿module;
-#include <QAbstractButton>
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
-#include <QPushButton>
 #include <QSignalBlocker>
 #include <QVariant>
 #include <QWidget>
@@ -12,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -25,7 +25,6 @@ import FloatColorPickerDialog;
 import Utils.Path;
 
 namespace Artifact {
-QVariant getPropertyDefaultValue(const ArtifactCore::AbstractProperty &property);
 void installSliderJumpBehavior(QWidget *pickerRoot);
 } // namespace Artifact
 
@@ -33,7 +32,6 @@ namespace Artifact::detail {
 extern const int kNumericEditorValueWidth;
 extern ArtifactNumericEditorLayoutMode g_numericEditorLayoutMode;
 void applyPropertyFieldPalette(QWidget *widget, bool elevated);
-void applyPropertyButtonPalette(QAbstractButton *button, bool accent);
 void applyThemeTextPalette(QWidget *widget, int shade);
 std::pair<double, double> resolveFloatSoftRange(
     const ArtifactCore::AbstractProperty &property,
@@ -48,6 +46,8 @@ namespace Artifact {
 using namespace detail;
 
 namespace {
+
+constexpr qint64 kSliderPreviewIntervalMs = 50;
 
 bool isScalePercentProperty(const ArtifactCore::AbstractProperty &property) {
   const QString name = property.getName();
@@ -110,37 +110,8 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     slider_ = new QSlider(Qt::Horizontal, this);
     applyPropertyFieldPalette(slider_);
   }
-  QPushButton *resetButton = nullptr;
-  if (::Artifact::artifactShouldShowPropertyResetButtons()) {
-    resetButton = new QPushButton(QStringLiteral("⟲"), this);
-    resetButton->setObjectName(QStringLiteral("propertyResetButton"));
-    resetButton->setFixedSize(20, 20);
-    resetButton->setToolTip(QStringLiteral("Reset to default"));
-    resetButton->setFlat(true);
-    applyPropertyButtonPalette(resetButton);
-
-    QObject::connect(resetButton, &QPushButton::clicked, this,
-                     [this, property, initializing]() {
-                       if (*initializing) {
-                         return;
-                       }
-                       const QVariant defaultValue =
-                           getPropertyDefaultValue(property);
-                       const double defaultNumericValue = storageToDisplayValue(
-                           defaultValue.toDouble(),
-                           spinBox_ != nullptr &&
-                               spinBox_->property("displayAsPercent").toBool());
-                       if (spinBox_) {
-                         spinBox_->setValue(defaultNumericValue);
-                       }
-                        if (slider_) {
-                          const QSignalBlocker blocker(slider_);
-                          slider_->setValue(floatToSliderPosition(
-                              defaultNumericValue, softMin_, softMax_));
-                        }
-                        commitCurrentValue();
-                      });
-  }
+  auto previewThrottle = std::make_shared<QElapsedTimer>();
+  previewThrottle->start();
 
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
@@ -239,19 +210,24 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                                                        displayAsPercent));
                    });
   if (slider_) {
-    QObject::connect(slider_, &QSlider::sliderPressed, this, [this]() {
+    QObject::connect(slider_, &QSlider::sliderPressed, this,
+                     [this, previewThrottle]() {
       sliderInteracting_ = true;
       previewCurrentValue();
+      previewThrottle->restart();
     });
 
     QObject::connect(
         slider_, &QSlider::valueChanged, this,
-        [this, sliderUnit, displayAsPercent](const int sliderValue) {
+        [this, sliderUnit, displayAsPercent,
+         previewThrottle](const int sliderValue) {
           const double nextValue =
               this->sliderPositionToFloat(sliderValue, softMin_, softMax_);
           const QSignalBlocker blocker(spinBox_);
           spinBox_->setValue(nextValue);
-          if (sliderInteracting_) {
+          if (sliderInteracting_ &&
+              previewThrottle->elapsed() >= kSliderPreviewIntervalMs) {
+            previewThrottle->restart();
             previewValue(
                 displayToStorageValue(nextValue, displayAsPercent));
           }
@@ -422,15 +398,8 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     slider_ = new QSlider(Qt::Horizontal, this);
     applyPropertyFieldPalette(slider_);
   }
-  QPushButton *resetButton = nullptr;
-  if (::Artifact::artifactShouldShowPropertyResetButtons()) {
-    resetButton = new QPushButton(QStringLiteral("⟲"), this);
-    resetButton->setObjectName(QStringLiteral("propertyResetButton"));
-    resetButton->setFixedSize(20, 20);
-    resetButton->setToolTip(QStringLiteral("Reset to default"));
-    resetButton->setFlat(true);
-    applyPropertyButtonPalette(resetButton);
-  }
+  auto previewThrottle = std::make_shared<QElapsedTimer>();
+  previewThrottle->start();
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
@@ -454,11 +423,6 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     }
   } else {
     layout->addWidget(spinBox_, 1);
-  }
-
-  // ✅ リセットボタンを一番右に追加
-  if (resetButton) {
-    layout->addWidget(resetButton, 0);
   }
 
   const auto meta = property.metadata();
@@ -520,17 +484,22 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
                      commitValue(spinBox_->value());
                    });
   if (slider_) {
-    QObject::connect(slider_, &QSlider::sliderPressed, this, [this]() {
+    QObject::connect(slider_, &QSlider::sliderPressed, this,
+                     [this, previewThrottle]() {
       sliderInteracting_ = true;
       previewCurrentValue();
+      previewThrottle->restart();
     });
     QObject::connect(slider_, &QSlider::valueChanged, this,
-                     [this, sliderUnit](const int sliderValue) {
+                     [this, sliderUnit, previewThrottle](const int sliderValue) {
                        const int nextValue =
                            sliderPositionToInt(sliderValue, softMin_, softMax_);
                        const QSignalBlocker blocker(spinBox_);
                        spinBox_->setValue(nextValue);
-                       if (sliderInteracting_) {
+                       if (sliderInteracting_ &&
+                           previewThrottle->elapsed() >=
+                               kSliderPreviewIntervalMs) {
+                         previewThrottle->restart();
                          previewValue(nextValue);
                        }
                      });

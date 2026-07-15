@@ -40,11 +40,20 @@ module;
 #include <QUrl>
 #include <QFileDialog>
 #include <QFocusEvent>
+#include <QFont>
+#include <QColor>
 #include <QClipboard>
 #include <QApplication>
 #include <QImage>
 #include <QImageReader>
 #include <QPainter>
+#include <QPainterPath>
+#include <QPalette>
+#include <QPen>
+#include <QPoint>
+#include <QRect>
+#include <QStyledItemDelegate>
+#include <QStyleOptionViewItem>
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QFileSystemWatcher>
@@ -851,6 +860,145 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
   }
  };
 
+class AssetCardDelegate final : public QStyledItemDelegate
+{
+public:
+ explicit AssetCardDelegate(QListView* view)
+     : QStyledItemDelegate(view), view_(view) {}
+
+ QSize sizeHint(const QStyleOptionViewItem& option,
+                const QModelIndex& index) const override
+ {
+  if (view_ && view_->viewMode() == QListView::ListMode) {
+   return QStyledItemDelegate::sizeHint(option, index);
+  }
+  const int thumbnail = std::max(64, option.decorationSize.width());
+  return QSize(thumbnail + 24, thumbnail + 54);
+ }
+
+ void paint(QPainter* painter, const QStyleOptionViewItem& option,
+            const QModelIndex& index) const override
+ {
+  if (!painter || !index.isValid()) {
+   return;
+  }
+  if (view_ && view_->viewMode() == QListView::ListMode) {
+   QStyledItemDelegate::paint(painter, option, index);
+   return;
+  }
+
+  QStyleOptionViewItem opt(option);
+  initStyleOption(&opt, index);
+  const bool selected = opt.state.testFlag(QStyle::State_Selected);
+  const bool hovered = opt.state.testFlag(QStyle::State_MouseOver);
+  const bool focused = opt.state.testFlag(QStyle::State_HasFocus);
+  const QRect cardRect = opt.rect.adjusted(3, 3, -3, -3);
+  const int informationHeight = 43;
+  const QRect thumbnailRect = cardRect.adjusted(1, 1, -1,
+                                                 -informationHeight);
+  const QRect informationRect(cardRect.left() + 1,
+                              thumbnailRect.bottom() + 1,
+                              cardRect.width() - 2,
+                              informationHeight - 1);
+
+  const QColor base = opt.palette.color(QPalette::Base);
+  const QColor text = opt.palette.color(QPalette::Text);
+  const QColor accent = opt.palette.color(QPalette::Highlight);
+  const QColor cardFill = hovered ? base.lighter(128) : base.lighter(112);
+  QColor border = hovered ? text.darker(190) : base.lighter(150);
+  if (selected) {
+   border = accent.lighter(focused ? 135 : 118);
+  }
+
+  painter->save();
+  painter->setRenderHint(QPainter::Antialiasing, true);
+  painter->setPen(QPen(border, selected ? 2.0 : 1.0));
+  painter->setBrush(cardFill);
+  painter->drawRoundedRect(cardRect, 6, 6);
+
+  QPainterPath thumbnailClip;
+  thumbnailClip.addRoundedRect(thumbnailRect, 5, 5);
+  painter->save();
+  painter->setClipPath(thumbnailClip);
+  painter->fillRect(thumbnailRect, base.darker(118));
+  const QIcon icon = qvariant_cast<QIcon>(index.data(Qt::DecorationRole));
+  if (!icon.isNull()) {
+   const QSize targetSize = thumbnailRect.size() - QSize(10, 10);
+   const QPixmap pixmap = icon.pixmap(targetSize);
+   if (!pixmap.isNull()) {
+    const QSize fitted = pixmap.size().scaled(targetSize, Qt::KeepAspectRatio);
+    const QRect pixmapRect(QPoint(0, 0), fitted);
+    QRect centered = pixmapRect;
+    centered.moveCenter(thumbnailRect.center());
+    painter->drawPixmap(centered, pixmap);
+   }
+  }
+  painter->restore();
+
+  const QString title = index.data(static_cast<int>(AssetMenuRole::Name)).toString();
+  const QString rawType = index.data(static_cast<int>(AssetMenuRole::Type)).toString();
+  const bool isFolder = index.data(static_cast<int>(AssetMenuRole::IsFolder)).toBool();
+  const bool favorite = rawType.contains(QStringLiteral("Favorite"), Qt::CaseInsensitive);
+  const bool imported = rawType.contains(QStringLiteral("Imported"), Qt::CaseInsensitive);
+  const bool missing = rawType.contains(QStringLiteral("Missing"), Qt::CaseInsensitive);
+  const bool unused = rawType.contains(QStringLiteral("Unused"), Qt::CaseInsensitive);
+
+  QStringList metadataParts;
+  for (const QString& part : rawType.split(QStringLiteral(" • "), Qt::SkipEmptyParts)) {
+   if (part.compare(QStringLiteral("Favorite"), Qt::CaseInsensitive) == 0 ||
+       part.compare(QStringLiteral("Imported"), Qt::CaseInsensitive) == 0 ||
+       part.compare(QStringLiteral("Missing"), Qt::CaseInsensitive) == 0 ||
+       part.compare(QStringLiteral("Unused"), Qt::CaseInsensitive) == 0 ||
+       part.startsWith(QStringLiteral("Source Uses:"), Qt::CaseInsensitive)) {
+    continue;
+   }
+   metadataParts.push_back(part);
+  }
+  const QString metadata = isFolder
+      ? QStringLiteral("Folder")
+      : metadataParts.value(0, QStringLiteral("Asset"));
+
+  const QRect titleRect = informationRect.adjusted(7, 3, -24, -19);
+  const QRect metadataRect = informationRect.adjusted(7, 21, -7, -3);
+  QFont titleFont = opt.font;
+  titleFont.setWeight(QFont::DemiBold);
+  painter->setFont(titleFont);
+  painter->setPen(selected ? opt.palette.color(QPalette::HighlightedText) : text);
+  painter->drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
+                    painter->fontMetrics().elidedText(
+                        title, Qt::ElideRight, titleRect.width()));
+
+  QFont metadataFont = opt.font;
+  metadataFont.setPointSizeF(std::max(8.0, metadataFont.pointSizeF() - 1.0));
+  metadataFont.setWeight(QFont::Normal);
+  painter->setFont(metadataFont);
+  painter->setPen(text.darker(145));
+  painter->drawText(metadataRect, Qt::AlignLeft | Qt::AlignVCenter,
+                    painter->fontMetrics().elidedText(
+                        metadata, Qt::ElideRight, metadataRect.width()));
+
+  if (favorite) {
+   painter->setPen(QColor(245, 195, 66));
+   painter->drawText(QRect(informationRect.right() - 23,
+                           informationRect.top() + 2, 18, 18),
+                     Qt::AlignCenter, QStringLiteral("★"));
+  }
+  if (imported || missing || unused) {
+   const QColor statusColor = missing ? QColor(224, 82, 82)
+       : unused ? QColor(224, 168, 68)
+                : QColor(78, 190, 112);
+   painter->setPen(Qt::NoPen);
+   painter->setBrush(statusColor);
+   painter->drawEllipse(QPoint(informationRect.right() - 10,
+                               informationRect.bottom() - 9), 3, 3);
+  }
+  painter->restore();
+ }
+
+private:
+ QListView* view_ = nullptr;
+};
+
 
 
 class ArtifactAssetBrowserToolBar::Impl
@@ -974,7 +1122,7 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
   // Async waveform thumbnail generation
   struct PendingWaveJob {
     QString filePath;
-    QFutureWatcher<QIcon>* watcher = nullptr;
+    QFutureWatcher<QImage>* watcher = nullptr;
     std::uint64_t generation = 0;
   };
   QHash<QString, PendingWaveJob> pendingWaveJobs_;
@@ -2528,6 +2676,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   auto assetModel = impl_->assetModel_ = new AssetMenuModel(this);
   auto fileView = impl_->fileView_ = new AssetFileListView();
   fileView->setModel(assetModel);
+  fileView->setItemDelegate(new AssetCardDelegate(fileView));
   impl_->currentDirectoryPath_ = desktopPath;  // Set initial directory
   fileView->setResizeMode(QListView::Adjust);
   fileView->setTextElideMode(Qt::ElideRight);
@@ -3611,17 +3760,20 @@ void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& aud
     }
 
     const quint64 jobGeneration = thumbnailGeneration_.load(std::memory_order_relaxed);
-    auto* watcher = new QFutureWatcher<QIcon>();
+    auto* watcher = new QFutureWatcher<QImage>();
 
     // Connect finished signal
-    QObject::connect(watcher, &QFutureWatcher<QIcon>::finished, [this, watcher, audioFilePath, jobGeneration]() {
-        const QIcon icon = watcher->result();
+    QObject::connect(watcher, &QFutureWatcher<QImage>::finished, [this, watcher, audioFilePath, jobGeneration]() {
+        const QImage image = watcher->result();
         pendingWaveJobs_.remove(audioFilePath);
         if (jobGeneration != thumbnailGeneration_.load(std::memory_order_relaxed)) {
             watcher->deleteLater();
             return;
         }
-        if (!icon.isNull()) {
+        if (!image.isNull()) {
+            // QPixmap/QIcon are GUI resources.  Keep their construction on the
+            // watcher's thread (the browser/UI thread), never in QtConcurrent.
+            const QIcon icon(QPixmap::fromImage(image));
             thumbnailCache_[audioFilePath] = icon;
             if (assetModel_ && assetModel_->updateItemIconByPath(audioFilePath, icon)) {
                 // model updated via dataChanged
@@ -3640,12 +3792,12 @@ void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& aud
     const QSize thumbSize = thumbnailSize_;
 
     // Run waveform generation in background thread
-    QFuture<QIcon> future = QtConcurrent::run([audioFilePath, thumbSize]() -> QIcon {
+    QFuture<QImage> future = QtConcurrent::run([audioFilePath, thumbSize]() -> QImage {
         try {
             // Load audio (in background thread)
             ArtifactCore::SimpleWav wav;
             if (!wav.loadFromFile(audioFilePath)) {
-                return QIcon();
+                return QImage();
             }
 
             // Downsample for thumbnail (max 30 seconds)
@@ -3661,7 +3813,7 @@ void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& aud
             segment.startFrame = 0;
 
             if (segment.channelData[0].isEmpty()) {
-                return QIcon();
+                return QImage();
             }
 
             // Generate waveform data
@@ -3670,18 +3822,19 @@ void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& aud
             WaveformData waveData = generator.generate(segment, thumbWidth);
 
             if (waveData.peaks.isEmpty()) {
-                return QIcon();
+                return QImage();
             }
 
-            // Render to pixmap
-            QPixmap pixmap(thumbSize);
-            pixmap.fill(Qt::transparent);
+            // QImage is reentrant and can be painted in a worker.  Conversion
+            // to GUI-backed QPixmap/QIcon happens in the finished callback.
+            QImage image(thumbSize, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
 
-            QPainter painter(&pixmap);
+            QPainter painter(&image);
             painter.setRenderHint(QPainter::Antialiasing);
 
-            const int w = pixmap.width();
-            const int h = pixmap.height();
+            const int w = image.width();
+            const int h = image.height();
             const int centerY = h / 2;
             const float padding = 2.0f;
 
@@ -3707,9 +3860,9 @@ void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& aud
             }
 
             painter.end();
-            return QIcon(pixmap);
+            return image;
         } catch (...) {
-            return QIcon();
+            return QImage();
         }
     });
 

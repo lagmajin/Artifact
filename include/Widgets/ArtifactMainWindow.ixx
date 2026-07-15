@@ -4,6 +4,7 @@ module;
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QStatusBar>
+#include <QString>
 #include <ads_globals.h>
 #include <functional>
 #include <memory> // Added for std::unique_ptr if used in Impl
@@ -50,6 +51,7 @@ public:
 
 public /*slots*/:
   void addWidget();
+  void setCentralWorkspace(const QString &title, QWidget *widget);
   void addDockedWidget(const QString &title, ads::DockWidgetArea area,
                        QWidget *widget);
   void addDockedWidgetTabbed(const QString &title, ads::DockWidgetArea area,

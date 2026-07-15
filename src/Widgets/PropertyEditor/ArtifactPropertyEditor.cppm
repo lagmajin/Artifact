@@ -32,6 +32,7 @@ module;
 #include <QPen>
 #include <QPalette>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QFrame>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -128,11 +129,6 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   setAttribute(Qt::WA_Hover, true);
   applyPropertyFieldPalette(this, false);
   setAutoFillBackground(false);
-
-  auto *layout = new QHBoxLayout(this);
-  layout->setContentsMargins(kPropertyRowMarginH, kPropertyRowMarginV,
-                             kPropertyRowMarginH, kPropertyRowMarginV);
-  layout->setSpacing(kPropertyRowSpacing);
 
   label_->setObjectName(QStringLiteral("propertyRowLabel"));
   label_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
@@ -265,16 +261,18 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   scrubTarget_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor
                                                    : Qt::ArrowCursor);
 
-  if (g_propertyRowLayoutMode ==
-      ArtifactPropertyRowLayoutMode::EditorThenLabel) {
-    layout->addWidget(editor_, 1);
-    layout->addWidget(label_, 0);
-  } else {
-    layout->addWidget(label_, 0);
-    layout->addWidget(editor_, 1);
-  }
-  layout->addWidget(supplementaryLabel_, 0);
-  layout->addWidget(auxContainer, 0);
+  // Row chrome is owner-drawn. Keep only the concrete value editor as a
+  // child widget so text entry, IME and accessibility remain native.
+  label_->hide();
+  supplementaryLabel_->hide();
+  auxContainer->hide();
+  keyframeButton_->setProperty("baseVisible", true);
+  keyframeButton_->hide();
+  resetButton_->hide();
+  expressionButton_->hide();
+  favoriteButton_->hide();
+  prevKeyBtn_->hide();
+  nextKeyBtn_->hide();
 
   QObject::connect(resetButton_, &QPushButton::clicked, this, [this]() {
     if (resetHandler_) {
@@ -317,6 +315,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     }
   });
   updateRowVisualState();
+  updateOwnedGeometry();
 }
 
 ArtifactPropertyEditorRowWidget::~ArtifactPropertyEditorRowWidget() = default;
@@ -565,7 +564,9 @@ void ArtifactPropertyEditorRowWidget::setSupplementaryText(
   }
   const QString trimmed = text.trimmed();
   supplementaryLabel_->setText(trimmed);
-  supplementaryLabel_->setVisible(!trimmed.isEmpty());
+  // The row owns its chrome; the label is retained only as the state store.
+  supplementaryLabel_->hide();
+  update();
 }
 
 void ArtifactPropertyEditorRowWidget::setShowExpressionButton(
@@ -589,10 +590,10 @@ void ArtifactPropertyEditorRowWidget::setShowResetButton(const bool visible) {
 
 void ArtifactPropertyEditorRowWidget::setShowKeyframeButton(
     const bool visible) {
-  if (keyframeButton_->isVisible() == visible) {
+  if (keyframeButton_->property("baseVisible").toBool() == visible) {
     return;
   }
-  keyframeButton_->setVisible(visible);
+  keyframeButton_->setProperty("baseVisible", visible);
   updateKeyframeButtonIcon();
   updateAuxControlVisibility();
   update();
@@ -634,7 +635,7 @@ void ArtifactPropertyEditorRowWidget::updateKeyframeButtonIcon() {
   if (!keyframeButton_) {
     return;
   }
-  const bool modeEnabled = keyframeButton_->isChecked();
+  const bool modeEnabled = keyframeModeEnabled_;
   const bool hasCurrentFrameKey = currentFrameKeyframed_;
   const bool enabled = keyframeButton_->isEnabled();
   QColor fillColor = QColor(QStringLiteral("#6E7681"));
@@ -674,23 +675,24 @@ void ArtifactPropertyEditorRowWidget::setKeyframeChecked(const bool checked) {
     return;
   }
   currentFrameKeyframed_ = checked;
+  const QSignalBlocker blocker(keyframeButton_);
+  keyframeButton_->setChecked(checked);
   updateKeyframeButtonIcon();
   update();
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeModeEnabled(
     const bool enabled) {
-  if (keyframeButton_ && keyframeButton_->isChecked() == enabled) {
+  if (keyframeModeEnabled_ == enabled) {
     return;
   }
-  const QSignalBlocker blocker(keyframeButton_);
-  keyframeButton_->setChecked(enabled);
+  keyframeModeEnabled_ = enabled;
   updateKeyframeButtonIcon();
   update();
 }
 
 bool ArtifactPropertyEditorRowWidget::isKeyframeModeEnabled() const {
-  return keyframeButton_ && keyframeButton_->isChecked();
+  return keyframeModeEnabled_;
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeEnabled(const bool enabled) {
@@ -734,22 +736,13 @@ void ArtifactPropertyEditorRowWidget::updateAuxControlVisibility() {
     return;
   }
   const bool hover = underMouse();
-  const bool keyVisible = keyframeButton_->isVisible();
+  const bool keyVisible = keyframeButton_->property("baseVisible").toBool();
   const bool resetVisible = resetButton_->property("baseVisible").toBool();
   const bool exprVisible = expressionButton_->property("baseVisible").toBool();
   const bool navVisible = prevKeyBtn_->property("baseVisible").toBool() &&
                           nextKeyBtn_->property("baseVisible").toBool();
   const bool favVisible =
       favoriteButton_ && favoriteButton_->property("baseVisible").toBool();
-
-  resetButton_->setVisible(resetVisible && hover);
-  expressionButton_->setVisible(exprVisible && hover);
-  if (favoriteButton_) {
-    favoriteButton_->setVisible(
-        favVisible && (hover || favoriteButton_->isChecked()));
-  }
-  prevKeyBtn_->setVisible(keyVisible && navVisible);
-  nextKeyBtn_->setVisible(keyVisible && navVisible);
 
   resetButton_->setEnabled(resetVisible && hover);
   expressionButton_->setEnabled(exprVisible && hover);
@@ -758,6 +751,59 @@ void ArtifactPropertyEditorRowWidget::updateAuxControlVisibility() {
   }
   prevKeyBtn_->setEnabled(navVisible);
   nextKeyBtn_->setEnabled(navVisible);
+}
+
+void ArtifactPropertyEditorRowWidget::updateOwnedGeometry() {
+  if (!editor_) {
+    return;
+  }
+  const int margin = kPropertyRowMarginH;
+  const int labelWidth = std::clamp(label_->minimumWidth(), 96, 240);
+  const int actionWidth = 6 * kPropertyKeyButtonSize + 5 * kPropertyActionSpacing;
+  const int editorLeft = margin + labelWidth + kPropertyRowSpacing;
+  const int editorWidth = std::max(40, width() - editorLeft - actionWidth - margin);
+  editor_->setGeometry(editorLeft, kPropertyRowMarginV, editorWidth,
+                       std::max(1, height() - 2 * kPropertyRowMarginV));
+}
+
+void ArtifactPropertyEditorRowWidget::resizeEvent(QResizeEvent *event) {
+  QWidget::resizeEvent(event);
+  updateOwnedGeometry();
+}
+
+void ArtifactPropertyEditorRowWidget::mousePressEvent(QMouseEvent *event) {
+  if (!event || event->button() != Qt::LeftButton) {
+    QWidget::mousePressEvent(event);
+    return;
+  }
+  const int step = kPropertyKeyButtonSize + kPropertyActionSpacing;
+  const int start = width() - kPropertyRowMarginH - 6 * kPropertyKeyButtonSize -
+                    5 * kPropertyActionSpacing;
+  const int index = (event->position().toPoint().x() - start) / step;
+  const int y = event->position().toPoint().y();
+  if (index >= 0 && index < 6 && y >= kPropertyRowMarginV &&
+      y < height() - kPropertyRowMarginV) {
+    const bool hover = underMouse();
+    const bool keyVisible = keyframeButton_->property("baseVisible").toBool();
+    const bool navVisible = prevKeyBtn_->property("baseVisible").toBool() &&
+                            nextKeyBtn_->property("baseVisible").toBool();
+    const bool resetVisible = resetButton_->property("baseVisible").toBool() && hover;
+    const bool exprVisible = expressionButton_->property("baseVisible").toBool() && hover;
+    const bool favVisible = favoriteButton_->property("baseVisible").toBool() &&
+                            (hover || favoriteButton_->isChecked());
+    QPushButton *button = index == 0 ? prevKeyBtn_ : index == 1 ? keyframeButton_
+        : index == 2 ? nextKeyBtn_ : index == 3 ? resetButton_
+        : index == 4 ? expressionButton_ : favoriteButton_;
+    const bool visible = index == 0 || index == 2 ? keyVisible && navVisible
+        : index == 1 ? keyVisible : index == 3 ? resetVisible
+        : index == 4 ? exprVisible : favVisible;
+    if (visible && button && button->isEnabled()) {
+      button->click();
+      event->accept();
+      return;
+    }
+  }
+  QWidget::mousePressEvent(event);
 }
 
 void ArtifactPropertyEditorRowWidget::updateRowVisualState() {
@@ -851,7 +897,7 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
       editor_->commitCurrentValue();
     }
   } else if (chosen == resetAction && resetButton_ &&
-             resetButton_->isVisible()) {
+             resetButton_->property("baseVisible").toBool()) {
     resetButton_->click();
   } else if (chosen == auxAction && auxActionHandler_) {
     auxActionHandler_();
@@ -893,13 +939,14 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
   QPainter painter(this);
   const bool hovered = hoverActive_;
   const bool focused = editorFocusActive_;
-  if (!(hovered || focused || currentFrameKeyframed_)) {
-    return;
-  }
 
   const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor accent =
       themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+  const QColor text =
+      themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
+  const QColor background =
+      themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
 
   if (hovered || focused) {
     const QColor selection =
@@ -921,6 +968,47 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
     painter.setPen(Qt::NoPen);
     painter.setBrush(accent);
     painter.drawRoundedRect(QRectF(1.0, 3.0, 4.0, height() - 6.0), 2.0, 2.0);
+  }
+
+  const int margin = kPropertyRowMarginH;
+  const int labelWidth = std::clamp(label_->minimumWidth(), 96, 240);
+  QRect labelRect(margin, kPropertyRowMarginV, labelWidth,
+                  height() - 2 * kPropertyRowMarginV);
+  painter.setPen(isEnabled() ? text : blendColor(text, background, 0.55));
+  QString labelText = label_->text();
+  if (supplementaryLabel_ && !supplementaryLabel_->text().trimmed().isEmpty()) {
+    labelText += QStringLiteral(" · %1").arg(supplementaryLabel_->text().trimmed());
+  }
+  painter.drawText(labelRect, Qt::AlignVCenter | Qt::AlignLeft, labelText);
+
+  const int step = kPropertyKeyButtonSize + kPropertyActionSpacing;
+  const int start = width() - margin - 6 * kPropertyKeyButtonSize -
+                    5 * kPropertyActionSpacing;
+  const bool keyVisible = keyframeButton_->property("baseVisible").toBool();
+  const bool navVisible = prevKeyBtn_->property("baseVisible").toBool() &&
+                          nextKeyBtn_->property("baseVisible").toBool();
+  const bool resetVisible = resetButton_->property("baseVisible").toBool() && hovered;
+  const bool exprVisible = expressionButton_->property("baseVisible").toBool() && hovered;
+  const bool favVisible = favoriteButton_->property("baseVisible").toBool() &&
+                          (hovered || favoriteButton_->isChecked());
+  const bool visible[6] = {keyVisible && navVisible, keyVisible,
+                           keyVisible && navVisible, resetVisible,
+                           exprVisible, favVisible};
+  const QString glyphs[6] = {QStringLiteral("‹"), QStringLiteral("◆"),
+                             QStringLiteral("›"), QStringLiteral("↶"),
+                             QStringLiteral("ƒx"), QStringLiteral("★")};
+  for (int i = 0; i < 6; ++i) {
+    if (!visible[i]) {
+      continue;
+    }
+    const QRect actionRect(start + i * step, (height() - kPropertyKeyButtonSize) / 2,
+                           kPropertyKeyButtonSize, kPropertyKeyButtonSize);
+    const bool selected = i == 1 && currentFrameKeyframed_;
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(selected ? accent : blendColor(background, accent, hovered ? 0.10 : 0.04));
+    painter.drawRoundedRect(actionRect, 4, 4);
+    painter.setPen(selected ? background : text);
+    painter.drawText(actionRect, Qt::AlignCenter, glyphs[i]);
   }
 }
 

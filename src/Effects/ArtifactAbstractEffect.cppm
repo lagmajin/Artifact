@@ -47,6 +47,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Artifact.Effect.ImplBase;
 import Property.Abstract;
+import Time.Rational;
 
 namespace Artifact {
 
@@ -69,7 +70,24 @@ public:
     QString maskName;
     bool maskInverted = false;
     float maskOpacity = 1.0f;
+    std::vector<std::shared_ptr<AbstractProperty>> editableProperties_;
 };
+
+namespace {
+
+bool supportsEffectPropertyAnimation(const AbstractProperty& property) {
+    switch (property.getType()) {
+    case PropertyType::Float:
+    case PropertyType::Integer:
+    case PropertyType::Boolean:
+    case PropertyType::Color:
+        return true;
+    default:
+        return property.isAnimatable();
+    }
+}
+
+} // namespace
 
 ArtifactAbstractEffect::ArtifactAbstractEffect() : impl_(new Impl()) {}
 
@@ -282,12 +300,75 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
 
 void ArtifactAbstractEffect::setContext(const EffectContext& context) {
     impl_->context_ = context;
+    const auto frameRate = std::max<std::int64_t>(
+        1, static_cast<std::int64_t>(std::llround(context.frameRate)));
+    const RationalTime time(context.compositionFrame, frameRate);
+    for (const auto& property : impl_->editableProperties_) {
+        if (!property ||
+            (property->getKeyFrames().empty() && !property->hasExpression() &&
+             !property->hasEnvelopes())) {
+            continue;
+        }
+        const QVariant value = property->evaluateValue(time);
+        if (value.isValid()) {
+            setPropertyValue(property->getName(), value);
+        }
+    }
     if (impl_->cpuImpl_) {
         impl_->cpuImpl_->setContext(context);
     }
     if (impl_->gpuImpl_) {
         impl_->gpuImpl_->setContext(context);
     }
+}
+
+std::vector<std::shared_ptr<AbstractProperty>>
+ArtifactAbstractEffect::editableProperties() {
+    const auto currentProperties = getProperties();
+    std::vector<std::shared_ptr<AbstractProperty>> result;
+    result.reserve(currentProperties.size());
+
+    for (const auto& current : currentProperties) {
+        const auto existing = std::find_if(
+            impl_->editableProperties_.begin(), impl_->editableProperties_.end(),
+            [&current](const auto& candidate) {
+                return candidate && candidate->getName().compare(
+                    current.getName(), Qt::CaseInsensitive) == 0;
+            });
+
+        if (existing == impl_->editableProperties_.end()) {
+            auto property = std::make_shared<AbstractProperty>(current);
+            if (supportsEffectPropertyAnimation(*property)) {
+                property->setAnimatable(true);
+            }
+            impl_->editableProperties_.push_back(property);
+            result.push_back(std::move(property));
+            continue;
+        }
+
+        const auto& property = *existing;
+        if (property->getKeyFrames().empty() && !property->hasExpression() &&
+            !property->hasEnvelopes()) {
+            property->setValue(current.getValue());
+        }
+        if (supportsEffectPropertyAnimation(current)) {
+            property->setAnimatable(true);
+        }
+        result.push_back(property);
+    }
+
+    return result;
+}
+
+std::shared_ptr<AbstractProperty>
+ArtifactAbstractEffect::editableProperty(const QString& name) {
+    const auto properties = editableProperties();
+    const auto found = std::find_if(
+        properties.begin(), properties.end(), [&name](const auto& property) {
+            return property && property->getName().compare(
+                name, Qt::CaseInsensitive) == 0;
+        });
+    return found != properties.end() ? *found : std::shared_ptr<AbstractProperty>{};
 }
 
 void ArtifactAbstractEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {

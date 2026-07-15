@@ -3039,9 +3039,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
                                   const QImage &surface,
 
-                                  ArtifactCore::ImageF32x4_RGBA *outBuffer,
-
-                                  bool skipRasterizerEffects = false) {
+                                  ArtifactCore::ImageF32x4_RGBA *outBuffer) {
 
   if (!targetLayer || surface.isNull() || !outBuffer) {
 
@@ -3059,7 +3057,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
   for (const auto &effect : effects) {
 
-    if (!skipRasterizerEffects && effect && effect->isEnabled() &&
+    if (effect && effect->isEnabled() &&
 
         effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
 
@@ -3083,20 +3081,11 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
   cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(surface, true);
 
-  if (mat.channels() == 3) {
-
-      if (mat.type() == CV_8UC3) cv::cvtColor(mat, mat, cv::COLOR_BGR2BGRA);
-
-      else if (mat.type() == CV_32FC3) cv::cvtColor(mat, mat, cv::COLOR_BGR2BGRA);
-
-  } else if (mat.channels() == 1) {
-
-      if (mat.type() == CV_8UC1) cv::cvtColor(mat, mat, cv::COLOR_GRAY2BGRA);
-
-      else if (mat.type() == CV_32FC1) cv::cvtColor(mat, mat, cv::COLOR_GRAY2BGRA);
-
-  }
-
+  // Keep the legacy QImage boundary in the same internal layout as the
+  // float-image path. qImageToCvMat() returns BGRA for ARGB32 on Windows and
+  // setFromCVMat() preserves CV_32FC4 channel order. The GPU upload boundary
+  // owns the single BGRA -> RGBA conversion; converting here as well swaps
+  // red and blue again for effect-processed surfaces.
   if (mat.type() != CV_32FC4) {
 
     mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
@@ -6435,6 +6424,7 @@ void drawLayerForCompositionView(
                                     : QStringLiteral("|full"));
 
     LayerSurfaceCacheEntry *cacheEntry = nullptr;
+    std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> directProcessedBuffer;
 
 
 
@@ -6453,6 +6443,7 @@ void drawLayerForCompositionView(
           (!cacheIt->processedSurface.isNull() || cacheIt->processedBuffer)) {
 
         cacheEntry = &(*cacheIt);
+        directProcessedBuffer = cacheEntry->processedBuffer;
 
         if (!cacheIt->processedSurface.isNull()) {
 
@@ -6468,36 +6459,33 @@ void drawLayerForCompositionView(
 
           ArtifactCore::ImageF32x4_RGBA processed;
 
-          if (buildRasterizedSurfaceBuffer(layer, surface, &processed,
-
-                                           interactiveDraft)) {
+          // Downsampling already controls preview cost. Skipping the rasterizer
+          // here makes Blur and Gaussian Blur disappear in Draft/interactive views.
+          if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
 
             processedBuffer =
 
                 std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
-
-            if (!processed.isEmpty() &&
-
-                (!gpuTextureCacheManager ||
-
-                 !layerUsesGpuTextureCacheForCompositionView(layer))) {
-
-              surface = processed.toQImage();
-
-            }
+            directProcessedBuffer = processedBuffer;
 
           }
 
         }
 
-        applyResolvedMattes(surface);
-
-        if (processedBuffer && !surface.isNull()) {
+        if (processedBuffer && !resolvedMatteSources.isEmpty()) {
+          // Preserve the rasterizer output. Replacing it from the original
+          // surface discarded Blur / Gaussian Blur / Glow on GPU-cached layers.
+          QImage processedSurface = processedBuffer->toQImage();
+          applyResolvedMattes(processedSurface);
           ArtifactCore::ImageF32x4_RGBA mattedProcessed;
           mattedProcessed.setFromCVMat(
-              ArtifactCore::CvUtils::qImageToCvMat(surface, true));
+              ArtifactCore::CvUtils::qImageToCvMat(processedSurface, true));
           processedBuffer =
               std::make_shared<ArtifactCore::ImageF32x4_RGBA>(mattedProcessed);
+          directProcessedBuffer = processedBuffer;
+          surface = std::move(processedSurface);
+        } else {
+          applyResolvedMattes(surface);
         }
 
 
@@ -6532,12 +6520,10 @@ void drawLayerForCompositionView(
 
           }
 
-          if (entry.processedBuffer &&
-
-              gpuTextureCacheManager->isValid(entry.gpuTextureHandle)) {
-
+          if (entry.processedBuffer) {
+            // Keep the processed buffer authoritative even when the first GPU
+            // upload fails; the draw fallback will materialize this result.
             entry.processedSurface = QImage();
-
           }
 
         }
@@ -6545,6 +6531,7 @@ void drawLayerForCompositionView(
         (*surfaceCache)[cacheSlotKey] = entry;
 
         cacheEntry = &(*surfaceCache)[cacheSlotKey];
+        directProcessedBuffer = cacheEntry->processedBuffer;
 
       }
 
@@ -6552,17 +6539,28 @@ void drawLayerForCompositionView(
 
       ArtifactCore::ImageF32x4_RGBA processed;
 
-      if (buildRasterizedSurfaceBuffer(layer, surface, &processed,
-
-                                       interactiveDraft) &&
+      if (buildRasterizedSurfaceBuffer(layer, surface, &processed) &&
 
           !processed.isEmpty()) {
-
-        surface = processed.toQImage();
+        directProcessedBuffer =
+            std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
 
       }
 
-      applyResolvedMattes(surface);
+      if (directProcessedBuffer && !resolvedMatteSources.isEmpty()) {
+        // Matte resolution is still a QImage-only compatibility boundary.
+        // Re-enter the float path immediately after applying it.
+        QImage processedSurface = directProcessedBuffer->toQImage();
+        applyResolvedMattes(processedSurface);
+        ArtifactCore::ImageF32x4_RGBA mattedProcessed;
+        mattedProcessed.setFromCVMat(
+            ArtifactCore::CvUtils::qImageToCvMat(processedSurface, true));
+        directProcessedBuffer =
+            std::make_shared<ArtifactCore::ImageF32x4_RGBA>(mattedProcessed);
+        surface = std::move(processedSurface);
+      } else if (!directProcessedBuffer) {
+        applyResolvedMattes(surface);
+      }
 
     }
 
@@ -6640,31 +6638,25 @@ void drawLayerForCompositionView(
 
             }
 
-            if (cacheEntry->processedSurface.isNull() &&
-
-                cacheEntry->processedBuffer) {
-
-              cacheEntry->processedSurface =
-
-                  cacheEntry->processedBuffer->toQImage();
-
-              surface = cacheEntry->processedSurface;
-
-            }
+            directProcessedBuffer = cacheEntry->processedBuffer;
 
           }
 
 
 
-          renderer->drawSpriteTransformed(
-
-              static_cast<float>(rect.x()), static_cast<float>(rect.y()),
-
-              static_cast<float>(rect.width()),
-
-              static_cast<float>(rect.height()), instanceTransform, surface,
-
-              finalOpacity);
+          if (directProcessedBuffer && !directProcessedBuffer->isEmpty()) {
+            renderer->drawSpriteTransformed(
+                static_cast<float>(rect.x()), static_cast<float>(rect.y()),
+                static_cast<float>(rect.width()),
+                static_cast<float>(rect.height()), instanceTransform,
+                *directProcessedBuffer, finalOpacity);
+          } else {
+            renderer->drawSpriteTransformed(
+                static_cast<float>(rect.x()), static_cast<float>(rect.y()),
+                static_cast<float>(rect.width()),
+                static_cast<float>(rect.height()), instanceTransform, surface,
+                finalOpacity);
+          }
 
         });
 
@@ -7220,9 +7212,11 @@ void drawLayerForCompositionView(
 
     if (textLayer->hasCurrentFrameBuffer()) {
 
-      const ArtifactCore::ImageF32x4_RGBA &buffer =
+      ArtifactCore::ImageF32x4_RGBA buffer =
 
-          textLayer->currentFrameBuffer();
+          textLayer->currentFrameBuffer().DeepCopy();
+
+      applyRasterizerEffectsAndMasksToSurface(layer, buffer, lod);
 
       const float baseOpacity =
 
@@ -7794,7 +7788,8 @@ public:
         drawLayerForCompositionView(layer.get(), renderer_.get(), 1.0f,
                                     &lastVideoDebug_, &surfaceCache_,
                                     gpuTextureCacheManager_.get(), childFrame,
-                                    true, DetailLevel::High);
+                                    true, DetailLevel::High,
+                                    static_cast<const QMatrix4x4*>(nullptr));
       }
     }
     renderer_->flush();
@@ -8422,12 +8417,6 @@ public:
 
     renderer_->setOverrideDSV(previewDepthDSV);
 
-    if (previewRenderSlot.depthTargetView) {
-
-      renderer_->clearDepthRenderTarget(previewRenderSlot.depthTargetView);
-
-    }
-
 
 
     renderer_->setViewportSize(rcw, rch);
@@ -8486,6 +8475,12 @@ public:
 
     renderer_->pushRenderTarget(renderPipeline.accumRTV(), previewRenderSlot.depthTargetView);
 
+    if (previewRenderSlot.depthTargetView) {
+
+      renderer_->clearDepthRenderTarget(previewRenderSlot.depthTargetView);
+
+    }
+
     renderer_->clearRenderTarget(renderPipeline.accumRTV(),
 
                                  FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
@@ -8493,12 +8488,6 @@ public:
     renderer_->popRenderTarget();
 
 
-
-    renderer_->setCanvasSize(cw, ch);
-
-    renderer_->setZoom(state.origZoom);
-
-    renderer_->setPan(state.origPanX, state.origPanY);
 
     return state;
 
@@ -11253,12 +11242,6 @@ public:
 
 
 
-    if (layer && !layer->is3D() && viewportOrientationActive_) {
-      viewportOrientationActive_ = false;
-      viewportOrientationMatricesValid_ = false;
-      invalidateOverlayComposite();
-    }
-
     if (gizmo3D_ && layer &&
         (layer->is3D() || viewportOrientationActive_)) {
 
@@ -11729,7 +11712,11 @@ public:
 
                                const FramePosition &currentFrame, float cw,
 
-                               float ch);
+                               float ch, bool has3DCamera,
+
+                               const QMatrix4x4 &cameraViewMatrix,
+
+                               const QMatrix4x4 &cameraProjMatrix);
 
   void drawViewportCanvasOverlay(float cw, float ch);
 
@@ -11770,7 +11757,11 @@ public:
 
       const QStringList &selectedIds,
 
-      const FramePosition &currentFrame, float cw, float ch);
+      const FramePosition &currentFrame, float cw, float ch,
+
+      bool has3DCamera, const QMatrix4x4 &cameraViewMatrix,
+
+      const QMatrix4x4 &cameraProjMatrix);
 
   void drawViewportUiOverlay();
 
@@ -21174,29 +21165,35 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           ? std::max(previewDownsample_, interactivePreviewDownsampleFloor_)
 
-          : previewDownsample_;
+          : 1;
 
   const bool draftRendering =
 
-      viewportInteracting_ ||
+      viewportInteracting_ &&
 
-      previewDownsample_ >= interactivePreviewDownsampleFloor_;
+      effectivePreviewDownsample > 1;
 
-  const float previewRcw = std::max(
+  const int previewRenderWidth = std::max(
 
-      1.0f, viewportW / static_cast<float>(effectivePreviewDownsample));
+      1, static_cast<int>(std::ceil(
 
-  const float previewRch = std::max(
+             viewportW / static_cast<float>(effectivePreviewDownsample))));
 
-      1.0f, viewportH / static_cast<float>(effectivePreviewDownsample));
+  const int previewRenderHeight = std::max(
 
-  // GPU blend intermediates preserve the viewport aspect and framing while
+      1, static_cast<int>(std::ceil(
 
-  // honoring the selected preview resolution.
+             viewportH / static_cast<float>(effectivePreviewDownsample))));
 
-  const float rcw = previewRcw;
+  // Keep the settled GPU blend path at the same physical resolution as the
 
-  const float rch = previewRch;
+  // direct Normal path. Downsampling is an interaction-only optimization;
+
+  // otherwise Add/Multiply look permanently softer than Normal.
+
+  const float rcw = static_cast<float>(previewRenderWidth);
+
+  const float rch = static_cast<float>(previewRenderHeight);
 
 
 
@@ -21912,9 +21909,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       if (auto device = renderer_->device()) {
 
-        renderPipeline.initialize(device, static_cast<Uint32>(rcw),
+        renderPipeline.initialize(device,
 
-                                  static_cast<Uint32>(rch),
+                                  static_cast<Uint32>(previewRenderWidth),
+
+                                  static_cast<Uint32>(previewRenderHeight),
 
                                   RenderConfig::LinearColorFormat,
 
@@ -21924,9 +21923,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                 previewRenderSlot,
 
-                static_cast<int>(std::ceil(rcw)),
+                previewRenderWidth,
 
-                static_cast<int>(std::ceil(rch)))) {
+                previewRenderHeight)) {
 
           qWarning() << "[CompositionView] failed to allocate preview depth slot"
 
@@ -21934,9 +21933,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                      << "size="
 
-                     << QSize(static_cast<int>(std::ceil(rcw)),
-
-                              static_cast<int>(std::ceil(rch)));
+                     << QSize(previewRenderWidth, previewRenderHeight);
 
         }
 
@@ -23843,7 +23840,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     drawSelectionEditingOverlay(owner, comp, layerVector, selectedIds,
 
-                                currentFrame, cw, ch);
+                                currentFrame, cw, ch, has3DCamera,
+
+                                cameraViewMatrix, cameraProjMatrix);
 
 
 
@@ -24986,7 +24985,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             "BoundingBox", ArtifactCore::ProfileCategory::Render);
 
-        if (showGizmoOverlay_ && showGuides_) {
+        // Selection frames are layer controls, not composition guides. Keep
+        // them visible whenever gizmos are enabled even if guides are hidden.
+        if (showGizmoOverlay_) {
 
           const FloatColor primaryColor{1.0f, 0.72f, 0.22f, 1.0f};
 
@@ -25100,7 +25101,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           drawViewportOverlayPass(owner, comp, activeCamera, overlayLayers,
 
-                                  selectedIds, currentFrame, cw, ch);
+                                  selectedIds, currentFrame, cw, ch,
+
+                                  has3DCamera, cameraViewMatrix,
+
+                                  cameraProjMatrix);
 
           return true;
 
@@ -26032,7 +26037,11 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
     const QStringList &selectedIds, const FramePosition &currentFrame,
 
-    float cw, float ch) {
+    float cw, float ch, bool has3DCamera,
+
+    const QMatrix4x4 &cameraViewMatrix,
+
+    const QMatrix4x4 &cameraProjMatrix) {
 
   ArtifactCore::ProfileScope _profOverlay("Overlay",
 
@@ -26308,7 +26317,9 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
   drawSelectionEditingOverlay(owner, comp, layers, selectedIds, currentFrame,
 
-                              cw, ch);
+                              cw, ch, has3DCamera, cameraViewMatrix,
+
+                              cameraProjMatrix);
 
   drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
 
@@ -27322,7 +27333,9 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
     const QStringList &selectedIds, const FramePosition &currentFrame, float cw,
 
-    float ch) {
+    float ch, bool has3DCamera, const QMatrix4x4 &cameraViewMatrix,
+
+    const QMatrix4x4 &cameraProjMatrix) {
 
   if (renderer_) {
 
@@ -27444,6 +27457,11 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
           if (viewportOrientationMatricesValid_) {
             view = viewportOrientationViewForOverlay_;
             proj = viewportOrientationProjectionForOverlay_;
+          } else if (has3DCamera) {
+            // Use the same scene camera as the selected 3D layer. A 2D
+            // pan/zoom fallback makes the axes detach after Z transforms.
+            view = cameraViewMatrix;
+            proj = cameraProjMatrix;
           } else {
             view.translate(panX, panY, 0.0f);
             view.scale(zoom, zoom, 1.0f);
@@ -27636,7 +27654,9 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
           "BoundingBox", ArtifactCore::ProfileCategory::Render);
 
-      if (showGizmoOverlay_ && showGuides_) {
+      // The projected 3D frame belongs to the transform gizmo. Guide
+      // visibility must not suppress the selected layer's controls.
+      if (showGizmoOverlay_) {
 
         const FloatColor secondaryColor{0.28f, 0.74f, 1.0f, 0.85f};
 
@@ -27668,20 +27688,28 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
               !selectedLayerId_.isNil() && layer->id() == selectedLayerId_;
 
-          // The primary layer owns the normal interactive gizmo.  This pass
-          // only adds non-interactive frames for the rest of a multi-selection.
-          if (primary) {
+          // The normal 2D transform gizmo already owns the primary frame in
+          // canvas view, so avoid drawing it twice. A 3D layer always needs
+          // this camera-projected frame alongside its axis gizmo.
+          if (primary && !layer->is3D() &&
+              !viewportOrientationMatricesValid_) {
             continue;
           }
 
           const QMatrix4x4 frameView = viewportOrientationMatricesValid_
               ? viewportOrientationViewForOverlay_
-              : renderer_->getViewMatrix();
+              : has3DCamera ? cameraViewMatrix
+                            : renderer_->getViewMatrix();
           const QMatrix4x4 frameProjection = viewportOrientationMatricesValid_
               ? viewportOrientationProjectionForOverlay_
-              : renderer_->getProjectionMatrix();
+              : has3DCamera ? cameraProjMatrix
+                            : renderer_->getProjectionMatrix();
+          const FloatColor frameColor = primary
+              ? FloatColor{0.24f, 0.68f, 1.0f, 0.98f}
+              : secondaryColor;
+          const float frameThickness = primary ? 2.2f : 1.6f;
           ::Artifact::drawSelectionFrameOverlay(
-              renderer_.get(), layer, secondaryColor, 1.4f, &frameView,
+              renderer_.get(), layer, frameColor, frameThickness, &frameView,
               &frameProjection);
 
         }

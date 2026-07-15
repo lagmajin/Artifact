@@ -43,6 +43,7 @@ public /*slots*/:
  void zoomFill(); W_SLOT(zoomFill);
  void zoom100(); W_SLOT(zoom100);
   bool handleImportPlacementKeyPress(QKeyEvent* event);
+  void toggleViewportToolboxes();
 
 private:
   void refreshEnabledState();

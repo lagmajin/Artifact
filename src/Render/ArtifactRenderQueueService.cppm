@@ -118,6 +118,8 @@ import Application.AppSettings;
 
 namespace Artifact
 {
+    static QString deriveContainerFromJob(const ArtifactRenderJob& job);
+
     namespace {
         struct EffectiveRenderFrameRange {
             int startFrame = 0;
@@ -923,7 +925,7 @@ namespace Artifact
             const auto green = image.getChannel(ArtifactCore::ChannelType::Green);
             const auto blue = image.getChannel(ArtifactCore::ChannelType::Blue);
             const auto fallbackTypes = image.channelTypes();
-            decltype(red) fallback;
+            std::shared_ptr<const ArtifactCore::VideoChannel> fallback;
             if (!fallbackTypes.empty()) {
                 fallback = image.getChannel(fallbackTypes.front());
             }
@@ -956,8 +958,6 @@ namespace Artifact
             return preview;
         }
 
-        static QString deriveContainerFromJob(const ArtifactRenderJob& job);
-
         void appendUnsupportedAovWarnings(const ArtifactRenderJob& job,
                                            const QString& compId,
                                            ArtifactCore::DiagnosticResult& result)
@@ -966,7 +966,7 @@ namespace Artifact
                 return;
             }
 
-            if (deriveContainerFromJob(job) != QStringLiteral("exr")) {
+            if (Artifact::deriveContainerFromJob(job) != QStringLiteral("exr")) {
                 result.addDiagnostic(makePreflightDiagnostic(
                     ArtifactCore::DiagnosticSeverity::Error,
                     ArtifactCore::DiagnosticCategory::Configuration,
@@ -1250,7 +1250,7 @@ namespace Artifact
             return baseDir.filePath(QStringLiteral("%1_sequence").arg(stem));
         }
 
-        const QString ext = deriveContainerFromJob(job);
+        const QString ext = Artifact::deriveContainerFromJob(job);
         return baseDir.filePath(QStringLiteral("%1.%2").arg(stem, ext));
     }
 
@@ -1513,7 +1513,7 @@ namespace Artifact
             settings.gopSize = std::max(1, static_cast<int>(std::round(settings.fps * 2.0)));
             settings.zerolatency = false;
         }
-        settings.container = deriveContainerFromJob(job);
+        settings.container = Artifact::deriveContainerFromJob(job);
         return settings;
     }
 
@@ -2107,7 +2107,7 @@ namespace Artifact
             const QString cdc = codec.trimmed();
             ArtifactRenderJob normalizedJob;
             normalizedJob.outputFormat = fmt.isEmpty() ? QStringLiteral("MP4") : fmt;
-            job.outputFormat = deriveContainerFromJob(normalizedJob);
+            job.outputFormat = Artifact::deriveContainerFromJob(normalizedJob);
             job.codec = cdc.isEmpty() ? QStringLiteral("H.264") : cdc;
             job.codecProfile = codecProfile.trimmed().isEmpty()
                 ? (normalizeCodecName(job.codec) == QStringLiteral("prores") ? QStringLiteral("hq") : QString())
@@ -2933,7 +2933,7 @@ namespace Artifact
                  << QStringLiteral("-framerate") << fpsStr
                  << QStringLiteral("-i") << inputPattern;
 
-            const QString format = deriveContainerFromJob(job);
+            const QString format = Artifact::deriveContainerFromJob(job);
             if (format == QStringLiteral("mp4") || format == QStringLiteral("mov") || format == QStringLiteral("mkv")) {
                 args << QStringLiteral("-c:v") << QStringLiteral("libx264")
                      << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
@@ -2982,7 +2982,7 @@ namespace Artifact
 
         bool runExternalRendererJob(const ArtifactRenderJob& job, int index, QString* failureReason)
         {
-            const QString format = deriveContainerFromJob(job);
+            const QString format = Artifact::deriveContainerFromJob(job);
             const bool isImageSequence = (format == QStringLiteral("png") || format == QStringLiteral("exr") || 
                                           format == QStringLiteral("tiff") || format == QStringLiteral("jpeg") || 
                                           format == QStringLiteral("bmp"));
@@ -5092,7 +5092,7 @@ namespace Artifact
                 if (!outDir.exists()) outDir.mkpath(".");
 
                 const QString ext = outInfo.suffix().toLower();
-                const QString format = deriveContainerFromJob(job);
+                const QString format = Artifact::deriveContainerFromJob(job);
                 const bool isVideo = !isImageSequenceContainer(format) &&
                     (isVideoContainer(format) ||
                      ext == QStringLiteral("mp4") || ext == QStringLiteral("mov") ||

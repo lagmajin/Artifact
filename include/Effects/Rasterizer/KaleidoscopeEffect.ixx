@@ -15,10 +15,12 @@ using namespace ArtifactCore;
 
 /// Kaleidoscope effect: mirrors and rotates the image around
 /// a center point with configurable segment count.
-class KaleidoscopeEffect : public ArtifactAbstractEffect {
+// Kept as an isolated experimental rasterizer implementation. The production
+// Effect Service owns Artifact.Effect.Kaleidoscope::KaleidoscopeEffect.
+class RasterizerKaleidoscopeEffect : public ArtifactAbstractEffect {
 public:
-    KaleidoscopeEffect();
-    ~KaleidoscopeEffect() override;
+    RasterizerKaleidoscopeEffect();
+    ~RasterizerKaleidoscopeEffect() override;
 
     int   segments() const;
     void  setSegments(int v);

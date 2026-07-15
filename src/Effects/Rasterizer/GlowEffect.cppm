@@ -45,12 +45,12 @@ public:
     }
 };
 
-GlowEffect::GlowEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();}
-GlowEffect::~GlowEffect()=default;
-float GlowEffect::threshold()const{return threshold_;}void GlowEffect::setThreshold(float v){threshold_=std::clamp(v,0.0f,1.0f);syncImpls();}
-float GlowEffect::radius()const{return radius_;}void GlowEffect::setRadius(float v){radius_=std::max(v,1.0f);syncImpls();}
-float GlowEffect::intensity()const{return intensity_;}void GlowEffect::setIntensity(float v){intensity_=std::clamp(v,0.0f,5.0f);syncImpls();}
-std::vector<AbstractProperty> GlowEffect::getProperties()const{
+RasterizerGlowEffect::RasterizerGlowEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();}
+RasterizerGlowEffect::~RasterizerGlowEffect()=default;
+float RasterizerGlowEffect::threshold()const{return threshold_;}void RasterizerGlowEffect::setThreshold(float v){threshold_=std::clamp(v,0.0f,1.0f);syncImpls();}
+float RasterizerGlowEffect::radius()const{return radius_;}void RasterizerGlowEffect::setRadius(float v){radius_=std::max(v,1.0f);syncImpls();}
+float RasterizerGlowEffect::intensity()const{return intensity_;}void RasterizerGlowEffect::setIntensity(float v){intensity_=std::clamp(v,0.0f,5.0f);syncImpls();}
+std::vector<AbstractProperty> RasterizerGlowEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(3);
 
@@ -71,6 +71,6 @@ std::vector<AbstractProperty> GlowEffect::getProperties()const{
     addFloat("intensity", intensity_, 0.0f, 5.0f);
     return props;
 }
-void GlowEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="threshold")setThreshold(v.toFloat());else if(k=="radius")setRadius(v.toFloat());else if(k=="intensity")setIntensity(v.toFloat());}
-void GlowEffect::syncImpls(){auto c=std::make_shared<GlowCPUImpl>();c->threshold_=threshold_;c->radius_=radius_;c->intensity_=intensity_;setCPUImpl(c);}
+void RasterizerGlowEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="threshold")setThreshold(v.toFloat());else if(k=="radius")setRadius(v.toFloat());else if(k=="intensity")setIntensity(v.toFloat());}
+void RasterizerGlowEffect::syncImpls(){auto c=std::make_shared<GlowCPUImpl>();c->threshold_=threshold_;c->radius_=radius_;c->intensity_=intensity_;setCPUImpl(c);}
 } // namespace Artifact

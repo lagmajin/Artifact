@@ -70,6 +70,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Graphics.ParticleData;
 import Property.Abstract;
 import Property.Group;
+import Property.SerializationBridge;
 import Artifact.Event.Types;
 import Event.Bus;
 
@@ -145,14 +146,8 @@ float applyLayerEffectEnvelopeOpacity(const LayerEffectEnvelope &envelope,
 
 bool isTimelineHiddenLayerPropertyGroup(const QString &groupName) {
   const QString normalized = groupName.trimmed();
-  return normalized.compare(QStringLiteral("Parent"), Qt::CaseInsensitive) == 0 ||
-         normalized.compare(QStringLiteral("Blend"), Qt::CaseInsensitive) == 0 ||
-         normalized.compare(QStringLiteral("BlendMode"), Qt::CaseInsensitive) == 0 ||
-         normalized.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0 ||
-         normalized.compare(QStringLiteral("Initial"), Qt::CaseInsensitive) == 0 ||
-         normalized.compare(QStringLiteral("Rig"), Qt::CaseInsensitive) == 0 ||
-         normalized.compare(QStringLiteral("Rig Controls"), Qt::CaseInsensitive) == 0 ||
-         normalized.compare(QStringLiteral("Physics"), Qt::CaseInsensitive) == 0;
+  return normalized.compare(QStringLiteral("Transform"),
+                            Qt::CaseInsensitive) != 0;
 }
 
 bool isTimelineExpandedByDefaultLayerPropertyGroup(const QString &groupName) {
@@ -160,15 +155,8 @@ bool isTimelineExpandedByDefaultLayerPropertyGroup(const QString &groupName) {
   if (normalized.compare(QStringLiteral("Transform"), Qt::CaseInsensitive) == 0) {
     return true;
   }
-  if (normalized.compare(QStringLiteral("Components"), Qt::CaseInsensitive) == 0 ||
-      normalized.compare(QStringLiteral("Layout"), Qt::CaseInsensitive) == 0 ||
-      normalized.compare(QStringLiteral("Cloner"), Qt::CaseInsensitive) == 0 ||
-      normalized.compare(QStringLiteral("Motion"), Qt::CaseInsensitive) == 0 ||
-      normalized.compare(QStringLiteral("Fracture"), Qt::CaseInsensitive) == 0 ||
-      normalized.compare(QStringLiteral("Source Reframe"), Qt::CaseInsensitive) == 0) {
-    return false;
-  }
-  return true;
+  // The standard timeline property surface is Transform-only.
+  return false;
 }
 
 bool isInspectorHiddenLayerPropertyGroup(const QString &groupName) {
@@ -3442,6 +3430,19 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
         pobj["value"] = QJsonValue();
         break;
       }
+      if (const auto editable = eff->editableProperty(p.getName())) {
+        const auto serialized =
+            ArtifactCore::PropertySerializationBridge::serializeProperty(editable);
+        if (!serialized.expression.isEmpty()) {
+          pobj["expression"] = serialized.expression;
+        }
+        if (!serialized.keyframes.isEmpty()) {
+          pobj["keyframes"] = serialized.keyframes;
+        }
+        if (!serialized.envelopes.isEmpty()) {
+          pobj["envelopes"] = serialized.envelopes;
+        }
+      }
       propsArr.append(pobj);
     }
     eobj["properties"] = propsArr;
@@ -3774,6 +3775,21 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
         }
       }
       eff->setPropertyValue(UniString(name.toStdString()), val);
+      if (pobj.contains("keyframes") || pobj.contains("expression") ||
+          pobj.contains("envelopes")) {
+        auto editable = eff->editableProperty(name);
+        if (editable) {
+          ArtifactCore::SerializedProperty serialized;
+          serialized.name = name;
+          serialized.type = static_cast<int>(ptype);
+          serialized.value = pobj.value("value");
+          serialized.expression = pobj.value("expression").toString();
+          serialized.keyframes = pobj.value("keyframes").toArray();
+          serialized.envelopes = pobj.value("envelopes").toArray();
+          ArtifactCore::PropertySerializationBridge::deserializeProperty(
+              editable, serialized);
+        }
+      }
     }
   }
 }

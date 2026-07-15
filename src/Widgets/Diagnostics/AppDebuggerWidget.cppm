@@ -3,6 +3,9 @@ module;
 #include <cmath>
 #include <QDateTime>
 #include <QAbstractItemView>
+#include <QBoxLayout>
+#include <QFont>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QHash>
 #include <QColor>
@@ -22,9 +25,11 @@ module;
 #include <QPlainTextEdit>
 #include <QPalette>
 #include <QResizeEvent>
+#include <QScopedValueRollback>
 #include <QSplitter>
 #include <QTabWidget>
 #include <QShowEvent>
+#include <QSizePolicy>
 #include <QVBoxLayout>
 #include <QTimerEvent>
 #include <QStandardPaths>
@@ -480,9 +485,25 @@ public:
     int captureSelectedRow_ = -1;
     QWidget* statePage_ = nullptr;
     QLabel* stateSummary_ = nullptr;
+    QLabel* stateContextValue_ = nullptr;
+    QLabel* stateContextDetail_ = nullptr;
+    QLabel* statePlaybackValue_ = nullptr;
+    QLabel* statePlaybackDetail_ = nullptr;
+    QLabel* stateRenderValue_ = nullptr;
+    QLabel* stateRenderDetail_ = nullptr;
+    QLabel* stateAttentionValue_ = nullptr;
+    QLabel* stateAttentionDetail_ = nullptr;
     QPlainTextEdit* stateText_ = nullptr;
     QWidget* playbackPage_ = nullptr;
     QLabel* playbackSummary_ = nullptr;
+    QLabel* playbackStateValue_ = nullptr;
+    QLabel* playbackStateDetail_ = nullptr;
+    QLabel* playbackCacheValue_ = nullptr;
+    QLabel* playbackCacheDetail_ = nullptr;
+    QLabel* playbackRenderValue_ = nullptr;
+    QLabel* playbackRenderDetail_ = nullptr;
+    QLabel* playbackQueueValue_ = nullptr;
+    QLabel* playbackQueueDetail_ = nullptr;
     QPlainTextEdit* playbackText_ = nullptr;
     QWidget* tracePage_ = nullptr;
     QLabel* traceSummary_ = nullptr;
@@ -514,10 +535,48 @@ public:
     qint64 captureBundleStampMs_ = -1;
     CompositionRenderController* controller_ = nullptr;
     int timerId_ = 0;
+    bool refreshing_ = false;
 
     explicit Impl(AppDebuggerWidget* owner, CompositionRenderController* controller)
         : owner_(owner), controller_(controller)
     {}
+
+    static QFrame* addStatusCard(QBoxLayout* layout,
+                                 const QString& title,
+                                 QLabel*& value,
+                                 QLabel*& detail,
+                                 QWidget* parent)
+    {
+        auto* card = new QFrame(parent);
+        card->setFrameShape(QFrame::StyledPanel);
+        card->setFrameShadow(QFrame::Plain);
+        card->setAutoFillBackground(true);
+        auto* cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(10, 8, 10, 8);
+        cardLayout->setSpacing(2);
+
+        auto* titleLabel = new QLabel(title, card);
+        QFont titleFont = titleLabel->font();
+        titleFont.setBold(true);
+        titleLabel->setFont(titleFont);
+        cardLayout->addWidget(titleLabel);
+
+        value = new QLabel(card);
+        QFont valueFont = value->font();
+        valueFont.setBold(true);
+        valueFont.setPointSize(std::max(10, valueFont.pointSize() + 1));
+        value->setFont(valueFont);
+        value->setWordWrap(true);
+        cardLayout->addWidget(value);
+
+        detail = new QLabel(card);
+        detail->setWordWrap(true);
+        detail->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        cardLayout->addWidget(detail);
+
+        layout->addWidget(card, 1);
+        return card;
+    }
 
     void restoreCaptureBundle()
     {
@@ -659,9 +718,29 @@ public:
         stateSummary_->setWordWrap(true);
         stateSummary_->setMinimumHeight(56);
         stateLayout->addWidget(stateSummary_);
+        auto* stateCardsTop = new QHBoxLayout();
+        stateCardsTop->setContentsMargins(8, 8, 8, 0);
+        stateCardsTop->setSpacing(8);
+        addStatusCard(stateCardsTop, QStringLiteral("CURRENT CONTEXT"),
+                      stateContextValue_, stateContextDetail_, statePage_);
+        addStatusCard(stateCardsTop, QStringLiteral("PLAYBACK"),
+                      statePlaybackValue_, statePlaybackDetail_, statePage_);
+        stateLayout->addLayout(stateCardsTop);
+        auto* stateCardsBottom = new QHBoxLayout();
+        stateCardsBottom->setContentsMargins(8, 8, 8, 8);
+        stateCardsBottom->setSpacing(8);
+        addStatusCard(stateCardsBottom, QStringLiteral("RENDER"),
+                      stateRenderValue_, stateRenderDetail_, statePage_);
+        addStatusCard(stateCardsBottom, QStringLiteral("ATTENTION / NEXT"),
+                      stateAttentionValue_, stateAttentionDetail_, statePage_);
+        stateLayout->addLayout(stateCardsBottom);
+        auto* stateDetailsTitle = new QLabel(QStringLiteral("DETAILS / RAW SNAPSHOT"), statePage_);
+        stateDetailsTitle->setContentsMargins(10, 2, 0, 2);
+        stateLayout->addWidget(stateDetailsTitle);
         stateText_ = new QPlainTextEdit(statePage_);
         stateText_->setReadOnly(true);
         stateText_->setLineWrapMode(QPlainTextEdit::NoWrap);
+        stateText_->setMaximumHeight(140);
         stateLayout->addWidget(stateText_);
         playbackPage_ = new QWidget(tabs_);
         auto* playbackLayout = new QVBoxLayout(playbackPage_);
@@ -672,9 +751,29 @@ public:
         playbackSummary_->setWordWrap(true);
         playbackSummary_->setMinimumHeight(56);
         playbackLayout->addWidget(playbackSummary_);
+        auto* playbackCardsTop = new QHBoxLayout();
+        playbackCardsTop->setContentsMargins(8, 8, 8, 0);
+        playbackCardsTop->setSpacing(8);
+        addStatusCard(playbackCardsTop, QStringLiteral("PLAYBACK"),
+                      playbackStateValue_, playbackStateDetail_, playbackPage_);
+        addStatusCard(playbackCardsTop, QStringLiteral("RAM PREVIEW"),
+                      playbackCacheValue_, playbackCacheDetail_, playbackPage_);
+        playbackLayout->addLayout(playbackCardsTop);
+        auto* playbackCardsBottom = new QHBoxLayout();
+        playbackCardsBottom->setContentsMargins(8, 8, 8, 8);
+        playbackCardsBottom->setSpacing(8);
+        addStatusCard(playbackCardsBottom, QStringLiteral("FRAME TIME"),
+                      playbackRenderValue_, playbackRenderDetail_, playbackPage_);
+        addStatusCard(playbackCardsBottom, QStringLiteral("QUEUE"),
+                      playbackQueueValue_, playbackQueueDetail_, playbackPage_);
+        playbackLayout->addLayout(playbackCardsBottom);
+        auto* playbackDetailsTitle = new QLabel(QStringLiteral("DETAILS / RAW SNAPSHOT"), playbackPage_);
+        playbackDetailsTitle->setContentsMargins(10, 2, 0, 2);
+        playbackLayout->addWidget(playbackDetailsTitle);
         playbackText_ = new QPlainTextEdit(playbackPage_);
         playbackText_->setReadOnly(true);
         playbackText_->setLineWrapMode(QPlainTextEdit::NoWrap);
+        playbackText_->setMaximumHeight(140);
         playbackLayout->addWidget(playbackText_);
         tracePage_ = new QWidget(tabs_);
         auto* traceLayout = new QVBoxLayout(tracePage_);
@@ -1418,6 +1517,10 @@ public:
 
     void refresh()
     {
+        if (refreshing_) {
+            return;
+        }
+        QScopedValueRollback<bool> refreshGuard(refreshing_, true);
         refreshCaptureBundleFromDisk();
         const auto trace = ArtifactCore::TraceRecorder::instance().snapshot();
         const auto projectSvc = ArtifactProjectService::instance();
@@ -1565,20 +1668,47 @@ public:
                                                  : debugMcpSessionSummary.value(QStringLiteral("recentAction")).toString();
             const QString priorRecentActionText = debugMcpSessionSummary.value(QStringLiteral("priorRecentAction")).toString().trimmed();
             const QString breakHistorySummaryText = debugMcpSessionSummary.value(QStringLiteral("breakHistorySummary")).toString().trimmed();
-            stateSummary_->setText(QStringLiteral("project=%1  composition=%2  layer=%3  frame=%4  status=%5  recent=%6  prior=%7  lastHit=%8  breakHistorySummary=%9  playback=%10  quality=%11  backend=%12  queueJobs=%13")
-                                       .arg(projectText,
-                                            compositionText,
-                                            layerText)
+            const QString densityWarning = densityWarningText(controllerSnapshot);
+            const QString nextText = controllerSnapshot.densityNextAction.isEmpty()
+                                         ? QStringLiteral("Capture a frame when behavior changes.")
+                                         : controllerSnapshot.densityNextAction;
+            stateSummary_->setText(QStringLiteral("NOW  %1 / %2 / Frame %3 / %4\nWARNING  %5    NEXT  %6")
+                                       .arg(compositionText, layerText)
                                        .arg(controllerSnapshot.frame.framePosition())
-                                       .arg(debugMcpStatus)
-                                       .arg(recentActionText)
-                                       .arg(priorRecentActionText.isEmpty() ? QStringLiteral("<none>") : priorRecentActionText)
-                                       .arg(debugMcpHit)
-                                       .arg(breakHistorySummaryText.isEmpty() ? QStringLiteral("<none>") : breakHistorySummaryText)
                                        .arg(playbackText)
-                                       .arg(qualityText)
-                                       .arg(backendText)
-                                       .arg(queueText));
+                                       .arg(densityWarning == QStringLiteral("none") ? QStringLiteral("None") : densityWarning)
+                                       .arg(nextText));
+            if (stateContextValue_) {
+                stateContextValue_->setText(QStringLiteral("%1 / Frame %2")
+                                                 .arg(compositionText)
+                                                 .arg(controllerSnapshot.frame.framePosition()));
+                stateContextDetail_->setText(QStringLiteral("Project: %1\nLayer: %2")
+                                                  .arg(projectText, layerText));
+            }
+            if (statePlaybackValue_) {
+                statePlaybackValue_->setText(playbackText.toUpper());
+                statePlaybackDetail_->setText(QStringLiteral("Quality: %1\nDropped frames: %2")
+                                                   .arg(qualityText)
+                                                   .arg(playbackSvc ? playbackSvc->droppedFrameCount() : 0));
+            }
+            if (stateRenderValue_) {
+                stateRenderValue_->setText(QStringLiteral("%1 ms average")
+                                                .arg(QString::number(controllerSnapshot.renderAverageFrameMs, 'f', 1)));
+                stateRenderDetail_->setText(QStringLiteral("Last: %1 ms  •  Backend: %2\nQueue: %3 job(s)")
+                                                 .arg(QString::number(controllerSnapshot.renderLastFrameMs, 'f', 1),
+                                                      backendText, queueText));
+            }
+            if (stateAttentionValue_) {
+                const bool hasWarning = densityWarning != QStringLiteral("none");
+                stateAttentionValue_->setText(hasWarning ? QStringLiteral("ATTENTION") : QStringLiteral("READY"));
+                stateAttentionDetail_->setText(hasWarning ? densityWarning + QStringLiteral("\nNext: ") + nextText
+                                                           : QStringLiteral("No current diagnostic warning.\nNext: ") + nextText);
+                QPalette attentionPalette = stateAttentionValue_->palette();
+                attentionPalette.setColor(QPalette::WindowText,
+                                          hasWarning ? QColor::fromRgb(255, 196, 92)
+                                                     : QColor::fromRgb(106, 218, 148));
+                stateAttentionValue_->setPalette(attentionPalette);
+            }
             if (!breakHistorySummaryText.isEmpty()) {
                 stateSummary_->setToolTip(QStringLiteral("breakHistorySummary=%1\nvisualDensityMonitor=%2  warning=%3  next=%4  status=%5  lastHit=%6  act=%7")
                                              .arg(breakHistorySummaryText)
@@ -1617,14 +1747,40 @@ public:
             const QString playbackQuality = playbackQualityText(playbackSvc, controllerSnapshot, controller_);
 
             if (playbackSummary_) {
-                playbackSummary_->setText(QStringLiteral("playback=%1  frame=%2  %3  pool=%4  queueJobs=%5")
+                playbackSummary_->setText(QStringLiteral("NOW  %1 at Frame %2    •    %3\nUse the cards for health; use the raw snapshot only when diagnosing a regression.")
                                               .arg(playbackText)
                                               .arg(controllerSnapshot.frame.framePosition())
-                                              .arg(renderTiming)
-                                              .arg(poolText)
-                                              .arg(queueSvc ? queueSvc->jobCount() : 0));
+                                              .arg(renderTiming));
                 playbackSummary_->setToolTip(QStringLiteral("%1  %2")
                                                  .arg(playbackQuality, playbackDiagnosticsText(playbackSvc, controllerSnapshot, controller_)));
+            }
+            if (playbackStateValue_) {
+                playbackStateValue_->setText(playbackText.toUpper());
+                playbackStateDetail_->setText(QStringLiteral("Frame: %1\nAudio offset: %2 s  •  Dropped: %3")
+                                                   .arg(controllerSnapshot.frame.framePosition())
+                                                   .arg(playbackSvc ? QString::number(playbackSvc->audioOffsetSeconds(), 'f', 3)
+                                                                    : QStringLiteral("-"))
+                                                   .arg(playbackSvc ? playbackSvc->droppedFrameCount() : 0));
+            }
+            if (playbackCacheValue_) {
+                playbackCacheValue_->setText(cacheHealthText(controllerSnapshot));
+                playbackCacheDetail_->setText(QStringLiteral("%1\nQuality: %2")
+                                                   .arg(ramPreviewText(playbackSvc), playbackQuality));
+            }
+            if (playbackRenderValue_) {
+                playbackRenderValue_->setText(QStringLiteral("%1 ms")
+                                                   .arg(QString::number(controllerSnapshot.renderLastFrameMs, 'f', 1)));
+                playbackRenderDetail_->setText(QStringLiteral("Average: %1 ms\nBackend: %2")
+                                                    .arg(QString::number(controllerSnapshot.renderAverageFrameMs, 'f', 1),
+                                                         controllerSnapshot.renderBackend.isEmpty()
+                                                             ? QStringLiteral("<none>")
+                                                             : controllerSnapshot.renderBackend));
+            }
+            if (playbackQueueValue_) {
+                playbackQueueValue_->setText(QStringLiteral("%1 job(s)")
+                                                 .arg(queueSvc ? queueSvc->jobCount() : 0));
+                playbackQueueDetail_->setText(QStringLiteral("%1")
+                                                  .arg(poolText));
             }
 
             if (playbackText_) {
@@ -1656,8 +1812,6 @@ public:
         }
 
         if (overviewSummary_) {
-            const QString projectText = projectSvc ? projectSvc->projectName().toQString()
-                                                   : QStringLiteral("<no service>");
             const QString compositionText = controllerSnapshot.compositionName.isEmpty()
                                                 ? QStringLiteral("<none>")
                                                 : controllerSnapshot.compositionName;
@@ -1703,15 +1857,11 @@ public:
             const QString nextText = warningText == QStringLiteral("none")
                                          ? QStringLiteral("capture frame when behavior changes")
                                          : QStringLiteral("open the relevant diagnostic tab");
-            overviewSummary_->setText(QStringLiteral("goal: inspect current app state | now: project=%1 comp=%2 layer=%3 frame=%4 play=%5 backend=%6 dens=%7 | warning: %8 | next: %9")
-                                          .arg(projectText,
-                                               compositionText,
-                                               layerText)
+            overviewSummary_->setText(QStringLiteral("NOW  %1 / %2 / Frame %3 / %4 / %5\nWARNING  %6    NEXT  %7")
+                                          .arg(compositionText, layerText)
                                           .arg(controllerSnapshot.frame.framePosition())
-                                          .arg(playbackText)
-                                          .arg(backendText)
-                                          .arg(visualDensityMonitorText(controllerSnapshot))
-                                          .arg(warningText)
+                                          .arg(playbackText, backendText)
+                                          .arg(warningText == QStringLiteral("none") ? QStringLiteral("None") : warningText)
                                           .arg(nextText));
             overviewSummary_->setToolTip(QStringLiteral("failedPasses=%1 totalPassUs=%2 queueJobs=%3 traceThreads=%4 bundle=%5")
                                              .arg(failedPasses)
@@ -2426,9 +2576,6 @@ void AppDebuggerWidget::showEvent(QShowEvent* event)
 void AppDebuggerWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
-    if (impl_) {
-        impl_->refresh();
-    }
 }
 
 } // namespace Artifact

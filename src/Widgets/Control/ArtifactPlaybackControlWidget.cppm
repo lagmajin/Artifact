@@ -528,11 +528,27 @@ public:
     void setupUI()
     {
         auto* mainLayout = new QVBoxLayout(owner_);
-        mainLayout->setSpacing(4);
-        mainLayout->setContentsMargins(8, 5, 8, 5);
+        mainLayout->setSpacing(12);
+        mainLayout->setContentsMargins(18, 14, 18, 14);
+        mainLayout->setAlignment(Qt::AlignTop);
+
+        const auto configureSurface = [](QFrame* surface) {
+            surface->setFrameShape(QFrame::StyledPanel);
+            surface->setFrameShadow(QFrame::Plain);
+            surface->setAutoFillBackground(true);
+            QPalette palette = surface->palette();
+            const auto& theme = ArtifactCore::currentDCCTheme();
+            palette.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+            surface->setPalette(palette);
+            surface->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        };
+
+        auto* transportSurface = new QFrame(owner_);
+        configureSurface(transportSurface);
         
-        auto* transportRow = new QHBoxLayout();
-        transportRow->setSpacing(6);
+        auto* transportRow = new QHBoxLayout(transportSurface);
+        transportRow->setContentsMargins(10, 10, 10, 10);
+        transportRow->setSpacing(10);
         
         seekStartButton_ = createToolButton(QStringList{
             QStringLiteral("MaterialVS/colored/E3E3E3/seek_start.svg")
@@ -687,14 +703,17 @@ public:
         transportRow->addWidget(timecodeFrame_);
         transportRow->addSpacing(8);
         transportRow->addWidget(loopButton_);
-        transportRow->addStretch();
+        transportRow->addStretch(1);
 
-        mainLayout->addLayout(transportRow);
+        mainLayout->addWidget(transportSurface);
 
-        auto* scrubRuler = new QWidget(owner_);
+        auto* scrubRuler = new QFrame(owner_);
+        configureSurface(scrubRuler);
+        scrubRuler->setMinimumHeight(118);
+        scrubRuler->setMaximumHeight(118);
         auto* scrubRulerLayout = new QVBoxLayout(scrubRuler);
-        scrubRulerLayout->setContentsMargins(4, 5, 4, 2);
-        scrubRulerLayout->setSpacing(1);
+        scrubRulerLayout->setContentsMargins(14, 14, 14, 10);
+        scrubRulerLayout->setSpacing(8);
 
         auto* scrubLabelRow = new QHBoxLayout();
         scrubLabelRow->setContentsMargins(5, 0, 5, 0);
@@ -722,7 +741,7 @@ public:
         scrubSlider_->setTracking(true);
         scrubSlider_->setTickPosition(QSlider::TicksAbove);
         scrubSlider_->setTickInterval(60);
-        scrubSlider_->setMinimumHeight(30);
+        scrubSlider_->setFixedHeight(44);
         scrubSlider_->setToolTip(QStringLiteral("Drag the playhead to seek"));
         {
             QPalette scrubPalette = scrubSlider_->palette();
@@ -772,11 +791,17 @@ public:
         speedLayout->addWidget(speedOneButton_);
         transportRow->addLayout(speedLayout);
 
-        auto* optionsRow = new QHBoxLayout();
-        optionsRow->setContentsMargins(2, 0, 2, 0);
-        optionsRow->setSpacing(8);
+        auto* optionsSurface = new QFrame(owner_);
+        configureSurface(optionsSurface);
+        auto* optionsSurfaceLayout = new QVBoxLayout(optionsSurface);
+        optionsSurfaceLayout->setContentsMargins(14, 12, 14, 12);
+        optionsSurfaceLayout->setSpacing(10);
 
-        ramCacheCheckbox_ = new QCheckBox(QStringLiteral("Ramキャッシュ作成してからプレビュー開始"), owner_);
+        auto* optionsRow = new QHBoxLayout();
+        optionsRow->setContentsMargins(0, 0, 0, 0);
+        optionsRow->setSpacing(10);
+
+        ramCacheCheckbox_ = new QCheckBox(QStringLiteral("RAM Preview"), owner_);
         {
             QFont font = ramCacheCheckbox_->font();
             font.setPointSize(9);
@@ -796,7 +821,6 @@ public:
         previewWorkAreaButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         previewWorkAreaButton_->setFixedSize(148, 24);
         previewWorkAreaButton_->setIconSize(QSize(16, 16));
-        optionsRow->addWidget(previewWorkAreaButton_);
 
         clearRamPreviewButton_ = createToolButton(QStringList{
             QStringLiteral("MaterialVS/neutral/delete_sweep.svg"),
@@ -978,6 +1002,7 @@ public:
             keyingSetPathsEdit_->setText(settings->timelineCustomKeyingSetPropertyPaths().join(QStringLiteral(", ")));
         }
         keyingSetPathsEdit_->setEnabled(keyingSetCombo_->currentIndex() == 2);
+        keyingSetPathsEdit_->setVisible(keyingSetCombo_->currentIndex() == 2);
         optionsRow->addWidget(keyingSetPathsEdit_);
 
         mutePreviewCheckbox_ = new QCheckBox(QStringLiteral("Mute Preview"), owner_);
@@ -993,9 +1018,15 @@ public:
     }
     optionsRow->addWidget(mutePreviewCheckbox_);
         clearRamPreviewButton_->setIconSize(QSize(16, 16));
-        optionsRow->addWidget(clearRamPreviewButton_);
+        optionsRow->addStretch(1);
+        optionsSurfaceLayout->addLayout(optionsRow);
 
-        optionsRow->addSpacing(8);
+        auto* actionsRow = new QHBoxLayout();
+        actionsRow->setContentsMargins(0, 0, 0, 0);
+        actionsRow->setSpacing(10);
+        actionsRow->addWidget(previewWorkAreaButton_);
+        actionsRow->addWidget(clearRamPreviewButton_);
+        actionsRow->addSpacing(8);
 
         auto* rangeLabel = new QLabel(QStringLiteral("再生範囲:"), owner_);
         {
@@ -1005,7 +1036,7 @@ public:
             rangeLabel->setFixedHeight(24);
             applyThemeTextPalette(rangeLabel, QColor(ArtifactCore::currentDCCTheme().textColor));
         }
-        optionsRow->addWidget(rangeLabel);
+        actionsRow->addWidget(rangeLabel);
 
         playbackRangeCombo_ = new QComboBox(owner_);
         playbackRangeCombo_->setFixedSize(140, 24);
@@ -1031,13 +1062,12 @@ public:
                 }
             }
         }
-        optionsRow->addWidget(playbackRangeCombo_);
-
-        optionsRow->addStretch();
-        mainLayout->addLayout(optionsRow);
+        actionsRow->addWidget(playbackRangeCombo_);
+        actionsRow->addStretch(1);
+        optionsSurfaceLayout->addLayout(actionsRow);
 
         auto* skipRow = new QHBoxLayout();
-        skipRow->setContentsMargins(2, 0, 2, 0);
+        skipRow->setContentsMargins(0, 0, 0, 0);
         skipRow->setSpacing(8);
 
         auto* skipLabel = new QLabel(QStringLiteral("再生モード:"), owner_);
@@ -1075,8 +1105,9 @@ public:
             }
         }
         skipRow->addWidget(playbackSkipCombo_);
-        skipRow->addStretch();
-        mainLayout->addLayout(skipRow);
+        skipRow->addStretch(1);
+        optionsSurfaceLayout->addLayout(skipRow);
+        mainLayout->addWidget(optionsSurface);
 
         connectSignals();
     }
@@ -1349,6 +1380,7 @@ public:
                              }
                              if (keyingSetPathsEdit_) {
                                  keyingSetPathsEdit_->setEnabled(index == 2);
+                                 keyingSetPathsEdit_->setVisible(index == 2);
                              }
                          });
 

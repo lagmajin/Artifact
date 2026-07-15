@@ -12,6 +12,7 @@ module;
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFont>
+#include <QFontMetrics>
 #include <QFormLayout>
 #include <QFrame>
 #include <QGroupBox>
@@ -30,6 +31,7 @@ module;
 #include <QObject>
 #include <QPalette>
 #include <QPlainTextEdit>
+#include <QPainter>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
@@ -39,6 +41,9 @@ module;
 #include <QScopeGuard>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStyledItemDelegate>
+#include <QStyle>
+#include <QStyleOptionViewItem>
 #include <QSplitter>
 #include <QStringList>
 #include <QTabWidget>
@@ -1104,6 +1109,90 @@ LayerPresentationBadgeTone toneFromRackIndex(int rackIndex) {
   }
 }
 
+constexpr int kEffectRackEnabledRole = Qt::UserRole + 1;
+constexpr int kEffectRackHasMaskRole = Qt::UserRole + 2;
+constexpr int kEffectRackNameRole = Qt::UserRole + 3;
+constexpr int kEffectRackMaskCountRole = Qt::UserRole + 4;
+
+class EffectRackItemDelegate final : public QStyledItemDelegate {
+public:
+  explicit EffectRackItemDelegate(int rackIndex, QObject *parent = nullptr)
+      : QStyledItemDelegate(parent), rackIndex_(rackIndex) {}
+
+  QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override {
+    return QSize(0, 34);
+  }
+
+  void paint(QPainter *painter, const QStyleOptionViewItem &option,
+             const QModelIndex &index) const override {
+    if (!painter) {
+      return;
+    }
+
+    const auto &theme = ArtifactCore::currentDCCTheme();
+    const QColor background = themeColor(
+        theme.backgroundColor, QColor(QStringLiteral("#20242A")));
+    const QColor surface = themeColor(
+        theme.secondaryBackgroundColor, QColor(QStringLiteral("#2B3038")));
+    const QColor text = themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
+    const QColor accent = themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+    const QColor selection = themeColor(
+        theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
+    const QColor rackColor = toneColor(toneFromRackIndex(rackIndex_), text, accent);
+    const QColor muted = blendColor(rackColor, background, 0.58);
+    const bool selected = option.state.testFlag(QStyle::State_Selected);
+    const bool enabled = index.data(kEffectRackEnabledRole).toBool();
+    const bool hasMask = index.data(kEffectRackHasMaskRole).toBool();
+    const int maskCount = index.data(kEffectRackMaskCountRole).toInt();
+    const QString effectId = index.data(Qt::UserRole).toString().trimmed();
+    const QString effectName = index.data(kEffectRackNameRole).toString().trimmed();
+
+    painter->save();
+    const QRect rowRect = option.rect.adjusted(2, 2, -2, -2);
+    painter->fillRect(rowRect, selected ? selection : surface);
+
+    if (effectId.isEmpty()) {
+      painter->setPen(blendColor(text, background, 0.52));
+      painter->drawText(rowRect, Qt::AlignCenter, index.data(Qt::DisplayRole).toString());
+      painter->restore();
+      return;
+    }
+
+    const QPoint indicator(rowRect.left() + 10, rowRect.center().y());
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(enabled ? rackColor : muted);
+    painter->drawEllipse(indicator, 4, 4);
+
+    QRect textRect = rowRect.adjusted(22, 0, -6, 0);
+    QString maskLabel;
+    if (hasMask) {
+      maskLabel = maskCount > 0 ? QStringLiteral("Mask %1").arg(maskCount)
+                                : QStringLiteral("Mask");
+      QFontMetrics metrics(option.font);
+      const int chipWidth = metrics.horizontalAdvance(maskLabel) + 12;
+      const QRect chipRect(rowRect.right() - chipWidth, rowRect.center().y() - 9,
+                           chipWidth, 18);
+      painter->setBrush(blendColor(rackColor, background, selected ? 0.28 : 0.16));
+      painter->drawRoundedRect(chipRect, 4, 4);
+      painter->setPen(enabled ? text : muted);
+      painter->drawText(chipRect, Qt::AlignCenter, maskLabel);
+      textRect.setRight(chipRect.left() - 6);
+    }
+
+    QFont nameFont = option.font;
+    nameFont.setWeight(QFont::DemiBold);
+    painter->setFont(nameFont);
+    painter->setPen(enabled ? text : muted);
+    painter->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
+                      effectName.isEmpty() ? index.data(Qt::DisplayRole).toString()
+                                           : effectName);
+    painter->restore();
+  }
+
+private:
+  int rackIndex_ = 0;
+};
+
 constexpr int rasterizerRackIndex() {
   return static_cast<int>(EffectPipelineStage::Rasterizer) - 1;
 }
@@ -1759,6 +1848,7 @@ public:
   InspectorActionButton *openScriptButton = nullptr;
   InspectorActionButton *applyLipSyncButton = nullptr;
   ArtifactPropertyWidget *componentPropertyWidget = nullptr;
+  QString lastComponentPropertyStateSignature_;
   QLabel *statusLabel = nullptr;
 
   // Effects Pipeline Tab
@@ -1839,6 +1929,8 @@ public:
   void updateComponentControls(const ArtifactAbstractLayerPtr &layer);
   void focusComponentProperties(const ArtifactAbstractLayerPtr &layer,
                                 const QString &filterText);
+  void syncComponentPropertyWidget(const ArtifactAbstractLayerPtr &layer,
+                                   const QString &filterText);
   void updateEffectsList();
   void addSelectedEffectToCurrentTarget(const QString &effectId);
   void updateEffectRackItemEnabled(const QString &effectId, bool enabled);
@@ -2793,38 +2885,21 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
     }
   }
 
-  if (componentPropertyWidget) {
-    componentPropertyWidget->setVisible(hasLayer && !activeName.isEmpty());
-    if (!hasLayer) {
-      componentPropertyWidget->clear();
-    } else {
-      // Check for multi-selection
-      auto *selMgr = ArtifactLayerSelectionManager::instance();
-      const auto selected = selMgr ? selMgr->selectedLayers() : QSet<ArtifactAbstractLayerPtr>{};
-      if (selected.size() > 1) {
-        componentPropertyWidget->setLayers(selected);
-      } else {
-        componentPropertyWidget->setLayer(layer);
-      }
-      QString desiredFilter = componentInspectorFilter(activeName);
-      if (activeName == QStringLiteral("Generator")) {
-        desiredFilter = generatorItemFilterText(
-            generatorListWidget ? generatorListWidget->currentItem() : nullptr);
-      } else if (activeName == QStringLiteral("Field")) {
-        desiredFilter = fieldItemFilterText(
-            fieldListWidget ? fieldListWidget->currentItem() : nullptr);
-      } else if (activeName == QStringLiteral("Clone Modifier")) {
-        desiredFilter = cloneModifierItemFilterText(
-            cloneModifierListWidget ? cloneModifierListWidget->currentItem()
-                                    : nullptr);
-      }
-      if (componentPropertyWidget->filterText() != desiredFilter) {
-        componentPropertyWidget->setFilterText(desiredFilter);
-      } else {
-        componentPropertyWidget->updateProperties();
-      }
-    }
+  QString desiredComponentFilter = componentInspectorFilter(activeName);
+  if (activeName == QStringLiteral("Generator")) {
+    desiredComponentFilter = generatorItemFilterText(
+        generatorListWidget ? generatorListWidget->currentItem() : nullptr);
+  } else if (activeName == QStringLiteral("Field")) {
+    desiredComponentFilter = fieldItemFilterText(
+        fieldListWidget ? fieldListWidget->currentItem() : nullptr);
+  } else if (activeName == QStringLiteral("Clone Modifier")) {
+    desiredComponentFilter = cloneModifierItemFilterText(
+        cloneModifierListWidget ? cloneModifierListWidget->currentItem()
+                                : nullptr);
   }
+  syncComponentPropertyWidget(
+      hasLayer && !activeName.isEmpty() ? layer : ArtifactAbstractLayerPtr{},
+      desiredComponentFilter);
 
   if (openScriptButton) {
     const QString scriptPath = resolveScriptBindingPath(layer);
@@ -2888,28 +2963,51 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   }
 }
 
-void ArtifactInspectorWidget::Impl::focusComponentProperties(
+void ArtifactInspectorWidget::Impl::syncComponentPropertyWidget(
     const ArtifactAbstractLayerPtr &layer, const QString &filterText) {
   if (!componentPropertyWidget) {
     return;
   }
   if (!layer) {
+    lastComponentPropertyStateSignature_.clear();
     componentPropertyWidget->clear();
     componentPropertyWidget->setVisible(false);
     return;
   }
-  componentPropertyWidget->setVisible(true);
-  // Check for multi-selection
+
+  const QString normalizedFilter = filterText.trimmed().isEmpty()
+      ? defaultComponentInspectorFilter(layer)
+      : filterText;
   auto *selMgr = ArtifactLayerSelectionManager::instance();
-  const auto selected = selMgr ? selMgr->selectedLayers() : QSet<ArtifactAbstractLayerPtr>{};
+  const auto selected =
+      selMgr ? selMgr->selectedLayers() : QSet<ArtifactAbstractLayerPtr>{};
+  QStringList selectedLayerIds;
+  selectedLayerIds.reserve(selected.size());
+  for (const auto &selectedLayer : selected) {
+    if (selectedLayer) {
+      selectedLayerIds.push_back(selectedLayer->id().toString());
+    }
+  }
+  std::sort(selectedLayerIds.begin(), selectedLayerIds.end());
+  const QString stateSignature = QStringLiteral("%1|%2|%3")
+      .arg(layer->id().toString(), selectedLayerIds.join(QLatin1Char(',')),
+           normalizedFilter);
+  componentPropertyWidget->setVisible(true);
+  if (stateSignature == lastComponentPropertyStateSignature_) {
+    return;
+  }
+  lastComponentPropertyStateSignature_ = stateSignature;
   if (selected.size() > 1) {
     componentPropertyWidget->setLayers(selected);
   } else {
     componentPropertyWidget->setLayer(layer);
   }
-  componentPropertyWidget->setFilterText(filterText.trimmed().isEmpty()
-                                             ? defaultComponentInspectorFilter(layer)
-                                             : filterText);
+  componentPropertyWidget->setFilterText(normalizedFilter);
+}
+
+void ArtifactInspectorWidget::Impl::focusComponentProperties(
+    const ArtifactAbstractLayerPtr &layer, const QString &filterText) {
+  syncComponentPropertyWidget(layer, filterText);
 }
 
 QString ArtifactInspectorWidget::Impl::computeLayerInfoSignature(
@@ -4330,18 +4428,6 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
     }
     racks[i].listWidget->setMinimumHeight(56);
     racks[i].listWidget->setMaximumHeight(180);
-    const auto &theme = ArtifactCore::currentDCCTheme();
-    const QColor textColor = QColor(theme.textColor.isEmpty()
-                                        ? QStringLiteral("#E3E7EC")
-                                        : theme.textColor);
-    const QColor accentColor = QColor(theme.accentColor.isEmpty()
-                                          ? QStringLiteral("#5E94C7")
-                                          : theme.accentColor);
-    const QColor backgroundColor = QColor(
-        theme.backgroundColor.isEmpty() ? QStringLiteral("#20242A")
-                                        : theme.backgroundColor);
-    const auto rackTone = toneFromRackIndex(i);
-    const QColor rackColor = toneColor(rackTone, textColor, accentColor);
     for (const auto &effect : rackEffects[i]) {
       if (!effect) {
         continue;
@@ -4359,8 +4445,10 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
       QString itemText = QStringLiteral("%1 %2%3").arg(effectStatus, effectName, maskSuffix);
       auto *item = new QListWidgetItem(itemText);
       item->setData(Qt::UserRole, effect->effectID().toQString());
-      item->setData(Qt::UserRole + 1, effect->isEnabled());
-      item->setData(Qt::UserRole + 2, hasMask);
+      item->setData(kEffectRackEnabledRole, effect->isEnabled());
+      item->setData(kEffectRackHasMaskRole, hasMask);
+      item->setData(kEffectRackNameRole, effectName);
+      item->setData(kEffectRackMaskCountRole, effectMaskCount);
       item->setSizeHint(QSize(0, 34));
       item->setToolTip(
           QStringLiteral("%1 on this %2.%3%4 Single click to focus. Double click toggles enable/disable. Right click for effect actions.")
@@ -4371,9 +4459,6 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
                    effectMaskCount > 0
                        ? QStringLiteral(" Effect mask images: %1.").arg(effectMaskCount)
                        : QString()));
-      item->setForeground(
-          effect->isEnabled() ? rackColor
-                              : blendColor(rackColor, backgroundColor, 0.58));
       racks[i].listWidget->addItem(item);
     }
   }
@@ -4436,19 +4521,6 @@ void ArtifactInspectorWidget::Impl::updateEffectRackItemEnabled(
     return;
   }
 
-  const auto &theme = ArtifactCore::currentDCCTheme();
-  const QColor textColor = QColor(theme.textColor.isEmpty()
-                                      ? QStringLiteral("#E3E7EC")
-                                      : theme.textColor);
-  const QColor accentColor = QColor(theme.accentColor.isEmpty()
-                                        ? QStringLiteral("#5E94C7")
-                                        : theme.accentColor);
-  const QColor backgroundColor = QColor(
-      theme.backgroundColor.isEmpty() ? QStringLiteral("#20242A")
-                                      : theme.backgroundColor);
-  const QString enabledPrefix = QStringLiteral("Enabled ");
-  const QString disabledPrefix = QStringLiteral("Disabled ");
-
   for (int rackIndex = 0; rackIndex < kEffectRackCount; ++rackIndex) {
     auto *list = racks[rackIndex].listWidget;
     if (!list) {
@@ -4460,39 +4532,18 @@ void ArtifactInspectorWidget::Impl::updateEffectRackItemEnabled(
         continue;
       }
 
-      QString effectName = item->text().trimmed();
-      if (effectName.startsWith(enabledPrefix)) {
-        effectName.remove(0, enabledPrefix.size());
-      } else if (effectName.startsWith(disabledPrefix)) {
-        effectName.remove(0, disabledPrefix.size());
-      }
-      effectName = effectName.trimmed();
-      QString maskSuffix;
-      const int maskStart = effectName.indexOf(QStringLiteral(" [Mask"));
-      if (maskStart >= 0) {
-        maskSuffix = effectName.mid(maskStart);
-        effectName.truncate(maskStart);
-        effectName = effectName.trimmed();
-      }
-      const bool hasMask = item->data(Qt::UserRole + 2).toBool();
-
-      const QColor rackColor =
-          toneColor(toneFromRackIndex(rackIndex), textColor, accentColor);
-      item->setText(QStringLiteral("%1 %2%3")
-                        .arg(enabled ? QStringLiteral("Enabled")
-                                     : QStringLiteral("Disabled"),
-                             effectName,
-                             hasMask ? maskSuffix : QString()));
-      item->setData(Qt::UserRole + 1, enabled);
-      item->setForeground(
-          enabled ? rackColor
-                  : blendColor(rackColor, backgroundColor, 0.58));
+      const QString effectName = item->data(kEffectRackNameRole).toString();
+      const bool hasMask = item->data(kEffectRackHasMaskRole).toBool();
+      item->setData(kEffectRackEnabledRole, enabled);
       item->setToolTip(
           QStringLiteral("%1 on this %2.%3 Single click to focus. Double click toggles enable/disable. Right click for effect actions.")
               .arg(effectName,
                    editingCompositionEffects() ? QStringLiteral("composition")
                                                : QStringLiteral("layer"),
-                   hasMask ? QStringLiteral(" Mask attached.") : QString()));
+                       hasMask ? QStringLiteral(" Mask attached.") : QString()));
+      if (list->viewport()) {
+        list->viewport()->update();
+      }
       refreshRackButtons();
       return;
     }
@@ -6191,6 +6242,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     impl_->racks[i].listWidget->setFrameShape(QFrame::NoFrame);
     impl_->racks[i].listWidget->setSpacing(5);
     impl_->racks[i].listWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    impl_->racks[i].listWidget->setItemDelegate(
+        new EffectRackItemDelegate(i, impl_->racks[i].listWidget));
     impl_->racks[i].listWidget->setToolTip(
         QStringLiteral("Single click an effect to edit its parameters below. Double click toggles enable/disable. Right click opens effect actions."));
     applyInspectorList(impl_->racks[i].listWidget);
@@ -6315,7 +6368,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
           const QString effectId = item->data(Qt::UserRole).toString();
           if (effectId.trimmed().isEmpty())
             return;
-          const QVariant enabledData = item->data(Qt::UserRole + 1);
+          const QVariant enabledData = item->data(kEffectRackEnabledRole);
           const bool isEnabled = enabledData.isValid()
                                      ? enabledData.toBool()
                                      : item->text().startsWith(QStringLiteral("Enabled"));

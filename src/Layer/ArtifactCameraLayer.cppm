@@ -84,6 +84,9 @@ ArtifactCameraLayer::ArtifactCameraLayer()
 {
     setLayerName("Camera 1");
     setIs3D(true);
+    // A usable default camera must sit in front of the Z=0 composition plane.
+    // Explicit project transforms loaded afterwards still override this value.
+    setPosition3D(QVector3D(0.0f, 0.0f, camImpl_->zoom_));
 }
 
 ArtifactCameraLayer::~ArtifactCameraLayer()
@@ -116,9 +119,9 @@ void ArtifactCameraLayer::draw(ArtifactIRenderer* renderer)
     renderer->drawGizmoCube(p, s, camColor);
 
     // 2. Draw Lens Direction
-    // Camera forward is +Z in our coordinate system
+    // QMatrix4x4's perspective convention looks down local -Z.
     QMatrix4x4 globalMat = getGlobalTransform4x4();
-    QVector3D forward = globalMat.mapVector(QVector3D(0, 0, 1)).normalized();
+    QVector3D forward = globalMat.mapVector(QVector3D(0, 0, -1)).normalized();
     QVector3D right = globalMat.mapVector(QVector3D(1, 0, 0)).normalized();
     QVector3D up = globalMat.mapVector(QVector3D(0, 1, 0)).normalized();
     
@@ -282,7 +285,6 @@ void ArtifactCameraLayer::setIpd(float ipd) {
 
 QMatrix4x4 ArtifactCameraLayer::viewMatrix() const
 {
-    // In AE, camera looks along +Z, and -Z is towards the viewer.
     // The view matrix is the inverse of the camera's global transform.
     const QMatrix4x4 global = getGlobalTransform4x4();
     if (camImpl_->shakeOffset_.isNull() &&
@@ -421,6 +423,9 @@ QMatrix4x4 ArtifactCameraLayer::projectionMatrix(float aspect) const
                         camImpl_->nearClipPlane_,
                         camImpl_->farClipPlane_);
     }
+    // Match the viewport-orientation and fallback camera paths used by the
+    // Diligent render target coordinate convention.
+    proj(1, 1) = -proj(1, 1);
     
     return proj;
 }

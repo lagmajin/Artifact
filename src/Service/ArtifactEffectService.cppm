@@ -708,6 +708,11 @@ W_OBJECT_IMPL(ArtifactEffectService)
   }
 
   auto effectPtr = std::shared_ptr<ArtifactAbstractEffect>(effect.release());
+  // Layer effect racks currently display and evaluate Rasterizer effects.
+  // Callers such as the Effect menu use this service directly, bypassing the
+  // Inspector's normalization; without this, insertion succeeds but the
+  // effect immediately disappears from the layer Effects surface.
+  effectPtr->setPipelineStage(EffectPipelineStage::Rasterizer);
   if (ps->addEffectToLayerWithUndo(layerId, effectPtr)) {
    const QString actualEffectId = effectPtr ? effectPtr->effectID().toQString() : effectId.toString();
    Q_EMIT effectAdded(layerId, actualEffectId);

@@ -114,8 +114,8 @@ public:
                              const FloatColor& outlineColor = FloatColor{0.0f, 0.0f, 0.0f, 0.0f},
                              float outlineThickness = 0.0f);
     void drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity = 1.0f);
-    void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity = 1.0f);
-    void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const ArtifactCore::ImageF32x4_RGBA& image, float opacity = 1.0f);
+    void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity = 1.0f, const QRectF& uvRect = QRectF(0.0, 0.0, 1.0, 1.0));
+    void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const ArtifactCore::ImageF32x4_RGBA& image, float opacity = 1.0f, const QRectF& uvRect = QRectF(0.0, 0.0, 1.0, 1.0));
     void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* texture, float opacity = 1.0f);
     void drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity = 1.0f);
     void drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity = 1.0f);

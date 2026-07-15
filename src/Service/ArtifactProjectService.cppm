@@ -1602,8 +1602,14 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
             static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080) *
             0.5f;
         const QVector3D current = result.layer->position3D();
+        // QMatrix4x4 perspective cameras look down local -Z. Keeping a newly
+        // created camera at the same Z as the scene puts every model on the
+        // near plane, so the whole 3D scene is clipped away.
+        const float initialZ = params.layerType() == LayerType::Camera
+            ? 1000.0f
+            : current.z();
         result.layer->setPosition3D(
-            QVector3D(compCenterX, compCenterY, current.z()));
+            QVector3D(compCenterX, compCenterY, initialZ));
       }
       if (placeAtCurrentFrame) {
         const qint64 activeFrame =

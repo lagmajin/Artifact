@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -63,18 +63,6 @@ struct GaussianBlurParamsCB {
     float horizontal = 1.0f;
     float pad0 = 0.0f;
     float pad1 = 0.0f;
-};
-
-struct SharedRenderDeviceLease {
-    Diligent::RefCntAutoPtr<Diligent::IRenderDevice>& device;
-    Diligent::RefCntAutoPtr<Diligent::IDeviceContext>& context;
-
-    ~SharedRenderDeviceLease()
-    {
-        context.Release();
-        device.Release();
-        releaseSharedRenderDevice();
-    }
 };
 
 bool imageBuffersDiffer(const ImageF32x4RGBAWithCache& a,
@@ -252,32 +240,74 @@ void GaussianBlurCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x
     dst = ImageF32x4RGBAWithCache(dstImage);
 }
 
+class GaussianBlurGPUImpl::Resources {
+public:
+    Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
+    std::unique_ptr<ArtifactCore::GpuContext> gpuContext;
+    std::unique_ptr<ArtifactCore::ComputeExecutor> executor;
+    Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB;
+    bool pipelineReady = false;
+    bool usingSharedDevice = false;
+
+    ~Resources() {
+        if (context) {
+            context->Flush();
+            context->WaitForIdle();
+        }
+        executor.reset();
+        gpuContext.reset();
+        paramsCB.Release();
+        context.Release();
+        device.Release();
+        if (usingSharedDevice) {
+            releaseSharedRenderDevice();
+        }
+    }
+};
+
+GaussianBlurGPUImpl::GaussianBlurGPUImpl()
+    : resources_(std::make_unique<Resources>()) {}
+
+GaussianBlurGPUImpl::GaussianBlurGPUImpl(const float sigma)
+    : sigma_(sigma), resources_(std::make_unique<Resources>()) {}
+
+GaussianBlurGPUImpl::~GaussianBlurGPUImpl() = default;
+
 void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
     if (sigma_ <= 0.0f) {
         dst = src;
         return;
     }
 
-    Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;
-    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
-    if (!acquireSharedRenderDeviceForCurrentBackend(device, context)) {
-        applyGaussianBlurCPUFallback(sigma_, src, dst);
-        return;
+    if (!resources_) {
+        resources_ = std::make_unique<Resources>();
     }
-    const SharedRenderDeviceLease sharedDeviceLease{device, context};
-
-    auto gpuContext = std::make_unique<ArtifactCore::GpuContext>(device, context);
-    auto executor = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext);
-
-    Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB;
-    Diligent::BufferDesc cbDesc;
-    cbDesc.Name = "GaussianBlur/ParamsCB";
-    cbDesc.Size = sizeof(GaussianBlurParamsCB);
-    cbDesc.Usage = Diligent::USAGE_DYNAMIC;
-    cbDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER;
-    cbDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
-    device->CreateBuffer(cbDesc, nullptr, &paramsCB);
-    if (!paramsCB) {
+    auto& resources = *resources_;
+    if (!resources.device || !resources.context) {
+        if (!acquireSharedRenderDeviceForCurrentBackend(resources.device,
+                                                        resources.context)) {
+            applyGaussianBlurCPUFallback(sigma_, src, dst);
+            return;
+        }
+        resources.usingSharedDevice = true;
+    }
+    if (!resources.executor) {
+        resources.gpuContext = std::make_unique<ArtifactCore::GpuContext>(
+            resources.device, resources.context);
+        resources.executor = std::make_unique<ArtifactCore::ComputeExecutor>(
+            *resources.gpuContext);
+    }
+    if (!resources.paramsCB) {
+        Diligent::BufferDesc cbDesc;
+        cbDesc.Name = "GaussianBlur/ParamsCB";
+        cbDesc.Size = sizeof(GaussianBlurParamsCB);
+        cbDesc.Usage = Diligent::USAGE_DYNAMIC;
+        cbDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER;
+        cbDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
+        resources.device->CreateBuffer(cbDesc, nullptr, &resources.paramsCB);
+    }
+    if (!resources.paramsCB) {
         applyGaussianBlurCPUFallback(sigma_, src, dst);
         return;
     }
@@ -296,17 +326,20 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
     desc.variables = vars;
     desc.variableCount = 3;
     desc.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-    if (!executor->build(desc) || !executor->createShaderResourceBinding(true)) {
-        applyGaussianBlurCPUFallback(sigma_, src, dst);
-        return;
-    }
-    if (!executor->setBuffer("GaussianBlurParams", paramsCB)) {
-        applyGaussianBlurCPUFallback(sigma_, src, dst);
-        return;
+    if (!resources.pipelineReady) {
+        if (!resources.executor->build(desc) ||
+            !resources.executor->createShaderResourceBinding(true) ||
+            !resources.executor->setBuffer("GaussianBlurParams",
+                                           resources.paramsCB)) {
+            applyGaussianBlurCPUFallback(sigma_, src, dst);
+            return;
+        }
+        resources.pipelineReady = true;
     }
 
     Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex;
-    if (!createTextureFromImage(src, device, &inputTex, "GaussianBlur/InputTexture")) {
+    if (!createTextureFromImage(src, resources.device, &inputTex,
+                                "GaussianBlur/InputTexture")) {
         applyGaussianBlurCPUFallback(sigma_, src, dst);
         return;
     }
@@ -317,14 +350,15 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
     outDesc.Name = "GaussianBlur/OutputTexture";
     Diligent::RefCntAutoPtr<Diligent::ITexture> tempTex;
     Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex;
-    device->CreateTexture(outDesc, nullptr, &tempTex);
-    device->CreateTexture(outDesc, nullptr, &outputTex);
+    resources.device->CreateTexture(outDesc, nullptr, &tempTex);
+    resources.device->CreateTexture(outDesc, nullptr, &outputTex);
     if (!tempTex || !outputTex) {
         applyGaussianBlurCPUFallback(sigma_, src, dst);
         return;
     }
     void* mapped = nullptr;
-    context->MapBuffer(paramsCB, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
+    resources.context->MapBuffer(resources.paramsCB, Diligent::MAP_WRITE,
+                                 Diligent::MAP_FLAG_DISCARD, mapped);
     if (!mapped) {
         applyGaussianBlurCPUFallback(sigma_, src, dst);
         return;
@@ -333,16 +367,18 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
     params.sigma = sigma_;
     params.horizontal = 1.0f;
     std::memcpy(mapped, &params, sizeof(params));
-    context->UnmapBuffer(paramsCB, Diligent::MAP_WRITE);
-    if (!executor->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-        !executor->setTextureView("g_OutputTexture", tempTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
+    resources.context->UnmapBuffer(resources.paramsCB, Diligent::MAP_WRITE);
+    if (!resources.executor->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+        !resources.executor->setTextureView("g_OutputTexture", tempTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
         applyGaussianBlurCPUFallback(sigma_, src, dst);
         return;
     }
     auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
-    executor->dispatch(context, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    resources.executor->dispatch(resources.context, attribs,
+                                 Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-    context->MapBuffer(paramsCB, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
+    resources.context->MapBuffer(resources.paramsCB, Diligent::MAP_WRITE,
+                                 Diligent::MAP_FLAG_DISCARD, mapped);
     if (!mapped) {
         applyGaussianBlurCPUFallback(sigma_, src, dst);
         return;
@@ -351,15 +387,17 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
     params.sigma = sigma_;
     params.horizontal = 0.0f;
     std::memcpy(mapped, &params, sizeof(params));
-    context->UnmapBuffer(paramsCB, Diligent::MAP_WRITE);
-    if (!executor->setTextureView("g_InputTexture", tempTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-        !executor->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
+    resources.context->UnmapBuffer(resources.paramsCB, Diligent::MAP_WRITE);
+    if (!resources.executor->setTextureView("g_InputTexture", tempTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+        !resources.executor->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
         applyGaussianBlurCPUFallback(sigma_, src, dst);
         return;
     }
-    executor->dispatch(context, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    resources.executor->dispatch(resources.context, attribs,
+                                 Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-    if (!readbackTexture(device, context, outputTex, dst, "GaussianBlur/StagingTexture")) {
+    if (!readbackTexture(resources.device, resources.context, outputTex, dst,
+                         "GaussianBlur/StagingTexture")) {
         applyGaussianBlurCPUFallback(sigma_, src, dst);
         return;
     }
@@ -382,6 +420,7 @@ public:
 GaussianBlur::GaussianBlur() : impl_(new Impl()) {
     setCPUImpl(impl_->cpuImpl_);
     setGPUImpl(impl_->gpuImpl_);
+    setComputeMode(ComputeMode::GPU);
     setEffectID(UniString("effect.blur.gaussian"));
     setDisplayName(UniString("Gaussian Blur"));
     setPipelineStage(EffectPipelineStage::Rasterizer);

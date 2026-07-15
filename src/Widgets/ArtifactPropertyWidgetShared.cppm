@@ -1073,8 +1073,10 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
         const bool keyframeMode = row && row->isKeyframeModeEnabled();
         const bool allowedByKeyingSet =
             propertyPtr ? timelinePropertyAllowedByKeyingSet(*propertyPtr) : false;
-        if (propertyPtr && (autoKey || keyframeMode) &&
-            allowedByKeyingSet && (playback || currentTimeProvider)) {
+        const bool shouldInsertKey =
+            keyframeMode || (autoKey && allowedByKeyingSet);
+        if (propertyPtr && shouldInsertKey &&
+            (playback || currentTimeProvider)) {
           const auto nowTime = currentTimeProvider
                                    ? currentTimeProvider()
                                    : currentPlaybackTime(playback);
@@ -1218,7 +1220,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
       const auto now = currentTimeProvider ? currentTimeProvider()
                                            : currentPlaybackTime(playback);
       row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(now));
-      row->setKeyframeModeEnabled(propertyPtr->hasKeyFrameAt(now));
+      row->setKeyframeModeEnabled(!track.empty());
       const QVariant animatedValue = propertyPtr->interpolateValue(now);
       if (animatedValue.isValid()) {
         editor->setValueFromVariant(animatedValue);
@@ -1234,11 +1236,6 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
          currentTimeProvider, propertyName](bool checked) {
           if (!propertyPtr)
             return;
-          if (checked && !timelinePropertyAllowedByKeyingSet(*propertyPtr)) {
-            row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(
-                currentTimeProvider ? currentTimeProvider() : currentPlaybackTime(playback)));
-            return;
-          }
           const auto nowTime = currentTimeProvider
                                    ? currentTimeProvider()
                                    : currentPlaybackTime(playback);
@@ -1249,7 +1246,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           } else {
             propertyPtr->removeKeyFrame(nowTime);
           }
-          row->setKeyframeModeEnabled(checked);
+          row->setKeyframeModeEnabled(!propertyPtr->getKeyFrames().empty());
           row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
           row->setNavigationEnabled(true);
           if (keyframeChanged) {

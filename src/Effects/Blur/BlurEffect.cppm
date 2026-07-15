@@ -64,59 +64,14 @@ void main(uint3 dtid : SV_DispatchThreadID)
 }
 )";
 
-static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src, Diligent::IRenderDevice* device, Diligent::ITexture** outTex)
+static bool readbackTexture(Diligent::IDeviceContext* ctx, Diligent::ITexture* src,
+                            Diligent::ITexture* staging,
+                            ImageF32x4RGBAWithCache& dst)
 {
-    if (!device || !outTex) {
-        return false;
-    }
-    const auto& img = src.image();
-    const float* data = img.rgba32fData();
-    if (!data || img.width() <= 0 || img.height() <= 0) {
-        return false;
-    }
-    Diligent::TextureDesc desc;
-    desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
-    desc.Width = static_cast<Diligent::Uint32>(img.width());
-    desc.Height = static_cast<Diligent::Uint32>(img.height());
-    desc.Format = Diligent::TEX_FORMAT_RGBA32_FLOAT;
-    desc.ArraySize = 1;
-    desc.MipLevels = 1;
-    desc.SampleCount = 1;
-    desc.Usage = Diligent::USAGE_IMMUTABLE;
-    desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
-    desc.Name = "Blur/InputTexture";
-    Diligent::TextureSubResData sub{};
-    sub.pData = data;
-    sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
-    Diligent::TextureData init{};
-    init.pSubResources = &sub;
-    init.NumSubresources = 1;
-    device->CreateTexture(desc, &init, outTex);
-    return *outTex != nullptr;
-}
-
-static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx, Diligent::ITexture* src, ImageF32x4RGBAWithCache& dst)
-{
-    if (!device || !ctx || !src) {
+    if (!ctx || !src || !staging) {
         return false;
     }
     const auto desc = src->GetDesc();
-    Diligent::TextureDesc stagingDesc;
-    stagingDesc.Type = Diligent::RESOURCE_DIM_TEX_2D;
-    stagingDesc.Width = desc.Width;
-    stagingDesc.Height = desc.Height;
-    stagingDesc.Format = desc.Format;
-    stagingDesc.ArraySize = 1;
-    stagingDesc.MipLevels = 1;
-    stagingDesc.SampleCount = 1;
-    stagingDesc.Usage = Diligent::USAGE_STAGING;
-    stagingDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
-    stagingDesc.Name = "Blur/StagingTexture";
-    Diligent::RefCntAutoPtr<Diligent::ITexture> staging;
-    device->CreateTexture(stagingDesc, nullptr, &staging);
-    if (!staging) {
-        return false;
-    }
     Diligent::CopyTextureAttribs copy(src, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
                                       staging, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     ctx->CopyTexture(copy);
@@ -254,6 +209,12 @@ public:
     mutable std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
     mutable std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
     mutable Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
+    mutable Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex_;
+    mutable Diligent::RefCntAutoPtr<Diligent::ITexture> scratchTex_;
+    mutable Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
+    mutable Diligent::RefCntAutoPtr<Diligent::ITexture> stagingTex_;
+    mutable Diligent::Uint32 textureWidth_ = 0;
+    mutable Diligent::Uint32 textureHeight_ = 0;
     mutable bool pipelineReady_ = false;
     mutable bool usingSharedDevice_ = false;
 
@@ -271,6 +232,12 @@ public:
         executor_.reset();
         gpuContext_.reset();
         paramsCB_.Release();
+        inputTex_.Release();
+        scratchTex_.Release();
+        outputTex_.Release();
+        stagingTex_.Release();
+        textureWidth_ = 0;
+        textureHeight_ = 0;
         context_.Release();
         device_.Release();
         pipelineReady_ = false;
@@ -292,6 +259,66 @@ public:
         }
         usingSharedDevice_ = true;
         return device_ && context_;
+    }
+
+    bool ensureTextures(const ImageF32x4RGBAWithCache& src) const
+    {
+        const auto& image = src.image();
+        const auto width = static_cast<Diligent::Uint32>(image.width());
+        const auto height = static_cast<Diligent::Uint32>(image.height());
+        const float* data = image.rgba32fData();
+        if (!device_ || !context_ || !data || width == 0 || height == 0) {
+            return false;
+        }
+
+        if (!inputTex_ || !scratchTex_ || !outputTex_ || !stagingTex_ ||
+            textureWidth_ != width || textureHeight_ != height) {
+            inputTex_.Release();
+            scratchTex_.Release();
+            outputTex_.Release();
+            stagingTex_.Release();
+
+            Diligent::TextureDesc desc;
+            desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+            desc.Width = width;
+            desc.Height = height;
+            desc.Format = Diligent::TEX_FORMAT_RGBA32_FLOAT;
+            desc.ArraySize = 1;
+            desc.MipLevels = 1;
+            desc.SampleCount = 1;
+            desc.Usage = Diligent::USAGE_DEFAULT;
+            desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
+            desc.Name = "Blur/InputTexture";
+            device_->CreateTexture(desc, nullptr, &inputTex_);
+
+            desc.BindFlags = Diligent::BIND_UNORDERED_ACCESS |
+                             Diligent::BIND_SHADER_RESOURCE;
+            desc.Name = "Blur/ScratchTexture";
+            device_->CreateTexture(desc, nullptr, &scratchTex_);
+            desc.Name = "Blur/OutputTexture";
+            device_->CreateTexture(desc, nullptr, &outputTex_);
+
+            Diligent::TextureDesc stagingDesc = desc;
+            stagingDesc.Usage = Diligent::USAGE_STAGING;
+            stagingDesc.BindFlags = Diligent::BIND_NONE;
+            stagingDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
+            stagingDesc.Name = "Blur/StagingTexture";
+            device_->CreateTexture(stagingDesc, nullptr, &stagingTex_);
+            textureWidth_ = width;
+            textureHeight_ = height;
+        }
+        if (!inputTex_ || !scratchTex_ || !outputTex_ || !stagingTex_) {
+            return false;
+        }
+
+        Diligent::TextureSubResData sub{};
+        sub.pData = data;
+        sub.Stride = static_cast<Diligent::Uint64>(width) * sizeof(float) * 4ull;
+        const Diligent::Box box(0, width, 0, height, 0, 1);
+        context_->UpdateTexture(inputTex_, 0, 0, box, sub,
+                                Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                                Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        return true;
     }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -354,24 +381,11 @@ public:
             pipelineReady_ = true;
         }
 
-        Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex;
-        if (!createTextureFromImage(src, device, &inputTex)) {
+        if (!ensureTextures(src)) {
             applyCPU(src, dst);
             return;
         }
-
-        Diligent::TextureDesc outDesc = inputTex->GetDesc();
-        outDesc.Usage = Diligent::USAGE_DEFAULT;
-        outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE;
-        outDesc.Name = "Blur/OutputTexture";
-        Diligent::RefCntAutoPtr<Diligent::ITexture> scratchTex;
-        Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex;
-        device->CreateTexture(outDesc, nullptr, &scratchTex);
-        device->CreateTexture(outDesc, nullptr, &outputTex);
-        if (!scratchTex || !outputTex) {
-            applyCPU(src, dst);
-            return;
-        }
+        const Diligent::TextureDesc outDesc = outputTex_->GetDesc();
         void* mapped = nullptr;
         ctx->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
         if (!mapped) {
@@ -383,8 +397,8 @@ public:
         params.horizontal = 1.0f;
         std::memcpy(mapped, &params, sizeof(params));
         ctx->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
-        if (!executor_->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-            !executor_->setTextureView("g_OutputTexture", scratchTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
+        if (!executor_->setTextureView("g_InputTexture", inputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor_->setTextureView("g_OutputTexture", scratchTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
             applyCPU(src, dst);
             return;
         }
@@ -401,14 +415,14 @@ public:
         params.horizontal = 0.0f;
         std::memcpy(mapped, &params, sizeof(params));
         ctx->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
-        if (!executor_->setTextureView("g_InputTexture", scratchTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-            !executor_->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
+        if (!executor_->setTextureView("g_InputTexture", scratchTex_->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor_->setTextureView("g_OutputTexture", outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
             applyCPU(src, dst);
             return;
         }
         executor_->dispatch(ctx, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-        if (!readbackTexture(device, ctx, outputTex, dst)) {
+        if (!readbackTexture(ctx, outputTex_, stagingTex_, dst)) {
             applyCPU(src, dst);
             return;
         }

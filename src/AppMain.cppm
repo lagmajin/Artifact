@@ -65,6 +65,7 @@ module;
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QVariant>
 #include <opencv2/opencv.hpp>
 #include <string>
@@ -172,7 +173,7 @@ using namespace Artifact;
 using namespace ArtifactCore;
 
 namespace {
-constexpr int kMainWindowLayoutVersion = 9;
+constexpr int kMainWindowLayoutVersion = 11;
 
 bool isArtifactProjectLaunchPath(const QString& filePath)
 {
@@ -2112,8 +2113,8 @@ int main(int argc, char *argv[]) {
                                    QSizePolicy::Expanding);
   compositionEditor->setMinimumSize(720, 420);
   suppressScrollBarsForViewportWidget(compositionEditor);
-  mw->addDockedWidget(QStringLiteral("Composition Viewer"),
-                      ads::CenterDockWidgetArea, compositionEditor);
+  mw->setCentralWorkspace(QStringLiteral("Composition Viewer"),
+                          compositionEditor);
   qInfo() << "[AppMain][Startup] Composition Viewer dock registration ms="
           << compositionEditorTimer.elapsed();
   QObject::connect(compositionEditor,
@@ -2264,7 +2265,7 @@ int main(int argc, char *argv[]) {
     mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("Composition View (Software)"),
         QStringLiteral("Composition View (Software)"),
-        ads::CenterDockWidgetArea,
+        ads::RightDockWidgetArea,
         [mw]() -> QWidget * {
           return new ArtifactSoftwareCompositionTestWidget(mw);
         },
@@ -2273,16 +2274,16 @@ int main(int argc, char *argv[]) {
     layerViewEditor->setSizePolicy(QSizePolicy::Expanding,
                                    QSizePolicy::Expanding);
     suppressScrollBarsForViewportWidget(layerViewEditor);
-    mw->addDockedWidgetTabbed(QStringLiteral("Layer View (Diligent)"),
-                              ads::CenterDockWidgetArea, layerViewEditor,
-                              QStringLiteral("Composition Viewer"));
+    mw->addDockedWidgetTabbed(QStringLiteral("Layer Solo View"),
+                              ads::RightDockWidgetArea, layerViewEditor,
+                              QString());
     mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("Layer View (Software)"),
-        QStringLiteral("Layer View (Software)"), ads::CenterDockWidgetArea,
+        QStringLiteral("Layer View (Software)"), ads::RightDockWidgetArea,
         [mw]() -> QWidget * {
           return new ArtifactSoftwareLayerTestWidget(mw);
         },
-        QStringLiteral("Layer View (Diligent)"));
+        QStringLiteral("Layer Solo View"));
     auto *projectManagerWidget = new ArtifactProjectManagerWidget(mw);
     projectManagerWidget->setMinimumWidth(240);
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea,
@@ -2301,8 +2302,8 @@ int main(int argc, char *argv[]) {
                               QStringLiteral("Project"));
     auto *contentsViewer = new ArtifactContentsViewer(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Contents Viewer"),
-                              ads::CenterDockWidgetArea, contentsViewer,
-                              QStringLiteral("Composition Viewer"));
+                              ads::RightDockWidgetArea, contentsViewer,
+                              QString());
     mw->setDockVisible(QStringLiteral("Contents Viewer"), false);
     QObject::connect(assetBrowser, &ArtifactAssetBrowser::itemDoubleClicked, mw,
                      [mw, contentsViewer](const QString &itemPath) {
@@ -2413,9 +2414,8 @@ int main(int argc, char *argv[]) {
             if (auto *service = ArtifactProjectService::instance()) {
               service->changeCurrentComposition(compId);
             }
-            mw->setDockVisible(QStringLiteral("Composition View (Software)"),
-                               true);
-            mw->activateDock(QStringLiteral("Composition View (Software)"));
+            mw->setDockVisible(QStringLiteral("Composition Viewer"), true);
+            mw->activateDock(QStringLiteral("Composition Viewer"));
             return;
           }
           if (typeVar.toInt() != static_cast<int>(eProjectItemType::Footage) ||
@@ -2610,7 +2610,7 @@ int main(int argc, char *argv[]) {
     mw->setDockVisible(QStringLiteral("AI Cloud"), false);
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
     mw->setDockVisible(QStringLiteral("Composition View (Software)"), false);
-    mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), false);
+    mw->setDockVisible(QStringLiteral("Layer Solo View"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Software)"), false);
 
     autoSaveManager->initialize(
@@ -2955,13 +2955,24 @@ int main(int argc, char *argv[]) {
                dopeSheetDockObjectId,
                status](const CompositionCreatedEvent &event) {
                 const CompositionID compId(event.compositionId);
+                const bool restoreUpdates = mw->updatesEnabled();
+                if (restoreUpdates) {
+                  mw->setUpdatesEnabled(false);
+                }
                 ArtifactPythonHookManager::runHook(
                     QStringLiteral("composition_created"),
                     QStringList() << event.compositionId);
                 QTimer::singleShot(
                     0, mw,
                     [mw, compId, timelineDockTitle, timelineDockObjectId,
-                     dopeSheetDockTitle, dopeSheetDockObjectId, status]() {
+                     dopeSheetDockTitle, dopeSheetDockObjectId, status,
+                     restoreUpdates]() {
+                      const auto updateGuard = qScopeGuard([mw, restoreUpdates]() {
+                        if (restoreUpdates) {
+                          mw->setUpdatesEnabled(true);
+                          mw->update();
+                        }
+                      });
                       const QString dockTitle = timelineDockTitle(compId);
                       const QString dockId = timelineDockObjectId(compId);
                       if (mw->hasDock(dockId)) {
@@ -2995,40 +3006,39 @@ int main(int argc, char *argv[]) {
                           },
                           QStringLiteral("timeline::"));
 
-                      // Use the regular dock path for Timeline. The lazy path wraps
-                      // the widget in an auto-scroll area, which prevents the
-                      // timeline's nested track views from receiving their normal
-                      // geometry/paint pass. Construct it after the composition
-                      // viewer has returned to the event loop, then bind the
-                      // composition before the first visible paint.
-                      QTimer::singleShot(0, mw,
-                                         [mw, compId, dockTitle, dockId, status]() {
-                        if (!mw || mw->hasDock(dockId)) {
-                          return;
-                        }
-                        auto *panel = new ArtifactTimelineWidget(mw);
-                        panel->setMinimumHeight(200);
-                        panel->resize(1200, 350);
-                        panel->setComposition(compId);
-                        panel->setWindowTitle(dockTitle);
-                        QObject::connect(
-                            panel,
-                            &ArtifactTimelineWidget::zoomLevelChanged,
-                            status,
-                            &ArtifactStatusBar::setZoomPercent);
-                        QObject::connect(
-                            panel,
-                            &ArtifactTimelineWidget::timelineDebugMessage,
-                            status,
-                            &ArtifactStatusBar::setTimelineDebugText);
-                        mw->addDockedWidgetTabbedWithId(
-                            dockTitle, dockId, ads::BottomDockWidgetArea,
-                            panel, QStringLiteral("timeline::"));
-                        mw->setDockSplitterSizes(dockId, {700, 350});
-                        mw->setDockVisible(dockId, true);
-                        mw->activateDock(dockId);
-                        panel->setFocus(Qt::OtherFocusReason);
-                      });
+                      // The lazy dock path wraps Timeline in an auto-scroll
+                      // host. Its nested owner-drawn panes then miss their
+                      // normal geometry/paint pass, leaving the panel blank.
+                      // Create the regular dock after this layout transaction
+                      // has restored main-window updates.
+                      QTimer::singleShot(
+                          0, mw, [mw, compId, dockTitle, dockId, status]() {
+                            if (!mw || mw->hasDock(dockId)) {
+                              return;
+                            }
+                            auto *panel = new ArtifactTimelineWidget(mw);
+                            panel->setMinimumHeight(200);
+                            panel->resize(1200, 350);
+                            panel->setComposition(compId);
+                            panel->setWindowTitle(dockTitle);
+                            QObject::connect(
+                                panel,
+                                &ArtifactTimelineWidget::zoomLevelChanged,
+                                status,
+                                &ArtifactStatusBar::setZoomPercent);
+                            QObject::connect(
+                                panel,
+                                &ArtifactTimelineWidget::timelineDebugMessage,
+                                status,
+                                &ArtifactStatusBar::setTimelineDebugText);
+                            mw->addDockedWidgetTabbedWithId(
+                                dockTitle, dockId, ads::BottomDockWidgetArea,
+                                panel, QStringLiteral("timeline::"));
+                            mw->setDockSplitterSizes(dockId, {700, 350});
+                            mw->setDockVisible(dockId, true);
+                            mw->activateDock(dockId);
+                            panel->setFocus(Qt::OtherFocusReason);
+                          });
 
                     });
               }));

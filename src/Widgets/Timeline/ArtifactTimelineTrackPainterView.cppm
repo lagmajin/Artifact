@@ -198,6 +198,22 @@ bool isAcceptedDroppedLayerType(const LayerType type) {
          type == LayerType::Audio || type == LayerType::Shape;
 }
 
+bool hasAcceptedDroppedAssetUrl(const QMimeData *mime) {
+  if (!mime || !mime->hasUrls()) {
+    return false;
+  }
+  // dragMoveEvent can fire many times per second. Keep hover validation free
+  // of filesystem probes; the drop path performs the authoritative exists /
+  // directory checks once before importing.
+  for (const auto &url : mime->urls()) {
+    if (url.isLocalFile() &&
+        isAcceptedDroppedLayerType(inferDroppedLayerType(url.toLocalFile()))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 QStringList collectDroppedAssetPaths(const QMimeData *mime) {
   QStringList paths;
   if (!mime) {
@@ -8492,7 +8508,8 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       editSourceTextAct = menu.addAction(
           tt("timeline.edit_source_text_at_playhead",
              "Edit Source Text at Playhead..."));
-      setActionIcon(editSourceTextAct, QStringLiteral("timeline_keyframe_edit"));
+      setActionIcon(editSourceTextAct,
+                    QStringLiteral("timeline_keyframe_interpolation"));
     }
     addKeyframeAct = menu.addAction(
         isSourceTextProperty
@@ -10241,8 +10258,7 @@ void ArtifactTimelineTrackPainterView::leaveEvent(QEvent *event) {
 
 void ArtifactTimelineTrackPainterView::dragEnterEvent(
     QDragEnterEvent *event) {
-  const QStringList validPaths = collectDroppedAssetPaths(event->mimeData());
-  if (!validPaths.isEmpty()) {
+  if (hasAcceptedDroppedAssetUrl(event->mimeData())) {
     event->acceptProposedAction();
     return;
   }
@@ -10250,8 +10266,7 @@ void ArtifactTimelineTrackPainterView::dragEnterEvent(
 }
 
 void ArtifactTimelineTrackPainterView::dragMoveEvent(QDragMoveEvent *event) {
-  const QStringList validPaths = collectDroppedAssetPaths(event->mimeData());
-  if (!validPaths.isEmpty()) {
+  if (hasAcceptedDroppedAssetUrl(event->mimeData())) {
     event->acceptProposedAction();
     return;
   }

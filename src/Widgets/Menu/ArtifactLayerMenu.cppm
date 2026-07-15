@@ -70,7 +70,6 @@ import Artifact.Widgets.ArtifactPropertyWidget;
 import Artifact.Composition.Abstract;
 import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Widgets.CreatePlaneLayerDialog;
-import Artifact.Widgets.QuickLayerCreationDialog;
 import Artifact.Widgets.CreateCameraLayerDialog;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Tool.CameraTracker;
@@ -774,6 +773,7 @@ public:
 
     QMenu* createMenu = nullptr;
     QMenu* createShapeMenu = nullptr;
+    QMenu* create3DMenu = nullptr;
     QMenu* createPlacementMenu = nullptr;
     QMenu* switchMenu = nullptr;
     QMenu* selectMenu = nullptr;
@@ -1129,18 +1129,23 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addAction(createParticleAction);
     createMenu->addAction(createPaintAction);
     createMenu->addAction(createFormParticleAction);
-    createMenu->addAction(createTerrainAction);
-    createMenu->addAction(createPathTubeAction);
     createMenu->addAction(createCameraAction);
     createMenu->addAction(createLightAction);
     createMenu->addAction(createAudioAction);
     createMenu->addAction(createSvgAction);
-    createMenu->addAction(createModel3DAction);
-    createMenu->addAction(createPlane3DAction);
-    createMenu->addAction(createBox3DAction);
-    createMenu->addAction(createSphere3DAction);
-    createMenu->addAction(createCylinder3DAction);
-    createMenu->addAction(createCone3DAction);
+    create3DMenu = new QMenu(QStringLiteral("3Dレイヤー(&3)"), createMenu);
+    create3DMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    create3DMenu->addAction(createModel3DAction);
+    create3DMenu->addSeparator();
+    create3DMenu->addAction(createPlane3DAction);
+    create3DMenu->addAction(createBox3DAction);
+    create3DMenu->addAction(createSphere3DAction);
+    create3DMenu->addAction(createCylinder3DAction);
+    create3DMenu->addAction(createCone3DAction);
+    create3DMenu->addSeparator();
+    create3DMenu->addAction(createTerrainAction);
+    create3DMenu->addAction(createPathTubeAction);
+    createMenu->addMenu(create3DMenu);
     createMenu->addMenu(createPlacementMenu);
     createMenu->addAction(cycleLayerForwardAction);
     createMenu->addAction(cycleLayerReverseAction);
@@ -2214,58 +2219,15 @@ void ArtifactLayerMenu::Impl::handleCreateSolid()
         QMessageBox::warning(parentWindow, "Layer", "コンポジションが選択されていません。");
         return;
     }
-    auto* const menu = menu_;
     QWidget* parentWindow = mainWindow_ ? mainWindow_ : (menu_ ? menu_->window() : nullptr);
-    QuickLayerCreationDialog dialog(parentWindow);
+    CreateSolidLayerSettingDialog dialog(layerCreationPlacementMode(), parentWindow);
     dialog.setModal(true);
     if (dialog.exec() != QDialog::Accepted || !service) {
         return;
     }
-    const QuickLayerCreationOptions options = dialog.submittedOptions();
-    const ArtifactSolidLayerInitParams params = options.solidParams;
-    const bool placeAtCurrentFrame = placeAtCurrentFrameRequested(layerCreationPlacementMode());
-    QTimer::singleShot(0, menu, [service, params, options, menu, placeAtCurrentFrame]() {
-        Q_UNUSED(menu);
-        service->addLayerToCurrentComposition(params, true, placeAtCurrentFrame);
-        auto layer = ArtifactLayerSelectionManager::instance()->currentLayer();
-        if (!layer) {
-            return;
-        }
-        if (options.envelope.enabled) {
-            layer->setEffectEnvelope(options.envelope);
-        }
-        if (options.maskShape == QuickLayerMaskShape::None) {
-            return;
-        }
-        const double width = static_cast<double>(params.width());
-        const double height = static_cast<double>(params.height());
-        const double cx = width * 0.5;
-        const double cy = height * 0.5;
-        const double rx = width * 0.5;
-        const double ry = height * 0.5;
-        MaskPath path;
-        if (options.maskShape == QuickLayerMaskShape::Rectangle) {
-            for (const QPointF point : {QPointF(0.0, 0.0), QPointF(width, 0.0),
-                                        QPointF(width, height), QPointF(0.0, height)}) {
-                path.addVertex(MaskVertex{point, QPointF(), QPointF()});
-            }
-        } else {
-            constexpr int samples = 32;
-            for (int i = 0; i < samples; ++i) {
-                const double angle = (2.0 * std::numbers::pi * i) / samples;
-                path.addVertex(MaskVertex{QPointF(cx + rx * std::cos(angle),
-                                                  cy + ry * std::sin(angle)),
-                                          QPointF(), QPointF()});
-            }
-        }
-        path.setClosed(true);
-        path.setFeather(options.maskFeather);
-        path.setName(UniString(QStringLiteral("Quick Mask")));
-        LayerMask mask;
-        mask.addMaskPath(path);
-        layer->addMask(mask);
-        layer->changed();
-    });
+    service->addLayerToCurrentComposition(
+        dialog.submittedParams(), true,
+        dialog.submittedPlacementMode() == LayerCreationPlacementMode::Playhead);
 }
 
 void ArtifactLayerMenu::Impl::handleCreateNull()
@@ -2440,6 +2402,9 @@ void ArtifactLayerMenu::Impl::handleCreateCamera()
     camera->setBlurAmount(dialog.blurAmount());
     camera->setUseManualFov(true);
     camera->setFov(dialog.fov());
+    const QVector3D cameraPosition = camera->position3D();
+    camera->setPosition3D(QVector3D(cameraPosition.x(), cameraPosition.y(),
+                                    std::max(1.0f, dialog.zoom())));
     camera->setLocked(dialog.cameraLocked());
 }
 

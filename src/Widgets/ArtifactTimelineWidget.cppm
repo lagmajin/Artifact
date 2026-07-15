@@ -8,6 +8,7 @@ module;
 #include <QFocusEvent>
 #include <QEvent>
 #include <QHash>
+#include <QIcon>
 #include <QLabel>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -25,6 +26,7 @@ module;
 #include <QDebug>
 #include <QSet>
 #include <QShortcut>
+#include <QSize>
 #include <QStandardItem>
 #include <QStringList>
 #include <QToolButton>
@@ -97,6 +99,7 @@ import Undo.UndoManager;
 import Time.Rational;
 import UI.ShortcutBindings;
 import Artifact.Audio.ScrubController;
+import Utils.Path;
 
 namespace Artifact {
 
@@ -125,6 +128,18 @@ void styleTimelineToolButton(QToolButton* button)
   pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
   pal.setColor(QPalette::WindowText, QColor(theme.textColor));
   button->setPalette(pal);
+}
+
+void setTimelineStudioToolIcon(QToolButton* button, const QString& iconName)
+{
+  if (!button) {
+    return;
+  }
+  button->setIcon(QIcon(ArtifactCore::resolveIconPath(
+      QStringLiteral("Studio/%1.svg").arg(iconName))));
+  button->setIconSize(QSize(18, 18));
+  button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+  button->setText(QString{});
 }
 
 std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
@@ -4114,9 +4129,10 @@ protected:
     painter.setRenderHint(QPainter::Antialiasing, false);
 
     const QRect bounds = rect();
-    const QColor base = palette().color(QPalette::Window).lighter(108);
-    const QColor border = palette().color(QPalette::Mid).darker(110);
-    const QColor topShade = palette().color(QPalette::Shadow);
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    const QColor base(theme.backgroundColor);
+    const QColor border(theme.borderColor);
+    const QColor topShade(theme.secondaryBackgroundColor);
 
     painter.fillRect(bounds, base);
     painter.setPen(QPen(border, 1));
@@ -5136,6 +5152,24 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   styleTimelineToolButton(keyframeEaseInButton);
   styleTimelineToolButton(keyframeEaseOutButton);
   styleTimelineToolButton(keyframeEaseInOutButton);
+  setTimelineStudioToolIcon(miniKeyEditorButton,
+                            QStringLiteral("timeline_switch_curve_editor"));
+  setTimelineStudioToolIcon(easingLabButton,
+                            QStringLiteral("timeline_keyframe_interpolation"));
+  setTimelineStudioToolIcon(keyPatternButton,
+                            QStringLiteral("timeline_keyframe_duplicate"));
+  setTimelineStudioToolIcon(keyframeAddButton,
+                            QStringLiteral("timeline_keyframe_add"));
+  setTimelineStudioToolIcon(keyframeRemoveButton,
+                            QStringLiteral("timeline_keyframe_remove"));
+  setTimelineStudioToolIcon(keyframeCopyButton,
+                            QStringLiteral("timeline_keyframe_copy"));
+  setTimelineStudioToolIcon(keyframePasteButton,
+                            QStringLiteral("timeline_keyframe_paste"));
+  setTimelineStudioToolIcon(keyframeEaseCopyButton,
+                            QStringLiteral("timeline_keyframe_copy"));
+  setTimelineStudioToolIcon(keyframeEasePasteButton,
+                            QStringLiteral("timeline_keyframe_paste"));
   auto currentLayerLabel = new QLabel();
   auto recentLayerLabel = new QLabel();
   auto frameSummaryLabel = new QLabel();
@@ -7366,9 +7400,10 @@ void ArtifactTimelineWidget::paintEvent(QPaintEvent *event) {
   painter.setRenderHint(QPainter::Antialiasing, false);
 
   const QRect bounds = rect();
-  const QColor base = palette().color(QPalette::Window);
-  const QColor border = palette().color(QPalette::Mid).darker(115);
-  const QColor topShade = palette().color(QPalette::Shadow);
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  const QColor base(theme.backgroundColor);
+  const QColor border(theme.borderColor);
+  const QColor topShade(theme.secondaryBackgroundColor);
 
   painter.fillRect(bounds, base);
 

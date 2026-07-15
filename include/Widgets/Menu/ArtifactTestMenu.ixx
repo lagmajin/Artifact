@@ -1,6 +1,8 @@
 module;
 #include <utility>
 #include <QtWidgets/QMenu>
+#include <QtGui/QShowEvent>
+#include <QtGui/QMouseEvent>
 export module Menu.Test;
 
 
@@ -48,8 +50,12 @@ export namespace Artifact {
 
  class ArtifactWidgetTestMenu :public QMenu {
  public:
-  explicit ArtifactWidgetTestMenu(QWidget* parent = nullptr);
+ explicit ArtifactWidgetTestMenu(QWidget* parent = nullptr);
   ~ArtifactWidgetTestMenu();
+
+ protected:
+  void showEvent(QShowEvent* event) override;
+  void mouseReleaseEvent(QMouseEvent* event) override;
 
  };
 

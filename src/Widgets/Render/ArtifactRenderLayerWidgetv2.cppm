@@ -13,6 +13,7 @@ module;
 #include <QDir>
 #include <QFileDialog>
 #include <QFont>
+#include <QFontMetrics>
 #include <QAction>
 #include <QApplication>
 #include <QImage>
@@ -52,6 +53,7 @@ import Artifact.Event.Types;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Shape;
+import Artifact.Effect.Abstract;
 import Shape.Operator;
 import Property.Abstract;
 
@@ -77,9 +79,22 @@ enum class LayerBackgroundMode {
   MayaGradient
 };
 
+enum class LayerSurfaceMode {
+  Edit,
+  Inspect,
+  Impact
+};
+
+const FloatColor kImpactParentColor{0.30f, 0.86f, 0.58f, 0.88f};
+const FloatColor kImpactChildColor{0.24f, 0.66f, 1.0f, 0.82f};
+const FloatColor kImpactMatteColor{0.78f, 0.42f, 1.0f, 0.90f};
+const FloatColor kImpactDependentColor{1.0f, 0.58f, 0.16f, 0.88f};
+
 QString editModeLabel(EditMode mode)
 {
   switch (mode) {
+  case EditMode::Transform:
+    return QStringLiteral("Move");
   case EditMode::Mask:
     return QStringLiteral("Mask");
   case EditMode::Paint:
@@ -103,7 +118,185 @@ QString displayModeLabel(DisplayMode mode)
     return QStringLiteral("Wireframe");
   case DisplayMode::Color:
   default:
-    return QStringLiteral("Color");
+    return QStringLiteral("Final");
+  }
+}
+
+QString layerTypeLabel(const ArtifactAbstractLayerPtr& layer)
+{
+  if (!layer) return QStringLiteral("—");
+
+  QString type;
+  if (std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+    type = QStringLiteral("Shape");
+  } else if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+    type = QStringLiteral("Image");
+  } else {
+    type = layer->className().toQString().trimmed();
+    if (type.startsWith(QStringLiteral("Artifact"))) {
+      type.remove(0, 8);
+    }
+    if (type.endsWith(QStringLiteral("Layer"))) {
+      type.chop(5);
+    }
+    if (type.isEmpty()) {
+      type = QStringLiteral("Layer");
+    }
+    QString spaced;
+    spaced.reserve(type.size() + 4);
+    for (qsizetype i = 0; i < type.size(); ++i) {
+      if (i > 0 && type.at(i).isUpper() && type.at(i - 1).isLower()) {
+        spaced.append(QStringLiteral(" "));
+      }
+      spaced.append(type.at(i));
+    }
+    type = spaced;
+  }
+
+  const QString dimension = layer->is3D()
+      ? QStringLiteral("3D") : QStringLiteral("2D");
+  if (!type.contains(dimension, Qt::CaseInsensitive)) {
+    type += QStringLiteral(" %1").arg(dimension);
+  }
+  return type;
+}
+
+QString layerNameLabel(const ArtifactAbstractLayerPtr& layer)
+{
+  if (!layer) return QStringLiteral("No layer selected");
+  const QString name = layer->layerName().trimmed();
+  return name.isEmpty() ? QStringLiteral("Untitled Layer") : name;
+}
+
+bool layerEditModeAvailable(const ArtifactAbstractLayerPtr& layer,
+                            EditMode mode)
+{
+  if (mode == EditMode::View) return true;
+  if (!layer || !layer->isVisible() || layer->isLocked()) return false;
+  if (mode == EditMode::Shape || mode == EditMode::Paint) {
+    return static_cast<bool>(std::dynamic_pointer_cast<ArtifactShapeLayer>(layer));
+  }
+  if (mode == EditMode::Mask) return layer->maskCount() > 0;
+  return true;
+}
+
+FramePosition currentLayerViewFrame()
+{
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+    return playback->currentFrame();
+  }
+  if (auto* project = ArtifactProjectService::instance()) {
+    if (auto composition = project->currentComposition().lock()) {
+      return composition->framePosition();
+    }
+  }
+  return FramePosition{};
+}
+
+QRectF viewportSurfaceModeRect(float viewportWidth, float viewportHeight)
+{
+  if (viewportWidth < 220.0f || viewportHeight < 112.0f) return {};
+  const float width = viewportWidth >= 980.0f
+      ? 430.0f
+      : viewportWidth >= 720.0f
+          ? 284.0f : std::max(1.0f, viewportWidth - 16.0f);
+  const float x = viewportWidth >= 720.0f
+      ? (viewportWidth - width) * 0.5f : 8.0f;
+  return QRectF(x, 64.0f, width, 38.0f);
+}
+
+QRectF viewportSurfaceModeItemsRect(float viewportWidth, float viewportHeight)
+{
+  const QRectF panel = viewportSurfaceModeRect(viewportWidth, viewportHeight);
+  if (panel.isEmpty() || panel.width() <= 284.0) return panel;
+  return QRectF(panel.x(), panel.y(), 284.0, panel.height());
+}
+
+QRectF viewportSurfaceSoloRect(float viewportWidth, float viewportHeight)
+{
+  const QRectF panel = viewportSurfaceModeRect(viewportWidth, viewportHeight);
+  if (panel.isEmpty() || panel.width() <= 284.0) return {};
+  return QRectF(panel.right() - 78.0, panel.y(), 78.0, panel.height());
+}
+
+QRectF viewportEditToolRect(float viewportWidth, float viewportHeight)
+{
+  return viewportWidth >= 1000.0f && viewportHeight >= 300.0f
+      ? QRectF(16.0f, 64.0f, 64.0f, 152.0f) : QRectF{};
+}
+
+QRectF viewportDisplayModeRect(float viewportWidth, float viewportHeight)
+{
+  return viewportWidth >= 860.0f && viewportHeight >= 160.0f
+      ? QRectF(viewportWidth - 308.0f, 112.0f, 292.0f, 38.0f) : QRectF{};
+}
+
+QRectF viewportOrientationRect(float viewportWidth, float viewportHeight)
+{
+  return viewportWidth >= 860.0f && viewportHeight >= 112.0f
+      ? QRectF(viewportWidth - 102.0f, 16.0f, 86.0f, 86.0f)
+      : QRectF{};
+}
+
+QRectF viewportZoomRect(float viewportWidth, float viewportHeight)
+{
+  if (viewportWidth < 190.0f || viewportHeight < 64.0f) return {};
+  const float width = viewportWidth >= 720.0f
+      ? 216.0f : std::min(174.0f, viewportWidth - 16.0f);
+  return QRectF((viewportWidth - width) * 0.5f, 16.0f, width, 38.0f);
+}
+
+float viewportZoomStop(float panelWidth, int stop)
+{
+  switch (stop) {
+  case 1: return panelWidth * 0.24f;
+  case 2: return panelWidth * 0.61f;
+  case 3: return panelWidth * 0.805f;
+  case 4: return panelWidth;
+  default: return 0.0f;
+  }
+}
+
+int viewportZoomControlIndex(float panelWidth, float relativeX)
+{
+  if (relativeX < viewportZoomStop(panelWidth, 1)) return 0;
+  if (relativeX < viewportZoomStop(panelWidth, 2)) return 1;
+  if (relativeX < viewportZoomStop(panelWidth, 3)) return 2;
+  return 3;
+}
+
+QRectF viewportStateCardRect(float viewportWidth, float viewportHeight)
+{
+  if (viewportWidth < 980.0f || viewportHeight < 220.0f) return {};
+  const float width = std::clamp(viewportWidth * 0.22f, 220.0f, 310.0f);
+  return QRectF((viewportWidth - width) * 0.5f,
+                std::max(68.0f, viewportHeight - 52.0f),
+                width, 36.0f);
+}
+
+QString viewportChromeToolTip(int control)
+{
+  switch (control) {
+  case 0: return QStringLiteral("View mode");
+  case 1: return QStringLiteral("Transform layer");
+  case 2: return QStringLiteral("Edit shape path");
+  case 3: return QStringLiteral("Edit layer mask");
+  case 10: return QStringLiteral("Show final color (Alt+C)");
+  case 11: return QStringLiteral("Show alpha channel (Alt+A)");
+  case 12: return QStringLiteral("Show mask overlay (Alt+M)");
+  case 13: return QStringLiteral("Show wireframe (Alt+W)");
+  case 20: return QStringLiteral("Zoom out (−)");
+  case 21: return QStringLiteral("Reset zoom to 100% (1)");
+  case 22: return QStringLiteral("Zoom in (+)");
+  case 23: return QStringLiteral("Fit layer to viewport (F)");
+  case 30: return QStringLiteral("Edit surface (Alt+1)");
+  case 31: return QStringLiteral("Inspect layer values (Alt+2)");
+  case 32: return QStringLiteral("Inspect layer relationships (Alt+3)");
+  case 40: return QStringLiteral("Toggle layer visibility (Alt+V)");
+  case 41: return QStringLiteral("Toggle layer lock (Alt+L)");
+  case 42: return QStringLiteral("Toggle layer solo (Alt+S)");
+  case 43: return QStringLiteral("Toggle layer solo (Alt+S)");
+  default: return {};
   }
 }
 
@@ -213,10 +406,45 @@ void publishModeReadout(QWidget *widget, EditMode editMode, DisplayMode displayM
 
   const QString editLabel = editModeLabel(editMode);
   const QString displayLabel = displayModeLabel(displayMode);
+  QString surfaceLabel = widget->property("artifactSurfaceMode").toString();
+  if (surfaceLabel.isEmpty()) {
+    surfaceLabel = QStringLiteral("Edit");
+  }
   widget->setProperty("artifactEditMode", editLabel);
   widget->setProperty("artifactDisplayMode", displayLabel);
   widget->setProperty("artifactModeSummary",
                       QStringLiteral("%1 / %2").arg(editLabel, displayLabel));
+  widget->setProperty(
+      "artifactViewSummary",
+      QStringLiteral("%1 | %2 / %3")
+          .arg(surfaceLabel, editLabel, displayLabel));
+  widget->setAccessibleDescription(
+      QStringLiteral("%1 surface, %2 mode, %3 display")
+          .arg(surfaceLabel, editLabel, displayLabel));
+}
+
+void publishLayerReadout(QWidget* widget,
+                         const ArtifactAbstractLayerPtr& layer)
+{
+  if (!widget) return;
+  const QString name = layerNameLabel(layer);
+  widget->setProperty("artifactLayerName", name);
+  widget->setProperty("artifactLayerType", layerTypeLabel(layer));
+  widget->setProperty("artifactLayerVisible", layer && layer->isVisible());
+  widget->setProperty("artifactLayerLocked", layer && layer->isLocked());
+  widget->setProperty("artifactLayerSolo", layer && layer->isSolo());
+  widget->setProperty(
+      "artifactLayerActive",
+      layer && layer->isActiveAt(currentLayerViewFrame()));
+  widget->setProperty(
+      "artifactLayerCacheState",
+      !layer || !layer->usesLayerCache()
+          ? QStringLiteral("Off")
+          : layer->isDirty() ? QStringLiteral("Dirty")
+                             : QStringLiteral("Ready"));
+  widget->setAccessibleName(layer
+      ? QStringLiteral("Layer Solo View — %1").arg(name)
+      : QStringLiteral("Layer Solo View"));
 }
 
 QImage makeMayaGradientSprite(const QSize& size, const FloatColor& bgColor)
@@ -691,10 +919,21 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
  RefCntAutoPtr<ITexture> m_layerRT;
  RefCntAutoPtr<IFence> m_layer_fence;
   LayerBackgroundMode backgroundMode_ = LayerBackgroundMode::Alpha;
+  LayerSurfaceMode surfaceMode_ = LayerSurfaceMode::Edit;
+  EditMode editModeBeforeSurface_ = EditMode::View;
   EditMode editMode_ = EditMode::View;
   DisplayMode displayMode_ = DisplayMode::Color;
   DisplayMode displayModeBeforeMask_ = DisplayMode::Color;
   int hoveredChromeControl_ = -1;
+  bool surfaceInfoDirty_ = true;
+  LayerID surfaceInfoLayerId_{};
+  LayerSurfaceMode surfaceInfoMode_ = LayerSurfaceMode::Edit;
+  QString surfaceInfoTitle_;
+  QString surfaceInfoBody_;
+  std::vector<LayerID> impactParentLayerIds_;
+  std::vector<LayerID> impactChildLayerIds_;
+  std::vector<LayerID> impactMatteLayerIds_;
+  std::vector<LayerID> impactDependentLayerIds_;
   QImage cachedMayaGradientSprite_;
   QSize cachedMayaGradientSize_;
   LayerID targetLayerId_{};
@@ -734,6 +973,8 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   std::vector<QPointF> shapeEditBefore_;
   
   void defaultHandleKeyPressEvent(QKeyEvent* event);
+  void setSurfaceMode(LayerSurfaceMode nextMode);
+  bool toggleLayerState(int stateIndex);
   bool isSolidLayerForPreview(const ArtifactAbstractLayerPtr& layer);
   bool tryGetSolidPreviewColor(const ArtifactAbstractLayerPtr& layer, FloatColor& outColor);
   void defaultHandleKeyReleaseEvent(QKeyEvent* event);
@@ -817,7 +1058,9 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   bool hitTestStarInnerRadiusHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos) const;
   void drawShapeParamHandles(const ArtifactAbstractLayerPtr& layer);
   void drawTransformHUD(const ArtifactAbstractLayerPtr& layer);
+  void drawSurfaceOverlay(const ArtifactAbstractLayerPtr& layer);
   void drawViewportChrome(const ArtifactAbstractLayerPtr& layer);
+  void refreshSurfaceInfo(const ArtifactAbstractLayerPtr& layer);
   bool handleViewportChromePress(const QPointF& viewportPos);
   bool updateViewportChromeHover(const QPointF& viewportPos);
   void drawCustomPathOverlay(const ArtifactAbstractLayerPtr& layer);
@@ -899,6 +1142,70 @@ void ArtifactLayerEditorWidgetV2::Impl::destroy()
   widget_.clear();
  }
 
+void ArtifactLayerEditorWidgetV2::Impl::setSurfaceMode(
+    LayerSurfaceMode nextMode)
+{
+ if (!widget_ || surfaceMode_ == nextMode) return;
+
+ if (surfaceMode_ == LayerSurfaceMode::Edit) {
+  editModeBeforeSurface_ = editMode_;
+ }
+ surfaceMode_ = nextMode;
+ const QString surfaceName = nextMode == LayerSurfaceMode::Edit
+     ? QStringLiteral("Edit")
+     : nextMode == LayerSurfaceMode::Inspect
+         ? QStringLiteral("Inspect")
+         : QStringLiteral("Impact");
+ widget_->setProperty("artifactSurfaceMode", surfaceName);
+ surfaceInfoDirty_ = true;
+
+ auto* editor = static_cast<ArtifactLayerEditorWidgetV2*>(widget_.data());
+ editor->setEditMode(nextMode == LayerSurfaceMode::Edit
+                         ? editModeBeforeSurface_
+                         : EditMode::View);
+ if (transformGizmo_ && nextMode != LayerSurfaceMode::Edit) {
+  transformGizmo_->setLayer(nullptr);
+ }
+ requestRender();
+}
+
+bool ArtifactLayerEditorWidgetV2::Impl::toggleLayerState(int stateIndex)
+{
+ auto layer = targetLayer();
+ if (!layer || stateIndex < 0 || stateIndex > 2) return false;
+
+ if (auto* undo = UndoManager::instance()) {
+  if (stateIndex == 0) {
+   undo->push(std::make_unique<SetLayerVisibilityCommand>(
+       layer, !layer->isVisible()));
+  } else if (stateIndex == 1) {
+   undo->push(std::make_unique<SetLayerLockCommand>(
+       layer, !layer->isLocked()));
+  } else {
+   undo->push(std::make_unique<SetLayerSoloCommand>(
+       layer, !layer->isSolo()));
+  }
+ }
+
+ publishLayerReadout(widget_, layer);
+ surfaceInfoDirty_ = true;
+ if (!layer->isVisible() || layer->isLocked()) {
+  hoveredCornerRadius_ = false;
+  hoveredStarInnerRadius_ = false;
+  hoveredShapeVertexIndex_ = -1;
+  hoveredShapeSegmentIndex_ = -1;
+  hoveredPathVertexIndex_ = -1;
+  hoveredPathTangentIndex_ = -1;
+  hoveredMaskIndex_ = -1;
+  hoveredPathIndex_ = -1;
+  hoveredVertexIndex_ = -1;
+  hoveredMaskHandleType_ = -1;
+ }
+ syncTransformGizmo(layer);
+ requestRender();
+ return true;
+}
+
  void ArtifactLayerEditorWidgetV2::Impl::defaultHandleKeyPressEvent(QKeyEvent* event)
  {
   if (!event || !renderer_ || !widget_) {
@@ -906,6 +1213,50 @@ void ArtifactLayerEditorWidgetV2::Impl::destroy()
   }
 
   const QPointF center(widget_->width() * 0.5, widget_->height() * 0.5);
+  if (event->modifiers().testFlag(Qt::AltModifier)) {
+   int stateIndex = -1;
+   if (event->key() == Qt::Key_V) stateIndex = 0;
+   if (event->key() == Qt::Key_L) stateIndex = 1;
+   if (event->key() == Qt::Key_S) stateIndex = 2;
+   if (stateIndex >= 0 && targetLayer()) {
+    if (!event->isAutoRepeat()) {
+     toggleLayerState(stateIndex);
+    }
+    event->accept();
+    return;
+   }
+
+   if (event->key() >= Qt::Key_1 && event->key() <= Qt::Key_3) {
+    const LayerSurfaceMode modes[] = {
+        LayerSurfaceMode::Edit,
+        LayerSurfaceMode::Inspect,
+        LayerSurfaceMode::Impact};
+    setSurfaceMode(modes[event->key() - Qt::Key_1]);
+    event->accept();
+    return;
+   }
+
+   DisplayMode nextDisplayMode;
+   bool hasDisplayMode = true;
+   switch (event->key()) {
+   case Qt::Key_C: nextDisplayMode = DisplayMode::Color; break;
+   case Qt::Key_A: nextDisplayMode = DisplayMode::Alpha; break;
+   case Qt::Key_M: nextDisplayMode = DisplayMode::Mask; break;
+   case Qt::Key_W: nextDisplayMode = DisplayMode::Wireframe; break;
+   default: hasDisplayMode = false; break;
+   }
+   if (hasDisplayMode) {
+    static_cast<ArtifactLayerEditorWidgetV2*>(widget_.data())
+        ->setDisplayMode(nextDisplayMode);
+    if (auto* app = Artifact::ApplicationService::instance()) {
+     if (auto* toolService = app->toolService()) {
+      toolService->setDisplayMode(nextDisplayMode);
+     }
+    }
+    event->accept();
+    return;
+   }
+  }
  switch (event->key()) {
   case Qt::Key_F:
    renderer_->fitToViewport();
@@ -1529,7 +1880,9 @@ void ArtifactLayerEditorWidgetV2::Impl::syncTransformGizmo(const ArtifactAbstrac
  if (!transformGizmo_) {
   return;
  }
- if (!layer || !layer->isVisible() || displayMode_ == DisplayMode::Mask ||
+ if (surfaceMode_ != LayerSurfaceMode::Edit ||
+     !layer || !layer->isVisible() || layer->isLocked() ||
+     displayMode_ == DisplayMode::Mask ||
      isMaskEditingMode(editMode_)) {
   transformGizmo_->setLayer(nullptr);
   return;
@@ -1650,33 +2003,473 @@ if (shape->shapeType() == Artifact::ShapeType::Rect ||
 }
 
 // ============================================================
-// Phase 4: XYWH HUD during gizmo drag
+// Phase 4: viewport-fixed XYWH selection HUD
 // ============================================================
 
 void ArtifactLayerEditorWidgetV2::Impl::drawTransformHUD(const ArtifactAbstractLayerPtr& layer)
 {
- if (!renderer_ || !layer || !transformGizmo_) return;
- if (!transformGizmo_->isDragging()) return;
- const QRectF canvasBB = transformGizmo_->currentCanvasBoundingRect();
- if (!canvasBB.isValid()) return;
- const Detail::float2 topLeftVP = renderer_->canvasToViewport(
-     {static_cast<float>(canvasBB.x()), static_cast<float>(canvasBB.y())});
+ if (!renderer_ || !widget_ || !layer) return;
+ QRectF canvasBB = layer->transformedBoundingBox();
+ if (transformGizmo_ && transformGizmo_->isDragging()) {
+  const QRectF draggingBounds = transformGizmo_->currentCanvasBoundingRect();
+  if (draggingBounds.isValid() && !draggingBounds.isEmpty()) {
+   canvasBB = draggingBounds;
+  }
+ }
+ if (!canvasBB.isValid() || canvasBB.isEmpty()) return;
+ const Detail::float2 bottomRightVP = renderer_->canvasToViewport(
+     {static_cast<float>(canvasBB.right()),
+      static_cast<float>(canvasBB.bottom())});
+ if (!std::isfinite(bottomRightVP.x) || !std::isfinite(bottomRightVP.y)) {
+  return;
+ }
  const float x = static_cast<float>(canvasBB.x());
  const float y = static_cast<float>(canvasBB.y());
  const float w = static_cast<float>(canvasBB.width());
  const float h = static_cast<float>(canvasBB.height());
- const QString text = QStringLiteral("X: %1  Y: %2\nW: %3  H: %4")
-     .arg(static_cast<int>(x))
-     .arg(static_cast<int>(y))
-     .arg(static_cast<int>(w))
-     .arg(static_cast<int>(h));
- const float hudX = topLeftVP.x + 8.0f;
- const float hudY = topLeftVP.y - 56.0f;
- renderer_->drawRectLocal(hudX, hudY, 120.0f, 50.0f, FloatColor{0,0,0,0.55f}, 1.0f);
- QFont hudFont;
+ const QString text = QStringLiteral("X %1    Y %2\nW %3    H %4")
+     .arg(QString::number(x, 'f', 0))
+     .arg(QString::number(y, 'f', 0))
+     .arg(QString::number(w, 'f', 0))
+     .arg(QString::number(h, 'f', 0));
+
+ const QSize viewportSize = physicalViewportSize(widget_);
+ const float viewportW = static_cast<float>(std::max(1, viewportSize.width()));
+ const float viewportH = static_cast<float>(std::max(1, viewportSize.height()));
+ constexpr float hudW = 132.0f;
+ constexpr float hudH = 54.0f;
+ constexpr float gap = 8.0f;
+ if (viewportW < hudW + gap * 2.0f ||
+     viewportH < hudH + gap * 2.0f) {
+  return;
+ }
+ float hudX = bottomRightVP.x + gap;
+ float hudY = bottomRightVP.y + gap;
+ if (hudX + hudW > viewportW - gap) {
+  hudX = bottomRightVP.x - hudW - gap;
+ }
+ if (hudY + hudH > viewportH - gap) {
+  hudY = bottomRightVP.y - hudH - gap;
+ }
+ hudX = std::clamp(hudX, gap, std::max(gap, viewportW - hudW - gap));
+ hudY = std::clamp(hudY, gap, std::max(gap, viewportH - hudH - gap));
+
+ const QRectF reservedChrome[] = {
+     viewportZoomRect(viewportW, viewportH),
+     viewportSurfaceModeRect(viewportW, viewportH),
+     viewportEditToolRect(viewportW, viewportH),
+     viewportDisplayModeRect(viewportW, viewportH),
+     viewportOrientationRect(viewportW, viewportH),
+     viewportH >= 220.0f
+         ? QRectF(0.0f, std::max(0.0f, viewportH - 60.0f),
+                  viewportW, 60.0f)
+         : QRectF{},
+ };
+ for (int pass = 0; pass < 2; ++pass) {
+  for (const QRectF& reserved : reservedChrome) {
+   if (reserved.isEmpty() ||
+       !QRectF(hudX, hudY, hudW, hudH).intersects(reserved)) {
+    continue;
+   }
+   const float below = static_cast<float>(reserved.bottom()) + gap;
+   const float above = static_cast<float>(reserved.top()) - hudH - gap;
+   if (below + hudH <= viewportH - 60.0f - gap) {
+    hudY = below;
+   } else if (above >= gap) {
+    hudY = above;
+   }
+  }
+ }
+ hudY = std::clamp(hudY, gap, viewportH - hudH - gap);
+
+ const float savedZoom = renderer_->getZoom();
+ float savedPanX = 0.0f;
+ float savedPanY = 0.0f;
+ renderer_->getPan(savedPanX, savedPanY);
+ renderer_->setCanvasSize(viewportW, viewportH);
+ renderer_->setZoom(1.0f);
+ renderer_->setPan(0.0f, 0.0f);
+ renderer_->setUseExternalMatrices(false);
+ renderer_->drawRoundedPanel(
+     hudX + 2.0f, hudY + 3.0f, hudW, hudH, 6.0f,
+     FloatColor{0.0f, 0.0f, 0.0f, 0.30f},
+     FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+ renderer_->drawRoundedPanel(
+     hudX, hudY, hudW, hudH, 6.0f,
+     FloatColor{0.045f, 0.055f, 0.067f, 0.90f},
+     FloatColor{0.18f, 0.55f, 0.94f, 0.96f});
+ QFont hudFont = QApplication::font();
  hudFont.setPixelSize(12);
- renderer_->drawText(QRectF(hudX + 4, hudY + 4, 112, 42), text, hudFont,
-                     FloatColor{1,1,1,1}, Qt::AlignLeft | Qt::AlignVCenter, 1.0f);
+ renderer_->drawText(QRectF(hudX + 10.0f, hudY + 5.0f,
+                            hudW - 20.0f, hudH - 10.0f),
+                     text, hudFont, FloatColor{0.93f, 0.95f, 0.98f, 1.0f},
+                     Qt::AlignLeft | Qt::AlignVCenter, 1.0f);
+ renderer_->setZoom(savedZoom);
+ renderer_->setPan(savedPanX, savedPanY);
+ if (auto* service = ArtifactProjectService::instance()) {
+  if (auto composition = service->currentComposition().lock()) {
+   const QSize compositionSize = composition->settings().compositionSize();
+   if (compositionSize.width() > 0 && compositionSize.height() > 0) {
+    renderer_->setCanvasSize(static_cast<float>(compositionSize.width()),
+                             static_cast<float>(compositionSize.height()));
+   }
+  }
+ }
+}
+
+void ArtifactLayerEditorWidgetV2::Impl::drawSurfaceOverlay(
+    const ArtifactAbstractLayerPtr& layer)
+{
+ if (!renderer_ || !layer || surfaceMode_ == LayerSurfaceMode::Edit) return;
+
+ const QRectF bounds = layer->transformedBoundingBox();
+ if (!bounds.isValid() || bounds.isEmpty()) return;
+
+ const FloatColor accent = surfaceMode_ == LayerSurfaceMode::Inspect
+     ? FloatColor{0.24f, 0.66f, 1.0f, 0.96f}
+     : FloatColor{1.0f, 0.58f, 0.16f, 0.96f};
+ renderer_->setUseExternalMatrices(false);
+ renderer_->drawDashedRectOutline(
+     static_cast<float>(bounds.x()), static_cast<float>(bounds.y()),
+     static_cast<float>(bounds.width()), static_cast<float>(bounds.height()),
+     accent, 1.5f, 10.0f, 5.0f);
+ const float zoom = std::max(0.1f, renderer_->getZoom());
+ const QPointF center = bounds.center();
+ const auto& transform = layer->transform3D();
+ const QPointF pivot = layer->getGlobalTransform().map(
+     QPointF(transform.anchorX(), transform.anchorY()));
+ renderer_->drawCrosshair(static_cast<float>(pivot.x()),
+                          static_cast<float>(pivot.y()),
+                          9.0f / zoom,
+                          FloatColor{0.02f, 0.03f, 0.04f, 0.92f});
+ renderer_->drawCrosshair(static_cast<float>(pivot.x()),
+                          static_cast<float>(pivot.y()),
+                          7.0f / zoom, accent);
+ renderer_->drawCircle(static_cast<float>(pivot.x()),
+                       static_cast<float>(pivot.y()),
+                       4.0f / zoom, accent, 1.0f, false);
+
+ if (surfaceMode_ != LayerSurfaceMode::Impact) return;
+ refreshSurfaceInfo(layer);
+ auto* service = ArtifactProjectService::instance();
+ if (!service) return;
+ auto composition = service->currentComposition().lock();
+ if (!composition) return;
+
+ int linkCount = 0;
+ constexpr int maxImpactLinks = 24;
+ std::vector<LayerID> drawnImpactLayerIds;
+ drawnImpactLayerIds.reserve(maxImpactLinks);
+ const auto drawImpactLink = [&](const ArtifactAbstractLayerPtr& other,
+                                 const FloatColor& color,
+                                 bool incoming) {
+  if (!other || other->id() == layer->id() || linkCount >= maxImpactLinks) {
+   return;
+  }
+  if (std::find(drawnImpactLayerIds.begin(), drawnImpactLayerIds.end(),
+                other->id()) != drawnImpactLayerIds.end()) {
+   return;
+  }
+  const QRectF otherBounds = other->transformedBoundingBox();
+  if (!otherBounds.isValid() || otherBounds.isEmpty()) return;
+  const QPointF otherCenter = otherBounds.center();
+  const auto boundaryPoint = [](const QRectF& rect,
+                                const QPointF& toward) {
+   const QPointF rectCenter = rect.center();
+   const QPointF delta = toward - rectCenter;
+   constexpr qreal epsilon = 0.001;
+   if (std::abs(delta.x()) <= epsilon &&
+       std::abs(delta.y()) <= epsilon) {
+    return rectCenter;
+   }
+   qreal scaleX = std::numeric_limits<qreal>::max();
+   qreal scaleY = std::numeric_limits<qreal>::max();
+   if (std::abs(delta.x()) > epsilon) {
+    scaleX = (rect.width() * 0.5) / std::abs(delta.x());
+   }
+   if (std::abs(delta.y()) > epsilon) {
+    scaleY = (rect.height() * 0.5) / std::abs(delta.y());
+   }
+   return rectCenter + delta * std::min(scaleX, scaleY);
+  };
+  const QPointF targetEdge = boundaryPoint(bounds, otherCenter);
+  const QPointF otherEdge = boundaryPoint(otherBounds, center);
+  renderer_->drawDashedRectOutline(
+      static_cast<float>(otherBounds.x()),
+      static_cast<float>(otherBounds.y()),
+      static_cast<float>(otherBounds.width()),
+      static_cast<float>(otherBounds.height()),
+      color, 1.0f / zoom, 8.0f / zoom, 4.0f / zoom);
+  renderer_->drawSolidLine(
+      {static_cast<float>(targetEdge.x()), static_cast<float>(targetEdge.y())},
+      {static_cast<float>(otherEdge.x()),
+       static_cast<float>(otherEdge.y())},
+      color, 1.25f / zoom);
+  const QPointF arrowFrom = incoming ? otherEdge : targetEdge;
+  const QPointF arrowTip = incoming ? targetEdge : otherEdge;
+  const QPointF arrowDelta = arrowTip - arrowFrom;
+  const qreal arrowDistance = std::hypot(arrowDelta.x(), arrowDelta.y());
+  if (arrowDistance > 0.001) {
+   const QPointF direction = arrowDelta / arrowDistance;
+   const QPointF perpendicular(-direction.y(), direction.x());
+   const QPointF arrowBase = arrowTip - direction * (8.0 / zoom);
+   const QPointF arrowWing = perpendicular * (3.5 / zoom);
+   const QPointF wingA = arrowBase + arrowWing;
+   const QPointF wingB = arrowBase - arrowWing;
+   renderer_->drawSolidLine(
+       {static_cast<float>(arrowTip.x()), static_cast<float>(arrowTip.y())},
+       {static_cast<float>(wingA.x()), static_cast<float>(wingA.y())},
+       color, 1.25f / zoom);
+   renderer_->drawSolidLine(
+       {static_cast<float>(arrowTip.x()), static_cast<float>(arrowTip.y())},
+       {static_cast<float>(wingB.x()), static_cast<float>(wingB.y())},
+       color, 1.25f / zoom);
+  }
+  renderer_->drawCircle(static_cast<float>(otherCenter.x()),
+                        static_cast<float>(otherCenter.y()),
+                        4.0f / zoom, color, 1.0f, true);
+  drawnImpactLayerIds.push_back(other->id());
+  ++linkCount;
+ };
+
+ for (const auto& id : impactParentLayerIds_) {
+  drawImpactLink(composition->layerById(id), kImpactParentColor, true);
+ }
+ for (const auto& id : impactChildLayerIds_) {
+  drawImpactLink(composition->layerById(id), kImpactChildColor, false);
+ }
+ for (const auto& id : impactMatteLayerIds_) {
+  drawImpactLink(composition->layerById(id), kImpactMatteColor, true);
+ }
+ for (const auto& id : impactDependentLayerIds_) {
+  drawImpactLink(composition->layerById(id), kImpactDependentColor, false);
+ }
+ renderer_->drawDashedRectOutline(
+     static_cast<float>(bounds.x()), static_cast<float>(bounds.y()),
+     static_cast<float>(bounds.width()), static_cast<float>(bounds.height()),
+     accent, 1.5f, 10.0f, 5.0f);
+ renderer_->drawCrosshair(static_cast<float>(pivot.x()),
+                          static_cast<float>(pivot.y()),
+                          7.0f / zoom, accent);
+ renderer_->drawCircle(static_cast<float>(pivot.x()),
+                       static_cast<float>(pivot.y()),
+                       4.0f / zoom, accent, 1.0f, false);
+}
+
+void ArtifactLayerEditorWidgetV2::Impl::refreshSurfaceInfo(
+    const ArtifactAbstractLayerPtr& layer)
+{
+ const LayerID layerId = layer ? layer->id() : LayerID{};
+ if (!surfaceInfoDirty_ && surfaceInfoLayerId_ == layerId &&
+     surfaceInfoMode_ == surfaceMode_) {
+  return;
+ }
+
+ surfaceInfoDirty_ = false;
+ surfaceInfoLayerId_ = layerId;
+ surfaceInfoMode_ = surfaceMode_;
+ surfaceInfoTitle_ = surfaceMode_ == LayerSurfaceMode::Inspect
+     ? QStringLiteral("Inspect") : QStringLiteral("Impact");
+ surfaceInfoBody_ = QStringLiteral("No layer selected");
+ impactParentLayerIds_.clear();
+ impactChildLayerIds_.clear();
+ impactMatteLayerIds_.clear();
+ impactDependentLayerIds_.clear();
+ if (!layer) return;
+
+ surfaceInfoTitle_ += QStringLiteral(" · %1").arg(layerNameLabel(layer));
+ if (surfaceMode_ == LayerSurfaceMode::Inspect) {
+  const FramePosition currentFrame = currentLayerViewFrame();
+  surfaceInfoTitle_ += QStringLiteral(" · Frame %1")
+      .arg(currentFrame.framePosition());
+  const auto source = layer->sourceSize();
+  const QRectF bounds = layer->transformedBoundingBox();
+  const auto& transform = layer->transform3D();
+  int enabledMatteCount = 0;
+  for (const auto& ref : layer->matteReferences()) {
+   if (ref.enabled && !ref.sourceLayerId.isNil()) {
+    ++enabledMatteCount;
+   }
+  }
+  QString effectSummary = QStringLiteral("None");
+  const auto effects = layer->getEffects();
+  if (!effects.empty()) {
+   effectSummary.clear();
+   constexpr int maxNamedEffects = 2;
+   const int namedEffectCount = std::min(
+       static_cast<int>(effects.size()), maxNamedEffects);
+   for (int i = 0; i < namedEffectCount; ++i) {
+    if (i > 0) effectSummary += QStringLiteral(" › ");
+    const auto& effect = effects[static_cast<size_t>(i)];
+    const QString name = effect
+        ? effect->displayName().toQString().trimmed() : QString{};
+    effectSummary += name.isEmpty() ? QStringLiteral("Unnamed")
+        : name.size() > 18 ? name.left(17) + QStringLiteral("…") : name;
+   }
+   if (effects.size() > static_cast<size_t>(namedEffectCount)) {
+    const int remainingEffectCount = static_cast<int>(effects.size()) -
+        namedEffectCount;
+    effectSummary += QStringLiteral("  +%1")
+        .arg(remainingEffectCount);
+   }
+  }
+  QString maskSummary = QStringLiteral("None");
+  if (layer->maskCount() > 0) {
+   const LayerMask firstMask = layer->mask(0);
+   QString pathName = QStringLiteral("Mask 1");
+   QString modeName = QStringLiteral("Empty");
+   QString opacityText = QStringLiteral("—");
+   QString invertedText;
+   if (firstMask.maskPathCount() > 0) {
+    const MaskPath path = firstMask.maskPath(0);
+    const QString candidateName = path.name().toQString().trimmed();
+    if (!candidateName.isEmpty()) {
+     pathName = candidateName.size() > 16
+         ? candidateName.left(15) + QStringLiteral("…")
+         : candidateName;
+    }
+    switch (path.mode()) {
+    case MaskMode::Subtract: modeName = QStringLiteral("Subtract"); break;
+    case MaskMode::Intersect: modeName = QStringLiteral("Intersect"); break;
+    case MaskMode::Difference: modeName = QStringLiteral("Difference"); break;
+    case MaskMode::Add:
+    default: modeName = QStringLiteral("Add"); break;
+    }
+    opacityText = QStringLiteral("%1%")
+        .arg(std::clamp(path.opacity() * 100.0f, 0.0f, 100.0f), 0, 'f', 0);
+    invertedText = path.isInverted() ? QStringLiteral(" · Inverted")
+                                     : QString{};
+   }
+   const QString remainingMasks = layer->maskCount() > 1
+       ? QStringLiteral(" · +%1").arg(layer->maskCount() - 1)
+       : QString{};
+   maskSummary = QStringLiteral("%1 · %2 · %3%4%5%6")
+       .arg(pathName)
+       .arg(modeName)
+       .arg(opacityText)
+       .arg(invertedText)
+       .arg(firstMask.isEnabled() ? QString{}
+                                  : QStringLiteral(" · Disabled"))
+       .arg(remainingMasks);
+  }
+  const QString stateText = QStringLiteral("%1 · %2 · %3 · %4")
+      .arg(layer->isVisible() ? QStringLiteral("Visible")
+                              : QStringLiteral("Hidden"),
+           layer->isLocked() ? QStringLiteral("Locked")
+                             : QStringLiteral("Unlocked"),
+           layer->isSolo() ? QStringLiteral("Solo")
+                           : QStringLiteral("Solo off"),
+           layer->isActiveAt(currentFrame) ? QStringLiteral("Active")
+                                           : QStringLiteral("Out of range"));
+  const QString cacheText = !layer->usesLayerCache()
+      ? QStringLiteral("Off")
+      : layer->isDirty() ? QStringLiteral("Dirty")
+                         : QStringLiteral("Ready");
+  surfaceInfoBody_ = QStringLiteral(
+      "%1  ·  Stage Final  ·  Source %2 × %3\n"
+      "Bounds X %4 Y %5 W %6 H %7  ·  Pivot %8, %9\n"
+      "%10\n"
+      "Opacity %11%  ·  %12  ·  Matte %13  ·  Cache %14\n"
+      "Mask %15\n"
+      "FX %16: %17")
+      .arg(layerTypeLabel(layer))
+      .arg(source.width)
+      .arg(source.height)
+      .arg(bounds.x(), 0, 'f', 0)
+      .arg(bounds.y(), 0, 'f', 0)
+      .arg(bounds.width(), 0, 'f', 0)
+      .arg(bounds.height(), 0, 'f', 0)
+      .arg(transform.anchorX(), 0, 'f', 0)
+      .arg(transform.anchorY(), 0, 'f', 0)
+      .arg(stateText)
+      .arg(std::clamp(layer->opacity() * 100.0f, 0.0f, 100.0f), 0, 'f', 0)
+      .arg(ArtifactCore::BlendModeUtils::toString(
+          ArtifactCore::toBlendMode(layer->layerBlendType())))
+      .arg(enabledMatteCount)
+      .arg(cacheText)
+      .arg(maskSummary)
+      .arg(layer->effectCount())
+      .arg(effectSummary);
+  return;
+ }
+
+ int childCount = 0;
+ int dependentCount = 0;
+ int matteInputCount = 0;
+ QString parentName = QStringLiteral("None");
+ QString childNames;
+ QString matteNames;
+ QString dependentNames;
+ const auto appendRelationshipName = [](QString& summary,
+                                        const ArtifactAbstractLayerPtr& item,
+                                        int visibleIndex) {
+  if (!item || visibleIndex >= 1) return;
+  QString name = layerNameLabel(item);
+  if (name.size() > 16) name = name.left(15) + QStringLiteral("…");
+  if (!summary.isEmpty()) summary += QStringLiteral(", ");
+  summary += name;
+ };
+ if (const auto parent = layer->parentLayer()) {
+  parentName = layerNameLabel(parent);
+  if (parentName.size() > 16) {
+   parentName = parentName.left(15) + QStringLiteral("…");
+  }
+  impactParentLayerIds_.push_back(parent->id());
+ }
+ for (const auto& ref : layer->matteReferences()) {
+  if (ref.enabled && !ref.sourceLayerId.isNil()) {
+   ++matteInputCount;
+   impactMatteLayerIds_.push_back(ref.sourceLayerId);
+  }
+ }
+ if (auto* service = ArtifactProjectService::instance()) {
+  if (auto composition = service->currentComposition().lock()) {
+   const auto children = composition->childLayersOf(layer->id());
+   childCount = static_cast<int>(children.size());
+   int namedChildCount = 0;
+   for (const auto& child : children) {
+    if (child) {
+     impactChildLayerIds_.push_back(child->id());
+     appendRelationshipName(childNames, child, namedChildCount++);
+    }
+   }
+   int namedMatteCount = 0;
+   for (const auto& matteId : impactMatteLayerIds_) {
+    appendRelationshipName(
+        matteNames, composition->layerById(matteId), namedMatteCount++);
+   }
+   int namedDependentCount = 0;
+   for (const auto& candidate : composition->allLayerRef()) {
+    if (!candidate || candidate->id() == layer->id()) continue;
+    for (const auto& ref : candidate->matteReferences()) {
+     if (ref.enabled && ref.sourceLayerId == layer->id()) {
+      ++dependentCount;
+      impactDependentLayerIds_.push_back(candidate->id());
+      appendRelationshipName(
+          dependentNames, candidate, namedDependentCount++);
+      break;
+     }
+    }
+   }
+  }
+ }
+ const auto relationshipSummary = [](int count, const QString& names) {
+  if (count <= 0 || names.isEmpty()) return QString::number(count);
+  const QString overflow = count > 1
+      ? QStringLiteral(", +%1").arg(count - 1) : QString{};
+  return QStringLiteral("%1 (%2%3)").arg(count).arg(names, overflow);
+ };
+ surfaceInfoBody_ = QStringLiteral(
+      "Parent %1  ·  Children %2\n"
+      "Matte inputs %3  ·  Used by %4\n"
+      "Effects %5  ·  Modifiers %6  ·  Masks %7")
+      .arg(parentName)
+      .arg(relationshipSummary(childCount, childNames))
+      .arg(relationshipSummary(matteInputCount, matteNames))
+      .arg(relationshipSummary(dependentCount, dependentNames))
+      .arg(layer->effectCount())
+      .arg(layer->modifierCount())
+      .arg(layer->maskCount());
 }
 
 void ArtifactLayerEditorWidgetV2::Impl::drawViewportChrome(
@@ -1692,13 +2485,10 @@ void ArtifactLayerEditorWidgetV2::Impl::drawViewportChrome(
  float currentPanY = 0.0f;
  renderer_->getPan(currentPanX, currentPanY);
 
- renderer_->setViewportSize(viewportW, viewportH);
  renderer_->setCanvasSize(viewportW, viewportH);
  renderer_->setZoom(1.0f);
  renderer_->setPan(0.0f, 0.0f);
  renderer_->setUseExternalMatrices(false);
- renderer_->resetGizmoCameraMatrices();
- renderer_->reset3DCameraMatrices();
 
  const FloatColor panelFill{0.045f, 0.055f, 0.067f, 0.90f};
  const FloatColor panelStroke{0.22f, 0.25f, 0.29f, 0.96f};
@@ -1706,19 +2496,128 @@ void ArtifactLayerEditorWidgetV2::Impl::drawViewportChrome(
  const FloatColor mutedText{0.68f, 0.72f, 0.77f, 1.0f};
  const FloatColor blueAccent{0.18f, 0.55f, 0.94f, 1.0f};
  const FloatColor amberAccent{1.0f, 0.52f, 0.10f, 1.0f};
+ const FloatColor selectedFill{0.16f, 0.32f, 0.50f, 0.96f};
+ const auto drawChromePanel = [&](float x, float y, float width,
+                                  float height, float radius,
+                                  const FloatColor& fill,
+                                  const FloatColor& stroke) {
+  renderer_->drawRoundedPanel(
+      x + 2.0f, y + 3.0f, width, height, radius,
+      FloatColor{0.0f, 0.0f, 0.0f, 0.30f},
+      FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+  renderer_->drawRoundedPanel(x, y, width, height, radius, fill, stroke);
+ };
 
  QFont uiFont = QApplication::font();
  uiFont.setPixelSize(12);
  QFont compactFont = uiFont;
  compactFont.setPixelSize(11);
 
- if (viewportW >= 1000.0f) {
-  constexpr float toolPanelX = 16.0f;
-  constexpr float toolPanelY = 16.0f;
-  constexpr float toolPanelW = 320.0f;
-  constexpr float toolPanelH = 38.0f;
+ const QRectF surfacePanel = viewportSurfaceModeRect(viewportW, viewportH);
+ if (!surfacePanel.isEmpty()) {
+  const QRectF surfaceItems = viewportSurfaceModeItemsRect(viewportW, viewportH);
+  const float surfacePanelX = static_cast<float>(surfacePanel.x());
+  const float surfacePanelY = static_cast<float>(surfacePanel.y());
+  const float surfacePanelW = static_cast<float>(surfacePanel.width());
+  const float surfacePanelH = static_cast<float>(surfacePanel.height());
+  const float surfaceItemsX = static_cast<float>(surfaceItems.x());
+  const float surfaceItemsW = static_cast<float>(surfaceItems.width());
+  constexpr float surfaceInset = 4.0f;
+  const float surfaceItemW = (surfaceItemsW - surfaceInset * 2.0f) / 3.0f;
+  struct SurfaceItem {
+   LayerSurfaceMode mode;
+   const char* label;
+  };
+  const SurfaceItem surfaces[] = {
+      {LayerSurfaceMode::Edit, "Edit"},
+      {LayerSurfaceMode::Inspect, "Inspect"},
+      {LayerSurfaceMode::Impact, "Impact"},
+  };
+  drawChromePanel(surfacePanelX, surfacePanelY,
+                  surfacePanelW, surfacePanelH,
+                  6.0f, panelFill, panelStroke);
+  for (int i = 0; i < 3; ++i) {
+   const float itemX = surfacePanelX + surfaceInset +
+       surfaceItemW * static_cast<float>(i);
+   const bool selected = surfaceMode_ == surfaces[i].mode;
+   const bool hovered = hoveredChromeControl_ == 30 + i;
+   if (hovered) {
+    const FloatColor accent = surfaces[i].mode == LayerSurfaceMode::Impact
+        ? amberAccent : blueAccent;
+    renderer_->drawRoundedPanel(
+        itemX, surfacePanelY + surfaceInset,
+        surfaceItemW - 2.0f, surfacePanelH - surfaceInset * 2.0f,
+        4.0f,
+        FloatColor{0.18f, 0.21f, 0.25f, 0.94f},
+        selected ? accent : panelStroke);
+   }
+   const FloatColor itemAccent = surfaces[i].mode == LayerSurfaceMode::Impact
+       ? amberAccent : blueAccent;
+   renderer_->drawText(
+       QRectF(itemX + 3.0f, surfacePanelY + 3.0f,
+              surfaceItemW - 8.0f, surfacePanelH - 6.0f),
+       QString::fromLatin1(surfaces[i].label), compactFont,
+       selected ? itemAccent : mutedText, Qt::AlignCenter);
+   if (i < 2) {
+    const float separatorX = itemX + surfaceItemW - 1.0f;
+    renderer_->drawSolidLine(
+        {separatorX, surfacePanelY + 10.0f},
+        {separatorX, surfacePanelY + surfacePanelH - 10.0f},
+        FloatColor{0.34f, 0.37f, 0.41f, 0.72f}, 1.0f);
+   }
+  }
+  if (surfacePanelW > surfaceItemsW) {
+   const float dividerX = surfaceItemsX + surfaceItemsW + 2.0f;
+   renderer_->drawSolidLine(
+       {dividerX, surfacePanelY + 9.0f},
+       {dividerX, surfacePanelY + surfacePanelH - 9.0f},
+       FloatColor{0.30f, 0.33f, 0.37f, 0.68f}, 1.0f);
+   const bool soloActive = layer && layer->isSolo();
+   const QRectF soloRect = viewportSurfaceSoloRect(viewportW, viewportH);
+   if (hoveredChromeControl_ == 43 && layer && !soloRect.isEmpty()) {
+    renderer_->drawRoundedPanel(
+        static_cast<float>(soloRect.x() + 3.0),
+        static_cast<float>(soloRect.y() + 4.0),
+        static_cast<float>(soloRect.width() - 6.0),
+        static_cast<float>(soloRect.height() - 8.0),
+        4.0f,
+        FloatColor{0.18f, 0.21f, 0.25f, 0.94f},
+        soloActive ? amberAccent : panelStroke);
+   }
+   renderer_->drawText(
+       QRectF(dividerX + 10.0f, surfacePanelY + 3.0f,
+              48.0f, surfacePanelH - 6.0f),
+       QStringLiteral("Final"), compactFont, textColor,
+       Qt::AlignLeft | Qt::AlignVCenter);
+   renderer_->drawCircle(dividerX + 57.0f,
+                         surfacePanelY + surfacePanelH * 0.5f,
+                         3.0f,
+                         FloatColor{0.10f, 0.88f, 0.48f, 1.0f},
+                         1.0f, true);
+   renderer_->drawText(
+       QRectF(dividerX + 73.0f, surfacePanelY + 3.0f,
+              40.0f, surfacePanelH - 6.0f),
+       QStringLiteral("Solo"), compactFont,
+       soloActive ? amberAccent : mutedText,
+       Qt::AlignLeft | Qt::AlignVCenter);
+   renderer_->drawCircle(dividerX + 116.0f,
+                         surfacePanelY + surfacePanelH * 0.5f,
+                         3.0f,
+                         soloActive
+                             ? amberAccent
+                             : FloatColor{0.46f, 0.49f, 0.54f, 1.0f},
+                         1.0f, true);
+  }
+
+  if (surfaceMode_ == LayerSurfaceMode::Edit) {
+   const QRectF toolPanel = viewportEditToolRect(viewportW, viewportH);
+   if (!toolPanel.isEmpty()) {
+  const float toolPanelX = static_cast<float>(toolPanel.x());
+  const float toolPanelY = static_cast<float>(toolPanel.y());
+  const float toolPanelW = static_cast<float>(toolPanel.width());
+  const float toolPanelH = static_cast<float>(toolPanel.height());
   constexpr float toolInset = 4.0f;
-  constexpr float toolW = 78.0f;
+  constexpr float toolItemH = 36.0f;
   struct ToolItem {
    EditMode mode;
    const char* label;
@@ -1729,73 +2628,169 @@ void ArtifactLayerEditorWidgetV2::Impl::drawViewportChrome(
       {EditMode::Shape, "Shape"},
       {EditMode::Mask, "Mask"},
   };
-  renderer_->drawRoundedPanel(toolPanelX, toolPanelY, toolPanelW, toolPanelH,
-                              6.0f, panelFill, panelStroke);
+  drawChromePanel(toolPanelX, toolPanelY, toolPanelW, toolPanelH,
+                  6.0f, panelFill, panelStroke);
   for (int i = 0; i < 4; ++i) {
-   const float itemX = toolPanelX + toolInset + toolW * static_cast<float>(i);
+   const float itemY = toolPanelY + toolInset +
+       toolItemH * static_cast<float>(i);
    const bool selected = editMode_ == tools[i].mode;
    const bool hovered = hoveredChromeControl_ == i;
-   if (selected || hovered) {
-    renderer_->drawRoundedPanel(itemX, toolPanelY + toolInset,
-                                toolW - 2.0f, toolPanelH - toolInset * 2.0f,
+   const bool enabled = layerEditModeAvailable(layer, tools[i].mode);
+   if (selected || (enabled && hovered)) {
+    renderer_->drawRoundedPanel(toolPanelX + toolInset, itemY,
+                                toolPanelW - toolInset * 2.0f,
+                                toolItemH - 2.0f,
                                 4.0f,
-                                selected
-                                    ? FloatColor{0.10f, 0.38f, 0.69f, 0.96f}
+                                selected && enabled
+                                    ? selectedFill
+                                    : selected
+                                        ? FloatColor{0.12f, 0.14f, 0.17f, 0.90f}
                                     : FloatColor{0.18f, 0.21f, 0.25f, 0.94f},
-                                selected ? blueAccent : panelStroke);
+                                selected && enabled
+                                    ? blueAccent
+                                    : FloatColor{0.34f, 0.37f, 0.41f, 0.88f});
    }
    renderer_->drawText(
-       QRectF(itemX + 3.0f, toolPanelY + 3.0f,
-              toolW - 8.0f, toolPanelH - 6.0f),
+       QRectF(toolPanelX + toolInset + 3.0f, itemY + 2.0f,
+              toolPanelW - toolInset * 2.0f - 6.0f,
+              toolItemH - 6.0f),
        QString::fromLatin1(tools[i].label), compactFont,
-       selected ? textColor : mutedText, Qt::AlignCenter);
+       !enabled ? FloatColor{0.40f, 0.43f, 0.47f, 0.78f}
+                : selected ? textColor : mutedText,
+       Qt::AlignCenter);
+  }
+   }
+  } else {
+   const float infoPanelW = std::min(
+       410.0f, std::max(1.0f, viewportW - 16.0f));
+   const float infoPanelX = (viewportW - infoPanelW) * 0.5f;
+   const float infoPanelY = surfacePanelY + 96.0f;
+   const bool compactInfo = infoPanelW < 320.0f;
+   const float infoPanelH = compactInfo ? 70.0f
+       : surfaceMode_ == LayerSurfaceMode::Inspect ? 146.0f : 112.0f;
+   const FloatColor infoAccent = surfaceMode_ == LayerSurfaceMode::Inspect
+       ? blueAccent : amberAccent;
+   drawChromePanel(infoPanelX, infoPanelY,
+                   infoPanelW, infoPanelH,
+                   7.0f, panelFill, infoAccent);
+   refreshSurfaceInfo(layer);
+   QFont titleFont = uiFont;
+   titleFont.setBold(true);
+   const QFontMetrics titleMetrics(titleFont);
+   const QString visibleTitle = titleMetrics.elidedText(
+       surfaceInfoTitle_, Qt::ElideMiddle,
+       static_cast<int>(infoPanelW - 24.0f));
+   renderer_->drawText(
+       QRectF(infoPanelX + 12.0f, infoPanelY + 7.0f,
+              infoPanelW - 24.0f, 22.0f),
+       visibleTitle, titleFont, infoAccent,
+       Qt::AlignLeft | Qt::AlignVCenter);
+   const QString visibleBody = compactInfo
+       ? QFontMetrics(compactFont).elidedText(
+             surfaceInfoBody_.section(QStringLiteral("\n"), 0, 0),
+             Qt::ElideRight,
+             std::max(1, static_cast<int>(infoPanelW - 24.0f)))
+       : surfaceInfoBody_;
+   renderer_->drawText(
+       QRectF(infoPanelX + 12.0f, infoPanelY + 31.0f,
+              infoPanelW - 24.0f,
+              !compactInfo && surfaceMode_ == LayerSurfaceMode::Impact
+                  ? infoPanelH - 59.0f : infoPanelH - 38.0f),
+       visibleBody, compactFont, textColor,
+       Qt::AlignLeft | Qt::AlignTop);
+   if (!compactInfo && surfaceMode_ == LayerSurfaceMode::Impact) {
+    struct LinkLegendItem {
+     const char* label;
+     FloatColor color;
+     float width;
+    };
+    const LinkLegendItem legend[] = {
+        {"Parent", kImpactParentColor, 72.0f},
+        {"Child", kImpactChildColor, 66.0f},
+        {"Matte", kImpactMatteColor, 66.0f},
+        {"Used by", kImpactDependentColor, 82.0f},
+    };
+    float legendX = infoPanelX + 12.0f;
+    const float legendY = infoPanelY + infoPanelH - 21.0f;
+    for (const auto& item : legend) {
+     renderer_->drawCircle(legendX + 4.0f, legendY + 8.0f,
+                           3.0f, item.color, 1.0f, true);
+     renderer_->drawText(
+         QRectF(legendX + 11.0f, legendY,
+                item.width - 11.0f, 16.0f),
+         QString::fromLatin1(item.label), compactFont, mutedText,
+         Qt::AlignLeft | Qt::AlignVCenter);
+     legendX += item.width;
+    }
+   }
   }
  }
 
- const float zoomPanelW = 174.0f;
- const float zoomPanelH = 38.0f;
- const float zoomPanelX = (viewportW - zoomPanelW) * 0.5f;
- const float zoomPanelY = 16.0f;
- renderer_->drawRoundedPanel(zoomPanelX, zoomPanelY, zoomPanelW, zoomPanelH,
-                             6.0f, panelFill, panelStroke);
+ const QRectF zoomPanel = viewportZoomRect(viewportW, viewportH);
+ if (!zoomPanel.isEmpty()) {
+ const float zoomPanelW = static_cast<float>(zoomPanel.width());
+ const float zoomPanelH = static_cast<float>(zoomPanel.height());
+ const float zoomPanelX = static_cast<float>(zoomPanel.x());
+ const float zoomPanelY = static_cast<float>(zoomPanel.y());
+ drawChromePanel(zoomPanelX, zoomPanelY, zoomPanelW, zoomPanelH,
+                 6.0f, panelFill, panelStroke);
  if (hoveredChromeControl_ >= 20 && hoveredChromeControl_ <= 23) {
   const int zoomIndex = hoveredChromeControl_ - 20;
-  const float segmentX[] = {0.0f, 42.0f, 105.0f, 142.0f};
-  const float segmentW[] = {42.0f, 63.0f, 37.0f, 32.0f};
-  renderer_->drawRoundedPanel(zoomPanelX + segmentX[zoomIndex] + 2.0f,
+  const float segmentX = viewportZoomStop(zoomPanelW, zoomIndex);
+  const float segmentW = viewportZoomStop(zoomPanelW, zoomIndex + 1) -
+      segmentX;
+  renderer_->drawRoundedPanel(zoomPanelX + segmentX + 2.0f,
                               zoomPanelY + 4.0f,
-                              segmentW[zoomIndex] - 4.0f,
+                              segmentW - 4.0f,
                               zoomPanelH - 8.0f,
                               4.0f,
                               FloatColor{0.18f, 0.21f, 0.25f, 0.94f},
                               panelStroke);
  }
- renderer_->drawText(
-     QRectF(zoomPanelX + 10.0f, zoomPanelY + 3.0f,
-            zoomPanelW - 20.0f, zoomPanelH - 6.0f),
-     QStringLiteral("−     %1%     +     Fit")
-         .arg(QString::number(currentZoom * 100.0f, 'f', 0)),
-     uiFont, textColor, Qt::AlignCenter);
+ for (int i = 1; i < 4; ++i) {
+  const float separatorX = viewportZoomStop(zoomPanelW, i);
+  renderer_->drawSolidLine(
+      {zoomPanelX + separatorX, zoomPanelY + 8.0f},
+      {zoomPanelX + separatorX, zoomPanelY + zoomPanelH - 8.0f},
+      FloatColor{0.30f, 0.33f, 0.37f, 0.72f}, 1.0f);
+ }
+ const QString zoomLabels[] = {
+     QStringLiteral("−"),
+     QStringLiteral("%1%").arg(
+         QString::number(currentZoom * 100.0f, 'f', 0)),
+     QStringLiteral("+"),
+     QStringLiteral("Fit")};
+ for (int i = 0; i < 4; ++i) {
+  const float segmentX = viewportZoomStop(zoomPanelW, i);
+  const float segmentW = viewportZoomStop(zoomPanelW, i + 1) - segmentX;
+  renderer_->drawText(
+      QRectF(zoomPanelX + segmentX, zoomPanelY + 3.0f,
+             segmentW, zoomPanelH - 6.0f),
+      zoomLabels[i], i == 3 ? compactFont : uiFont,
+      i == 1 ? textColor : mutedText, Qt::AlignCenter);
+ }
+ }
 
- const float modePanelW = 292.0f;
- const float modePanelH = 38.0f;
- const float modePanelX = std::max(12.0f, viewportW - modePanelW - 16.0f);
- const float modePanelY = 16.0f;
- if (viewportW >= 860.0f) {
+ const QRectF modePanel = viewportDisplayModeRect(viewportW, viewportH);
+ if (!modePanel.isEmpty()) {
+  const float modePanelW = static_cast<float>(modePanel.width());
+  const float modePanelH = static_cast<float>(modePanel.height());
+  const float modePanelX = static_cast<float>(modePanel.x());
+  const float modePanelY = static_cast<float>(modePanel.y());
   struct DisplayItem {
    DisplayMode mode;
    const char* label;
   };
   const DisplayItem displayItems[] = {
-      {DisplayMode::Color, "Color"},
+      {DisplayMode::Color, "Final"},
       {DisplayMode::Alpha, "Alpha"},
       {DisplayMode::Mask, "Mask"},
       {DisplayMode::Wireframe, "Wire"},
   };
   constexpr float modeInset = 4.0f;
   constexpr float modeItemW = 71.0f;
-  renderer_->drawRoundedPanel(modePanelX, modePanelY, modePanelW, modePanelH,
-                              6.0f, panelFill, panelStroke);
+  drawChromePanel(modePanelX, modePanelY, modePanelW, modePanelH,
+                  6.0f, panelFill, panelStroke);
   for (int i = 0; i < 4; ++i) {
    const float itemX = modePanelX + modeInset + modeItemW * static_cast<float>(i);
    const bool selected = displayMode_ == displayItems[i].mode;
@@ -1805,7 +2800,7 @@ void ArtifactLayerEditorWidgetV2::Impl::drawViewportChrome(
                                 modeItemW - 2.0f, modePanelH - modeInset * 2.0f,
                                 4.0f,
                                 selected
-                                    ? FloatColor{0.10f, 0.38f, 0.69f, 0.96f}
+                                    ? selectedFill
                                     : FloatColor{0.18f, 0.21f, 0.25f, 0.94f},
                                 selected ? blueAccent : panelStroke);
    }
@@ -1814,101 +2809,248 @@ void ArtifactLayerEditorWidgetV2::Impl::drawViewportChrome(
               modeItemW - 6.0f, modePanelH - 6.0f),
        QString::fromLatin1(displayItems[i].label), compactFont,
        selected ? textColor : mutedText, Qt::AlignCenter);
+   if (i == 0 && selected) {
+    renderer_->drawCircle(itemX + modeItemW - 10.0f,
+                          modePanelY + modePanelH * 0.5f,
+                          3.0f,
+                          FloatColor{0.10f, 0.88f, 0.48f, 1.0f},
+                          1.0f, true);
+    }
   }
-
-  if (layer) {
-   const float cubeSize = 54.0f;
-   const float cubeX = viewportW - cubeSize - 16.0f;
-   const float cubeY = modePanelY + modePanelH + 10.0f;
-   renderer_->drawRoundedPanel(cubeX, cubeY, cubeSize, cubeSize,
-                               6.0f, panelFill, panelStroke);
-   renderer_->drawRoundedPanel(cubeX + 8.0f, cubeY + 8.0f,
-                               cubeSize - 16.0f, 25.0f,
-                               4.0f,
-                               FloatColor{0.10f, 0.34f, 0.61f, 0.94f},
-                               blueAccent);
-   renderer_->drawText(QRectF(cubeX + 8.0f, cubeY + 7.0f,
-                              cubeSize - 16.0f, 27.0f),
-                       layer->is3D() ? QStringLiteral("3D") : QStringLiteral("2D"),
-                       compactFont, textColor, Qt::AlignCenter);
-   renderer_->drawText(QRectF(cubeX + 5.0f, cubeY + 33.0f,
-                              cubeSize - 10.0f, 16.0f),
-                       layer->is3D() ? QStringLiteral("Layer")
-                                     : QStringLiteral("Front"),
-                       compactFont,
-                       mutedText, Qt::AlignCenter);
+  for (int i = 1; i < 4; ++i) {
+   const float separatorX = modePanelX + modeInset +
+       modeItemW * static_cast<float>(i) - 1.0f;
+   renderer_->drawSolidLine(
+       {separatorX, modePanelY + 9.0f},
+       {separatorX, modePanelY + modePanelH - 9.0f},
+       FloatColor{0.30f, 0.33f, 0.37f, 0.68f}, 1.0f);
   }
  }
 
+ const QRectF cubeRect = viewportOrientationRect(viewportW, viewportH);
+ if (!cubeRect.isEmpty()) {
+   const bool layerIs3D = layer && layer->is3D();
+   const float cubeSize = static_cast<float>(cubeRect.width());
+   const float cubeX = static_cast<float>(cubeRect.x());
+   const float cubeY = static_cast<float>(cubeRect.y());
+   const float cubeCenterX = cubeX + cubeSize * 0.5f;
+   const float cubeCenterY = cubeY + 36.0f;
+   const FloatColor axisX{0.96f, 0.28f, 0.22f, 1.0f};
+   const FloatColor axisY{0.20f, 0.86f, 0.38f, 1.0f};
+   const FloatColor axisZ{0.20f, 0.58f, 1.0f, 1.0f};
+   drawChromePanel(cubeX, cubeY, cubeSize, cubeSize,
+                   6.0f, panelFill, panelStroke);
+   renderer_->drawSolidLine(
+       {cubeCenterX, cubeY + 18.0f},
+       {cubeCenterX, cubeY + 8.0f}, axisY, 1.5f);
+   renderer_->drawSolidLine(
+       {cubeX + cubeSize - 12.0f, cubeCenterY},
+       {cubeX + cubeSize - 4.0f, cubeCenterY}, axisX, 1.5f);
+   renderer_->drawSolidLine(
+       {cubeCenterX, cubeY + 54.0f},
+       {cubeCenterX, cubeY + 62.0f}, axisZ, 1.5f);
+   QFont axisFont = compactFont;
+   axisFont.setPixelSize(10);
+   axisFont.setBold(true);
+   renderer_->drawText(QRectF(cubeCenterX - 7.0f, cubeY,
+                              14.0f, 13.0f),
+                       QStringLiteral("Y"), axisFont, axisY,
+                       Qt::AlignCenter);
+   renderer_->drawText(QRectF(cubeX + cubeSize - 15.0f,
+                              cubeCenterY - 7.0f, 14.0f, 14.0f),
+                       QStringLiteral("X"), axisFont, axisX,
+                       Qt::AlignCenter);
+   renderer_->drawText(QRectF(cubeCenterX - 7.0f, cubeY + 56.0f,
+                              14.0f, 13.0f),
+                       QStringLiteral("Z"), axisFont, axisZ,
+                       Qt::AlignCenter);
+   renderer_->drawRoundedPanel(cubeX + 12.0f, cubeY + 18.0f,
+                               cubeSize - 24.0f, 36.0f,
+                               4.0f,
+                               selectedFill,
+                               blueAccent);
+   renderer_->drawText(QRectF(cubeX + 12.0f, cubeY + 18.0f,
+                              cubeSize - 24.0f, 36.0f),
+                       layerIs3D ? QStringLiteral("Layer")
+                                 : QStringLiteral("Front"),
+                       compactFont, textColor, Qt::AlignCenter);
+   renderer_->drawText(QRectF(cubeX + 8.0f, cubeY + 66.0f,
+                              cubeSize - 16.0f, 18.0f),
+                       layerIs3D ? QStringLiteral("3D")
+                                 : QStringLiteral("2D"),
+                       compactFont,
+                       mutedText, Qt::AlignCenter);
+ }
+
+ QString canvasStateTitle;
+ QString canvasStateDetail;
+ if (!layer) {
+  canvasStateTitle = QStringLiteral("No layer selected");
+  canvasStateDetail = QStringLiteral("Select a layer to open it in Layer Solo View");
+ } else {
+  const FramePosition currentFrame = currentLayerViewFrame();
+  if (!layer->isVisible()) {
+   canvasStateTitle = QStringLiteral("Layer is hidden");
+   canvasStateDetail = QStringLiteral("Enable Visible in the layer state controls");
+  } else if (!layer->isActiveAt(currentFrame)) {
+   canvasStateTitle = QStringLiteral("Layer is outside the current frame");
+   canvasStateDetail = QStringLiteral("Move the playhead into the layer range");
+  } else if (layer->opacity() <= 0.0f) {
+   canvasStateTitle = QStringLiteral("Layer is transparent");
+   canvasStateDetail = QStringLiteral("Raise opacity above 0% to preview it");
+  }
+ }
+ if (!canvasStateTitle.isEmpty() && viewportW >= 260.0f &&
+     viewportH >= 300.0f) {
+  const float statePanelW = std::min(340.0f, viewportW - 32.0f);
+  constexpr float statePanelH = 66.0f;
+  const float statePanelX = (viewportW - statePanelW) * 0.5f;
+  const float contentTop = surfaceMode_ == LayerSurfaceMode::Edit
+      ? 132.0f
+      : surfaceMode_ == LayerSurfaceMode::Inspect ? 320.0f : 288.0f;
+  const float contentBottom = viewportH - 76.0f;
+  if (contentBottom - contentTop >= statePanelH) {
+   const float statePanelY = std::clamp(
+       (viewportH - statePanelH) * 0.5f,
+       contentTop, contentBottom - statePanelH);
+   const FloatColor stateAccent = layer
+       ? amberAccent : FloatColor{0.38f, 0.43f, 0.49f, 0.96f};
+   drawChromePanel(statePanelX, statePanelY,
+                   statePanelW, statePanelH,
+                   7.0f, panelFill, stateAccent);
+   QFont stateTitleFont = uiFont;
+   stateTitleFont.setBold(true);
+   renderer_->drawText(
+       QRectF(statePanelX + 14.0f, statePanelY + 7.0f,
+              statePanelW - 28.0f, 23.0f),
+       QFontMetrics(stateTitleFont).elidedText(
+           canvasStateTitle, Qt::ElideRight,
+           std::max(1, static_cast<int>(statePanelW - 28.0f))),
+       stateTitleFont, textColor,
+       Qt::AlignCenter);
+   renderer_->drawText(
+       QRectF(statePanelX + 14.0f, statePanelY + 32.0f,
+              statePanelW - 28.0f, 22.0f),
+       QFontMetrics(compactFont).elidedText(
+           canvasStateDetail, Qt::ElideRight,
+           std::max(1, static_cast<int>(statePanelW - 28.0f))),
+       compactFont, mutedText,
+       Qt::AlignCenter);
+  }
+ }
+
+ if (viewportH >= 220.0f) {
  const float bottomY = std::max(68.0f, viewportH - 52.0f);
  const float cardH = 36.0f;
  const float edge = 14.0f;
  const bool compactLayout = viewportW < 980.0f;
- const float leftW = compactLayout
+ const bool singleCardLayout = viewportW < 560.0f;
+ const float leftW = singleCardLayout
+     ? std::max(1.0f, viewportW - edge * 2.0f)
+     : compactLayout
      ? std::max(180.0f, (viewportW - edge * 2.0f - 12.0f) * 0.5f)
      : std::clamp(viewportW * 0.29f, 260.0f, 410.0f);
- const float centerW = std::clamp(viewportW * 0.22f, 220.0f, 310.0f);
+ const QRectF stateCard = viewportStateCardRect(viewportW, viewportH);
+ const float centerW = static_cast<float>(stateCard.width());
  const float rightW = compactLayout
      ? leftW
      : std::clamp(viewportW * 0.31f, 280.0f, 430.0f);
 
  QString layerName = QStringLiteral("No layer selected");
  QString layerType = QStringLiteral("—");
- QString stateText = QStringLiteral("Hidden     Unlocked     Solo     Inactive");
  QString detailText = QStringLiteral("Opacity: —   |   Blend: —   |   Cache: Idle");
  bool solo = false;
  bool active = false;
+ bool cacheEnabled = false;
+ bool cacheDirty = false;
  if (layer) {
-  layerName = layer->name().toQString();
-  layerType = layer->is3D() ? QStringLiteral("3D") : layer->className().toQString();
+  layerName = layerNameLabel(layer);
+  layerType = layerTypeLabel(layer);
   solo = layer->isSolo();
-  active = ArtifactPlaybackService::instance()
-      ? layer->isActiveAt(ArtifactPlaybackService::instance()->currentFrame())
-      : true;
-  stateText = QStringLiteral("%1     %2     %3     %4")
-      .arg(layer->isVisible() ? QStringLiteral("Visible") : QStringLiteral("Hidden"))
-      .arg(layer->isLocked() ? QStringLiteral("Locked") : QStringLiteral("Unlocked"))
-      .arg(solo ? QStringLiteral("Solo") : QStringLiteral("Solo off"))
-      .arg(active ? QStringLiteral("Active") : QStringLiteral("Inactive"));
-  detailText = QStringLiteral("Opacity: %1%   |   Blend: %2   |   Cache: n/a")
+  active = layer->isActiveAt(currentLayerViewFrame());
+  cacheEnabled = layer->usesLayerCache();
+  cacheDirty = layer->isDirty();
+  const QString cacheLabel = !cacheEnabled
+      ? QStringLiteral("Off")
+      : cacheDirty ? QStringLiteral("Dirty") : QStringLiteral("Ready");
+  detailText = QStringLiteral("Opacity: %1%   |   Blend: %2   |   Cache: %3")
       .arg(QString::number(std::clamp(layer->opacity() * 100.0f, 0.0f, 100.0f),
                            'f', 0))
       .arg(ArtifactCore::BlendModeUtils::toString(
-          ArtifactCore::toBlendMode(layer->layerBlendType())));
+          ArtifactCore::toBlendMode(layer->layerBlendType())))
+      .arg(cacheLabel);
  }
 
  const float leftX = edge;
- const float centerX = (viewportW - centerW) * 0.5f;
+ const float centerX = static_cast<float>(stateCard.x());
  const float rightX = std::max(edge, viewportW - rightW - edge);
- renderer_->drawRoundedPanel(leftX, bottomY, leftW, cardH,
-                             6.0f, panelFill, panelStroke);
+ const QFontMetrics compactMetrics(compactFont);
+ const QString leftText = compactMetrics.elidedText(
+     QStringLiteral("Layer: %1   |   %2   |   %3   |   %4")
+         .arg(layerName, layerType,
+              solo ? QStringLiteral("Solo") : QStringLiteral("Solo off"),
+              active ? QStringLiteral("Active") : QStringLiteral("Inactive")),
+     Qt::ElideMiddle, std::max(1, static_cast<int>(leftW - 24.0f)));
+ drawChromePanel(leftX, bottomY, leftW, cardH,
+                 6.0f, panelFill, panelStroke);
  renderer_->drawText(
      QRectF(leftX + 12.0f, bottomY + 3.0f, leftW - 24.0f, cardH - 6.0f),
-     QStringLiteral("Layer: %1   |   %2   |   Solo").arg(layerName, layerType),
+     leftText,
      compactFont, textColor, Qt::AlignLeft | Qt::AlignVCenter);
 
- if (!compactLayout) {
-  renderer_->drawRoundedPanel(centerX, bottomY, centerW, cardH,
-                              6.0f, panelFill,
-                              solo ? amberAccent : panelStroke);
-  renderer_->drawText(
-      QRectF(centerX + 10.0f, bottomY + 3.0f,
-             centerW - 20.0f, cardH - 6.0f),
-      stateText, compactFont, solo ? amberAccent : mutedText, Qt::AlignCenter);
+ if (!compactLayout && layer) {
+  drawChromePanel(centerX, bottomY, centerW, cardH,
+                  6.0f, panelFill,
+                  solo ? amberAccent : panelStroke);
+  const float stateItemW = centerW / 3.0f;
+  const QString stateLabels[] = {
+      layer && layer->isVisible() ? QStringLiteral("Visible")
+                                  : QStringLiteral("Hidden"),
+      layer && layer->isLocked() ? QStringLiteral("Locked")
+                                 : QStringLiteral("Unlocked"),
+      solo ? QStringLiteral("Solo") : QStringLiteral("Solo off")};
+  const bool stateActive[] = {
+      layer && layer->isVisible(), layer && layer->isLocked(), solo};
+  for (int i = 0; i < 3; ++i) {
+   const float itemX = centerX + stateItemW * static_cast<float>(i);
+   const bool hovered = hoveredChromeControl_ == 40 + i;
+   if (stateActive[i] || hovered) {
+    const FloatColor accent = i == 0 ? blueAccent : amberAccent;
+    renderer_->drawRoundedPanel(
+        itemX + 3.0f, bottomY + 4.0f,
+        stateItemW - 6.0f, cardH - 8.0f, 4.0f,
+        stateActive[i] ? FloatColor{0.10f, 0.25f, 0.38f, 0.92f}
+                       : FloatColor{0.18f, 0.21f, 0.25f, 0.94f},
+        stateActive[i] ? accent : panelStroke);
+   }
+   renderer_->drawText(
+       QRectF(itemX + 4.0f, bottomY + 3.0f,
+              stateItemW - 8.0f, cardH - 6.0f),
+       stateLabels[i], compactFont,
+       stateActive[i] ? (i == 0 ? textColor : amberAccent) : mutedText,
+       Qt::AlignCenter);
+  }
  }
 
- renderer_->drawRoundedPanel(rightX, bottomY, rightW, cardH,
-                             6.0f, panelFill,
-                             active ? blueAccent : panelStroke);
- renderer_->drawText(
-     QRectF(rightX + 12.0f, bottomY + 3.0f,
-            rightW - 30.0f, cardH - 6.0f),
-     detailText, compactFont, textColor, Qt::AlignLeft | Qt::AlignVCenter);
- renderer_->drawCircle(rightX + rightW - 14.0f, bottomY + cardH * 0.5f,
-                       4.0f,
-                       active ? FloatColor{0.10f, 0.88f, 0.48f, 1.0f}
-                              : FloatColor{0.46f, 0.49f, 0.54f, 1.0f},
-                       1.0f, true);
+ if (!singleCardLayout) {
+  drawChromePanel(rightX, bottomY, rightW, cardH,
+                  6.0f, panelFill, panelStroke);
+  renderer_->drawText(
+      QRectF(rightX + 12.0f, bottomY + 3.0f,
+             rightW - 30.0f, cardH - 6.0f),
+      compactMetrics.elidedText(detailText, Qt::ElideRight,
+                                static_cast<int>(rightW - 30.0f)),
+      compactFont, textColor, Qt::AlignLeft | Qt::AlignVCenter);
+  renderer_->drawCircle(rightX + rightW - 14.0f, bottomY + cardH * 0.5f,
+                        4.0f,
+                        cacheEnabled && !cacheDirty
+                            ? FloatColor{0.10f, 0.88f, 0.48f, 1.0f}
+                            : cacheEnabled
+                                ? amberAccent
+                                : FloatColor{0.46f, 0.49f, 0.54f, 1.0f},
+                        1.0f, true);
+ }
+ }
 
  renderer_->setZoom(currentZoom);
  renderer_->setPan(currentPanX, currentPanY);
@@ -1930,23 +3072,51 @@ bool ArtifactLayerEditorWidgetV2::Impl::handleViewportChromePress(
 
  const qreal dpr = widget_->devicePixelRatioF();
  const QPointF pos = viewportPos * dpr;
- const float viewportW = static_cast<float>(physicalViewportSize(widget_).width());
+ const QSize viewportSize = physicalViewportSize(widget_);
+ const float viewportW = static_cast<float>(viewportSize.width());
+ const float viewportH = static_cast<float>(viewportSize.height());
 
- if (viewportW >= 1000.0f) {
-  const QRectF toolRect(16.0, 16.0, 320.0, 38.0);
-  if (toolRect.contains(pos)) {
+ const QRectF surfaceRect = viewportSurfaceModeRect(viewportW, viewportH);
+ const QRectF surfaceItemsRect = viewportSurfaceModeItemsRect(viewportW, viewportH);
+ if (!surfaceRect.isEmpty()) {
+  const QRectF surfaceSoloRect = viewportSurfaceSoloRect(viewportW, viewportH);
+  if (surfaceSoloRect.contains(pos)) {
+   toggleLayerState(2);
+   return true;
+  }
+  if (surfaceItemsRect.contains(pos)) {
+   const float surfaceItemW = static_cast<float>(
+       (surfaceItemsRect.width() - 8.0) / 3.0);
    const int index = std::clamp(
-       static_cast<int>((pos.x() - toolRect.left() - 4.0) / 78.0), 0, 3);
+       static_cast<int>((pos.x() - surfaceItemsRect.left() - 4.0) / surfaceItemW),
+       0, 2);
+   const LayerSurfaceMode modes[] = {
+       LayerSurfaceMode::Edit,
+       LayerSurfaceMode::Inspect,
+       LayerSurfaceMode::Impact};
+   setSurfaceMode(modes[index]);
+   return true;
+  }
+
+  const QRectF toolRect = viewportEditToolRect(viewportW, viewportH);
+  if (!toolRect.isEmpty() && surfaceMode_ == LayerSurfaceMode::Edit &&
+      toolRect.contains(pos)) {
+   const int index = std::clamp(
+       static_cast<int>((pos.y() - toolRect.top() - 4.0) / 36.0), 0, 3);
    const EditMode modes[] = {
        EditMode::View, EditMode::Transform, EditMode::Shape, EditMode::Mask};
+   const auto layer = targetLayer();
+   if (!layerEditModeAvailable(layer, modes[index])) {
+    return true;
+   }
    static_cast<ArtifactLayerEditorWidgetV2*>(widget_.data())->setEditMode(
        modes[index]);
    return true;
   }
  }
 
- if (viewportW >= 860.0f) {
-  const QRectF modeRect(viewportW - 292.0f - 16.0f, 16.0f, 292.0f, 38.0f);
+ const QRectF modeRect = viewportDisplayModeRect(viewportW, viewportH);
+ if (!modeRect.isEmpty()) {
   if (modeRect.contains(pos)) {
    const int index = std::clamp(
        static_cast<int>((pos.x() - modeRect.left() - 4.0) / 71.0), 0, 3);
@@ -1964,23 +3134,35 @@ bool ArtifactLayerEditorWidgetV2::Impl::handleViewportChromePress(
   }
  }
 
- const QRectF zoomRect((viewportW - 174.0f) * 0.5f, 16.0f, 174.0f, 38.0f);
+ const QRectF stateRect = viewportStateCardRect(viewportW, viewportH);
+ if (!stateRect.isEmpty() && stateRect.contains(pos)) {
+  if (!targetLayer()) return false;
+  const int index = std::clamp(
+      static_cast<int>((pos.x() - stateRect.left()) /
+                       (stateRect.width() / 3.0)), 0, 2);
+  toggleLayerState(index);
+  return true;
+ }
+
+ const QRectF zoomRect = viewportZoomRect(viewportW, viewportH);
  if (!zoomRect.contains(pos)) return false;
 
  const float relativeX = static_cast<float>(pos.x() - zoomRect.left());
+ const int zoomControl = viewportZoomControlIndex(
+     static_cast<float>(zoomRect.width()), relativeX);
  const QPointF center(widget_->width() * 0.5 * dpr,
                       widget_->height() * 0.5 * dpr);
- if (relativeX < 42.0f) {
+ if (zoomControl == 0) {
   zoomLevel_ = std::clamp(renderer_->getZoom() / 1.1f, 0.05f, 32.0f);
   renderer_->zoomAroundViewportPoint(
       {static_cast<float>(center.x()), static_cast<float>(center.y())},
       zoomLevel_);
- } else if (relativeX < 105.0f) {
+ } else if (zoomControl == 1) {
   zoomLevel_ = 1.0f;
   renderer_->zoomAroundViewportPoint(
       {static_cast<float>(center.x()), static_cast<float>(center.y())},
       zoomLevel_);
- } else if (relativeX < 142.0f) {
+ } else if (zoomControl == 2) {
   zoomLevel_ = std::clamp(renderer_->getZoom() * 1.1f, 0.05f, 32.0f);
   renderer_->zoomAroundViewportPoint(
       {static_cast<float>(center.x()), static_cast<float>(center.y())},
@@ -2000,19 +3182,36 @@ bool ArtifactLayerEditorWidgetV2::Impl::updateViewportChromeHover(
 
  const qreal dpr = widget_->devicePixelRatioF();
  const QPointF pos = viewportPos * dpr;
- const float viewportW = static_cast<float>(physicalViewportSize(widget_).width());
+ const QSize viewportSize = physicalViewportSize(widget_);
+ const float viewportW = static_cast<float>(viewportSize.width());
+ const float viewportH = static_cast<float>(viewportSize.height());
  int nextControl = -1;
+ bool nextControlEnabled = true;
 
- if (viewportW >= 1000.0f) {
-  const QRectF toolRect(16.0, 16.0, 320.0, 38.0);
-  if (toolRect.contains(pos)) {
+ const QRectF surfaceRect = viewportSurfaceModeRect(viewportW, viewportH);
+ const QRectF surfaceItemsRect = viewportSurfaceModeItemsRect(viewportW, viewportH);
+ if (!surfaceRect.isEmpty()) {
+  const QRectF surfaceSoloRect = viewportSurfaceSoloRect(viewportW, viewportH);
+  if (surfaceSoloRect.contains(pos) && !targetLayerId_.isNil()) {
+   nextControl = 43;
+  } else if (surfaceItemsRect.contains(pos)) {
+   const float surfaceItemW = static_cast<float>(
+       (surfaceItemsRect.width() - 8.0) / 3.0);
+   nextControl = 30 + std::clamp(
+       static_cast<int>((pos.x() - surfaceItemsRect.left() - 4.0) / surfaceItemW),
+       0, 2);
+  }
+  const QRectF toolRect = viewportEditToolRect(viewportW, viewportH);
+  if (nextControl < 0 && !toolRect.isEmpty() &&
+      surfaceMode_ == LayerSurfaceMode::Edit &&
+      toolRect.contains(pos)) {
    nextControl = std::clamp(
-       static_cast<int>((pos.x() - toolRect.left() - 4.0) / 78.0), 0, 3);
+       static_cast<int>((pos.y() - toolRect.top() - 4.0) / 36.0), 0, 3);
   }
  }
 
- if (nextControl < 0 && viewportW >= 860.0f) {
-  const QRectF modeRect(viewportW - 292.0f - 16.0f, 16.0f, 292.0f, 38.0f);
+ const QRectF modeRect = viewportDisplayModeRect(viewportW, viewportH);
+ if (nextControl < 0 && !modeRect.isEmpty()) {
   if (modeRect.contains(pos)) {
    nextControl = 10 + std::clamp(
        static_cast<int>((pos.x() - modeRect.left() - 4.0) / 71.0), 0, 3);
@@ -2020,28 +3219,59 @@ bool ArtifactLayerEditorWidgetV2::Impl::updateViewportChromeHover(
  }
 
  if (nextControl < 0) {
-  const QRectF zoomRect((viewportW - 174.0f) * 0.5f,
-                        16.0f, 174.0f, 38.0f);
+  const QRectF stateRect = viewportStateCardRect(viewportW, viewportH);
+  if (!targetLayerId_.isNil() && !stateRect.isEmpty() &&
+      stateRect.contains(pos)) {
+   nextControl = 40 + std::clamp(
+       static_cast<int>((pos.x() - stateRect.left()) /
+                        (stateRect.width() / 3.0)), 0, 2);
+  }
+ }
+
+ if (nextControl < 0) {
+  const QRectF zoomRect = viewportZoomRect(viewportW, viewportH);
   if (zoomRect.contains(pos)) {
    const float relativeX = static_cast<float>(pos.x() - zoomRect.left());
-   nextControl = relativeX < 42.0f ? 20
-       : relativeX < 105.0f ? 21
-       : relativeX < 142.0f ? 22
-       : 23;
+   nextControl = 20 + viewportZoomControlIndex(
+       static_cast<float>(zoomRect.width()), relativeX);
   }
+ }
+
+ if (nextControl >= 0 && nextControl <= 3) {
+  const EditMode modes[] = {
+      EditMode::View, EditMode::Transform, EditMode::Shape, EditMode::Mask};
+  nextControlEnabled = layerEditModeAvailable(
+      targetLayer(), modes[nextControl]);
  }
 
  const int previousControl = hoveredChromeControl_;
  if (previousControl != nextControl) {
   hoveredChromeControl_ = nextControl;
+  QString toolTip = viewportChromeToolTip(nextControl);
+  if (nextControl >= 0 && nextControl <= 3) {
+   if (!nextControlEnabled) {
+    const auto layer = targetLayer();
+    toolTip = !layer
+        ? QStringLiteral("Select a layer to edit")
+        : !layer->isVisible() || layer->isLocked()
+            ? QStringLiteral("Unlock and show the layer to edit it")
+            : nextControl == 2
+                ? QStringLiteral("Shape editing is unavailable for this layer")
+                : QStringLiteral("Add a mask before entering mask edit mode");
+   }
+  }
+  widget_->setToolTip(toolTip);
   requestRender();
  }
  if (nextControl >= 0) {
-  widget_->setCursor(Qt::PointingHandCursor);
+  widget_->setCursor(nextControlEnabled
+                         ? Qt::PointingHandCursor : Qt::ArrowCursor);
   return true;
  }
  if (previousControl >= 0) {
-  if (isMaskEditingMode(editMode_)) {
+  const auto layer = targetLayer();
+  if (isMaskEditingMode(editMode_) && layer && layer->isVisible() &&
+      !layer->isLocked()) {
    widget_->setCursor(Qt::CrossCursor);
   } else {
    widget_->unsetCursor();
@@ -2709,9 +3939,9 @@ void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
  renderer_->resetGizmoCameraMatrices();
  renderer_->reset3DCameraMatrices();
  if (backgroundMode_ == LayerBackgroundMode::Alpha) {
-  renderer_->drawCheckerboard(0.0f, 0.0f, viewportW, viewportH, 48.0f,
-                              FloatColor(0.24f, 0.24f, 0.26f, 1.0f),
-                              FloatColor(0.16f, 0.16f, 0.18f, 1.0f));
+  renderer_->drawCheckerboard(0.0f, 0.0f, viewportW, viewportH, 56.0f,
+                              FloatColor(0.33f, 0.34f, 0.35f, 1.0f),
+                              FloatColor(0.26f, 0.27f, 0.28f, 1.0f));
  } else if (backgroundMode_ == LayerBackgroundMode::MayaGradient) {
   refreshBackgroundCache();
   if (!cachedMayaGradientSprite_.isNull()) {
@@ -2744,9 +3974,7 @@ void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
 
      if (auto layer = composition->layerById(targetLayerId_)) {
       displayedLayer = layer;
-      const auto currentFrame = ArtifactPlaybackService::instance()
-          ? ArtifactPlaybackService::instance()->currentFrame()
-          : composition->framePosition();
+      const FramePosition currentFrame = currentLayerViewFrame();
       layer->goToFrame(currentFrame.framePosition());
       const auto source = layer->sourceSize();
       if (source.width > 0 && source.height > 0) {
@@ -2759,14 +3987,22 @@ void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
       if (!isVisible || !isActive || layer->opacity() <= 0.0f) {
       } else {
        layer->draw(renderer_.get());
-       if (displayMode_ == DisplayMode::Mask || editMode_ == EditMode::Mask) {
+       if (surfaceMode_ == LayerSurfaceMode::Inspect &&
+           displayMode_ == DisplayMode::Mask) {
         drawMaskOverlay(layer);
-       } else if (isShapeEditingMode(editMode_)) {
-        drawShapeOverlay(layer);
-       } else {
-        drawTransformOverlay(layer);
-        drawShapeParamHandles(layer);
-        drawTransformHUD(layer);
+        drawSurfaceOverlay(layer);
+       } else if (surfaceMode_ != LayerSurfaceMode::Edit) {
+        drawSurfaceOverlay(layer);
+       } else if (!layer->isLocked()) {
+        if (displayMode_ == DisplayMode::Mask || editMode_ == EditMode::Mask) {
+         drawMaskOverlay(layer);
+        } else if (isShapeEditingMode(editMode_)) {
+         drawShapeOverlay(layer);
+        } else {
+         drawTransformOverlay(layer);
+         drawShapeParamHandles(layer);
+         drawTransformHUD(layer);
+        }
        }
       }
      }
@@ -2839,7 +4075,10 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   setAttribute(Qt::WA_PaintOnScreen);
   setAttribute(Qt::WA_NoSystemBackground);
 
-  setWindowTitle("ArtifactLayerEditor");
+  setWindowTitle(QStringLiteral("Layer Solo View"));
+  setProperty("artifactSurfaceMode", QStringLiteral("Edit"));
+  publishModeReadout(this, impl_->editMode_, impl_->displayMode_);
+  publishLayerReadout(this, ArtifactAbstractLayerPtr{});
 
   impl_->renderTimer_ = new QTimer(this);
   impl_->renderTimer_->setInterval(16);
@@ -2893,6 +4132,10 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<LayerChangedEvent>(
           [this](const LayerChangedEvent& event) {
+            if (impl_->surfaceMode_ == LayerSurfaceMode::Impact ||
+                impl_->targetLayerId_.toString() == event.layerId) {
+              impl_->surfaceInfoDirty_ = true;
+            }
             if (event.changeType == LayerChangedEvent::ChangeType::Removed &&
                 impl_->targetLayerId_.toString() == event.layerId) {
               clearTargetLayer();
@@ -2905,7 +4148,11 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
             if (!targetLayer) {
               return;
             }
-            if (impl_->targetLayerId_.toString() == event.layerId ||
+            if (impl_->targetLayerId_.toString() == event.layerId) {
+              publishLayerReadout(this, targetLayer);
+            }
+            if (impl_->surfaceMode_ == LayerSurfaceMode::Impact ||
+                impl_->targetLayerId_.toString() == event.layerId ||
                 targetLayer->parentLayerId().toString() == event.layerId) {
               impl_->requestRender();
             }
@@ -2915,6 +4162,9 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
           [this](const FrameChangedEvent& event) {
             if (impl_->targetLayerId_.isNil()) {
               return;
+            }
+            if (impl_->surfaceMode_ == LayerSurfaceMode::Inspect) {
+              impl_->surfaceInfoDirty_ = true;
             }
             if (impl_->isPlay_ && impl_->running_.load(std::memory_order_acquire)) {
               return;
@@ -2943,6 +4193,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<ProjectChangedEvent>(
           [this](const ProjectChangedEvent&) {
+            impl_->surfaceInfoDirty_ = true;
             const auto targetId = impl_->targetLayerId_;
             if (targetId.isNil()) {
               return;
@@ -2960,6 +4211,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>(
           [this](const CurrentCompositionChangedEvent&) {
+            impl_->surfaceInfoDirty_ = true;
             const LayerID selectedId = currentSelectedLayerId();
             if (!selectedId.isNil()) {
               setTargetLayer(selectedId);
@@ -2988,7 +4240,9 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   if (impl_->pathEditPending_) {
    impl_->commitPathEditTransaction();
   }
-  impl_->targetLayerId_ = LayerID();
+ impl_->targetLayerId_ = LayerID();
+ publishLayerReadout(this, ArtifactAbstractLayerPtr{});
+ impl_->surfaceInfoDirty_ = true;
   impl_->isDraggingShapeVertex_ = false;
   impl_->draggingShapeVertexIndex_ = -1;
   impl_->hoveredShapeVertexIndex_ = -1;
@@ -3041,10 +4295,11 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    }
    if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
     auto layer = impl_->targetLayer();
-    if (layer) {
+    if (layer && layer->isVisible() && !layer->isLocked()) {
      impl_->beginMaskEditTransaction(layer);
     }
-    if (layer && impl_->deleteHoveredMaskVertex(layer)) {
+    if (layer && layer->isVisible() && !layer->isLocked() &&
+        impl_->deleteHoveredMaskVertex(layer)) {
      impl_->commitMaskEditTransaction();
      impl_->requestRender();
      event->accept();
@@ -3053,7 +4308,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     impl_->commitMaskEditTransaction();
    }
   }
-  if (isShapeEditingMode(impl_->editMode_) && impl_->renderer_ && event) {
+  if (impl_->displayMode_ != DisplayMode::Mask &&
+      isShapeEditingMode(impl_->editMode_) && impl_->renderer_ && event) {
    if (event->key() == Qt::Key_O) {
     impl_->proportionalEditingEnabled_ = !impl_->proportionalEditingEnabled_;
     impl_->requestRender();
@@ -3072,13 +4328,15 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    }
    if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
     auto layer = impl_->targetLayer();
-    if (layer) {
+    if (layer && layer->isVisible() && !layer->isLocked()) {
      impl_->beginShapeEditTransaction(layer);
     }
     bool handled = false;
-    if (layer && impl_->deleteHoveredShapeVertex(layer)) {
+    if (layer && layer->isVisible() && !layer->isLocked() &&
+        impl_->deleteHoveredShapeVertex(layer)) {
      handled = true;
-    } else if (layer && impl_->splitHoveredShapeSegment(layer)) {
+    } else if (layer && layer->isVisible() && !layer->isLocked() &&
+               impl_->splitHoveredShapeSegment(layer)) {
      handled = true;
     }
     if (handled) {
@@ -3109,6 +4367,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   if (event->button() == Qt::MiddleButton ||
    (event->button() == Qt::RightButton && event->modifiers() & Qt::AltModifier))
   {
+   impl_->updateViewportChromeHover(QPointF(-1.0, -1.0));
    impl_->isPanning_ = true;
    impl_->lastMousePos_ = event->position(); // 前回位置を保存
    setCursor(hudCursor(QStringLiteral("hud_cursor_pan.svg"),
@@ -3117,13 +4376,23 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    return;
   }
 
-  if (impl_->transformGizmo_ && impl_->renderer_ &&
+  if (event->button() == Qt::LeftButton) {
+   if (const auto layer = impl_->targetLayer();
+       layer && (!layer->isVisible() || layer->isLocked())) {
+    event->accept();
+    return;
+   }
+  }
+
+  if (impl_->surfaceMode_ == LayerSurfaceMode::Edit &&
+      impl_->transformGizmo_ && impl_->renderer_ &&
+      impl_->displayMode_ != DisplayMode::Mask &&
       impl_->editMode_ != EditMode::Mask &&
       !isShapeEditingMode(impl_->editMode_) &&
       event->button() == Qt::LeftButton) {
    // Phase 1: parametric shape handle hit test (takes priority over gizmo)
    auto layer = impl_->targetLayer();
-   if (layer) {
+   if (layer && layer->isVisible() && !layer->isLocked()) {
     const Detail::float2 cp = impl_->renderer_->viewportToCanvas(
         {(float)event->position().x(), (float)event->position().y()});
     const QPointF canvasPoint(cp.x, cp.y);
@@ -3163,7 +4432,9 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    }
   }
 
- if (isShapeEditingMode(impl_->editMode_) && event->button() == Qt::LeftButton && impl_->renderer_) {
+ if (impl_->displayMode_ != DisplayMode::Mask &&
+     isShapeEditingMode(impl_->editMode_) &&
+     event->button() == Qt::LeftButton && impl_->renderer_) {
    auto layer = impl_->targetLayer();
    auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
    if (shape && shape->shapeType() != ShapeType::Line) {
@@ -3311,7 +4582,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
     if (impl_->editMode_ == EditMode::Mask && event->button() == Qt::LeftButton && impl_->renderer_) {
    auto layer = impl_->targetLayer();
-   if (layer) {
+   if (layer && layer->isVisible() && !layer->isLocked()) {
      const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
          {(float)event->position().x(), (float)event->position().y()});
      const QPointF canvasPoint(static_cast<qreal>(canvasPos.x),
@@ -3382,10 +4653,19 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
 void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
  {
- if (event->button() == Qt::MiddleButton ||
-      event->button() == Qt::RightButton) {
+ if (impl_->isPanning_ &&
+     (event->button() == Qt::MiddleButton ||
+      event->button() == Qt::RightButton)) {
    impl_->isPanning_ = false;
-   unsetCursor();
+   if (!impl_->updateViewportChromeHover(event->position())) {
+    const auto layer = impl_->targetLayer();
+    if (isMaskEditingMode(impl_->editMode_) && layer &&
+        layer->isVisible() && !layer->isLocked()) {
+     setCursor(Qt::CrossCursor);
+    } else {
+     unsetCursor();
+    }
+   }
    event->accept();
    return;
   }
@@ -3499,7 +4779,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
  {
   if (impl_->editMode_ == EditMode::Mask && event->button() == Qt::LeftButton && impl_->renderer_) {
    auto layer = impl_->targetLayer();
-   if (layer) {
+   if (layer && layer->isVisible() && !layer->isLocked()) {
      const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
          {(float)event->position().x(), (float)event->position().y()});
      const QPointF canvasPoint(static_cast<qreal>(canvasPos.x),
@@ -3576,9 +4856,12 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
    }
   }
   // Phase 1: hover update in View mode
-  if (impl_->editMode_ != EditMode::Mask && !isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
+  if (impl_->surfaceMode_ == LayerSurfaceMode::Edit &&
+      impl_->displayMode_ != DisplayMode::Mask &&
+      impl_->editMode_ != EditMode::Mask &&
+      !isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
    auto layer = impl_->targetLayer();
-   if (layer) {
+   if (layer && layer->isVisible() && !layer->isLocked()) {
     const Detail::float2 cp = impl_->renderer_->viewportToCanvas(
         {(float)event->position().x(), (float)event->position().y()});
     const QPointF canvasPoint(cp.x, cp.y);
@@ -3592,11 +4875,13 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
    }
   }
 
-  if (impl_->transformGizmo_ && impl_->renderer_ &&
+  if (impl_->surfaceMode_ == LayerSurfaceMode::Edit &&
+      impl_->transformGizmo_ && impl_->renderer_ &&
+      impl_->displayMode_ != DisplayMode::Mask &&
       impl_->editMode_ != EditMode::Mask &&
       !isShapeEditingMode(impl_->editMode_)) {
    auto layer = impl_->targetLayer();
-   if (layer) {
+   if (layer && layer->isVisible() && !layer->isLocked()) {
     if (impl_->transformGizmo_->isDragging()) {
      if (impl_->transformGizmo_->handleMouseMove(
              {event->position().x(), event->position().y()}, impl_->renderer_.get())) {
@@ -3618,7 +4903,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
 
   if (impl_->editMode_ == EditMode::Mask && impl_->renderer_) {
    auto layer = impl_->targetLayer();
-   if (layer) {
+   if (layer && layer->isVisible() && !layer->isLocked()) {
      const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
          {(float)event->position().x(), (float)event->position().y()});
      const QPointF canvasPoint(static_cast<qreal>(canvasPos.x),
@@ -3687,9 +4972,12 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
     }
    }
   }
-  if (isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
+  if (impl_->displayMode_ != DisplayMode::Mask &&
+      isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
    auto layer = impl_->targetLayer();
-   auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+   auto shape = layer && layer->isVisible() && !layer->isLocked()
+       ? std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)
+       : std::shared_ptr<ArtifactShapeLayer>{};
    if (shape) {
     const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
         {(float)event->position().x(), (float)event->position().y()});
@@ -3864,6 +5152,17 @@ void ArtifactLayerEditorWidgetV2::resizeEvent(QResizeEvent* event)
  if (event->size().width() <= 0 || event->size().height() <= 0) {
   return;
  }
+ if (impl_->hoveredChromeControl_ >= 0) {
+  impl_->hoveredChromeControl_ = -1;
+  setToolTip(QString{});
+  const auto layer = impl_->targetLayer();
+  if (isMaskEditingMode(impl_->editMode_) && layer &&
+      layer->isVisible() && !layer->isLocked()) {
+   setCursor(Qt::CrossCursor);
+  } else {
+   unsetCursor();
+  }
+ }
  impl_->recreateSwapChain(this);
  if (impl_->initialized_ && impl_->renderer_) {
   impl_->requestRender();
@@ -3902,9 +5201,12 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* pathToggleSmoothAct = nullptr;
  QAction* pathToggleClosedAct = nullptr;
  std::shared_ptr<ArtifactShapeLayer> shapeLayer;
- if (isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
+ if (impl_->displayMode_ != DisplayMode::Mask &&
+     isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
   auto layer = impl_->targetLayer();
-  shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+  if (layer && layer->isVisible() && !layer->isLocked()) {
+   shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+  }
   if (shapeLayer) {
    QMenu* shapeOpsMenu = menu.addMenu(QStringLiteral("Add Operator"));
    addTrimPathsAct = shapeOpsMenu->addAction(QStringLiteral("Trim Paths"));
@@ -4239,9 +5541,10 @@ void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
                             << "initialized=" << impl_->initialized_
                             << "visible=" << isVisible()
                             << "size=" << size();
-  if (impl_->initialized_) {
+ if (impl_->initialized_) {
    impl_->stopRenderLoop();
   }
+  impl_->updateViewportChromeHover(QPointF(-1.0, -1.0));
   QWidget::hideEvent(event);
  }
 
@@ -4263,6 +5566,7 @@ void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
 
  void ArtifactLayerEditorWidgetV2::focusOutEvent(QFocusEvent* event)
  {
+  impl_->updateViewportChromeHover(QPointF(-1.0, -1.0));
   QWidget::focusOutEvent(event);
  }
 
@@ -4282,6 +5586,8 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
   impl_->commitShapeEditTransaction();
  }
  impl_->targetLayerId_ = id;
+ publishLayerReadout(this, impl_->targetLayer());
+ impl_->surfaceInfoDirty_ = true;
  impl_->isDraggingShapeVertex_ = false;
  impl_->draggingShapeVertexIndex_ = -1;
  impl_->hoveredShapeVertexIndex_ = -1;
@@ -4310,7 +5616,8 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
       // レイヤーサイズは使用しない（コンポジションサイズを優先）
       // impl_->renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
      }
-     if (isShapeEditingMode(impl_->editMode_)) {
+     if (layer->isVisible() && !layer->isLocked() &&
+         isShapeEditingMode(impl_->editMode_)) {
       if (auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
        if (!shape->hasCustomPolygon()) {
         const std::vector<QPointF> points = buildShapeEditSeedPoints(*shape);
@@ -4372,15 +5679,24 @@ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, fl
 
  void ArtifactLayerEditorWidgetV2::setEditMode(EditMode mode)
  {
+  if (impl_->surfaceMode_ != LayerSurfaceMode::Edit && mode != EditMode::View) {
+   impl_->editModeBeforeSurface_ = mode;
+   mode = EditMode::View;
+  }
   const bool wasMaskMode = isMaskEditingMode(impl_->editMode_);
   const bool isMaskMode = isMaskEditingMode(mode);
-  impl_->editMode_ = mode;
+ impl_->editMode_ = mode;
  if (isMaskMode) {
-   if (!wasMaskMode) {
+   if (!wasMaskMode && impl_->displayMode_ != DisplayMode::Mask) {
     impl_->displayModeBeforeMask_ = impl_->displayMode_;
    }
    impl_->displayMode_ = DisplayMode::Mask;
-   setCursor(Qt::CrossCursor);
+   const auto layer = impl_->targetLayer();
+   if (layer && layer->isVisible() && !layer->isLocked()) {
+    setCursor(Qt::CrossCursor);
+   } else {
+    unsetCursor();
+   }
   } else {
    unsetCursor();
    impl_->isDraggingMaskVertex_ = false;
@@ -4414,7 +5730,8 @@ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, fl
   if (isShapeEditingMode(mode) && !impl_->targetLayerId_.isNil()) {
    if (auto* service = ArtifactProjectService::instance()) {
     if (auto composition = service->currentComposition().lock()) {
-     if (auto layer = composition->layerById(impl_->targetLayerId_)) {
+     if (auto layer = composition->layerById(impl_->targetLayerId_);
+         layer && layer->isVisible() && !layer->isLocked()) {
       if (auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
        if (!shape->hasCustomPolygon()) {
         const std::vector<QPointF> points = buildShapeEditSeedPoints(*shape);
@@ -4436,10 +5753,15 @@ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, fl
  void ArtifactLayerEditorWidgetV2::setDisplayMode(DisplayMode mode)
  {
   if (isMaskEditingMode(impl_->editMode_)) {
-    impl_->displayModeBeforeMask_ = mode;
+    if (mode != DisplayMode::Mask) {
+     impl_->displayModeBeforeMask_ = mode;
+    }
     impl_->displayMode_ = DisplayMode::Mask;
   } else {
     impl_->displayMode_ = mode;
+    if (mode != DisplayMode::Mask) {
+     impl_->displayModeBeforeMask_ = mode;
+    }
   }
   if (impl_->transformGizmo_) {
    impl_->syncTransformGizmo(impl_->targetLayer());

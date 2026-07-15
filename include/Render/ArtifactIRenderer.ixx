@@ -262,11 +262,13 @@ public:
                          const QImage &image, float opacity = 1.0f);
   void drawSpriteTransformed(float x, float y, float w, float h,
                              const QMatrix4x4 &transform, const QImage &image,
-                             float opacity = 1.0f);
+                             float opacity = 1.0f,
+                             const QRectF &uvRect = QRectF(0.0, 0.0, 1.0, 1.0));
   void drawSpriteTransformed(float x, float y, float w, float h,
                              const QMatrix4x4 &transform,
                              const ArtifactCore::ImageF32x4_RGBA &image,
-                             float opacity = 1.0f);
+                             float opacity = 1.0f,
+                             const QRectF &uvRect = QRectF(0.0, 0.0, 1.0, 1.0));
   void drawSpriteTransformed(float x, float y, float w, float h,
                              const QMatrix4x4 &transform,
                              Diligent::ITextureView *texture,

@@ -786,7 +786,7 @@ private:
       QMenu *submenu = menu.addMenu(category);
       for (const auto &effect : it->second) {
         QAction *action = submenu->addAction(effect.displayName);
-        action->setData(effect.id.toQString());
+        action->setData(effect.id.toString());
       }
     }
     for (const auto &[category, effects] : grouped) {
@@ -796,7 +796,7 @@ private:
       QMenu *submenu = menu.addMenu(category);
       for (const auto &effect : effects) {
         QAction *action = submenu->addAction(effect.displayName);
-        action->setData(effect.id.toQString());
+        action->setData(effect.id.toString());
       }
     }
 

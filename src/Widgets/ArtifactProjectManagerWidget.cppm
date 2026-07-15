@@ -3141,8 +3141,19 @@ void ArtifactProjectView::mouseDoubleClickEvent(QMouseEvent* event) {
 
     const QModelIndex idx = indexAt(mousePos);
     if (idx.isValid()) {
-        itemDoubleClicked(idx);
-        handleItemDoubleClicked(idx);
+        const QVariant typeVar = idx.data(
+            Qt::UserRole +
+            static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+        const auto itemType = typeVar.isValid()
+            ? static_cast<eProjectItemType>(typeVar.toInt())
+            : eProjectItemType::Folder;
+        if (itemType == eProjectItemType::Footage) {
+            itemDoubleClicked(idx);
+        } else {
+            // Composition changes rebuild the proxy model synchronously. Do not
+            // emit the external open signal and then reuse the invalidated index.
+            handleItemDoubleClicked(idx);
+        }
         event->accept();
         return;
     }
@@ -5780,10 +5791,9 @@ public:
         }
         if (projectView_) {
             ProjectItem* item = currentSelectedItem();
-            if (item && item->type() == eProjectItemType::Folder) {
-                projectView_->handleItemDoubleClicked(idx);
-            } else {
+            if (item && item->type() == eProjectItemType::Footage) {
                 projectView_->itemDoubleClicked(idx);
+            } else {
                 projectView_->handleItemDoubleClicked(idx);
             }
         }

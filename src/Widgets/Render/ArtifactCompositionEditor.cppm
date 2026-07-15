@@ -4341,6 +4341,15 @@ protected:
       return;
     }
 
+    if (event->key() == Qt::Key_Tab && !event->isAutoRepeat() &&
+        event->modifiers().testFlag(Qt::ShiftModifier)) {
+      if (auto *owner = qobject_cast<ArtifactCompositionEditor *>(parentWidget())) {
+        owner->toggleViewportToolboxes();
+      }
+      event->accept();
+      return;
+    }
+
     if (event->key() == Qt::Key_Tab && !event->isAutoRepeat()) {
       showPieMenu();
       event->accept();
@@ -6787,6 +6796,7 @@ public:
   QToolBar *topToolbar_ = nullptr;
   QToolBar *toolHud_ = nullptr;
   QToolBar *zoomHud_ = nullptr;
+  bool viewportToolboxesVisible_ = true;
   QFrame *chromeStrip_ = nullptr;
   QLabel *chromeTitleLabel_ = nullptr;
   QLabel *chromeDetailLabel_ = nullptr;
@@ -7623,7 +7633,7 @@ public:
       }
       hud->adjustSize();
       hud->move(position);
-      hud->setVisible(hasComposition);
+      hud->setVisible(hasComposition && viewportToolboxesVisible_);
       if (hud->isVisible()) {
         hud->raise();
       }
@@ -8178,6 +8188,11 @@ public:
       immersiveAction_->setText(immersive ? QStringLiteral("Exit Immersive")
                                           : QStringLiteral("Immersive"));
     }
+  }
+
+  void toggleViewportToolboxes(ArtifactCompositionEditor *owner) {
+    viewportToolboxesVisible_ = !viewportToolboxesVisible_;
+    syncOverlayGeometry(owner);
   }
 
   bool saveQuickScreenshot(ArtifactCompositionEditor* owner) {
@@ -9294,6 +9309,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                       widget == impl_->viewportLayoutButton_ ||
                       widget == impl_->viewPresetButton_ ||
                       widget == impl_->workspaceModeButton_ ||
+                      widget == impl_->screenshotButton_ ||
                       widget == impl_->viewportRenderOutputButton_;
     if (!keep) {
       impl_->topToolbar_->removeAction(action);
@@ -10206,6 +10222,15 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QTimer::singleShot(0, this, [this]() {
     if (impl_) {
       impl_->syncOverlayGeometry(this);
+      // Dock layouts settle after the editor constructor returns.  Re-run the
+      // native viewport readiness pass at that point so the first swap chain
+      // uses the actual center-pane dimensions rather than a transient size.
+      impl_->forEachActiveViewport([](CompositionViewport *view, int) {
+        if (view) {
+          view->scheduleViewportReadinessCheck(
+              QStringLiteral("editor-initial-layout"), 0);
+        }
+      });
     }
   });
 
@@ -10749,6 +10774,22 @@ ArtifactCompositionEditor::~ArtifactCompositionEditor() {
 }
 
 bool ArtifactCompositionEditor::event(QEvent *event) {
+  if (event && impl_ && event->type() == QEvent::Show) {
+    // The first QMainWindow/QADS layout pass can complete after child show
+    // events. Re-check on the next turn with the final center-pane geometry.
+    QTimer::singleShot(0, this, [this]() {
+      if (!impl_) {
+        return;
+      }
+      impl_->forEachActiveViewport([](CompositionViewport *view, int) {
+        if (view) {
+          view->scheduleViewportReadinessCheck(
+              QStringLiteral("editor-show-layout"), 0);
+        }
+      });
+      impl_->syncOverlayGeometry(this);
+    });
+  }
   if (event && impl_ &&
       (event->type() == QEvent::Show || event->type() == QEvent::FocusIn ||
        event->type() == QEvent::WindowActivate)) {
@@ -10951,6 +10992,12 @@ void ArtifactCompositionEditor::zoom100() {
 
 bool ArtifactCompositionEditor::handleImportPlacementKeyPress(QKeyEvent *event) {
   return impl_ ? impl_->handleImportPlacementKeyPress(this, event) : false;
+}
+
+void ArtifactCompositionEditor::toggleViewportToolboxes() {
+  if (impl_) {
+    impl_->toggleViewportToolboxes(this);
+  }
 }
 
 } // namespace Artifact

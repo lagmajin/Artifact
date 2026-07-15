@@ -370,6 +370,10 @@ public:
   QString filterText;
   QString focusedEffectId;
   bool rebuilding = false;
+  // Rebuild requests can arrive while a dynamic property editor is being
+  // torn down and recreated.  Keep a monotonic context revision so that the
+  // final UI always represents the most recent layer/effect/filter state.
+  quint64 rebuildRevision = 0;
   bool needsRebuildWhenVisible = false;
   bool valueColumnFirst = false;
   bool sliderBeforeValue = false;
@@ -385,6 +389,7 @@ public:
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   void scheduleRebuild(int delayMs = -1) {
+    ++rebuildRevision;
     if (!rebuildTimer) {
       return;
     }
@@ -461,8 +466,9 @@ ArtifactPropertyWidget::Impl::resolveRowProperty(
     }
 
     const QString effectName = effect->displayName().toQString();
-    for (const auto &property : effect->getProperties()) {
-      if (property.getName().compare(propertyName, Qt::CaseInsensitive) != 0) {
+    for (const auto &property : effect->editableProperties()) {
+      if (!property || property->getName().compare(
+                           propertyName, Qt::CaseInsensitive) != 0) {
         continue;
       }
       if (!propertyScope.isEmpty() &&
@@ -471,7 +477,7 @@ ArtifactPropertyWidget::Impl::resolveRowProperty(
               .compare(propertyScope, Qt::CaseInsensitive) != 0) {
         continue;
       }
-      return std::make_shared<ArtifactCore::AbstractProperty>(property);
+      return property;
     }
   }
 
@@ -566,6 +572,13 @@ QString ArtifactPropertyWidget::Impl::computeRebuildSignature() const {
                                       Qt::CaseInsensitive) == 0) {
         signature += QStringLiteral("structural_value:");
         signature += property->getValue().toString();
+        signature += QLatin1Char('\n');
+      }
+      if (property->getName().compare(QStringLiteral("sourceCrop.enabled"),
+                                      Qt::CaseInsensitive) == 0) {
+        signature += QStringLiteral("structural_value:");
+        signature += property->getValue().toBool() ? QStringLiteral("1")
+                                                   : QStringLiteral("0");
         signature += QLatin1Char('\n');
       }
     }
@@ -1330,10 +1343,20 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   }
 
   rebuilding = true;
+  const quint64 rebuildingRevision = rebuildRevision;
+  const auto finishRebuild = [this, rebuildingRevision]() {
+    rebuilding = false;
+    // A setter/event changed the editing context while rows were being
+    // rebuilt.  Do one follow-up pass for that newest context instead of
+    // leaving the previous tab's rows on screen.
+    if (rebuildRevision != rebuildingRevision) {
+      scheduleRebuild(0);
+    }
+  };
 
   const QString nextSignature = computeRebuildSignature();
   if (nextSignature == rebuildSignature) {
-    rebuilding = false;
+    finishRebuild();
     updatePropertyValues();
     if (!pendingScrollGroupName.isEmpty()) {
       QTimer::singleShot(0, owner, [this]() { scrollToGroupByName(pendingScrollGroupName); });
@@ -1355,7 +1378,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     emptyLabel->setAlignment(Qt::AlignCenter);
     applyPropertySectionLabel(emptyLabel, true);
     mainLayout->addWidget(emptyLabel);
-    rebuilding = false;
+    finishRebuild();
     return;
   }
 
@@ -1463,7 +1486,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   if (!currentLayer) {
     bool hasAnyCompositionEffectProperties = false;
     const bool hasFocusedEffect = !focusedEffectId.trimmed().isEmpty();
-    const auto currentCompositionEffectTime = []() { return RationalTime(0, 1); };
+    auto *playback = ArtifactPlaybackService::instance();
+    const auto currentCompositionEffectTime = [playback]() {
+      return currentPlaybackTime(playback);
+    };
 
     if (hasFocusedEffect) {
       auto *focusedLabel = new QLabel(
@@ -1498,9 +1524,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       groupLayout->addWidget(stageLabel);
 
       ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
-      for (const auto &p : effect->getProperties()) {
-        propGroup.addProperty(
-            std::make_shared<ArtifactCore::AbstractProperty>(p));
+      for (const auto &p : effect->editableProperties()) {
+        if (p) {
+          propGroup.addProperty(p);
+        }
       }
 
       auto sortedProps = propGroup.sortedProperties();
@@ -1535,7 +1562,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           },
           {},
           currentCompositionEffectTime,
-          {},
+          [this](const QString &) { scheduleUpdateValues(); },
           ArtifactAbstractLayerPtr{},
           &addedGroupProperties, presentation.headingText, &propertyEditors, &effectRows,
           {});
@@ -1558,7 +1585,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
     mainLayout->addStretch();
 
-    rebuilding = false;
+    finishRebuild();
     return;
   }
 
@@ -1616,7 +1643,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           ? PropertyPresentationProfile{QStringLiteral("components"), {}}
           : propertyPresentationProfile(layer);
 
-  for (const auto &groupDef : layerGroups) {
+  if (!hasFocusedEffect) {
+    for (const auto &groupDef : layerGroups) {
     const QString groupName =
         groupDef.name().isEmpty() ? QStringLiteral("Layer") : groupDef.name();
     if (shouldHideInspectorPropertyGroup(groupName)) {
@@ -1982,8 +2010,14 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                                (!cropWidth || !cropHeight ||
                                 cropWidth->getValue().toDouble() <= 0.0 ||
                                 cropHeight->getValue().toDouble() <= 0.0);
-                           layer->setLayerPropertyValue(
-                               QStringLiteral("sourceCrop.enabled"), true);
+                           if (!layer->setLayerPropertyValue(
+                                   QStringLiteral("sourceCrop.enabled"), true)) {
+                             return;
+                           }
+                           if (const auto enabled = layer->getProperty(
+                                   QStringLiteral("sourceCrop.enabled"))) {
+                             enabled->setValue(true);
+                           }
                            if (needsInitialCrop) {
                              layer->setLayerPropertyValue(
                                  QStringLiteral("sourceCrop.cropX"), 0.0);
@@ -2180,7 +2214,13 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             (!cropWidth || !cropHeight ||
              cropWidth->getValue().toDouble() <= 0.0 ||
              cropHeight->getValue().toDouble() <= 0.0);
-        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"), true);
+        if (!layer->setLayerPropertyValue(
+                QStringLiteral("sourceCrop.enabled"), true)) {
+          return;
+        }
+        if (enabledProperty) {
+          enabledProperty->setValue(true);
+        }
         if (needsInitialCrop) {
           layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"), 0.0);
           layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"), 0.0);
@@ -2209,16 +2249,6 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
   }
 
-  if (hasFocusedEffect) {
-    auto *focusedLabel = new QLabel(
-        QStringLiteral("Focused Effect ID: %1").arg(focusedEffectId));
-    focusedLabel->setObjectName(QStringLiteral("propertySectionLabel"));
-    applyPropertySectionLabel(focusedLabel, true);
-    QFont focusedFont = focusedLabel->font();
-    focusedFont.setPointSize(11);
-    focusedLabel->setFont(focusedFont);
-    applyThemeTextPalette(focusedLabel, 110);
-    mainLayout->addWidget(focusedLabel);
   }
 
   for (const auto &effect : effects) {
@@ -2243,9 +2273,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     groupLayout->addWidget(stageLabel);
 
     ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
-    for (const auto &p : effect->getProperties()) {
-      propGroup.addProperty(
-          std::make_shared<ArtifactCore::AbstractProperty>(p));
+    for (const auto &p : effect->editableProperties()) {
+      if (p) {
+        propGroup.addProperty(p);
+      }
     }
 
     auto sortedProps = propGroup.sortedProperties();
@@ -2280,7 +2311,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         },
         {},
         currentLayerTime,
-        {},
+        notifyLayerKeyframeChanged,
         layer,
         &addedGroupProperties, presentation.headingText, &propertyEditors, &effectRows,
         decorateLayerRow);
@@ -2310,7 +2341,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     pendingScrollGroupName.clear();
   }
 
-  rebuilding = false;
+  finishRebuild();
 }
 
 void ArtifactPropertyWidget::Impl::scrollToGroupByName(const QString &groupName) {
