@@ -1374,6 +1374,16 @@ void PrimitiveRenderer3D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEX
     impl_->createPSO();
 }
 
+void PrimitiveRenderer3D::setRenderTargetFormat(TEXTURE_FORMAT rtvFormat)
+{
+    if (rtvFormat == TEX_FORMAT_UNKNOWN || impl_->rtvFormat_ == rtvFormat) {
+        return;
+    }
+
+    impl_->rtvFormat_ = rtvFormat;
+    impl_->createPSO();
+}
+
 void PrimitiveRenderer3D::setPSOs(ShaderManager& shaderManager)
 {
     impl_->gizmo3DPsoAndSrb_ = shaderManager.gizmo3DPsoAndSrb();

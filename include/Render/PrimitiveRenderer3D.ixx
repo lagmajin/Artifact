@@ -35,6 +35,9 @@ public:
   void createBuffers(RefCntAutoPtr<IRenderDevice> device);
   void createBuffers(RefCntAutoPtr<IRenderDevice> device,
                      TEXTURE_FORMAT rtvFormat);
+  // Rebuild the small 3D primitive PSO set only when the active attachment
+  // format changes (for example SDR swapchain <-> float composition target).
+  void setRenderTargetFormat(TEXTURE_FORMAT rtvFormat);
   void setPSOs(ShaderManager &shaderManager);
   void setCommandBuffer(RenderCommandBuffer* cmdBuf);
   void setContext(IDeviceContext *ctx);

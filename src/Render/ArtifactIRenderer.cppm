@@ -2251,6 +2251,11 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
   primitiveRenderer_.setOverrideRTV(colorRTV);
   primitiveRenderer3D_.setOverrideRTV(colorRTV);
   primitiveRenderer3D_.setOverrideDSV(depthDSV);
+  if (auto* colorView = activeColorView()) {
+    if (auto* colorTexture = colorView->GetTexture()) {
+      primitiveRenderer3D_.setRenderTargetFormat(colorTexture->GetDesc().Format);
+    }
+  }
 }
 
  Diligent::ITextureView* ArtifactIRenderer::Impl::activeColorView() const
