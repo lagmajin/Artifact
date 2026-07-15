@@ -722,6 +722,11 @@ namespace {
     }
     ScopedGpuDebugGroup debugGroup(ctx.RawPtr(), "ArtifactIRenderer.Mesh");
     bindActiveRenderTargets(ctx.RawPtr());
+    if (auto* colorView = activeColorView()) {
+      if (auto* colorTexture = colorView->GetTexture()) {
+        renderer->setRenderTargetFormat(colorTexture->GetDesc().Format);
+      }
+    }
     renderer->prepare(ctx.RawPtr());
     renderer->draw(ctx.RawPtr(), 1);
   }
