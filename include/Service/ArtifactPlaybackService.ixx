@@ -126,6 +126,7 @@ public:
   void play();
   void pause();
   void stop();
+  void waitForStop();
   void togglePlayPause();
   void playFromFrame(const FramePosition &position);
   void pauseAndGoToFrame(const FramePosition &position);

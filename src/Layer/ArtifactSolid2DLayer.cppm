@@ -296,7 +296,7 @@ namespace Artifact
                                               -119);
   fillTypeProp->setValue(static_cast<int>(fillType()));
   fillTypeProp->setDisplayLabel(QStringLiteral("Fill Mode"));
-  fillTypeProp->setTooltip(QStringLiteral("0=Solid, 1=Linear Gradient, 2=Radial Gradient, 3=Conical Gradient"));
+  fillTypeProp->setTooltip(QStringLiteral("Solid, linear, radial, conical, repeating, or mirrored gradient"));
   solidGroup.addProperty(fillTypeProp);
 
   const auto start = gradientStartColor();
@@ -385,6 +385,8 @@ namespace Artifact
    setFillType(type <= 0 ? ArtifactSolidFillType::Solid
                          : type == 2 ? ArtifactSolidFillType::RadialGradient
                          : type == 3 ? ArtifactSolidFillType::ConicalGradient
+                         : type == 4 ? ArtifactSolidFillType::RepeatingGradient
+                         : type == 5 ? ArtifactSolidFillType::MirroredGradient
                                      : ArtifactSolidFillType::LinearGradient);
    Q_EMIT changed();
    return true;

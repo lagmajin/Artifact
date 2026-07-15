@@ -1715,6 +1715,12 @@ class InspectorActionButton final : public QPushButton {
 public:
   using QPushButton::QPushButton;
 
+  void setOwnerDrawn(bool enabled) {
+    ownerDrawn_ = enabled;
+    setAttribute(Qt::WA_Hover, enabled);
+    update();
+  }
+
   void setAction(std::function<void()> action) {
     action_ = std::move(action);
   }
@@ -1726,6 +1732,61 @@ public:
   }
 
 protected:
+  void paintEvent(QPaintEvent *event) override {
+    if (!ownerDrawn_) {
+      QPushButton::paintEvent(event);
+      return;
+    }
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    const QPalette pal = palette();
+    const bool hovered = underMouse();
+    const bool pressed = isDown();
+    const bool active = isCheckable() && isChecked();
+    const QColor base = pal.color(isEnabled() ? QPalette::Active
+                                              : QPalette::Disabled,
+                                  QPalette::Button);
+    const QColor accent = pal.color(QPalette::Highlight);
+    const QColor fill = pressed
+                            ? blendColor(base, accent, 0.46)
+                            : active
+                                  ? blendColor(base, accent, 0.34)
+                                  : hovered
+                                        ? blendColor(base, accent, 0.14)
+                                        : base;
+    const QRectF surface = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    painter.setPen(pal.color(QPalette::Mid));
+    painter.setBrush(fill);
+    painter.drawRoundedRect(surface, 4.0, 4.0);
+
+    if (active) {
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(accent);
+      painter.drawRoundedRect(QRectF(3.0, 7.0, 3.0,
+                                     qMax(4, height() - 14)),
+                              1.5, 1.5);
+    }
+
+    QFont textFont = font();
+    textFont.setWeight(active ? QFont::DemiBold : QFont::Normal);
+    painter.setFont(textFont);
+    painter.setPen(pal.color(isEnabled() ? QPalette::Active
+                                         : QPalette::Disabled,
+                             QPalette::ButtonText));
+    const QRect textRect = rect().adjusted(active ? 12 : 8, 0, -8, 0);
+    painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, text());
+
+    if (hasFocus()) {
+      QPen focusPen(accent);
+      focusPen.setStyle(Qt::DashLine);
+      painter.setPen(focusPen);
+      painter.setBrush(Qt::NoBrush);
+      painter.drawRoundedRect(surface.adjusted(2, 2, -2, -2), 3.0, 3.0);
+    }
+  }
+
   void mouseReleaseEvent(QMouseEvent *event) override {
     const bool activate =
         event && event->button() == Qt::LeftButton && isEnabled() &&
@@ -1749,6 +1810,58 @@ protected:
 
 private:
   std::function<void()> action_;
+  bool ownerDrawn_ = false;
+};
+
+class ComponentStackItemDelegate final : public QStyledItemDelegate {
+ public:
+  using QStyledItemDelegate::QStyledItemDelegate;
+
+  QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override {
+    return QSize(0, 30);
+  }
+
+  void paint(QPainter *painter, const QStyleOptionViewItem &option,
+             const QModelIndex &index) const override {
+    if (!painter) {
+      return;
+    }
+    const QPalette pal = option.palette;
+    const bool selected = option.state.testFlag(QStyle::State_Selected);
+    const bool hovered = option.state.testFlag(QStyle::State_MouseOver);
+    const QRectF row = QRectF(option.rect).adjusted(1.5, 1.5, -1.5, -1.5);
+    const QColor base = pal.color(QPalette::Base);
+    const QColor accent = pal.color(QPalette::Highlight);
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(pal.color(QPalette::Mid));
+    painter->setBrush(selected ? blendColor(base, accent, 0.42)
+                               : hovered ? blendColor(base, accent, 0.12)
+                                         : pal.color(QPalette::AlternateBase));
+    painter->drawRoundedRect(row, 3.0, 3.0);
+    painter->setPen(selected ? pal.color(QPalette::HighlightedText)
+                             : pal.color(QPalette::Text));
+    QFont itemFont = option.font;
+    itemFont.setWeight(selected ? QFont::DemiBold : QFont::Normal);
+    painter->setFont(itemFont);
+    painter->drawText(option.rect.adjusted(10, 0, -8, 0),
+                      Qt::AlignVCenter | Qt::AlignLeft,
+                      index.data(Qt::DisplayRole).toString());
+    painter->restore();
+  }
+};
+
+class ComponentDivider final : public QFrame {
+ public:
+  using QFrame::QFrame;
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setPen(palette().color(QPalette::Mid));
+    painter.drawLine(rect().left(), rect().center().y(),
+                     rect().right(), rect().center().y());
+  }
 };
 
 class InspectorSelectionList final : public QListWidget {
@@ -1817,7 +1930,7 @@ public:
   QLabel *layerTypeLabel = nullptr;
   MatteInfoLabel *matteInfoLabel = nullptr;
   ProxyInfoLabel *proxyInfoLabel = nullptr;
-  QGroupBox *componentsGroup = nullptr;
+  QWidget *componentsGroup = nullptr;
   QLabel *componentsSummaryLabel = nullptr;
   QLabel *activeComponentLabel = nullptr;
   QString focusedComponentName_;
@@ -3702,7 +3815,12 @@ bool ArtifactInspectorWidget::Impl::moveEffectById(const QString &effectId,
 
 void ArtifactInspectorWidget::Impl::handleProjectCreated() {
   qDebug() << "[Inspector] Project created";
+  const bool wasEnabled = containerWidget && containerWidget->isEnabled();
   containerWidget->setEnabled(true);
+  if (wasEnabled) {
+    scheduleRefresh(CompositionNoteDirty);
+    return;
+  }
   scheduleRefresh(CompositionNoteDirty | LayerNoteDirty | LayerInfoDirty |
                   EffectsDirty);
 }
@@ -4365,10 +4483,8 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
       effectsTargetLabel->setText(
           QStringLiteral("Target: Composition \"%1\"")
               .arg(comp->settings().compositionName().toQString()));
-    } else if (auto layer = comp->layerById(currentLayerId_)) {
-      effectsTargetLabel->setText(
-          QStringLiteral("Target: Layer \"%1\"")
-              .arg(layer->layerName()));
+    } else if (comp->layerById(currentLayerId_)) {
+      effectsTargetLabel->setText(QStringLiteral("Target: Layer"));
     } else {
       effectsTargetLabel->setText(QStringLiteral("Target: Layer unavailable"));
     }
@@ -5080,10 +5196,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   applyInspectorLabelPalette(impl_->proxyInfoLabel, false);
   layerInfoLayout->addWidget(impl_->proxyInfoLabel);
 
-  impl_->componentsGroup = new QGroupBox();
-  applyInspectorSectionBox(impl_->componentsGroup);
+  impl_->componentsGroup = new QWidget();
   applyInspectorPalette(impl_->componentsGroup);
-  impl_->componentsGroup->setFlat(true);
   auto componentsLayout = new QVBoxLayout();
   impl_->componentsSummaryLabel =
       new QLabel("Components: select a layer", impl_->componentsGroup);
@@ -5109,6 +5223,27 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->cloneModifierMoveDownButton = new InspectorActionButton("Mod Down");
   impl_->openScriptButton = new InspectorActionButton("Open Script");
   impl_->applyLipSyncButton = new InspectorActionButton("Lip Sync");
+  for (auto *button : {impl_->physicsComponentButton,
+                       impl_->scriptComponentButton,
+                       impl_->layoutComponentButton,
+                       impl_->cloneComponentButton,
+                       impl_->fluidComponentButton,
+                       impl_->generatorComponentButton,
+                       impl_->removeGeneratorComponentButton,
+                       impl_->generatorMoveUpButton,
+                       impl_->generatorMoveDownButton,
+                       impl_->fieldComponentButton,
+                       impl_->removeFieldComponentButton,
+                       impl_->fieldMoveUpButton,
+                       impl_->fieldMoveDownButton,
+                       impl_->cloneModifierButton,
+                       impl_->removeCloneModifierButton,
+                       impl_->cloneModifierMoveUpButton,
+                       impl_->cloneModifierMoveDownButton,
+                       impl_->openScriptButton,
+                       impl_->applyLipSyncButton}) {
+    button->setOwnerDrawn(true);
+  }
   impl_->physicsComponentButton->setCheckable(true);
   impl_->scriptComponentButton->setCheckable(true);
   impl_->layoutComponentButton->setCheckable(true);
@@ -5189,6 +5324,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       QStringLiteral("Build a lip sync track from the audio layer and apply it to a Switch Layer."));
   impl_->addComponentButton =
       new InspectorActionButton(QStringLiteral("+ Add Component"));
+  impl_->addComponentButton->setOwnerDrawn(true);
   applyInspectorButton(impl_->addComponentButton, false);
   impl_->addComponentButton->setMinimumHeight(30);
   impl_->addComponentButton->setMaximumWidth(240);
@@ -5240,7 +5376,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   addComponentLayout->addStretch(1);
   componentsLayout->addLayout(addComponentLayout);
 
-  auto *componentDivider = new QFrame(impl_->componentsGroup);
+  auto *componentDivider = new ComponentDivider(impl_->componentsGroup);
   componentDivider->setObjectName(QStringLiteral("inspectorComponentDivider"));
   componentDivider->setFrameShape(QFrame::HLine);
   componentDivider->setFrameShadow(QFrame::Plain);
@@ -5267,6 +5403,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   generatorHeaderLayout->addWidget(impl_->removeGeneratorComponentButton);
   clonerStructureLayout->addLayout(generatorHeaderLayout);
   impl_->generatorListWidget = new InspectorSelectionList();
+  impl_->generatorListWidget->setItemDelegate(
+      new ComponentStackItemDelegate(impl_->generatorListWidget));
   impl_->generatorListWidget->setVisible(false);
   impl_->generatorListWidget->setMaximumHeight(96);
   impl_->generatorListWidget->setSelectionMode(
@@ -5287,6 +5425,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   fieldHeaderLayout->addWidget(impl_->removeFieldComponentButton);
   clonerStructureLayout->addLayout(fieldHeaderLayout);
   impl_->fieldListWidget = new InspectorSelectionList();
+  impl_->fieldListWidget->setItemDelegate(
+      new ComponentStackItemDelegate(impl_->fieldListWidget));
   impl_->fieldListWidget->setVisible(false);
   impl_->fieldListWidget->setMaximumHeight(96);
   impl_->fieldListWidget->setSelectionMode(
@@ -5308,6 +5448,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   cloneModifierHeaderLayout->addWidget(impl_->removeCloneModifierButton);
   clonerStructureLayout->addLayout(cloneModifierHeaderLayout);
   impl_->cloneModifierListWidget = new InspectorSelectionList();
+  impl_->cloneModifierListWidget->setItemDelegate(
+      new ComponentStackItemDelegate(impl_->cloneModifierListWidget));
   impl_->cloneModifierListWidget->setVisible(false);
   impl_->cloneModifierListWidget->setMaximumHeight(96);
   impl_->cloneModifierListWidget->setSelectionMode(

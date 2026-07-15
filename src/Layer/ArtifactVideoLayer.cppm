@@ -468,6 +468,7 @@ public:
         bool hasCurrentBuffer = false;
         QString backendName;
         uint32_t generation = 0;
+        uint64_t requestId = 0;
     };
 
     std::shared_ptr<ArtifactCore::MediaPlaybackController> playbackController_;
@@ -512,6 +513,16 @@ public:
     QString lastDecodeState_ = QStringLiteral("idle");
     bool vulkanDeviceConfigured_ = false;
     std::atomic<uint32_t> decodeGeneration_{0};
+    mutable std::mutex decodeRequestMutex_;
+    std::optional<DecodeRequest> pendingDecodeRequest_;
+    uint64_t nextDecodeRequestId_ = 0;
+    uint64_t latestDecodeRequestId_ = 0;
+    uint64_t activeDecodeRequestId_ = 0;
+    uint64_t failedDecodeRequestId_ = 0;
+    uint32_t latestDecodeGeneration_ = 0;
+    int64_t latestDecodeTimelineFrame_ = -1;
+    int64_t latestDecodeSourceFrame_ = -1;
+    std::size_t coalescedDecodeRequestCount_ = 0;
     mutable std::mutex frameTicketMutex_;
     FrameTicket frameTicket_;
     std::deque<FrameOutcome> recentFrameOutcomes_;
@@ -554,7 +565,7 @@ public:
         }
 
         cachedSourceVersion_ = currentVersion;
-        cancelPendingDecode();
+        invalidatePendingDecode();
         frameCache_.clear();
         clearSharedFrames();
         {
@@ -569,17 +580,82 @@ public:
         return true;
     }
 
+    uint64_t registerDecodeRequest(const int64_t timelineFrame,
+                                   const int64_t sourceFrame,
+                                   const uint32_t generation) {
+        std::lock_guard<std::mutex> lock(decodeRequestMutex_);
+        if (latestDecodeGeneration_ != generation ||
+            latestDecodeTimelineFrame_ != timelineFrame ||
+            latestDecodeSourceFrame_ != sourceFrame) {
+            latestDecodeGeneration_ = generation;
+            latestDecodeTimelineFrame_ = timelineFrame;
+            latestDecodeSourceFrame_ = sourceFrame;
+            latestDecodeRequestId_ = ++nextDecodeRequestId_;
+        }
+        return latestDecodeRequestId_;
+    }
+
+    void discardPendingRequestIfCurrent(const uint64_t requestId) {
+        std::lock_guard<std::mutex> lock(decodeRequestMutex_);
+        if (latestDecodeRequestId_ == requestId) {
+            pendingDecodeRequest_.reset();
+        }
+    }
+
+    bool isLatestDecodeRequestLocked(const DecodeRequest& request) const {
+        return request.generation == decodeGeneration_.load(std::memory_order_acquire) &&
+               request.generation == latestDecodeGeneration_ &&
+               request.requestId == latestDecodeRequestId_ &&
+               request.timelineFrame == latestDecodeTimelineFrame_ &&
+               request.sourceFrame == latestDecodeSourceFrame_;
+    }
+
+    bool isFailedDecodeRequest(const uint64_t requestId) const {
+        std::lock_guard<std::mutex> lock(decodeRequestMutex_);
+        return failedDecodeRequestId_ == requestId;
+    }
+
+    QString decodeQueueSummary() const {
+        std::lock_guard<std::mutex> lock(decodeRequestMutex_);
+        return QStringLiteral(
+                   "latestRequest=%1 activeRequest=%2 pendingRequest=%3 "
+                   "latestTimeline=%4 latestSource=%5 coalesced=%6 failedRequest=%7")
+            .arg(latestDecodeRequestId_)
+            .arg(activeDecodeRequestId_)
+            .arg(pendingDecodeRequest_ ? pendingDecodeRequest_->requestId : 0)
+            .arg(latestDecodeTimelineFrame_)
+            .arg(latestDecodeSourceFrame_)
+            .arg(coalescedDecodeRequestCount_)
+            .arg(failedDecodeRequestId_);
+    }
+
+    void invalidatePendingDecode() {
+        const uint32_t generation =
+            decodeGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
+        std::lock_guard<std::mutex> lock(decodeRequestMutex_);
+        pendingDecodeRequest_.reset();
+        failedDecodeRequestId_ = 0;
+        latestDecodeGeneration_ = generation;
+        latestDecodeTimelineFrame_ = -1;
+        latestDecodeSourceFrame_ = -1;
+        latestDecodeRequestId_ = ++nextDecodeRequestId_;
+    }
+
     void cancelPendingDecode() {
-        decodeGeneration_.fetch_add(1, std::memory_order_acq_rel);
-        // QtConcurrent cancellation is cooperative and the decode lambda uses
-        // Impl state. Keep the future alive and join it before reusing or
-        // destroying that state.
+        invalidatePendingDecode();
+        // Destruction and source replacement must join the one worker that may
+        // still reference Impl. Runtime stop only invalidates its generation.
         if (decodeFuture_.isRunning()) {
             decodeFuture_.waitForFinished();
         }
-        decoding_ = false;
-        decodeTargetFrame_ = -1;
-        decodeFuture_ = QFuture<ArtifactCore::ImageF32x4_RGBA>();
+        {
+            std::lock_guard<std::mutex> lock(decodeRequestMutex_);
+            pendingDecodeRequest_.reset();
+            activeDecodeRequestId_ = 0;
+        }
+        decoding_.store(false, std::memory_order_release);
+        decodeTargetFrame_.store(-1, std::memory_order_release);
+        decodeFuture_ = QFuture<void>();
     }
 
     double frameBudgetMs() const {
@@ -775,14 +851,6 @@ public:
 
         const int64_t sourceFrame = currentSourceFrame(layer);
         const int64_t timelineFrame = currentTimelineFrame_;
-        {
-            std::lock_guard<std::mutex> lock(frameStateMutex_);
-            if (sourceFrame == lastDecodedFrame_ && hasCurrentFrameBuffer_) {
-                lastDecodeState_ = QStringLiteral("cached");
-                return std::nullopt;
-            }
-        }
-
         if (timelineFrame < layer->inPoint() || timelineFrame >= layer->outPoint() ||
             sourceFrame < 0 ||
             (streamInfo_.frameCount > 0 && sourceFrame >= streamInfo_.frameCount)) {
@@ -799,12 +867,33 @@ public:
             return std::nullopt;
         }
 
+        const uint32_t generation =
+            decodeGeneration_.load(std::memory_order_acquire);
+        const uint64_t requestId =
+            registerDecodeRequest(timelineFrame, sourceFrame, generation);
+        if (isFailedDecodeRequest(requestId)) {
+            lastDecodeState_ = QStringLiteral("decode-failed-retained");
+            return std::nullopt;
+        }
+        bool alreadyPresented = false;
+        {
+            std::lock_guard<std::mutex> lock(frameStateMutex_);
+            alreadyPresented =
+                sourceFrame == lastDecodedFrame_ && hasCurrentFrameBuffer_;
+        }
+        if (alreadyPresented) {
+            discardPendingRequestIfCurrent(requestId);
+            lastDecodeState_ = QStringLiteral("cached");
+            return std::nullopt;
+        }
+
         if (!sourceAssetId_.isNull()) {
             const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(sourceAssetId_);
             const auto sharedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
                 ArtifactCore::AssetManager::instance().decodedPayload(
                     sourceAssetId_, sourceVersion, videoFramePayloadRepresentation(sourceFrame)));
             if (sharedFrame && !sharedFrame->isEmpty()) {
+                discardPendingRequestIfCurrent(requestId);
                 {
                     std::lock_guard<std::mutex> lock(frameStateMutex_);
                     currentSharedFrame_ = sharedFrame;
@@ -825,6 +914,7 @@ public:
 
         ArtifactCore::ImageF32x4_RGBA cachedFrame;
         if (frameCache_.get(sourceFrame, cachedFrame)) {
+            discardPendingRequestIfCurrent(requestId);
             {
                 std::lock_guard<std::mutex> lock(frameStateMutex_);
                 currentFrameBuffer_ = cachedFrame;
@@ -840,22 +930,6 @@ public:
             return std::nullopt;
         }
 
-        const bool inFlight = decoding_.load()
-            || (decodeTargetFrame_ >= 0 && !decodeFuture_.isFinished());
-        if (inFlight) {
-            if (decodeTargetFrame_ != sourceFrame) {
-                // Do not launch another request against the same decoder while
-                // the current request is still running.  Logical cancellation
-                // cannot stop QtConcurrent work and used to let multiple seeks
-                // race inside MediaPlaybackController.
-                lastDecodeState_ = QStringLiteral("decode-pending-retain-frame");
-                return std::nullopt;
-            } else {
-                lastDecodeState_ = QStringLiteral("decode-pending");
-                return std::nullopt;
-            }
-        }
-
         bool hasBufferForLog = false;
         {
             std::lock_guard<std::mutex> lock(frameStateMutex_);
@@ -868,15 +942,17 @@ public:
         request.sourceFrame = sourceFrame;
         request.hasCurrentBuffer = hasBufferForLog;
         request.backendName = decoderBackendName(playbackController_.get());
-        request.generation = decodeGeneration_.load(std::memory_order_acquire);
+        request.generation = generation;
+        request.requestId = requestId;
         beginFrameTicket(timelineFrame, sourceFrame, QStringLiteral("decoder"));
         return request;
     }
 
-    // [Fix C] バックグラウンドデコード管理
-    mutable QFuture<ArtifactCore::ImageF32x4_RGBA> decodeFuture_;
+    // One worker serializes direct decoder access. New timeline requests replace
+    // the single pending ticket instead of growing a backlog.
+    mutable QFuture<void> decodeFuture_;
     mutable std::atomic<bool> decoding_{ false };
-    mutable int64_t decodeTargetFrame_ = -1;
+    mutable std::atomic<int64_t> decodeTargetFrame_{ -1 };
     mutable QFuture<AsyncOpenResult> openFuture_;
     mutable std::atomic<bool> opening_{ false };
     mutable int openRequestId_ = 0;
@@ -947,11 +1023,11 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
                           << "path=" << normalizedPath
                           << "thread=" << threadIdTag();
 
+    impl_->cancelPendingDecode();
     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     impl_->sourceAssetId_ = nextAssetId;
     impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
     impl_->sourcePath_ = normalizedPath;
-    impl_->cancelPendingDecode();
     impl_->streamInfo_ = VideoStreamInfo{};
     {
         std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
@@ -1098,75 +1174,10 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
                 QSizeF(layer->impl_->streamInfo_.width, layer->impl_->streamInfo_.height));
         }
 
-        const int64_t initialSourceFrame = std::max<int64_t>(0, layer->impl_->currentSourceFrame_);
-        layer->impl_->decoding_ = true;
-        layer->impl_->decodeTargetFrame_ = initialSourceFrame;
-        auto ctrl = layer->impl_->playbackController_;
-        const QUuid sourceAssetId = layer->impl_->sourceAssetId_;
-        const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(sourceAssetId);
-        const uint32_t decodeGeneration =
-            layer->impl_->decodeGeneration_.load(std::memory_order_acquire);
-        layer->impl_->decodeFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [ctrl, layer, initialSourceFrame, sourceAssetId, sourceVersion, decodeGeneration]() -> ArtifactCore::ImageF32x4_RGBA {
-            ArtifactCore::ScopedThreadName threadName(QStringLiteral("VideoLayer/decode"));
-            auto sharedFrame = !sourceAssetId.isNull()
-                ? std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
-                    ArtifactCore::AssetManager::instance().decodedPayload(
-                        sourceAssetId, sourceVersion,
-                        videoFramePayloadRepresentation(initialSourceFrame)))
-                : std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>{};
-            ArtifactCore::ImageF32x4_RGBA frame;
-            if (sharedFrame && !sharedFrame->isEmpty()) {
-                frame = *sharedFrame;
-            } else {
-                sharedFrame.reset();
-                frame = decodedVideoFrameToImageF32x4_RGBA(
-                    ctrl->getVideoFrameAtFrameDirectRaw(initialSourceFrame));
-            }
-            if (decodeGeneration !=
-                layer->impl_->decodeGeneration_.load(std::memory_order_acquire)) {
-                return ArtifactCore::ImageF32x4_RGBA();
-            }
-            if (frame.isEmpty()) {
-                qWarning() << "[VideoLayer] initial decode FAILED"
-                           << "source=" << initialSourceFrame
-                           << "backend=" << decoderBackendName(ctrl.get())
-                           << "controller=" << ctrl->getDebugState()
-                           << threadDiagnosticsTag();
-                layer->impl_->lastDecodeState_ = QStringLiteral("decode-failed");
-            } else {
-                if (!sharedFrame && !sourceAssetId.isNull() && sourceVersion > 0) {
-                    sharedFrame = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(frame);
-                    sharedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
-                        ArtifactCore::AssetManager::instance().publishDecodedPayload(
-                            sourceAssetId, sourceVersion,
-                            videoFramePayloadRepresentation(initialSourceFrame), sharedFrame));
-                    layer->impl_->retainSharedFrame(initialSourceFrame, sharedFrame);
-                }
-                layer->impl_->frameCache_.put(initialSourceFrame, frame);
-                {
-                    std::lock_guard<std::mutex> lock(layer->impl_->frameStateMutex_);
-                    layer->impl_->currentSharedFrame_ = sharedFrame;
-                    layer->impl_->currentFrameBuffer_ = frame;
-                    layer->impl_->hasCurrentFrameBuffer_ = true;
-                    layer->impl_->lastDecodedFrame_ = initialSourceFrame;
-                }
-                layer->impl_->lastDecodeState_ = QStringLiteral("ready");
-                QMetaObject::invokeMethod(
-                    layer,
-                    [layer, decodeGeneration]() {
-                        if (layer && layer->impl_ &&
-                            decodeGeneration == layer->impl_->decodeGeneration_.load(
-                                std::memory_order_acquire)) {
-                            publishVideoLayerModified(layer);
-                        }
-                    },
-                    Qt::QueuedConnection);
-            }
-            if (decodeGeneration == layer->impl_->decodeGeneration_.load(std::memory_order_acquire)) {
-                layer->impl_->decoding_ = false;
-            }
-            return frame;
-        });
+        // Initial presentation uses the same latest-wins worker as timeline
+        // playback. Keeping a second one-shot future here used to bypass
+        // request coalescing and made open/seek races possible.
+        layer->decodeCurrentFrame();
 
         qDebug() << "[VideoLayer] Loaded:" << result.normalizedPath
                  << "Duration:" << layer->impl_->streamInfo_.duration << "s"
@@ -1193,6 +1204,7 @@ bool ArtifactVideoLayer::localizeSourceIdentity()
     if (impl_->sourceAssetId_.isNull() || isSourceIdentityLocalized()) return false;
     const QUuid localizedId = ArtifactCore::AssetManager::instance().localizeSource(impl_->sourceAssetId_);
     if (localizedId.isNull()) return false;
+    impl_->cancelPendingDecode();
     impl_->sourceAssetId_ = localizedId;
     impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(localizedId);
     setDirty(LayerDirtyFlag::Property);
@@ -1206,6 +1218,7 @@ bool ArtifactVideoLayer::relinkSourceIdentityToShared()
     const QUuid sharedId = ArtifactCore::AssetManager::instance().acquireSource(
         impl_->sourcePath_, ArtifactCore::AssetType::Video);
     if (sharedId.isNull()) return false;
+    impl_->cancelPendingDecode();
     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     impl_->sourceAssetId_ = sharedId;
     impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(sharedId);
@@ -1232,6 +1245,7 @@ const VideoStreamInfo& ArtifactVideoLayer::streamInfo() const
 void ArtifactVideoLayer::setStreamFrameRate(double fps)
 {
     if (!impl_->isLoaded_) return;
+    impl_->invalidatePendingDecode();
     impl_->streamInfo_.frameRate = fps;
     {
         std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
@@ -1242,6 +1256,7 @@ void ArtifactVideoLayer::setStreamFrameRate(double fps)
     }
     impl_->decodeTargetFrame_ = -1;
     impl_->lastDecodeState_ = QStringLiteral("rate_changed");
+    impl_->frameCache_.clear();
     impl_->clearSharedFrames();
     Q_EMIT changed();
 }
@@ -1264,14 +1279,14 @@ QString ArtifactVideoLayer::debugState() const
         "state=%1 loaded=%2 opening=%3 decoding=%4 timeline=%5 source=%6 "
         "decodeTarget=%7 lastDecoded=%8 cachedFrames=%9 "
         "hasBuffer=%10 bufferSize=%11 syncFallbackFrame=%12 syncFallbackOk=%13 "
-        "backend=%14 lastError=%15 detail={%16} bounds={%17}")
+        "backend=%14 lastError=%15 detail={%16} queue={%17} bounds={%18}")
         .arg(impl_ ? impl_->lastDecodeState_ : QStringLiteral("idle"))
         .arg(impl_ && impl_->isLoaded_ ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->opening_.load() ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->decoding_.load() ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(timelineFrame)
         .arg(sourceFrame)
-        .arg(impl_ ? impl_->decodeTargetFrame_ : -1)
+        .arg(impl_ ? impl_->decodeTargetFrame_.load(std::memory_order_acquire) : -1)
         .arg(lastDecodedFrame)
         .arg(impl_ ? impl_->frameCache_.size() : 0)
         .arg(hasCurrentFrameBuffer ? QStringLiteral("true") : QStringLiteral("false"))
@@ -1281,6 +1296,7 @@ QString ArtifactVideoLayer::debugState() const
         .arg(decoderBackendName(controller))
         .arg(controller ? controller->getLastError() : QStringLiteral("<no controller>"))
         .arg(controller ? controller->getDebugState() : QStringLiteral("<no controller>"))
+        .arg(impl_ ? impl_->decodeQueueSummary() : QStringLiteral("none"))
         .arg(contentBoundsSummary());
 }
 
@@ -1295,19 +1311,20 @@ QString ArtifactVideoLayer::decodeState() const
         lastDecodedFrame = impl_->lastDecodedFrame_;
         hasCurrentFrameBuffer = impl_->hasCurrentFrameBuffer_;
     }
-    return QStringLiteral("state=%1 loaded=%2 opening=%3 decoding=%4 source=%5 target=%6 last=%7 hasBuffer=%8 syncOk=%9 backend=%10 err=%11 %12")
+    return QStringLiteral("state=%1 loaded=%2 opening=%3 decoding=%4 source=%5 target=%6 last=%7 hasBuffer=%8 syncOk=%9 backend=%10 err=%11 %12 queue={%13}")
         .arg(impl_ ? impl_->lastDecodeState_ : QStringLiteral("idle"))
         .arg(impl_ && impl_->isLoaded_ ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->opening_.load() ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->decoding_.load() ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(sourceFrame)
-        .arg(impl_ ? impl_->decodeTargetFrame_ : -1)
+        .arg(impl_ ? impl_->decodeTargetFrame_.load(std::memory_order_acquire) : -1)
         .arg(lastDecodedFrame)
         .arg(hasCurrentFrameBuffer ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->lastSyncFallbackSucceeded_ ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(decoderBackendName(controller))
         .arg(controller ? controller->getLastError() : QStringLiteral("<no controller>"))
-        .arg(impl_ ? impl_->frameTicketSummary() : QStringLiteral("ticket=none"));
+        .arg(impl_ ? impl_->frameTicketSummary() : QStringLiteral("ticket=none"))
+        .arg(impl_ ? impl_->decodeQueueSummary() : QStringLiteral("none"));
 }
 
 void ArtifactVideoLayer::markFrameRenderQueued(int64_t timelineFrame,
@@ -1400,6 +1417,10 @@ void ArtifactVideoLayer::stop()
         return;
     }
 
+    // Stop is non-blocking: invalidate the active generation and discard the
+    // coalesced request. The decoder call may finish, but that stale result can
+    // no longer replace the last presented frame.
+    impl_->invalidatePendingDecode();
     {
         std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
         // Keep the last successfully presented frame until the new stop
@@ -1475,104 +1496,202 @@ void ArtifactVideoLayer::decodeCurrentFrame()
         return;
     }
 
-    qCDebug(videoLayerLog)
-        << "[VideoLayerT] decodeCurrentFrame starting bg decode"
-        << "timeline=" << request->timelineFrame
-        << "source=" << request->sourceFrame
-        << "hasBuffer=" << request->hasCurrentBuffer
-        << "inPoint=" << inPoint()
-        << "outPoint=" << outPoint()
-        << "backend=" << request->backendName
-        << threadIdTag();
+    bool startWorker = false;
+    {
+        std::lock_guard<std::mutex> lock(impl_->decodeRequestMutex_);
+        if (!impl_->isLatestDecodeRequestLocked(*request)) {
+            return;
+        }
+        if (impl_->activeDecodeRequestId_ == request->requestId ||
+            (impl_->pendingDecodeRequest_ &&
+             impl_->pendingDecodeRequest_->requestId == request->requestId)) {
+            impl_->lastDecodeState_ = QStringLiteral("decode-pending");
+            return;
+        }
 
-    impl_->decoding_ = true;
-    impl_->decodeTargetFrame_ = request->sourceFrame;
-    impl_->lastDecodeState_ = QStringLiteral("decode-pending");
-    auto ctrl = request->controller;
-    const int64_t timelineFrame = request->timelineFrame;
-    const int64_t sourceFrame = request->sourceFrame;
-    const QString backendName = request->backendName;
-    const QUuid sourceAssetId = impl_->sourceAssetId_;
-    const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(sourceAssetId);
-    const uint32_t decodeGeneration = request->generation;
+        if (impl_->decoding_.load(std::memory_order_acquire)) {
+            ++impl_->coalescedDecodeRequestCount_;
+            impl_->lastDecodeState_ = QStringLiteral("decode-coalesced-latest");
+        } else {
+            impl_->lastDecodeState_ = QStringLiteral("decode-pending");
+        }
+        impl_->pendingDecodeRequest_ = *request;
+        if (!impl_->decoding_.exchange(true, std::memory_order_acq_rel)) {
+            startWorker = true;
+        }
+    }
+
+    if (!startWorker) {
+        return;
+    }
+
     impl_->decodeFuture_ = QtConcurrent::run(
-        &sharedBackgroundThreadPool(),
-        [ctrl, timelineFrame, sourceFrame, backendName, sourceAssetId, sourceVersion, decodeGeneration,
-         this]() -> ArtifactCore::ImageF32x4_RGBA {
+        &sharedBackgroundThreadPool(), [this]() {
         ArtifactCore::ScopedThreadName threadName(QStringLiteral("VideoLayer/decode"));
-        impl_->markDecodeStarted(sourceFrame);
-        auto sharedFrame = !sourceAssetId.isNull()
-            ? std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
-                ArtifactCore::AssetManager::instance().decodedPayload(
-                    sourceAssetId, sourceVersion, videoFramePayloadRepresentation(sourceFrame)))
-            : std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>{};
-        ArtifactCore::DecodedVideoFrame rawDecoded = std::monostate{};
-        ArtifactCore::ImageF32x4_RGBA decoded;
-        if (sharedFrame && !sharedFrame->isEmpty()) {
-            decoded = *sharedFrame;
-        } else {
-            sharedFrame.reset();
-            rawDecoded = ctrl->getVideoFrameAtFrameDirectRaw(sourceFrame);
-            decoded = decodedVideoFrameToImageF32x4_RGBA(rawDecoded);
-        }
-        if (decodeGeneration !=
-            impl_->decodeGeneration_.load(std::memory_order_acquire)) {
-            return ArtifactCore::ImageF32x4_RGBA();
-        }
-        impl_->markDecodeFinished(
-            sourceFrame,
-            !decoded.isEmpty() || decodedVideoFrameHasGpuPayload(rawDecoded));
-        if (!decoded.isEmpty()) {
-            auto publishedFrame = sharedFrame;
-            if (!publishedFrame && !sourceAssetId.isNull() && sourceVersion > 0) {
-                publishedFrame = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(decoded);
-                publishedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
-                    ArtifactCore::AssetManager::instance().publishDecodedPayload(
-                        sourceAssetId, sourceVersion,
-                        videoFramePayloadRepresentation(sourceFrame), publishedFrame));
-                impl_->retainSharedFrame(sourceFrame, publishedFrame);
-            }
-            impl_->frameCache_.put(sourceFrame, decoded);
+        for (;;) {
+            Impl::DecodeRequest activeRequest;
             {
-                std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
-                impl_->currentSharedFrame_ = publishedFrame;
-                impl_->currentFrameBuffer_ = decoded;
-                impl_->hasCurrentFrameBuffer_ = true;
-                impl_->lastDecodedFrame_ = sourceFrame;
+                std::lock_guard<std::mutex> lock(impl_->decodeRequestMutex_);
+                if (!impl_->pendingDecodeRequest_) {
+                    impl_->activeDecodeRequestId_ = 0;
+                    impl_->decodeTargetFrame_.store(-1, std::memory_order_release);
+                    impl_->decoding_.store(false, std::memory_order_release);
+                    return;
+                }
+                activeRequest = *impl_->pendingDecodeRequest_;
+                impl_->pendingDecodeRequest_.reset();
+                impl_->activeDecodeRequestId_ = activeRequest.requestId;
+                impl_->decodeTargetFrame_.store(
+                    activeRequest.sourceFrame, std::memory_order_release);
             }
-            impl_->lastDecodeState_ = QStringLiteral("ready");
-            qCDebug(videoLayerLog) << "[VideoLayer] bg decoded frame"
-                                   << "timeline=" << timelineFrame
-                                   << "source=" << sourceFrame
-                                   << "size=" << decoded.width() << "x" << decoded.height()
-                                   << threadIdTag();
-            QMetaObject::invokeMethod(
-                this,
-                [this, decodeGeneration]() {
-                    if (decodeGeneration ==
-                        impl_->decodeGeneration_.load(std::memory_order_acquire)) {
-                        publishVideoLayerModified(this);
+
+            qCDebug(videoLayerLog)
+                << "[VideoLayerT] decode worker request"
+                << "request=" << activeRequest.requestId
+                << "timeline=" << activeRequest.timelineFrame
+                << "source=" << activeRequest.sourceFrame
+                << "hasBuffer=" << activeRequest.hasCurrentBuffer
+                << "backend=" << activeRequest.backendName
+                << threadIdTag();
+
+            impl_->markDecodeStarted(activeRequest.sourceFrame);
+            const QUuid sourceAssetId = impl_->sourceAssetId_;
+            const auto sourceVersion =
+                ArtifactCore::AssetManager::instance().sourceVersion(sourceAssetId);
+            auto sharedFrame = !sourceAssetId.isNull()
+                ? std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+                    ArtifactCore::AssetManager::instance().decodedPayload(
+                        sourceAssetId, sourceVersion,
+                        videoFramePayloadRepresentation(activeRequest.sourceFrame)))
+                : std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>{};
+            ArtifactCore::DecodedVideoFrame rawDecoded = std::monostate{};
+            ArtifactCore::ImageF32x4_RGBA decoded;
+            if (sharedFrame && !sharedFrame->isEmpty()) {
+                decoded = *sharedFrame;
+            } else {
+                sharedFrame.reset();
+                rawDecoded = activeRequest.controller->getVideoFrameAtFrameDirectRaw(
+                    activeRequest.sourceFrame);
+                decoded = decodedVideoFrameToImageF32x4_RGBA(rawDecoded);
+            }
+
+            const bool generationCurrent =
+                activeRequest.generation ==
+                impl_->decodeGeneration_.load(std::memory_order_acquire);
+            const bool hasGpuOnlyFrame =
+                decoded.isEmpty() && decodedVideoFrameHasGpuPayload(rawDecoded);
+            std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> publishedFrame = sharedFrame;
+            if (generationCurrent && !decoded.isEmpty()) {
+                if (!publishedFrame && !sourceAssetId.isNull() && sourceVersion > 0) {
+                    publishedFrame =
+                        std::make_shared<ArtifactCore::ImageF32x4_RGBA>(decoded);
+                    publishedFrame =
+                        std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+                            ArtifactCore::AssetManager::instance().publishDecodedPayload(
+                                sourceAssetId, sourceVersion,
+                                videoFramePayloadRepresentation(activeRequest.sourceFrame),
+                                publishedFrame));
+                    impl_->retainSharedFrame(activeRequest.sourceFrame, publishedFrame);
+                }
+                impl_->frameCache_.put(activeRequest.sourceFrame, decoded);
+            }
+
+            bool publishResult = false;
+            {
+                std::lock_guard<std::mutex> requestLock(impl_->decodeRequestMutex_);
+                if (impl_->isLatestDecodeRequestLocked(activeRequest)) {
+                    publishResult = true;
+                    if (!decoded.isEmpty()) {
+                        {
+                            std::lock_guard<std::mutex> frameLock(impl_->frameStateMutex_);
+                            impl_->currentSharedFrame_ = publishedFrame;
+                            impl_->currentFrameBuffer_ = decoded;
+                            impl_->hasCurrentFrameBuffer_ = true;
+                            impl_->lastDecodedFrame_ = activeRequest.sourceFrame;
+                        }
+                        impl_->failedDecodeRequestId_ = 0;
+                        impl_->lastDecodeState_ = QStringLiteral("ready");
+                    } else {
+                        impl_->failedDecodeRequestId_ = activeRequest.requestId;
+                        impl_->lastDecodeState_ = hasGpuOnlyFrame
+                            ? QStringLiteral("gpu-frame-unsupported")
+                            : QStringLiteral("decode-failed");
                     }
-                },
-                Qt::QueuedConnection);
-        } else if (decodedVideoFrameHasGpuPayload(rawDecoded)) {
-            impl_->lastDecodeState_ = QStringLiteral("gpu-ready");
-        } else {
-            impl_->lastDecodeState_ = QStringLiteral("decode-failed");
-            qWarning() << "[VideoLayer] DECODE FAILED"
-                       << "timeline=" << timelineFrame
-                       << "source=" << sourceFrame
-                       << "backend=" << backendName
-                       << "backendLastError=" << ctrl->getLastError()
-                       << "controller=" << ctrl->getDebugState()
-                       << threadDiagnosticsTag()
-                       << threadIdTag();
+                }
+            }
+
+            if (publishResult) {
+                impl_->markDecodeFinished(activeRequest.sourceFrame,
+                                          !decoded.isEmpty());
+                if (!decoded.isEmpty()) {
+                    qCDebug(videoLayerLog) << "[VideoLayer] bg decoded frame"
+                                           << "request=" << activeRequest.requestId
+                                           << "timeline=" << activeRequest.timelineFrame
+                                           << "source=" << activeRequest.sourceFrame
+                                           << "size=" << decoded.width() << "x"
+                                           << decoded.height()
+                                           << threadIdTag();
+                } else {
+                    qWarning() << "[VideoLayer] DECODE FAILED"
+                               << "request=" << activeRequest.requestId
+                               << "timeline=" << activeRequest.timelineFrame
+                               << "source=" << activeRequest.sourceFrame
+                               << "backend=" << activeRequest.backendName
+                               << "reason="
+                               << (hasGpuOnlyFrame
+                                       ? QStringLiteral("gpu-frame-without-cpu-presentation")
+                                       : QStringLiteral("empty-decoded-frame"))
+                               << "backendLastError="
+                               << activeRequest.controller->getLastError()
+                               << "controller="
+                               << activeRequest.controller->getDebugState()
+                               << threadDiagnosticsTag()
+                               << threadIdTag();
+                }
+
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, generation = activeRequest.generation,
+                     requestId = activeRequest.requestId,
+                     decodedWidth = decoded.width(),
+                     decodedHeight = decoded.height()]() {
+                        bool stillCurrent = false;
+                        {
+                            std::lock_guard<std::mutex> lock(
+                                impl_->decodeRequestMutex_);
+                            stillCurrent =
+                                generation == impl_->decodeGeneration_.load(
+                                                  std::memory_order_acquire) &&
+                                requestId == impl_->latestDecodeRequestId_;
+                        }
+                        if (stillCurrent) {
+                            if (decodedWidth > 0 && decodedHeight > 0 &&
+                                (impl_->streamInfo_.width <= 0 ||
+                                 impl_->streamInfo_.height <= 0)) {
+                                impl_->streamInfo_.width = decodedWidth;
+                                impl_->streamInfo_.height = decodedHeight;
+                                setSourceSize(Size_2D(decodedWidth, decodedHeight));
+                                impl_->sourceCrop_.clampToSource(
+                                    QSizeF(decodedWidth, decodedHeight));
+                            }
+                            publishVideoLayerModified(this);
+                        }
+                    },
+                    Qt::QueuedConnection);
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(impl_->decodeRequestMutex_);
+                if (impl_->activeDecodeRequestId_ == activeRequest.requestId) {
+                    impl_->activeDecodeRequestId_ = 0;
+                }
+                if (!impl_->pendingDecodeRequest_) {
+                    impl_->decodeTargetFrame_.store(-1, std::memory_order_release);
+                    impl_->decoding_.store(false, std::memory_order_release);
+                    return;
+                }
+            }
         }
-        // Only clear decoding_ flag if this decode matches the current generation
-        if (decodeGeneration == impl_->decodeGeneration_.load(std::memory_order_acquire)) {
-            impl_->decoding_ = false;
-        }
-        return decoded;
     });
 }
 
@@ -1593,57 +1712,14 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::currentFrameImageBuffer() cons
 
     const int64_t sourceFrame = currentSourceFrame(this);
 
-    // decoding_ は lambda 内の return 直前にクリアされるため isFinished() も合わせて確認する
-    const bool inFlight = impl_->decoding_.load()
-        || (impl_->decodeTargetFrame_ >= 0 && !impl_->decodeFuture_.isFinished());
-
-    // 完了したバックグラウンドデコード結果を取り込む
-    if (!inFlight && impl_->decodeTargetFrame_ >= 0) {
-        ArtifactCore::ImageF32x4_RGBA loaded = impl_->decodeFuture_.result();
-        if (!loaded.isEmpty()) {
-            impl_->lastDecodeState_ = QStringLiteral("ready");
-            bool updateSourceSize = false;
-            {
-                std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
-                if (impl_->decodeTargetFrame_ != impl_->lastDecodedFrame_) {
-                    impl_->currentFrameBuffer_ = loaded;
-                    impl_->hasCurrentFrameBuffer_ = true;
-                    impl_->lastDecodedFrame_ = impl_->decodeTargetFrame_;
-                    updateSourceSize = impl_->streamInfo_.width <= 0 || impl_->streamInfo_.height <= 0;
-                }
-            }
-            if (updateSourceSize) {
-                if (impl_->streamInfo_.width <= 0 || impl_->streamInfo_.height <= 0) {
-                    impl_->streamInfo_.width  = loaded.width();
-                    impl_->streamInfo_.height = loaded.height();
-                    const_cast<ArtifactVideoLayer*>(this)->setSourceSize(
-                        Size_2D(loaded.width(), loaded.height()));
-                    const_cast<ArtifactVideoLayer*>(this)->impl_->sourceCrop_.clampToSource(
-                        QSizeF(loaded.width(), loaded.height()));
-                }
-            }
-        } else {
-            if (impl_->lastDecodeState_ != QStringLiteral("gpu-ready")) {
-                qWarning() << "[VideoLayer] async decode null frame"
-                           << "timeline=" << sourceFrameToTimelineFrame(this, impl_->decodeTargetFrame_)
-                           << "source=" << impl_->decodeTargetFrame_
-                           << "backend=" << decoderBackendName(impl_->playbackController_.get())
-                           << "backendLastError=" << impl_->playbackController_->getLastError()
-                           << "controller=" << impl_->playbackController_->getDebugState()
-                           << threadDiagnosticsTag();
-                impl_->lastDecodeState_ = QStringLiteral("sync-fallback-miss");
-            }
-        }
-        impl_->decodeTargetFrame_ = -1;
-    }
-
-    // 現在フレームがまだデコードされていなければ非同期デコードを起動する
+    // Always submit the desired frame. The worker deduplicates the active
+    // request and replaces one pending request with the latest timeline frame.
     bool needsDecode = false;
     {
         std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
         needsDecode = sourceFrame != impl_->lastDecodedFrame_;
     }
-    if (!inFlight && needsDecode) {
+    if (needsDecode) {
         impl_->lastDecodeState_ = QStringLiteral("decode-pending");
         const_cast<ArtifactVideoLayer*>(this)->decodeCurrentFrame();
     }

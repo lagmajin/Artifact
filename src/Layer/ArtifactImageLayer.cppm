@@ -293,7 +293,12 @@ ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
 }
 
 ArtifactImageLayer::~ArtifactImageLayer() {
-    ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+    // During static Qt teardown the AssetManager mutex may already reference
+    // destroyed Qt synchronization state. At that point the whole process is
+    // exiting, so releasing the source is unnecessary and unsafe.
+    if (!QCoreApplication::closingDown()) {
+        ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+    }
     delete impl_;
 }
 

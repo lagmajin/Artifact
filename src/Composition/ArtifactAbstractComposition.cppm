@@ -3227,6 +3227,15 @@ void ArtifactAbstractComposition::pause()
 void ArtifactAbstractComposition::stop()
 {
     impl_->isPlaying_ = false;
+    // Media layers own asynchronous decoder work. Invalidate their playback
+    // generation before rewinding so only the final start-frame request can be
+    // presented after Stop.
+    for (const auto& layer : impl_->layerMultiIndex_) {
+        if (const auto videoLayer =
+                std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+            videoLayer->stop();
+        }
+    }
     goToStartFrame();
 }
 

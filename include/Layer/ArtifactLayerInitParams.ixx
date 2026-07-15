@@ -50,7 +50,9 @@ export namespace Artifact {
   Solid = 0,
   LinearGradient = 1,
   RadialGradient = 2,
-  ConicalGradient = 3
+  ConicalGradient = 3,
+  RepeatingGradient = 4,
+  MirroredGradient = 5
  };
 
 

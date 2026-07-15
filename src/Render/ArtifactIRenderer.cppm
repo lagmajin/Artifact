@@ -14,10 +14,12 @@ module;
 #include <memory>
 #include <mutex>
 #include <functional>
+#include <span>
 #include <QImage>
 #include <QFont>
 #include <QColor>
 #include <QPainter>
+#include <QPointF>
 #include <QRectF>
 #include <QSize>
 #include <QElapsedTimer>
@@ -1374,6 +1376,7 @@ namespace {
   depthDesc.MipLevels = 1;
   depthDesc.Format    = TEX_FORMAT_R32_TYPELESS;
   depthDesc.BindFlags = BIND_DEPTH_STENCIL | BIND_SHADER_RESOURCE;
+  depthDesc.InitialState = RESOURCE_STATE_DEPTH_WRITE;
   deviceManager_.device()->CreateTexture(depthDesc, nullptr, &m_layerDepthTex);
 
   auto* rtv = m_layerRT ? m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET) : nullptr;
@@ -2215,7 +2218,12 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   depthDesc.MipLevels = 1;
   depthDesc.Format    = TEX_FORMAT_R32_TYPELESS;
   depthDesc.BindFlags = BIND_DEPTH_STENCIL | BIND_SHADER_RESOURCE;
+  depthDesc.InitialState = RESOURCE_STATE_DEPTH_WRITE;
   deviceManager_.device()->CreateTexture(depthDesc, nullptr, &m_layerDepthTex);
+  if (m_layerDepthTex) {
+    primitiveRenderer3D_.setOverrideDSV(
+        m_layerDepthTex->GetDefaultView(TEXTURE_VIEW_DEPTH_STENCIL));
+  }
   m_layerRTWidth = targetWidth;
   m_layerRTHeight = targetHeight;
  }
@@ -3300,6 +3308,22 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
                                              Qt::Alignment alignment, float opacity,
                                              const FloatColor& outlineColor, float outlineThickness)
  { impl_->primitiveRenderer_.drawTextTransformed(rect, text, font, color, transform, alignment, opacity, outlineColor, outlineThickness); }
+ void ArtifactIRenderer::drawGlyphsTransformed(
+     std::span<const ArtifactCore::GlyphItem> glyphs,
+     const ArtifactCore::TextStyle& style,
+     const FloatColor& color,
+     const QMatrix4x4& transform,
+     const QPointF& origin,
+     float opacity,
+     const FloatColor& outlineColor,
+     float outlineThickness,
+     float blurRadius,
+     bool useGlyphColorOverrides)
+ {
+  impl_->primitiveRenderer_.drawGlyphsTransformed(
+      glyphs, style, color, transform, origin, opacity, outlineColor,
+      outlineThickness, blurRadius, useGlyphColorOverrides);
+ }
  void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
  {
   // Direct delegation to primitive renderer for transformed sprite drawing

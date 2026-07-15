@@ -451,6 +451,8 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
     impl_->fillModeCombo->addItem(QStringLiteral("線形グラデーション"), static_cast<int>(ArtifactSolidFillType::LinearGradient));
     impl_->fillModeCombo->addItem(QStringLiteral("放射状グラデーション"), static_cast<int>(ArtifactSolidFillType::RadialGradient));
     impl_->fillModeCombo->addItem(QStringLiteral("円錐グラデーション"), static_cast<int>(ArtifactSolidFillType::ConicalGradient));
+    impl_->fillModeCombo->addItem(QStringLiteral("リピートグラデーション"), static_cast<int>(ArtifactSolidFillType::RepeatingGradient));
+    impl_->fillModeCombo->addItem(QStringLiteral("ミラーグラデーション"), static_cast<int>(ArtifactSolidFillType::MirroredGradient));
 
     impl_->gradientAngleSpin = new QDoubleSpinBox(this);
     impl_->gradientAngleSpin->setRange(-360.0, 360.0);

@@ -1622,6 +1622,9 @@ void ArtifactPlaybackService::play() {
   impl_->applyCurrentPlaybackFrameRangeToEngine();
 
   // 新しいエンジンを使用
+  if (impl_->currentComposition_) {
+    impl_->currentComposition_->play();
+  }
   if (impl_->engine_) {
     impl_->engine_->play();
   }
@@ -1635,6 +1638,9 @@ void ArtifactPlaybackService::pause() {
   if (impl_->engine_) {
     impl_->engine_->pause();
   }
+  if (impl_->currentComposition_) {
+    impl_->currentComposition_->pause();
+  }
   /*
   if (impl_->controller_) {
       impl_->controller_->pause();
@@ -1645,6 +1651,12 @@ void ArtifactPlaybackService::pause() {
 void ArtifactPlaybackService::stop() {
   impl_->stopAudioClock();
   impl_->cancelRamPreviewBuild(QStringLiteral("playback-stopped"));
+  // Composition stop invalidates media decode generations before the engine
+  // emits its rewind frame. This prevents stale playback results from winning
+  // over the final start-frame request.
+  if (impl_->currentComposition_) {
+    impl_->currentComposition_->stop();
+  }
   if (impl_->engine_) {
     impl_->engine_->stop();
   }
@@ -1653,6 +1665,12 @@ void ArtifactPlaybackService::stop() {
       impl_->controller_->stop();
   }
   */
+}
+
+void ArtifactPlaybackService::waitForStop() {
+  if (impl_ && impl_->engine_) {
+    impl_->engine_->waitForStop();
+  }
 }
 
 void ArtifactPlaybackService::togglePlayPause() {

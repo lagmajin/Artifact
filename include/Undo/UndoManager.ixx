@@ -160,6 +160,22 @@ private:
     QString label_;
 };
 
+class SetTextLayerTextCommand : public UndoCommand {
+public:
+    SetTextLayerTextCommand(ArtifactAbstractLayerPtr layer,
+                            QString beforeText,
+                            QString afterText,
+                            QString label = QStringLiteral("Edit Text"));
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    QString beforeText_;
+    QString afterText_;
+    QString label_;
+};
+
 class ReplaceLayerSourceCommand : public UndoCommand {
 public:
     ReplaceLayerSourceCommand(ArtifactAbstractLayerPtr layer,

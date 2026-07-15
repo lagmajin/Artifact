@@ -121,6 +121,7 @@ void launchExpressionCopilot(
     const RationalTime &currentTime,
     const std::function<void(const QString &)> &applyHandler);
 void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer);
+void notifyLayerPropertyPreviewChanged(const ArtifactAbstractLayerPtr &layer);
 
 constexpr std::array<LayerStateToggleDef, 8> kLayerStateToggleDefs = {{
     {"layer.visible", "Visible", "Show or hide the layer"},
@@ -1560,7 +1561,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             effect->setPropertyValue(name, value);
             scheduleUpdateValues();
           },
-          {},
+          [this, effect](const QString &name, const QVariant &value) {
+            ScopedPropertyEditGuard guard(localPropertyEditDepth);
+            effect->setPropertyValue(name, value);
+          },
           currentCompositionEffectTime,
           [this](const QString &) { scheduleUpdateValues(); },
           ArtifactAbstractLayerPtr{},
@@ -1765,7 +1769,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           notifyLayerPropertyAnimationChanged(tl);
         }
         if (name.startsWith(QStringLiteral("component.cloner."), Qt::CaseInsensitive) ||
-            name.compare(QStringLiteral("component.layout.enabled"), Qt::CaseInsensitive) == 0) {
+            name.compare(QStringLiteral("component.layout.enabled"), Qt::CaseInsensitive) == 0 ||
+            name.compare(QStringLiteral("solid.fillType"), Qt::CaseInsensitive) == 0) {
           scheduleRebuild(0);
         }
       }
@@ -1795,7 +1800,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           notifyLayerPropertyAnimationChanged(tl);
         }
         if (name.startsWith(QStringLiteral("component.cloner."), Qt::CaseInsensitive) ||
-            name.compare(QStringLiteral("component.layout.enabled"), Qt::CaseInsensitive) == 0) {
+            name.compare(QStringLiteral("component.layout.enabled"), Qt::CaseInsensitive) == 0 ||
+            name.compare(QStringLiteral("solid.fillType"), Qt::CaseInsensitive) == 0) {
           scheduleRebuild(0);
         }
       }
@@ -2309,7 +2315,11 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           effect->setPropertyValue(name, value);
           notifyLayerPropertyAnimationChanged(layer);
         },
-        {},
+        [this, layer, effect](const QString &name, const QVariant &value) {
+          ScopedPropertyEditGuard guard(localPropertyEditDepth);
+          effect->setPropertyValue(name, value);
+          notifyLayerPropertyPreviewChanged(layer);
+        },
         currentLayerTime,
         notifyLayerKeyframeChanged,
         layer,

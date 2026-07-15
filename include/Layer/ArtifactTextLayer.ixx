@@ -62,6 +62,7 @@ private:
     class Impl;
     Impl* impl_;
     void markDirty();
+    void updateGlyphEvaluation(bool rasterize);
 public:
     ArtifactTextLayer();
     ~ArtifactTextLayer();

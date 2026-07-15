@@ -1,9 +1,11 @@
-﻿module;
+module;
 #include <utility>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <numbers>
+#include <vector>
 #include <QImage>
 #include <QColor>
 #include <QFont>
@@ -35,6 +37,8 @@ import Render.Shader.ThickLine;
 import Render.Shader.ViewerHelpers;
 import Image.ImageF32x4_RGBA;
 import Color.Float;
+import FloatRGBA;
+import Font.FreeFont;
 import Text.Style;
 import Text.GlyphAtlas;
 import Text.GlyphLayout;
@@ -1320,6 +1324,19 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
                                         float opacity)
 {
     if (!impl_->pGlyphAtlas_ || text.length() == 0 || !impl_->cmdBuf_) return;
+
+    const auto codePoints = text.toStdU32String();
+    for (const char32_t codePoint : codePoints) {
+        const QString glyphText = QString::fromUcs4(&codePoint, 1);
+        const QFont resolvedFont = FontManager::makeFont(style, glyphText);
+        GlyphKey key;
+        key.codePoint = codePoint;
+        key.fontSize = style.fontSize;
+        key.fontFamily = resolvedFont.family().toStdString();
+        key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
+                         static_cast<uint32_t>(style.fontStyle);
+        impl_->pGlyphAtlas_->acquire(key, resolvedFont);
+    }
     
     // Manage GPU texture for GlyphAtlas
     if (impl_->pGlyphAtlas_->isDirty() || !impl_->pGlyphAtlasTexture_) {
@@ -1359,20 +1376,15 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
     const float atlasH = static_cast<float>(impl_->pGlyphAtlas_->height());
     
     float currentX = x;
-    auto u32 = text.toStdU32String();
-    
-    for (char32_t codePoint : u32) {
+    for (const char32_t codePoint : codePoints) {
+        const QString glyphText = QString::fromUcs4(&codePoint, 1);
+        const QFont qfont = FontManager::makeFont(style, glyphText);
         GlyphKey key;
         key.codePoint = codePoint;
         key.fontSize = style.fontSize;
-        key.fontFamily = std::string(style.fontFamily);
+        key.fontFamily = qfont.family().toStdString();
         key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
                          (static_cast<uint32_t>(style.fontStyle) << 0);
-        
-        QFont qfont(QString::fromStdString(key.fontFamily));
-        qfont.setPointSizeF(style.fontSize);
-        qfont.setBold(style.fontWeight == FontWeight::Bold);
-        qfont.setItalic(style.fontStyle == FontStyle::Italic);
         
         GlyphRect rect = impl_->pGlyphAtlas_->acquire(key, qfont);
         if (!rect.valid) continue;
@@ -1451,6 +1463,18 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
 {
     if (!impl_->pGlyphAtlas_ || glyphs.empty() || !impl_->cmdBuf_) return;
 
+    for (const GlyphItem& glyph : glyphs) {
+        const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
+        const QFont resolvedFont = FontManager::makeFont(style, glyphText);
+        GlyphKey key;
+        key.codePoint = glyph.charCode;
+        key.fontSize = style.fontSize;
+        key.fontFamily = resolvedFont.family().toStdString();
+        key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
+                         static_cast<uint32_t>(style.fontStyle);
+        impl_->pGlyphAtlas_->acquire(key, resolvedFont);
+    }
+
     // Pre-laid-out glyph path: callers (text animators, hand-shaped runs) supply GlyphItems
     // whose basePosition/offsetPosition already encode final placement. We acquire each glyph
     // from the atlas and emit an AtlasSpritePkt — the same primitive drawGlyphText() uses —
@@ -1490,16 +1514,13 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
     const float atlasW = static_cast<float>(impl_->pGlyphAtlas_->width());
     const float atlasH = static_cast<float>(impl_->pGlyphAtlas_->height());
 
-    QFont qfont(QString::fromStdString(style.fontFamily));
-    qfont.setPointSizeF(style.fontSize);
-    qfont.setBold(style.fontWeight == FontWeight::Bold);
-    qfont.setItalic(style.fontStyle == FontStyle::Italic);
-
     for (const GlyphItem& glyph : glyphs) {
+        const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
+        const QFont qfont = FontManager::makeFont(style, glyphText);
         GlyphKey key;
         key.codePoint = glyph.charCode;
         key.fontSize   = style.fontSize;
-        key.fontFamily = std::string(style.fontFamily);
+        key.fontFamily = qfont.family().toStdString();
         key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
                          (static_cast<uint32_t>(style.fontStyle) << 0);
 
@@ -1535,6 +1556,239 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
         }
 
         impl_->cmdBuf_->append(pkt);
+    }
+}
+
+void PrimitiveRenderer2D::drawGlyphsTransformed(
+    std::span<const GlyphItem> glyphs,
+    const TextStyle& style,
+    const FloatColor& color,
+    const QMatrix4x4& transform,
+    const QPointF& origin,
+    float opacity,
+    const FloatColor& outlineColor,
+    float outlineThickness,
+    float blurRadius,
+    bool useGlyphColorOverrides)
+{
+    if (!impl_->pGlyphAtlas_ || glyphs.empty() || !impl_->cmdBuf_ ||
+        !impl_->pDevice_) {
+        return;
+    }
+
+    struct ResolvedGlyph {
+        const GlyphItem* item = nullptr;
+        GlyphRect rect;
+    };
+
+    std::vector<ResolvedGlyph> resolvedGlyphs;
+    resolvedGlyphs.reserve(glyphs.size());
+    for (const GlyphItem& glyph : glyphs) {
+        const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
+        if (glyphText.isEmpty() || glyphText.at(0).isSpace()) {
+            continue;
+        }
+
+        const QFont resolvedFont = FontManager::makeFont(style, glyphText);
+        GlyphKey key;
+        key.codePoint = glyph.charCode;
+        key.fontSize = style.fontSize;
+        key.fontFamily = resolvedFont.family().toStdString();
+        key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
+                         static_cast<uint32_t>(style.fontStyle);
+        const GlyphRect rect = impl_->pGlyphAtlas_->acquire(key, resolvedFont);
+        if (rect.valid) {
+            resolvedGlyphs.push_back({&glyph, rect});
+        }
+    }
+    if (resolvedGlyphs.empty()) {
+        return;
+    }
+
+    if (impl_->pGlyphAtlas_->isDirty() || !impl_->pGlyphAtlasTexture_) {
+        const QImage& image = impl_->pGlyphAtlas_->atlasImage();
+        if (image.isNull()) {
+            return;
+        }
+
+        TextureDesc textureDesc;
+        textureDesc.Name = "GlyphAtlasTexture";
+        textureDesc.Type = RESOURCE_DIM_TEX_2D;
+        textureDesc.Width = image.width();
+        textureDesc.Height = image.height();
+        textureDesc.MipLevels = 1;
+        textureDesc.Format = TEX_FORMAT_RGBA8_UNORM;
+        textureDesc.Usage = USAGE_IMMUTABLE;
+        textureDesc.BindFlags = BIND_SHADER_RESOURCE;
+
+        TextureSubResData subresource;
+        subresource.pData = image.constBits();
+        subresource.Stride = image.bytesPerLine();
+        TextureData initialData;
+        initialData.pSubResources = &subresource;
+        initialData.NumSubresources = 1;
+
+        impl_->pGlyphAtlasTexture_.Release();
+        impl_->pDevice_->CreateTexture(textureDesc, &initialData,
+                                       &impl_->pGlyphAtlasTexture_);
+        if (impl_->pGlyphAtlasTexture_) {
+            impl_->pGlyphAtlas_->clearDirty();
+        }
+    }
+
+    if (!impl_->pGlyphAtlasTexture_) {
+        return;
+    }
+    ITextureView* atlasView =
+        impl_->pGlyphAtlasTexture_->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    if (!atlasView) {
+        return;
+    }
+
+    const auto viewport = impl_->viewport_.GetViewportCB();
+    const float screenWidth = std::max(viewport.screenSize.x, 0.001f);
+    const float screenHeight = std::max(viewport.screenSize.y, 0.001f);
+    const float zoom = std::max(viewport.zoom, 0.001f);
+    const float atlasWidth = static_cast<float>(impl_->pGlyphAtlas_->width());
+    const float atlasHeight = static_cast<float>(impl_->pGlyphAtlas_->height());
+
+    const auto blendColor = [](const FloatColor& base,
+                               const FloatRGBA& overrideColor,
+                               float weight) {
+        const float t = std::clamp(weight, 0.0f, 1.0f);
+        return FloatColor(
+            base.r() + (overrideColor.r() - base.r()) * t,
+            base.g() + (overrideColor.g() - base.g()) * t,
+            base.b() + (overrideColor.b() - base.b()) * t,
+            base.a() + (overrideColor.a() - base.a()) * t);
+    };
+
+    const auto appendGlyphPacket =
+        [&](const GlyphItem& glyph, const GlyphRect& rect,
+            const FloatColor& packetColor, float xOffset, float yOffset) {
+            const float width = static_cast<float>(rect.width);
+            const float height = static_cast<float>(rect.height);
+            if (width <= 0.0f || height <= 0.0f) {
+                return;
+            }
+
+            const float penX = static_cast<float>(
+                glyph.basePosition.x() + glyph.offsetPosition.x());
+            const float penY = static_cast<float>(
+                glyph.basePosition.y() + glyph.offsetPosition.y());
+            const float left = static_cast<float>(origin.x()) + penX +
+                               rect.bearingX + xOffset;
+            const float top = static_cast<float>(origin.y()) + penY -
+                              rect.bearingY + yOffset;
+            const float glyphScale = std::max(
+                0.0001f, glyph.baseScale * glyph.offsetScale);
+
+            QMatrix4x4 model = transform;
+            model.translate(left, top, glyph.offsetZ);
+            model.translate(width * 0.5f, height * 0.5f, 0.0f);
+            if (std::abs(glyph.offsetSkew) > 0.0001f) {
+                QMatrix4x4 skew;
+                skew.setToIdentity();
+                skew(0, 1) = std::tan(
+                    glyph.offsetSkew * std::numbers::pi_v<float> / 180.0f);
+                model *= skew;
+            }
+            model.rotate(glyph.baseRotation + glyph.offsetRotation,
+                         0.0f, 0.0f, 1.0f);
+            model.scale(glyphScale, glyphScale, 1.0f);
+            model.translate(-width * 0.5f, -height * 0.5f, 0.0f);
+            model.scale(width, height, 1.0f);
+
+            QMatrix4x4 finalMatrix;
+            if (impl_->useExternalMatrices_) {
+                finalMatrix = impl_->externalProjMatrix_ *
+                              impl_->externalViewMatrix_ * model;
+            } else {
+                QMatrix4x4 canvasToNdc;
+                canvasToNdc.setToIdentity();
+                canvasToNdc.translate(-1.0f, 1.0f, 0.0f);
+                canvasToNdc.scale(2.0f / screenWidth,
+                                  -2.0f / screenHeight, 1.0f);
+                canvasToNdc.scale(zoom, zoom, 1.0f);
+                canvasToNdc.translate(viewport.offset.x / zoom,
+                                      viewport.offset.y / zoom, 0.0f);
+                finalMatrix = canvasToNdc * model;
+            }
+
+            const float alpha = std::clamp(
+                opacity * glyph.offsetOpacity * packetColor.a(), 0.0f, 1.0f);
+            AtlasSpriteXformPkt packet;
+            packet.mat.row0 = {finalMatrix.row(0).x(), finalMatrix.row(0).y(),
+                               finalMatrix.row(0).z(), finalMatrix.row(0).w()};
+            packet.mat.row1 = {finalMatrix.row(1).x(), finalMatrix.row(1).y(),
+                               finalMatrix.row(1).z(), finalMatrix.row(1).w()};
+            packet.mat.row2 = {finalMatrix.row(2).x(), finalMatrix.row(2).y(),
+                               finalMatrix.row(2).z(), finalMatrix.row(2).w()};
+            packet.mat.row3 = {finalMatrix.row(3).x(), finalMatrix.row(3).y(),
+                               finalMatrix.row(3).z(), finalMatrix.row(3).w()};
+            packet.pSRV = atlasView;
+            packet.uvRect = {
+                rect.u0(static_cast<int>(atlasWidth)),
+                rect.v0(static_cast<int>(atlasHeight)),
+                rect.u1(static_cast<int>(atlasWidth)),
+                rect.v1(static_cast<int>(atlasHeight))};
+            packet.color = {packetColor.r(), packetColor.g(), packetColor.b(),
+                            alpha};
+            impl_->cmdBuf_->append(packet);
+        };
+
+    constexpr float diagonal = 0.7071067811865476f;
+    for (const ResolvedGlyph& resolved : resolvedGlyphs) {
+        const GlyphItem& glyph = *resolved.item;
+        FloatColor fill = color;
+        if (useGlyphColorOverrides && glyph.hasColorOverride) {
+            fill = blendColor(fill, glyph.fillColorOverride,
+                              glyph.fillColorOverrideWeight);
+        }
+
+        FloatColor stroke = outlineColor;
+        if (useGlyphColorOverrides && glyph.hasStrokeOverride) {
+            stroke = blendColor(stroke, glyph.strokeColorOverride,
+                                glyph.strokeColorOverrideWeight);
+        }
+        const float strokeWidth = std::max(
+            0.0f, outlineThickness + glyph.offsetStrokeWidth);
+        if (strokeWidth > 0.01f && stroke.a() > 0.0f) {
+            const std::array<QPointF, 8> offsets = {
+                QPointF(strokeWidth, 0.0f), QPointF(-strokeWidth, 0.0f),
+                QPointF(0.0f, strokeWidth), QPointF(0.0f, -strokeWidth),
+                QPointF(strokeWidth * diagonal, strokeWidth * diagonal),
+                QPointF(-strokeWidth * diagonal, strokeWidth * diagonal),
+                QPointF(strokeWidth * diagonal, -strokeWidth * diagonal),
+                QPointF(-strokeWidth * diagonal, -strokeWidth * diagonal)};
+            for (const QPointF& offset : offsets) {
+                appendGlyphPacket(glyph, resolved.rect, stroke,
+                                  static_cast<float>(offset.x()),
+                                  static_cast<float>(offset.y()));
+            }
+        }
+        const float resolvedBlur =
+            std::max(0.0f, blurRadius + glyph.offsetBlur);
+        if (resolvedBlur > 0.1f) {
+            const float radius = std::min(resolvedBlur, 32.0f);
+            FloatColor tapColor(fill.r(), fill.g(), fill.b(),
+                                fill.a() / 9.0f);
+            const std::array<QPointF, 9> blurOffsets = {
+                QPointF(0.0f, 0.0f), QPointF(radius, 0.0f),
+                QPointF(-radius, 0.0f), QPointF(0.0f, radius),
+                QPointF(0.0f, -radius),
+                QPointF(radius * diagonal, radius * diagonal),
+                QPointF(-radius * diagonal, radius * diagonal),
+                QPointF(radius * diagonal, -radius * diagonal),
+                QPointF(-radius * diagonal, -radius * diagonal)};
+            for (const QPointF& offset : blurOffsets) {
+                appendGlyphPacket(glyph, resolved.rect, tapColor,
+                                  static_cast<float>(offset.x()),
+                                  static_cast<float>(offset.y()));
+            }
+        } else {
+            appendGlyphPacket(glyph, resolved.rect, fill, 0.0f, 0.0f);
+        }
     }
 }
 

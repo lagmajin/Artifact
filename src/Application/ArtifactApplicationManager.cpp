@@ -48,6 +48,7 @@ import Artifact.Test.ProjectManager;
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
 import Artifact.Service.ActiveContext;
+import Artifact.Service.Playback;
 import Artifact.Tool.Manager;
 import Artifact.Tool.MotionSketchTool;
 import Artifact.Tool.PuppetTool;
@@ -93,6 +94,13 @@ namespace Artifact
 
  ArtifactApplicationManager::Impl::~Impl()
  {
+  // Playback owns a worker thread that can still hold composition/layer
+  // references. Stop it before the composition manager and its layers are
+  // destroyed during application shutdown.
+  if (auto *playback = ArtifactPlaybackService::instance()) {
+   playback->stop();
+   playback->waitForStop();
+  }
   delete activeContext_;
  }
 

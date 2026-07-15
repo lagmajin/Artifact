@@ -96,6 +96,7 @@ public:
     void play();
     void pause();
     void stop();
+    void waitForStop();
     void togglePlayPause();
 
     // フレームナビゲーション

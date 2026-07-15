@@ -9,6 +9,7 @@ module;
 #include <BasicMath.hpp>
 #include <QImage>
 #include <QFont>
+#include <QPointF>
 #include <QRectF>
 #include <QString>
 #include <QTransform>
@@ -136,6 +137,17 @@ public:
                     const ArtifactCore::TextStyle& style,
                     const FloatColor& color,
                     float opacity = 1.0f);
+    void drawGlyphsTransformed(
+        std::span<const ArtifactCore::GlyphItem> glyphs,
+        const ArtifactCore::TextStyle& style,
+        const FloatColor& color,
+        const QMatrix4x4& transform,
+        const QPointF& origin,
+        float opacity = 1.0f,
+        const FloatColor& outlineColor = FloatColor{0.0f, 0.0f, 0.0f, 0.0f},
+        float outlineThickness = 0.0f,
+        float blurRadius = 0.0f,
+        bool useGlyphColorOverrides = true);
     QString glyphAtlasDebugState() const;
 
     // Returns the currently active render target view (override or swapchain back-buffer).

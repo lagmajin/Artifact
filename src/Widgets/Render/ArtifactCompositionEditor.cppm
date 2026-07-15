@@ -494,6 +494,76 @@ ArtifactCompositionPtr resolvePreferredComposition() {
   return {};
 }
 
+qint64 textEditFrame(const std::shared_ptr<ArtifactTextLayer> &layer) {
+  if (!layer) {
+    return 0;
+  }
+  if (auto *composition = static_cast<ArtifactAbstractComposition *>(
+          layer->composition())) {
+    return composition->framePosition().framePosition();
+  }
+  return 0;
+}
+
+QString textEditorValue(const std::shared_ptr<ArtifactTextLayer> &layer) {
+  if (!layer) {
+    return {};
+  }
+  return layer->hasSourceTextKeyframes()
+             ? layer->sourceTextAtFrame(textEditFrame(layer))
+             : layer->text().toQString();
+}
+
+bool commitTextEditorValue(const std::shared_ptr<ArtifactTextLayer> &layer,
+                           const QString &nextText) {
+  if (!layer) {
+    return false;
+  }
+
+  const QString beforeText = textEditorValue(layer);
+  if (beforeText == nextText) {
+    return false;
+  }
+
+  if (layer->hasSourceTextKeyframes()) {
+    const auto property = layer->getProperty(QStringLiteral("text.value"));
+    if (!property) {
+      return false;
+    }
+    const auto beforeKeyframes = property->getKeyFrames();
+    auto afterKeyframes = beforeKeyframes;
+    const qint64 frame = textEditFrame(layer);
+    int fps = 30;
+    if (auto *composition = static_cast<ArtifactAbstractComposition *>(
+            layer->composition())) {
+      fps = std::max(1, static_cast<int>(
+                            std::round(composition->frameRate().framerate())));
+    }
+    ArtifactCore::KeyFrame editedKeyframe;
+    editedKeyframe.time = RationalTime(frame, fps);
+    editedKeyframe.value = nextText;
+    editedKeyframe.interpolation = ArtifactCore::InterpolationType::Constant;
+    const auto existing = std::find_if(
+        afterKeyframes.begin(), afterKeyframes.end(),
+        [&editedKeyframe](const ArtifactCore::KeyFrame &keyframe) {
+          return keyframe.time == editedKeyframe.time;
+        });
+    if (existing != afterKeyframes.end()) {
+      *existing = editedKeyframe;
+    } else {
+      afterKeyframes.push_back(editedKeyframe);
+    }
+    UndoManager::instance()->push(
+        std::make_unique<SetLayerPropertyKeyframesCommand>(
+            layer, QStringLiteral("text.value"), beforeKeyframes,
+            afterKeyframes, QStringLiteral("Edit Source Text")));
+  } else {
+    UndoManager::instance()->push(std::make_unique<SetTextLayerTextCommand>(
+        layer, beforeText, nextText, QStringLiteral("Edit Text")));
+  }
+  return true;
+}
+
 class TextOverlayFilter : public QObject {
 public:
   TextOverlayFilter(QPlainTextEdit *editor,
@@ -523,9 +593,7 @@ private:
   void commit() {
     if (!editor_)
       return;
-    if (layer_->text().toQString() != editor_->toPlainText()) {
-      layer_->setText(
-          ArtifactCore::UniString::fromQString(editor_->toPlainText()));
+    if (commitTextEditorValue(layer_, editor_->toPlainText())) {
       if (auto *comp = static_cast<ArtifactAbstractComposition *>(
               layer_->composition())) {
         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
@@ -616,7 +684,7 @@ public:
     root->addWidget(preview, 1);
 
     editor_ = new QPlainTextEdit(this);
-    editor_->setPlainText(textLayer ? textLayer->text().toQString() : QString());
+    editor_->setPlainText(textEditorValue(textLayer));
     editor_->setPlaceholderText(QStringLiteral("Enter text..."));
     editor_->selectAll();
     editor_->setMinimumHeight(160);
@@ -726,7 +794,7 @@ private:
       const QString detail = QStringLiteral("bbox %1 x %2  |  text length %3")
                                  .arg(bbox.width(), 0, 'f', 1)
                                  .arg(bbox.height(), 0, 'f', 1)
-                                 .arg(textLayer->text().toQString().size());
+                                 .arg(textEditorValue(textLayer).size());
       painter.setPen(QColor(180, 200, 220));
       painter.drawText(inner.adjusted(14, 44, -14, -10),
                        Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, detail);
@@ -744,8 +812,7 @@ private:
     }
 
     const QString nextText = editor_->toPlainText();
-    if (textLayer->text().toQString() != nextText) {
-      textLayer->setText(ArtifactCore::UniString::fromQString(nextText));
+    if (commitTextEditorValue(textLayer, nextText)) {
       if (auto *comp = static_cast<ArtifactAbstractComposition *>(textLayer->composition())) {
         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
             LayerChangedEvent{comp->id().toString(), textLayer->id().toString(),
@@ -838,27 +905,27 @@ public:
     rootLayout->setSpacing(0);
     rootLayout->addStretch(1);
 
-    auto *card = new QFrame(this);
-    card->setObjectName(QStringLiteral("compositionCardFrame"));
-    card->setFrameShape(QFrame::StyledPanel);
-    card->setFrameShadow(QFrame::Plain);
-    card->setAutoFillBackground(true);
-    card->setMinimumWidth(0);
-    card->setMaximumWidth(640);
-    card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    card_ = new QFrame(this);
+    card_->setObjectName(QStringLiteral("compositionCardFrame"));
+    card_->setFrameShape(QFrame::StyledPanel);
+    card_->setFrameShadow(QFrame::Plain);
+    card_->setAutoFillBackground(true);
+    card_->setMinimumWidth(0);
+    card_->setMaximumWidth(640);
+    card_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
-    QPalette cardPalette = card->palette();
+    QPalette cardPalette = card_->palette();
     cardPalette.setColor(QPalette::Window, QColor(18, 20, 25, 230));
     cardPalette.setColor(QPalette::WindowText, QColor(248, 248, 248));
     cardPalette.setColor(QPalette::Base, QColor(18, 20, 25, 230));
     cardPalette.setColor(QPalette::Text, QColor(248, 248, 248));
-    card->setPalette(cardPalette);
+    card_->setPalette(cardPalette);
 
-    auto *cardLayout = new QVBoxLayout(card);
+    auto *cardLayout = new QVBoxLayout(card_);
     cardLayout->setContentsMargins(32, 28, 32, 28);
     cardLayout->setSpacing(14);
 
-    titleLabel_ = new QLabel(QStringLiteral("まだコンポジションがありません"), card);
+    titleLabel_ = new QLabel(QStringLiteral("まだコンポジションがありません"), card_);
     QFont titleFont = titleLabel_->font();
     titleFont.setPointSizeF(std::max(14.0, titleFont.pointSizeF() + 2.0));
     titleFont.setBold(true);
@@ -869,19 +936,19 @@ public:
 
     bodyLabel_ = new QLabel(
         QStringLiteral("新規コンポジションを作成して、編集を始めましょう。"),
-        card);
+        card_);
     bodyLabel_->setAlignment(Qt::AlignCenter);
     bodyLabel_->setMinimumWidth(0);
     bodyLabel_->setWordWrap(true);
 
     helperLabel_ = new QLabel(
         QStringLiteral("ボタンを押すと、コンポジション設定ダイアログを開きます。"),
-        card);
+        card_);
     helperLabel_->setAlignment(Qt::AlignCenter);
     helperLabel_->setMinimumWidth(0);
     helperLabel_->setWordWrap(true);
 
-    createButton_ = new QPushButton(QStringLiteral("新規コンポジション"), card);
+    createButton_ = new QPushButton(QStringLiteral("新規コンポジション"), card_);
     createButton_->setMinimumHeight(46);
     createButton_->setMinimumWidth(0);
     createButton_->setMaximumWidth(240);
@@ -898,7 +965,7 @@ public:
     cardLayout->addSpacing(8);
     cardLayout->addWidget(createButton_, 0, Qt::AlignHCenter);
 
-    rootLayout->addWidget(card, 0, Qt::AlignHCenter);
+    rootLayout->addWidget(card_, 0, Qt::AlignHCenter);
     rootLayout->addStretch(1);
 
     QObject::connect(createButton_, &QPushButton::clicked, this,
@@ -913,21 +980,36 @@ public:
     if (!titleLabel_ || !bodyLabel_ || !helperLabel_ || !createButton_) {
       return;
     }
+    if (compositionStateInitialized_ && hasComposition_ == hasComposition) {
+      return;
+    }
+    compositionStateInitialized_ = true;
     if (hasComposition) {
+      hasComposition_ = true;
+      setAttribute(Qt::WA_TransparentForMouseEvents, true);
+      card_->setMaximumWidth(420);
       titleLabel_->setText(QStringLiteral("レイヤーがありません"));
       bodyLabel_->setText(QStringLiteral("平面やテキストなどのレイヤーを追加すると、ここに表示されます。"));
       helperLabel_->setText(QStringLiteral("Layer メニューからレイヤーを追加してください。"));
       createButton_->hide();
+      update();
       return;
     }
+    hasComposition_ = false;
+    setAttribute(Qt::WA_TransparentForMouseEvents, false);
+    card_->setMaximumWidth(640);
     titleLabel_->setText(QStringLiteral("まだコンポジションがありません"));
     bodyLabel_->setText(QStringLiteral("新規コンポジションを作成して、編集を始めましょう。"));
     helperLabel_->setText(QStringLiteral("ボタンを押すと、コンポジション設定ダイアログを開きます。"));
     createButton_->show();
+    update();
   }
 
 protected:
   void paintEvent(QPaintEvent *) override {
+    if (hasComposition_) {
+      return;
+    }
     QPainter painter(this);
     painter.fillRect(rect(), QColor(10, 12, 16, 148));
 
@@ -941,10 +1023,13 @@ protected:
 
 private:
   std::function<void()> createRequested_;
+  QFrame *card_ = nullptr;
   QLabel *titleLabel_ = nullptr;
   QLabel *bodyLabel_ = nullptr;
   QLabel *helperLabel_ = nullptr;
   QPushButton *createButton_ = nullptr;
+  bool hasComposition_ = false;
+  bool compositionStateInitialized_ = false;
 };
 
 class CompositionViewport final : public QWidget {
@@ -4538,6 +4623,7 @@ protected:
     if (!event->isAutoRepeat() &&
         (ArtifactCore::ShortcutBindings::instance().matches(
              event, ArtifactCore::ShortcutId::LayerDeleteSelected) ||
+         event->key() == Qt::Key_Delete ||
          event->key() == Qt::Key_Backspace)) {
       auto *svc = ArtifactProjectService::instance();
       auto *active = ArtifactActiveContextService::instance();
@@ -7633,7 +7719,10 @@ public:
       }
       hud->adjustSize();
       hud->move(position);
-      hud->setVisible(hasComposition && viewportToolboxesVisible_);
+      const bool shouldShow = hasComposition && viewportToolboxesVisible_;
+      if (hud->isVisible() != shouldShow) {
+        hud->setVisible(shouldShow);
+      }
       if (hud->isVisible()) {
         hud->raise();
       }
@@ -7673,9 +7762,11 @@ public:
         emptyStateOverlay->setGeometry(
             QRect(paneTopLeft, paneState->view->size()));
         emptyStateOverlay->setCompositionAvailable(hasComposition);
-        emptyStateOverlay->show();
+        if (!emptyStateOverlay->isVisible()) {
+          emptyStateOverlay->show();
+        }
         emptyStateOverlay->raise();
-      } else {
+      } else if (emptyStateOverlay->isVisible()) {
         emptyStateOverlay->hide();
       }
     }
@@ -7689,7 +7780,9 @@ public:
             controller->viewportOrientationQuaternion());
       }
       const bool showNavigator = hasComposition;
-      viewOrientationWidget_->setVisible(showNavigator);
+      if (viewOrientationWidget_->isVisible() != showNavigator) {
+        viewOrientationWidget_->setVisible(showNavigator);
+      }
       viewOrientationWidget_->setEnabledState(showNavigator);
       if (viewOrientationWidget_->isVisible()) {
         viewOrientationWidget_->raise();
@@ -7702,7 +7795,9 @@ public:
                                 viewportGeometry.bottom() -
                                     chromeStrip_->sizeHint().height() - overlayInset,
                                 width, chromeStrip_->sizeHint().height());
-      chromeStrip_->setVisible(hasComposition);
+      if (chromeStrip_->isVisible() != hasComposition) {
+        chromeStrip_->setVisible(hasComposition);
+      }
       if (chromeStrip_->isVisible()) {
         chromeStrip_->raise();
       }
@@ -7713,7 +7808,9 @@ public:
       bottomBar_->setGeometry(viewportGeometry.right() - sz.width() - overlayInset,
                               viewportGeometry.bottom() - sz.height() - overlayInset,
                               sz.width(), sz.height());
-      bottomBar_->setVisible(hasComposition);
+      if (bottomBar_->isVisible() != hasComposition) {
+        bottomBar_->setVisible(hasComposition);
+      }
       if (bottomBar_->isVisible()) {
         bottomBar_->raise();
       }

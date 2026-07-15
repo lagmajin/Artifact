@@ -1431,7 +1431,6 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
         return;
     }
 
-    const QFont resolvedFont = FontManager::makeFont(style, p.text);
     const float zoom = std::max(0.001f, p.xform.scale.x);
     struct DrawGlyph {
         GlyphItem item;
@@ -1441,12 +1440,14 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
     drawGlyphs.reserve(glyphs.size());
 
     for (const auto& glyph : glyphs) {
+        const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
+        const QFont resolvedFont = FontManager::makeFont(style, glyphText);
         const GlyphKey key{
             glyph.charCode,
             style.fontSize,
             static_cast<uint32_t>((style.fontWeight == FontWeight::Bold ? 0x1u : 0u) |
                                   (style.fontStyle == FontStyle::Italic ? 0x2u : 0u)),
-            style.fontFamily.toQString().toStdString()
+            resolvedFont.family().toStdString()
         };
         const GlyphRect glyphRect = m_glyph_atlas.acquire(key, resolvedFont);
         if (glyphRect.valid) {
@@ -1589,7 +1590,6 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
         return;
     }
 
-    const QFont resolvedFont = FontManager::makeFont(style, p.text);
     struct DrawGlyph {
         GlyphItem item;
         GlyphRect rect;
@@ -1598,12 +1598,14 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
     drawGlyphs.reserve(glyphs.size());
 
     for (const auto& glyph : glyphs) {
+        const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
+        const QFont resolvedFont = FontManager::makeFont(style, glyphText);
         const GlyphKey key{
             glyph.charCode,
             style.fontSize,
             static_cast<uint32_t>((style.fontWeight == FontWeight::Bold ? 0x1u : 0u) |
                                   (style.fontStyle == FontStyle::Italic ? 0x2u : 0u)),
-            style.fontFamily.toQString().toStdString()
+            resolvedFont.family().toStdString()
         };
         const GlyphRect glyphRect = m_glyph_atlas.acquire(key, resolvedFont);
         if (glyphRect.valid) {

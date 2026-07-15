@@ -9,6 +9,7 @@ module;
 #include <QFont>
 #include <QImage>
 #include <QMatrix4x4>
+#include <QPointF>
 #include <QRectF>
 #include <QString>
 #include <QTransform>
@@ -17,11 +18,14 @@ module;
 #include <RenderDevice.h>
 #include <functional>
 #include <memory>
+#include <span>
 #include <vector>
 
 export module Artifact.Render.IRenderer;
 
 import Color.Float;
+import Text.LayoutContract;
+import Text.Style;
 import Mesh;
 import Material.Material;
 import Image.ImageF32x4_RGBA;
@@ -255,6 +259,17 @@ public:
                            float opacity = 1.0f,
                            const FloatColor &outlineColor = FloatColor{0.0f, 0.0f, 0.0f, 0.0f},
                            float outlineThickness = 0.0f);
+  void drawGlyphsTransformed(
+      std::span<const ArtifactCore::GlyphItem> glyphs,
+      const ArtifactCore::TextStyle &style,
+      const FloatColor &color,
+      const QMatrix4x4 &transform,
+      const QPointF &origin,
+      float opacity = 1.0f,
+      const FloatColor &outlineColor = FloatColor{0.0f, 0.0f, 0.0f, 0.0f},
+      float outlineThickness = 0.0f,
+      float blurRadius = 0.0f,
+      bool useGlyphColorOverrides = true);
   void drawSpriteTransformed(float x, float y, float w, float h,
                              const QTransform &transform, const QImage &image,
                              float opacity = 1.0f);

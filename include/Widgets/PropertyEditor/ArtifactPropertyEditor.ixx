@@ -193,7 +193,7 @@ private:
 
 private:
     QDoubleSpinBox* spinBox_ = nullptr;
-    QSlider* slider_ = nullptr;
+    detail::PropertySliderWidget* slider_ = nullptr;
     QWidget* knob_ = nullptr;
     QPushButton* resetButton_ = nullptr;
     double softMin_ = 0.0;
@@ -223,7 +223,7 @@ private:
 
 private:
     QSpinBox* spinBox_ = nullptr;
-    QSlider* slider_ = nullptr;
+    detail::PropertySliderWidget* slider_ = nullptr;
     QWidget* knob_ = nullptr;
     int softMin_ = 0;
     int softMax_ = 100;

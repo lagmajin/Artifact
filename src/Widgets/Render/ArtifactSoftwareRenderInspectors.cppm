@@ -449,7 +449,28 @@ void fillRectWithGradient(QPainter& painter,
         gradient.setColorAt(1.0, toQColor(startColor, static_cast<float>(opacityScale)));
         painter.fillRect(rect, gradient);
     } else {
-        fillRectWithLinearGradient(painter, rect, startColor, endColor, angleDegrees, opacityScale);
+        const QSize gradientSize(
+            std::max(1, static_cast<int>(std::round(rect.width()))),
+            std::max(1, static_cast<int>(std::round(rect.height()))));
+        const QPointF baseCenter(gradientSize.width() * 0.5,
+                                 gradientSize.height() * 0.5);
+        const QPointF center(gradientSize.width() * centerX,
+                             gradientSize.height() * centerY);
+        const qreal spanScale = std::max(0.01f, scale);
+        const QPointF rawStart =
+            gradientPointForAngle(angleDegrees, gradientSize, true);
+        const QPointF rawEnd =
+            gradientPointForAngle(angleDegrees, gradientSize, false);
+        QLinearGradient gradient(center + (rawStart - baseCenter) * spanScale,
+                                 center + (rawEnd - baseCenter) * spanScale);
+        if (fillType == ArtifactSolidFillType::RepeatingGradient) {
+            gradient.setSpread(QGradient::RepeatSpread);
+        } else if (fillType == ArtifactSolidFillType::MirroredGradient) {
+            gradient.setSpread(QGradient::ReflectSpread);
+        }
+        gradient.setColorAt(0.0, toQColor(startColor, static_cast<float>(opacityScale)));
+        gradient.setColorAt(1.0, toQColor(endColor, static_cast<float>(opacityScale)));
+        painter.fillRect(rect, gradient);
     }
 }
 

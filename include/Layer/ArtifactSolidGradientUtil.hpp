@@ -93,6 +93,11 @@ inline QImage makeSolidGradientImage(
     const QPointF p2 = gradientPointForAngle(angleDegrees, size, false, reverse,
                                               centerX, centerY, scale, offset);
     QLinearGradient gradient(p1, p2);
+    if (fillType == 4) { // Repeating
+        gradient.setSpread(QGradient::RepeatSpread);
+    } else if (fillType == 5) { // Mirrored
+        gradient.setSpread(QGradient::ReflectSpread);
+    }
     gradient.setColorAt(0.0, reverse ? toQColor(endColor) : toQColor(startColor));
     gradient.setColorAt(1.0, reverse ? toQColor(startColor) : toQColor(endColor));
     painter.fillRect(image.rect(), gradient);

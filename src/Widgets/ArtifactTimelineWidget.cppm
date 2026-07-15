@@ -7496,14 +7496,6 @@ void ArtifactTimelineWidget::syncWorkAreaFromCurrentComposition() {
 }
 
 void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
-  if (auto* input = ArtifactCore::InputOperator::instance()) {
-    input->setActiveContext(QStringLiteral("Workspace.Timeline"));
-    if (event && input->processKeyPress(this, event->key(), event->modifiers())) {
-      event->accept();
-      return;
-    }
-  }
-
   const auto &shortcuts = ArtifactCore::ShortcutBindings::instance();
   const auto zoomTimelineBy = [this](const double scale) {
     if (!impl_ || !impl_->painterTrackView_) {
@@ -7729,7 +7721,10 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     }
   }
 
-  if (shortcuts.matches(event, ArtifactCore::ShortcutId::LayerDeleteSelected)) {
+  if (shortcuts.matches(event, ArtifactCore::ShortcutId::LayerDeleteSelected) ||
+      ((event->key() == Qt::Key_Delete ||
+        event->key() == Qt::Key_Backspace) &&
+       event->modifiers() == Qt::NoModifier)) {
     auto *selection = ArtifactApplicationManager::instance()
                           ? ArtifactApplicationManager::instance()->layerSelectionManager()
                           : nullptr;
@@ -7737,6 +7732,14 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
                                           : QSet<ArtifactAbstractLayerPtr>{};
     if (!selectedLayers.isEmpty()) {
       deleteSelectedLayersFromTimeline();
+      event->accept();
+      return;
+    }
+  }
+
+  if (auto* input = ArtifactCore::InputOperator::instance()) {
+    input->setActiveContext(QStringLiteral("Workspace.Timeline"));
+    if (event && input->processKeyPress(this, event->key(), event->modifiers())) {
       event->accept();
       return;
     }

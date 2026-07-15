@@ -4195,6 +4195,27 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
   key += QStringLiteral("|generation=%1").arg(surfaceGeneration);
 
+  bool hasAnimatedEffectProperty = false;
+  for (const auto &effect : layer->getEffects()) {
+    if (!effect || !effect->isEnabled()) {
+      continue;
+    }
+    for (const auto &property : effect->editableProperties()) {
+      if (property && (!property->getKeyFrames().empty() ||
+                       property->hasExpression() ||
+                       property->hasEnvelopes())) {
+        hasAnimatedEffectProperty = true;
+        break;
+      }
+    }
+    if (hasAnimatedEffectProperty) {
+      break;
+    }
+  }
+  if (hasAnimatedEffectProperty) {
+    key += QStringLiteral("|effectFrame=%1").arg(frameNumber);
+  }
+
 
 
   if (auto *solid2D = dynamic_cast<ArtifactSolid2DLayer *>(layer)) {

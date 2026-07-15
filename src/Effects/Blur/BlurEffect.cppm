@@ -41,6 +41,42 @@ Texture2D<float4> g_InputTexture : register(t0);
 RWTexture2D<float4> g_OutputTexture : register(u0);
 cbuffer BlurParams : register(b0) { float g_Radius; float g_Horizontal; float2 g_Pad; };
 float gaussianWeight(float x, float sigma) { return exp(-0.5f * (x * x) / max(0.0001f, sigma * sigma)); }
+float srgbToLinearChannel(float value)
+{
+    value = saturate(value);
+    return value <= 0.04045f
+        ? value / 12.92f
+        : pow((value + 0.055f) / 1.055f, 2.4f);
+}
+float3 srgbToLinear(float3 value)
+{
+    return float3(srgbToLinearChannel(value.r),
+                  srgbToLinearChannel(value.g),
+                  srgbToLinearChannel(value.b));
+}
+float linearToSrgbChannel(float value)
+{
+    value = max(value, 0.0f);
+    return value <= 0.0031308f
+        ? value * 12.92f
+        : 1.055f * pow(value, 1.0f / 2.4f) - 0.055f;
+}
+float3 linearToSrgb(float3 value)
+{
+    return float3(linearToSrgbChannel(value.r),
+                  linearToSrgbChannel(value.g),
+                  linearToSrgbChannel(value.b));
+}
+float4 decodePremultipliedSrgb(float4 value)
+{
+    if (value.a <= 0.000001f) return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    return float4(srgbToLinear(saturate(value.rgb / value.a)) * value.a, value.a);
+}
+float4 encodePremultipliedSrgb(float4 value)
+{
+    if (value.a <= 0.000001f) return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    return float4(linearToSrgb(max(value.rgb / value.a, 0.0f)) * value.a, value.a);
+}
 [numthreads(8, 8, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
@@ -57,12 +93,52 @@ void main(uint3 dtid : SV_DispatchThreadID)
         if (g_Horizontal > 0.5f) samplePos.x = clamp(samplePos.x + i, 0, int(width) - 1);
         else samplePos.y = clamp(samplePos.y + i, 0, int(height) - 1);
         const float w = gaussianWeight((float)i, sigma);
-        sum += g_InputTexture[uint2(samplePos)] * w;
+        sum += decodePremultipliedSrgb(g_InputTexture[uint2(samplePos)]) * w;
         weightSum += w;
     }
-    g_OutputTexture[dtid.xy] = sum / max(weightSum, 0.0001f);
+    g_OutputTexture[dtid.xy] = encodePremultipliedSrgb(sum / max(weightSum, 0.0001f));
 }
 )";
+
+static float srgbToLinear(const float value)
+{
+    const float clamped = std::clamp(value, 0.0f, 1.0f);
+    return clamped <= 0.04045f
+        ? clamped / 12.92f
+        : std::pow((clamped + 0.055f) / 1.055f, 2.4f);
+}
+
+static float linearToSrgb(const float value)
+{
+    const float clamped = std::max(value, 0.0f);
+    return clamped <= 0.0031308f
+        ? clamped * 12.92f
+        : 1.055f * std::pow(clamped, 1.0f / 2.4f) - 0.055f;
+}
+
+static void convertBlurColorSpace(cv::Mat& image, const bool toLinear,
+                                  const bool premultiplied)
+{
+    for (int y = 0; y < image.rows; ++y) {
+        auto* row = image.ptr<cv::Vec4f>(y);
+        for (int x = 0; x < image.cols; ++x) {
+            auto& pixel = row[x];
+            const float alpha = std::clamp(pixel[3], 0.0f, 1.0f);
+            for (int channel = 0; channel < 3; ++channel) {
+                float value = pixel[channel];
+                if (premultiplied) {
+                    if (alpha <= 0.000001f) {
+                        pixel[channel] = 0.0f;
+                        continue;
+                    }
+                    value /= alpha;
+                }
+                value = toLinear ? srgbToLinear(value) : linearToSrgb(value);
+                pixel[channel] = premultiplied ? value * alpha : value;
+            }
+        }
+    }
+}
 
 static bool readbackTexture(Diligent::IDeviceContext* ctx, Diligent::ITexture* src,
                             Diligent::ITexture* staging,
@@ -143,27 +219,16 @@ public:
             return;
         }
 
-        cv::Mat floatMat(srcImage.height(), srcImage.width(), CV_32FC4, const_cast<float*>(srcData));
+        cv::Mat sourceView(srcImage.height(), srcImage.width(), CV_32FC4,
+                           const_cast<float*>(srcData));
+        cv::Mat floatMat = sourceView.clone();
+        convertBlurColorSpace(floatMat, true, premultiplied_);
 
         std::vector<cv::Mat> channels;
         cv::split(floatMat, channels);
         cv::Mat color;
         cv::merge(std::vector<cv::Mat>{channels[0], channels[1], channels[2]}, color);
         cv::Mat alpha = channels[3];
-
-        if (premultiplied_) {
-            for (int y = 0; y < color.rows; ++y) {
-                for (int x = 0; x < color.cols; ++x) {
-                    const float a = alpha.at<float>(y, x);
-                    if (a > 0.001f) {
-                        cv::Vec3f& pixel = color.at<cv::Vec3f>(y, x);
-                        pixel[0] /= a;
-                        pixel[1] /= a;
-                        pixel[2] /= a;
-                    }
-                }
-            }
-        }
 
         const float sigma = std::max(0.1f, radius_ * 0.5f);
         const int ksize = std::max(3, static_cast<int>(sigma * 6.0f) | 1);
@@ -172,22 +237,22 @@ public:
                              sigma,
                              sigma,
                              cv::BORDER_REPLICATE);
+            if (premultiplied_) {
+                cv::GaussianBlur(alpha, alpha, cv::Size(ksize, ksize),
+                                 sigma,
+                                 sigma,
+                                 cv::BORDER_REPLICATE);
+            }
             if (mode_ == BlurMode::EdgePreserving) {
                 cv::GaussianBlur(color, color, cv::Size(ksize, ksize),
                                  std::max(0.1f, sigma * 0.6f),
                                  std::max(0.1f, sigma * 0.6f),
                                  cv::BORDER_REPLICATE);
-            }
-        }
-
-        if (premultiplied_) {
-            for (int y = 0; y < color.rows; ++y) {
-                for (int x = 0; x < color.cols; ++x) {
-                    const float a = alpha.at<float>(y, x);
-                    cv::Vec3f& pixel = color.at<cv::Vec3f>(y, x);
-                    pixel[0] *= a;
-                    pixel[1] *= a;
-                    pixel[2] *= a;
+                if (premultiplied_) {
+                    cv::GaussianBlur(alpha, alpha, cv::Size(ksize, ksize),
+                                     std::max(0.1f, sigma * 0.6f),
+                                     std::max(0.1f, sigma * 0.6f),
+                                     cv::BORDER_REPLICATE);
                 }
             }
         }
@@ -197,6 +262,7 @@ public:
         outChannels.push_back(alpha);
         cv::Mat dstMat;
         cv::merge(outChannels, dstMat);
+        convertBlurColorSpace(dstMat, false, premultiplied_);
         dst.image().setFromRGBA32F(dstMat.ptr<float>(), dstMat.cols, dstMat.rows);
         mixWithSource(src, dst);
     }
@@ -330,6 +396,12 @@ public:
             dst = src;
             return;
         }
+        // The compute shader operates on premultiplied RGBA. Keep modes with
+        // different alpha/filter semantics on the matching CPU implementation.
+        if (!cpuImpl_.premultiplied_ || cpuImpl_.mode_ != BlurMode::Gaussian) {
+            applyCPU(src, dst);
+            return;
+        }
         if (!ensureDevice()) {
             applyCPU(src, dst);
             return;
@@ -386,41 +458,43 @@ public:
             return;
         }
         const Diligent::TextureDesc outDesc = outputTex_->GetDesc();
-        void* mapped = nullptr;
-        ctx->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
-        if (!mapped) {
-            applyCPU(src, dst);
-            return;
-        }
-        BlurParamsCB params{};
-        params.radius = cpuImpl_.radius_;
-        params.horizontal = 1.0f;
-        std::memcpy(mapped, &params, sizeof(params));
-        ctx->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
-        if (!executor_->setTextureView("g_InputTexture", inputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-            !executor_->setTextureView("g_OutputTexture", scratchTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
-            applyCPU(src, dst);
-            return;
-        }
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
-        executor_->dispatch(ctx, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        auto dispatchPass = [&](Diligent::ITexture* input,
+                                Diligent::ITexture* output,
+                                const bool horizontal) {
+            void* mapped = nullptr;
+            ctx->MapBuffer(paramsCB_, Diligent::MAP_WRITE,
+                           Diligent::MAP_FLAG_DISCARD, mapped);
+            if (!mapped) {
+                return false;
+            }
+            BlurParamsCB params{};
+            params.radius = cpuImpl_.radius_;
+            params.horizontal = horizontal ? 1.0f : 0.0f;
+            std::memcpy(mapped, &params, sizeof(params));
+            ctx->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
+            if (!executor_->setTextureView(
+                    "g_InputTexture",
+                    input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+                !executor_->setTextureView(
+                    "g_OutputTexture",
+                    output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
+                return false;
+            }
+            executor_->dispatch(ctx, attribs,
+                                Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            return true;
+        };
 
-        ctx->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
-        if (!mapped) {
-            applyCPU(src, dst);
-            return;
+        Diligent::ITexture* iterationInput = inputTex_;
+        for (int iteration = 0; iteration < cpuImpl_.iterations_; ++iteration) {
+            if (!dispatchPass(iterationInput, scratchTex_, true) ||
+                !dispatchPass(scratchTex_, outputTex_, false)) {
+                applyCPU(src, dst);
+                return;
+            }
+            iterationInput = outputTex_;
         }
-        params = {};
-        params.radius = cpuImpl_.radius_;
-        params.horizontal = 0.0f;
-        std::memcpy(mapped, &params, sizeof(params));
-        ctx->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
-        if (!executor_->setTextureView("g_InputTexture", scratchTex_->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-            !executor_->setTextureView("g_OutputTexture", outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
-            applyCPU(src, dst);
-            return;
-        }
-        executor_->dispatch(ctx, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
         if (!readbackTexture(ctx, outputTex_, stagingTex_, dst)) {
             applyCPU(src, dst);

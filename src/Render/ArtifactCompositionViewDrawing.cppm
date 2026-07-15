@@ -285,6 +285,27 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
              .arg(surface.width())
              .arg(surface.height());
 
+  bool hasAnimatedEffectProperty = false;
+  for (const auto& effect : layer->getEffects()) {
+    if (!effect || !effect->isEnabled()) {
+      continue;
+    }
+    for (const auto& property : effect->editableProperties()) {
+      if (property && (!property->getKeyFrames().empty() ||
+                       property->hasExpression() ||
+                       property->hasEnvelopes())) {
+        hasAnimatedEffectProperty = true;
+        break;
+      }
+    }
+    if (hasAnimatedEffectProperty) {
+      break;
+    }
+  }
+  if (hasAnimatedEffectProperty) {
+    key += QStringLiteral("|effectFrame=%1").arg(frameNumber);
+  }
+
   if (auto* solid2D = dynamic_cast<ArtifactSolid2DLayer*>(layer)) {
     const QRectF bounds = solid2D->localBounds();
     key += QStringLiteral("|solid2D|color=%1|bounds=%2x%3")

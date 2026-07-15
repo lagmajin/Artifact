@@ -339,30 +339,32 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProper
   if (normalizedGroup.compare(QStringLiteral("Solid"), Qt::CaseInsensitive) == 0) {
     const int fillType = groupInt(QStringLiteral("solid.fillType"),
                                  static_cast<int>(ArtifactSolidFillType::Solid));
-    if (fillType == static_cast<int>(ArtifactSolidFillType::Solid)) {
-      std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filtered;
-      filtered.reserve(properties.size());
-      for (const auto &property : properties) {
-        if (!property) {
-          continue;
-        }
-        const QString name = property->getName();
-        const bool isGradientOnly =
-            name == QStringLiteral("solid.gradientStartColor") ||
-            name == QStringLiteral("solid.gradientEndColor") ||
-            name == QStringLiteral("solid.gradientAngleDegrees") ||
-            name == QStringLiteral("solid.gradientReverse") ||
-            name == QStringLiteral("solid.gradientCenterX") ||
-            name == QStringLiteral("solid.gradientCenterY") ||
-            name == QStringLiteral("solid.gradientScale") ||
-            name == QStringLiteral("solid.gradientOffset");
-        if (isGradientOnly) {
-          continue;
-        }
-        filtered.push_back(property);
+    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filtered;
+    filtered.reserve(visibleProperties.size());
+    for (const auto &property : visibleProperties) {
+      if (!property) {
+        continue;
       }
-      return filtered;
+      const QString name = property->getName();
+      const bool isSolidOnly = name == QStringLiteral("solid.color");
+      const bool isGradientOnly =
+          name == QStringLiteral("solid.gradientStartColor") ||
+          name == QStringLiteral("solid.gradientEndColor") ||
+          name == QStringLiteral("solid.gradientAngleDegrees") ||
+          name == QStringLiteral("solid.gradientReverse") ||
+          name == QStringLiteral("solid.gradientCenterX") ||
+          name == QStringLiteral("solid.gradientCenterY") ||
+          name == QStringLiteral("solid.gradientScale") ||
+          name == QStringLiteral("solid.gradientOffset");
+      if ((fillType == static_cast<int>(ArtifactSolidFillType::Solid) &&
+           isGradientOnly) ||
+          (fillType != static_cast<int>(ArtifactSolidFillType::Solid) &&
+           isSolidOnly)) {
+        continue;
+      }
+      filtered.push_back(property);
     }
+    return filtered;
   }
 
   // Shape Appearance group: hide gradient properties when fillType == Solid
@@ -796,6 +798,7 @@ bool propertyMatchesFilter(const ArtifactCore::AbstractProperty &property,
 }
 
 void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer);
+void notifyLayerPropertyPreviewChanged(const ArtifactAbstractLayerPtr &layer);
 
 bool shouldHideInspectorProperty(const QString &propertyName) {
   return false;
@@ -907,10 +910,19 @@ void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer) 
   }
   auto *composition =
       static_cast<ArtifactAbstractComposition *>(layer->composition());
+  layer->setDirty(LayerDirtyFlag::Effect);
   layer->changed();
   ArtifactCore::globalEventBus().publish(LayerChangedEvent{
       composition ? composition->id().toString() : QString{},
       layer->id().toString(), LayerChangedEvent::ChangeType::Modified});
+}
+
+void notifyLayerPropertyPreviewChanged(const ArtifactAbstractLayerPtr &layer) {
+  if (!layer) {
+    return;
+  }
+  layer->setDirty(LayerDirtyFlag::Effect);
+  layer->changed();
 }
 
 void launchExpressionCopilot(

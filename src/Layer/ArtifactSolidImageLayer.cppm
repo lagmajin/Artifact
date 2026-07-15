@@ -299,7 +299,7 @@ ArtifactSolidImageLayer::getLayerPropertyGroups() const {
       static_cast<int>(fillType()), -119);
   fillTypeProperty->setValue(static_cast<int>(fillType()));
   fillTypeProperty->setDisplayLabel(QStringLiteral("Fill Mode"));
-  fillTypeProperty->setTooltip(QStringLiteral("0=Solid, 1=Linear Gradient, 2=Radial Gradient, 3=Conical Gradient"));
+  fillTypeProperty->setTooltip(QStringLiteral("Solid, linear, radial, conical, repeating, or mirrored gradient"));
   solidGroup.addProperty(fillTypeProperty);
 
   const auto start = gradientStartColor();
@@ -383,6 +383,8 @@ bool ArtifactSolidImageLayer::setLayerPropertyValue(const QString &propertyPath,
     setFillType(type <= 0 ? ArtifactSolidFillType::Solid
                           : type == 2 ? ArtifactSolidFillType::RadialGradient
                           : type == 3 ? ArtifactSolidFillType::ConicalGradient
+                          : type == 4 ? ArtifactSolidFillType::RepeatingGradient
+                          : type == 5 ? ArtifactSolidFillType::MirroredGradient
                                       : ArtifactSolidFillType::LinearGradient);
     Q_EMIT changed();
     return true;

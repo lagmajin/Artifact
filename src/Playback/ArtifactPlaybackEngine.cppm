@@ -751,6 +751,12 @@ void ArtifactPlaybackEngine::stop() {
     Q_EMIT frameChanged(position, QImage());
 }
 
+void ArtifactPlaybackEngine::waitForStop() {
+    if (impl_->workerThread_ && impl_->workerThread_->isRunning()) {
+        impl_->workerThread_->wait(3000);
+    }
+}
+
 void ArtifactPlaybackEngine::togglePlayPause() {
     if (impl_->state_ == PlaybackState::Playing) {
         pause();

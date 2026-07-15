@@ -302,6 +302,15 @@ void applyLayerPropertyKeyframeSnapshot(
     layer->changed();
 }
 
+void applyTextLayerTextSnapshot(const ArtifactAbstractLayerPtr& layer,
+                                const QString& text) {
+    if (!layer) {
+        return;
+    }
+
+    layer->setLayerPropertyValue(QStringLiteral("text.value"), text);
+}
+
 void applyEffectMaskImageSnapshot(
     const std::shared_ptr<ArtifactAbstractEffect>& effect,
     const std::vector<std::shared_ptr<ImageF32x4_RGBA>>& masks) {
@@ -397,6 +406,35 @@ void SetLayerPropertyKeyframesCommand::redo() {
 }
 
 QString SetLayerPropertyKeyframesCommand::label() const {
+    return label_;
+}
+
+// --- SetTextLayerTextCommand ---
+SetTextLayerTextCommand::SetTextLayerTextCommand(
+    ArtifactAbstractLayerPtr layer,
+    QString beforeText,
+    QString afterText,
+    QString label)
+    : layer_(layer),
+      beforeText_(std::move(beforeText)),
+      afterText_(std::move(afterText)),
+      label_(std::move(label)) {}
+
+void SetTextLayerTextCommand::undo() {
+    applyTextLayerTextSnapshot(layer_.lock(), beforeText_);
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+void SetTextLayerTextCommand::redo() {
+    applyTextLayerTextSnapshot(layer_.lock(), afterText_);
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+QString SetTextLayerTextCommand::label() const {
     return label_;
 }
 

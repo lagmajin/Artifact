@@ -107,7 +107,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   spinBox_ = new ArtifactRelativeDoubleSpinBox(this);
   spinBox_->setProperty("displayAsPercent", displayAsPercent);
   if (showSlider) {
-    slider_ = new QSlider(Qt::Horizontal, this);
+    slider_ = new detail::PropertySliderWidget(this);
     applyPropertyFieldPalette(slider_);
   }
   auto previewThrottle = std::make_shared<QElapsedTimer>();
@@ -187,6 +187,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     slider_->setValue(floatToSliderPosition(
         storageToDisplayValue(property.getValue().toDouble(), displayAsPercent),
         softMin_, softMax_));
+    slider_->setDisplayText(spinBox_->text());
   }
 
   QObject::connect(spinBox_, &QDoubleSpinBox::valueChanged, this,
@@ -195,6 +196,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                         const QSignalBlocker blocker(slider_);
                         slider_->setValue(
                             floatToSliderPosition(nextValue, softMin_, softMax_));
+                        slider_->setDisplayText(spinBox_->text());
                       }
                      if (spinBox_->hasFocus() && !sliderInteracting_) {
                        previewValue(
@@ -348,6 +350,7 @@ void ArtifactFloatPropertyEditor::setValueFromVariant(const QVariant &value) {
   if (slider_) {
     const QSignalBlocker sliderBlocker(slider_);
     slider_->setValue(this->floatToSliderPosition(nextValue, softMin_, softMax_));
+    slider_->setDisplayText(spinBox_->text());
   }
 }
 
@@ -395,7 +398,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   setObjectName(QStringLiteral("propertyIntEditor"));
   spinBox_ = new ArtifactRelativeSpinBox(this);
   if (showSlider) {
-    slider_ = new QSlider(Qt::Horizontal, this);
+    slider_ = new detail::PropertySliderWidget(this);
     applyPropertyFieldPalette(slider_);
   }
   auto previewThrottle = std::make_shared<QElapsedTimer>();
@@ -464,6 +467,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     slider_->setTracking(true);
     slider_->setValue(
         intToSliderPosition(property.getValue().toInt(), softMin_, softMax_));
+    slider_->setDisplayText(spinBox_->text());
   }
 
   QObject::connect(
@@ -471,6 +475,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
         if (slider_) {
           const QSignalBlocker blocker(slider_);
           slider_->setValue(intToSliderPosition(nextValue, softMin_, softMax_));
+          slider_->setDisplayText(spinBox_->text());
         }
         if (spinBox_->hasFocus() && !sliderInteracting_) {
           previewValue(nextValue);
@@ -534,6 +539,7 @@ void ArtifactIntPropertyEditor::setValueFromVariant(const QVariant &value) {
   if (slider_) {
     const QSignalBlocker sliderBlocker(slider_);
     slider_->setValue(intToSliderPosition(nextValue, softMin_, softMax_));
+    slider_->setDisplayText(spinBox_->text());
   }
 }
 

@@ -6940,30 +6940,36 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     });
 
     QPointer<ArtifactProjectManagerWidget> widgetPtr(this);
-    const auto queueProjectRefresh = [widgetPtr]() {
+    const auto queueProjectPresentationRefresh = [widgetPtr]() {
         if (!widgetPtr || !widgetPtr->impl_ || widgetPtr->impl_->projectRefreshQueued_) {
             return;
         }
         widgetPtr->impl_->projectRefreshQueued_ = true;
         QMetaObject::invokeMethod(widgetPtr, [widgetPtr]() {
-            if (!widgetPtr) {
+            if (!widgetPtr || !widgetPtr->impl_) {
                 return;
             }
-            widgetPtr->updateRequested();
+            auto* impl = widgetPtr->impl_;
+            impl->projectRefreshQueued_ = false;
+            impl->refreshUnusedAssetCache();
+            if (impl->proxyModel_) {
+                impl->proxyModel_->setAdvancedFilter(
+                    impl->searchBar ? impl->searchBar->text() : QString(),
+                    impl->typeFilterBox ? impl->typeFilterBox->currentText() : QString(),
+                    impl->unusedOnlyCheck ? impl->unusedOnlyCheck->isChecked() : false);
+            }
+            impl->refreshSelectionChrome();
+            impl->syncSelectionToCurrentComposition();
         }, Qt::QueuedConnection);
     };
 
     impl_->eventBusSubscriptions_.push_back(
-        impl_->eventBus_.subscribe<CompositionCreatedEvent>([queueProjectRefresh](const CompositionCreatedEvent&) {
-        queueProjectRefresh();
+        impl_->eventBus_.subscribe<LayerChangedEvent>([queueProjectPresentationRefresh](const LayerChangedEvent&) {
+        queueProjectPresentationRefresh();
     }));
     impl_->eventBusSubscriptions_.push_back(
-        impl_->eventBus_.subscribe<LayerChangedEvent>([queueProjectRefresh](const LayerChangedEvent&) {
-        queueProjectRefresh();
-    }));
-    impl_->eventBusSubscriptions_.push_back(
-        impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
-        updateRequested();
+        impl_->eventBus_.subscribe<ProjectChangedEvent>([queueProjectPresentationRefresh](const ProjectChangedEvent&) {
+        queueProjectPresentationRefresh();
     }));
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent&) {
