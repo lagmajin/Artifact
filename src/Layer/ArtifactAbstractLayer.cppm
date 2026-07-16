@@ -78,7 +78,9 @@ bool isTimelineHiddenLayerPropertyGroup(const QString &groupName) {
          normalized.compare(QStringLiteral("Initial"), Qt::CaseInsensitive) == 0 ||
          normalized.compare(QStringLiteral("Rig"), Qt::CaseInsensitive) == 0 ||
          normalized.compare(QStringLiteral("Rig Controls"), Qt::CaseInsensitive) == 0 ||
-         normalized.compare(QStringLiteral("Physics"), Qt::CaseInsensitive) == 0;
+         normalized.compare(QStringLiteral("Physics"), Qt::CaseInsensitive) == 0 ||
+         normalized.compare(QStringLiteral("Trail"), Qt::CaseInsensitive) == 0 ||
+         normalized.compare(QStringLiteral("Fragment Appearance"), Qt::CaseInsensitive) == 0;
 }
 
 bool isTimelineExpandedByDefaultLayerPropertyGroup(const QString &groupName) {
@@ -580,6 +582,37 @@ struct FractureRenderElement {
   }
 };
 
+struct MotionTrailRingBuffer {
+  std::vector<QVector3D> samples;
+  std::size_t head = 0;
+  std::size_t count = 0;
+
+  void clear() {
+    head = 0;
+    count = 0;
+  }
+
+  void push(const QVector3D& sample, const std::size_t capacity) {
+    if (capacity == 0) {
+      clear();
+      return;
+    }
+    if (samples.size() != capacity) {
+      samples.assign(capacity, sample);
+      head = 0;
+      count = 1;
+      return;
+    }
+    const std::size_t writeIndex = (head + count) % capacity;
+    samples[writeIndex] = sample;
+    if (count < capacity) {
+      ++count;
+    } else {
+      head = (head + 1) % capacity;
+    }
+  }
+};
+
 void submitFractureRenderElement(ArtifactIRenderer *renderer,
                                  const FractureRenderElement &element) {
   if (!renderer || element.empty()) {
@@ -646,6 +679,19 @@ public:
     float fractureShardGravity_ = 0.0f;
     float fractureImpactSensitivity_ = 1.0f;
     bool fracturePreGenerate_ = false;
+    int64_t fractureTriggerFrame_ = -1;
+    int64_t fractureTriggerLastFrame_ = std::numeric_limits<int64_t>::min();
+    bool motionTrailEnabled_ = false;
+    int motionTrailLength_ = 24;
+    float motionTrailFade_ = 0.72f;
+    float motionTrailWidth_ = 2.0f;
+    QHash<QString, MotionTrailRingBuffer> motionTrailHistory_;
+    int64_t motionTrailLastFrame_ = std::numeric_limits<int64_t>::min();
+    bool fragmentVelocityStretchEnabled_ = false;
+    float fragmentVelocityStretchStrength_ = 0.01f;
+    float fragmentVelocityStretchMax_ = 3.0f;
+    bool fragmentColorVariationEnabled_ = false;
+    float fragmentColorVariation_ = 0.35f;
     FractureState fractureState_;
     FractureResult prefractureResult_;
     mutable int64_t fractureMotionLastFrame_ = std::numeric_limits<int64_t>::min();
@@ -667,6 +713,7 @@ public:
     float collisionOffsetX_ = 0.0f;
     float collisionOffsetY_ = 0.0f;
     float collisionFloorY_ = 0.0f;
+    bool collisionCompositionBounds_ = false;
     bool crowdComponentEnabled_ = false;
     float crowdCohesion_ = 0.5f;
     float crowdSeparation_ = 0.5f;
@@ -901,6 +948,8 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
       static_cast<double>(collisionOffsetY_);
   collision.settings[QStringLiteral("floorY")] =
       static_cast<double>(collisionFloorY_);
+  collision.settings[QStringLiteral("compositionBounds")] =
+      collisionCompositionBounds_;
   componentHost_.upsert(std::move(collision));
 
   auto fracture = makeFractureComponentDescriptor(fractureEnabled_);
@@ -1910,20 +1959,42 @@ void applyFragmentFieldsAndFloorCollision(
                            ? configuredFloor
                            : static_cast<float>(compositionSize.height());
   const float shardRadius = std::max(2.0f, 5.0f * shard.scale);
-  const QVector3D worldPosition = baseTransform.map(shard.position);
-  if (worldPosition.y() + shardRadius <= floorY) {
-    return;
-  }
-  shard.position.setY(shard.position.y() + floorY - shardRadius -
-                      worldPosition.y());
   const auto restitutionProperty =
       layer->getProperty(QStringLiteral("physics.restitution"));
   const float restitution = std::clamp(
       restitutionProperty ? restitutionProperty->getValue().toFloat() : 0.25f,
       0.0f, 1.0f);
-  if (shard.velocity.y() > 0.0f) {
+  QVector3D worldPosition = baseTransform.map(shard.position);
+  if (worldPosition.y() + shardRadius > floorY) {
+    shard.position.setY(shard.position.y() + floorY - shardRadius -
+                        worldPosition.y());
+    if (shard.velocity.y() > 0.0f) {
+      shard.velocity.setY(-shard.velocity.y() * restitution);
+      shard.velocity.setX(shard.velocity.x() * 0.92f);
+    }
+  }
+  const auto boundsProperty =
+      layer->getProperty(QStringLiteral("component.collision.compositionBounds"));
+  if (!boundsProperty || !boundsProperty->getValue().toBool()) {
+    return;
+  }
+  worldPosition = baseTransform.map(shard.position);
+  const float compositionWidth = static_cast<float>(compositionSize.width());
+  const float compositionHeight = static_cast<float>(compositionSize.height());
+  if (worldPosition.x() - shardRadius < 0.0f ||
+      worldPosition.x() + shardRadius > compositionWidth) {
+    const float targetX = std::clamp(worldPosition.x(), shardRadius,
+                                     compositionWidth - shardRadius);
+    shard.position.setX(shard.position.x() + targetX - worldPosition.x());
+    shard.velocity.setX(-shard.velocity.x() * restitution);
+  }
+  worldPosition = baseTransform.map(shard.position);
+  if (worldPosition.y() - shardRadius < 0.0f ||
+      worldPosition.y() + shardRadius > compositionHeight) {
+    const float targetY = std::clamp(worldPosition.y(), shardRadius,
+                                     compositionHeight - shardRadius);
+    shard.position.setY(shard.position.y() + targetY - worldPosition.y());
     shard.velocity.setY(-shard.velocity.y() * restitution);
-    shard.velocity.setX(shard.velocity.x() * 0.92f);
   }
 }
 
@@ -2011,7 +2082,70 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
   Q_UNUSED(sourceSize);
 
   const int64_t frame = currentTimelineFrame(this);
+  if (impl_->fractureEnabled_ && impl_->fractureTriggerFrame_ >= 0) {
+    if (frame < impl_->fractureTriggerFrame_) {
+      if (impl_->fractureTriggerLastFrame_ >= impl_->fractureTriggerFrame_) {
+        resetFractureState();
+      }
+      impl_->fractureTriggerLastFrame_ = frame;
+    } else if (impl_->fractureTriggerLastFrame_ < impl_->fractureTriggerFrame_) {
+      FractureImpact triggerImpact;
+      triggerImpact.impulse = std::max(
+          1.0f, impl_->fractureShatterThreshold_ * 1.25f);
+      triggerImpact.stress = triggerImpact.impulse;
+      triggerImpact.speed = triggerImpact.impulse;
+      applyFractureImpact(triggerImpact);
+      impl_->fractureTriggerLastFrame_ = frame;
+    }
+  }
   FractureRenderElement fractureElement;
+  const bool resetMotionTrail =
+      impl_->motionTrailLastFrame_ == std::numeric_limits<int64_t>::min() ||
+      frame < impl_->motionTrailLastFrame_ ||
+      frame - impl_->motionTrailLastFrame_ > 1;
+  if (resetMotionTrail) {
+    impl_->motionTrailHistory_.clear();
+  }
+  const bool appendMotionTrailSample =
+      impl_->motionTrailLastFrame_ != frame;
+  if (appendMotionTrailSample) {
+    impl_->motionTrailLastFrame_ = frame;
+  }
+  const auto appendAndDrawMotionTrail =
+      [&](const QString& entityKey, const QVector3D& position, float alpha) {
+        if (!impl_->motionTrailEnabled_) {
+          return;
+        }
+        auto& history = impl_->motionTrailHistory_[entityKey];
+        const std::size_t capacity = static_cast<std::size_t>(
+            std::clamp(impl_->motionTrailLength_, 2, 256));
+        if (appendMotionTrailSample) {
+          history.push(position, capacity);
+        }
+        if (history.count < 2) {
+          return;
+        }
+        const float opacity = std::clamp(alpha * opacityScale, 0.0f, 1.0f);
+        for (std::size_t sampleIndex = 1; sampleIndex < history.count;
+             ++sampleIndex) {
+          const std::size_t previous =
+              (history.head + sampleIndex - 1) % history.samples.size();
+          const std::size_t current =
+              (history.head + sampleIndex) % history.samples.size();
+          const float age = 1.0f - static_cast<float>(sampleIndex) /
+                                      static_cast<float>(history.count);
+          const float segmentAlpha = opacity * impl_->motionTrailFade_ * age;
+          renderer->drawSolidLine(
+              {history.samples[previous].x(), history.samples[previous].y()},
+              {history.samples[current].x(), history.samples[current].y()},
+              FloatColor(0.48f, 0.84f, 1.0f, segmentAlpha),
+              std::max(0.1f, impl_->motionTrailWidth_));
+        }
+      };
+  const QVector3D layerTrailPosition = baseTransform.map(
+      QVector3D(static_cast<float>(localBounds().center().x()),
+                static_cast<float>(localBounds().center().y()), 0.0f));
+  appendAndDrawMotionTrail(QStringLiteral("layer"), layerTrailPosition, 1.0f);
   if (impl_->fluidComponentEnabled_) {
     const double fps = std::max(1.0, effectiveLayerFrameRate(this));
     const bool solverMismatch =
@@ -2259,8 +2393,31 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         geometry->localPolygon.size() < 3U) {
       continue;
     }
-    const QMatrix4x4 fragmentTransform =
-        baseTransform * fragment.transform;
+    QMatrix4x4 fragmentTransform = fragment.transform;
+    if (impl_->fragmentVelocityStretchEnabled_) {
+      const float speed = fragment.linearVelocity.length();
+      if (speed > 0.001f) {
+        const float stretch = std::clamp(
+            1.0f + speed * impl_->fragmentVelocityStretchStrength_, 1.0f,
+            std::max(1.0f, impl_->fragmentVelocityStretchMax_));
+        const QVector3D center = fragment.transform.column(3).toVector3D();
+        const float angleDegrees = std::atan2(
+            fragment.linearVelocity.y(), fragment.linearVelocity.x()) *
+            180.0f / 3.14159265358979323846f;
+        QMatrix4x4 stretchTransform;
+        stretchTransform.translate(center);
+        stretchTransform.rotate(angleDegrees, 0.0f, 0.0f, 1.0f);
+        stretchTransform.scale(stretch, 1.0f, 1.0f);
+        stretchTransform.rotate(-angleDegrees, 0.0f, 0.0f, 1.0f);
+        stretchTransform.translate(-center);
+        fragmentTransform = stretchTransform * fragmentTransform;
+      }
+    }
+    fragmentTransform = baseTransform * fragmentTransform;
+    appendAndDrawMotionTrail(
+        fragment.entityId.ownerLayerId + QStringLiteral(":") +
+            QString::number(fragment.entityId.localId),
+        fragmentTransform.column(3).toVector3D(), fragment.opacity);
     std::vector<Detail::float2> shardPoly;
     shardPoly.reserve(geometry->localPolygon.size());
     for (const QVector2D& point : geometry->localPolygon) {
@@ -2270,9 +2427,23 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
     }
     const float alpha =
         std::clamp(fragment.opacity * opacityScale, 0.0f, 1.0f);
-    fractureElement.shards.push_back(
-        {std::move(shardPoly),
-         FloatColor(0.92f, 0.96f, 1.0f, alpha * 0.42f)});
+    FloatColor shardColor(0.92f, 0.96f, 1.0f, alpha * 0.42f);
+    if (impl_->fragmentColorVariationEnabled_) {
+      const uint seed = qHash(fragment.geometryHandle);
+      const float hue = static_cast<float>(seed % 360U) / 360.0f;
+      const QColor varied = QColor::fromHsvF(
+          hue, 0.30, 1.0,
+          std::clamp(0.42f + static_cast<float>((seed >> 9U) % 48U) /
+                                  100.0f,
+                     0.0f, 1.0f));
+      const float mix = std::clamp(impl_->fragmentColorVariation_, 0.0f, 1.0f);
+      shardColor = FloatColor(
+          0.92f + (varied.redF() - 0.92f) * mix,
+          0.96f + (varied.greenF() - 0.96f) * mix,
+          1.0f + (varied.blueF() - 1.0f) * mix,
+          alpha * (0.42f + (varied.alphaF() - 0.42f) * mix));
+    }
+    fractureElement.shards.push_back({std::move(shardPoly), shardColor});
   }
   submitFractureRenderElement(renderer, fractureElement);
 }
@@ -3336,11 +3507,30 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   fractureObj["shardGravity"] = static_cast<double>(impl_->fractureShardGravity_);
   fractureObj["impactSensitivity"] = static_cast<double>(impl_->fractureImpactSensitivity_);
   fractureObj["preGenerate"] = impl_->fracturePreGenerate_;
+  fractureObj["triggerFrame"] = static_cast<qint64>(impl_->fractureTriggerFrame_);
   fractureObj["stateKind"] = static_cast<int>(impl_->fractureState_.kind);
   fractureObj["stateDamage"] = static_cast<double>(impl_->fractureState_.damage);
   fractureObj["stateLastImpact"] = static_cast<double>(impl_->fractureState_.lastImpact);
   fractureObj["stateCrackProgress"] = static_cast<double>(impl_->fractureState_.crackProgress);
   obj["fracture"] = fractureObj;
+  QJsonObject trailObj;
+  trailObj["enabled"] = impl_->motionTrailEnabled_;
+  trailObj["length"] = impl_->motionTrailLength_;
+  trailObj["fade"] = static_cast<double>(impl_->motionTrailFade_);
+  trailObj["width"] = static_cast<double>(impl_->motionTrailWidth_);
+  obj["trail"] = trailObj;
+  QJsonObject fragmentAppearanceObj;
+  fragmentAppearanceObj["velocityStretchEnabled"] =
+      impl_->fragmentVelocityStretchEnabled_;
+  fragmentAppearanceObj["velocityStretchStrength"] =
+      static_cast<double>(impl_->fragmentVelocityStretchStrength_);
+  fragmentAppearanceObj["velocityStretchMax"] =
+      static_cast<double>(impl_->fragmentVelocityStretchMax_);
+  fragmentAppearanceObj["colorVariationEnabled"] =
+      impl_->fragmentColorVariationEnabled_;
+  fragmentAppearanceObj["colorVariation"] =
+      static_cast<double>(impl_->fragmentColorVariation_);
+  obj["fragmentAppearance"] = fragmentAppearanceObj;
   QJsonObject componentsObj;
   componentsObj["scriptEnabled"] = impl_->scriptComponentEnabled_;
   componentsObj["clonerEnabled"] = impl_->clonerComponentEnabled_;
@@ -3359,6 +3549,8 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
       static_cast<double>(impl_->collisionOffsetY_);
   componentsObj["collisionFloorY"] =
       static_cast<double>(impl_->collisionFloorY_);
+  componentsObj["collisionCompositionBounds"] =
+      impl_->collisionCompositionBounds_;
   componentsObj["crowdEnabled"] = impl_->crowdComponentEnabled_;
   componentsObj["crowdCohesion"] =
       static_cast<double>(impl_->crowdCohesion_);
@@ -3778,6 +3970,11 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
           std::clamp(fractureObj.value(QStringLiteral("impactSensitivity")).toDouble(1.0), 0.0, 10.0));
       impl_->fracturePreGenerate_ =
           fractureObj.value(QStringLiteral("preGenerate")).toBool(false);
+      impl_->fractureTriggerFrame_ = fractureObj.contains(
+          QStringLiteral("triggerFrame"))
+          ? static_cast<int64_t>(fractureObj.value(
+                QStringLiteral("triggerFrame")).toVariant().toLongLong())
+          : -1;
       impl_->fractureState_.kind = static_cast<FractureStateKind>(
           fractureObj.value(QStringLiteral("stateKind")).toInt(static_cast<int>(FractureStateKind::Intact)));
       impl_->fractureState_.damage = static_cast<float>(
@@ -3786,6 +3983,34 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
           fractureObj.value(QStringLiteral("stateLastImpact")).toDouble(0.0));
       impl_->fractureState_.crackProgress = static_cast<float>(
           fractureObj.value(QStringLiteral("stateCrackProgress")).toDouble(0.0));
+  }
+  if (obj.contains("trail") && obj["trail"].isObject()) {
+      const QJsonObject trailObj = obj["trail"].toObject();
+      impl_->motionTrailEnabled_ = trailObj.value(QStringLiteral("enabled")).toBool(false);
+      impl_->motionTrailLength_ = std::clamp(trailObj.value(QStringLiteral("length")).toInt(24), 2, 256);
+      impl_->motionTrailFade_ = static_cast<float>(
+          std::clamp(trailObj.value(QStringLiteral("fade")).toDouble(0.72), 0.0, 1.0));
+      impl_->motionTrailWidth_ = static_cast<float>(
+          std::clamp(trailObj.value(QStringLiteral("width")).toDouble(2.0), 0.1, 128.0));
+      impl_->motionTrailHistory_.clear();
+      impl_->motionTrailLastFrame_ = std::numeric_limits<int64_t>::min();
+  }
+  if (obj.contains("fragmentAppearance") &&
+      obj["fragmentAppearance"].isObject()) {
+      const QJsonObject appearanceObj = obj["fragmentAppearance"].toObject();
+      impl_->fragmentVelocityStretchEnabled_ =
+          appearanceObj.value(QStringLiteral("velocityStretchEnabled")).toBool(false);
+      impl_->fragmentVelocityStretchStrength_ = static_cast<float>(std::clamp(
+          appearanceObj.value(QStringLiteral("velocityStretchStrength")).toDouble(0.01),
+          0.0, 1.0));
+      impl_->fragmentVelocityStretchMax_ = static_cast<float>(std::clamp(
+          appearanceObj.value(QStringLiteral("velocityStretchMax")).toDouble(3.0),
+          1.0, 32.0));
+      impl_->fragmentColorVariationEnabled_ =
+          appearanceObj.value(QStringLiteral("colorVariationEnabled")).toBool(false);
+      impl_->fragmentColorVariation_ = static_cast<float>(std::clamp(
+          appearanceObj.value(QStringLiteral("colorVariation")).toDouble(0.35),
+          0.0, 1.0));
   }
   if (obj.contains("components") && obj["components"].isObject()) {
       const QJsonObject componentsObj = obj["components"].toObject();
@@ -3818,6 +4043,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         impl_->collisionFloorY_ = static_cast<float>(std::clamp(
             componentsObj.value(QStringLiteral("collisionFloorY")).toDouble(0.0),
             0.0, 100000.0));
+        impl_->collisionCompositionBounds_ = componentsObj.value(
+            QStringLiteral("collisionCompositionBounds")).toBool(false);
         impl_->crowdComponentEnabled_ =
             componentsObj.value(QStringLiteral("crowdEnabled")).toBool(false);
         impl_->crowdCohesion_ = static_cast<float>(std::clamp(
@@ -4928,6 +5155,15 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       QStringLiteral("Prepare deterministic shard geometry before an impact so downstream components can use it."));
   fractureGroup.addProperty(fracturePreGenerateProp);
 
+  auto fractureTriggerFrameProp = makeProp(
+      QStringLiteral("fracture.triggerFrame"), PropertyType::Integer,
+      static_cast<qint64>(impl_->fractureTriggerFrame_), -834);
+  fractureTriggerFrameProp->setDisplayLabel(QStringLiteral("Trigger Frame"));
+  fractureTriggerFrameProp->setTooltip(
+      QStringLiteral("Start fracture at this composition frame. -1 disables the automatic trigger."));
+  fractureTriggerFrameProp->setHardRange(-1.0, 1000000.0);
+  fractureGroup.addProperty(fractureTriggerFrameProp);
+
   auto fracturePresetProp =
       makeProp(QStringLiteral("fracture.preset"), PropertyType::Integer,
                impl_->fracturePreset_, -83);
@@ -4998,6 +5234,64 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   fractureImpactSensitivityProp->setTooltip(
       QStringLiteral("How strongly incoming impacts contribute to fracture damage."));
   fractureGroup.addProperty(fractureImpactSensitivityProp);
+
+  PropertyGroup trailGroup(QStringLiteral("Trail"));
+  auto trailEnabledProp = makeProp(QStringLiteral("trail.enabled"),
+      PropertyType::Boolean, impl_->motionTrailEnabled_, -76);
+  trailEnabledProp->setDisplayLabel(QStringLiteral("Enable"));
+  trailGroup.addProperty(trailEnabledProp);
+  auto trailLengthProp = makeProp(QStringLiteral("trail.length"),
+      PropertyType::Integer, impl_->motionTrailLength_, -75);
+  trailLengthProp->setDisplayLabel(QStringLiteral("Length"));
+  trailLengthProp->setHardRange(2.0, 256.0);
+  trailLengthProp->setSoftRange(4.0, 64.0);
+  trailGroup.addProperty(trailLengthProp);
+  auto trailFadeProp = makeProp(QStringLiteral("trail.fade"),
+      PropertyType::Float, static_cast<double>(impl_->motionTrailFade_), -74);
+  trailFadeProp->setDisplayLabel(QStringLiteral("Fade"));
+  trailFadeProp->setHardRange(0.0, 1.0);
+  trailFadeProp->setSoftRange(0.0, 1.0);
+  trailGroup.addProperty(trailFadeProp);
+  auto trailWidthProp = makeProp(QStringLiteral("trail.width"),
+      PropertyType::Float, static_cast<double>(impl_->motionTrailWidth_), -73);
+  trailWidthProp->setDisplayLabel(QStringLiteral("Width"));
+  trailWidthProp->setUnit(QStringLiteral("px"));
+  trailWidthProp->setHardRange(0.1, 128.0);
+  trailWidthProp->setSoftRange(0.5, 16.0);
+  trailGroup.addProperty(trailWidthProp);
+
+  PropertyGroup fragmentAppearanceGroup(QStringLiteral("Fragment Appearance"));
+  auto velocityStretchEnabledProp = makeProp(
+      QStringLiteral("fragment.velocityStretch.enabled"), PropertyType::Boolean,
+      impl_->fragmentVelocityStretchEnabled_, -72);
+  velocityStretchEnabledProp->setDisplayLabel(QStringLiteral("Velocity Stretch"));
+  fragmentAppearanceGroup.addProperty(velocityStretchEnabledProp);
+  auto velocityStretchStrengthProp = makeProp(
+      QStringLiteral("fragment.velocityStretch.strength"), PropertyType::Float,
+      static_cast<double>(impl_->fragmentVelocityStretchStrength_), -71);
+  velocityStretchStrengthProp->setDisplayLabel(QStringLiteral("Stretch Strength"));
+  velocityStretchStrengthProp->setHardRange(0.0, 1.0);
+  velocityStretchStrengthProp->setSoftRange(0.0, 0.1);
+  fragmentAppearanceGroup.addProperty(velocityStretchStrengthProp);
+  auto velocityStretchMaxProp = makeProp(
+      QStringLiteral("fragment.velocityStretch.max"), PropertyType::Float,
+      static_cast<double>(impl_->fragmentVelocityStretchMax_), -70);
+  velocityStretchMaxProp->setDisplayLabel(QStringLiteral("Max Stretch"));
+  velocityStretchMaxProp->setHardRange(1.0, 32.0);
+  velocityStretchMaxProp->setSoftRange(1.0, 8.0);
+  fragmentAppearanceGroup.addProperty(velocityStretchMaxProp);
+  auto colorVariationEnabledProp = makeProp(
+      QStringLiteral("fragment.colorVariation.enabled"), PropertyType::Boolean,
+      impl_->fragmentColorVariationEnabled_, -69);
+  colorVariationEnabledProp->setDisplayLabel(QStringLiteral("Color Variation"));
+  fragmentAppearanceGroup.addProperty(colorVariationEnabledProp);
+  auto colorVariationProp = makeProp(
+      QStringLiteral("fragment.colorVariation.amount"), PropertyType::Float,
+      static_cast<double>(impl_->fragmentColorVariation_), -68);
+  colorVariationProp->setDisplayLabel(QStringLiteral("Variation Amount"));
+  colorVariationProp->setHardRange(0.0, 1.0);
+  colorVariationProp->setSoftRange(0.0, 1.0);
+  fragmentAppearanceGroup.addProperty(colorVariationProp);
 
   PropertyGroup componentGroup(QStringLiteral("Components"));
   auto scriptComponentEnabledProp =
@@ -5077,6 +5371,14 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   collisionFloorYProp->setHardRange(0.0, 100000.0);
   collisionFloorYProp->setSoftRange(0.0, 4096.0);
   collisionGroup.addProperty(collisionFloorYProp);
+  auto collisionCompositionBoundsProp =
+      makeProp(QStringLiteral("component.collision.compositionBounds"),
+               PropertyType::Boolean, impl_->collisionCompositionBounds_, -81);
+  collisionCompositionBoundsProp->setDisplayLabel(
+      QStringLiteral("Composition Bounds"));
+  collisionCompositionBoundsProp->setTooltip(
+      QStringLiteral("Bounce fracture fragments from the composition edges."));
+  collisionGroup.addProperty(collisionCompositionBoundsProp);
   auto crowdComponentEnabledProp =
       makeProp(QStringLiteral("component.crowd.enabled"),
                PropertyType::Boolean, impl_->crowdComponentEnabled_, -88);
@@ -5986,6 +6288,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   groups.push_back(std::move(physicsGroup));
   groups.push_back(std::move(motionGroup));
   groups.push_back(std::move(fractureGroup));
+  groups.push_back(std::move(trailGroup));
+  groups.push_back(std::move(fragmentAppearanceGroup));
   groups.push_back(std::move(componentGroup));
   groups.push_back(std::move(collisionGroup));
   groups.push_back(std::move(layoutGroup));
@@ -6243,6 +6547,49 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->motionDynamicsOvershootLimit_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 2.0));
     return true;
   }
+  if (propertyPath == QStringLiteral("trail.enabled")) {
+    impl_->motionTrailEnabled_ = value.toBool();
+    impl_->motionTrailHistory_.clear();
+    impl_->motionTrailLastFrame_ = std::numeric_limits<int64_t>::min();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("trail.length")) {
+    impl_->motionTrailLength_ = std::clamp(value.toInt(), 2, 256);
+    impl_->motionTrailHistory_.clear();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("trail.fade")) {
+    impl_->motionTrailFade_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 1.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("trail.width")) {
+    impl_->motionTrailWidth_ = static_cast<float>(std::clamp(value.toDouble(), 0.1, 128.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fragment.velocityStretch.enabled")) {
+    impl_->fragmentVelocityStretchEnabled_ = value.toBool();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fragment.velocityStretch.strength")) {
+    impl_->fragmentVelocityStretchStrength_ = static_cast<float>(
+        std::clamp(value.toDouble(), 0.0, 1.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fragment.velocityStretch.max")) {
+    impl_->fragmentVelocityStretchMax_ = static_cast<float>(
+        std::clamp(value.toDouble(), 1.0, 32.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fragment.colorVariation.enabled")) {
+    impl_->fragmentColorVariationEnabled_ = value.toBool();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fragment.colorVariation.amount")) {
+    impl_->fragmentColorVariation_ = static_cast<float>(
+        std::clamp(value.toDouble(), 0.0, 1.0));
+    return true;
+  }
   if (propertyPath == QStringLiteral("fracture.enabled")) {
     impl_->fractureEnabled_ = value.toBool();
     Q_EMIT changed();
@@ -6255,6 +6602,11 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       resetFractureState();
     }
     Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fracture.triggerFrame")) {
+    impl_->fractureTriggerFrame_ = std::max<int64_t>(-1, value.toLongLong());
+    impl_->fractureTriggerLastFrame_ = std::numeric_limits<int64_t>::min();
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.preset")) {
@@ -6931,6 +7283,13 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
           std::clamp(value.toDouble(), 0.0, 100000.0));
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.collision.compositionBounds")) {
+      impl_->collisionCompositionBounds_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
