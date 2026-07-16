@@ -522,6 +522,10 @@ std::vector<EffectCatalogEntry> buildEffectCatalogEntries() {
        QStringLiteral("Displacement Map"), QStringLiteral("Distort"),
        QStringLiteral("Warp using displacement textures."),
        QStringLiteral("displacement map distort")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("screen_shake"),
+       QStringLiteral("Screen Shake"), QStringLiteral("Transform"),
+       QStringLiteral("Animated 2D screen shake / offset."),
+       QStringLiteral("shake camera offset jitter")},
       {EffectPipelineStage::Rasterizer, QStringLiteral("time_displacement"),
        QStringLiteral("Time Displacement"), QStringLiteral("Time"),
        QStringLiteral("Offset sampling in time."),
@@ -5468,6 +5472,10 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   componentsLayout->addWidget(impl_->componentUtilitiesLabel);
   componentsLayout->addWidget(impl_->openScriptButton);
   componentsLayout->addWidget(impl_->applyLipSyncButton);
+  impl_->componentPropertyWidget = new ArtifactPropertyWidget();
+  impl_->componentPropertyWidget->setVisible(false);
+  impl_->componentPropertyWidget->setMinimumHeight(120);
+  componentsLayout->addWidget(impl_->componentPropertyWidget);
   componentsLayout->setContentsMargins(
       kInspectorNoteMargin, kInspectorNoteMargin, kInspectorNoteMargin,
       kInspectorNoteMargin);

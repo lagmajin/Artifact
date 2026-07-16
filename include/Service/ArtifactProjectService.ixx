@@ -73,6 +73,10 @@ export namespace Artifact {
  {
   W_OBJECT(ArtifactProjectService)
  private:
+  // M-UG-1: 子コンポ長さ変更を親プリコンポレイヤーへ伝播する（setFrameRange の
+  // CompositionChangedEvent を購読）。
+  void onChildCompositionFrameRangeChanged(const Artifact::CompositionChangedEvent& e);
+  void propagateChildFrameRangeToParents(const CompositionID& childCompId);
   class Impl;
   Impl* impl_;
  public:
@@ -167,6 +171,10 @@ export namespace Artifact {
        PrecomposeMode mode = PrecomposeMode::MoveSelected);
   bool unprecomposeLayerInCurrentComposition(const LayerID& layerId,
                                              bool keepComposition = true);
+
+  // M-UG-1: 子コンポ長さ変更時の親プリコンポレイヤーへの伝播を一時停止する。
+  // ロード/修復/Python 一括操作の前後に set し、余計な伝播を抑止する。
+  void setSuspendFrameRangeCascade(bool suspend);
 
   // === Precompose undo support ===
   // These return the ids touched by the most recent precompose / unprecompose

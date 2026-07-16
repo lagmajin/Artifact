@@ -380,6 +380,7 @@ public:
   void syncRigidBodyPhysicsToBounds();
   const ArtifactCore::FractureState& fractureState() const;
   const std::vector<ArtifactCore::FractureShardMotion>& fractureShardMotions() const;
+  const LayerEvaluationState& layerEvaluationState() const;
   void resetFractureState();
   void applyFractureImpact(const ArtifactCore::FractureImpact& impact);
   void drawFractureOverlay(ArtifactIRenderer* renderer, const QMatrix4x4& baseTransform,

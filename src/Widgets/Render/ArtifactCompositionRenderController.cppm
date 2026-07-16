@@ -9564,6 +9564,11 @@ public:
   bool viewportOrientationMatricesValid_ = false;
   QMatrix4x4 viewportOrientationViewForOverlay_;
   QMatrix4x4 viewportOrientationProjectionForOverlay_;
+  // Keep the 3D gizmo on the exact camera used for 3D layer rendering.
+  // This is intentionally separate from the 2D composition pan/zoom matrices.
+  bool gizmo3DCameraMatricesValid_ = false;
+  QMatrix4x4 gizmo3DViewMatrix_;
+  QMatrix4x4 gizmo3DProjectionMatrix_;
 
   int currentFrameForOverlay_ = 0;
 
@@ -16974,9 +16979,13 @@ Ray CompositionRenderController::createPickingRay(
 
 
 
-  QMatrix4x4 view = impl_->renderer_->getViewMatrix();
+  const QMatrix4x4 view = impl_->gizmo3DCameraMatricesValid_
+                              ? impl_->gizmo3DViewMatrix_
+                              : impl_->renderer_->getViewMatrix();
 
-  QMatrix4x4 proj = impl_->renderer_->getProjectionMatrix();
+  const QMatrix4x4 proj = impl_->gizmo3DCameraMatricesValid_
+                              ? impl_->gizmo3DProjectionMatrix_
+                              : impl_->renderer_->getProjectionMatrix();
 
   QRect viewport(0, 0, (int)impl_->hostWidth_, (int)impl_->hostHeight_);
 
@@ -17748,11 +17757,13 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
     Ray ray = createPickingRay(viewportPos);
 
-    GizmoAxis axis =
-
-        impl_->gizmo3D_->hitTest(ray, impl_->renderer_->getViewMatrix(),
-
-                                 impl_->renderer_->getProjectionMatrix());
+    const QMatrix4x4& gizmoView = impl_->gizmo3DCameraMatricesValid_
+                                      ? impl_->gizmo3DViewMatrix_
+                                      : impl_->renderer_->getViewMatrix();
+    const QMatrix4x4& gizmoProj = impl_->gizmo3DCameraMatricesValid_
+                                      ? impl_->gizmo3DProjectionMatrix_
+                                      : impl_->renderer_->getProjectionMatrix();
+    GizmoAxis axis = impl_->gizmo3D_->hitTest(ray, gizmoView, gizmoProj);
 
     if (axis != GizmoAxis::None) {
 
@@ -19047,9 +19058,13 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
         const auto prevHoverAxis = impl_->gizmo3D_->hoverAxis();
 
-        impl_->gizmo3D_->hitTest(ray, impl_->renderer_->getViewMatrix(),
-
-                                 impl_->renderer_->getProjectionMatrix());
+        const QMatrix4x4& gizmoView = impl_->gizmo3DCameraMatricesValid_
+                                          ? impl_->gizmo3DViewMatrix_
+                                          : impl_->renderer_->getViewMatrix();
+        const QMatrix4x4& gizmoProj = impl_->gizmo3DCameraMatricesValid_
+                                          ? impl_->gizmo3DProjectionMatrix_
+                                          : impl_->renderer_->getProjectionMatrix();
+        impl_->gizmo3D_->hitTest(ray, gizmoView, gizmoProj);
 
         if (prevHoverAxis != impl_->gizmo3D_->hoverAxis()) {
 
@@ -21548,6 +21563,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   }
 
+  gizmo3DCameraMatricesValid_ = has3DCamera;
+  if (gizmo3DCameraMatricesValid_) {
+    gizmo3DViewMatrix_ = cameraViewMatrix;
+    gizmo3DProjectionMatrix_ = cameraProjMatrix;
+  }
+
   int64_t effectiveEndFrame = 0;
 
   for (const auto &l : layers) {
@@ -23955,7 +23976,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
 
-          if (viewportW > 0.0f && viewportH > 0.0f) {
+          if (!gizmo3DCameraMatricesValid_ && viewportW > 0.0f && viewportH > 0.0f) {
 
             float panX = 0.0f;
 
@@ -24011,9 +24032,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                   "Gizmo3DDraw", ArtifactCore::ProfileCategory::Render);
 
-              gizmo3D_->draw(renderer_.get(), renderer_->getViewMatrix(),
-
-                             renderer_->getProjectionMatrix());
+            gizmo3D_->draw(
+                renderer_.get(),
+                gizmo3DCameraMatricesValid_ ? gizmo3DViewMatrix_
+                                             : renderer_->getViewMatrix(),
+                gizmo3DCameraMatricesValid_ ? gizmo3DProjectionMatrix_
+                                             : renderer_->getProjectionMatrix());
 
             }
 
@@ -27459,7 +27483,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
             hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
 
-        if (viewportW > 0.0f && viewportH > 0.0f) {
+        if (!gizmo3DCameraMatricesValid_ && viewportW > 0.0f && viewportH > 0.0f) {
 
           float panX = 0.0f;
 
@@ -27520,9 +27544,12 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
                 "Gizmo3DDraw", ArtifactCore::ProfileCategory::Render);
 
-            gizmo3D_->draw(renderer_.get(), renderer_->getViewMatrix(),
-
-                           renderer_->getProjectionMatrix());
+            gizmo3D_->draw(
+                renderer_.get(),
+                gizmo3DCameraMatricesValid_ ? gizmo3DViewMatrix_
+                                             : renderer_->getViewMatrix(),
+                gizmo3DCameraMatricesValid_ ? gizmo3DProjectionMatrix_
+                                             : renderer_->getProjectionMatrix());
 
           }
 
