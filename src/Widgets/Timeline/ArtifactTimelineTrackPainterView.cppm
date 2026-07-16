@@ -132,16 +132,20 @@ bool tryComputeEasyEaseHandles(const std::vector<ArtifactCore::KeyFrame>& keyfra
     const double v1 = curVal - prevVal;
     const double v2 = nextVal - curVal;
 
-    const double dSum = d1 + d2;
-    const double vSum = std::fabs(v1) + std::fabs(v2);
+    const double valueSpan = nextVal - prevVal;
     const double vEps = 1e-6;
+    if (std::fabs(valueSpan) <= vEps) {
+        return false;
+    }
 
-    // AE 互換: in-tangent を区間の 1/3、out-tangent を 2/3 の time 位置に置く。
-    // value 方向は前後速度に比例させ、slow-in / slow-out で各ハンドルを減衰。
-    float inX = static_cast<float>(d1 / (3.0 * dSum));
-    float inY = static_cast<float>(v1 / (3.0 * (vSum + vEps)));
-    float outX = static_cast<float>(d2 / (3.0 * dSum) + d2 / (3.0 * dSum));
-    float outY = static_cast<float>(v2 / (3.0 * (vSum + vEps)));
+    // Keep control-point coordinates in the normalized segment space. The
+    // neighboring value deltas provide the local velocity estimate.
+    float inX = 1.0f / 3.0f;
+    float inY = static_cast<float>(v1 / (3.0 * valueSpan));
+    float outX = 2.0f / 3.0f;
+    float outY = static_cast<float>(1.0 - v2 / (3.0 * valueSpan));
+    inY = std::clamp(inY, -2.0f, 2.0f);
+    outY = std::clamp(outY, -2.0f, 2.0f);
 
     if (easeIn) {
         inY *= 0.0f;
