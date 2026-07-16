@@ -77,6 +77,7 @@ export namespace Artifact {
   // CompositionChangedEvent を購読）。
   void onChildCompositionFrameRangeChanged(const Artifact::CompositionChangedEvent& e);
   void propagateChildFrameRangeToParents(const CompositionID& childCompId);
+  void propagateParentFrameRangeToChildren(const CompositionID& parentCompId);
   class Impl;
   Impl* impl_;
  public:

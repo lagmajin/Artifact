@@ -3190,7 +3190,46 @@ void ArtifactProjectService::onChildCompositionFrameRangeChanged(
   if (childCompId.isNil()) {
     return;
   }
+  // Keep the source composition range aligned with the visible precomp
+  // windows before propagating the resulting change to parent compositions.
+  propagateParentFrameRangeToChildren(childCompId);
   propagateChildFrameRangeToParents(childCompId);
+}
+
+void ArtifactProjectService::propagateParentFrameRangeToChildren(
+    const CompositionID& parentCompId) {
+  auto project = getCurrentProjectSharedPtr();
+  const auto parentFind = findComposition(parentCompId);
+  const auto parentComp = parentFind.ptr.lock();
+  if (!project || !parentComp) {
+    return;
+  }
+
+  QSet<CompositionID> visited;
+  for (const auto& layer : parentComp->allLayer()) {
+    const auto compLayer =
+        std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer);
+    if (!compLayer) {
+      continue;
+    }
+    const CompositionID childCompId = compLayer->sourceCompositionId();
+    if (childCompId.isNil() || visited.contains(childCompId)) {
+      continue;
+    }
+    visited.insert(childCompId);
+
+    const auto childFind = findComposition(childCompId);
+    const auto childComp = childFind.ptr.lock();
+    if (!childComp) {
+      continue;
+    }
+    const int64_t duration =
+        std::max<int64_t>(1, parentComp->frameRange().duration());
+    const FrameRange targetRange = FrameRange::fromDuration(0, duration);
+    if (childComp->frameRange() != targetRange) {
+      childComp->setFrameRange(targetRange);
+    }
+  }
 }
 
 void ArtifactProjectService::propagateChildFrameRangeToParents(
