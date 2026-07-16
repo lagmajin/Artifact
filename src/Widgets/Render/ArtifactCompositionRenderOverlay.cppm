@@ -232,6 +232,7 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
 
   const ArtifactCore::Mesh &mesh = modelLayer->mesh();
   const auto positions = mesh.vertexAttributes().get<QVector3D>("position");
+  const auto normals = mesh.vertexAttributes().get<QVector3D>("normal");
   if (!positions || positions->data().isEmpty() || mesh.polygonCount() <= 0) {
     return;
   }
@@ -246,6 +247,9 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
   const FloatColor wireColor{1.0f, 0.56f, 0.18f, 0.98f};
   const float shadowThickness = 3.4f;
   const float thickness = 1.9f;
+  const FloatColor normalShadow{0.02f, 0.04f, 0.02f, 0.92f};
+  const FloatColor normalColor{0.30f, 1.0f, 0.38f, 0.96f};
+  const float normalLength = std::max(4.0f, static_cast<float>(modelLayer->localBounds().width()) * 0.08f);
 
   renderer->set3DCameraMatrices(*cameraView, *cameraProj);
 
@@ -284,6 +288,24 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
 
     if (polygon.size() == 4) {
       drawEdge(polygon[0], polygon[2]);
+    }
+  }
+
+  if (normals && normals->data().size() == vertexPositions.size()) {
+    for (int i = 0; i < vertexPositions.size(); ++i) {
+      QVector3D normal = normals->data()[i];
+      if (normal.lengthSquared() < 1.0e-8f) {
+        continue;
+      }
+      normal.normalize();
+      const QVector3D start = modelMatrix.map(vertexPositions[i]);
+      const QVector3D end = modelMatrix.map(vertexPositions[i] + normal * normalLength);
+      renderer->draw3DLine({start.x(), start.y(), start.z()},
+                           {end.x(), end.y(), end.z()},
+                           normalShadow, 2.6f);
+      renderer->draw3DLine({start.x(), start.y(), start.z()},
+                           {end.x(), end.y(), end.z()},
+                           normalColor, 1.25f);
     }
   }
 

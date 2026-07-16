@@ -58,6 +58,7 @@ private:
     HandleType activeHandle_ = HandleType::None;
     
     QPointF dragStartCanvasPos_;
+    QRectF dragStartBounds_;
     float dragStartValue_ = 0.0f;
 
     // 定数

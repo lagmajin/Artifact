@@ -228,6 +228,10 @@ bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* 
         isDragging_ = true;
         auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
         dragStartCanvasPos_ = QPointF(canvasMouse.x, canvasMouse.y);
+        dragStartBounds_ = layer_->transformedBoundingBox();
+        if (dragStartBounds_.isEmpty()) {
+            dragStartBounds_ = QRectF(0, 0, 400, 100);
+        }
         // 現在のセレクター値を保存
         return true;
     }
@@ -244,10 +248,7 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
     float deltaX = canvasMouse.x - dragStartCanvasPos_.x();
     float deltaY = canvasMouse.y - dragStartCanvasPos_.y();
 
-    QRectF bbox = layer_->transformedBoundingBox();
-    if (bbox.isEmpty()) {
-        bbox = QRectF(0, 0, 400, 100);
-    }
+    QRectF bbox = dragStartBounds_;
 
     switch (activeHandle_) {
         case HandleType::BoxLeft:
@@ -276,6 +277,26 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
             break;
         default:
             return false;
+    }
+
+    constexpr qreal kMinimumTextBoxExtent = 1.0;
+    if (bbox.width() < kMinimumTextBoxExtent) {
+        if (activeHandle_ == HandleType::BoxLeft ||
+            activeHandle_ == HandleType::BoxCornerTopLeft ||
+            activeHandle_ == HandleType::BoxCornerBottomLeft) {
+            bbox.setLeft(bbox.right() - kMinimumTextBoxExtent);
+        } else {
+            bbox.setRight(bbox.left() + kMinimumTextBoxExtent);
+        }
+    }
+    if (bbox.height() < kMinimumTextBoxExtent) {
+        if (activeHandle_ == HandleType::BoxTop ||
+            activeHandle_ == HandleType::BoxCornerTopLeft ||
+            activeHandle_ == HandleType::BoxCornerTopRight) {
+            bbox.setTop(bbox.bottom() - kMinimumTextBoxExtent);
+        } else {
+            bbox.setBottom(bbox.top() + kMinimumTextBoxExtent);
+        }
     }
 
     // Update text layer properties based on new bounds
