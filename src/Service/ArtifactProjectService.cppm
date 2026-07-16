@@ -3162,9 +3162,6 @@ bool ArtifactProjectService::unprecomposeLayerInCurrentComposition(
     }
   }
 
-  // M-UG-1: ネスト記録（childSourceMap 含む）を消去し、スタレ逆索引を防ぐ。
-  ArtifactCore::PreComposeManager::instance().unprecompose(comp->id(), layerId);
-
   if (!movedLayerIds.isEmpty()) {
     selectLayer(movedLayerIds.front());
   } else {
