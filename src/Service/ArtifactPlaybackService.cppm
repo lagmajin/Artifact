@@ -468,6 +468,10 @@ public:
   }
 
   ~Impl() {
+    if (engine_) {
+      engine_->stop();
+      engine_->waitForStop();
+    }
     {
       std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
       previewDiskWriterStop_ = true;

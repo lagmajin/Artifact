@@ -885,9 +885,18 @@ void DiligentImmediateSubmitter::submitGradientRect(const GradientRectPkt& p, ID
         {{0.0f, 0.0f}, vertexColor}, {{1.0f, 0.0f}, vertexColor},
         {{0.0f, 1.0f}, vertexColor}, {{1.0f, 1.0f}, vertexColor},
     };
+    auto gradientParams = p.params;
+    gradientParams.startColor.x *= p.opacity;
+    gradientParams.startColor.y *= p.opacity;
+    gradientParams.startColor.z *= p.opacity;
+    gradientParams.startColor.w *= p.opacity;
+    gradientParams.endColor.x *= p.opacity;
+    gradientParams.endColor.y *= p.opacity;
+    gradientParams.endColor.z *= p.opacity;
+    gradientParams.endColor.w *= p.opacity;
     mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_transform_matrix_cb, &p.mat, sizeof(p.mat), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_gradient_cb, &p.params, sizeof(p.params), m_frameCostStats_);
+    mapWriteDiscard(ctx, m_draw_gradient_cb, &gradientParams, sizeof(gradientParams), m_frameCostStats_);
 
     if (m_currentPSO_ != m_draw_gradient_rect_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);

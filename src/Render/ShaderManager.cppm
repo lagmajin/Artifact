@@ -303,7 +303,6 @@ cbuffer GradientCB {
 struct PS_INPUT {
     float4 Position : SV_POSITION;
     float2 TexCoord : TEXCOORD0;
-    float4 Color    : COLOR0;
 };
 float gradientT(float2 uv)
 {
@@ -334,8 +333,6 @@ float gradientT(float2 uv)
 float4 main(PS_INPUT input) : SV_TARGET
 {
     float4 color = lerp(StartColor, EndColor, gradientT(input.TexCoord));
-    color.a *= input.Color.a;
-    color.rgb *= input.Color.a;
     return color;
 }
 )";
@@ -550,7 +547,11 @@ QString ShaderManager::Impl::psoCacheFilePath() const
                                   .arg(deviceInfo.APIVersion.Minor)
                                   .arg(static_cast<int>(deviceInfo.Type));
 
-    const QString signature = QStringLiteral("backend=%1|rtv=%2|vendorId=%3|deviceId=%4|api=%5.%6")
+    // Bump the schema whenever shader interfaces or input-layout contracts
+    // change so an old backend PSO blob cannot mask the new contract.
+    constexpr int kPsoCacheSchema = 2;
+    const QString signature = QStringLiteral("schema=%1|backend=%2|rtv=%3|vendorId=%4|deviceId=%5|api=%6.%7")
+                                  .arg(kPsoCacheSchema)
                                   .arg(static_cast<int>(deviceInfo.Type))
                                   .arg(static_cast<int>(rtvFormat_))
                                   .arg(adapterInfo.VendorId)
@@ -669,8 +670,7 @@ void ShaderManager::Impl::createLineFamilyPSOs()
     }
 
     static const LayoutElement solidLayoutElems[] = {
-        LayoutElement{0, 0, 2, VT_FLOAT32, false},
-        LayoutElement{1, 0, 4, VT_FLOAT32, false}
+        LayoutElement{0, 0, 2, VT_FLOAT32, false, 0, 6 * sizeof(float)}
     };
     static const ShaderResourceVariableDesc solidVars[] = {
         { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
@@ -744,6 +744,8 @@ void ShaderManager::Impl::createLineFamilyPSOs()
     triangleInfo.pVS = thickLineShaders_.VS;
     triangleInfo.pPS = thickLineShaders_.PS;
     triangleInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    triangleInfo.GraphicsPipeline.InputLayout.LayoutElements = lineLayoutElems;
+    triangleInfo.GraphicsPipeline.InputLayout.NumElements = _countof(lineLayoutElems);
     triangleInfo.PSODesc.ResourceLayout.Variables    = triVars;
     triangleInfo.PSODesc.ResourceLayout.NumVariables = _countof(triVars);
     device_->CreateGraphicsPipelineState(triangleInfo, &solidTrianglePsoAndSrb_.pPSO);
@@ -958,11 +960,18 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
     }
 
     GraphicsPipelineStateCreateInfo spriteTransformInfo = spriteInfo;
+    static const LayoutElement spriteTransformLayoutElems[] = {
+        LayoutElement{0, 0, 2, VT_FLOAT32, false, 0, 8 * sizeof(float)},
+        LayoutElement{1, 0, 2, VT_FLOAT32, false, 2 * sizeof(float),
+                      8 * sizeof(float)}
+    };
     spriteTransformInfo.PSODesc.Name = "DrawSpriteTransform PSO";
     spriteTransformInfo.pPSOCache = psoCache_.RawPtr();
     spriteTransformInfo.pVS = spriteTransformShaders_.VS;
     spriteTransformInfo.pPS = spriteTransformShaders_.PS;
     spriteTransformInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    spriteTransformInfo.GraphicsPipeline.InputLayout.LayoutElements = spriteTransformLayoutElems;
+    spriteTransformInfo.GraphicsPipeline.InputLayout.NumElements = _countof(spriteTransformLayoutElems);
     device_->CreateGraphicsPipelineState(spriteTransformInfo, &spriteTransformPsoAndSrb_.pPSO);
     if (spriteTransformPsoAndSrb_.pPSO) {
         spriteTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&spriteTransformPsoAndSrb_.pSRB, true);
@@ -982,6 +991,8 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
     maskedSpriteInfo.pPSOCache = psoCache_.RawPtr();
     maskedSpriteInfo.pVS = maskedSpriteShaders_.VS;
     maskedSpriteInfo.pPS = maskedSpriteShaders_.PS;
+    maskedSpriteInfo.GraphicsPipeline.InputLayout.LayoutElements = spriteTransformLayoutElems;
+    maskedSpriteInfo.GraphicsPipeline.InputLayout.NumElements = _countof(spriteTransformLayoutElems);
     maskedSpriteInfo.PSODesc.ResourceLayout.Variables = maskedSpriteVars;
     maskedSpriteInfo.PSODesc.ResourceLayout.NumVariables = _countof(maskedSpriteVars);
     device_->CreateGraphicsPipelineState(maskedSpriteInfo, &maskedSpritePsoAndSrb_.pPSO);

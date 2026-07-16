@@ -94,13 +94,9 @@ namespace Artifact
 
  ArtifactApplicationManager::Impl::~Impl()
  {
-  // Playback owns a worker thread that can still hold composition/layer
-  // references. Stop it before the composition manager and its layers are
-  // destroyed during application shutdown.
-  if (auto *playback = ArtifactPlaybackService::instance()) {
-   playback->stop();
-   playback->waitForStop();
-  }
+  // Playback is shut down explicitly by AppMain before static destruction.
+  // Do not access function-local service singletons from another singleton's
+  // destructor: their destruction order is not a valid lifetime contract.
   delete activeContext_;
  }
 

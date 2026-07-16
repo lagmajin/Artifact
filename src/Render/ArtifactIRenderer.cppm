@@ -410,6 +410,8 @@ namespace {
 
   RefCntAutoPtr<ITexture> m_layerRT;
   RefCntAutoPtr<ITexture> m_layerDepthTex;
+  RefCntAutoPtr<ITextureView> m_layerDepthDSV;
+  RefCntAutoPtr<ITextureView> m_layerDepthSRV;
   ITextureView* m_overrideColorRTV = nullptr;
   ITextureView* m_overrideDepthDSV = nullptr;
   struct RenderTargetStackEntry {
@@ -1374,15 +1376,28 @@ namespace {
   depthDesc.Width     = static_cast<Uint32>(width);
   depthDesc.Height    = static_cast<Uint32>(height);
   depthDesc.MipLevels = 1;
-  depthDesc.Format    = TEX_FORMAT_R32_TYPELESS;
+  depthDesc.Format    = TEX_FORMAT_D32_FLOAT;
   depthDesc.BindFlags = BIND_DEPTH_STENCIL | BIND_SHADER_RESOURCE;
-  depthDesc.InitialState = RESOURCE_STATE_DEPTH_WRITE;
   deviceManager_.device()->CreateTexture(depthDesc, nullptr, &m_layerDepthTex);
+  if (m_layerDepthTex) {
+   TextureViewDesc dsvDesc{"OfflineDepthTarget DSV", TEXTURE_VIEW_DEPTH_STENCIL,
+                           RESOURCE_DIM_TEX_2D, TEX_FORMAT_D32_FLOAT};
+   TextureViewDesc srvDesc{"OfflineDepthTarget SRV", TEXTURE_VIEW_SHADER_RESOURCE,
+                           RESOURCE_DIM_TEX_2D, TEX_FORMAT_R32_FLOAT};
+   m_layerDepthTex->CreateView(dsvDesc, &m_layerDepthDSV);
+   m_layerDepthTex->CreateView(srvDesc, &m_layerDepthSRV);
+   if (!m_layerDepthDSV || !m_layerDepthSRV) {
+    qWarning() << "[ArtifactIRenderer] failed to create explicit offline depth views";
+    m_layerDepthDSV.Release();
+    m_layerDepthSRV.Release();
+    m_layerDepthTex.Release();
+   }
+  }
 
   auto* rtv = m_layerRT ? m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET) : nullptr;
   primitiveRenderer_.setOverrideRTV(rtv);
   primitiveRenderer3D_.setOverrideRTV(rtv);
-  primitiveRenderer3D_.setOverrideDSV(m_layerDepthTex ? m_layerDepthTex->GetDefaultView(Diligent::TEXTURE_VIEW_DEPTH_STENCIL) : nullptr);
+  primitiveRenderer3D_.setOverrideDSV(m_layerDepthDSV);
   primitiveRenderer_.setContext(deviceManager_.immediateContext(), nullptr);
   primitiveRenderer3D_.setContext(deviceManager_.immediateContext());
   primitiveRenderer_.setViewportSize(float(width), float(height));
@@ -2198,6 +2213,8 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   }
 
   if (m_layerRT) m_layerRT.Release();
+  m_layerDepthDSV.Release();
+  m_layerDepthSRV.Release();
   if (m_layerDepthTex) m_layerDepthTex.Release();
 
   TextureDesc TexDesc;
@@ -2216,13 +2233,23 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   depthDesc.Width     = targetWidth;
   depthDesc.Height    = targetHeight;
   depthDesc.MipLevels = 1;
-  depthDesc.Format    = TEX_FORMAT_R32_TYPELESS;
+  depthDesc.Format    = TEX_FORMAT_D32_FLOAT;
   depthDesc.BindFlags = BIND_DEPTH_STENCIL | BIND_SHADER_RESOURCE;
-  depthDesc.InitialState = RESOURCE_STATE_DEPTH_WRITE;
   deviceManager_.device()->CreateTexture(depthDesc, nullptr, &m_layerDepthTex);
   if (m_layerDepthTex) {
-    primitiveRenderer3D_.setOverrideDSV(
-        m_layerDepthTex->GetDefaultView(TEXTURE_VIEW_DEPTH_STENCIL));
+    TextureViewDesc dsvDesc{"LayerDepthTarget DSV", TEXTURE_VIEW_DEPTH_STENCIL,
+                            RESOURCE_DIM_TEX_2D, TEX_FORMAT_D32_FLOAT};
+    TextureViewDesc srvDesc{"LayerDepthTarget SRV", TEXTURE_VIEW_SHADER_RESOURCE,
+                            RESOURCE_DIM_TEX_2D, TEX_FORMAT_R32_FLOAT};
+    m_layerDepthTex->CreateView(dsvDesc, &m_layerDepthDSV);
+    m_layerDepthTex->CreateView(srvDesc, &m_layerDepthSRV);
+    if (!m_layerDepthDSV || !m_layerDepthSRV) {
+      qWarning() << "[ArtifactIRenderer] failed to create explicit layer depth views";
+      m_layerDepthDSV.Release();
+      m_layerDepthSRV.Release();
+      m_layerDepthTex.Release();
+    }
+    primitiveRenderer3D_.setOverrideDSV(m_layerDepthDSV);
   }
   m_layerRTWidth = targetWidth;
   m_layerRTHeight = targetHeight;
@@ -2234,7 +2261,7 @@ Diligent::ITextureView* ArtifactIRenderer::Impl::activeDepthView() const
    return m_overrideDepthDSV;
   }
   if (m_layerDepthTex) {
-   return m_layerDepthTex->GetDefaultView(Diligent::TEXTURE_VIEW_DEPTH_STENCIL);
+   return m_layerDepthDSV;
   }
   if (auto sc = deviceManager_.swapChain()) {
    return sc->GetDepthBufferDSV();
@@ -2552,6 +2579,8 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   m_depthReadbackFenceValue = 0;
   m_renderTargetStack.clear();
   m_layerRT = nullptr;
+  m_layerDepthDSV = nullptr;
+  m_layerDepthSRV = nullptr;
   m_layerDepthTex = nullptr;
   for (auto& query : m_frameQueries) query = nullptr;
   m_frameQueryActive = false;
@@ -2710,6 +2739,9 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   if (!texture ||
       (texture->GetDesc().BindFlags & Diligent::BIND_SHADER_RESOURCE) == 0) {
    return nullptr;
+  }
+  if (texture == impl_->m_layerDepthTex.RawPtr()) {
+   return impl_->m_layerDepthSRV;
   }
   return texture->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
  }
@@ -3710,17 +3742,21 @@ bool ArtifactIRenderer::applyTrackMatte(
   desc.Width = static_cast<Diligent::Uint32>(width);
   desc.Height = static_cast<Diligent::Uint32>(height);
   desc.MipLevels = 1;
-  desc.Format = Diligent::TEX_FORMAT_R32_TYPELESS;
+  desc.Format = Diligent::TEX_FORMAT_D32_FLOAT;
   desc.Usage = Diligent::USAGE_DEFAULT;
   desc.BindFlags = Diligent::BIND_DEPTH_STENCIL | Diligent::BIND_SHADER_RESOURCE;
 
   impl_->deviceManager_.device()->CreateTexture(desc, nullptr, &texture);
   if (!texture) return nullptr;
 
-  auto* view = texture->GetDefaultView(Diligent::TEXTURE_VIEW_DEPTH_STENCIL);
+  Diligent::RefCntAutoPtr<Diligent::ITextureView> view;
+  Diligent::TextureViewDesc viewDesc{
+      "GroupOffscreenDepthTexture DSV", Diligent::TEXTURE_VIEW_DEPTH_STENCIL,
+      Diligent::RESOURCE_DIM_TEX_2D, Diligent::TEX_FORMAT_D32_FLOAT};
+  texture->CreateView(viewDesc, &view);
   if (!view) return nullptr;
   view->AddRef();
-  return static_cast<void*>(view);
+  return static_cast<void*>(view.RawPtr());
  }
 
  Diligent::ITextureView* ArtifactIRenderer::offscreenTextureShaderResourceView(

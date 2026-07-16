@@ -3282,5 +3282,12 @@ int main(int argc, char *argv[]) {
   QTimer::singleShot(0, mw, [mw]() {
     mw->show();
   });
-  return a.exec();
+  const int exitCode = a.exec();
+  // Explicitly stop playback while all application services are still alive.
+  // Function-local singleton destruction order must not own shutdown ordering.
+  if (playbackService) {
+    playbackService->stop();
+    playbackService->waitForStop();
+  }
+  return exitCode;
 }
