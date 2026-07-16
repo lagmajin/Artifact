@@ -59,6 +59,7 @@ import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Service.ActiveContext;
 import Artifact.Service.Playback;
 import Artifact.Audio.ScrubController;
+import Composition.PreCompose;
 import Undo.UndoManager;
 // import Artifact.Render.FrameCache;
 
@@ -1155,6 +1156,8 @@ public:
   LayerID lastForwardedLayerId_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
+  // M-UG-1: ロード/修復/Python 一括時に子→親長さ伝播を一時停止する。
+  bool suspendFrameRangeCascade_ = false;
 
   QFileSystemWatcher* fileWatcher_ = nullptr;
   QTimer* statusCheckTimer_ = nullptr;
@@ -1801,6 +1804,12 @@ ArtifactProjectService::ArtifactProjectService(QObject *parent)
       impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
         ArtifactRevisionService::instance()->noteProjectChanged();
       }));
+  // M-UG-1: 子コンポ長さ変更を親プリコンポレイヤーへ伝播する。
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<Artifact::CompositionChangedEvent>(
+          [this](const Artifact::CompositionChangedEvent& e) {
+            onChildCompositionFrameRangeChanged(e);
+          }));
   impl_->installSelectionBridge(this);
 }
 
@@ -2542,6 +2551,10 @@ bool ArtifactProjectService::precomposeLayersInCurrentComposition(
 
   precompLayer->setLayerName(newCompositionName.toQString());
   precompLayer->setCompositionId(childCompId);
+  // M-UG-1: 実プリコンポレイヤー作成直後にネスト記録を正しい値で登録。
+  // これにより子コンポ長さ変更時の親レイヤー逆引きが機能する。
+  ArtifactCore::PreComposeManager::instance().registerPrecompLayer(
+      comp->id(), precompLayer->id(), childCompId);
   if (moveAll) {
     // The new child holds the whole original timeline verbatim (layers keep
     // their in/out), so the precomp layer plays it from frame 0 for the full
@@ -2665,6 +2678,9 @@ bool ArtifactProjectService::unprecomposeLayerInCurrentComposition(
     removeComposition(childCompId);
   }
 
+  // M-UG-1: ネスト記録（childSourceMap 含む）を消去し、スタレ逆索引を防ぐ。
+  ArtifactCore::PreComposeManager::instance().unprecompose(comp->id(), layerId);
+
   if (!movedLayerIds.isEmpty()) {
     selectLayer(movedLayerIds.front());
   } else {
@@ -2672,6 +2688,61 @@ bool ArtifactProjectService::unprecomposeLayerInCurrentComposition(
   }
   ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
   return true;
+}
+
+void ArtifactProjectService::setSuspendFrameRangeCascade(bool suspend) {
+  impl_->suspendFrameRangeCascade_ = suspend;
+}
+
+void ArtifactProjectService::onChildCompositionFrameRangeChanged(
+    const Artifact::CompositionChangedEvent& e) {
+  if (impl_->suspendFrameRangeCascade_) {
+    return;
+  }
+  const CompositionID childCompId = CompositionID(e.compositionId);
+  if (childCompId.isNil()) {
+    return;
+  }
+  propagateChildFrameRangeToParents(childCompId);
+}
+
+void ArtifactProjectService::propagateChildFrameRangeToParents(
+    const CompositionID& childCompId) {
+  auto project = getCurrentProjectSharedPtr();
+  const auto childFind = findComposition(childCompId);
+  const auto childComp = childFind.ptr.lock();
+  if (!project || !childComp) {
+    return;
+  }
+
+  const int64_t newLen = childComp->frameRange().duration();
+  const auto refs =
+      ArtifactCore::PreComposeManager::instance().getPrecompLayersForChild(childCompId);
+
+  QSet<CompositionID> visited;
+  for (const auto& ref : refs) {
+    if (ref.parentCompId.isNil() || visited.contains(ref.parentCompId)) {
+      continue;
+    }
+    visited.insert(ref.parentCompId);
+
+    const auto parentFind = findComposition(ref.parentCompId);
+    const auto parentComp = parentFind.ptr.lock();
+    if (!parentComp) {
+      continue;
+    }
+    const auto layer = parentComp->layerById(ref.precompLayerId);
+    const auto compLayer = std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer);
+    if (!compLayer) {
+      continue;
+    }
+
+    // AE 統一ルール: ウィンドウ長さが子長さを追従、inPoint を固定基準に。
+    const int64_t newOut = compLayer->inPoint().framePosition() + newLen;
+    compLayer->setOutPoint(FramePosition(newOut));
+  }
+
+  ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
 }
 
 PrecomposeOutcome ArtifactProjectService::lastPrecomposeOutcome() const {

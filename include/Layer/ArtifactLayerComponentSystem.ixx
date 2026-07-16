@@ -252,8 +252,31 @@ struct LayerParticleSpawnEvent {
     std::uint32_t seed = 0;
 };
 
+struct LayerFragmentState {
+    SimulationEntityId entityId;
+    SimulationEntityId sourceEntityId;
+    QString geometryHandle;
+    QString coordinateSpace = QStringLiteral("layer-local");
+    QMatrix4x4 transform;
+    QVector3D linearVelocity{0.0f, 0.0f, 0.0f};
+    QVector3D angularVelocity{0.0f, 0.0f, 0.0f};
+    float mass = 1.0f;
+    float opacity = 1.0f;
+    float age = 0.0f;
+    float lifetime = 1.0f;
+    bool active = true;
+    bool debris = false;
+};
+
+struct LayerFragmentGeometry {
+    QString geometryHandle;
+    std::vector<QVector2D> localPolygon;
+};
+
 struct LayerEvaluationState {
     std::vector<LayerInstanceState> instances;
+    std::vector<LayerFragmentState> fragments;
+    std::vector<LayerFragmentGeometry> fragmentGeometry;
     std::vector<LayerMotionIntent> intents;
     std::vector<LayerContactEvent> contacts;
     std::vector<LayerFractureEvent> pendingFractures;

@@ -15,6 +15,7 @@ module;
 #include <QSizeF>
 #include <QString>
 #include <QVariant>
+#include <QVector2D>
 #include <QVector3D>
 #include <QVector4D>
 
@@ -34,6 +35,14 @@ struct CloneRenderInstance {
     float timeOffset = 0.0f;
     std::array<QPointF, 4> canvasCorners{};
     QRectF canvasBounds;
+};
+
+struct FragmentRenderInstance {
+    SimulationEntityId entityId;
+    QString geometryHandle;
+    std::vector<QVector2D> localPolygon;
+    QMatrix4x4 transform;
+    float weight = 1.0f;
 };
 
 inline void populateCloneInstanceGeometry(
@@ -315,7 +324,11 @@ inline void applyInstanceCollisionComponent(
         return QRectF(minX, minY, maxX - minX, maxY - minY);
     };
 
-    const float floorY = static_cast<float>(compositionSize.height());
+    const float configuredFloorY = cloneComponentFloatProperty(
+        layer, QStringLiteral("component.collision.floorY"), 0.0f);
+    const float floorY = configuredFloorY > 0.0f
+                             ? configuredFloorY
+                             : static_cast<float>(compositionSize.height());
     for (auto& instance : instances) {
         const QRectF bounds = boundsForInstance(instance);
         const float bottomY = static_cast<float>(bounds.bottom());
@@ -375,6 +388,122 @@ inline void applyInstanceCollisionComponent(
         QMatrix4x4 correction;
         correction.translate(0.0f, floorY - bottomY, 0.0f);
         instance.transform = correction * instance.transform;
+    }
+}
+
+inline void applyClonePhysicsTiming(
+    const ArtifactAbstractLayer* layer,
+    std::vector<CloneRenderInstance>& instances)
+{
+    if (!layer || instances.size() < 2 ||
+        !cloneComponentBoolProperty(layer, QStringLiteral("physics.enabled"))) {
+        return;
+    }
+
+    const float gravityY = cloneComponentFloatProperty(
+        layer, QStringLiteral("physics.gravityY"), 980.0f);
+    if (gravityY <= 0.0f) {
+        return;
+    }
+    const float timeSeconds =
+        std::max(0.0f, static_cast<float>(layer->currentFrame()) / 30.0f);
+    const QSizeF compositionSize = layer->compositionSizeHint();
+    const float maxFall = compositionSize.isValid()
+                              ? static_cast<float>(compositionSize.height()) +
+                                    static_cast<float>(std::max<qreal>(
+                                        0.0, layer->localBounds().height()))
+                              : 10000.0f;
+    const float currentFall = std::min(
+        maxFall, 0.5f * gravityY * timeSeconds * timeSeconds);
+    for (auto& instance : instances) {
+        const float delaySeconds = std::max(0.0f, instance.timeOffset);
+        if (delaySeconds <= 0.0f) {
+            continue;
+        }
+        const float localTime = std::max(0.0f, timeSeconds - delaySeconds);
+        const float delayedFall = std::min(
+            maxFall, 0.5f * gravityY * localTime * localTime);
+        QMatrix4x4 timingDelta;
+        timingDelta.translate(0.0f, delayedFall - currentFall, 0.0f);
+        instance.transform = timingDelta * instance.transform;
+    }
+}
+
+inline void applyCloneFields(
+    const ArtifactAbstractLayer* layer,
+    std::vector<CloneRenderInstance>& instances)
+{
+    if (!layer || instances.empty()) {
+        return;
+    }
+    const auto fields = layer->layerFields();
+    if (fields.empty()) {
+        return;
+    }
+
+    const float timeSeconds =
+        static_cast<float>(layer->currentFrame()) / 30.0f;
+    const QVector3D fieldOrigin =
+        instances.front().transform.column(3).toVector3D();
+    for (std::size_t index = 0; index < instances.size(); ++index) {
+        auto& instance = instances[index];
+        QVector3D position = instance.transform.column(3).toVector3D();
+        QVector3D accumulated(0.0f, 0.0f, 0.0f);
+        for (const auto& field : fields) {
+            if (!field.enabled || field.strength == 0.0f) {
+                continue;
+            }
+            const float direction = field.invert ? -1.0f : 1.0f;
+            const float force = field.strength * direction;
+            const float centerX = static_cast<float>(
+                field.settings.value(QStringLiteral("centerX")).toDouble(0.0));
+            const float centerY = static_cast<float>(
+                field.settings.value(QStringLiteral("centerY")).toDouble(0.0));
+            QVector3D fromCenter(position.x() - fieldOrigin.x() - centerX,
+                                 position.y() - fieldOrigin.y() - centerY,
+                                 0.0f);
+
+            if (field.typeId == QStringLiteral("artifact.field.radial") ||
+                field.typeId == QStringLiteral("artifact.field.sphere")) {
+                const float outerRadius = std::max(
+                    1.0f, static_cast<float>(field.settings
+                        .value(QStringLiteral("outerRadius"))
+                        .toDouble(field.settings.value(QStringLiteral("radius"))
+                                      .toDouble(160.0))));
+                const float distance = fromCenter.length();
+                if (distance <= outerRadius && distance > 0.0001f) {
+                    fromCenter.normalize();
+                    accumulated += fromCenter * force *
+                                   (1.0f - distance / outerRadius) * 80.0f;
+                }
+            } else if (field.typeId == QStringLiteral("artifact.field.linear")) {
+                const float angle = static_cast<float>(
+                    field.settings.value(QStringLiteral("angle")).toDouble(0.0)) *
+                    3.1415926535f / 180.0f;
+                accumulated += QVector3D(std::cos(angle), std::sin(angle), 0.0f) *
+                               force * 80.0f;
+            } else if (field.typeId == QStringLiteral("artifact.field.box")) {
+                const float halfX = std::max(1.0f, static_cast<float>(
+                    field.settings.value(QStringLiteral("halfX")).toDouble(120.0)));
+                const float halfY = std::max(1.0f, static_cast<float>(
+                    field.settings.value(QStringLiteral("halfY")).toDouble(120.0)));
+                if (std::abs(fromCenter.x()) <= halfX &&
+                    std::abs(fromCenter.y()) <= halfY) {
+                    accumulated += QVector3D(0.0f, force * 80.0f, 0.0f);
+                }
+            } else if (field.typeId == QStringLiteral("artifact.field.noise")) {
+                const float phase = static_cast<float>(index) * 1.6180339f;
+                accumulated += QVector3D(
+                    std::sin(timeSeconds * 1.7f + phase),
+                    std::cos(timeSeconds * 1.3f + phase * 0.5f), 0.0f) *
+                    force * 40.0f;
+            }
+        }
+        if (!accumulated.isNull()) {
+            QMatrix4x4 fieldDelta;
+            fieldDelta.translate(accumulated);
+            instance.transform = fieldDelta * instance.transform;
+        }
     }
 }
 
@@ -515,6 +644,63 @@ inline float cloneModifierTimeOffset(
     return timeOffsetStep * static_cast<float>(cloneIndex);
 }
 
+export std::vector<CloneRenderInstance> fragmentCloneRenderInstances(
+    const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform)
+{
+    std::vector<CloneRenderInstance> instances;
+    if (!layer) {
+        return instances;
+    }
+    const auto& fragments = layer->layerEvaluationState().fragments;
+    instances.reserve(fragments.size());
+    for (const auto& fragment : fragments) {
+        if (!fragment.active || fragment.opacity <= 0.0f) {
+            continue;
+        }
+        CloneRenderInstance instance;
+        instance.transform = baseTransform * fragment.transform;
+        instance.weight = std::clamp(fragment.opacity, 0.0f, 1.0f);
+        instance.timeOffset = fragment.age;
+        instances.push_back(std::move(instance));
+    }
+    populateCloneInstanceGeometry(layer, instances);
+    return instances;
+}
+
+export std::vector<FragmentRenderInstance> fragmentRenderInstances(
+    const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform)
+{
+    std::vector<FragmentRenderInstance> instances;
+    if (!layer) {
+        return instances;
+    }
+    const auto& evaluationState = layer->layerEvaluationState();
+    instances.reserve(evaluationState.fragments.size());
+    for (const auto& fragment : evaluationState.fragments) {
+        if (!fragment.active || fragment.opacity <= 0.0f) {
+            continue;
+        }
+        const auto geometry = std::find_if(
+            evaluationState.fragmentGeometry.begin(),
+            evaluationState.fragmentGeometry.end(),
+            [&](const LayerFragmentGeometry& candidate) {
+                return candidate.geometryHandle == fragment.geometryHandle;
+            });
+        if (geometry == evaluationState.fragmentGeometry.end() ||
+            geometry->localPolygon.size() < 3U) {
+            continue;
+        }
+        FragmentRenderInstance instance;
+        instance.entityId = fragment.entityId;
+        instance.geometryHandle = fragment.geometryHandle;
+        instance.localPolygon = geometry->localPolygon;
+        instance.transform = baseTransform * fragment.transform;
+        instance.weight = std::clamp(fragment.opacity, 0.0f, 1.0f);
+        instances.push_back(std::move(instance));
+    }
+    return instances;
+}
+
 export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstractLayer* layer,
                                                              const QMatrix4x4& baseTransform)
 {
@@ -552,6 +738,8 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
         instances.insert(instances.end(), clonerInstances.begin(), clonerInstances.end());
         applyLayoutComponent(layer, instances);
         applyCrowdComponent(layer, instances);
+        applyClonePhysicsTiming(layer, instances);
+        applyCloneFields(layer, instances);
         applyInstanceCollisionComponent(layer, instances);
         populateCloneInstanceGeometry(layer, instances);
         return instances;
@@ -561,6 +749,8 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
     if (!instances.empty()) {
         applyLayoutComponent(layer, instances);
         applyCrowdComponent(layer, instances);
+        applyClonePhysicsTiming(layer, instances);
+        applyCloneFields(layer, instances);
         applyInstanceCollisionComponent(layer, instances);
         populateCloneInstanceGeometry(layer, instances);
         return instances;
@@ -569,6 +759,8 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
     instances.push_back(CloneRenderInstance{baseTransform, 1.0f});
     applyLayoutComponent(layer, instances);
     applyCrowdComponent(layer, instances);
+    applyClonePhysicsTiming(layer, instances);
+    applyCloneFields(layer, instances);
     applyInstanceCollisionComponent(layer, instances);
     populateCloneInstanceGeometry(layer, instances);
     return instances;

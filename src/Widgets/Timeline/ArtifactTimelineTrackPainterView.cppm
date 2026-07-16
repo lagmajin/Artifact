@@ -77,6 +77,88 @@ import UI.ShortcutBindings;
 import Utils.Path;
 
 namespace Artifact {
+
+// AE Easy Ease (F9) 互換: 選択キーフレームの前後キーフレームから velocity に基づき
+// ベジェ制御点を自動算出する。スカラー値のみ対応し、非スカラー値（カラー等）や
+// 隣接キーフレームがない場合は AE 標準の固定ハンドルへフォールバックする。
+bool tryComputeEasyEaseHandles(const std::vector<ArtifactCore::KeyFrame>& keyframes,
+                               const ArtifactCore::KeyFrame& cur,
+                               const bool easeIn,
+                               const bool easeOut,
+                               float& outCp1x, float& outCp1y,
+                               float& outCp2x, float& outCp2y)
+{
+    const auto toScalar = [](const QVariant& v, bool& ok) -> double {
+        ok = v.canConvert<double>() && v.userType() != QMetaType::QColor
+             && v.userType() != QMetaType::QVector2D
+             && v.userType() != QMetaType::QVector3D
+             && v.userType() != QMetaType::QVector4D;
+        return ok ? v.toDouble() : 0.0;
+    };
+
+    bool curOk = false;
+    const double curVal = toScalar(cur.value, curOk);
+    if (!curOk) {
+        return false;
+    }
+
+    const ArtifactCore::KeyFrame* prev = nullptr;
+    const ArtifactCore::KeyFrame* next = nullptr;
+    for (const auto& kf : keyframes) {
+        if (kf.time < cur.time) {
+            prev = &kf;
+        } else if (kf.time > cur.time) {
+            next = &kf;
+            break;
+        }
+    }
+    if (!prev || !next) {
+        return false;
+    }
+
+    bool prevOk = false;
+    bool nextOk = false;
+    const double prevVal = toScalar(prev->value, prevOk);
+    const double nextVal = toScalar(next->value, nextOk);
+    if (!prevOk || !nextOk) {
+        return false;
+    }
+
+    const double d1 = (cur.time - prev->time).toDouble();
+    const double d2 = (next->time - cur.time).toDouble();
+    if (d1 <= 0.0 || d2 <= 0.0) {
+        return false;
+    }
+    const double v1 = curVal - prevVal;
+    const double v2 = nextVal - curVal;
+
+    const double dSum = d1 + d2;
+    const double vSum = std::fabs(v1) + std::fabs(v2);
+    const double vEps = 1e-6;
+
+    // AE 互換: in-tangent を区間の 1/3、out-tangent を 2/3 の time 位置に置く。
+    // value 方向は前後速度に比例させ、slow-in / slow-out で各ハンドルを減衰。
+    float inX = static_cast<float>(d1 / (3.0 * dSum));
+    float inY = static_cast<float>(v1 / (3.0 * (vSum + vEps)));
+    float outX = static_cast<float>(d2 / (3.0 * dSum) + d2 / (3.0 * dSum));
+    float outY = static_cast<float>(v2 / (3.0 * (vSum + vEps)));
+
+    if (easeIn) {
+        inY *= 0.0f;
+        inX = std::min(inX, 0.33f);
+    }
+    if (easeOut) {
+        outY *= 0.0f;
+        outX = std::max(outX, 0.67f);
+    }
+
+    outCp1x = inX;
+    outCp1y = inY;
+    outCp2x = outX;
+    outCp2y = outY;
+    return true;
+}
+
 W_OBJECT_IMPL(ArtifactTimelineTrackPainterView)
 
 namespace {
@@ -2552,6 +2634,34 @@ int applyInterpolationToSelectedKeyframesImpl(
     const ArtifactCore::KeyFrame before = *it;
     ArtifactCore::KeyFrame after = before;
     after.interpolation = interpolationType;
+    const bool wasBezier = before.interpolation == ArtifactCore::InterpolationType::Bezier;
+    if (interpolationType == ArtifactCore::InterpolationType::Bezier && !wasBezier) {
+      after.cp1_x = 0.42f;
+      after.cp1_y = 0.0f;
+      after.cp2_x = 0.58f;
+      after.cp2_y = 1.0f;
+    } else if (interpolationType == ArtifactCore::InterpolationType::EaseIn
+               || interpolationType == ArtifactCore::InterpolationType::EaseOut
+               || interpolationType == ArtifactCore::InterpolationType::EaseInOut) {
+      // AE Easy Ease: velocity に基づき Bezier ハンドルを自動算出する。
+      after.interpolation = ArtifactCore::InterpolationType::Bezier;
+      float cp1x = 0.42f, cp1y = 0.0f, cp2x = 0.58f, cp2y = 1.0f;
+      const bool easeIn = interpolationType == ArtifactCore::InterpolationType::EaseIn
+                          || interpolationType == ArtifactCore::InterpolationType::EaseInOut;
+      const bool easeOut = interpolationType == ArtifactCore::InterpolationType::EaseOut
+                           || interpolationType == ArtifactCore::InterpolationType::EaseInOut;
+      if (tryComputeEasyEaseHandles(keyframes, before, easeIn, easeOut, cp1x, cp1y, cp2x, cp2y)) {
+        after.cp1_x = cp1x;
+        after.cp1_y = cp1y;
+        after.cp2_x = cp2x;
+        after.cp2_y = cp2y;
+      } else {
+        after.cp1_x = 0.42f;
+        after.cp1_y = 0.0f;
+        after.cp2_x = 0.58f;
+        after.cp2_y = 1.0f;
+      }
+    }
     records.push_back(InterpolationChangeRecord{
         layer,
         marker.propertyPath,

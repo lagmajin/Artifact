@@ -49,10 +49,22 @@ namespace Artifact
  class WorkAreaControl::Impl
  {
  public:
+  enum class DragMode {
+    None,
+    LeftHandle,
+    RightHandle,
+    BodyMove,
+    BodyScale,
+  };
+
+  DragMode dragMode{DragMode::None};
   bool draggingLeft{ false };
   bool draggingRight{ false };
   bool draggingRange{ false };
   float dragGrabRatio{ 0.0f };
+  float dragStartCenter{ 0.5f };
+  float dragStartLength{ 1.0f };
+  float dragStartPointerNorm{ 0.0f };
   bool hoveringLeft{ false };
   bool hoveringRight{ false };
   bool hoveringRange{ false };
@@ -67,6 +79,8 @@ namespace Artifact
  {
   setMouseTracking(true);
   setMinimumHeight(26);
+  setToolTip(
+      QStringLiteral("Work Area | Drag the bar to move. Ctrl+drag the bar to scale around center. Drag handles to trim."));
  }
 
  WorkAreaControl::~WorkAreaControl()
@@ -240,6 +254,7 @@ void WorkAreaControl::setEnd(float e) {
 
  void WorkAreaControl::mouseMoveEvent(QMouseEvent* ev)
  {
+  const bool ctrlDown = (ev->modifiers() & Qt::ControlModifier) != 0;
   const int handleHalfW = 6;
   const int handleW = handleHalfW * 2;
   const int usableWidth = std::max(1, width() - handleW);
@@ -264,7 +279,7 @@ void WorkAreaControl::setEnd(float e) {
   if (impl_->hoveringLeft || impl_->hoveringRight) {
     setCursor(Qt::SizeHorCursor);
   } else if (impl_->hoveringRange) {
-    setCursor(Qt::SizeAllCursor);
+    setCursor(ctrlDown ? Qt::SizeHorCursor : Qt::SizeAllCursor);
   } else {
     unsetCursor();
   }
@@ -278,14 +293,34 @@ void WorkAreaControl::setEnd(float e) {
    return;
   }
 
-  if (impl_->draggingLeft) {
+  if (impl_->dragMode == Impl::DragMode::LeftHandle || impl_->draggingLeft) {
    float newStart = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
    setStart(qBound(0.0f, newStart, end - 0.01f));
   }
-  else if (impl_->draggingRight) {
+  else if (impl_->dragMode == Impl::DragMode::RightHandle || impl_->draggingRight) {
    float newEnd = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
    setEnd(qBound(start + 0.01f, newEnd, 1.0f));
-  } else if (impl_->draggingRange) {
+  } else if (impl_->dragMode == Impl::DragMode::BodyScale) {
+   const float pointerNorm = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
+   const float delta = pointerNorm - impl_->dragStartPointerNorm;
+   const float newLength = std::clamp(impl_->dragStartLength * (1.0f + delta), 0.01f, 1.0f);
+   const float center = impl_->dragStartCenter;
+   float newStart = center - newLength * 0.5f;
+   float newEnd = center + newLength * 0.5f;
+   if (newStart < 0.0f) {
+    newEnd = std::min(1.0f, newEnd - newStart);
+    newStart = 0.0f;
+   }
+   if (newEnd > 1.0f) {
+    const float overflow = newEnd - 1.0f;
+    newStart = std::max(0.0f, newStart - overflow);
+    newEnd = 1.0f;
+   }
+   if (newEnd - newStart >= 0.01f) {
+    setStart(newStart);
+    setEnd(newEnd);
+   }
+  } else if (impl_->dragMode == Impl::DragMode::BodyMove || impl_->draggingRange) {
    const float range = std::max(0.01f, end - start);
    float left = (float(ev->pos().x()) - handleHalfW) / float(usableWidth) - impl_->dragGrabRatio;
    left = qBound(0.0f, left, 1.0f - range);
@@ -296,6 +331,7 @@ void WorkAreaControl::setEnd(float e) {
 
  void WorkAreaControl::mouseReleaseEvent(QMouseEvent*)
  {
+  impl_->dragMode = Impl::DragMode::None;
   impl_->draggingLeft = impl_->draggingRight = impl_->draggingRange = false;
   // Reset hover state on release
   impl_->hoveringLeft = impl_->hoveringRight = impl_->hoveringRange = false;
@@ -306,6 +342,7 @@ void WorkAreaControl::setEnd(float e) {
  void WorkAreaControl::mousePressEvent(QMouseEvent* ev)
  {
   if (ev->button() != Qt::LeftButton) return;
+  const bool ctrlDown = (ev->modifiers() & Qt::ControlModifier) != 0;
   const int handleHalfW = 6;
   const int handleW = handleHalfW * 2;
   const int usableWidth = std::max(1, width() - handleW);
@@ -313,12 +350,22 @@ void WorkAreaControl::setEnd(float e) {
   int x1 = handleHalfW + static_cast<int>(start * usableWidth);
   int x2 = handleHalfW + static_cast<int>(end * usableWidth);
 
-  if (QRect(x1 - handleHalfW, 0, handleW, height()).contains(ev->pos())) impl_->draggingLeft = true;
-  else if (QRect(x2 - handleHalfW, 0, handleW, height()).contains(ev->pos())) impl_->draggingRight = true;
+  if (QRect(x1 - handleHalfW, 0, handleW, height()).contains(ev->pos())) {
+   impl_->draggingLeft = true;
+   impl_->dragMode = Impl::DragMode::LeftHandle;
+  }
+  else if (QRect(x2 - handleHalfW, 0, handleW, height()).contains(ev->pos())) {
+   impl_->draggingRight = true;
+   impl_->dragMode = Impl::DragMode::RightHandle;
+  }
   else if (QRect(x1 + handleHalfW, 0, std::max(0, x2 - x1 - handleW), height()).contains(ev->pos())) {
    impl_->draggingRange = true;
    const float normalizedX = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
    impl_->dragGrabRatio = normalizedX - start;
+   impl_->dragStartCenter = (start + end) * 0.5f;
+   impl_->dragStartLength = std::max(0.01f, end - start);
+   impl_->dragStartPointerNorm = normalizedX;
+   impl_->dragMode = ctrlDown ? Impl::DragMode::BodyScale : Impl::DragMode::BodyMove;
   }
  }
 

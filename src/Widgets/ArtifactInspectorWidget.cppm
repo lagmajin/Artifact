@@ -4652,8 +4652,6 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->componentPropertyWidget = new ArtifactPropertyWidget();
   impl_->componentPropertyWidget->setVisible(false);
   impl_->componentPropertyWidget->setMinimumHeight(120);
-  impl_->componentPropertyWidget->setFilterText(
-      QStringLiteral("physics|script|layout|cloner"));
   componentsLayout->addWidget(impl_->componentPropertyWidget);
   componentsLayout->setContentsMargins(
       kInspectorNoteMargin, kInspectorNoteMargin, kInspectorNoteMargin,

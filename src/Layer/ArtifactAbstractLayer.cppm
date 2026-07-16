@@ -645,7 +645,9 @@ public:
     float fractureShardDamping_ = 0.92f;
     float fractureShardGravity_ = 0.0f;
     float fractureImpactSensitivity_ = 1.0f;
+    bool fracturePreGenerate_ = false;
     FractureState fractureState_;
+    FractureResult prefractureResult_;
     mutable int64_t fractureMotionLastFrame_ = std::numeric_limits<int64_t>::min();
     mutable DynamicsChannel1D motionX_;
     mutable DynamicsChannel1D motionY_;
@@ -664,6 +666,7 @@ public:
     float collisionRadius_ = 0.0f;
     float collisionOffsetX_ = 0.0f;
     float collisionOffsetY_ = 0.0f;
+    float collisionFloorY_ = 0.0f;
     bool crowdComponentEnabled_ = false;
     float crowdCohesion_ = 0.5f;
     float crowdSeparation_ = 0.5f;
@@ -691,6 +694,7 @@ public:
     mutable int64_t lastCollisionImpactFrame_ =
         std::numeric_limits<int64_t>::min();
     LayerComponentHost componentHost_;
+    LayerEvaluationState componentEvaluationState_;
     int layoutMode_ = 0;
     int layoutAnchorMode_ = 0;
     int layoutHorizontalPin_ = 0;
@@ -895,6 +899,8 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
       static_cast<double>(collisionOffsetX_);
   collision.settings[QStringLiteral("offsetY")] =
       static_cast<double>(collisionOffsetY_);
+  collision.settings[QStringLiteral("floorY")] =
+      static_cast<double>(collisionFloorY_);
   componentHost_.upsert(std::move(collision));
 
   auto fracture = makeFractureComponentDescriptor(fractureEnabled_);
@@ -904,6 +910,7 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
       static_cast<double>(fractureCrackThreshold_);
   fracture.settings[QStringLiteral("shatterThreshold")] =
       static_cast<double>(fractureShatterThreshold_);
+  fracture.settings[QStringLiteral("preGenerate")] = fracturePreGenerate_;
   componentHost_.upsert(std::move(fracture));
 
   auto emitter = makeParticleEmitterComponentDescriptor(
@@ -1828,6 +1835,172 @@ const std::vector<FractureShardMotion>& ArtifactAbstractLayer::fractureShardMoti
   return impl_->fractureState_.shards;
 }
 
+void applyFragmentFieldsAndFloorCollision(
+    const ArtifactAbstractLayer* layer, FractureShardMotion& shard,
+    const QMatrix4x4& baseTransform, const float deltaSeconds) {
+  if (!layer || !shard.active || deltaSeconds <= 0.0f) {
+    return;
+  }
+
+  for (const auto& field : layer->layerFields()) {
+    if (!field.enabled || field.strength == 0.0f) {
+      continue;
+    }
+    const float sign = field.invert ? -1.0f : 1.0f;
+    const float strength = field.strength * sign;
+    const float centerX = static_cast<float>(
+        field.settings.value(QStringLiteral("centerX")).toDouble(0.0));
+    const float centerY = static_cast<float>(
+        field.settings.value(QStringLiteral("centerY")).toDouble(0.0));
+    QVector3D fromCenter(shard.position.x() - centerX,
+                         shard.position.y() - centerY, 0.0f);
+    QVector3D acceleration(0.0f, 0.0f, 0.0f);
+
+    if (field.typeId == QStringLiteral("artifact.field.radial") ||
+        field.typeId == QStringLiteral("artifact.field.sphere")) {
+      const float radius = std::max(
+          1.0f, static_cast<float>(field.settings
+              .value(QStringLiteral("outerRadius"))
+              .toDouble(field.settings.value(QStringLiteral("radius"))
+                            .toDouble(160.0))));
+      const float distance = fromCenter.length();
+      if (distance <= radius && distance > 0.0001f) {
+        fromCenter.normalize();
+        acceleration = fromCenter * strength *
+                       (1.0f - distance / radius) * 600.0f;
+      }
+    } else if (field.typeId == QStringLiteral("artifact.field.linear")) {
+      const float angle = static_cast<float>(
+          field.settings.value(QStringLiteral("angle")).toDouble(0.0)) *
+          3.1415926535f / 180.0f;
+      acceleration = QVector3D(std::cos(angle), std::sin(angle), 0.0f) *
+                     strength * 600.0f;
+    } else if (field.typeId == QStringLiteral("artifact.field.box")) {
+      const float halfX = std::max(1.0f, static_cast<float>(
+          field.settings.value(QStringLiteral("halfX")).toDouble(120.0)));
+      const float halfY = std::max(1.0f, static_cast<float>(
+          field.settings.value(QStringLiteral("halfY")).toDouble(120.0)));
+      if (std::abs(fromCenter.x()) <= halfX &&
+          std::abs(fromCenter.y()) <= halfY) {
+        acceleration.setY(strength * 600.0f);
+      }
+    } else if (field.typeId == QStringLiteral("artifact.field.noise")) {
+      const float phase = shard.position.x() * 0.013f +
+                          shard.position.y() * 0.017f;
+      acceleration = QVector3D(std::sin(phase), std::cos(phase), 0.0f) *
+                     strength * 300.0f;
+    }
+    shard.velocity += acceleration * deltaSeconds;
+  }
+
+  const auto collisionEnabled =
+      layer->getProperty(QStringLiteral("component.collision.enabled"));
+  if (!collisionEnabled || !collisionEnabled->getValue().toBool()) {
+    return;
+  }
+  const QSizeF compositionSize = layer->compositionSizeHint();
+  if (!compositionSize.isValid()) {
+    return;
+  }
+  const auto floorProperty =
+      layer->getProperty(QStringLiteral("component.collision.floorY"));
+  const float configuredFloor =
+      floorProperty ? floorProperty->getValue().toFloat() : 0.0f;
+  const float floorY = configuredFloor > 0.0f
+                           ? configuredFloor
+                           : static_cast<float>(compositionSize.height());
+  const float shardRadius = std::max(2.0f, 5.0f * shard.scale);
+  const QVector3D worldPosition = baseTransform.map(shard.position);
+  if (worldPosition.y() + shardRadius <= floorY) {
+    return;
+  }
+  shard.position.setY(shard.position.y() + floorY - shardRadius -
+                      worldPosition.y());
+  const auto restitutionProperty =
+      layer->getProperty(QStringLiteral("physics.restitution"));
+  const float restitution = std::clamp(
+      restitutionProperty ? restitutionProperty->getValue().toFloat() : 0.25f,
+      0.0f, 1.0f);
+  if (shard.velocity.y() > 0.0f) {
+    shard.velocity.setY(-shard.velocity.y() * restitution);
+    shard.velocity.setX(shard.velocity.x() * 0.92f);
+  }
+}
+
+void syncFragmentDataset(const ArtifactAbstractLayer* layer,
+                         const FractureState& fractureState,
+                         const FractureResult* prefractureResult,
+                         LayerEvaluationState& evaluationState) {
+  auto& fragments = evaluationState.fragments;
+  auto& fragmentGeometry = evaluationState.fragmentGeometry;
+  fragments.clear();
+  fragmentGeometry.clear();
+  if (!layer) {
+    return;
+  }
+  fragments.reserve(fractureState.shards.size());
+  fragmentGeometry.reserve(fractureState.shards.size());
+  const QString ownerLayerId = layer->id().toString();
+  for (std::size_t index = 0; index < fractureState.shards.size(); ++index) {
+    const auto& shard = fractureState.shards[index];
+    QMatrix4x4 fragmentTransform;
+    fragmentTransform.setToIdentity();
+    fragmentTransform.translate(shard.position);
+    fragmentTransform.rotate(shard.rotation, 0.0f, 0.0f, 1.0f);
+    fragmentTransform.scale(shard.scale);
+    LayerFragmentState fragment;
+    fragment.entityId = SimulationEntityId{
+        ownerLayerId, QStringLiteral("component.fracture"),
+        static_cast<std::uint64_t>(index), 0};
+    fragment.sourceEntityId = SimulationEntityId{
+        ownerLayerId, QStringLiteral("layer.source"), 0, 0};
+    fragment.geometryHandle =
+        QStringLiteral("fracture.shard.%1").arg(index);
+    fragment.transform = fragmentTransform;
+    fragment.linearVelocity = shard.velocity;
+    fragment.angularVelocity = shard.angularVelocity;
+    const FractureShard* sourceShard = nullptr;
+    if (prefractureResult && prefractureResult->valid &&
+        index < prefractureResult->shards.size()) {
+      sourceShard = &prefractureResult->shards[index];
+      fragment.mass = sourceShard->mass;
+    }
+    fragment.opacity = shard.opacity;
+    fragment.age = shard.age;
+    fragment.lifetime = shard.lifetime;
+    fragment.active = shard.active;
+    fragment.debris = shard.debris;
+    LayerFragmentGeometry geometry;
+    geometry.geometryHandle = fragment.geometryHandle;
+    if (sourceShard && sourceShard->polygon.size() >= 3) {
+      const QVector3D centroid = sourceShard->sourceCentroid;
+      geometry.localPolygon.reserve(
+          static_cast<std::size_t>(sourceShard->polygon.size()));
+      for (const QPointF& point : sourceShard->polygon) {
+        geometry.localPolygon.emplace_back(
+            static_cast<float>(point.x()) - centroid.x(),
+            static_cast<float>(point.y()) - centroid.y());
+      }
+    } else {
+      const float seed = static_cast<float>(index) * 1.61803398875f;
+      const float skew = std::sin(seed) * 0.22f;
+      const float pinch = 0.16f + std::cos(seed * 0.73f) * 0.07f;
+      geometry.localPolygon = {
+          QVector2D(-4.5f - skew * 10.0f, -10.0f - pinch * 2.5f),
+          QVector2D(3.5f - skew * 8.0f, -9.2f - pinch * 1.5f),
+          QVector2D(0.5f + skew * 1.5f, 0.8f + pinch * 0.8f),
+          QVector2D(5.8f + skew * 11.0f, 9.5f - pinch * 0.5f),
+          QVector2D(-6.2f + skew * 9.0f, 8.2f + pinch * 2.0f)};
+    }
+    fragments.push_back(std::move(fragment));
+    fragmentGeometry.push_back(std::move(geometry));
+  }
+}
+
+const LayerEvaluationState& ArtifactAbstractLayer::layerEvaluationState() const {
+  return impl_->componentEvaluationState_;
+}
+
 void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
                                                 const QMatrix4x4& baseTransform,
                                                 const QSizeF& sourceSize,
@@ -2011,7 +2184,37 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
     }
   }
 
+  if (impl_->fractureEnabled_ && impl_->fracturePreGenerate_ &&
+      impl_->fractureState_.shards.empty()) {
+    FractureSettings prefractureSettings = makeFracturePreset(
+        static_cast<FracturePreset>(std::clamp(
+            impl_->fracturePreset_, 0, static_cast<int>(FracturePreset::Dust))));
+    prefractureSettings.shardCount = std::max(1, impl_->fractureShardCount_);
+    FractureEffect prefracture;
+    prefracture.setSourceBounds(localBounds());
+    prefracture.setImpactPoint(localBounds().center());
+    prefracture.setSettings(prefractureSettings);
+    if (prefracture.generate()) {
+      impl_->prefractureResult_ = prefracture.result();
+      impl_->fractureState_.kind = FractureStateKind::Shattered;
+      impl_->fractureState_.shards.reserve(
+          impl_->prefractureResult_.shards.size());
+      for (const FractureShard& sourceShard : impl_->prefractureResult_.shards) {
+        FractureShardMotion shard;
+        shard.position = sourceShard.sourceCentroid;
+        shard.scale = sourceShard.scale;
+        shard.opacity = sourceShard.opacity;
+        shard.lifetime = sourceShard.lifetime;
+        shard.active = sourceShard.active;
+        shard.debris = sourceShard.debris;
+        impl_->fractureState_.shards.push_back(std::move(shard));
+      }
+    }
+  }
+
   if (!impl_->fractureEnabled_ || impl_->fractureState_.shards.empty()) {
+    impl_->componentEvaluationState_.fragments.clear();
+    impl_->componentEvaluationState_.fragmentGeometry.clear();
     return;
   }
 
@@ -2033,45 +2236,40 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
   const float dt = needsReset ? 0.0f : (1.0f / std::max(1.0, effectiveLayerFrameRate(this)));
   for (auto& shard : impl_->fractureState_.shards) {
     ArtifactCore::stepFractureShardMotion(shard, dt, settings);
+    applyFragmentFieldsAndFloorCollision(this, shard, baseTransform, dt);
   }
   impl_->fractureMotionLastFrame_ = frame;
 
-  for (const auto& shard : impl_->fractureState_.shards) {
-    if (!shard.active || shard.opacity <= 0.0f) {
+  syncFragmentDataset(this, impl_->fractureState_,
+                      &impl_->prefractureResult_,
+                      impl_->componentEvaluationState_);
+
+  const auto& evaluationState = impl_->componentEvaluationState_;
+  for (const auto& fragment : evaluationState.fragments) {
+    if (!fragment.active || fragment.opacity <= 0.0f) {
       continue;
     }
-
-    const float alpha = std::clamp(shard.opacity * opacityScale, 0.0f, 1.0f);
-    const float shardScale = std::max(4.0f, 10.0f * std::max(0.05f, shard.scale));
-    const float angle = static_cast<float>(std::fmod(shard.rotation, 360.0f) * (3.14159265358979323846f / 180.0f));
-    const float cs = std::cos(angle);
-    const float sn = std::sin(angle);
-    auto rotateOffset = [&](float x, float y) {
-      return QPointF(x * cs - y * sn, x * sn + y * cs);
-    };
-
-    const QPointF center(shard.position.x(), shard.position.y());
-    const float wobble = std::sin((shard.position.x() + shard.position.y() + shard.rotation) * 0.013f);
-    const float skew = std::sin(shard.rotation * 0.0174532925f) * 0.22f + wobble * 0.12f;
-    const float pinch = 0.16f + wobble * 0.07f;
-    const QPointF topLeft = center + rotateOffset(-shardScale * (0.45f + skew), -shardScale * (1.00f + pinch * 0.25f));
-    const QPointF topRight = center + rotateOffset(shardScale * (0.35f - skew * 0.8f), -shardScale * (0.92f + pinch * 0.15f));
-    const QPointF bottomRight = center + rotateOffset(shardScale * (0.58f + skew * 1.1f), shardScale * (0.95f - pinch * 0.05f));
-    const QPointF bottomLeft = center + rotateOffset(-shardScale * (0.62f - skew * 0.9f), shardScale * (0.82f + pinch * 0.2f));
-    const QPointF notch = center + rotateOffset(shardScale * (0.05f + skew * 0.15f + wobble * 0.05f), shardScale * (0.08f - skew * 0.1f + pinch * 0.08f));
-
-    const QVector4D tlV = baseTransform * QVector4D(static_cast<float>(topLeft.x()), static_cast<float>(topLeft.y()), shard.position.z(), 1.0f);
-    const QVector4D trV = baseTransform * QVector4D(static_cast<float>(topRight.x()), static_cast<float>(topRight.y()), shard.position.z(), 1.0f);
-    const QVector4D brV = baseTransform * QVector4D(static_cast<float>(bottomRight.x()), static_cast<float>(bottomRight.y()), shard.position.z(), 1.0f);
-    const QVector4D blV = baseTransform * QVector4D(static_cast<float>(bottomLeft.x()), static_cast<float>(bottomLeft.y()), shard.position.z(), 1.0f);
-    const QVector4D nV = baseTransform * QVector4D(static_cast<float>(notch.x()), static_cast<float>(notch.y()), shard.position.z(), 1.0f);
-
+    const auto geometry = std::find_if(
+        evaluationState.fragmentGeometry.begin(),
+        evaluationState.fragmentGeometry.end(),
+        [&](const LayerFragmentGeometry& candidate) {
+          return candidate.geometryHandle == fragment.geometryHandle;
+        });
+    if (geometry == evaluationState.fragmentGeometry.end() ||
+        geometry->localPolygon.size() < 3U) {
+      continue;
+    }
+    const QMatrix4x4 fragmentTransform =
+        baseTransform * fragment.transform;
     std::vector<Detail::float2> shardPoly;
-    shardPoly.push_back({tlV.x(), tlV.y()});
-    shardPoly.push_back({trV.x(), trV.y()});
-    shardPoly.push_back({nV.x(), nV.y()});
-    shardPoly.push_back({brV.x(), brV.y()});
-    shardPoly.push_back({blV.x(), blV.y()});
+    shardPoly.reserve(geometry->localPolygon.size());
+    for (const QVector2D& point : geometry->localPolygon) {
+      const QVector4D canvasPoint =
+          fragmentTransform * QVector4D(point.x(), point.y(), 0.0f, 1.0f);
+      shardPoly.push_back({canvasPoint.x(), canvasPoint.y()});
+    }
+    const float alpha =
+        std::clamp(fragment.opacity * opacityScale, 0.0f, 1.0f);
     fractureElement.shards.push_back(
         {std::move(shardPoly),
          FloatColor(0.92f, 0.96f, 1.0f, alpha * 0.42f)});
@@ -2081,6 +2279,10 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
 
 void ArtifactAbstractLayer::resetFractureState() {
   ArtifactCore::resetFractureState(impl_->fractureState_);
+  impl_->prefractureResult_ = FractureResult{};
+  impl_->componentEvaluationState_.fragments.clear();
+  impl_->componentEvaluationState_.fragmentGeometry.clear();
+  impl_->componentEvaluationState_.clearTransientEvents();
   impl_->fractureMotionLastFrame_ = std::numeric_limits<int64_t>::min();
   if (impl_->particleEmitterComponentEnabled_) {
     impl_->componentParticles_.clear();
@@ -2095,6 +2297,19 @@ void ArtifactAbstractLayer::applyFractureImpact(const FractureImpact& impact) {
     return;
   }
 
+  auto& evaluationState = impl_->componentEvaluationState_;
+  evaluationState.pendingFractures.clear();
+  evaluationState.pendingParticleSpawns.clear();
+  const QString ownerLayerId = id().toString();
+  const QRectF impactBounds = localBounds();
+  const QVector3D impactPosition(
+      static_cast<float>(impactBounds.center().x()),
+      static_cast<float>(impactBounds.center().y()), 0.0f);
+  evaluationState.pendingFractures.push_back(LayerFractureEvent{
+      SimulationEntityId{ownerLayerId, QStringLiteral("layer.source"), 0, 0},
+      impactPosition, QVector3D(0.0f, impact.impulse, 0.0f), impact.stress,
+      static_cast<std::uint32_t>(std::max(1, impl_->fractureShardCount_))});
+
   const auto emitImpactParticles = [this, &impact]() {
     if (!impl_->particleEmitterComponentEnabled_ ||
         impl_->particleEmitterCount_ <= 0) {
@@ -2106,6 +2321,14 @@ void ArtifactAbstractLayer::applyFractureImpact(const FractureImpact& impact) {
         static_cast<std::uint32_t>(
             qHash(id().toString()) ^
             static_cast<uint>(currentTimelineFrame(this)));
+    impl_->componentEvaluationState_.pendingParticleSpawns.push_back(
+        LayerParticleSpawnEvent{
+            SimulationEntityId{id().toString(),
+                               QStringLiteral("component.fracture"), 0, 0},
+            QVector3D(static_cast<float>(center.x()),
+                      static_cast<float>(center.y()), 0.0f),
+            QVector3D(0.0f, impact.speed, 0.0f),
+            static_cast<std::uint32_t>(impl_->particleEmitterCount_), seed});
     std::mt19937 rng(seed);
     std::uniform_real_distribution<float> angleDistribution(
         0.0f, 2.0f * 3.1415926535f);
@@ -2113,8 +2336,8 @@ void ArtifactAbstractLayer::applyFractureImpact(const FractureImpact& impact) {
     std::uniform_real_distribution<float> sizeDistribution(2.0f, 7.0f);
     const float impactScale =
         std::max(0.25f, std::min(4.0f, impact.impulse));
-    const auto& shards = impl_->fractureState_.shards;
-    const bool emitFromShards = impl_->fractureEnabled_ && !shards.empty();
+    const auto& fragments = impl_->componentEvaluationState_.fragments;
+    const bool emitFromFragments = impl_->fractureEnabled_ && !fragments.empty();
 
     QVector3D debrisColor(1.0f, 0.72f, 0.28f);
     switch (static_cast<FracturePreset>(impl_->fracturePreset_)) {
@@ -2145,17 +2368,18 @@ void ArtifactAbstractLayer::applyFractureImpact(const FractureImpact& impact) {
       const float angle = angleDistribution(rng);
       const float speed = impl_->particleEmitterSpeed_ *
                           speedDistribution(rng) * impactScale *
-                          (emitFromShards ? 0.35f : 1.0f);
+                          (emitFromFragments ? 0.35f : 1.0f);
       QVector3D sourcePosition(static_cast<float>(center.x()),
                                static_cast<float>(center.y()), 0.0f);
       QVector3D sourceVelocity;
       float sourceScale = 1.0f;
-      if (emitFromShards) {
-        const auto& shard =
-            shards[static_cast<std::size_t>(index) % shards.size()];
-        sourcePosition = shard.position;
-        sourceVelocity = shard.velocity;
-        sourceScale = std::max(0.25f, shard.scale);
+      if (emitFromFragments) {
+        const auto& fragment = fragments[
+            static_cast<std::size_t>(index) % fragments.size()];
+        sourcePosition = fragment.transform.column(3).toVector3D();
+        sourceVelocity = fragment.linearVelocity;
+        sourceScale = std::max(
+            0.25f, fragment.transform.column(0).toVector3D().length());
       }
 
       ArtifactCore::ParticleVertex particle{};
@@ -2191,6 +2415,8 @@ void ArtifactAbstractLayer::applyFractureImpact(const FractureImpact& impact) {
   settings = makeFracturePreset(static_cast<FracturePreset>(
       std::clamp(impl_->fracturePreset_, 0, static_cast<int>(FracturePreset::Dust))));
   settings.shardCount = std::max(1, impl_->fractureShardCount_);
+  settings.crackThreshold = impl_->fractureCrackThreshold_;
+  settings.shatterThreshold = impl_->fractureShatterThreshold_;
   settings.debrisCount = 48;
   settings.impulseStrength = impl_->fractureImpactSensitivity_ * 120.0f;
   settings.angularStrength = 8.0f;
@@ -2214,6 +2440,21 @@ void ArtifactAbstractLayer::applyFractureImpact(const FractureImpact& impact) {
   settings.lifetimeMax = std::max(settings.lifetimeMin, settings.lifetimeMax);
   ArtifactCore::applyFractureImpact(impl_->fractureState_, settings, impact);
   ArtifactCore::primeFractureShardMotion(impl_->fractureState_, settings, impact, localBounds());
+  if (!impl_->fractureState_.shards.empty() &&
+      (!impl_->prefractureResult_.valid ||
+       impl_->prefractureResult_.shards.size() !=
+           impl_->fractureState_.shards.size())) {
+    FractureEffect prefracture;
+    prefracture.setSourceBounds(localBounds());
+    prefracture.setImpactPoint(localBounds().center());
+    prefracture.setSettings(settings);
+    if (prefracture.generate()) {
+      impl_->prefractureResult_ = prefracture.result();
+    }
+  }
+  syncFragmentDataset(this, impl_->fractureState_,
+                      &impl_->prefractureResult_,
+                      impl_->componentEvaluationState_);
   emitImpactParticles();
 }
 
@@ -3094,6 +3335,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   fractureObj["shardDamping"] = static_cast<double>(impl_->fractureShardDamping_);
   fractureObj["shardGravity"] = static_cast<double>(impl_->fractureShardGravity_);
   fractureObj["impactSensitivity"] = static_cast<double>(impl_->fractureImpactSensitivity_);
+  fractureObj["preGenerate"] = impl_->fracturePreGenerate_;
   fractureObj["stateKind"] = static_cast<int>(impl_->fractureState_.kind);
   fractureObj["stateDamage"] = static_cast<double>(impl_->fractureState_.damage);
   fractureObj["stateLastImpact"] = static_cast<double>(impl_->fractureState_.lastImpact);
@@ -3115,6 +3357,8 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
       static_cast<double>(impl_->collisionOffsetX_);
   componentsObj["collisionOffsetY"] =
       static_cast<double>(impl_->collisionOffsetY_);
+  componentsObj["collisionFloorY"] =
+      static_cast<double>(impl_->collisionFloorY_);
   componentsObj["crowdEnabled"] = impl_->crowdComponentEnabled_;
   componentsObj["crowdCohesion"] =
       static_cast<double>(impl_->crowdCohesion_);
@@ -3532,6 +3776,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
           std::clamp(fractureObj.value(QStringLiteral("shardGravity")).toDouble(0.0), -5000.0, 5000.0));
       impl_->fractureImpactSensitivity_ = static_cast<float>(
           std::clamp(fractureObj.value(QStringLiteral("impactSensitivity")).toDouble(1.0), 0.0, 10.0));
+      impl_->fracturePreGenerate_ =
+          fractureObj.value(QStringLiteral("preGenerate")).toBool(false);
       impl_->fractureState_.kind = static_cast<FractureStateKind>(
           fractureObj.value(QStringLiteral("stateKind")).toInt(static_cast<int>(FractureStateKind::Intact)));
       impl_->fractureState_.damage = static_cast<float>(
@@ -3569,6 +3815,9 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         impl_->collisionOffsetY_ = static_cast<float>(std::clamp(
             componentsObj.value(QStringLiteral("collisionOffsetY")).toDouble(0.0),
             -100000.0, 100000.0));
+        impl_->collisionFloorY_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("collisionFloorY")).toDouble(0.0),
+            0.0, 100000.0));
         impl_->crowdComponentEnabled_ =
             componentsObj.value(QStringLiteral("crowdEnabled")).toBool(false);
         impl_->crowdCohesion_ = static_cast<float>(std::clamp(
@@ -4671,6 +4920,14 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       QStringLiteral("Enable fracture overlay, shard motion, and crack state."));
   fractureGroup.addProperty(fractureEnabledProp);
 
+  auto fracturePreGenerateProp =
+      makeProp(QStringLiteral("fracture.preGenerate"), PropertyType::Boolean,
+               impl_->fracturePreGenerate_, -835);
+  fracturePreGenerateProp->setDisplayLabel(QStringLiteral("Pre-generate Shards"));
+  fracturePreGenerateProp->setTooltip(
+      QStringLiteral("Prepare deterministic shard geometry before an impact so downstream components can use it."));
+  fractureGroup.addProperty(fracturePreGenerateProp);
+
   auto fracturePresetProp =
       makeProp(QStringLiteral("fracture.preset"), PropertyType::Integer,
                impl_->fracturePreset_, -83);
@@ -4810,6 +5067,16 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   collisionOffsetYProp->setHardRange(-100000.0, 100000.0);
   collisionOffsetYProp->setSoftRange(-4096.0, 4096.0);
   collisionGroup.addProperty(collisionOffsetYProp);
+  auto collisionFloorYProp =
+      makeProp(QStringLiteral("component.collision.floorY"),
+               PropertyType::Float,
+               static_cast<double>(impl_->collisionFloorY_), -82);
+  collisionFloorYProp->setDisplayLabel(QStringLiteral("Floor Y"));
+  collisionFloorYProp->setTooltip(
+      QStringLiteral("0 uses the composition bottom; positive values set an explicit floor."));
+  collisionFloorYProp->setHardRange(0.0, 100000.0);
+  collisionFloorYProp->setSoftRange(0.0, 4096.0);
+  collisionGroup.addProperty(collisionFloorYProp);
   auto crowdComponentEnabledProp =
       makeProp(QStringLiteral("component.crowd.enabled"),
                PropertyType::Boolean, impl_->crowdComponentEnabled_, -88);
@@ -5487,6 +5754,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       stepProp->setDisplayLabel(QStringLiteral("Step"));
       stepProp->setUnit(QStringLiteral("s"));
       stepProp->setSoftRange(-5.0, 5.0);
+      stepProp->setTooltip(
+          QStringLiteral("Positive values delay each successive clone, including its physics fall."));
       modifierGroup.addProperty(stepProp);
     } else if (descriptor.typeId ==
                QStringLiteral("artifact.modifier.sequence")) {
@@ -5976,6 +6245,15 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("fracture.enabled")) {
     impl_->fractureEnabled_ = value.toBool();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fracture.preGenerate")) {
+    const bool enabled = value.toBool();
+    if (impl_->fracturePreGenerate_ != enabled) {
+      impl_->fracturePreGenerate_ = enabled;
+      resetFractureState();
+    }
     Q_EMIT changed();
     return true;
   }
@@ -6641,6 +6919,16 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (propertyPath == QStringLiteral("component.collision.offsetY")) {
       impl_->collisionOffsetY_ = static_cast<float>(
           std::clamp(value.toDouble(), -100000.0, 100000.0));
+      impl_->lastCollisionImpactFrame_ =
+          std::numeric_limits<int64_t>::min();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.collision.floorY")) {
+      impl_->collisionFloorY_ = static_cast<float>(
+          std::clamp(value.toDouble(), 0.0, 100000.0));
       impl_->lastCollisionImpactFrame_ =
           std::numeric_limits<int64_t>::min();
       impl_->syncBuiltinComponentDescriptors();

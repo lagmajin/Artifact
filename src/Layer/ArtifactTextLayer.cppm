@@ -2484,39 +2484,51 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   sourceTextKeyframeCountProp->setTooltip(
       QStringLiteral("Number of keyframes stored on Source Text."));
   textGroup.addProperty(sourceTextKeyframeCountProp);
-  textGroup.addProperty(makeProp(QStringLiteral("text.fontFamily"),
-                                 ArtifactCore::PropertyType::String,
-                                 fontFamily().toQString(), -110));
-  textGroup.addProperty(makeProp(QStringLiteral("text.fontSize"),
-                                 ArtifactCore::PropertyType::Float, fontSize(),
-                                 -100));
-  textGroup.addProperty(makeProp(QStringLiteral("text.tracking"),
-                                 ArtifactCore::PropertyType::Float, tracking(),
-                                 -95));
-  textGroup.addProperty(makeProp(QStringLiteral("text.leading"),
-                                 ArtifactCore::PropertyType::Float, leading(),
-                                 -94));
-  textGroup.addProperty(makeProp(QStringLiteral("text.bold"),
-                                 ArtifactCore::PropertyType::Boolean, isBold(),
-                                 -93));
-  textGroup.addProperty(makeProp(QStringLiteral("text.italic"),
-                                 ArtifactCore::PropertyType::Boolean,
-                                 isItalic(), -92));
-  textGroup.addProperty(makeProp(QStringLiteral("text.allCaps"),
-                                 ArtifactCore::PropertyType::Boolean,
-                                 isAllCaps(), -91));
-  textGroup.addProperty(makeProp(QStringLiteral("text.underline"),
-                                 ArtifactCore::PropertyType::Boolean,
-                                 isUnderline(), -90));
-  textGroup.addProperty(makeProp(QStringLiteral("text.strikethrough"),
-                                 ArtifactCore::PropertyType::Boolean,
-                                 isStrikethrough(), -89));
+  auto addEssentialTextProp = [&textGroup, &makeProp](
+                                  const QString &name,
+                                  ArtifactCore::PropertyType type,
+                                  const QVariant &value, const QString &label,
+                                  int priority) {
+    auto property = makeProp(name, type, value, priority);
+    property->setDisplayLabel(label);
+    property->setAnimatable(true);
+    textGroup.addProperty(property);
+  };
+  addEssentialTextProp(QStringLiteral("text.fontFamily"),
+                       ArtifactCore::PropertyType::String,
+                       fontFamily().toQString(), QStringLiteral("Font Family"), -110);
+  addEssentialTextProp(QStringLiteral("text.fontSize"),
+                       ArtifactCore::PropertyType::Float, fontSize(),
+                       QStringLiteral("Font Size"), -100);
+  addEssentialTextProp(QStringLiteral("text.tracking"),
+                       ArtifactCore::PropertyType::Float, tracking(),
+                       QStringLiteral("Tracking"), -95);
+  addEssentialTextProp(QStringLiteral("text.leading"),
+                       ArtifactCore::PropertyType::Float, leading(),
+                       QStringLiteral("Leading"), -94);
+  addEssentialTextProp(QStringLiteral("text.bold"),
+                       ArtifactCore::PropertyType::Boolean, isBold(),
+                       QStringLiteral("Bold"), -93);
+  addEssentialTextProp(QStringLiteral("text.italic"),
+                       ArtifactCore::PropertyType::Boolean, isItalic(),
+                       QStringLiteral("Italic"), -92);
+  addEssentialTextProp(QStringLiteral("text.allCaps"),
+                       ArtifactCore::PropertyType::Boolean, isAllCaps(),
+                       QStringLiteral("All Caps"), -91);
+  addEssentialTextProp(QStringLiteral("text.underline"),
+                       ArtifactCore::PropertyType::Boolean, isUnderline(),
+                       QStringLiteral("Underline"), -90);
+  addEssentialTextProp(QStringLiteral("text.strikethrough"),
+                       ArtifactCore::PropertyType::Boolean, isStrikethrough(),
+                       QStringLiteral("Strikethrough"), -89);
 
   auto alignmentProp = makeProp(QStringLiteral("text.alignment"),
                                 ArtifactCore::PropertyType::Integer,
                                 static_cast<int>(horizontalAlignment()), -88);
   alignmentProp->setTooltip(
       QStringLiteral("0=Left, 1=Center, 2=Right, 3=Justify"));
+  alignmentProp->setDisplayLabel(QStringLiteral("Horizontal Alignment"));
+  alignmentProp->setAnimatable(true);
   textGroup.addProperty(alignmentProp);
 
   auto verticalAlignmentProp =
@@ -2525,6 +2537,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                static_cast<int>(verticalAlignment()), -87);
   verticalAlignmentProp->setTooltip(
       QStringLiteral("0=Top, 1=Middle, 2=Bottom"));
+  verticalAlignmentProp->setDisplayLabel(QStringLiteral("Vertical Alignment"));
+  verticalAlignmentProp->setAnimatable(true);
   textGroup.addProperty(verticalAlignmentProp);
 
   auto wrapModeProp = makeProp(QStringLiteral("text.wrapMode"),
@@ -2532,6 +2546,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                static_cast<int>(wrapMode()), -86);
   wrapModeProp->setTooltip(
       QStringLiteral("0=NoWrap, 1=WordWrap, 2=WrapAnywhere, 3=ManualWrap"));
+  wrapModeProp->setDisplayLabel(QStringLiteral("Wrap Mode"));
+  wrapModeProp->setAnimatable(true);
   textGroup.addProperty(wrapModeProp);
 
   auto writingModeProp = makeProp(QStringLiteral("text.writingMode"),
@@ -2539,6 +2555,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                   static_cast<int>(writingMode()), -85);
   writingModeProp->setTooltip(
       QStringLiteral("0=Horizontal, 1=Vertical"));
+  writingModeProp->setDisplayLabel(QStringLiteral("Writing Mode"));
+  writingModeProp->setAnimatable(true);
   textGroup.addProperty(writingModeProp);
 
   const QString badgeSourceText = resolvedSourceTextAtTime(this);
@@ -2685,12 +2703,17 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                            QVariant(), -72);
   colorProp->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
   colorProp->setValue(colorProp->getColorValue());
+  colorProp->setDisplayLabel(QStringLiteral("Fill Color"));
+  colorProp->setAnimatable(true);
   textGroup.addProperty(colorProp);
 
   // Stroke
-  textGroup.addProperty(makeProp(QStringLiteral("text.strokeEnabled"),
-                                 ArtifactCore::PropertyType::Boolean,
-                                 isStrokeEnabled(), -71));
+  auto strokeEnabledProp = makeProp(QStringLiteral("text.strokeEnabled"),
+                                    ArtifactCore::PropertyType::Boolean,
+                                    isStrokeEnabled(), -71);
+  strokeEnabledProp->setDisplayLabel(QStringLiteral("Stroke Enabled"));
+  strokeEnabledProp->setAnimatable(true);
+  textGroup.addProperty(strokeEnabledProp);
   const auto sc = strokeColor();
   auto strokeColorProp = persistentLayerProperty(
       QStringLiteral("text.strokeColor"), ArtifactCore::PropertyType::Color,
@@ -2698,15 +2721,23 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   strokeColorProp->setColorValue(
       QColor::fromRgbF(sc.r(), sc.g(), sc.b(), sc.a()));
   strokeColorProp->setValue(strokeColorProp->getColorValue());
+  strokeColorProp->setDisplayLabel(QStringLiteral("Stroke Color"));
+  strokeColorProp->setAnimatable(true);
   textGroup.addProperty(strokeColorProp);
-  textGroup.addProperty(makeProp(QStringLiteral("text.strokeWidth"),
-                                 ArtifactCore::PropertyType::Float,
-                                 strokeWidth(), -69));
+  auto strokeWidthProp = makeProp(QStringLiteral("text.strokeWidth"),
+                                  ArtifactCore::PropertyType::Float,
+                                  strokeWidth(), -69);
+  strokeWidthProp->setDisplayLabel(QStringLiteral("Stroke Width"));
+  strokeWidthProp->setAnimatable(true);
+  textGroup.addProperty(strokeWidthProp);
 
   // Shadow
-  textGroup.addProperty(makeProp(QStringLiteral("text.shadowEnabled"),
-                                 ArtifactCore::PropertyType::Boolean,
-                                 isShadowEnabled(), -68));
+  auto shadowEnabledProp = makeProp(QStringLiteral("text.shadowEnabled"),
+                                    ArtifactCore::PropertyType::Boolean,
+                                    isShadowEnabled(), -68);
+  shadowEnabledProp->setDisplayLabel(QStringLiteral("Shadow Enabled"));
+  shadowEnabledProp->setAnimatable(true);
+  textGroup.addProperty(shadowEnabledProp);
   const auto shc = shadowColor();
   auto shadowColorProp = persistentLayerProperty(
       QStringLiteral("text.shadowColor"), ArtifactCore::PropertyType::Color,
