@@ -692,6 +692,11 @@ public:
     float fragmentVelocityStretchMax_ = 3.0f;
     bool fragmentColorVariationEnabled_ = false;
     float fragmentColorVariation_ = 0.35f;
+    bool fragmentClonerOutputEnabled_ = false;
+    int fragmentClonerOutputCount_ = 1;
+    float fragmentClonerOutputSpacingX_ = 24.0f;
+    float fragmentClonerOutputSpacingY_ = 0.0f;
+    float fragmentClonerOutputTimeOffsetFrames_ = 0.0f;
     FractureState fractureState_;
     FractureResult prefractureResult_;
     mutable int64_t fractureMotionLastFrame_ = std::numeric_limits<int64_t>::min();
@@ -2043,14 +2048,23 @@ void syncFragmentDataset(const ArtifactAbstractLayer* layer,
     fragment.debris = shard.debris;
     LayerFragmentGeometry geometry;
     geometry.geometryHandle = fragment.geometryHandle;
+    geometry.materialHandle = QStringLiteral("layer.source:%1").arg(ownerLayerId);
     if (sourceShard && sourceShard->polygon.size() >= 3) {
       const QVector3D centroid = sourceShard->sourceCentroid;
+      const QRectF bounds = layer->localBounds();
+      const float width = std::max(1.0f, static_cast<float>(bounds.width()));
+      const float height = std::max(1.0f, static_cast<float>(bounds.height()));
       geometry.localPolygon.reserve(
+          static_cast<std::size_t>(sourceShard->polygon.size()));
+      geometry.localUV.reserve(
           static_cast<std::size_t>(sourceShard->polygon.size()));
       for (const QPointF& point : sourceShard->polygon) {
         geometry.localPolygon.emplace_back(
             static_cast<float>(point.x()) - centroid.x(),
             static_cast<float>(point.y()) - centroid.y());
+        geometry.localUV.emplace_back(
+            (static_cast<float>(point.x()) - static_cast<float>(bounds.left())) / width,
+            (static_cast<float>(point.y()) - static_cast<float>(bounds.top())) / height);
       }
     } else {
       const float seed = static_cast<float>(index) * 1.61803398875f;
@@ -2062,6 +2076,17 @@ void syncFragmentDataset(const ArtifactAbstractLayer* layer,
           QVector2D(0.5f + skew * 1.5f, 0.8f + pinch * 0.8f),
           QVector2D(5.8f + skew * 11.0f, 9.5f - pinch * 0.5f),
           QVector2D(-6.2f + skew * 9.0f, 8.2f + pinch * 2.0f)};
+      geometry.localUV.reserve(geometry.localPolygon.size());
+      const QRectF bounds = layer->localBounds();
+      const float width = std::max(1.0f, static_cast<float>(bounds.width()));
+      const float height = std::max(1.0f, static_cast<float>(bounds.height()));
+      for (const QVector2D& point : geometry.localPolygon) {
+        geometry.localUV.emplace_back(
+            std::clamp((shard.position.x() + point.x() -
+                        static_cast<float>(bounds.left())) / width, 0.0f, 1.0f),
+            std::clamp((shard.position.y() + point.y() -
+                        static_cast<float>(bounds.top())) / height, 0.0f, 1.0f));
+      }
     }
     fragments.push_back(std::move(fragment));
     fragmentGeometry.push_back(std::move(geometry));
@@ -2443,7 +2468,38 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
           1.0f + (varied.blueF() - 1.0f) * mix,
           alpha * (0.42f + (varied.alphaF() - 0.42f) * mix));
     }
-    fractureElement.shards.push_back({std::move(shardPoly), shardColor});
+    const int cloneCount = impl_->fragmentClonerOutputEnabled_
+        ? std::clamp(impl_->fragmentClonerOutputCount_, 1, 256)
+        : 1;
+    const QVector3D cloneOrigin = baseTransform.map(QVector3D());
+    const QVector3D cloneStep = baseTransform.map(QVector3D(
+        impl_->fragmentClonerOutputSpacingX_,
+        impl_->fragmentClonerOutputSpacingY_, 0.0f)) - cloneOrigin;
+    const float cloneTimeStepSeconds =
+        impl_->fragmentClonerOutputTimeOffsetFrames_ /
+        static_cast<float>(std::max(1.0, effectiveLayerFrameRate(this)));
+    const QVector3D cloneVelocityStep = baseTransform.map(
+        fragment.linearVelocity * cloneTimeStepSeconds) - cloneOrigin;
+    for (int cloneIndex = 0; cloneIndex < cloneCount; ++cloneIndex) {
+      std::vector<Detail::float2> clonePolygon = shardPoly;
+      const float cloneTimeIndex = static_cast<float>(cloneIndex);
+      const float offsetX = (cloneStep.x() + cloneVelocityStep.x()) *
+                            cloneTimeIndex;
+      const float offsetY = (cloneStep.y() + cloneVelocityStep.y()) *
+                            cloneTimeIndex;
+      for (auto& point : clonePolygon) {
+        point.x += offsetX;
+        point.y += offsetY;
+      }
+      const float cloneOpacity = 1.0f -
+          0.18f * static_cast<float>(cloneIndex) /
+              static_cast<float>(std::max(1, cloneCount - 1));
+      const FloatColor cloneColor(
+          shardColor.r(), shardColor.g(), shardColor.b(),
+          shardColor.a() * cloneOpacity);
+      fractureElement.shards.push_back(
+          {std::move(clonePolygon), cloneColor});
+    }
   }
   submitFractureRenderElement(renderer, fractureElement);
 }
@@ -3530,6 +3586,16 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
       impl_->fragmentColorVariationEnabled_;
   fragmentAppearanceObj["colorVariation"] =
       static_cast<double>(impl_->fragmentColorVariation_);
+  fragmentAppearanceObj["clonerOutputEnabled"] =
+      impl_->fragmentClonerOutputEnabled_;
+  fragmentAppearanceObj["clonerOutputCount"] =
+      impl_->fragmentClonerOutputCount_;
+  fragmentAppearanceObj["clonerOutputSpacingX"] =
+      static_cast<double>(impl_->fragmentClonerOutputSpacingX_);
+  fragmentAppearanceObj["clonerOutputSpacingY"] =
+      static_cast<double>(impl_->fragmentClonerOutputSpacingY_);
+  fragmentAppearanceObj["clonerOutputTimeOffsetFrames"] =
+      static_cast<double>(impl_->fragmentClonerOutputTimeOffsetFrames_);
   obj["fragmentAppearance"] = fragmentAppearanceObj;
   QJsonObject componentsObj;
   componentsObj["scriptEnabled"] = impl_->scriptComponentEnabled_;
@@ -4011,6 +4077,19 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       impl_->fragmentColorVariation_ = static_cast<float>(std::clamp(
           appearanceObj.value(QStringLiteral("colorVariation")).toDouble(0.35),
           0.0, 1.0));
+      impl_->fragmentClonerOutputEnabled_ = appearanceObj.value(
+          QStringLiteral("clonerOutputEnabled")).toBool(false);
+      impl_->fragmentClonerOutputCount_ = std::clamp(appearanceObj.value(
+          QStringLiteral("clonerOutputCount")).toInt(1), 1, 256);
+      impl_->fragmentClonerOutputSpacingX_ = static_cast<float>(std::clamp(
+          appearanceObj.value(QStringLiteral("clonerOutputSpacingX")).toDouble(24.0),
+          -100000.0, 100000.0));
+      impl_->fragmentClonerOutputSpacingY_ = static_cast<float>(std::clamp(
+          appearanceObj.value(QStringLiteral("clonerOutputSpacingY")).toDouble(0.0),
+          -100000.0, 100000.0));
+      impl_->fragmentClonerOutputTimeOffsetFrames_ = static_cast<float>(std::clamp(
+          appearanceObj.value(QStringLiteral("clonerOutputTimeOffsetFrames")).toDouble(0.0),
+          -10000.0, 10000.0));
   }
   if (obj.contains("components") && obj["components"].isObject()) {
       const QJsonObject componentsObj = obj["components"].toObject();
@@ -5292,6 +5371,40 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   colorVariationProp->setHardRange(0.0, 1.0);
   colorVariationProp->setSoftRange(0.0, 1.0);
   fragmentAppearanceGroup.addProperty(colorVariationProp);
+  auto fragmentClonerOutputEnabledProp = makeProp(
+      QStringLiteral("fragment.clonerOutput.enabled"), PropertyType::Boolean,
+      impl_->fragmentClonerOutputEnabled_, -67);
+  fragmentClonerOutputEnabledProp->setDisplayLabel(
+      QStringLiteral("Fragment Cloner Output"));
+  fragmentAppearanceGroup.addProperty(fragmentClonerOutputEnabledProp);
+  auto fragmentClonerOutputCountProp = makeProp(
+      QStringLiteral("fragment.clonerOutput.count"), PropertyType::Integer,
+      impl_->fragmentClonerOutputCount_, -66);
+  fragmentClonerOutputCountProp->setDisplayLabel(QStringLiteral("Clone Count"));
+  fragmentClonerOutputCountProp->setHardRange(1.0, 256.0);
+  fragmentClonerOutputCountProp->setSoftRange(1.0, 32.0);
+  fragmentAppearanceGroup.addProperty(fragmentClonerOutputCountProp);
+  auto fragmentClonerOutputSpacingXProp = makeProp(
+      QStringLiteral("fragment.clonerOutput.spacingX"), PropertyType::Float,
+      static_cast<double>(impl_->fragmentClonerOutputSpacingX_), -65);
+  fragmentClonerOutputSpacingXProp->setDisplayLabel(QStringLiteral("Clone Spacing X"));
+  fragmentClonerOutputSpacingXProp->setUnit(QStringLiteral("px"));
+  fragmentAppearanceGroup.addProperty(fragmentClonerOutputSpacingXProp);
+  auto fragmentClonerOutputSpacingYProp = makeProp(
+      QStringLiteral("fragment.clonerOutput.spacingY"), PropertyType::Float,
+      static_cast<double>(impl_->fragmentClonerOutputSpacingY_), -64);
+  fragmentClonerOutputSpacingYProp->setDisplayLabel(QStringLiteral("Clone Spacing Y"));
+  fragmentClonerOutputSpacingYProp->setUnit(QStringLiteral("px"));
+  fragmentAppearanceGroup.addProperty(fragmentClonerOutputSpacingYProp);
+  auto fragmentClonerOutputTimeOffsetProp = makeProp(
+      QStringLiteral("fragment.clonerOutput.timeOffsetFrames"), PropertyType::Float,
+      static_cast<double>(impl_->fragmentClonerOutputTimeOffsetFrames_), -63);
+  fragmentClonerOutputTimeOffsetProp->setDisplayLabel(
+      QStringLiteral("Time Offset"));
+  fragmentClonerOutputTimeOffsetProp->setUnit(QStringLiteral("frames"));
+  fragmentClonerOutputTimeOffsetProp->setHardRange(-10000.0, 10000.0);
+  fragmentClonerOutputTimeOffsetProp->setSoftRange(-60.0, 60.0);
+  fragmentAppearanceGroup.addProperty(fragmentClonerOutputTimeOffsetProp);
 
   PropertyGroup componentGroup(QStringLiteral("Components"));
   auto scriptComponentEnabledProp =
@@ -6588,6 +6701,29 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   if (propertyPath == QStringLiteral("fragment.colorVariation.amount")) {
     impl_->fragmentColorVariation_ = static_cast<float>(
         std::clamp(value.toDouble(), 0.0, 1.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fragment.clonerOutput.enabled")) {
+    impl_->fragmentClonerOutputEnabled_ = value.toBool();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fragment.clonerOutput.count")) {
+    impl_->fragmentClonerOutputCount_ = std::clamp(value.toInt(), 1, 256);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fragment.clonerOutput.spacingX")) {
+    impl_->fragmentClonerOutputSpacingX_ = static_cast<float>(
+        std::clamp(value.toDouble(), -100000.0, 100000.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fragment.clonerOutput.spacingY")) {
+    impl_->fragmentClonerOutputSpacingY_ = static_cast<float>(
+        std::clamp(value.toDouble(), -100000.0, 100000.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fragment.clonerOutput.timeOffsetFrames")) {
+    impl_->fragmentClonerOutputTimeOffsetFrames_ = static_cast<float>(
+        std::clamp(value.toDouble(), -10000.0, 10000.0));
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.enabled")) {

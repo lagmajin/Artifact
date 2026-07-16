@@ -40,7 +40,9 @@ struct CloneRenderInstance {
 struct FragmentRenderInstance {
     SimulationEntityId entityId;
     QString geometryHandle;
+    QString materialHandle;
     std::vector<QVector2D> localPolygon;
+    std::vector<QVector2D> localUV;
     QMatrix4x4 transform;
     float weight = 1.0f;
 };
@@ -693,7 +695,9 @@ export std::vector<FragmentRenderInstance> fragmentRenderInstances(
         FragmentRenderInstance instance;
         instance.entityId = fragment.entityId;
         instance.geometryHandle = fragment.geometryHandle;
+        instance.materialHandle = geometry->materialHandle;
         instance.localPolygon = geometry->localPolygon;
+        instance.localUV = geometry->localUV;
         instance.transform = baseTransform * fragment.transform;
         instance.weight = std::clamp(fragment.opacity, 0.0f, 1.0f);
         instances.push_back(std::move(instance));

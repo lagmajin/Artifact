@@ -270,7 +270,9 @@ struct LayerFragmentState {
 
 struct LayerFragmentGeometry {
     QString geometryHandle;
+    QString materialHandle;
     std::vector<QVector2D> localPolygon;
+    std::vector<QVector2D> localUV;
 };
 
 struct LayerEvaluationState {
