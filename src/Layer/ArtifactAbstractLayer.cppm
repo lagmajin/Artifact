@@ -7034,21 +7034,29 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                descriptor.typeId == QStringLiteral("artifact.modifier.random")) {
       const bool random = descriptor.typeId == QStringLiteral("artifact.modifier.random");
       auto numberProp = [&](const QString& name, const QString& label,
-                            double fallback, int order) {
+                            double fallback, int order, const QString& unit,
+                            double softMin, double softMax) {
         auto prop = makeProp(modifierPrefix + name, PropertyType::Float,
                              descriptor.settings.value(name).toDouble(fallback),
                              orderBase + order);
         prop->setDisplayLabel(label);
-        prop->setUnit(QStringLiteral("px"));
-        prop->setSoftRange(-1000.0, 1000.0);
+        if (!unit.isEmpty()) {
+          prop->setUnit(unit);
+        }
+        prop->setSoftRange(softMin, softMax);
         modifierGroup.addProperty(prop);
       };
-      numberProp(QStringLiteral("positionX"), QStringLiteral("Position X"), 0.0, 1);
-      numberProp(QStringLiteral("positionY"), QStringLiteral("Position Y"), 0.0, 2);
-      numberProp(QStringLiteral("positionZ"), QStringLiteral("Position Z"), 0.0, 3);
-      numberProp(QStringLiteral("rotationZ"), QStringLiteral("Rotation Z"), 0.0, 4);
+      numberProp(QStringLiteral("positionX"), QStringLiteral("Position X"), 0.0, 1,
+                 QStringLiteral("px"), -1000.0, 1000.0);
+      numberProp(QStringLiteral("positionY"), QStringLiteral("Position Y"), 0.0, 2,
+                 QStringLiteral("px"), -1000.0, 1000.0);
+      numberProp(QStringLiteral("positionZ"), QStringLiteral("Position Z"), 0.0, 3,
+                 QStringLiteral("px"), -1000.0, 1000.0);
+      numberProp(QStringLiteral("rotationZ"), QStringLiteral("Rotation Z"), 0.0, 4,
+                 QStringLiteral("deg"), -360.0, 360.0);
       if (random) {
-        numberProp(QStringLiteral("scaleVariance"), QStringLiteral("Scale Variance"), 0.0, 5);
+        numberProp(QStringLiteral("scaleVariance"), QStringLiteral("Scale Variance"), 0.0, 5,
+                   QString(), 0.0, 1.0);
         auto seedProp = makeProp(modifierPrefix + QStringLiteral("seed"),
                                  PropertyType::Integer,
                                  descriptor.settings.value(QStringLiteral("seed")).toInt(1),
@@ -7057,9 +7065,12 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
         seedProp->setHardRange(-2147483647.0, 2147483647.0);
         modifierGroup.addProperty(seedProp);
       } else {
-        numberProp(QStringLiteral("scaleX"), QStringLiteral("Scale X"), 1.0, 5);
-        numberProp(QStringLiteral("scaleY"), QStringLiteral("Scale Y"), 1.0, 6);
-        numberProp(QStringLiteral("scaleZ"), QStringLiteral("Scale Z"), 1.0, 7);
+        numberProp(QStringLiteral("scaleX"), QStringLiteral("Scale X"), 1.0, 5,
+                   QString(), 0.0, 4.0);
+        numberProp(QStringLiteral("scaleY"), QStringLiteral("Scale Y"), 1.0, 6,
+                   QString(), 0.0, 4.0);
+        numberProp(QStringLiteral("scaleZ"), QStringLiteral("Scale Z"), 1.0, 7,
+                   QString(), 0.0, 4.0);
       }
       auto strengthProp = makeProp(
           modifierPrefix + QStringLiteral("strength"), PropertyType::Float,
