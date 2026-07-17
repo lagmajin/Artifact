@@ -272,6 +272,7 @@ private:
 - physics solver はコンポジションの実効 frame rate を参照し、30fps 固定にならないようにした。
 - Step modifier（段階的な位置・回転・スケール変化）を追加し、既存の Time Offset modifier を Delay 相当として利用できるようにした。
 - clone physics の `linearDamping` を反発速度へ反映した。
+- Plain / Random / Step modifier の回転軸をX/Y/Zへ拡張し、3Dレイヤーでも編集できるようにした。
 - 外部 physics engine や新規イベント配線は導入していないため、現段階はクローン描画向けの軽量 solver として扱う。
 
 ---
