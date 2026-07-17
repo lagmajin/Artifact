@@ -1,6 +1,7 @@
 module;
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <utility>
 #include <algorithm>
 #include <cmath>
@@ -992,6 +993,66 @@ inline void applyGeneratorTransformStack(const QJsonObject& settings,
     }
 }
 
+inline void applyCloneEffectorModifiers(
+    const std::vector<LayerModifierDescriptor>& modifiers,
+    const int cloneIndex,
+    QMatrix4x4& cloneTransform)
+{
+    for (const auto& modifier : modifiers) {
+        if (!modifier.enabled) {
+            continue;
+        }
+        const auto& settings = modifier.settings;
+        const float strength = std::clamp(static_cast<float>(
+            settings.value(QStringLiteral("strength")).toDouble(1.0)), 0.0f, 1.0f);
+        if (modifier.typeId == QStringLiteral("artifact.modifier.plain")) {
+            const float positionX = static_cast<float>(
+                settings.value(QStringLiteral("positionX")).toDouble(0.0)) * strength;
+            const float positionY = static_cast<float>(
+                settings.value(QStringLiteral("positionY")).toDouble(0.0)) * strength;
+            const float positionZ = static_cast<float>(
+                settings.value(QStringLiteral("positionZ")).toDouble(0.0)) * strength;
+            cloneTransform.translate(positionX, positionY, positionZ);
+            const float rotationZ = static_cast<float>(
+                settings.value(QStringLiteral("rotationZ")).toDouble(0.0)) * strength;
+            if (rotationZ != 0.0f) {
+                cloneTransform.rotate(rotationZ, 0.0f, 0.0f, 1.0f);
+            }
+            const float scaleX = 1.0f + (static_cast<float>(
+                settings.value(QStringLiteral("scaleX")).toDouble(1.0)) - 1.0f) * strength;
+            const float scaleY = 1.0f + (static_cast<float>(
+                settings.value(QStringLiteral("scaleY")).toDouble(1.0)) - 1.0f) * strength;
+            const float scaleZ = 1.0f + (static_cast<float>(
+                settings.value(QStringLiteral("scaleZ")).toDouble(1.0)) - 1.0f) * strength;
+            cloneTransform.scale(scaleX, scaleY, scaleZ);
+        } else if (modifier.typeId == QStringLiteral("artifact.modifier.random")) {
+            const int seed = settings.value(QStringLiteral("seed")).toInt(1);
+            std::mt19937 rng(static_cast<std::uint32_t>(seed) ^
+                             (static_cast<std::uint32_t>(cloneIndex) * 0x9E3779B9u));
+            std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
+            const float positionX = static_cast<float>(
+                settings.value(QStringLiteral("positionX")).toDouble(0.0));
+            const float positionY = static_cast<float>(
+                settings.value(QStringLiteral("positionY")).toDouble(0.0));
+            const float positionZ = static_cast<float>(
+                settings.value(QStringLiteral("positionZ")).toDouble(0.0));
+            cloneTransform.translate(unit(rng) * positionX * strength,
+                                     unit(rng) * positionY * strength,
+                                     unit(rng) * positionZ * strength);
+            const float rotationZ = static_cast<float>(
+                settings.value(QStringLiteral("rotationZ")).toDouble(0.0));
+            cloneTransform.rotate(unit(rng) * rotationZ * strength,
+                                  0.0f, 0.0f, 1.0f);
+            const float scaleVariance = std::max(0.0f, static_cast<float>(
+                settings.value(QStringLiteral("scaleVariance")).toDouble(0.0)));
+            const float scale = 1.0f + unit(rng) * scaleVariance * strength;
+            cloneTransform.scale(std::max(0.001f, scale),
+                                 std::max(0.001f, scale),
+                                 std::max(0.001f, scale));
+        }
+    }
+}
+
 std::vector<CloneRenderInstance> clonerComponentInstances(
       const ArtifactAbstractLayer* layer,
       const QMatrix4x4& baseTransform)
@@ -1057,6 +1118,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
                                                  startPos.z() + spacingZ * z);
                         applyGeneratorTransformStack(settings, cloneTransform);
                         const int cloneIndex = z * (rows * cols) + y * cols + x;
+                        applyCloneEffectorModifiers(modifiers, cloneIndex, cloneTransform);
                         appendCloneInstance(
                             settings, cloneTransform, 1.0f, cloneIndex);
                     }
@@ -1093,6 +1155,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
                 cloneTransform.rotate(angle + rotationStep * static_cast<float>(i),
                                       0.0f, 0.0f, 1.0f);
                 applyGeneratorTransformStack(settings, cloneTransform);
+                applyCloneEffectorModifiers(modifiers, i, cloneTransform);
                 appendCloneInstance(
                     settings, cloneTransform,
                     1.0f - opacityDecay * static_cast<float>(i), i);
@@ -1141,6 +1204,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
                         unit(rng) * 30.0f * mix,
                     0.0f, 0.0f, 1.0f);
                 applyGeneratorTransformStack(settings, cloneTransform);
+                applyCloneEffectorModifiers(modifiers, i, cloneTransform);
                 appendCloneInstance(
                     settings, cloneTransform,
                     1.0f - opacityDecay * static_cast<float>(i), i);
@@ -1160,6 +1224,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
                                       0.0f, 1.0f);
             }
             applyGeneratorTransformStack(settings, cloneTransform);
+            applyCloneEffectorModifiers(modifiers, cloneIndex, cloneTransform);
             appendCloneInstance(
                 settings, cloneTransform,
                 1.0f - opacityDecay * static_cast<float>(cloneIndex),
