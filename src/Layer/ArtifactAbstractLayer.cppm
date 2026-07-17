@@ -7085,6 +7085,48 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       strengthProp->setHardRange(0.0, 1.0);
       strengthProp->setSoftRange(0.0, 1.0);
       modifierGroup.addProperty(strengthProp);
+    } else if (descriptor.typeId == QStringLiteral("artifact.modifier.spline")) {
+      auto splineProp = [&](const QString& name, const QString& label,
+                            double fallback, int order, const QString& unit,
+                            double softMin, double softMax) {
+        auto prop = makeProp(modifierPrefix + name, PropertyType::Float,
+                             descriptor.settings.value(name).toDouble(fallback),
+                             orderBase + order);
+        prop->setDisplayLabel(label);
+        if (!unit.isEmpty()) {
+          prop->setUnit(unit);
+        }
+        prop->setSoftRange(softMin, softMax);
+        modifierGroup.addProperty(prop);
+      };
+      splineProp(QStringLiteral("startX"), QStringLiteral("Start X"), 0.0, 1,
+                 QStringLiteral("px"), -1000.0, 1000.0);
+      splineProp(QStringLiteral("startY"), QStringLiteral("Start Y"), 0.0, 2,
+                 QStringLiteral("px"), -1000.0, 1000.0);
+      splineProp(QStringLiteral("startZ"), QStringLiteral("Start Z"), 0.0, 3,
+                 QStringLiteral("px"), -1000.0, 1000.0);
+      splineProp(QStringLiteral("controlX"), QStringLiteral("Control X"), 0.0, 4,
+                 QStringLiteral("px"), -1000.0, 1000.0);
+      splineProp(QStringLiteral("controlY"), QStringLiteral("Control Y"), 0.0, 5,
+                 QStringLiteral("px"), -1000.0, 1000.0);
+      splineProp(QStringLiteral("controlZ"), QStringLiteral("Control Z"), 0.0, 6,
+                 QStringLiteral("px"), -1000.0, 1000.0);
+      splineProp(QStringLiteral("endX"), QStringLiteral("End X"), 0.0, 7,
+                 QStringLiteral("px"), -1000.0, 1000.0);
+      splineProp(QStringLiteral("endY"), QStringLiteral("End Y"), 0.0, 8,
+                 QStringLiteral("px"), -1000.0, 1000.0);
+      splineProp(QStringLiteral("endZ"), QStringLiteral("End Z"), 0.0, 9,
+                 QStringLiteral("px"), -1000.0, 1000.0);
+      splineProp(QStringLiteral("indexScale"), QStringLiteral("Index Scale"), 0.1, 10,
+                 QString(), 0.0001, 1.0);
+      auto strengthProp = makeProp(
+          modifierPrefix + QStringLiteral("strength"), PropertyType::Float,
+          descriptor.settings.value(QStringLiteral("strength")).toDouble(1.0),
+          orderBase + 11);
+      strengthProp->setDisplayLabel(QStringLiteral("Strength"));
+      strengthProp->setHardRange(0.0, 1.0);
+      strengthProp->setSoftRange(0.0, 1.0);
+      modifierGroup.addProperty(strengthProp);
     } else if (descriptor.typeId == QStringLiteral("artifact.modifier.plain") ||
                descriptor.typeId == QStringLiteral("artifact.modifier.random") ||
                descriptor.typeId == QStringLiteral("artifact.modifier.step")) {
@@ -8147,6 +8189,19 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         descriptor.settings[QStringLiteral("phase")] = 0.0;
         descriptor.settings[QStringLiteral("indexPhase")] = 0.0;
         descriptor.settings[QStringLiteral("strength")] = 1.0;
+      } else if (requestedType == QStringLiteral("spline")) {
+        descriptor.typeId = QStringLiteral("artifact.modifier.spline");
+        descriptor.settings[QStringLiteral("startX")] = 0.0;
+        descriptor.settings[QStringLiteral("startY")] = 0.0;
+        descriptor.settings[QStringLiteral("startZ")] = 0.0;
+        descriptor.settings[QStringLiteral("controlX")] = 0.0;
+        descriptor.settings[QStringLiteral("controlY")] = 0.0;
+        descriptor.settings[QStringLiteral("controlZ")] = 0.0;
+        descriptor.settings[QStringLiteral("endX")] = 0.0;
+        descriptor.settings[QStringLiteral("endY")] = 0.0;
+        descriptor.settings[QStringLiteral("endZ")] = 0.0;
+        descriptor.settings[QStringLiteral("indexScale")] = 0.1;
+        descriptor.settings[QStringLiteral("strength")] = 1.0;
       } else {
         descriptor.typeId = QStringLiteral("artifact.modifier.time-offset");
         descriptor.settings[QStringLiteral("step")] = 0.0;
@@ -8310,7 +8365,17 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
             field == QStringLiteral("amplitudeZ") ||
             field == QStringLiteral("frequency") ||
             field == QStringLiteral("phase") ||
-            field == QStringLiteral("indexPhase")) {
+            field == QStringLiteral("indexPhase") ||
+            field == QStringLiteral("startX") ||
+            field == QStringLiteral("startY") ||
+            field == QStringLiteral("startZ") ||
+            field == QStringLiteral("controlX") ||
+            field == QStringLiteral("controlY") ||
+            field == QStringLiteral("controlZ") ||
+            field == QStringLiteral("endX") ||
+            field == QStringLiteral("endY") ||
+            field == QStringLiteral("endZ") ||
+            field == QStringLiteral("indexScale")) {
           return setSetting(field, value.toDouble());
         }
       }

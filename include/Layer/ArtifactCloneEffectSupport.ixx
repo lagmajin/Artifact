@@ -1120,6 +1120,24 @@ inline void applyCloneEffectorModifiers(
                 static_cast<float>(settings.value(QStringLiteral("amplitudeX")).toDouble(0.0)) * wave,
                 static_cast<float>(settings.value(QStringLiteral("amplitudeY")).toDouble(0.0)) * wave,
                 static_cast<float>(settings.value(QStringLiteral("amplitudeZ")).toDouble(0.0)) * wave);
+        } else if (modifier.typeId == QStringLiteral("artifact.modifier.spline")) {
+            const float indexScale = std::max(0.0001f, static_cast<float>(
+                settings.value(QStringLiteral("indexScale")).toDouble(0.1)));
+            const float t = std::clamp(static_cast<float>(cloneIndex) * indexScale,
+                                       0.0f, 1.0f);
+            const float oneMinusT = 1.0f - t;
+            const auto point = [&](const QString& prefix) {
+                return QVector3D(
+                    static_cast<float>(settings.value(prefix + QStringLiteral("X")).toDouble(0.0)),
+                    static_cast<float>(settings.value(prefix + QStringLiteral("Y")).toDouble(0.0)),
+                    static_cast<float>(settings.value(prefix + QStringLiteral("Z")).toDouble(0.0)));
+            };
+            const QVector3D start = point(QStringLiteral("start"));
+            const QVector3D control = point(QStringLiteral("control"));
+            const QVector3D end = point(QStringLiteral("end"));
+            const QVector3D position = start * (oneMinusT * oneMinusT) +
+                control * (2.0f * oneMinusT * t) + end * (t * t);
+            cloneTransform.translate(position * strength);
         } else if (modifier.typeId == QStringLiteral("artifact.modifier.step")) {
             const float step = static_cast<float>(cloneIndex) * strength;
             cloneTransform.translate(
