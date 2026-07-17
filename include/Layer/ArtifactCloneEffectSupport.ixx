@@ -1210,7 +1210,9 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
 
         const auto& settings = generator.settings;
         if (generator.typeId ==
-            QStringLiteral("artifact.generator.cloner.grid")) {
+                QStringLiteral("artifact.generator.cloner.grid") ||
+            generator.typeId ==
+                QStringLiteral("artifact.generator.cloner.matrix")) {
             const int cols = std::max(
                 1, generatorSettingInt(settings, QStringLiteral("columns"), 3));
             const int rows = std::max(

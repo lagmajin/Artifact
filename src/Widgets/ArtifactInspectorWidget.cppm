@@ -5654,6 +5654,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                      }
                      const QStringList generatorChoices = {
                          QStringLiteral("grid"),
+                         QStringLiteral("matrix"),
                          QStringLiteral("radial"),
                      };
                      bool accepted = false;

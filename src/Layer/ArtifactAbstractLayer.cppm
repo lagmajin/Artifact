@@ -7833,7 +7833,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         descriptor.settings[QStringLiteral("startAngle")] = 0.0;
         descriptor.settings[QStringLiteral("endAngle")] = 360.0;
       } else {
-        descriptor.typeId = QStringLiteral("artifact.generator.cloner.grid");
+        descriptor.typeId = requestedType == QStringLiteral("matrix")
+            ? QStringLiteral("artifact.generator.cloner.matrix")
+            : QStringLiteral("artifact.generator.cloner.grid");
         descriptor.settings[QStringLiteral("columns")] = 3;
         descriptor.settings[QStringLiteral("rows")] = 3;
         descriptor.settings[QStringLiteral("depth")] = 1;
