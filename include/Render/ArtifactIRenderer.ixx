@@ -77,26 +77,29 @@ export enum class GlobalIlluminationMode {
 };
 
 export enum class GlobalIlluminationQuality {
-  Preview,
-  High,
-  Final
+  Performance,
+  Balanced,
+  Quality
 };
 
 export struct GlobalIlluminationSettings {
   bool enabled = false;
   GlobalIlluminationMode mode = GlobalIlluminationMode::Auto;
-  GlobalIlluminationQuality quality = GlobalIlluminationQuality::Preview;
+  GlobalIlluminationQuality quality = GlobalIlluminationQuality::Balanced;
   bool temporalAccumulation = true;
   bool denoise = true;
-  unsigned int ssgiRaySteps = 16;
-  unsigned int ddgiRaysPerProbe = 64;
-  unsigned int ddgiProbeUpdateBudget = 64;
+  bool adaptiveBudget = true;
+  float targetGpuTimeMs = 3.0f;
+  float ssgiResolutionScale = 0.5f;
+  unsigned int ssgiRaySteps = 10;
+  unsigned int ddgiRaysPerProbe = 48;
+  unsigned int ddgiProbeUpdateBudget = 128;
 };
 
 export struct GlobalIlluminationState {
   GlobalIlluminationMode requestedMode = GlobalIlluminationMode::Off;
   GlobalIlluminationMode selectedMode = GlobalIlluminationMode::Off;
-  GlobalIlluminationQuality quality = GlobalIlluminationQuality::Preview;
+  GlobalIlluminationQuality quality = GlobalIlluminationQuality::Balanced;
   bool rayTracingSupported = false;
   bool usingFallback = false;
 };
@@ -140,6 +143,8 @@ public:
   QString glyphAtlasDebugState() const;
   QString rayTracingDebugState() const;
   void setGlobalIlluminationSettings(const GlobalIlluminationSettings &settings);
+  static GlobalIlluminationSettings recommendedGlobalIlluminationSettings(
+      GlobalIlluminationQuality quality);
   GlobalIlluminationSettings globalIlluminationSettings() const;
   GlobalIlluminationState globalIlluminationState() const;
   QString globalIlluminationDebugState() const;
