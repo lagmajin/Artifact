@@ -272,6 +272,7 @@ private:
 - physics solver はコンポジションの実効 frame rate を参照し、30fps 固定にならないようにした。
 - Step modifier（段階的な位置・回転・スケール変化）を追加し、既存の Time Offset modifier を Delay 相当として利用できるようにした。
 - clone physics の `linearDamping` を反発速度へ反映した。
+- physics setter側でも重力・減衰・wiggle値を正規化し、Inspector外からの極端な値を抑止した。
 - Plain / Random / Step modifier の回転軸をX/Y/Zへ拡張し、3Dレイヤーでも編集できるようにした。
 - clone physics の専用設定を `physics` JSONオブジェクトへ整理し、旧レイヤー直下形式の読み込み互換も維持した。
 - 保存時も旧トップレベルキーを併記し、旧版の読み手に対する書き込み互換を維持した。
