@@ -3927,6 +3927,11 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
       static_cast<double>(impl_->clonePhysicsInitialVelocityY_);
   physicsObj[QStringLiteral("cloneMaxBounces")] = impl_->clonePhysicsMaxBounces_;
   obj["physics"] = physicsObj;
+  // Keep legacy aliases for projects/readers that predate the nested form.
+  obj[QStringLiteral("clonePhysicsInitialVelocityY")] =
+      static_cast<double>(impl_->clonePhysicsInitialVelocityY_);
+  obj[QStringLiteral("clonePhysicsMaxBounces")] =
+      impl_->clonePhysicsMaxBounces_;
   obj["softBodyPhysicsEnabled"] = impl_->softBodyPhysicsEnabled_;
   obj["materialPhysicsEnabled"] = impl_->materialPhysicsEnabled_;
   obj["materialPhysicsPreset"] = impl_->materialPhysicsPreset_;
