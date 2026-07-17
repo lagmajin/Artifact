@@ -289,6 +289,17 @@ bool RenderPipeline::hasMaterialIdTarget() const { return impl_->emissionEnabled
 ITextureView* RenderPipeline::albedoSRV() const { return impl_->albedo_.srv; }
 ITextureView* RenderPipeline::albedoRTV() const { return impl_->albedo_.rtv; }
 bool RenderPipeline::hasAlbedoTarget() const { return impl_->emissionEnabled_ && impl_->albedo_.texture; }
+GlobalIlluminationInputs RenderPipeline::globalIlluminationInputs(
+    ITextureView* depthSRV) const
+{
+ GlobalIlluminationInputs inputs;
+ inputs.depth = depthSRV;
+ inputs.normal = normalSRV();
+ inputs.albedo = albedoSRV();
+ inputs.velocity = velocitySRV();
+ inputs.emission = emissionSRV();
+ return inputs;
+}
  bool RenderPipeline::updateMatteSourceFromData(IDeviceContext* ctx,
                                                  const void* data,
                                                  Uint32 width,

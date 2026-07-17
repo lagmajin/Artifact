@@ -68,6 +68,39 @@ export struct float3 {
 };
 } // namespace Detail
 
+export enum class GlobalIlluminationMode {
+  Off,
+  Auto,
+  SSGI,
+  DDGI,
+  Hybrid
+};
+
+export enum class GlobalIlluminationQuality {
+  Preview,
+  High,
+  Final
+};
+
+export struct GlobalIlluminationSettings {
+  bool enabled = false;
+  GlobalIlluminationMode mode = GlobalIlluminationMode::Auto;
+  GlobalIlluminationQuality quality = GlobalIlluminationQuality::Preview;
+  bool temporalAccumulation = true;
+  bool denoise = true;
+  unsigned int ssgiRaySteps = 16;
+  unsigned int ddgiRaysPerProbe = 64;
+  unsigned int ddgiProbeUpdateBudget = 64;
+};
+
+export struct GlobalIlluminationState {
+  GlobalIlluminationMode requestedMode = GlobalIlluminationMode::Off;
+  GlobalIlluminationMode selectedMode = GlobalIlluminationMode::Off;
+  GlobalIlluminationQuality quality = GlobalIlluminationQuality::Preview;
+  bool rayTracingSupported = false;
+  bool usingFallback = false;
+};
+
 export class ArtifactIRenderer {
 public:
   class Impl;
@@ -106,6 +139,10 @@ public:
   QString particleDebugState() const;
   QString glyphAtlasDebugState() const;
   QString rayTracingDebugState() const;
+  void setGlobalIlluminationSettings(const GlobalIlluminationSettings &settings);
+  GlobalIlluminationSettings globalIlluminationSettings() const;
+  GlobalIlluminationState globalIlluminationState() const;
+  QString globalIlluminationDebugState() const;
 
   QImage readbackToImage() const;
   QImage readbackTextureViewToImage(Diligent::ITextureView *textureView) const;

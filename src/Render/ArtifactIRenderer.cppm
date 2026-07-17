@@ -399,6 +399,7 @@ namespace {
   };
   mutable std::map<QString, MeshGeometryState> meshRendererGeometry_;
   std::unique_ptr<ArtifactCore::IRayTracingManager> rayTracingManager_;
+  GlobalIlluminationSettings globalIlluminationSettings_;
   std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
   std::unique_ptr<ArtifactCore::ParticleRenderer> particleRenderer_;
   QString lastParticleDebug_;
@@ -3545,6 +3546,119 @@ QString ArtifactIRenderer::rayTracingDebugState() const
       .arg(caps.maxGeometriesPerBLAS)
       .arg(caps.scratchBufferAlignment)
       .arg(caps.instanceBufferAlignment);
+}
+
+void ArtifactIRenderer::setGlobalIlluminationSettings(
+    const GlobalIlluminationSettings& settings)
+{
+  if (!impl_) {
+    return;
+  }
+  impl_->globalIlluminationSettings_ = settings;
+  impl_->globalIlluminationSettings_.ssgiRaySteps =
+      std::clamp(settings.ssgiRaySteps, 4u, 128u);
+  impl_->globalIlluminationSettings_.ddgiRaysPerProbe =
+      std::clamp(settings.ddgiRaysPerProbe, 16u, 512u);
+  impl_->globalIlluminationSettings_.ddgiProbeUpdateBudget =
+      std::clamp(settings.ddgiProbeUpdateBudget, 1u, 4096u);
+}
+
+GlobalIlluminationSettings ArtifactIRenderer::globalIlluminationSettings() const
+{
+  return impl_ ? impl_->globalIlluminationSettings_
+               : GlobalIlluminationSettings{};
+}
+
+GlobalIlluminationState ArtifactIRenderer::globalIlluminationState() const
+{
+  GlobalIlluminationState state;
+  if (!impl_) {
+    return state;
+  }
+
+  const auto& settings = impl_->globalIlluminationSettings_;
+  state.requestedMode = settings.mode;
+  state.quality = settings.quality;
+  state.rayTracingSupported = impl_->rayTracingManager_ &&
+                              impl_->rayTracingManager_->isSupported();
+
+  if (!settings.enabled || settings.mode == GlobalIlluminationMode::Off) {
+    state.selectedMode = GlobalIlluminationMode::Off;
+    return state;
+  }
+
+  switch (settings.mode) {
+  case GlobalIlluminationMode::SSGI:
+    state.selectedMode = GlobalIlluminationMode::SSGI;
+    break;
+  case GlobalIlluminationMode::DDGI:
+    state.selectedMode = state.rayTracingSupported
+                             ? GlobalIlluminationMode::DDGI
+                             : GlobalIlluminationMode::SSGI;
+    state.usingFallback = !state.rayTracingSupported;
+    break;
+  case GlobalIlluminationMode::Hybrid:
+    state.selectedMode = state.rayTracingSupported
+                             ? GlobalIlluminationMode::Hybrid
+                             : GlobalIlluminationMode::SSGI;
+    state.usingFallback = !state.rayTracingSupported;
+    break;
+  case GlobalIlluminationMode::Auto:
+    if (settings.quality == GlobalIlluminationQuality::Preview ||
+        !state.rayTracingSupported) {
+      state.selectedMode = GlobalIlluminationMode::SSGI;
+      state.usingFallback = !state.rayTracingSupported &&
+                            settings.quality != GlobalIlluminationQuality::Preview;
+    } else if (settings.quality == GlobalIlluminationQuality::Final) {
+      state.selectedMode = GlobalIlluminationMode::Hybrid;
+    } else {
+      state.selectedMode = GlobalIlluminationMode::DDGI;
+    }
+    break;
+  case GlobalIlluminationMode::Off:
+    state.selectedMode = GlobalIlluminationMode::Off;
+    break;
+  }
+  return state;
+}
+
+QString ArtifactIRenderer::globalIlluminationDebugState() const
+{
+  const auto settings = globalIlluminationSettings();
+  const auto state = globalIlluminationState();
+  const auto modeName = [](GlobalIlluminationMode mode) {
+    switch (mode) {
+    case GlobalIlluminationMode::Off: return QStringLiteral("off");
+    case GlobalIlluminationMode::Auto: return QStringLiteral("auto");
+    case GlobalIlluminationMode::SSGI: return QStringLiteral("ssgi");
+    case GlobalIlluminationMode::DDGI: return QStringLiteral("ddgi");
+    case GlobalIlluminationMode::Hybrid: return QStringLiteral("hybrid");
+    }
+    return QStringLiteral("unknown");
+  };
+  const auto qualityName = [](GlobalIlluminationQuality quality) {
+    switch (quality) {
+    case GlobalIlluminationQuality::Preview: return QStringLiteral("preview");
+    case GlobalIlluminationQuality::High: return QStringLiteral("high");
+    case GlobalIlluminationQuality::Final: return QStringLiteral("final");
+    }
+    return QStringLiteral("unknown");
+  };
+
+  return QStringLiteral(
+             "enabled=%1 requested=%2 selected=%3 quality=%4 rt=%5 fallback=%6 "
+             "temporal=%7 denoise=%8 ssgiSteps=%9 ddgiRays=%10 ddgiProbeBudget=%11")
+      .arg(settings.enabled)
+      .arg(modeName(state.requestedMode))
+      .arg(modeName(state.selectedMode))
+      .arg(qualityName(state.quality))
+      .arg(state.rayTracingSupported)
+      .arg(state.usingFallback)
+      .arg(settings.temporalAccumulation)
+      .arg(settings.denoise)
+      .arg(settings.ssgiRaySteps)
+      .arg(settings.ddgiRaysPerProbe)
+      .arg(settings.ddgiProbeUpdateBudget);
 }
 void ArtifactIRenderer::drawGizmoLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness)
 { impl_->primitiveRenderer3D_.draw3DLine({start.x, start.y, start.z}, {end.x, end.y, end.z}, color, thickness); }
