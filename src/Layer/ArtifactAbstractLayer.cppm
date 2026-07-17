@@ -7626,12 +7626,14 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("physics.gravityY")) {
-    impl_->physicsComponent_.settings().gravityY = static_cast<float>(value.toDouble());
+    impl_->physicsComponent_.settings().gravityY = static_cast<float>(
+        std::clamp(value.toDouble(), -5000.0, 5000.0));
     impl_->physicsComponent_.reset();
     return true;
   }
   if (propertyPath == QStringLiteral("physics.linearDamping")) {
-    impl_->physicsComponent_.settings().linearDamping = static_cast<float>(value.toDouble());
+    impl_->physicsComponent_.settings().linearDamping = static_cast<float>(
+        std::clamp(value.toDouble(), 0.0, 50.0));
     impl_->physicsComponent_.reset();
     return true;
   }
@@ -7657,11 +7659,13 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("physics.wiggleFreq")) {
-    impl_->physicsComponent_.settings().wiggleFreq = static_cast<float>(value.toDouble());
+    impl_->physicsComponent_.settings().wiggleFreq = static_cast<float>(
+        std::clamp(value.toDouble(), 0.0, 60.0));
     return true;
   }
   if (propertyPath == QStringLiteral("physics.wiggleAmp")) {
-    impl_->physicsComponent_.settings().wiggleAmp = static_cast<float>(value.toDouble());
+    impl_->physicsComponent_.settings().wiggleAmp = static_cast<float>(
+        std::clamp(value.toDouble(), 0.0, 10000.0));
     return true;
   }
   if (propertyPath == QStringLiteral("motion.enabled")) {
