@@ -274,6 +274,7 @@ private:
 - clone physics の `linearDamping` を反発速度へ反映した。
 - Plain / Random / Step modifier の回転軸をX/Y/Zへ拡張し、3Dレイヤーでも編集できるようにした。
 - clone physics の専用設定を `physics` JSONオブジェクトへ整理し、旧レイヤー直下形式の読み込み互換も維持した。
+- 保存時も旧トップレベルキーを併記し、旧版の読み手に対する書き込み互換を維持した。
 - 外部 physics engine や新規イベント配線は導入していないため、現段階はクローン描画向けの軽量 solver として扱う。
 
 ---
