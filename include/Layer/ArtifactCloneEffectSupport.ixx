@@ -192,7 +192,7 @@ inline void applyLayoutComponent(
     // Layout is an authoring-stage arrangement pass: it seeds an initial
     // placement for instances, but it is not the authoritative dynamics
     // solver for collision or long-lived simulation state.
-    if (!layer || instances.size() < 2 ||
+    if (!layer || instances.empty() ||
         !cloneComponentBoolProperty(
             layer, QStringLiteral("component.layout.enabled"))) {
         return;
@@ -444,11 +444,15 @@ inline void applyClonePhysicsTiming(
     const int maxBounces = std::clamp(cloneComponentIntProperty(
         layer, QStringLiteral("physics.maxBounces"), 4), 0, 32);
     const QSizeF compositionSize = layer->compositionSizeHint();
-    const float maxFall = compositionSize.isValid()
-                              ? static_cast<float>(compositionSize.height()) +
-                                    static_cast<float>(std::max<qreal>(
-                                        0.0, layer->localBounds().height()))
-                              : 10000.0f;
+    const float configuredFloorY = cloneComponentFloatProperty(
+        layer, QStringLiteral("component.collision.floorY"), 0.0f);
+    const float maxFall = configuredFloorY > 0.0f
+                              ? configuredFloorY
+                              : (compositionSize.isValid()
+                                     ? static_cast<float>(compositionSize.height()) +
+                                           static_cast<float>(std::max<qreal>(
+                                               0.0, layer->localBounds().height()))
+                                     : 10000.0f);
     const auto fallDistance = [&](const float seconds) {
         float remaining = seconds;
         float position = 0.0f;
