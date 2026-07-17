@@ -7051,6 +7051,40 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       softnessProp->setDisplayLabel(QStringLiteral("Softness"));
       softnessProp->setSoftRange(0.1, 16.0);
       modifierGroup.addProperty(softnessProp);
+    } else if (descriptor.typeId == QStringLiteral("artifact.modifier.formula")) {
+      auto formulaProp = [&](const QString& name, const QString& label,
+                             double fallback, int order, const QString& unit,
+                             double softMin, double softMax) {
+        auto prop = makeProp(modifierPrefix + name, PropertyType::Float,
+                             descriptor.settings.value(name).toDouble(fallback),
+                             orderBase + order);
+        prop->setDisplayLabel(label);
+        if (!unit.isEmpty()) {
+          prop->setUnit(unit);
+        }
+        prop->setSoftRange(softMin, softMax);
+        modifierGroup.addProperty(prop);
+      };
+      formulaProp(QStringLiteral("amplitudeX"), QStringLiteral("Amplitude X"), 0.0, 1,
+                  QStringLiteral("px"), -1000.0, 1000.0);
+      formulaProp(QStringLiteral("amplitudeY"), QStringLiteral("Amplitude Y"), 0.0, 2,
+                  QStringLiteral("px"), -1000.0, 1000.0);
+      formulaProp(QStringLiteral("amplitudeZ"), QStringLiteral("Amplitude Z"), 0.0, 3,
+                  QStringLiteral("px"), -1000.0, 1000.0);
+      formulaProp(QStringLiteral("frequency"), QStringLiteral("Frequency"), 1.0, 4,
+                  QStringLiteral("Hz"), 0.0, 60.0);
+      formulaProp(QStringLiteral("phase"), QStringLiteral("Phase"), 0.0, 5,
+                  QStringLiteral("rad"), -6.28318530718, 6.28318530718);
+      formulaProp(QStringLiteral("indexPhase"), QStringLiteral("Index Phase"), 0.0, 6,
+                  QStringLiteral("rad"), -6.28318530718, 6.28318530718);
+      auto strengthProp = makeProp(
+          modifierPrefix + QStringLiteral("strength"), PropertyType::Float,
+          descriptor.settings.value(QStringLiteral("strength")).toDouble(1.0),
+          orderBase + 7);
+      strengthProp->setDisplayLabel(QStringLiteral("Strength"));
+      strengthProp->setHardRange(0.0, 1.0);
+      strengthProp->setSoftRange(0.0, 1.0);
+      modifierGroup.addProperty(strengthProp);
     } else if (descriptor.typeId == QStringLiteral("artifact.modifier.plain") ||
                descriptor.typeId == QStringLiteral("artifact.modifier.random") ||
                descriptor.typeId == QStringLiteral("artifact.modifier.step")) {
@@ -8104,6 +8138,15 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         descriptor.settings[QStringLiteral("scaleY")] = 1.0;
         descriptor.settings[QStringLiteral("scaleZ")] = 1.0;
         descriptor.settings[QStringLiteral("strength")] = 1.0;
+      } else if (requestedType == QStringLiteral("formula")) {
+        descriptor.typeId = QStringLiteral("artifact.modifier.formula");
+        descriptor.settings[QStringLiteral("amplitudeX")] = 0.0;
+        descriptor.settings[QStringLiteral("amplitudeY")] = 0.0;
+        descriptor.settings[QStringLiteral("amplitudeZ")] = 0.0;
+        descriptor.settings[QStringLiteral("frequency")] = 1.0;
+        descriptor.settings[QStringLiteral("phase")] = 0.0;
+        descriptor.settings[QStringLiteral("indexPhase")] = 0.0;
+        descriptor.settings[QStringLiteral("strength")] = 1.0;
       } else {
         descriptor.typeId = QStringLiteral("artifact.modifier.time-offset");
         descriptor.settings[QStringLiteral("step")] = 0.0;
@@ -8261,7 +8304,13 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
             field == QStringLiteral("scaleX") ||
             field == QStringLiteral("scaleY") ||
             field == QStringLiteral("scaleZ") ||
-            field == QStringLiteral("scaleVariance")) {
+            field == QStringLiteral("scaleVariance") ||
+            field == QStringLiteral("amplitudeX") ||
+            field == QStringLiteral("amplitudeY") ||
+            field == QStringLiteral("amplitudeZ") ||
+            field == QStringLiteral("frequency") ||
+            field == QStringLiteral("phase") ||
+            field == QStringLiteral("indexPhase")) {
           return setSetting(field, value.toDouble());
         }
       }

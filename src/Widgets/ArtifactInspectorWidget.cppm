@@ -6053,6 +6053,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                          QStringLiteral("plain"),
                          QStringLiteral("random"),
                          QStringLiteral("step"),
+                         QStringLiteral("formula"),
                      };
                      bool accepted = false;
                      const QString modifierChoice = QInputDialog::getItem(

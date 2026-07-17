@@ -1030,6 +1030,7 @@ inline void applyGeneratorTransformStack(const QJsonObject& settings,
 }
 
 inline void applyCloneEffectorModifiers(
+    const ArtifactAbstractLayer* layer,
     const std::vector<LayerModifierDescriptor>& modifiers,
     const int cloneIndex,
     QMatrix4x4& cloneTransform)
@@ -1101,6 +1102,24 @@ inline void applyCloneEffectorModifiers(
             cloneTransform.scale(std::max(0.001f, scale),
                                  std::max(0.001f, scale),
                                  std::max(0.001f, scale));
+        } else if (modifier.typeId == QStringLiteral("artifact.modifier.formula")) {
+            const double frameRate = std::max(1.0, layer ? layer->compositionFrameRate() : 30.0);
+            const float timeSeconds = layer
+                ? static_cast<float>(static_cast<double>(layer->currentFrame()) / frameRate)
+                : 0.0f;
+            const float frequency = static_cast<float>(
+                settings.value(QStringLiteral("frequency")).toDouble(1.0));
+            const float phase = static_cast<float>(
+                settings.value(QStringLiteral("phase")).toDouble(0.0));
+            const float indexPhase = static_cast<float>(
+                settings.value(QStringLiteral("indexPhase")).toDouble(0.0));
+            const float wave = std::sin(
+                timeSeconds * frequency * 6.28318530718f + phase +
+                static_cast<float>(cloneIndex) * indexPhase) * strength;
+            cloneTransform.translate(
+                static_cast<float>(settings.value(QStringLiteral("amplitudeX")).toDouble(0.0)) * wave,
+                static_cast<float>(settings.value(QStringLiteral("amplitudeY")).toDouble(0.0)) * wave,
+                static_cast<float>(settings.value(QStringLiteral("amplitudeZ")).toDouble(0.0)) * wave);
         } else if (modifier.typeId == QStringLiteral("artifact.modifier.step")) {
             const float step = static_cast<float>(cloneIndex) * strength;
             cloneTransform.translate(
@@ -1200,7 +1219,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
                                                  startPos.z() + spacingZ * z);
                         applyGeneratorTransformStack(settings, cloneTransform);
                         const int cloneIndex = z * (rows * cols) + y * cols + x;
-                        applyCloneEffectorModifiers(modifiers, cloneIndex, cloneTransform);
+                        applyCloneEffectorModifiers(layer, modifiers, cloneIndex, cloneTransform);
                         appendCloneInstance(
                             settings, cloneTransform, 1.0f, cloneIndex);
                     }
@@ -1237,7 +1256,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
                 cloneTransform.rotate(angle + rotationStep * static_cast<float>(i),
                                       0.0f, 0.0f, 1.0f);
                 applyGeneratorTransformStack(settings, cloneTransform);
-                applyCloneEffectorModifiers(modifiers, i, cloneTransform);
+                applyCloneEffectorModifiers(layer, modifiers, i, cloneTransform);
                 appendCloneInstance(
                     settings, cloneTransform,
                     1.0f - opacityDecay * static_cast<float>(i), i);
@@ -1286,7 +1305,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
                         unit(rng) * 30.0f * mix,
                     0.0f, 0.0f, 1.0f);
                 applyGeneratorTransformStack(settings, cloneTransform);
-                applyCloneEffectorModifiers(modifiers, i, cloneTransform);
+                applyCloneEffectorModifiers(layer, modifiers, i, cloneTransform);
                 appendCloneInstance(
                     settings, cloneTransform,
                     1.0f - opacityDecay * static_cast<float>(i), i);
@@ -1306,7 +1325,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
                                       0.0f, 1.0f);
             }
             applyGeneratorTransformStack(settings, cloneTransform);
-            applyCloneEffectorModifiers(modifiers, cloneIndex, cloneTransform);
+            applyCloneEffectorModifiers(layer, modifiers, cloneIndex, cloneTransform);
             appendCloneInstance(
                 settings, cloneTransform,
                 1.0f - opacityDecay * static_cast<float>(cloneIndex),
