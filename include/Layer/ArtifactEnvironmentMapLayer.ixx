@@ -1,6 +1,7 @@
 module;
 #include <memory>
 #include <vector>
+#include <cstdint>
 #include <QRectF>
 #include <QString>
 #include <QVariant>
@@ -32,16 +33,39 @@ public:
 
     // Environment map properties
     QString hdriPath() const { return hdriPath_; }
-    void setHdriPath(const QString& path) { hdriPath_ = path; }
+    void setHdriPath(const QString& path) {
+        if (hdriPath_ != path) {
+            hdriPath_ = path;
+            ++revision_;
+        }
+    }
 
     float intensity() const { return intensity_; }
-    void setIntensity(float intensity) { intensity_ = intensity < 0.0f ? 0.0f : intensity; }
+    void setIntensity(float intensity) {
+        const float clamped = intensity < 0.0f ? 0.0f : intensity;
+        if (intensity_ != clamped) {
+            intensity_ = clamped;
+            ++revision_;
+        }
+    }
 
     float rotation() const { return rotation_; }
-    void setRotation(float rotationDegrees) { rotation_ = rotationDegrees; }
+    void setRotation(float rotationDegrees) {
+        if (rotation_ != rotationDegrees) {
+            rotation_ = rotationDegrees;
+            ++revision_;
+        }
+    }
 
     bool visibleAsBackground() const { return visibleAsBackground_; }
-    void setVisibleAsBackground(bool visible) { visibleAsBackground_ = visible; }
+    void setVisibleAsBackground(bool visible) {
+        if (visibleAsBackground_ != visible) {
+            visibleAsBackground_ = visible;
+            ++revision_;
+        }
+    }
+
+    std::uint64_t revision() const { return revision_; }
 
     // Access the loaded cubemap texture
     Diligent::ITexture* cubemapTexture() const { return cubemapTexture_; }
@@ -109,6 +133,7 @@ private:
     float rotation_ = 0.0f;
     bool visibleAsBackground_ = true;
     Diligent::ITexture* cubemapTexture_ = nullptr;
+    std::uint64_t revision_ = 1;
 };
 
 using ArtifactEnvironmentMapLayerPtr = std::shared_ptr<ArtifactEnvironmentMapLayer>;
