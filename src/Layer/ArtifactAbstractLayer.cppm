@@ -3922,10 +3922,11 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   }
   obj["effects"] = effectsArr;
   obj["isAdjustment"] = impl_->isAdjustmentLayer_;
-  obj["physics"] = impl_->physicsComponent_.settings().toJson();
-  obj["clonePhysicsInitialVelocityY"] =
+  QJsonObject physicsObj = impl_->physicsComponent_.settings().toJson();
+  physicsObj[QStringLiteral("cloneInitialVelocityY")] =
       static_cast<double>(impl_->clonePhysicsInitialVelocityY_);
-  obj["clonePhysicsMaxBounces"] = impl_->clonePhysicsMaxBounces_;
+  physicsObj[QStringLiteral("cloneMaxBounces")] = impl_->clonePhysicsMaxBounces_;
+  obj["physics"] = physicsObj;
   obj["softBodyPhysicsEnabled"] = impl_->softBodyPhysicsEnabled_;
   obj["materialPhysicsEnabled"] = impl_->materialPhysicsEnabled_;
   obj["materialPhysicsPreset"] = impl_->materialPhysicsPreset_;
@@ -4437,15 +4438,26 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   }
 
   if (obj.contains("physics") && obj["physics"].isObject()) {
-      impl_->physicsComponent_.settings().fromJson(obj["physics"].toObject());
+      const QJsonObject physicsObj = obj["physics"].toObject();
+      impl_->physicsComponent_.settings().fromJson(physicsObj);
+      impl_->clonePhysicsInitialVelocityY_ = static_cast<float>(
+          physicsObj.value(QStringLiteral("cloneInitialVelocityY"))
+              .toDouble(impl_->clonePhysicsInitialVelocityY_));
+      impl_->clonePhysicsMaxBounces_ = std::clamp(
+          physicsObj.value(QStringLiteral("cloneMaxBounces"))
+              .toInt(impl_->clonePhysicsMaxBounces_), 0, 32);
       impl_->physicsComponent_.reset();
   }
-  impl_->clonePhysicsInitialVelocityY_ = static_cast<float>(
-      obj.value(QStringLiteral("clonePhysicsInitialVelocityY"))
-          .toDouble(impl_->clonePhysicsInitialVelocityY_));
-  impl_->clonePhysicsMaxBounces_ = std::clamp(
-      obj.value(QStringLiteral("clonePhysicsMaxBounces"))
-          .toInt(impl_->clonePhysicsMaxBounces_), 0, 32);
+  if (obj.contains(QStringLiteral("clonePhysicsInitialVelocityY"))) {
+    impl_->clonePhysicsInitialVelocityY_ = static_cast<float>(
+        obj.value(QStringLiteral("clonePhysicsInitialVelocityY"))
+            .toDouble(impl_->clonePhysicsInitialVelocityY_));
+  }
+  if (obj.contains(QStringLiteral("clonePhysicsMaxBounces"))) {
+    impl_->clonePhysicsMaxBounces_ = std::clamp(
+        obj.value(QStringLiteral("clonePhysicsMaxBounces"))
+            .toInt(impl_->clonePhysicsMaxBounces_), 0, 32);
+  }
   if (obj.contains("softBodyPhysicsEnabled") &&
       obj["softBodyPhysicsEnabled"].toBool(false)) {
       enableSoftBodyPhysicsGrid();
