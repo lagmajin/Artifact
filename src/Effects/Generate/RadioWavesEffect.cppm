@@ -18,6 +18,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -70,7 +71,7 @@ public:
         // 各ウェーブは lifespan_ 秒間生存し、frequency_ [波/秒] で発生する
         const int waveCount = static_cast<int>(std::ceil(currentTime_ * frequency_)) + 1;
 
-        for (int y = 0; y < H; ++y) {
+        ArtifactCore::Parallel::For(0, H, [&](int y) {
             float* row = dstData + y * W * 4;
             const float dy = static_cast<float>(y) - cy;
             for (int x = 0; x < W; ++x) {
@@ -116,7 +117,7 @@ public:
                     px[3] = outA;
                 }
             }
-        }
+        });
     }
 };
 

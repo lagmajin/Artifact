@@ -99,7 +99,9 @@ export namespace Artifact
             settings_ = settings;
         }
 
-        bool supportsGPU() const override { return true; }
+        // The generator currently owns only the CPU preset pipeline.
+        // Do not advertise GPU mode until a matching HLSL contract exists.
+        bool supportsGPU() const override { return false; }
 
         std::vector<ArtifactCore::AbstractProperty> getProperties() const override
         {

@@ -19,6 +19,7 @@ import ArtifactCore.ImageProcessing.FaceDetection;
 import Utils.String.UniString;
 import Property.Abstract;
 import CvUtils;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -120,14 +121,14 @@ static cv::Mat applyFeather(const cv::Mat& original, const cv::Mat& processed, c
 
     int channels = origRoi.channels();
     for (int c = 0; c < channels; ++c) {
-        for (int y = 0; y < expanded.height; ++y) {
+        ArtifactCore::Parallel::For(0, expanded.height, [&](int y) {
             for (int x = 0; x < expanded.width; ++x) {
                 float alpha = mask.at<float>(y, x);
                 uchar& orig = origChannels[c].at<uchar>(y, x);
                 uchar proc = procChannels[c].at<uchar>(y, x);
                 orig = static_cast<uchar>(orig * (1.0f - alpha) + proc * alpha);
             }
-        }
+        });
     }
     cv::merge(origChannels, origRoi);
 

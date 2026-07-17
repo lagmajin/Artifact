@@ -19,6 +19,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -52,7 +53,7 @@ public:
         cv::Mat hsv;
         cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
 
-        for (int y = 0; y < hsv.rows; ++y) {
+        ArtifactCore::Parallel::For(0, hsv.rows, [&](int y) {
             for (int x = 0; x < hsv.cols; ++x) {
                 cv::Vec3f& pixel = hsv.at<cv::Vec3f>(y, x);
                 if (colorize_) {
@@ -65,7 +66,7 @@ public:
                     pixel[2] = std::clamp(pixel[2] + lightnessShift_, 0.0f, 1.0f);
                 }
             }
-        }
+        });
 
         cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
         cv::merge(std::vector<cv::Mat>{bgr, alpha}, floatMat);

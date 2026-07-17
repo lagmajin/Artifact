@@ -16,6 +16,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -45,12 +46,14 @@ public:
 
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
         float inv=1.0f/totalW;
-        for(size_t i=0;i<n;++i){float acc[4]={d[i*4]*1.0f,d[i*4+1]*1.0f,d[i*4+2]*1.0f,d[i*4+3]*1.0f};
-            for(auto& rf:refs){const float* rp=rf.img.rgba32fData()+i*4;
-                acc[0]+=rp[0]*rf.weight;acc[1]+=rp[1]*rf.weight;acc[2]+=rp[2]*rf.weight;acc[3]+=rp[3]*rf.weight;
+        ArtifactCore::Parallel::For(0,H,[&](int y){
+            for(int x=0;x<W;++x){const size_t i=(static_cast<size_t>(y)*W+x);float acc[4]={d[i*4],d[i*4+1],d[i*4+2],d[i*4+3]};
+                for(const auto& rf:refs){const float* rp=rf.img.rgba32fData()+i*4;
+                    acc[0]+=rp[0]*rf.weight;acc[1]+=rp[1]*rf.weight;acc[2]+=rp[2]*rf.weight;acc[3]+=rp[3]*rf.weight;
+                }
+                d[i*4]=acc[0]*inv;d[i*4+1]=acc[1]*inv;d[i*4+2]=acc[2]*inv;d[i*4+3]=acc[3]*inv;
             }
-            d[i*4]=acc[0]*inv;d[i*4+1]=acc[1]*inv;d[i*4+2]=acc[2]*inv;d[i*4+3]=acc[3]*inv;
-        }
+        });
     }
 };
 

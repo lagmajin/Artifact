@@ -14,6 +14,7 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -49,7 +50,7 @@ public:
         const int offsetX = static_cast<int>(std::round(dirX * chromaticOffset));
         const int offsetY = static_cast<int>(std::round(dirY * chromaticOffset));
         cv::Mat output = input.clone();
-        for (int y = 0; y < height; ++y) {
+        ArtifactCore::Parallel::For(0, height, [&](int y) {
             const auto* sourceRow = input.ptr<cv::Vec4f>(y);
             const float* gxRow = gx.ptr<float>(y);
             const float* gyRow = gy.ptr<float>(y);
@@ -70,7 +71,7 @@ public:
                     outputRow[x][c] = sourceRow[x][c] * (1.0f - mix) + styled[c] * mix;
                 outputRow[x][3] = sourceRow[x][3];
             }
-        }
+        });
         dst = src;
         dst.image().setFromCVMat(output);
     }

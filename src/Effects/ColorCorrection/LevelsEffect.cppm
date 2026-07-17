@@ -17,6 +17,7 @@ module LevelsEffect;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import ImageProcessing.ColorTransform.LevelsCurves;
@@ -39,12 +40,12 @@ public:
 
         const int width = dst.image().width();
         const int height = dst.image().height();
-        for (int y = 0; y < height; ++y) {
+        ArtifactCore::Parallel::For(0, height, [&](int y) {
             for (int x = 0; x < width; ++x) {
                 float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
                 processor_.applyPixel(pixel[0], pixel[1], pixel[2]);
             }
-        }
+        });
     }
 };
 
@@ -68,12 +69,12 @@ public:
 
         const int width = dst.image().width();
         const int height = dst.image().height();
-        for (int y = 0; y < height; ++y) {
+        ArtifactCore::Parallel::For(0, height, [&](int y) {
             for (int x = 0; x < width; ++x) {
                 float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
                 processor_.applyPixel(pixel[0], pixel[1], pixel[2]);
             }
-        }
+        });
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {

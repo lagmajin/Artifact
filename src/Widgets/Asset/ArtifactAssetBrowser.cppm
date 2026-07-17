@@ -3593,6 +3593,11 @@ if (!item.isFolder) {
         }
         QString error;
         interpretSvc.applyFrameRateChange(footage, newFps, preserveMode, &error);
+        if (error.isEmpty()) {
+          interpretSvc.applyColorInterpretation(
+              footage, dialog.selectedInputColorSpace(),
+              dialog.selectedInputTransferFunction(), &error);
+        }
         if (!error.isEmpty()) {
           QMessageBox::warning(nullptr, "Interpret Footage", error);
         }

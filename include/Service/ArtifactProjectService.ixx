@@ -17,6 +17,7 @@ import Utils;
 import Utils.String.Like;
 import Utils.String.UniString;
 import Artifact.Composition.Abstract;
+import Artifact.Event.Types;
 import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Layer.InitParams;
 import Artifact.Project.Settings;

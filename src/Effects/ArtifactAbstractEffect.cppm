@@ -48,6 +48,7 @@ import Image.ImageF32x4_RGBA;
 import Artifact.Effect.ImplBase;
 import Property.Abstract;
 import Time.Rational;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -247,7 +248,9 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
     const int width = dstImage.width();
     const int height = dstImage.height();
 
-    for (int y = 0; y < height; ++y) {
+    // Mask evaluation only reads shared mask images and writes one destination
+    // row at a time, so rows can be processed independently.
+    Parallel::For(0, height, [&](int y) {
         for (int x = 0; x < width; ++x) {
             float combinedMaskAlpha = 1.0f;
             bool hasValidMask = false;
@@ -295,7 +298,7 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
                     basePixel.b() * inv + effectPixel.b() * combinedMaskAlpha,
                     basePixel.a() * inv + effectPixel.a() * combinedMaskAlpha));
         }
-    }
+    });
 }
 
 void ArtifactAbstractEffect::setContext(const EffectContext& context) {

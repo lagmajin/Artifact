@@ -14,18 +14,21 @@ class ArtifactGlitchEffect : public ArtifactAbstractEffect {
 public:
     ArtifactGlitchEffect();
     void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
+    bool supportsGPU() const override { return true; }
 };
 
 class ArtifactHalftoneEffect : public ArtifactAbstractEffect {
 public:
     ArtifactHalftoneEffect();
     void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
+    bool supportsGPU() const override { return true; }
 };
 
 class ArtifactOldTVEffect : public ArtifactAbstractEffect {
 public:
     ArtifactOldTVEffect();
     void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
+    bool supportsGPU() const override { return true; }
 };
 
 } // namespace Artifact

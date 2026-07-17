@@ -16,6 +16,7 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -84,7 +85,11 @@ public:
         const float burnCenterY = unit(rng);
         const float burnRadius = 0.18f + filmBurn * 0.8f;
         cv::Mat output = working.clone();
-        for (int y = 0; y < height; ++y) {
+        ArtifactCore::Parallel::For(0, height, [&](int y) {
+            std::mt19937 rowRng(static_cast<std::uint32_t>(seed) ^
+                                (static_cast<std::uint32_t>(frameKey) * 0x9e3779b9u) ^
+                                (static_cast<std::uint32_t>(y) * 0x85ebca6bu));
+            std::normal_distribution<float> rowNormal(0.0f, 1.0f);
             const auto* sourceRow = working.ptr<cv::Vec4f>(y);
             const auto* damageRow = damage.ptr<cv::Vec4f>(y);
             auto* outputRow = output.ptr<cv::Vec4f>(y);
@@ -97,7 +102,7 @@ public:
                 const float burn = filmBurn * std::clamp(
                     1.0f - std::abs(distance - burnRadius) / 0.12f, 0.0f, 1.0f);
                 const float damageAlpha = std::clamp(damageRow[x][3], 0.0f, 1.0f);
-                const float grainNoise = normal(rng) * grain;
+                const float grainNoise = rowNormal(rowRng) * grain;
                 for (int c = 0; c < 3; ++c) {
                     float value = sourceRow[x][c] * flickerGain + grainNoise;
                     value = value * (1.0f - damageAlpha) + damageRow[x][c] * damageAlpha;
@@ -108,7 +113,7 @@ public:
                 }
                 outputRow[x][3] = sourceRow[x][3];
             }
-        }
+        });
         dst = src;
         dst.image().setFromCVMat(output);
     }

@@ -249,6 +249,8 @@ PropertyPresentationProfile
 propertyPresentationProfile(const ArtifactAbstractLayerPtr &layer);
 bool presentationAllowsGroup(const PropertyPresentationProfile &profile,
                              const QString &groupName);
+bool isTextAnimatorPropertyGroup(
+    const ArtifactCore::PropertyGroup &group);
 void applyPresentationPropertyRules(
     const PropertyPresentationProfile &profile, const QString &groupName,
     std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &properties);
@@ -300,6 +302,11 @@ namespace detail {
 
 PropertyPresentationProfile
 propertyPresentationProfile(const ArtifactAbstractLayerPtr &layer) {
+  if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+    return {QStringLiteral("text"),
+            {QStringLiteral("Initial"), QStringLiteral("Transform"),
+             QStringLiteral("Text"), QStringLiteral("Path Options")}};
+  }
   if (layer && layer->getProperty(QStringLiteral("solid.color"))) {
     return {QStringLiteral("solid"),
             {QStringLiteral("Initial"), QStringLiteral("Transform"),
@@ -316,6 +323,15 @@ bool presentationAllowsGroup(const PropertyPresentationProfile &profile,
   }
   return profile.visibleGroups.contains(groupName.trimmed(),
                                         Qt::CaseInsensitive);
+}
+
+bool isTextAnimatorPropertyGroup(const ArtifactCore::PropertyGroup &group) {
+  const auto properties = group.sortedProperties();
+  return std::any_of(properties.begin(), properties.end(), [](const auto &property) {
+    return property && property->getName().startsWith(
+                           QStringLiteral("text.animators."),
+                           Qt::CaseInsensitive);
+  });
 }
 
 void applyPresentationPropertyRules(
@@ -1654,11 +1670,17 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     if (shouldHideInspectorPropertyGroup(groupName)) {
       continue;
     }
-    if (!presentationAllowsGroup(presentationProfile, groupName)) {
+    const bool textAnimatorGroup =
+        presentationProfile.id == QStringLiteral("text") &&
+        isTextAnimatorPropertyGroup(groupDef);
+    if (!presentationAllowsGroup(presentationProfile, groupName) &&
+        !textAnimatorGroup) {
       continue;
     }
-    const bool isSourceReframe = isSourceReframeSection(groupName);
-    const bool isClonerGroup = isClonerSection(groupName);
+    const bool isSourceReframe =
+        !textAnimatorGroup && isSourceReframeSection(groupName);
+    const bool isClonerGroup =
+        !textAnimatorGroup && isClonerSection(groupName);
     auto sortedProps =
         applyFavoriteFilter(filteredGroupProperties(
             layer, groupName, inspectorProperties(groupDef.sortedProperties())),
@@ -1679,7 +1701,9 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     applyPropertySectionBox(group);
     applyThemeTextPalette(group, 120);
 
-    if (groupName.compare(QStringLiteral("Components"), Qt::CaseInsensitive) == 0) {
+    if (!textAnimatorGroup &&
+        groupName.compare(QStringLiteral("Components"),
+                          Qt::CaseInsensitive) == 0) {
       const auto validationIssues = layer->validateLayerComponents();
       if (!validationIssues.empty()) {
         QStringList issueLines;

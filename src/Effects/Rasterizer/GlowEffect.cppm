@@ -16,6 +16,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -32,16 +33,16 @@ public:
         const float it=std::clamp(intensity_,0.0f,5.0f);
         cv::Mat srcM(H,W,CV_32FC4,(void*)sd);
         cv::Mat bright; srcM.copyTo(bright);
-        for(int y=0;y<H;++y){auto* r=bright.ptr<cv::Vec4f>(y);for(int x=0;x<W;++x){
+        Parallel::For(0,H,[&](int y){auto* r=bright.ptr<cv::Vec4f>(y);for(int x=0;x<W;++x){
             float l=r[x][0]*0.299f+r[x][1]*0.587f+r[x][2]*0.114f;
-            if(l<th)r[x]=cv::Vec4f(0,0,0,0);else{float m=(l-th)/(1.0f-th);r[x]*=m;}}}
+            if(l<th)r[x]=cv::Vec4f(0,0,0,0);else{float m=(l-th)/(1.0f-th);r[x]*=m;}}});
         cv::Mat blur; int kr=std::min((int)rad,128);
         cv::GaussianBlur(bright,blur,cv::Size(kr*2+1,kr*2+1),rad*0.3f);
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
-        for(int y=0;y<H;++y){auto* br=blur.ptr<cv::Vec4f>(y);float* o=d+(size_t)y*W*4;
+        Parallel::For(0,H,[&](int y){auto* br=blur.ptr<cv::Vec4f>(y);float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){float* p=o+(size_t)x*4;
                 p[0]=std::clamp(p[0]+br[x][0]*it,0.0f,1.0f);p[1]=std::clamp(p[1]+br[x][1]*it,0.0f,1.0f);
-                p[2]=std::clamp(p[2]+br[x][2]*it,0.0f,1.0f);}}
+                p[2]=std::clamp(p[2]+br[x][2]*it,0.0f,1.0f);}});
     }
 };
 

@@ -17,6 +17,7 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -76,10 +77,11 @@ public:
         cv::Mat mapX(h, w, CV_32FC1);
         cv::Mat mapY(h, w, CV_32FC1);
         const float scale = 1.0f / std::max(1.0f, size_);
-        std::mt19937 rng(seed_);
-        std::uniform_real_distribution<float> dist(0.0f, 1000.0f);
 
-        for (int y = 0; y < h; ++y) {
+        ArtifactCore::Parallel::For(0, h, [&](int y) {
+            std::mt19937 rowRng(static_cast<std::uint32_t>(seed_) ^
+                                (static_cast<std::uint32_t>(y) * 0x9e3779b9u));
+            std::uniform_real_distribution<float> rowDist(0.0f, 1000.0f);
             for (int x = 0; x < w; ++x) {
                 const float fx = x * scale;
                 const float fy = y * scale;
@@ -88,8 +90,8 @@ public:
                 float amp = amount_;
                 float freq = 1.0f;
                 for (int o = 0; o < octaves_; ++o) {
-                    const float nx = fx * freq + dist(rng);
-                    const float ny = fy * freq + dist(rng);
+                    const float nx = fx * freq + rowDist(rowRng);
+                    const float ny = fy * freq + rowDist(rowRng);
                     dx += valueNoise2D(nx, ny, seed_ + o) * amp;
                     dy += valueNoise2D(nx + 100.0f, ny + 100.0f, seed_ + o) * amp;
                     amp *= 0.5f;
@@ -98,9 +100,35 @@ public:
                 mapX.at<float>(y, x) = std::clamp(x + dx, 0.0f, static_cast<float>(w - 1));
                 mapY.at<float>(y, x) = std::clamp(y + dy, 0.0f, static_cast<float>(h - 1));
             }
-        }
+        });
 
-        cv::remap(srcMat, dstMat, mapX, mapY, cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+        // mapX/mapY are complete before this pass, so each destination row can
+        // be sampled independently without relying on OpenCV's global remap
+        // scheduler or sharing mutable interpolation state.
+        ArtifactCore::Parallel::For(0, h, [&](int y) {
+            const float* mx = mapX.ptr<float>(y);
+            const float* my = mapY.ptr<float>(y);
+            cv::Vec4f* out = dstMat.ptr<cv::Vec4f>(y);
+            for (int x = 0; x < w; ++x) {
+                const float sx = std::clamp(mx[x], 0.0f, static_cast<float>(w - 1));
+                const float sy = std::clamp(my[x], 0.0f, static_cast<float>(h - 1));
+                const int x0 = static_cast<int>(std::floor(sx));
+                const int y0 = static_cast<int>(std::floor(sy));
+                const int x1 = std::min(x0 + 1, w - 1);
+                const int y1 = std::min(y0 + 1, h - 1);
+                const float tx = sx - static_cast<float>(x0);
+                const float ty = sy - static_cast<float>(y0);
+                const cv::Vec4f& p00 = srcMat.at<cv::Vec4f>(y0, x0);
+                const cv::Vec4f& p10 = srcMat.at<cv::Vec4f>(y0, x1);
+                const cv::Vec4f& p01 = srcMat.at<cv::Vec4f>(y1, x0);
+                const cv::Vec4f& p11 = srcMat.at<cv::Vec4f>(y1, x1);
+                for (int c = 0; c < 4; ++c) {
+                    const float top = p00[c] + (p10[c] - p00[c]) * tx;
+                    const float bottom = p01[c] + (p11[c] - p01[c]) * tx;
+                    out[x][c] = top + (bottom - top) * ty;
+                }
+            }
+        });
     }
 };
 

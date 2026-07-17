@@ -22,6 +22,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -119,7 +120,7 @@ static float linearToSrgb(const float value)
 static void convertBlurColorSpace(cv::Mat& image, const bool toLinear,
                                   const bool premultiplied)
 {
-    for (int y = 0; y < image.rows; ++y) {
+    ArtifactCore::Parallel::For(0, image.rows, [&](int y) {
         auto* row = image.ptr<cv::Vec4f>(y);
         for (int x = 0; x < image.cols; ++x) {
             auto& pixel = row[x];
@@ -137,7 +138,7 @@ static void convertBlurColorSpace(cv::Mat& image, const bool toLinear,
                 pixel[channel] = premultiplied ? value * alpha : value;
             }
         }
-    }
+    });
 }
 
 static bool readbackTexture(Diligent::IDeviceContext* ctx, Diligent::ITexture* src,

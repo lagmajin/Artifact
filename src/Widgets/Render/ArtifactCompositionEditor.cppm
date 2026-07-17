@@ -41,6 +41,7 @@ module;
 #include <QPainter>
 #include <QPixmap>
 #include <QPlainTextEdit>
+#include <QTextEdit>
 #include <QPointer>
 #include <QPolygonF>
 #include <QQuaternion>
@@ -683,8 +684,14 @@ public:
     preview_ = preview;
     root->addWidget(preview, 1);
 
-    editor_ = new QPlainTextEdit(this);
-    editor_->setPlainText(textEditorValue(textLayer));
+    editor_ = new QTextEdit(this);
+    const QString initialText = textEditorValue(textLayer);
+    richText_ = Qt::mightBeRichText(initialText);
+    if (richText_) {
+      editor_->setHtml(initialText);
+    } else {
+      editor_->setPlainText(initialText);
+    }
     editor_->setPlaceholderText(QStringLiteral("Enter text..."));
     editor_->selectAll();
     editor_->setMinimumHeight(160);
@@ -707,6 +714,32 @@ public:
 
     editor_->installEventFilter(this);
     root->addWidget(editor_);
+
+    auto *typeRow = new QHBoxLayout();
+    auto addMetric = [this, typeRow](const QString &label, double value,
+                                     double minimum, double maximum,
+                                     double step, QDoubleSpinBox **out) {
+      typeRow->addWidget(new QLabel(label, this));
+      auto *spin = new QDoubleSpinBox(this);
+      spin->setRange(minimum, maximum);
+      spin->setSingleStep(step);
+      spin->setValue(value);
+      spin->setDecimals(2);
+      typeRow->addWidget(spin);
+      *out = spin;
+    };
+    if (textLayer) {
+      addMetric(QStringLiteral("Size"), textLayer->fontSize(), 1.0, 1000.0,
+                1.0, &fontSizeSpin_);
+      addMetric(QStringLiteral("Tracking"), textLayer->tracking(), -500.0,
+                500.0, 1.0, &trackingSpin_);
+      addMetric(QStringLiteral("Leading"), textLayer->leading(), -1000.0,
+                1000.0, 1.0, &leadingSpin_);
+      addMetric(QStringLiteral("Stretch"), textLayer->fontStretch(), 50.0,
+                200.0, 1.0, &stretchSpin_);
+    }
+    typeRow->addStretch(1);
+    root->addLayout(typeRow);
 
     setMinimumSize(680, 520);
     resize(900, 680);
@@ -811,8 +844,21 @@ private:
       return;
     }
 
-    const QString nextText = editor_->toPlainText();
-    if (commitTextEditorValue(textLayer, nextText)) {
+    const float beforeFontSize = textLayer->fontSize();
+    const float beforeTracking = textLayer->tracking();
+    const float beforeLeading = textLayer->leading();
+    const float beforeStretch = textLayer->fontStretch();
+    if (fontSizeSpin_) textLayer->setFontSize(static_cast<float>(fontSizeSpin_->value()));
+    if (trackingSpin_) textLayer->setTracking(static_cast<float>(trackingSpin_->value()));
+    if (leadingSpin_) textLayer->setLeading(static_cast<float>(leadingSpin_->value()));
+    if (stretchSpin_) textLayer->setFontStretch(static_cast<float>(stretchSpin_->value()));
+    const bool styleChanged = beforeFontSize != textLayer->fontSize() ||
+                              beforeTracking != textLayer->tracking() ||
+                              beforeLeading != textLayer->leading() ||
+                              beforeStretch != textLayer->fontStretch();
+
+    const QString nextText = richText_ ? editor_->toHtml() : editor_->toPlainText();
+    if (commitTextEditorValue(textLayer, nextText) || styleChanged) {
       if (auto *comp = static_cast<ArtifactAbstractComposition *>(textLayer->composition())) {
         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
             LayerChangedEvent{comp->id().toString(), textLayer->id().toString(),
@@ -826,7 +872,12 @@ private:
 
   ArtifactAbstractLayerPtr layer_;
   CompositionRenderController *controller_ = nullptr;
-  QPlainTextEdit *editor_ = nullptr;
+  QTextEdit *editor_ = nullptr;
+  QDoubleSpinBox *fontSizeSpin_ = nullptr;
+  QDoubleSpinBox *trackingSpin_ = nullptr;
+  QDoubleSpinBox *leadingSpin_ = nullptr;
+  QDoubleSpinBox *stretchSpin_ = nullptr;
+  bool richText_ = false;
   QWidget *preview_ = nullptr;
 };
 

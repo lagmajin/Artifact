@@ -1597,6 +1597,15 @@ void ArtifactTextLayer::setTracking(float tracking) {
 
 float ArtifactTextLayer::tracking() const { return impl_->textStyle_.tracking; }
 
+void ArtifactTextLayer::setFontStretch(float stretch) {
+  impl_->textStyle_.fontStretch = std::clamp(stretch, 50.0f, 200.0f);
+  markDirty();
+}
+
+float ArtifactTextLayer::fontStretch() const {
+  return impl_->textStyle_.fontStretch;
+}
+
 void ArtifactTextLayer::setLeading(float leading) {
   impl_->textStyle_.leading = leading;
   markDirty();
@@ -1872,6 +1881,7 @@ QJsonObject ArtifactTextLayer::toJson() const {
   obj["text.fontFamily"] = fontFamily().toQString();
   obj["text.fontSize"] = fontSize();
   obj["text.tracking"] = tracking();
+  obj["text.fontStretch"] = fontStretch();
   obj["text.leading"] = leading();
   obj["text.bold"] = isBold();
   obj["text.italic"] = isItalic();
@@ -1966,6 +1976,9 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
   }
   if (obj.contains("text.tracking")) {
     setTracking(static_cast<float>(obj.value("text.tracking").toDouble(tracking())));
+  }
+  if (obj.contains("text.fontStretch")) {
+    setFontStretch(static_cast<float>(obj.value("text.fontStretch").toDouble(fontStretch())));
   }
   if (obj.contains("text.leading")) {
     setLeading(static_cast<float>(obj.value("text.leading").toDouble(leading())));
@@ -2831,9 +2844,18 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   addEssentialTextProp(QStringLiteral("text.tracking"),
                        ArtifactCore::PropertyType::Float, tracking(),
                        QStringLiteral("Tracking"), -95);
+  auto fontStretchProp = makeProp(QStringLiteral("text.fontStretch"),
+                                  ArtifactCore::PropertyType::Float,
+                                  fontStretch(), -94);
+  fontStretchProp->setDisplayLabel(QStringLiteral("Font Stretch"));
+  fontStretchProp->setHardRange(50.0, 200.0);
+  fontStretchProp->setSoftRange(75.0, 125.0);
+  fontStretchProp->setStep(1.0);
+  fontStretchProp->setAnimatable(true);
+  textGroup.addProperty(fontStretchProp);
   addEssentialTextProp(QStringLiteral("text.leading"),
                        ArtifactCore::PropertyType::Float, leading(),
-                       QStringLiteral("Leading"), -94);
+                       QStringLiteral("Leading"), -93);
   addEssentialTextProp(QStringLiteral("text.bold"),
                        ArtifactCore::PropertyType::Boolean, isBold(),
                        QStringLiteral("Bold"), -93);
@@ -3202,6 +3224,22 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
         QStringLiteral("Pattern matched against cluster id, tag, and glyph index when Regex is on."));
     animatorGroup.addProperty(selectorPatternProp);
 
+    auto easeHighProp = makeAnimatorProp(
+        QStringLiteral("easeHigh"), ArtifactCore::PropertyType::Float,
+        animator.range.easeHigh, -111);
+    easeHighProp->setDisplayLabel(QStringLiteral("Ease High"));
+    easeHighProp->setHardRange(0.0, 100.0);
+    easeHighProp->setSoftRange(0.0, 100.0);
+    animatorGroup.addProperty(easeHighProp);
+
+    auto easeLowProp = makeAnimatorProp(
+        QStringLiteral("easeLow"), ArtifactCore::PropertyType::Float,
+        animator.range.easeLow, -110);
+    easeLowProp->setDisplayLabel(QStringLiteral("Ease Low"));
+    easeLowProp->setHardRange(0.0, 100.0);
+    easeLowProp->setSoftRange(0.0, 100.0);
+    animatorGroup.addProperty(easeLowProp);
+
     auto wigglyEnabledProp =
         makeAnimatorProp(QStringLiteral("wigglyEnabled"),
                          ArtifactCore::PropertyType::Boolean,
@@ -3407,6 +3445,11 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("text.tracking")) {
     setTracking(static_cast<float>(value.toDouble()));
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.fontStretch")) {
+    setFontStretch(static_cast<float>(value.toDouble()));
     setDirty(LayerDirtyFlag::Property);
     return true;
   }
@@ -3629,6 +3672,12 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
       animator.range.regexEnabled = value.toBool();
     } else if (field == QStringLiteral("selectorPattern")) {
       animator.range.selectorPattern = value.toString();
+    } else if (field == QStringLiteral("easeHigh")) {
+      animator.range.easeHigh =
+          std::clamp(static_cast<float>(value.toDouble()), 0.0f, 100.0f);
+    } else if (field == QStringLiteral("easeLow")) {
+      animator.range.easeLow =
+          std::clamp(static_cast<float>(value.toDouble()), 0.0f, 100.0f);
     } else if (field == QStringLiteral("wigglyEnabled")) {
       animator.wiggly.enabled = value.toBool();
     } else if (field == QStringLiteral("wigglesPerSecond")) {
@@ -3734,8 +3783,11 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
     impl_->glyphs_ = shaped.glyphs;
     impl_->layoutContract_ = shaped.contract;
   }
-  impl_->perGlyphMode_ = (hasAnimators || pathLayout || !rasterize) &&
-                         !isRichText;
+  // Keep plain-text rasterization (effects/masks) on the same shaped-glyph
+  // source as the direct GPU path. Falling back to QTextDocument only when an
+  // effect was attached produced decoration-like horizontal artifacts and
+  // made the source appearance depend on whether effects were enabled.
+  impl_->perGlyphMode_ = !isRichText;
 
   if (impl_->perGlyphMode_) {
     const RationalTime time = effectiveTextTimelineTime(this);

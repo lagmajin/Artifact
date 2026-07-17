@@ -1,10 +1,13 @@
 ﻿module;
 #include <QList>
 #include <QVariant>
-#include <QVector>
 #include <cmath>
 #include <opencv2/core/mat.hpp>
-#include <QtConcurrent>
+#include <opencv2/opencv.hpp>
+#include <cstring>
+#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 #include <iostream>
 #include <vector>
@@ -36,7 +39,6 @@
 #include <deque>
 #include <list>
 #include <tuple>
-#include <numeric>
 #include <regex>
 #include <random>
 module Artifact.Effect.Spherize;
@@ -48,6 +50,10 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
+import Graphics.Compute;
+import Graphics.GPUcomputeContext;
+import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -74,10 +80,7 @@ void SpherizeEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF3
     // ピクセルごとの処理 — 行単位で並列化
     std::vector<cv::Vec4f> rowResults(width * height);
 
-    QVector<int> rows(height);
-    std::iota(rows.begin(), rows.end(), 0);
-
-    QtConcurrent::blockingMap(rows, [&](int y) {
+    ArtifactCore::Parallel::For(0, height, [&](int y) {
         for (int x = 0; x < width; x++) {
             // 中心からの距離と角度を計算
             float dx = static_cast<float>(x) - cx;
@@ -115,26 +118,31 @@ void SpherizeEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF3
     });
 
     // 結果をdstMatにコピー
-    for (int y = 0; y < height; y++) {
+    ArtifactCore::Parallel::For(0, height, [&](int y) {
         for (int x = 0; x < width; x++) {
             dstMat.at<cv::Vec4f>(y, x) = rowResults[y * width + x];
         }
-    }
+    });
     
     // 結果をdstに設定
     ImageF32x4_RGBA dstImage;
     dstImage.setFromRGBA32F(dstMat.ptr<float>(), dstMat.cols, dstMat.rows);
+    dst = ImageF32x4RGBAWithCache(dstImage);
 }
 
+static constexpr const char* kSpherizeHlsl=R"(
+Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);
+cbuffer SpherizeParams:register(b0){float g_Amount;float g_Radius;float g_Cx;float g_Cy;}
+float4 atp(int2 p,uint w,uint h){return g_InputTexture[uint2(clamp(p.x,0,(int)w-1),clamp(p.y,0,(int)h-1))];}
+[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float2 c=float2(g_Cx*w,g_Cy*h),d=float2(id.xy)-c;float maxR=max(min(w,h)*g_Radius,0.001),dist=length(d),n=dist/maxR;if(n>1){g_OutputTexture[id.xy]=atp(int2(id.xy),w,h);return;}float z=sqrt(max(0,1-n*n));float nd=n+(g_Amount/100)*z*n*(1-n);float2 offset=dist>1e-6?d*(nd/n):float2(0,0);g_OutputTexture[id.xy]=atp(int2(c+offset),w,h);}
+)";
+
 void SpherizeEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-    // 現在はCPUバックエンドにフォールバック
-    // TODO: HLSLシェーダの実装
-    SpherizeEffectCPUImpl cpuImpl;
-    cpuImpl.setAmount(amount_);
-    cpuImpl.setRadius(radius_);
-    cpuImpl.setCenterX(centerX_);
-    cpuImpl.setCenterY(centerY_);
-    cpuImpl.applyCPU(src, dst);
+    auto fallback=[&]{SpherizeEffectCPUImpl c;c.setAmount(amount_);c.setRadius(radius_);c.setCenterX(centerX_);c.setCenterY(centerY_);c.applyCPU(src,dst);};Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;if(!acquireSharedRenderDeviceForCurrentBackend(device,context)){fallback();return;}const auto& image=src.image();const float* data=image.rgba32fData();if(!data||image.width()<=0||image.height()<=0){fallback();return;}
+    Diligent::TextureDesc td{};td.Name="Spherize/Input";td.Type=Diligent::RESOURCE_DIM_TEX_2D;td.Width=image.width();td.Height=image.height();td.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;td.MipLevels=1;td.ArraySize=1;td.SampleCount=1;td.Usage=Diligent::USAGE_IMMUTABLE;td.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=data;sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(td,&init,&input);if(!input){fallback();return;}auto od=td;od.Name="Spherize/Output";od.Usage=Diligent::USAGE_DEFAULT;od.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;Diligent::RefCntAutoPtr<Diligent::ITexture> output;device->CreateTexture(od,nullptr,&output);if(!output){fallback();return;}
+    struct Params{float amount,radius,cx,cy;};Diligent::BufferDesc bd{};bd.Name="Spherize/Params";bd.Size=sizeof(Params);bd.Usage=Diligent::USAGE_DYNAMIC;bd.BindFlags=Diligent::BIND_UNIFORM_BUFFER;bd.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;Diligent::RefCntAutoPtr<Diligent::IBuffer> params;device->CreateBuffer(bd,nullptr,&params);if(!params){fallback();return;}void*m=nullptr;context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,m);if(!m){fallback();return;}Params p{amount_,radius_,centerX_,centerY_};std::memcpy(m,&p,sizeof(p));context->UnmapBuffer(params,Diligent::MAP_WRITE);
+    static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"SpherizeParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};ArtifactCore::GpuContext gc{device,context};ArtifactCore::ComputeExecutor ex{gc};ArtifactCore::ComputePipelineDesc pd{};pd.name="Spherize/PSO";pd.shaderSource=kSpherizeHlsl;pd.entryPoint="main";pd.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;pd.variables=vars;pd.variableCount=3;pd.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!ex.build(pd)||!ex.createShaderResourceBinding(true)||!ex.setBuffer("SpherizeParams",params)||!ex.setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!ex.setTextureView("g_OutputTexture",output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){fallback();return;}ex.dispatch(context,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    auto sd=od;sd.Name="Spherize/Readback";sd.Usage=Diligent::USAGE_STAGING;sd.BindFlags=Diligent::BIND_NONE;sd.CPUAccessFlags=Diligent::CPU_ACCESS_READ;Diligent::RefCntAutoPtr<Diligent::ITexture> staging;device->CreateTexture(sd,nullptr,&staging);if(!staging){fallback();return;}context->CopyTexture(Diligent::CopyTextureAttribs(output,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){fallback();return;}cv::Mat result(image.height(),image.width(),CV_32FC4,read.pData,read.Stride);dst.image().setFromCVMat(result);context->UnmapTextureSubresource(staging,0,0);
 }
 
 class SpherizeEffect::Impl {

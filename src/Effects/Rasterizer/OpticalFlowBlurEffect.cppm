@@ -26,6 +26,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -76,7 +77,7 @@ public:
         // Lucas-Kanade optical flow per pixel (3x3 window)
         std::vector<float> vx(W*H,0),vy(W*H,0);
         const int r=1;
-        for(int y=r;y<H-r;++y)for(int x=r;x<W-r;++x){
+        ArtifactCore::Parallel::For(r,H-r,[&](int y){for(int x=r;x<W-r;++x){
             float Ix=0,Iy=0,It=0,Ixx=0,Iyy=0,Ixy=0,Ixt=0,Iyt=0;
             for(int dy=-r;dy<=r;++dy)for(int dx=-r;dx<=r;++dx){
                 int cx=x+dx,cy=y+dy,px=cx,py=cy;
@@ -94,10 +95,10 @@ public:
             }
             float det=Ixx*Iyy-Ixy*Ixy;
             if(fabsf(det)>1e-6f){vx[y*W+x]=(Iyy*Ixt-Ixy*Iyt)/det;vy[y*W+x]=(Ixx*Iyt-Ixy*Ixt)/det;}
-        }
+        }});
 
         // Apply smear along optical flow
-        for(int y=0;y<H;++y){float* o=d+(size_t)y*W*4;
+        ArtifactCore::Parallel::For(0,H,[&](int y){float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){
                 float mx=vx[y*W+x]*velocityScale_,my=vy[y*W+x]*velocityScale_;
                 float* p=o+(size_t)x*4;
@@ -114,7 +115,7 @@ public:
                     p[0]=r*inv;p[1]=g*inv;p[2]=b*inv;p[3]=a*inv;
                 }
             }
-        }
+        });
     }
 };
 

@@ -1,11 +1,13 @@
 ﻿module;
 #include <QList>
 #include <QVariant>
-#include <QVector>
 #include <cmath>
 #include <opencv2/core/mat.hpp>
-#include <QtConcurrent>
-#include <numeric>
+#include <opencv2/opencv.hpp>
+#include <cstring>
+#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 #include <iostream>
 #include <vector>
@@ -37,7 +39,6 @@
 #include <deque>
 #include <list>
 #include <tuple>
-#include <numeric>
 #include <regex>
 #include <random>
 module Artifact.Effect.Wave;
@@ -49,6 +50,10 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
+import Graphics.Compute;
+import Graphics.GPUcomputeContext;
+import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -75,10 +80,7 @@ void WaveEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     // ピクセルごとの処理 — 行単位で並列化
     std::vector<cv::Vec4f> rowResults(width * height);
 
-    QVector<int> rows(height);
-    std::iota(rows.begin(), rows.end(), 0);
-
-    QtConcurrent::blockingMap(rows, [&](int y) {
+    ArtifactCore::Parallel::For(0, height, [&](int y) {
         for (int x = 0; x < width; x++) {
             float offset = 0.0f;
 
@@ -117,27 +119,32 @@ void WaveEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     });
 
     // 結果をdstMatにコピー
-    for (int y = 0; y < height; y++) {
+    ArtifactCore::Parallel::For(0, height, [&](int y) {
         for (int x = 0; x < width; x++) {
             dstMat.at<cv::Vec4f>(y, x) = rowResults[y * width + x];
         }
-    }
+    });
     
     // 結果をdstに設定
     ImageF32x4_RGBA dstImage;
     dstImage.setFromRGBA32F(dstMat.ptr<float>(), dstMat.cols, dstMat.rows);
+    dst = ImageF32x4RGBAWithCache(dstImage);
 }
 
+static constexpr const char* kWaveHlsl=R"(
+Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);
+cbuffer WaveParams:register(b0){float g_Amplitude;float g_Frequency;float g_Phase;int g_Type;int g_Orientation;float3 g_Pad;}
+float4 atp(int2 p,uint w,uint h){return g_InputTexture[uint2(clamp(p.x,0,(int)w-1),clamp(p.y,0,(int)h-1))];}
+[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float phase=6.2831853*((g_Orientation==0?id.x:id.y)*g_Frequency)+g_Phase;float v=(g_Type==0?sin(phase):cos(phase))*g_Amplitude;int2 p=int2(id.xy)+(g_Orientation==0?int2((int)v,0):int2(0,(int)v));g_OutputTexture[id.xy]=atp(p,w,h);}
+)";
+
 void WaveEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-    // 現在はCPUバックエンドにフォールバック
-    // TODO: HLSLシェーダの実装
-    WaveEffectCPUImpl cpuImpl;
-    cpuImpl.setAmplitude(amplitude_);
-    cpuImpl.setFrequency(frequency_);
-    cpuImpl.setPhase(phase_);
-    cpuImpl.setWaveType(waveType_);
-    cpuImpl.setOrientation(orientation_);
-    cpuImpl.applyCPU(src, dst);
+    auto fallback=[&]{WaveEffectCPUImpl c;c.setAmplitude(amplitude_);c.setFrequency(frequency_);c.setPhase(phase_);c.setWaveType(waveType_);c.setOrientation(orientation_);c.applyCPU(src,dst);};
+    Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;if(!acquireSharedRenderDeviceForCurrentBackend(device,context)){fallback();return;}const auto& image=src.image();const float* data=image.rgba32fData();if(!data||image.width()<=0||image.height()<=0){fallback();return;}
+    Diligent::TextureDesc td{};td.Name="Wave/Input";td.Type=Diligent::RESOURCE_DIM_TEX_2D;td.Width=image.width();td.Height=image.height();td.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;td.MipLevels=1;td.ArraySize=1;td.SampleCount=1;td.Usage=Diligent::USAGE_IMMUTABLE;td.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=data;sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(td,&init,&input);if(!input){fallback();return;}auto od=td;od.Name="Wave/Output";od.Usage=Diligent::USAGE_DEFAULT;od.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;Diligent::RefCntAutoPtr<Diligent::ITexture> output;device->CreateTexture(od,nullptr,&output);if(!output){fallback();return;}
+    struct Params{float amp,freq,phase;int type,orientation;float pad[3];};Diligent::BufferDesc bd{};bd.Name="Wave/Params";bd.Size=sizeof(Params);bd.Usage=Diligent::USAGE_DYNAMIC;bd.BindFlags=Diligent::BIND_UNIFORM_BUFFER;bd.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;Diligent::RefCntAutoPtr<Diligent::IBuffer> params;device->CreateBuffer(bd,nullptr,&params);if(!params){fallback();return;}void*m=nullptr;context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,m);if(!m){fallback();return;}Params p{amplitude_,frequency_,phase_,waveType_,orientation_,{0,0,0}};std::memcpy(m,&p,sizeof(p));context->UnmapBuffer(params,Diligent::MAP_WRITE);
+    static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"WaveParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};ArtifactCore::GpuContext gc{device,context};ArtifactCore::ComputeExecutor ex{gc};ArtifactCore::ComputePipelineDesc pd{};pd.name="Wave/PSO";pd.shaderSource=kWaveHlsl;pd.entryPoint="main";pd.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;pd.variables=vars;pd.variableCount=3;pd.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!ex.build(pd)||!ex.createShaderResourceBinding(true)||!ex.setBuffer("WaveParams",params)||!ex.setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!ex.setTextureView("g_OutputTexture",output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){fallback();return;}ex.dispatch(context,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    auto sd=od;sd.Name="Wave/Readback";sd.Usage=Diligent::USAGE_STAGING;sd.BindFlags=Diligent::BIND_NONE;sd.CPUAccessFlags=Diligent::CPU_ACCESS_READ;Diligent::RefCntAutoPtr<Diligent::ITexture> staging;device->CreateTexture(sd,nullptr,&staging);if(!staging){fallback();return;}context->CopyTexture(Diligent::CopyTextureAttribs(output,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){fallback();return;}cv::Mat result(image.height(),image.width(),CV_32FC4,read.pData,read.Stride);dst.image().setFromCVMat(result);context->UnmapTextureSubresource(staging,0,0);
 }
 
 class WaveEffect::Impl {

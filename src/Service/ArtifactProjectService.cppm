@@ -1612,6 +1612,11 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
             : current.z();
         result.layer->setPosition3D(
             QVector3D(compCenterX, compCenterY, initialZ));
+        // LayerCreated is published by the project manager before this
+        // post-create placement is applied. Notify the existing render path
+        // once more so a new 3D primitive is visible without requiring the
+        // user to touch Position first.
+        notifyLayerMutation(comp->id().toString(), result.layer->id());
       }
       if (placeAtCurrentFrame) {
         const qint64 activeFrame =

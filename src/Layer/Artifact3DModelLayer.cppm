@@ -3,6 +3,7 @@ module;
 #include <QFileInfo>
 #include <QDir>
 #include <QColor>
+#include <QDebug>
 #include <QJsonObject>
 #include <QRectF>
 #include <QSizeF>
@@ -10,6 +11,7 @@ module;
 #include <QVector2D>
 #include <QVector3D>
 #include <QVector>
+#include <QtGlobal>
 #include <utility>
 
 module Artifact.Layers.Model3D;
@@ -95,6 +97,7 @@ public:
   bool affectedByLights_ = true;
   bool useTextureInSolid_ = false;
   bool wireOverlay_ = false;
+  QString lastRenderTraceOutcome_;
   Impl() {}
   ~Impl() {}
 };
@@ -678,7 +681,42 @@ const ArtifactCore::Mesh& Artifact3DLayer::mesh() const
 }
 
 void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
-  if (!renderer || !isVisible() || !impl_->meshLoaded_) {
+  const int64_t frame = currentFrame();
+  static const bool traceEnabled =
+      !qEnvironmentVariableIsSet("ARTIFACT_DISABLE_3D_RENDER_TRACE");
+  const auto traceResult = [&](const QString &outcome,
+                               const QString &detail = {}) {
+    if (!traceEnabled || impl_->lastRenderTraceOutcome_ == outcome) {
+      return;
+    }
+    impl_->lastRenderTraceOutcome_ = outcome;
+    qInfo().noquote()
+        << QStringLiteral(
+               "[Artifact3DLayer][RenderTrace] frame=%1 layer=\"%2\" id=%3 "
+               "outcome=%4 mode=%5 vertices=%6 polygons=%7 opacity=%8 %9")
+               .arg(frame)
+               .arg(layerName())
+               .arg(id().toString())
+               .arg(outcome)
+               .arg(impl_->renderMode_ == RenderMode::Solid
+                        ? QStringLiteral("solid")
+                        : QStringLiteral("wireframe"))
+               .arg(impl_->mesh_.vertexCount())
+               .arg(impl_->mesh_.polygonCount())
+               .arg(opacity(), 0, 'f', 3)
+               .arg(detail);
+  };
+
+  if (!renderer) {
+    traceResult(QStringLiteral("skip:no-renderer"));
+    return;
+  }
+  if (!isVisible()) {
+    traceResult(QStringLiteral("skip:not-visible"));
+    return;
+  }
+  if (!impl_->meshLoaded_) {
+    traceResult(QStringLiteral("skip:mesh-not-loaded"));
     return;
   }
 
@@ -705,6 +743,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   const auto &vertexAttrs = impl_->mesh_.vertexAttributes();
   const auto positions = vertexAttrs.get<QVector3D>("position");
   if (!positions || positions->data().isEmpty()) {
+    traceResult(QStringLiteral("skip:no-position-data"));
     return;
   }
 
@@ -734,11 +773,21 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
     const int solidShadingMode = impl_->useTextureInSolid_ ? 3 : 8;
     renderer->drawMesh(cacheKey, impl_->mesh_, impl_->material_, modelMatrix,
                        opacity(), solidShadingMode, &previousModelMatrix);
+    traceResult(
+        QStringLiteral("mesh-submitted"),
+        QStringLiteral("position=(%1,%2,%3) scale=(%4,%5) shading=%6")
+            .arg(snapshot.positionX, 0, 'f', 2)
+            .arg(snapshot.positionY, 0, 'f', 2)
+            .arg(snapshot.positionZ, 0, 'f', 2)
+            .arg(snapshot.scaleX, 0, 'f', 3)
+            .arg(snapshot.scaleY, 0, 'f', 3)
+            .arg(solidShadingMode));
     if (impl_->wireOverlay_) {
       drawEdges(FloatColor{0.04f, 0.05f, 0.06f, opacity() * 0.72f}, 1.0f);
     }
   } else {
     drawEdges(wireframeColor, thickness);
+    traceResult(QStringLiteral("wireframe-submitted"));
   }
 
   drawFractureOverlay(renderer, modelMatrix,

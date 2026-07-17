@@ -74,6 +74,8 @@ export namespace Artifact {
   QStringList sequencePaths;
   double frameRate = 0.0;
   bool isSequence = false;
+  QString inputColorSpace;
+  QString inputTransferFunction;
   
  };
 

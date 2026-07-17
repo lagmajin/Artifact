@@ -31,7 +31,7 @@ public:
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& n, const QVariant& v) override;
-    bool supportsGPU() const override { return false; }
+    bool supportsGPU() const override { return true; }
 
 private:
     float redShift_=2.0f,blueShift_=2.0f,cx_=0.5f,cy_=0.5f;

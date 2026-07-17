@@ -6,6 +6,10 @@ module;
 #include <QVariant>
 #include <vector>
 #include <opencv2/opencv.hpp>
+#include <cstring>
+#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module Artifact.Effect.DirectionalGlow;
 
@@ -14,6 +18,10 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
+import Graphics.Compute;
+import Graphics.GPUcomputeContext;
+import Artifact.Render.DiligentDeviceManager;
 
 namespace Artifact {
 
@@ -29,7 +37,7 @@ static cv::Mat directionalBlur1D(const cv::Mat& src, float angleDeg, float lengt
 
     cv::Mat result = cv::Mat::zeros(src.size(), src.type());
 
-    for (int y = 0; y < src.rows; ++y) {
+    ArtifactCore::Parallel::For(0, src.rows, [&](int y) {
         for (int x = 0; x < src.cols; ++x) {
             cv::Vec4f sum(0, 0, 0, 0);
             float totalWeight = 0.0f;
@@ -114,7 +122,7 @@ public:
         cv::Mat mat(srcImage.height(), srcImage.width(), CV_32FC4, const_cast<float*>(srcData));
 
         cv::Mat bright = cv::Mat::zeros(mat.size(), CV_32FC4);
-        for (int y = 0; y < mat.rows; ++y) {
+        ArtifactCore::Parallel::For(0, mat.rows, [&](int y) {
             for (int x = 0; x < mat.cols; ++x) {
                 const cv::Vec4f p = mat.at<cv::Vec4f>(y, x);
                 const float lum = 0.299f * p[2] + 0.587f * p[1] + 0.114f * p[0];
@@ -123,7 +131,7 @@ public:
                     bright.at<cv::Vec4f>(y, x) = p * scale;
                 }
             }
-        }
+        });
 
         const QVector<float> angles = customAngles_.isEmpty()
             ? getAnglesForPattern(pattern_, angleOffset_)
@@ -141,7 +149,7 @@ public:
         }
 
         cv::Mat result = mat.clone();
-        for (int y = 0; y < mat.rows; ++y) {
+        ArtifactCore::Parallel::For(0, mat.rows, [&](int y) {
             for (int x = 0; x < mat.cols; ++x) {
                 cv::Vec4f& dstP = result.at<cv::Vec4f>(y, x);
                 const cv::Vec4f streakP = streaks.at<cv::Vec4f>(y, x) * intensity_;
@@ -150,10 +158,10 @@ public:
                 dstP[1] = std::clamp(dstP[1], 0.0f, 1.0f);
                 dstP[2] = std::clamp(dstP[2], 0.0f, 1.0f);
             }
-        }
+        });
 
         dst.image().setFromRGBA32F(result.ptr<float>(), result.cols, result.rows);
-    }
+    });
 };
 
 class DirectionalGlowGPUImpl : public ArtifactEffectImplBase {
@@ -167,16 +175,31 @@ public:
     StreakPattern pattern_ = StreakPattern::Horizontal;
     QVector<float> customAngles_;
     float angleOffset_ = 0.0f;
+    mutable Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
+    mutable Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
+    mutable Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
+    mutable bool pipelineReady_ = false;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         cpuImpl_.applyCPU(src, dst);
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        applyCPU(src, dst);
+        if (!customAngles_.isEmpty()) { applyCPU(src,dst); return; }
+        if (!acquireSharedRenderDeviceForCurrentBackend(device_,context_)) { applyCPU(src,dst); return; }
+        auto gpuContext=std::make_unique<ArtifactCore::GpuContext>(device_,context_);auto executor=std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext);
+        if(!paramsCB_){Diligent::BufferDesc d;d.Name="DirectionalGlow/Params";d.Size=sizeof(ParamsCB);d.Usage=Diligent::USAGE_DYNAMIC;d.BindFlags=Diligent::BIND_UNIFORM_BUFFER;d.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;device_->CreateBuffer(d,nullptr,&paramsCB_);}if(!paramsCB_){applyCPU(src,dst);return;}
+        static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"DirectionalGlowParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
+        if(!pipelineReady_){ArtifactCore::ComputePipelineDesc d;d.name="DirectionalGlow/PSO";d.shaderSource=kHlsl;d.entryPoint="main";d.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;d.variables=vars;d.variableCount=3;d.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!executor->build(d)||!executor->createShaderResourceBinding(true)||!executor->setBuffer("DirectionalGlowParams",paramsCB_)){applyCPU(src,dst);return;}pipelineReady_=true;}
+        Diligent::RefCntAutoPtr<Diligent::ITexture> input;if(!createTexture(src,&input,"DirectionalGlow/Input")){applyCPU(src,dst);return;}auto od=input->GetDesc();od.Usage=Diligent::USAGE_DEFAULT;od.BindFlags=Diligent::BIND_UNORDERED_ACCESS|Diligent::BIND_SHADER_RESOURCE;od.Name="DirectionalGlow/Output";Diligent::RefCntAutoPtr<Diligent::ITexture> output;device_->CreateTexture(od,nullptr,&output);if(!output){applyCPU(src,dst);return;}
+        ParamsCB p{threshold_,intensity_,length1_,length2_,weight1_,weight2_,static_cast<float>(static_cast<int>(pattern_)),angleOffset_};void*mapped=nullptr;context_->MapBuffer(paramsCB_,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}std::memcpy(mapped,&p,sizeof(p));context_->UnmapBuffer(paramsCB_,Diligent::MAP_WRITE);if(!executor->setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor->setTextureView("g_OutputTexture",output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}executor->dispatch(context_,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);if(!readback(device_,context_,output,dst,"DirectionalGlow/Readback")){applyCPU(src,dst);}
     }
 
 private:
+    struct ParamsCB{float threshold,intensity,length1,length2,weight1,weight2,pattern,angleOffset;};
+    static constexpr const char* kHlsl=R"(Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer DirectionalGlowParams:register(b0){float g_Threshold;float g_Intensity;float g_Length1;float g_Length2;float g_Weight1;float g_Weight2;float g_Pattern;float g_AngleOffset;}float4 sampleBright(int2 p,uint2 size){p=clamp(p,int2(0,0),int2(size)-1);float4 v=g_InputTexture[p];float lum=dot(v.rgb,float3(0.114,0.587,0.299));return lum>g_Threshold?v*((lum-g_Threshold)/max(0.001,1.0-g_Threshold)):0;}float3 streak(int2 p,uint2 size,float angle,float len){float2 d=float2(cos(angle),sin(angle));int radius=(int)max(1.0,len*.5);float3 sum=0;float total=0;for(int s=-128;s<=128;++s){if(abs(s)>radius)continue;int2 q=p+int2(round(d*s));float w=exp(-.5*s*s/max(1.0,radius*radius*.25));sum+=sampleBright(q,size).rgb*w;total+=w;}return total>0?sum/total:0;}[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;int2 p=int2(id.xy);float a=g_AngleOffset*0.0174532925;float3 s=streak(p,uint2(w,h),a,g_Length1)*g_Weight1+streak(p,uint2(w,h),a,g_Length2)*g_Weight2;if(g_Pattern>0.5&&g_Pattern<1.5)s+=streak(p,uint2(w,h),a+1.5707963,g_Length1)*g_Weight1+streak(p,uint2(w,h),a+1.5707963,g_Length2)*g_Weight2;if(g_Pattern>1.5&&g_Pattern<2.5)for(int k=1;k<4;k+=1){float ang=a+1.5707963*k*.5;s+=streak(p,uint2(w,h),ang,g_Length1)*g_Weight1+streak(p,uint2(w,h),ang,g_Length2)*g_Weight2;}float4 px=g_InputTexture[id.xy];px.rgb=saturate(px.rgb+s*g_Intensity);g_OutputTexture[id.xy]=px;})";
+    bool createTexture(const ImageF32x4RGBAWithCache&src,Diligent::ITexture**out,const char*name){const auto&i=src.image();const float*data=i.rgba32fData();if(!out||!data||i.width()<=0||i.height()<=0)return false;Diligent::TextureDesc d;d.Type=Diligent::RESOURCE_DIM_TEX_2D;d.Width=i.width();d.Height=i.height();d.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;d.ArraySize=1;d.MipLevels=1;d.SampleCount=1;d.Usage=Diligent::USAGE_IMMUTABLE;d.BindFlags=Diligent::BIND_SHADER_RESOURCE;d.Name=name;Diligent::TextureSubResData sub{};sub.pData=data;sub.Stride=static_cast<Diligent::Uint64>(i.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;device_->CreateTexture(d,&init,out);return *out!=nullptr;}
+    static bool readback(Diligent::IRenderDevice*dev,Diligent::IDeviceContext*ctx,Diligent::ITexture*src,ImageF32x4RGBAWithCache&dst,const char*name){if(!dev||!ctx||!src)return false;auto d=src->GetDesc();Diligent::TextureDesc s;s.Type=Diligent::RESOURCE_DIM_TEX_2D;s.Width=d.Width;s.Height=d.Height;s.Format=d.Format;s.ArraySize=1;s.MipLevels=1;s.SampleCount=1;s.Usage=Diligent::USAGE_STAGING;s.CPUAccessFlags=Diligent::CPU_ACCESS_READ;s.Name=name;Diligent::RefCntAutoPtr<Diligent::ITexture>staging;dev->CreateTexture(s,nullptr,&staging);if(!staging)return false;ctx->CopyTexture(Diligent::CopyTextureAttribs(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));ctx->Flush();ctx->WaitForIdle();Diligent::MappedTextureSubresource m{};ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,m);if(!m.pData||!m.Stride)return false;cv::Mat temp((int)d.Height,(int)d.Width,CV_32FC4,m.pData,m.Stride);dst.image().setFromCVMat(temp);ctx->UnmapTextureSubresource(staging,0,0);return true;}
     DirectionalGlowCPUImpl cpuImpl_;
 };
 

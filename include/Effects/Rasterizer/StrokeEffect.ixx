@@ -20,6 +20,7 @@ public:
     void setOpacity(float o);
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+    bool supportsGPU() const override { return true; }
 private:
     QColor strokeColor_ = QColor(255, 255, 255, 255);
     float width_ = 3.0f;

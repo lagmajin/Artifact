@@ -38,6 +38,8 @@ public:
 
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    bool supportsGPU() const override { return true; }
 };
 
 }

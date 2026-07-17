@@ -26,6 +26,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -63,16 +64,16 @@ public:
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();if(!hp)return;
         const float* pd=prev.image().rgba32fData();int pw=prev.width(),ph=prev.height();
         int BS=8,vw=(W+BS-1)/BS,vh=(H+BS-1)/BS;std::vector<float> vx(vw*vh,0),vy(vw*vh,0);
-        for(int by=0;by<vh;++by)for(int bx=0;bx<vw;++bx){int sx=bx*BS,sy=by*BS,ex=std::min(sx+BS,W),ey=std::min(sy+BS,H);float best=1e12f,bdx=0,bdy=0;
+        ArtifactCore::Parallel::For(0,vh,[&](int by){for(int bx=0;bx<vw;++bx){int sx=bx*BS,sy=by*BS,ex=std::min(sx+BS,W),ey=std::min(sy+BS,H);float best=1e12f,bdx=0,bdy=0;
             for(int dy=-16;dy<=16;dy+=4)for(int dx=-16;dx<=16;dx+=4){float diff=0;int cnt=0;
                 for(int y=sy;y<ey;y+=2)for(int x=sx;x<ex;x+=2){int cx=x+dx,cy=y+dy;
                     if((unsigned)cx<(unsigned)pw&&(unsigned)cy<(unsigned)ph){auto*sp=sd+((size_t)y*W+x)*4,*pp=pd+((size_t)cy*pw+cx)*4;float dr=sp[0]-pp[0],dg=sp[1]-pp[1],db=sp[2]-pp[2];diff+=dr*dr+dg*dg+db*db;++cnt;}}
                 if(cnt>0){diff/=(float)cnt;if(diff<best){best=diff;bdx=(float)(-dx);bdy=(float)(-dy);}}}
-            vx[by*vw+bx]=bdx*sa;vy[by*vw+bx]=bdy*sa;}
-        for(int y=0;y<H;++y){int bvY=y/BS;float* o=d+(size_t)y*W*4;
+            vx[by*vw+bx]=bdx*sa;vy[by*vw+bx]=bdy*sa;}}
+        ArtifactCore::Parallel::For(0,H,[&](int y){int bvY=y/BS;float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){int bvX=x/BS;float mx=vx[std::min(bvY,vh-1)*vw+std::min(bvX,vw-1)],my=vy[std::min(bvY,vh-1)*vw+std::min(bvX,vw-1)];float* p=o+(size_t)x*4;float r=p[0],g=p[1],b=p[2],a=p[3];
                 for(int i=1;i<=ns;++i){float t=((float)i-0.5f)/(float)ns;int sx=(int)((float)x+mx*t+0.5f),sy=(int)((float)y+my*t+0.5f);sx=std::clamp(sx,0,W-1);sy=std::clamp(sy,0,H-1);auto*sp=sd+((size_t)sy*W+sx)*4;r+=sp[0];g+=sp[1];b+=sp[2];a+=sp[3];}
-                float inv=1.0f/(float)(ns+1)*exposureComp_;p[0]=std::clamp(r*inv,0.0f,1.0f);p[1]=std::clamp(g*inv,0.0f,1.0f);p[2]=std::clamp(b*inv,0.0f,1.0f);p[3]=std::clamp(a*inv,0.0f,1.0f);}}
+                float inv=1.0f/(float)(ns+1)*exposureComp_;p[0]=std::clamp(r*inv,0.0f,1.0f);p[1]=std::clamp(g*inv,0.0f,1.0f);p[2]=std::clamp(b*inv,0.0f,1.0f);p[3]=std::clamp(a*inv,0.0f,1.0f);}});
     }
 };
 

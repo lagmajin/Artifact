@@ -16,6 +16,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -56,21 +57,24 @@ public:
         }
 
         // Apply persistence decay to accumulation buffer.
-        for (size_t i = 0; i < n; ++i) {
-            accum_[i] *= p;
-        }
+        ArtifactCore::Parallel::For(0,H,[&](int y){
+            const size_t begin=static_cast<size_t>(y)*W*4;
+            for(int i=0;i<W*4;++i)accum_[begin+i]*=p;
+        });
 
         // Add current frame contribution.
-        for (size_t i = 0; i < n; ++i) {
-            accum_[i] = std::clamp(accum_[i] + sd[i] * (1.0f - p), 0.0f, 1.0f);
-        }
+        ArtifactCore::Parallel::For(0,H,[&](int y){
+            const size_t begin=static_cast<size_t>(y)*W*4;
+            for(int i=0;i<W*4;++i)accum_[begin+i]=std::clamp(accum_[begin+i]+sd[begin+i]*(1.0f-p),0.0f,1.0f);
+        });
 
         // Blend: accum ↔ current.
         dst = src.DeepCopy();
         float* d = dst.image().rgba32fData();
-        for (size_t i = 0; i < n; ++i) {
-            d[i] = accum_[i] * (1.0f - b) + sd[i] * b;
-        }
+        ArtifactCore::Parallel::For(0,H,[&](int y){
+            const size_t begin=static_cast<size_t>(y)*W*4;
+            for(int i=0;i<W*4;++i)d[begin+i]=accum_[begin+i]*(1.0f-b)+sd[begin+i]*b;
+        });
     }
 };
 

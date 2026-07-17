@@ -16,8 +16,11 @@ export namespace Artifact {
   Point = 0,
   Spot,
   Parallel,
-  Ambient
+  Ambient,
+  Area
  };
+
+ enum class AreaLightShape { Rectangle = 0, Disk = 1 };
 
  enum class LightLinkMode {
   All = 0,
@@ -46,6 +49,14 @@ export namespace Artifact {
 
   float intensity() const;
   void setIntensity(float intensity);
+
+  float range() const;
+  void setRange(float range);
+  float areaWidth() const;
+  float areaHeight() const;
+  void setAreaSize(float width, float height);
+  AreaLightShape areaShape() const;
+  void setAreaShape(AreaLightShape shape);
 
   // Spot-light cone. These are authored in composition-space units and are
   // also the source values for a future volumetric-light render bridge.

@@ -21,6 +21,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -67,7 +68,9 @@ public:
         const int cell = std::max(1, static_cast<int>(cellSize_));
         // cache: key=cell origin, value=average color
         // lazy recompute each cell (cheap for small images)
-        for (int by = 0; by < h; by += cell) {
+        const int tileRows = (h + cell - 1) / cell;
+        ArtifactCore::Parallel::For(0, tileRows, [&](int tileRow) {
+            const int by = tileRow * cell;
             for (int bx = 0; bx < w; bx += cell) {
                 const int x1 = std::min(bx + cell, w);
                 const int y1 = std::min(by + cell, h);
@@ -105,7 +108,7 @@ public:
                     fillRect(mat, bx, by, x1, y1, c);
                 }
             }
-        }
+        });
     }
 };
 

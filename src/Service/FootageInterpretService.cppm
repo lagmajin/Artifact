@@ -183,8 +183,22 @@ SourceInterpretOverride FootageInterpretService::currentOverride(
     SourceInterpretOverride override;
     if (!footage) return override;
     override.frameRate = footage->frameRate;
+    override.inputColorSpace = footage->inputColorSpace;
+    override.inputTransferFunction = footage->inputTransferFunction;
     override.isActive = true;
     return override;
+}
+
+bool FootageInterpretService::applyColorInterpretation(
+    FootageItem* footage, const QString& inputColorSpace,
+    const QString& inputTransferFunction, QString* errorOut) {
+    if (!footage) {
+        if (errorOut) *errorOut = QStringLiteral("Invalid footage");
+        return false;
+    }
+    footage->inputColorSpace = inputColorSpace.trimmed();
+    footage->inputTransferFunction = inputTransferFunction.trimmed();
+    return true;
 }
 
 bool FootageInterpretService::clearOverride(FootageItem* footage) {

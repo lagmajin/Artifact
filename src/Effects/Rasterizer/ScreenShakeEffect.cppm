@@ -16,6 +16,7 @@ import Image.ImageF32x4_RGBA;
 import ImageProcessing.Distortion;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -71,7 +72,7 @@ public:
         const int W = si.width(), H = si.height();
         ImageF32x4_RGBA tmp;
         tmp.allocate(W, H);
-        for (int y = 0; y < H; ++y) {
+        ArtifactCore::Parallel::For(0, H, [&](int y) {
             for (int x = 0; x < W; ++x) {
                 const float sx = (wrap_ == 2) ? mirrorCoord(static_cast<float>(x) + dx, W)
                                               : clampCoord(static_cast<float>(x) + dx, W);
@@ -79,7 +80,7 @@ public:
                                               : clampCoord(static_cast<float>(y) + dy, H);
                 tmp.setPixel(x, y, sampleBilinear(si, sx, sy));
             }
-        }
+        });
         dst.image().setFromRGBA32F(tmp.rgba32fData(), W, H);
     }
 };

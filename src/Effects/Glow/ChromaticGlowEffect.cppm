@@ -6,7 +6,11 @@ module;
 #include <vector>
 
 #include <QVariant>
+#include <cstring>
 #include <opencv2/opencv.hpp>
+#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module Artifact.Effect.Glow.ChromaticGlow;
 
@@ -15,6 +19,10 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
+import Graphics.Compute;
+import Graphics.GPUcomputeContext;
+import Artifact.Render.DiligentDeviceManager;
 
 namespace Artifact {
 
@@ -109,7 +117,7 @@ public:
         const float shiftY = dirY * shift;
 
         cv::Mat result = srcMat.clone();
-        for (int y = 0; y < srcMat.rows; ++y) {
+        ArtifactCore::Parallel::For(0, srcMat.rows, [&](int y) {
             for (int x = 0; x < srcMat.cols; ++x) {
                 const float fx = static_cast<float>(x);
                 const float fy = static_cast<float>(y);
@@ -126,7 +134,7 @@ public:
                 dstPx[1] = std::clamp(dstPx[1] + spectral[1] * intensity_, 0.0f, 1.0f);
                 dstPx[2] = std::clamp(dstPx[2] + spectral[2] * intensity_, 0.0f, 1.0f);
             }
-        }
+        });
 
         dst.image().setFromRGBA32F(result.ptr<float>(), result.cols, result.rows);
     }
@@ -146,8 +154,22 @@ public:
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache &src, ImageF32x4RGBAWithCache &dst) override {
-        applyCPU(src, dst);
+        Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device; Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
+        if (!acquireSharedRenderDeviceForCurrentBackend(device, context)) { applyCPU(src, dst); return; }
+        const auto& image=src.image(); const float* data=image.rgba32fData(); if(!data||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
+        Diligent::TextureDesc d{}; d.Name="ChromaticGlow/Input"; d.Type=Diligent::RESOURCE_DIM_TEX_2D; d.Width=image.width(); d.Height=image.height(); d.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT; d.MipLevels=1; d.ArraySize=1; d.SampleCount=1; d.Usage=Diligent::USAGE_IMMUTABLE; d.BindFlags=Diligent::BIND_SHADER_RESOURCE;
+        Diligent::TextureSubResData sub{};sub.pData=data;sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(d,&init,&input);if(!input){applyCPU(src,dst);return;}
+        auto od=d;od.Name="ChromaticGlow/Output";od.Usage=Diligent::USAGE_DEFAULT;od.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;Diligent::RefCntAutoPtr<Diligent::ITexture> output;device->CreateTexture(od,nullptr,&output);if(!output){applyCPU(src,dst);return;}
+        struct Params{float threshold,radius,intensity,dispersion,angle,tintMix;float pad[2];};Diligent::BufferDesc bd{};bd.Name="ChromaticGlow/Params";bd.Size=sizeof(Params);bd.Usage=Diligent::USAGE_DYNAMIC;bd.BindFlags=Diligent::BIND_UNIFORM_BUFFER;bd.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;Diligent::RefCntAutoPtr<Diligent::IBuffer> params;device->CreateBuffer(bd,nullptr,&params);if(!params){applyCPU(src,dst);return;}void*m=nullptr;context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,m);if(!m){applyCPU(src,dst);return;}Params p{threshold_,radius_,intensity_,dispersion_,angle_,tintMix_,{}};std::memcpy(m,&p,sizeof(p));context->UnmapBuffer(params,Diligent::MAP_WRITE);
+        static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"ChromaticGlowParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};ArtifactCore::GpuContext gc{device,context};ArtifactCore::ComputeExecutor ex{gc};ArtifactCore::ComputePipelineDesc pd{};pd.name="ChromaticGlow/PSO";pd.shaderSource=kHlsl;pd.entryPoint="main";pd.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;pd.variables=vars;pd.variableCount=3;pd.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!ex.build(pd)||!ex.createShaderResourceBinding(true)||!ex.setBuffer("ChromaticGlowParams",params)||!ex.setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!ex.setTextureView("g_OutputTexture",output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}ex.dispatch(context,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        auto sd=od;sd.Name="ChromaticGlow/Readback";sd.Usage=Diligent::USAGE_STAGING;sd.BindFlags=Diligent::BIND_NONE;sd.CPUAccessFlags=Diligent::CPU_ACCESS_READ;Diligent::RefCntAutoPtr<Diligent::ITexture> staging;device->CreateTexture(sd,nullptr,&staging);if(!staging){applyCPU(src,dst);return;}context->CopyTexture(Diligent::CopyTextureAttribs(output,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}cv::Mat result(image.height(),image.width(),CV_32FC4,read.pData,read.Stride);dst.image().setFromCVMat(result);context->UnmapTextureSubresource(staging,0,0);
     }
+private:
+    static constexpr const char* kHlsl=R"(
+Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer ChromaticGlowParams:register(b0){float g_Threshold;float g_Radius;float g_Intensity;float g_Dispersion;float g_Angle;float g_TintMix;float2 g_Pad;}
+float4 sample(float2 p,uint w,uint h){p=clamp(p,float2(0,0),float2(w-1,h-1));int2 a=int2(floor(p)),b=min(a+1,int2(w-1,h-1));float2 t=p-a;return lerp(lerp(g_InputTexture[a],g_InputTexture[int2(b.x,a.y)],t.x),lerp(g_InputTexture[int2(a.x,b.y)],g_InputTexture[b],t.x),t.y);}
+[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 base=g_InputTexture[id.xy],acc=0;float2 dir=float2(cos(g_Angle*0.0174532925),sin(g_Angle*0.0174532925));int n=5;for(int i=-n;i<=n;++i){float2 q=float2(id.xy)+dir*(float)i*(g_Radius*0.25);float4 s=sample(q,w,h);float b=dot(s.rgb,float3(0.114,0.587,0.299));acc+=max(0,b-g_Threshold)*s/(max(0.001,1-g_Threshold));}acc/=(2*n+1);float shift=max(0,g_Dispersion)*max(1,g_Radius*0.25);float4 rr=sample(float2(id.xy)+dir*shift,w,h),bb=sample(float2(id.xy)-dir*shift,w,h);float3 spectral=float3(bb.b*(1-g_TintMix)+acc.b*g_TintMix,acc.g,rr.r*(1-g_TintMix)+acc.r*g_TintMix);g_OutputTexture[id.xy]=float4(saturate(base.rgb+spectral*g_Intensity),base.a);}
+)";
 
 private:
     ChromaticGlowEffectCPUImpl cpuImpl_;

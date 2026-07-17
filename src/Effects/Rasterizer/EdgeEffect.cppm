@@ -16,6 +16,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -39,7 +40,7 @@ public:
             ImageF32x4RGBAWithCache prev;
             if(context_.sampler->sampleCurrentLayerFrameRelative(-1,prev)&&prev.width()>0&&prev.image().rgba32fData()){
                 const float* pd=prev.image().rgba32fData();int pw=prev.width(),ph=prev.height();
-                for(int y=0;y<H;++y){float* o=d+(size_t)y*W*4;int py=std::min(y,ph-1);
+                Parallel::For(0,H,[&](int y){float* o=d+(size_t)y*W*4;int py=std::min(y,ph-1);
                     for(int x=0;x<W;++x){int px=std::min(x,pw-1);
                         const float* pp=pd+((size_t)py*pw+px)*4;float* p=o+(size_t)x*4;
                         float dr=fabsf(p[0]-pp[0]),dg=fabsf(p[1]-pp[1]),db=fabsf(p[2]-pp[2]);
@@ -48,10 +49,11 @@ public:
                         p[0]=e;p[1]=e;p[2]=e;p[3]=1.0f;
                     }
                 }
+                });
             }
         }else{
             // Spatial Sobel edge
-            for(int y=1;y<H-1;++y){float* o=d+(size_t)y*W*4;
+            Parallel::For(1,H-1,[&](int y){float* o=d+(size_t)y*W*4;
                 for(int x=1;x<W-1;++x){
                     auto L=[&](int ox,int oy)->float{const float*sp=sd+((size_t)(y+oy)*W+(x+ox))*4;return sp[0]*0.299f+sp[1]*0.587f+sp[2]*0.114f;};
                     float gx=-L(-1,-1)-2*L(-1,0)-L(-1,1)+L(1,-1)+2*L(1,0)+L(1,1);
@@ -60,7 +62,7 @@ public:
                     if(e<th)e=0;if(inv>0.5f)e=1.0f-e;
                     float* p=o+(size_t)x*4;p[0]=e;p[1]=e;p[2]=e;p[3]=1.0f;
                 }
-            }
+            });
         }
     }
 };

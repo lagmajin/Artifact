@@ -15,6 +15,7 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -130,14 +131,14 @@ public:
         const cv::Mat psf = loadAndNormalizePsf(psfImagePath, kernelSize, shape,
                                                rotation, edgeBrightness);
         std::vector<cv::Mat> outputChannels(4);
-        for (int c = 0; c < 3; ++c) {
+        ArtifactCore::Parallel::For(0, 3, [&](int c) {
             outputChannels[c] = fftConvolve(channels[c], psf);
             if (highlightBoost > 0.0f) {
                 cv::Mat highlights = channels[c] - 0.65f;
                 cv::max(highlights, 0.0, highlights);
                 outputChannels[c] += fftConvolve(highlights, psf) * highlightBoost;
             }
-        }
+        });
         outputChannels[3] = channels[3];
         cv::Mat output;
         cv::merge(outputChannels, output);

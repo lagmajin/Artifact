@@ -101,6 +101,8 @@ public:
     float shadowBlur() const;
 
     void setTracking(float tracking);    float tracking() const;
+    void setFontStretch(float stretch);
+    float fontStretch() const;
 
     void setLeading(float leading);
     float leading() const;

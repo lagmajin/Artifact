@@ -17,6 +17,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact
 {
@@ -86,7 +87,7 @@ public:
 
         const float invTotal = 1.0f / std::max(totalWeight, 0.0001f);
 
-        for (int y = 0; y < height; ++y)
+        ArtifactCore::Parallel::For(0, height, [&](int y)
         {
             float* outRow = dstData + static_cast<size_t>(y) * width * 4;
             for (int x = 0; x < width; ++x)
@@ -130,7 +131,7 @@ public:
                     pixel[0] = r; pixel[1] = g; pixel[2] = b; pixel[3] = a;
                 }
             }
-        }
+        });
     }
 };
 

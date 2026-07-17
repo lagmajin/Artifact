@@ -22,6 +22,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -75,7 +76,7 @@ public:
             float bayerScale = 1.0f / static_cast<float>(bayerN * bayerN);
             float bayerOffset = 0.5f / static_cast<float>(bayerN * bayerN);
 
-            for (int y = 0; y < h; ++y) {
+            ArtifactCore::Parallel::For(0, h, [&](int y) {
                 for (int x = 0; x < w; ++x) {
                     int idx = (y * w + x) * 4;
                     int bx = int((x * patternScale_) / std::max(1.0f, w * 0.01f) * bayerSize) % bayerSize;
@@ -91,7 +92,7 @@ public:
                     quantized = std::floor(dstPixels[idx + 2] * levelsPerChannel + threshold) / levelsPerChannel;
                     dstPixels[idx + 2] = std::clamp(quantized, 0.0f, 1.0f);
                 }
-            }
+            });
         } else {
             // Error diffusion (Floyd-Steinberg, Atkinson, Sierra, Stucki)
             std::vector<float> error(w * h * 3, 0.0f);

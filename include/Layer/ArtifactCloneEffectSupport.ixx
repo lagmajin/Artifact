@@ -23,6 +23,7 @@ module;
 export module Artifact.Layer.CloneEffectSupport;
 
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Component.System;
 import Artifact.Effect.Generator.Cloner;
 import Property.Abstract;
 

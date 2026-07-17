@@ -26,6 +26,7 @@ public:
     void setInvert(bool v);
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+    bool supportsGPU() const override { return true; }
 private:
     QColor satinColor_ = QColor(200, 200, 200, 180);
     float distance_ = 0.0f;

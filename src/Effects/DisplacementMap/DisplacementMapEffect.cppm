@@ -17,6 +17,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -106,7 +107,7 @@ public:
         float* dstData = dst.image().rgba32fData();
         cv::Mat dstMat(H, W, CV_32FC4, dstData);
 
-        for (int y = 0; y < H; ++y) {
+        ArtifactCore::Parallel::For(0, H, [&](int y) {
             const float* mapRow = srcMat.ptr<float>(y);
             cv::Vec4f*   outRow = dstMat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < W; ++x) {
@@ -125,7 +126,7 @@ public:
                     outRow[x] = sampleBilinear(srcMat, srcX, srcY);
                 }
             }
-        }
+        });
     }
 };
 

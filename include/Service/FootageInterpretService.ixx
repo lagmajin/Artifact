@@ -29,6 +29,12 @@ public:
 
     bool clearOverride(FootageItem* footage);
 
+    bool applyColorInterpretation(
+        FootageItem* footage,
+        const QString& inputColorSpace,
+        const QString& inputTransferFunction,
+        QString* errorOut = nullptr);
+
 private:
     FootageInterpretService() = default;
 

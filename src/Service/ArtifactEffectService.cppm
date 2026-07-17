@@ -384,6 +384,13 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("PBR Material"));
    return effect;
   }
+  if (effectId == QStringLiteral("builtin.glitch") ||
+      effectId == QStringLiteral("glitch")) {
+   auto effect = std::make_unique<ArtifactGlitchEffect>();
+   effect->setEffectID(UniString::fromQString(QStringLiteral("builtin.glitch")));
+   effect->setDisplayName(QStringLiteral("Glitch"));
+   return effect;
+  }
   if (effectId == QStringLiteral("builtin.halftone")) {
    auto effect = std::make_unique<ArtifactHalftoneEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
@@ -394,6 +401,13 @@ W_OBJECT_IMPL(ArtifactEffectService)
    auto effect = std::make_unique<ArtifactHalftoneEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
    effect->setDisplayName(QStringLiteral("Halftone"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("builtin.old_tv") ||
+      effectId == QStringLiteral("old_tv")) {
+   auto effect = std::make_unique<ArtifactOldTVEffect>();
+   effect->setEffectID(UniString::fromQString(QStringLiteral("builtin.old_tv")));
+   effect->setDisplayName(QStringLiteral("Old TV"));
    return effect;
   }
   if (effectId == QStringLiteral("sharpen")) {
@@ -641,7 +655,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("twist"), "Twist"});
   effects.push_back({EffectID("bend"), "Bend"});
   effects.push_back({EffectID("pbr_material"), "PBR Material"});
+  effects.push_back({EffectID("builtin.glitch"), "Glitch"});
   effects.push_back({EffectID("halftone"), "Halftone"});
+  effects.push_back({EffectID("builtin.old_tv"), "Old TV"});
   effects.push_back({EffectID("sharpen"), "Sharpen"});
   effects.push_back({EffectID("find_edges"), "Find Edges"});
   effects.push_back({EffectID("rim_light"), "Rim Light / Edge Light"});

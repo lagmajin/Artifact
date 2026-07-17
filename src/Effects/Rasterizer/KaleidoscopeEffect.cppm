@@ -16,6 +16,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -33,7 +34,7 @@ public:
         float segAng=std::numbers::pi_v<float>*2.0f/(float)seg;
 
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
-        for(int y=0;y<H;++y){float* o=d+(size_t)y*W*4;
+        Parallel::For(0,H,[&](int y){float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){float* p=o+(size_t)x*4;
                 float dx=(float)x-cx,dy=(float)y-cy;
                 float ang=std::atan2(dy,dx)+rot;
@@ -49,7 +50,7 @@ public:
                 const float*sp=sd+((size_t)sy*W+sx)*4;
                 p[0]=sp[0];p[1]=sp[1];p[2]=sp[2];p[3]=sp[3];
             }
-        }
+        });
     }
 };
 

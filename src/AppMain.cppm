@@ -2869,8 +2869,6 @@ int main(int argc, char *argv[]) {
                         }
                         mw->setDockVisible(
                             QStringLiteral("Composition Viewer"), true);
-                        mw->activateDock(
-                            QStringLiteral("Composition Viewer"));
                       });
                     }
                   }

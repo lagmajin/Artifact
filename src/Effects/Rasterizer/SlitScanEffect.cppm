@@ -17,6 +17,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -40,16 +41,19 @@ public:
         pos=std::fmod(pos,maxDim);if(pos<0)pos+=maxDim;
 
         // Apply persistence to accumulation
-        for(size_t i=0;i<n;++i)accum_[i]*=p;
+        ArtifactCore::Parallel::For(0,H,[&](int y){
+            float* row=accum_.data()+static_cast<size_t>(y)*W*4;
+            for(int x=0;x<W*4;++x)row[x]*=p;
+        });
 
         // Write current frame's slit line into accumulation
         if(direction_<=0.5f){// horizontal
             int sx=std::clamp((int)pos,0,W-1);
-            for(int y=0;y<H;++y){
+            ArtifactCore::Parallel::For(0,H,[&](int y){
                 const float*sp=sd+((size_t)y*W+sx)*4;
                 float*ap=accum_.data()+((size_t)y*W+sx)*4;
                 ap[0]=sp[0];ap[1]=sp[1];ap[2]=sp[2];ap[3]=sp[3];
-            }
+            });
         }else{// vertical
             int sy=std::clamp((int)pos,0,H-1);
             const float*sp=sd+((size_t)sy*W)*4;
@@ -60,7 +64,11 @@ public:
         }
 
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
-        for(size_t i=0;i<n;++i)d[i]=std::clamp(accum_[i],0.0f,1.0f);
+        ArtifactCore::Parallel::For(0,H,[&](int y){
+            const float* a=accum_.data()+static_cast<size_t>(y)*W*4;
+            float* o=d+static_cast<size_t>(y)*W*4;
+            for(int x=0;x<W*4;++x)o[x]=std::clamp(a[x],0.0f,1.0f);
+        });
     }
 };
 

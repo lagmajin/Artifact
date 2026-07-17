@@ -15,6 +15,7 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -91,7 +92,7 @@ public:
         }
 
         cv::Mat output = input.clone();
-        for (int y = 0; y < height; ++y) {
+        ArtifactCore::Parallel::For(0, height, [&](int y) {
             const auto* sourceRow = input.ptr<cv::Vec4f>(y);
             const auto* rainRow = rain.ptr<cv::Vec4f>(y);
             auto* outputRow = output.ptr<cv::Vec4f>(y);
@@ -103,7 +104,7 @@ public:
                 }
                 outputRow[x][3] = sourceRow[x][3];
             }
-        }
+        });
         dst = src;
         dst.image().setFromCVMat(output);
     }

@@ -18,6 +18,7 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -54,13 +55,13 @@ public:
         // ── 1. アルファチャンネル抽出 ──────────────────────────────────────
         cv::Mat srcAlpha(H, W, CV_32FC1);
         {
-            const float* p = srcData;
-            for (int y = 0; y < H; ++y) {
+            ArtifactCore::Parallel::For(0, H, [&](int y) {
+                const float* p = srcData + static_cast<size_t>(y) * W * 4;
                 float* row = srcAlpha.ptr<float>(y);
                 for (int x = 0; x < W; ++x, p += 4) {
                     row[x] = p[3];  // alpha channel
                 }
-            }
+            });
         }
 
         // ── 2. オフセット適用 (shadow offset) ──────────────────────────────
@@ -95,7 +96,7 @@ public:
         const float opac = std::clamp(opacity_ / 100.0f, 0.0f, 1.0f);
 
         cv::Mat shadowLayer(H, W, CV_32FC4);
-        for (int y = 0; y < H; ++y) {
+        ArtifactCore::Parallel::For(0, H, [&](int y) {
             const float* aRow = shifted.ptr<float>(y);
             cv::Vec4f*   sRow = shadowLayer.ptr<cv::Vec4f>(y);
             for (int x = 0; x < W; ++x) {
@@ -103,7 +104,7 @@ public:
                 // OpenCV internal order: B, G, R, A
                 sRow[x] = cv::Vec4f(sb, sg, sr, a);
             }
-        }
+        });
         
         // ── 5. 合成: Inner Shadow ──────────────────────────────────────────
         // dst = src をコピーし、影を src アルファでマスクした内側に合成
@@ -115,7 +116,7 @@ public:
 
         // Inner shadow は src の内部（src のアルファがある領域の内側）にのみ表示
         // shadow_color * shadow_alpha * (1 - src_alpha) を src に加算合成
-        for (int y = 0; y < H; ++y) {
+        ArtifactCore::Parallel::For(0, H, [&](int y) {
             const cv::Vec4f* sh  = shadowLayer.ptr<cv::Vec4f>(y);
             const cv::Vec4f* fg  = srcMat.ptr<cv::Vec4f>(y);
             cv::Vec4f*       out = dstMat.ptr<cv::Vec4f>(y);
@@ -133,7 +134,7 @@ public:
                 }
                 out[x][3] = oa;
             }
-        }
+        });
     }
 };
 

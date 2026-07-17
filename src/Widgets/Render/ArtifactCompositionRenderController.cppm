@@ -232,10 +232,6 @@ import Artifact.Render.Pipeline;
 
 import Graphics.LayerBlendPipeline;
 
-import Graphics.GPUcomputeContext;
-
-import Graphics.Shader.Compute.MaskCutout;
-
 import Widgets.Utils.CSS;
 
 import Core.Diagnostics.Trace;
@@ -3980,6 +3976,9 @@ ArtifactCore::Light makeSceneLightFromLayer(const ArtifactLightLayer* layer,
     light.setType(ArtifactCore::LightType::Ambient);
 
     break;
+  case LightType::Area:
+    light.setType(ArtifactCore::LightType::Area);
+    break;
 
   }
 
@@ -4019,17 +4018,23 @@ ArtifactCore::Light makeSceneLightFromLayer(const ArtifactLightLayer* layer,
 
       ArtifactCore::float3<float>{direction.x(), direction.y(), direction.z()});
 
+  if (layer->lightType() == LightType::Area) {
+    light.setAreaSize(layer->areaWidth(), layer->areaHeight());
+    light.setAreaShape(static_cast<int>(layer->areaShape()));
+    light.setRange(layer->range());
+  }
+
 
 
   if (layer->lightType() == LightType::Point) {
 
-    light.setRange(std::max(10.0f, layer->shadowRadius() * 10.0f));
+    light.setRange(layer->range());
 
   }
 
   if (layer->lightType() == LightType::Spot) {
 
-    light.setRange(layer->coneLength());
+    light.setRange(std::min(layer->range(), layer->coneLength()));
 
     const float outerHalfAngle = layer->coneAngle() * 0.5f;
 
@@ -7843,8 +7848,6 @@ public:
 
   std::unique_ptr<ArtifactCore::LayerBlendPipeline> blendPipeline_;
 
-  std::unique_ptr<ArtifactCore::MaskCutoutPipeline> maskCutoutPipeline_;
-
   static constexpr int kPreviewRenderPipelineSlotCount = 2;
 
   struct PreviewRenderPipelineSlot {
@@ -8255,6 +8258,31 @@ public:
   QString lastBlendMaskSummary_;
 
   QString lastFrameRenderPassPlanSummary_;
+
+  QString last3DLayerSubmissionKey_;
+
+  void log3DLayerDecision(const ArtifactAbstractLayerPtr& layer,
+                          const QString& route, const QString& outcome,
+                          bool hasCamera, int64_t frame) {
+    static const bool traceEnabled =
+        !qEnvironmentVariableIsSet("ARTIFACT_DISABLE_3D_RENDER_TRACE");
+    if (!traceEnabled || !layer || !layer->is3D()) {
+      return;
+    }
+    const QString id = layer->id().toString();
+    const QString key = id + QLatin1Char('|') + route + QLatin1Char('|') +
+                        outcome + QLatin1Char('|') +
+                        QString::number(hasCamera ? 1 : 0);
+    if (key == last3DLayerSubmissionKey_) {
+      return;
+    }
+    last3DLayerSubmissionKey_ = key;
+    qInfo() << "[CompositionView][3DTrace]"
+            << "layer=" << layer->layerName() << "id=" << id
+            << "frame=" << frame << "route=" << route
+            << "outcome=" << outcome << "camera=" << hasCamera
+            << "bounds=" << layer->transformedBoundingBox();
+  }
 
   qint64 lastSetupMs_ = 0;
 
@@ -11297,7 +11325,7 @@ public:
 
       gizmo3D_->setTransform(layer->position3D(), layer->rotation3D());
 
-      gizmo3D_->setScale(QVector3D(t3.scaleX(), t3.scaleY(), 1.0f));
+      gizmo3D_->setScale(QVector3D(t3.scaleX(), t3.scaleY(), t3.scaleZ()));
 
       return;
 
@@ -12431,37 +12459,9 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
 
 
-  // Schedule blend pipeline initialization off the hot render path.
-
-  // blendPipeline_->initialize() compiles GPU shaders (slow); running it
-
-  // inside renderOneFrameImpl would stall the render timer for hundreds of ms.
-
-  if (impl_->gpuBlendEnabled_) {
-    impl_->scheduleBlendPipelineInitialization(
-        this, 1500, QStringLiteral("startup"));
-  }
-
-  // Mask cutout is an independent capability. Its initialization must not
-  // decide whether standard Add/Multiply composition is available.
-  QTimer::singleShot(1500, this, [this]() {
-    if (!impl_ || !impl_->initialized_ || !impl_->renderer_ ||
-        !impl_->renderer_->device() || !impl_->renderer_->immediateContext()) {
-      return;
-    }
-    if (!impl_->maskCutoutPipeline_) {
-      auto ctx = std::make_unique<ArtifactCore::GpuContext>(
-          impl_->renderer_->device(), impl_->renderer_->immediateContext());
-      impl_->maskCutoutPipeline_ =
-          std::make_unique<ArtifactCore::MaskCutoutPipeline>(*ctx);
-      ctx.release();
-      if (impl_->maskCutoutPipeline_->initialize()) {
-        qInfo() << "[CompositionView][Startup] mask cutout pipeline init OK";
-      } else {
-        qWarning() << "[CompositionView] MaskCutoutPipeline FAILED to init.";
-      }
-    }
-  });
+  // Expensive composition pipelines are initialized by the render path only
+  // when a visible layer actually needs them. Delayed startup compilation
+  // stalls the UI and invalidates an otherwise complete first frame.
 
 }
 
@@ -12524,8 +12524,6 @@ void CompositionRenderController::destroy() {
   ++impl_->blendPipelineInitGeneration_;
 
   impl_->blendPipelineInitState_ = QStringLiteral("not-scheduled");
-
-  impl_->maskCutoutPipeline_.reset();
 
   impl_->lastPresentedReadbackSRV_ = nullptr;
 
@@ -19016,7 +19014,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
               const QVector3D scale = impl_->gizmo3D_->scale();
 
-              t3.setScale(time, scale.x(), scale.y());
+              t3.setScale(time, scale.x(), scale.y(), scale.z());
 
             } else {
 
@@ -22823,6 +22821,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           if (!isLayerEffectivelyVisible(layer)) {
 
+            log3DLayerDecision(layer, QStringLiteral("gpu-blend"),
+                               QStringLiteral("skip:not-effectively-visible"),
+                               has3DCamera, currentFrame.framePosition());
+
             ++skipInvisibleCount;
 
             continue;
@@ -22830,6 +22832,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           }
 
           if (hasSoloLayer && !layer->isSolo()) {
+
+            log3DLayerDecision(layer, QStringLiteral("gpu-blend"),
+                               QStringLiteral("skip:solo-filter"), has3DCamera,
+                               currentFrame.framePosition());
 
             ++skipSoloCount;
 
@@ -22839,15 +22845,23 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           if (!layer->isActiveAt(currentFrame)) {
 
+            log3DLayerDecision(layer, QStringLiteral("gpu-blend"),
+                               QStringLiteral("skip:inactive"), has3DCamera,
+                               currentFrame.framePosition());
+
             ++skipInactiveCount;
 
             continue;
 
           }
 
+          const bool is3DSceneLayer = layer->is3D();
           const QRectF layerBounds = layer->transformedBoundingBox();
 
-          if (layerBounds.isValid() &&
+          // A 3D layer's projected screen bounds depend on the active camera.
+          // The 2D transformed bounds can be only a few world units wide and
+          // must not be used for ROI/LOD rejection before projection.
+          if (!is3DSceneLayer && layerBounds.isValid() &&
 
               layerBounds.intersected(roiRect).isEmpty()) {
 
@@ -22863,7 +22877,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           // Skip rendering layers that are too small to be visible on screen.
 
-          if (layerBounds.isValid()) {
+          // Text must remain legible/present while navigating at distant zoom
+          // levels. Its glyph renderer already clips off-screen packets, so do
+          // not discard the whole layer through the generic tiny-layer LOD
+          // heuristic.
+          const bool isTextLayer =
+              dynamic_cast<ArtifactTextLayer *>(layer.get()) != nullptr;
+          if (!is3DSceneLayer && !isTextLayer && layerBounds.isValid()) {
 
             const float screenW =
 
@@ -22904,6 +22924,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
           ++drawnLayerCount;
+
+          if (is3DSceneLayer) {
+            log3DLayerDecision(layer, QStringLiteral("gpu-blend"),
+                               QStringLiteral("submit"), has3DCamera,
+                               currentFrame.framePosition());
+          }
 
           if (layerUsesSurfaceUploadForCompositionView(layer.get())) {
 
@@ -23488,6 +23514,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           if (!isLayerEffectivelyVisible(layer)) {
 
+            log3DLayerDecision(layer, QStringLiteral("direct"),
+                               QStringLiteral("skip:not-effectively-visible"),
+                               has3DCamera, currentFrame.framePosition());
+
             ++skipInvisibleCount;
 
             continue;
@@ -23496,6 +23526,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           if (hasSoloLayer && !layer->isSolo()) {
 
+            log3DLayerDecision(layer, QStringLiteral("direct"),
+                               QStringLiteral("skip:solo-filter"), has3DCamera,
+                               currentFrame.framePosition());
+
             ++skipSoloCount;
 
             continue;
@@ -23503,6 +23537,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           }
 
           if (!layer->isActiveAt(currentFrame)) {
+
+            log3DLayerDecision(layer, QStringLiteral("direct"),
+                               QStringLiteral("skip:inactive"), has3DCamera,
+                               currentFrame.framePosition());
 
             ++skipInactiveCount;
 
@@ -23514,9 +23552,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           // === 段階 2: ROI 計算 ===
 
+          const bool is3DSceneLayer = layer->is3D();
           const QRectF layerBounds = layer->transformedBoundingBox();
 
-          const QRectF intersected = layerBounds.intersected(roiRect);
+          // A 3D layer's visible bounds depend on camera projection. Its 2D
+          // transformed bounds are not valid for pre-draw ROI/LOD rejection.
+          const QRectF intersected =
+              is3DSceneLayer ? roiRect : layerBounds.intersected(roiRect);
 
 
 
@@ -23524,7 +23566,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           // Skip rendering layers that are too small to be visible on screen.
 
-          if (layerBounds.isValid()) {
+          // Keep text submitted at distant zoom levels. Generic tiny-layer LOD
+          // rejection makes an otherwise visible text layer disappear.
+          const bool isTextLayer =
+              dynamic_cast<ArtifactTextLayer *>(layer.get()) != nullptr;
+          if (!is3DSceneLayer && !isTextLayer && layerBounds.isValid()) {
 
             const auto tl = renderer_->canvasToViewport(
 
@@ -23581,6 +23627,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
           ++drawnLayerCount;
+
+          if (is3DSceneLayer) {
+            log3DLayerDecision(layer, QStringLiteral("direct"),
+                               QStringLiteral("submit"), has3DCamera,
+                               currentFrame.framePosition());
+          }
 
           if (layerUsesSurfaceUploadForCompositionView(layer.get())) {
 
@@ -24001,6 +24053,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             QMatrix4x4 proj;
 
             proj.ortho(0.0f, viewportW, viewportH, 0.0f, -1000.0f, 1000.0f);
+
+            // Keep picking on the exact fallback camera used for this draw.
+            gizmo3DCameraMatricesValid_ = true;
+            gizmo3DViewMatrix_ = view;
+            gizmo3DProjectionMatrix_ = proj;
 
 
 
@@ -27513,6 +27570,11 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
             proj.ortho(0.0f, viewportW, viewportH, 0.0f, -1000.0f,
                        1000.0f);
           }
+
+          // The input path must use the same matrices as this fallback draw.
+          gizmo3DCameraMatricesValid_ = true;
+          gizmo3DViewMatrix_ = view;
+          gizmo3DProjectionMatrix_ = proj;
 
 
 

@@ -28,6 +28,7 @@ module;
 #include <QTransform>
 #include <QMatrix4x4>
 #include <QVector2D>
+#include <QtGlobal>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -556,8 +557,43 @@ namespace {
                 int shadingMode,
                 const QMatrix4x4* previousModelMatrix)
   {
+    static const bool traceEnabled =
+        !qEnvironmentVariableIsSet("ARTIFACT_DISABLE_3D_RENDER_TRACE");
+    const auto traceResult = [&](const QString& outcome,
+                                 size_t vertexCount = 0,
+                                 size_t indexCount = 0) {
+      if (!traceEnabled) {
+        return;
+      }
+      const QString signature =
+          outcome + QLatin1Char('|') + QString::number(mesh.revision()) +
+          QLatin1Char('|') +
+          QString::number(static_cast<qulonglong>(vertexCount)) +
+          QLatin1Char('|') +
+          QString::number(static_cast<qulonglong>(indexCount));
+      {
+        static std::mutex traceMutex;
+        static std::map<QString, QString> processTraceSignatures;
+        const std::lock_guard<std::mutex> lock(traceMutex);
+        if (processTraceSignatures[cacheKey] == signature) {
+          return;
+        }
+        processTraceSignatures[cacheKey] = signature;
+      }
+      qInfo().noquote()
+          << QStringLiteral(
+                 "[ArtifactIRenderer][MeshTrace] key=\"%1\" outcome=%2 "
+                 "vertices=%3 indices=%4 opacity=%5 shading=%6")
+                 .arg(cacheKey, outcome)
+                 .arg(static_cast<qulonglong>(vertexCount))
+                 .arg(static_cast<qulonglong>(indexCount))
+                 .arg(opacity, 0, 'f', 3)
+                 .arg(shadingMode);
+    };
+
     auto* renderer = meshRendererFor(cacheKey);
     if (!renderer) {
+      traceResult(QStringLiteral("skip:no-mesh-renderer"));
       return;
     }
 
@@ -570,6 +606,7 @@ namespace {
     if (!geometryCacheCurrent) {
       const auto data = mesh.generateRenderData();
       if (data.positions.isEmpty()) {
+        traceResult(QStringLiteral("skip:no-render-data"));
         return;
       }
 
@@ -723,8 +760,20 @@ namespace {
 
     auto ctx = deviceManager_.immediateContext();
     if (!ctx) {
+      const auto state = meshRendererGeometry_.find(cacheKey);
+      traceResult(QStringLiteral("skip:no-immediate-context"),
+                  state != meshRendererGeometry_.end()
+                      ? state->second.vertexCount
+                      : 0,
+                  state != meshRendererGeometry_.end()
+                      ? state->second.indexCount
+                      : 0);
       return;
     }
+    // 2D composition commands are buffered, while MeshRenderer issues an
+    // immediate draw. Drain older commands first so a delayed background pass
+    // cannot execute after the mesh and cover it.
+    submitQueuedDraws(ctx.RawPtr());
     ScopedGpuDebugGroup debugGroup(ctx.RawPtr(), "ArtifactIRenderer.Mesh");
     bindActiveRenderTargets(ctx.RawPtr());
     if (auto* colorView = activeColorView()) {
@@ -734,6 +783,14 @@ namespace {
     }
     renderer->prepare(ctx.RawPtr());
     renderer->draw(ctx.RawPtr(), 1);
+    const auto state = meshRendererGeometry_.find(cacheKey);
+    traceResult(QStringLiteral("gpu-draw-issued"),
+                state != meshRendererGeometry_.end()
+                    ? state->second.vertexCount
+                    : 0,
+                state != meshRendererGeometry_.end()
+                    ? state->second.indexCount
+                    : 0);
   }
 
  public:
@@ -3571,6 +3628,9 @@ void ArtifactIRenderer::draw3DCard(const QRectF& localRect,
                                    const FloatColor& color, float opacity,
                                    bool writeDepth)
 {
+ if (auto ctx = impl_->deviceManager_.immediateContext()) {
+  impl_->submitQueuedDraws(ctx.RawPtr());
+ }
  impl_->primitiveRenderer3D_.setOverrideDSV(impl_->activeDepthView());
  impl_->primitiveRenderer3D_.drawCardQuadImmediate(
      localRect, modelMatrix, color, opacity, writeDepth);
@@ -3580,6 +3640,9 @@ void ArtifactIRenderer::draw3DTexturedCard(
     const QRectF& localRect, const QMatrix4x4& modelMatrix,
     Diligent::ITextureView* texture, float opacity)
 {
+ if (auto ctx = impl_->deviceManager_.immediateContext()) {
+  impl_->submitQueuedDraws(ctx.RawPtr());
+ }
  impl_->primitiveRenderer3D_.setOverrideDSV(impl_->activeDepthView());
  impl_->primitiveRenderer3D_.drawTexturedCardQuadImmediate(
      localRect, modelMatrix, texture,
@@ -3599,6 +3662,9 @@ void ArtifactIRenderer::draw3DShape(
    const auto& point = points[static_cast<size_t>(index)];
    vertices.emplace_back(point.x, point.y);
   }
+ }
+ if (auto ctx = impl_->deviceManager_.immediateContext()) {
+  impl_->submitQueuedDraws(ctx.RawPtr());
  }
  impl_->primitiveRenderer3D_.setOverrideDSV(impl_->activeDepthView());
  impl_->primitiveRenderer3D_.drawShapeTrianglesImmediate(

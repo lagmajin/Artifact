@@ -49,6 +49,7 @@ import Artifact.Effect.Abstract;
 import FloatRGBA;
 import Utils.String.UniString;
 import Property.Abstract;
+import Core.Parallel;
 
 // Global includes for Qt types used in this implementation
 
@@ -87,7 +88,7 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
     
     if(smooth < 0.001f) smooth = 0.001f;
 
-    for(int y=0; y<rows; ++y) {
+    ArtifactCore::Parallel::For(0, rows, [&](int y) {
         cv::Vec4f* ptr = dstMat.ptr<cv::Vec4f>(y);
         for(int x=0; x<cols; ++x) {
             float r = ptr[x][0];
@@ -119,7 +120,7 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
 
             ptr[x][3] = a * alphaFactor;
         }
-    }
+    });
 
     ImageF32x4_RGBA dstImage;
     dstImage.setFromRGBA32F(dstMat.ptr<float>(), dstMat.cols, dstMat.rows);

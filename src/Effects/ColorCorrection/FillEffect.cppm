@@ -20,6 +20,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -33,7 +34,11 @@ public:
         if (!pixels) {
             return;
         }
-        processor_.apply(pixels, dst.image().width(), dst.image().height());
+        const int width = dst.image().width();
+        const int height = dst.image().height();
+        ArtifactCore::Parallel::For(0, height, [&](int y) {
+            processor_.applyRow(pixels, width, height, y);
+        });
     }
 };
 
@@ -51,7 +56,11 @@ public:
         if (!pixels) {
             return;
         }
-        processor_.apply(pixels, dst.image().width(), dst.image().height());
+        const int width = dst.image().width();
+        const int height = dst.image().height();
+        ArtifactCore::Parallel::For(0, height, [&](int y) {
+            processor_.applyRow(pixels, width, height, y);
+        });
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {

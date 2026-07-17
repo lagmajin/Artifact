@@ -184,6 +184,7 @@ public:
   std::deque<PreviewDiskWriteTask> previewDiskWriteQueue_;
   std::thread previewDiskWriterThread_;
   bool previewDiskWriterStop_ = false;
+  std::atomic_bool shuttingDown_{false};
   struct RamPreviewBuildQueue {
     uint64_t generation = 0;
     bool active = false;
@@ -300,6 +301,9 @@ public:
     QObject::connect(
         engine_, &ArtifactPlaybackEngine::frameChanged, owner_,
         [this](const FramePosition &position, const QImage &frame) {
+          if (shuttingDown_.load(std::memory_order_acquire)) {
+            return;
+          }
           const QString compositionId =
               currentComposition_ ? currentComposition_->id().toString()
                                   : QString();
@@ -468,6 +472,7 @@ public:
   }
 
   ~Impl() {
+    shuttingDown_.store(true, std::memory_order_release);
     if (engine_) {
       engine_->stop();
       engine_->waitForStop();

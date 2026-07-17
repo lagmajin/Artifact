@@ -28,7 +28,7 @@ public:
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& n, const QVariant& v) override;
-    bool supportsGPU() const override { return false; }
+    bool supportsGPU() const override { return true; }
 
 private:
     float cellSize_=32.0f,lineWidth_=2.0f,angle_=0.0f;

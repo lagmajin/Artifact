@@ -22,6 +22,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -69,13 +70,13 @@ public:
         if (!pixels) { dst = src; return; }
         const int w = srcImage.width();
         const int h = srcImage.height();
-        dst = src;
+        dst = src.DeepCopy();
         auto& dstImage = dst.image();
         float* dstPixels = dstImage.rgba32fData();
         if (!dstPixels) return;
-        cv::Mat mat(h, w, CV_32FC4, dstPixels);
+        cv::Mat mat(h, w, CV_32FC4, const_cast<float*>(pixels));
         int r = std::max(1, static_cast<int>(radius_));
-        for (int y = 0; y < h; ++y) {
+        ArtifactCore::Parallel::For(0, h, [&](int y) {
             for (int x = 0; x < w; ++x) {
                 cv::Vec4f m0 = quadrantMean(mat, x, y, 0, -r, r);
                 cv::Vec4f m1 = quadrantMean(mat, x, y, 0, 0, r);
@@ -98,7 +99,7 @@ public:
                 dstPixels[idx + 2] = m0[2] * w0 + m1[2] * w1 + m2[2] * w2 + m3[2] * w3;
                 dstPixels[idx + 3] = m0[3] * w0 + m1[3] * w1 + m2[3] * w2 + m3[3] * w3;
             }
-        }
+        });
     }
 };
 

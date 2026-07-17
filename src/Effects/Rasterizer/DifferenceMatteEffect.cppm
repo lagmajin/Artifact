@@ -15,6 +15,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -37,7 +38,7 @@ public:
         const int rw=ref.width(),rh=ref.height();
         const float th=std::clamp(threshold_,0.0f,1.0f);
 
-        for(int y=0;y<H;++y){float* o=d+(size_t)y*W*4;
+        Parallel::For(0,H,[&](int y){float* o=d+(size_t)y*W*4;
             int ry=std::min(y,rh-1);
             for(int x=0;x<W;++x){int rx=std::min(x,rw-1);
                 const float* rp=rd+((size_t)ry*rw+rx)*4;
@@ -47,7 +48,7 @@ public:
                 if(th>0.0f)diff=diff>=th?1.0f:0.0f;
                 p[0]=diff;p[1]=diff;p[2]=diff;p[3]=1.0f;
             }
-        }
+        });
     }
 };
 

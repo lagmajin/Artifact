@@ -22,6 +22,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -43,7 +44,7 @@ public:
         const int height = dst.image().height();
         const float contrastFactor = (contrast_ != 1.0f) ? (1.0f + contrast_) / (1.0f - contrast_) : 100.0f;
 
-        for (int y = 0; y < height; ++y) {
+        ArtifactCore::Parallel::For(0, height, [&](int y) {
             for (int x = 0; x < width; ++x) {
                 float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
                 for (int c = 0; c < 3; ++c) {
@@ -61,7 +62,7 @@ public:
                     pixel[c] = std::clamp(val, 0.0f, 1.0f);
                 }
             }
-        }
+        });
     }
 };
 
