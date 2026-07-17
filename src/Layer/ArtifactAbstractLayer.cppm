@@ -5924,6 +5924,25 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   restitutionProp->setStep(0.01);
   physicsGroup.addProperty(restitutionProp);
 
+  auto initialVelocityYProp =
+      makeProp(QStringLiteral("physics.initialVelocityY"), PropertyType::Float,
+               0.0, -92);
+  initialVelocityYProp->setDisplayLabel(QStringLiteral("Initial Velocity Y"));
+  initialVelocityYProp->setUnit(QStringLiteral("px/s"));
+  initialVelocityYProp->setHardRange(-5000.0, 5000.0);
+  initialVelocityYProp->setSoftRange(-2000.0, 2000.0);
+  initialVelocityYProp->setStep(10.0);
+  physicsGroup.addProperty(initialVelocityYProp);
+
+  auto maxBouncesProp =
+      makeProp(QStringLiteral("physics.maxBounces"), PropertyType::Integer,
+               4, -91);
+  maxBouncesProp->setDisplayLabel(QStringLiteral("Max Bounces"));
+  maxBouncesProp->setHardRange(0.0, 32.0);
+  maxBouncesProp->setSoftRange(0.0, 16.0);
+  maxBouncesProp->setStep(1.0);
+  physicsGroup.addProperty(maxBouncesProp);
+
   auto wiggleFreqProp =
       makeProp(QStringLiteral("physics.wiggleFreq"), PropertyType::Float,
                static_cast<double>(impl_->physicsComponent_.settings().wiggleFreq), -93);
@@ -7462,6 +7481,12 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (hasRigidBodyPhysics()) {
       syncRigidBodyPhysicsToBounds();
     }
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.initialVelocityY")) {
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.maxBounces")) {
     return true;
   }
   if (propertyPath == QStringLiteral("physics.wiggleFreq")) {
