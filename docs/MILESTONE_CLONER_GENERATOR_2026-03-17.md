@@ -268,6 +268,7 @@ private:
 - Plain / Random modifier の位置・回転・スケール変形を clone render path へ接続した。
 - Collision の既存 floor 設定を使う deterministic な clone physics timing を追加した。
 - 重力、初速、反発係数、最大反発回数を Inspector から編集でき、レイヤー JSON に保存・復元できる。
+- `Time Offset` / `timeOffsetStep` は秒単位で統一し、physics solver の frame-to-second 変換と混同しないようにした。
 - 外部 physics engine や新規イベント配線は導入していないため、現段階はクローン描画向けの軽量 solver として扱う。
 
 ---
