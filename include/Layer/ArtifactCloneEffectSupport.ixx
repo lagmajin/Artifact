@@ -435,8 +435,10 @@ inline void applyClonePhysicsTiming(
     if (gravityY <= 0.0f) {
         return;
     }
-    const float timeSeconds =
-        std::max(0.0f, static_cast<float>(layer->currentFrame()) / 30.0f);
+    const double frameRate = std::max(1.0, layer->compositionFrameRate());
+    const float timeSeconds = std::max(
+        0.0f, static_cast<float>(static_cast<double>(layer->currentFrame()) /
+                                  frameRate));
     const float restitution = std::clamp(cloneComponentFloatProperty(
         layer, QStringLiteral("physics.restitution"), 0.35f), 0.0f, 1.0f);
     const float initialVelocityY = cloneComponentFloatProperty(

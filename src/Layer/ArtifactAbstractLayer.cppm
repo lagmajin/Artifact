@@ -1570,6 +1570,10 @@ QSizeF ArtifactAbstractLayer::compositionSizeHint() const {
   return QSizeF(size.width(), size.height());
 }
 
+double ArtifactAbstractLayer::compositionFrameRate() const {
+  return effectiveLayerFrameRate(this);
+}
+
 ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const {
   auto *composition = dynamic_cast<ArtifactAbstractComposition *>(compositionObject());
   if (!composition || impl_->parentLayerId_.isNil())

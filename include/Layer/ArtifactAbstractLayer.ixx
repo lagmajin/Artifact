@@ -326,6 +326,7 @@ public:
   LayerFieldChannelSample compositionFieldChannelsAtCanvasPoint(
       const QPointF& canvasPosition) const;
   QSizeF compositionSizeHint() const;
+  double compositionFrameRate() const;
 
   LAYER_BLEND_TYPE layerBlendType() const;
   void setBlendMode(LAYER_BLEND_TYPE type);
