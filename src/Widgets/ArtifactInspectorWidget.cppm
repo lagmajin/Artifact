@@ -6050,6 +6050,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                      const QStringList modifierChoices = {
                          QStringLiteral("time-offset"),
                          QStringLiteral("sequence"),
+                         QStringLiteral("plain"),
+                         QStringLiteral("random"),
                      };
                      bool accepted = false;
                      const QString modifierChoice = QInputDialog::getItem(

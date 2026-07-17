@@ -7030,6 +7030,45 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       softnessProp->setDisplayLabel(QStringLiteral("Softness"));
       softnessProp->setSoftRange(0.1, 16.0);
       modifierGroup.addProperty(softnessProp);
+    } else if (descriptor.typeId == QStringLiteral("artifact.modifier.plain") ||
+               descriptor.typeId == QStringLiteral("artifact.modifier.random")) {
+      const bool random = descriptor.typeId == QStringLiteral("artifact.modifier.random");
+      auto numberProp = [&](const QString& name, const QString& label,
+                            double fallback, int order) {
+        auto prop = makeProp(modifierPrefix + name, PropertyType::Float,
+                             descriptor.settings.value(name).toDouble(fallback),
+                             orderBase + order);
+        prop->setDisplayLabel(label);
+        prop->setUnit(QStringLiteral("px"));
+        prop->setSoftRange(-1000.0, 1000.0);
+        modifierGroup.addProperty(prop);
+      };
+      numberProp(QStringLiteral("positionX"), QStringLiteral("Position X"), 0.0, 1);
+      numberProp(QStringLiteral("positionY"), QStringLiteral("Position Y"), 0.0, 2);
+      numberProp(QStringLiteral("positionZ"), QStringLiteral("Position Z"), 0.0, 3);
+      numberProp(QStringLiteral("rotationZ"), QStringLiteral("Rotation Z"), 0.0, 4);
+      if (random) {
+        numberProp(QStringLiteral("scaleVariance"), QStringLiteral("Scale Variance"), 0.0, 5);
+        auto seedProp = makeProp(modifierPrefix + QStringLiteral("seed"),
+                                 PropertyType::Integer,
+                                 descriptor.settings.value(QStringLiteral("seed")).toInt(1),
+                                 orderBase + 6);
+        seedProp->setDisplayLabel(QStringLiteral("Seed"));
+        seedProp->setHardRange(-2147483647.0, 2147483647.0);
+        modifierGroup.addProperty(seedProp);
+      } else {
+        numberProp(QStringLiteral("scaleX"), QStringLiteral("Scale X"), 1.0, 5);
+        numberProp(QStringLiteral("scaleY"), QStringLiteral("Scale Y"), 1.0, 6);
+        numberProp(QStringLiteral("scaleZ"), QStringLiteral("Scale Z"), 1.0, 7);
+      }
+      auto strengthProp = makeProp(
+          modifierPrefix + QStringLiteral("strength"), PropertyType::Float,
+          descriptor.settings.value(QStringLiteral("strength")).toDouble(1.0),
+          orderBase + (random ? 7 : 8));
+      strengthProp->setDisplayLabel(QStringLiteral("Strength"));
+      strengthProp->setHardRange(0.0, 1.0);
+      strengthProp->setSoftRange(0.0, 1.0);
+      modifierGroup.addProperty(strengthProp);
     }
 
     cloneModifierGroups.push_back(std::move(modifierGroup));
@@ -7992,6 +8031,25 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         descriptor.typeId = QStringLiteral("artifact.modifier.sequence");
         descriptor.settings[QStringLiteral("rate")] = 8.0;
         descriptor.settings[QStringLiteral("softness")] = 1.0;
+      } else if (requestedType == QStringLiteral("plain")) {
+        descriptor.typeId = QStringLiteral("artifact.modifier.plain");
+        descriptor.settings[QStringLiteral("positionX")] = 0.0;
+        descriptor.settings[QStringLiteral("positionY")] = 0.0;
+        descriptor.settings[QStringLiteral("positionZ")] = 0.0;
+        descriptor.settings[QStringLiteral("rotationZ")] = 0.0;
+        descriptor.settings[QStringLiteral("scaleX")] = 1.0;
+        descriptor.settings[QStringLiteral("scaleY")] = 1.0;
+        descriptor.settings[QStringLiteral("scaleZ")] = 1.0;
+        descriptor.settings[QStringLiteral("strength")] = 1.0;
+      } else if (requestedType == QStringLiteral("random")) {
+        descriptor.typeId = QStringLiteral("artifact.modifier.random");
+        descriptor.settings[QStringLiteral("seed")] = 1;
+        descriptor.settings[QStringLiteral("positionX")] = 0.0;
+        descriptor.settings[QStringLiteral("positionY")] = 0.0;
+        descriptor.settings[QStringLiteral("positionZ")] = 0.0;
+        descriptor.settings[QStringLiteral("rotationZ")] = 0.0;
+        descriptor.settings[QStringLiteral("scaleVariance")] = 0.0;
+        descriptor.settings[QStringLiteral("strength")] = 1.0;
       } else {
         descriptor.typeId = QStringLiteral("artifact.modifier.time-offset");
         descriptor.settings[QStringLiteral("step")] = 0.0;
@@ -8133,6 +8191,22 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         }
         if (field == QStringLiteral("softness")) {
           return setSetting(field, std::clamp(value.toDouble(), 0.1, 32.0));
+        }
+        if (field == QStringLiteral("seed")) {
+          return setSetting(field, value.toInt());
+        }
+        if (field == QStringLiteral("strength")) {
+          return setSetting(field, std::clamp(value.toDouble(), 0.0, 1.0));
+        }
+        if (field == QStringLiteral("positionX") ||
+            field == QStringLiteral("positionY") ||
+            field == QStringLiteral("positionZ") ||
+            field == QStringLiteral("rotationZ") ||
+            field == QStringLiteral("scaleX") ||
+            field == QStringLiteral("scaleY") ||
+            field == QStringLiteral("scaleZ") ||
+            field == QStringLiteral("scaleVariance")) {
+          return setSetting(field, value.toDouble());
         }
       }
       return false;
