@@ -8363,6 +8363,20 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         if (field == QStringLiteral("indexScale")) {
           return setSetting(field, std::clamp(value.toDouble(), 0.0001, 1.0));
         }
+        if (field == QStringLiteral("amplitudeX") ||
+            field == QStringLiteral("amplitudeY") ||
+            field == QStringLiteral("amplitudeZ") ||
+            field == QStringLiteral("startX") ||
+            field == QStringLiteral("startY") ||
+            field == QStringLiteral("startZ") ||
+            field == QStringLiteral("controlX") ||
+            field == QStringLiteral("controlY") ||
+            field == QStringLiteral("controlZ") ||
+            field == QStringLiteral("endX") ||
+            field == QStringLiteral("endY") ||
+            field == QStringLiteral("endZ")) {
+          return setSetting(field, std::clamp(value.toDouble(), -10000.0, 10000.0));
+        }
         if (field == QStringLiteral("positionX") ||
             field == QStringLiteral("positionY") ||
             field == QStringLiteral("positionZ") ||
