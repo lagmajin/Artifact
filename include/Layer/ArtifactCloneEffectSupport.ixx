@@ -437,22 +437,50 @@ inline void applyClonePhysicsTiming(
     }
     const float timeSeconds =
         std::max(0.0f, static_cast<float>(layer->currentFrame()) / 30.0f);
+    const float restitution = std::clamp(cloneComponentFloatProperty(
+        layer, QStringLiteral("physics.restitution"), 0.35f), 0.0f, 1.0f);
+    const float initialVelocityY = cloneComponentFloatProperty(
+        layer, QStringLiteral("physics.initialVelocityY"), 0.0f);
+    const int maxBounces = std::clamp(cloneComponentIntProperty(
+        layer, QStringLiteral("physics.maxBounces"), 4), 0, 32);
     const QSizeF compositionSize = layer->compositionSizeHint();
     const float maxFall = compositionSize.isValid()
                               ? static_cast<float>(compositionSize.height()) +
                                     static_cast<float>(std::max<qreal>(
                                         0.0, layer->localBounds().height()))
                               : 10000.0f;
-    const float currentFall = std::min(
-        maxFall, 0.5f * gravityY * timeSeconds * timeSeconds);
+    const auto fallDistance = [&](const float seconds) {
+        float remaining = seconds;
+        float position = 0.0f;
+        float velocity = initialVelocityY;
+        for (int bounce = 0; bounce <= maxBounces && remaining > 0.0f; ++bounce) {
+            const float discriminant = velocity * velocity +
+                2.0f * gravityY * std::max(0.0f, maxFall - position);
+            const float timeToFloor =
+                (-velocity + std::sqrt(std::max(0.0f, discriminant))) / gravityY;
+            if (timeToFloor <= 0.0001f || remaining <= timeToFloor) {
+                return std::clamp(position + velocity * remaining +
+                                      0.5f * gravityY * remaining * remaining,
+                                  0.0f, maxFall);
+            }
+            position = maxFall;
+            remaining -= timeToFloor;
+            velocity = -velocity - gravityY * timeToFloor;
+            velocity *= restitution;
+            if (std::abs(velocity) < 0.5f) {
+                return maxFall;
+            }
+        }
+        return maxFall;
+    };
+    const float currentFall = fallDistance(timeSeconds);
     for (auto& instance : instances) {
         const float delaySeconds = std::max(0.0f, instance.timeOffset);
         if (delaySeconds <= 0.0f) {
             continue;
         }
         const float localTime = std::max(0.0f, timeSeconds - delaySeconds);
-        const float delayedFall = std::min(
-            maxFall, 0.5f * gravityY * localTime * localTime);
+        const float delayedFall = fallDistance(localTime);
         QMatrix4x4 timingDelta;
         timingDelta.translate(0.0f, delayedFall - currentFall, 0.0f);
         instance.transform = timingDelta * instance.transform;
