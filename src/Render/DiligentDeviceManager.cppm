@@ -130,6 +130,19 @@ namespace {
         }
     }
 
+    QString adapterVendorName(const Uint32 vendorId)
+    {
+        switch (vendorId) {
+            case 0x10de: return QStringLiteral("NVIDIA");
+            case 0x1002:
+            case 0x1022: return QStringLiteral("AMD");
+            case 0x8086: return QStringLiteral("Intel");
+            case 0x106b: return QStringLiteral("Apple");
+            case 0x1414: return QStringLiteral("Microsoft");
+            default: return QStringLiteral("Unknown");
+        }
+    }
+
     SharedRenderDeviceState& sharedRenderDeviceState()
     {
         static SharedRenderDeviceState state;
@@ -1014,6 +1027,42 @@ bool DiligentDeviceManager::isInitialized() const
 bool DiligentDeviceManager::isRayTracingSupported() const
 {
     return impl_->rtSupported_;
+}
+
+SelectedGpuAdapterInfo DiligentDeviceManager::selectedAdapterInfo() const
+{
+    SelectedGpuAdapterInfo info;
+    if (!impl_ || !impl_->device_) {
+        return info;
+    }
+
+    const auto& adapter = impl_->device_->GetAdapterInfo();
+    info.available = true;
+    info.name = QString::fromLatin1(adapter.Description).trimmed();
+    info.vendorId = adapter.VendorId;
+    info.deviceId = adapter.DeviceId;
+    info.vendor = adapterVendorName(adapter.VendorId);
+    info.backend = QString::fromLatin1(
+        deviceTypeName(impl_->device_->GetDeviceInfo().Type));
+    info.rayTracingSupported = impl_->rtSupported_;
+    return info;
+}
+
+QString DiligentDeviceManager::selectedAdapterDebugState() const
+{
+    const auto info = selectedAdapterInfo();
+    if (!info.available) {
+        return QStringLiteral("adapter=<unavailable>");
+    }
+    return QStringLiteral(
+               "adapter=%1 vendor=%2 vendorId=0x%3 deviceId=0x%4 "
+               "backend=%5 rayTracing=%6")
+        .arg(info.name.isEmpty() ? QStringLiteral("<unnamed>") : info.name)
+        .arg(info.vendor)
+        .arg(info.vendorId, 8, 16, QLatin1Char('0'))
+        .arg(info.deviceId, 8, 16, QLatin1Char('0'))
+        .arg(info.backend)
+        .arg(info.rayTracingSupported);
 }
 
 }

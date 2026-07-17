@@ -7,6 +7,7 @@
 #include <vulkan/vulkan_core.h>
 #include <windows.h>
 #include <QWidget>
+#include <QString>
 export module Artifact.Render.DiligentDeviceManager;
 
 
@@ -20,6 +21,16 @@ bool acquireSharedRenderDeviceForCurrentBackend(
 void releaseSharedRenderDevice();
 bool invalidateSharedRenderDeviceIfExclusive(IRenderDevice* expectedDevice);
 RENDER_DEVICE_TYPE sharedRenderDeviceType();
+
+struct SelectedGpuAdapterInfo {
+    bool available = false;
+    QString name;
+    QString vendor;
+    QString backend;
+    Uint32 vendorId = 0;
+    Uint32 deviceId = 0;
+    bool rayTracingSupported = false;
+};
 
 class DiligentDeviceManager {
 public:
@@ -51,6 +62,8 @@ public:
 
     bool isInitialized() const;
     bool isRayTracingSupported() const;
+    SelectedGpuAdapterInfo selectedAdapterInfo() const;
+    QString selectedAdapterDebugState() const;
 
 private:
     class Impl;

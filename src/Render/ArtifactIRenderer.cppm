@@ -3548,6 +3548,12 @@ QString ArtifactIRenderer::rayTracingDebugState() const
       .arg(caps.instanceBufferAlignment);
 }
 
+QString ArtifactIRenderer::gpuAdapterDebugState() const
+{
+  return impl_ ? impl_->deviceManager_.selectedAdapterDebugState()
+               : QStringLiteral("adapter=<no renderer>");
+}
+
 void ArtifactIRenderer::setGlobalIlluminationSettings(
     const GlobalIlluminationSettings& settings)
 {

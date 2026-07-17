@@ -141,6 +141,7 @@ public:
   double lastFrameGpuTimeMs() const;
   QString particleDebugState() const;
   QString glyphAtlasDebugState() const;
+  QString gpuAdapterDebugState() const;
   QString rayTracingDebugState() const;
   void setGlobalIlluminationSettings(const GlobalIlluminationSettings &settings);
   static GlobalIlluminationSettings recommendedGlobalIlluminationSettings(
