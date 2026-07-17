@@ -18,6 +18,7 @@ module;
 #include <SwapChain.h>
 #include <RefCntAutoPtr.hpp>
 #include <d3d12.h>
+#include <dxgi1_6.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>
@@ -260,6 +261,83 @@ namespace {
         auto* pFactory = resolveD3D12Factory();
         if (!pFactory) {
             return false;
+        }
+
+        const QString requestedAdapter = qEnvironmentVariable("ARTIFACT_GPU_ADAPTER").trimmed();
+        if (!requestedAdapter.isEmpty() && requestedAdapter.compare(QStringLiteral("auto"), Qt::CaseInsensitive) != 0) {
+            ComPtr<IDXGIFactory6> dxgiFactory;
+            if (SUCCEEDED(::CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory)))) {
+                ComPtr<IDXGIAdapter1> selectedAdapter;
+                UINT hardwareIndex = 0;
+                for (UINT adapterIndex = 0;; ++adapterIndex) {
+                    ComPtr<IDXGIAdapter1> adapter;
+                    if (dxgiFactory->EnumAdapters1(adapterIndex, &adapter) == DXGI_ERROR_NOT_FOUND) {
+                        break;
+                    }
+
+                    DXGI_ADAPTER_DESC1 desc{};
+                    if (FAILED(adapter->GetDesc1(&desc)) || (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+                        continue;
+                    }
+
+                    const QString description = QString::fromWCharArray(desc.Description);
+                    const bool indexMatch = requestedAdapter == QString::number(hardwareIndex);
+                    const bool nameMatch = description.contains(requestedAdapter, Qt::CaseInsensitive);
+                    if (indexMatch || nameMatch) {
+                        selectedAdapter = adapter;
+                        qDebug() << "[DiligentDeviceManager] selected D3D12 adapter"
+                                 << "index=" << hardwareIndex
+                                 << "name=" << description;
+                        break;
+                    }
+                    ++hardwareIndex;
+                }
+
+                if (selectedAdapter) {
+                    ComPtr<ID3D12Device> nativeDevice;
+                    HRESULT hr = ::D3D12CreateDevice(
+                        selectedAdapter.Get(), D3D_FEATURE_LEVEL_11_0,
+                        IID_PPV_ARGS(&nativeDevice));
+                    if (SUCCEEDED(hr) && nativeDevice) {
+                        D3D12_COMMAND_QUEUE_DESC queueDesc{};
+                        queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+                        ComPtr<ID3D12CommandQueue> nativeQueue;
+                        hr = nativeDevice->CreateCommandQueue(
+                            &queueDesc, IID_PPV_ARGS(&nativeQueue));
+                        if (SUCCEEDED(hr) && nativeQueue) {
+                            EngineD3D12CreateInfo attachInfo = {};
+                            attachInfo.EnableValidation = true;
+                            attachInfo.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+                            attachInfo.Features.MultithreadedResourceCreation = DEVICE_FEATURE_STATE_DISABLED;
+                            attachInfo.NumAsyncShaderCompilationThreads = kAsyncShaderCompileThreads;
+                            attachInfo.Features.RayTracing = rayTracingEnabledByConfig()
+                                ? DEVICE_FEATURE_STATE_ENABLED
+                                : DEVICE_FEATURE_STATE_DISABLED;
+
+                            ICommandQueueD3D12* diligentQueue = nullptr;
+                            pFactory->CreateCommandQueueD3D12(
+                                nativeDevice.Get(), nativeQueue.Get(), nullptr, &diligentQueue);
+                            if (diligentQueue) {
+                                ICommandQueueD3D12* queues[] = {diligentQueue};
+                                pFactory->AttachToD3D12Device(
+                                    nativeDevice.Get(), 1, queues, attachInfo,
+                                    &outDevice, &outImmediateContext);
+                                diligentQueue->Release();
+                            }
+                        }
+                    }
+                } else {
+                    qWarning() << "[DiligentDeviceManager] requested D3D12 adapter was not found:"
+                               << requestedAdapter << ". Falling back to automatic selection.";
+                }
+            } else {
+                qWarning() << "[DiligentDeviceManager] failed to create DXGI factory."
+                           << "Falling back to automatic D3D12 adapter selection.";
+            }
+
+            if (outDevice && outImmediateContext) {
+                return true;
+            }
         }
 
         EngineD3D12CreateInfo creationAttribs = {};
