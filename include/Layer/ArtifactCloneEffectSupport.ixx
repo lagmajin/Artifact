@@ -441,6 +441,8 @@ inline void applyClonePhysicsTiming(
                                   frameRate));
     const float restitution = std::clamp(cloneComponentFloatProperty(
         layer, QStringLiteral("physics.restitution"), 0.35f), 0.0f, 1.0f);
+    const float linearDamping = std::max(0.0f, cloneComponentFloatProperty(
+        layer, QStringLiteral("physics.linearDamping"), 0.0f));
     const float initialVelocityY = cloneComponentFloatProperty(
         layer, QStringLiteral("physics.initialVelocityY"), 0.0f);
     const int maxBounces = std::clamp(cloneComponentIntProperty(
@@ -472,7 +474,7 @@ inline void applyClonePhysicsTiming(
             position = maxFall;
             remaining -= timeToFloor;
             velocity = -velocity - gravityY * timeToFloor;
-            velocity *= restitution;
+            velocity *= restitution * std::exp(-linearDamping * timeToFloor);
             if (std::abs(velocity) < 0.5f) {
                 return maxFall;
             }
