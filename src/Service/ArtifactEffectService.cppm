@@ -452,6 +452,21 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Mosaic"));
    return effect;
   }
+  if (effectId == QStringLiteral("builtin.pixelate") ||
+      effectId == QStringLiteral("pixelate")) {
+   auto effect = std::make_unique<MosaicEffect>();
+   effect->setEffectID(UniString::fromQString(QStringLiteral("builtin.pixelate")));
+   effect->setDisplayName(QStringLiteral("Pixelate"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("builtin.posterize") ||
+      effectId == QStringLiteral("posterize")) {
+   auto effect = std::make_unique<CurvesEffect>();
+   effect->setPreset(5);
+   effect->setEffectID(UniString::fromQString(QStringLiteral("builtin.posterize")));
+   effect->setDisplayName(QStringLiteral("Posterize"));
+   return effect;
+  }
   if (effectId == QStringLiteral("turbulent_displace")) {
    auto effect = std::make_unique<TurbulentDisplaceEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
@@ -666,6 +681,8 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("radial_shadow"), "Radial Shadow"});
   effects.push_back({EffectID("optics_compensation"), "Optics Compensation"});
   effects.push_back({EffectID("mosaic"), "Mosaic"});
+  effects.push_back({EffectID("builtin.pixelate"), "Pixelate"});
+  effects.push_back({EffectID("builtin.posterize"), "Posterize"});
   effects.push_back({EffectID("turbulent_displace"), "Turbulent Displace"});
   effects.push_back({EffectID("bevel"), "Bevel"});
   effects.push_back({EffectID("linear_wipe"), "Linear Wipe"});
