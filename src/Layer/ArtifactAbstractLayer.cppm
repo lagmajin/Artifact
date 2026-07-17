@@ -8352,6 +8352,17 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         if (field == QStringLiteral("strength")) {
           return setSetting(field, std::clamp(value.toDouble(), 0.0, 1.0));
         }
+        if (field == QStringLiteral("frequency")) {
+          return setSetting(field, std::clamp(value.toDouble(), 0.0, 60.0));
+        }
+        if (field == QStringLiteral("phase") ||
+            field == QStringLiteral("indexPhase")) {
+          return setSetting(field, std::clamp(value.toDouble(),
+                                               -6.28318530718, 6.28318530718));
+        }
+        if (field == QStringLiteral("indexScale")) {
+          return setSetting(field, std::clamp(value.toDouble(), 0.0001, 1.0));
+        }
         if (field == QStringLiteral("positionX") ||
             field == QStringLiteral("positionY") ||
             field == QStringLiteral("positionZ") ||
