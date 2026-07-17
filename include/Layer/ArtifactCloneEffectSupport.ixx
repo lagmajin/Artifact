@@ -1083,6 +1083,26 @@ inline void applyCloneEffectorModifiers(
             cloneTransform.scale(std::max(0.001f, scale),
                                  std::max(0.001f, scale),
                                  std::max(0.001f, scale));
+        } else if (modifier.typeId == QStringLiteral("artifact.modifier.step")) {
+            const float step = static_cast<float>(cloneIndex) * strength;
+            cloneTransform.translate(
+                static_cast<float>(settings.value(QStringLiteral("positionX")).toDouble(0.0)) * step,
+                static_cast<float>(settings.value(QStringLiteral("positionY")).toDouble(0.0)) * step,
+                static_cast<float>(settings.value(QStringLiteral("positionZ")).toDouble(0.0)) * step);
+            const float rotationZ = static_cast<float>(
+                settings.value(QStringLiteral("rotationZ")).toDouble(0.0)) * step;
+            if (rotationZ != 0.0f) {
+                cloneTransform.rotate(rotationZ, 0.0f, 0.0f, 1.0f);
+            }
+            const float scaleX = 1.0f + static_cast<float>(
+                settings.value(QStringLiteral("scaleX")).toDouble(1.0) - 1.0) * step;
+            const float scaleY = 1.0f + static_cast<float>(
+                settings.value(QStringLiteral("scaleY")).toDouble(1.0) - 1.0) * step;
+            const float scaleZ = 1.0f + static_cast<float>(
+                settings.value(QStringLiteral("scaleZ")).toDouble(1.0) - 1.0) * step;
+            cloneTransform.scale(std::max(0.001f, scaleX),
+                                 std::max(0.001f, scaleY),
+                                 std::max(0.001f, scaleZ));
         }
     }
 }
