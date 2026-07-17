@@ -526,6 +526,10 @@ void renderClonerLayer(ArtifactClonerLayer* layer, ArtifactIRenderer* renderer) 
 
 ## First Step
 
+> 現行実装では、専用 `MatrixData` / 基底クラスを新設する代わりに、既存の
+> `LayerGeneratorDescriptor` と `CloneRenderInstance` を正式な軽量基盤として採用している。
+> 下記は当初案であり、未実装項目の一覧ではない。
+
 **M-CLONER-1** から着手。
 
 最初にやること：
