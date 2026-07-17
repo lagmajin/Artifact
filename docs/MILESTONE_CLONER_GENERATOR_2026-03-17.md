@@ -15,7 +15,7 @@
 
 ## Definition of Done
 
-- [ ] **Cloner ジェネレーター** - グリッド/放射状/ランダム配置
+- [x] **Cloner ジェネレーター** - グリッド/放射状/ランダム配置
 - [ ] **Matrix ジェネレーター** - 点/グリッドマトリックス生成
 - [ ] **Plain エフェクター** - 位置/回転/スケール変形
 - [ ] **Random エフェクター** - ランダム変形
@@ -219,7 +219,7 @@ protected:
 
 **完了条件**:
 - [ ] `ArtifactClonerGenerator` 基底クラス
-- [ ] `ArtifactClonerGenerator` 実装（グリッド/放射状/ランダム）
+- [x] `ArtifactClonerGenerator` 実装（グリッド/放射状/ランダム）
 - [ ] `ArtifactMatrixData` データ構造
 - [ ] Inspector からパラメータ編集
 
@@ -281,9 +281,9 @@ private:
 **目標**: エフェクター基底と Plain/Random 実装
 
 **完了条件**:
-- [ ] `ArtifactClonerEffector` 基底クラス
-- [ ] `ArtifactPlainEffector` 実装（位置/回転/スケール）
-- [ ] `ArtifactRandomEffector` 実装（ランダム変形）
+- [x] `ArtifactClonerEffector` 相当のmodifier descriptor基盤
+- [x] `ArtifactPlainEffector` 相当のPlain modifier（位置/回転/スケール）
+- [x] `ArtifactRandomEffector` 相当のRandom modifier（ランダム変形）
 - [ ] エフェクターのスタック管理
 - [ ] Inspector から順序変更
 
@@ -342,7 +342,7 @@ private:
 **目標**: Inspector 統合とプレビュー
 
 **完了条件**:
-- [ ] Cloner Generator/Effectors カテゴリ
+- [x] Cloner Generator/Effectors カテゴリ
 - [ ] エフェクター追加ダイアログ
 - [ ] エフェクタースタック UI（順序変更）
 - [ ] パラメータプロパティ表示
@@ -378,7 +378,7 @@ private:
 **目標**: 追加エフェクターで表現力向上
 
 **完了条件**:
-- [ ] `Step Effector` - 段階的変化
+- [x] `Step Effector` - 段階的変化
 - [ ] `Delay Effector` - 遅延効果
 - [ ] `Formula Effector` - 数式ベース
 - [ ] `Spline Effector` - スプライン沿い配置
