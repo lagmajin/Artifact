@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <QWidget>
 #include <QString>
+#include <vector>
 export module Artifact.Render.DiligentDeviceManager;
 
 
@@ -30,6 +31,21 @@ struct SelectedGpuAdapterInfo {
     Uint32 vendorId = 0;
     Uint32 deviceId = 0;
     bool rayTracingSupported = false;
+};
+
+struct GpuAdapterCandidate {
+    Uint32 adapterId = 0;
+    QString name;
+    QString vendor;
+    QString type;
+    QString backend;
+    Uint32 vendorId = 0;
+    Uint32 deviceId = 0;
+    Uint64 localMemoryBytes = 0;
+    Uint64 unifiedMemoryBytes = 0;
+    bool rayTracingSupported = false;
+    bool selected = false;
+    int autoScore = 0;
 };
 
 class DiligentDeviceManager {
@@ -64,6 +80,8 @@ public:
     bool isRayTracingSupported() const;
     SelectedGpuAdapterInfo selectedAdapterInfo() const;
     QString selectedAdapterDebugState() const;
+    std::vector<GpuAdapterCandidate> availableAdapters() const;
+    QString availableAdaptersDebugState() const;
 
 private:
     class Impl;

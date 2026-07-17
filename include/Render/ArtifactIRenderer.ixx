@@ -142,6 +142,7 @@ public:
   QString particleDebugState() const;
   QString glyphAtlasDebugState() const;
   QString gpuAdapterDebugState() const;
+  QString gpuAdapterRegistryDebugState() const;
   QString rayTracingDebugState() const;
   void setGlobalIlluminationSettings(const GlobalIlluminationSettings &settings);
   static GlobalIlluminationSettings recommendedGlobalIlluminationSettings(

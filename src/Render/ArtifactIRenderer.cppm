@@ -3554,6 +3554,12 @@ QString ArtifactIRenderer::gpuAdapterDebugState() const
                : QStringLiteral("adapter=<no renderer>");
 }
 
+QString ArtifactIRenderer::gpuAdapterRegistryDebugState() const
+{
+  return impl_ ? impl_->deviceManager_.availableAdaptersDebugState()
+               : QStringLiteral("adapters=<no renderer>");
+}
+
 void ArtifactIRenderer::setGlobalIlluminationSettings(
     const GlobalIlluminationSettings& settings)
 {
