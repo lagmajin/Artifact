@@ -31,6 +31,8 @@ struct SelectedGpuAdapterInfo {
     Uint32 vendorId = 0;
     Uint32 deviceId = 0;
     bool rayTracingSupported = false;
+    QString selectionPolicy;
+    QString requestedAdapter;
 };
 
 struct GpuAdapterCandidate {
