@@ -285,8 +285,8 @@ private:
 - [x] `ArtifactClonerEffector` 相当のmodifier descriptor基盤
 - [x] `ArtifactPlainEffector` 相当のPlain modifier（位置/回転/スケール）
 - [x] `ArtifactRandomEffector` 相当のRandom modifier（ランダム変形）
-- [ ] エフェクターのスタック管理
-- [ ] Inspector から順序変更
+- [x] エフェクターのスタック管理
+- [x] Inspector から順序変更
 
 **API 案**:
 ```cpp
@@ -344,10 +344,10 @@ private:
 
 **完了条件**:
 - [x] Cloner Generator/Effectors カテゴリ
-- [ ] エフェクター追加ダイアログ
-- [ ] エフェクタースタック UI（順序変更）
-- [ ] パラメータプロパティ表示
-- [ ] リアルタイムプレビュー連携
+- [x] エフェクター追加ダイアログ
+- [x] エフェクタースタック UI（順序変更）
+- [x] パラメータプロパティ表示
+- [x] リアルタイムプレビュー連携
 
 **UI 構成案**:
 ```
