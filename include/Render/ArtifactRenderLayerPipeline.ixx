@@ -98,7 +98,10 @@ export namespace Artifact
       float resolutionScale,
       Uint32 raySteps,
       float intensity = 1.0f,
-      float depthThickness = 0.01f);
+      float depthThickness = 0.01f,
+      bool temporalAccumulation = true,
+      bool denoise = true);
+  void resetScreenSpaceGlobalIlluminationHistory();
   ITextureView* screenSpaceGlobalIlluminationSRV() const;
   Uint32 screenSpaceGlobalIlluminationWidth() const;
   Uint32 screenSpaceGlobalIlluminationHeight() const;

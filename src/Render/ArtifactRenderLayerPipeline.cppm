@@ -120,6 +120,92 @@ void ScreenSpaceGICS(uint3 dispatchId : SV_DispatchThreadID)
 }
 )";
 
+  inline constexpr const char* kScreenSpaceGlobalIlluminationResolveShader = R"(
+cbuffer SSGIResolveParams : register(b0)
+{
+    uint g_InputWidth;
+    uint g_InputHeight;
+    uint g_OutputWidth;
+    uint g_OutputHeight;
+    uint g_HistoryValid;
+    uint g_TemporalEnabled;
+    uint g_DenoiseEnabled;
+    float g_HistoryWeight;
+    float g_DepthSigma;
+    float g_NormalSigma;
+    float g_VelocityScale;
+    float _padding0;
+};
+
+Texture2D<float4> g_RawGI : register(t0);
+Texture2D<float4> g_HistoryGI : register(t1);
+Texture2D<float> g_ResolveDepth : register(t2);
+Texture2D<float4> g_ResolveNormal : register(t3);
+Texture2D<float4> g_ResolveVelocity : register(t4);
+RWTexture2D<float4> g_ResolvedGI : register(u0);
+
+[numthreads(8, 8, 1)]
+void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
+{
+    if (dispatchId.x >= g_OutputWidth || dispatchId.y >= g_OutputHeight) return;
+
+    const float2 outputSize = float2(g_OutputWidth, g_OutputHeight);
+    const float2 inputSize = float2(g_InputWidth, g_InputHeight);
+    const float2 uv = (float2(dispatchId.xy) + 0.5) / outputSize;
+    const int2 fullPixel = clamp(int2(uv * inputSize), int2(0, 0),
+                                 int2(g_InputWidth - 1, g_InputHeight - 1));
+    const float centerDepth = g_ResolveDepth.Load(int3(fullPixel, 0));
+    const float3 centerNormal = normalize(
+        g_ResolveNormal.Load(int3(fullPixel, 0)).xyz * 2.0 - 1.0);
+
+    float3 filtered = float3(0.0, 0.0, 0.0);
+    float totalWeight = 0.0;
+    const int filterRadius = g_DenoiseEnabled != 0 ? 1 : 0;
+    [loop]
+    for (int y = -1; y <= 1; ++y) {
+        [loop]
+        for (int x = -1; x <= 1; ++x) {
+            if (abs(x) > filterRadius || abs(y) > filterRadius) continue;
+            const int2 sampleOutput = clamp(
+                int2(dispatchId.xy) + int2(x, y), int2(0, 0),
+                int2(g_OutputWidth - 1, g_OutputHeight - 1));
+            const float2 sampleUV =
+                (float2(sampleOutput) + 0.5) / outputSize;
+            const int2 sampleFull = clamp(int2(sampleUV * inputSize),
+                int2(0, 0), int2(g_InputWidth - 1, g_InputHeight - 1));
+            const float sampleDepth =
+                g_ResolveDepth.Load(int3(sampleFull, 0));
+            const float3 sampleNormal = normalize(
+                g_ResolveNormal.Load(int3(sampleFull, 0)).xyz * 2.0 - 1.0);
+            const float depthWeight = exp(-abs(sampleDepth - centerDepth) /
+                                          max(g_DepthSigma, 0.000001));
+            const float normalWeight = pow(
+                saturate(dot(centerNormal, sampleNormal)), g_NormalSigma);
+            const float spatialWeight = (x == 0 && y == 0) ? 1.0 : 0.75;
+            const float weight = depthWeight * normalWeight * spatialWeight;
+            filtered += g_RawGI.Load(int3(sampleOutput, 0)).rgb * weight;
+            totalWeight += weight;
+        }
+    }
+    filtered = totalWeight > 0.0
+        ? filtered / totalWeight
+        : g_RawGI.Load(int3(dispatchId.xy, 0)).rgb;
+
+    if (g_TemporalEnabled != 0 && g_HistoryValid != 0) {
+        const float2 velocity =
+            (g_ResolveVelocity.Load(int3(fullPixel, 0)).xy * 2.0 - 1.0) *
+            g_VelocityScale;
+        const int2 historyPixel = clamp(
+            int2(round(float2(dispatchId.xy) - velocity * outputSize)),
+            int2(0, 0), int2(g_OutputWidth - 1, g_OutputHeight - 1));
+        const float3 history = g_HistoryGI.Load(int3(historyPixel, 0)).rgb;
+        filtered = lerp(filtered, history, saturate(g_HistoryWeight));
+    }
+
+    g_ResolvedGI[dispatchId.xy] = float4(filtered, 1.0);
+}
+)";
+
   struct alignas(16) ScreenSpaceGlobalIlluminationParams
   {
    Uint32 inputWidth = 0;
@@ -130,6 +216,22 @@ void ScreenSpaceGICS(uint3 dispatchId : SV_DispatchThreadID)
    float intensity = 1.0f;
    float depthThickness = 0.01f;
    float radiusPixels = 24.0f;
+  };
+
+  struct alignas(16) ScreenSpaceGlobalIlluminationResolveParams
+  {
+   Uint32 inputWidth = 0;
+   Uint32 inputHeight = 0;
+   Uint32 outputWidth = 0;
+   Uint32 outputHeight = 0;
+   Uint32 historyValid = 0;
+   Uint32 temporalEnabled = 1;
+   Uint32 denoiseEnabled = 1;
+   float historyWeight = 0.9f;
+   float depthSigma = 0.01f;
+   float normalSigma = 16.0f;
+   float velocityScale = 1.0f;
+   float padding0 = 0.0f;
   };
 
   struct TextureBundle
@@ -219,6 +321,11 @@ void ScreenSpaceGICS(uint3 dispatchId : SV_DispatchThreadID)
   std::shared_ptr<GpuContext> screenSpaceGIContext_;
   std::unique_ptr<ArtifactCore::ComputeExecutor> screenSpaceGIExecutor_;
   RefCntAutoPtr<IBuffer> screenSpaceGIParams_;
+  std::unique_ptr<ArtifactCore::ComputeExecutor> screenSpaceGIResolveExecutor_;
+  RefCntAutoPtr<IBuffer> screenSpaceGIResolveParams_;
+  TextureBundle screenSpaceGIHistory_[2];
+  Uint32 screenSpaceGIHistoryWriteIndex_ = 0;
+  bool screenSpaceGIHistoryValid_ = false;
   Uint32 width_ = 0;
   Uint32 height_ = 0;
   TEXTURE_FORMAT format_ = TEX_FORMAT_UNKNOWN;
@@ -314,6 +421,12 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->screenSpaceGIExecutor_.reset();
   impl_->screenSpaceGIContext_.reset();
   impl_->screenSpaceGIParams_.Release();
+  impl_->screenSpaceGIResolveExecutor_.reset();
+  impl_->screenSpaceGIResolveParams_.Release();
+  impl_->screenSpaceGIHistory_[0] = {};
+  impl_->screenSpaceGIHistory_[1] = {};
+  impl_->screenSpaceGIHistoryWriteIndex_ = 0;
+  impl_->screenSpaceGIHistoryValid_ = false;
   impl_->width_ = 0;
   impl_->height_ = 0;
   impl_->format_ = TEX_FORMAT_UNKNOWN;
@@ -415,7 +528,9 @@ bool RenderPipeline::dispatchScreenSpaceGlobalIllumination(
     float resolutionScale,
     Uint32 raySteps,
     float intensity,
-    float depthThickness)
+    float depthThickness,
+    bool temporalAccumulation,
+    bool denoise)
 {
  if (!ctx || !impl_->device_ || !inputs.validForScreenSpace() ||
      impl_->width_ == 0 || impl_->height_ == 0) {
@@ -437,6 +552,21 @@ bool RenderPipeline::dispatchScreenSpaceGlobalIllumination(
                            "RenderPipeline.ScreenSpaceGI",
                            impl_->screenSpaceGI_)) {
    return false;
+  }
+  impl_->screenSpaceGIHistoryValid_ = false;
+ }
+
+ for (auto& history : impl_->screenSpaceGIHistory_) {
+  if (!history.texture || history.texture->GetDesc().Width != outputWidth ||
+      history.texture->GetDesc().Height != outputHeight) {
+   if (!createTextureBundle(impl_->device_, outputWidth, outputHeight,
+                            TEX_FORMAT_RGBA16_FLOAT,
+                            BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
+                            "RenderPipeline.ScreenSpaceGIHistory",
+                            history)) {
+    return false;
+   }
+   impl_->screenSpaceGIHistoryValid_ = false;
   }
  }
 
@@ -480,6 +610,47 @@ bool RenderPipeline::dispatchScreenSpaceGlobalIllumination(
    impl_->screenSpaceGIParams_.Release();
    return false;
   }
+
+  impl_->screenSpaceGIResolveExecutor_ =
+      std::make_unique<ArtifactCore::ComputeExecutor>(
+          *impl_->screenSpaceGIContext_);
+  BufferDesc resolveParamsDesc;
+  resolveParamsDesc.Name = "ScreenSpaceGI Resolve Params";
+  resolveParamsDesc.Usage = USAGE_DYNAMIC;
+  resolveParamsDesc.Size =
+      sizeof(ScreenSpaceGlobalIlluminationResolveParams);
+  resolveParamsDesc.BindFlags = BIND_UNIFORM_BUFFER;
+  resolveParamsDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+  impl_->device_->CreateBuffer(resolveParamsDesc, nullptr,
+                               &impl_->screenSpaceGIResolveParams_);
+  static const ShaderResourceVariableDesc resolveVariables[] = {
+      {SHADER_TYPE_COMPUTE, "SSGIResolveParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_RawGI", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_HistoryGI", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_ResolveDepth", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_ResolveNormal", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_ResolveVelocity", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_ResolvedGI", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+  };
+  ArtifactCore::ComputePipelineDesc resolveDesc;
+  resolveDesc.name = "ScreenSpaceGI Resolve PSO";
+  resolveDesc.shaderSource = kScreenSpaceGlobalIlluminationResolveShader;
+  resolveDesc.entryPoint = "ScreenSpaceGIResolveCS";
+  resolveDesc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+  resolveDesc.variables = resolveVariables;
+  resolveDesc.variableCount = static_cast<Uint32>(
+      sizeof(resolveVariables) / sizeof(resolveVariables[0]));
+  resolveDesc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+  if (!impl_->screenSpaceGIResolveParams_ ||
+      !impl_->screenSpaceGIResolveExecutor_->build(resolveDesc) ||
+      !impl_->screenSpaceGIResolveExecutor_->createShaderResourceBinding(true)) {
+   impl_->screenSpaceGIResolveExecutor_.reset();
+   impl_->screenSpaceGIResolveParams_.Release();
+   impl_->screenSpaceGIExecutor_.reset();
+   impl_->screenSpaceGIParams_.Release();
+   impl_->screenSpaceGIContext_.reset();
+   return false;
+  }
  }
 
  ScreenSpaceGlobalIlluminationParams params;
@@ -514,11 +685,65 @@ bool RenderPipeline::dispatchScreenSpaceGlobalIllumination(
      outputWidth, outputHeight, 1, 8, 8, 1);
  executor.dispatch(ctx, dispatch,
                    RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+ const Uint32 writeIndex = impl_->screenSpaceGIHistoryWriteIndex_;
+ const Uint32 readIndex = 1u - writeIndex;
+ ScreenSpaceGlobalIlluminationResolveParams resolveParams;
+ resolveParams.inputWidth = impl_->width_;
+ resolveParams.inputHeight = impl_->height_;
+ resolveParams.outputWidth = outputWidth;
+ resolveParams.outputHeight = outputHeight;
+ resolveParams.historyValid = impl_->screenSpaceGIHistoryValid_ ? 1u : 0u;
+ resolveParams.temporalEnabled =
+     temporalAccumulation && inputs.validForTemporalReuse() ? 1u : 0u;
+ resolveParams.denoiseEnabled = denoise ? 1u : 0u;
+ resolveParams.historyWeight = 0.9f;
+ resolveParams.depthSigma = params.depthThickness;
+ resolveParams.normalSigma = 16.0f;
+ resolveParams.velocityScale = 1.0f;
+
+ void* mappedResolveParams = nullptr;
+ ctx->MapBuffer(impl_->screenSpaceGIResolveParams_, MAP_WRITE,
+                MAP_FLAG_DISCARD, mappedResolveParams);
+ if (!mappedResolveParams) {
+  return false;
+ }
+ std::memcpy(mappedResolveParams, &resolveParams, sizeof(resolveParams));
+ ctx->UnmapBuffer(impl_->screenSpaceGIResolveParams_, MAP_WRITE);
+
+ auto& resolveExecutor = *impl_->screenSpaceGIResolveExecutor_;
+ if (!resolveExecutor.setBuffer("SSGIResolveParams",
+                                impl_->screenSpaceGIResolveParams_) ||
+     !resolveExecutor.setTextureView("g_RawGI", impl_->screenSpaceGI_.srv) ||
+     !resolveExecutor.setTextureView(
+         "g_HistoryGI", impl_->screenSpaceGIHistory_[readIndex].srv) ||
+     !resolveExecutor.setTextureView("g_ResolveDepth", inputs.depth) ||
+     !resolveExecutor.setTextureView("g_ResolveNormal", inputs.normal) ||
+     !resolveExecutor.setTextureView(
+         "g_ResolveVelocity",
+         inputs.velocity ? inputs.velocity : inputs.normal) ||
+     !resolveExecutor.setTextureView(
+         "g_ResolvedGI", impl_->screenSpaceGIHistory_[writeIndex].uav)) {
+  return false;
+ }
+ resolveExecutor.dispatch(ctx, dispatch,
+                          RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ impl_->screenSpaceGIHistoryWriteIndex_ = readIndex;
+ impl_->screenSpaceGIHistoryValid_ = true;
  return true;
 }
 ITextureView* RenderPipeline::screenSpaceGlobalIlluminationSRV() const
 {
+ if (impl_->screenSpaceGIHistoryValid_) {
+  const Uint32 latestIndex = 1u - impl_->screenSpaceGIHistoryWriteIndex_;
+  return impl_->screenSpaceGIHistory_[latestIndex].srv;
+ }
  return impl_->screenSpaceGI_.srv;
+}
+void RenderPipeline::resetScreenSpaceGlobalIlluminationHistory()
+{
+ impl_->screenSpaceGIHistoryValid_ = false;
+ impl_->screenSpaceGIHistoryWriteIndex_ = 0;
 }
 Uint32 RenderPipeline::screenSpaceGlobalIlluminationWidth() const
 {

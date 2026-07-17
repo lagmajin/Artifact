@@ -23278,7 +23278,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             renderPipeline.dispatchScreenSpaceGlobalIllumination(
                 context.RawPtr(), giInputs,
                 globalIlluminationSettings.ssgiResolutionScale,
-                globalIlluminationSettings.ssgiRaySteps);
+                globalIlluminationSettings.ssgiRaySteps,
+                1.0f, 0.01f,
+                globalIlluminationSettings.temporalAccumulation,
+                globalIlluminationSettings.denoise);
         if (!dispatched && compositionViewLog().isDebugEnabled()) {
           qCDebug(compositionViewLog)
               << "[CompositionView] SSGI dispatch skipped"
