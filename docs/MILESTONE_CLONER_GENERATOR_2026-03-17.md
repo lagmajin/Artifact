@@ -276,7 +276,7 @@ private:
 - clone physics の専用設定を `physics` JSONオブジェクトへ整理し、旧レイヤー直下形式の読み込み互換も維持した。
 - 保存時も旧トップレベルキーを併記し、旧版の読み手に対する書き込み互換を維持した。
 - Formula modifierは、振幅・周波数・位相・クローン番号位相を使う決定論的なSin波変形として実装した。
-- Splineなどの高度なmodifierは、既存の `LayerModifierDescriptor` と `applyCloneEffectorModifiers` を接続点とする次段として未実装のまま管理する。
+- Spline modifierは、始点・制御点・終点による二次Bezier変形として実装した。`indexScale` でクローン番号の正規化を調整できる。
 - 外部 physics engine や新規イベント配線は導入していないため、現段階はクローン描画向けの軽量 solver として扱う。
 
 ---
@@ -386,7 +386,7 @@ private:
 - [x] `Step Effector` - 段階的変化
 - [ ] `Delay Effector` - 遅延効果
 - [ ] `Formula Effector` - 数式ベース
-- [ ] `Spline Effector` - スプライン沿い配置
+- [x] `Spline Effector` - 二次Bezierによるスプライン沿い配置
 
 **実装優先度**:
 1. Step - 実装簡単、使用頻度高
