@@ -756,6 +756,8 @@ public:
 
     // Physics component
     PhysicsLayerComponent physicsComponent_;
+    float clonePhysicsInitialVelocityY_ = 0.0f;
+    int clonePhysicsMaxBounces_ = 4;
     bool softBodyPhysicsEnabled_ = false;
     bool materialPhysicsEnabled_ = false;
     int materialPhysicsPreset_ = 0;
@@ -3917,6 +3919,9 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["effects"] = effectsArr;
   obj["isAdjustment"] = impl_->isAdjustmentLayer_;
   obj["physics"] = impl_->physicsComponent_.settings().toJson();
+  obj["clonePhysicsInitialVelocityY"] =
+      static_cast<double>(impl_->clonePhysicsInitialVelocityY_);
+  obj["clonePhysicsMaxBounces"] = impl_->clonePhysicsMaxBounces_;
   obj["softBodyPhysicsEnabled"] = impl_->softBodyPhysicsEnabled_;
   obj["materialPhysicsEnabled"] = impl_->materialPhysicsEnabled_;
   obj["materialPhysicsPreset"] = impl_->materialPhysicsPreset_;
@@ -4431,6 +4436,12 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       impl_->physicsComponent_.settings().fromJson(obj["physics"].toObject());
       impl_->physicsComponent_.reset();
   }
+  impl_->clonePhysicsInitialVelocityY_ = static_cast<float>(
+      obj.value(QStringLiteral("clonePhysicsInitialVelocityY"))
+          .toDouble(impl_->clonePhysicsInitialVelocityY_));
+  impl_->clonePhysicsMaxBounces_ = std::clamp(
+      obj.value(QStringLiteral("clonePhysicsMaxBounces"))
+          .toInt(impl_->clonePhysicsMaxBounces_), 0, 32);
   if (obj.contains("softBodyPhysicsEnabled") &&
       obj["softBodyPhysicsEnabled"].toBool(false)) {
       enableSoftBodyPhysicsGrid();
@@ -5926,7 +5937,7 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
 
   auto initialVelocityYProp =
       makeProp(QStringLiteral("physics.initialVelocityY"), PropertyType::Float,
-               0.0, -92);
+               static_cast<double>(impl_->clonePhysicsInitialVelocityY_), -92);
   initialVelocityYProp->setDisplayLabel(QStringLiteral("Initial Velocity Y"));
   initialVelocityYProp->setUnit(QStringLiteral("px/s"));
   initialVelocityYProp->setHardRange(-5000.0, 5000.0);
@@ -5936,7 +5947,7 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
 
   auto maxBouncesProp =
       makeProp(QStringLiteral("physics.maxBounces"), PropertyType::Integer,
-               4, -91);
+               impl_->clonePhysicsMaxBounces_, -91);
   maxBouncesProp->setDisplayLabel(QStringLiteral("Max Bounces"));
   maxBouncesProp->setHardRange(0.0, 32.0);
   maxBouncesProp->setSoftRange(0.0, 16.0);
@@ -7484,9 +7495,12 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("physics.initialVelocityY")) {
+    impl_->clonePhysicsInitialVelocityY_ = static_cast<float>(
+        std::clamp(value.toDouble(), -5000.0, 5000.0));
     return true;
   }
   if (propertyPath == QStringLiteral("physics.maxBounces")) {
+    impl_->clonePhysicsMaxBounces_ = std::clamp(value.toInt(), 0, 32);
     return true;
   }
   if (propertyPath == QStringLiteral("physics.wiggleFreq")) {
