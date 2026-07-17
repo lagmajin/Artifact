@@ -276,6 +276,7 @@ private:
 - clone physics の専用設定を `physics` JSONオブジェクトへ整理し、旧レイヤー直下形式の読み込み互換も維持した。
 - 保存時も旧トップレベルキーを併記し、旧版の読み手に対する書き込み互換を維持した。
 - Formula / Spline などの高度なmodifierは、現行の決定論的な変形・物理基盤とは分離した次段として未実装のまま管理する。
+- 次段の接続点は既存の `LayerModifierDescriptor` と `applyCloneEffectorModifiers` とし、追加のグローバルイベント経路は設けない。
 - 外部 physics engine や新規イベント配線は導入していないため、現段階はクローン描画向けの軽量 solver として扱う。
 
 ---
