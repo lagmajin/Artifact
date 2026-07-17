@@ -503,6 +503,11 @@ namespace {
   quint64 presentSkippedCount_ = 0;
   QString lastPresentStatus_ = QStringLiteral("never-presented");
   bool deviceRecoveryAttempted_ = false;
+  quint64 deviceRecoveryAttemptCount_ = 0;
+  quint64 deviceRecoverySuccessCount_ = 0;
+  quint64 deviceRecoveryFailureCount_ = 0;
+  QString deviceRecoveryPreviousAdapter_ = QStringLiteral("<none>");
+  QString deviceRecoveryCurrentAdapter_ = QStringLiteral("<none>");
   bool deviceLossTeardown_ = false;
   std::vector<ArtifactCore::Light> m_sceneLights;
   LODManager::DetailLevel detailLevel_ = LODManager::DetailLevel::High;
@@ -767,6 +772,16 @@ namespace {
   quint64 presentFailureCount() const { return presentFailureCount_; }
   quint64 presentSkippedCount() const { return presentSkippedCount_; }
   QString lastPresentStatus() const { return lastPresentStatus_; }
+  QString gpuAdapterRecoveryDebugState() const {
+    return QStringLiteral(
+               "recoveryAttempts=%1 recoverySuccesses=%2 recoveryFailures=%3 "
+               "previous={%4} current={%5}")
+        .arg(deviceRecoveryAttemptCount_)
+        .arg(deviceRecoverySuccessCount_)
+        .arg(deviceRecoveryFailureCount_)
+        .arg(deviceRecoveryPreviousAdapter_)
+        .arg(deviceRecoveryCurrentAdapter_);
+  }
   void beginFrameCostCapture();
   void endFrameCostCapture();
   ArtifactCore::RenderCostStats frameCostStats() const;
@@ -2637,11 +2652,15 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
 
      if (deviceLost && widget_ && !deviceRecoveryAttempted_) {
       deviceRecoveryAttempted_ = true;
+      ++deviceRecoveryAttemptCount_;
+      deviceRecoveryPreviousAdapter_ =
+          deviceManager_.selectedAdapterDebugState();
       QWidget* recoveryWidget = widget_;
       qWarning() << "[ArtifactIRenderer] attempting one-shot renderer recovery after device loss";
       try {
        auto lostDevice = deviceManager_.device();
        if (!invalidateSharedRenderDeviceIfExclusive(lostDevice.RawPtr())) {
+        ++deviceRecoveryFailureCount_;
         lastPresentStatus_ = QStringLiteral("device-recovery-deferred-shared");
         qWarning() << "[ArtifactIRenderer] device recovery deferred because the lost shared device"
                       " still has other owners";
@@ -2651,10 +2670,19 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
        deviceLossTeardown_ = true;
        destroy();
        initialize(recoveryWidget);
-       lastPresentStatus_ = isInitialized()
-                                ? QStringLiteral("device-recovered")
-                                : QStringLiteral("device-recovery-failed");
+       deviceRecoveryCurrentAdapter_ =
+           deviceManager_.selectedAdapterDebugState();
+       if (isInitialized()) {
+        ++deviceRecoverySuccessCount_;
+        lastPresentStatus_ = QStringLiteral("device-recovered");
+       } else {
+        ++deviceRecoveryFailureCount_;
+        lastPresentStatus_ = QStringLiteral("device-recovery-failed");
+       }
       } catch (const std::exception& recoveryEx) {
+       ++deviceRecoveryFailureCount_;
+       deviceRecoveryCurrentAdapter_ =
+           deviceManager_.selectedAdapterDebugState();
        lastPresentStatus_ = QStringLiteral("device-recovery-exception: %1")
                                 .arg(QString::fromLocal8Bit(recoveryEx.what()));
        qWarning() << "[ArtifactIRenderer] device recovery failed:"
@@ -3550,8 +3578,12 @@ QString ArtifactIRenderer::rayTracingDebugState() const
 
 QString ArtifactIRenderer::gpuAdapterDebugState() const
 {
-  return impl_ ? impl_->deviceManager_.selectedAdapterDebugState()
-               : QStringLiteral("adapter=<no renderer>");
+  if (!impl_) {
+    return QStringLiteral("adapter=<no renderer>");
+  }
+  return QStringLiteral("%1 %2")
+      .arg(impl_->deviceManager_.selectedAdapterDebugState())
+      .arg(impl_->gpuAdapterRecoveryDebugState());
 }
 
 QString ArtifactIRenderer::gpuAdapterRegistryDebugState() const
