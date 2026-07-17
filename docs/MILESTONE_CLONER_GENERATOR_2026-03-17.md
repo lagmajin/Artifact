@@ -17,11 +17,11 @@
 
 - [x] **Cloner ジェネレーター** - グリッド/放射状/ランダム配置
 - [ ] **Matrix ジェネレーター** - 点/グリッドマトリックス生成
-- [ ] **Plain エフェクター** - 位置/回転/スケール変形
-- [ ] **Random エフェクター** - ランダム変形
-- [ ] エフェクターの順序制御（スタック）
-- [ ] Inspector からパラメータ編集可能
-- [ ] リアルタイムプレビューで視認可能
+- [x] **Plain エフェクター** - 位置/回転/スケール変形
+- [x] **Random エフェクター** - ランダム変形
+- [x] エフェクターの順序制御（スタック）
+- [x] Inspector からパラメータ編集可能
+- [x] リアルタイムプレビューで視認可能
 
 ---
 
@@ -384,8 +384,8 @@ private:
 
 **完了条件**:
 - [x] `Step Effector` - 段階的変化
-- [ ] `Delay Effector` - 遅延効果
-- [ ] `Formula Effector` - 数式ベース
+- [x] `Delay Effector` - Time Offset modifierによる遅延
+- [x] `Formula Effector` - 決定論的Sin波ベース
 - [x] `Spline Effector` - 二次Bezierによるスプライン沿い配置
 
 **実装優先度**:
