@@ -21899,17 +21899,34 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     });
 
-    if (gpuBlendEnabled_ && hasGpuBlendJustification &&
+    const auto globalIlluminationState =
+        renderer_->globalIlluminationState();
+    const auto globalIlluminationSettings =
+        renderer_->globalIlluminationSettings();
+    const bool screenSpaceGlobalIlluminationRequested =
+        globalIlluminationState.selectedMode ==
+            GlobalIlluminationMode::SSGI ||
+        globalIlluminationState.selectedMode ==
+            GlobalIlluminationMode::Hybrid;
+
+    if (gpuBlendEnabled_ &&
+        (hasGpuBlendJustification ||
+         screenSpaceGlobalIlluminationRequested) &&
         !blendPipelineReady_) {
       scheduleBlendPipelineInitialization(
-          owner, 0, QStringLiteral("non-normal-layer-visible"));
+          owner, 0,
+          screenSpaceGlobalIlluminationRequested
+              ? QStringLiteral("screen-space-gi-requested")
+              : QStringLiteral("non-normal-layer-visible"));
     }
 
     const bool gpuBlendRequested = gpuBlendEnabled_ && blendPipelineReady_;
 
     const bool gpuBlendPathRequested =
 
-        gpuBlendRequested && hasGpuBlendJustification;
+        gpuBlendRequested &&
+        (hasGpuBlendJustification ||
+         screenSpaceGlobalIlluminationRequested);
 
 
 
@@ -21941,7 +21958,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         emissionChannelRequested || objectIdChannelRequested ||
 
-        materialIdChannelRequested || albedoChannelRequested;
+        materialIdChannelRequested || albedoChannelRequested ||
+
+        screenSpaceGlobalIlluminationRequested;
 
 
 
@@ -23056,7 +23075,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                 }
 
-                if (!draftRendering && normalRTV) {
+                if ((!draftRendering ||
+                     screenSpaceGlobalIlluminationRequested) && normalRTV) {
 
                   drawGpuLayerNormalToTarget(layer.get(), normalRTV);
 
@@ -23112,7 +23132,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                 }
 
-                if (!draftRendering && albedoRTV) {
+                if ((!draftRendering ||
+                     screenSpaceGlobalIlluminationRequested) && albedoRTV) {
 
                   drawGpuLayerAlbedoToTarget(layer.get(), albedoRTV);
 
@@ -23244,6 +23265,26 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         }
 
+      }
+
+      if (screenSpaceGlobalIlluminationRequested) {
+        renderer_->unbindColorTargetsForCompute();
+        auto* depthSRV = renderer_->offscreenTextureShaderResourceView(
+            previewRenderSlot.depthTargetView);
+        const auto giInputs =
+            renderPipeline.globalIlluminationInputs(depthSRV);
+        auto context = renderer_->immediateContext();
+        const bool dispatched = context &&
+            renderPipeline.dispatchScreenSpaceGlobalIllumination(
+                context.RawPtr(), giInputs,
+                globalIlluminationSettings.ssgiResolutionScale,
+                globalIlluminationSettings.ssgiRaySteps);
+        if (!dispatched && compositionViewLog().isDebugEnabled()) {
+          qCDebug(compositionViewLog)
+              << "[CompositionView] SSGI dispatch skipped"
+              << renderer_->globalIlluminationDebugState()
+              << "inputs=" << giInputs.validForScreenSpace();
+        }
       }
 
 

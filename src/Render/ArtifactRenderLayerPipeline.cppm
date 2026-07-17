@@ -1,11 +1,15 @@
 ﻿module;
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <memory>
 #include <utility>
 
 #include <QDebug>
 
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/TextureView.h>
@@ -19,6 +23,7 @@ import Layer.Blend;
 import Artifact.Layer.Abstract;
 import Graphics.LayerBlendPipeline;
 import Graphics.GPUcomputeContext;
+import Graphics.Compute;
 
 import Artifact.Render.Config;
 
@@ -31,6 +36,102 @@ namespace Artifact
 
  namespace
  {
+  inline constexpr const char* kScreenSpaceGlobalIlluminationShader = R"(
+cbuffer SSGIParams : register(b0)
+{
+    uint g_InputWidth;
+    uint g_InputHeight;
+    uint g_OutputWidth;
+    uint g_OutputHeight;
+    uint g_RaySteps;
+    float g_Intensity;
+    float g_DepthThickness;
+    float g_RadiusPixels;
+};
+
+Texture2D<float> g_Depth : register(t0);
+Texture2D<float4> g_Normal : register(t1);
+Texture2D<float4> g_Albedo : register(t2);
+RWTexture2D<float4> g_Output : register(u0);
+
+static const float2 kDirections[8] = {
+    float2(1.0, 0.0), float2(0.7071, 0.7071),
+    float2(0.0, 1.0), float2(-0.7071, 0.7071),
+    float2(-1.0, 0.0), float2(-0.7071, -0.7071),
+    float2(0.0, -1.0), float2(0.7071, -0.7071)
+};
+
+[numthreads(8, 8, 1)]
+void ScreenSpaceGICS(uint3 dispatchId : SV_DispatchThreadID)
+{
+    if (dispatchId.x >= g_OutputWidth || dispatchId.y >= g_OutputHeight) return;
+
+    const float2 outputUV = (float2(dispatchId.xy) + 0.5) /
+                            float2(g_OutputWidth, g_OutputHeight);
+    const int2 centerPixel = clamp(
+        int2(outputUV * float2(g_InputWidth, g_InputHeight)),
+        int2(0, 0), int2(g_InputWidth - 1, g_InputHeight - 1));
+    const float centerDepth = g_Depth.Load(int3(centerPixel, 0));
+    if (centerDepth >= 0.999999) {
+        g_Output[dispatchId.xy] = float4(0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+
+    const float3 centerNormal = normalize(
+        g_Normal.Load(int3(centerPixel, 0)).xyz * 2.0 - 1.0);
+    float3 indirect = float3(0.0, 0.0, 0.0);
+    float totalWeight = 0.0;
+    const uint stepCount = clamp(g_RaySteps, 1u, 24u);
+
+    [unroll]
+    for (uint directionIndex = 0; directionIndex < 8; ++directionIndex) {
+        const float2 direction = kDirections[directionIndex];
+        [loop]
+        for (uint stepIndex = 1; stepIndex <= 24; ++stepIndex) {
+            if (stepIndex > stepCount) break;
+            const float distanceWeight = 1.0 -
+                (float(stepIndex - 1) / max(1.0, float(stepCount)));
+            const float radius = g_RadiusPixels *
+                (float(stepIndex) / float(stepCount));
+            const int2 samplePixel = clamp(
+                centerPixel + int2(round(direction * radius)),
+                int2(0, 0), int2(g_InputWidth - 1, g_InputHeight - 1));
+            const float sampleDepth = g_Depth.Load(int3(samplePixel, 0));
+            if (sampleDepth >= 0.999999) continue;
+
+            const float depthDelta = abs(sampleDepth - centerDepth);
+            const float depthWeight = saturate(
+                1.0 - depthDelta / max(g_DepthThickness, 0.000001));
+            if (depthWeight <= 0.0) continue;
+
+            const float3 sampleNormal = normalize(
+                g_Normal.Load(int3(samplePixel, 0)).xyz * 2.0 - 1.0);
+            const float normalWeight = saturate(dot(centerNormal, sampleNormal));
+            const float weight = depthWeight * normalWeight * distanceWeight;
+            indirect += g_Albedo.Load(int3(samplePixel, 0)).rgb * weight;
+            totalWeight += weight;
+        }
+    }
+
+    indirect = totalWeight > 0.0
+        ? indirect / totalWeight
+        : float3(0.0, 0.0, 0.0);
+    g_Output[dispatchId.xy] = float4(indirect * g_Intensity, 1.0);
+}
+)";
+
+  struct alignas(16) ScreenSpaceGlobalIlluminationParams
+  {
+   Uint32 inputWidth = 0;
+   Uint32 inputHeight = 0;
+   Uint32 outputWidth = 0;
+   Uint32 outputHeight = 0;
+   Uint32 raySteps = 8;
+   float intensity = 1.0f;
+   float depthThickness = 0.01f;
+   float radiusPixels = 24.0f;
+  };
+
   struct TextureBundle
   {
    RefCntAutoPtr<ITexture> texture;
@@ -114,6 +215,10 @@ namespace Artifact
   TextureBundle objectId_;
   TextureBundle materialId_;
   TextureBundle albedo_;
+  TextureBundle screenSpaceGI_;
+  std::shared_ptr<GpuContext> screenSpaceGIContext_;
+  std::unique_ptr<ArtifactCore::ComputeExecutor> screenSpaceGIExecutor_;
+  RefCntAutoPtr<IBuffer> screenSpaceGIParams_;
   Uint32 width_ = 0;
   Uint32 height_ = 0;
   TEXTURE_FORMAT format_ = TEX_FORMAT_UNKNOWN;
@@ -205,6 +310,10 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->objectId_ = {};
   impl_->materialId_ = {};
   impl_->albedo_ = {};
+  impl_->screenSpaceGI_ = {};
+  impl_->screenSpaceGIExecutor_.reset();
+  impl_->screenSpaceGIContext_.reset();
+  impl_->screenSpaceGIParams_.Release();
   impl_->width_ = 0;
   impl_->height_ = 0;
   impl_->format_ = TEX_FORMAT_UNKNOWN;
@@ -299,6 +408,129 @@ GlobalIlluminationInputs RenderPipeline::globalIlluminationInputs(
  inputs.velocity = velocitySRV();
  inputs.emission = emissionSRV();
  return inputs;
+}
+bool RenderPipeline::dispatchScreenSpaceGlobalIllumination(
+    IDeviceContext* ctx,
+    const GlobalIlluminationInputs& inputs,
+    float resolutionScale,
+    Uint32 raySteps,
+    float intensity,
+    float depthThickness)
+{
+ if (!ctx || !impl_->device_ || !inputs.validForScreenSpace() ||
+     impl_->width_ == 0 || impl_->height_ == 0) {
+  return false;
+ }
+
+ const float safeScale = std::clamp(resolutionScale, 0.25f, 1.0f);
+ const Uint32 outputWidth = std::max(
+     1u, static_cast<Uint32>(std::ceil(impl_->width_ * safeScale)));
+ const Uint32 outputHeight = std::max(
+     1u, static_cast<Uint32>(std::ceil(impl_->height_ * safeScale)));
+
+ if (!impl_->screenSpaceGI_.texture ||
+     impl_->screenSpaceGI_.texture->GetDesc().Width != outputWidth ||
+     impl_->screenSpaceGI_.texture->GetDesc().Height != outputHeight) {
+  if (!createTextureBundle(impl_->device_, outputWidth, outputHeight,
+                           TEX_FORMAT_RGBA16_FLOAT,
+                           BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
+                           "RenderPipeline.ScreenSpaceGI",
+                           impl_->screenSpaceGI_)) {
+   return false;
+  }
+ }
+
+ if (!impl_->screenSpaceGIExecutor_) {
+  impl_->screenSpaceGIContext_ =
+      std::make_shared<GpuContext>(impl_->device_, ctx);
+  impl_->screenSpaceGIExecutor_ =
+      std::make_unique<ArtifactCore::ComputeExecutor>(
+          *impl_->screenSpaceGIContext_);
+
+  BufferDesc paramsDesc;
+  paramsDesc.Name = "ScreenSpaceGI Params";
+  paramsDesc.Usage = USAGE_DYNAMIC;
+  paramsDesc.Size = sizeof(ScreenSpaceGlobalIlluminationParams);
+  paramsDesc.BindFlags = BIND_UNIFORM_BUFFER;
+  paramsDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+  impl_->device_->CreateBuffer(paramsDesc, nullptr,
+                               &impl_->screenSpaceGIParams_);
+
+  static const ShaderResourceVariableDesc variables[] = {
+      {SHADER_TYPE_COMPUTE, "SSGIParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_Depth", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_Normal", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_Albedo", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_Output", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+  };
+  ArtifactCore::ComputePipelineDesc desc;
+  desc.name = "ScreenSpaceGI PSO";
+  desc.shaderSource = kScreenSpaceGlobalIlluminationShader;
+  desc.entryPoint = "ScreenSpaceGICS";
+  desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+  desc.variables = variables;
+  desc.variableCount = static_cast<Uint32>(
+      sizeof(variables) / sizeof(variables[0]));
+  desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+  if (!impl_->screenSpaceGIParams_ ||
+      !impl_->screenSpaceGIExecutor_->build(desc) ||
+      !impl_->screenSpaceGIExecutor_->createShaderResourceBinding(true)) {
+   impl_->screenSpaceGIExecutor_.reset();
+   impl_->screenSpaceGIContext_.reset();
+   impl_->screenSpaceGIParams_.Release();
+   return false;
+  }
+ }
+
+ ScreenSpaceGlobalIlluminationParams params;
+ params.inputWidth = impl_->width_;
+ params.inputHeight = impl_->height_;
+ params.outputWidth = outputWidth;
+ params.outputHeight = outputHeight;
+ params.raySteps = std::clamp(raySteps, 1u, 24u);
+ params.intensity = std::clamp(intensity, 0.0f, 8.0f);
+ params.depthThickness = std::clamp(depthThickness, 0.0001f, 1.0f);
+ params.radiusPixels = 32.0f * safeScale;
+
+ void* mappedParams = nullptr;
+ ctx->MapBuffer(impl_->screenSpaceGIParams_, MAP_WRITE,
+                MAP_FLAG_DISCARD, mappedParams);
+ if (!mappedParams) {
+  return false;
+ }
+ std::memcpy(mappedParams, &params, sizeof(params));
+ ctx->UnmapBuffer(impl_->screenSpaceGIParams_, MAP_WRITE);
+
+ auto& executor = *impl_->screenSpaceGIExecutor_;
+ if (!executor.setBuffer("SSGIParams", impl_->screenSpaceGIParams_) ||
+     !executor.setTextureView("g_Depth", inputs.depth) ||
+     !executor.setTextureView("g_Normal", inputs.normal) ||
+     !executor.setTextureView("g_Albedo", inputs.albedo) ||
+     !executor.setTextureView("g_Output", impl_->screenSpaceGI_.uav)) {
+  return false;
+ }
+
+ const auto dispatch = ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+     outputWidth, outputHeight, 1, 8, 8, 1);
+ executor.dispatch(ctx, dispatch,
+                   RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ return true;
+}
+ITextureView* RenderPipeline::screenSpaceGlobalIlluminationSRV() const
+{
+ return impl_->screenSpaceGI_.srv;
+}
+Uint32 RenderPipeline::screenSpaceGlobalIlluminationWidth() const
+{
+ return impl_->screenSpaceGI_.texture
+            ? impl_->screenSpaceGI_.texture->GetDesc().Width
+            : 0;
+}
+Uint32 RenderPipeline::screenSpaceGlobalIlluminationHeight() const
+{
+ return impl_->screenSpaceGI_.texture
+            ? impl_->screenSpaceGI_.texture->GetDesc().Height
+            : 0;
 }
  bool RenderPipeline::updateMatteSourceFromData(IDeviceContext* ctx,
                                                  const void* data,

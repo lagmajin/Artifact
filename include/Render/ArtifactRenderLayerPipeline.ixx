@@ -92,6 +92,16 @@ export namespace Artifact
   bool hasAlbedoTarget() const;
   GlobalIlluminationInputs globalIlluminationInputs(
       ITextureView* depthSRV) const;
+  bool dispatchScreenSpaceGlobalIllumination(
+      IDeviceContext* ctx,
+      const GlobalIlluminationInputs& inputs,
+      float resolutionScale,
+      Uint32 raySteps,
+      float intensity = 1.0f,
+      float depthThickness = 0.01f);
+  ITextureView* screenSpaceGlobalIlluminationSRV() const;
+  Uint32 screenSpaceGlobalIlluminationWidth() const;
+  Uint32 screenSpaceGlobalIlluminationHeight() const;
   bool updateMatteSourceFromData(IDeviceContext* ctx,
                                   const void* data,
                                   Uint32 width,
