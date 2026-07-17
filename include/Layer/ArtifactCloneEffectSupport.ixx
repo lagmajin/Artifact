@@ -1051,6 +1051,16 @@ inline void applyCloneEffectorModifiers(
             cloneTransform.translate(positionX, positionY, positionZ);
             const float rotationZ = static_cast<float>(
                 settings.value(QStringLiteral("rotationZ")).toDouble(0.0)) * strength;
+            const float rotationX = static_cast<float>(
+                settings.value(QStringLiteral("rotationX")).toDouble(0.0)) * strength;
+            const float rotationY = static_cast<float>(
+                settings.value(QStringLiteral("rotationY")).toDouble(0.0)) * strength;
+            if (rotationX != 0.0f) {
+                cloneTransform.rotate(rotationX, 1.0f, 0.0f, 0.0f);
+            }
+            if (rotationY != 0.0f) {
+                cloneTransform.rotate(rotationY, 0.0f, 1.0f, 0.0f);
+            }
             if (rotationZ != 0.0f) {
                 cloneTransform.rotate(rotationZ, 0.0f, 0.0f, 1.0f);
             }
@@ -1077,6 +1087,12 @@ inline void applyCloneEffectorModifiers(
                                      unit(rng) * positionZ * strength);
             const float rotationZ = static_cast<float>(
                 settings.value(QStringLiteral("rotationZ")).toDouble(0.0));
+            cloneTransform.rotate(unit(rng) * static_cast<float>(
+                                      settings.value(QStringLiteral("rotationX")).toDouble(0.0)) * strength,
+                                  1.0f, 0.0f, 0.0f);
+            cloneTransform.rotate(unit(rng) * static_cast<float>(
+                                      settings.value(QStringLiteral("rotationY")).toDouble(0.0)) * strength,
+                                  0.0f, 1.0f, 0.0f);
             cloneTransform.rotate(unit(rng) * rotationZ * strength,
                                   0.0f, 0.0f, 1.0f);
             const float scaleVariance = std::max(0.0f, static_cast<float>(
@@ -1093,6 +1109,16 @@ inline void applyCloneEffectorModifiers(
                 static_cast<float>(settings.value(QStringLiteral("positionZ")).toDouble(0.0)) * step);
             const float rotationZ = static_cast<float>(
                 settings.value(QStringLiteral("rotationZ")).toDouble(0.0)) * step;
+            const float rotationX = static_cast<float>(
+                settings.value(QStringLiteral("rotationX")).toDouble(0.0)) * step;
+            const float rotationY = static_cast<float>(
+                settings.value(QStringLiteral("rotationY")).toDouble(0.0)) * step;
+            if (rotationX != 0.0f) {
+                cloneTransform.rotate(rotationX, 1.0f, 0.0f, 0.0f);
+            }
+            if (rotationY != 0.0f) {
+                cloneTransform.rotate(rotationY, 0.0f, 1.0f, 0.0f);
+            }
             if (rotationZ != 0.0f) {
                 cloneTransform.rotate(rotationZ, 0.0f, 0.0f, 1.0f);
             }
