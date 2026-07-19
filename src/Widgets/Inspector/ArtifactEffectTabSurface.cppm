@@ -3,8 +3,6 @@ module;
 #include <QPainter>
 #include <QPalette>
 #include <QSettings>
-#include <QStyle>
-#include <QStyleOption>
 #include <QVBoxLayout>
 
 module Artifact.Widgets.Inspector.EffectTabSurface;
@@ -12,6 +10,18 @@ module Artifact.Widgets.Inspector.EffectTabSurface;
 namespace {
 constexpr auto kEffectRackVisibleSetting =
     "Inspector/Effects/EffectRackVisible";
+
+class EffectTabCanvas final : public QWidget {
+ public:
+  using QWidget::QWidget;
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    const QPalette pal = palette();
+    painter.fillRect(rect(), pal.color(QPalette::Window));
+  }
+};
 
 class EffectRackDisclosure final : public QWidget {
  public:
@@ -38,13 +48,15 @@ class EffectRackDisclosure final : public QWidget {
     painter.setPen(pal.color(QPalette::Mid));
     painter.drawLine(rect().bottomLeft(), rect().bottomRight());
 
-    const QRect arrowRect(8, 6, 16, 16);
-    QStyleOption arrowOption;
-    arrowOption.initFrom(this);
-    arrowOption.rect = arrowRect;
-    style()->drawPrimitive(rackVisible_ ? QStyle::PE_IndicatorArrowDown
-                                       : QStyle::PE_IndicatorArrowRight,
-                           &arrowOption, &painter, this);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(pal.color(QPalette::Text));
+    if (rackVisible_) {
+      const QPoint arrow[] = {QPoint(9, 10), QPoint(21, 10), QPoint(15, 17)};
+      painter.drawPolygon(arrow, 3);
+    } else {
+      const QPoint arrow[] = {QPoint(11, 7), QPoint(19, 14), QPoint(11, 21)};
+      painter.drawPolygon(arrow, 3);
+    }
 
     painter.setPen(pal.color(QPalette::Text));
     painter.drawText(QRect(30, 0, qMax(0, width() - 92), height()),
@@ -94,11 +106,16 @@ ArtifactEffectTabSurface::ArtifactEffectTabSurface(QWidget* stackPanel,
     : QWidget(parent) {
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
-  layout->setSpacing(1);
+  layout->setSpacing(0);
+  auto* canvas = new EffectTabCanvas(this);
+  auto* canvasLayout = new QVBoxLayout(canvas);
+  canvasLayout->setContentsMargins(0, 0, 0, 0);
+  canvasLayout->setSpacing(1);
   if (stackPanel) {
-    layout->addWidget(new EffectRackDisclosure(stackPanel, this));
+    canvasLayout->addWidget(new EffectRackDisclosure(stackPanel, canvas));
   }
-  if (stackPanel) layout->addWidget(stackPanel);
-  if (detailPanel) layout->addWidget(detailPanel, 1);
+  if (stackPanel) canvasLayout->addWidget(stackPanel);
+  if (detailPanel) canvasLayout->addWidget(detailPanel, 1);
+  layout->addWidget(canvas, 1);
 }
 }

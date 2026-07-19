@@ -992,8 +992,9 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
     return;
   }
 
-  const QRectF bounds = layer->localBounds();
-  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+  const QRectF localBounds = layer->localBounds();
+  if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+      localBounds.height() <= 0.0) {
     return;
   }
 
@@ -1004,6 +1005,12 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
   // layers. In that mode the selection frame must follow the supplied camera
   // matrices instead of falling back to the unrotated 2D canvas transform.
   if (layer->is3D() || (cameraView && cameraProj)) {
+    // Keep the projected frame clear of the layer pixels. Besides improving
+    // readability, this leaves a stable border-sized target for frame dragging.
+    const qreal frameOutset = std::clamp(
+        std::min(localBounds.width(), localBounds.height()) * 0.015, 6.0, 18.0);
+    const QRectF bounds = localBounds.adjusted(
+        -frameOutset, -frameOutset, frameOutset, frameOutset);
     const auto world = layer->getGlobalTransformMatrix();
     const auto point = [&world](float x, float y) -> Detail::float3 {
       const auto transformed = world * Diligent::float4{x, y, 0.0f, 1.0f};
@@ -1035,6 +1042,7 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
     return;
   }
 
+  const QRectF bounds = localBounds;
   const QTransform transform = layer->getGlobalTransform();
   const QPointF tl = transform.map(bounds.topLeft());
   const QPointF tr = transform.map(bounds.topRight());

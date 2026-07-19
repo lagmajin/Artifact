@@ -485,6 +485,33 @@ void pushDockLayoutSnapshot(ArtifactMainWindow *window,
 void prepareFloatingDockContainer(ads::CFloatingDockContainer *floatingWidget,
                                   QObject *eventFilterOwner);
 
+void materializeDeferredFloatingDock(ads::CDockManager *dockManager,
+                                     ads::CDockWidget *dock) {
+  if (!dockManager || !dock ||
+      !dock->property("artifactDeferredFloatingContainer").toBool() ||
+      dock->property("artifactDeferredFloatingMaterialized").toBool() ||
+      dock->property("artifactRespectRestoredDockPlacement").toBool()) {
+    return;
+  }
+
+  if (findFloatingDockContainer(dock)) {
+    dock->setProperty("artifactDeferredFloatingMaterialized", true);
+    return;
+  }
+
+  auto *container = dockManager->addDockWidgetFloating(dock);
+  if (!container) {
+    return;
+  }
+
+  const QRect geometry =
+      dock->property("artifactDeferredFloatingGeometry").toRect();
+  if (geometry.isValid()) {
+    container->setGeometry(geometry);
+  }
+  dock->setProperty("artifactDeferredFloatingMaterialized", true);
+}
+
 void wireDockWidgetSignals(ads::CDockWidget *dock, QObject *owner) {
   if (!dock || !owner ||
       dock->property("artifactFloatingHooksInstalled").toBool()) {
@@ -1559,6 +1586,8 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
   dock->setProperty("artifactLazyDock", true);
   dock->setProperty("artifactLazyFloatingDock", true);
+  dock->setProperty("artifactDeferredFloatingContainer", true);
+  dock->setProperty("artifactDeferredFloatingGeometry", floatingGeometry);
   auto *placeholder = createLazyDockPlaceholder(dock);
   dock->setWidget(placeholder, CDockWidget::ForceNoScrollArea);
   impl_->lazyDockFactories.insert(dock, std::move(factory));
@@ -1587,10 +1616,10 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
         }();
       });
 
-  auto *container = impl_->dockManager->addDockWidgetFloating(dock);
-  if (container) {
-    container->setGeometry(floatingGeometry);
-  }
+  // Register a restorable dock shell without creating a native floating
+  // window. The floating container is materialized on first explicit use, or
+  // supplied by ADS when a saved layout restores this dock as floating.
+  impl_->dockManager->addDockWidget(ads::RightDockWidgetArea, dock);
 
   impl_->dockWidgets.push_back(dock);
   wireDockWidgetSignals(dock, this);
@@ -1692,6 +1721,9 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
         dock->setProperty("artifactStartupVisibilityOverride", visible);
         return;
       }
+      if (visible) {
+        materializeDeferredFloatingDock(impl_->dockManager, dock);
+      }
       const bool isVisible = dock->isVisible() && !dock->isClosed();
       if (isVisible != visible) {
         dock->toggleView(visible);
@@ -1746,6 +1778,7 @@ void ArtifactMainWindow::activateDock(const QString &title) {
         dock->setProperty("artifactStartupVisibilityOverride", true);
         return;
       }
+      materializeDeferredFloatingDock(impl_->dockManager, dock);
       dock->toggleView(true);
       if (!dock->property("artifactLazyWidgetCreated").toBool() &&
           !dock->property("artifactLazyWidgetCreationPending").toBool()) {
@@ -2094,7 +2127,25 @@ bool ArtifactMainWindow::restoreDockManagerState(const QByteArray &state) {
     return false;
   // ADS は「全ての dock が DockManager に登録された後」でないと restore できない。
   // 呼び出し側（AppMain）がレイアウト構築完了後に呼ぶことを前提とする。
-  return impl_->dockManager->restoreState(state);
+  const bool restored = impl_->dockManager->restoreState(state);
+  if (!restored) {
+    return false;
+  }
+
+  for (auto *dock : impl_->dockWidgets) {
+    if (!dock ||
+        !dock->property("artifactDeferredFloatingContainer").toBool()) {
+      continue;
+    }
+    if (findFloatingDockContainer(dock)) {
+      dock->setProperty("artifactDeferredFloatingMaterialized", true);
+    } else {
+      // A saved docked placement is authoritative. Do not force the default
+      // floating geometry when the user opens this surface later.
+      dock->setProperty("artifactRespectRestoredDockPlacement", true);
+    }
+  }
+  return true;
 }
 
 void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {

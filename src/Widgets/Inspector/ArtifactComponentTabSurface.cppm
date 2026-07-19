@@ -7,6 +7,20 @@ module Artifact.Widgets.Inspector.ComponentTabSurface;
 
 namespace Artifact {
 namespace {
+class ComponentTabCanvas final : public QWidget {
+ public:
+  using QWidget::QWidget;
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    const QPalette pal = palette();
+    painter.fillRect(rect(), pal.color(QPalette::Window));
+    painter.setPen(pal.color(QPalette::Mid));
+    painter.drawLine(rect().topLeft(), rect().topRight());
+  }
+};
+
 class ComponentTabHeading final : public QWidget {
  public:
   using QWidget::QWidget;
@@ -36,9 +50,14 @@ ArtifactComponentTabSurface::ArtifactComponentTabSurface(QWidget* componentPanel
                                                          QWidget* parent)
     : QWidget(parent) {
   auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(8, 8, 8, 8);
-  layout->setSpacing(8);
-  layout->addWidget(new ComponentTabHeading(this));
-  if (componentPanel) layout->addWidget(componentPanel, 1);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(0);
+  auto* canvas = new ComponentTabCanvas(this);
+  auto* canvasLayout = new QVBoxLayout(canvas);
+  canvasLayout->setContentsMargins(8, 8, 8, 8);
+  canvasLayout->setSpacing(8);
+  canvasLayout->addWidget(new ComponentTabHeading(canvas));
+  if (componentPanel) canvasLayout->addWidget(componentPanel, 1);
+  layout->addWidget(canvas, 1);
 }
 }

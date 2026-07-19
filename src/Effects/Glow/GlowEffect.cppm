@@ -348,6 +348,7 @@ void GlowEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     cv::Mat out;
     cv::merge(outChannels, out);
     writeGlowResultToDestination(out, dst);
+    dst.image().setColorDescriptor(srcImage.colorDescriptor());
 }
 
 void GlowEffectGPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
@@ -461,6 +462,7 @@ void GlowEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     if (!imageBuffersDiffer(src, dst)) {
         applyCPU(src, dst);
     }
+    dst.image().setColorDescriptor(src.image().colorDescriptor());
 }
 
 class GlowEffect::Impl {

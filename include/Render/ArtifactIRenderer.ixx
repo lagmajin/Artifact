@@ -14,6 +14,7 @@ module;
 #include <QString>
 #include <QTransform>
 #include <QWidget>
+#include <QtGlobal>
 #include <RefCntAutoPtr.hpp>
 #include <RenderDevice.h>
 #include <functional>
@@ -98,11 +99,13 @@ public:
   QString lastPresentStatus() const;
   void beginFrameCostCapture();
   void endFrameCostCapture();
-  void beginFrameGpuProfiling();
+  void beginFrameGpuProfiling(quint64 executionId);
   void endFrameGpuProfiling();
   ArtifactCore::RenderCostStats frameCostStats() const;
   std::vector<ArtifactCore::FrameDebugPassRecord> frameDebugPasses() const;
   double lastFrameGpuTimeMs() const;
+  bool hasFrameGpuTiming() const;
+  quint64 lastFrameGpuTimingExecutionId() const;
   QString particleDebugState() const;
   QString glyphAtlasDebugState() const;
   QString rayTracingDebugState() const;
@@ -310,7 +313,8 @@ public:
                                   float centerY = 0.5f,
                                   float scale = 1.0f,
                                   float offset = 0.0f,
-                                  float opacity = 1.0f);
+                                  float opacity = 1.0f,
+                                  bool linearColorInterpolation = false);
   void drawRectOutlineLocal(float x, float y, float w, float h,
                             const FloatColor &color);
   void drawThickLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness,

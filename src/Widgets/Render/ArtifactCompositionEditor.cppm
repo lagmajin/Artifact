@@ -100,6 +100,7 @@ import Artifact.Contents.Viewer;
 import Artifact.Widgets.TransformGizmo;
 import Artifact.Widgets.Gizmo3D;
 import Artifact.Widgets.PieMenu;
+import Input.Operator;
 import UI.ShortcutBindings;
 import UI.View.Orientation.Navigator;
 import Math.Interpolate;
@@ -4746,7 +4747,7 @@ protected:
              mapFromGlobal(QCursor::pos())));
        }
        if (shouldTogglePlayback) {
-         togglePlaybackPreview();
+         executePlaybackToggleAction();
        }
        event->accept();
        return;
@@ -4863,6 +4864,16 @@ protected:
     if (controller_) {
       controller_->start();
     }
+  }
+
+  void executePlaybackToggleAction() {
+    auto *actions = ArtifactCore::ActionManager::instance();
+    if (actions &&
+        actions->getAction(QStringLiteral("playback.play_pause"))) {
+      actions->executeAction(QStringLiteral("playback.play_pause"));
+      return;
+    }
+    togglePlaybackPreview();
   }
 
   void restoreTemporarySolo() {
@@ -5015,9 +5026,14 @@ protected:
     // Mask Tool
     model.items.push_back({"Mask",
                            loadIconWithFallback("MaterialVS/neutral/draw.svg"),
-                           "tool.mask", true, false, [toolManager]() {
+                           "tool.mask", true, false, [this, toolManager]() {
                              if (toolManager)
                                toolManager->setActiveTool(ToolType::Pen);
+                             controller_->setLineDebugKindVisible(
+                                 LineDebugKind::MaskPath, true);
+                             controller_->setLineDebugKindVisible(
+                                 LineDebugKind::MaskHandle, true);
+                             controller_->markRenderDirty();
                            }});
 
     // Zoom Fit
@@ -5052,6 +5068,24 @@ protected:
                              gizmo3D->mode() == GizmoMode::Scale,
                              [this, gizmo3D]() {
                                gizmo3D->setMode(GizmoMode::Scale);
+                               controller_->markRenderDirty();
+                             }});
+      model.items.push_back({"3D Full", QIcon(), "gizmo3d.full", true,
+                             gizmo3D->mode() == GizmoMode::Full,
+                             [this, gizmo3D]() {
+                               gizmo3D->setMode(GizmoMode::Full);
+                               controller_->markRenderDirty();
+                             }});
+      model.items.push_back({"3D World", QIcon(), "gizmo3d.world", true,
+                             gizmo3D->space() == GizmoSpace::World,
+                             [this, gizmo3D]() {
+                               gizmo3D->setSpace(GizmoSpace::World);
+                               controller_->markRenderDirty();
+                             }});
+      model.items.push_back({"3D Local", QIcon(), "gizmo3d.local", true,
+                             gizmo3D->space() == GizmoSpace::Local,
+                             [this, gizmo3D]() {
+                               gizmo3D->setSpace(GizmoSpace::Local);
                                controller_->markRenderDirty();
                              }});
     }
@@ -9115,6 +9149,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                   ? ArtifactApplicationManager::instance()->toolManager()
                   : nullptr) {
         toolManager->setActiveTool(toolType);
+      }
+      if (toolType == ToolType::Pen && impl_->renderController_) {
+        impl_->showMaskEditingGuides();
+        impl_->renderController_->markRenderDirty();
       }
       if (impl_->toolModeButton_) {
         impl_->toolModeButton_->setText(text);

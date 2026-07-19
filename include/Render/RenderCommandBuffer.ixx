@@ -47,12 +47,16 @@ struct SolidRectXformPkt {
 struct GradientRectParams {
     float4 startColor;
     float4 endColor;
-    // x=fill type (1 linear, 2 radial, 3 conical), y=angle degrees,
+    // x=fill type (1 linear, 2 radial, 3 conical, 4 repeat, 5 mirror), y=angle degrees,
     // z=reverse flag, w=scale.
     float4 mode;
     // xy=center, z=linear offset, w=local-rect aspect ratio.
     float4 centerOffset;
+    // x=1 when encoded sRGB endpoints must be decoded before interpolation.
+    float4 colorContract;
 };
+
+static_assert(sizeof(GradientRectParams) == sizeof(float4) * 5);
 
 struct GradientRectPkt {
     RenderSolidRectTransform2D mat;

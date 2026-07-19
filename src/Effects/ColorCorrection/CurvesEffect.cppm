@@ -151,6 +151,7 @@ public:
         if (!readbackTexture(device_, context_, outputTex, dst, "Curves/StagingTexture")) {
             applyCPU(src, dst);
         }
+        dst.image().setColorDescriptor(src.image().colorDescriptor());
     }
 
     void syncCurves(const ArtifactCore::ColorCurves& curves) {

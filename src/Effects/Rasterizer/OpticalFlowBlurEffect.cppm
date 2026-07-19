@@ -223,6 +223,7 @@ public:
         auto at=ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1);
         ex_->dispatch(c,at,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         if(!readbackTex(d,c,ot,dst))cpu.applyCPU(src,dst);
+        dst.image().setColorDescriptor(src.image().colorDescriptor());
     }
 
 private:

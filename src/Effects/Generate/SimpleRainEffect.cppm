@@ -106,7 +106,7 @@ public:
             }
         });
         dst = src;
-        dst.image().setFromCVMat(output);
+        dst.image().setFromCVMat(output, image.colorDescriptor());
     }
 };
 

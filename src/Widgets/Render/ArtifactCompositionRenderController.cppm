@@ -61,7 +61,6 @@ module;
 #include <QVector4D>
 
 #include <QVector>
-#include <Layer/ArtifactSolidGradientUtil.hpp>
 
 #include <deque>
 
@@ -180,6 +179,8 @@ import Artifact.Render.Offscreen;
 
 import Image.ImageF32x4_RGBA;
 
+import Graphics.SurfaceColorContract;
+
 import Frame.Position;
 
 import Artifact.Application.Manager;
@@ -231,6 +232,8 @@ import Time.Rational;
 import Artifact.Render.Pipeline;
 
 import Graphics.LayerBlendPipeline;
+
+import Graphics.RenderGraph;
 
 import Widgets.Utils.CSS;
 
@@ -302,10 +305,7 @@ QString colorHslLabel(const QColor& color) {
 }
 
 QColor qColorFromFloatColor(const FloatColor& color) {
-  return QColor::fromRgbF(std::clamp(color.r(), 0.0f, 1.0f),
-                          std::clamp(color.g(), 0.0f, 1.0f),
-                          std::clamp(color.b(), 0.0f, 1.0f),
-                          std::clamp(color.a(), 0.0f, 1.0f));
+  return QColor::fromRgbF(color.red(), color.green(), color.blue(), color.alpha());
 }
 
 QVector<FloatColor> buildReferenceHarmonyPalette(const FloatColor& baseColor) {
@@ -3075,7 +3075,11 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
 
 
-  cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(surface, true);
+  const QImage effectSurface = normalizeQImageForCvEffectBoundary(surface);
+  ArtifactCore::SurfaceColorDescriptor surfaceDescriptor =
+      qImageCvMatSurfaceDescriptor(effectSurface);
+
+  cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(effectSurface, true);
 
   // Keep the legacy QImage boundary in the same internal layout as the
   // float-image path. qImageToCvMat() returns BGRA for ARGB32 on Windows and
@@ -3183,7 +3187,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
   if (hasRasterizerEffect) {
     ArtifactCore::ImageF32x4_RGBA cpuImage;
 
-    cpuImage.setFromCVMat(mat);
+    cpuImage.setFromCVMat(mat, surfaceDescriptor);
 
     ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
 
@@ -3219,11 +3223,13 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
     mat = current.image().toCVMat();
 
+    surfaceDescriptor = current.image().colorDescriptor();
+
   }
 
 
 
-  outBuffer->setFromCVMat(mat);
+  outBuffer->setFromCVMat(mat, surfaceDescriptor);
 
   return true;
 
@@ -4178,6 +4184,23 @@ std::vector<ArtifactCore::Light> filterSceneLightsForLayer(
 
 
 
+QString surfaceCacheColorKey(const FloatColor& color) {
+  return QStringLiteral("%1,%2,%3,%4")
+      .arg(color.r(), 0, 'f', 4)
+      .arg(color.g(), 0, 'f', 4)
+      .arg(color.b(), 0, 'f', 4)
+      .arg(color.a(), 0, 'f', 4);
+}
+
+int layerSurfaceColorPipelineVersion(ArtifactAbstractLayer* layer) {
+  const auto* composition = layer
+      ? static_cast<ArtifactAbstractComposition*>(layer->composition())
+      : nullptr;
+  return composition
+      ? composition->colorPipelineVersion()
+      : ArtifactAbstractComposition::CanonicalColorPipelineVersion;
+}
+
 QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
                                   const QImage &surface, int64_t frameNumber,
@@ -4199,6 +4222,12 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
       QStringLiteral("|size=%1x%2").arg(surface.width()).arg(surface.height());
 
   key += QStringLiteral("|generation=%1").arg(surfaceGeneration);
+  const auto *composition =
+      static_cast<ArtifactAbstractComposition *>(layer->composition());
+  key += QStringLiteral("|colorPipeline=%1")
+             .arg(composition
+                      ? composition->colorPipelineVersion()
+                      : ArtifactAbstractComposition::CanonicalColorPipelineVersion);
 
   bool hasAnimatedEffectProperty = false;
   for (const auto &effect : layer->getEffects()) {
@@ -4227,18 +4256,17 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
     const QRectF bounds = solid2D->localBounds();
 
-    key += QStringLiteral("|solid2D|color=%1|bounds=%2x%3")
-
-               .arg(QStringLiteral("%1,%2,%3,%4")
-
-                        .arg(solid2D->color().r(), 0, 'f', 4)
-
-                        .arg(solid2D->color().g(), 0, 'f', 4)
-
-                        .arg(solid2D->color().b(), 0, 'f', 4)
-
-                        .arg(solid2D->color().a(), 0, 'f', 4))
-
+    key += QStringLiteral("|solid2D|color=%1|fill=%2|g0=%3|g1=%4|ang=%5|rev=%6|cx=%7|cy=%8|scale=%9|off=%10|bounds=%11x%12")
+               .arg(surfaceCacheColorKey(solid2D->color()))
+               .arg(static_cast<int>(solid2D->fillType()))
+               .arg(surfaceCacheColorKey(solid2D->gradientStartColor()))
+               .arg(surfaceCacheColorKey(solid2D->gradientEndColor()))
+               .arg(solid2D->gradientAngleDegrees(), 0, 'f', 4)
+               .arg(solid2D->gradientReverse() ? 1 : 0)
+               .arg(solid2D->gradientCenterX(), 0, 'f', 4)
+               .arg(solid2D->gradientCenterY(), 0, 'f', 4)
+               .arg(solid2D->gradientScale(), 0, 'f', 4)
+               .arg(solid2D->gradientOffset(), 0, 'f', 4)
                .arg(bounds.width(), 0, 'f', 2)
 
                .arg(bounds.height(), 0, 'f', 2);
@@ -4253,18 +4281,17 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
     const QRectF bounds = solidImage->localBounds();
 
-    key += QStringLiteral("|solidImage|color=%1|bounds=%2x%3")
-
-               .arg(QStringLiteral("%1,%2,%3,%4")
-
-                        .arg(solidImage->color().r(), 0, 'f', 4)
-
-                        .arg(solidImage->color().g(), 0, 'f', 4)
-
-                        .arg(solidImage->color().b(), 0, 'f', 4)
-
-                        .arg(solidImage->color().a(), 0, 'f', 4))
-
+    key += QStringLiteral("|solidImage|color=%1|fill=%2|g0=%3|g1=%4|ang=%5|rev=%6|cx=%7|cy=%8|scale=%9|off=%10|bounds=%11x%12")
+               .arg(surfaceCacheColorKey(solidImage->color()))
+               .arg(static_cast<int>(solidImage->fillType()))
+               .arg(surfaceCacheColorKey(solidImage->gradientStartColor()))
+               .arg(surfaceCacheColorKey(solidImage->gradientEndColor()))
+               .arg(solidImage->gradientAngleDegrees(), 0, 'f', 4)
+               .arg(solidImage->gradientReverse() ? 1 : 0)
+               .arg(solidImage->gradientCenterX(), 0, 'f', 4)
+               .arg(solidImage->gradientCenterY(), 0, 'f', 4)
+               .arg(solidImage->gradientScale(), 0, 'f', 4)
+               .arg(solidImage->gradientOffset(), 0, 'f', 4)
                .arg(bounds.width(), 0, 'f', 2)
 
                .arg(bounds.height(), 0, 'f', 2);
@@ -4734,6 +4761,81 @@ private:
   int64_t frame_ = 0;
   MotionPathTangentSnapshot before_;
   MotionPathTangentSnapshot after_;
+};
+
+struct Gizmo3DTransformSnapshot {
+  QVector3D position;
+  QVector3D rotation;
+  QVector3D scale{1.0f, 1.0f, 1.0f};
+  int64_t frame = 0;
+};
+
+Gizmo3DTransformSnapshot captureGizmo3DTransform(
+    const ArtifactAbstractLayerPtr &layer) {
+  Gizmo3DTransformSnapshot result;
+  if (!layer) {
+    return result;
+  }
+  result.frame = layer->currentFrame();
+  const ArtifactCore::RationalTime time(result.frame, 30);
+  const auto snapshot = layer->transform3D().snapshotAt(time);
+  result.position = QVector3D(snapshot.positionX, snapshot.positionY,
+                              snapshot.positionZ);
+  result.rotation = QVector3D(snapshot.rotation, 0.0f, 0.0f);
+  result.scale = QVector3D(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+  return result;
+}
+
+bool gizmo3DTransformChanged(const Gizmo3DTransformSnapshot &before,
+                             const Gizmo3DTransformSnapshot &after) {
+  constexpr float epsilon = 0.0001f;
+  return (before.position - after.position).lengthSquared() > epsilon * epsilon ||
+         (before.rotation - after.rotation).lengthSquared() > epsilon * epsilon ||
+         (before.scale - after.scale).lengthSquared() > epsilon * epsilon;
+}
+
+class Gizmo3DTransformUndoCommand final : public UndoCommand {
+public:
+  Gizmo3DTransformUndoCommand(ArtifactAbstractLayerPtr layer,
+                              Gizmo3DTransformSnapshot before,
+                              Gizmo3DTransformSnapshot after)
+      : layer_(layer), before_(std::move(before)), after_(std::move(after)) {}
+
+  void undo() override { apply(before_); }
+  void redo() override { apply(after_); }
+  QString label() const override {
+    return QStringLiteral("Transform 3D Layer");
+  }
+
+private:
+  void apply(const Gizmo3DTransformSnapshot &snapshot) {
+    const auto layer = layer_.lock();
+    if (!layer) {
+      return;
+    }
+    const ArtifactCore::RationalTime time(snapshot.frame, 30);
+    auto &transform = layer->transform3D();
+    transform.setPosition(time, snapshot.position.x(), snapshot.position.y());
+    transform.setPositionZ(time, snapshot.position.z());
+    transform.setRotation(time, snapshot.rotation.x());
+    transform.setScale(time, snapshot.scale.x(), snapshot.scale.y(),
+                       snapshot.scale.z());
+    layer->setDirty(LayerDirtyFlag::Transform);
+    layer->changed();
+    if (auto *composition =
+            static_cast<ArtifactAbstractComposition *>(layer->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{composition->id().toString(), layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+    }
+    if (auto *manager = UndoManager::instance()) {
+      manager->notifyAnythingChanged();
+    }
+  }
+
+  ArtifactAbstractLayerWeak layer_;
+  Gizmo3DTransformSnapshot before_;
+  Gizmo3DTransformSnapshot after_;
 };
 
 
@@ -5759,6 +5861,15 @@ hitTopmostLayerAtViewportPos(const ArtifactCompositionPtr &comp,
 
       }
 
+      // Text uses visualLocalBounds() for its rendered extent (including
+      // stroke/shadow and line metrics), while localBounds() is the generic
+      // layer hit shape. Keep the precise local hit first, then allow the
+      // visible text extent to start a viewport manipulation as well.
+      if (dynamic_cast<ArtifactTextLayer *>(layer.get()) &&
+          layer->transformedBoundingBox().contains(canvasPos.x, canvasPos.y)) {
+        return layer;
+      }
+
       continue;
 
     }
@@ -6503,9 +6614,12 @@ void drawLayerForCompositionView(
           // surface discarded Blur / Gaussian Blur / Glow on GPU-cached layers.
           QImage processedSurface = processedBuffer->toQImage();
           applyResolvedMattes(processedSurface);
+          const QImage effectSurface =
+              normalizeQImageForCvEffectBoundary(processedSurface);
           ArtifactCore::ImageF32x4_RGBA mattedProcessed;
           mattedProcessed.setFromCVMat(
-              ArtifactCore::CvUtils::qImageToCvMat(processedSurface, true));
+              ArtifactCore::CvUtils::qImageToCvMat(effectSurface, true),
+              qImageCvMatSurfaceDescriptor(effectSurface));
           processedBuffer =
               std::make_shared<ArtifactCore::ImageF32x4_RGBA>(mattedProcessed);
           directProcessedBuffer = processedBuffer;
@@ -6578,9 +6692,12 @@ void drawLayerForCompositionView(
         // Re-enter the float path immediately after applying it.
         QImage processedSurface = directProcessedBuffer->toQImage();
         applyResolvedMattes(processedSurface);
+        const QImage effectSurface =
+            normalizeQImageForCvEffectBoundary(processedSurface);
         ArtifactCore::ImageF32x4_RGBA mattedProcessed;
         mattedProcessed.setFromCVMat(
-            ArtifactCore::CvUtils::qImageToCvMat(processedSurface, true));
+            ArtifactCore::CvUtils::qImageToCvMat(effectSurface, true),
+            qImageCvMatSurfaceDescriptor(effectSurface));
         directProcessedBuffer =
             std::make_shared<ArtifactCore::ImageF32x4_RGBA>(mattedProcessed);
         surface = std::move(processedSurface);
@@ -6705,15 +6822,12 @@ void drawLayerForCompositionView(
 
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
       if (solid2D->fillType() != ArtifactSolidFillType::Solid) {
-        surface = ArtifactSolidGradientUtil::makeSolidGradientImage(
-            surfaceSize,
-            QColor::fromRgbF(solid2D->gradientStartColor().r(), solid2D->gradientStartColor().g(),
-                             solid2D->gradientStartColor().b(), solid2D->gradientStartColor().a()),
-            QColor::fromRgbF(solid2D->gradientEndColor().r(), solid2D->gradientEndColor().g(),
-                             solid2D->gradientEndColor().b(), solid2D->gradientEndColor().a()),
+        surface = makeVersionedSolidGradientImage(
+            surfaceSize, solid2D->gradientStartColor(), solid2D->gradientEndColor(),
             static_cast<int>(solid2D->fillType()), solid2D->gradientAngleDegrees(),
             solid2D->gradientReverse(), solid2D->gradientCenterX(), solid2D->gradientCenterY(),
-            solid2D->gradientScale(), solid2D->gradientOffset());
+            solid2D->gradientScale(), solid2D->gradientOffset(),
+            layerSurfaceColorPipelineVersion(layer));
       } else {
         surface.fill(toQColor(color));
       }
@@ -6736,7 +6850,10 @@ void drawLayerForCompositionView(
                   instanceTransform, solid2D->gradientStartColor(), solid2D->gradientEndColor(),
                   static_cast<int>(solid2D->fillType()), solid2D->gradientAngleDegrees(),
                   solid2D->gradientReverse(), solid2D->gradientCenterX(), solid2D->gradientCenterY(),
-                  solid2D->gradientScale(), solid2D->gradientOffset(), baseOpacity * instanceWeight);
+                  solid2D->gradientScale(), solid2D->gradientOffset(),
+                  baseOpacity * instanceWeight,
+                  layerSurfaceColorPipelineVersion(layer) >=
+                      ArtifactAbstractComposition::CanonicalColorPipelineVersion);
             });
         return;
       }
@@ -6782,7 +6899,12 @@ void drawLayerForCompositionView(
 
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
       if (solidImage->fillType() != ArtifactSolidFillType::Solid) {
-        surface = solidImage->toQImage();
+        surface = makeVersionedSolidGradientImage(
+            surfaceSize, solidImage->gradientStartColor(), solidImage->gradientEndColor(),
+            static_cast<int>(solidImage->fillType()), solidImage->gradientAngleDegrees(),
+            solidImage->gradientReverse(), solidImage->gradientCenterX(), solidImage->gradientCenterY(),
+            solidImage->gradientScale(), solidImage->gradientOffset(),
+            layerSurfaceColorPipelineVersion(layer));
       } else {
         surface.fill(toQColor(color));
       }
@@ -6805,7 +6927,10 @@ void drawLayerForCompositionView(
                   instanceTransform, solidImage->gradientStartColor(), solidImage->gradientEndColor(),
                   static_cast<int>(solidImage->fillType()), solidImage->gradientAngleDegrees(),
                   solidImage->gradientReverse(), solidImage->gradientCenterX(), solidImage->gradientCenterY(),
-                  solidImage->gradientScale(), solidImage->gradientOffset(), baseOpacity * instanceWeight);
+                  solidImage->gradientScale(), solidImage->gradientOffset(),
+                  baseOpacity * instanceWeight,
+                  layerSurfaceColorPipelineVersion(layer) >=
+                      ArtifactAbstractComposition::CanonicalColorPipelineVersion);
             });
         return;
       }
@@ -8259,6 +8384,8 @@ public:
 
   QString lastFrameRenderPassPlanSummary_;
 
+  ArtifactCore::RenderGraphDiagnosticSnapshot lastRenderGraphDiagnostic_;
+
   QString last3DLayerSubmissionKey_;
 
   void log3DLayerDecision(const ArtifactAbstractLayerPtr& layer,
@@ -8434,6 +8561,103 @@ public:
 
     return items.join(QStringLiteral(" -> "));
 
+  }
+
+  ArtifactCore::RenderGraphDiagnosticSnapshot captureFrameRenderGraph(
+      const std::vector<FrameRenderPass>& plan, const quint64 executionId,
+      const std::uint32_t width, const std::uint32_t height) const {
+    ArtifactCore::RenderGraph graph;
+    const auto surfaceBytes = [](const std::uint32_t w, const std::uint32_t h,
+                                 const std::uint64_t bytesPerPixel) {
+      constexpr auto maxValue = std::numeric_limits<std::uint64_t>::max();
+      if (w == 0 || h == 0 || bytesPerPixel == 0) return std::uint64_t{0};
+      const auto pixels = static_cast<std::uint64_t>(w) * h;
+      return pixels > maxValue / bytesPerPixel ? maxValue
+                                               : pixels * bytesPerPixel;
+    };
+    const auto addTexture = [&graph, width, height, &surfaceBytes](
+                                const char* name,
+                                const ArtifactCore::RenderResourceLifetime lifetime,
+                                const std::uint64_t bytesPerPixel) {
+      ArtifactCore::RenderResourceDescriptor descriptor;
+      descriptor.name = name;
+      descriptor.kind = ArtifactCore::RenderResourceKind::Texture;
+      descriptor.lifetime = lifetime;
+      descriptor.width = width;
+      descriptor.height = height;
+      descriptor.byteSize = surfaceBytes(width, height, bytesPerPixel);
+      return graph.addResource(std::move(descriptor));
+    };
+
+    const auto composition = addTexture(
+        "composition-input", ArtifactCore::RenderResourceLifetime::External, 0);
+    const auto frameState = addTexture(
+        "frame-state", ArtifactCore::RenderResourceLifetime::Transient, 1);
+    const auto layerSurface = addTexture(
+        "layer-surface", ArtifactCore::RenderResourceLifetime::Transient, 16);
+    const auto maskSurface = addTexture(
+        "mask-surface", ArtifactCore::RenderResourceLifetime::Transient, 4);
+    const auto accumulation = addTexture(
+        "accumulation", ArtifactCore::RenderResourceLifetime::Transient, 16);
+    const auto resolved = addTexture(
+        "viewport-resolve", ArtifactCore::RenderResourceLifetime::Transient, 4);
+    const auto swapchain = addTexture(
+        "swapchain", ArtifactCore::RenderResourceLifetime::External, 4);
+
+    for (const auto& framePass : plan) {
+      ArtifactCore::RenderPassDescriptor pass;
+      pass.name = framePass.name.toStdString();
+      switch (framePass.kind) {
+      case FrameRenderPassKind::Setup:
+        pass.queue = ArtifactCore::RenderPassQueue::Copy;
+        pass.reads = {composition};
+        pass.writes = {frameState};
+        break;
+      case FrameRenderPassKind::Base:
+        pass.reads = {composition, frameState};
+        pass.writes = {accumulation};
+        break;
+      case FrameRenderPassKind::Surface:
+        pass.reads = {composition, frameState};
+        pass.writes = {layerSurface};
+        break;
+      case FrameRenderPassKind::Mask:
+        pass.queue = ArtifactCore::RenderPassQueue::Compute;
+        pass.reads = {layerSurface};
+        pass.writes = {maskSurface};
+        break;
+      case FrameRenderPassKind::Composite:
+        pass.queue = ArtifactCore::RenderPassQueue::Compute;
+        if (framePass.name == QStringLiteral("composite")) {
+          pass.reads = {layerSurface, maskSurface, accumulation};
+          pass.writes = {accumulation};
+        } else {
+          pass.reads = {composition, frameState};
+          pass.writes = {resolved};
+        }
+        break;
+      case FrameRenderPassKind::Post:
+        pass.queue = ArtifactCore::RenderPassQueue::Compute;
+        pass.reads = {accumulation};
+        pass.writes = {resolved};
+        break;
+      case FrameRenderPassKind::Overlay:
+        pass.reads = {resolved};
+        pass.writes = {resolved};
+        break;
+      case FrameRenderPassKind::Flush:
+        pass.queue = ArtifactCore::RenderPassQueue::Copy;
+        pass.reads = {resolved};
+        break;
+      case FrameRenderPassKind::Present:
+        pass.queue = ArtifactCore::RenderPassQueue::Copy;
+        pass.reads = {resolved};
+        pass.writes = {swapchain};
+        break;
+      }
+      graph.addPass(std::move(pass));
+    }
+    return graph.compileDiagnosticSnapshot(executionId);
   }
 
 
@@ -9378,7 +9602,182 @@ public:
 
   bool isDraggingLayer_ = false;
 
-  bool gizmoDragActive_ = false;
+  struct TransformEditSession {
+    enum class Target {
+      None,
+      Gizmo2D,
+      Gizmo3D,
+      Text,
+      Tracker
+    };
+
+    Target activeTarget = Target::None;
+
+    void begin(Target target) { activeTarget = target; }
+
+    bool isActive(Target target) const { return activeTarget == target; }
+
+    bool isSpatialGizmoActive() const {
+      return activeTarget == Target::Gizmo2D ||
+             activeTarget == Target::Gizmo3D;
+    }
+
+    bool end(Target target) {
+      if (activeTarget != target) {
+        return false;
+      }
+      activeTarget = Target::None;
+      return true;
+    }
+
+    void clear() { activeTarget = Target::None; }
+
+    static Ray createPickingRay(const QPointF &viewportPos,
+                                const QMatrix4x4 &view,
+                                const QMatrix4x4 &projection,
+                                const QRect &viewport) {
+      const QVector3D nearPosition =
+          QVector3D(viewportPos.x(), viewportPos.y(), 0.0f)
+              .unproject(view, projection, viewport);
+      const QVector3D farPosition =
+          QVector3D(viewportPos.x(), viewportPos.y(), 1.0f)
+              .unproject(view, projection, viewport);
+      return {nearPosition, (farPosition - nearPosition).normalized()};
+    }
+
+    static float distanceToViewportSegmentSquared(const QPointF &point,
+                                                   const QPointF &start,
+                                                   const QPointF &end) {
+      const QPointF segment = end - start;
+      const double lengthSquared = segment.x() * segment.x() +
+                                   segment.y() * segment.y();
+      if (lengthSquared <= 1e-6) {
+        const QPointF delta = point - start;
+        return static_cast<float>(delta.x() * delta.x() +
+                                  delta.y() * delta.y());
+      }
+      const QPointF fromStart = point - start;
+      const double amount = std::clamp(
+          (fromStart.x() * segment.x() + fromStart.y() * segment.y()) /
+              lengthSquared,
+          0.0, 1.0);
+      const QPointF closest = start + segment * amount;
+      const QPointF delta = point - closest;
+      return static_cast<float>(delta.x() * delta.x() +
+                                delta.y() * delta.y());
+    }
+
+    static bool hitsProjectedFrame(const QPointF &viewportPos,
+                                   const ArtifactAbstractLayerPtr &layer,
+                                   const QMatrix4x4 &view,
+                                   const QMatrix4x4 &projection,
+                                   float viewportWidth,
+                                   float viewportHeight,
+                                   float devicePixelRatio) {
+      if (!layer || viewportWidth <= 0.0f || viewportHeight <= 0.0f) {
+        return false;
+      }
+      const QRectF localBounds = layer->localBounds();
+      if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+          localBounds.height() <= 0.0) {
+        return false;
+      }
+      const qreal frameOutset = std::clamp(
+          std::min(localBounds.width(), localBounds.height()) * 0.015,
+          6.0, 18.0);
+      const QRectF bounds = localBounds.adjusted(
+          -frameOutset, -frameOutset, frameOutset, frameOutset);
+      const QMatrix4x4 world = layer->getGlobalTransform4x4();
+      const QRect viewport(0, 0, static_cast<int>(viewportWidth),
+                           static_cast<int>(viewportHeight));
+      const auto project = [&](const QPointF &localPoint) {
+        const QVector3D worldPoint = world.map(
+            QVector3D(static_cast<float>(localPoint.x()),
+                      static_cast<float>(localPoint.y()), 0.0f));
+        const QVector3D screenPoint =
+            worldPoint.project(view, projection, viewport);
+        return QPointF(screenPoint.x(), screenPoint.y());
+      };
+      const std::array<QPointF, 4> corners{
+          project(bounds.topLeft()), project(bounds.topRight()),
+          project(bounds.bottomRight()), project(bounds.bottomLeft())};
+      const float hitRadius = std::max(8.0f, 7.0f * devicePixelRatio);
+      const float hitRadiusSquared = hitRadius * hitRadius;
+      for (size_t index = 0; index < corners.size(); ++index) {
+        if (distanceToViewportSegmentSquared(
+                viewportPos, corners[index],
+                corners[(index + 1) % corners.size()]) <= hitRadiusSquared) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    static void syncGizmoFromLayer(Artifact3DGizmo *gizmo,
+                                   const ArtifactAbstractLayerPtr &layer) {
+      if (!gizmo || !layer) {
+        return;
+      }
+      if (layer->is3D()) {
+        const auto &transform = layer->transform3D();
+        gizmo->setDepthEnabled(true);
+        gizmo->setTransform(layer->position3D(), layer->rotation3D());
+        gizmo->setScale(QVector3D(transform.scaleX(), transform.scaleY(),
+                                  transform.scaleZ()));
+        return;
+      }
+      const QRectF localRect = layer->localBounds();
+      const QTransform globalTransform = layer->getGlobalTransform();
+      const QPointF center =
+          localRect.isValid()
+              ? globalTransform.map(localRect.center())
+              : QPointF(globalTransform.dx(), globalTransform.dy());
+      const float scaleX = std::max<float>(
+          0.01f, static_cast<float>(
+                     std::hypot(globalTransform.m11(), globalTransform.m12())));
+      const float scaleY = std::max<float>(
+          0.01f, static_cast<float>(
+                     std::hypot(globalTransform.m21(), globalTransform.m22())));
+      const float rotationZ =
+          std::atan2(globalTransform.m12(), globalTransform.m11()) *
+          (180.0f / 3.14159265358979323846f);
+      gizmo->setDepthEnabled(false);
+      gizmo->setTransform(
+          QVector3D(static_cast<float>(center.x()),
+                    static_cast<float>(center.y()), 0.0f),
+          QVector3D(0.0f, 0.0f, rotationZ));
+      gizmo->setScale(QVector3D(scaleX, scaleY, 1.0f));
+    }
+
+    static bool applyGizmoToLayer(Artifact3DGizmo *gizmo,
+                                  const ArtifactAbstractLayerPtr &layer) {
+      if (!gizmo || !layer) {
+        return false;
+      }
+      if (gizmo->mode() == GizmoMode::Scale ||
+          gizmo->activeOperation() == GizmoOperation::Scale) {
+        auto &transform = layer->transform3D();
+        const ArtifactCore::RationalTime time(layer->currentFrame(), 30);
+        const QVector3D scale = gizmo->scale();
+        transform.setScale(time, scale.x(), scale.y(), scale.z());
+      } else {
+        const QVector3D currentPosition = layer->position3D();
+        const QVector3D gizmoPosition = gizmo->position();
+        if (gizmo->depthEnabled()) {
+          layer->setPosition3D(gizmoPosition);
+        } else {
+          layer->setPosition3D(QVector3D(
+              gizmoPosition.x(), gizmoPosition.y(), currentPosition.z()));
+        }
+        layer->setRotation3D(gizmo->rotation());
+      }
+      return true;
+    }
+  };
+
+  TransformEditSession transformEditSession_;
+  ArtifactAbstractLayerWeak gizmo3DUndoLayer_;
+  std::optional<Gizmo3DTransformSnapshot> gizmo3DUndoBefore_;
 
   bool designReorderActive_ = false;
 
@@ -9388,15 +9787,196 @@ public:
 
   int designReorderTargetIndex_ = -1;
 
-  bool textGizmoDragActive_ = false;
+  struct MaskEditSession {
+    bool pendingCreation = false;
+    LayerID pendingLayerId;
+    MaskPath pendingPath;
+    bool transactionPending = false;
+    bool transactionDirty = false;
+    ArtifactAbstractLayerWeak transactionLayer;
+    std::vector<LayerMask> beforeMasks;
+    int hoveredMaskIndex = -1;
+    int hoveredPathIndex = -1;
+    int hoveredVertexIndex = -1;
+    int hoveredHandleType = -1;
+    int draggingMaskIndex = -1;
+    int draggingPathIndex = -1;
+    int draggingVertexIndex = -1;
+    int draggingHandleType = -1;
+    bool draggingVertex = false;
+    bool draggingHandle = false;
 
-  bool trackerGizmoDragActive_ = false;
+    struct HoverSnapshot {
+      int maskIndex = -1;
+      int pathIndex = -1;
+      int vertexIndex = -1;
+      int handleType = -1;
 
-  bool pendingMaskCreation_ = false;
+      bool operator==(const HoverSnapshot &) const = default;
+    };
 
-  LayerID pendingMaskLayerId_;
+    bool hasPending() const { return pendingCreation; }
 
-  MaskPath pendingMaskPath_;
+    bool targetsPendingLayer(const ArtifactAbstractLayerPtr &layer) const {
+      return layer && pendingCreation && pendingLayerId == layer->id();
+    }
+
+    int pendingVertexCount() const { return pendingPath.vertexCount(); }
+
+    MaskVertex pendingVertex(int index) const { return pendingPath.vertex(index); }
+
+    MaskPath &editablePendingPath() { return pendingPath; }
+
+    const MaskPath &currentPendingPath() const { return pendingPath; }
+
+    bool hasDirtyTransaction() const { return transactionDirty; }
+
+    bool hasTransaction() const { return transactionPending; }
+
+    ArtifactAbstractLayerPtr transactionTarget() const {
+      return transactionLayer.lock();
+    }
+
+    HoverSnapshot hoverSnapshot() const {
+      return {hoveredMaskIndex, hoveredPathIndex, hoveredVertexIndex,
+              hoveredHandleType};
+    }
+
+    void clearHover() {
+      hoveredMaskIndex = -1;
+      hoveredPathIndex = -1;
+      hoveredVertexIndex = -1;
+      hoveredHandleType = -1;
+    }
+
+    void setHover(int maskIndex, int pathIndex, int vertexIndex,
+                  int handleType = -1) {
+      hoveredMaskIndex = maskIndex;
+      hoveredPathIndex = pathIndex;
+      hoveredVertexIndex = vertexIndex;
+      hoveredHandleType = handleType;
+    }
+
+    void clearDrag() {
+      draggingVertex = false;
+      draggingHandle = false;
+      draggingMaskIndex = -1;
+      draggingPathIndex = -1;
+      draggingVertexIndex = -1;
+      draggingHandleType = -1;
+    }
+
+    void setDragTarget(int maskIndex, int pathIndex, int vertexIndex) {
+      draggingMaskIndex = maskIndex;
+      draggingPathIndex = pathIndex;
+      draggingVertexIndex = vertexIndex;
+    }
+
+    void beginVertexDrag(int maskIndex, int pathIndex, int vertexIndex) {
+      clearDrag();
+      draggingVertex = true;
+      draggingMaskIndex = maskIndex;
+      draggingPathIndex = pathIndex;
+      draggingVertexIndex = vertexIndex;
+    }
+
+    void beginHandleDrag(int maskIndex, int pathIndex, int vertexIndex,
+                         int handleType) {
+      clearDrag();
+      draggingHandle = true;
+      draggingMaskIndex = maskIndex;
+      draggingPathIndex = pathIndex;
+      draggingVertexIndex = vertexIndex;
+      draggingHandleType = handleType;
+    }
+
+    void clearPending() {
+      pendingCreation = false;
+      pendingLayerId = LayerID();
+      pendingPath.clearVertices();
+      pendingPath.setClosed(false);
+    }
+
+    void beginPending(const ArtifactAbstractLayerPtr &layer,
+                      const QPointF &localPos) {
+      if (!layer) {
+        return;
+      }
+      if (!pendingCreation || pendingLayerId != layer->id()) {
+        clearPending();
+        pendingCreation = true;
+        pendingLayerId = layer->id();
+      }
+      MaskVertex vertex;
+      vertex.position = localPos;
+      vertex.inTangent = QPointF(0, 0);
+      vertex.outTangent = QPointF(0, 0);
+      pendingPath.addVertex(vertex);
+    }
+
+    void beginTransaction(const ArtifactAbstractLayerPtr &layer) {
+      if (!layer) {
+        return;
+      }
+      transactionPending = true;
+      transactionDirty = false;
+      transactionLayer = layer;
+      beforeMasks.clear();
+      beforeMasks.reserve(static_cast<size_t>(layer->maskCount()));
+      for (int index = 0; index < layer->maskCount(); ++index) {
+        beforeMasks.push_back(layer->mask(index));
+      }
+    }
+
+    void markDirty() {
+      if (transactionPending) {
+        transactionDirty = true;
+      }
+    }
+
+    bool finalizePending(const ArtifactAbstractLayerPtr &layer) {
+      if (!layer || !pendingCreation || pendingLayerId != layer->id() ||
+          pendingPath.vertexCount() < 3) {
+        return false;
+      }
+      MaskPath path = pendingPath;
+      path.setClosed(true);
+      beginTransaction(layer);
+      LayerMask newMask;
+      newMask.addMaskPath(path);
+      layer->addMask(newMask);
+      markDirty();
+      clearPending();
+      return true;
+    }
+
+    void commitTransaction() {
+      if (!transactionPending) {
+        return;
+      }
+      auto layer = transactionLayer.lock();
+      transactionPending = false;
+      transactionLayer.reset();
+      if (!layer || !transactionDirty) {
+        beforeMasks.clear();
+        transactionDirty = false;
+        return;
+      }
+      std::vector<LayerMask> afterMasks;
+      afterMasks.reserve(static_cast<size_t>(layer->maskCount()));
+      for (int index = 0; index < layer->maskCount(); ++index) {
+        afterMasks.push_back(layer->mask(index));
+      }
+      if (auto *undo = UndoManager::instance()) {
+        undo->push(std::make_unique<MaskEditCommand>(
+            layer, beforeMasks, std::move(afterMasks)));
+      }
+      beforeMasks.clear();
+      transactionDirty = false;
+    }
+  };
+
+  MaskEditSession maskEditSession_;
 
   std::chrono::steady_clock::time_point quickMaskPresetStartedAt_{};
 
@@ -10653,34 +11233,6 @@ public:
 
   // Mask editing state
 
-  int hoveredMaskIndex_ = -1;
-
-  int hoveredPathIndex_ = -1;
-
-  int hoveredVertexIndex_ = -1;
-
-  int hoveredMaskHandleType_ = -1;
-
-  int draggingMaskIndex_ = -1;
-
-  int draggingPathIndex_ = -1;
-
-  int draggingVertexIndex_ = -1;
-
-  int draggingMaskHandleType_ = -1;
-
-  bool isDraggingVertex_ = false;
-
-  bool isDraggingMaskHandle_ = false;
-
-  bool maskEditPending_ = false;
-
-  bool maskEditDirty_ = false;
-
-  ArtifactAbstractLayerWeak maskEditLayer_;
-
-  std::vector<LayerMask> maskEditBefore_;
-
   std::chrono::steady_clock::time_point lastLayerMutationNotify_{};
 
 
@@ -10700,40 +11252,14 @@ public:
 
 
   void beginMaskEditTransaction(const ArtifactAbstractLayerPtr &layer) {
-
-    if (!layer) {
-
-      return;
-
-    }
-
-    maskEditPending_ = true;
-
-    maskEditDirty_ = false;
-
-    maskEditLayer_ = layer;
-
-    maskEditBefore_.clear();
-
-    maskEditBefore_.reserve(static_cast<size_t>(layer->maskCount()));
-
-    for (int i = 0; i < layer->maskCount(); ++i) {
-
-      maskEditBefore_.push_back(layer->mask(i));
-
-    }
+    maskEditSession_.beginTransaction(layer);
 
   }
 
 
 
   void markMaskEditDirty() {
-
-    if (maskEditPending_) {
-
-      maskEditDirty_ = true;
-
-    }
+    maskEditSession_.markDirty();
 
   }
 
@@ -10798,60 +11324,7 @@ public:
 
 
   void commitMaskEditTransaction() {
-
-    if (!maskEditPending_) {
-
-      return;
-
-    }
-
-
-
-    auto layer = maskEditLayer_.lock();
-
-    maskEditPending_ = false;
-
-    maskEditLayer_.reset();
-
-
-
-    if (!layer || !maskEditDirty_) {
-
-      maskEditBefore_.clear();
-
-      maskEditDirty_ = false;
-
-      return;
-
-    }
-
-
-
-    std::vector<LayerMask> afterMasks;
-
-    afterMasks.reserve(static_cast<size_t>(layer->maskCount()));
-
-    for (int i = 0; i < layer->maskCount(); ++i) {
-
-      afterMasks.push_back(layer->mask(i));
-
-    }
-
-
-
-    if (auto *undo = UndoManager::instance()) {
-
-      undo->push(std::make_unique<MaskEditCommand>(layer, maskEditBefore_,
-
-                                                   std::move(afterMasks)));
-
-    }
-
-
-
-    maskEditBefore_.clear();
-
-    maskEditDirty_ = false;
+    maskEditSession_.commitTransaction();
 
   }
 
@@ -11308,72 +11781,7 @@ public:
 
 
   void syncGizmo3DFromLayer(const ArtifactAbstractLayerPtr &layer) {
-
-    if (!gizmo3D_ || !layer) {
-
-      return;
-
-    }
-
-
-
-    if (layer->is3D()) {
-
-      const auto &t3 = layer->transform3D();
-
-      gizmo3D_->setDepthEnabled(true);
-
-      gizmo3D_->setTransform(layer->position3D(), layer->rotation3D());
-
-      gizmo3D_->setScale(QVector3D(t3.scaleX(), t3.scaleY(), t3.scaleZ()));
-
-      return;
-
-    }
-
-
-
-    const QRectF localRect = layer->localBounds();
-
-    const QTransform globalTransform = layer->getGlobalTransform();
-
-    const QPointF center =
-
-        localRect.isValid()
-
-            ? globalTransform.map(localRect.center())
-
-            : QPointF(globalTransform.dx(), globalTransform.dy());
-
-    const float scaleX = std::max<float>(
-
-        0.01f, static_cast<float>(
-
-                   std::hypot(globalTransform.m11(), globalTransform.m12())));
-
-    const float scaleY = std::max<float>(
-
-        0.01f, static_cast<float>(
-
-                   std::hypot(globalTransform.m21(), globalTransform.m22())));
-
-    const float rotationZ =
-
-        std::atan2(globalTransform.m12(), globalTransform.m11()) *
-
-        (180.0f / 3.14159265358979323846f);
-
-
-
-    gizmo3D_->setDepthEnabled(false);
-
-    gizmo3D_->setTransform(QVector3D(static_cast<float>(center.x()),
-
-                                     static_cast<float>(center.y()), 0.0f),
-
-                           QVector3D(0.0f, 0.0f, rotationZ));
-
-    gizmo3D_->setScale(QVector3D(scaleX, scaleY, 1.0f));
+    TransformEditSession::syncGizmoFromLayer(gizmo3D_.get(), layer);
 
   }
 
@@ -11710,6 +12118,17 @@ public:
 
   }
 
+  void requestMaskInteractionRender(bool contentDirty) {
+    if (contentDirty) {
+      invalidateBaseComposite();
+    }
+    invalidateOverlayComposite();
+    renderDirty_.store(true, std::memory_order_release);
+    if (running_ && renderTickDriver_ && !renderTickDriver_->isRunning()) {
+      renderTickDriver_->start();
+    }
+  }
+
 
 
   RenderDamageTracker& damageTracker() { return damageTracker_; }
@@ -12019,7 +12438,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
                       directDragTarget ||
 
-                      (impl_->gizmoDragActive_ &&
+                      (impl_->transformEditSession_.isSpatialGizmoActive() &&
 
                        layerId == impl_->selectedLayerId_);
 
@@ -12041,7 +12460,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
               // ギズモドラッグ中はオーバーレイ同期コストを省く（ドラッグ終了時に一括同期）
 
-              if (!impl_->gizmoDragActive_) {
+              if (!impl_->transformEditSession_.isSpatialGizmoActive()) {
 
                 impl_->syncSelectedLayerOverlayState(
 
@@ -12808,6 +13227,28 @@ void CompositionRenderController::setGizmoMode(
   if (impl_->gizmo_) {
 
     impl_->gizmo_->setMode(mode);
+
+  }
+
+  if (impl_->gizmo3D_) {
+
+    if (mode == TransformGizmo::Mode::Scale) {
+
+      impl_->gizmo3D_->setMode(GizmoMode::Scale);
+
+    } else if (mode == TransformGizmo::Mode::Rotate) {
+
+      impl_->gizmo3D_->setMode(GizmoMode::Rotate);
+
+    } else if (mode == TransformGizmo::Mode::All) {
+
+      impl_->gizmo3D_->setMode(GizmoMode::Full);
+
+    } else if (mode == TransformGizmo::Mode::Move) {
+
+      impl_->gizmo3D_->setMode(GizmoMode::Move);
+
+    }
 
   }
 
@@ -15651,6 +16092,12 @@ CompositionRenderController::frameDebugSnapshot() const {
 
     snapshot.renderGpuFrameMs = impl_->renderer_->lastFrameGpuTimeMs();
 
+    snapshot.renderGpuTimingAvailable = impl_->renderer_->hasFrameGpuTiming();
+
+    snapshot.renderGpuTimingExecutionId =
+
+        impl_->renderer_->lastFrameGpuTimingExecutionId();
+
     snapshot.renderCost = impl_->renderer_->frameCostStats();
 
   }
@@ -15768,6 +16215,12 @@ CompositionRenderController::frameDebugSnapshot() const {
   snapshot.compareMode = ArtifactCore::FrameDebugCompareMode::Disabled;
 
   snapshot.compareTargetId = QString();
+
+  snapshot.renderGraphDiagnostic = impl_->lastRenderGraphDiagnostic_;
+
+  snapshot.hasRenderGraphDiagnostic =
+
+      !snapshot.renderGraphDiagnostic.passes.empty();
 
 
 
@@ -16985,21 +17438,10 @@ Ray CompositionRenderController::createPickingRay(
                               ? impl_->gizmo3DProjectionMatrix_
                               : impl_->renderer_->getProjectionMatrix();
 
-  QRect viewport(0, 0, (int)impl_->hostWidth_, (int)impl_->hostHeight_);
-
-
-
-  QVector3D nearPos = QVector3D(viewportPos.x(), viewportPos.y(), 0.0f)
-
-                          .unproject(view, proj, viewport);
-
-  QVector3D farPos = QVector3D(viewportPos.x(), viewportPos.y(), 1.0f)
-
-                         .unproject(view, proj, viewport);
-
-
-
-  return {nearPos, (farPos - nearPos).normalized()};
+  const QRect viewport(0, 0, static_cast<int>(impl_->hostWidth_),
+                       static_cast<int>(impl_->hostHeight_));
+  return Impl::TransformEditSession::createPickingRay(
+      viewportPos, view, proj, viewport);
 
 }
 
@@ -17066,6 +17508,31 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
     markRenderDirty();
 
   };
+
+  // The toolbar selection is owned by the shared selection manager. Resolve
+  // it before Pen input so the first mask click is not dropped while the
+  // controller's cached selection id is still catching up.
+  if (activeTool == ToolType::Pen && comp) {
+    auto *selection = ArtifactApplicationManager::instance()
+                          ? ArtifactApplicationManager::instance()
+                                ->layerSelectionManager()
+                          : nullptr;
+    auto maskTarget = selection ? selection->currentLayer()
+                                : ArtifactAbstractLayerPtr{};
+    if (!maskTarget && impl_->renderer_) {
+      maskTarget = hitTopmostLayerAtViewportPos(comp, impl_->renderer_.get(),
+                                                viewportPos);
+      if (maskTarget && selection) {
+        selection->selectLayer(maskTarget);
+      }
+    }
+    if (maskTarget && comp->layerById(maskTarget->id()) == maskTarget) {
+      selectedLayer = maskTarget;
+      if (impl_->selectedLayerId_ != maskTarget->id()) {
+        syncPrimarySelectionLayer(maskTarget);
+      }
+    }
+  }
 
 
 
@@ -17266,9 +17733,9 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
 
 
-      if (impl_->pendingMaskCreation_ &&
+      if (impl_->maskEditSession_.hasPending() &&
 
-          impl_->pendingMaskLayerId_ != selectedLayer->id()) {
+          !impl_->maskEditSession_.targetsPendingLayer(selectedLayer)) {
 
         impl_->clearPendingMaskCreation();
 
@@ -17294,25 +17761,13 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
         impl_->resetLayerMutationNotify();
 
-        impl_->isDraggingVertex_ = false;
-
-        impl_->isDraggingMaskHandle_ = true;
-
-        impl_->draggingMaskIndex_ = handleMaskIndex;
-
-        impl_->draggingPathIndex_ = handlePathIndex;
-
-        impl_->draggingVertexIndex_ = handleVertexIndex;
-
-        impl_->draggingMaskHandleType_ = static_cast<int>(handleType);
-
-        impl_->hoveredMaskIndex_ = handleMaskIndex;
-
-        impl_->hoveredPathIndex_ = handlePathIndex;
-
-        impl_->hoveredVertexIndex_ = handleVertexIndex;
-
-        impl_->hoveredMaskHandleType_ = static_cast<int>(handleType);
+        impl_->maskEditSession_.beginHandleDrag(
+            handleMaskIndex, handlePathIndex, handleVertexIndex,
+            static_cast<int>(handleType));
+        impl_->maskEditSession_.setHover(
+            handleMaskIndex, handlePathIndex, handleVertexIndex,
+            static_cast<int>(handleType));
+        impl_->requestMaskInteractionRender(false);
 
         event->accept();
 
@@ -17365,19 +17820,11 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
                     LayerChangedEvent::ChangeType::Modified});
 
-                impl_->isDraggingVertex_ = false;
+                impl_->requestMaskInteractionRender(true);
 
-                impl_->draggingMaskIndex_ = m;
-
-                impl_->draggingPathIndex_ = p;
-
-                impl_->draggingVertexIndex_ = -1;
-
-                impl_->hoveredMaskIndex_ = m;
-
-                impl_->hoveredPathIndex_ = p;
-
-                impl_->hoveredVertexIndex_ = -1;
+                impl_->maskEditSession_.clearDrag();
+                impl_->maskEditSession_.setDragTarget(m, p, -1);
+                impl_->maskEditSession_.setHover(m, p, -1);
 
                 event->accept();
 
@@ -17389,31 +17836,14 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
               if (event->modifiers().testFlag(Qt::ControlModifier)) {
 
-                impl_->isDraggingVertex_ = false;
-
                 impl_->resetLayerMutationNotify();
-
-                impl_->isDraggingMaskHandle_ = true;
-
-                impl_->draggingMaskIndex_ = m;
-
-                impl_->draggingPathIndex_ = p;
-
-                impl_->draggingVertexIndex_ = v;
-
-                impl_->draggingMaskHandleType_ =
-
-                    static_cast<int>(MaskHandleType::OutTangent);
-
-                impl_->hoveredMaskIndex_ = m;
-
-                impl_->hoveredPathIndex_ = p;
-
-                impl_->hoveredVertexIndex_ = v;
-
-                impl_->hoveredMaskHandleType_ =
-
-                    static_cast<int>(MaskHandleType::OutTangent);
+                impl_->maskEditSession_.beginHandleDrag(
+                    m, p, v,
+                    static_cast<int>(MaskHandleType::OutTangent));
+                impl_->maskEditSession_.setHover(
+                    m, p, v,
+                    static_cast<int>(MaskHandleType::OutTangent));
+                impl_->requestMaskInteractionRender(false);
 
                 qDebug() << "[PenTool] Started dragging bezier handle" << v;
 
@@ -17425,15 +17855,9 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
 
 
-              impl_->isDraggingVertex_ = true;
-
               impl_->resetLayerMutationNotify();
-
-              impl_->draggingMaskIndex_ = m;
-
-              impl_->draggingPathIndex_ = p;
-
-              impl_->draggingVertexIndex_ = v;
+              impl_->maskEditSession_.beginVertexDrag(m, p, v);
+              impl_->requestMaskInteractionRender(false);
 
               qDebug() << "[PenTool] Started dragging vertex" << v;
 
@@ -17451,15 +17875,14 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
 
 
-      if (impl_->pendingMaskCreation_ &&
+      if (impl_->maskEditSession_.targetsPendingLayer(selectedLayer) &&
 
-          impl_->pendingMaskLayerId_ == selectedLayer->id() &&
-
-          impl_->pendingMaskPath_.vertexCount() >= 3) {
+          impl_->maskEditSession_.pendingVertexCount() >= 3) {
 
         const float closeThreshold = 12.0f / impl_->renderer_->getZoom();
 
-        const MaskVertex firstVertex = impl_->pendingMaskPath_.vertex(0);
+        const MaskVertex firstVertex =
+            impl_->maskEditSession_.pendingVertex(0);
 
         if (QVector2D(firstVertex.position - localPos).length() <
 
@@ -17480,6 +17903,8 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
                 LayerChangedEvent::ChangeType::Modified});
 
           }
+
+          impl_->requestMaskInteractionRender(true);
 
           event->accept();
 
@@ -17515,21 +17940,11 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
           impl_->markMaskEditDirty();
 
-          impl_->isDraggingVertex_ = true;
-
           impl_->resetLayerMutationNotify();
-
-          impl_->draggingMaskIndex_ = segmentMaskIndex;
-
-          impl_->draggingPathIndex_ = segmentPathIndex;
-
-          impl_->draggingVertexIndex_ = insertedVertexIndex;
-
-          impl_->hoveredMaskIndex_ = segmentMaskIndex;
-
-          impl_->hoveredPathIndex_ = segmentPathIndex;
-
-          impl_->hoveredVertexIndex_ = insertedVertexIndex;
+          impl_->maskEditSession_.beginVertexDrag(
+              segmentMaskIndex, segmentPathIndex, insertedVertexIndex);
+          impl_->maskEditSession_.setHover(
+              segmentMaskIndex, segmentPathIndex, insertedVertexIndex);
 
           qDebug() << "[PenTool] Inserted mask vertex on segment"
 
@@ -17545,6 +17960,8 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
               LayerChangedEvent::ChangeType::Modified});
 
+          impl_->requestMaskInteractionRender(true);
+
         }
 
         event->accept();
@@ -17557,21 +17974,9 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
       impl_->beginPendingMaskCreation(selectedLayer, localPos);
 
-      impl_->isDraggingVertex_ = false;
-
-      impl_->isDraggingMaskHandle_ = true;
-
-      impl_->draggingMaskIndex_ = -1;
-
-      impl_->draggingPathIndex_ = -1;
-
-      impl_->draggingVertexIndex_ =
-
-          impl_->pendingMaskPath_.vertexCount() - 1;
-
-      impl_->draggingMaskHandleType_ =
-
-          static_cast<int>(MaskHandleType::OutTangent);
+      impl_->maskEditSession_.beginHandleDrag(
+          -1, -1, impl_->maskEditSession_.pendingVertexCount() - 1,
+          static_cast<int>(MaskHandleType::OutTangent));
 
 
 
@@ -17579,7 +17984,10 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
                << "layer:" << selectedLayer->id().toString()
 
-               << "pendingVertices:" << impl_->pendingMaskPath_.vertexCount();
+               << "pendingVertices:"
+               << impl_->maskEditSession_.pendingVertexCount();
+
+      impl_->requestMaskInteractionRender(false);
 
       event->accept();
 
@@ -17745,13 +18153,18 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
 
 
-  // 3D Gizmo hit test (GIZ-2) — only for 3D layers
+  // 3D Gizmo hit test (GIZ-2). View-orientation mode presents ordinary 2D
+  // layers as editable planes, so it must use the same projected gizmo path.
 
-  if (selectedLayer && impl_->gizmo3D_ && selectedLayer->is3D() &&
+  if (selectedLayer && impl_->gizmo3D_ &&
+      (selectedLayer->is3D() || impl_->viewportOrientationActive_) &&
 
       activeTool != ToolType::Pen) {
 
     impl_->gizmo3D_->setDepthEnabled(selectedLayer->is3D());
+    impl_->gizmo3D_->setInteractionModifiers(
+        event->modifiers().testFlag(Qt::ControlModifier),
+        event->modifiers().testFlag(Qt::ShiftModifier));
 
     Ray ray = createPickingRay(viewportPos);
 
@@ -17763,11 +18176,24 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
                                       : impl_->renderer_->getProjectionMatrix();
     GizmoAxis axis = impl_->gizmo3D_->hitTest(ray, gizmoView, gizmoProj);
 
+    if (axis == GizmoAxis::None &&
+        impl_->gizmo3D_->mode() != GizmoMode::Rotate &&
+        Impl::TransformEditSession::hitsProjectedFrame(
+            viewportPos, selectedLayer, gizmoView, gizmoProj,
+            impl_->hostWidth_, impl_->hostHeight_, impl_->devicePixelRatio_)) {
+      // The projected frame is itself an editing surface: drag it to move,
+      // or use the Scale tool and drag it for uniform planar scaling.
+      axis = GizmoAxis::Screen;
+    }
+
     if (axis != GizmoAxis::None) {
 
+      impl_->gizmo3DUndoLayer_ = selectedLayer;
+      impl_->gizmo3DUndoBefore_ = captureGizmo3DTransform(selectedLayer);
       impl_->gizmo3D_->beginDrag(axis, ray);
 
-      impl_->gizmoDragActive_ = true;
+      impl_->transformEditSession_.begin(
+          Impl::TransformEditSession::Target::Gizmo3D);
 
       notifyViewportInteractionActivity();
 
@@ -17801,7 +18227,8 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
       if (impl_->textGizmo_->isDragging()) {
 
-        impl_->textGizmoDragActive_ = true;
+        impl_->transformEditSession_.begin(
+            Impl::TransformEditSession::Target::Text);
 
         notifyViewportInteractionActivity();
 
@@ -17821,7 +18248,7 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
             impl_->gizmo_->activeHandle() == TransformGizmo::HandleType::Move) {
 
           impl_->gizmo_->handleMouseRelease();
-          impl_->gizmoDragActive_ = false;
+          impl_->transformEditSession_.clear();
           impl_->designReorderActive_ = false;
           impl_->designReorderTargetIndex_ = -1;
           if (gizmoLayer && comp && !gizmoLayer->parentLayerId().isNil()) {
@@ -17854,7 +18281,8 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
         }
 
-        impl_->gizmoDragActive_ = true;
+        impl_->transformEditSession_.begin(
+            Impl::TransformEditSession::Target::Gizmo2D);
 
         notifyViewportInteractionActivity();
 
@@ -17884,7 +18312,8 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
     if (impl_->trackerGizmo_->isDragging()) {
 
-      impl_->trackerGizmoDragActive_ = true;
+      impl_->transformEditSession_.begin(
+          Impl::TransformEditSession::Target::Tracker);
 
       notifyViewportInteractionActivity();
 
@@ -18634,7 +19063,7 @@ void CompositionRenderController::handleMouseMove(
     }
   }
 
-if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
+if (activeTool == ToolType::Pen && impl_->maskEditSession_.draggingVertex) {
 
     auto comp = impl_->previewPipeline_.composition();
 
@@ -18660,25 +19089,31 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
           const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
 
-          LayerMask mask = selectedLayer->mask(impl_->draggingMaskIndex_);
+          LayerMask mask =
+              selectedLayer->mask(impl_->maskEditSession_.draggingMaskIndex);
 
-          MaskPath path = mask.maskPath(impl_->draggingPathIndex_);
+          MaskPath path =
+              mask.maskPath(impl_->maskEditSession_.draggingPathIndex);
 
-          MaskVertex vertex = path.vertex(impl_->draggingVertexIndex_);
+          MaskVertex vertex =
+              path.vertex(impl_->maskEditSession_.draggingVertexIndex);
 
 
 
           vertex.position = localPos;
 
-          path.setVertex(impl_->draggingVertexIndex_, vertex);
+          path.setVertex(impl_->maskEditSession_.draggingVertexIndex, vertex);
 
-          mask.setMaskPath(impl_->draggingPathIndex_, path);
+          mask.setMaskPath(impl_->maskEditSession_.draggingPathIndex, path);
 
-          selectedLayer->setMask(impl_->draggingMaskIndex_, mask);
+          selectedLayer->setMask(impl_->maskEditSession_.draggingMaskIndex,
+                                 mask);
 
           impl_->markMaskEditDirty();
 
           impl_->publishLayerModified(selectedLayer);
+
+          impl_->requestMaskInteractionRender(true);
 
           return;
 
@@ -18692,7 +19127,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
 
 
-  if (activeTool == ToolType::Pen && impl_->isDraggingMaskHandle_) {
+  if (activeTool == ToolType::Pen && impl_->maskEditSession_.draggingHandle) {
 
     auto comp = impl_->previewPipeline_.composition();
 
@@ -18720,7 +19155,8 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
           const auto handleType =
 
-              static_cast<MaskHandleType>(impl_->draggingMaskHandleType_);
+              static_cast<MaskHandleType>(
+                  impl_->maskEditSession_.draggingHandleType);
 
           const bool breakTangents =
 
@@ -18728,35 +19164,33 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
 
 
-          if (impl_->draggingMaskIndex_ == -1 &&
+          if (impl_->maskEditSession_.draggingMaskIndex == -1 &&
 
-              impl_->pendingMaskCreation_ &&
+              impl_->maskEditSession_.hasPending() &&
 
-              impl_->draggingVertexIndex_ >= 0 &&
+              impl_->maskEditSession_.draggingVertexIndex >= 0 &&
 
-              impl_->draggingVertexIndex_ <
+              impl_->maskEditSession_.draggingVertexIndex <
 
-                  impl_->pendingMaskPath_.vertexCount()) {
+                  impl_->maskEditSession_.pendingVertexCount()) {
 
             MaskVertex vertex =
 
-                impl_->pendingMaskPath_.vertex(impl_->draggingVertexIndex_);
+                impl_->maskEditSession_.pendingVertex(
+                    impl_->maskEditSession_.draggingVertexIndex);
 
             setMaskVertexHandle(vertex, handleType, localPos - vertex.position,
 
                                 breakTangents);
 
-            impl_->pendingMaskPath_.setVertex(impl_->draggingVertexIndex_,
-
-                                              vertex);
+            impl_->maskEditSession_.editablePendingPath().setVertex(
+                impl_->maskEditSession_.draggingVertexIndex, vertex);
 
             impl_->penMaskPreviewCanvasPos_ = {cPos.x, cPos.y};
 
             impl_->penMaskPreviewValid_ = true;
 
-            impl_->invalidateOverlayComposite();
-
-            markRenderDirty();
+            impl_->requestMaskInteractionRender(false);
 
             return;
 
@@ -18764,31 +19198,38 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
 
 
-          if (impl_->draggingMaskIndex_ >= 0 &&
+          if (impl_->maskEditSession_.draggingMaskIndex >= 0 &&
 
-              impl_->draggingPathIndex_ >= 0 &&
+              impl_->maskEditSession_.draggingPathIndex >= 0 &&
 
-              impl_->draggingVertexIndex_ >= 0) {
+              impl_->maskEditSession_.draggingVertexIndex >= 0) {
 
-            LayerMask mask = selectedLayer->mask(impl_->draggingMaskIndex_);
+            LayerMask mask = selectedLayer->mask(
+                impl_->maskEditSession_.draggingMaskIndex);
 
-            MaskPath path = mask.maskPath(impl_->draggingPathIndex_);
+            MaskPath path =
+                mask.maskPath(impl_->maskEditSession_.draggingPathIndex);
 
-            MaskVertex vertex = path.vertex(impl_->draggingVertexIndex_);
+            MaskVertex vertex =
+                path.vertex(impl_->maskEditSession_.draggingVertexIndex);
 
             setMaskVertexHandle(vertex, handleType, localPos - vertex.position,
 
                                 breakTangents);
 
-            path.setVertex(impl_->draggingVertexIndex_, vertex);
+            path.setVertex(impl_->maskEditSession_.draggingVertexIndex,
+                           vertex);
 
-            mask.setMaskPath(impl_->draggingPathIndex_, path);
+            mask.setMaskPath(impl_->maskEditSession_.draggingPathIndex, path);
 
-            selectedLayer->setMask(impl_->draggingMaskIndex_, mask);
+            selectedLayer->setMask(
+                impl_->maskEditSession_.draggingMaskIndex, mask);
 
             impl_->markMaskEditDirty();
 
             impl_->publishLayerModified(selectedLayer);
+
+            impl_->requestMaskInteractionRender(true);
 
             return;
 
@@ -18826,21 +19267,8 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
     impl_->penToolPreviewVisible_ = true;
 
-    const int prevHoveredMaskIndex = impl_->hoveredMaskIndex_;
-
-    const int prevHoveredPathIndex = impl_->hoveredPathIndex_;
-
-    const int prevHoveredVertexIndex = impl_->hoveredVertexIndex_;
-
-    const int prevHoveredMaskHandleType = impl_->hoveredMaskHandleType_;
-
-    impl_->hoveredMaskIndex_ = -1;
-
-    impl_->hoveredPathIndex_ = -1;
-
-    impl_->hoveredVertexIndex_ = -1;
-
-    impl_->hoveredMaskHandleType_ = -1;
+    const auto previousHover = impl_->maskEditSession_.hoverSnapshot();
+    impl_->maskEditSession_.clearHover();
 
 
 
@@ -18892,13 +19320,9 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
                                 handleVertexIndex, handleType)) {
 
-            impl_->hoveredMaskIndex_ = handleMaskIndex;
-
-            impl_->hoveredPathIndex_ = handlePathIndex;
-
-            impl_->hoveredVertexIndex_ = handleVertexIndex;
-
-            impl_->hoveredMaskHandleType_ = static_cast<int>(handleType);
+            impl_->maskEditSession_.setHover(
+                handleMaskIndex, handlePathIndex, handleVertexIndex,
+                static_cast<int>(handleType));
 
           } else {
 
@@ -18918,11 +19342,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
                       hitThreshold) {
 
-                    impl_->hoveredMaskIndex_ = m;
-
-                    impl_->hoveredPathIndex_ = p;
-
-                    impl_->hoveredVertexIndex_ = v;
+                    impl_->maskEditSession_.setHover(m, p, v);
 
                     break;
 
@@ -18930,13 +19350,13 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
                }
 
-                if (impl_->hoveredVertexIndex_ != -1)
+                if (impl_->maskEditSession_.hoveredVertexIndex != -1)
 
                   break;
 
               }
 
-              if (impl_->hoveredVertexIndex_ != -1)
+              if (impl_->maskEditSession_.hoveredVertexIndex != -1)
 
                 break;
 
@@ -18950,15 +19370,9 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
     }
 
-    if (prevHoveredMaskIndex != impl_->hoveredMaskIndex_ ||
+    if (!(previousHover == impl_->maskEditSession_.hoverSnapshot())) {
 
-        prevHoveredPathIndex != impl_->hoveredPathIndex_ ||
-
-        prevHoveredVertexIndex != impl_->hoveredVertexIndex_ ||
-
-        prevHoveredMaskHandleType != impl_->hoveredMaskHandleType_) {
-
-      impl_->invalidateOverlayComposite();
+      impl_->requestMaskInteractionRender(false);
 
       needsRender = true;
 
@@ -18974,7 +19388,8 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
 
 
-  // 3D Gizmo interaction (GIZ-2, GIZ-3) — only for 3D layers
+  // 3D Gizmo interaction (GIZ-2, GIZ-3), including 2D planes shown through
+  // the view-orientation camera.
 
   if (impl_->gizmo3D_) {
 
@@ -18986,7 +19401,14 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
                           : ArtifactAbstractLayerPtr{};
 
-    if (sel3DLayer && sel3DLayer->is3D()) {
+    if (sel3DLayer &&
+        (sel3DLayer->is3D() || impl_->viewportOrientationActive_)) {
+
+      const Qt::KeyboardModifiers modifiers =
+          QApplication::keyboardModifiers();
+      impl_->gizmo3D_->setInteractionModifiers(
+          modifiers.testFlag(Qt::ControlModifier),
+          modifiers.testFlag(Qt::ShiftModifier));
 
       Ray ray = createPickingRay(viewportPos);
 
@@ -19006,43 +19428,20 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
           if (auto layer = comp->layerById(impl_->selectedLayerId_)) {
 
-            if (impl_->gizmo3D_->mode() == GizmoMode::Scale) {
-
-              auto &t3 = layer->transform3D();
-
-              const ArtifactCore::RationalTime time(layer->currentFrame(), 30);
-
-              const QVector3D scale = impl_->gizmo3D_->scale();
-
-              t3.setScale(time, scale.x(), scale.y(), scale.z());
-
-            } else {
-
-              const QVector3D currentPos = layer->position3D();
-
-              const QVector3D gizmoPos = impl_->gizmo3D_->position();
-
-              if (impl_->gizmo3D_->depthEnabled()) {
-
-                layer->setPosition3D(gizmoPos);
-
-              } else {
-
-                layer->setPosition3D(
-
-                    QVector3D(gizmoPos.x(), gizmoPos.y(), currentPos.z()));
-
-              }
-
-              layer->setRotation3D(impl_->gizmo3D_->rotation());
-
-            }
+            Impl::TransformEditSession::applyGizmoToLayer(
+                impl_->gizmo3D_.get(), layer);
 
             ArtifactCore::globalEventBus().publish(
 
                 LayerChangedEvent{comp->id().toString(), layer->id().toString(),
 
                                   LayerChangedEvent::ChangeType::Modified});
+
+            impl_->invalidateBaseComposite();
+
+            impl_->invalidateOverlayComposite();
+
+            markRenderDirty();
 
           }
 
@@ -19623,21 +20022,12 @@ void CompositionRenderController::handleMouseRelease() {
 
 
 
-  const bool publishFinalMaskEditChange = impl_->maskEditDirty_;
+  const bool publishFinalMaskEditChange =
+      impl_->maskEditSession_.hasDirtyTransaction();
 
-  const auto maskEditLayer = impl_->maskEditLayer_.lock();
+  const auto maskEditLayer = impl_->maskEditSession_.transactionTarget();
 
-  impl_->isDraggingVertex_ = false;
-
-  impl_->isDraggingMaskHandle_ = false;
-
-  impl_->draggingMaskIndex_ = -1;
-
-  impl_->draggingPathIndex_ = -1;
-
-  impl_->draggingVertexIndex_ = -1;
-
-  impl_->draggingMaskHandleType_ = -1;
+  impl_->maskEditSession_.clearDrag();
 
   impl_->commitMaskEditTransaction();
 
@@ -19653,9 +20043,23 @@ void CompositionRenderController::handleMouseRelease() {
 
   if (impl_->gizmo3D_) {
 
-    const bool wasDragging = impl_->gizmoDragActive_;
+    const bool wasDragging = impl_->transformEditSession_.end(
+        Impl::TransformEditSession::Target::Gizmo3D);
 
-    impl_->gizmoDragActive_ = false;
+    if (wasDragging && impl_->gizmo3DUndoBefore_) {
+      if (const auto layer = impl_->gizmo3DUndoLayer_.lock()) {
+        const Gizmo3DTransformSnapshot after =
+            captureGizmo3DTransform(layer);
+        if (gizmo3DTransformChanged(*impl_->gizmo3DUndoBefore_, after)) {
+          if (auto *manager = UndoManager::instance()) {
+            manager->push(std::make_unique<Gizmo3DTransformUndoCommand>(
+                layer, *impl_->gizmo3DUndoBefore_, after));
+          }
+        }
+      }
+    }
+    impl_->gizmo3DUndoBefore_.reset();
+    impl_->gizmo3DUndoLayer_.reset();
 
     impl_->gizmo3D_->endDrag();
 
@@ -19675,9 +20079,8 @@ void CompositionRenderController::handleMouseRelease() {
 
   if (impl_->textGizmo_) {
 
-    const bool wasTextDragging = impl_->textGizmoDragActive_;
-
-    impl_->textGizmoDragActive_ = false;
+    const bool wasTextDragging = impl_->transformEditSession_.end(
+        Impl::TransformEditSession::Target::Text);
 
     impl_->textGizmo_->handleMouseRelease();
 
@@ -19697,9 +20100,8 @@ void CompositionRenderController::handleMouseRelease() {
 
   if (impl_->gizmo_) {
 
-    const bool wasDragging = impl_->gizmoDragActive_;
-
-    impl_->gizmoDragActive_ = false;
+    const bool wasDragging = impl_->transformEditSession_.end(
+        Impl::TransformEditSession::Target::Gizmo2D);
 
     impl_->gizmo_->handleMouseRelease();
 
@@ -19719,9 +20121,8 @@ void CompositionRenderController::handleMouseRelease() {
 
   if (impl_->trackerGizmo_) {
 
-    const bool wasTrackerDragging = impl_->trackerGizmoDragActive_;
-
-    impl_->trackerGizmoDragActive_ = false;
+    const bool wasTrackerDragging = impl_->transformEditSession_.end(
+        Impl::TransformEditSession::Target::Tracker);
 
     impl_->trackerGizmo_->handleMouseRelease();
 
@@ -19745,7 +20146,7 @@ void CompositionRenderController::handleMouseRelease() {
 
 bool CompositionRenderController::hasPendingMaskEdit() const {
 
-  return impl_ && impl_->maskEditPending_;
+  return impl_ && impl_->maskEditSession_.hasTransaction();
 
 }
 
@@ -20330,13 +20731,14 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
   if (activeTool == ToolType::Pen) {
 
-    if (impl_->isDraggingMaskHandle_ || impl_->isDraggingVertex_) {
+    if (impl_->maskEditSession_.draggingHandle ||
+        impl_->maskEditSession_.draggingVertex) {
 
       return Qt::ClosedHandCursor;
 
     }
 
-    if (impl_->hoveredMaskHandleType_ !=
+    if (impl_->maskEditSession_.hoveredHandleType !=
 
         static_cast<int>(MaskHandleType::None)) {
 
@@ -20344,7 +20746,7 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
     }
 
-    if (impl_->hoveredVertexIndex_ >= 0) {
+    if (impl_->maskEditSession_.hoveredVertexIndex >= 0) {
 
       return Qt::OpenHandCursor;
 
@@ -20556,14 +20958,7 @@ void CompositionRenderController::markRenderDirty() {
 
 
 void CompositionRenderController::Impl::clearPendingMaskCreation() {
-
-  pendingMaskCreation_ = false;
-
-  pendingMaskLayerId_ = LayerID();
-
-  pendingMaskPath_.clearVertices();
-
-  pendingMaskPath_.setClosed(false);
+  maskEditSession_.clearPending();
 
   penToolPreviewVisible_ = false;
 
@@ -20618,38 +21013,16 @@ void CompositionRenderController::Impl::beginRectangleToolSession(
 void CompositionRenderController::Impl::beginPendingMaskCreation(
 
     const ArtifactAbstractLayerPtr &layer, const QPointF &localPos) {
-
-  if (!layer) {
-
-    return;
-
+  const bool switchesTarget =
+      !maskEditSession_.hasPending() ||
+      !maskEditSession_.targetsPendingLayer(layer);
+  if (switchesTarget) {
+    penToolPreviewVisible_ = false;
+    penMaskPreviewValid_ = false;
   }
+  maskEditSession_.beginPending(layer, localPos);
 
-
-
-  if (!pendingMaskCreation_ || pendingMaskLayerId_ != layer->id()) {
-
-    clearPendingMaskCreation();
-
-    pendingMaskCreation_ = true;
-
-    pendingMaskLayerId_ = layer->id();
-
-  }
-
-
-
-  MaskVertex vertex;
-
-  vertex.position = localPos;
-
-  vertex.inTangent = QPointF(0, 0);
-
-  vertex.outTangent = QPointF(0, 0);
-
-  pendingMaskPath_.addVertex(vertex);
-
-  penMaskPreviewValid_ = true;
+  penMaskPreviewValid_ = static_cast<bool>(layer);
 
 }
 
@@ -20658,46 +21031,12 @@ void CompositionRenderController::Impl::beginPendingMaskCreation(
 bool CompositionRenderController::Impl::finalizePendingMaskCreation(
 
     const ArtifactAbstractLayerPtr &layer) {
-
-  if (!layer || !pendingMaskCreation_ || pendingMaskLayerId_ != layer->id()) {
-
-    return false;
-
+  const bool finalized = maskEditSession_.finalizePending(layer);
+  if (finalized) {
+    penToolPreviewVisible_ = false;
+    penMaskPreviewValid_ = false;
   }
-
-
-
-  if (pendingMaskPath_.vertexCount() < 3) {
-
-    return false;
-
-  }
-
-
-
-  MaskPath path = pendingMaskPath_;
-
-  path.setClosed(true);
-
-
-
-  beginMaskEditTransaction(layer);
-
-
-
-  LayerMask newMask;
-
-  newMask.addMaskPath(path);
-
-  layer->addMask(newMask);
-
-  markMaskEditDirty();
-
-
-
-  clearPendingMaskCreation();
-
-  return true;
+  return finalized;
 
 }
 
@@ -20775,7 +21114,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         renderer->beginFrameCostCapture();
 
-        renderer->beginFrameGpuProfiling();
+        renderer->beginFrameGpuProfiling(frame);
 
       }
 
@@ -22180,6 +22519,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         buildFrameRenderPassPlan(useRamPreviewFallback, pipelineEnabled,
 
                                  static_cast<bool>(comp));
+
+    lastRenderGraphDiagnostic_ = captureFrameRenderGraph(
+
+        framePassPlan, renderFrameCounter_,
+
+        static_cast<std::uint32_t>(std::max(0.0f, cw)),
+
+        static_cast<std::uint32_t>(std::max(0.0f, ch)));
 
     const QString framePassPlanSummary =
 
@@ -24176,16 +24523,26 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           const FloatColor activeMaskHandleColor = {1.0f, 0.82f, 0.40f, 1.0f};
 
-          constexpr float maskStrokeWidth = 5.2f;
+          constexpr float maskVisualScale = 1.20f;
 
-          constexpr float handleStrokeWidth = 3.0f;
+          constexpr float maskStrokeWidth = 5.2f * maskVisualScale;
 
+          constexpr float handleStrokeWidth = 3.0f * maskVisualScale;
+
+          const auto *maskToolManager =
+              ArtifactApplicationManager::instance()
+                  ? ArtifactApplicationManager::instance()->toolManager()
+                  : nullptr;
+          const bool maskToolActive =
+              maskToolManager && maskToolManager->activeTool() == ToolType::Pen;
           const bool showMaskPath =
 
+              maskToolActive ||
               owner->isLineDebugKindVisible(LineDebugKind::MaskPath);
 
           const bool showMaskHandle =
 
+              maskToolActive ||
               owner->isLineDebugKindVisible(LineDebugKind::MaskHandle);
 
 
@@ -24200,11 +24557,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             const bool isActiveMask =
 
-                (isDraggingMaskHandle_ && draggingMaskIndex_ == m) ||
+                (maskEditSession_.draggingHandle &&
+                 maskEditSession_.draggingMaskIndex == m) ||
 
-                (isDraggingVertex_ && draggingMaskIndex_ == m) ||
+                (maskEditSession_.draggingVertex &&
+                 maskEditSession_.draggingMaskIndex == m) ||
 
-                (hoveredMaskIndex_ == m);
+                (maskEditSession_.hoveredMaskIndex == m);
 
 
 
@@ -24284,21 +24643,27 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     }
 
-                    if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
-
-                        draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
+                    if (maskEditSession_.draggingHandle &&
+                        maskEditSession_.draggingMaskIndex == m &&
+                        maskEditSession_.draggingPathIndex == p &&
+                        maskEditSession_.draggingVertexIndex == v &&
+                        maskEditSession_.draggingHandleType ==
+                            static_cast<int>(MaskHandleType::InTangent)) {
 
                       handleColor = handleDragColor;
 
-                    } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p && hoveredVertexIndex_ == v &&
-
-                               hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
+                    } else if (maskEditSession_.hoveredMaskIndex == m &&
+                               maskEditSession_.hoveredPathIndex == p &&
+                               maskEditSession_.hoveredVertexIndex == v &&
+                               maskEditSession_.hoveredHandleType ==
+                                   static_cast<int>(MaskHandleType::InTangent)) {
 
                       handleColor = handleHoverColor;
 
                     }
 
-                    drawMaskSquareMarker(renderer_.get(), inHandleCanvas, 7.0f,
+                    drawMaskSquareMarker(renderer_.get(), inHandleCanvas,
+                                         7.0f * maskVisualScale,
 
                                          handleColor, &maskPointShadowColor,
 
@@ -24324,21 +24689,27 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     }
 
-                    if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
-
-                        draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
+                    if (maskEditSession_.draggingHandle &&
+                        maskEditSession_.draggingMaskIndex == m &&
+                        maskEditSession_.draggingPathIndex == p &&
+                        maskEditSession_.draggingVertexIndex == v &&
+                        maskEditSession_.draggingHandleType ==
+                            static_cast<int>(MaskHandleType::OutTangent)) {
 
                       handleColor = handleDragColor;
 
-                    } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p && hoveredVertexIndex_ == v &&
-
-                               hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
+                    } else if (maskEditSession_.hoveredMaskIndex == m &&
+                               maskEditSession_.hoveredPathIndex == p &&
+                               maskEditSession_.hoveredVertexIndex == v &&
+                               maskEditSession_.hoveredHandleType ==
+                                   static_cast<int>(MaskHandleType::OutTangent)) {
 
                       handleColor = handleHoverColor;
 
                     }
 
-                    drawMaskSquareMarker(renderer_.get(), outHandleCanvas, 7.0f,
+                    drawMaskSquareMarker(renderer_.get(), outHandleCanvas,
+                                         7.0f * maskVisualScale,
 
                                          handleColor, &maskPointShadowColor,
 
@@ -24398,17 +24769,18 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
 
-                  if (isDraggingVertex_ && draggingMaskIndex_ == m &&
-
-                      draggingPathIndex_ == p && draggingVertexIndex_ == v) {
+                  if (maskEditSession_.draggingVertex &&
+                      maskEditSession_.draggingMaskIndex == m &&
+                      maskEditSession_.draggingPathIndex == p &&
+                      maskEditSession_.draggingVertexIndex == v) {
 
                     currentColor = dragColor;
 
                     currentPointRadius = 17.0f;
 
-                  } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p &&
-
-                             hoveredVertexIndex_ == v) {
+                  } else if (maskEditSession_.hoveredMaskIndex == m &&
+                             maskEditSession_.hoveredPathIndex == p &&
+                             maskEditSession_.hoveredVertexIndex == v) {
 
                     currentColor = hoverColor;
 
@@ -24490,7 +24862,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     drawMaskSquareMarker(renderer_.get(), marker.pos,
 
-                                          std::max(5.5f, marker.radius * 0.42f),
+                                          std::max(5.5f, marker.radius * 0.42f) *
+                                              maskVisualScale,
 
                                           marker.color, &maskPointShadowColor,
 
@@ -24514,13 +24887,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
 
-        if (pendingMaskCreation_ &&
+        if (maskEditSession_.targetsPendingLayer(selectedLayer) &&
 
-            pendingMaskLayerId_ == selectedLayer->id() &&
+            maskEditSession_.pendingVertexCount() > 0) {
 
-            pendingMaskPath_.vertexCount() > 0) {
-
-          const MaskPath &path = pendingMaskPath_;
+          const MaskPath &path = maskEditSession_.currentPendingPath();
 
           const int vertexCount = path.vertexCount();
 
@@ -24532,7 +24903,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           const QTransform globalTransform = selectedLayer->getGlobalTransform();
 
-          constexpr float pendingStrokeWidth = 5.8f;
+          constexpr float pendingStrokeWidth = 6.6f;
 
 
 
@@ -24576,7 +24947,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             }
 
-            drawMaskSquareMarker(renderer_.get(), currentCanvasPos, 7.5f,
+            drawMaskSquareMarker(renderer_.get(), currentCanvasPos, 9.0f,
 
                                  pendingPointColor, &pendingPointShadowColor,
 
@@ -24614,11 +24985,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           const bool closingSoon =
 
-              pendingMaskCreation_ &&
+              maskEditSession_.targetsPendingLayer(selectedLayer) &&
 
-              pendingMaskLayerId_ == selectedLayer->id() &&
-
-              pendingMaskPath_.vertexCount() >= 3;
+              maskEditSession_.pendingVertexCount() >= 3;
 
           const FloatColor previewShadowColor = {0.0f, 0.0f, 0.0f, 0.30f};
 
@@ -24628,7 +24997,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                                               : FloatColor{0.82f, 0.97f, 1.0f, 0.92f};
 
-          drawMaskSquareMarker(renderer_.get(), penMaskPreviewCanvasPos_, 6.0f,
+          drawMaskSquareMarker(renderer_.get(), penMaskPreviewCanvasPos_, 7.2f,
 
                                previewColor, &previewShadowColor, 4.0f);
 
@@ -26356,7 +26725,76 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
   }
 
+  if (has3DCamera) {
+    for (const auto &layer : layers) {
+      const auto *light = dynamic_cast<const ArtifactLightLayer *>(layer.get());
+      if (!light || !light->isVisible() || !light->is3D() ||
+          (selectedLayer && selectedLayer->id() == light->id())) {
+        continue;
+      }
+      const QVector4D clipPosition =
+          cameraProjMatrix * cameraViewMatrix * light->getGlobalTransform4x4() *
+          QVector4D(0.0f, 0.0f, 0.0f, 1.0f);
+      if (clipPosition.w() <= 0.001f) {
+        continue;
+      }
+      const float ndcX = clipPosition.x() / clipPosition.w();
+      const float ndcY = clipPosition.y() / clipPosition.w();
+      const float ndcZ = clipPosition.z() / clipPosition.w();
+      if (ndcZ < 0.0f || ndcZ > 1.0f || ndcX < -1.05f || ndcX > 1.05f ||
+          ndcY < -1.05f || ndcY > 1.05f) {
+        continue;
+      }
+      const auto color = light->color();
+      const float x = (ndcX * 0.5f + 0.5f) * cw;
+      const float y = (1.0f - (ndcY * 0.5f + 0.5f)) * ch;
+      const FloatColor ring{color.red(), color.green(), color.blue(), 0.28f};
+      const FloatColor core{std::min(1.0f, color.red() + 0.25f),
+                            std::min(1.0f, color.green() + 0.25f),
+                            std::min(1.0f, color.blue() + 0.25f), 0.86f};
+      renderer_->drawCircle(x, y, 7.0f, ring, 1.0f, false);
+      renderer_->drawCircle(x, y, 2.5f, core, 0.0f, true);
+    }
+  }
+
   if (selectedLayer) {
+
+    if (const auto *selectedLight =
+            dynamic_cast<const ArtifactLightLayer *>(selectedLayer.get());
+        selectedLight && has3DCamera && selectedLight->is3D()) {
+      const QMatrix4x4 lightTransform = selectedLight->getGlobalTransform4x4();
+      const QVector4D clipPosition =
+          cameraProjMatrix * cameraViewMatrix * lightTransform * QVector4D(0.0f, 0.0f, 0.0f, 1.0f);
+      if (clipPosition.w() > 0.001f) {
+        const float ndcX = clipPosition.x() / clipPosition.w();
+        const float ndcY = clipPosition.y() / clipPosition.w();
+        const float ndcZ = clipPosition.z() / clipPosition.w();
+        if (ndcZ >= 0.0f && ndcZ <= 1.0f && ndcX >= -1.2f && ndcX <= 1.2f &&
+            ndcY >= -1.2f && ndcY <= 1.2f) {
+          const float screenX = (ndcX * 0.5f + 0.5f) * cw;
+          const float screenY = (1.0f - (ndcY * 0.5f + 0.5f)) * ch;
+          const float intensity =
+              std::clamp(selectedLight->intensity() / 100.0f, 0.25f, 2.0f);
+          const auto lightColor = selectedLight->color();
+          const FloatColor haloColor{lightColor.red(), lightColor.green(), lightColor.blue(),
+                                     0.10f * intensity};
+          const FloatColor ringColor{lightColor.red(), lightColor.green(), lightColor.blue(),
+                                     0.42f * intensity};
+          const FloatColor coreColor{std::min(1.0f, lightColor.red() + 0.35f),
+                                     std::min(1.0f, lightColor.green() + 0.35f),
+                                     std::min(1.0f, lightColor.blue() + 0.35f),
+                                     0.96f};
+          const float inverseZoom =
+              1.0f / std::max(0.001f, renderer_->getZoom());
+          const float haloRadius = std::max(18.0f, 30.0f * inverseZoom) * intensity;
+          renderer_->drawCircle(screenX, screenY, haloRadius, haloColor, 0.0f, true);
+          renderer_->drawCircle(screenX, screenY, haloRadius * 0.66f, ringColor,
+                                std::max(1.0f, 1.4f * inverseZoom), false);
+          renderer_->drawCircle(screenX, screenY, std::max(3.0f, 4.5f * inverseZoom),
+                                coreColor, 0.0f, true);
+        }
+      }
+    }
 
     if (!showGizmoOverlay_) {
       const QMatrix4x4* overlayViewMatrix =
@@ -27772,13 +28210,19 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
         for (const auto &layer : layers) {
 
+          const bool primary =
+
+              layer && !selectedLayerId_.isNil() &&
+
+              layer->id() == selectedLayerId_;
+
           if (!isLayerEffectivelyVisible(layer) ||
 
               !layer->isActiveAt(currentFrame) ||
 
               dynamic_cast<ArtifactVideoLayer *>(layer.get()) ||
 
-              !isLayerSelected(selectedIds, layer)) {
+              (!primary && !isLayerSelected(selectedIds, layer))) {
 
             continue;
 
@@ -27793,10 +28237,6 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
             continue;
 
           }
-
-          const bool primary =
-
-              !selectedLayerId_.isNil() && layer->id() == selectedLayerId_;
 
           // The normal 2D transform gizmo already owns the primary frame in
           // canvas view, so avoid drawing it twice. A 3D layer always needs
@@ -27817,7 +28257,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
           const FloatColor frameColor = primary
               ? FloatColor{0.24f, 0.68f, 1.0f, 0.98f}
               : secondaryColor;
-          const float frameThickness = primary ? 2.2f : 1.6f;
+          const float frameThickness = primary ? 3.2f : 2.0f;
           ::Artifact::drawSelectionFrameOverlay(
               renderer_.get(), layer, frameColor, frameThickness, &frameView,
               &frameProjection);

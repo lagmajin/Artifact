@@ -6,6 +6,8 @@
 #include <QSize>
 #include <QStyleOption>
 #include <QWidget>
+#include <QEvent>
+#include <QResizeEvent>
 
 export module Widgets.CommonStyle;
 
@@ -29,6 +31,32 @@ public:
                      QPainter* painter, const QWidget* widget = nullptr) const override;
   void drawComplexControl(ComplexControl control, const QStyleOptionComplex* option,
                           QPainter* painter, const QWidget* widget = nullptr) const override;
+};
+
+class StudioSectionStack final : public QWidget {
+public:
+  explicit StudioSectionStack(QWidget* parent = nullptr);
+  ~StudioSectionStack() override;
+
+  void appendWidget(QWidget* widget, bool expands = false);
+  void removeWidget(QWidget* widget);
+  void setWidgetExpands(QWidget* widget, bool expands);
+  void setSpacing(int spacing);
+  int spacing() const;
+  int count() const;
+  QWidget* widgetAt(int index) const;
+
+  QSize sizeHint() const override;
+  QSize minimumSizeHint() const override;
+
+protected:
+  void resizeEvent(QResizeEvent* event) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
+  class Impl;
+  Impl* impl_ = nullptr;
+  void updateChildGeometry();
 };
 
 }

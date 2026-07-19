@@ -45,9 +45,10 @@ constexpr float kPi = 3.14159265358979323846f;
 struct GizmoVisualStyle {
  static constexpr float scaleAxisThickness = 1.25f;
  static constexpr float scaleCornerThickness = 1.05f;
- static constexpr float scaleHandleBoost = 1.05f;
+ static constexpr float scaleHandleBoost = 1.30f;
  static constexpr float scaleHandleOutset = 9.0f;
  static constexpr float scaleHandleSize = 1.18f;
+ static constexpr float scaleOverlayBoost = 1.22f;
  static constexpr float rotateRingPadding = 18.0f;
  static constexpr float rotateRingThickness = 3.0f;
  static constexpr float rotateRingInnerScale = 1.65f;
@@ -1848,8 +1849,9 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
 
  if (showScale) {
     const float handleSizeScale =
-        std::clamp(handleSize * GizmoVisualStyle::scaleHandleSize * 1.16f,
-                   12.0f, 26.0f);
+        std::clamp(handleSize * GizmoVisualStyle::scaleHandleSize * 1.16f *
+                       GizmoVisualStyle::scaleOverlayBoost,
+                   14.0f, 34.0f);
     const bool cornerActive = activeHandle_ == HandleType::Scale_TL ||
                               activeHandle_ == HandleType::Scale_TR ||
                               activeHandle_ == HandleType::Scale_BL ||
@@ -2307,7 +2309,7 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
   QPointF worldPoint = globalTransform.map(localPoint);
   auto vPos = renderer->canvasToViewport({(float)worldPoint.x(), (float)worldPoint.y()});
   const float hitHandleSize = std::clamp(
-      static_cast<float>(HANDLE_SIZE) * 2.2f * invZoom, 14.0f, 24.0f);
+      static_cast<float>(HANDLE_SIZE) * 2.75f * invZoom, 17.0f, 30.0f);
   QRectF handleRect = handleRectForViewport({vPos.x, vPos.y}, hitHandleSize);
   return handleRect.contains(viewportPos);
  };
@@ -2315,8 +2317,9 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  const QPointF centerPoint = localRect.center();
  const float scaleHandleSize =
      std::clamp(static_cast<float>(HANDLE_SIZE) * 1.62f * 1.5f *
-                    GizmoVisualStyle::scaleHandleSize * 1.16f * invZoom,
-                12.0f, 26.0f);
+                    GizmoVisualStyle::scaleHandleSize * 1.16f *
+                    GizmoVisualStyle::scaleOverlayBoost * invZoom,
+                14.0f, 34.0f);
  const float scaleOutset = scaleHandleSize * 0.5f;
  const QPointF topPoint(localRect.center().x(), localRect.top());
  const QPointF bottomPoint(localRect.center().x(), localRect.bottom());
@@ -2348,7 +2351,7 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
   const QPointF worldPoint = globalTransform.map(centerPoint);
   const auto vPos = renderer->canvasToViewport({static_cast<float>(worldPoint.x()),
                                                 static_cast<float>(worldPoint.y())});
-  const float centerHandleSize = std::max(20.0f, 22.0f * invZoom);
+  const float centerHandleSize = std::max(24.0f, 27.5f * invZoom);
   if (QRectF(vPos.x - centerHandleSize * 0.5f,
              vPos.y - centerHandleSize * 0.5f,
              centerHandleSize, centerHandleSize).contains(viewportPos)) {

@@ -101,7 +101,9 @@ public:
         outChannels.push_back(alpha);
         cv::Mat outMat;
         cv::merge(outChannels, outMat);
-        dst.image().setFromRGBA32F(outMat.ptr<float>(), outMat.cols, outMat.rows);
+        dst.image().setFromRGBA32F(
+            outMat.ptr<float>(), outMat.cols, outMat.rows,
+            src.image().colorDescriptor());
     }
 };
 
@@ -141,6 +143,7 @@ public:
         if (!executor->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) || !executor->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src,dst); return; }
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1); executor->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         if (!readbackTexture(device_, context_, outputTex, dst, "ReactiveGlow/StagingTexture")) { applyCPU(src,dst); return; }
+        dst.image().setColorDescriptor(src.image().colorDescriptor());
     }
 
 private:

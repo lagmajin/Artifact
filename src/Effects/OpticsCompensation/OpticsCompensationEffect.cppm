@@ -50,7 +50,8 @@ void OpticsCompensationEffect::applyCPU(const ImageF32x4RGBAWithCache& src, Imag
         srcImg, tmp,
         ArtifactCore::makeOpticsCompensation(centerX_, centerY_, fov_, direction_)
     );
-    dst.image().setFromRGBA32F(tmp.rgba32fData(), w, h);
+    dst.image().setFromRGBA32F(
+        tmp.rgba32fData(), w, h, srcImg.colorDescriptor());
 }
 
 }

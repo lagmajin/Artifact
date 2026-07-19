@@ -152,7 +152,7 @@ public:
         context->CopyTexture(Diligent::CopyTextureAttribs(output, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION, staging, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION)); context->Flush(); context->WaitForIdle();
         Diligent::MappedTextureSubresource read{}; context->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, read);
         if (!read.pData || !read.Stride) { applyCPU(src, dst); return; }
-        cv::Mat result(image.height(), image.width(), CV_32FC4, read.pData, read.Stride); dst.image().setFromCVMat(result); context->UnmapTextureSubresource(staging, 0, 0);
+        cv::Mat result(image.height(), image.width(), CV_32FC4, read.pData, read.Stride); dst.image().setFromCVMat(result, image.colorDescriptor()); context->UnmapTextureSubresource(staging, 0, 0);
     }
 private:
     static constexpr const char* kHlsl = R"(

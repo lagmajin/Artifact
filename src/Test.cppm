@@ -7,6 +7,9 @@ module;
 #include <memory>
 
 #include <QDebug>
+#include <QColor>
+#include <QImage>
+#include <QSize>
 
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
@@ -16,6 +19,8 @@ module;
 export module Artifact.TestRunner;
 
 import Artifact.Render.DiligentDeviceManager;
+import Artifact.Render.CompositionViewDrawing;
+import Artifact.Effect.Abstract;
 import Artifact.Test.AIToolBridge;
 import Artifact.Test.AdjustmentLayer;
 import Artifact.Test.LayerGroup;
@@ -25,6 +30,10 @@ import Artifact.Test.TimingEventView;
 import Graphics.GPUcomputeContext;
 import Graphics.LayerBlendPipeline;
 import Layer.Blend;
+import Color.Float;
+import Graphics.SurfaceColorContract;
+import Image.ImageF32x4RGBAWithCache;
+import Image.ImageF32x4_RGBA;
 
 namespace {
 
@@ -136,6 +145,123 @@ bool matchesExpected(const std::array<float, 4>& actual,
     return true;
 }
 
+bool versionedGradientCpuContractTest()
+{
+    const ArtifactCore::FloatColor black(0.0f, 0.0f, 0.0f, 1.0f);
+    const ArtifactCore::FloatColor white(1.0f, 1.0f, 1.0f, 1.0f);
+    const QImage legacy = Artifact::makeVersionedSolidGradientImage(
+        QSize(1, 1), black, white, 1, 0.0f, false,
+        0.5f, 0.5f, 1.0f, 0.0f, 1);
+    const QImage canonical = Artifact::makeVersionedSolidGradientImage(
+        QSize(1, 1), black, white, 1, 0.0f, false,
+        0.5f, 0.5f, 1.0f, 0.0f, 2);
+    if (legacy.isNull() || canonical.isNull()) {
+        return false;
+    }
+
+    const int legacyMidpoint = qRed(legacy.pixel(0, 0));
+    const int canonicalMidpoint = qRed(canonical.pixel(0, 0));
+    if (std::abs(legacyMidpoint - 128) > 1 ||
+        std::abs(canonicalMidpoint - 188) > 1) {
+        return false;
+    }
+
+    QImage rgbaBoundary(1, 1, QImage::Format_RGBA8888);
+    rgbaBoundary.fill(QColor(64, 128, 192, 96));
+    const QImage normalizedBoundary =
+        Artifact::normalizeQImageForCvEffectBoundary(rgbaBoundary);
+    if (normalizedBoundary.format() != QImage::Format_ARGB32 ||
+        !Artifact::qImageCvMatSurfaceDescriptor(normalizedBoundary)
+             .isFullySpecified()) {
+        return false;
+    }
+
+    const ArtifactCore::FloatColor hiddenRed(1.0f, 0.0f, 0.0f, 0.0f);
+    const QImage transparentEndpoint = Artifact::makeVersionedSolidGradientImage(
+        QSize(1, 1), hiddenRed, black, 1, 0.0f, false,
+        0.5f, 0.5f, 1.0f, 0.0f, 2);
+    return !transparentEndpoint.isNull() &&
+           qRed(transparentEndpoint.pixel(0, 0)) == 0;
+}
+
+class DescriptorPoisonEffect final : public Artifact::ArtifactAbstractEffect
+{
+public:
+    void apply(const ArtifactCore::ImageF32x4RGBAWithCache& src,
+               ArtifactCore::ImageF32x4RGBAWithCache& dst) override
+    {
+        dst = src.DeepCopy();
+        dst.image().setColorDescriptor(
+            ArtifactCore::SurfaceColorDescriptor::encodedSrgbRgba8Straight());
+    }
+};
+
+bool gradientNoOpEffectContractTest()
+{
+    const ArtifactCore::FloatColor transparentRed(1.0f, 0.0f, 0.0f, 0.0f);
+    const ArtifactCore::FloatColor opaqueBlue(0.0f, 0.0f, 1.0f, 1.0f);
+    const QImage gradient = Artifact::makeVersionedSolidGradientImage(
+        QSize(17, 1), transparentRed, opaqueBlue, 1, 0.0f, false,
+        0.5f, 0.5f, 1.0f, 0.0f, 2);
+    if (gradient.isNull()) {
+        return false;
+    }
+
+    std::vector<float> pixels(
+        static_cast<std::size_t>(gradient.width()) * gradient.height() * 4u);
+    for (int y = 0; y < gradient.height(); ++y) {
+        for (int x = 0; x < gradient.width(); ++x) {
+            const QRgb pixel = gradient.pixel(x, y);
+            const std::size_t offset =
+                (static_cast<std::size_t>(y) * gradient.width() + x) * 4u;
+            pixels[offset + 0] = static_cast<float>(qBlue(pixel)) / 255.0f;
+            pixels[offset + 1] = static_cast<float>(qGreen(pixel)) / 255.0f;
+            pixels[offset + 2] = static_cast<float>(qRed(pixel)) / 255.0f;
+            pixels[offset + 3] = static_cast<float>(qAlpha(pixel)) / 255.0f;
+        }
+    }
+
+    const auto descriptor = Artifact::qImageCvMatSurfaceDescriptor(gradient);
+    ArtifactCore::ImageF32x4_RGBA sourceImage;
+    sourceImage.setFromRGBA32F(
+        pixels.data(), gradient.width(), gradient.height(), descriptor);
+    ArtifactCore::ImageF32x4RGBAWithCache source(sourceImage);
+    ArtifactCore::ImageF32x4RGBAWithCache output;
+    Artifact::ArtifactAbstractEffect identityEffect;
+    identityEffect.applyConfigured(source, output);
+
+    if (output.width() != source.width() || output.height() != source.height() ||
+        output.image().colorDescriptor() != descriptor) {
+        return false;
+    }
+    const float* outputPixels = output.image().rgba32fData();
+    if (!outputPixels) {
+        return false;
+    }
+    for (std::size_t index = 0; index < pixels.size(); ++index) {
+        if (outputPixels[index] != pixels[index]) {
+            return false;
+        }
+    }
+
+    ArtifactCore::ImageF32x4RGBAWithCache poisonedOutput;
+    DescriptorPoisonEffect poisonEffect;
+    poisonEffect.applyConfigured(source, poisonedOutput);
+    if (poisonedOutput.image().colorDescriptor() != descriptor) {
+        return false;
+    }
+    const float* poisonedPixels = poisonedOutput.image().rgba32fData();
+    if (!poisonedPixels) {
+        return false;
+    }
+    for (std::size_t index = 0; index < pixels.size(); ++index) {
+        if (poisonedPixels[index] != pixels[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 export namespace Artifact {
@@ -151,6 +277,14 @@ int runAllTests()
     failures += runLayerGroupTests();
     failures += runPreComposeTests();
     failures += runPropertyKeyframeTests();
+    if (!versionedGradientCpuContractTest()) {
+        qWarning().noquote() << "[Test] Versioned gradient CPU contract failed";
+        ++failures;
+    }
+    if (!gradientNoOpEffectContractTest()) {
+        qWarning().noquote() << "[Test] Gradient no-op effect contract failed";
+        ++failures;
+    }
 
     ArtifactTestTimingEventView timingEventViewTests;
     timingEventViewTests.runAllTests();

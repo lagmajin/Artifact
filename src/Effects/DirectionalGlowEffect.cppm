@@ -72,7 +72,7 @@ static cv::Mat directionalBlur1D(const cv::Mat& src, float angleDeg, float lengt
 
             result.at<cv::Vec4f>(y, x) = totalWeight > 0.0f ? sum / totalWeight : cv::Vec4f(0, 0, 0, 0);
         }
-    }
+    });
 
     return result;
 }
@@ -160,8 +160,10 @@ public:
             }
         });
 
-        dst.image().setFromRGBA32F(result.ptr<float>(), result.cols, result.rows);
-    });
+        dst.image().setFromRGBA32F(
+            result.ptr<float>(), result.cols, result.rows,
+            srcImage.colorDescriptor());
+    }
 };
 
 class DirectionalGlowGPUImpl : public ArtifactEffectImplBase {
@@ -192,7 +194,7 @@ public:
         static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"DirectionalGlowParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
         if(!pipelineReady_){ArtifactCore::ComputePipelineDesc d;d.name="DirectionalGlow/PSO";d.shaderSource=kHlsl;d.entryPoint="main";d.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;d.variables=vars;d.variableCount=3;d.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!executor->build(d)||!executor->createShaderResourceBinding(true)||!executor->setBuffer("DirectionalGlowParams",paramsCB_)){applyCPU(src,dst);return;}pipelineReady_=true;}
         Diligent::RefCntAutoPtr<Diligent::ITexture> input;if(!createTexture(src,&input,"DirectionalGlow/Input")){applyCPU(src,dst);return;}auto od=input->GetDesc();od.Usage=Diligent::USAGE_DEFAULT;od.BindFlags=Diligent::BIND_UNORDERED_ACCESS|Diligent::BIND_SHADER_RESOURCE;od.Name="DirectionalGlow/Output";Diligent::RefCntAutoPtr<Diligent::ITexture> output;device_->CreateTexture(od,nullptr,&output);if(!output){applyCPU(src,dst);return;}
-        ParamsCB p{threshold_,intensity_,length1_,length2_,weight1_,weight2_,static_cast<float>(static_cast<int>(pattern_)),angleOffset_};void*mapped=nullptr;context_->MapBuffer(paramsCB_,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}std::memcpy(mapped,&p,sizeof(p));context_->UnmapBuffer(paramsCB_,Diligent::MAP_WRITE);if(!executor->setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor->setTextureView("g_OutputTexture",output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}executor->dispatch(context_,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);if(!readback(device_,context_,output,dst,"DirectionalGlow/Readback")){applyCPU(src,dst);}
+        ParamsCB p{threshold_,intensity_,length1_,length2_,weight1_,weight2_,static_cast<float>(static_cast<int>(pattern_)),angleOffset_};void*mapped=nullptr;context_->MapBuffer(paramsCB_,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}std::memcpy(mapped,&p,sizeof(p));context_->UnmapBuffer(paramsCB_,Diligent::MAP_WRITE);if(!executor->setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor->setTextureView("g_OutputTexture",output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}executor->dispatch(context_,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);if(!readback(device_,context_,output,dst,"DirectionalGlow/Readback")){applyCPU(src,dst);}dst.image().setColorDescriptor(src.image().colorDescriptor());
     }
 
 private:

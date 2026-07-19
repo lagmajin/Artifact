@@ -154,16 +154,25 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   } else if (type == LightType::Ambient) {
     renderer->drawGizmoRing(p, float3{0, 1, 0}, baseSize * 1.35f, tintColor, 1.0f);
   } else if (type == LightType::Area) {
-    const QVector3D areaSide = m.mapVector(QVector3D(lightImpl_->areaWidth_ * 0.5f, 0, 0));
-    const QVector3D areaUp = m.mapVector(QVector3D(0, lightImpl_->areaHeight_ * 0.5f, 0));
-    const QVector3D a = pos - areaSide - areaUp;
-    const QVector3D b = pos + areaSide - areaUp;
-    const QVector3D c = pos + areaSide + areaUp;
-    const QVector3D d = pos - areaSide + areaUp;
-    renderer->drawGizmoLine({a.x(), a.y(), a.z()}, {b.x(), b.y(), b.z()}, tintColor, 1.2f);
-    renderer->drawGizmoLine({b.x(), b.y(), b.z()}, {c.x(), c.y(), c.z()}, tintColor, 1.2f);
-    renderer->drawGizmoLine({c.x(), c.y(), c.z()}, {d.x(), d.y(), d.z()}, tintColor, 1.2f);
-    renderer->drawGizmoLine({d.x(), d.y(), d.z()}, {a.x(), a.y(), a.z()}, tintColor, 1.2f);
+    if (lightImpl_->areaShape_ == AreaLightShape::Disk) {
+      const float radius = std::max(1.0f, std::min(lightImpl_->areaWidth_,
+                                                    lightImpl_->areaHeight_) * 0.5f);
+      const QVector3D normal = m.mapVector(QVector3D(0, 0, 1)).normalized();
+      renderer->drawGizmoRing(float3{pos.x(), pos.y(), pos.z()},
+                              float3{normal.x(), normal.y(), normal.z()},
+                              radius, tintColor, 1.2f);
+    } else {
+      const QVector3D areaSide = m.mapVector(QVector3D(lightImpl_->areaWidth_ * 0.5f, 0, 0));
+      const QVector3D areaUp = m.mapVector(QVector3D(0, lightImpl_->areaHeight_ * 0.5f, 0));
+      const QVector3D a = pos - areaSide - areaUp;
+      const QVector3D b = pos + areaSide - areaUp;
+      const QVector3D c = pos + areaSide + areaUp;
+      const QVector3D d = pos - areaSide + areaUp;
+      renderer->drawGizmoLine({a.x(), a.y(), a.z()}, {b.x(), b.y(), b.z()}, tintColor, 1.2f);
+      renderer->drawGizmoLine({b.x(), b.y(), b.z()}, {c.x(), c.y(), c.z()}, tintColor, 1.2f);
+      renderer->drawGizmoLine({c.x(), c.y(), c.z()}, {d.x(), d.y(), d.z()}, tintColor, 1.2f);
+      renderer->drawGizmoLine({d.x(), d.y(), d.z()}, {a.x(), a.y(), a.z()}, tintColor, 1.2f);
+    }
     const QVector3D directionTip = pos + forward * std::max(baseSize * 2.0f, 24.0f);
     renderer->drawGizmoArrow(float3{pos.x(), pos.y(), pos.z()},
                              float3{directionTip.x(), directionTip.y(), directionTip.z()},

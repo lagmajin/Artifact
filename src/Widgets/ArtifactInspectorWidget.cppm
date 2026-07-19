@@ -1,5 +1,6 @@
 module;
 #include <QAbstractButton>
+#include <QAbstractScrollArea>
 #include <QApplication>
 #include <QAction>
 #include <QCheckBox>
@@ -33,7 +34,9 @@ module;
 #include <QPlainTextEdit>
 #include <QPainter>
 #include <QPushButton>
+#include <QProxyStyle>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QKeyEvent>
 #include <QRadioButton>
@@ -43,6 +46,7 @@ module;
 #include <QSpinBox>
 #include <QStyledItemDelegate>
 #include <QStyle>
+#include <QStyleOptionSlider>
 #include <QStyleOptionViewItem>
 #include <QSplitter>
 #include <QStringList>
@@ -108,6 +112,7 @@ module Widgets.Inspector;
 import Utils.Id;
 import Utils.String.UniString;
 import Widgets.Utils.CSS;
+import Widgets.CommonStyle;
 import Artifact.Widgets.Inspector.EffectTabSurface;
 import Artifact.Widgets.Inspector.ComponentTabSurface;
 
@@ -762,6 +767,93 @@ void applyInspectorComponentStateButton(QPushButton *button,
   button->setPalette(pal);
 }
 
+class InspectorScrollBarStyle final : public QProxyStyle {
+ public:
+  using QProxyStyle::QProxyStyle;
+
+  int pixelMetric(PixelMetric metric, const QStyleOption* option,
+                  const QWidget* widget) const override {
+    if (metric == PM_ScrollBarExtent) return 10;
+    if (metric == PM_ScrollBarSliderMin) return 24;
+    return QProxyStyle::pixelMetric(metric, option, widget);
+  }
+
+  void drawComplexControl(ComplexControl control, const QStyleOption* option,
+                          QPainter* painter,
+                          const QWidget* widget = nullptr) const override {
+    if (control != CC_ScrollBar || !option || !painter) {
+      QProxyStyle::drawComplexControl(control, option, painter, widget);
+      return;
+    }
+    const auto* slider = qstyleoption_cast<const QStyleOptionSlider*>(option);
+    if (!slider) return;
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    const QPalette pal = slider->palette;
+    const QRect groove = subControlRect(
+        CC_ScrollBar, slider, SC_ScrollBarGroove, widget);
+    const QRect handle = subControlRect(
+        CC_ScrollBar, slider, SC_ScrollBarSlider, widget);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(blendColor(pal.color(QPalette::Window),
+                                 pal.color(QPalette::Mid), 0.18));
+    painter->drawRoundedRect(QRectF(groove).adjusted(2, 2, -2, -2),
+                             3.0, 3.0);
+    const bool handleActive =
+        slider->activeSubControls.testFlag(SC_ScrollBarSlider);
+    const bool pressed = handleActive &&
+        slider->state.testFlag(QStyle::State_Sunken);
+    const QColor handleColor = pressed
+        ? pal.color(QPalette::Highlight)
+        : handleActive
+              ? blendColor(pal.color(QPalette::Mid),
+                           pal.color(QPalette::Highlight), 0.34)
+              : pal.color(QPalette::Mid);
+    painter->setBrush(handleColor);
+    painter->drawRoundedRect(QRectF(handle).adjusted(2, 2, -2, -2),
+                             3.0, 3.0);
+    const auto drawArrow = [&](const SubControl subControl,
+                               const bool decrement) {
+      const QRect arrowRect =
+          subControlRect(CC_ScrollBar, slider, subControl, widget);
+      if (!arrowRect.isValid()) return;
+      const bool active = slider->activeSubControls.testFlag(subControl);
+      painter->setPen(Qt::NoPen);
+      painter->setBrush(active ? pal.color(QPalette::Highlight)
+                               : pal.color(QPalette::PlaceholderText));
+      const QPointF center = arrowRect.center();
+      if (slider->orientation == Qt::Vertical) {
+        const qreal direction = decrement ? -1.0 : 1.0;
+        const QPointF points[] = {
+            QPointF(center.x() - 3.0, center.y() - 2.0 * direction),
+            QPointF(center.x() + 3.0, center.y() - 2.0 * direction),
+            QPointF(center.x(), center.y() + 2.5 * direction)};
+        painter->drawPolygon(points, 3);
+      } else {
+        const qreal direction = decrement ? -1.0 : 1.0;
+        const QPointF points[] = {
+            QPointF(center.x() - 2.0 * direction, center.y() - 3.0),
+            QPointF(center.x() - 2.0 * direction, center.y() + 3.0),
+            QPointF(center.x() + 2.5 * direction, center.y())};
+        painter->drawPolygon(points, 3);
+      }
+    };
+    drawArrow(SC_ScrollBarSubLine, true);
+    drawArrow(SC_ScrollBarAddLine, false);
+    painter->restore();
+  }
+};
+
+void applyInspectorOwnerDrawScrollBars(QAbstractScrollArea* area) {
+  if (!area) return;
+  for (auto* bar : {area->verticalScrollBar(), area->horizontalScrollBar()}) {
+    if (!bar) continue;
+    auto* style = new InspectorScrollBarStyle();
+    style->setParent(bar);
+    bar->setStyle(style);
+  }
+}
+
 enum class RasterizerInitialSettingsMode {
   KeepDefaults,
   FitToSource,
@@ -803,17 +895,124 @@ RasterizerInitialSettingsMode rasterizerInitialSettingsModeFromSettings() {
           .toString());
 }
 
+class EffectSetupDescription final : public QLabel {
+ public:
+  using QLabel::QLabel;
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    painter.setPen(palette().color(QPalette::WindowText));
+    painter.setFont(font());
+    painter.drawText(rect(), Qt::AlignLeft | Qt::AlignVCenter |
+                                 Qt::TextWordWrap,
+                     text());
+  }
+};
+
+void paintEffectSetupChoice(QAbstractButton* button, QPainter& painter,
+                            const bool radio) {
+  if (!button) return;
+  painter.setRenderHint(QPainter::Antialiasing, true);
+  painter.setRenderHint(QPainter::TextAntialiasing, true);
+  const QPalette pal = button->palette();
+  const QColor accent = pal.color(QPalette::Highlight);
+  const QRectF indicatorRect(3.5, button->height() / 2.0 - 6.0, 12.0, 12.0);
+  painter.setPen(button->hasFocus() ? accent : pal.color(QPalette::Mid));
+  painter.setBrush(button->isChecked() ? accent : pal.color(QPalette::Base));
+  if (radio) {
+    painter.drawEllipse(indicatorRect);
+    if (button->isChecked()) {
+      painter.setBrush(pal.color(QPalette::HighlightedText));
+      painter.setPen(Qt::NoPen);
+      painter.drawEllipse(indicatorRect.adjusted(4, 4, -4, -4));
+    }
+  } else {
+    painter.drawRoundedRect(indicatorRect, 2.0, 2.0);
+    if (button->isChecked()) {
+      painter.setPen(pal.color(QPalette::HighlightedText));
+      painter.drawLine(QPointF(6.5, button->height() / 2.0),
+                       QPointF(9.5, button->height() / 2.0 + 3.0));
+      painter.drawLine(QPointF(9.5, button->height() / 2.0 + 3.0),
+                       QPointF(14.0, button->height() / 2.0 - 3.0));
+    }
+  }
+  painter.setPen(button->isEnabled()
+                     ? pal.color(QPalette::WindowText)
+                     : pal.color(QPalette::Disabled, QPalette::WindowText));
+  painter.drawText(button->rect().adjusted(23, 0, -4, 0),
+                   Qt::AlignLeft | Qt::AlignVCenter, button->text());
+}
+
+class EffectSetupRadioButton final : public QRadioButton {
+ public:
+  using QRadioButton::QRadioButton;
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    paintEffectSetupChoice(this, painter, true);
+  }
+};
+
+class EffectSetupCheckBox final : public QCheckBox {
+ public:
+  using QCheckBox::QCheckBox;
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    paintEffectSetupChoice(this, painter, false);
+  }
+};
+
 class RasterizerInitialSettingsActionButton final : public QPushButton {
 public:
   RasterizerInitialSettingsActionButton(const QString &text, QDialog *dialog,
                                         const int dialogResult)
-      : QPushButton(text, dialog), dialog_(dialog), dialogResult_(dialogResult) {}
+      : QPushButton(text, dialog), dialog_(dialog), dialogResult_(dialogResult) {
+    setAttribute(Qt::WA_Hover, true);
+    setMinimumHeight(30);
+  }
 
 protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    const QPalette pal = palette();
+    const bool primary = dialogResult_ == QDialog::Accepted;
+    const QColor accent = pal.color(QPalette::Highlight);
+    const QColor base = primary
+        ? blendColor(pal.color(QPalette::Button), accent, 0.48)
+        : pal.color(QPalette::Button);
+    painter.setPen(primary ? accent : pal.color(QPalette::Mid));
+    painter.setBrush(isDown() ? blendColor(base, accent, 0.30)
+                              : underMouse() ? blendColor(base, accent, 0.14)
+                                             : base);
+    painter.drawRoundedRect(
+        QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
+    painter.setPen(isEnabled() ? pal.color(QPalette::ButtonText)
+                               : pal.color(QPalette::Disabled,
+                                           QPalette::ButtonText));
+    painter.drawText(rect(), Qt::AlignCenter, text());
+  }
+
   void mouseReleaseEvent(QMouseEvent *event) override {
     const bool activate = event && event->button() == Qt::LeftButton &&
                           rect().contains(event->position().toPoint());
     QPushButton::mouseReleaseEvent(event);
+    if (activate && dialog_) {
+      dialog_->done(dialogResult_);
+    }
+  }
+
+  void keyReleaseEvent(QKeyEvent* event) override {
+    const bool activate = event && isEnabled() &&
+        (event->key() == Qt::Key_Space || event->key() == Qt::Key_Return ||
+         event->key() == Qt::Key_Enter);
+    QPushButton::keyReleaseEvent(event);
     if (activate && dialog_) {
       dialog_->done(dialogResult_);
     }
@@ -834,7 +1033,7 @@ public:
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(14, 14, 14, 14);
     layout->setSpacing(10);
-    auto *description = new QLabel(
+    auto *description = new EffectSetupDescription(
         QStringLiteral("Choose how to initialize pixel-based settings for this effect. "
                        "Auto Fit uses the source size (%1 x %2) only once; it will not "
                        "change the effect after it is added.")
@@ -845,15 +1044,20 @@ public:
     applyInspectorLabelPalette(description, false);
     layout->addWidget(description);
 
-    defaultsButton_ = new QRadioButton(QStringLiteral("Keep effect defaults"), this);
-    fitButton_ = new QRadioButton(QStringLiteral("Auto Fit to source size"), this);
+    defaultsButton_ = new EffectSetupRadioButton(
+        QStringLiteral("Keep effect defaults"), this);
+    fitButton_ = new EffectSetupRadioButton(
+        QStringLiteral("Auto Fit to source size"), this);
+    defaultsButton_->setMinimumHeight(28);
+    fitButton_->setMinimumHeight(28);
     defaultsButton_->setChecked(true);
     layout->addWidget(defaultsButton_);
     layout->addWidget(fitButton_);
 
-    rememberChoice_ = new QCheckBox(
+    rememberChoice_ = new EffectSetupCheckBox(
         QStringLiteral("Use this choice automatically for future rasterizer effects"),
         this);
+    rememberChoice_->setMinimumHeight(28);
     layout->addWidget(rememberChoice_);
 
     auto *buttons = new QHBoxLayout();
@@ -880,6 +1084,11 @@ public:
   }
 
 protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.fillRect(rect(), palette().color(QPalette::Window));
+  }
+
   void keyPressEvent(QKeyEvent *event) override {
     if (event && (event->key() == Qt::Key_Return ||
                   event->key() == Qt::Key_Enter)) {
@@ -943,6 +1152,163 @@ int applyRasterizerSourceFit(ArtifactAbstractEffect *effect,
   return adjustedCount;
 }
 
+class EffectPickerPanel final : public QWidget {
+ public:
+  using QWidget::QWidget;
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QPalette pal = palette();
+    painter.setPen(pal.color(QPalette::Mid));
+    painter.setBrush(pal.color(QPalette::Base));
+    painter.drawRoundedRect(
+        QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 5.0, 5.0);
+  }
+};
+
+class EffectPickerLabel final : public QLabel {
+ public:
+  EffectPickerLabel(const QString& text, bool heading,
+                    QWidget* parent = nullptr)
+      : QLabel(text, parent), heading_(heading) {
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    if (heading_) {
+      QFont labelFont = font();
+      labelFont.setWeight(QFont::DemiBold);
+      setFont(labelFont);
+    }
+  }
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    painter.setFont(font());
+    painter.setPen(palette().color(QPalette::WindowText));
+    painter.drawText(rect(), Qt::AlignLeft | Qt::AlignVCenter |
+                                 (wordWrap() ? Qt::TextWordWrap : 0),
+                     text());
+    if (heading_) {
+      painter.setPen(palette().color(QPalette::Mid));
+      painter.drawLine(rect().bottomLeft(), rect().bottomRight());
+    }
+  }
+
+ private:
+  bool heading_ = false;
+};
+
+class EffectPickerList final : public QListWidget {
+ public:
+  using QListWidget::QListWidget;
+
+ protected:
+  void paintEvent(QPaintEvent* event) override {
+    QPainter painter(viewport());
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    if (event) painter.setClipRegion(event->region());
+    const QPalette pal = palette();
+    painter.fillRect(viewport()->rect(), pal.color(QPalette::Base));
+    const QModelIndex hoveredIndex =
+        viewport()->underMouse()
+            ? indexAt(viewport()->mapFromGlobal(QCursor::pos()))
+            : QModelIndex{};
+    for (int row = 0; row < count(); ++row) {
+      auto* listItem = item(row);
+      if (!listItem) continue;
+      const QRect itemRect = visualItemRect(listItem);
+      if (!itemRect.isValid() || !itemRect.intersects(viewport()->rect()))
+        continue;
+      const QModelIndex index = model()->index(row, 0);
+      const bool selected = listItem->isSelected();
+      const bool hovered = hoveredIndex == index;
+      const bool selectable = listItem->flags().testFlag(Qt::ItemIsSelectable);
+      const QRectF cardRect =
+          QRectF(itemRect).adjusted(2.0, 2.0, -2.0, -2.0);
+      painter.setPen(selected ? pal.color(QPalette::Highlight)
+                              : pal.color(QPalette::Mid));
+      painter.setBrush(selected
+                           ? blendColor(pal.color(QPalette::Base),
+                                        pal.color(QPalette::Highlight), 0.36)
+                           : hovered && selectable
+                                 ? blendColor(pal.color(QPalette::Base),
+                                              pal.color(QPalette::Highlight),
+                                              0.12)
+                                 : pal.color(QPalette::AlternateBase));
+      painter.drawRoundedRect(cardRect, 4.0, 4.0);
+
+      const QString displayName =
+          listItem->data(Qt::UserRole + 1).toString().trimmed();
+      const QString category =
+          listItem->data(Qt::UserRole + 2).toString().trimmed();
+      const QRect textRect = itemRect.adjusted(12, 3, -10, -3);
+      if (displayName.isEmpty()) {
+        painter.setPen(pal.color(QPalette::PlaceholderText));
+        painter.drawText(textRect, Qt::AlignCenter, listItem->text());
+        continue;
+      }
+      QFont nameFont = font();
+      nameFont.setWeight(QFont::DemiBold);
+      painter.setFont(nameFont);
+      painter.setPen(pal.color(QPalette::Text));
+      painter.drawText(QRect(textRect.left(), textRect.top(), textRect.width(),
+                             22),
+                       Qt::AlignLeft | Qt::AlignVCenter, displayName);
+      painter.setFont(font());
+      painter.setPen(pal.color(QPalette::PlaceholderText));
+      painter.drawText(QRect(textRect.left(), textRect.top() + 21,
+                             textRect.width(), 18),
+                       Qt::AlignLeft | Qt::AlignVCenter, category);
+    }
+    painter.setClipping(false);
+    painter.setPen(hasFocus() ? pal.color(QPalette::Highlight)
+                              : pal.color(QPalette::Mid));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(
+        QRectF(viewport()->rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+        4.0, 4.0);
+  }
+};
+
+class EffectPickerButton final : public QPushButton {
+ public:
+  EffectPickerButton(const QString& text, bool primary,
+                     QWidget* parent = nullptr)
+      : QPushButton(text, parent), primary_(primary) {
+    setMinimumHeight(30);
+    setAttribute(Qt::WA_Hover, true);
+  }
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    const QPalette pal = palette();
+    const bool active = isDown() || isChecked();
+    const QColor accent = pal.color(QPalette::Highlight);
+    const QColor base = primary_ ? blendColor(pal.color(QPalette::Button),
+                                                accent, 0.48)
+                                 : pal.color(QPalette::Button);
+    painter.setPen(primary_ ? accent : pal.color(QPalette::Mid));
+    painter.setBrush(active ? blendColor(base, accent, 0.28)
+                            : underMouse() ? blendColor(base, accent, 0.14)
+                                           : base);
+    painter.drawRoundedRect(
+        QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
+    painter.setPen(isEnabled() ? pal.color(QPalette::ButtonText)
+                               : pal.color(QPalette::Disabled,
+                                           QPalette::ButtonText));
+    painter.drawText(rect(), Qt::AlignCenter, text());
+  }
+
+ private:
+  bool primary_ = false;
+};
+
 class EffectPickerDialog final : public QDialog {
 public:
   EffectPickerDialog(const std::vector<EffectCatalogEntry> &entries,
@@ -957,16 +1323,17 @@ public:
     layout->setContentsMargins(14, 14, 14, 14);
     layout->setSpacing(10);
 
-    auto *header = new QLabel(
+    auto *header = new EffectPickerLabel(
         QStringLiteral("Add to %1  |  Stage: %2")
             .arg(targetLabel, stageDisplayName(stageFilter_)),
-        this);
+        true, this);
+    header->setMinimumHeight(30);
     applyInspectorLabelPalette(header, true);
     layout->addWidget(header);
 
-    auto *subHeader = new QLabel(
+    auto *subHeader = new EffectPickerLabel(
         QStringLiteral("Search by name, category, or keyword. Double click or press Add to insert and focus the effect."),
-        this);
+        false, this);
     subHeader->setWordWrap(true);
     applyInspectorLabelPalette(subHeader, false);
     layout->addWidget(subHeader);
@@ -975,41 +1342,44 @@ public:
     searchEdit_->setObjectName(QStringLiteral("inspectorSearchEdit"));
     searchEdit_->setPlaceholderText(
         QStringLiteral("Search effects for this stage"));
+    searchEdit_->setFrame(false);
     applyInspectorPalette(searchEdit_, true);
-    layout->addWidget(searchEdit_);
+    auto* searchPanel = new EffectPickerPanel(this);
+    auto* searchLayout = new QVBoxLayout(searchPanel);
+    searchLayout->setContentsMargins(7, 3, 7, 3);
+    searchLayout->setSpacing(0);
+    searchLayout->addWidget(searchEdit_);
+    layout->addWidget(searchPanel);
 
-    auto *contentFrame = new QFrame(this);
+    auto *contentFrame = new EffectPickerPanel(this);
     contentFrame->setObjectName(QStringLiteral("inspectorContentFrame"));
     applyInspectorPalette(contentFrame, true);
     auto *contentLayout = new QVBoxLayout(contentFrame);
     contentLayout->setContentsMargins(8, 8, 8, 8);
     contentLayout->setSpacing(8);
 
-    resultSummaryLabel_ = new QLabel(contentFrame);
+    resultSummaryLabel_ = new EffectPickerLabel(QString(), false, contentFrame);
     resultSummaryLabel_->setWordWrap(true);
     applyInspectorLabelPalette(resultSummaryLabel_, false);
     contentLayout->addWidget(resultSummaryLabel_);
 
-    listWidget_ = new QListWidget(contentFrame);
+    listWidget_ = new EffectPickerList(contentFrame);
     listWidget_->setUniformItemSizes(false);
     listWidget_->setSelectionMode(QAbstractItemView::SingleSelection);
+    listWidget_->setFrameShape(QFrame::NoFrame);
     applyInspectorList(listWidget_);
+    applyInspectorOwnerDrawScrollBars(listWidget_);
     contentLayout->addWidget(listWidget_, 1);
 
     layout->addWidget(contentFrame, 1);
 
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok |
-                                             QDialogButtonBox::Cancel,
-                                         Qt::Horizontal, this);
-    addButton_ = buttons->button(QDialogButtonBox::Ok);
-    if (addButton_) {
-      addButton_->setText(QStringLiteral("Add Effect"));
-      applyInspectorButton(addButton_, true);
-    }
-    if (auto *cancelButton = buttons->button(QDialogButtonBox::Cancel)) {
-      cancelButton->setText(QStringLiteral("Cancel"));
-      applyInspectorButton(cancelButton, false);
-    }
+    auto *buttons = new QDialogButtonBox(Qt::Horizontal, this);
+    addButton_ = new EffectPickerButton(
+        QStringLiteral("Add Effect"), true, buttons);
+    buttons->addButton(addButton_, QDialogButtonBox::AcceptRole);
+    auto *cancelButton = new EffectPickerButton(
+        QStringLiteral("Cancel"), false, buttons);
+    buttons->addButton(cancelButton, QDialogButtonBox::RejectRole);
     layout->addWidget(buttons);
 
     QObject::connect(searchEdit_, &QLineEdit::textChanged, this,
@@ -1050,6 +1420,12 @@ public:
         .trimmed();
   }
 
+protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.fillRect(rect(), palette().color(QPalette::Window));
+  }
+
 private:
   void rebuildList() {
     if (!listWidget_) {
@@ -1071,6 +1447,8 @@ private:
           listWidget_);
       item->setData(Qt::UserRole, entry.effectId);
       item->setData(Qt::UserRole + 1, entry.displayName);
+      item->setData(Qt::UserRole + 2, entry.category);
+      item->setSizeHint(QSize(0, 46));
       item->setToolTip(entry.description);
     }
 
@@ -1079,6 +1457,7 @@ private:
           new QListWidgetItem(QStringLiteral("No effects match this search."),
                               listWidget_);
       item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
+      item->setSizeHint(QSize(0, 46));
     } else {
       listWidget_->setCurrentRow(0);
     }
@@ -1189,6 +1568,7 @@ public:
     const QColor rackColor = toneColor(toneFromRackIndex(rackIndex_), text, accent);
     const QColor muted = blendColor(rackColor, background, 0.58);
     const bool selected = option.state.testFlag(QStyle::State_Selected);
+    const bool hovered = option.state.testFlag(QStyle::State_MouseOver);
     const bool enabled = index.data(kEffectRackEnabledRole).toBool();
     const bool hasMask = index.data(kEffectRackHasMaskRole).toBool();
     const int maskCount = index.data(kEffectRackMaskCountRole).toInt();
@@ -1196,8 +1576,13 @@ public:
     const QString effectName = index.data(kEffectRackNameRole).toString().trimmed();
 
     painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
     const QRect rowRect = option.rect.adjusted(2, 2, -2, -2);
-    painter->fillRect(rowRect, selected ? selection : surface);
+    painter->setPen(selected ? rackColor : blendColor(surface, text, 0.18));
+    painter->setBrush(selected ? selection
+                               : hovered ? blendColor(surface, accent, 0.14)
+                                         : surface);
+    painter->drawRoundedRect(QRectF(rowRect), 3.0, 3.0);
 
     if (effectId.isEmpty()) {
       painter->setPen(blendColor(text, background, 0.52));
@@ -1912,9 +2297,304 @@ class ComponentDivider final : public QFrame {
   }
 };
 
+class InspectorCanvasSurface final : public QWidget {
+ public:
+  using QWidget::QWidget;
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    const QPalette pal = palette();
+    painter.fillRect(rect(), pal.color(QPalette::Window));
+  }
+};
+
+class InspectorChromeLabel final : public QLabel {
+ public:
+  enum class Role { Section, Active, Summary };
+
+  InspectorChromeLabel(const QString& text, Role role,
+                       QWidget* parent = nullptr)
+      : QLabel(text, parent), role_(role) {
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    if (role_ != Role::Summary) {
+      QFont labelFont = font();
+      labelFont.setWeight(QFont::DemiBold);
+      setFont(labelFont);
+    }
+  }
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    const QPalette pal = palette();
+    QRect contentRect = rect();
+    if (role_ == Role::Active) {
+      const QColor accent = pal.color(QPalette::Highlight);
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(blendColor(pal.color(QPalette::Window), accent, 0.16));
+      painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+                              4.0, 4.0);
+      painter.setPen(accent);
+      painter.setBrush(Qt::NoBrush);
+      painter.drawLine(2, 4, 2, height() - 5);
+      contentRect.adjust(10, 0, -6, 0);
+    } else if (role_ == Role::Section) {
+      painter.setPen(pal.color(QPalette::Mid));
+      painter.drawLine(contentRect.left(), contentRect.bottom(),
+                       contentRect.right(), contentRect.bottom());
+      contentRect.adjust(0, 0, 0, -3);
+    } else {
+      contentRect.adjust(2, 0, -2, 0);
+    }
+    painter.setFont(font());
+    painter.setPen(isEnabled() ? pal.color(QPalette::WindowText)
+                               : pal.color(QPalette::Disabled,
+                                           QPalette::WindowText));
+    int flags = Qt::AlignLeft | Qt::AlignVCenter;
+    if (wordWrap()) {
+      flags |= Qt::TextWordWrap;
+    }
+    painter.drawText(contentRect, flags, text());
+  }
+
+ private:
+  Role role_;
+};
+
+class InspectorPropertySurface final : public QWidget {
+ public:
+  explicit InspectorPropertySurface(QWidget* editor, QWidget* parent = nullptr)
+      : QWidget(parent) {
+    auto* surfaceLayout = new QVBoxLayout(this);
+    surfaceLayout->setContentsMargins(6, 6, 6, 6);
+    surfaceLayout->setSpacing(0);
+    if (editor) {
+      surfaceLayout->addWidget(editor, 1);
+    }
+  }
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QPalette pal = palette();
+    const QRectF panelRect = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    painter.setPen(pal.color(QPalette::Mid));
+    painter.setBrush(pal.color(QPalette::Base));
+    painter.drawRoundedRect(panelRect, 4.0, 4.0);
+  }
+};
+
+class EffectPanelSurface final : public QWidget {
+ public:
+  enum class Role { Header, Stack, Detail };
+
+  explicit EffectPanelSurface(Role role, QWidget* parent = nullptr)
+      : QWidget(parent), role_(role) {}
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QPalette pal = palette();
+    const QColor base = role_ == Role::Header
+        ? pal.color(QPalette::AlternateBase)
+        : pal.color(QPalette::Window);
+    painter.fillRect(rect(), base);
+    painter.setPen(pal.color(QPalette::Mid));
+    if (role_ == Role::Header) {
+      painter.drawLine(rect().bottomLeft(), rect().bottomRight());
+    } else {
+      painter.drawRoundedRect(
+          QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
+    }
+  }
+
+ private:
+  Role role_;
+};
+
+class EffectRackSurface final : public QWidget {
+ public:
+  explicit EffectRackSurface(const QString& title, QWidget* parent = nullptr)
+      : QWidget(parent), title_(title) {}
+
+  void setTitle(const QString& title) {
+    if (title_ == title) {
+      return;
+    }
+    title_ = title;
+    update();
+  }
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    const QPalette pal = palette();
+    const QRectF surfaceRect =
+        QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    painter.setPen(pal.color(QPalette::Mid));
+    painter.setBrush(pal.color(QPalette::AlternateBase));
+    painter.drawRoundedRect(surfaceRect, 4.0, 4.0);
+    QFont titleFont = font();
+    titleFont.setWeight(QFont::DemiBold);
+    painter.setFont(titleFont);
+    painter.setPen(pal.color(QPalette::WindowText));
+    painter.drawText(QRect(9, 0, qMax(0, width() - 18), 28),
+                     Qt::AlignLeft | Qt::AlignVCenter, title_);
+    painter.setPen(pal.color(QPalette::Mid));
+    painter.drawLine(6, 28, width() - 7, 28);
+  }
+
+ private:
+  QString title_;
+};
+
+class EffectRackList final : public QListWidget {
+ public:
+  explicit EffectRackList(QWidget* parent = nullptr) : QListWidget(parent) {
+    setAttribute(Qt::WA_Hover, true);
+    if (viewport()) {
+      viewport()->setAttribute(Qt::WA_Hover, true);
+    }
+  }
+
+ protected:
+  void paintEvent(QPaintEvent* event) override {
+    QPainter painter(viewport());
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QPalette pal = palette();
+    if (event) {
+      painter.setClipRegion(event->region());
+    }
+    painter.fillRect(viewport()->rect(), pal.color(QPalette::Base));
+    const QModelIndex hoveredIndex =
+        viewport()->underMouse()
+            ? indexAt(viewport()->mapFromGlobal(QCursor::pos()))
+            : QModelIndex{};
+    auto* delegate = itemDelegate();
+    if (delegate) {
+      for (int row = 0; row < count(); ++row) {
+        auto* listItem = item(row);
+        if (!listItem) {
+          continue;
+        }
+        const QRect itemRect = visualItemRect(listItem);
+        if (!itemRect.isValid() || !itemRect.intersects(viewport()->rect())) {
+          continue;
+        }
+        const QModelIndex index = model()->index(row, 0);
+        QStyleOptionViewItem option;
+        option.initFrom(this);
+        option.rect = itemRect;
+        option.palette = pal;
+        option.font = font();
+        option.state = isEnabled() ? QStyle::State_Enabled
+                                   : QStyle::State_None;
+        if (isActiveWindow()) option.state |= QStyle::State_Active;
+        if (listItem->isSelected()) option.state |= QStyle::State_Selected;
+        if (hasFocus() && currentItem() == listItem)
+          option.state |= QStyle::State_HasFocus;
+        if (hoveredIndex == index) option.state |= QStyle::State_MouseOver;
+        delegate->paint(&painter, option, index);
+      }
+    }
+    painter.setClipping(false);
+    painter.setPen(hasFocus() ? pal.color(QPalette::Highlight)
+                              : pal.color(QPalette::Mid));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(
+        QRectF(viewport()->rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+        3.0, 3.0);
+  }
+};
+
+class InspectorActionMenu final : public QMenu {
+ public:
+  using QMenu::QMenu;
+
+ protected:
+  void paintEvent(QPaintEvent* event) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    if (event) {
+      painter.setClipRegion(event->region());
+    }
+    const QPalette pal = palette();
+    painter.fillRect(rect(), pal.color(QPalette::Window));
+
+    for (auto* action : actions()) {
+      if (!action || !action->isVisible()) {
+        continue;
+      }
+      const QRect actionRect = actionGeometry(action);
+      if (!actionRect.isValid()) {
+        continue;
+      }
+      if (action->isSeparator()) {
+        painter.setPen(pal.color(QPalette::Mid));
+        painter.drawLine(actionRect.left() + 8, actionRect.center().y(),
+                         actionRect.right() - 8, actionRect.center().y());
+        continue;
+      }
+
+      const bool hovered = activeAction() == action;
+      if (hovered && action->isEnabled()) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(
+            blendColor(pal.color(QPalette::Window),
+                       pal.color(QPalette::Highlight), 0.22));
+        painter.drawRoundedRect(
+            QRectF(actionRect).adjusted(3.0, 1.0, -3.0, -1.0), 3.0, 3.0);
+      }
+
+      int textLeft = actionRect.left() + 10;
+      if (action->isCheckable()) {
+        const QRectF stateRect(actionRect.left() + 9,
+                               actionRect.center().y() - 5, 10, 10);
+        painter.setPen(action->isChecked()
+                           ? pal.color(QPalette::Highlight)
+                           : pal.color(QPalette::Mid));
+        if (action->isChecked()) {
+          painter.setBrush(pal.color(QPalette::Highlight));
+        } else {
+          painter.setBrush(Qt::NoBrush);
+        }
+        painter.drawRoundedRect(stateRect, 2.0, 2.0);
+        textLeft = actionRect.left() + 27;
+      }
+      painter.setPen(action->isEnabled()
+                         ? pal.color(QPalette::WindowText)
+                         : pal.color(QPalette::Disabled,
+                                     QPalette::WindowText));
+      painter.drawText(actionRect.adjusted(textLeft - actionRect.left(), 0,
+                                           -10, 0),
+                       Qt::AlignLeft | Qt::AlignVCenter, action->text());
+    }
+
+    painter.setClipping(false);
+    painter.setPen(pal.color(QPalette::Mid));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(
+        QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
+  }
+};
+
 class InspectorSelectionList final : public QListWidget {
 public:
-  using QListWidget::QListWidget;
+  explicit InspectorSelectionList(QWidget* parent = nullptr)
+      : QListWidget(parent) {
+    setAttribute(Qt::WA_Hover, true);
+    if (viewport()) {
+      viewport()->setAttribute(Qt::WA_Hover, true);
+    }
+  }
 
   void setSelectionAction(
       std::function<void(QListWidgetItem *)> action) {
@@ -1926,6 +2606,79 @@ public:
   }
 
 protected:
+  void paintEvent(QPaintEvent* event) override {
+    QPainter painter(viewport());
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QPalette pal = palette();
+    if (event) {
+      painter.setClipRegion(event->region());
+    }
+    painter.fillRect(viewport()->rect(), pal.color(QPalette::Base));
+
+    const QModelIndex hoveredIndex =
+        viewport()->underMouse()
+            ? indexAt(viewport()->mapFromGlobal(QCursor::pos()))
+            : QModelIndex{};
+    auto* delegate = itemDelegate();
+    if (delegate) {
+      for (int row = 0; row < count(); ++row) {
+        auto* listItem = item(row);
+        if (!listItem) {
+          continue;
+        }
+        const QRect itemRect = visualItemRect(listItem);
+        if (!itemRect.isValid() || !itemRect.intersects(viewport()->rect())) {
+          continue;
+        }
+        const QModelIndex index = model()->index(row, 0);
+        QStyleOptionViewItem option;
+        option.initFrom(this);
+        option.rect = itemRect;
+        option.palette = pal;
+        option.font = font();
+        option.state = isEnabled() ? QStyle::State_Enabled
+                                   : QStyle::State_None;
+        if (isActiveWindow()) {
+          option.state |= QStyle::State_Active;
+        }
+        if (listItem->isSelected()) {
+          option.state |= QStyle::State_Selected;
+        }
+        if (hasFocus() && currentItem() == listItem) {
+          option.state |= QStyle::State_HasFocus;
+        }
+        if (hoveredIndex == index) {
+          option.state |= QStyle::State_MouseOver;
+        }
+        delegate->paint(&painter, option, index);
+      }
+    }
+
+    painter.setClipping(false);
+    const QColor border = hasFocus()
+        ? pal.color(QPalette::Highlight)
+        : pal.color(QPalette::Mid);
+    painter.setPen(border);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(
+        QRectF(viewport()->rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+        3.0, 3.0);
+  }
+
+  void focusInEvent(QFocusEvent* event) override {
+    QListWidget::focusInEvent(event);
+    if (viewport()) {
+      viewport()->update();
+    }
+  }
+
+  void focusOutEvent(QFocusEvent* event) override {
+    QListWidget::focusOutEvent(event);
+    if (viewport()) {
+      viewport()->update();
+    }
+  }
+
   void currentChanged(const QModelIndex &current,
                       const QModelIndex &previous) override {
     QListWidget::currentChanged(current, previous);
@@ -2009,6 +2762,7 @@ public:
   InspectorActionButton *openScriptButton = nullptr;
   InspectorActionButton *applyLipSyncButton = nullptr;
   ArtifactPropertyWidget *componentPropertyWidget = nullptr;
+  QWidget *componentPropertySurface = nullptr;
   QString lastComponentPropertyStateSignature_;
   QLabel *statusLabel = nullptr;
 
@@ -2023,6 +2777,7 @@ public:
   QLabel *effectParametersHintLabel = nullptr;
   InspectorActionButton *effectEnableButton = nullptr;
   ArtifactPropertyWidget *effectPropertyWidget = nullptr;
+  QWidget *effectPropertySurface = nullptr;
   QPushButton *effectsQuickAddButton = nullptr;
   QString focusedEffectId_;
   ArtifactAbstractLayerPtr lastSyncedLayer_;
@@ -2030,7 +2785,7 @@ public:
   QString lastEffectPropertyStateSignature_;
 
   struct EffectRack {
-    QGroupBox *groupBox = nullptr;
+    EffectRackSurface *groupBox = nullptr;
     QListWidget *listWidget = nullptr;
     QPushButton *addButton = nullptr;
     QPushButton *removeButton = nullptr;
@@ -2265,6 +3020,9 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
   const auto showEffectGuidance = [this](const QString &text,
                                          const bool showPropertyWidget) {
     effectPropertyWidget->setVisible(showPropertyWidget);
+    if (effectPropertySurface) {
+      effectPropertySurface->setVisible(showPropertyWidget);
+    }
     if (effectEnableButton) {
       effectEnableButton->setVisible(showPropertyWidget);
       effectEnableButton->setEnabled(showPropertyWidget);
@@ -3133,6 +3891,9 @@ void ArtifactInspectorWidget::Impl::syncComponentPropertyWidget(
     lastComponentPropertyStateSignature_.clear();
     componentPropertyWidget->clear();
     componentPropertyWidget->setVisible(false);
+    if (componentPropertySurface) {
+      componentPropertySurface->setVisible(false);
+    }
     return;
   }
 
@@ -3154,6 +3915,9 @@ void ArtifactInspectorWidget::Impl::syncComponentPropertyWidget(
       .arg(layer->id().toString(), selectedLayerIds.join(QLatin1Char(',')),
            normalizedFilter);
   componentPropertyWidget->setVisible(true);
+  if (componentPropertySurface) {
+    componentPropertySurface->setVisible(true);
+  }
   if (stateSignature == lastComponentPropertyStateSignature_) {
     return;
   }
@@ -3261,7 +4025,7 @@ void ArtifactInspectorWidget::Impl::showContextMenu() {
 }
 
 void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
-  QMenu menu;
+  InspectorActionMenu menu;
   menu.addAction("Refresh Inspector", [this]() {
     updateLayerInfo();
     updateEffectsList();
@@ -3272,10 +4036,6 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
   menu.addAction("Show Layer Info Tab", [this]() {
     if (tabWidget)
       tabWidget->setCurrentIndex(0);
-  });
-  menu.addAction("Show Effects Tab", [this]() {
-    if (tabWidget)
-      tabWidget->setCurrentIndex(2);
   });
   menu.addSeparator();
   menu.addAction("Expand All Racks", [this]() {
@@ -3383,10 +4143,9 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
 
 void ArtifactInspectorWidget::Impl::showRackContextMenu(
     int rackIndex, QListWidgetItem *item, const QPoint &globalPos) {
-  QMenu menu;
+  InspectorActionMenu menu;
 
   if (!item) {
-    menu.addSeparator();
     menu.addAction("Refresh Inspector", [this]() {
       updateLayerInfo();
       updateEffectsList();
@@ -5244,11 +6003,12 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   applyInspectorLabelPalette(impl_->proxyInfoLabel, false);
   layerInfoLayout->addWidget(impl_->proxyInfoLabel);
 
-  impl_->componentsGroup = new QWidget();
+  auto* componentsStack = new StudioSectionStack();
+  impl_->componentsGroup = componentsStack;
   applyInspectorPalette(impl_->componentsGroup);
-  auto componentsLayout = new QVBoxLayout();
-  impl_->componentsSummaryLabel =
-      new QLabel("Components: select a layer", impl_->componentsGroup);
+  impl_->componentsSummaryLabel = new InspectorChromeLabel(
+      QStringLiteral("Components: select a layer"),
+      InspectorChromeLabel::Role::Summary, impl_->componentsGroup);
   impl_->componentsSummaryLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->componentsSummaryLabel, true);
 
@@ -5391,9 +6151,10 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     componentButton->setVisible(false);
   }
 
-  impl_->activeComponentLabel =
-      new QLabel(QStringLiteral("Active Component  |  None"),
-                 impl_->componentsGroup);
+  impl_->activeComponentLabel = new InspectorChromeLabel(
+      QStringLiteral("Active Component  |  None"),
+      InspectorChromeLabel::Role::Active, impl_->componentsGroup);
+  impl_->activeComponentLabel->setMinimumHeight(32);
   applyInspectorLabelPalette(impl_->activeComponentLabel, true);
   impl_->activeComponentLabel->setVisible(false);
 
@@ -5403,46 +6164,61 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       "artifactEmbeddedComponentEditor", true);
   impl_->componentPropertyWidget->setVisible(false);
   impl_->componentPropertyWidget->setMinimumHeight(120);
+  applyInspectorOwnerDrawScrollBars(impl_->componentPropertyWidget);
   // The active component filter is selected from the layer state during refresh.
   impl_->componentPropertyWidget->setFilterText(QString());
 
-  auto *componentStackHeader = new QHBoxLayout();
-  auto *componentStackLabel = new QLabel(QStringLiteral("Layer Components"));
+  auto *componentStackLabel = new InspectorChromeLabel(
+      QStringLiteral("Layer Components"),
+      InspectorChromeLabel::Role::Section, impl_->componentsGroup);
+  componentStackLabel->setMinimumHeight(28);
   applyInspectorLabelPalette(componentStackLabel, true);
-  componentStackHeader->addWidget(componentStackLabel, 1);
-  componentsLayout->addLayout(componentStackHeader);
-  componentsLayout->addWidget(impl_->componentsSummaryLabel);
-  componentsLayout->addWidget(impl_->cloneComponentButton);
-  componentsLayout->addWidget(impl_->layoutComponentButton);
-  componentsLayout->addWidget(impl_->physicsComponentButton);
-  componentsLayout->addWidget(impl_->fluidComponentButton);
-  componentsLayout->addWidget(impl_->scriptComponentButton);
+  componentsStack->appendWidget(componentStackLabel);
+  componentsStack->appendWidget(impl_->componentsSummaryLabel);
+  componentsStack->appendWidget(impl_->cloneComponentButton);
+  componentsStack->appendWidget(impl_->layoutComponentButton);
+  componentsStack->appendWidget(impl_->physicsComponentButton);
+  componentsStack->appendWidget(impl_->fluidComponentButton);
+  componentsStack->appendWidget(impl_->scriptComponentButton);
 
-  auto *addComponentLayout = new QHBoxLayout();
+  auto* addComponentRow = new InspectorCanvasSurface(componentsStack);
+  auto *addComponentLayout = new QHBoxLayout(addComponentRow);
+  addComponentLayout->setContentsMargins(0, 0, 0, 0);
   addComponentLayout->addStretch(1);
   addComponentLayout->addWidget(impl_->addComponentButton);
   addComponentLayout->addStretch(1);
-  componentsLayout->addLayout(addComponentLayout);
+  componentsStack->appendWidget(addComponentRow);
 
   auto *componentDivider = new ComponentDivider(impl_->componentsGroup);
   componentDivider->setObjectName(QStringLiteral("inspectorComponentDivider"));
   componentDivider->setFrameShape(QFrame::HLine);
   componentDivider->setFrameShadow(QFrame::Plain);
   applyInspectorPalette(componentDivider, false);
-  componentsLayout->addWidget(componentDivider);
-  componentsLayout->addWidget(impl_->activeComponentLabel);
-  componentsLayout->addWidget(impl_->componentPropertyWidget, 1);
+  componentsStack->appendWidget(componentDivider);
+  componentsStack->appendWidget(impl_->activeComponentLabel);
+  impl_->componentPropertySurface = new InspectorPropertySurface(
+      impl_->componentPropertyWidget, impl_->componentsGroup);
+  impl_->componentPropertySurface->setObjectName(
+      QStringLiteral("inspectorComponentPropertySurface"));
+  impl_->componentPropertySurface->setVisible(false);
+  componentsStack->appendWidget(impl_->componentPropertySurface, true);
 
-  impl_->clonerStructureWidget = new QWidget(impl_->componentsGroup);
+  impl_->clonerStructureWidget =
+      new InspectorCanvasSurface(impl_->componentsGroup);
   auto *clonerStructureLayout = new QVBoxLayout(impl_->clonerStructureWidget);
   clonerStructureLayout->setContentsMargins(0, 4, 0, 0);
   clonerStructureLayout->setSpacing(6);
-  auto *clonerStructureLabel = new QLabel(QStringLiteral("Cloner Structure"));
+  auto *clonerStructureLabel = new InspectorChromeLabel(
+      QStringLiteral("Cloner Structure"),
+      InspectorChromeLabel::Role::Section, impl_->clonerStructureWidget);
+  clonerStructureLabel->setMinimumHeight(28);
   applyInspectorLabelPalette(clonerStructureLabel, true);
   clonerStructureLayout->addWidget(clonerStructureLabel);
 
   auto generatorHeaderLayout = new QHBoxLayout();
-  auto *generatorHeaderLabel = new QLabel(QStringLiteral("Generators"));
+  auto *generatorHeaderLabel = new InspectorChromeLabel(
+      QStringLiteral("Generators"), InspectorChromeLabel::Role::Section,
+      impl_->clonerStructureWidget);
   applyInspectorLabelPalette(generatorHeaderLabel, true);
   generatorHeaderLayout->addWidget(generatorHeaderLabel, 1);
   generatorHeaderLayout->addWidget(impl_->generatorComponentButton);
@@ -5461,10 +6237,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->generatorListWidget->setAlternatingRowColors(false);
   impl_->generatorListWidget->setFrameShape(QFrame::NoFrame);
   impl_->generatorListWidget->setSpacing(2);
+  applyInspectorOwnerDrawScrollBars(impl_->generatorListWidget);
   clonerStructureLayout->addWidget(impl_->generatorListWidget);
 
   auto fieldHeaderLayout = new QHBoxLayout();
-  auto *fieldHeaderLabel = new QLabel(QStringLiteral("Fields"));
+  auto *fieldHeaderLabel = new InspectorChromeLabel(
+      QStringLiteral("Fields"), InspectorChromeLabel::Role::Section,
+      impl_->clonerStructureWidget);
   applyInspectorLabelPalette(fieldHeaderLabel, true);
   fieldHeaderLayout->addWidget(fieldHeaderLabel, 1);
   fieldHeaderLayout->addWidget(impl_->fieldComponentButton);
@@ -5483,11 +6262,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->fieldListWidget->setAlternatingRowColors(false);
   impl_->fieldListWidget->setFrameShape(QFrame::NoFrame);
   impl_->fieldListWidget->setSpacing(2);
+  applyInspectorOwnerDrawScrollBars(impl_->fieldListWidget);
   clonerStructureLayout->addWidget(impl_->fieldListWidget);
 
   auto cloneModifierHeaderLayout = new QHBoxLayout();
-  auto *cloneModifierHeaderLabel =
-      new QLabel(QStringLiteral("Clone Modifiers"));
+  auto *cloneModifierHeaderLabel = new InspectorChromeLabel(
+      QStringLiteral("Clone Modifiers"), InspectorChromeLabel::Role::Section,
+      impl_->clonerStructureWidget);
   applyInspectorLabelPalette(cloneModifierHeaderLabel, true);
   cloneModifierHeaderLayout->addWidget(cloneModifierHeaderLabel, 1);
   cloneModifierHeaderLayout->addWidget(impl_->cloneModifierButton);
@@ -5506,24 +6287,23 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->cloneModifierListWidget->setAlternatingRowColors(false);
   impl_->cloneModifierListWidget->setFrameShape(QFrame::NoFrame);
   impl_->cloneModifierListWidget->setSpacing(2);
+  applyInspectorOwnerDrawScrollBars(impl_->cloneModifierListWidget);
   clonerStructureLayout->addWidget(impl_->cloneModifierListWidget);
   impl_->clonerStructureWidget->setVisible(false);
-  componentsLayout->addWidget(impl_->clonerStructureWidget);
+  componentsStack->appendWidget(impl_->clonerStructureWidget);
 
-  impl_->componentUtilitiesLabel = new QLabel(QStringLiteral("Layer Utilities"));
+  impl_->componentUtilitiesLabel = new InspectorChromeLabel(
+      QStringLiteral("Layer Utilities"), InspectorChromeLabel::Role::Section,
+      impl_->componentsGroup);
   applyInspectorLabelPalette(impl_->componentUtilitiesLabel, true);
   impl_->componentUtilitiesLabel->setVisible(false);
-  componentsLayout->addWidget(impl_->componentUtilitiesLabel);
-  componentsLayout->addWidget(impl_->openScriptButton);
-  componentsLayout->addWidget(impl_->applyLipSyncButton);
-  impl_->componentPropertyWidget = new ArtifactPropertyWidget();
-  impl_->componentPropertyWidget->setVisible(false);
-  impl_->componentPropertyWidget->setMinimumHeight(120);
-  componentsLayout->addWidget(impl_->componentPropertyWidget);
-  componentsLayout->setContentsMargins(
+  componentsStack->appendWidget(impl_->componentUtilitiesLabel);
+  componentsStack->appendWidget(impl_->openScriptButton);
+  componentsStack->appendWidget(impl_->applyLipSyncButton);
+  componentsStack->setContentsMargins(
       kInspectorNoteMargin, kInspectorNoteMargin, kInspectorNoteMargin,
       kInspectorNoteMargin);
-  impl_->componentsGroup->setLayout(componentsLayout);
+  componentsStack->setSpacing(kInspectorSectionSpacing);
   impl_->componentsGroup->setEnabled(false);
   layerInfoLayout->addWidget(impl_->componentsGroup);
 
@@ -5602,7 +6382,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
         !impl_->componentsGroup->isEnabled()) {
       return;
     }
-    QMenu menu;
+    InspectorActionMenu menu;
     auto *physicsAction = menu.addAction(QStringLiteral("Physics"));
     auto *scriptAction = menu.addAction(QStringLiteral("Script"));
     auto *layoutAction = menu.addAction(QStringLiteral("Layout"));
@@ -6306,31 +7086,39 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   // and its action wiring.
   layerInfoLayout->removeWidget(impl_->componentsGroup);
   auto *componentsTab = new ArtifactComponentTabSurface(impl_->componentsGroup);
+  componentsTab->setObjectName(
+      QStringLiteral("inspectorComponentsSurface"));
+  componentsTab->setParent(this);
   impl_->tabWidget->addTab(layerInfoWidget, "Layer");
-  impl_->tabWidget->addTab(componentsTab, "Components");
 
   // ================== Effects Pipeline Tab ==================
   impl_->effectsScrollArea = new QScrollArea();
   impl_->effectsScrollArea->setObjectName(QStringLiteral("inspectorEffectsScrollArea"));
   impl_->effectsScrollArea->setWidgetResizable(true);
-  impl_->effectsTabWidget = new QWidget();
+  impl_->effectsScrollArea->setFrameShape(QFrame::NoFrame);
+  applyInspectorOwnerDrawScrollBars(impl_->effectsScrollArea);
+  impl_->effectsTabWidget = new InspectorCanvasSurface();
   impl_->effectsTabWidget->setObjectName(QStringLiteral("inspectorEffectsTabWidget"));
   auto effectsLayout = new QVBoxLayout();
-  auto *effectsHeaderFrame = new QFrame();
+  auto *effectsHeaderFrame =
+      new EffectPanelSurface(EffectPanelSurface::Role::Header);
   effectsHeaderFrame->setObjectName(QStringLiteral("inspectorEffectsHeaderFrame"));
   applyInspectorPalette(effectsHeaderFrame, false);
   auto *effectsHeaderLayout = new QVBoxLayout(effectsHeaderFrame);
   effectsHeaderLayout->setContentsMargins(10, 10, 10, 10);
   effectsHeaderLayout->setSpacing(6);
 
-  impl_->effectsStateLabel =
-      new QLabel("Open a composition to manage effects.");
+  impl_->effectsStateLabel = new InspectorChromeLabel(
+      QStringLiteral("Open a composition to manage effects."),
+      InspectorChromeLabel::Role::Summary, effectsHeaderFrame);
   impl_->effectsStateLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectsStateLabel, true);
   effectsHeaderLayout->addWidget(impl_->effectsStateLabel);
 
-  impl_->effectsTargetLabel =
-      new QLabel("Target: No composition selected");
+  impl_->effectsTargetLabel = new InspectorChromeLabel(
+      QStringLiteral("Target: No composition selected"),
+      InspectorChromeLabel::Role::Active, effectsHeaderFrame);
+  impl_->effectsTargetLabel->setMinimumHeight(30);
   impl_->effectsTargetLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectsTargetLabel, false);
   effectsHeaderLayout->addWidget(impl_->effectsTargetLabel);
@@ -6338,7 +7126,10 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   auto *effectsToolbarLayout = new QHBoxLayout();
   effectsToolbarLayout->setContentsMargins(0, 0, 0, 0);
   effectsToolbarLayout->setSpacing(8);
-  impl_->effectsQuickAddButton = new QPushButton("+ Add Effect");
+  auto* effectsQuickAddButton =
+      new InspectorActionButton(QStringLiteral("+ Add Effect"));
+  effectsQuickAddButton->setOwnerDrawn(true);
+  impl_->effectsQuickAddButton = effectsQuickAddButton;
   impl_->effectsQuickAddButton->setObjectName(QStringLiteral("inspectorEffectsQuickAddButton"));
   applyInspectorButton(impl_->effectsQuickAddButton, true);
   impl_->effectsQuickAddButton->setToolTip(
@@ -6352,31 +7143,40 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   // not insert a second Stack / Editor page switch inside the Effects tab.
   impl_->effectsModeTabs = nullptr;
 
-  auto *stackPanel = new QFrame();
+  auto *stackPanel =
+      new EffectPanelSurface(EffectPanelSurface::Role::Stack);
   stackPanel->setObjectName(QStringLiteral("inspectorEffectsStackPanel"));
   applyInspectorPalette(stackPanel, false);
   auto *stackPanelLayout = new QVBoxLayout(stackPanel);
   stackPanelLayout->setContentsMargins(8, 8, 8, 8);
   stackPanelLayout->setSpacing(8);
 
-  impl_->effectsStackSummaryLabel = new QLabel("Effect Controls");
+  impl_->effectsStackSummaryLabel = new InspectorChromeLabel(
+      QStringLiteral("Effect Controls"), InspectorChromeLabel::Role::Section,
+      stackPanel);
+  impl_->effectsStackSummaryLabel->setMinimumHeight(28);
   impl_->effectsStackSummaryLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectsStackSummaryLabel, false);
   stackPanelLayout->addWidget(impl_->effectsStackSummaryLabel);
 
-  auto *detailPanel = new QFrame();
+  auto *detailPanel =
+      new EffectPanelSurface(EffectPanelSurface::Role::Detail);
   detailPanel->setObjectName(QStringLiteral("inspectorEffectsDetailPanel"));
   applyInspectorPalette(detailPanel, false);
   auto *detailPanelLayout = new QVBoxLayout(detailPanel);
   detailPanelLayout->setContentsMargins(8, 8, 8, 8);
   detailPanelLayout->setSpacing(8);
 
-  impl_->effectEditorTitleLabel = new QLabel("Selected Effect Controls");
+  impl_->effectEditorTitleLabel = new InspectorChromeLabel(
+      QStringLiteral("Selected Effect Controls"),
+      InspectorChromeLabel::Role::Active, detailPanel);
+  impl_->effectEditorTitleLabel->setMinimumHeight(32);
   applyInspectorLabelPalette(impl_->effectEditorTitleLabel, true);
   detailPanelLayout->addWidget(impl_->effectEditorTitleLabel);
 
   impl_->effectEnableButton =
       new InspectorActionButton(QStringLiteral("Enabled"));
+  impl_->effectEnableButton->setOwnerDrawn(true);
   impl_->effectEnableButton->setCheckable(true);
   impl_->effectEnableButton->setVisible(false);
   impl_->effectEnableButton->setMinimumHeight(28);
@@ -6385,8 +7185,9 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       QStringLiteral("Temporarily bypass the selected effect."));
   detailPanelLayout->addWidget(impl_->effectEnableButton);
 
-  impl_->effectParametersHintLabel =
-      new QLabel("Select an effect above to reveal its parameters here.");
+  impl_->effectParametersHintLabel = new InspectorChromeLabel(
+      QStringLiteral("Select an effect above to reveal its parameters here."),
+      InspectorChromeLabel::Role::Summary, detailPanel);
   impl_->effectParametersHintLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectParametersHintLabel, false);
   detailPanelLayout->addWidget(impl_->effectParametersHintLabel);
@@ -6394,7 +7195,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectPropertyWidget = new ArtifactPropertyWidget();
   impl_->effectPropertyWidget->setVisible(false);
   impl_->effectPropertyWidget->setMinimumHeight(220);
-  detailPanelLayout->addWidget(impl_->effectPropertyWidget, 1);
+  applyInspectorOwnerDrawScrollBars(impl_->effectPropertyWidget);
+  impl_->effectPropertySurface = new InspectorPropertySurface(
+      impl_->effectPropertyWidget, detailPanel);
+  impl_->effectPropertySurface->setObjectName(
+      QStringLiteral("inspectorEffectPropertySurface"));
+  impl_->effectPropertySurface->setVisible(false);
+  detailPanelLayout->addWidget(impl_->effectPropertySurface, 1);
 
   impl_->effectEnableButton->setAction([this]() {
     const QString effectId = impl_->focusedEffectId_.trimmed();
@@ -6428,14 +7235,12 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                           "Rasterizer", "Layer Transform"};
 
   for (int i = 0; i < 5; ++i) {
-    auto rackGroup = new QGroupBox(rackNames[i]);
+    auto rackGroup = new EffectRackSurface(rackNames[i]);
     impl_->racks[i].groupBox = rackGroup;
-    applyInspectorSectionBox(rackGroup);
     applyInspectorPalette(rackGroup, false);
-    rackGroup->setFlat(true);
     auto rackLayout = new QVBoxLayout();
 
-    impl_->racks[i].listWidget = new QListWidget();
+    impl_->racks[i].listWidget = new EffectRackList();
     impl_->racks[i].listWidget->setMinimumHeight(38);
     impl_->racks[i].listWidget->setMaximumHeight(132);
     impl_->racks[i].listWidget->setUniformItemSizes(true);
@@ -6447,6 +7252,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     impl_->racks[i].listWidget->setToolTip(
         QStringLiteral("Single click an effect to edit its parameters below. Double click toggles enable/disable. Right click opens effect actions."));
     applyInspectorList(impl_->racks[i].listWidget);
+    applyInspectorOwnerDrawScrollBars(impl_->racks[i].listWidget);
     impl_->racks[i].listWidget->setContextMenuPolicy(Qt::CustomContextMenu);
     if (impl_->racks[i].listWidget->viewport()) {
       impl_->racks[i].listWidget->viewport()->setContextMenuPolicy(
@@ -6454,13 +7260,24 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     }
 
     auto btnLayout = new QHBoxLayout();
-  impl_->racks[i].addButton = new QPushButton("+ Add");
+  auto* rackAddButton = new InspectorActionButton(QStringLiteral("+ Add"));
+  rackAddButton->setOwnerDrawn(true);
+  impl_->racks[i].addButton = rackAddButton;
   impl_->racks[i].addButton->setObjectName(QStringLiteral("inspectorRackAddButton"));
-  impl_->racks[i].removeButton = new QPushButton("Remove");
+  auto* rackRemoveButton =
+      new InspectorActionButton(QStringLiteral("Remove"));
+  rackRemoveButton->setOwnerDrawn(true);
+  impl_->racks[i].removeButton = rackRemoveButton;
   impl_->racks[i].removeButton->setObjectName(QStringLiteral("inspectorRackRemoveButton"));
-  impl_->racks[i].moveUpButton = new QPushButton(QStringLiteral("Move Up"));
+  auto* rackMoveUpButton =
+      new InspectorActionButton(QStringLiteral("Move Up"));
+  rackMoveUpButton->setOwnerDrawn(true);
+  impl_->racks[i].moveUpButton = rackMoveUpButton;
   impl_->racks[i].moveUpButton->setObjectName(QStringLiteral("inspectorRackMoveUpButton"));
-  impl_->racks[i].moveDownButton = new QPushButton(QStringLiteral("Move Down"));
+  auto* rackMoveDownButton =
+      new InspectorActionButton(QStringLiteral("Move Down"));
+  rackMoveDownButton->setOwnerDrawn(true);
+  impl_->racks[i].moveDownButton = rackMoveDownButton;
   impl_->racks[i].moveDownButton->setObjectName(QStringLiteral("inspectorRackMoveDownButton"));
     applyInspectorButton(impl_->racks[i].addButton, false);
     applyInspectorButton(impl_->racks[i].removeButton, false);
@@ -6483,7 +7300,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
 
     rackLayout->addWidget(impl_->racks[i].listWidget);
     rackLayout->addLayout(btnLayout);
-    rackLayout->setContentsMargins(kInspectorRackMarginL, 8,
+    rackLayout->setContentsMargins(kInspectorRackMarginL, 34,
                                    kInspectorRackMarginR,
                                    kInspectorRackMarginB);
     rackGroup->setLayout(rackLayout);
@@ -6590,7 +7407,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                    [this]() { impl_->handleAddEffectClicked(-1); });
 
   auto *quickAddEffectShortcut =
-      new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Space), this);
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Space),
+                    impl_->effectsScrollArea);
   quickAddEffectShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   quickAddEffectShortcut->setObjectName(QStringLiteral("QuickAddEffectShortcut"));
   QObject::connect(quickAddEffectShortcut, &QShortcut::activated, this,
@@ -6603,7 +7421,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
 
   impl_->effectsTabWidget->setLayout(effectsLayout);
   impl_->effectsScrollArea->setWidget(impl_->effectsTabWidget);
-  impl_->tabWidget->addTab(impl_->effectsScrollArea, "Effects");
+  impl_->effectsScrollArea->setParent(this);
 
   // タブをメインレイアウトに追加
   mainLayout->addWidget(impl_->tabWidget);

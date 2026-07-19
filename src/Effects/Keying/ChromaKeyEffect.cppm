@@ -123,7 +123,9 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
     });
 
     ImageF32x4_RGBA dstImage;
-    dstImage.setFromRGBA32F(dstMat.ptr<float>(), dstMat.cols, dstMat.rows);
+    dstImage.setFromRGBA32F(
+        dstMat.ptr<float>(), dstMat.cols, dstMat.rows,
+        srcImage.colorDescriptor());
     dst = ImageF32x4RGBAWithCache(dstImage);
 }
 // Properties - single definitions placed after implementation

@@ -48,7 +48,6 @@ public:
                         if(e<th)e=0;if(inv>0.5f)e=1.0f-e;
                         p[0]=e;p[1]=e;p[2]=e;p[3]=1.0f;
                     }
-                }
                 });
             }
         }else{

@@ -7938,7 +7938,11 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
 
   // 再生/一時停止
   if (shortcuts.matches(event, ArtifactCore::ShortcutId::PlaybackToggle)) {
-    if (auto *active = ArtifactActiveContextService::instance()) {
+    auto *actions = ArtifactCore::ActionManager::instance();
+    if (actions &&
+        actions->getAction(QStringLiteral("playback.play_pause"))) {
+      actions->executeAction(QStringLiteral("playback.play_pause"));
+    } else if (auto *active = ArtifactActiveContextService::instance()) {
       active->togglePlayPause();
     } else if (auto *svc = ArtifactPlaybackService::instance()) {
       svc->togglePlayPause();

@@ -55,6 +55,7 @@ module;
 #include <QTimer>
 #include <QThread>
 #include <QUrl>
+#include <QWidget>
 #include <QtCore/QtGlobal>
 #include <ads_globals.h>
 #include <filesystem>
@@ -2591,6 +2592,22 @@ int main(int argc, char *argv[]) {
     inspectorWidget->setMinimumWidth(240);
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea,
                         inspectorWidget);
+    auto *componentsPanel = inspectorWidget->findChild<QWidget *>(
+        QStringLiteral("inspectorComponentsSurface"),
+        Qt::FindDirectChildrenOnly);
+    if (componentsPanel) {
+      mw->addDockedWidgetTabbed(QStringLiteral("Components"),
+                                ads::RightDockWidgetArea, componentsPanel,
+                                QStringLiteral("Inspector"));
+    }
+    auto *effectsPanel = inspectorWidget->findChild<QWidget *>(
+        QStringLiteral("inspectorEffectsScrollArea"),
+        Qt::FindDirectChildrenOnly);
+    if (effectsPanel) {
+      mw->addDockedWidgetTabbed(QStringLiteral("Effects"),
+                                ads::RightDockWidgetArea, effectsPanel,
+                                QStringLiteral("Inspector"));
+    }
     auto *propertyPanel = new ArtifactPropertyWidget(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"),
                               ads::RightDockWidgetArea, propertyPanel,
@@ -2953,24 +2970,26 @@ int main(int argc, char *argv[]) {
                dopeSheetDockObjectId,
                status](const CompositionCreatedEvent &event) {
                 const CompositionID compId(event.compositionId);
-                const bool restoreUpdates = mw->updatesEnabled();
-                if (restoreUpdates) {
-                  mw->setUpdatesEnabled(false);
+                if (!mw || compId.isNil()) {
+                  return;
                 }
-                ArtifactPythonHookManager::runHook(
-                    QStringLiteral("composition_created"),
-                    QStringList() << event.compositionId);
+
+                // The service queues CurrentCompositionChangedEvent immediately
+                // after this notification.  Do not suspend main-window updates or
+                // construct the per-composition docks ahead of it: doing so held
+                // back the composition viewer until the Timeline's expensive
+                // setup had completed.
                 QTimer::singleShot(
-                    0, mw,
+                    1, mw,
                     [mw, compId, timelineDockTitle, timelineDockObjectId,
                      dopeSheetDockTitle, dopeSheetDockObjectId, status,
-                     restoreUpdates]() {
-                      const auto updateGuard = qScopeGuard([mw, restoreUpdates]() {
-                        if (restoreUpdates) {
-                          mw->setUpdatesEnabled(true);
-                          mw->update();
-                        }
-                      });
+                     event]() {
+                      if (!mw) {
+                        return;
+                      }
+                      ArtifactPythonHookManager::runHook(
+                          QStringLiteral("composition_created"),
+                          QStringList() << event.compositionId);
                       const QString dockTitle = timelineDockTitle(compId);
                       const QString dockId = timelineDockObjectId(compId);
                       if (mw->hasDock(dockId)) {

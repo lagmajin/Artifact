@@ -298,7 +298,8 @@ cbuffer GradientCB {
     float4 StartColor;
     float4 EndColor;
     float4 Mode;          // x=type, y=angle degrees, z=reverse, w=scale
-    float4 CenterOffset;  // xy=center, zw=offset
+    float4 CenterOffset;  // xy=center, z=offset, w=aspect ratio
+    float4 ColorContract; // x=linear interpolation of decoded endpoints
 };
 struct PS_INPUT {
     float4 Position : SV_POSITION;
@@ -309,13 +310,21 @@ float gradientT(float2 uv)
     const float pi = 3.14159265359;
     float type = Mode.x;
     float t = 0.0;
-    if (type < 1.5) {
+    if (type < 1.5 || type > 3.5) {
         float radians = Mode.y * pi / 180.0;
         float2 dir = float2(cos(radians), -sin(radians));
         float aspect = max(CenterOffset.w, 0.0001);
         float2 local = (uv - CenterOffset.xy) * float2(aspect, 1.0);
         float halfSpan = max(0.0001, 0.5 * sqrt(aspect * aspect + 1.0) * Mode.w);
         t = dot(local, dir) / (2.0 * halfSpan) + 0.5 + CenterOffset.z;
+        if (type > 4.5) {
+            float period = t - floor(t * 0.5) * 2.0;
+            t = period <= 1.0 ? period : 2.0 - period;
+        } else if (type > 3.5) {
+            t = t - floor(t);
+        } else {
+            t = saturate(t);
+        }
     } else if (type < 2.5) {
         float2 center = CenterOffset.xy;
         float aspect = max(CenterOffset.w, 0.0001);
@@ -327,13 +336,42 @@ float gradientT(float2 uv)
         float2 d = uv - center;
         t = atan2(d.y, d.x) / (2.0 * pi) + 0.5 + Mode.y / 360.0;
     }
-    t = saturate(t);
+    if (type >= 1.5 && type < 3.5) {
+        t = saturate(t);
+    }
     return Mode.z > 0.5 ? 1.0 - t : t;
+}
+float srgbToLinearChannel(float encoded)
+{
+    encoded = max(encoded, 0.0);
+    return encoded <= 0.04045
+        ? encoded / 12.92
+        : pow((encoded + 0.055) / 1.055, 2.4);
 }
 float4 main(PS_INPUT input) : SV_TARGET
 {
-    float4 color = lerp(StartColor, EndColor, gradientT(input.TexCoord));
-    return color;
+    // Serialized/UI gradient colors are sRGB-encoded straight colors. The
+    // target is sRGB, so the shader must provide linear RGB and let the render
+    // target perform the single display encoding. This also matches the
+    // QImage/effect path, where sampling the sRGB texture performs the decode.
+    float t = gradientT(input.TexCoord);
+    float alpha = lerp(StartColor.a, EndColor.a, t);
+    if (ColorContract.x > 0.5) {
+        float3 linearStart = StartColor.a <= 0.000001 ? float3(0.0, 0.0, 0.0) : float3(
+            srgbToLinearChannel(StartColor.r),
+            srgbToLinearChannel(StartColor.g),
+            srgbToLinearChannel(StartColor.b));
+        float3 linearEnd = EndColor.a <= 0.000001 ? float3(0.0, 0.0, 0.0) : float3(
+            srgbToLinearChannel(EndColor.r),
+            srgbToLinearChannel(EndColor.g),
+            srgbToLinearChannel(EndColor.b));
+        return float4(lerp(linearStart, linearEnd, t), alpha);
+    }
+    float3 encodedColor = lerp(StartColor.rgb, EndColor.rgb, t);
+    return float4(
+        srgbToLinearChannel(encodedColor.r),
+        srgbToLinearChannel(encodedColor.g),
+        srgbToLinearChannel(encodedColor.b), alpha);
 }
 )";
     ShaderCreateInfo gradientPsInfo;

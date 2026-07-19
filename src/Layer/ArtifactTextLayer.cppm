@@ -72,6 +72,7 @@ import Artifact.Render.IRenderer;
 import Utils.String.UniString;
 import Color.Float;
 import FloatRGBA;
+import Graphics.SurfaceColorContract;
 import Image.ImageF32x4_RGBA;
 import CvUtils;
 import Size;
@@ -114,6 +115,8 @@ public:
   QImage renderedImage_;
   mutable std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> renderedBuffer_;
   bool isDirty_ = true;
+  std::optional<int64_t> lastAnimatedTextPropertyFrame_;
+  bool applyingAnimatedTextProperties_ = false;
 
   // Text Animator support
   std::vector<GlyphItem> glyphs_;
@@ -2337,6 +2340,62 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
   if (!renderer) {
     return;
   }
+
+  const int64_t animationFrame = currentFrame();
+  if (!impl_->lastAnimatedTextPropertyFrame_ ||
+      *impl_->lastAnimatedTextPropertyFrame_ != animationFrame) {
+    impl_->lastAnimatedTextPropertyFrame_ = animationFrame;
+    impl_->applyingAnimatedTextProperties_ = true;
+    static const std::array<QString, 33> animatedTextPropertyPaths{
+        QStringLiteral("text.fontFamily"),
+        QStringLiteral("text.fontSize"),
+        QStringLiteral("text.tracking"),
+        QStringLiteral("text.fontStretch"),
+        QStringLiteral("text.leading"),
+        QStringLiteral("text.bold"),
+        QStringLiteral("text.italic"),
+        QStringLiteral("text.allCaps"),
+        QStringLiteral("text.underline"),
+        QStringLiteral("text.strikethrough"),
+        QStringLiteral("text.alignment"),
+        QStringLiteral("text.verticalAlignment"),
+        QStringLiteral("text.wrapMode"),
+        QStringLiteral("text.writingMode"),
+        QStringLiteral("text.rubyText"),
+        QStringLiteral("text.rubyScale"),
+        QStringLiteral("text.layoutMode"),
+        QStringLiteral("text.maxWidth"),
+        QStringLiteral("text.boxHeight"),
+        QStringLiteral("text.paragraphSpacing"),
+        QStringLiteral("text.pathStartOffset"),
+        QStringLiteral("text.pathEndOffset"),
+        QStringLiteral("text.pathReverse"),
+        QStringLiteral("text.pathAlignToPath"),
+        QStringLiteral("text.color"),
+        QStringLiteral("text.strokeEnabled"),
+        QStringLiteral("text.strokeColor"),
+        QStringLiteral("text.strokeWidth"),
+        QStringLiteral("text.shadowEnabled"),
+        QStringLiteral("text.shadowColor"),
+        QStringLiteral("text.shadowOffsetX"),
+        QStringLiteral("text.shadowOffsetY"),
+        QStringLiteral("text.shadowBlur"),
+    };
+    const RationalTime animationTime = effectiveTextTimelineTime(this);
+    for (const auto &propertyPath : animatedTextPropertyPaths) {
+      const auto property = getProperty(propertyPath);
+      if (!property || !property->isAnimatable() ||
+          property->getKeyFrames().empty()) {
+        continue;
+      }
+      const QVariant animatedValue = property->interpolateValue(animationTime);
+      if (animatedValue.isValid()) {
+        setLayerPropertyValue(propertyPath, animatedValue);
+      }
+    }
+    impl_->applyingAnimatedTextProperties_ = false;
+  }
+
   const bool boxLayout = isBoxText();
   const bool hasEnabledAnimators =
       std::any_of(impl_->animators_.begin(), impl_->animators_.end(),
@@ -3390,7 +3449,10 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 }
 
 bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
-                                              const QVariant &value) {
+                                               const QVariant &value) {
+  if (!impl_->applyingAnimatedTextProperties_) {
+    impl_->lastAnimatedTextPropertyFrame_.reset();
+  }
   auto clearPresetSelection = [this]() {
     if (const auto presetProperty =
             getProperty(QStringLiteral("text.animatorPreset"))) {
@@ -4098,7 +4160,9 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
       if (rgba.type() != CV_32FC4) {
         rgba.convertTo(rgba, CV_32FC4, 1.0 / 255.0);
       }
-      impl_->renderedBuffer_->setFromCVMat(rgba);
+      impl_->renderedBuffer_->setFromCVMat(
+          rgba, SurfaceColorDescriptor::legacyOpenCvBgra32Float(
+                    TransferFunction::sRGB, SurfaceAlphaMode::Premultiplied));
     }
     impl_->isDirty_ = false;
     return;
@@ -4358,7 +4422,9 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
     if (rgba.type() != CV_32FC4) {
       rgba.convertTo(rgba, CV_32FC4, 1.0 / 255.0);
     }
-    impl_->renderedBuffer_->setFromCVMat(rgba);
+    impl_->renderedBuffer_->setFromCVMat(
+        rgba, SurfaceColorDescriptor::legacyOpenCvBgra32Float(
+                  TransferFunction::sRGB, SurfaceAlphaMode::Premultiplied));
   }
   impl_->isDirty_ = false;
 }

@@ -204,6 +204,10 @@ public:
         const int passCount = static_cast<int>(snapshot_.passes.size());
         const int resourceCount = static_cast<int>(snapshot_.resources.size());
         const int attachmentCount = static_cast<int>(snapshot_.attachments.size());
+        const int graphPassCount = snapshot_.hasRenderGraphDiagnostic
+            ? static_cast<int>(snapshot_.renderGraphDiagnostic.passes.size()) : 0;
+        const int graphResourceCount = snapshot_.hasRenderGraphDiagnostic
+            ? static_cast<int>(snapshot_.renderGraphDiagnostic.resources.size()) : 0;
         int bindingCount = 0;
         qint64 passTotalUs = 0;
         for (const auto& pass : snapshot_.passes) {
@@ -213,13 +217,15 @@ public:
         const int laneCount = trace_.frames.empty() ? 0 : static_cast<int>(trace_.frames.back().lanes.size());
         const qint64 spanNs = trace_.frames.empty() ? 0 : (trace_.frames.back().frameEndNs - trace_.frames.back().frameStartNs);
 
-        summary_->setText(QStringLiteral("frame=%1  render=%2ms/%3ms  passCpu=%4ms  passes=%5  resources=%6  attachments=%7  bindings=%8  lanes=%9  traceSpanNs=%10")
+        summary_->setText(QStringLiteral("frame=%1  render=%2ms/%3ms  passCpu=%4ms  passes=%5  resources=%6  graph=%7/%8  attachments=%9  bindings=%10  lanes=%11  traceSpanNs=%12")
                               .arg(QString::number(frameIndex))
                               .arg(QString::number(snapshot_.renderLastFrameMs, 'f', 1))
                               .arg(QString::number(snapshot_.renderAverageFrameMs, 'f', 1))
                               .arg(QString::number(static_cast<double>(passTotalUs) / 1000.0, 'f', 2))
                               .arg(passCount)
                               .arg(resourceCount)
+                              .arg(graphPassCount)
+                              .arg(graphResourceCount)
                               .arg(attachmentCount)
                               .arg(bindingCount)
                               .arg(laneCount)
@@ -245,6 +251,12 @@ public:
         lines << QStringLiteral("renderTiming: last=%1ms avg=%2ms")
                      .arg(QString::number(snapshot_.renderLastFrameMs, 'f', 1))
                      .arg(QString::number(snapshot_.renderAverageFrameMs, 'f', 1));
+        lines << QStringLiteral("gpuTiming: %1 sample=%2 duration=%3ms")
+                     .arg(snapshot_.renderGpuTimingAvailable
+                              ? QStringLiteral("available")
+                              : QStringLiteral("unavailable"))
+                     .arg(QString::number(snapshot_.renderGpuTimingExecutionId))
+                     .arg(QString::number(snapshot_.renderGpuFrameMs, 'f', 3));
         lines << QStringLiteral("playback: %1")
                      .arg(snapshot_.playbackState.isEmpty() ? QStringLiteral("<none>") : snapshot_.playbackState);
         lines << QStringLiteral("selectedLayer: %1")
@@ -256,6 +268,64 @@ public:
                      .arg(snapshot_.failed ? QStringLiteral("true") : QStringLiteral("false"));
         if (!snapshot_.failureReason.isEmpty()) {
             lines << QStringLiteral("failureReason: %1").arg(snapshot_.failureReason);
+        }
+
+        lines << QString();
+        lines << QStringLiteral("Compiled Render Graph:");
+        if (!snapshot_.hasRenderGraphDiagnostic) {
+            lines << QStringLiteral("  <not captured>");
+        } else {
+            const auto& graph = snapshot_.renderGraphDiagnostic;
+            lines << QStringLiteral("  executionId=%1 valid=%2 estimatedBytes=%3")
+                         .arg(QString::number(graph.executionId))
+                         .arg(graph.valid ? QStringLiteral("true") : QStringLiteral("false"))
+                         .arg(QString::number(graph.estimatedResourceBytes));
+            if (!graph.error.empty()) {
+                lines << QStringLiteral("  error=%1").arg(QString::fromStdString(graph.error));
+            }
+            const auto resourceLabel = [&graph](const ArtifactCore::RenderResourceHandle handle) {
+                for (const auto& resource : graph.resources) {
+                    if (resource.handle == handle) {
+                        const auto name = QString::fromStdString(resource.descriptor.name);
+                        return name.isEmpty() ? QStringLiteral("resource#%1").arg(handle.id) : name;
+                    }
+                }
+                return QStringLiteral("resource#%1").arg(handle.id);
+            };
+            for (const auto& pass : graph.passes) {
+                QStringList reads;
+                for (const auto handle : pass.descriptor.reads) reads << resourceLabel(handle);
+                QStringList writes;
+                for (const auto handle : pass.descriptor.writes) writes << resourceLabel(handle);
+                const QString order = pass.state == ArtifactCore::RenderDiagnosticPassState::Scheduled
+                    ? QString::number(pass.executionOrder) : QStringLiteral("-");
+                lines << QStringLiteral("  #%1 order=%2 [%3/%4] %5 -> %6")
+                             .arg(pass.handle.id)
+                             .arg(order)
+                             .arg(ArtifactCore::toString(pass.descriptor.queue))
+                             .arg(ArtifactCore::toString(pass.state))
+                             .arg(reads.isEmpty() ? QStringLiteral("<none>") : reads.join(QStringLiteral(", ")))
+                             .arg(writes.isEmpty() ? QStringLiteral("<none>") : writes.join(QStringLiteral(", ")));
+                if (pass.gpuTimingAvailable) {
+                    lines << QStringLiteral("      gpu=%1us sample=%2")
+                                 .arg(QString::number(pass.gpuDurationUs))
+                                 .arg(QString::number(pass.gpuSampleExecutionId));
+                }
+            }
+            lines << QStringLiteral("  Resource lifetime:");
+            for (const auto& resource : graph.resources) {
+                const QString name = QString::fromStdString(resource.descriptor.name);
+                const QString range = resource.used
+                    ? QStringLiteral("%1..%2").arg(resource.firstPass).arg(resource.lastPass)
+                    : QStringLiteral("unused");
+                lines << QStringLiteral("    #%1 %2 [%3/%4] bytes=%5 lifetime=%6")
+                             .arg(resource.handle.id)
+                             .arg(name.isEmpty() ? QStringLiteral("<unnamed>") : name)
+                             .arg(ArtifactCore::toString(resource.descriptor.kind))
+                             .arg(ArtifactCore::toString(resource.descriptor.lifetime))
+                             .arg(QString::number(resource.descriptor.byteSize))
+                             .arg(range);
+            }
         }
 
         lines << QString();

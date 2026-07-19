@@ -69,7 +69,7 @@ public:
                 for(int y=sy;y<ey;y+=2)for(int x=sx;x<ex;x+=2){int cx=x+dx,cy=y+dy;
                     if((unsigned)cx<(unsigned)pw&&(unsigned)cy<(unsigned)ph){auto*sp=sd+((size_t)y*W+x)*4,*pp=pd+((size_t)cy*pw+cx)*4;float dr=sp[0]-pp[0],dg=sp[1]-pp[1],db=sp[2]-pp[2];diff+=dr*dr+dg*dg+db*db;++cnt;}}
                 if(cnt>0){diff/=(float)cnt;if(diff<best){best=diff;bdx=(float)(-dx);bdy=(float)(-dy);}}}
-            vx[by*vw+bx]=bdx*sa;vy[by*vw+bx]=bdy*sa;}}
+            vx[by*vw+bx]=bdx*sa;vy[by*vw+bx]=bdy*sa;}});
         ArtifactCore::Parallel::For(0,H,[&](int y){int bvY=y/BS;float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){int bvX=x/BS;float mx=vx[std::min(bvY,vh-1)*vw+std::min(bvX,vw-1)],my=vy[std::min(bvY,vh-1)*vw+std::min(bvX,vw-1)];float* p=o+(size_t)x*4;float r=p[0],g=p[1],b=p[2],a=p[3];
                 for(int i=1;i<=ns;++i){float t=((float)i-0.5f)/(float)ns;int sx=(int)((float)x+mx*t+0.5f),sy=(int)((float)y+my*t+0.5f);sx=std::clamp(sx,0,W-1);sy=std::clamp(sy,0,H-1);auto*sp=sd+((size_t)sy*W+sx)*4;r+=sp[0];g+=sp[1];b+=sp[2];a+=sp[3];}
@@ -105,6 +105,7 @@ public:
         if(!ex_->setTextureView("InTex",in->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!ex_->setTextureView("OutTex",ot->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){cpu.applyCPU(src,dst);return;}
         auto at=ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1);ex_->dispatch(c,at,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         if(!vbDown(d,c,ot,dst))cpu.applyCPU(src,dst);
+        dst.image().setColorDescriptor(src.image().colorDescriptor());
     }
 private:
     static constexpr const char* kHLSL=R"(

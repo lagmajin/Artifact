@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <iostream>
 #include <vector>
@@ -211,10 +211,10 @@ std::shared_ptr<ImageF32x4_RGBA> ArtifactAbstractEffect::effectMaskImage(int ind
 }
 
 void ArtifactAbstractEffect::applyCPUOnly(const ImageF32x4RGBAWithCache& src,
-                                         ImageF32x4RGBAWithCache& dst) {
+                                          ImageF32x4RGBAWithCache& dst) {
     const ComputeMode previousMode = impl_->mode;
     impl_->mode = ComputeMode::CPU;
-    apply(src, dst);
+    applyConfigured(src, dst);
     impl_->mode = previousMode;
 }
 
@@ -231,6 +231,15 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
         impl_->mode = ComputeMode::CPU;
         apply(src, dst);
         impl_->mode = previousMode;
+    }
+
+    // Effects operate inside the host surface domain. No effect API currently
+    // declares an output color-domain transform, so a fully-specified input
+    // descriptor is authoritative even when a legacy implementation publishes
+    // an inferred or stale descriptor while replacing pixel data.
+    const auto sourceDescriptor = src.image().colorDescriptor();
+    if (sourceDescriptor.isFullySpecified()) {
+        dst.image().setColorDescriptor(sourceDescriptor);
     }
 
     const bool hasPrimaryMask = impl_->maskEnabled && impl_->maskImage;

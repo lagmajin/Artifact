@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 
 //#include <memory>
@@ -56,6 +56,11 @@ export namespace Artifact {
   Impl* impl_;
 
  public:
+  static constexpr int LegacyColorPipelineVersion =
+      ArtifactAbstractComposition::LegacyColorPipelineVersion;
+  static constexpr int CanonicalColorPipelineVersion =
+      ArtifactAbstractComposition::CanonicalColorPipelineVersion;
+
   ArtifactProject();
   ArtifactProject(const QString& name);
   ArtifactProject(const ArtifactProjectSettings& setting);
@@ -73,6 +78,8 @@ export namespace Artifact {
   bool addImportedComposition(ArtifactCompositionPtr comp, const QString& name);
   void setProjectName(const QString& name);
   void setAuthor(const QString& author);
+  int colorPipelineVersion() const noexcept;
+  void setColorPipelineVersion(int version, bool markDirty = true);
 
   // AI^f[^
   void setAIDescription(const QString& description);

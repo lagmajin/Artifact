@@ -156,6 +156,7 @@ public:
         if (!readbackTexture(device_, context_, outputTex, dst, "Levels/StagingTexture")) {
             applyCPU(src, dst);
         }
+        dst.image().setColorDescriptor(src.image().colorDescriptor());
     }
 
     void syncSettings(const ArtifactCore::LevelsSettings& settings) {

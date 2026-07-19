@@ -8,6 +8,9 @@ module;
 
 module Artifact.FxStudio.ViewportModel;
 
+import Artifact.FxStudio.EventTrack;
+import Artifact.FxStudio.Sequence;
+
 namespace Artifact::FxStudio {
 
 ComparisonMode ViewportModel::comparisonMode() const noexcept {

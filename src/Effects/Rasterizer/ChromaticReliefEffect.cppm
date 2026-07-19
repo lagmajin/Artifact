@@ -73,7 +73,7 @@ public:
             }
         });
         dst = src;
-        dst.image().setFromCVMat(output);
+        dst.image().setFromCVMat(output, src.image().colorDescriptor());
     }
 };
 

@@ -471,10 +471,15 @@ namespace {
   bool m_initialized = false;
   bool m_frameQueryInitialized = false;
   bool m_frameQueryActive = false;
+  bool m_hasGpuFrameTiming = false;
   double m_lastGpuFrameTimeMs = 0.0;
+  Uint64 m_activeFrameQueryExecutionId = 0;
+  Uint64 m_lastGpuFrameTimingExecutionId = 0;
   Uint32 m_frameQueryIndex = 0;
-  static constexpr Uint32 FrameQueryCount = 2;
+  static constexpr Uint32 FrameQueryCount = 3;
   std::array<RefCntAutoPtr<IQuery>, FrameQueryCount> m_frameQueries;
+  std::array<bool, FrameQueryCount> m_frameQuerySubmitted{};
+  std::array<Uint64, FrameQueryCount> m_frameQueryExecutionIds{};
   int m_offlineWidth  = 0;
   int m_offlineHeight = 0;
   float m_viewportWidth  = 0.0f;
@@ -516,6 +521,7 @@ namespace {
 
 
   void initFrameQueries();
+  void collectFrameQueryResults();
   void createLayerRT(QWidget* window);
   ITextureView* activeColorView() const;
   ITextureView* activeDepthView() const;
@@ -815,9 +821,13 @@ namespace {
   QImage readbackTextureViewToImage(ITextureView* textureView) const;
   void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
-  void beginFrameGpuProfiling();
+  void beginFrameGpuProfiling(quint64 executionId);
   void endFrameGpuProfiling();
    double lastFrameGpuTimeMs() const;
+  bool hasFrameGpuTiming() const { return m_hasGpuFrameTiming; }
+  quint64 lastFrameGpuTimingExecutionId() const {
+    return m_lastGpuFrameTimingExecutionId;
+  }
   quint64 presentAttemptCount() const { return presentAttemptCount_; }
   quint64 presentSuccessCount() const { return presentSuccessCount_; }
   quint64 presentFailureCount() const { return presentFailureCount_; }
@@ -2443,15 +2453,41 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
   m_frameQueryInitialized = true;
  }
 
- void ArtifactIRenderer::Impl::beginFrameGpuProfiling()
+ void ArtifactIRenderer::Impl::collectFrameQueryResults()
+ {
+  for (Uint32 index = 0; index < FrameQueryCount; ++index) {
+   if (!m_frameQuerySubmitted[index] || !m_frameQueries[index]) continue;
+   QueryDataDuration data;
+   if (!m_frameQueries[index]->GetData(&data, sizeof(data), True) ||
+       data.Frequency == 0) {
+    continue;
+   }
+   m_frameQuerySubmitted[index] = false;
+   const auto executionId = m_frameQueryExecutionIds[index];
+   if (!m_hasGpuFrameTiming ||
+       executionId >= m_lastGpuFrameTimingExecutionId) {
+    m_lastGpuFrameTimeMs = static_cast<double>(data.Duration) * 1000.0
+                           / static_cast<double>(data.Frequency);
+    m_lastGpuFrameTimingExecutionId = executionId;
+    m_hasGpuFrameTiming = true;
+   }
+  }
+ }
+
+ void ArtifactIRenderer::Impl::beginFrameGpuProfiling(const quint64 executionId)
  {
   if (!qEnvironmentVariableIsSet("ARTIFACT_ENABLE_GPU_FRAME_QUERY")) {
    return;
   }
   initFrameQueries();
+  collectFrameQueryResults();
+  if (m_frameQuerySubmitted[m_frameQueryIndex]) {
+   return;
+  }
   auto& query = m_frameQueries[m_frameQueryIndex];
   if (!query || !deviceManager_.immediateContext()) return;
   deviceManager_.immediateContext()->BeginQuery(query);
+  m_activeFrameQueryExecutionId = executionId;
   m_frameQueryActive = true;
  }
 
@@ -2464,16 +2500,10 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
   auto& query = m_frameQueries[m_frameQueryIndex];
   if (!query || !deviceManager_.immediateContext()) return;
   deviceManager_.immediateContext()->EndQuery(query);
-
-  const Uint32 readIndex = (m_frameQueryIndex + FrameQueryCount - 1) % FrameQueryCount;
-  auto& readQuery = m_frameQueries[readIndex];
-  if (readQuery) {
-   QueryDataDuration data;
-   if (readQuery->GetData(&data, sizeof(data), True) && data.Frequency != 0)
-    m_lastGpuFrameTimeMs = static_cast<double>(data.Duration) * 1000.0
-                           / static_cast<double>(data.Frequency);
-  }
+  m_frameQuerySubmitted[m_frameQueryIndex] = true;
+  m_frameQueryExecutionIds[m_frameQueryIndex] = m_activeFrameQueryExecutionId;
   m_frameQueryIndex = (m_frameQueryIndex + 1) % FrameQueryCount;
+  collectFrameQueryResults();
  }
 
  double ArtifactIRenderer::Impl::lastFrameGpuTimeMs() const
@@ -2640,7 +2670,12 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   m_layerDepthSRV = nullptr;
   m_layerDepthTex = nullptr;
   for (auto& query : m_frameQueries) query = nullptr;
+  m_frameQuerySubmitted.fill(false);
+  m_frameQueryExecutionIds.fill(0);
   m_frameQueryActive = false;
+  m_hasGpuFrameTiming = false;
+  m_activeFrameQueryExecutionId = 0;
+  m_lastGpuFrameTimingExecutionId = 0;
   primitiveRenderer_.destroy();
   primitiveRenderer3D_.destroy();
   particleRenderer_.reset();
@@ -2776,11 +2811,13 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
  QString ArtifactIRenderer::lastPresentStatus() const { return impl_->lastPresentStatus(); }
  void ArtifactIRenderer::beginFrameCostCapture() { impl_->beginFrameCostCapture(); }
  void ArtifactIRenderer::endFrameCostCapture() { impl_->endFrameCostCapture(); }
- void ArtifactIRenderer::beginFrameGpuProfiling() { impl_->beginFrameGpuProfiling(); }
+ void ArtifactIRenderer::beginFrameGpuProfiling(quint64 executionId) { impl_->beginFrameGpuProfiling(executionId); }
  void ArtifactIRenderer::endFrameGpuProfiling() { impl_->endFrameGpuProfiling(); }
  ArtifactCore::RenderCostStats ArtifactIRenderer::frameCostStats() const { return impl_->frameCostStats(); }
  std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::frameDebugPasses() const { return impl_->frameDebugPasses(); }
  double ArtifactIRenderer::lastFrameGpuTimeMs() const { return impl_->lastFrameGpuTimeMs(); }
+ bool ArtifactIRenderer::hasFrameGpuTiming() const { return impl_->hasFrameGpuTiming(); }
+ quint64 ArtifactIRenderer::lastFrameGpuTimingExecutionId() const { return impl_->lastFrameGpuTimingExecutionId(); }
 
  QImage ArtifactIRenderer::readbackToImage() const { return impl_->readbackToImage(); }
  QImage ArtifactIRenderer::readbackTextureViewToImage(
@@ -3451,10 +3488,12 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
                                                      float centerY,
                                                      float scale,
                                                      float offset,
-                                                     float opacity)
+                                                     float opacity,
+                                                     bool linearColorInterpolation)
  { impl_->primitiveRenderer_.drawGradientRectTransformed(x, y, w, h, transform, startColor, endColor,
                                                           fillType, angleDegrees, reverse, centerX, centerY,
-                                                          scale, offset, opacity); }
+                                                          scale, offset, opacity,
+                                                          linearColorInterpolation); }
  void ArtifactIRenderer::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
  { impl_->drawRectOutlineLocal(x, y, w, h, color); }
 void ArtifactIRenderer::drawThickLineLocal(Detail::float2 p1, Detail::float2 p2,

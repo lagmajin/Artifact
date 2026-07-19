@@ -11,7 +11,6 @@ module;
 #include <QSizeF>
 #include <QString>
 #include <QUuid>
-#include <Layer/ArtifactSolidGradientUtil.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -45,6 +44,7 @@ import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
 import Layer.Matte;
 import Image.ImageF32x4_RGBA;
+import Graphics.SurfaceColorContract;
 import Core.Light;
 import CvUtils;
 import Color.Float;
@@ -97,7 +97,160 @@ export void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                         DetailLevel lod = DetailLevel::High,
                                         const std::vector<ArtifactCore::Light>* sceneLights = nullptr);
 
+export ArtifactCore::SurfaceColorDescriptor qImageCvMatSurfaceDescriptor(
+    const QImage& image)
+{
+  if (image.format() == QImage::Format_ARGB32_Premultiplied) {
+    return ArtifactCore::SurfaceColorDescriptor::legacyOpenCvBgra32Float(
+        ArtifactCore::TransferFunction::sRGB,
+        ArtifactCore::SurfaceAlphaMode::Premultiplied);
+  }
+  if (image.format() == QImage::Format_RGB32) {
+    return ArtifactCore::SurfaceColorDescriptor::legacyOpenCvBgra32Float(
+        ArtifactCore::TransferFunction::sRGB,
+        ArtifactCore::SurfaceAlphaMode::Opaque);
+  }
+  if (image.format() == QImage::Format_ARGB32) {
+    return ArtifactCore::SurfaceColorDescriptor::legacyOpenCvBgra32Float(
+        ArtifactCore::TransferFunction::sRGB,
+        ArtifactCore::SurfaceAlphaMode::Straight);
+  }
+  return ArtifactCore::SurfaceColorDescriptor::unknown();
+}
+
+export QImage normalizeQImageForCvEffectBoundary(const QImage& image)
+{
+  switch (image.format()) {
+  case QImage::Format_ARGB32_Premultiplied:
+  case QImage::Format_ARGB32:
+  case QImage::Format_RGB32:
+    return image;
+  default:
+    // CvUtils has format-specific 1/3-channel paths. Effects require one
+    // explicit four-channel BGRA boundary instead of inferring that layout.
+    return image.convertToFormat(image.hasAlphaChannel()
+                                     ? QImage::Format_ARGB32
+                                     : QImage::Format_RGB32);
+  }
+}
+
+export QImage makeVersionedSolidGradientImage(
+    const QSize& size, const FloatColor& startColor,
+    const FloatColor& endColor, int fillType, float angleDegrees,
+    bool reverse, float centerX, float centerY, float scale, float offset,
+    int colorPipelineVersion)
+{
+  if (size.width() <= 0 || size.height() <= 0) {
+    return QImage();
+  }
+
+  QImage image(size, QImage::Format_ARGB32_Premultiplied);
+  const float width = static_cast<float>(size.width());
+  const float height = static_cast<float>(size.height());
+  const float aspect = std::max(width / std::max(height, 1.0f), 0.0001f);
+  const float radians = angleDegrees * 3.14159265358979323846f / 180.0f;
+  const float directionX = std::cos(radians);
+  const float directionY = -std::sin(radians);
+  const float safeScale = std::max(scale, 0.0001f);
+  const bool linearColorInterpolation =
+      colorPipelineVersion >=
+      ArtifactAbstractComposition::CanonicalColorPipelineVersion;
+
+  const auto decode = [](float value) {
+    return ArtifactCore::ColorTransferFunction::srgbToLinear(
+        std::clamp(value, 0.0f, 1.0f));
+  };
+  const float startLinear[3] = {
+      startColor.a() <= 1.0e-6f ? 0.0f : decode(startColor.r()),
+      startColor.a() <= 1.0e-6f ? 0.0f : decode(startColor.g()),
+      startColor.a() <= 1.0e-6f ? 0.0f : decode(startColor.b())};
+  const float endLinear[3] = {
+      endColor.a() <= 1.0e-6f ? 0.0f : decode(endColor.r()),
+      endColor.a() <= 1.0e-6f ? 0.0f : decode(endColor.g()),
+      endColor.a() <= 1.0e-6f ? 0.0f : decode(endColor.b())};
+
+  const auto spreadGradient = [fillType](float value) {
+    if (fillType == 4) {
+      return value - std::floor(value);
+    }
+    if (fillType == 5) {
+      const float period = value - std::floor(value * 0.5f) * 2.0f;
+      return period <= 1.0f ? period : 2.0f - period;
+    }
+    return std::clamp(value, 0.0f, 1.0f);
+  };
+
+  for (int y = 0; y < size.height(); ++y) {
+    auto* row = reinterpret_cast<QRgb*>(image.scanLine(y));
+    const float v = (static_cast<float>(y) + 0.5f) / height;
+    for (int x = 0; x < size.width(); ++x) {
+      const float u = (static_cast<float>(x) + 0.5f) / width;
+      const float localX = (u - centerX) * aspect;
+      const float localY = v - centerY;
+      float t = 0.0f;
+      if (fillType == 2) {
+        const float radius =
+            std::max(0.0001f,
+                     0.5f * std::sqrt(aspect * aspect + 1.0f) * safeScale);
+        t = std::sqrt(localX * localX + localY * localY) / radius;
+      } else if (fillType == 3) {
+        t = std::atan2(v - centerY, u - centerX) /
+                (2.0f * 3.14159265358979323846f) +
+            0.5f + angleDegrees / 360.0f;
+      } else {
+        const float halfSpan =
+            std::max(0.0001f,
+                     0.5f * std::sqrt(aspect * aspect + 1.0f) * safeScale);
+        t = (localX * directionX + localY * directionY) /
+                (2.0f * halfSpan) +
+            0.5f + offset;
+      }
+      t = spreadGradient(t);
+      if (reverse) {
+        t = 1.0f - t;
+      }
+
+      const float alpha = std::clamp(
+          startColor.a() + (endColor.a() - startColor.a()) * t, 0.0f, 1.0f);
+      float encoded[3]{};
+      for (int channel = 0; channel < 3; ++channel) {
+        if (linearColorInterpolation) {
+          const float linear = startLinear[channel] +
+                               (endLinear[channel] - startLinear[channel]) * t;
+          encoded[channel] =
+              ArtifactCore::ColorTransferFunction::linearToSRGB(linear);
+        } else {
+          const float start = channel == 0 ? startColor.r()
+                              : channel == 1 ? startColor.g()
+                                             : startColor.b();
+          const float end = channel == 0 ? endColor.r()
+                            : channel == 1 ? endColor.g()
+                                           : endColor.b();
+          encoded[channel] = start + (end - start) * t;
+        }
+        encoded[channel] = std::clamp(encoded[channel], 0.0f, 1.0f) * alpha;
+      }
+      const int red = static_cast<int>(encoded[0] * 255.0f + 0.5f);
+      const int green = static_cast<int>(encoded[1] * 255.0f + 0.5f);
+      const int blue = static_cast<int>(encoded[2] * 255.0f + 0.5f);
+      const int alphaByte = static_cast<int>(alpha * 255.0f + 0.5f);
+      row[x] = qRgba(red, green, blue, alphaByte);
+    }
+  }
+  return image;
+}
+
 namespace {
+
+int layerColorPipelineVersion(ArtifactAbstractLayer* layer)
+{
+  const auto* composition = layer
+      ? static_cast<ArtifactAbstractComposition*>(layer->composition())
+      : nullptr;
+  return composition
+      ? composition->colorPipelineVersion()
+      : ArtifactAbstractComposition::CanonicalColorPipelineVersion;
+}
 
 QHash<QString, StaticLayerGpuCacheEntry> &staticLayerGpuCache()
 {
@@ -268,7 +421,7 @@ ArtifactCore::ImageF32x4_RGBA downsampleForLOD(const ArtifactCore::ImageF32x4_RG
              cv::INTER_LINEAR);
 
   ArtifactCore::ImageF32x4_RGBA result;
-  result.setFromCVMat(resized);
+  result.setFromCVMat(resized, image.colorDescriptor());
   return result;
 }
 
@@ -284,6 +437,12 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
   key += QStringLiteral("|size=%1x%2")
              .arg(surface.width())
              .arg(surface.height());
+  const auto* composition =
+      static_cast<ArtifactAbstractComposition*>(layer->composition());
+  key += QStringLiteral("|colorPipeline=%1")
+             .arg(composition
+                      ? composition->colorPipelineVersion()
+                      : ArtifactAbstractComposition::CanonicalColorPipelineVersion);
 
   bool hasAnimatedEffectProperty = false;
   for (const auto& effect : layer->getEffects()) {
@@ -308,8 +467,19 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
 
   if (auto* solid2D = dynamic_cast<ArtifactSolid2DLayer*>(layer)) {
     const QRectF bounds = solid2D->localBounds();
-    key += QStringLiteral("|solid2D|color=%1|bounds=%2x%3")
+    key += QStringLiteral("|solid2D|color=%1|fill=%2|g0=%3|g1=%4|ang=%5|rev=%6|cx=%7|cy=%8|scale=%9|off=%10|bounds=%11x%12")
                .arg(rgbaKey(solid2D->color().r(), solid2D->color().g(), solid2D->color().b(), solid2D->color().a()))
+               .arg(static_cast<int>(solid2D->fillType()))
+               .arg(rgbaKey(solid2D->gradientStartColor().r(), solid2D->gradientStartColor().g(),
+                            solid2D->gradientStartColor().b(), solid2D->gradientStartColor().a()))
+               .arg(rgbaKey(solid2D->gradientEndColor().r(), solid2D->gradientEndColor().g(),
+                            solid2D->gradientEndColor().b(), solid2D->gradientEndColor().a()))
+               .arg(solid2D->gradientAngleDegrees(), 0, 'f', 4)
+               .arg(solid2D->gradientReverse() ? 1 : 0)
+               .arg(solid2D->gradientCenterX(), 0, 'f', 4)
+               .arg(solid2D->gradientCenterY(), 0, 'f', 4)
+               .arg(solid2D->gradientScale(), 0, 'f', 4)
+               .arg(solid2D->gradientOffset(), 0, 'f', 4)
                .arg(bounds.width(), 0, 'f', 2)
                .arg(bounds.height(), 0, 'f', 2);
     return key;
@@ -429,7 +599,11 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
     return false;
   }
 
-  cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(surface, true);
+  const QImage effectSurface = normalizeQImageForCvEffectBoundary(surface);
+  ArtifactCore::SurfaceColorDescriptor surfaceDescriptor =
+      qImageCvMatSurfaceDescriptor(effectSurface);
+
+  cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(effectSurface, true);
   if (mat.type() != CV_32FC4) {
     mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
   }
@@ -454,7 +628,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
 
   if (hasRasterizerEffect) {
     ArtifactCore::ImageF32x4_RGBA cpuImage;
-    cpuImage.setFromCVMat(mat);
+    cpuImage.setFromCVMat(mat, surfaceDescriptor);
     ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
 
     // 調整レイヤーのエフェクトは背面全体に作用するため、
@@ -499,9 +673,10 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
 
     // Store frame for temporal effect lookback.
     mat = current.image().toCVMat();
+    surfaceDescriptor = current.image().colorDescriptor();
   }
 
-  outBuffer->setFromCVMat(mat);
+  outBuffer->setFromCVMat(mat, surfaceDescriptor);
   return true;
 }
 
@@ -530,6 +705,8 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
   }
 
   cv::Mat mat = surface.toCVMat();
+  ArtifactCore::SurfaceColorDescriptor surfaceDescriptor =
+      surface.colorDescriptor();
 
   if (hasMasks) {
     const QRectF lb = targetLayer->localBounds();
@@ -581,9 +758,10 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
     }
 
     mat = current.image().toCVMat();
+    surfaceDescriptor = current.image().colorDescriptor();
   }
 
-  outBuffer->setFromCVMat(mat);
+  outBuffer->setFromCVMat(mat, surfaceDescriptor);
   return true;
 }
 
@@ -832,13 +1010,14 @@ bool applyCompositionFinalEffectsToImage(ArtifactAbstractComposition* compositio
     return false;
   }
 
-  cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(processedImage, true);
+  const QImage effectImage = normalizeQImageForCvEffectBoundary(processedImage);
+  cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(effectImage, true);
   if (mat.type() != CV_32FC4) {
     mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
   }
 
   ArtifactCore::ImageF32x4_RGBA cpuImage;
-  cpuImage.setFromCVMat(mat);
+  cpuImage.setFromCVMat(mat, qImageCvMatSurfaceDescriptor(effectImage));
   ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
 
   for (const auto& effect : effects) {
@@ -1078,15 +1257,12 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           std::max(1, static_cast<int>(std::ceil(localRect.height()))));
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
       if (solid2D->fillType() != ArtifactSolidFillType::Solid) {
-        surface = ArtifactSolidGradientUtil::makeSolidGradientImage(
-            surfaceSize,
-            QColor::fromRgbF(solid2D->gradientStartColor().r(), solid2D->gradientStartColor().g(),
-                             solid2D->gradientStartColor().b(), solid2D->gradientStartColor().a()),
-            QColor::fromRgbF(solid2D->gradientEndColor().r(), solid2D->gradientEndColor().g(),
-                             solid2D->gradientEndColor().b(), solid2D->gradientEndColor().a()),
+        surface = makeVersionedSolidGradientImage(
+            surfaceSize, solid2D->gradientStartColor(), solid2D->gradientEndColor(),
             static_cast<int>(solid2D->fillType()), solid2D->gradientAngleDegrees(),
             solid2D->gradientReverse(), solid2D->gradientCenterX(), solid2D->gradientCenterY(),
-            solid2D->gradientScale(), solid2D->gradientOffset());
+            solid2D->gradientScale(), solid2D->gradientOffset(),
+            layerColorPipelineVersion(layer));
       } else {
         surface.fill(toQColor(color));
       }
@@ -1104,7 +1280,10 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                   instanceTransform, solid2D->gradientStartColor(), solid2D->gradientEndColor(),
                   static_cast<int>(solid2D->fillType()), solid2D->gradientAngleDegrees(),
                   solid2D->gradientReverse(), solid2D->gradientCenterX(), solid2D->gradientCenterY(),
-                  solid2D->gradientScale(), solid2D->gradientOffset(), baseOpacity * instanceWeight);
+                  solid2D->gradientScale(), solid2D->gradientOffset(),
+                  baseOpacity * instanceWeight,
+                  layerColorPipelineVersion(layer) >=
+                      ArtifactAbstractComposition::CanonicalColorPipelineVersion);
             });
         return;
       }
@@ -1127,7 +1306,15 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     const bool gradientEnabled = solidImage->isGradientEnabled();
     if (hasRasterizerEffectsOrMasks(layer)) {
       QImage surface = gradientEnabled
-                           ? solidImage->toQImage()
+                           ? makeVersionedSolidGradientImage(
+                                 QSize(std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+                                       std::max(1, static_cast<int>(std::ceil(localRect.height())))),
+                                 solidImage->gradientStartColor(), solidImage->gradientEndColor(),
+                                 static_cast<int>(solidImage->fillType()),
+                                 solidImage->gradientAngleDegrees(), solidImage->gradientReverse(),
+                                 solidImage->gradientCenterX(), solidImage->gradientCenterY(),
+                                 solidImage->gradientScale(), solidImage->gradientOffset(),
+                                 layerColorPipelineVersion(layer))
                            : QImage(std::max(1, static_cast<int>(std::ceil(localRect.width()))),
                                     std::max(1, static_cast<int>(std::ceil(localRect.height()))),
                                     QImage::Format_ARGB32_Premultiplied);
@@ -1147,7 +1334,10 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                 instanceTransform, solidImage->gradientStartColor(), solidImage->gradientEndColor(),
                 static_cast<int>(solidImage->fillType()), solidImage->gradientAngleDegrees(),
                 solidImage->gradientReverse(), solidImage->gradientCenterX(), solidImage->gradientCenterY(),
-                solidImage->gradientScale(), solidImage->gradientOffset(), baseOpacity * instanceWeight);
+                solidImage->gradientScale(), solidImage->gradientOffset(),
+                baseOpacity * instanceWeight,
+                layerColorPipelineVersion(layer) >=
+                    ArtifactAbstractComposition::CanonicalColorPipelineVersion);
           });
     } else {
       const float baseOpacity =

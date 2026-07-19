@@ -155,6 +155,7 @@ public:
             applyCPU(src, dst);
             return;
         }
+        dst.image().setColorDescriptor(src.image().colorDescriptor());
     }
 
 private:

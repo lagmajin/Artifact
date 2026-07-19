@@ -201,7 +201,30 @@ namespace Artifact
    }
 
    qDebug() << "[Importer] Version check passed - file version:" << fileVersion << "min version:" << minVersion;
+  const QJsonValue colorPipelineValue = root.value(QStringLiteral("colorPipelineVersion"));
+  const double rawColorPipelineVersion = colorPipelineValue.isUndefined()
+      ? static_cast<double>(ArtifactProject::LegacyColorPipelineVersion)
+      : colorPipelineValue.toDouble();
+  if ((!colorPipelineValue.isUndefined() && !colorPipelineValue.isDouble()) ||
+      std::floor(rawColorPipelineVersion) != rawColorPipelineVersion) {
+   result.errorMessage = UniString("Project colorPipelineVersion must be an integer");
+   qWarning() << "[Importer] Invalid colorPipelineVersion" << colorPipelineValue;
+   return result;
+  }
+  if (rawColorPipelineVersion < ArtifactProject::LegacyColorPipelineVersion ||
+      rawColorPipelineVersion > ArtifactProject::CanonicalColorPipelineVersion) {
+   result.errorMessage = UniString(
+       QStringLiteral("Project color pipeline version %1 is not supported (supported: %2-%3)")
+           .arg(rawColorPipelineVersion)
+           .arg(ArtifactProject::LegacyColorPipelineVersion)
+           .arg(ArtifactProject::CanonicalColorPipelineVersion)
+           .toStdString());
+   qWarning() << "[Importer] Unsupported colorPipelineVersion" << rawColorPipelineVersion;
+   return result;
+  }
+  const int colorPipelineVersion = static_cast<int>(rawColorPipelineVersion);
   auto projectPtr = std::make_shared<ArtifactProject>();
+  projectPtr->setColorPipelineVersion(colorPipelineVersion, false);
 
   // プロジェクト基本情報の読み込み
   if (root.contains("name") && root["name"].isString()) {

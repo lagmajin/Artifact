@@ -2,12 +2,17 @@ module;
 
 #include <cassert>
 #include <cstdint>
+#include <utility>
+#include <variant>
 #include <vector>
+
+module Artifact.Layer.NLETransitionBridge;
 
 import NLE.Core;
 import Video.AbstractTransition;
 import Video.TransitionFactory;
 import Video.CpuFrameView;
+import Video.VideoFrame;
 import Image.ImageF32x4_RGBA;
 
 // M0: Video.ixx で漏れていた3実装をブリッジから import して静的登録を強制する。
@@ -16,7 +21,7 @@ import Video.Transitions.GradientWipeTransition;
 import Video.Transitions.IrisWipeTransition;
 import Video.Transitions.BlockDissolveTransition;
 
-export namespace Artifact {
+namespace Artifact {
 
 using namespace ArtifactCore;
 using namespace ArtifactCore::NLE;

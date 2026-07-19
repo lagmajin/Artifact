@@ -205,7 +205,9 @@ public:
         cv::Mat dstMat(dstImage.height(), dstImage.width(), CV_32FC4, const_cast<float*>(dstData));
         cv::Mat blended;
         cv::addWeighted(srcMat, keep, dstMat, mix, 0.0, blended);
-        dst.image().setFromRGBA32F(blended.ptr<float>(), blended.cols, blended.rows);
+        dst.image().setFromRGBA32F(
+            blended.ptr<float>(), blended.cols, blended.rows,
+            srcImage.colorDescriptor());
     }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -264,7 +266,9 @@ public:
         cv::Mat dstMat;
         cv::merge(outChannels, dstMat);
         convertBlurColorSpace(dstMat, false, premultiplied_);
-        dst.image().setFromRGBA32F(dstMat.ptr<float>(), dstMat.cols, dstMat.rows);
+        dst.image().setFromRGBA32F(
+            dstMat.ptr<float>(), dstMat.cols, dstMat.rows,
+            srcImage.colorDescriptor());
         mixWithSource(src, dst);
     }
 };

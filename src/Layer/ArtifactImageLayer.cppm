@@ -34,6 +34,7 @@ import CvUtils;
 import Artifact.Render.IRenderer;
 import Artifact.Layer.SourceCrop;
 import Core.Diagnostics.FallbackPolicy;
+import Graphics.SurfaceColorContract;
 import Image.ImageF32x4_RGBA;
 import Size;
 import Asset.Manager;
@@ -51,7 +52,9 @@ ArtifactCore::ImageF32x4_RGBA toFrameBuffer(const QImage& image)
         return buffer;
     }
 
-    cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(image, true);
+    const QImage encodedPremultiplied =
+        image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(encodedPremultiplied, true);
     if (mat.empty()) {
         return buffer;
     }
@@ -60,7 +63,11 @@ ArtifactCore::ImageF32x4_RGBA toFrameBuffer(const QImage& image)
         mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
     }
 
-    buffer.setFromCVMat(mat);
+    buffer.setFromCVMat(
+        mat,
+        ArtifactCore::SurfaceColorDescriptor::legacyOpenCvBgra32Float(
+            ArtifactCore::TransferFunction::sRGB,
+            ArtifactCore::SurfaceAlphaMode::Premultiplied));
     return buffer;
 }
 

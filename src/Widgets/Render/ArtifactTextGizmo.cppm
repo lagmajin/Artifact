@@ -12,6 +12,8 @@
 module Artifact.Widgets.TextGizmo;
 
 import Artifact.Layer.Text;
+import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Color.Float;
 
@@ -193,6 +195,13 @@ TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRe
         return HandleType::BoxBottom;
     }
 
+    // The text gizmo replaces the regular transform gizmo while a text layer
+    // is selected. Keep the body draggable so text positioning does not
+    // depend on which gizmo happened to win the hit test.
+    if (bbox.contains(QPointF(canvasMouse.x, canvasMouse.y))) {
+        return HandleType::Offset;
+    }
+
     // Legacy range selector hits if no bounds hit
     // ... existing code for range selectors if needed
 
@@ -217,6 +226,8 @@ Qt::CursorShape TextGizmo::cursorShapeForViewportPos(const QPointF& viewportPos,
         case HandleType::RangeStart:
         case HandleType::RangeEnd:
             return Qt::SizeHorCursor;
+        case HandleType::Offset:
+            return isDragging_ ? Qt::ClosedHandCursor : Qt::OpenHandCursor;
         default:
             return Qt::ArrowCursor;
     }
@@ -228,6 +239,8 @@ bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* 
         isDragging_ = true;
         auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
         dragStartCanvasPos_ = QPointF(canvasMouse.x, canvasMouse.y);
+        dragStartLayerPosition_ = QPointF(layer_->transform3D().positionX(),
+                                          layer_->transform3D().positionY());
         dragStartBounds_ = layer_->transformedBoundingBox();
         if (dragStartBounds_.isEmpty()) {
             dragStartBounds_ = QRectF(0, 0, 400, 100);
@@ -251,6 +264,18 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
     QRectF bbox = dragStartBounds_;
 
     switch (activeHandle_) {
+        case HandleType::Offset: {
+            auto* composition = static_cast<ArtifactAbstractComposition*>(textLayer->composition());
+            const auto frame = composition
+                                    ? ArtifactCore::RationalTime(0, 30000)
+                                    : ArtifactCore::RationalTime(0, 30000);
+            auto &start = textLayer->transform3D();
+            start.setPosition(frame,
+                              static_cast<float>(dragStartLayerPosition_.x() + deltaX),
+                              static_cast<float>(dragStartLayerPosition_.y() + deltaY));
+            textLayer->setDirty(LayerDirtyFlag::Transform);
+            break;
+        }
         case HandleType::BoxLeft:
             bbox.setLeft(bbox.left() + deltaX);
             break;

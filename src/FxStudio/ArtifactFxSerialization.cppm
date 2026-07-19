@@ -7,6 +7,9 @@ module;
 
 module Artifact.FxStudio.Serialization;
 
+import Artifact.FxStudio.EventTrack;
+import Artifact.FxStudio.Sequence;
+
 namespace Artifact::FxStudio {
 
 namespace {

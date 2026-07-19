@@ -17,7 +17,20 @@ export namespace Artifact {
 enum class GizmoMode {
     Move,
     Rotate,
+    Scale,
+    Full
+};
+
+enum class GizmoOperation {
+    None,
+    Translate,
+    Rotate,
     Scale
+};
+
+enum class GizmoSpace {
+    World,
+    Local
 };
 
 enum class GizmoAxis {
@@ -44,6 +57,8 @@ public:
 
     void setMode(GizmoMode mode) { mode_ = mode; }
     GizmoMode mode() const { return mode_; }
+    void setSpace(GizmoSpace space) { space_ = space; }
+    GizmoSpace space() const { return space_; }
 
     void setTransform(const QVector3D& position, const QVector3D& rotation);
     QVector3D position() const;
@@ -52,6 +67,10 @@ public:
     QVector3D scale() const;
     void setDepthEnabled(bool enabled) { depthEnabled_ = enabled; }
     bool depthEnabled() const { return depthEnabled_; }
+    void setInteractionModifiers(bool snapEnabled, bool fineAdjustment) {
+        snapEnabled_ = snapEnabled;
+        fineAdjustment_ = fineAdjustment;
+    }
     
     // Hit testing
     GizmoAxis hitTest(const Ray& ray, const QMatrix4x4& view, const QMatrix4x4& proj);
@@ -63,6 +82,8 @@ public:
     bool isDragging() const { return activeAxis_ != GizmoAxis::None; }
     GizmoAxis activeAxis() const { return activeAxis_; }
     GizmoAxis hoverAxis() const { return hoverAxis_; }
+    GizmoOperation activeOperation() const { return activeOperation_; }
+    GizmoOperation hoverOperation() const { return hoverOperation_; }
 
     // Rendering
     void draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, const QMatrix4x4& proj);
@@ -72,9 +93,14 @@ private:
     std::unique_ptr<Impl> impl_;
     
     GizmoMode mode_ = GizmoMode::Move;
+    GizmoSpace space_ = GizmoSpace::World;
     GizmoAxis activeAxis_ = GizmoAxis::None;
     GizmoAxis hoverAxis_ = GizmoAxis::None;
+    GizmoOperation activeOperation_ = GizmoOperation::None;
+    GizmoOperation hoverOperation_ = GizmoOperation::None;
     bool depthEnabled_ = true;
+    bool snapEnabled_ = false;
+    bool fineAdjustment_ = false;
 };
 
 } // namespace Artifact

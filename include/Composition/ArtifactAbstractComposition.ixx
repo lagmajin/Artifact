@@ -182,6 +182,9 @@ export namespace Artifact {
   class Impl;
   Impl* impl_;
  public:
+  static constexpr int LegacyColorPipelineVersion = 1;
+  static constexpr int CanonicalColorPipelineVersion = 2;
+
   explicit ArtifactAbstractComposition(const CompositionID& id,const ArtifactCompositionInitParams& params);
   ~ArtifactAbstractComposition();
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
@@ -202,6 +205,8 @@ export namespace Artifact {
   QString compositionNote() const;
   void setCompositionNote(const QString& note);
   void setCompositionSize(const QSize& size);
+  int colorPipelineVersion() const noexcept;
+  void setColorPipelineVersion(int version);
 
   ArtifactAbstractLayerPtr layerById(const LayerID& id) const;
   bool containsLayerById(const LayerID& id);

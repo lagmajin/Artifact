@@ -8,12 +8,15 @@ module;
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLineEdit>
+#include <QMargins>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPalette>
 #include <QPainter>
+#include <QPointer>
 #include <QPushButton>
 #include <QSize>
+#include <QSizePolicy>
 #include <QScrollArea>
 #include <QSlider>
 #include <QSpinBox>
@@ -29,7 +32,9 @@ module;
 #include <QBitmap>
 #include <QEvent>
 #include <QFontMetrics>
+#include <algorithm>
 #include <cmath>
+#include <vector>
 #ifdef _WIN32
 #include <qt_windows.h>
 #endif
@@ -39,6 +44,216 @@ module Widgets.CommonStyle;
 import Widgets.Utils.CSS;
 
 namespace Artifact {
+
+class StudioSectionStack::Impl {
+public:
+  struct Item {
+    QPointer<QWidget> widget;
+    bool expands = false;
+  };
+
+  std::vector<Item> items;
+  int spacing = 6;
+};
+
+StudioSectionStack::StudioSectionStack(QWidget* parent)
+    : QWidget(parent), impl_(new Impl()) {
+  setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+}
+
+StudioSectionStack::~StudioSectionStack() { delete impl_; }
+
+void StudioSectionStack::appendWidget(QWidget* widget, const bool expands) {
+  if (!impl_ || !widget) return;
+  for (auto& item : impl_->items) {
+    if (item.widget == widget) {
+      item.expands = expands;
+      updateGeometry();
+      updateChildGeometry();
+      return;
+    }
+  }
+  const bool explicitlyHidden =
+      widget->testAttribute(Qt::WA_WState_ExplicitShowHide) &&
+      widget->isHidden();
+  widget->setParent(this);
+  widget->installEventFilter(this);
+  impl_->items.push_back({widget, expands});
+  if (!explicitlyHidden) widget->show();
+  updateGeometry();
+  updateChildGeometry();
+}
+
+void StudioSectionStack::removeWidget(QWidget* widget) {
+  if (!impl_ || !widget) return;
+  widget->removeEventFilter(this);
+  impl_->items.erase(
+      std::remove_if(impl_->items.begin(), impl_->items.end(),
+                     [widget](const Impl::Item& item) {
+                       return !item.widget || item.widget == widget;
+                     }),
+      impl_->items.end());
+  if (widget->parentWidget() == this) widget->setParent(nullptr);
+  updateGeometry();
+  updateChildGeometry();
+}
+
+void StudioSectionStack::setWidgetExpands(QWidget* widget,
+                                          const bool expands) {
+  if (!impl_ || !widget) return;
+  for (auto& item : impl_->items) {
+    if (item.widget == widget) {
+      item.expands = expands;
+      updateGeometry();
+      updateChildGeometry();
+      return;
+    }
+  }
+}
+
+void StudioSectionStack::setSpacing(const int spacing) {
+  if (!impl_) return;
+  const int normalized = std::max(0, spacing);
+  if (impl_->spacing == normalized) return;
+  impl_->spacing = normalized;
+  updateGeometry();
+  updateChildGeometry();
+}
+
+int StudioSectionStack::spacing() const {
+  return impl_ ? impl_->spacing : 0;
+}
+
+int StudioSectionStack::count() const {
+  if (!impl_) return 0;
+  return static_cast<int>(std::count_if(
+      impl_->items.begin(), impl_->items.end(),
+      [](const Impl::Item& item) { return static_cast<bool>(item.widget); }));
+}
+
+QWidget* StudioSectionStack::widgetAt(const int index) const {
+  if (!impl_ || index < 0) return nullptr;
+  int liveIndex = 0;
+  for (const auto& item : impl_->items) {
+    if (!item.widget) continue;
+    if (liveIndex++ == index) return item.widget;
+  }
+  return nullptr;
+}
+
+QSize StudioSectionStack::sizeHint() const {
+  if (!impl_) return QWidget::sizeHint();
+  const QMargins margins = contentsMargins();
+  int width = 0;
+  int height = 0;
+  int visibleCount = 0;
+  for (const auto& item : impl_->items) {
+    if (!item.widget || item.widget->isHidden()) continue;
+    const QSize hint = item.widget->sizeHint().expandedTo(
+        item.widget->minimumSizeHint());
+    width = std::max(width, hint.width());
+    height += hint.height();
+    ++visibleCount;
+  }
+  if (visibleCount > 1) height += impl_->spacing * (visibleCount - 1);
+  return QSize(width + margins.left() + margins.right(),
+               height + margins.top() + margins.bottom());
+}
+
+QSize StudioSectionStack::minimumSizeHint() const {
+  if (!impl_) return QWidget::minimumSizeHint();
+  const QMargins margins = contentsMargins();
+  int width = 0;
+  int height = 0;
+  int visibleCount = 0;
+  for (const auto& item : impl_->items) {
+    if (!item.widget || item.widget->isHidden()) continue;
+    const QSize hint = item.widget->minimumSizeHint().expandedTo(
+        item.widget->minimumSize());
+    width = std::max(width, hint.width());
+    height += hint.height();
+    ++visibleCount;
+  }
+  if (visibleCount > 1) height += impl_->spacing * (visibleCount - 1);
+  return QSize(width + margins.left() + margins.right(),
+               height + margins.top() + margins.bottom());
+}
+
+void StudioSectionStack::resizeEvent(QResizeEvent* event) {
+  QWidget::resizeEvent(event);
+  updateChildGeometry();
+}
+
+bool StudioSectionStack::eventFilter(QObject* watched, QEvent* event) {
+  if (impl_ && event && event->type() == QEvent::Destroy) {
+    impl_->items.erase(
+        std::remove_if(impl_->items.begin(), impl_->items.end(),
+                       [watched](const Impl::Item& item) {
+                         return !item.widget || item.widget.data() == watched;
+                       }),
+        impl_->items.end());
+    updateGeometry();
+    updateChildGeometry();
+    return QWidget::eventFilter(watched, event);
+  }
+  if (event && (event->type() == QEvent::Show ||
+                event->type() == QEvent::Hide ||
+                event->type() == QEvent::LayoutRequest ||
+                event->type() == QEvent::FontChange ||
+                event->type() == QEvent::StyleChange)) {
+    updateGeometry();
+    updateChildGeometry();
+  }
+  return QWidget::eventFilter(watched, event);
+}
+
+void StudioSectionStack::updateChildGeometry() {
+  if (!impl_) return;
+  impl_->items.erase(
+      std::remove_if(impl_->items.begin(), impl_->items.end(),
+                     [](const Impl::Item& item) { return !item.widget; }),
+      impl_->items.end());
+  std::vector<Impl::Item*> visible;
+  visible.reserve(impl_->items.size());
+  int fixedHeight = 0;
+  int expandingCount = 0;
+  for (auto& item : impl_->items) {
+    if (!item.widget || item.widget->isHidden()) continue;
+    visible.push_back(&item);
+    if (item.expands) {
+      ++expandingCount;
+    } else {
+      const QSize hint = item.widget->sizeHint().expandedTo(
+          item.widget->minimumSizeHint());
+      fixedHeight += std::clamp(hint.height(), item.widget->minimumHeight(),
+                                item.widget->maximumHeight());
+    }
+  }
+  if (visible.empty()) return;
+  const QMargins margins = contentsMargins();
+  const int totalSpacing = impl_->spacing *
+      std::max(0, static_cast<int>(visible.size()) - 1);
+  const int availableHeight =
+      std::max(0, height() - margins.top() - margins.bottom() - totalSpacing);
+  const int expandingHeight = expandingCount > 0
+      ? std::max(0, availableHeight - fixedHeight) / expandingCount
+      : 0;
+  const int availableWidth =
+      std::max(0, width() - margins.left() - margins.right());
+  int y = margins.top();
+  for (auto* item : visible) {
+    auto* widget = item->widget.data();
+    if (!widget) continue;
+    const QSize hint = widget->sizeHint().expandedTo(widget->minimumSizeHint());
+    int childHeight = item->expands ? expandingHeight : hint.height();
+    childHeight = std::clamp(childHeight, widget->minimumHeight(),
+                             widget->maximumHeight());
+    const int childWidth = std::clamp(availableWidth, widget->minimumWidth(),
+                                      widget->maximumWidth());
+    widget->setGeometry(margins.left(), y, childWidth, childHeight);
+    y += childHeight + impl_->spacing;
+  }
+}
 
 ArtifactCommonStyle::ArtifactCommonStyle(QStyle* baseStyle)
     : QProxyStyle(baseStyle ? baseStyle : QStyleFactory::create(QStringLiteral("Fusion"))) {}

@@ -64,14 +64,16 @@ public:
             // free path: makeOffset + applyDisplacement (always wraps)
             ImageF32x4_RGBA tmp;
             applyDisplacement(si, tmp, makeOffset(dx, dy));
-            dst.image().setFromRGBA32F(tmp.rgba32fData(), si.width(), si.height());
+            dst.image().setFromRGBA32F(
+                tmp.rgba32fData(), si.width(), si.height(),
+                si.colorDescriptor());
             return;
         }
 
         // clamp / mirror: custom sampler using Distortion::sampleBilinear
         const int W = si.width(), H = si.height();
         ImageF32x4_RGBA tmp;
-        tmp.allocate(W, H);
+        tmp.resize(W, H);
         ArtifactCore::Parallel::For(0, H, [&](int y) {
             for (int x = 0; x < W; ++x) {
                 const float sx = (wrap_ == 2) ? mirrorCoord(static_cast<float>(x) + dx, W)
@@ -81,7 +83,8 @@ public:
                 tmp.setPixel(x, y, sampleBilinear(si, sx, sy));
             }
         });
-        dst.image().setFromRGBA32F(tmp.rgba32fData(), W, H);
+        dst.image().setFromRGBA32F(
+            tmp.rgba32fData(), W, H, si.colorDescriptor());
     }
 };
 

@@ -107,6 +107,8 @@ import Artifact.Layer.Solid2D;
 import Artifact.Layer.Shape;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Procedural3D;
+import Artifact.Layer.Camera;
+import Artifact.Layer.Light;
 import Layer.Blend;
 import Color.Float;
 import Composition.TemplateLock;
@@ -977,7 +979,7 @@ namespace Artifact
             }
             const QString requestedBackend = job.renderBackend.trimmed().toLower();
             if (requestedBackend == QStringLiteral("cpu") ||
-                requestedBackend == QStringLiteral("external")) {
+                requestedBackend.startsWith(QStringLiteral("external"))) {
                 result.addDiagnostic(makePreflightDiagnostic(
                     ArtifactCore::DiagnosticSeverity::Error,
                     ArtifactCore::DiagnosticCategory::Configuration,
@@ -1142,7 +1144,7 @@ namespace Artifact
         if (value == QLatin1String("cpu") || value == QLatin1String("software") || value == QLatin1String("qpainter") || value == QLatin1String("qpaint")) {
             return QStringLiteral("cpu");
         }
-        if (value == QLatin1String("external") || value == QLatin1String("process") || value == QLatin1String("outofprocess")) {
+        if (value == QLatin1String("external") || value == QLatin1String("external-cycles") || value == QLatin1String("process") || value == QLatin1String("outofprocess")) {
             return QStringLiteral("external");
         }
         return QStringLiteral("auto");
@@ -2788,13 +2790,18 @@ namespace Artifact
 
             QJsonObject output;
             output.insert(QStringLiteral("path"), job.outputPath);
-            output.insert(QStringLiteral("format"), QStringLiteral("png"));
+            const QString externalFormat = Artifact::deriveContainerFromJob(job);
+            output.insert(QStringLiteral("format"), externalFormat.isEmpty()
+                ? QStringLiteral("png") : externalFormat);
             output.insert(QStringLiteral("width"), std::max(16, job.resolutionWidth));
             output.insert(QStringLiteral("height"), std::max(16, job.resolutionHeight));
 
             QJsonObject quality;
             quality.insert(QStringLiteral("preset"), QStringLiteral("draft"));
-            quality.insert(QStringLiteral("backend"), QStringLiteral("diagnostic"));
+            const bool cyclesBackend = job.renderBackend.trimmed().compare(
+                QStringLiteral("external-cycles"), Qt::CaseInsensitive) == 0;
+            quality.insert(QStringLiteral("backend"), cyclesBackend
+                ? QStringLiteral("cycles") : QStringLiteral("diagnostic"));
 
             auto collectCompositionSnapshot = [&](const ArtifactCompositionPtr& composition,
                                                   auto&& self,
@@ -2810,6 +2817,35 @@ namespace Artifact
                 visitedIds.push_back(compositionId);
 
                 QJsonObject snapshotObject = composition->toJson().object();
+                QJsonArray externalLayers;
+                for (const auto& layer : composition->allLayerRef()) {
+                    if (!layer) {
+                        continue;
+                    }
+                    QJsonObject layerObject = layer->toJson();
+                    if (const auto camera = std::dynamic_pointer_cast<ArtifactCameraLayer>(layer)) {
+                        layerObject.insert(QStringLiteral("type"), static_cast<int>(LayerType::Camera));
+                    } else if (const auto light = std::dynamic_pointer_cast<ArtifactLightLayer>(layer)) {
+                        const auto lightColor = light->color();
+                        layerObject.insert(QStringLiteral("type"), static_cast<int>(LayerType::Light));
+                        layerObject.insert(QStringLiteral("light.type"), static_cast<int>(light->lightType()));
+                        layerObject.insert(QStringLiteral("light.color"), QJsonObject{
+                            {QStringLiteral("r"), lightColor.r()},
+                            {QStringLiteral("g"), lightColor.g()},
+                            {QStringLiteral("b"), lightColor.b()},
+                            {QStringLiteral("a"), lightColor.a()}});
+                        layerObject.insert(QStringLiteral("light.intensity"), light->intensity());
+                        layerObject.insert(QStringLiteral("light.range"), light->range());
+                        layerObject.insert(QStringLiteral("light.areaWidth"), light->areaWidth());
+                        layerObject.insert(QStringLiteral("light.areaHeight"), light->areaHeight());
+                        layerObject.insert(QStringLiteral("light.areaShape"), static_cast<int>(light->areaShape()));
+                        layerObject.insert(QStringLiteral("light.coneAngle"), light->coneAngle());
+                        layerObject.insert(QStringLiteral("light.coneFeather"), light->coneFeather());
+                        layerObject.insert(QStringLiteral("light.castsShadows"), light->castsShadows());
+                    }
+                    externalLayers.append(layerObject);
+                }
+                snapshotObject.insert(QStringLiteral("layers"), externalLayers);
                 const QJsonObject componentBake =
                     composition->exportLayerComponentSimulationBake();
                 if (!componentBake.isEmpty()) {
@@ -2860,6 +2896,7 @@ namespace Artifact
             diagnostics.insert(QStringLiteral("cancelFile"), resolvedCancelPath);
             diagnostics.insert(QStringLiteral("summaryFile"), resolvedSummaryPath);
             diagnostics.insert(QStringLiteral("eventLogFile"), resolvedEventLogPath);
+            diagnostics.insert(QStringLiteral("jobFile"), QDir(workDir).filePath(QStringLiteral("job.json")));
 
             QJsonObject root;
             root.insert(QStringLiteral("version"), 1);
@@ -4118,7 +4155,9 @@ namespace Artifact
         if (index < 0 || index >= count) {
             return QStringLiteral("auto");
         }
-        return normalizeRenderBackend(impl_->queueManager.getJob(index).renderBackend);
+        const QString backend = impl_->queueManager.getJob(index).renderBackend;
+        return backend.trimmed().compare(QStringLiteral("external-cycles"), Qt::CaseInsensitive) == 0
+            ? QStringLiteral("external-cycles") : normalizeRenderBackend(backend);
     }
 
     void ArtifactRenderQueueService::setJobRenderBackendAt(int index, const QString& backend)
@@ -4128,7 +4167,10 @@ namespace Artifact
             return;
         }
         auto job = impl_->queueManager.getJob(index);
-        job.renderBackend = normalizeRenderBackend(backend);
+        job.renderBackend = backend.trimmed().compare(
+            QStringLiteral("external-cycles"), Qt::CaseInsensitive) == 0
+            ? QStringLiteral("external-cycles")
+            : normalizeRenderBackend(backend);
         impl_->queueManager.updateJob(index, job);
         impl_->syncCoreQueueModel();
     }
@@ -5465,7 +5507,11 @@ namespace Artifact
             job.codec = obj["codec"].toString();
             job.codecProfile = obj["codecProfile"].toString();
             job.encoderBackend = obj["encoderBackend"].toString("auto");
-            job.renderBackend = normalizeRenderBackend(obj["renderBackend"].toString("auto"));
+            const QString savedRenderBackend = obj["renderBackend"].toString("auto");
+            job.renderBackend = savedRenderBackend.trimmed().compare(
+                QStringLiteral("external-cycles"), Qt::CaseInsensitive) == 0
+                ? QStringLiteral("external-cycles")
+                : normalizeRenderBackend(savedRenderBackend);
             job.integratedRenderEnabled = obj["integratedRenderEnabled"].toBool(false);
             job.multiChannelExportEnabled = obj["multiChannelExportEnabled"].toBool(false);
             for (const auto& value : obj["multiChannelExportChannels"].toArray()) {

@@ -22,6 +22,7 @@ module;
 module Artifact.Render.GPUTextureCacheManager;
 
 import Image.ImageF32x4_RGBA;
+import Image.UploadConversion;
 import Video.VideoFrame;
 
 namespace Artifact {
@@ -35,83 +36,6 @@ size_t bytesForImage(const QImage& image)
         return 0;
     }
     return static_cast<size_t>(image.bytesPerLine()) * static_cast<size_t>(image.height());
-}
-
-struct UploadImageData
-{
-    std::vector<uint8_t> bytes;
-    Uint32 width = 0;
-    Uint32 height = 0;
-    Uint64 stride = 0;
-    TEXTURE_FORMAT format = TEX_FORMAT_UNKNOWN;
-};
-
-float decodeSrgbBoundary(float value)
-{
-    if (!std::isfinite(value)) {
-        return 0.0f;
-    }
-    // CPU/QImage raster surfaces enter this boundary with display-encoded
-    // values in the SDR range. Preserve explicit extended-range values; their
-    // producer is responsible for declaring them scene-linear.
-    if (value < 0.0f || value > 1.0f) {
-        return value;
-    }
-    return value <= 0.04045f
-               ? value / 12.92f
-               : std::pow((value + 0.055f) / 1.055f, 2.4f);
-}
-
-UploadImageData makeUploadImageData(const ArtifactCore::ImageF32x4_RGBA& image)
-{
-    UploadImageData upload;
-    const int width = image.width();
-    const int height = image.height();
-    if (width <= 0 || height <= 0) {
-        return upload;
-    }
-
-    if (const float* rgba32 = image.rgba32fData()) {
-        // Internal mat is CV_32FC4 stored as BGRA (from qImageToCvMat+BGR2BGRA).
-        // Keep the effect result in float/HDR form and swap B<->R only at this
-        // upload boundary. Alpha remains bounded; finite RGB values may exceed
-        // 1.0 for the scene-linear pipeline.
-        upload.width  = static_cast<Uint32>(width);
-        upload.height = static_cast<Uint32>(height);
-        upload.stride = static_cast<Uint64>(upload.width) * 4ull * sizeof(float);
-        upload.format = TEX_FORMAT_RGBA32_FLOAT;
-        const size_t totalBytes = static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height);
-        upload.bytes.resize(totalBytes);
-        const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
-        for (size_t i = 0; i < pixelCount; ++i) {
-            // Source layout: [B, G, R, A] as float
-            const float srcB = rgba32[i * 4u + 0];
-            const float srcG = rgba32[i * 4u + 1];
-            const float srcR = rgba32[i * 4u + 2];
-            const float srcA = rgba32[i * 4u + 3];
-            const float dst[4] = {
-                decodeSrgbBoundary(srcR),
-                decodeSrgbBoundary(srcG),
-                decodeSrgbBoundary(srcB),
-                std::isfinite(srcA) ? std::clamp(srcA, 0.0f, 1.0f) : 0.0f,
-            };
-            std::memcpy(upload.bytes.data() + i * sizeof(dst), dst, sizeof(dst));
-        }
-        return upload;
-    }
-
-    if (const std::uint8_t* rgba8 = image.rgba8Data()) {
-        upload.width = static_cast<Uint32>(width);
-        upload.height = static_cast<Uint32>(height);
-        upload.stride = static_cast<Uint64>(upload.width) * 4ull;
-        upload.bytes.resize(static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height));
-        std::memcpy(upload.bytes.data(),
-                    rgba8,
-                    static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height));
-        return upload;
-    }
-
-    return upload;
 }
 
 Diligent::TEXTURE_FORMAT textureFormatFromVulkanNativeFormat(std::uint32_t nativeFormat)
@@ -241,19 +165,29 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
                                                              const QString& cacheKey,
                                                              const ArtifactCore::ImageF32x4_RGBA& image)
 {
-    UploadImageData upload = makeUploadImageData(image);
-    if (upload.format == TEX_FORMAT_UNKNOWN) {
-        QMutexLocker locker(&mutex_);
-        upload.format = textureFormat_;
-    }
+    const auto descriptor = image.colorDescriptor();
+    const QString colorAwareCacheKey =
+        cacheKey + QStringLiteral("|color:%1,%2,%3,%4,%5,%6,%7")
+                       .arg(static_cast<int>(descriptor.storage))
+                       .arg(static_cast<int>(descriptor.channelOrder))
+                       .arg(static_cast<int>(descriptor.primaries))
+                       .arg(static_cast<int>(descriptor.transfer))
+                       .arg(static_cast<int>(descriptor.alphaMode))
+                       .arg(static_cast<int>(descriptor.range))
+                       .arg(descriptor.transferKnown ? 1 : 0);
+    const ArtifactCore::ImageUploadBuffer upload =
+        ArtifactCore::convertImageForUpload(
+            image, ArtifactCore::ImageUploadTarget::Rgba32LinearStraight);
+    const TEXTURE_FORMAT uploadFormat =
+        upload.isValid() ? TEX_FORMAT_RGBA32_FLOAT : TEX_FORMAT_UNKNOWN;
     return acquireOrCreateFromRgbaBytes(ownerId,
-                                        cacheKey,
+                                        colorAwareCacheKey,
                                         upload.width,
                                         upload.height,
-                                         upload.stride,
+                                         upload.rowStride,
                                          upload.bytes.data(),
                                          upload.bytes.size(),
-                                         upload.format);
+                                         uploadFormat);
 }
 
 GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& ownerId,

@@ -88,7 +88,9 @@ public:
 
         cv::Mat result;
         cv::merge(channels, result);
-        dst.image().setFromRGBA32F(result.ptr<float>(), result.cols, result.rows);
+        dst.image().setFromRGBA32F(
+            result.ptr<float>(), result.cols, result.rows,
+            src.image().colorDescriptor());
     }
 };
 

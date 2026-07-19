@@ -8,6 +8,7 @@ module;
 export module Artifact.FxStudio.ViewportModel;
 
 import Artifact.FxStudio.EventTrack;
+import Artifact.FxStudio.Sequence;
 
 export namespace Artifact::FxStudio {
 

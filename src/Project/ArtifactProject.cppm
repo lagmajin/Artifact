@@ -98,6 +98,7 @@ namespace Artifact {
    CreationDefaultsState creationDefaultsState_;
    GuideSet guideSet_;
    QJsonObject extensionData_;
+   int colorPipelineVersion_ = ArtifactProject::CanonicalColorPipelineVersion;
 
  public:
   Impl();
@@ -132,6 +133,23 @@ namespace Artifact {
   // 保存受け口。既存サービス・メニュー経路には接続しない。
   QJsonObject extensionData() const { return extensionData_; }
   void setExtensionData(const QJsonObject& data) { extensionData_ = data; }
+  int colorPipelineVersion() const noexcept { return colorPipelineVersion_; }
+  void setColorPipelineVersion(int version, bool markDirty) {
+   if (version < ArtifactProject::LegacyColorPipelineVersion ||
+       version > ArtifactProject::CanonicalColorPipelineVersion ||
+       colorPipelineVersion_ == version) {
+    return;
+   }
+   colorPipelineVersion_ = version;
+   for (const auto& composition : container_.all()) {
+    if (composition) {
+     composition->setColorPipelineVersion(version);
+    }
+   }
+   if (markDirty) {
+    setDirty(true);
+   }
+  }
 
    // Layer management
    ArtifactLayerResult createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
@@ -270,6 +288,7 @@ CreateCompositionResult ArtifactProject::Impl::createComposition(const ArtifactC
 
  // create a shared_ptr for the new composition and insert into the multi-index
  auto newCompPtr = std::make_shared<ArtifactAbstractComposition>(id, settings);
+ newCompPtr->setColorPipelineVersion(colorPipelineVersion_);
  container_.add(newCompPtr, id, std::type_index(typeid(ArtifactAbstractComposition)));
 
  // Mark project state as dirty
@@ -323,7 +342,8 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
 
  bool ArtifactProject::Impl::addImportedComposition(ArtifactCompositionPtr comp, const QString& name)
  {
-  if (!comp) return false;
+ if (!comp) return false;
+  comp->setColorPipelineVersion(colorPipelineVersion_);
   CompositionID id = comp->id();
   container_.add(comp, id, std::type_index(typeid(ArtifactAbstractComposition)));
 
@@ -459,6 +479,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
                                        ? QStringLiteral("Composition")
                                        : name;
       const CompositionID compId = comp->id();
+      comp->setColorPipelineVersion(colorPipelineVersion_);
       container_.add(comp, compId, std::type_index(typeid(ArtifactAbstractComposition)));
 
       auto compItemUp = std::make_unique<CompositionItem>();
@@ -687,6 +708,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   result["author"] = projectSettings_.author().toQString();
   result["version"] = "1.1";
   result["minVersion"] = "1.0";
+  result["colorPipelineVersion"] = colorPipelineVersion_;
   result["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
   if (!currentCompositionId_.isNil()) {
    result["currentCompositionId"] = currentCompositionId_.toString();
@@ -1371,6 +1393,20 @@ void ArtifactProject::setExtensionData(const QJsonObject& data)
    return;
   }
   impl_->setCurrentCompositionId(id, markDirty);
+ }
+
+ int ArtifactProject::colorPipelineVersion() const noexcept
+ {
+  return impl_ ? impl_->colorPipelineVersion()
+               : CanonicalColorPipelineVersion;
+ }
+
+ void ArtifactProject::setColorPipelineVersion(int version, bool markDirty)
+ {
+  if (!impl_) {
+   return;
+  }
+  impl_->setColorPipelineVersion(version, markDirty);
  }
 
  void ArtifactProject::addAssetFile()

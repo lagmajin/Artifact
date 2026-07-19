@@ -4,7 +4,7 @@ module;
 #include <QScreen>
 #include <QString>
 
-module Artifact.Widgets.LayerPanelPresentation;
+module Artifact.Widgets.LayerPanelWidget;
 
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Audio;

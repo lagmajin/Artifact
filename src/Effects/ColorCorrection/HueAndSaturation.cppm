@@ -70,7 +70,9 @@ public:
 
         cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
         cv::merge(std::vector<cv::Mat>{bgr, alpha}, floatMat);
-        dst.image().setFromRGBA32F(floatMat.ptr<float>(), floatMat.cols, floatMat.rows);
+        dst.image().setFromRGBA32F(
+            floatMat.ptr<float>(), floatMat.cols, floatMat.rows,
+            src.image().colorDescriptor());
     }
 };
 

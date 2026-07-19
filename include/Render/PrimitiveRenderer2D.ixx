@@ -82,7 +82,8 @@ public:
                                      float centerY = 0.5f,
                                      float scale = 1.0f,
                                      float offset = 0.0f,
-                                     float opacity = 1.0f);
+                                     float opacity = 1.0f,
+                                     bool linearColorInterpolation = false);
     void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
     void drawLineLocal(float2 p1, float2 p2, const FloatColor& c1, const FloatColor& c2);
     // Quad vertices are expected in triangle-strip order.

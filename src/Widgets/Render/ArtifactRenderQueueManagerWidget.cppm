@@ -519,6 +519,7 @@ namespace Artifact
     if (value == QStringLiteral("pipe-vulkan")) return QStringLiteral("vk");
     if (value == QStringLiteral("native")) return QStringLiteral("native");
     if (value == QStringLiteral("gpu") || value.startsWith(QStringLiteral("gpu:"))) return QStringLiteral("gpu");
+    if (value == QStringLiteral("external-cycles")) return QStringLiteral("cycles");
     if (value == QStringLiteral("external")) return QStringLiteral("ext");
     return value.left(8);
   }

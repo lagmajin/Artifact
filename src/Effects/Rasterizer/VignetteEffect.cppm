@@ -119,7 +119,7 @@ public:
         context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);
         if(!read.pData||!read.Stride) { applyCPU(src,dst); return; }
         cv::Mat result(static_cast<int>(outDesc.Height),static_cast<int>(outDesc.Width),CV_32FC4,read.pData,read.Stride);
-        dst.image().setFromCVMat(result); context->UnmapTextureSubresource(staging,0,0);
+        dst.image().setFromCVMat(result,image.colorDescriptor()); context->UnmapTextureSubresource(staging,0,0);
     }
 
 private:

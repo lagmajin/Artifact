@@ -45,6 +45,7 @@ import Text.GlyphLayout;
 import Utils.String.UniString;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.RenderCommandBuffer;
+import Image.UploadConversion;
 
 namespace Artifact {
 
@@ -86,6 +87,17 @@ qint64 computeImageContentKey(const auto& image)
     const size_t totalBytes = static_cast<size_t>(image.width()) * static_cast<size_t>(image.height()) * 4u * bytesPerChannel;
     const size_t sampleBytes = std::min<size_t>(totalBytes, 4096u);
     quint32 h = qHashMulti(0, image.width(), image.height(), 4, bytesPerChannel);
+    if constexpr (requires { image.colorDescriptor(); }) {
+        const auto descriptor = image.colorDescriptor();
+        h = qHashMulti(h,
+                       static_cast<int>(descriptor.storage),
+                       static_cast<int>(descriptor.channelOrder),
+                       static_cast<int>(descriptor.primaries),
+                       static_cast<int>(descriptor.transfer),
+                       static_cast<int>(descriptor.alphaMode),
+                       static_cast<int>(descriptor.range),
+                       descriptor.transferKnown);
+    }
     const quint8* bytes = isFloat
         ? reinterpret_cast<const quint8*>(data32)
         : reinterpret_cast<const quint8*>(data8);
@@ -433,7 +445,8 @@ void PrimitiveRenderer2D::drawGradientRectTransformed(float x, float y, float w,
                                                        float centerY,
                                                        float scale,
                                                        float offset,
-                                                       float opacity)
+                                                       float opacity,
+                                                       bool linearColorInterpolation)
 {
     if (!impl_->cmdBuf_) return;
     const auto viewportCB = impl_->viewport_.GetViewportCB();
@@ -468,6 +481,8 @@ void PrimitiveRenderer2D::drawGradientRectTransformed(float x, float y, float w,
     pkt.params.mode = {static_cast<float>(fillType), angleDegrees, reverse ? 1.0f : 0.0f, std::max(scale, 0.0001f)};
     pkt.params.centerOffset = {centerX, centerY, offset,
                                h > 0.0001f ? std::abs(w / h) : 1.0f};
+    pkt.params.colorContract = {
+        linearColorInterpolation ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
     pkt.opacity = opacity;
     impl_->cmdBuf_->append(pkt);
 }
@@ -1211,35 +1226,14 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         pTexture = it->second.pTexture;
         it->second.lastUsedFrame = impl_->m_frameCount;
     } else {
-        const int width = image.width();
-        const int height = image.height();
-        const float* rgba32 = image.rgba32fData();
-        const std::uint8_t* rgba8 = image.rgba8Data();
-        if (width <= 0 || height <= 0 || (!rgba32 && !rgba8)) {
+        const ArtifactCore::ImageUploadBuffer upload =
+            ArtifactCore::convertImageForUpload(
+                image, ArtifactCore::ImageUploadTarget::Rgba8SrgbStraight);
+        if (!upload.isValid()) {
             return;
         }
-
-        std::vector<uint8_t> uploadBytes;
-        const uint8_t* uploadPtr = nullptr;
-        if (rgba8) {
-            uploadPtr = rgba8;
-        } else {
-            uploadBytes.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u);
-            const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
-            for (size_t i = 0; i < pixelCount; ++i) {
-                // Source layout from ImageF32x4_RGBA internal mat: [B, G, R, A] as float
-                const float srcB = rgba32[i * 4u + 0];
-                const float srcG = rgba32[i * 4u + 1];
-                const float srcR = rgba32[i * 4u + 2];
-                const float srcA = rgba32[i * 4u + 3];
-                // Dest layout: [R, G, B, A] as uint8 (TEX_FORMAT_RGBA8_UNORM_SRGB)
-                uploadBytes[i * 4u + 0] = static_cast<uint8_t>(std::clamp(srcR, 0.0f, 1.0f) * 255.0f + 0.5f);
-                uploadBytes[i * 4u + 1] = static_cast<uint8_t>(std::clamp(srcG, 0.0f, 1.0f) * 255.0f + 0.5f);
-                uploadBytes[i * 4u + 2] = static_cast<uint8_t>(std::clamp(srcB, 0.0f, 1.0f) * 255.0f + 0.5f);
-                uploadBytes[i * 4u + 3] = static_cast<uint8_t>(std::clamp(srcA, 0.0f, 1.0f) * 255.0f + 0.5f);
-            }
-            uploadPtr = uploadBytes.data();
-        }
+        const Uint32 width = static_cast<Uint32>(upload.width);
+        const Uint32 height = static_cast<Uint32>(upload.height);
 
         TextureDesc texDesc;
         texDesc.Type = RESOURCE_DIM_TEX_2D;
@@ -1252,8 +1246,8 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         texDesc.CPUAccessFlags = CPU_ACCESS_NONE;
 
         TextureSubResData subData;
-        subData.pData = uploadPtr;
-        subData.Stride = static_cast<Uint64>(width) * 4ull;
+        subData.pData = upload.bytes.data();
+        subData.Stride = upload.rowStride;
         TextureData initData;
         initData.pSubResources = &subData;
         initData.NumSubresources = 1;

@@ -1012,6 +1012,8 @@ class ArtifactAbstractComposition::Impl {
   std::shared_ptr<AudioMixer> audioMixer_;
   CompositionID id_;
   QString compositionNote_;
+  int colorPipelineVersion_ =
+      ArtifactAbstractComposition::CanonicalColorPipelineVersion;
   FloatColor backgroundColor_ = { 0.47f, 0.47f, 0.47f, 1.0f };
   std::vector<std::shared_ptr<ArtifactAbstractEffect>> effects_;
   mutable QImage thumbnailCache_;
@@ -2375,6 +2377,21 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
  FloatColor ArtifactAbstractComposition::backgroundColor() const
  {
   return impl_->backgroundColor_;
+ }
+
+ int ArtifactAbstractComposition::colorPipelineVersion() const noexcept
+ {
+  return impl_ ? impl_->colorPipelineVersion_
+               : CanonicalColorPipelineVersion;
+ }
+
+ void ArtifactAbstractComposition::setColorPipelineVersion(int version)
+ {
+  if (!impl_ || version < LegacyColorPipelineVersion ||
+      version > CanonicalColorPipelineVersion) {
+   return;
+  }
+  impl_->colorPipelineVersion_ = version;
  }
 
  void ArtifactAbstractComposition::Impl::addEffect(std::shared_ptr<ArtifactAbstractEffect> effect)
@@ -4326,6 +4343,7 @@ bool ArtifactAbstractComposition::setStateComparisonPair(
 QJsonDocument ArtifactAbstractComposition::toJson() const{
     QJsonObject obj;
     obj["id"] = id().toString();
+    obj["colorPipelineVersion"] = impl_->colorPipelineVersion_;
     obj["frameRange"] = impl_->frameRange_.toJson();
     obj["workAreaRange"] = impl_->workAreaRange_.toJson();
     obj["currentFrame"] = impl_->position_.framePosition();
@@ -4389,6 +4407,17 @@ void ArtifactAbstractComposition::removeLayerById(const ArtifactCore::LayerID& i
 ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument& doc){
     if (!doc.isObject()) return nullptr;
     QJsonObject obj = doc.object();
+    const QJsonValue colorPipelineValue = obj.value("colorPipelineVersion");
+    const double rawColorPipelineVersion = colorPipelineValue.isUndefined()
+        ? static_cast<double>(LegacyColorPipelineVersion)
+        : colorPipelineValue.toDouble();
+    if ((!colorPipelineValue.isUndefined() && !colorPipelineValue.isDouble()) ||
+        std::floor(rawColorPipelineVersion) != rawColorPipelineVersion ||
+        rawColorPipelineVersion < LegacyColorPipelineVersion ||
+        rawColorPipelineVersion > CanonicalColorPipelineVersion) {
+        return nullptr;
+    }
+    const int colorPipelineVersion = static_cast<int>(rawColorPipelineVersion);
     
     CompositionID compId;
     if (obj.contains("id")) {
@@ -4415,6 +4444,7 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
         });
     }
     auto comp = ArtifactCore::makeShared<ArtifactAbstractComposition>(compId, params);
+    comp->setColorPipelineVersion(colorPipelineVersion);
     comp->impl_->suppressLayerChangedEvents_ = true;
     if (obj.contains("frameRange") && obj["frameRange"].isObject()) {
         comp->setFrameRange(FrameRange::fromJson(obj["frameRange"].toObject()));

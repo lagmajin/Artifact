@@ -53,8 +53,6 @@ module;
 #include <QClipboard>
 module Artifact.Widgets.LayerPanelWidget;
 
-import Artifact.Widgets.LayerPanelPresentation;
-
 import std;
 import ArtifactCore.Utils.PerformanceProfiler;
 

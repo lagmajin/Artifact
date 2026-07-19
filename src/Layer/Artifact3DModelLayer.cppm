@@ -256,6 +256,15 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["geometry.depth"] = impl_->geometryDepth_;
   obj["geometry.segments"] = impl_->geometrySegments_;
   obj["geometry.rings"] = impl_->geometryRings_;
+  const QColor baseColor = impl_->material_.baseColor();
+  obj["material.base.color"] = QJsonObject{
+      {QStringLiteral("r"), baseColor.redF()},
+      {QStringLiteral("g"), baseColor.greenF()},
+      {QStringLiteral("b"), baseColor.blueF()},
+      {QStringLiteral("a"), baseColor.alphaF()}};
+  obj["material.metallic"] = impl_->material_.metallic();
+  obj["material.roughness"] = impl_->material_.roughness();
+  obj["material.opacity"] = impl_->material_.opacity();
   obj["material.baseColorTexture"] = impl_->material_.baseColorTexture().toQString();
   obj["material.metallicRoughnessTexture"] =
       impl_->material_.metallicRoughnessTexture().toQString();

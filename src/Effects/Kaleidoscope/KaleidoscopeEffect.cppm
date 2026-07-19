@@ -174,6 +174,7 @@ public:
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
         executor->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         if (!readbackTexture(device_, context_, outputTex, dst)) { applyCPU(src, dst); return; }
+        dst.image().setColorDescriptor(src.image().colorDescriptor());
     }
 
 private:
