@@ -56,6 +56,15 @@ export namespace Artifact {
   bool affected = false;
  };
 
+ struct SoftBodyDeformationMesh {
+  std::vector<float> vertices; // x, y, u, v per vertex
+  std::vector<std::uint32_t> indices;
+
+  bool isValid() const noexcept {
+   return !vertices.empty() && !indices.empty() && vertices.size() % 4 == 0;
+  }
+ };
+
  struct LayerComponentRuntimeSnapshot {
   std::shared_ptr<const void> storage;
   std::size_t estimatedBytes = 0;
@@ -369,6 +378,7 @@ public:
   float4x4 getGlobalTransformMatrix() const;
   float4x4 getLocalTransformMatrix() const;
   bool hasSoftBodyPhysics() const;
+  SoftBodyDeformationMesh softBodyDeformationMesh() const;
   bool hasRigidBodyPhysics() const;
   void enableSoftBodyPhysics();
   void enableSoftBodyPhysicsGrid(int columns = 6, int rows = 6, float stiffness = 1.0f);

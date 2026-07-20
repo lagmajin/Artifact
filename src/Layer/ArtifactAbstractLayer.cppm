@@ -2138,6 +2138,23 @@ bool ArtifactAbstractLayer::hasSoftBodyPhysics() const {
   return static_cast<bool>(ArtifactCore::PhysicsSystem::instance().getSoftBody(id()));
 }
 
+SoftBodyDeformationMesh ArtifactAbstractLayer::softBodyDeformationMesh() const {
+  SoftBodyDeformationMesh mesh;
+  const auto solver = ArtifactCore::PhysicsSystem::instance().getSoftBody(id());
+  if (!solver) {
+    return mesh;
+  }
+  const auto vertices = solver->getUVVertices();
+  const auto indices = solver->getGridTriangleIndices();
+  mesh.vertices.reserve(vertices.size() * 4);
+  for (const auto& vertex : vertices) {
+    mesh.vertices.insert(mesh.vertices.end(),
+                         {vertex.x, vertex.y, vertex.u, vertex.v});
+  }
+  mesh.indices = indices;
+  return mesh;
+}
+
 bool ArtifactAbstractLayer::hasRigidBodyPhysics() const {
   return static_cast<bool>(ArtifactCore::PhysicsSystem::instance().getRigidWorld(id()));
 }
