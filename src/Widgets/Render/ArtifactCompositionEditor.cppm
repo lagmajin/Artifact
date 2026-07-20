@@ -56,6 +56,7 @@ module;
 #include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QTabWidget>
 #include <QStringList>
 #include <QTimer>
 #include <QToolBar>
@@ -149,6 +150,8 @@ import Artifact.Render.IRenderer;
 import IO.ImageExporter;
 import Image.ExportOptions;
 import VectorScopeWidget;
+import WaveformScopeWidget;
+import ParadeScopeWidget;
 import Codec.Thumbnail.FFmpeg;
 import UI.ShortcutBindings;
 import Undo.UndoManager;
@@ -9297,17 +9300,29 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      dialog->setWindowTitle(QStringLiteral("Preview Vectorscope"));
                      dialog->resize(360, 380);
                      auto *layout = new QVBoxLayout(dialog);
-                     auto *scope = new ArtifactWidgets::VectorScopeWidget(dialog);
-                     scope->setMode(ArtifactWidgets::VectorScopeMode::Standard);
-                     layout->addWidget(scope);
+                     auto *tabs = new QTabWidget(dialog);
+                     auto *vectorScope = new ArtifactWidgets::VectorScopeWidget(tabs);
+                     vectorScope->setMode(ArtifactWidgets::VectorScopeMode::Standard);
+                     auto *waveformScope = new ArtifactWidgets::WaveformScopeWidget(tabs);
+                     waveformScope->setMode(ArtifactWidgets::WaveformMode::Luma);
+                     auto *paradeScope = new ArtifactWidgets::ParadeScopeWidget(tabs);
+                     paradeScope->setMode(ArtifactWidgets::ParadeMode::RGB);
+                     tabs->addTab(vectorScope, QStringLiteral("Vectorscope"));
+                     tabs->addTab(waveformScope, QStringLiteral("Waveform"));
+                     tabs->addTab(paradeScope, QStringLiteral("RGB Parade"));
+                     layout->addWidget(tabs);
                      auto *timer = new QTimer(dialog);
                      QObject::connect(timer, &QTimer::timeout, dialog,
-                                      [this, scope]() {
-                                        if (!impl_ || !impl_->renderController_ || !scope) {
+                                      [this, vectorScope, waveformScope, paradeScope]() {
+                                        if (!impl_ || !impl_->renderController_ || !vectorScope ||
+                                            !waveformScope || !paradeScope) {
                                           return;
                                         }
-                                        scope->updateFrame(
-                                            impl_->renderController_->captureCurrentFrameImage());
+                                        const auto frame =
+                                            impl_->renderController_->captureCurrentFrameImage();
+                                        vectorScope->updateFrame(frame);
+                                        waveformScope->updateFrame(frame);
+                                        paradeScope->updateFrame(frame);
                                       });
                      QObject::connect(dialog, &QDialog::finished, this,
                                       [this]() {
@@ -9318,10 +9333,15 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      impl_->vectorScopeDialog_ = dialog;
                      dialog->show();
                      timer->start(150);
-                     QTimer::singleShot(0, dialog, [this, scope]() {
-                       if (impl_ && impl_->renderController_ && scope) {
-                         scope->updateFrame(
-                             impl_->renderController_->captureCurrentFrameImage());
+                     QTimer::singleShot(0, dialog,
+                                        [this, vectorScope, waveformScope, paradeScope]() {
+                       if (impl_ && impl_->renderController_ && vectorScope && waveformScope &&
+                           paradeScope) {
+                         const auto frame =
+                             impl_->renderController_->captureCurrentFrameImage();
+                         vectorScope->updateFrame(frame);
+                         waveformScope->updateFrame(frame);
+                         paradeScope->updateFrame(frame);
                        }
                      });
                    });
