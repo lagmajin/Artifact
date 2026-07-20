@@ -578,6 +578,17 @@ endif()
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia MultimediaWidgets Concurrent Svg)
 target_link_libraries(Artifact PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Multimedia Qt6::MultimediaWidgets Qt6::Concurrent Qt6::Svg)
 
+# OpenAssetIO is an optional interoperability layer for external asset
+# management systems. The local filesystem asset workflow remains the default.
+find_package(OpenAssetIO CONFIG QUIET)
+if(TARGET openassetio::openassetio-core)
+    target_link_libraries(Artifact PRIVATE openassetio::openassetio-core)
+    target_compile_definitions(Artifact PRIVATE ARTIFACT_HAS_OPENASSETIO=1)
+elseif(TARGET OpenAssetIO::openassetio-core)
+    target_link_libraries(Artifact PRIVATE OpenAssetIO::openassetio-core)
+    target_compile_definitions(Artifact PRIVATE ARTIFACT_HAS_OPENASSETIO=1)
+endif()
+
 # Qt resource bundle: app icons
 file(GLOB_RECURSE ARTIFACT_ICON_RESOURCE_FILES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon/*"
