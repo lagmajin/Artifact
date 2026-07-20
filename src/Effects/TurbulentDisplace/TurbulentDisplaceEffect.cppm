@@ -60,6 +60,7 @@ public:
     float size_ = 30.0f;
     int octaves_ = 4;
     int seed_ = 0;
+    float domainWarp_ = 0.0f;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         auto& srcImage = src.image();
@@ -85,13 +86,15 @@ public:
             for (int x = 0; x < w; ++x) {
                 const float fx = x * scale;
                 const float fy = y * scale;
+                const float warpedFx = fx + (valueNoise2D(fx * 0.75f + 17.0f, fy * 0.75f, seed_ + 101) - 0.5f) * domainWarp_;
+                const float warpedFy = fy + (valueNoise2D(fx * 0.75f, fy * 0.75f + 31.0f, seed_ + 137) - 0.5f) * domainWarp_;
                 float dx = 0.0f;
                 float dy = 0.0f;
                 float amp = amount_;
                 float freq = 1.0f;
                 for (int o = 0; o < octaves_; ++o) {
-                    const float nx = fx * freq + rowDist(rowRng);
-                    const float ny = fy * freq + rowDist(rowRng);
+                    const float nx = warpedFx * freq + rowDist(rowRng);
+                    const float ny = warpedFy * freq + rowDist(rowRng);
                     dx += valueNoise2D(nx, ny, seed_ + o) * amp;
                     dy += valueNoise2D(nx + 100.0f, ny + 100.0f, seed_ + o) * amp;
                     amp *= 0.5f;
@@ -159,6 +162,8 @@ int TurbulentDisplaceEffect::octaves() const { return octaves_; }
 void TurbulentDisplaceEffect::setOctaves(int v) { octaves_ = std::max(1, v); syncImpls(); }
 int TurbulentDisplaceEffect::seed() const { return seed_; }
 void TurbulentDisplaceEffect::setSeed(int v) { seed_ = v; syncImpls(); }
+float TurbulentDisplaceEffect::domainWarp() const { return domainWarp_; }
+void TurbulentDisplaceEffect::setDomainWarp(float v) { domainWarp_ = std::max(0.0f, v); syncImpls(); }
 
 void TurbulentDisplaceEffect::syncImpls() {
     if (auto* c = dynamic_cast<TurbulentDisplaceEffectCPUImpl*>(cpuImpl().get())) {
@@ -166,12 +171,14 @@ void TurbulentDisplaceEffect::syncImpls() {
         c->size_ = size_;
         c->octaves_ = octaves_;
         c->seed_ = seed_;
+        c->domainWarp_ = domainWarp_;
     }
     if (auto* g = dynamic_cast<TurbulentDisplaceEffectGPUImpl*>(gpuImpl().get())) {
         g->cpuImpl_.amount_ = amount_;
         g->cpuImpl_.size_ = size_;
         g->cpuImpl_.octaves_ = octaves_;
         g->cpuImpl_.seed_ = seed_;
+        g->cpuImpl_.domainWarp_ = domainWarp_;
     }
 }
 
@@ -181,6 +188,7 @@ std::vector<AbstractProperty> TurbulentDisplaceEffect::getProperties() const {
     auto& s = props.emplace_back(); s.setName("Size"); s.setType(PropertyType::Float); s.setValue(size_);
     auto& o = props.emplace_back(); o.setName("Octaves"); o.setType(PropertyType::Integer); o.setValue(octaves_);
     auto& sd = props.emplace_back(); sd.setName("Seed"); sd.setType(PropertyType::Integer); sd.setValue(seed_);
+    auto& dw = props.emplace_back(); dw.setName("Domain Warp"); dw.setType(PropertyType::Float); dw.setValue(domainWarp_);
     return props;
 }
 
@@ -190,6 +198,7 @@ void TurbulentDisplaceEffect::setPropertyValue(const UniString& n, const QVarian
     else if (k == "Size") setSize(v.toFloat());
     else if (k == "Octaves") setOctaves(v.toInt());
     else if (k == "Seed") setSeed(v.toInt());
+    else if (k == "Domain Warp") setDomainWarp(v.toFloat());
 } // namespace Artifact
 
 }

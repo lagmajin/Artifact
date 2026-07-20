@@ -18,6 +18,7 @@ private:
     float size_ = 30.0f;
     int octaves_ = 4;
     int seed_ = 0;
+    float domainWarp_ = 0.0f;
     void syncImpls();
 
 public:
@@ -32,6 +33,8 @@ public:
     void setOctaves(int v);
     int seed() const;
     void setSeed(int v);
+    float domainWarp() const;
+    void setDomainWarp(float v);
 
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
