@@ -78,4 +78,13 @@ namespace Artifact {
         loadUrl(prodUrl);
     }
 
+
+    void ArtifactWebUIHost::runJavaScript(const QString& js)
+    {
+        if (impl_->webView) {
+            impl_->webView->page()->runJavaScript(js);
+        }
+    }
+
+
 }

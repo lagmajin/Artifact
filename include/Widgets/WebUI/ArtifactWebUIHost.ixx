@@ -79,6 +79,9 @@ export namespace Artifact {
         // プロダクションモード: qrc内のビルド済みアセットをロード
         void loadProductionUI();
 
+        // JSを直接実行（ReportDashboard 等から利用）
+        void runJavaScript(const QString& js);
+
         // WebBridge への直接アクセス（テスト/デバッグ用）
         // ArtifactWebBridge* bridge() const;
     };

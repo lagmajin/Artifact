@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ArtifactStudio Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root{--bg:#1e1e2e;--card:#252536;--text:#cdd6f4;--muted:#6c7086;
+--accent:#89b4fa;--border:#313244}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px}
+.header{text-align:center;margin-bottom:32px}
+.header h1{font-size:28px;font-weight:600;color:var(--accent)}
+.header p{font-size:14px;color:var(--muted);margin-top:4px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(460px,1fr));gap:20px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
+.card h3{font-size:15px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+.card.full{grid-column:1/-1}
+.chart-wrap{position:relative;width:100%}
+.chart-wrap canvas{max-height:320px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:600;padding:8px 12px;border-bottom:2px solid var(--border);text-transform:uppercase;font-size:11px}
+td{padding:8px 12px;border-bottom:1px solid var(--border)}
+tr:hover td{background:rgba(255,255,255,.03)}
+.text-content{font-size:14px;line-height:1.7}
+.image-content{text-align:center}
+.image-content img{max-width:100%;border-radius:8px;border:1px solid var(--border)}
+.stats{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 20px;flex:1;min-width:140px}
+.stat .value{font-size:28px;font-weight:700;color:var(--accent)}
+.stat .label{font-size:12px;color:var(--muted);margin-top:4px;text-transform:uppercase}
+#loading{text-align:center;padding:80px;color:var(--muted);font-size:16px}
+#loading.hidden{display:none}
+</style>
+</head>
+<body>
+<div id="loading">Loading report data...</div>
+<div id="app" style="display:none">
+<div class="header"><h1 id="reportTitle"></h1><p id="reportSubtitle"></p></div>
+<div class="stats" id="statsBar"></div>
+<div class="grid" id="sectionsGrid"></div>
+
+<script>
+window.__charts=[];
+window.renderReport=function(d){
+document.getElementById('loading').classList.add('hidden');
+document.getElementById('app').style.display='block';
+window.__charts.forEach(c=>c.destroy());window.__charts=[];
+document.getElementById('reportTitle').textContent=d.title||'';
+document.getElementById('reportSubtitle').textContent=d.subtitle||'';
+document.getElementById('statsBar').innerHTML='';
+document.getElementById('sectionsGrid').innerHTML='';
+if(d.stats)d.stats.forEach(s=>{var e=document.createElement('div');e.className='stat';
+e.innerHTML='<div class="value">'+s.value+'</div><div class="label">'+s.label+'</div>';
+document.getElementById('statsBar').appendChild(e)});
+(d.sections||[]).forEach(function(sec){
+var card=document.createElement('div');
+card.className='card'+(sec.fullWidth?' full':'');
+card.innerHTML='<h3>'+(sec.title||'')+'</h3>';
+if(sec.type==='chart'){var w=document.createElement('div');w.className='chart-wrap';
+var c=document.createElement('canvas');w.appendChild(c);card.appendChild(w);
+var ctx=c.getContext('2d');
+var cfg={type:sec.chartType||'line',
+data:{labels:sec.labels||[],datasets:(sec.datasets||[]).map(function(ds){return{
+label:ds.label,data:ds.data,borderColor:ds.borderColor||'#89b4fa',
+backgroundColor:ds.backgroundColor||(ds.borderColor||'#89b4fa')+'33',
+fill:ds.fill||false,tension:ds.tension||0.3,pointRadius:2,borderWidth:2}})},
+options:{responsive:true,maintainAspectRatio:false,
+plugins:{legend:{labels:{color:'#6c7086',font:{size:11}}}},
+scales:(sec.chartType==='pie'||sec.chartType==='doughnut'||sec.chartType==='radar')?{}:
+{x:{ticks:{color:'#6c7086'},grid:{color:'#313244'}},
+y:{ticks:{color:'#6c7086'},grid:{color:'#313244'},beginAtZero:true}}}};
+window.__charts.push(new Chart(ctx,cfg))}
+else if(sec.type==='table'){var h='<table><thead><tr>';
+(sec.columns||[]).forEach(function(c){h+='<th>'+c+'</th>'});
+h+='</tr></thead><tbody>';
+(sec.rows||[]).forEach(function(r){h+='<tr>';r.forEach(function(c){h+='<td>'+c+'</td>'});
+h+='</tr>'});h+='</tbody></table>';card.innerHTML+=h}
+else if(sec.type==='image'){card.innerHTML+='<div class="image-content"><img src="'+sec.content
++'" width="'+(sec.imageWidth||800)+'" height="'+(sec.imageHeight||600)+'"></div>'}
+else{card.innerHTML+='<div class="text-content">'+(sec.content||'')+'</div>'}
+document.getElementById('sectionsGrid').appendChild(card)});
+};
+if(window.__pendingReport){window.renderReport(window.__pendingReport);delete window.__pendingReport;}
+</script>
+</body></html>
+
+</div>
