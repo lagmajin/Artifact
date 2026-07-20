@@ -3,9 +3,12 @@ module;
 #include <QImage>
 #include <QMatrix4x4>
 #include <QRectF>
+#include <QString>
 #include <QVector2D>
 #include <QVector3D>
+#include <QVector4D>
 #include <QDebug>
+#include <Diagnostics/WidgetCreationDiagnostics.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
@@ -314,6 +317,7 @@ public:
     // CPU-side accumulation buffers — flushed once per flushGizmoGeometry() call
     std::vector<GizmoLineVertex> pendingLineVerts_;
     std::vector<GizmoLineVertex> pendingTriVerts_;
+    QString lastGizmoFlushDiagnosticOutcome_;
 
     QMatrix4x4 viewMatrix_;
     QMatrix4x4 projMatrix_;
@@ -784,10 +788,33 @@ public:
         }
     }
 
+    void recordGizmoFlushDiagnostic(const QString& outcome,
+                                    const QString& detail)
+    {
+        if (lastGizmoFlushDiagnosticOutcome_ == outcome) {
+            return;
+        }
+        lastGizmoFlushDiagnosticOutcome_ = outcome;
+        WidgetCreationDiagnostics::recordPhase(
+            QStringLiteral("3D Primitive Flush"),
+            QStringLiteral("composition-overlay"),
+            QStringLiteral("primitive-renderer3d-flush"), 0.0, detail,
+            outcome);
+    }
+
     void drawGizmoGeometry(const GizmoLineVertex* vertices, Uint32 vertexCount, const PSOAndSRB& psoAndSrb,
                            PRIMITIVE_TOPOLOGY /*primitiveTopology*/)
     {
-        if (!psoAndSrb.pPSO || !psoAndSrb.pSRB || vertexCount < 2) {
+        if (vertexCount < 2) {
+            return;
+        }
+        if (!psoAndSrb.pPSO || !psoAndSrb.pSRB) {
+            recordGizmoFlushDiagnostic(
+                QStringLiteral("queue-rejected-pso-unavailable"),
+                QStringLiteral("vertexCount=%1 pso=%2 srb=%3")
+                    .arg(vertexCount)
+                    .arg(psoAndSrb.pPSO ? 1 : 0)
+                    .arg(psoAndSrb.pSRB ? 1 : 0));
             return;
         }
         // Accumulate into CPU-side vector; GPU submission deferred to flushGizmoGeometry()
@@ -802,7 +829,67 @@ public:
         if (pendingLineVerts_.empty() && pendingTriVerts_.empty()) {
             return;
         }
+        const Uint32 queuedLineVertices =
+            static_cast<Uint32>(pendingLineVerts_.size());
+        const Uint32 queuedTriangleVertices =
+            static_cast<Uint32>(pendingTriVerts_.size());
+        const QMatrix4x4 viewProjection = projMatrix_ * viewMatrix_;
+        QVector3D ndcMin(std::numeric_limits<float>::max(),
+                         std::numeric_limits<float>::max(),
+                         std::numeric_limits<float>::max());
+        QVector3D ndcMax(std::numeric_limits<float>::lowest(),
+                         std::numeric_limits<float>::lowest(),
+                         std::numeric_limits<float>::lowest());
+        int projectedVertexCount = 0;
+        int positiveWVertexCount = 0;
+        int insideClipVertexCount = 0;
+        const bool collectProjectionDiagnostics =
+            lastGizmoFlushDiagnosticOutcome_ != QStringLiteral("submitted");
+        const auto collectProjectionStats =
+            [&](const std::vector<GizmoLineVertex>& vertices) {
+                for (const auto& vertex : vertices) {
+                    const QVector4D clip = viewProjection * QVector4D(
+                        vertex.position[0], vertex.position[1],
+                        vertex.position[2], 1.0f);
+                    if (!std::isfinite(clip.x()) || !std::isfinite(clip.y()) ||
+                        !std::isfinite(clip.z()) || !std::isfinite(clip.w()) ||
+                        std::abs(clip.w()) <= 1e-6f) {
+                        continue;
+                    }
+                    const QVector3D ndc(clip.x() / clip.w(),
+                                        clip.y() / clip.w(),
+                                        clip.z() / clip.w());
+                    ndcMin.setX(std::min(ndcMin.x(), ndc.x()));
+                    ndcMin.setY(std::min(ndcMin.y(), ndc.y()));
+                    ndcMin.setZ(std::min(ndcMin.z(), ndc.z()));
+                    ndcMax.setX(std::max(ndcMax.x(), ndc.x()));
+                    ndcMax.setY(std::max(ndcMax.y(), ndc.y()));
+                    ndcMax.setZ(std::max(ndcMax.z(), ndc.z()));
+                    ++projectedVertexCount;
+                    positiveWVertexCount += clip.w() > 0.0f ? 1 : 0;
+                    insideClipVertexCount +=
+                        std::abs(ndc.x()) <= 1.0f &&
+                                std::abs(ndc.y()) <= 1.0f &&
+                                ndc.z() >= 0.0f && ndc.z() <= 1.0f
+                            ? 1
+                            : 0;
+                }
+            };
+        if (collectProjectionDiagnostics) {
+            collectProjectionStats(pendingLineVerts_);
+            collectProjectionStats(pendingTriVerts_);
+        }
         if (!hasRenderTarget() || !ctx_ || !gizmoLineConstantBuffer_) {
+            recordGizmoFlushDiagnostic(
+                QStringLiteral("flush-rejected-render-state"),
+                QStringLiteral(
+                    "queuedLineVertices=%1 queuedTriangleVertices=%2 "
+                    "renderTarget=%3 context=%4 constantBuffer=%5")
+                    .arg(queuedLineVertices)
+                    .arg(queuedTriangleVertices)
+                    .arg(hasRenderTarget() ? 1 : 0)
+                    .arg(ctx_ ? 1 : 0)
+                    .arg(gizmoLineConstantBuffer_ ? 1 : 0));
             pendingLineVerts_.clear();
             pendingTriVerts_.clear();
             return;
@@ -813,6 +900,16 @@ public:
         void* mapped = nullptr;
         ctx_->MapBuffer(gizmoLineConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
         if (!mapped) {
+            // MapBuffer registers the buffer as mapped before the Vulkan
+            // dynamic allocation is attempted. Balance that state even when
+            // allocation fails so the next frame does not assert as already mapped.
+            ctx_->UnmapBuffer(gizmoLineConstantBuffer_, MAP_WRITE);
+            recordGizmoFlushDiagnostic(
+                QStringLiteral("flush-rejected-constant-map"),
+                QStringLiteral(
+                    "queuedLineVertices=%1 queuedTriangleVertices=%2")
+                    .arg(queuedLineVertices)
+                    .arg(queuedTriangleVertices));
             pendingLineVerts_.clear();
             pendingTriVerts_.clear();
             return;
@@ -823,22 +920,33 @@ public:
             ++frameCostStats_->bufferUpdates;
         }
 
-        auto submitBatch = [&](std::vector<GizmoLineVertex>& verts, const PSOAndSRB& psoAndSrb) {
-            if (verts.empty() || !psoAndSrb.pPSO || !psoAndSrb.pSRB) {
+        QString submissionFailure;
+        auto submitBatch = [&](std::vector<GizmoLineVertex>& verts,
+                               const PSOAndSRB& psoAndSrb) -> Uint32 {
+            if (verts.empty()) {
+                return 0;
+            }
+            if (!psoAndSrb.pPSO || !psoAndSrb.pSRB) {
+                submissionFailure = QStringLiteral("pso-or-srb-unavailable");
                 verts.clear();
-                return;
+                return 0;
             }
             const auto vertexCount = static_cast<Uint32>(verts.size());
             ensureGizmoLineCapacity(vertexCount);
             if (!gizmoLineVertexBuffer_) {
+                submissionFailure = QStringLiteral("vertex-buffer-unavailable");
                 verts.clear();
-                return;
+                return 0;
             }
             void* vmapped = nullptr;
             ctx_->MapBuffer(gizmoLineVertexBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, vmapped);
             if (!vmapped) {
+                // Keep Diligent's map/unmap bookkeeping balanced on allocation
+                // failure; otherwise the next gizmo flush trips its debug assert.
+                ctx_->UnmapBuffer(gizmoLineVertexBuffer_, MAP_WRITE);
+                submissionFailure = QStringLiteral("vertex-buffer-map-failed");
                 verts.clear();
-                return;
+                return 0;
             }
             std::memcpy(vmapped, verts.data(), sizeof(GizmoLineVertex) * vertexCount);
             ctx_->UnmapBuffer(gizmoLineVertexBuffer_, MAP_WRITE);
@@ -874,10 +982,53 @@ public:
             }
             ctx_->Draw(drawAttrs);
             verts.clear();
+            return vertexCount;
         };
 
-        submitBatch(pendingLineVerts_, gizmo3DPsoAndSrb_);
-        submitBatch(pendingTriVerts_, gizmo3DTrianglePsoAndSrb_);
+        const Uint32 submittedLineVertices =
+            submitBatch(pendingLineVerts_, gizmo3DPsoAndSrb_);
+        const Uint32 submittedTriangleVertices =
+            submitBatch(pendingTriVerts_, gizmo3DTrianglePsoAndSrb_);
+        const Uint32 submittedVertices =
+            submittedLineVertices + submittedTriangleVertices;
+        if (submittedVertices > 0) {
+            const auto* diagnosticRTV = currentRTV();
+            const auto* diagnosticDSV = currentDSV();
+            recordGizmoFlushDiagnostic(
+                QStringLiteral("submitted"),
+                QStringLiteral(
+                    "queuedLineVertices=%1 queuedTriangleVertices=%2 "
+                    "submittedLineVertices=%3 submittedTriangleVertices=%4 "
+                    "viewIdentity=%5 projectionIdentity=%6 rtv=%7 dsv=%8 "
+                    "projectedVertices=%9 positiveW=%10 insideClip=%11 "
+                    "ndcMin=%12,%13,%14 ndcMax=%15,%16,%17")
+                    .arg(queuedLineVertices)
+                    .arg(queuedTriangleVertices)
+                    .arg(submittedLineVertices)
+                    .arg(submittedTriangleVertices)
+                    .arg(viewMatrix_.isIdentity() ? 1 : 0)
+                    .arg(projMatrix_.isIdentity() ? 1 : 0)
+                    .arg(diagnosticRTV ? 1 : 0)
+                    .arg(diagnosticDSV ? 1 : 0)
+                    .arg(projectedVertexCount)
+                    .arg(positiveWVertexCount)
+                    .arg(insideClipVertexCount)
+                    .arg(projectedVertexCount > 0 ? ndcMin.x() : 0.0f, 0, 'f', 3)
+                    .arg(projectedVertexCount > 0 ? ndcMin.y() : 0.0f, 0, 'f', 3)
+                    .arg(projectedVertexCount > 0 ? ndcMin.z() : 0.0f, 0, 'f', 3)
+                    .arg(projectedVertexCount > 0 ? ndcMax.x() : 0.0f, 0, 'f', 3)
+                    .arg(projectedVertexCount > 0 ? ndcMax.y() : 0.0f, 0, 'f', 3)
+                    .arg(projectedVertexCount > 0 ? ndcMax.z() : 0.0f, 0, 'f', 3));
+        } else {
+            recordGizmoFlushDiagnostic(
+                QStringLiteral("flush-rejected-submission"),
+                QStringLiteral(
+                    "queuedLineVertices=%1 queuedTriangleVertices=%2 "
+                    "failure=%3")
+                    .arg(queuedLineVertices)
+                    .arg(queuedTriangleVertices)
+                    .arg(submissionFailure));
+        }
     }
 
     void drawGizmoLineGeometry(const GizmoLineVertex* vertices, Uint32 vertexCount)

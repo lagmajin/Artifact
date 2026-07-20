@@ -262,6 +262,9 @@ public:
 
         const bool savedToDisk =
             persistPreviewFrameToDisk(task.filePath, task.image);
+        if (shuttingDown_.load(std::memory_order_acquire)) {
+          continue;
+        }
         QMetaObject::invokeMethod(
             owner_, [this, frame = task.frame,
                      compositionId = task.compositionId, savedToDisk]() {
@@ -480,6 +483,10 @@ public:
     {
       std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
       previewDiskWriterStop_ = true;
+      // Shutdown must not drain a potentially large RAM-preview write queue.
+      // Those entries are disposable cache data; keeping them made the process
+      // remain alive after every window had already disappeared.
+      previewDiskWriteQueue_.clear();
     }
     previewDiskWriteCv_.notify_all();
     if (previewDiskWriterThread_.joinable()) {

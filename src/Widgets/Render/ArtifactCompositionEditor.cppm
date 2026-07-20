@@ -64,6 +64,7 @@ module;
 #include <QTreeWidgetItem>
 #include <QTransform>
 #include <QVBoxLayout>
+#include <QVariant>
 #include <QLabel>
 #include <QVector>
 #include <QVector3D>
@@ -946,11 +947,14 @@ struct PendingDroppedAsset {
 class EmptyCompositionOverlayWidget final : public QWidget {
 public:
   explicit EmptyCompositionOverlayWidget(
-      QWidget *parent, std::function<void()> createRequested)
-      : QWidget(parent), createRequested_(std::move(createRequested)) {
+      QWidget *parent, std::function<void()> createRequested,
+      std::function<void(const QStringList &)> filesDropped)
+      : QWidget(parent), createRequested_(std::move(createRequested)),
+        filesDropped_(std::move(filesDropped)) {
     setAutoFillBackground(false);
     setAttribute(Qt::WA_NoSystemBackground);
     setFocusPolicy(Qt::NoFocus);
+    setAcceptDrops(true);
 
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(24, 24, 24, 24);
@@ -1058,6 +1062,54 @@ public:
   }
 
 protected:
+  void dragEnterEvent(QDragEnterEvent *event) override {
+    if (hasComposition_ && event->mimeData() && event->mimeData()->hasUrls()) {
+      for (const auto &url : event->mimeData()->urls()) {
+        const QFileInfo info(url.toLocalFile());
+        if (url.isLocalFile() && info.exists() && !info.isDir()) {
+          event->acceptProposedAction();
+          return;
+        }
+      }
+    }
+    event->ignore();
+  }
+
+  void dragMoveEvent(QDragMoveEvent *event) override {
+    if (hasComposition_ && event->mimeData() && event->mimeData()->hasUrls()) {
+      for (const auto &url : event->mimeData()->urls()) {
+        const QFileInfo info(url.toLocalFile());
+        if (url.isLocalFile() && info.exists() && !info.isDir()) {
+          event->acceptProposedAction();
+          return;
+        }
+      }
+    }
+    event->ignore();
+  }
+
+  void dropEvent(QDropEvent *event) override {
+    QStringList paths;
+    if (hasComposition_ && event->mimeData()) {
+      for (const auto &url : event->mimeData()->urls()) {
+        if (!url.isLocalFile()) {
+          continue;
+        }
+        const QFileInfo info(url.toLocalFile());
+        if (info.exists() && !info.isDir()) {
+          paths.push_back(info.absoluteFilePath());
+        }
+      }
+    }
+    paths.removeDuplicates();
+    if (paths.isEmpty() || !filesDropped_) {
+      event->ignore();
+      return;
+    }
+    filesDropped_(paths);
+    event->acceptProposedAction();
+  }
+
   void paintEvent(QPaintEvent *) override {
     if (hasComposition_) {
       return;
@@ -1075,6 +1127,7 @@ protected:
 
 private:
   std::function<void()> createRequested_;
+  std::function<void(const QStringList &)> filesDropped_;
   QFrame *card_ = nullptr;
   QLabel *titleLabel_ = nullptr;
   QLabel *bodyLabel_ = nullptr;
@@ -3627,6 +3680,20 @@ public:
     }
   }
 
+  void importDroppedPaths(const QStringList &paths) {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc || paths.isEmpty()) {
+      return;
+    }
+    QPointer<CompositionViewport> self(this);
+    svc->importAssetsFromPathsAsync(
+        paths, [self, paths](const QStringList &importedPaths) mutable {
+          if (self) {
+            self->enqueueDroppedAssets(paths, importedPaths);
+          }
+        });
+  }
+
   void processPendingDroppedAssets() {
     if (processingDroppedAssets_) {
       return;
@@ -3745,12 +3812,6 @@ protected:
       return;
     }
 
-    auto *svc = ArtifactProjectService::instance();
-    if (!svc) {
-      event->ignore();
-      return;
-    }
-
     const auto urls = event->mimeData()->urls();
     QStringList paths;
     for (const auto &url : urls) {
@@ -3768,16 +3829,7 @@ protected:
       return;
     }
 
-    // アセットインポートを非同期で行い、完了後にレイヤーを追加する
-    // ウィジェット破棄後に戻ってこないよう、QPointer で寿命を監視する。
-    QPointer<CompositionViewport> self(this);
-    svc->importAssetsFromPathsAsync(
-        paths, [self, paths](const QStringList &importedPaths) mutable {
-          if (!self) {
-            return;
-          }
-          self->enqueueDroppedAssets(paths, importedPaths);
-        });
+    importDroppedPaths(paths);
     event->acceptProposedAction();
   }
 
@@ -4054,7 +4106,10 @@ protected:
 
     if (controller_ && !spacePressed_) {
       controller_->handleMousePress(event);
-      if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
+      if (isSpatialGizmoDragging()) {
+        if (QWidget::mouseGrabber() != this) {
+          grabMouse();
+        }
         updateViewportCursor(event->position());
         if (overlayWidget_) {
           overlayWidget_->update();
@@ -4139,7 +4194,7 @@ protected:
 
     if (controller_) {
       controller_->handleMouseMove(event->position());
-      if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
+      if (isSpatialGizmoDragging()) {
         // Phase 3: Use fixed-rate render tick instead of singleShot(16) + renderOneFrame().
         controller_->markRenderDirty();
         updateViewportCursor(event->position());
@@ -4212,7 +4267,11 @@ protected:
 
     if (controller_) {
       const bool wasScaleDrag = isScaleDragActive();
+      const bool wasSpatialGizmoDragging = isSpatialGizmoDragging();
       controller_->handleMouseRelease();
+      if (wasSpatialGizmoDragging && QWidget::mouseGrabber() == this) {
+        releaseMouse();
+      }
       if (wasScaleDrag) {
         controller_->markRenderDirty();
       }
@@ -4222,6 +4281,10 @@ protected:
       if (!spacePressed_) {
         updateViewportCursor(event->position());
       }
+      if (wasSpatialGizmoDragging) {
+        event->accept();
+        return;
+      }
     }
 
     QWidget::mouseReleaseEvent(event);
@@ -4229,7 +4292,7 @@ protected:
 
   void leaveEvent(QEvent *event) override {
     if (!isPanning_ && !isAltOrbiting_ &&
-        !(controller_ && controller_->gizmo() && controller_->gizmo()->isDragging())) {
+        !isSpatialGizmoDragging()) {
       unsetCursor();
     }
     QWidget::leaveEvent(event);
@@ -4252,6 +4315,26 @@ protected:
                           GET_Y_LPARAM(msg->lParam));
     const QPointF logPos = physPos / dpr;
     const bool altDown = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    const auto cancelNativePointerInteraction = [&]() {
+      const bool finishControllerDrag = nativeControllerDragActive_;
+      nativePointerCaptureActive_ = false;
+      nativeControllerDragActive_ = false;
+      isPanning_ = false;
+      isPanningWithMiddle_ = false;
+      isAltOrbiting_ = false;
+      isAltZooming_ = false;
+      clearNavigationFeedback();
+      if (finishControllerDrag && controller_) {
+        controller_->handleMouseRelease();
+      }
+      if (controller_) {
+        controller_->finishViewportInteraction();
+      }
+      unsetCursor();
+      if (GetCapture() == msg->hwnd) {
+        ReleaseCapture();
+      }
+    };
 
     switch (msg->message) {
     case WM_RBUTTONDOWN:
@@ -4264,6 +4347,7 @@ protected:
         setNavigationFeedback(NavigationFeedbackMode::Zoom);
         lastMousePos_ = logPos;
         SetCapture(msg->hwnd);
+        nativePointerCaptureActive_ = true;
         setCursor(Qt::SizeVerCursor);
         if (controller_) {
           controller_->notifyViewportInteractionActivity();
@@ -4288,6 +4372,7 @@ protected:
         isPanningWithMiddle_ = false;
         lastMousePos_ = logPos;
         SetCapture(msg->hwnd);
+        nativePointerCaptureActive_ = true;
         setCursor(Qt::ClosedHandCursor);
         if (controller_)
           controller_->notifyViewportInteractionActivity();
@@ -4299,18 +4384,21 @@ protected:
         orbitDragStartOrientation_ =
             controller_->viewportOrientationQuaternion();
         SetCapture(msg->hwnd);
+        nativePointerCaptureActive_ = true;
         setCursor(Qt::SizeAllCursor);
         controller_->notifyViewportInteractionActivity();
       } else if (altDown && (GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
                  controller_) {
         controller_->placeWorkCursorAtViewportPos(logPos);
       } else if (controller_) {
-        SetCapture(msg->hwnd);
         QMouseEvent synth(QEvent::MouseButtonPress, logPos,
                           mapToGlobal(logPos), Qt::LeftButton,
                           Qt::LeftButton, Qt::NoModifier);
         controller_->handleMousePress(&synth);
-        if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
+        if (isSpatialGizmoDragging()) {
+          SetCapture(msg->hwnd);
+          nativePointerCaptureActive_ = true;
+          nativeControllerDragActive_ = true;
           updateViewportCursor(logPos);
           if (overlayWidget_)
             overlayWidget_->update();
@@ -4319,7 +4407,6 @@ protected:
       return true;
 
     case WM_LBUTTONUP:
-      ReleaseCapture();
       if (isAltOrbiting_) {
         isAltOrbiting_ = false;
         clearNavigationFeedback();
@@ -4339,6 +4426,11 @@ protected:
           overlayWidget_->update();
         controller_->markRenderDirty();
       }
+      nativeControllerDragActive_ = false;
+      nativePointerCaptureActive_ = false;
+      if (GetCapture() == msg->hwnd) {
+        ReleaseCapture();
+      }
       return true;
 
     case WM_MBUTTONDOWN:
@@ -4347,6 +4439,7 @@ protected:
       isPanningWithMiddle_ = true;
       lastMousePos_ = logPos;
       SetCapture(msg->hwnd);
+      nativePointerCaptureActive_ = true;
       setCursor(Qt::ClosedHandCursor);
       if (controller_)
         controller_->notifyViewportInteractionActivity();
@@ -4357,7 +4450,9 @@ protected:
         isPanning_ = false;
         isPanningWithMiddle_ = false;
         clearNavigationFeedback();
-        ReleaseCapture();
+        nativePointerCaptureActive_ = false;
+        if (GetCapture() == msg->hwnd)
+          ReleaseCapture();
         if (controller_)
           controller_->finishViewportInteraction();
         if (!spacePressed_)
@@ -4369,7 +4464,9 @@ protected:
       if (isAltZooming_) {
         isAltZooming_ = false;
         clearNavigationFeedback();
-        ReleaseCapture();
+        nativePointerCaptureActive_ = false;
+        if (GetCapture() == msg->hwnd)
+          ReleaseCapture();
         if (controller_) {
           controller_->finishViewportInteraction();
         }
@@ -4421,15 +4518,36 @@ protected:
         controller_->panBy(delta);
         return true;
       }
-      if ((msg->wParam & MK_LBUTTON) && controller_) {
+      if (((msg->wParam & MK_LBUTTON) || isSpatialGizmoDragging()) &&
+          controller_) {
+        if ((msg->wParam & MK_LBUTTON) && GetCapture() != msg->hwnd) {
+          SetCapture(msg->hwnd);
+          nativePointerCaptureActive_ = true;
+          nativeControllerDragActive_ = true;
+        }
         controller_->handleMouseMove(logPos);
-        if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
+        if (isSpatialGizmoDragging()) {
           // Phase 3: Use fixed-rate render tick instead of singleShot(16) + renderOneFrame().
           controller_->markRenderDirty();
           updateViewportCursor(logPos);
           return true;
         }
         updateViewportCursor(logPos);
+      }
+      break;
+
+    case WM_CANCELMODE:
+    case WM_KILLFOCUS:
+      if (nativePointerCaptureActive_ || nativeControllerDragActive_) {
+        cancelNativePointerInteraction();
+        return true;
+      }
+      break;
+
+    case WM_CAPTURECHANGED:
+      if ((nativePointerCaptureActive_ || nativeControllerDragActive_) &&
+          reinterpret_cast<HWND>(msg->lParam) != msg->hwnd) {
+        cancelNativePointerInteraction();
       }
       break;
 
@@ -5171,6 +5289,8 @@ protected:
   bool isPanningWithMiddle_ = false;
   bool isAltOrbiting_ = false;
   bool isAltZooming_ = false;
+  bool nativePointerCaptureActive_ = false;
+  bool nativeControllerDragActive_ = false;
   bool spacePressed_ = false;
   bool didSpacePan_ = false;
   NavigationFeedbackMode navigationFeedbackMode_ =
@@ -5313,6 +5433,16 @@ protected:
     if (controller_) {
       controller_->clearDropGhostPreview();
     }
+  }
+
+  bool isSpatialGizmoDragging() const {
+    if (!controller_) {
+      return false;
+    }
+    const auto *gizmo2D = controller_->gizmo();
+    const auto *gizmo3D = controller_->gizmo3D();
+    return (gizmo2D && gizmo2D->isDragging()) ||
+           (gizmo3D && gizmo3D->isDragging());
   }
 
   bool isScaleDragActive() const {
@@ -5575,6 +5705,66 @@ protected:
 private:
   std::function<void()> activatedCallback_;
   bool pressedInside_ = false;
+};
+
+class ViewportHudGrip final : public QWidget {
+public:
+  ViewportHudGrip(QToolBar *hud, QString settingsKey)
+      : QWidget(hud), hud_(hud), settingsKey_(std::move(settingsKey)) {
+    setFixedWidth(12);
+    setCursor(Qt::SizeAllCursor);
+    setToolTip(QStringLiteral("Drag to move this viewport toolbar"));
+  }
+
+protected:
+  void mousePressEvent(QMouseEvent *event) override {
+    if (event && event->button() == Qt::LeftButton && hud_) {
+      dragging_ = true;
+      dragStartGlobal_ = event->globalPosition().toPoint();
+      dragStartPosition_ = hud_->pos();
+      event->accept();
+      return;
+    }
+    QWidget::mousePressEvent(event);
+  }
+
+  void mouseMoveEvent(QMouseEvent *event) override {
+    if (!dragging_ || !event || !hud_) {
+      QWidget::mouseMoveEvent(event);
+      return;
+    }
+    QPoint position = dragStartPosition_ +
+                      event->globalPosition().toPoint() - dragStartGlobal_;
+    const QRect bounds = hud_->property("artifactHudViewportBounds").toRect();
+    if (bounds.isValid()) {
+      position.setX(std::clamp(position.x(), bounds.left(),
+                               std::max(bounds.left(), bounds.right() - hud_->width() + 1)));
+      position.setY(std::clamp(position.y(), bounds.top(),
+                               std::max(bounds.top(), bounds.bottom() - hud_->height() + 1)));
+    }
+    hud_->move(position);
+    event->accept();
+  }
+
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    if (dragging_ && event && event->button() == Qt::LeftButton && hud_) {
+      dragging_ = false;
+      const QRect bounds = hud_->property("artifactHudViewportBounds").toRect();
+      const QPoint offset = hud_->pos() - bounds.topLeft();
+      hud_->setProperty("artifactHudOffset", offset);
+      QSettings().setValue(settingsKey_, offset);
+      event->accept();
+      return;
+    }
+    QWidget::mouseReleaseEvent(event);
+  }
+
+private:
+  QToolBar *hud_ = nullptr;
+  QString settingsKey_;
+  QPoint dragStartGlobal_;
+  QPoint dragStartPosition_;
+  bool dragging_ = false;
 };
 
 struct CompositionCleanupMove {
@@ -7798,11 +7988,24 @@ public:
     const QRect viewportGeometry(viewportTopLeft, overlayViewport->size());
     const int overlayInset = 14;
 
-    const auto placeHud = [&](QWidget *hud, const QPoint &position) {
+    const auto placeHud = [&](QWidget *hud, const QPoint &defaultPosition) {
       if (!hud) {
         return;
       }
       hud->adjustSize();
+      hud->setProperty("artifactHudViewportBounds", viewportGeometry);
+      const QVariant savedOffset = hud->property("artifactHudOffset");
+      QPoint position = savedOffset.isValid()
+                            ? viewportGeometry.topLeft() + savedOffset.toPoint()
+                            : defaultPosition;
+      position.setX(std::clamp(
+          position.x(), viewportGeometry.left(),
+          std::max(viewportGeometry.left(),
+                   viewportGeometry.right() - hud->width() + 1)));
+      position.setY(std::clamp(
+          position.y(), viewportGeometry.top(),
+          std::max(viewportGeometry.top(),
+                   viewportGeometry.bottom() - hud->height() + 1)));
       hud->move(position);
       const bool shouldShow = hasComposition && viewportToolboxesVisible_;
       if (hud->isVisible() != shouldShow) {
@@ -8374,6 +8577,8 @@ public:
 
   void toggleViewportToolboxes(ArtifactCompositionEditor *owner) {
     viewportToolboxesVisible_ = !viewportToolboxesVisible_;
+    QSettings().setValue(QStringLiteral("CompositionViewer/Hud/Visible"),
+                         viewportToolboxesVisible_);
     syncOverlayGeometry(owner);
   }
 
@@ -8464,6 +8669,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   setMinimumSize(0, 0);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   setAutoFillBackground(true);
+  impl_->viewportToolboxesVisible_ =
+      QSettings().value(QStringLiteral("CompositionViewer/Hud/Visible"), true)
+          .toBool();
 
   const auto theme = ArtifactCore::currentDCCTheme();
   QPalette editorPalette = palette();
@@ -8634,6 +8842,14 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         this, [this]() {
           if (impl_) {
             impl_->openCreateCompositionDialog(this);
+          }
+        }, [this, i](const QStringList &paths) {
+          if (!impl_ || i < 0 ||
+              i >= ArtifactCompositionEditor::Impl::kViewportPaneCount) {
+            return;
+          }
+          if (auto *view = impl_->panes_[i].view) {
+            view->importDroppedPaths(paths);
           }
         });
     impl_->emptyStateOverlays_[i]->hide();
@@ -9450,6 +9666,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->toolHud_ = new QToolBar(this);
   impl_->toolHud_->setObjectName(QStringLiteral("compositionToolHud"));
   configureHud(impl_->toolHud_);
+  impl_->toolHud_->setProperty(
+      "artifactHudOffset",
+      QSettings().value(QStringLiteral("CompositionViewer/Hud/ToolOffset")));
+  impl_->toolHud_->addWidget(new ViewportHudGrip(
+      impl_->toolHud_, QStringLiteral("CompositionViewer/Hud/ToolOffset")));
   moveToolbarWidget(impl_->topToolbar_, impl_->toolHud_, impl_->toolModeButton_);
   moveToolbarWidget(impl_->topToolbar_, impl_->toolHud_, impl_->gizmoModeButton_);
   moveToolbarWidget(impl_->topToolbar_, impl_->toolHud_, impl_->pivotModeButton_);
@@ -9469,6 +9690,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->zoomHud_ = new QToolBar(this);
   impl_->zoomHud_->setObjectName(QStringLiteral("compositionZoomHud"));
   configureHud(impl_->zoomHud_);
+  impl_->zoomHud_->setProperty(
+      "artifactHudOffset",
+      QSettings().value(QStringLiteral("CompositionViewer/Hud/ZoomOffset")));
+  impl_->zoomHud_->addWidget(new ViewportHudGrip(
+      impl_->zoomHud_, QStringLiteral("CompositionViewer/Hud/ZoomOffset")));
   impl_->resetAction_->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/toolbar_home_surface.svg")));
   impl_->zoomInAction_->setIcon(

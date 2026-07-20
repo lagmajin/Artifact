@@ -1011,10 +1011,14 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
         std::min(localBounds.width(), localBounds.height()) * 0.015, 6.0, 18.0);
     const QRectF bounds = localBounds.adjusted(
         -frameOutset, -frameOutset, frameOutset, frameOutset);
-    const auto world = layer->getGlobalTransformMatrix();
+    // Match the matrix used by layer rendering and projected-frame hit tests.
+    // The transitional Diligent matrix path has different row/column
+    // conventions and projected the visible frame away from its 2D plane in
+    // view-orientation mode.
+    const QMatrix4x4 world = layer->getGlobalTransform4x4();
     const auto point = [&world](float x, float y) -> Detail::float3 {
-      const auto transformed = world * Diligent::float4{x, y, 0.0f, 1.0f};
-      return Detail::float3(transformed.x, transformed.y, transformed.z);
+      const QVector3D transformed = world.map(QVector3D(x, y, 0.0f));
+      return Detail::float3(transformed.x(), transformed.y(), transformed.z());
     };
     const auto tl = point(static_cast<float>(bounds.left()),
                           static_cast<float>(bounds.top()));
@@ -1035,6 +1039,30 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
     edge(tr, br);
     edge(br, bl);
     edge(bl, tl);
+
+    // A projected border alone is easy to confuse with the composition outline.
+    // Add plane-aligned corner handles so the 3D frame remains identifiable and
+    // readable at oblique view angles.
+    const qreal handleSize = std::clamp(
+        std::min(localBounds.width(), localBounds.height()) * 0.025, 14.0, 36.0);
+    const qreal handleHalf = handleSize * 0.5;
+    const qreal shadowHalf = handleHalf + std::max<qreal>(2.0, handleSize * 0.12);
+    const auto handle = [&](qreal x, qreal y) {
+      const auto quad = [&](qreal half, const FloatColor &fill) {
+        renderer->draw3DQuad(
+            point(static_cast<float>(x - half), static_cast<float>(y - half)),
+            point(static_cast<float>(x + half), static_cast<float>(y - half)),
+            point(static_cast<float>(x + half), static_cast<float>(y + half)),
+            point(static_cast<float>(x - half), static_cast<float>(y + half)),
+            fill);
+      };
+      quad(shadowHalf, shadow);
+      quad(handleHalf, color);
+    };
+    handle(bounds.left(), bounds.top());
+    handle(bounds.right(), bounds.top());
+    handle(bounds.right(), bounds.bottom());
+    handle(bounds.left(), bounds.bottom());
     renderer->flushGizmo3D();
     if (cameraView && cameraProj) {
       renderer->reset3DCameraMatrices();

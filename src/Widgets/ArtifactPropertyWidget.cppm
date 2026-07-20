@@ -751,7 +751,7 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
       impl_->compositionEffects.empty()) {
     // Same layer object can still need a full rebuild when visibility or groups change.
     impl_->invalidatePropertyValueCache();
-    updateProperties();
+    impl_->scheduleRebuild(0);
     return;
   }
 
@@ -780,7 +780,7 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
                 });
   }
 
-  updateProperties();
+  impl_->scheduleRebuild(0);
 }
 
 void ArtifactPropertyWidget::setCompositionEffects(
@@ -794,7 +794,7 @@ void ArtifactPropertyWidget::setCompositionEffects(
   impl_->targetLayers.clear();
   impl_->compositionEffects = effects;
   impl_->invalidatePropertyValueCache();
-  updateProperties();
+  impl_->scheduleRebuild(0);
 }
 
 void ArtifactPropertyWidget::setLayers(const QSet<ArtifactAbstractLayerPtr>& layers) {
@@ -826,7 +826,7 @@ void ArtifactPropertyWidget::setLayers(const QSet<ArtifactAbstractLayerPtr>& lay
                 });
   }
 
-  updateProperties();
+  impl_->scheduleRebuild(0);
 }
 
 int ArtifactPropertyWidget::targetLayersCount() const {
@@ -837,7 +837,10 @@ void ArtifactPropertyWidget::setFocusedEffectId(const QString &effectId) {
   if (impl_->focusedEffectId == effectId)
     return;
   impl_->focusedEffectId = effectId;
-  updateProperties();
+  // Effect selection is an explicit context switch. Deferring it through the
+  // general 80 ms debounce makes effect insertion and rack selection feel
+  // sluggish even when no rendering work is involved.
+  impl_->scheduleRebuild(0);
 }
 
 void ArtifactPropertyWidget::clear() {
@@ -846,7 +849,7 @@ void ArtifactPropertyWidget::clear() {
   impl_->targetLayers.clear();
   impl_->focusedEffectId.clear();
   impl_->invalidatePropertyValueCache();
-  updateProperties();
+  impl_->scheduleRebuild(0);
 }
 
 void ArtifactPropertyWidget::setFilterText(const QString &text) {

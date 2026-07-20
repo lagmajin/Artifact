@@ -419,7 +419,7 @@ float4 main(PS_INPUT input) : SV_TARGET
         };
         struct PSInput {
             float4 Pos   : SV_POSITION;
-            float4 Color : COLOR;
+            float4 Color : COLOR0;
         };
         void main(in VSInput VSIn, out PSInput PSIn) {
             PSIn.Pos   = mul(float4(VSIn.Pos, 1.0), g_WorldViewProj);
@@ -587,7 +587,7 @@ QString ShaderManager::Impl::psoCacheFilePath() const
 
     // Bump the schema whenever shader interfaces or input-layout contracts
     // change so an old backend PSO blob cannot mask the new contract.
-    constexpr int kPsoCacheSchema = 2;
+    constexpr int kPsoCacheSchema = 3;
     const QString signature = QStringLiteral("schema=%1|backend=%2|rtv=%3|vendorId=%4|deviceId=%5|api=%6.%7")
                                   .arg(kPsoCacheSchema)
                                   .arg(static_cast<int>(deviceInfo.Type))
@@ -1239,8 +1239,10 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
     gizmoGP.DSVFormat = TEX_FORMAT_D32_FLOAT;
     gizmoGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_LINE_LIST;
     gizmoGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
-    gizmoGP.DepthStencilDesc.DepthEnable = True;
-    gizmoGP.DepthStencilDesc.DepthFunc = COMPARISON_FUNC_ALWAYS;
+    // Gizmos are an editor overlay. They must neither be rejected by scene
+    // depth nor alter the depth buffer used by subsequent overlays.
+    gizmoGP.DepthStencilDesc.DepthEnable = False;
+    gizmoGP.DepthStencilDesc.DepthWriteEnable = False;
     gizmoGP.BlendDesc.RenderTargets[0].BlendEnable = True;
     gizmoGP.BlendDesc.RenderTargets[0].SrcBlend = BLEND_FACTOR_SRC_ALPHA;
     gizmoGP.BlendDesc.RenderTargets[0].DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;

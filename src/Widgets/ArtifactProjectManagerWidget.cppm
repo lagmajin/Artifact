@@ -66,6 +66,7 @@
 #include <QDialog>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QJsonDocument>
 #include <QTreeWidget>
 #include <QGridLayout>
@@ -78,6 +79,7 @@
 #include <QPalette>
 #include <QStringView>
 #include <QImageReader>
+#include <QtConcurrent>
 
 #include <QScrollBar>
 #include <QKeyEvent>
@@ -221,6 +223,80 @@ QVector<FootageImpactRow> assessFootageFrameRateChange(
 
 namespace {
 constexpr auto kProjectContext = "Workspace.Project";
+
+void collectProjectItemAssetPaths(const QJsonArray& items,
+                                  QSet<QString>& assetPaths)
+{
+    for (const auto& value : items) {
+        const QJsonObject item = value.toObject();
+        if (item.value(QStringLiteral("type")).toString().compare(
+                QStringLiteral("footage"), Qt::CaseInsensitive) == 0) {
+            const QString path = item.value(QStringLiteral("filePath")).toString().trimmed();
+            if (!path.isEmpty()) {
+                assetPaths.insert(path);
+            }
+        }
+        collectProjectItemAssetPaths(item.value(QStringLiteral("children")).toArray(),
+                                     assetPaths);
+    }
+}
+
+void collectReferencedAssetPaths(const QJsonValue& value, const QString& key,
+                                 QSet<QString>& referencedPaths)
+{
+    if (value.isObject()) {
+        const QJsonObject object = value.toObject();
+        for (auto it = object.constBegin(); it != object.constEnd(); ++it) {
+            collectReferencedAssetPaths(it.value(), it.key(), referencedPaths);
+        }
+        return;
+    }
+    if (value.isArray()) {
+        for (const auto& child : value.toArray()) {
+            collectReferencedAssetPaths(child, key, referencedPaths);
+        }
+        return;
+    }
+    if (!value.isString()) {
+        return;
+    }
+
+    const QString normalizedKey = key.trimmed().toLower();
+    if (!normalizedKey.contains(QStringLiteral("source")) &&
+        !normalizedKey.contains(QStringLiteral("path")) &&
+        !normalizedKey.contains(QStringLiteral("file"))) {
+        return;
+    }
+    const QString path = value.toString().trimmed();
+    if (path.isEmpty()) {
+        return;
+    }
+    referencedPaths.insert(path);
+    const QString fileName = QFileInfo(path).fileName();
+    if (!fileName.isEmpty()) {
+        referencedPaths.insert(fileName);
+    }
+}
+
+QSet<QString> findUnusedAssetPathsFromSnapshot(const QJsonObject& snapshot)
+{
+    QSet<QString> allAssetPaths;
+    QSet<QString> referencedPaths;
+    collectProjectItemAssetPaths(snapshot.value(QStringLiteral("projectItems")).toArray(),
+                                 allAssetPaths);
+    collectReferencedAssetPaths(snapshot.value(QStringLiteral("compositions")),
+                                QStringLiteral("compositions"), referencedPaths);
+
+    QSet<QString> unusedPaths;
+    for (const QString& path : allAssetPaths) {
+        const QString fileName = QFileInfo(path).fileName();
+        if (!referencedPaths.contains(path) &&
+            (fileName.isEmpty() || !referencedPaths.contains(fileName))) {
+            unusedPaths.insert(path);
+        }
+    }
+    return unusedPaths;
+}
 }
 
 namespace {
@@ -1647,6 +1723,34 @@ public:
 
     const QSet<QString>& unusedAssetPaths() const {
         return unusedAssetPaths_;
+    }
+
+    QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override {
+        if (!index.isValid()) {
+            return {};
+        }
+        const QModelIndex sourceIndex = mapToSource(index);
+        const QVariant ptrVar = sourceModel()->data(
+            sourceIndex.siblingAtColumn(0),
+            Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+        auto* item = ptrVar.isValid()
+            ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>())
+            : nullptr;
+        if (item && item->type() == eProjectItemType::Footage) {
+            const QString path = QDir::cleanPath(static_cast<FootageItem*>(item)->filePath);
+            if (unusedAssetPaths_.contains(path)) {
+                if (role == Qt::DisplayRole && index.column() == 0) {
+                    const QString text = QSortFilterProxyModel::data(index, role).toString();
+                    return text.startsWith(QStringLiteral("[Unused] "))
+                        ? text
+                        : QStringLiteral("[Unused] %1").arg(text);
+                }
+                if (role == Qt::ForegroundRole) {
+                    return QColor(150, 150, 60);
+                }
+            }
+        }
+        return QSortFilterProxyModel::data(index, role);
     }
 
     void setAdvancedFilter(const QString& expression, const QString& typeFilter, const bool unusedOnly) {
@@ -3279,11 +3383,17 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
                 auto* mime = new QMimeData();
                 QList<QUrl> urls;
                 QStringList filePaths;
-                const auto selectedRows = selectionModel()->selectedRows(0);
+                QModelIndexList selectedRows = selectionModel()->selectedRows(0);
+                const QModelIndex dragRow = dragIdx.siblingAtColumn(0);
+                if (!selectedRows.contains(dragRow)) {
+                    selectedRows = {dragRow};
+                }
+                QModelIndexList sourceRows;
                 for (const QModelIndex& proxyIdx : selectedRows) {
                     QModelIndex sourceIdx = proxyIdx;
                     if (auto* proxy = qobject_cast<const QSortFilterProxyModel*>(proxyIdx.model()))
                         sourceIdx = proxy->mapToSource(proxyIdx).siblingAtColumn(0);
+                    if (sourceIdx.isValid()) sourceRows.append(sourceIdx);
                     const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
                     ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
                     if (item && item->type() == eProjectItemType::Footage) {
@@ -3299,11 +3409,16 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
                     mime->setText(filePaths.join(QStringLiteral("\n")));
                 } else {
                     delete mime;
-                    mime = impl_->model->mimeData(selectedRows);
+                    mime = impl_->model->mimeData(sourceRows);
+                }
+                if (!mime || (!mime->hasUrls() && !mime->hasText())) {
+                    delete mime;
+                    event->accept();
+                    return;
                 }
                 auto* drag = new QDrag(this);
                 drag->setMimeData(mime);
-                drag->exec(Qt::CopyAction | Qt::MoveAction);
+                drag->exec(Qt::CopyAction, Qt::CopyAction);
             }
         }
         event->accept();
@@ -4947,6 +5062,7 @@ QSize ArtifactProjectView::sizeHint() const { return QSize(400, 400); }
 // --- Main Widget Implementation ---
 class ArtifactProjectManagerWidget::Impl {
 public:
+    ArtifactProjectManagerWidget* owner_ = nullptr;
     ArtifactProjectView* projectView_ = nullptr;
     ArtifactProjectModel* projectModel_ = nullptr;
     ProjectFilterProxyModel* proxyModel_ = nullptr;
@@ -5002,6 +5118,10 @@ public:
     ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
     bool projectRefreshQueued_ = false;
+    bool unusedAssetSnapshotQueued_ = false;
+    bool unusedAssetRefreshInFlight_ = false;
+    bool unusedAssetRefreshPending_ = false;
+    quint64 unusedAssetRefreshGeneration_ = 0;
 
     QVector<CompositionItem*> selectedCompositionItems() const {
         QVector<CompositionItem*> items;
@@ -6186,16 +6306,71 @@ public:
     }
 
     void refreshUnusedAssetCache() {
-        unusedAssetPaths_.clear();
-        auto shared = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
-        if (!shared) return;
-        const QStringList list = ArtifactProjectCleanupTool::findUnusedAssetPaths(shared.get());
-        for (const QString& s : list) {
-            unusedAssetPaths_.insert(s);
+        if (!owner_) {
+            return;
         }
-        if (proxyModel_) {
-            proxyModel_->setUnusedAssetPaths(unusedAssetPaths_);
+        if (unusedAssetRefreshInFlight_) {
+            unusedAssetRefreshPending_ = true;
+            return;
         }
+        if (unusedAssetSnapshotQueued_) {
+            return;
+        }
+        unusedAssetSnapshotQueued_ = true;
+        QPointer<ArtifactProjectManagerWidget> owner(owner_);
+        QMetaObject::invokeMethod(owner_, [owner]() {
+            if (!owner || !owner->impl_) {
+                return;
+            }
+            auto* impl = owner->impl_;
+            impl->unusedAssetSnapshotQueued_ = false;
+            auto* service = ArtifactProjectService::instance();
+            auto project = service ? service->getCurrentProjectSharedPtr() : nullptr;
+            const quint64 generation = ++impl->unusedAssetRefreshGeneration_;
+            if (!project) {
+                impl->unusedAssetPaths_.clear();
+                impl->unusedAssetRefreshPending_ = false;
+                if (impl->proxyModel_) {
+                    impl->proxyModel_->setUnusedAssetPaths({});
+                }
+                impl->refreshSelectionChrome();
+                return;
+            }
+
+            const QJsonObject snapshot = project->toJson();
+            impl->unusedAssetRefreshInFlight_ = true;
+            [[maybe_unused]] auto unusedAssetFuture =
+                QtConcurrent::run([owner, generation, snapshot]() {
+                    QSet<QString> unusedPaths = findUnusedAssetPathsFromSnapshot(snapshot);
+                    if (!owner) {
+                        return;
+                    }
+                    QMetaObject::invokeMethod(owner, [owner, generation,
+                                                      unusedPaths = std::move(unusedPaths)]() mutable {
+                        if (!owner || !owner->impl_) {
+                            return;
+                        }
+                        auto* impl = owner->impl_;
+                        impl->unusedAssetRefreshInFlight_ = false;
+                        if (generation == impl->unusedAssetRefreshGeneration_) {
+                            impl->unusedAssetPaths_ = std::move(unusedPaths);
+                            if (impl->proxyModel_) {
+                                impl->proxyModel_->setUnusedAssetPaths(impl->unusedAssetPaths_);
+                                impl->proxyModel_->setAdvancedFilter(
+                                    impl->searchBar ? impl->searchBar->text() : QString(),
+                                    impl->typeFilterBox ? impl->typeFilterBox->currentText() : QString(),
+                                    impl->unusedOnlyCheck ? impl->unusedOnlyCheck->isChecked() : false);
+                            }
+                            impl->refreshSelectionChrome();
+                        }
+                        const bool refreshAgain = impl->unusedAssetRefreshPending_;
+                        impl->unusedAssetRefreshPending_ = false;
+                        if (refreshAgain) {
+                            impl->refreshUnusedAssetCache();
+                        }
+                    }, Qt::QueuedConnection);
+                });
+        }, Qt::QueuedConnection);
     }
 
     void update() {
@@ -6272,6 +6447,7 @@ public:
 ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl())
 {
+    impl_->owner_ = this;
     setObjectName(QStringLiteral("artifactProjectManagerWidget"));
     setAutoFillBackground(true);
 

@@ -96,6 +96,8 @@ module;
 
 #include <wobjectimpl.h>
 
+#include <Diagnostics/WidgetCreationDiagnostics.hpp>
+
 
 
 module Artifact.Widgets.CompositionRenderController;
@@ -9636,11 +9638,17 @@ public:
                                 const QMatrix4x4 &view,
                                 const QMatrix4x4 &projection,
                                 const QRect &viewport) {
+      // QMouseEvent uses a top-left origin while QVector3D::unproject uses the
+      // OpenGL-style bottom-left viewport origin. Convert once at this boundary
+      // so dragging follows the visible mouse direction.
+      const float unprojectY = static_cast<float>(
+          viewport.y() + viewport.height() -
+          (viewportPos.y() - viewport.y()));
       const QVector3D nearPosition =
-          QVector3D(viewportPos.x(), viewportPos.y(), 0.0f)
+          QVector3D(viewportPos.x(), unprojectY, 0.0f)
               .unproject(view, projection, viewport);
       const QVector3D farPosition =
-          QVector3D(viewportPos.x(), viewportPos.y(), 1.0f)
+          QVector3D(viewportPos.x(), unprojectY, 1.0f)
               .unproject(view, projection, viewport);
       return {nearPosition, (farPosition - nearPosition).normalized()};
     }
@@ -9673,7 +9681,11 @@ public:
                                    const QMatrix4x4 &projection,
                                    float viewportWidth,
                                    float viewportHeight,
-                                   float devicePixelRatio) {
+                                   float devicePixelRatio,
+                                   bool *scaleHandleHit = nullptr) {
+      if (scaleHandleHit) {
+        *scaleHandleHit = false;
+      }
       if (!layer || viewportWidth <= 0.0f || viewportHeight <= 0.0f) {
         return false;
       }
@@ -9696,11 +9708,58 @@ public:
                       static_cast<float>(localPoint.y()), 0.0f));
         const QVector3D screenPoint =
             worldPoint.project(view, projection, viewport);
-        return QPointF(screenPoint.x(), screenPoint.y());
+        return QPointF(screenPoint.x(),
+                       viewport.y() + viewport.height() -
+                           (screenPoint.y() - viewport.y()));
       };
+      // Corner handles are drawn on the actual layer bounds. Keep their hit
+      // positions exact; the outset below is only for the forgiving frame/body
+      // editing surface.
+      const std::array<QPointF, 4> handleCorners{
+          project(localBounds.topLeft()), project(localBounds.topRight()),
+          project(localBounds.bottomRight()), project(localBounds.bottomLeft())};
+      const float cornerHitRadius =
+          std::max(10.0f, 9.0f * devicePixelRatio);
+      const float cornerHitRadiusSquared = cornerHitRadius * cornerHitRadius;
+      for (const QPointF &corner : handleCorners) {
+        const QPointF delta = viewportPos - corner;
+        if (delta.x() * delta.x() + delta.y() * delta.y() <=
+            cornerHitRadiusSquared) {
+          if (scaleHandleHit) {
+            *scaleHandleHit = true;
+          }
+          return true;
+        }
+      }
       const std::array<QPointF, 4> corners{
           project(bounds.topLeft()), project(bounds.topRight()),
           project(bounds.bottomRight()), project(bounds.bottomLeft())};
+      double signedAreaTwice = 0.0;
+      for (size_t index = 0; index < corners.size(); ++index) {
+        const QPointF &corner = corners[index];
+        const QPointF &next = corners[(index + 1) % corners.size()];
+        if (!std::isfinite(corner.x()) || !std::isfinite(corner.y())) {
+          return false;
+        }
+        signedAreaTwice += corner.x() * next.y() - next.x() * corner.y();
+      }
+      if (std::abs(signedAreaTwice) <= 1e-4) {
+        return false;
+      }
+      bool hasPositiveCross = false;
+      bool hasNegativeCross = false;
+      for (size_t index = 0; index < corners.size(); ++index) {
+        const QPointF edge = corners[(index + 1) % corners.size()] -
+                             corners[index];
+        const QPointF toPoint = viewportPos - corners[index];
+        const double cross = edge.x() * toPoint.y() -
+                             edge.y() * toPoint.x();
+        hasPositiveCross = hasPositiveCross || cross > 1e-4;
+        hasNegativeCross = hasNegativeCross || cross < -1e-4;
+      }
+      if (!(hasPositiveCross && hasNegativeCross)) {
+        return true;
+      }
       const float hitRadius = std::max(8.0f, 7.0f * devicePixelRatio);
       const float hitRadiusSquared = hitRadius * hitRadius;
       for (size_t index = 0; index < corners.size(); ++index) {
@@ -9728,10 +9787,12 @@ public:
       }
       const QRectF localRect = layer->localBounds();
       const QTransform globalTransform = layer->getGlobalTransform();
-      const QPointF center =
-          localRect.isValid()
-              ? globalTransform.map(localRect.center())
-              : QPointF(globalTransform.dx(), globalTransform.dy());
+      const QMatrix4x4 globalTransform3D = layer->getGlobalTransform4x4();
+      const QPointF localCenter =
+          localRect.isValid() ? localRect.center() : QPointF(0.0, 0.0);
+      const QVector3D center = globalTransform3D.map(QVector3D(
+          static_cast<float>(localCenter.x()),
+          static_cast<float>(localCenter.y()), 0.0f));
       const float scaleX = std::max<float>(
           0.01f, static_cast<float>(
                      std::hypot(globalTransform.m11(), globalTransform.m12())));
@@ -9743,8 +9804,7 @@ public:
           (180.0f / 3.14159265358979323846f);
       gizmo->setDepthEnabled(false);
       gizmo->setTransform(
-          QVector3D(static_cast<float>(center.x()),
-                    static_cast<float>(center.y()), 0.0f),
+          center,
           QVector3D(0.0f, 0.0f, rotationZ));
       gizmo->setScale(QVector3D(scaleX, scaleY, 1.0f));
     }
@@ -9759,17 +9819,31 @@ public:
         auto &transform = layer->transform3D();
         const ArtifactCore::RationalTime time(layer->currentFrame(), 30);
         const QVector3D scale = gizmo->scale();
-        transform.setScale(time, scale.x(), scale.y(), scale.z());
+        transform.setScale(time, scale.x(), scale.y(),
+                           layer->is3D() ? scale.z() : transform.scaleZ());
+      } else if (gizmo->activeOperation() == GizmoOperation::Rotate) {
+        const QVector3D rotation = gizmo->rotation();
+        layer->setRotation3D(
+            layer->is3D() ? rotation
+                          : QVector3D(rotation.z(), 0.0f, 0.0f));
       } else {
         const QVector3D currentPosition = layer->position3D();
         const QVector3D gizmoPosition = gizmo->position();
         if (gizmo->depthEnabled()) {
           layer->setPosition3D(gizmoPosition);
         } else {
+          const QRectF localRect = layer->localBounds();
+          const QPointF localCenter =
+              localRect.isValid() ? localRect.center() : QPointF(0.0, 0.0);
+          const QVector3D currentCenter = layer->getGlobalTransform4x4().map(
+              QVector3D(static_cast<float>(localCenter.x()),
+                        static_cast<float>(localCenter.y()), 0.0f));
+          const QVector3D centerDelta = gizmoPosition - currentCenter;
           layer->setPosition3D(QVector3D(
-              gizmoPosition.x(), gizmoPosition.y(), currentPosition.z()));
+              currentPosition.x() + centerDelta.x(),
+              currentPosition.y() + centerDelta.y(),
+              currentPosition.z()));
         }
-        layer->setRotation3D(gizmo->rotation());
       }
       return true;
     }
@@ -10177,6 +10251,14 @@ public:
   bool gizmo3DCameraMatricesValid_ = false;
   QMatrix4x4 gizmo3DViewMatrix_;
   QMatrix4x4 gizmo3DProjectionMatrix_;
+  LayerID lastGizmoDrawDiagnosticLayerId_;
+  int lastGizmoDrawDiagnosticState_ = -1;
+  bool lastGizmoDrawDiagnosticOrientationActive_ = false;
+  bool lastGizmoDrawDiagnosticOrientationMatricesValid_ = false;
+  bool lastGizmoDrawDiagnosticMatricesValid_ = false;
+  bool gizmo3DDragMoveDiagnosticPending_ = false;
+  QString pendingCompositionFirstFrameId_;
+  QElapsedTimer pendingCompositionFirstFrameTimer_;
 
   int currentFrameForOverlay_ = 0;
 
@@ -12406,6 +12488,10 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
                 impl_->applyCompositionState(comp);
 
+                if (auto layer = comp->layerById(layerId)) {
+                  layer->clearDirtyReasons();
+                }
+
               } else {
 
                 // Property/transform modification: invalidate only this layer
@@ -12415,6 +12501,16 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                 // transform だけの更新では重いサーフェス再生成を避ける。
 
                 if (auto layer = comp->layerById(layerId)) {
+
+                  const uint64_t dirtyReasons = layer->dirtyReasonMask();
+                  const uint64_t transformReason = static_cast<uint64_t>(
+                      LayerDirtyReason::TransformChanged);
+                  const uint64_t harmlessCompanionReasons =
+                      transformReason |
+                      static_cast<uint64_t>(LayerDirtyReason::UserEdit);
+                  const bool transformOnlyMutation =
+                      (dirtyReasons & transformReason) != 0 &&
+                      (dirtyReasons & ~harmlessCompanionReasons) == 0;
 
                   const bool directDragTarget =
 
@@ -12440,7 +12536,9 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
                       (impl_->transformEditSession_.isSpatialGizmoActive() &&
 
-                       layerId == impl_->selectedLayerId_);
+                       layerId == impl_->selectedLayerId_) ||
+
+                      transformOnlyMutation;
 
                   if (!skipCacheInvalidation) {
 
@@ -12451,6 +12549,12 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                   impl_->changeDetector_.markLayerChanged(
 
                       layer->id().toString());
+
+                  // Dirty reasons describe the mutation being delivered. They
+                  // must not accumulate across events, otherwise a later
+                  // transform edit inherits an old EffectChanged reason and
+                  // unnecessarily rebuilds the full effect surface.
+                  layer->clearDirtyReasons();
 
                }
 
@@ -13316,6 +13420,10 @@ void CompositionRenderController::setComposition(
 
     ArtifactCompositionPtr composition) {
 
+  QElapsedTimer totalTimer;
+
+  totalTimer.start();
+
   qCDebug(compositionViewLog) << "[CompositionView] setComposition"
 
                               << "isNull=" << (composition == nullptr) << "id="
@@ -13390,6 +13498,24 @@ void CompositionRenderController::setComposition(
 
   }
 
+  if (composition) {
+
+    impl_->pendingCompositionFirstFrameId_ = composition->id().toString();
+
+    impl_->pendingCompositionFirstFrameTimer_.start();
+
+  } else {
+
+    impl_->pendingCompositionFirstFrameId_.clear();
+
+    impl_->pendingCompositionFirstFrameTimer_.invalidate();
+
+  }
+
+  QElapsedTimer phaseTimer;
+
+  phaseTimer.start();
+
   if (impl_->stateCompareSessionActive_ && currentComposition) {
     currentComposition->setActiveStateVariantId(
         impl_->compareRestoreStateId_);
@@ -13424,11 +13550,23 @@ void CompositionRenderController::setComposition(
 
   impl_->invalidateBaseComposite();
 
+  const double cleanupMs =
+
+      static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
+
+  phaseTimer.restart();
+
 
 
   impl_->previewPipeline_.setComposition(composition);
 
   impl_->bindCompositionChanged(this, composition);
+
+  const double pipelineBindMs =
+
+      static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
+
+  phaseTimer.restart();
 
 
 
@@ -13442,11 +13580,29 @@ void CompositionRenderController::setComposition(
 
   }
 
+  const double playbackBindMs =
+
+      static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
+
+  phaseTimer.restart();
+
+  double renderStateMs = 0.0;
+
 
 
   if (composition && impl_->renderer_) {
 
     impl_->applyCompositionState(composition);
+
+    for (const auto &layer : composition->allLayer()) {
+
+      if (layer) {
+
+        layer->clearDirtyReasons();
+
+      }
+
+    }
 
     impl_->renderer_->fillToViewport();
 
@@ -13466,6 +13622,10 @@ void CompositionRenderController::setComposition(
 
     markRenderDirty();
 
+    renderStateMs =
+
+        static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
+
   } else if (!composition) {
 
     impl_->syncSelectedLayerOverlayState(composition);
@@ -13480,7 +13640,45 @@ void CompositionRenderController::setComposition(
 
     markRenderDirty();
 
+    renderStateMs =
+
+        static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
+
   }
+
+  const double totalMs =
+
+      static_cast<double>(totalTimer.nsecsElapsed()) / 1000000.0;
+
+  WidgetCreationDiagnostics::recordPhase(
+
+      QStringLiteral("Composition Render Bind"),
+
+      QStringLiteral("composition-lifecycle"),
+
+      QStringLiteral("render-controller-set-composition"), totalMs,
+
+      QStringLiteral(
+
+          "compositionId=%1 layers=%2 cleanupMs=%3 pipelineBindMs=%4 "
+
+          "playbackBindMs=%5 renderStateMs=%6")
+
+          .arg(composition ? composition->id().toString()
+
+                           : QStringLiteral("<null>"))
+
+          .arg(composition ? composition->layerCount() : 0)
+
+          .arg(cleanupMs, 0, 'f', 2)
+
+          .arg(pipelineBindMs, 0, 'f', 2)
+
+          .arg(playbackBindMs, 0, 'f', 2)
+
+          .arg(renderStateMs, 0, 'f', 2),
+
+      composition ? QStringLiteral("bound") : QStringLiteral("cleared"));
 
 }
 
@@ -18156,11 +18354,13 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
   // 3D Gizmo hit test (GIZ-2). View-orientation mode presents ordinary 2D
   // layers as editable planes, so it must use the same projected gizmo path.
 
-  if (selectedLayer && impl_->gizmo3D_ &&
+  if (impl_->showGizmoOverlay_ && selectedLayer &&
+      isLayerEffectivelyVisible(selectedLayer) && impl_->gizmo3D_ &&
       (selectedLayer->is3D() || impl_->viewportOrientationActive_) &&
 
       activeTool != ToolType::Pen) {
 
+    impl_->syncGizmo3DFromLayer(selectedLayer);
     impl_->gizmo3D_->setDepthEnabled(selectedLayer->is3D());
     impl_->gizmo3D_->setInteractionModifiers(
         event->modifiers().testFlag(Qt::ControlModifier),
@@ -18174,26 +18374,84 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
     const QMatrix4x4& gizmoProj = impl_->gizmo3DCameraMatricesValid_
                                       ? impl_->gizmo3DProjectionMatrix_
                                       : impl_->renderer_->getProjectionMatrix();
-    GizmoAxis axis = impl_->gizmo3D_->hitTest(ray, gizmoView, gizmoProj);
-
-    if (axis == GizmoAxis::None &&
+    bool projectedScaleHandleHit = false;
+    const bool projectedFrameHit =
         impl_->gizmo3D_->mode() != GizmoMode::Rotate &&
         Impl::TransformEditSession::hitsProjectedFrame(
-            viewportPos, selectedLayer, gizmoView, gizmoProj,
-            impl_->hostWidth_, impl_->hostHeight_, impl_->devicePixelRatio_)) {
+          viewportPos, selectedLayer, gizmoView, gizmoProj,
+          impl_->hostWidth_, impl_->hostHeight_, impl_->devicePixelRatio_,
+          &projectedScaleHandleHit);
+    // The visible frame corners are explicit scale handles. Resolve them
+    // before the dense Full gizmo so a nearby move shaft or rotation ring
+    // cannot steal the press.
+    GizmoAxis axis = projectedScaleHandleHit
+                         ? GizmoAxis::Screen
+                         : impl_->gizmo3D_->hitTest(ray, gizmoView, gizmoProj);
+    bool projectedSurfaceHit = false;
+
+    if (axis == GizmoAxis::None && projectedFrameHit) {
+      projectedSurfaceHit = true;
+    }
+    if (projectedSurfaceHit) {
       // The projected frame is itself an editing surface: drag it to move,
       // or use the Scale tool and drag it for uniform planar scaling.
       axis = GizmoAxis::Screen;
     }
 
+    const QRect gizmoViewport(
+        0, 0, std::max(1, static_cast<int>(impl_->hostWidth_)),
+        std::max(1, static_cast<int>(impl_->hostHeight_)));
+    const QVector3D gizmoPosition = impl_->gizmo3D_->position();
+    const QVector3D projectedCenter =
+        gizmoPosition.project(gizmoView, gizmoProj, gizmoViewport);
+    WidgetCreationDiagnostics::recordPhase(
+        QStringLiteral("3D Gizmo Interaction"),
+        QStringLiteral("composition-interaction"),
+        QStringLiteral("mouse-press-hit-test"), 0.0,
+        QStringLiteral(
+            "selectedId=%1 viewportPos=%2,%3 axis=%4 mode=%5 "
+            "projectedSurfaceHit=%6 gizmoPosition=%7,%8,%9 "
+            "projectedCenter=%10,%11,%12 viewport=%13x%14 "
+            "rayOrigin=%15,%16,%17 rayDirection=%18,%19,%20")
+            .arg(selectedLayer->id().toString())
+            .arg(viewportPos.x(), 0, 'f', 1)
+            .arg(viewportPos.y(), 0, 'f', 1)
+            .arg(static_cast<int>(axis))
+            .arg(static_cast<int>(impl_->gizmo3D_->mode()))
+            .arg(projectedSurfaceHit ? 1 : 0)
+            .arg(gizmoPosition.x(), 0, 'f', 2)
+            .arg(gizmoPosition.y(), 0, 'f', 2)
+            .arg(gizmoPosition.z(), 0, 'f', 2)
+            .arg(projectedCenter.x(), 0, 'f', 1)
+            .arg(projectedCenter.y(), 0, 'f', 1)
+            .arg(projectedCenter.z(), 0, 'f', 3)
+            .arg(gizmoViewport.width())
+            .arg(gizmoViewport.height())
+            .arg(ray.origin.x(), 0, 'f', 2)
+            .arg(ray.origin.y(), 0, 'f', 2)
+            .arg(ray.origin.z(), 0, 'f', 2)
+            .arg(ray.direction.x(), 0, 'f', 4)
+            .arg(ray.direction.y(), 0, 'f', 4)
+            .arg(ray.direction.z(), 0, 'f', 4),
+        axis != GizmoAxis::None ? QStringLiteral("drag-began")
+                                : QStringLiteral("miss"));
+
     if (axis != GizmoAxis::None) {
 
       impl_->gizmo3DUndoLayer_ = selectedLayer;
       impl_->gizmo3DUndoBefore_ = captureGizmo3DTransform(selectedLayer);
-      impl_->gizmo3D_->beginDrag(axis, ray);
+      if (projectedScaleHandleHit) {
+        const GizmoMode previousMode = impl_->gizmo3D_->mode();
+        impl_->gizmo3D_->setMode(GizmoMode::Scale);
+        impl_->gizmo3D_->beginDrag(axis, ray);
+        impl_->gizmo3D_->setMode(previousMode);
+      } else {
+        impl_->gizmo3D_->beginDrag(axis, ray);
+      }
 
       impl_->transformEditSession_.begin(
           Impl::TransformEditSession::Target::Gizmo3D);
+      impl_->gizmo3DDragMoveDiagnosticPending_ = true;
 
       notifyViewportInteractionActivity();
 
@@ -18201,6 +18459,7 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
       markRenderDirty();
 
+      event->accept();
       return;
 
     }
@@ -19416,19 +19675,22 @@ if (activeTool == ToolType::Pen && impl_->maskEditSession_.draggingVertex) {
 
         notifyViewportInteractionActivity();
 
+        const QVector3D positionBefore = impl_->gizmo3D_->position();
         impl_->gizmo3D_->updateDrag(ray);
+        const QVector3D positionAfter = impl_->gizmo3D_->position();
 
 
 
         // Update layer transform from gizmo
 
+        bool appliedToLayer = false;
         auto comp = impl_->previewPipeline_.composition();
 
         if (comp && !impl_->selectedLayerId_.isNil()) {
 
           if (auto layer = comp->layerById(impl_->selectedLayerId_)) {
 
-            Impl::TransformEditSession::applyGizmoToLayer(
+            appliedToLayer = Impl::TransformEditSession::applyGizmoToLayer(
                 impl_->gizmo3D_.get(), layer);
 
             ArtifactCore::globalEventBus().publish(
@@ -19445,6 +19707,33 @@ if (activeTool == ToolType::Pen && impl_->maskEditSession_.draggingVertex) {
 
           }
 
+        }
+        if (impl_->gizmo3DDragMoveDiagnosticPending_) {
+          impl_->gizmo3DDragMoveDiagnosticPending_ = false;
+          const float movement = (positionAfter - positionBefore).length();
+          WidgetCreationDiagnostics::recordPhase(
+              QStringLiteral("3D Gizmo Interaction"),
+              QStringLiteral("composition-interaction"),
+              QStringLiteral("first-drag-update"), 0.0,
+              QStringLiteral(
+                  "selectedId=%1 viewportPos=%2,%3 axis=%4 operation=%5 "
+                  "before=%6,%7,%8 after=%9,%10,%11 movement=%12 applied=%13")
+                  .arg(impl_->selectedLayerId_.toString())
+                  .arg(viewportPos.x(), 0, 'f', 1)
+                  .arg(viewportPos.y(), 0, 'f', 1)
+                  .arg(static_cast<int>(impl_->gizmo3D_->activeAxis()))
+                  .arg(static_cast<int>(impl_->gizmo3D_->activeOperation()))
+                  .arg(positionBefore.x(), 0, 'f', 2)
+                  .arg(positionBefore.y(), 0, 'f', 2)
+                  .arg(positionBefore.z(), 0, 'f', 2)
+                  .arg(positionAfter.x(), 0, 'f', 2)
+                  .arg(positionAfter.y(), 0, 'f', 2)
+                  .arg(positionAfter.z(), 0, 'f', 2)
+                  .arg(movement, 0, 'f', 3)
+                  .arg(appliedToLayer ? 1 : 0),
+              appliedToLayer && movement > 0.0001f
+                  ? QStringLiteral("moved")
+                  : QStringLiteral("unchanged"));
         }
 
         return;
@@ -20045,6 +20334,7 @@ void CompositionRenderController::handleMouseRelease() {
 
     const bool wasDragging = impl_->transformEditSession_.end(
         Impl::TransformEditSession::Target::Gizmo3D);
+    impl_->gizmo3DDragMoveDiagnosticPending_ = false;
 
     if (wasDragging && impl_->gizmo3DUndoBefore_) {
       if (const auto layer = impl_->gizmo3DUndoLayer_.lock()) {
@@ -24425,6 +24715,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   "Gizmo3DFlush", ArtifactCore::ProfileCategory::Render);
 
               renderer_->flushGizmo3D();
+              renderer_->resetGizmoCameraMatrices();
 
             }
 
@@ -24452,6 +24743,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   "Gizmo3DFlush", ArtifactCore::ProfileCategory::Render);
 
               renderer_->flushGizmo3D();
+              renderer_->resetGizmoCameraMatrices();
 
             }
 
@@ -26180,6 +26472,60 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     }
 
+    if (!pendingCompositionFirstFrameId_.isEmpty() &&
+
+        pendingCompositionFirstFrameTimer_.isValid() && comp &&
+
+        pendingCompositionFirstFrameId_ == comp->id().toString()) {
+
+      const double setToPresentMs = static_cast<double>(
+
+          pendingCompositionFirstFrameTimer_.nsecsElapsed()) / 1000000.0;
+
+      WidgetCreationDiagnostics::recordPhase(
+
+          QStringLiteral("Composition First Frame"),
+
+          QStringLiteral("composition-lifecycle"),
+
+          QStringLiteral("set-composition-to-first-present"), setToPresentMs,
+
+          QStringLiteral(
+
+              "compositionId=%1 frameMs=%2 setupMs=%3 basePassMs=%4 "
+
+              "layerPassMs=%5 overlayMs=%6 flushMs=%7 submit2DMs=%8 "
+
+              "presentMs=%9 layersTotal=%10 layersDrawn=%11")
+
+              .arg(comp->id().toString())
+
+              .arg(frameMs)
+
+              .arg(setupMs)
+
+              .arg(basePassMs)
+
+              .arg(layerPassMs)
+
+              .arg(overlayMs)
+
+              .arg(flushMs)
+
+              .arg(lastSubmit2DMs_)
+
+              .arg(presentMs)
+
+              .arg(layers.size())
+
+              .arg(drawnLayerCount));
+
+      pendingCompositionFirstFrameId_.clear();
+
+      pendingCompositionFirstFrameTimer_.invalidate();
+
+    }
+
   } // _profSetup ("RenderFrame") destructs here — BEFORE endFrame() so its
 
     // duration is correctly recorded (popScope requires inFrame == true).
@@ -26524,6 +26870,11 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
                                           : ArtifactAbstractLayerPtr{};
 
+  if (hostWidth_ > 0.0f && hostHeight_ > 0.0f) {
+    // Offscreen layer and precomposition passes change the Diligent viewport.
+    // The editing overlay always targets the physical swap-chain viewport.
+    renderer_->setViewportRect(hostWidth_, hostHeight_);
+  }
   renderer_->setUseExternalMatrices(false);
 
   renderer_->resetGizmoCameraMatrices();
@@ -27889,6 +28240,154 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
   }
 
+  auto selectedLayer = (!selectedLayerId_.isNil() && comp)
+
+                           ? comp->layerById(selectedLayerId_)
+
+                           : ArtifactAbstractLayerPtr{};
+
+  const bool selectedLayerVisible =
+
+      selectedLayer && isLayerEffectivelyVisible(selectedLayer);
+
+  const bool spatialGizmoRequested =
+
+      selectedLayer && (selectedLayer->is3D() || viewportOrientationActive_);
+
+  int gizmoDiagnosticState = 0;
+
+  QString gizmoDiagnosticOutcome = QStringLiteral("overlay-disabled");
+
+  if (!showGizmoOverlay_) {
+
+    gizmoDiagnosticState = 0;
+
+  } else if (!gizmo_) {
+
+    gizmoDiagnosticState = 1;
+
+    gizmoDiagnosticOutcome = QStringLiteral("base-gizmo-unavailable");
+
+  } else if (!selectedLayer) {
+
+    gizmoDiagnosticState = 2;
+
+    gizmoDiagnosticOutcome = QStringLiteral("selection-not-resolved");
+
+  } else if (!selectedLayerVisible) {
+
+    gizmoDiagnosticState = 3;
+
+    gizmoDiagnosticOutcome = QStringLiteral("selected-layer-hidden");
+
+  } else if (!spatialGizmoRequested) {
+
+    gizmoDiagnosticState = 4;
+
+    gizmoDiagnosticOutcome = QStringLiteral("two-dimensional-view");
+
+  } else if (!gizmo3D_) {
+
+    gizmoDiagnosticState = 5;
+
+    gizmoDiagnosticOutcome = QStringLiteral("3d-gizmo-unavailable");
+
+  } else {
+
+    gizmoDiagnosticState = 6;
+
+    gizmoDiagnosticOutcome = QStringLiteral("draw-issued");
+
+  }
+
+  if (lastGizmoDrawDiagnosticState_ != gizmoDiagnosticState ||
+
+      lastGizmoDrawDiagnosticLayerId_ != selectedLayerId_ ||
+
+      lastGizmoDrawDiagnosticOrientationActive_ != viewportOrientationActive_ ||
+
+      lastGizmoDrawDiagnosticOrientationMatricesValid_ !=
+
+          viewportOrientationMatricesValid_ ||
+
+      lastGizmoDrawDiagnosticMatricesValid_ != gizmo3DCameraMatricesValid_) {
+
+    lastGizmoDrawDiagnosticState_ = gizmoDiagnosticState;
+
+    lastGizmoDrawDiagnosticLayerId_ = selectedLayerId_;
+
+    lastGizmoDrawDiagnosticOrientationActive_ = viewportOrientationActive_;
+
+    lastGizmoDrawDiagnosticOrientationMatricesValid_ =
+
+        viewportOrientationMatricesValid_;
+
+    lastGizmoDrawDiagnosticMatricesValid_ = gizmo3DCameraMatricesValid_;
+
+    const QRectF selectedBounds =
+
+        selectedLayer ? selectedLayer->localBounds() : QRectF{};
+
+    const bool frameEligible =
+
+        showGizmoOverlay_ && selectedLayerVisible &&
+
+        !(selectedLayer &&
+
+          dynamic_cast<ArtifactVideoLayer *>(selectedLayer.get())) &&
+
+        selectedBounds.isValid() && selectedBounds.width() > 0.0 &&
+
+        selectedBounds.height() > 0.0 && spatialGizmoRequested;
+
+    WidgetCreationDiagnostics::recordPhase(
+
+        QStringLiteral("3D Selection Overlay"),
+
+        QStringLiteral("composition-overlay"),
+
+        QStringLiteral("gizmo-draw-state-change"), 0.0,
+
+        QStringLiteral(
+
+            "selectedId=%1 selectedCount=%2 layerResolved=%3 visible=%4 "
+
+            "layer3D=%5 orientationActive=%6 orientationMatrices=%7 "
+
+            "gizmoCameraMatrices=%8 frameEligible=%9 bounds=%10x%11 "
+
+            "viewport=%12x%13")
+
+            .arg(selectedLayerId_.toString())
+
+            .arg(selectedIds.size())
+
+            .arg(selectedLayer ? 1 : 0)
+
+            .arg(selectedLayerVisible ? 1 : 0)
+
+            .arg(selectedLayer && selectedLayer->is3D() ? 1 : 0)
+
+            .arg(viewportOrientationActive_ ? 1 : 0)
+
+            .arg(viewportOrientationMatricesValid_ ? 1 : 0)
+
+            .arg(gizmo3DCameraMatricesValid_ ? 1 : 0)
+
+            .arg(frameEligible ? 1 : 0)
+
+            .arg(selectedBounds.width(), 0, 'f', 1)
+
+            .arg(selectedBounds.height(), 0, 'f', 1)
+
+            .arg(hostWidth_, 0, 'f', 1)
+
+            .arg(hostHeight_, 0, 'f', 1),
+
+        gizmoDiagnosticOutcome);
+
+  }
+
 
 
   if (showGizmoOverlay_ && gizmo_) {
@@ -27896,12 +28395,6 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
     ArtifactCore::ProfileScope _profGizmo("GizmoMask",
 
                                           ArtifactCore::ProfileCategory::Render);
-
-    auto selectedLayer = (!selectedLayerId_.isNil() && comp)
-
-                             ? comp->layerById(selectedLayerId_)
-
-                             : ArtifactAbstractLayerPtr{};
 
     if (selectedLayer && isLayerEffectivelyVisible(selectedLayer)) {
 
@@ -28033,6 +28526,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
                 "Gizmo3DFlush", ArtifactCore::ProfileCategory::Render);
 
             renderer_->flushGizmo3D();
+            renderer_->resetGizmoCameraMatrices();
 
           }
 
@@ -28060,6 +28554,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
                 "Gizmo3DFlush", ArtifactCore::ProfileCategory::Render);
 
             renderer_->flushGizmo3D();
+            renderer_->resetGizmoCameraMatrices();
 
           }
 
@@ -28216,9 +28711,13 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
               layer->id() == selectedLayerId_;
 
+          // A selected plane remains an editing target at its out point or
+          // outside its render span. Secondary selection frames still follow
+          // normal timeline visibility so the viewport does not fill with
+          // inactive controls.
           if (!isLayerEffectivelyVisible(layer) ||
 
-              !layer->isActiveAt(currentFrame) ||
+              (!primary && !layer->isActiveAt(currentFrame)) ||
 
               dynamic_cast<ArtifactVideoLayer *>(layer.get()) ||
 
@@ -28242,7 +28741,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
           // canvas view, so avoid drawing it twice. A 3D layer always needs
           // this camera-projected frame alongside its axis gizmo.
           if (primary && !layer->is3D() &&
-              !viewportOrientationMatricesValid_) {
+              !viewportOrientationActive_) {
             continue;
           }
 

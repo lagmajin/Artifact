@@ -2701,6 +2701,12 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
      submitQueuedDraws(deviceManager_.immediateContext());
       try {
        sc->Present();
+       // Present completes this immediate-context frame. Vulkan's dynamic
+       // upload allocations are retired by FinishFrame(); without it repeated
+       // gizmo uploads eventually exhaust the dynamic heap.
+       if (auto context = deviceManager_.immediateContext()) {
+        context->FinishFrame();
+       }
        ++presentSuccessCount_;
        lastPresentStatus_ = QStringLiteral("ok");
        deviceRecoveryAttempted_ = false;
@@ -3653,7 +3659,14 @@ void ArtifactIRenderer::drawGizmoTorus(Detail::float3 center, Detail::float3 nor
 void ArtifactIRenderer::drawGizmoCube(Detail::float3 center, float halfExtent, const FloatColor& color)
 { impl_->primitiveRenderer3D_.draw3DCube({center.x, center.y, center.z}, halfExtent, color); }
 void ArtifactIRenderer::flushGizmo3D()
-{ impl_->primitiveRenderer3D_.flushGizmo3D(); }
+{
+ if (auto ctx = impl_->deviceManager_.immediateContext()) {
+  // 2D composition commands are buffered while gizmo primitives are issued
+  // immediately. Drain older 2D work first so the delayed composition sprite
+  // cannot be submitted by present() after the gizmo and cover it.
+  impl_->submitQueuedDraws(ctx.RawPtr());
+ }
+}
 void ArtifactIRenderer::draw3DLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness)
 { drawGizmoLine(start, end, color, thickness); }
 void ArtifactIRenderer::draw3DArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size)

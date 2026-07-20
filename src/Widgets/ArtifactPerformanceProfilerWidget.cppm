@@ -12,6 +12,8 @@
 #include <QPaintEvent>
 #include <QResizeEvent>
 #include <QRect>
+#include <QMouseEvent>
+#include <QSettings>
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
 
@@ -262,6 +264,18 @@ protected:
         p.setFont(monoFont);
         p.drawText(statusRect, Qt::AlignCenter, statusText);
 
+        const QRect effectProfileRect(contentLeft, contentTop + titleFm.height() + 8,
+                                      190, 20);
+        const bool effectProfiling = QSettings(
+            QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"))
+            .value(QStringLiteral("Diagnostics/EffectProfiling"), false).toBool();
+        p.setPen(colors.textMuted);
+        p.setFont(subtitleFont);
+        p.drawText(effectProfileRect, Qt::AlignLeft | Qt::AlignVCenter,
+                   QStringLiteral("[%1] Effect pass profiling")
+                       .arg(effectProfiling ? QStringLiteral("x")
+                                             : QStringLiteral(" ")));
+
         // Secondary chips
         const int chipsY = contentTop + titleFm.height() + subtitleFm.height() + 18;
         auto drawChip = [&](const QRect& r, const QString& label, const QString& value, const QColor& accent) {
@@ -404,6 +418,22 @@ protected:
             return;
         }
         QWidget::keyPressEvent(event);
+    }
+
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        if (event && event->button() == Qt::LeftButton &&
+            QRect(32, 42, 190, 20).contains(event->position().toPoint())) {
+            QSettings settings(QStringLiteral("ArtifactStudio"),
+                               QStringLiteral("Artifact"));
+            const bool enabled = settings.value(
+                QStringLiteral("Diagnostics/EffectProfiling"), false).toBool();
+            settings.setValue(QStringLiteral("Diagnostics/EffectProfiling"), !enabled);
+            update();
+            event->accept();
+            return;
+        }
+        QWidget::mousePressEvent(event);
     }
 
 private:

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QDebug>
 #include <QStandardItemModel>
 #include <QIcon>
@@ -8,7 +8,6 @@
 #include <QFileInfo>
 #include <QPainter>
 #include <QtSVG/QSvgRenderer>
-#include <opencv2/opencv.hpp>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -126,7 +125,7 @@ QStandardItem* projectItemFromModelIndex(const QModelIndex& index)
   class ArtifactProjectModel::Impl
   {
   private:
-   
+
 
   public:
 
@@ -174,7 +173,9 @@ void ArtifactProjectModel::Impl::refreshTree()
     return;
   }
 
-  updateUnusedAssetPaths();
+  // Unused-asset analysis is owned by the Project Manager presentation layer.
+  // Running the full project traversal here blocks model reset and duplicates
+  // the asynchronous snapshot analysis performed by that surface.
 
   model_->clear();
   model_->setColumnCount(6);
@@ -243,11 +244,9 @@ void ArtifactProjectModel::Impl::refreshTree()
         return iconOrFallback(QStringLiteral("MaterialVS/purple/title.svg"), QColor(121, 82, 168), QStringLiteral("T"));
       }
       if (isImageFile(suffix)) {
-        QImage img(footage->filePath);
-        if (!img.isNull()) {
-          QPixmap pixmap = QPixmap::fromImage(img).scaled(16, 16, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-          return QIcon(pixmap);
-        }
+        // Project model resets happen for structural edits such as creating a
+        // composition. Do not decode every image again just to build a 16 px
+        // row icon; tile previews own the richer thumbnail path.
         return iconOrFallback(QStringLiteral("MaterialVS/green/photo_library.svg"), QColor(66, 148, 98), QStringLiteral("I"));
       }
       if (isVideoFile(suffix)) {
@@ -320,18 +319,19 @@ void ArtifactProjectModel::Impl::refreshTree()
             frameRateItem->setText(QStringLiteral("Image"));
           }
         } else if (isVideoFile(suffix)) {
-          cv::VideoCapture cap(footage->filePath.toLocal8Bit().constData());
-          if (cap.isOpened()) {
-            const double fps = cap.get(cv::CAP_PROP_FPS);
-            const int frameCount = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
-            const double durationSec = (fps > 0.0) ? static_cast<double>(frameCount) / fps : 0.0;
-            const int durationFrames = static_cast<int>(durationSec * fps);
-            durationItem->setText(durationFrames > 0 ? QStringLiteral("%1 frames").arg(durationFrames) : QStringLiteral("-"));
-            frameRateItem->setText(fps > 0.0 ? QStringLiteral("%1 fps").arg(QString::number(fps, 'f', fps == std::floor(fps) ? 0 : 3))
-                                             : QStringLiteral("Video"));
-          } else {
-            frameRateItem->setText(QStringLiteral("Video"));
-          }
+          // Opening every media file with OpenCV made unrelated project-tree
+          // rebuilds block on disk and codec initialization. Use metadata that
+          // was captured at import time; unknown values remain intentionally
+          // lightweight until a dedicated metadata cache supplies them.
+          frameRateItem->setText(
+              footage->frameRate > 0.0
+                  ? QStringLiteral("%1 fps").arg(QString::number(
+                        footage->frameRate, 'f',
+                        std::abs(footage->frameRate -
+                                 std::round(footage->frameRate)) <= 0.0005
+                            ? 0
+                            : 3))
+                  : QStringLiteral("Video"));
         } else if (isAudioFile(suffix)) {
           frameRateItem->setText(QStringLiteral("Audio"));
         } else if (isFontFile(suffix)) {

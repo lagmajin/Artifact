@@ -68,6 +68,11 @@ module;
 #include <QGridLayout>
 #include <QElapsedTimer>
 #include <QSet>
+#include <QPointer>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
+#include <QMetaObject>
 #include <QHBoxLayout>
 #include <QAbstractItemView>
 #include <QComboBox>
@@ -110,7 +115,6 @@ import Widgets.Dialog.InterpretFootage;
 import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Project.Manager;
-import Artifact.Project.Cleanup;
 import Artifact.Project.PresetManager;
 import Artifact.Mask.LayerMask;
 import Asset.Manager;
@@ -134,6 +138,85 @@ constexpr int kAssetThumbnailMinPx = 25;
 constexpr int kAssetThumbnailMaxPx = 256;
 constexpr int kAssetThumbnailDefaultPx = 128;
 constexpr auto kAssetBrowserContext = "Panel.AssetBrowser";
+
+void collectAssetBrowserProjectPaths(const QJsonArray& items,
+                                     QSet<QString>& assetPaths)
+{
+  for (const auto& value : items) {
+    const QJsonObject item = value.toObject();
+    if (item.value(QStringLiteral("type")).toString().compare(
+            QStringLiteral("footage"), Qt::CaseInsensitive) == 0) {
+      const QString path = item.value(QStringLiteral("filePath")).toString().trimmed();
+      if (!path.isEmpty()) {
+        assetPaths.insert(path);
+      }
+    }
+    collectAssetBrowserProjectPaths(item.value(QStringLiteral("children")).toArray(),
+                                    assetPaths);
+  }
+}
+
+void collectAssetBrowserReferences(const QJsonValue& value, const QString& key,
+                                   QSet<QString>& referencedPaths)
+{
+  if (value.isObject()) {
+    const QJsonObject object = value.toObject();
+    for (auto it = object.constBegin(); it != object.constEnd(); ++it) {
+      collectAssetBrowserReferences(it.value(), it.key(), referencedPaths);
+    }
+    return;
+  }
+  if (value.isArray()) {
+    for (const auto& child : value.toArray()) {
+      collectAssetBrowserReferences(child, key, referencedPaths);
+    }
+    return;
+  }
+  if (!value.isString()) {
+    return;
+  }
+  const QString normalizedKey = key.trimmed().toLower();
+  if (!normalizedKey.contains(QStringLiteral("source")) &&
+      !normalizedKey.contains(QStringLiteral("path")) &&
+      !normalizedKey.contains(QStringLiteral("file"))) {
+    return;
+  }
+  const QString path = value.toString().trimmed();
+  if (path.isEmpty()) {
+    return;
+  }
+  referencedPaths.insert(path);
+  const QString fileName = QFileInfo(path).fileName();
+  if (!fileName.isEmpty()) {
+    referencedPaths.insert(fileName);
+  }
+}
+
+QSet<QString> findUnusedAssetBrowserPaths(const QJsonObject& snapshot)
+{
+  QSet<QString> allAssetPaths;
+  QSet<QString> referencedPaths;
+  collectAssetBrowserProjectPaths(
+      snapshot.value(QStringLiteral("projectItems")).toArray(), allAssetPaths);
+  collectAssetBrowserReferences(snapshot.value(QStringLiteral("compositions")),
+                                QStringLiteral("compositions"), referencedPaths);
+
+  QSet<QString> unusedPaths;
+  for (const QString& path : allAssetPaths) {
+    const QString fileName = QFileInfo(path).fileName();
+    if (referencedPaths.contains(path) ||
+        (!fileName.isEmpty() && referencedPaths.contains(fileName))) {
+      continue;
+    }
+    const QFileInfo info(path);
+    const QString canonicalPath = info.canonicalFilePath().isEmpty()
+        ? info.absoluteFilePath()
+        : info.canonicalFilePath();
+    unusedPaths.insert(QDir::cleanPath(path));
+    unusedPaths.insert(QDir::cleanPath(canonicalPath));
+  }
+  return unusedPaths;
+}
 
 void applyAssetBrowserPanelPalette(QWidget* widget)
 {
@@ -1166,6 +1249,10 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
     bool sortAscending_ = false;
     ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
+    bool unusedAssetSnapshotQueued_ = false;
+    bool unusedAssetRefreshInFlight_ = false;
+    bool unusedAssetRefreshPending_ = false;
+    quint64 unusedAssetRefreshGeneration_ = 0;
 
   void handleDirectryChanged();
   void handleDoubleClicked();
@@ -1962,23 +2049,63 @@ void ArtifactAssetBrowser::Impl::syncProjectAssetRoot()
 
 void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
 {
-  unusedAssetPaths_.clear();
-  auto* svc = ArtifactProjectService::instance();
-  if (!svc) {
-   return;
+  if (!owner_) {
+    return;
   }
-  auto project = svc->getCurrentProjectSharedPtr();
-  if (!project) {
-   return;
+  if (unusedAssetRefreshInFlight_) {
+    unusedAssetRefreshPending_ = true;
+    return;
   }
-  const QStringList unused = ArtifactProjectCleanupTool::findUnusedAssetPaths(project.get());
-  for (const QString& path : unused) {
-   const QString canonicalPath = QFileInfo(path).canonicalFilePath().isEmpty()
-    ? QFileInfo(path).absoluteFilePath()
-    : QFileInfo(path).canonicalFilePath();
-   unusedAssetPaths_.insert(QDir::cleanPath(path));
-   unusedAssetPaths_.insert(QDir::cleanPath(canonicalPath));
+  if (unusedAssetSnapshotQueued_) {
+    return;
   }
+  unusedAssetSnapshotQueued_ = true;
+  QPointer<ArtifactAssetBrowser> owner(owner_);
+  QMetaObject::invokeMethod(owner_, [owner]() {
+    if (!owner || !owner->impl_) {
+      return;
+    }
+    auto* impl = owner->impl_;
+    impl->unusedAssetSnapshotQueued_ = false;
+    auto* service = ArtifactProjectService::instance();
+    auto project = service ? service->getCurrentProjectSharedPtr() : nullptr;
+    const quint64 generation = ++impl->unusedAssetRefreshGeneration_;
+    if (!project) {
+      impl->unusedAssetPaths_.clear();
+      impl->unusedAssetRefreshPending_ = false;
+      impl->applyFilters();
+      impl->refreshLeftHubSummary();
+      return;
+    }
+
+    const QJsonObject snapshot = project->toJson();
+    impl->unusedAssetRefreshInFlight_ = true;
+    [[maybe_unused]] auto unusedAssetFuture =
+        QtConcurrent::run([owner, generation, snapshot]() {
+          QSet<QString> unusedPaths = findUnusedAssetBrowserPaths(snapshot);
+          if (!owner) {
+            return;
+          }
+          QMetaObject::invokeMethod(owner, [owner, generation,
+                                            unusedPaths = std::move(unusedPaths)]() mutable {
+            if (!owner || !owner->impl_) {
+              return;
+            }
+            auto* impl = owner->impl_;
+            impl->unusedAssetRefreshInFlight_ = false;
+            if (generation == impl->unusedAssetRefreshGeneration_) {
+              impl->unusedAssetPaths_ = std::move(unusedPaths);
+              impl->applyFilters();
+              impl->refreshLeftHubSummary();
+            }
+            const bool refreshAgain = impl->unusedAssetRefreshPending_;
+            impl->unusedAssetRefreshPending_ = false;
+            if (refreshAgain) {
+              impl->refreshUnusedAssetCache();
+            }
+          }, Qt::QueuedConnection);
+        });
+  }, Qt::QueuedConnection);
 }
 
 void ArtifactAssetBrowser::Impl::hideHoverPreview()

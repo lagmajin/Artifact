@@ -218,6 +218,7 @@ int compositionPreviewIntervalMs(
   bool initialized_ = false;
   std::atomic_bool isPlaying_{ false };
   std::atomic_bool needsRender_{ true };
+  std::atomic_uint64_t renderGeneration_{ 0 };
   std::atomic_bool running_{ false };
   tbb::task_group renderTask_;
   std::mutex renderMutex_;
@@ -310,9 +311,11 @@ int compositionPreviewIntervalMs(
       }
        {
         std::lock_guard<std::mutex> lock(renderMutex_);
+        const std::uint64_t generation =
+            renderGeneration_.load(std::memory_order_acquire);
         QElapsedTimer frameTimer;
         frameTimer.start();
-        renderOneFrame();
+        renderOneFrame(generation);
         const qint64 renderElapsedMs = frameTimer.elapsed();
         if (playing) {
           const int remainingMs =
@@ -333,7 +336,7 @@ int compositionPreviewIntervalMs(
    if (renderer_) renderer_->flushAndWait();
   }
 
-  void renderOneFrame() {
+  void renderOneFrame(const std::uint64_t generation) {
     if (!initialized_ || !renderer_) return;
     auto comp = previewPipeline_.composition();
     FramePosition targetFrame = comp ? comp->framePosition() : FramePosition(0);
@@ -390,14 +393,22 @@ int compositionPreviewIntervalMs(
         0.0f, 0.0f, (float)comp->settings().compositionSize().width(),
         (float)comp->settings().compositionSize().height(), identity,
         ramPreviewFrameImage, 1.0f);
-    renderer_->present();
+    if (generation == renderGeneration_.load(std::memory_order_acquire)) {
+     renderer_->present();
+    }
     return;
    }
    previewPipeline_.render(renderer_.get());
-   renderer_->present();
+   // Property edits can arrive while CPU preparation/effect evaluation is
+   // running on this worker. Never publish an older frame after a newer edit;
+   // the pending request will render the latest generation next.
+   if (generation == renderGeneration_.load(std::memory_order_acquire)) {
+    renderer_->present();
+   }
   }
 
   void requestRender() {
+    renderGeneration_.fetch_add(1, std::memory_order_acq_rel);
     needsRender_.store(true, std::memory_order_release);
     renderCv_.notify_one();
    }

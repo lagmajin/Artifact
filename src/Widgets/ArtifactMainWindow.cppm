@@ -18,7 +18,9 @@ module;
 #include <QApplication>
 #include <QCloseEvent>
 #include <QColor>
+#include <QDateTime>
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QEvent>
 #include <QHash>
 #include <QHeaderView>
@@ -31,6 +33,7 @@ module;
 #include <QMenu>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <QShowEvent>
 #include <QStatusBar>
 #include <QTimer>
@@ -41,6 +44,7 @@ module;
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QFileDialog>
+#include <Diagnostics/WidgetCreationDiagnostics.hpp>
 #include <wobjectimpl.h>
 
 module Artifact.MainWindow;
@@ -332,28 +336,30 @@ void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
   }
 
   const QStringList dockTitles = window->dockTitles();
-  const auto setVisible = [window](const QString &title, bool visible) {
-    if (!title.isEmpty()) {
-      window->setDockVisible(title, visible);
-    }
-  };
   const WorkspaceVisibilityRule *rule = workspaceVisibilityRuleFor(mode);
-
-  for (const QString &title : dockTitles) {
-    setVisible(title, false);
-  }
-
+  QSet<QString> visibleTitles;
   for (const QString &title : rule->visibleTitles) {
-    setVisible(title, true);
+    visibleTitles.insert(title);
   }
   for (const QString &title : rule->hiddenTitles) {
-    setVisible(title, false);
+    visibleTitles.remove(title);
   }
-
   for (const QString &title : dockTitles) {
     if (isTimelineDockTitle(title)) {
-      setVisible(title, mode == WorkspaceMode::Default ||
-                            mode == WorkspaceMode::Animation);
+      if (mode == WorkspaceMode::Default || mode == WorkspaceMode::Animation) {
+        visibleTitles.insert(title);
+      } else {
+        visibleTitles.remove(title);
+      }
+    }
+  }
+
+  // Apply each dock's final state once. The previous hide-all/show-selected
+  // sequence toggled every visible dock twice and serialized the full ADS graph
+  // for each toggle.
+  for (const QString &title : dockTitles) {
+    if (!title.isEmpty()) {
+      window->setDockVisible(title, visibleTitles.contains(title));
     }
   }
 }
@@ -362,7 +368,12 @@ void applyWorkspaceMode(ArtifactMainWindow *window, WorkspaceMode mode) {
   if (!window) {
     return;
   }
+  constexpr auto kWorkspaceBatchDepth =
+      "artifactWorkspaceVisibilityBatchDepth";
+  const int previousDepth = window->property(kWorkspaceBatchDepth).toInt();
+  window->setProperty(kWorkspaceBatchDepth, previousDepth + 1);
   applyWorkspaceVisibility(window, mode);
+  window->setProperty(kWorkspaceBatchDepth, previousDepth);
 }
 
 void refreshFloatingWidgetTree(QWidget *widget) {
@@ -607,7 +618,8 @@ public:
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
-  bool createLazyDockWidgetNow(ArtifactMainWindow *owner, CDockWidget *dock) {
+  bool createLazyDockWidgetNow(ArtifactMainWindow *owner, CDockWidget *dock,
+                               const QString &reason) {
     if (!owner || !dock || dock->property("artifactLazyWidgetCreated").toBool()) {
       if (dock) {
         dock->setProperty("artifactLazyWidgetCreationPending", false);
@@ -619,12 +631,23 @@ public:
       dock->setProperty("artifactLazyFactoryAvailable", false);
       dock->setProperty("artifactLazyWidgetLastError",
                         QStringLiteral("factory is not registered"));
+      WidgetCreationDiagnostics::record(
+          nullptr, dock->windowTitle(), QStringLiteral("lazy-dock-factory"),
+          reason, 0.0, 0.0, QStringLiteral("factory-missing"),
+          dock->windowTitle(), dock->objectName(),
+          QStringLiteral("factory is not registered"));
       return false;
     }
 
+    QElapsedTimer totalTimer;
+    totalTimer.start();
     dock->setProperty("artifactLazyWidgetCreationPending", true);
     auto factory = lazyDockFactories.take(dock);
+    QElapsedTimer factoryTimer;
+    factoryTimer.start();
     QWidget *widget = factory ? factory() : nullptr;
+    const double factoryMs =
+        static_cast<double>(factoryTimer.nsecsElapsed()) / 1000000.0;
     if (!widget) {
       // A failed factory must remain retryable. Previously take() permanently
       // removed it, leaving an uncreated dock with no way to recover.
@@ -636,6 +659,16 @@ public:
       dock->setProperty("artifactLazyWidgetCreationPending", false);
       dock->setProperty("artifactLazyWidgetLastError",
                         QStringLiteral("factory returned null"));
+      const double totalMs =
+          static_cast<double>(totalTimer.nsecsElapsed()) / 1000000.0;
+      dock->setProperty("artifactLazyWidgetCreateReason", reason);
+      dock->setProperty("artifactLazyWidgetFactoryMs", factoryMs);
+      dock->setProperty("artifactLazyWidgetTotalMs", totalMs);
+      WidgetCreationDiagnostics::record(
+          nullptr, dock->windowTitle(), QStringLiteral("lazy-dock-factory"),
+          reason, factoryMs, totalMs, QStringLiteral("factory-null"),
+          dock->windowTitle(), dock->objectName(),
+          QStringLiteral("factory returned null; factory retained for retry"));
       return false;
     }
 
@@ -675,6 +708,20 @@ public:
     if (placeholder && placeholder != widget) {
       placeholder->deleteLater();
     }
+    const double totalMs =
+        static_cast<double>(totalTimer.nsecsElapsed()) / 1000000.0;
+    dock->setProperty("artifactLazyWidgetCreateReason", reason);
+    dock->setProperty("artifactLazyWidgetFactoryMs", factoryMs);
+    dock->setProperty("artifactLazyWidgetTotalMs", totalMs);
+    dock->setProperty("artifactLazyWidgetClass",
+                      QString::fromLatin1(widget->metaObject()->className()));
+    dock->setProperty("artifactLazyWidgetCreatedAtUtc",
+                      QDateTime::currentDateTimeUtc().toString(
+                          Qt::ISODateWithMs));
+    WidgetCreationDiagnostics::record(
+        widget, dock->windowTitle(), QStringLiteral("lazy-dock-factory"),
+        reason, factoryMs, totalMs, QStringLiteral("created"),
+        dock->windowTitle(), dock->objectName());
     return true;
   }
 
@@ -1379,6 +1426,9 @@ void ArtifactMainWindow::addDockedWidgetTabbedWithId(
 
   auto *dock = new CDockWidget(title, this);
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
+  const bool compositionScopedDock =
+      dock->objectName().startsWith(QStringLiteral("timeline::")) ||
+      dock->objectName().startsWith(QStringLiteral("dopesheet::"));
   dock->setWidget(widget);
   if (auto *aiWidget = qobject_cast<ArtifactAICloudWidget *>(widget)) {
     impl_->aiCloudWidget_ = aiWidget;
@@ -1434,7 +1484,7 @@ void ArtifactMainWindow::addDockedWidgetTabbedWithId(
   wireDockWidgetSignals(dock, this);
   prepareDockDropOverlays(impl_->dockManager);
   impl_->dockStyleManager->applyStyle();
-  if (!impl_->startupLayoutFrozen) {
+  if (!impl_->startupLayoutFrozen && !compositionScopedDock) {
     applyWorkspaceMode(this, impl_->workspaceMode_);
   }
 }
@@ -1448,6 +1498,9 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
 
   auto *dock = new CDockWidget(title, this);
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
+  const bool compositionScopedDock =
+      dock->objectName().startsWith(QStringLiteral("timeline::")) ||
+      dock->objectName().startsWith(QStringLiteral("dopesheet::"));
   dock->setProperty("artifactLazyDock", true);
   if (dock->objectName().startsWith(QStringLiteral("timeline::"))) {
     dock->setProperty("artifactLazyForceNoScrollArea", true);
@@ -1520,7 +1573,8 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
         auto createNow = [this, dock, placeholder]() {
           Q_UNUSED(placeholder);
           if (impl_) {
-            impl_->createLazyDockWidgetNow(this, dock);
+            impl_->createLazyDockWidgetNow(
+                this, dock, QStringLiteral("dock-visibility-request"));
           }
         };
 
@@ -1529,7 +1583,7 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
   });
 
   impl_->dockStyleManager->applyStyle();
-  if (!impl_->startupLayoutFrozen) {
+  if (!impl_->startupLayoutFrozen && !compositionScopedDock) {
     applyWorkspaceMode(this, impl_->workspaceMode_);
   }
 }
@@ -1611,7 +1665,8 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
         [this, dock, placeholder]() mutable {
           Q_UNUSED(placeholder);
           if (impl_) {
-            impl_->createLazyDockWidgetNow(this, dock);
+            impl_->createLazyDockWidgetNow(
+                this, dock, QStringLiteral("floating-dock-visibility-request"));
           }
         }();
       });
@@ -1703,15 +1758,18 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
     // The central workspace is structural, not a toggleable tool panel.
     // Keeping it visible prevents workspace-mode changes from leaving the
     // main window with an empty QADS central area.
-    impl_->centralWorkspaceWidget->show();
+    if (!impl_->centralWorkspaceWidget->isVisible()) {
+      impl_->centralWorkspaceWidget->show();
+    }
     if (impl_->primaryCenterDock) {
-      impl_->primaryCenterDock->toggleView(true);
+      const bool centerDockVisible = impl_->primaryCenterDock->isVisible() &&
+                                     !impl_->primaryCenterDock->isClosed();
+      if (!centerDockVisible) {
+        impl_->primaryCenterDock->toggleView(true);
+      }
     }
     return;
   }
-
-  const QByteArray beforeState =
-      impl_->recordLayoutMutations ? saveDockManagerState() : QByteArray{};
 
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
@@ -1721,23 +1779,36 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
         dock->setProperty("artifactStartupVisibilityOverride", visible);
         return;
       }
-      if (visible) {
-        materializeDeferredFloatingDock(impl_->dockManager, dock);
-      }
       const bool isVisible = dock->isVisible() && !dock->isClosed();
-      if (isVisible != visible) {
-        dock->toggleView(visible);
-      }
-
+      const bool visibilityChanged = isVisible != visible;
       const bool needsLazyWidget =
           visible && impl_->lazyDockFactories.contains(dock) &&
           !dock->property("artifactLazyWidgetCreated").toBool() &&
           !dock->property("artifactLazyWidgetCreationPending").toBool();
+      if (!visibilityChanged && !needsLazyWidget) {
+        return;
+      }
+
+      const bool recordMutation =
+          visibilityChanged && impl_->recordLayoutMutations &&
+          property("artifactWorkspaceVisibilityBatchDepth").toInt() == 0 &&
+          property("artifactProgrammaticDockMutationDepth").toInt() == 0;
+      const QByteArray beforeState =
+          recordMutation ? saveDockManagerState() : QByteArray{};
+
+      if (visible) {
+        materializeDeferredFloatingDock(impl_->dockManager, dock);
+      }
+      if (visibilityChanged) {
+        dock->toggleView(visible);
+      }
+
       if (needsLazyWidget) {
         if (impl_->startupLayoutFrozen || impl_->startupLayoutApplying) {
           dock->setProperty("artifactLazyWidgetStartupPending", true);
         } else {
-          impl_->createLazyDockWidgetNow(this, dock);
+          impl_->createLazyDockWidgetNow(
+              this, dock, QStringLiteral("set-dock-visible"));
         }
       }
 
@@ -1749,7 +1820,7 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
           scheduleFloatingRefresh(floatingWidget);
         }
       }
-      if (impl_->recordLayoutMutations) {
+      if (recordMutation) {
         pushDockLayoutSnapshot(
             this, beforeState,
             visible ? QStringLiteral("Show Dock: %1").arg(title)
@@ -1778,14 +1849,18 @@ void ArtifactMainWindow::activateDock(const QString &title) {
         dock->setProperty("artifactStartupVisibilityOverride", true);
         return;
       }
-      materializeDeferredFloatingDock(impl_->dockManager, dock);
-      dock->toggleView(true);
+      const bool isVisible = dock->isVisible() && !dock->isClosed();
+      if (!isVisible) {
+        materializeDeferredFloatingDock(impl_->dockManager, dock);
+        dock->toggleView(true);
+      }
       if (!dock->property("artifactLazyWidgetCreated").toBool() &&
           !dock->property("artifactLazyWidgetCreationPending").toBool()) {
         if (impl_->startupLayoutFrozen || impl_->startupLayoutApplying) {
           dock->setProperty("artifactLazyWidgetStartupPending", true);
         } else if (impl_->lazyDockFactories.contains(dock)) {
-          impl_->createLazyDockWidgetNow(this, dock);
+          impl_->createLazyDockWidgetNow(
+              this, dock, QStringLiteral("activate-dock"));
         }
       }
       dock->setAsCurrentTab();
@@ -1940,48 +2015,56 @@ void ArtifactMainWindow::setWorkspaceMode(WorkspaceMode mode) {
     return;
   }
 
-  qDebug() << "[MainWindow] setWorkspaceMode mode="
-           << static_cast<int>(mode);
+  const bool workspaceModeChanged = impl_->workspaceMode_ != mode;
+  const bool shouldApplyWorkspace =
+      workspaceModeChanged || impl_->startupLayoutFrozen ||
+      impl_->startupLayoutApplying;
+  qDebug() << "[MainWindow] setWorkspaceMode mode=" << static_cast<int>(mode)
+           << "apply=" << shouldApplyWorkspace;
   impl_->workspaceMode_ = mode;
-  applyWorkspaceMode(this, mode);
+  if (shouldApplyWorkspace) {
+    applyWorkspaceMode(this, mode);
+  }
   if (impl_->toolBar && impl_->toolBar->workspaceMode() != mode) {
     impl_->toolBar->setWorkspaceMode(mode);
   }
-  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
-    QString modeText = QStringLiteral("Default");
-    switch (mode) {
-    case WorkspaceMode::Default:
-      modeText = QStringLiteral("Default");
-      break;
-    case WorkspaceMode::Import:
-      modeText = QStringLiteral("Import");
-      break;
-    case WorkspaceMode::Layout:
-      modeText = QStringLiteral("Layout");
-      break;
-    case WorkspaceMode::Animation:
-      modeText = QStringLiteral("Animation");
-      break;
-    case WorkspaceMode::VFX:
-      modeText = QStringLiteral("VFX");
-      break;
-    case WorkspaceMode::Compositing:
-      modeText = QStringLiteral("Compositing");
-      break;
-    case WorkspaceMode::Text:
-      modeText = QStringLiteral("Text");
-      break;
-    case WorkspaceMode::Export:
-      modeText = QStringLiteral("Export");
-      break;
-    case WorkspaceMode::Debug:
-      modeText = QStringLiteral("Debug");
-      break;
-    case WorkspaceMode::Audio:
-      modeText = QStringLiteral("Audio");
-      break;
+  if (workspaceModeChanged) {
+    if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+      QString modeText = QStringLiteral("Default");
+      switch (mode) {
+      case WorkspaceMode::Default:
+        modeText = QStringLiteral("Default");
+        break;
+      case WorkspaceMode::Import:
+        modeText = QStringLiteral("Import");
+        break;
+      case WorkspaceMode::Layout:
+        modeText = QStringLiteral("Layout");
+        break;
+      case WorkspaceMode::Animation:
+        modeText = QStringLiteral("Animation");
+        break;
+      case WorkspaceMode::VFX:
+        modeText = QStringLiteral("VFX");
+        break;
+      case WorkspaceMode::Compositing:
+        modeText = QStringLiteral("Compositing");
+        break;
+      case WorkspaceMode::Text:
+        modeText = QStringLiteral("Text");
+        break;
+      case WorkspaceMode::Export:
+        modeText = QStringLiteral("Export");
+        break;
+      case WorkspaceMode::Debug:
+        modeText = QStringLiteral("Debug");
+        break;
+      case WorkspaceMode::Audio:
+        modeText = QStringLiteral("Audio");
+        break;
+      }
+      settings->setProjectDefaultWorkspaceModeText(modeText);
     }
-    settings->setProjectDefaultWorkspaceModeText(modeText);
   }
 }
 
@@ -2100,16 +2183,23 @@ void ArtifactMainWindow::setDockSplitterSizes(const QString &dockTitle,
   if (!impl_ || !impl_->dockManager)
     return;
 
-  const QByteArray beforeState = saveDockManagerState();
+  const bool recordMutation =
+      impl_->recordLayoutMutations &&
+      property("artifactWorkspaceVisibilityBatchDepth").toInt() == 0 &&
+      property("artifactProgrammaticDockMutationDepth").toInt() == 0;
+  const QByteArray beforeState =
+      recordMutation ? saveDockManagerState() : QByteArray{};
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
       continue;
     if (dock->objectName() == dockTitle || dock->windowTitle() == dockTitle) {
       if (auto *area = dock->dockAreaWidget()) {
         impl_->dockManager->setSplitterSizes(area, sizes);
-        pushDockLayoutSnapshot(
-            this, beforeState,
-            QStringLiteral("Resize Dock Splitter: %1").arg(dockTitle));
+        if (recordMutation) {
+          pushDockLayoutSnapshot(
+              this, beforeState,
+              QStringLiteral("Resize Dock Splitter: %1").arg(dockTitle));
+        }
       }
       return;
     }
@@ -2210,7 +2300,8 @@ void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {
         dock->setProperty("artifactLazyWidgetCreationPending", false);
         continue;
       }
-      impl_->createLazyDockWidgetNow(this, dock);
+      impl_->createLazyDockWidgetNow(
+          this, dock, QStringLiteral("startup-layout-final-visible-tab"));
     }
   }
 
@@ -2239,7 +2330,8 @@ void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {
       if (!shouldCreateLazyWidget) {
         continue;
       }
-      impl_->createLazyDockWidgetNow(this, dock);
+      impl_->createLazyDockWidgetNow(
+          this, dock, QStringLiteral("startup-layout-deferred-visible-tab"));
     }
     applyDarkNativeTitleBar(this);
     for (auto *dock : impl_->dockWidgets) {
@@ -2324,6 +2416,12 @@ void ArtifactMainWindow::closeEvent(QCloseEvent *event) {
           this, QStringLiteral("終了"),
           QStringLiteral("Artifact を終了しますか？"))) {
     event->accept();
+    // QADS floating containers are independent top-level windows. Relying on
+    // QApplication::lastWindowClosed can therefore leave the event loop alive
+    // after the main editor disappears. Closing the main editor is an explicit
+    // application-exit request, so terminate the event loop regardless of any
+    // auxiliary/floating window that is still registered.
+    QApplication::quit();
   } else {
     event->ignore();
   }

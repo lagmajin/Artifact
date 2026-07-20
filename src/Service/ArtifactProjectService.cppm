@@ -4,6 +4,7 @@ module;
 #include <QApplication>
 #include <QDebug>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
@@ -21,6 +22,7 @@ module;
 #include <QtSvg/QSvgRenderer>
 #include <QFileSystemWatcher>
 #include <QTimer>
+#include <Diagnostics/WidgetCreationDiagnostics.hpp>
 #include <glm/ext/matrix_projection.hpp>
 #include <wobjectimpl.h>
 
@@ -4039,13 +4041,34 @@ QString ArtifactProjectService::currentProjectHealthStateToken() const
 
 ChangeCompositionResult
 ArtifactProjectService::changeCurrentComposition(const CompositionID &id) {
+  QElapsedTimer changeTimer;
+  changeTimer.start();
   const auto previousCompositionId =
       impl_ ? impl_->currentCompositionId_ : CompositionID{};
   auto result = impl_->changeCurrentComposition(id);
+  const double changeMs =
+      static_cast<double>(changeTimer.nsecsElapsed()) / 1000000.0;
+  WidgetCreationDiagnostics::recordPhase(
+      QStringLiteral("Composition Switch"),
+      QStringLiteral("composition-lifecycle"),
+      QStringLiteral("change-current-composition-sync"), changeMs,
+      QStringLiteral("from=%1 to=%2 changed=%3")
+          .arg(previousCompositionId.toString(), id.toString())
+          .arg(previousCompositionId != id ? 1 : 0),
+      result.success ? QStringLiteral("succeeded") : QStringLiteral("failed"));
   if (result.success && previousCompositionId != id) {
     QTimer::singleShot(0, this, [this, id]() {
+      QElapsedTimer publishTimer;
+      publishTimer.start();
       ArtifactCore::globalEventBus().publish<CurrentCompositionChangedEvent>(
           CurrentCompositionChangedEvent{id.toString()});
+      const double publishMs =
+          static_cast<double>(publishTimer.nsecsElapsed()) / 1000000.0;
+      WidgetCreationDiagnostics::recordPhase(
+          QStringLiteral("Composition Switch Subscribers"),
+          QStringLiteral("composition-lifecycle"),
+          QStringLiteral("current-composition-event-publish"), publishMs,
+          QStringLiteral("compositionId=%1").arg(id.toString()));
     });
   }
   return result;
@@ -4066,43 +4089,111 @@ ArtifactProjectService::projectItems() const { // truncated for brevity
 }
 
 void ArtifactProjectService::createComposition(const UniString &name) {
+  QElapsedTimer totalTimer;
+  totalTimer.start();
   auto &manager = impl_->projectManager();
+  double projectCreateMs = 0.0;
   if (!hasProject()) {
+    QElapsedTimer phaseTimer;
+    phaseTimer.start();
     manager.createProject();
+    projectCreateMs =
+        static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
   }
   ArtifactCompositionInitParams params;
   params.setCompositionName(name);
+  QElapsedTimer phaseTimer;
+  phaseTimer.start();
   auto result = manager.createComposition(params);
+  const double managerCreateMs =
+      static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
+  double defaultsMs = 0.0;
+  double switchMs = 0.0;
   if (result.success) {
     if (auto project = manager.getCurrentProjectSharedPtr()) {
+      phaseTimer.restart();
       updateLastUsedCreationDefaults(project, params);
+      defaultsMs =
+          static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
     }
+    phaseTimer.restart();
     changeCurrentComposition(result.id);
+    switchMs =
+        static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
     qDebug() << "[ArtifactProjectService::createComposition(UniString)] "
                 "succeeded, id:"
              << result.id.toString();
   } else {
     qDebug() << "[ArtifactProjectService::createComposition(UniString)] failed";
   }
+  const double totalMs =
+      static_cast<double>(totalTimer.nsecsElapsed()) / 1000000.0;
+  const QString detail = QStringLiteral(
+                             "compositionId=%1 projectCreateMs=%2 "
+                             "managerCreateMs=%3 defaultsMs=%4 switchMs=%5")
+                             .arg(result.id.toString())
+                             .arg(projectCreateMs, 0, 'f', 2)
+                             .arg(managerCreateMs, 0, 'f', 2)
+                             .arg(defaultsMs, 0, 'f', 2)
+                             .arg(switchMs, 0, 'f', 2);
+  WidgetCreationDiagnostics::recordPhase(
+      QStringLiteral("Composition Create"),
+      QStringLiteral("composition-lifecycle"),
+      QStringLiteral("service-create-by-name"), totalMs, detail,
+      result.success ? QStringLiteral("succeeded") : QStringLiteral("failed"));
 }
 
 void ArtifactProjectService::createComposition(
     const ArtifactCompositionInitParams &params) {
+  QElapsedTimer totalTimer;
+  totalTimer.start();
   auto &manager = impl_->projectManager();
+  double projectCreateMs = 0.0;
   if (!hasProject()) {
+    QElapsedTimer phaseTimer;
+    phaseTimer.start();
     manager.createProject();
+    projectCreateMs =
+        static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
   }
+  QElapsedTimer phaseTimer;
+  phaseTimer.start();
   auto result = manager.createComposition(params);
+  const double managerCreateMs =
+      static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
+  double defaultsMs = 0.0;
+  double switchMs = 0.0;
   if (result.success) {
     if (auto project = manager.getCurrentProjectSharedPtr()) {
+      phaseTimer.restart();
       updateLastUsedCreationDefaults(project, params);
+      defaultsMs =
+          static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
     }
+    phaseTimer.restart();
     changeCurrentComposition(result.id);
+    switchMs =
+        static_cast<double>(phaseTimer.nsecsElapsed()) / 1000000.0;
     qDebug() << "[ArtifactProjectService::createComposition] succeeded, id:"
              << result.id.toString();
   } else {
     qDebug() << "[ArtifactProjectService::createComposition] failed";
   }
+  const double totalMs =
+      static_cast<double>(totalTimer.nsecsElapsed()) / 1000000.0;
+  const QString detail = QStringLiteral(
+                             "compositionId=%1 projectCreateMs=%2 "
+                             "managerCreateMs=%3 defaultsMs=%4 switchMs=%5")
+                             .arg(result.id.toString())
+                             .arg(projectCreateMs, 0, 'f', 2)
+                             .arg(managerCreateMs, 0, 'f', 2)
+                             .arg(defaultsMs, 0, 'f', 2)
+                             .arg(switchMs, 0, 'f', 2);
+  WidgetCreationDiagnostics::recordPhase(
+      QStringLiteral("Composition Create"),
+      QStringLiteral("composition-lifecycle"),
+      QStringLiteral("service-create-from-params"), totalMs, detail,
+      result.success ? QStringLiteral("succeeded") : QStringLiteral("failed"));
 }
 
 void ArtifactProjectService::createProject(

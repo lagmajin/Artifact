@@ -3870,6 +3870,7 @@ void ArtifactLayerEditorWidgetV2::Impl::startRenderLoop()
 
 void ArtifactLayerEditorWidgetV2::Impl::requestRender()
 {
+ constexpr int kInteractiveRenderCoalesceMs = 16;
  if (!widget_) {
   return;
  }
@@ -3878,7 +3879,10 @@ void ArtifactLayerEditorWidgetV2::Impl::requestRender()
   return;
  }
  renderRequestScheduled_ = true;
- QTimer::singleShot(0, widget_, [this]() {
+ // Property sliders and effect controls can emit several mutations inside one
+ // display interval. Keep only the newest state and render at most once per
+ // interval instead of blocking the UI thread for every intermediate value.
+ QTimer::singleShot(kInteractiveRenderCoalesceMs, widget_, [this]() {
   renderRequestScheduled_ = false;
   if (!renderRequestPending_.exchange(false, std::memory_order_acq_rel)) {
    return;

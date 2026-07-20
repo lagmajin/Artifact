@@ -546,6 +546,7 @@ public:
     int64_t lastSyncFallbackSourceFrame_ = -1;
     bool lastSyncFallbackSucceeded_ = false;
     QString lastDecodeState_ = QStringLiteral("idle");
+    bool rangeRejectionLogged_ = false;
     bool vulkanDeviceConfigured_ = false;
     std::atomic<uint32_t> decodeGeneration_{0};
     mutable std::mutex decodeRequestMutex_;
@@ -554,6 +555,7 @@ public:
     uint64_t latestDecodeRequestId_ = 0;
     uint64_t activeDecodeRequestId_ = 0;
     uint64_t failedDecodeRequestId_ = 0;
+    std::chrono::steady_clock::time_point lastDecodeFailureAt_{};
     uint32_t latestDecodeGeneration_ = 0;
     int64_t latestDecodeTimelineFrame_ = -1;
     int64_t latestDecodeSourceFrame_ = -1;
@@ -606,9 +608,11 @@ public:
         clearSharedFrames();
         {
             std::lock_guard<std::mutex> lock(frameStateMutex_);
-            currentFrameBuffer_ = ArtifactCore::ImageF32x4_RGBA();
+            // Keep the last presented CPU frame visible while the refreshed
+            // source version is decoded. Clearing it here exposes the
+            // composition's black background for one or more render ticks.
             currentSharedFrame_.reset();
-            hasCurrentFrameBuffer_ = false;
+            hasCurrentFrameBuffer_ = !currentFrameBuffer_.isEmpty();
             lastDecodedFrame_ = -1;
         }
         decodeTargetFrame_ = -1;
@@ -673,6 +677,7 @@ public:
         std::lock_guard<std::mutex> lock(decodeRequestMutex_);
         pendingDecodeRequest_.reset();
         failedDecodeRequestId_ = 0;
+        lastDecodeFailureAt_ = {};
         latestDecodeGeneration_ = generation;
         latestDecodeTimelineFrame_ = -1;
         latestDecodeSourceFrame_ = -1;
@@ -743,9 +748,15 @@ public:
         if (frameTicket_.sourceFrame != sourceFrame) {
             return;
         }
+        // A latest-wins request can replace the ticket with the same source
+        // frame while an older decode is still running. In that case the new
+        // ticket has no decode start timestamp; subtracting the epoch produced
+        // multi-million millisecond averages in debug reports.
         frameTicket_.decodeMs =
-            std::chrono::duration<double, std::milli>(
-                now - frameTicket_.decodeStartedAt).count();
+            frameTicket_.decodeStartedAt.time_since_epoch().count() != 0
+                ? std::chrono::duration<double, std::milli>(
+                      now - frameTicket_.decodeStartedAt).count()
+                : 0.0;
         frameTicket_.readyMs =
             std::chrono::duration<double, std::milli>(
                 now - frameTicket_.requestedAt).count();
@@ -893,26 +904,40 @@ public:
         if (timelineFrame < layer->inPoint() || timelineFrame >= layer->outPoint() ||
             sourceFrame < 0 ||
             (streamInfo_.frameCount > 0 && sourceFrame >= streamInfo_.frameCount)) {
-            qWarning() << "[VideoLayer] decodeCurrentFrame rejected"
-                       << "timeline=" << timelineFrame
-                       << "source=" << sourceFrame
-                       << "in=" << layer->inPoint()
-                       << "out=" << layer->outPoint()
-                       << "start=" << layer->startTime().framePosition()
-                       << threadIdTag()
-                       << threadDiagnosticsTag()
-                       << "streamFrames=" << streamInfo_.frameCount;
+            if (!rangeRejectionLogged_) {
+                qCWarning(videoLayerLog)
+                    << "[VideoLayer] decode range rejected"
+                    << "timeline=" << timelineFrame
+                    << "source=" << sourceFrame
+                    << "in=" << layer->inPoint()
+                    << "out=" << layer->outPoint()
+                    << "start=" << layer->startTime().framePosition()
+                    << "streamFrames=" << streamInfo_.frameCount;
+                rangeRejectionLogged_ = true;
+            }
             lastDecodeState_ = QStringLiteral("range-rejected");
             return std::nullopt;
         }
+        rangeRejectionLogged_ = false;
 
         const uint32_t generation =
             decodeGeneration_.load(std::memory_order_acquire);
         const uint64_t requestId =
             registerDecodeRequest(timelineFrame, sourceFrame, generation);
-        if (isFailedDecodeRequest(requestId)) {
-            lastDecodeState_ = QStringLiteral("decode-failed-retained");
-            return std::nullopt;
+        {
+            std::lock_guard<std::mutex> lock(decodeRequestMutex_);
+            if (failedDecodeRequestId_ == requestId) {
+                constexpr auto kDecodeRetryDelay =
+                    std::chrono::milliseconds(250);
+                const auto now = std::chrono::steady_clock::now();
+                if (lastDecodeFailureAt_.time_since_epoch().count() != 0 &&
+                    now - lastDecodeFailureAt_ < kDecodeRetryDelay) {
+                    lastDecodeState_ =
+                        QStringLiteral("decode-failed-retained");
+                    return std::nullopt;
+                }
+                failedDecodeRequestId_ = 0;
+            }
         }
         bool alreadyPresented = false;
         {
@@ -1288,9 +1313,12 @@ void ArtifactVideoLayer::setStreamFrameRate(double fps)
     impl_->streamInfo_.frameRate = fps;
     {
         std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
-        impl_->currentFrameBuffer_ = ArtifactCore::ImageF32x4_RGBA();
+        // Frame-rate reinterpretation changes the requested source frame, not
+        // the validity of the last presented pixels. Retain those pixels until
+        // the replacement frame is ready.
         impl_->currentSharedFrame_.reset();
-        impl_->hasCurrentFrameBuffer_ = false;
+        impl_->hasCurrentFrameBuffer_ =
+            !impl_->currentFrameBuffer_.isEmpty();
         impl_->lastDecodedFrame_ = -1;
     }
     impl_->decodeTargetFrame_ = -1;
@@ -1681,6 +1709,8 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                 } else if (latestRequest) {
                     publishResult = true;
                     impl_->failedDecodeRequestId_ = activeRequest.requestId;
+                    impl_->lastDecodeFailureAt_ =
+                        std::chrono::steady_clock::now();
                     impl_->lastDecodeState_ = hasGpuOnlyFrame
                         ? QStringLiteral("gpu-frame-unsupported")
                         : QStringLiteral("decode-failed");
@@ -2492,6 +2522,13 @@ void ArtifactVideoLayer::goToFrame(int64_t frameNumber)
     impl_->currentTimelineFrame_ = frameNumber;
     ArtifactAbstractLayer::goToFrame(frameNumber);
     impl_->currentSourceFrame_ = timelineFrameToSourceFrame(this, frameNumber);
+    if (frameNumber < inPoint() || frameNumber >= outPoint() ||
+        impl_->currentSourceFrame_ < 0 ||
+        (impl_->streamInfo_.frameCount > 0 &&
+         impl_->currentSourceFrame_ >= impl_->streamInfo_.frameCount)) {
+        impl_->lastDecodeState_ = QStringLiteral("inactive-range");
+        return;
+    }
     // 先読みデコード：次の render tick より先にバックグラウンドデコードを起動しておく
     bool needsDecode = false;
     {

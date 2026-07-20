@@ -1374,32 +1374,10 @@ ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
     result.success = false;
      return result;
     }
-    // Get current composition - assuming first composition for now
-    // You may need to implement getCurrentCompositionId() method
-    auto projectItems = currentProjectPtr_->projectItems();
-    qDebug() << "[addLayerToCurrentComposition] projectItems.size()=" << projectItems.size();
-    
-    CompositionID currentCompId;
-    
-    // Find the first composition item
-    for (auto item : projectItems) {
-     if (!item) {
-      qDebug() << "[addLayerToCurrentComposition] projectItem is null";
-      continue;
-     }
-     qDebug() << "[addLayerToCurrentComposition] projectItem children.size()=" << item->children.size();
-     for (auto child : item->children) {
-      if (child && child->type() == eProjectItemType::Composition) {
-       CompositionItem* compItem = static_cast<CompositionItem*>(child);
-       currentCompId = compItem->compositionId;
-       qDebug() << "[addLayerToCurrentComposition] Found composition:" << currentCompId.toString();
-       break;
-      }
-     }
-     if (!currentCompId.isNil()) break;
-    }
-    
-    qDebug() << "[addLayerToCurrentComposition] Final currentCompId.isNil()=" << currentCompId.isNil();
+    // UI entry points such as Timeline/Viewport D&D must target the active
+    // composition, not the first composition found in project tree order.
+    const CompositionID currentCompId =
+        currentProjectPtr_->currentCompositionId();
     
     if (currentCompId.isNil()) {
      result.success = false;

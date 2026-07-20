@@ -30,9 +30,9 @@ struct Artifact3DGizmo::Impl {
     QVector3D dragAxisDirection;
     float dragStartAngle = 0.0f;
     bool firstDrag = true;
-    
+
     // Intersection helpers
-    float rayLineDistance(const QVector3D& rayOrigin, const QVector3D& rayDir, 
+    float rayLineDistance(const QVector3D& rayOrigin, const QVector3D& rayDir,
                           const QVector3D& p1, const QVector3D& p2, float& t) {
         QVector3D u = rayDir;
         QVector3D v = p2 - p1;
@@ -85,8 +85,8 @@ QVector3D axisDirectionFor(GizmoAxis axis,
         direction = QVector3D(1, 0, 0);
         break;
     case GizmoAxis::Y:
-        // Viewport coordinates are Y-down, but gizmo axes should read as Y-up
-        // so the Move handle matches the conventional editor feel.
+        // Composition world coordinates are Y-down. The picking conversion
+        // handles Qt's viewport-origin difference separately.
         direction = QVector3D(0, -1, 0);
         break;
     case GizmoAxis::Z:
@@ -232,7 +232,9 @@ QVector3D axisHandleEndFor(GizmoAxis axis, const QVector3D& center, float scale,
 }
 
 float axisHandleHitThreshold(float scale) {
-    return std::max(scale * 0.11f, 8.0f);
+    // Match the visible shaft/tip more closely. A broad world-space radius
+    // makes adjacent Full-mode handles steal clicks from one another.
+    return std::max(scale * 0.075f, 5.0f);
 }
 
 float axisHandleTipRadius(float scale) {
@@ -289,7 +291,9 @@ QVector3D Artifact3DGizmo::scale() const {
 
 GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const QMatrix4x4& proj) {
     (void)proj;
-    float threshold = 0.12f * impl_->currentScale;
+    // Rotation tubes are drawn at roughly 0.034 * scale. Keep a small picking
+    // allowance without extending the ring hit area into the inner handles.
+    float threshold = std::max(0.060f * impl_->currentScale, 4.0f);
     float minDistance = std::numeric_limits<float>::max();
     GizmoAxis result = GizmoAxis::None;
 
@@ -437,9 +441,10 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
                 return;
             }
             float t;
-            const QVector3D end = axisHandleEndFor(
-                axis, impl_->position, impl_->currentScale,
-                impl_->rotation, space_);
+            const QVector3D end =
+                impl_->position +
+                axisDirectionFor(axis, impl_->rotation, space_) *
+                    impl_->currentScale * 0.92f;
             const float lineDist = impl_->rayLineDistance(ray.origin, ray.direction,
                                                           impl_->position, end, t);
             const float tipDist = rayPointDistance(ray, end);
@@ -514,7 +519,7 @@ void Artifact3DGizmo::beginDrag(GizmoAxis axis, const Ray& ray) {
     impl_->dragStartOrientation = QQuaternion::fromEulerAngles(impl_->rotation);
     impl_->dragStartScale = impl_->scale;
     impl_->firstDrag = true;
-    
+
     const QVector3D viewDir = (ray.origin - impl_->dragStartPosition).normalized();
     const QVector3D axisDir =
         (activeOperation_ == GizmoOperation::Rotate && axis == GizmoAxis::Screen)
@@ -538,8 +543,14 @@ void Artifact3DGizmo::beginDrag(GizmoAxis axis, const Ray& ray) {
         if (planeNormal.lengthSquared() < 0.01f) {
             planeNormal = QVector3D(0.0f, 0.0f, 1.0f);
         }
+        // Keep the drag surface fixed for the whole gesture. In an
+        // orthographic view the ray origin moves with the pointer, so deriving
+        // a new normal from every ray makes screen-plane motion drift away
+        // from the mouse distance at oblique viewport orientations.
+        impl_->dragAxisDirection = planeNormal.normalized();
         QVector3D hit;
-        if (impl_->intersectRayPlane(ray, impl_->dragStartPosition, planeNormal.normalized(), hit)) {
+        if (impl_->intersectRayPlane(ray, impl_->dragStartPosition,
+                                     impl_->dragAxisDirection, hit)) {
             impl_->dragStartHitPoint = hit;
         } else {
             impl_->dragStartHitPoint = impl_->dragStartPosition;
@@ -555,7 +566,7 @@ void Artifact3DGizmo::beginDrag(GizmoAxis axis, const Ray& ray) {
             if (std::abs(axisDir.x()) > 0.9f) { tangent = QVector3D(0, 1, 0); bitangent = QVector3D(0, 0, 1); }
             else if (std::abs(axisDir.y()) > 0.9f) { tangent = QVector3D(1, 0, 0); bitangent = QVector3D(0, 0, 1); }
             else { tangent = QVector3D(1, 0, 0); bitangent = QVector3D(0, 1, 0); }
-            
+
             float x = QVector3D::dotProduct(dir, tangent);
             float y = QVector3D::dotProduct(dir, bitangent);
             impl_->dragStartAngle = std::atan2(y, x) * 180.0f / M_PI;
@@ -582,7 +593,7 @@ void Artifact3DGizmo::beginDrag(GizmoAxis axis, const Ray& ray) {
 
 void Artifact3DGizmo::updateDrag(const Ray& ray) {
     if (activeAxis_ == GizmoAxis::None) return;
-    
+
     const QVector3D axisDir =
         (activeOperation_ == GizmoOperation::Rotate &&
          activeAxis_ == GizmoAxis::Screen)
@@ -633,13 +644,14 @@ void Artifact3DGizmo::updateDrag(const Ray& ray) {
     }
 
     if (activeOperation_ == GizmoOperation::Translate && activeAxis_ == GizmoAxis::Screen) {
-        QVector3D viewDir = (ray.origin - impl_->dragStartPosition).normalized();
-        if (viewDir.lengthSquared() < 0.01f) {
-            viewDir = QVector3D(0.0f, 0.0f, 1.0f);
+        QVector3D planeNormal = impl_->dragAxisDirection;
+        if (planeNormal.lengthSquared() < 0.01f) {
+            planeNormal = QVector3D(0.0f, 0.0f, 1.0f);
         }
-        viewDir.normalize();
+        planeNormal.normalize();
         QVector3D hit;
-        if (!impl_->intersectRayPlane(ray, impl_->dragStartPosition, viewDir.normalized(), hit)) {
+        if (!impl_->intersectRayPlane(ray, impl_->dragStartPosition,
+                                      planeNormal, hit)) {
             return;
         }
         QVector3D delta = hit - impl_->dragStartHitPoint;
@@ -670,7 +682,7 @@ void Artifact3DGizmo::updateDrag(const Ray& ray) {
                 fineAdjustment_, snapEnabled_, 10.0f);
             impl_->position = impl_->dragStartPosition + axisDir * projectT;
         }
-    } 
+    }
     else if (activeOperation_ == GizmoOperation::Rotate) {
         if (!depthEnabled_ && activeAxis_ == GizmoAxis::Z) {
             return;
@@ -682,13 +694,13 @@ void Artifact3DGizmo::updateDrag(const Ray& ray) {
             if (std::abs(axisDir.x()) > 0.9f) { tangent = QVector3D(0, 1, 0); bitangent = QVector3D(0, 0, 1); }
             else if (std::abs(axisDir.y()) > 0.9f) { tangent = QVector3D(1, 0, 0); bitangent = QVector3D(0, 0, 1); }
             else { tangent = QVector3D(1, 0, 0); bitangent = QVector3D(0, 1, 0); }
-            
+
             float x = QVector3D::dotProduct(dir, tangent);
             float y = QVector3D::dotProduct(dir, bitangent);
             float currentAngle = std::atan2(y, x) * 180.0f / M_PI;
             float delta = adjustedDelta(currentAngle - impl_->dragStartAngle,
                                         fineAdjustment_, snapEnabled_, 15.0f);
-            
+
             const QQuaternion deltaRotation =
                 QQuaternion::fromAxisAndAngle(axisDir, delta);
             impl_->rotation =
@@ -761,7 +773,9 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
 
     QVector4D viewPos = view * QVector4D(impl_->position, 1.0f);
     const float distance = std::abs(viewPos.z());
-    const float baseScale = std::max(distance * 0.63f, 126.0f);
+    // Keep the editor controls compact enough that Full mode does not obscure
+    // the selected layer while retaining a usable minimum size when close up.
+    const float baseScale = std::max(distance * 0.08f, 28.0f);
     const float modeScaleFactor = mode_ == GizmoMode::Scale ? 2.0f
                                : mode_ == GizmoMode::Rotate ? 0.5f
                                : 1.0f;
@@ -1018,7 +1032,7 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         const float moveCenterSize = std::max(s * 0.048f, 4.2f);
         renderer->drawGizmoCube(center, moveCenterSize * 1.18f, FloatColor{0.0f, 0.0f, 0.0f, 0.42f});
         renderer->drawGizmoCube(center, moveCenterSize, FloatColor{1.0f, 1.0f, 1.0f, 0.88f});
-    } 
+    }
     if (mode_ == GizmoMode::Rotate || mode_ == GizmoMode::Full) {
         // imGuIZMO-style rotate rings: thin torus + visible grab marker.
         drawRotateRing(GizmoAxis::X, center, toFloat3(axisX), s * 1.04f, {1.0f, 0.22f, 0.18f, 1.0f});
@@ -1078,7 +1092,8 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
     }
 
     renderer->setUseExternalMatrices(false);
-    renderer->resetGizmoCameraMatrices();
+    // PrimitiveRenderer3D uploads these matrices when the queued gizmo
+    // geometry is flushed. The caller resets them immediately after flush.
 }
 
 } // namespace Artifact

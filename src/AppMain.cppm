@@ -52,6 +52,7 @@ module;
 #include <QStandardPaths>
 #include <QStyleFactory>
 #include <QMetaObject>
+#include <QObject>
 #include <QTimer>
 #include <QThread>
 #include <QUrl>
@@ -68,6 +69,7 @@ module;
 #include <QSaveFile>
 #include <QScopeGuard>
 #include <QVariant>
+#include <Diagnostics/WidgetCreationDiagnostics.hpp>
 #include <opencv2/opencv.hpp>
 #include <string>
 module Artifact.AppMain;
@@ -145,6 +147,7 @@ import Artifact.Widgets.Render.QueueManager;
 import Artifact.Render.Queue.Service;
 import Core.Diagnostics.SessionLedger;
 import Core.Diagnostics.Trace;
+import Frame.Debug;
 import Artifact.Widgets.RenderCenterWindow;
 import Artifact.Render.Scheduler;
 import Artifact.Contents.Viewer;
@@ -175,6 +178,233 @@ using namespace ArtifactCore;
 
 namespace {
 constexpr int kMainWindowLayoutVersion = 11;
+
+class DialogLatencyEventFilter final : public QObject {
+ public:
+  DialogLatencyEventFilter() { clock_.start(); }
+
+ protected:
+  bool eventFilter(QObject* watched, QEvent* event) override {
+    if (!event || (event->type() != QEvent::Polish &&
+                   event->type() != QEvent::Show &&
+                   event->type() != QEvent::Paint &&
+                   event->type() != QEvent::Hide)) {
+      return false;
+    }
+    auto* messageBox = qobject_cast<QMessageBox*>(watched);
+    if (!messageBox) {
+      return false;
+    }
+
+    const qint64 nowNs = clock_.nsecsElapsed();
+    switch (event->type()) {
+      case QEvent::Polish:
+        messageBox->setProperty("artifactDialogPolishNs", nowNs);
+        messageBox->setProperty("artifactDialogFirstPaintLogged", false);
+        break;
+      case QEvent::Show: {
+        messageBox->setProperty("artifactDialogShowNs", nowNs);
+        const qint64 polishNs =
+            messageBox->property("artifactDialogPolishNs").toLongLong();
+        qInfo().noquote()
+            << QStringLiteral("[DialogLatency] phase=show title=\"%1\" "
+                              "polishToShowMs=%2")
+                   .arg(messageBox->windowTitle())
+                   .arg(polishNs > 0 ? (nowNs - polishNs) / 1'000'000.0 : 0.0,
+                        0, 'f', 2);
+        break;
+      }
+      case QEvent::Paint: {
+        if (messageBox->property("artifactDialogFirstPaintLogged").toBool()) {
+          break;
+        }
+        messageBox->setProperty("artifactDialogFirstPaintLogged", true);
+        const qint64 showNs =
+            messageBox->property("artifactDialogShowNs").toLongLong();
+        qInfo().noquote()
+            << QStringLiteral("[DialogLatency] phase=first-paint title=\"%1\" "
+                              "showToFirstPaintMs=%2")
+                   .arg(messageBox->windowTitle())
+                   .arg(showNs > 0 ? (nowNs - showNs) / 1'000'000.0 : 0.0,
+                        0, 'f', 2);
+        break;
+      }
+      case QEvent::Hide:
+        messageBox->setProperty("artifactDialogPolishNs", QVariant{});
+        messageBox->setProperty("artifactDialogShowNs", QVariant{});
+        messageBox->setProperty("artifactDialogFirstPaintLogged", false);
+        break;
+      default:
+        break;
+    }
+    return false;
+  }
+
+ private:
+  QElapsedTimer clock_;
+};
+
+class PlaybackDebugAutoReporter final {
+ public:
+  void observe(const bool playing,
+               const ArtifactCore::FrameDebugSnapshot& snapshot) {
+    if (playing && !playing_) {
+      begin(snapshot);
+    }
+    if (playing) {
+      sample(snapshot);
+    } else if (playing_) {
+      sample(snapshot);
+      finish(snapshot);
+    }
+    playing_ = playing;
+  }
+
+  [[nodiscard]] bool isCapturing() const { return playing_; }
+
+ private:
+  static double debugFieldNumber(const QString& text, const QString& key,
+                                 const double fallback = 0.0) {
+    const QString prefix = key + QLatin1Char('=');
+    for (const QString& field : text.split(QLatin1Char(' '),
+                                           Qt::SkipEmptyParts)) {
+      if (field.startsWith(prefix)) {
+        bool ok = false;
+        const double value = field.mid(prefix.size()).toDouble(&ok);
+        return ok ? value : fallback;
+      }
+    }
+    return fallback;
+  }
+
+  void begin(const ArtifactCore::FrameDebugSnapshot& snapshot) {
+    reasons_.clear();
+    pendingDecodeSamples_ = 0;
+    sampleCount_ = 0;
+    startedAt_ = QDateTime::currentDateTimeUtc();
+    startFrame_ = snapshot.frame.framePosition();
+  }
+
+  void addReason(const QString& reason) {
+    if (!reason.isEmpty() && !reasons_.contains(reason)) {
+      reasons_.append(reason);
+    }
+  }
+
+  void sample(const ArtifactCore::FrameDebugSnapshot& snapshot) {
+    ++sampleCount_;
+    if (snapshot.failed) {
+      addReason(QStringLiteral("render-failed: %1").arg(snapshot.failureReason));
+    }
+    if (snapshot.renderLastFrameMs > 50.0) {
+      addReason(QStringLiteral("render-last-frame-over-50ms"));
+    }
+    if (snapshot.renderAverageFrameMs > 33.34) {
+      addReason(QStringLiteral("render-average-over-frame-budget"));
+    }
+
+    bool decodePending = false;
+    for (const auto& resource : snapshot.resources) {
+      const QString note = resource.note;
+      if (resource.type == QStringLiteral("video") ||
+          resource.label == QStringLiteral("Video Decode")) {
+        decodePending = decodePending ||
+                        note.contains(QStringLiteral("state=decode-pending")) ||
+                        note.contains(QStringLiteral("stage=decoding"));
+        if (note.contains(QStringLiteral("state=decode-failed")) ||
+            note.contains(QStringLiteral("state=open-failed")) ||
+            note.contains(QStringLiteral("sync-fallback-miss"))) {
+          addReason(QStringLiteral("video-decode-failed"));
+        }
+        if (debugFieldNumber(note, QStringLiteral("avgDecodeMs")) > 50.0) {
+          addReason(QStringLiteral("video-decode-over-50ms"));
+        }
+        if (debugFieldNumber(note, QStringLiteral("lateFrames")) >= 3.0) {
+          addReason(QStringLiteral("video-decode-repeatedly-late"));
+        }
+      }
+      if (note.contains(QStringLiteral("presentStatus=failed")) ||
+          (note.contains(QStringLiteral("presentFail=")) &&
+           !note.contains(QStringLiteral("presentFail=0")))) {
+        addReason(QStringLiteral("present-failed"));
+      }
+    }
+    pendingDecodeSamples_ = decodePending ? pendingDecodeSamples_ + 1 : 0;
+    if (pendingDecodeSamples_ >= 3) {
+      addReason(QStringLiteral("video-decode-pending-for-3-samples"));
+    }
+  }
+
+  void finish(const ArtifactCore::FrameDebugSnapshot& terminalSnapshot) {
+    if (reasons_.isEmpty()) {
+      return;
+    }
+
+    const QString appData =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir reportDir(appData);
+    if (!reportDir.mkpath(QStringLiteral("PlaybackDebugReports"))) {
+      qWarning() << "[PlaybackDebugReport] failed to create report directory"
+                 << reportDir.absolutePath();
+      return;
+    }
+    reportDir.cd(QStringLiteral("PlaybackDebugReports"));
+    QString compositionFilePart = terminalSnapshot.compositionName.isEmpty()
+                                      ? QStringLiteral("composition")
+                                      : terminalSnapshot.compositionName;
+    compositionFilePart.replace(QChar('/'), QChar('_'));
+    compositionFilePart.replace(QChar('\\'), QChar('_'));
+    compositionFilePart.replace(QChar(':'), QChar('_'));
+    const QString fileName = QStringLiteral("playback_%1_%2.txt")
+                                 .arg(startedAt_.toString(QStringLiteral("yyyyMMdd_HHmmss_zzz")),
+                                      compositionFilePart);
+    const QString reportPath = reportDir.filePath(fileName);
+
+    QStringList lines;
+    lines << QStringLiteral("ArtifactStudio Playback Debug Report");
+    lines << QStringLiteral("startedAt: %1").arg(startedAt_.toString(Qt::ISODateWithMs));
+    lines << QStringLiteral("endedAt: %1").arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    lines << QStringLiteral("composition: %1").arg(terminalSnapshot.compositionName);
+    lines << QStringLiteral("frameRange: %1 -> %2").arg(startFrame_).arg(terminalSnapshot.frame.framePosition());
+    lines << QStringLiteral("samples: %1").arg(sampleCount_);
+    lines << QStringLiteral("reasons: %1").arg(reasons_.join(QStringLiteral(", ")));
+    lines << QStringLiteral("renderMs: last=%1 average=%2 gpu=%3")
+                 .arg(terminalSnapshot.renderLastFrameMs, 0, 'f', 2)
+                 .arg(terminalSnapshot.renderAverageFrameMs, 0, 'f', 2)
+                 .arg(terminalSnapshot.renderGpuFrameMs, 0, 'f', 2);
+    lines << QString();
+    lines << QStringLiteral("Resources");
+    for (const auto& resource : terminalSnapshot.resources) {
+      lines << QStringLiteral("%1 [%2] %3")
+                   .arg(resource.label, resource.type, resource.note);
+    }
+    lines << QString();
+    lines << QStringLiteral("Passes");
+    for (const auto& pass : terminalSnapshot.passes) {
+      lines << QStringLiteral("%1 durationUs=%2 note=%3")
+                   .arg(pass.name)
+                   .arg(pass.durationUs)
+                   .arg(pass.note);
+    }
+
+    QSaveFile reportFile(reportPath);
+    const QByteArray payload = lines.join(QLatin1Char('\n')).toUtf8();
+    if (!reportFile.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+        reportFile.write(payload) != payload.size() || !reportFile.commit()) {
+      qWarning() << "[PlaybackDebugReport] failed to write" << reportPath;
+      return;
+    }
+    qWarning() << "[PlaybackDebugReport] wrote" << reportPath
+               << "reasons=" << reasons_;
+  }
+
+  bool playing_ = false;
+  int pendingDecodeSamples_ = 0;
+  int sampleCount_ = 0;
+  int startFrame_ = 0;
+  QDateTime startedAt_;
+  QStringList reasons_;
+};
 
 bool isArtifactProjectLaunchPath(const QString& filePath)
 {
@@ -1792,6 +2022,8 @@ int main(int argc, char *argv[]) {
 
   QApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
   QApplication a(argc, argv);
+  DialogLatencyEventFilter dialogLatencyFilter;
+  a.installEventFilter(&dialogLatencyFilter);
   configureQtPaths();
   Artifact::WorkspaceAutomation::ensureRegistered();
   auto* launchOpenFilter = new LaunchOpenRequestFilter(&a);
@@ -1857,9 +2089,13 @@ int main(int argc, char *argv[]) {
   qDebug() << "[AppMain] Environment variables loaded:"
            << envManager->variableNames().size();
 
+  const bool verboseVideoLog =
+      qEnvironmentVariableIsSet("ARTIFACT_VIDEO_VERBOSE_LOG");
   QLoggingCategory::setFilterRules(
       QStringLiteral("artifact.compositionview.debug=false\n"
-                     "artifact.layer.video.debug=true"));
+                     "artifact.layer.video.debug=%1")
+          .arg(verboseVideoLog ? QStringLiteral("true")
+                               : QStringLiteral("false")));
   auto *settings = ArtifactCore::ArtifactAppSettings::instance();
   auto applyThemeFromSettings = [&a, settings]() {
     if (!settings) {
@@ -2016,6 +2252,7 @@ int main(int argc, char *argv[]) {
   QApplication::setWindowIcon(appIcon);
   using namespace Artifact;
   auto *mw = new ArtifactMainWindow();
+  QPointer<ArtifactMainWindow> mainWindowGuard(mw);
   initializeProjectBundleIpc(mw);
   ArtifactWorkspaceManager workspaceManager;
   mw->setObjectName("ArtifactMainWindow");
@@ -2098,32 +2335,45 @@ int main(int argc, char *argv[]) {
   QPointer<ArtifactDebugConsoleWidget> debugConsoleWidget;
   QPointer<FrameDebugViewWidget> frameDebugWidget;
   QPointer<DebugRenderHarnessWidget> debugHarnessWidget;
+  std::shared_ptr<ArtifactCore::PreciseTicker> frameDebugTimer;
   const QString recoveryDir =
       QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
           .filePath("Recovery");
   // Create the composition editor synchronously so its native HWND exists when
   // mw->show() fires. Deferring this inside singleShot(0) caused the widget to
   // miss its showEvent and never initialize the Diligent renderer.
-  QElapsedTimer compositionEditorTimer;
-  compositionEditorTimer.start();
+  QElapsedTimer compositionEditorTotalTimer;
+  compositionEditorTotalTimer.start();
+  QElapsedTimer compositionEditorFactoryTimer;
+  compositionEditorFactoryTimer.start();
   auto *compositionEditor = new ArtifactCompositionEditor(mw);
-  qInfo() << "[AppMain][Startup] ArtifactCompositionEditor ctor ms="
-          << compositionEditorTimer.elapsed();
-  compositionEditorTimer.restart();
+  const double compositionEditorFactoryMs =
+      static_cast<double>(compositionEditorFactoryTimer.nsecsElapsed()) /
+      1000000.0;
   compositionEditor->setSizePolicy(QSizePolicy::Expanding,
                                    QSizePolicy::Expanding);
   compositionEditor->setMinimumSize(720, 420);
   suppressScrollBarsForViewportWidget(compositionEditor);
   mw->setCentralWorkspace(QStringLiteral("Composition Viewer"),
                           compositionEditor);
-  qInfo() << "[AppMain][Startup] Composition Viewer dock registration ms="
-          << compositionEditorTimer.elapsed();
+  WidgetCreationDiagnostics::record(
+      compositionEditor, QStringLiteral("Composition Viewer"),
+      QStringLiteral("eager-central-workspace"),
+      QStringLiteral("startup-required-native-viewport"),
+      compositionEditorFactoryMs,
+      static_cast<double>(compositionEditorTotalTimer.nsecsElapsed()) /
+          1000000.0,
+      QStringLiteral("created"), QStringLiteral("Composition Viewer"),
+      QStringLiteral("Composition Viewer"));
   QObject::connect(compositionEditor,
                    &ArtifactCompositionEditor::videoDebugMessage, status,
                    &ArtifactStatusBar::setTimelineDebugText);
 
   // --- Performance HUD (C4D-style viewport overlay) ---
-  auto* perfHUD = new ArtifactPerformanceHUD(mw);
+  auto* perfHUD = WidgetCreationDiagnostics::createMeasured(
+      QStringLiteral("Performance HUD"), QStringLiteral("eager-widget"),
+      QStringLiteral("startup-default-viewport-overlay"),
+      [mw]() { return new ArtifactPerformanceHUD(mw); });
   perfHUD->setController(compositionEditor->renderController());
   perfHUD->setEnabled(true);
 
@@ -2144,7 +2394,10 @@ int main(int argc, char *argv[]) {
 
   // --- Coordinate Manager (C4D-style) ---
   const QRect coordManagerFloatingGeometry(120, 806, 380, 30);
-  auto* coordManager = new ArtifactCoordinateManagerWidget(mw);
+  auto* coordManager = WidgetCreationDiagnostics::createMeasured(
+      QStringLiteral("Coordinate Manager"), QStringLiteral("eager-widget"),
+      QStringLiteral("startup-default-floating-tool"),
+      [mw]() { return new ArtifactCoordinateManagerWidget(mw); });
   mw->addDockedWidgetFloating(
       QStringLiteral("Coordinate Manager"), QStringLiteral("CoordinateManager"),
       coordManager, coordManagerFloatingGeometry);
@@ -2153,7 +2406,7 @@ int main(int argc, char *argv[]) {
   QTimer::singleShot(
       0, mw,
       [=, &renderCenterWindow, &debugConsoleWidget,
-       &frameDebugWidget, &debugHarnessWidget]() {
+       &frameDebugWidget, &debugHarnessWidget, &frameDebugTimer]() {
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("Debug Console"), QStringLiteral("DebugConsole"),
         [mw, compositionEditor, &debugConsoleWidget]() mutable -> QWidget* {
@@ -2203,7 +2456,9 @@ int main(int argc, char *argv[]) {
           return widget;
         },
         QRect(180, 180, 1100, 660));
-    auto refreshFrameDebugWidgets = [compositionEditor, &debugConsoleWidget,
+    auto playbackDebugReporter = std::make_shared<PlaybackDebugAutoReporter>();
+    auto refreshFrameDebugWidgets = [compositionEditor, playbackService,
+                                     playbackDebugReporter, &debugConsoleWidget,
                                      &frameDebugWidget, &debugHarnessWidget]() mutable {
       if (!compositionEditor) {
         return;
@@ -2212,14 +2467,20 @@ int main(int argc, char *argv[]) {
           (debugConsoleWidget && debugConsoleWidget->isVisible()) ||
           (frameDebugWidget && frameDebugWidget->isVisible()) ||
           (debugHarnessWidget && debugHarnessWidget->isVisible());
-      if (!debugSurfaceVisible) {
-        return;
-      }
       auto* controller = compositionEditor->renderController();
       if (!controller) {
         return;
       }
+      const bool playbackActive = playbackService && playbackService->isPlaying();
+      if (!debugSurfaceVisible && !playbackActive &&
+          !playbackDebugReporter->isCapturing()) {
+        return;
+      }
       const auto snapshot = controller->frameDebugSnapshot();
+      playbackDebugReporter->observe(playbackActive, snapshot);
+      if (!debugSurfaceVisible) {
+        return;
+      }
       if (debugConsoleWidget) {
         debugConsoleWidget->setFrameDebugSnapshot(snapshot);
       }
@@ -2230,7 +2491,7 @@ int main(int argc, char *argv[]) {
         debugHarnessWidget->setFrameDebugSnapshot(snapshot);
       }
     };
-    auto frameDebugTimer = std::make_shared<ArtifactCore::PreciseTicker>();
+    frameDebugTimer = std::make_shared<ArtifactCore::PreciseTicker>();
     frameDebugTimer->setInterval(std::chrono::milliseconds(750));
     frameDebugTimer->setCallback([mw, refreshFrameDebugWidgets]() {
       QMetaObject::invokeMethod(
@@ -2271,7 +2532,10 @@ int main(int argc, char *argv[]) {
           return new ArtifactSoftwareCompositionTestWidget(mw);
         },
         QStringLiteral("Composition Viewer"));
-    auto *layerViewEditor = new ArtifactRenderLayerEditor(mw);
+    auto *layerViewEditor = WidgetCreationDiagnostics::createMeasured(
+        QStringLiteral("Layer Solo View"), QStringLiteral("eager-widget"),
+        QStringLiteral("startup-default-layer-solo-surface"),
+        [mw]() { return new ArtifactRenderLayerEditor(mw); });
     layerViewEditor->setSizePolicy(QSizePolicy::Expanding,
                                    QSizePolicy::Expanding);
     suppressScrollBarsForViewportWidget(layerViewEditor);
@@ -2285,23 +2549,38 @@ int main(int argc, char *argv[]) {
           return new ArtifactSoftwareLayerTestWidget(mw);
         },
         QStringLiteral("Layer Solo View"));
-    auto *projectManagerWidget = new ArtifactProjectManagerWidget(mw);
+    auto *projectManagerWidget = WidgetCreationDiagnostics::createMeasured(
+        QStringLiteral("Project"), QStringLiteral("eager-widget"),
+        QStringLiteral("startup-default-workspace"),
+        [mw]() { return new ArtifactProjectManagerWidget(mw); });
     projectManagerWidget->setMinimumWidth(240);
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea,
                         projectManagerWidget);
-    auto *assetBrowser = new ArtifactAssetBrowser(mw);
+    auto *assetBrowser = WidgetCreationDiagnostics::createMeasured(
+        QStringLiteral("Asset Browser"), QStringLiteral("eager-widget"),
+        QStringLiteral("startup-default-workspace"),
+        [mw]() { return new ArtifactAssetBrowser(mw); });
     mw->addDockedWidgetTabbed(QStringLiteral("Asset Browser"),
                               ads::LeftDockWidgetArea, assetBrowser,
                               QStringLiteral("Project"));
-    auto *clipBufferWidget = new ArtifactClipBufferWidget(mw);
+    auto *clipBufferWidget = WidgetCreationDiagnostics::createMeasured(
+        QStringLiteral("Clip Buffer"), QStringLiteral("eager-widget"),
+        QStringLiteral("startup-registered-left-tool"),
+        [mw]() { return new ArtifactClipBufferWidget(mw); });
     mw->addDockedWidgetTabbed(QStringLiteral("Clip Buffer"),
                               ads::LeftDockWidgetArea, clipBufferWidget,
                               QStringLiteral("Project"));
-    auto *shortcutHelperWidget = new ArtifactContextShortcutHelperWidget(mw);
+    auto *shortcutHelperWidget = WidgetCreationDiagnostics::createMeasured(
+        QStringLiteral("Shortcut Helper"), QStringLiteral("eager-widget"),
+        QStringLiteral("startup-registered-left-tool"),
+        [mw]() { return new ArtifactContextShortcutHelperWidget(mw); });
     mw->addDockedWidgetTabbed(QStringLiteral("Shortcut Helper"),
                               ads::LeftDockWidgetArea, shortcutHelperWidget,
                               QStringLiteral("Project"));
-    auto *contentsViewer = new ArtifactContentsViewer(mw);
+    auto *contentsViewer = WidgetCreationDiagnostics::createMeasured(
+        QStringLiteral("Contents Viewer"), QStringLiteral("eager-widget"),
+        QStringLiteral("startup-registered-file-preview"),
+        [mw]() { return new ArtifactContentsViewer(mw); });
     mw->addDockedWidgetTabbed(QStringLiteral("Contents Viewer"),
                               ads::RightDockWidgetArea, contentsViewer,
                               QString());
@@ -2588,7 +2867,10 @@ int main(int argc, char *argv[]) {
             *selectionSyncGuard = false;
           });
     }
-    auto *inspectorWidget = new ArtifactInspectorWidget(mw);
+    auto *inspectorWidget = WidgetCreationDiagnostics::createMeasured(
+        QStringLiteral("Inspector"), QStringLiteral("eager-widget"),
+        QStringLiteral("startup-default-right-editing-surface"),
+        [mw]() { return new ArtifactInspectorWidget(mw); });
     inspectorWidget->setMinimumWidth(240);
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea,
                         inspectorWidget);
@@ -2596,6 +2878,8 @@ int main(int argc, char *argv[]) {
         QStringLiteral("inspectorComponentsSurface"),
         Qt::FindDirectChildrenOnly);
     if (componentsPanel) {
+      // Keep the editing responsibilities independent while grouping the
+      // related surfaces in the Inspector's right-side tab area.
       mw->addDockedWidgetTabbed(QStringLiteral("Components"),
                                 ads::RightDockWidgetArea, componentsPanel,
                                 QStringLiteral("Inspector"));
@@ -2608,7 +2892,10 @@ int main(int argc, char *argv[]) {
                                 ads::RightDockWidgetArea, effectsPanel,
                                 QStringLiteral("Inspector"));
     }
-    auto *propertyPanel = new ArtifactPropertyWidget(mw);
+    auto *propertyPanel = WidgetCreationDiagnostics::createMeasured(
+        QStringLiteral("Properties"), QStringLiteral("eager-widget"),
+        QStringLiteral("startup-default-right-editing-surface"),
+        [mw]() { return new ArtifactPropertyWidget(mw); });
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"),
                               ads::RightDockWidgetArea, propertyPanel,
                               QStringLiteral("Inspector"));
@@ -2987,9 +3274,16 @@ int main(int argc, char *argv[]) {
                       if (!mw) {
                         return;
                       }
+                      QElapsedTimer setupTimer;
+                      setupTimer.start();
+                      QElapsedTimer phaseTimer;
+                      phaseTimer.start();
                       ArtifactPythonHookManager::runHook(
                           QStringLiteral("composition_created"),
                           QStringList() << event.compositionId);
+                      const double pythonHookMs =
+                          static_cast<double>(phaseTimer.nsecsElapsed()) /
+                          1000000.0;
                       const QString dockTitle = timelineDockTitle(compId);
                       const QString dockId = timelineDockObjectId(compId);
                       if (mw->hasDock(dockId)) {
@@ -3010,6 +3304,7 @@ int main(int argc, char *argv[]) {
 
                       // Register the Dope Sheet for ADS layout restoration, but keep
                       // it hidden until the user explicitly selects that tab.
+                      phaseTimer.restart();
                       mw->addLazyDockedWidgetTabbedWithId(
                           dopeSheetDockTitle(compId),
                           dopeSheetDockObjectId(compId),
@@ -3022,6 +3317,9 @@ int main(int argc, char *argv[]) {
                             return panel;
                           },
                           QStringLiteral("timeline::"));
+                      const double lazyDopeSheetDockMs =
+                          static_cast<double>(phaseTimer.nsecsElapsed()) /
+                          1000000.0;
 
                       // The lazy dock path wraps Timeline in an auto-scroll
                       // host. Its nested owner-drawn panes then miss their
@@ -3033,10 +3331,29 @@ int main(int argc, char *argv[]) {
                             if (!mw || mw->hasDock(dockId)) {
                               return;
                             }
-                            auto *panel = new ArtifactTimelineWidget(mw);
+                            QElapsedTimer totalTimer;
+                            totalTimer.start();
+                            QElapsedTimer phaseTimer;
+                            phaseTimer.start();
+                            auto *panel =
+                                WidgetCreationDiagnostics::createMeasured(
+                                    dockTitle,
+                                    QStringLiteral("composition-widget"),
+                                    QStringLiteral(
+                                        "composition-created-primary-timeline"),
+                                    [mw]() {
+                                      return new ArtifactTimelineWidget(mw);
+                                    });
+                            const double constructorMs =
+                                static_cast<double>(phaseTimer.nsecsElapsed()) /
+                                1000000.0;
                             panel->setMinimumHeight(200);
                             panel->resize(1200, 350);
+                            phaseTimer.restart();
                             panel->setComposition(compId);
+                            const double setCompositionMs =
+                                static_cast<double>(phaseTimer.nsecsElapsed()) /
+                                1000000.0;
                             panel->setWindowTitle(dockTitle);
                             QObject::connect(
                                 panel,
@@ -3048,14 +3365,62 @@ int main(int argc, char *argv[]) {
                                 &ArtifactTimelineWidget::timelineDebugMessage,
                                 status,
                                 &ArtifactStatusBar::setTimelineDebugText);
+                            phaseTimer.restart();
                             mw->addDockedWidgetTabbedWithId(
                                 dockTitle, dockId, ads::BottomDockWidgetArea,
                                 panel, QStringLiteral("timeline::"));
+                            const double dockAttachMs =
+                                static_cast<double>(phaseTimer.nsecsElapsed()) /
+                                1000000.0;
+                            phaseTimer.restart();
+                            constexpr auto kDockMutationDepth =
+                                "artifactProgrammaticDockMutationDepth";
+                            const int previousDockMutationDepth =
+                                mw->property(kDockMutationDepth).toInt();
+                            mw->setProperty(kDockMutationDepth,
+                                            previousDockMutationDepth + 1);
                             mw->setDockSplitterSizes(dockId, {700, 350});
                             mw->setDockVisible(dockId, true);
                             mw->activateDock(dockId);
                             panel->setFocus(Qt::OtherFocusReason);
+                            mw->setProperty(kDockMutationDepth,
+                                            previousDockMutationDepth);
+                            const double dockActivationMs =
+                                static_cast<double>(phaseTimer.nsecsElapsed()) /
+                                1000000.0;
+                            const double totalMs =
+                                static_cast<double>(totalTimer.nsecsElapsed()) /
+                                1000000.0;
+                            WidgetCreationDiagnostics::recordPhase(
+                                QStringLiteral("Timeline Ready"),
+                                QStringLiteral("composition-lifecycle"),
+                                QStringLiteral("composition-timeline-ready"),
+                                totalMs,
+                                QStringLiteral(
+                                    "compositionId=%1 constructorMs=%2 "
+                                    "setCompositionMs=%3 dockAttachMs=%4 "
+                                    "dockActivationMs=%5")
+                                    .arg(compId.toString())
+                                    .arg(constructorMs, 0, 'f', 2)
+                                    .arg(setCompositionMs, 0, 'f', 2)
+                                    .arg(dockAttachMs, 0, 'f', 2)
+                                    .arg(dockActivationMs, 0, 'f', 2));
                           });
+
+                      const double setupTotalMs =
+                          static_cast<double>(setupTimer.nsecsElapsed()) /
+                          1000000.0;
+                      WidgetCreationDiagnostics::recordPhase(
+                          QStringLiteral("Composition Dock Registration"),
+                          QStringLiteral("composition-lifecycle"),
+                          QStringLiteral("composition-created-queued-turn"),
+                          setupTotalMs,
+                          QStringLiteral(
+                              "compositionId=%1 pythonHookMs=%2 "
+                              "lazyDopeSheetDockMs=%3")
+                              .arg(compId.toString())
+                              .arg(pythonHookMs, 0, 'f', 2)
+                              .arg(lazyDopeSheetDockMs, 0, 'f', 2));
 
                     });
               }));
@@ -3266,14 +3631,20 @@ int main(int argc, char *argv[]) {
     layoutStore.sync();
     workspaceManager.saveSession(mw);
   });
-  QObject::connect(&a, &QCoreApplication::aboutToQuit, [&renderCenterWindow]() {
-    if (renderCenterWindow) {
-      renderCenterWindow->deleteLater();
-    }
-  });
-  QObject::connect(&a, &QCoreApplication::aboutToQuit, mw,
-                   &QObject::deleteLater);
   QObject::connect(&a, &QCoreApplication::aboutToQuit, [&]() {
+    QElapsedTimer shutdownTimer;
+    shutdownTimer.start();
+    if (frameDebugTimer) {
+      frameDebugTimer->stop();
+      frameDebugTimer.reset();
+    }
+    if (compositionEditor) {
+      compositionEditor->stop();
+    }
+    if (playbackService) {
+      playbackService->stop();
+      playbackService->waitForStop();
+    }
     if (autoSaveManager) {
       if (autoSaveManager->isDirty()) {
         const QByteArray snapshot = currentProjectSnapshotJson();
@@ -3285,6 +3656,8 @@ int main(int argc, char *argv[]) {
       delete autoSaveManager;
     }
     markSessionEndClean();
+    qInfo() << "[AppMain][Shutdown] foreground services stopped ms="
+            << shutdownTimer.elapsed();
   });
 
   QTimer::singleShot(2000, mw, [startupParallelism, &parallelismControl]() {
@@ -3306,5 +3679,21 @@ int main(int argc, char *argv[]) {
     playbackService->stop();
     playbackService->waitForStop();
   }
+  // deleteLater() queued from aboutToQuit is not guaranteed to run after the
+  // main event loop has returned. Deterministically release top-level widgets
+  // while QApplication and the rendering services are still alive; otherwise
+  // renderer/driver worker threads can keep the process and several GB of GPU
+  // resources resident with no window.
+  QElapsedTimer uiTeardownTimer;
+  uiTeardownTimer.start();
+  qInfo() << "[AppMain][Shutdown] top-level UI teardown begin";
+  if (renderCenterWindow) {
+    delete renderCenterWindow.data();
+  }
+  if (mainWindowGuard) {
+    delete mainWindowGuard.data();
+  }
+  qInfo() << "[AppMain][Shutdown] top-level UI teardown complete ms="
+          << uiTeardownTimer.elapsed();
   return exitCode;
 }

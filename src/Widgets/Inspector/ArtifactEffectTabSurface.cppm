@@ -3,6 +3,7 @@ module;
 #include <QPainter>
 #include <QPalette>
 #include <QSettings>
+#include <QShowEvent>
 #include <QVBoxLayout>
 
 module Artifact.Widgets.Inspector.EffectTabSurface;
@@ -32,13 +33,22 @@ class EffectRackDisclosure final : public QWidget {
     setToolTip(QStringLiteral("Show or hide the effect rack."));
     setAccessibleName(QStringLiteral("Effect Rack visibility"));
 
+    setRackVisible(true, false);
+  }
+
+ protected:
+  void showEvent(QShowEvent* event) override {
+    QWidget::showEvent(event);
+    if (settingsLoaded_) {
+      return;
+    }
+    settingsLoaded_ = true;
     const bool visible =
         QSettings().value(QString::fromLatin1(kEffectRackVisibleSetting), true)
             .toBool();
     setRackVisible(visible, false);
   }
 
- protected:
   void paintEvent(QPaintEvent*) override {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
@@ -96,6 +106,7 @@ class EffectRackDisclosure final : public QWidget {
 
   QWidget* rack_ = nullptr;
   bool rackVisible_ = true;
+  bool settingsLoaded_ = false;
 };
 }  // namespace
 

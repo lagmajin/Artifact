@@ -3,9 +3,12 @@ module;
 #include <QRectF>
 #include <QString>
 #include <QVariant>
+#include <QByteArray>
+#include <QStringList>
 #include <memory>
 #include <vector>
 #include <functional>
+#include <cmath>
 
 export module Artifact.Effect.HostContract;
 
@@ -14,6 +17,7 @@ import Artifact.Render.ROI;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;
 import Image.ImageF32x4RGBAWithCache;
+import Color.ColorSpace;
 
 export namespace Artifact {
 
@@ -58,6 +62,8 @@ struct EffectInputRequest {
     std::int64_t absoluteFrame = 0;
     bool allowPerPixelTemporalSampling = false;
     bool requiresFrameCache = false;
+    ArtifactCore::ColorSpace colorSpace = ArtifactCore::ColorSpace::Linear;
+    QString colorConfigIdentity;
 };
 
 struct EffectInputSurface {
@@ -106,6 +112,10 @@ struct EffectCapabilityDescriptor {
     bool isGenerator = false;
     EffectPipelineStage pipelineStage = EffectPipelineStage::MaterialRender;
     float roiExpansionHint = 0.0f;
+    ArtifactCore::ColorSpace inputColorSpace = ArtifactCore::ColorSpace::Linear;
+    ArtifactCore::ColorSpace workingColorSpace = ArtifactCore::ColorSpace::Linear;
+    ArtifactCore::ColorSpace outputColorSpace = ArtifactCore::ColorSpace::Linear;
+    QString colorConfigIdentity;
 };
 
 struct EffectDependencyDescriptor {
@@ -113,6 +123,8 @@ struct EffectDependencyDescriptor {
     bool dependsOnUpstreamEffect = false;
     bool dependsOnLayerTransform = false;
     bool dependsOnCompositionFrame = false;
+    // Stable names consumed by cache invalidation and diagnostics.
+    QStringList dependencyKeys;
 };
 
 class EffectHostContext {
@@ -131,6 +143,15 @@ public:
     const QRectF& roi() const { return roi_; }
     void setROI(const QRectF& roi) { roi_ = roi; }
 
+    ArtifactCore::ColorSpace inputColorSpace() const { return inputColorSpace_; }
+    void setInputColorSpace(ArtifactCore::ColorSpace space) { inputColorSpace_ = space; }
+    ArtifactCore::ColorSpace workingColorSpace() const { return workingColorSpace_; }
+    void setWorkingColorSpace(ArtifactCore::ColorSpace space) { workingColorSpace_ = space; }
+    ArtifactCore::ColorSpace outputColorSpace() const { return outputColorSpace_; }
+    void setOutputColorSpace(ArtifactCore::ColorSpace space) { outputColorSpace_ = space; }
+    const QString& colorConfigIdentity() const { return colorConfigIdentity_; }
+    void setColorConfigIdentity(const QString& identity) { colorConfigIdentity_ = identity; }
+
     bool isInteractive() const
     {
         return isInteractiveRenderPurpose(purpose_);
@@ -143,6 +164,10 @@ private:
     RenderPurpose purpose_ = RenderPurpose::EditorInteractive;
     RenderContextSnapshot snapshot_;
     QRectF roi_;
+    ArtifactCore::ColorSpace inputColorSpace_ = ArtifactCore::ColorSpace::Linear;
+    ArtifactCore::ColorSpace workingColorSpace_ = ArtifactCore::ColorSpace::Linear;
+    ArtifactCore::ColorSpace outputColorSpace_ = ArtifactCore::ColorSpace::Linear;
+    QString colorConfigIdentity_;
 };
 
 class IEffectHostAdapter {
@@ -190,6 +215,10 @@ public:
             desc.supportsGPU = effect_->supportsGPU();
             desc.pipelineStage = effect_->pipelineStage();
         }
+        desc.inputColorSpace = hostContext_.inputColorSpace();
+        desc.workingColorSpace = hostContext_.workingColorSpace();
+        desc.outputColorSpace = hostContext_.outputColorSpace();
+        desc.colorConfigIdentity = hostContext_.colorConfigIdentity();
         return desc;
     }
 
@@ -198,6 +227,19 @@ public:
         EffectDependencyDescriptor dep;
         dep.inputRequests.push_back(inputRequest_);
         dep.dependsOnUpstreamEffect = true;
+        dep.dependencyKeys.push_back(inputRequest_.inputId);
+        if (inputRequest_.requiresPreviousFrame || inputRequest_.requiresFrameCache) {
+            dep.dependencyKeys.push_back(QStringLiteral("previous-frame"));
+        }
+        if (!inputRequest_.colorConfigIdentity.isEmpty()) {
+            dep.dependencyKeys.push_back(
+                QStringLiteral("color-config:%1").arg(inputRequest_.colorConfigIdentity));
+        }
+        dep.dependencyKeys.push_back(
+            QStringLiteral("color-space:%1:%2:%3")
+                .arg(static_cast<int>(inputRequest_.colorSpace))
+                .arg(static_cast<int>(hostContext_.workingColorSpace()))
+                .arg(static_cast<int>(hostContext_.outputColorSpace())));
         return dep;
     }
 
@@ -217,6 +259,11 @@ public:
         legacyCtx.frameRate = context.snapshot().frameRate;
         legacyCtx.timeSeconds = context.timeSeconds();
         legacyCtx.resolutionScale = context.resolutionScale();
+        legacyCtx.inputColorSpace = context.inputColorSpace();
+        legacyCtx.workingColorSpace = context.workingColorSpace();
+        legacyCtx.outputColorSpace = context.outputColorSpace();
+        legacyCtx.colorConfigIdentity = context.colorConfigIdentity();
+        legacyCtx.evaluationCacheKey = buildEvaluationCacheKey(context, input);
         legacyCtx.sampler = frameSampler_;
         effect_->setContext(legacyCtx);
         effect_->applyConfigured(*inputSource_, *output.image);
@@ -249,6 +296,36 @@ public:
     void setFrameSampler(IEffectFrameSampler* sampler) { frameSampler_ = sampler; }
 
 private:
+    static QByteArray buildEvaluationCacheKey(const EffectHostContext& context,
+                                              const EffectInputRequest& input)
+    {
+        QByteArray key = QByteArrayLiteral("effect-cache-v1|");
+        key += input.inputId.toUtf8();
+        key += '|';
+        key += QByteArray::number(context.snapshot().currentFrame);
+        key += '|';
+        key += QByteArray::number(static_cast<int>(context.inputColorSpace()));
+        key += '|';
+        key += QByteArray::number(static_cast<int>(context.workingColorSpace()));
+        key += '|';
+        key += QByteArray::number(static_cast<int>(context.outputColorSpace()));
+        key += '|';
+        key += context.colorConfigIdentity().toUtf8();
+        key += '|';
+        key += QByteArray::number(static_cast<int>(input.colorSpace));
+        key += '|';
+        key += input.colorConfigIdentity.toUtf8();
+        key += '|';
+        key += QByteArray::number(static_cast<qint64>(std::llround(input.roi.x() * 1000000.0)));
+        key += ',';
+        key += QByteArray::number(static_cast<qint64>(std::llround(input.roi.y() * 1000000.0)));
+        key += ',';
+        key += QByteArray::number(static_cast<qint64>(std::llround(input.roi.width() * 1000000.0)));
+        key += ',';
+        key += QByteArray::number(static_cast<qint64>(std::llround(input.roi.height() * 1000000.0)));
+        return key;
+    }
+
     ArtifactAbstractEffect* effect_ = nullptr;
     const ImageF32x4RGBAWithCache* inputSource_ = nullptr;
     IEffectFrameSampler* frameSampler_ = nullptr;

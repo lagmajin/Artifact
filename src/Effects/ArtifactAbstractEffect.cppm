@@ -17,6 +17,7 @@ module;
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -34,6 +35,7 @@ module;
 #include <regex>
 #include <random>
 #include <QString>
+#include <QSettings>
 
 module Artifact.Effect.Abstract;
 
@@ -75,6 +77,15 @@ public:
 };
 
 namespace {
+
+bool effectProfilingEnabled() {
+    QSettings settings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
+    if (settings.contains(QStringLiteral("Diagnostics/EffectProfiling"))) {
+        return settings.value(QStringLiteral("Diagnostics/EffectProfiling")).toBool();
+    }
+    const char* value = std::getenv("ARTIFACT_EFFECT_PROFILE");
+    return value && value[0] != '\0' && std::string(value) != "0";
+}
 
 bool supportsEffectPropertyAnimation(const AbstractProperty& property) {
     switch (property.getType()) {
@@ -220,6 +231,9 @@ void ArtifactAbstractEffect::applyCPUOnly(const ImageF32x4RGBAWithCache& src,
 
 void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
                                              ImageF32x4RGBAWithCache& dst) {
+    const auto profileStart = std::chrono::steady_clock::now();
+    const int sourceWidth = src.width();
+    const int sourceHeight = src.height();
     apply(src, dst);
 
     const bool outputMissing = dst.width() <= 0 || dst.height() <= 0;
@@ -231,6 +245,20 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
         impl_->mode = ComputeMode::CPU;
         apply(src, dst);
         impl_->mode = previousMode;
+    }
+
+    if (effectProfilingEnabled()) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - profileStart);
+        std::clog << "[EffectProfile] id=" << impl_->id.toQString().toStdString()
+                  << " name=" << impl_->name.toQString().toStdString()
+                  << " mode=" << static_cast<int>(impl_->mode)
+                  << " src=" << sourceWidth << 'x' << sourceHeight
+                  << " dst=" << dst.width() << 'x' << dst.height()
+                  << " fallback=" << (outputMissing || outputSizeMismatch ? 1 : 0)
+                  << " masks=" << (impl_->maskEnabled ? 1 : 0) +
+                         static_cast<int>(impl_->effectMaskImages.size())
+                  << " elapsed_us=" << elapsed.count() << '\n';
     }
 
     // Effects operate inside the host surface domain. No effect API currently

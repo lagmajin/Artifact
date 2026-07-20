@@ -56,6 +56,7 @@ module;
 #include <QVariant>
 #include <QUrl>
 #include <QWidget>
+#include <Diagnostics/WidgetCreationDiagnostics.hpp>
 #include <cstdlib>
 #include <wobjectimpl.h>
 
@@ -778,7 +779,8 @@ class InspectorScrollBarStyle final : public QProxyStyle {
     return QProxyStyle::pixelMetric(metric, option, widget);
   }
 
-  void drawComplexControl(ComplexControl control, const QStyleOption* option,
+  void drawComplexControl(ComplexControl control,
+                          const QStyleOptionComplex* option,
                           QPainter* painter,
                           const QWidget* widget = nullptr) const override {
     if (control != CC_ScrollBar || !option || !painter) {
@@ -2376,6 +2378,15 @@ class InspectorPropertySurface final : public QWidget {
     }
   }
 
+  void setEditor(QWidget* editor) {
+    if (!editor) {
+      return;
+    }
+    if (auto* surfaceLayout = static_cast<QVBoxLayout*>(layout())) {
+      surfaceLayout->addWidget(editor, 1);
+    }
+  }
+
  protected:
   void paintEvent(QPaintEvent*) override {
     QPainter painter(this);
@@ -2762,7 +2773,7 @@ public:
   InspectorActionButton *openScriptButton = nullptr;
   InspectorActionButton *applyLipSyncButton = nullptr;
   ArtifactPropertyWidget *componentPropertyWidget = nullptr;
-  QWidget *componentPropertySurface = nullptr;
+  InspectorPropertySurface *componentPropertySurface = nullptr;
   QString lastComponentPropertyStateSignature_;
   QLabel *statusLabel = nullptr;
 
@@ -2777,7 +2788,7 @@ public:
   QLabel *effectParametersHintLabel = nullptr;
   InspectorActionButton *effectEnableButton = nullptr;
   ArtifactPropertyWidget *effectPropertyWidget = nullptr;
-  QWidget *effectPropertySurface = nullptr;
+  InspectorPropertySurface *effectPropertySurface = nullptr;
   QPushButton *effectsQuickAddButton = nullptr;
   QString focusedEffectId_;
   ArtifactAbstractLayerPtr lastSyncedLayer_;
@@ -2847,6 +2858,7 @@ public:
                                 const QString &filterText);
   void syncComponentPropertyWidget(const ArtifactAbstractLayerPtr &layer,
                                    const QString &filterText);
+  void ensureComponentPropertyWidget();
   void updateEffectsList();
   void addSelectedEffectToCurrentTarget(const QString &effectId);
   void updateEffectRackItemEnabled(const QString &effectId, bool enabled);
@@ -2854,6 +2866,7 @@ public:
   QString currentSelectedEffectIdFromRacks() const;
   void syncFocusedEffectFromRackSelection();
   void syncEffectPropertyWidget();
+  void ensureEffectPropertyWidget();
   void handleApplyLipSyncToSwitchLayer();
   void handleAddEffectClicked(int rackIndex);
   void handleRemoveEffectClicked(int rackIndex);
@@ -3005,7 +3018,38 @@ ArtifactInspectorWidget::Impl::currentEffectById(const QString &effectId) const 
   return {};
 }
 
+void ArtifactInspectorWidget::Impl::ensureEffectPropertyWidget() {
+  if (effectPropertyWidget || !effectPropertySurface) {
+    return;
+  }
+
+  effectPropertyWidget = new ArtifactPropertyWidget(effectPropertySurface);
+  effectPropertyWidget->setVisible(false);
+  effectPropertyWidget->setMinimumHeight(220);
+  applyInspectorOwnerDrawScrollBars(effectPropertyWidget);
+  effectPropertySurface->setEditor(effectPropertyWidget);
+}
+
 void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
+  if (!effectPropertyWidget && focusedEffectId_.trimmed().isEmpty()) {
+    if (effectPropertySurface) {
+      effectPropertySurface->setVisible(false);
+    }
+    if (effectEnableButton) {
+      effectEnableButton->setVisible(false);
+      effectEnableButton->setEnabled(false);
+    }
+    if (effectEditorTitleLabel) {
+      effectEditorTitleLabel->setText(QStringLiteral("No effect selected"));
+    }
+    if (effectParametersHintLabel) {
+      effectParametersHintLabel->setText(
+          QStringLiteral("Select an effect above to reveal its parameters here."));
+      effectParametersHintLabel->setVisible(true);
+    }
+    return;
+  }
+  ensureEffectPropertyWidget();
   if (!effectPropertyWidget) {
     return;
   }
@@ -3884,16 +3928,20 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
 
 void ArtifactInspectorWidget::Impl::syncComponentPropertyWidget(
     const ArtifactAbstractLayerPtr &layer, const QString &filterText) {
-  if (!componentPropertyWidget) {
-    return;
-  }
   if (!layer) {
     lastComponentPropertyStateSignature_.clear();
-    componentPropertyWidget->clear();
-    componentPropertyWidget->setVisible(false);
+    if (componentPropertyWidget) {
+      componentPropertyWidget->clear();
+      componentPropertyWidget->setVisible(false);
+    }
     if (componentPropertySurface) {
       componentPropertySurface->setVisible(false);
     }
+    return;
+  }
+
+  ensureComponentPropertyWidget();
+  if (!componentPropertyWidget) {
     return;
   }
 
@@ -3928,6 +3976,20 @@ void ArtifactInspectorWidget::Impl::syncComponentPropertyWidget(
     componentPropertyWidget->setLayer(layer);
   }
   componentPropertyWidget->setFilterText(normalizedFilter);
+}
+
+void ArtifactInspectorWidget::Impl::ensureComponentPropertyWidget() {
+  if (componentPropertyWidget || !componentPropertySurface) {
+    return;
+  }
+
+  componentPropertyWidget = new ArtifactPropertyWidget(componentPropertySurface);
+  componentPropertyWidget->setProperty("artifactEmbeddedComponentEditor", true);
+  componentPropertyWidget->setVisible(false);
+  componentPropertyWidget->setMinimumHeight(120);
+  applyInspectorOwnerDrawScrollBars(componentPropertyWidget);
+  componentPropertyWidget->setFilterText(QString());
+  componentPropertySurface->setEditor(componentPropertyWidget);
 }
 
 void ArtifactInspectorWidget::Impl::focusComponentProperties(
@@ -5709,7 +5771,6 @@ void ArtifactInspectorWidget::Impl::addSelectedEffectToCurrentTarget(
   lastRackSignatures_.fill(QString());
   lastEffectPropertyStateSignature_.clear();
   updateEffectsList();
-  scheduleRefresh(EffectsDirty);
   if (statusLabel) {
     statusLabel->setText(
         QStringLiteral("Status: %1 effect added - %2.")
@@ -6158,16 +6219,6 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   applyInspectorLabelPalette(impl_->activeComponentLabel, true);
   impl_->activeComponentLabel->setVisible(false);
 
-  impl_->componentPropertyWidget =
-      new ArtifactPropertyWidget(impl_->componentsGroup);
-  impl_->componentPropertyWidget->setProperty(
-      "artifactEmbeddedComponentEditor", true);
-  impl_->componentPropertyWidget->setVisible(false);
-  impl_->componentPropertyWidget->setMinimumHeight(120);
-  applyInspectorOwnerDrawScrollBars(impl_->componentPropertyWidget);
-  // The active component filter is selected from the layer state during refresh.
-  impl_->componentPropertyWidget->setFilterText(QString());
-
   auto *componentStackLabel = new InspectorChromeLabel(
       QStringLiteral("Layer Components"),
       InspectorChromeLabel::Role::Section, impl_->componentsGroup);
@@ -6196,8 +6247,11 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   applyInspectorPalette(componentDivider, false);
   componentsStack->appendWidget(componentDivider);
   componentsStack->appendWidget(impl_->activeComponentLabel);
+  // The embedded editor is expensive and has no value until a concrete
+  // component is selected. Keep the visual surface ready, then create the
+  // editor on that first selection.
   impl_->componentPropertySurface = new InspectorPropertySurface(
-      impl_->componentPropertyWidget, impl_->componentsGroup);
+      nullptr, impl_->componentsGroup);
   impl_->componentPropertySurface->setObjectName(
       QStringLiteral("inspectorComponentPropertySurface"));
   impl_->componentPropertySurface->setVisible(false);
@@ -7085,11 +7139,17 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   // component-oriented inspector layout while preserving the existing widget
   // and its action wiring.
   layerInfoLayout->removeWidget(impl_->componentsGroup);
-  auto *componentsTab = new ArtifactComponentTabSurface(impl_->componentsGroup);
+  auto *componentsTab = WidgetCreationDiagnostics::createMeasured(
+      QStringLiteral("Components"), QStringLiteral("inspector-surface"),
+      QStringLiteral("inspector-default-components-surface"),
+      [this]() {
+        return new ArtifactComponentTabSurface(impl_->componentsGroup);
+      });
   componentsTab->setObjectName(
       QStringLiteral("inspectorComponentsSurface"));
   componentsTab->setParent(this);
   impl_->tabWidget->addTab(layerInfoWidget, "Layer");
+  impl_->tabWidget->addTab(componentsTab, "Components");
 
   // ================== Effects Pipeline Tab ==================
   impl_->effectsScrollArea = new QScrollArea();
@@ -7192,12 +7252,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   applyInspectorLabelPalette(impl_->effectParametersHintLabel, false);
   detailPanelLayout->addWidget(impl_->effectParametersHintLabel);
 
-  impl_->effectPropertyWidget = new ArtifactPropertyWidget();
-  impl_->effectPropertyWidget->setVisible(false);
-  impl_->effectPropertyWidget->setMinimumHeight(220);
-  applyInspectorOwnerDrawScrollBars(impl_->effectPropertyWidget);
   impl_->effectPropertySurface = new InspectorPropertySurface(
-      impl_->effectPropertyWidget, detailPanel);
+      nullptr, detailPanel);
   impl_->effectPropertySurface->setObjectName(
       QStringLiteral("inspectorEffectPropertySurface"));
   impl_->effectPropertySurface->setVisible(false);
@@ -7400,8 +7456,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
         });
   }
   stackPanelLayout->addStretch(1);
-  auto *effectsSurface =
-      new ArtifactEffectTabSurface(stackPanel, detailPanel, impl_->effectsTabWidget);
+  auto *effectsSurface = WidgetCreationDiagnostics::createMeasured(
+      QStringLiteral("Effects"), QStringLiteral("inspector-surface"),
+      QStringLiteral("inspector-default-effects-surface"),
+      [this, stackPanel, detailPanel]() {
+        return new ArtifactEffectTabSurface(stackPanel, detailPanel,
+                                            impl_->effectsTabWidget);
+      });
   effectsLayout->addWidget(effectsSurface, 1);
   QObject::connect(impl_->effectsQuickAddButton, &QPushButton::clicked, this,
                    [this]() { impl_->handleAddEffectClicked(-1); });
@@ -7422,6 +7483,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectsTabWidget->setLayout(effectsLayout);
   impl_->effectsScrollArea->setWidget(impl_->effectsTabWidget);
   impl_->effectsScrollArea->setParent(this);
+  impl_->tabWidget->addTab(impl_->effectsScrollArea, "Effects");
 
   // タブをメインレイアウトに追加
   mainLayout->addWidget(impl_->tabWidget);
