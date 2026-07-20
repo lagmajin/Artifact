@@ -1585,6 +1585,18 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
   ArtifactLayerResult result;
   bool targetedCurrentComposition = false;
   if (auto comp = currentComposition().lock()) {
+    if (params.layerType() == LayerType::CompositionBackground) {
+      const auto allLayers = comp->allLayer();
+      const bool alreadyHasBackground = std::any_of(
+          allLayers.cbegin(), allLayers.cend(), [](const auto& layer) {
+            return layer && layer->isCompositionBackgroundLayer();
+          });
+      if (alreadyHasBackground) {
+        qWarning() << "[ArtifactProjectService::Impl::addLayerToCurrentComposition]"
+                   << "composition background layer already exists";
+        return;
+      }
+    }
     result = manager.addLayerToComposition(
         comp->id(), const_cast<ArtifactLayerInitParams &>(params));
     targetedCurrentComposition = true;

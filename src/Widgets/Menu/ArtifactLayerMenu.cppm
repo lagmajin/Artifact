@@ -782,7 +782,6 @@ public:
     QActionGroup* proxyQualityGroup = nullptr;
 
     QAction* createSolidAction = nullptr;
-    QAction* createCompositionBackgroundAction = nullptr;
     QAction* createNullAction = nullptr;
     QAction* createConstructionAction = nullptr;
     QAction* createAdjustAction = nullptr;
@@ -899,7 +898,6 @@ public:
     QAction* controllerLearnAction = nullptr;
 
     void handleCreateSolid();
-    void handleCreateCompositionBackground();
     void handleCreateNull();
     void handleCreateConstruction();
     void handleCreateAdjust();
@@ -994,11 +992,6 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createSolidAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateSolid));
     createSolidAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_palette.svg")));
-
-    createCompositionBackgroundAction = new QAction("コンポジション背景レイヤー", createMenu);
-    createCompositionBackgroundAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_grid_on.svg")));
-    createCompositionBackgroundAction->setToolTip(QStringLiteral(
-        "コンポジション背景を専用の背景レイヤーとして追加します。最終レンダーへの出力はプロパティで切り替えられます。"));
 
     createNullAction = new QAction("ヌルオブジェクト(&N)", createMenu);
     createNullAction->setShortcut(
@@ -1129,7 +1122,6 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMotionTrackerAction = new QAction("モーショントラッカーを作成(&M)", menu);
 
     createMenu->addAction(createSolidAction);
-    createMenu->addAction(createCompositionBackgroundAction);
     createMenu->addAction(createNullAction);
     createMenu->addAction(createConstructionAction);
     createMenu->addAction(createAdjustAction);
@@ -1462,7 +1454,6 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             return;
         }
         if (action == createSolidAction) { handleCreateSolid(); return; }
-        if (action == createCompositionBackgroundAction) { handleCreateCompositionBackground(); return; }
         if (action == createNullAction) { handleCreateNull(); return; }
         if (action == createConstructionAction) { handleCreateConstruction(); return; }
         if (action == createAdjustAction) { handleCreateAdjust(); return; }
@@ -2237,19 +2228,6 @@ void ArtifactLayerMenu::Impl::handleCreateSolid()
     service->addLayerToCurrentComposition(
         dialog.submittedParams(), true,
         dialog.submittedPlacementMode() == LayerCreationPlacementMode::Playhead);
-}
-
-void ArtifactLayerMenu::Impl::handleCreateCompositionBackground()
-{
-    if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
-        return;
-    }
-
-    ArtifactCompositionBackgroundLayerInitParams params;
-    if (auto* service = ArtifactProjectService::instance()) {
-        service->addLayerToCurrentComposition(params, true, false);
-    }
 }
 
 void ArtifactLayerMenu::Impl::handleCreateNull()
