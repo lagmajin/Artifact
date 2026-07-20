@@ -162,6 +162,49 @@ void ParticleEffector::apply(std::vector<Particle>& particles, float deltaTime)
     }
 }
 
+void FlockingEffector::apply(Particle& particle, float deltaTime)
+{
+    Q_UNUSED(particle);
+    Q_UNUSED(deltaTime);
+}
+
+void FlockingEffector::apply(std::vector<Particle>& particles, float deltaTime)
+{
+    if (particles.size() < 2 || neighborhoodRadius <= 0.0f || deltaTime <= 0.0f) return;
+    const float radius2 = neighborhoodRadius * neighborhoodRadius;
+    const float limit = std::max(0.0f, maxAcceleration);
+    std::vector<QVector3D> accelerations(particles.size());
+    for (std::size_t i = 0; i < particles.size(); ++i) {
+        const Particle& source = particles[i];
+        if (!source.alive) continue;
+        QVector3D separation, averageVelocity, center;
+        int neighbors = 0;
+        for (std::size_t j = 0; j < particles.size(); ++j) {
+            if (i == j || !particles[j].alive) continue;
+            const QVector3D offset = particles[j].position - source.position;
+            const float distance2 = offset.lengthSquared();
+            if (distance2 <= 1.0e-6f || distance2 > radius2) continue;
+            const float distance = std::sqrt(distance2);
+            separation -= offset / std::max(distance, 1.0e-3f);
+            averageVelocity += particles[j].velocity;
+            center += particles[j].position;
+            ++neighbors;
+        }
+        if (neighbors == 0) continue;
+        const float inverseCount = 1.0f / static_cast<float>(neighbors);
+        QVector3D acceleration =
+            separation * separationWeight +
+            (averageVelocity * inverseCount - source.velocity) * alignmentWeight +
+            (center * inverseCount - source.position) * cohesionWeight;
+        if (limit > 0.0f && acceleration.lengthSquared() > limit * limit)
+            acceleration = acceleration.normalized() * limit;
+        accelerations[i] = acceleration;
+    }
+    for (std::size_t i = 0; i < particles.size(); ++i) {
+        if (particles[i].alive) particles[i].acceleration += accelerations[i];
+    }
+}
+
 // ==================== ForceEffector ====================
 
 void ForceEffector::apply(Particle& particle, float deltaTime)
@@ -911,7 +954,12 @@ void ParticleEmitter::simulateStep(float deltaTime)
             break;
     }
 
-    // Phase 1: effectors + integration (particle-local)
+    // Phase 1a: vector effectors such as Boids/Flocking.
+    for (const auto& effector : effectors_) {
+        if (effector && effector->enabled) effector->apply(particles_, deltaTime);
+    }
+
+    // Phase 1b: effectors + integration (particle-local)
     const int aliveCount = static_cast<int>(
         std::count_if(particles_.begin(), particles_.end(), [](const Particle& p) { return p.alive; })
     );

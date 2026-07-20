@@ -296,6 +296,7 @@ enum class EffectorType {
     Drag,           // 抵抗
     Wind,           // 風
     Noise,          // ノイズ
+    Flocking,       // Boids: separation/alignment/cohesion
     Collision,      // コリジョン
     Kill            // キルゾーン
 };
@@ -394,6 +395,19 @@ public:
     
     WindEffector() { type = EffectorType::Wind; }
     void apply(Particle& particle, float deltaTime) override;
+};
+
+class FlockingEffector : public ParticleEffector {
+public:
+    float neighborhoodRadius = 100.0f;
+    float separationWeight = 1.0f;
+    float alignmentWeight = 1.0f;
+    float cohesionWeight = 1.0f;
+    float maxAcceleration = 100.0f;
+
+    FlockingEffector() { type = EffectorType::Flocking; }
+    void apply(Particle& particle, float deltaTime) override;
+    void apply(std::vector<Particle>& particles, float deltaTime) override;
 };
 
 /**

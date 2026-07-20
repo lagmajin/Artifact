@@ -556,6 +556,12 @@ QJsonObject ArtifactParticleLayer::toJson() const
                         effectorJson["turbulence"] = typed->turbulence;
                         effectorJson["turbulenceFrequency"] = typed->turbulenceFrequency;
                         effectorJson["evolution"] = typed->evolution;
+                    } else if (const auto* typed = dynamic_cast<const FlockingEffector*>(effector.get())) {
+                        effectorJson["neighborhoodRadius"] = typed->neighborhoodRadius;
+                        effectorJson["separationWeight"] = typed->separationWeight;
+                        effectorJson["alignmentWeight"] = typed->alignmentWeight;
+                        effectorJson["cohesionWeight"] = typed->cohesionWeight;
+                        effectorJson["maxAcceleration"] = typed->maxAcceleration;
                     } else if (const auto* typed = dynamic_cast<const KillZoneEffector*>(effector.get())) {
                         effectorJson["zoneType"] = static_cast<int>(typed->zoneType);
                         effectorJson["sizeX"] = typed->size.x();
@@ -898,6 +904,7 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
                         case EffectorType::Attractor: effector = std::make_unique<AttractorEffector>(); break;
                         case EffectorType::Repeller: effector = std::make_unique<RepellerEffector>(); break;
                         case EffectorType::Wind: effector = std::make_unique<WindEffector>(); break;
+                        case EffectorType::Flocking: effector = std::make_unique<FlockingEffector>(); break;
                         case EffectorType::Kill: effector = std::make_unique<KillZoneEffector>(); break;
                     }
                     if (!effector) {
@@ -960,6 +967,15 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
                             typed->turbulence = static_cast<float>(effectorJson["turbulence"].toDouble());
                             typed->turbulenceFrequency = static_cast<float>(effectorJson["turbulenceFrequency"].toDouble());
                             typed->evolution = static_cast<float>(effectorJson["evolution"].toDouble());
+                            break;
+                        }
+                        case EffectorType::Flocking: {
+                            auto* typed = static_cast<FlockingEffector*>(effector.get());
+                            typed->neighborhoodRadius = static_cast<float>(effectorJson["neighborhoodRadius"].toDouble(100.0));
+                            typed->separationWeight = static_cast<float>(effectorJson["separationWeight"].toDouble(1.0));
+                            typed->alignmentWeight = static_cast<float>(effectorJson["alignmentWeight"].toDouble(1.0));
+                            typed->cohesionWeight = static_cast<float>(effectorJson["cohesionWeight"].toDouble(1.0));
+                            typed->maxAcceleration = static_cast<float>(effectorJson["maxAcceleration"].toDouble(100.0));
                             break;
                         }
                         case EffectorType::Kill: {
