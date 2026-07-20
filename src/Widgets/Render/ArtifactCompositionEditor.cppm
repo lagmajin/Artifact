@@ -148,6 +148,7 @@ import Image.ImageF32x4_RGBA;
 import Artifact.Render.IRenderer;
 import IO.ImageExporter;
 import Image.ExportOptions;
+import VectorScopeWidget;
 import Codec.Thumbnail.FFmpeg;
 import UI.ShortcutBindings;
 import Undo.UndoManager;
@@ -7188,6 +7189,8 @@ public:
   QToolButton *viewportBookmarkButton_ = nullptr;
   QAction *renderSuspendAction_ = nullptr;
   QAction *previewOrbitAction_ = nullptr;
+  QAction *vectorScopeAction_ = nullptr;
+  QPointer<QDialog> vectorScopeDialog_;
   QToolButton *toolModeButton_ = nullptr;
   QToolButton *gizmoModeButton_ = nullptr;
   QToolButton *pivotModeButton_ = nullptr;
@@ -9275,6 +9278,52 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                        return;
                      }
                      impl_->setPreviewOrbitMode(this, checked);
+                   });
+  impl_->vectorScopeAction_ = impl_->topToolbar_->addAction(QStringLiteral("Vectorscope"));
+  impl_->vectorScopeAction_->setToolTip(
+      QStringLiteral("Show a vectorscope following the current composition preview frame"));
+  QObject::connect(impl_->vectorScopeAction_, &QAction::triggered, this,
+                   [this]() {
+                     if (!impl_) {
+                       return;
+                     }
+                     if (impl_->vectorScopeDialog_) {
+                       impl_->vectorScopeDialog_->raise();
+                       impl_->vectorScopeDialog_->activateWindow();
+                       return;
+                     }
+                     auto *dialog = new QDialog(this);
+                     dialog->setAttribute(Qt::WA_DeleteOnClose);
+                     dialog->setWindowTitle(QStringLiteral("Preview Vectorscope"));
+                     dialog->resize(360, 380);
+                     auto *layout = new QVBoxLayout(dialog);
+                     auto *scope = new ArtifactWidgets::VectorScopeWidget(dialog);
+                     scope->setMode(ArtifactWidgets::VectorScopeMode::Standard);
+                     layout->addWidget(scope);
+                     auto *timer = new QTimer(dialog);
+                     QObject::connect(timer, &QTimer::timeout, dialog,
+                                      [this, scope]() {
+                                        if (!impl_ || !impl_->renderController_ || !scope) {
+                                          return;
+                                        }
+                                        scope->updateFrame(
+                                            impl_->renderController_->captureCurrentFrameImage());
+                                      });
+                     QObject::connect(dialog, &QDialog::finished, this,
+                                      [this]() {
+                                        if (impl_) {
+                                          impl_->vectorScopeDialog_.clear();
+                                        }
+                                      });
+                     impl_->vectorScopeDialog_ = dialog;
+                     dialog->show();
+                     timer->start(150);
+                     QTimer::singleShot(0, dialog, [this, scope]() {
+                       if (impl_ && impl_->renderController_ && scope) {
+                         scope->updateFrame(
+                             impl_->renderController_->captureCurrentFrameImage());
+                       }
+                     });
                    });
   impl_->topToolbar_->addSeparator();
 
