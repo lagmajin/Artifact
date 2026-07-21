@@ -9228,6 +9228,70 @@ public:
 
     lastPresentedReadbackSRV_ = finalPresentSRV;
 
+    Diligent::ITextureView* channelComponentSource = nullptr;
+    Diligent::Uint32 channelComponent = 0;
+    switch (viewportChannelDisplayMode_) {
+    case ViewportChannelDisplayMode::Red:
+      channelComponentSource = finalPresentSRV;
+      channelComponent = 0;
+      break;
+    case ViewportChannelDisplayMode::Green:
+      channelComponentSource = finalPresentSRV;
+      channelComponent = 1;
+      break;
+    case ViewportChannelDisplayMode::Blue:
+      channelComponentSource = finalPresentSRV;
+      channelComponent = 2;
+      break;
+    case ViewportChannelDisplayMode::Alpha:
+      channelComponentSource = finalPresentSRV;
+      channelComponent = 3;
+      break;
+    case ViewportChannelDisplayMode::AlbedoR:
+      channelComponentSource = renderPipeline.albedoSRV();
+      channelComponent = 0;
+      break;
+    case ViewportChannelDisplayMode::AlbedoG:
+      channelComponentSource = renderPipeline.albedoSRV();
+      channelComponent = 1;
+      break;
+    case ViewportChannelDisplayMode::AlbedoB:
+      channelComponentSource = renderPipeline.albedoSRV();
+      channelComponent = 2;
+      break;
+    case ViewportChannelDisplayMode::NormalX:
+      channelComponentSource = renderPipeline.normalSRV();
+      channelComponent = 0;
+      break;
+    case ViewportChannelDisplayMode::NormalY:
+      channelComponentSource = renderPipeline.normalSRV();
+      channelComponent = 1;
+      break;
+    case ViewportChannelDisplayMode::NormalZ:
+      channelComponentSource = renderPipeline.normalSRV();
+      channelComponent = 2;
+      break;
+    case ViewportChannelDisplayMode::VelocityX:
+      channelComponentSource = renderPipeline.velocitySRV();
+      channelComponent = 0;
+      break;
+    case ViewportChannelDisplayMode::VelocityY:
+      channelComponentSource = renderPipeline.velocitySRV();
+      channelComponent = 1;
+      break;
+    default:
+      break;
+    }
+    if (channelComponentSource && blendPipeline_) {
+      auto context = renderer_->immediateContext();
+      if (context && blendPipeline_->displayComponent(
+                         context.RawPtr(), channelComponentSource,
+                         renderPipeline.tempUAV(), channelComponent,
+                         renderPipeline.width(), renderPipeline.height())) {
+        viewportChannelDisplaySRV_ = renderPipeline.tempSRV();
+      }
+    }
+
     renderer_->setCanvasSize(origViewW, origViewH);
 
     renderer_->setZoom(1.0f);
