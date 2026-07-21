@@ -959,8 +959,10 @@ public:
   std::vector<int64_t> enforcePreviewDiskCacheGlobalBudget(
       const QString &savedFramePath) {
     std::vector<int64_t> evictedCurrentFrames;
-    const QDir root(previewDiskCacheRoot());
-    if (!root.exists()) {
+    // The writer owns a concrete frame path.  Derive the cache root from it
+    // instead of reading the UI-thread-owned composition/root state here.
+    QDir root(QFileInfo(savedFramePath).absoluteDir());
+    if (!root.cdUp() || !root.exists()) {
       return evictedCurrentFrames;
     }
 
