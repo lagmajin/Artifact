@@ -180,6 +180,8 @@ import Artifact.Render.Offscreen;
 
 import Image.ImageF32x4_RGBA;
 
+import FloatRGBA;
+
 import Frame.Position;
 
 import Artifact.Application.Manager;
@@ -5954,6 +5956,101 @@ static void applyLayerMatteToSurface(
 
 }
 
+static void applyLayerMatteToSurface(
+    ArtifactAbstractLayer* layer, ArtifactCore::ImageF32x4_RGBA& surface,
+    const std::function<QImage(const ArtifactCore::Id&)>& sourceResolver)
+{
+  if (!layer || surface.isEmpty()) {
+    return;
+  }
+
+  const auto mattes = layer->matteReferences();
+  if (mattes.empty()) {
+    return;
+  }
+
+  const int w = surface.width();
+  const int h = surface.height();
+  if (w <= 0 || h <= 0) {
+    return;
+  }
+
+  std::vector<std::vector<float>> sources;
+  for (const auto& ref : mattes) {
+    if (!ref.enabled || ref.sourceLayerId.isNil()) {
+      continue;
+    }
+
+    QImage source = sourceResolver(ref.sourceLayerId);
+    if (source.isNull()) {
+      continue;
+    }
+    if (source.size() != QSize(w, h)) {
+      source = source.scaled(w, h, Qt::IgnoreAspectRatio,
+                             Qt::SmoothTransformation);
+    }
+    source = source.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+
+    std::vector<float> matteValues(static_cast<size_t>(w) * h, 0.0f);
+    const bool useLuma =
+        ref.type == MatteType::Luma || ref.type == MatteType::InverseLuma;
+    for (int y = 0; y < h; ++y) {
+      const auto* row = reinterpret_cast<const QRgb*>(source.constScanLine(y));
+      for (int x = 0; x < w; ++x) {
+        const QRgb pixel = row[x];
+        matteValues[static_cast<size_t>(y) * w + x] = useLuma
+            ? (0.299f * qRed(pixel) + 0.587f * qGreen(pixel) +
+               0.114f * qBlue(pixel)) / 255.0f
+            : qAlpha(pixel) / 255.0f;
+      }
+    }
+    if (ref.invert) {
+      for (auto& value : matteValues) {
+        value = 1.0f - value;
+      }
+    }
+    sources.push_back(std::move(matteValues));
+  }
+  if (sources.empty()) {
+    return;
+  }
+
+  MatteStack stack;
+  for (const auto& ref : mattes) {
+    if (ref.enabled && !ref.sourceLayerId.isNil()) {
+      stack.addNode(ref.toCoreMatteNode());
+    }
+  }
+  const auto mask = evaluateMatteStack(sources, stack, w, h);
+  if (!mask.isValid()) {
+    return;
+  }
+
+  if (float* pixels = surface.rgba32fData()) {
+    float* pixel = pixels;
+    for (int y = 0; y < h; ++y) {
+      for (int x = 0; x < w; ++x, pixel += 4) {
+        const float factor = mask.sampleAlpha(x, y);
+        pixel[0] *= factor;
+        pixel[1] *= factor;
+        pixel[2] *= factor;
+        pixel[3] *= factor;
+      }
+    }
+    return;
+  }
+
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      const float factor = mask.sampleAlpha(x, y);
+      const ArtifactCore::FloatRGBA pixel = surface.getPixel(x, y);
+      surface.setPixel(x, y, ArtifactCore::FloatRGBA(
+                                 pixel.r() * factor, pixel.g() * factor,
+                                 pixel.b() * factor, pixel.a() * factor));
+    }
+  }
+}
+
 
 
 void drawLayerForCompositionView(
@@ -6438,6 +6535,18 @@ void drawLayerForCompositionView(
       applyLayerMatteToSurface(layer, targetSurface, cachedResolver);
     };
 
+    auto applyResolvedMattesF32 = [&](ArtifactCore::ImageF32x4_RGBA& targetSurface) {
+      if (targetSurface.isEmpty() || resolvedMatteSources.isEmpty()) {
+        return;
+      }
+
+      const std::function<QImage(const ArtifactCore::Id&)> cachedResolver =
+          [&resolvedMatteSources](const ArtifactCore::Id& id) {
+            return resolvedMatteSources.value(id);
+          };
+      applyLayerMatteToSurface(layer, targetSurface, cachedResolver);
+    };
+
     const QString cacheSlotKey =
 
         ownerId + (interactiveDraft ? QStringLiteral("|draft")
@@ -6494,17 +6603,8 @@ void drawLayerForCompositionView(
         }
 
         if (processedBuffer && !resolvedMatteSources.isEmpty()) {
-          // Preserve the rasterizer output. Replacing it from the original
-          // surface discarded Blur / Gaussian Blur / Glow on GPU-cached layers.
-          QImage processedSurface = processedBuffer->toQImage();
-          applyResolvedMattes(processedSurface);
-          ArtifactCore::ImageF32x4_RGBA mattedProcessed;
-          mattedProcessed.setFromCVMat(
-              ArtifactCore::CvUtils::qImageToCvMat(processedSurface, true));
-          processedBuffer =
-              std::make_shared<ArtifactCore::ImageF32x4_RGBA>(mattedProcessed);
+          applyResolvedMattesF32(*processedBuffer);
           directProcessedBuffer = processedBuffer;
-          surface = std::move(processedSurface);
         } else {
           applyResolvedMattes(surface);
         }
@@ -6519,7 +6619,7 @@ void drawLayerForCompositionView(
 
         entry.processedBuffer = processedBuffer;
 
-        entry.processedSurface = surface;
+        entry.processedSurface = processedBuffer ? QImage{} : surface;
 
         entry.frameNumber = cacheFrameNumber;
 
@@ -6539,12 +6639,6 @@ void drawLayerForCompositionView(
 
                 gpuOwnerId, gpuCacheSignature, surface);
 
-          }
-
-          if (entry.processedBuffer) {
-            // Keep the processed buffer authoritative even when the first GPU
-            // upload fails; the draw fallback will materialize this result.
-            entry.processedSurface = QImage();
           }
 
         }
@@ -6569,16 +6663,7 @@ void drawLayerForCompositionView(
       }
 
       if (directProcessedBuffer && !resolvedMatteSources.isEmpty()) {
-        // Matte resolution is still a QImage-only compatibility boundary.
-        // Re-enter the float path immediately after applying it.
-        QImage processedSurface = directProcessedBuffer->toQImage();
-        applyResolvedMattes(processedSurface);
-        ArtifactCore::ImageF32x4_RGBA mattedProcessed;
-        mattedProcessed.setFromCVMat(
-            ArtifactCore::CvUtils::qImageToCvMat(processedSurface, true));
-        directProcessedBuffer =
-            std::make_shared<ArtifactCore::ImageF32x4_RGBA>(mattedProcessed);
-        surface = std::move(processedSurface);
+        applyResolvedMattesF32(*directProcessedBuffer);
       } else if (!directProcessedBuffer) {
         applyResolvedMattes(surface);
       }
