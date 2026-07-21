@@ -168,6 +168,8 @@
   time-stretch backend is added, non-1x and reverse previews stop/clear audio
   and disable audio-clock correction rather than presenting desynchronized
   sound.
+- `AudioSyncTools::timeStretch()` is a linear resampler and changes pitch; it
+  is not a valid realtime playback-rate backend.
 - A future time-stretch implementation must become the audio-clock source for
   non-1x playback before this policy is relaxed.
 
