@@ -79,6 +79,7 @@ public:
     // Cached evaluation order (invalidated when graph changes)
     mutable std::vector<QUuid> evaluationOrder_;
     mutable bool orderDirty_ = true;
+    mutable std::mutex orderMutex_;
 
     // Special node references
     QUuid inputNodeId_;
@@ -171,13 +172,19 @@ public:
         return false;
     }
 
-    void invalidateOrder() { orderDirty_ = true; }
+    void invalidateOrder() {
+      std::lock_guard<std::mutex> lock(orderMutex_);
+      orderDirty_ = true;
+    }
 
     void ensureOrder() const {
+      if (orderDirty_) {
+        std::lock_guard<std::mutex> lock(orderMutex_);
         if (orderDirty_) {
-            evaluationOrder_ = topologicalSort();
-            orderDirty_ = false;
+          evaluationOrder_ = topologicalSort();
+          orderDirty_ = false;
         }
+      }
     }
 
     /// Find where a node's output connects to (the next node in a serial chain)

@@ -43,8 +43,24 @@ GradingNode::GradingNode(const GradingNode &other)
 
 GradingNode &GradingNode::operator=(const GradingNode &other) {
   if (this != &other) {
-    // Destroy current
-    this->~GradingNode();
+    // Explicitly destroy the current active union member
+    switch (type) {
+    case GradingNodeType::LiftGammaGain:
+      liftGammaGain.~LiftGammaGainNode();
+      break;
+    case GradingNodeType::ColorWheels:
+      colorWheels.~ColorWheelNode();
+      break;
+    case GradingNodeType::RGBCurves:
+      rgbCurves.~RGBCurveNode();
+      break;
+    case GradingNodeType::HueSatLum:
+      hueSatLum.~HueSatLumNode();
+      break;
+    case GradingNodeType::LogAdjust:
+      logAdjust.~LogAdjustNode();
+      break;
+    }
 
     // Copy new
     type = other.type;
@@ -73,7 +89,23 @@ GradingNode &GradingNode::operator=(const GradingNode &other) {
 }
 
 GradingNode::~GradingNode() {
-  // Union destructor - no action needed for POD types
+  switch (type) {
+  case GradingNodeType::LiftGammaGain:
+    liftGammaGain.~LiftGammaGainNode();
+    break;
+  case GradingNodeType::ColorWheels:
+    colorWheels.~ColorWheelNode();
+    break;
+  case GradingNodeType::RGBCurves:
+    rgbCurves.~RGBCurveNode();
+    break;
+  case GradingNodeType::HueSatLum:
+    hueSatLum.~HueSatLumNode();
+    break;
+  case GradingNodeType::LogAdjust:
+    logAdjust.~LogAdjustNode();
+    break;
+  }
 }
 
 class ArtifactColorGradingEngine::Impl {
@@ -344,19 +376,177 @@ float ArtifactColorGradingEngine::interpolateCurve(
 }
 
 void ArtifactColorGradingEngine::savePreset(const std::string &name) {
-  // Implementation for saving presets to JSON
-  // (Simplified - would save node configurations)
+  // Serialize all grading nodes to a JSON preset file
+  Q_UNUSED(name);
+  const QString presetName = QString::fromStdString(name);
+  const QString presetDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/grading_presets");
+  QDir().mkpath(presetDir);
+
+  QJsonArray nodesArray;
+  for (const GradingNode& node : impl_->nodes_) {
+    QJsonObject nodeObj;
+    nodeObj[QStringLiteral("type")] = static_cast<int>(node.type);
+    nodeObj[QStringLiteral("enabled")] = node.enabled;
+    nodeObj[QStringLiteral("name")] = QString::fromStdString(node.name);
+
+    auto wr3 = [](QJsonObject& o, const char* kr, const char* kg, const char* kb, float r, float g, float b) {
+      o[QString::fromLatin1(kr)] = r; o[QString::fromLatin1(kg)] = g; o[QString::fromLatin1(kb)] = b;
+    };
+
+    switch (node.type) {
+    case GradingNodeType::LiftGammaGain: {
+      QJsonObject d;
+      wr3(d, "lift_r", "lift_g", "lift_b", node.liftGammaGain.lift.r(), node.liftGammaGain.lift.g(), node.liftGammaGain.lift.b());
+      wr3(d, "gamma_r", "gamma_g", "gamma_b", node.liftGammaGain.gamma.r(), node.liftGammaGain.gamma.g(), node.liftGammaGain.gamma.b());
+      wr3(d, "gain_r", "gain_g", "gain_b", node.liftGammaGain.gain.r(), node.liftGammaGain.gain.g(), node.liftGammaGain.gain.b());
+      d[QStringLiteral("pivot")] = node.liftGammaGain.pivot;
+      nodeObj[QStringLiteral("data")] = d;
+      break;
+    }
+    case GradingNodeType::ColorWheels: {
+      QJsonObject d;
+      wr3(d, "shadows_r", "shadows_g", "shadows_b", node.colorWheels.shadows.r(), node.colorWheels.shadows.g(), node.colorWheels.shadows.b());
+      wr3(d, "midtones_r", "midtones_g", "midtones_b", node.colorWheels.midtones.r(), node.colorWheels.midtones.g(), node.colorWheels.midtones.b());
+      wr3(d, "highlights_r", "highlights_g", "highlights_b", node.colorWheels.highlights.r(), node.colorWheels.highlights.g(), node.colorWheels.highlights.b());
+      d[QStringLiteral("range")] = node.colorWheels.range;
+      nodeObj[QStringLiteral("data")] = d;
+      break;
+    }
+    case GradingNodeType::RGBCurves: {
+      QJsonObject d;
+      auto pts = [](const std::vector<std::pair<float,float>>& pts) {
+        QJsonArray a;
+        for (const auto& [x, y] : pts) { QJsonObject p; p[QStringLiteral("x")] = x; p[QStringLiteral("y")] = y; a.append(p); }
+        return a;
+      };
+      d[QStringLiteral("master")] = pts(node.rgbCurves.masterCurve);
+      d[QStringLiteral("red")] = pts(node.rgbCurves.redCurve);
+      d[QStringLiteral("green")] = pts(node.rgbCurves.greenCurve);
+      d[QStringLiteral("blue")] = pts(node.rgbCurves.blueCurve);
+      nodeObj[QStringLiteral("data")] = d;
+      break;
+    }
+    case GradingNodeType::HueSatLum: {
+      QJsonObject d;
+      d[QStringLiteral("hue")] = node.hueSatLum.hue;
+      d[QStringLiteral("saturation")] = node.hueSatLum.saturation;
+      d[QStringLiteral("luminance")] = node.hueSatLum.luminance;
+      wr3(d, "range_min_r", "range_min_g", "range_min_b", node.hueSatLum.rangeMin.r(), node.hueSatLum.rangeMin.g(), node.hueSatLum.rangeMin.b());
+      wr3(d, "range_max_r", "range_max_g", "range_max_b", node.hueSatLum.rangeMax.r(), node.hueSatLum.rangeMax.g(), node.hueSatLum.rangeMax.b());
+      nodeObj[QStringLiteral("data")] = d;
+      break;
+    }
+    case GradingNodeType::LogAdjust: {
+      QJsonObject d;
+      d[QStringLiteral("exposure")] = node.logAdjust.exposure;
+      d[QStringLiteral("contrast")] = node.logAdjust.contrast;
+      wr3(d, "offset_r", "offset_g", "offset_b", node.logAdjust.offset.r(), node.logAdjust.offset.g(), node.logAdjust.offset.b());
+      d[QStringLiteral("pivot")] = node.logAdjust.pivot;
+      nodeObj[QStringLiteral("data")] = d;
+      break;
+    }
+    }
+    nodesArray.append(nodeObj);
+  }
+
+  QJsonObject root;
+  root[QStringLiteral("version")] = 1;
+  root[QStringLiteral("nodes")] = nodesArray;
+
+  QFile file(presetDir + QStringLiteral("/") + presetName + QStringLiteral(".json"));
+  if (file.open(QIODevice::WriteOnly)) {
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+  }
+ 
 }
 
 void ArtifactColorGradingEngine::loadPreset(const std::string &name) {
-  // Implementation for loading presets from JSON
-  // (Simplified - would load and recreate nodes)
+  // Deserialize grading nodes from a JSON preset file
+  Q_UNUSED(name);
+  const QString presetName = QString::fromStdString(name);
+  const QString presetDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/grading_presets");
+
+  QFile file(presetDir + QStringLiteral("/") + presetName + QStringLiteral(".json"));
+  if (!file.open(QIODevice::ReadOnly)) return;
+
+  QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+  if (!doc.isObject()) return;
+
+  QJsonObject root = doc.object();
+  QJsonArray nodesArray = root[QStringLiteral("nodes")].toArray();
+
+  impl_->nodes_.clear();
+  for (const QJsonValue& val : nodesArray) {
+    if (!val.isObject()) continue;
+    QJsonObject nodeObj = val.toObject();
+
+    auto tp = static_cast<GradingNodeType>(nodeObj[QStringLiteral("type")].toInt(0));
+    bool on = nodeObj[QStringLiteral("enabled")].toBool(true);
+    std::string nm = nodeObj[QStringLiteral("name")].toString().toStdString();
+
+    GradingNode node(tp, nm);
+    node.enabled = on;
+
+    QJsonObject d = nodeObj[QStringLiteral("data")].toObject();
+    switch (tp) {
+    case GradingNodeType::LiftGammaGain:
+      node.liftGammaGain.lift = FloatColor(d[QStringLiteral("lift_r")].toDouble(), d[QStringLiteral("lift_g")].toDouble(), d[QStringLiteral("lift_b")].toDouble(), 0);
+      node.liftGammaGain.gamma = FloatColor(d[QStringLiteral("gamma_r")].toDouble(), d[QStringLiteral("gamma_g")].toDouble(), d[QStringLiteral("gamma_b")].toDouble(), 0);
+      node.liftGammaGain.gain = FloatColor(d[QStringLiteral("gain_r")].toDouble(), d[QStringLiteral("gain_g")].toDouble(), d[QStringLiteral("gain_b")].toDouble(), 0);
+      node.liftGammaGain.pivot = d[QStringLiteral("pivot")].toDouble(0.5);
+      break;
+    case GradingNodeType::ColorWheels:
+      node.colorWheels.shadows = FloatColor(d[QStringLiteral("shadows_r")].toDouble(), d[QStringLiteral("shadows_g")].toDouble(), d[QStringLiteral("shadows_b")].toDouble(), 0);
+      node.colorWheels.midtones = FloatColor(d[QStringLiteral("midtones_r")].toDouble(), d[QStringLiteral("midtones_g")].toDouble(), d[QStringLiteral("midtones_b")].toDouble(), 0);
+      node.colorWheels.highlights = FloatColor(d[QStringLiteral("highlights_r")].toDouble(), d[QStringLiteral("highlights_g")].toDouble(), d[QStringLiteral("highlights_b")].toDouble(), 0);
+      node.colorWheels.range = d[QStringLiteral("range")].toDouble(0.5);
+      break;
+    case GradingNodeType::RGBCurves: {
+      auto rd = [](const QJsonValue& v) {
+        std::vector<std::pair<float,float>> pts;
+        for (const QJsonValue& pv : v.toArray())
+          pts.emplace_back(pv[QStringLiteral("x")].toDouble(), pv[QStringLiteral("y")].toDouble());
+        return pts;
+      };
+      node.rgbCurves.masterCurve = rd(d[QStringLiteral("master")]);
+      node.rgbCurves.redCurve = rd(d[QStringLiteral("red")]);
+      node.rgbCurves.greenCurve = rd(d[QStringLiteral("green")]);
+      node.rgbCurves.blueCurve = rd(d[QStringLiteral("blue")]);
+      break;
+    }
+    case GradingNodeType::HueSatLum:
+      node.hueSatLum.hue = d[QStringLiteral("hue")].toDouble();
+      node.hueSatLum.saturation = d[QStringLiteral("saturation")].toDouble(1.0);
+      node.hueSatLum.luminance = d[QStringLiteral("luminance")].toDouble(1.0);
+      node.hueSatLum.rangeMin = FloatColor(d[QStringLiteral("range_min_r")].toDouble(), d[QStringLiteral("range_min_g")].toDouble(), d[QStringLiteral("range_min_b")].toDouble(), 0);
+      node.hueSatLum.rangeMax = FloatColor(d[QStringLiteral("range_max_r")].toDouble(), d[QStringLiteral("range_max_g")].toDouble(), d[QStringLiteral("range_max_b")].toDouble(), 0);
+      break;
+    case GradingNodeType::LogAdjust:
+      node.logAdjust.exposure = d[QStringLiteral("exposure")].toDouble();
+      node.logAdjust.contrast = d[QStringLiteral("contrast")].toDouble(1.0);
+      node.logAdjust.offset = FloatColor(d[QStringLiteral("offset_r")].toDouble(), d[QStringLiteral("offset_g")].toDouble(), d[QStringLiteral("offset_b")].toDouble(), 0);
+      node.logAdjust.pivot = d[QStringLiteral("pivot")].toDouble(0.5);
+      break;
+    }
+    impl_->nodes_.push_back(node);
+  }
+ 
 }
 
 std::vector<std::string>
 ArtifactColorGradingEngine::getAvailablePresets() const {
-  // Return list of available preset files
-  return {};
+  // Return list of available preset files in the grading_presets directory
+  const QString presetDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/grading_presets");
+  QDir dir(presetDir);
+  QStringList filters; filters << QStringLiteral("*.json");
+  QStringList files = dir.entryList(filters, QDir::Files, QDir::Name);
+  std::vector<std::string> result;
+  for (const QString& f : files) {
+    QString name = f;
+    name.chop(5); // remove ".json"
+    result.push_back(name.toStdString());
+  }
+  return result;
 }
 
 void ArtifactColorGradingEngine::resetAll() { impl_->nodes_.clear(); }

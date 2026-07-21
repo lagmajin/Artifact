@@ -124,6 +124,7 @@ void CollabPresenceWidget::removeUser(const QString& userId) {
                 if (label->property("userId").toString() == userId) {
                     layout->removeItem(item);
                     delete label;
+                    delete item;
                     break;
                 }
             }
@@ -143,6 +144,7 @@ void CollabPresenceWidget::clearUsers() {
             if (item->widget()) {
                 layout->removeItem(item);
                 delete item->widget();
+                delete item;
             }
         }
     }

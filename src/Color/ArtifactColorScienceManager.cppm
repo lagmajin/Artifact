@@ -294,9 +294,11 @@ ArtifactColorScienceManager::getSupportedColorSpaces() const {
 
 void ArtifactColorScienceManager::applySettings() {
   // Apply current settings to the rendering pipeline
-  // This would integrate with the rendering system
-  qDebug() << "Applying color science settings:"
-           << (int)impl_->globalSettings_.mode;
+ 
+  impl_->conversionCache_.clear();
+  Q_EMIT settingsChanged();
+  Q_EMIT lutChanged();
+ 
 }
 
 // Composition-specific settings implementation
