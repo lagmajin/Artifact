@@ -156,6 +156,21 @@
 
 ## Immediate Follow-up
 
+### Playback-speed contract (2026-07-21)
+
+- `ArtifactPlaybackEngine` is the authoritative visual speed clock.  A live
+  speed change re-bases at the currently displayed frame before the worker
+  applies the new multiplier, so `0.25x / 0.5x / 2x` cannot jump by the full
+  elapsed play duration.
+- The speed value crosses the UI/worker boundary as an atomic value.  Ping-pong
+  direction changes publish the existing speed-change event back to the UI.
+- Realtime audio is audible only at `1.0x`.  Until a pitch-preserving
+  time-stretch backend is added, non-1x and reverse previews stop/clear audio
+  and disable audio-clock correction rather than presenting desynchronized
+  sound.
+- A future time-stretch implementation must become the audio-clock source for
+  non-1x playback before this policy is relaxed.
+
 今回の修正では、`ArtifactPlaybackEngine.cppm` 内の古い
 `PlaybackState::Playing/Paused/Stopped`
 参照を、宣言側の bool signal 契約に合わせて置き換えた。
