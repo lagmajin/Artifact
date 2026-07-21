@@ -13,6 +13,23 @@ namespace Artifact {
 
 W_OBJECT_IMPL(Artifact3DGizmo)
 
+namespace {
+
+constexpr float kIntersectionEpsilon = 1e-6f;
+constexpr float kPlaneHandleInsetScale = 0.22f;
+constexpr float kPlaneHandleSizeScale = 0.14f;
+constexpr float kMinPlaneHandleInset = 6.0f;
+constexpr float kMinPlaneHandleSize = 4.0f;
+constexpr float kAxisHitThresholdScale = 0.11f;
+constexpr float kMinAxisHitThreshold = 8.0f;
+constexpr float kAxisTipRadiusScale = 0.055f;
+constexpr float kMinAxisTipRadius = 5.0f;
+constexpr float kMinimumScale = 0.01f;
+constexpr float kScaleDivisionEpsilon = 1e-3f;
+constexpr float kScaleHandleLength = 0.92f;
+
+} // namespace
+
 struct Artifact3DGizmo::Impl {
     QVector3D position;
     QVector3D rotation;
@@ -42,7 +59,7 @@ struct Artifact3DGizmo::Impl {
         float D = a * c - b * b;
         float sc, tc;
 
-        if (D < 1e-6f) { // Lines are parallel
+        if (D < kIntersectionEpsilon) { // Lines are parallel
             sc = 0.0f;
             tc = (b > c ? d / b : e / c);
         } else {
@@ -60,7 +77,7 @@ struct Artifact3DGizmo::Impl {
     // Intersects ray with a plane
     bool intersectRayPlane(const Ray& ray, const QVector3D& planePos, const QVector3D& planeNormal, QVector3D& hitPoint, float* tOut = nullptr) {
         float denom = QVector3D::dotProduct(planeNormal, ray.direction);
-        if (std::abs(denom) < 1e-6f) return false;
+        if (std::abs(denom) < kIntersectionEpsilon) return false;
         float t = QVector3D::dotProduct(planePos - ray.origin, planeNormal) / denom;
         if (t < 0) return false;
         if (tOut) {
@@ -72,8 +89,6 @@ struct Artifact3DGizmo::Impl {
 };
 
 namespace {
-
-constexpr float kScaleHandleLength = 0.92f;
 
 QVector3D axisDirectionFor(GizmoAxis axis) {
     switch (axis) {
@@ -144,8 +159,10 @@ struct PlaneHandleGeometry {
 
 PlaneHandleGeometry planeHandleGeometryFor(GizmoAxis axis, const QVector3D& center, float scale) {
     const PlaneHandleFrame frame = planeHandleFrameFor(axis);
-    const float inset = std::max(scale * 0.22f, 6.0f);
-    const float size = std::max(scale * 0.14f, 4.0f);
+    const float inset = std::max(scale * kPlaneHandleInsetScale,
+                                 kMinPlaneHandleInset);
+    const float size = std::max(scale * kPlaneHandleSizeScale,
+                                kMinPlaneHandleSize);
     return {frame, center + frame.u * inset + frame.v * inset, size};
 }
 
@@ -161,7 +178,7 @@ bool hitPlaneHandle(const Ray& ray,
     }
 
     const float denom = QVector3D::dotProduct(geom.frame.normal, ray.direction);
-    if (std::abs(denom) < 1e-6f) {
+    if (std::abs(denom) < kIntersectionEpsilon) {
         return false;
     }
 
@@ -213,11 +230,12 @@ QVector3D scaleAxisHandleEndFor(GizmoAxis axis, const QVector3D& center, float s
 }
 
 float axisHandleHitThreshold(float scale) {
-    return std::max(scale * 0.11f, 8.0f);
+    return std::max(scale * kAxisHitThresholdScale,
+                    kMinAxisHitThreshold);
 }
 
 float axisHandleTipRadius(float scale) {
-    return std::max(scale * 0.055f, 5.0f);
+    return std::max(scale * kAxisTipRadiusScale, kMinAxisTipRadius);
 }
 
 } // namespace
@@ -521,19 +539,19 @@ void Artifact3DGizmo::updateDrag(const Ray& ray) {
         QVector3D newScale = impl_->dragStartScale;
         if (activeAxis_ == GizmoAxis::X) {
             const float delta = QVector3D::dotProduct(hit - impl_->dragStartHitPoint, axisDir);
-            const float factor = std::max(0.01f, 1.0f + delta / std::max(impl_->currentScale, 1e-3f));
-            newScale.setX(std::max(0.01f, impl_->dragStartScale.x() * factor));
+            const float factor = std::max(kMinimumScale, 1.0f + delta / std::max(impl_->currentScale, kScaleDivisionEpsilon));
+            newScale.setX(std::max(kMinimumScale, impl_->dragStartScale.x() * factor));
         } else if (activeAxis_ == GizmoAxis::Y) {
             const float delta = QVector3D::dotProduct(hit - impl_->dragStartHitPoint, axisDir);
-            const float factor = std::max(0.01f, 1.0f + delta / std::max(impl_->currentScale, 1e-3f));
-            newScale.setY(std::max(0.01f, impl_->dragStartScale.y() * factor));
+            const float factor = std::max(kMinimumScale, 1.0f + delta / std::max(impl_->currentScale, kScaleDivisionEpsilon));
+            newScale.setY(std::max(kMinimumScale, impl_->dragStartScale.y() * factor));
         } else if (activeAxis_ == GizmoAxis::Z || activeAxis_ == GizmoAxis::Screen) {
             const float startDist = std::max((impl_->dragStartHitPoint - impl_->dragStartPosition).length(),
-                                              std::max(impl_->currentScale * 0.5f, 1e-3f));
+                                              std::max(impl_->currentScale * 0.5f, kScaleDivisionEpsilon));
             const float currentDist = (hit - impl_->dragStartPosition).length();
-            const float factor = std::max(0.01f, currentDist / startDist);
-            newScale.setX(std::max(0.01f, impl_->dragStartScale.x() * factor));
-            newScale.setY(std::max(0.01f, impl_->dragStartScale.y() * factor));
+            const float factor = std::max(kMinimumScale, currentDist / startDist);
+            newScale.setX(std::max(kMinimumScale, impl_->dragStartScale.x() * factor));
+            newScale.setY(std::max(kMinimumScale, impl_->dragStartScale.y() * factor));
         } else {
             return;
         }
