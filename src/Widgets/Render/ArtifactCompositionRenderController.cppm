@@ -12079,6 +12079,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
               const auto layerId = LayerID(event.layerId);
 
+              bool invalidatesFinalPreview = false;
               if (event.changeType == LayerChangedEvent::ChangeType::Created ||
 
                   event.changeType == LayerChangedEvent::ChangeType::Removed) {
@@ -12108,6 +12109,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                }
 
                 impl_->applyCompositionState(comp);
+                invalidatesFinalPreview = true;
 
               } else {
 
@@ -12148,6 +12150,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                   if (!skipCacheInvalidation) {
 
                     impl_->invalidateLayerSurfaceCache(layer);
+                    invalidatesFinalPreview = true;
 
                   }
 
@@ -12160,6 +12163,13 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
               }
 
               impl_->invalidateBaseComposite();
+
+              if (invalidatesFinalPreview) {
+                if (auto *playback = ArtifactPlaybackService::instance()) {
+                  playback->invalidateRamPreviewCache(
+                      QStringLiteral("composition-content-changed"));
+                }
+              }
 
               // ギズモドラッグ中はオーバーレイ同期コストを省く（ドラッグ終了時に一括同期）
 

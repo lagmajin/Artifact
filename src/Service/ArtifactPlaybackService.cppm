@@ -1,11 +1,14 @@
 ﻿module;
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QStringList>
 #include <QThread>
 #include <QTimer>
 #include <wobjectimpl.h>
@@ -178,12 +181,19 @@ public:
     QString filePath;
     ArtifactCore::ImageF32x4_RGBA image;
     QString compositionId;
+    uint64_t generation = 0;
   };
   std::mutex previewDiskWriteMutex_;
   std::condition_variable previewDiskWriteCv_;
   std::deque<PreviewDiskWriteTask> previewDiskWriteQueue_;
   std::thread previewDiskWriterThread_;
   bool previewDiskWriterStop_ = false;
+  static constexpr qint64 kPreviewDiskCacheBudgetBytes =
+      512LL * 1024LL * 1024LL;
+  // A disk cache invalidation must also invalidate queued writes.  Without
+  // this generation, an old encode can recreate a cache file after its
+  // composition directory was removed.
+  std::atomic<uint64_t> previewDiskGeneration_{1};
   struct RamPreviewBuildQueue {
     uint64_t generation = 0;
     bool active = false;
@@ -196,6 +206,10 @@ public:
   std::atomic<int64_t> pendingCompositionFrame_{0};
   std::atomic_bool compositionFrameSyncQueued_{false};
   QString previewDiskCacheRoot_;
+  // The final-frame cache is valid only for the render contract that produced
+  // it.  Layer state is still invalidated by the composition edit paths;
+  // this contract closes the quality/render-path gap at the service boundary.
+  QString previewDiskRenderContract_{QStringLiteral("unbound")};
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
@@ -259,11 +273,27 @@ public:
           previewDiskWriteQueue_.pop_front();
         }
 
-        const bool savedToDisk =
-            persistPreviewFrameToDisk(task.filePath, task.image);
+        bool savedToDisk = false;
+        std::vector<int64_t> evictedFrames;
+        {
+          // Serialize persistence with directory removal so a stale task
+          // cannot write back into a cache that has just been invalidated.
+          std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
+          if (task.generation == previewDiskGeneration_.load()) {
+            savedToDisk = persistPreviewFrameToDisk(task.filePath, task.image);
+            if (savedToDisk) {
+              evictedFrames = enforcePreviewDiskCacheBudget(task.filePath);
+            }
+          }
+        }
         QMetaObject::invokeMethod(
             owner_, [this, frame = task.frame,
-                     compositionId = task.compositionId, savedToDisk]() {
+                     compositionId = task.compositionId,
+                     generation = task.generation, savedToDisk,
+                     evictedFrames = std::move(evictedFrames)]() {
+              if (generation != previewDiskGeneration_.load()) {
+                return;
+              }
               const QString currentCompositionId =
                   currentComposition_ ? currentComposition_->id().toString()
                                       : QString();
@@ -272,6 +302,9 @@ public:
                 return;
               }
               markFrameOnDisk(frame, savedToDisk);
+              for (const int64_t evictedFrame : evictedFrames) {
+                markFrameOnDisk(evictedFrame, false);
+              }
             },
             Qt::QueuedConnection);
       }
@@ -338,7 +371,8 @@ public:
                 std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
                 previewDiskWriteQueue_.push_back(
                     PreviewDiskWriteTask{frameNumber, diskCacheFramePath,
-                                         frameBuffer, compositionId});
+                                         frameBuffer, compositionId,
+                                         previewDiskGeneration_.load()});
               }
               previewDiskWriteCv_.notify_one();
               markFrameOnDisk(frameNumber, false);
@@ -771,7 +805,10 @@ public:
 
     const auto settings = currentComposition_->settings();
     const QSize compSize = settings.compositionSize();
-    const QString basis = QStringLiteral("%1|%2|%3x%4|%5|%6")
+    // v2 deliberately separates files produced before disk-write generation
+    // checks were introduced.  Do not reuse a v1 frame whose invalidation
+    // provenance cannot be established.
+    const QString basis = QStringLiteral("preview-frame-v2|%1|%2|%3x%4|%5|%6|%7")
                               .arg(currentComposition_->id().toString(),
                                    settings.compositionName()
                                        .toQString()
@@ -784,7 +821,8 @@ public:
                                        'f', 3),
                                    QString::number(currentComposition_
                                                        ->frameRange()
-                                                       .duration()));
+                                                       .duration()),
+                                   previewDiskRenderContract_);
     const QByteArray digest =
         QCryptographicHash::hash(basis.toUtf8(), QCryptographicHash::Sha256);
     return QString::fromLatin1(digest.toHex().left(24));
@@ -802,10 +840,47 @@ public:
       return;
     }
 
+    const QString compositionId = currentComposition_->id().toString();
     QDir dir(currentCompositionDiskCacheDir());
-    if (dir.exists()) {
-      dir.removeRecursively();
+    {
+      // A queued frame write belongs to the old cache generation and must not
+      // recreate this directory after it has been cleared.
+      std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
+      ++previewDiskGeneration_;
+      std::erase_if(previewDiskWriteQueue_, [&compositionId](
+                                            const PreviewDiskWriteTask &task) {
+        return task.compositionId == compositionId;
+      });
+      if (dir.exists()) {
+        dir.removeRecursively();
+      }
     }
+  }
+
+  void updatePreviewDiskRenderContract(const int previewDownsample,
+                                       const int effectiveDownsample,
+                                       const QString &renderPath) {
+    const QString basis =
+        QStringLiteral("preview-contract-v1|previewDownsample=%1|"
+                       "effectiveDownsample=%2|path=%3")
+            .arg(std::max(1, previewDownsample))
+            .arg(std::max(1, effectiveDownsample))
+            .arg(renderPath.trimmed().isEmpty() ? QStringLiteral("unknown")
+                                                : renderPath.trimmed());
+    const QString contract = QString::fromLatin1(
+        QCryptographicHash::hash(basis.toUtf8(), QCryptographicHash::Sha256)
+            .toHex()
+            .left(24));
+    if (previewDiskRenderContract_ == contract) {
+      return;
+    }
+
+    // Clear the prior namespace before switching contracts.  Keeping the
+    // RAM state would let a previous-quality frame survive this transition.
+    clearPreviewDiskCacheForCurrentComposition();
+    previewDiskRenderContract_ = contract;
+    cancelRamPreviewBuild(QStringLiteral("preview-render-contract-changed"));
+    resetRamPreviewCache();
   }
 
   QString previewDiskCacheFramePathForNamespace(const QString &compositionKey,
@@ -819,6 +894,54 @@ public:
   QString previewDiskCacheFramePath(const int64_t frame) {
     return previewDiskCacheFramePathForNamespace(
         currentCompositionDiskCacheNamespace(), frame);
+  }
+
+  std::vector<int64_t> enforcePreviewDiskCacheBudget(
+      const QString &savedFramePath) {
+    std::vector<int64_t> evictedFrames;
+    const QFileInfo savedInfo(savedFramePath);
+    QDir directory(savedInfo.absolutePath());
+    if (!directory.exists()) {
+      return evictedFrames;
+    }
+
+    QFileInfoList frames = directory.entryInfoList(
+        QStringList{QStringLiteral("frame_*.png")}, QDir::Files, QDir::NoSort);
+    qint64 totalBytes = 0;
+    for (const QFileInfo &frame : frames) {
+      totalBytes += frame.size();
+    }
+    if (totalBytes <= kPreviewDiskCacheBudgetBytes) {
+      return evictedFrames;
+    }
+
+    std::sort(frames.begin(), frames.end(), [](const QFileInfo &a,
+                                                const QFileInfo &b) {
+      if (a.lastModified() != b.lastModified()) {
+        return a.lastModified() < b.lastModified();
+      }
+      return a.fileName() < b.fileName();
+    });
+    for (const QFileInfo &frame : frames) {
+      if (totalBytes <= kPreviewDiskCacheBudgetBytes) {
+        break;
+      }
+      // Preserve the just-completed frame even when one image exceeds budget.
+      if (frame.absoluteFilePath() == savedInfo.absoluteFilePath()) {
+        continue;
+      }
+      const QString baseName = frame.completeBaseName();
+      bool validFrame = false;
+      const int64_t frameNumber = baseName.mid(QStringLiteral("frame_").size())
+                                      .toLongLong(&validFrame);
+      if (QFile::remove(frame.absoluteFilePath())) {
+        totalBytes -= frame.size();
+        if (validFrame) {
+          evictedFrames.push_back(frameNumber);
+        }
+      }
+    }
+    return evictedFrames;
   }
 
   bool persistPreviewFrameToDisk(const QString &filePath, const QImage &image) {
@@ -864,7 +987,8 @@ public:
   }
 
   bool hasPreviewFrameOnDisk(const int64_t frame) {
-    if (!currentComposition_ || frame < 0) {
+    if (!currentComposition_ || frame < 0 ||
+        previewDiskRenderContract_ == QStringLiteral("unbound")) {
       return false;
     }
     return QFileInfo::exists(previewDiskCacheFramePath(frame));
@@ -1026,7 +1150,8 @@ public:
             PreviewDiskWriteTask{
                 frame, filePath, imageToCpuPreviewFrame(image),
                 currentComposition_ ? currentComposition_->id().toString()
-                                    : QString()});
+                                    : QString(),
+                previewDiskGeneration_.load()});
       }
       previewDiskWriteCv_.notify_one();
       markFrameOnDisk(frame, false);
@@ -1054,7 +1179,8 @@ public:
             PreviewDiskWriteTask{
                 frame, filePath, image,
                 currentComposition_ ? currentComposition_->id().toString()
-                                    : QString()});
+                                    : QString(),
+                previewDiskGeneration_.load()});
       }
       previewDiskWriteCv_.notify_one();
       markFrameOnDisk(frame, false);
@@ -1135,7 +1261,8 @@ public:
   }
 
   bool hydrateFrameFromDisk(const int64_t frame) {
-    if (!isValidFrameIndex(frame)) {
+    if (!isValidFrameIndex(frame) ||
+        previewDiskRenderContract_ == QStringLiteral("unbound")) {
       return false;
     }
 
@@ -1265,14 +1392,25 @@ public:
     if (frameCacheStates_.empty()) {
       return 0.0f;
     }
-    size_t hits = 0;
-    for (size_t i = 0; i < frameCacheStates_.size(); ++i) {
-      if (isFrameReadyForRamPreview(static_cast<int64_t>(i))) {
+    const int64_t start = std::max<int64_t>(0, ramPreviewRange_.start());
+    const int64_t endExclusive = std::max<int64_t>(
+        start, std::min<int64_t>(static_cast<int64_t>(frameCacheStates_.size()),
+                                 ramPreviewRange_.end()));
+    int requested = 0;
+    int hits = 0;
+    for (int64_t frame = start; frame < endExclusive; ++frame) {
+      const auto &state = frameCacheStates_[static_cast<size_t>(frame)];
+      if (!state.requested) {
+        continue;
+      }
+      ++requested;
+      if (isFrameReadyForRamPreview(frame)) {
         ++hits;
       }
     }
-    return static_cast<float>(hits) /
-           static_cast<float>(frameCacheStates_.size());
+    return requested > 0 ? static_cast<float>(hits) /
+                               static_cast<float>(requested)
+                         : 0.0f;
   }
 
   int ramPreviewCachedFrameCount() const {
@@ -1983,6 +2121,7 @@ void ArtifactPlaybackService::setCurrentComposition(
     ArtifactCompositionPtr composition) {
   if (impl_->currentComposition_ != composition) {
     impl_->currentComposition_ = composition;
+    impl_->previewDiskRenderContract_ = QStringLiteral("unbound");
     impl_->cancelRamPreviewBuild(QStringLiteral("composition-changed"));
     
     // Clear and resize cache bitmap
@@ -2283,10 +2422,10 @@ void ArtifactPlaybackService::clearRamPreviewCache() {
     return;
   }
 
-  impl_->cancelRamPreviewBuild(QStringLiteral("cache-cleared"));
-  impl_->resetRamPreviewCache();
-  Q_EMIT ramPreviewStateChanged(impl_->ramPreviewEnabled_,
-                                impl_->ramPreviewRange_);
+  // The public "Clear Cache" action must not leave disk-backed preview
+  // frames available for immediate rehydration.
+  impl_->invalidateRamPreviewForCurrentComposition(
+      QStringLiteral("cache-cleared"));
 }
 
 void ArtifactPlaybackService::invalidateRamPreviewCache(const QString &reason) {
@@ -2470,6 +2609,8 @@ bool ArtifactPlaybackService::storeCompositionPreviewFrameImage(
       currentCompositionId != compositionId.trimmed()) {
     return false;
   }
+  impl_->updatePreviewDiskRenderContract(previewDownsample,
+                                         effectiveDownsample, renderPath);
 
   const auto summary = impl_->ramPreviewSummary();
   const QString detailReason =
@@ -2477,7 +2618,7 @@ bool ArtifactPlaybackService::storeCompositionPreviewFrameImage(
           "composition-preview-readback;composition=%1;frame=%2;"
           "previewDownsample=%3;effectiveDownsample=%4;"
           "backend=composition-view;path=%5;policy=viewport-preview-v1;"
-          "diskKeyLimit=composition-settings-only;queue=%6;gen=%7;"
+          "diskContract=quality-render-path-v1;queue=%6;gen=%7;"
           "next=%8;range=%9-%10;rangeReady=%11%12")
           .arg(compositionId.trimmed().isEmpty() ? QStringLiteral("-")
                                                  : compositionId.trimmed())
@@ -2514,6 +2655,8 @@ bool ArtifactPlaybackService::storeCompositionPreviewFrameImage(
       currentCompositionId != compositionId.trimmed()) {
     return false;
   }
+  impl_->updatePreviewDiskRenderContract(previewDownsample,
+                                         effectiveDownsample, renderPath);
 
   const auto summary = impl_->ramPreviewSummary();
   const QString detailReason =
@@ -2521,7 +2664,7 @@ bool ArtifactPlaybackService::storeCompositionPreviewFrameImage(
           "composition-preview-readback;composition=%1;frame=%2;"
           "previewDownsample=%3;effectiveDownsample=%4;"
           "backend=composition-view;path=%5;policy=viewport-preview-v1;"
-          "diskKeyLimit=composition-settings-only;queue=%6;gen=%7;"
+          "diskContract=quality-render-path-v1;queue=%6;gen=%7;"
           "next=%8;range=%9-%10;rangeReady=%11%12")
           .arg(compositionId.trimmed().isEmpty() ? QStringLiteral("-")
                                                  : compositionId.trimmed())
