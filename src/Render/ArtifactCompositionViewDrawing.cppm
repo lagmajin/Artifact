@@ -898,8 +898,21 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       return false;
     }
 
-    const QString ownerId = layer->id().toString();
-    const QString cacheSignature = buildLayerSurfaceCacheKey(layer, surface, cacheFrameNumber);
+    const bool usesGpuTextureCache =
+        layerCacheEnabled && gpuTextureCacheManager &&
+        layerUsesGpuTextureCacheForCompositionView(layer);
+    const bool usesStaticGpuCache =
+        layerUsesStaticLayerGpuCacheForCompositionView(layer);
+    const bool usesSurfaceCache =
+        surfaceCache && (allowSurfaceCache || usesGpuTextureCache ||
+                         usesStaticGpuCache);
+    const QString ownerId = usesSurfaceCache || usesStaticGpuCache
+                                ? layer->id().toString()
+                                : QString{};
+    const QString cacheSignature = usesSurfaceCache || usesStaticGpuCache
+                                       ? buildLayerSurfaceCacheKey(
+                                             layer, surface, cacheFrameNumber)
+                                       : QString{};
     QString gpuOwnerId = ownerId;
     QString gpuCacheSignature = cacheSignature;
     if (!allowSurfaceCache) {
@@ -929,7 +942,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       }
     }
 
-    if (surfaceCache && !cacheSignature.isEmpty()) {
+    if (usesSurfaceCache && !cacheSignature.isEmpty()) {
       auto cacheIt = surfaceCache->find(ownerId);
       if (cacheIt != surfaceCache->end() &&
           cacheIt->ownerId == ownerId &&
@@ -955,7 +968,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         entry.processedBuffer = processedBuffer;
         entry.processedSurface = surface;
         entry.frameNumber = cacheFrameNumber;
-        if (layerCacheEnabled && gpuTextureCacheManager && layerUsesGpuTextureCacheForCompositionView(layer)) {
+        if (usesGpuTextureCache) {
           if (entry.processedBuffer) {
             entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(gpuOwnerId, gpuCacheSignature, *entry.processedBuffer);
           } else {
@@ -986,8 +999,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
             entry.processedBuffer = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
           }
         }
-        if (layerCacheEnabled && gpuTextureCacheManager &&
-            layerUsesGpuTextureCacheForCompositionView(layer)) {
+        if (usesGpuTextureCache) {
           if (entry.processedBuffer) {
             entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(
                 gpuOwnerId, gpuCacheSignature, *entry.processedBuffer);
@@ -1029,8 +1041,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
         const float finalOpacity = baseOpacity * instanceWeight;
 
-        if (layerCacheEnabled && gpuTextureCacheManager &&
-            layerUsesGpuTextureCacheForCompositionView(layer)) {
+        if (usesGpuTextureCache) {
           auto *textureEntry = staticCacheEntry
                                    ? static_cast<StaticLayerGpuCacheEntry*>(staticCacheEntry)
                                    : nullptr;
