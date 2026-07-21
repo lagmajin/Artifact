@@ -2,6 +2,7 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -190,6 +191,9 @@ public:
   bool previewDiskWriterStop_ = false;
   static constexpr qint64 kPreviewDiskCacheBudgetBytes =
       512LL * 1024LL * 1024LL;
+  static constexpr qint64 kPreviewDiskCacheGlobalBudgetBytes =
+      2LL * 1024LL * 1024LL * 1024LL;
+  size_t previewDiskWritesSinceGlobalBudgetCheck_ = 0;
   // A disk cache invalidation must also invalidate queued writes.  Without
   // this generation, an old encode can recreate a cache file after its
   // composition directory was removed.
@@ -283,6 +287,14 @@ public:
             savedToDisk = persistPreviewFrameToDisk(task.filePath, task.image);
             if (savedToDisk) {
               evictedFrames = enforcePreviewDiskCacheBudget(task.filePath);
+              ++previewDiskWritesSinceGlobalBudgetCheck_;
+              if (previewDiskWritesSinceGlobalBudgetCheck_ >= 8) {
+                previewDiskWritesSinceGlobalBudgetCheck_ = 0;
+                const auto globalEvictions =
+                    enforcePreviewDiskCacheGlobalBudget(task.filePath);
+                evictedFrames.insert(evictedFrames.end(), globalEvictions.begin(),
+                                     globalEvictions.end());
+              }
             }
           }
         }
@@ -942,6 +954,70 @@ public:
       }
     }
     return evictedFrames;
+  }
+
+  std::vector<int64_t> enforcePreviewDiskCacheGlobalBudget(
+      const QString &savedFramePath) {
+    std::vector<int64_t> evictedCurrentFrames;
+    const QDir root(previewDiskCacheRoot());
+    if (!root.exists()) {
+      return evictedCurrentFrames;
+    }
+
+    std::vector<QFileInfo> frames;
+    qint64 totalBytes = 0;
+    QDirIterator it(root.absolutePath(), QStringList{QStringLiteral("frame_*.png")},
+                    QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+      it.next();
+      const QFileInfo frame = it.fileInfo();
+      totalBytes += frame.size();
+      frames.push_back(frame);
+    }
+    if (totalBytes <= kPreviewDiskCacheGlobalBudgetBytes) {
+      return evictedCurrentFrames;
+    }
+
+    const QFileInfo savedInfo(savedFramePath);
+    const QString savedDirectory = savedInfo.absolutePath();
+    std::sort(frames.begin(), frames.end(), [](const QFileInfo &a,
+                                                const QFileInfo &b) {
+      if (a.lastModified() != b.lastModified()) {
+        return a.lastModified() < b.lastModified();
+      }
+      return a.absoluteFilePath() < b.absoluteFilePath();
+    });
+    for (const QFileInfo &frame : frames) {
+      if (totalBytes <= kPreviewDiskCacheGlobalBudgetBytes) {
+        break;
+      }
+      if (frame.absoluteFilePath() == savedInfo.absoluteFilePath()) {
+        continue;
+      }
+      if (!QFile::remove(frame.absoluteFilePath())) {
+        continue;
+      }
+      totalBytes -= frame.size();
+      if (frame.absolutePath() != savedDirectory) {
+        continue;
+      }
+      bool validFrame = false;
+      const int64_t frameNumber =
+          frame.completeBaseName().mid(QStringLiteral("frame_").size())
+              .toLongLong(&validFrame);
+      if (validFrame) {
+        evictedCurrentFrames.push_back(frameNumber);
+      }
+    }
+
+    // Empty namespace directories contain only generated preview data.
+    for (const QFileInfo &entry : root.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+      QDir namespaceDir(entry.absoluteFilePath());
+      if (namespaceDir.entryList(QDir::NoDotAndDotDot | QDir::AllEntries).isEmpty()) {
+        root.rmdir(entry.fileName());
+      }
+    }
+    return evictedCurrentFrames;
   }
 
   bool persistPreviewFrameToDisk(const QString &filePath, const QImage &image) {
