@@ -9487,6 +9487,7 @@ public:
 
   ViewportChannelDisplayMode viewportChannelDisplayMode_ =
       ViewportChannelDisplayMode::Color;
+  Diligent::ITextureView* viewportChannelDisplaySRV_ = nullptr;
 
   bool showReferenceOverlay_ = false;
 
@@ -22184,6 +22185,32 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             : nullptr);
 
+    viewportChannelDisplaySRV_ = nullptr;
+    if (pipelineEnabled) {
+      switch (viewportChannelDisplayMode_) {
+      case ViewportChannelDisplayMode::Emission:
+        viewportChannelDisplaySRV_ = renderPipeline.emissionSRV();
+        break;
+      case ViewportChannelDisplayMode::ObjectId:
+        viewportChannelDisplaySRV_ = renderPipeline.objectIdSRV();
+        break;
+      case ViewportChannelDisplayMode::MaterialId:
+        viewportChannelDisplaySRV_ = renderPipeline.materialIdSRV();
+        break;
+      case ViewportChannelDisplayMode::Albedo:
+        viewportChannelDisplaySRV_ = renderPipeline.albedoSRV();
+        break;
+      case ViewportChannelDisplayMode::Normal:
+        viewportChannelDisplaySRV_ = renderPipeline.normalSRV();
+        break;
+      case ViewportChannelDisplayMode::Velocity:
+        viewportChannelDisplaySRV_ = renderPipeline.velocitySRV();
+        break;
+      default:
+        break;
+      }
+    }
+
     previewRenderSlot.state = pipelineEnabled
 
                                   ? PreviewRenderPipelineSlot::State::Ready
@@ -23107,26 +23134,26 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     preserveSceneDepth);
 
-                if (!draftRendering && emissionRTV) {
+                if ((!draftRendering || emissionChannelRequested) && emissionRTV) {
 
                   drawGpuLayerEmissionToTarget(layer.get(), emissionRTV);
 
                 }
 
-                if ((!draftRendering ||
+                if ((!draftRendering || normalChannelRequested ||
                      screenSpaceGlobalIlluminationRequested) && normalRTV) {
 
                   drawGpuLayerNormalToTarget(layer.get(), normalRTV);
 
                 }
 
-                if (!draftRendering && velocityRTV) {
+                if ((!draftRendering || velocityChannelRequested) && velocityRTV) {
 
                   drawGpuLayerVelocityToTarget(layer.get(), velocityRTV);
 
                 }
 
-                if (!draftRendering && objectIdRTV) {
+                if ((!draftRendering || objectIdChannelRequested) && objectIdRTV) {
 
                   const quint32 objectHash =
 
@@ -23142,7 +23169,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                 }
 
-                if (!draftRendering && materialIdRTV) {
+                if ((!draftRendering || materialIdChannelRequested) && materialIdRTV) {
 
                   QString materialKey =
 
@@ -23170,7 +23197,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                 }
 
-                if ((!draftRendering ||
+                if ((!draftRendering || albedoChannelRequested ||
                      screenSpaceGlobalIlluminationRequested) && albedoRTV) {
 
                   drawGpuLayerAlbedoToTarget(layer.get(), albedoRTV);
@@ -26498,6 +26525,12 @@ void CompositionRenderController::Impl::drawViewportChannelOverlayImage(
 
     return;
 
+  }
+
+  if (viewportChannelDisplaySRV_) {
+    renderer_->drawSprite(0.0f, 0.0f, canvasWidth, canvasHeight,
+                          viewportChannelDisplaySRV_, 1.0f);
+    return;
   }
 
   const QImage channelImage = composeViewportChannelOverlayImage();
