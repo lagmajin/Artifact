@@ -400,6 +400,7 @@ namespace {
   };
   mutable std::map<QString, MeshGeometryState> meshRendererGeometry_;
   std::unique_ptr<ArtifactCore::IRayTracingManager> rayTracingManager_;
+  GlobalIlluminationSettings globalIlluminationSettings_;
   std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
   std::unique_ptr<ArtifactCore::ParticleRenderer> particleRenderer_;
   QString lastParticleDebug_;
@@ -508,6 +509,11 @@ namespace {
   quint64 presentSkippedCount_ = 0;
   QString lastPresentStatus_ = QStringLiteral("never-presented");
   bool deviceRecoveryAttempted_ = false;
+  quint64 deviceRecoveryAttemptCount_ = 0;
+  quint64 deviceRecoverySuccessCount_ = 0;
+  quint64 deviceRecoveryFailureCount_ = 0;
+  QString deviceRecoveryPreviousAdapter_ = QStringLiteral("<none>");
+  QString deviceRecoveryCurrentAdapter_ = QStringLiteral("<none>");
   bool deviceLossTeardown_ = false;
   std::vector<ArtifactCore::Light> m_sceneLights;
   LODManager::DetailLevel detailLevel_ = LODManager::DetailLevel::High;
@@ -833,6 +839,16 @@ namespace {
   quint64 presentFailureCount() const { return presentFailureCount_; }
   quint64 presentSkippedCount() const { return presentSkippedCount_; }
   QString lastPresentStatus() const { return lastPresentStatus_; }
+  QString gpuAdapterRecoveryDebugState() const {
+    return QStringLiteral(
+               "recoveryAttempts=%1 recoverySuccesses=%2 recoveryFailures=%3 "
+               "previous={%4} current={%5}")
+        .arg(deviceRecoveryAttemptCount_)
+        .arg(deviceRecoverySuccessCount_)
+        .arg(deviceRecoveryFailureCount_)
+        .arg(deviceRecoveryPreviousAdapter_)
+        .arg(deviceRecoveryCurrentAdapter_);
+  }
   void beginFrameCostCapture();
   void endFrameCostCapture();
   ArtifactCore::RenderCostStats frameCostStats() const;
@@ -2734,11 +2750,15 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
 
      if (deviceLost && widget_ && !deviceRecoveryAttempted_) {
       deviceRecoveryAttempted_ = true;
+      ++deviceRecoveryAttemptCount_;
+      deviceRecoveryPreviousAdapter_ =
+          deviceManager_.selectedAdapterDebugState();
       QWidget* recoveryWidget = widget_;
       qWarning() << "[ArtifactIRenderer] attempting one-shot renderer recovery after device loss";
       try {
        auto lostDevice = deviceManager_.device();
        if (!invalidateSharedRenderDeviceIfExclusive(lostDevice.RawPtr())) {
+        ++deviceRecoveryFailureCount_;
         lastPresentStatus_ = QStringLiteral("device-recovery-deferred-shared");
         qWarning() << "[ArtifactIRenderer] device recovery deferred because the lost shared device"
                       " still has other owners";
@@ -2748,10 +2768,19 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
        deviceLossTeardown_ = true;
        destroy();
        initialize(recoveryWidget);
-       lastPresentStatus_ = isInitialized()
-                                ? QStringLiteral("device-recovered")
-                                : QStringLiteral("device-recovery-failed");
+       deviceRecoveryCurrentAdapter_ =
+           deviceManager_.selectedAdapterDebugState();
+       if (isInitialized()) {
+        ++deviceRecoverySuccessCount_;
+        lastPresentStatus_ = QStringLiteral("device-recovered");
+       } else {
+        ++deviceRecoveryFailureCount_;
+        lastPresentStatus_ = QStringLiteral("device-recovery-failed");
+       }
       } catch (const std::exception& recoveryEx) {
+       ++deviceRecoveryFailureCount_;
+       deviceRecoveryCurrentAdapter_ =
+           deviceManager_.selectedAdapterDebugState();
        lastPresentStatus_ = QStringLiteral("device-recovery-exception: %1")
                                 .arg(QString::fromLocal8Bit(recoveryEx.what()));
        qWarning() << "[ArtifactIRenderer] device recovery failed:"
@@ -3647,6 +3676,180 @@ QString ArtifactIRenderer::rayTracingDebugState() const
       .arg(caps.maxGeometriesPerBLAS)
       .arg(caps.scratchBufferAlignment)
       .arg(caps.instanceBufferAlignment);
+}
+
+QString ArtifactIRenderer::gpuAdapterDebugState() const
+{
+  if (!impl_) {
+    return QStringLiteral("adapter=<no renderer>");
+  }
+  return QStringLiteral("%1 %2")
+      .arg(impl_->deviceManager_.selectedAdapterDebugState())
+      .arg(impl_->gpuAdapterRecoveryDebugState());
+}
+
+QString ArtifactIRenderer::gpuAdapterRegistryDebugState() const
+{
+  return impl_ ? impl_->deviceManager_.availableAdaptersDebugState()
+               : QStringLiteral("adapters=<no renderer>");
+}
+
+void ArtifactIRenderer::setGlobalIlluminationSettings(
+    const GlobalIlluminationSettings& settings)
+{
+  if (!impl_) {
+    return;
+  }
+  impl_->globalIlluminationSettings_ = settings;
+  impl_->globalIlluminationSettings_.targetGpuTimeMs =
+      std::clamp(settings.targetGpuTimeMs, 0.5f, 16.0f);
+  impl_->globalIlluminationSettings_.ssgiResolutionScale =
+      std::clamp(settings.ssgiResolutionScale, 0.25f, 1.0f);
+  impl_->globalIlluminationSettings_.ssgiRaySteps =
+      std::clamp(settings.ssgiRaySteps, 4u, 128u);
+  impl_->globalIlluminationSettings_.ddgiRaysPerProbe =
+      std::clamp(settings.ddgiRaysPerProbe, 16u, 512u);
+  impl_->globalIlluminationSettings_.ddgiProbeUpdateBudget =
+      std::clamp(settings.ddgiProbeUpdateBudget, 1u, 4096u);
+}
+
+GlobalIlluminationSettings
+ArtifactIRenderer::recommendedGlobalIlluminationSettings(
+    GlobalIlluminationQuality quality)
+{
+  GlobalIlluminationSettings settings;
+  settings.enabled = true;
+  settings.mode = GlobalIlluminationMode::Auto;
+  settings.quality = quality;
+  settings.temporalAccumulation = true;
+  settings.denoise = true;
+  settings.adaptiveBudget = true;
+
+  switch (quality) {
+  case GlobalIlluminationQuality::Performance:
+    settings.targetGpuTimeMs = 1.5f;
+    settings.ssgiResolutionScale = 0.25f;
+    settings.ssgiRaySteps = 6;
+    settings.ddgiRaysPerProbe = 24;
+    settings.ddgiProbeUpdateBudget = 64;
+    break;
+  case GlobalIlluminationQuality::Balanced:
+    settings.targetGpuTimeMs = 3.0f;
+    settings.ssgiResolutionScale = 0.5f;
+    settings.ssgiRaySteps = 10;
+    settings.ddgiRaysPerProbe = 48;
+    settings.ddgiProbeUpdateBudget = 128;
+    break;
+  case GlobalIlluminationQuality::Quality:
+    settings.targetGpuTimeMs = 6.0f;
+    settings.ssgiResolutionScale = 0.5f;
+    settings.ssgiRaySteps = 18;
+    settings.ddgiRaysPerProbe = 96;
+    settings.ddgiProbeUpdateBudget = 256;
+    break;
+  }
+  return settings;
+}
+
+GlobalIlluminationSettings ArtifactIRenderer::globalIlluminationSettings() const
+{
+  return impl_ ? impl_->globalIlluminationSettings_
+               : GlobalIlluminationSettings{};
+}
+
+GlobalIlluminationState ArtifactIRenderer::globalIlluminationState() const
+{
+  GlobalIlluminationState state;
+  if (!impl_) {
+    return state;
+  }
+
+  const auto& settings = impl_->globalIlluminationSettings_;
+  state.requestedMode = settings.mode;
+  state.quality = settings.quality;
+  state.rayTracingSupported = impl_->rayTracingManager_ &&
+                              impl_->rayTracingManager_->isSupported();
+
+  if (!settings.enabled || settings.mode == GlobalIlluminationMode::Off) {
+    state.selectedMode = GlobalIlluminationMode::Off;
+    return state;
+  }
+
+  switch (settings.mode) {
+  case GlobalIlluminationMode::SSGI:
+    state.selectedMode = GlobalIlluminationMode::SSGI;
+    break;
+  case GlobalIlluminationMode::DDGI:
+    state.selectedMode = state.rayTracingSupported
+                             ? GlobalIlluminationMode::DDGI
+                             : GlobalIlluminationMode::SSGI;
+    state.usingFallback = !state.rayTracingSupported;
+    break;
+  case GlobalIlluminationMode::Hybrid:
+    state.selectedMode = state.rayTracingSupported
+                             ? GlobalIlluminationMode::Hybrid
+                             : GlobalIlluminationMode::SSGI;
+    state.usingFallback = !state.rayTracingSupported;
+    break;
+  case GlobalIlluminationMode::Auto:
+    if (settings.quality == GlobalIlluminationQuality::Performance ||
+        !state.rayTracingSupported) {
+      state.selectedMode = GlobalIlluminationMode::SSGI;
+      state.usingFallback = !state.rayTracingSupported &&
+                            settings.quality != GlobalIlluminationQuality::Performance;
+    } else if (settings.quality == GlobalIlluminationQuality::Quality ||
+               settings.quality == GlobalIlluminationQuality::Balanced) {
+      state.selectedMode = GlobalIlluminationMode::Hybrid;
+    }
+    break;
+  case GlobalIlluminationMode::Off:
+    state.selectedMode = GlobalIlluminationMode::Off;
+    break;
+  }
+  return state;
+}
+
+QString ArtifactIRenderer::globalIlluminationDebugState() const
+{
+  const auto settings = globalIlluminationSettings();
+  const auto state = globalIlluminationState();
+  const auto modeName = [](GlobalIlluminationMode mode) {
+    switch (mode) {
+    case GlobalIlluminationMode::Off: return QStringLiteral("off");
+    case GlobalIlluminationMode::Auto: return QStringLiteral("auto");
+    case GlobalIlluminationMode::SSGI: return QStringLiteral("ssgi");
+    case GlobalIlluminationMode::DDGI: return QStringLiteral("ddgi");
+    case GlobalIlluminationMode::Hybrid: return QStringLiteral("hybrid");
+    }
+    return QStringLiteral("unknown");
+  };
+  const auto qualityName = [](GlobalIlluminationQuality quality) {
+    switch (quality) {
+    case GlobalIlluminationQuality::Performance: return QStringLiteral("performance");
+    case GlobalIlluminationQuality::Balanced: return QStringLiteral("balanced");
+    case GlobalIlluminationQuality::Quality: return QStringLiteral("quality");
+    }
+    return QStringLiteral("unknown");
+  };
+
+  return QStringLiteral(
+             "enabled=%1 requested=%2 selected=%3 quality=%4 rt=%5 fallback=%6 "
+             "temporal=%7 denoise=%8 adaptive=%9 targetMs=%10 ssgiScale=%11 "
+             "ssgiSteps=%12 ddgiRays=%13 ddgiProbeBudget=%14")
+      .arg(settings.enabled)
+      .arg(modeName(state.requestedMode))
+      .arg(modeName(state.selectedMode))
+      .arg(qualityName(state.quality))
+      .arg(state.rayTracingSupported)
+      .arg(state.usingFallback)
+      .arg(settings.temporalAccumulation)
+      .arg(settings.denoise)
+      .arg(settings.adaptiveBudget)
+      .arg(settings.targetGpuTimeMs, 0, 'f', 2)
+      .arg(settings.ssgiResolutionScale, 0, 'f', 2)
+      .arg(settings.ssgiRaySteps)
+      .arg(settings.ddgiRaysPerProbe)
+      .arg(settings.ddgiProbeUpdateBudget);
 }
 void ArtifactIRenderer::drawGizmoLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness)
 { impl_->primitiveRenderer3D_.draw3DLine({start.x, start.y, start.z}, {end.x, end.y, end.z}, color, thickness); }

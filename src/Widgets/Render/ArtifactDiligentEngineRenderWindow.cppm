@@ -261,10 +261,27 @@ float4 main(PSInput input) : SV_TARGET
     float3 diffuse =
         (1.0 - fresnel) * (1.0 - materialMetallic) *
         sampledBaseColor.rgb / pi;
-    float3 ambient =
-        sampledBaseColor.rgb *
-        (0.035 + 0.025 * (1.0 - materialMetallic));
-    float3 color = ambient + (diffuse + specular) * NdotL * 2.2;
+    // Neutral analytic environment fallback.  It keeps the viewport material
+    // readable before an HDRI cubemap has been generated, and deliberately
+    // stays in linear light until the final display conversion below.
+    float skyWeight = saturate(N.y * 0.5 + 0.5);
+    float3 diffuseEnvironment = lerp(
+        float3(0.055, 0.050, 0.045),
+        float3(0.34, 0.40, 0.52),
+        skyWeight);
+    float3 R = reflect(-V, N);
+    float reflectionWeight = saturate(R.y * 0.5 + 0.5);
+    float3 specularEnvironment = lerp(
+        float3(0.025, 0.020, 0.018),
+        float3(0.22, 0.30, 0.44),
+        reflectionWeight);
+    specularEnvironment *= lerp(1.0, 0.16, materialRoughness);
+    float3 ambientDiffuse =
+        diffuseEnvironment * sampledBaseColor.rgb *
+        (1.0 - materialMetallic) * (1.0 - fresnel);
+    float3 ambientSpecular = specularEnvironment * fresnel;
+    float3 color = ambientDiffuse + ambientSpecular +
+        (diffuse + specular) * NdotL * 2.2;
     color = color / (color + 1.0);
     color = pow(color, 1.0 / 2.2);
     return float4(color, sampledBaseColor.a);

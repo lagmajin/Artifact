@@ -1077,8 +1077,21 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       return false;
     }
 
-    const QString ownerId = layer->id().toString();
-    const QString cacheSignature = buildLayerSurfaceCacheKey(layer, surface, cacheFrameNumber);
+    const bool usesGpuTextureCache =
+        layerCacheEnabled && gpuTextureCacheManager &&
+        layerUsesGpuTextureCacheForCompositionView(layer);
+    const bool usesStaticGpuCache =
+        layerUsesStaticLayerGpuCacheForCompositionView(layer);
+    const bool usesSurfaceCache =
+        surfaceCache && (allowSurfaceCache || usesGpuTextureCache ||
+                         usesStaticGpuCache);
+    const QString ownerId = usesSurfaceCache || usesStaticGpuCache
+                                ? layer->id().toString()
+                                : QString{};
+    const QString cacheSignature = usesSurfaceCache || usesStaticGpuCache
+                                       ? buildLayerSurfaceCacheKey(
+                                             layer, surface, cacheFrameNumber)
+                                       : QString{};
     QString gpuOwnerId = ownerId;
     QString gpuCacheSignature = cacheSignature;
     if (!allowSurfaceCache) {
@@ -1094,6 +1107,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     }
     LayerSurfaceCacheEntry* cacheEntry = nullptr;
     StaticLayerGpuCacheEntry* staticCacheEntry = nullptr;
+    std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> directProcessedBuffer;
 
     if (layerUsesStaticLayerGpuCacheForCompositionView(layer) &&
         !cacheSignature.isEmpty()) {
@@ -1102,39 +1116,44 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       if (it != staticCache.end() && it->ownerId == ownerId &&
           it->cacheSignature == cacheSignature) {
         staticCacheEntry = &(*it);
+        directProcessedBuffer = staticCacheEntry->processedBuffer;
         if (!staticCacheEntry->processedSurface.isNull()) {
           surface = staticCacheEntry->processedSurface;
         }
       }
     }
 
-    if (surfaceCache && !cacheSignature.isEmpty()) {
+    if (usesSurfaceCache && !cacheSignature.isEmpty()) {
       auto cacheIt = surfaceCache->find(ownerId);
       if (cacheIt != surfaceCache->end() &&
           cacheIt->ownerId == ownerId &&
           cacheIt->cacheSignature == cacheSignature &&
-          !cacheIt->processedSurface.isNull()) {
+          (!cacheIt->processedSurface.isNull() ||
+           cacheIt->processedBuffer ||
+           (usesGpuTextureCache &&
+            gpuTextureCacheManager->isValid(cacheIt->gpuTextureHandle)))) {
         cacheEntry = &(*cacheIt);
-        surface = cacheIt->processedSurface;
+        directProcessedBuffer = cacheEntry->processedBuffer;
+        if (!cacheEntry->processedSurface.isNull()) {
+          surface = cacheEntry->processedSurface;
+        }
       } else {
         std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
         if (allowSurfaceCache) {
           ArtifactCore::ImageF32x4_RGBA processed;
           if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
             processedBuffer = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
-            if (!layerCacheEnabled || !gpuTextureCacheManager || !layerUsesGpuTextureCacheForCompositionView(layer)) {
-              surface = processed.toQImage();
-            }
           }
         }
+        directProcessedBuffer = processedBuffer;
 
         LayerSurfaceCacheEntry entry;
         entry.ownerId = ownerId;
         entry.cacheSignature = cacheSignature;
         entry.processedBuffer = processedBuffer;
-        entry.processedSurface = surface;
+        entry.processedSurface = processedBuffer ? QImage{} : surface;
         entry.frameNumber = cacheFrameNumber;
-        if (layerCacheEnabled && gpuTextureCacheManager && layerUsesGpuTextureCacheForCompositionView(layer)) {
+        if (usesGpuTextureCache) {
           if (entry.processedBuffer) {
             entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(gpuOwnerId, gpuCacheSignature, *entry.processedBuffer);
           } else {
@@ -1145,7 +1164,15 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         cacheEntry = &(*surfaceCache)[ownerId];
       }
     } else if (allowSurfaceCache) {
-      applyRasterizerEffectsAndMasksToSurface(layer, surface, lod);
+      const QImage processedSurface = downsampleForLOD(surface, lod);
+      ArtifactCore::ImageF32x4_RGBA processed;
+      if (!processedSurface.isNull() &&
+          buildRasterizedSurfaceBuffer(layer, processedSurface, &processed)) {
+        directProcessedBuffer =
+            std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
+      } else if (!processedSurface.isNull()) {
+        surface = processedSurface;
+      }
     }
 
     if (layerUsesStaticLayerGpuCacheForCompositionView(layer) &&
@@ -1155,21 +1182,23 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         StaticLayerGpuCacheEntry entry;
         entry.ownerId = ownerId;
         entry.cacheSignature = cacheSignature;
-        entry.processedSurface = surface;
         entry.lastFrameNumber = cacheFrameNumber;
-        entry.byteSize = static_cast<size_t>(surface.bytesPerLine()) *
-                         static_cast<size_t>(std::max(0, surface.height()));
-        if (allowSurfaceCache) {
+        entry.processedBuffer = directProcessedBuffer;
+        if (!entry.processedBuffer && allowSurfaceCache) {
           ArtifactCore::ImageF32x4_RGBA processed;
           if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
             entry.processedBuffer = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
           }
         }
-        if (layerCacheEnabled && gpuTextureCacheManager &&
-            layerUsesGpuTextureCacheForCompositionView(layer)) {
+        entry.processedSurface = entry.processedBuffer ? QImage{} : surface;
+        entry.byteSize = entry.processedBuffer
+                             ? entry.processedBuffer->totalPixels() * 4 * sizeof(float)
+                             : static_cast<size_t>(surface.bytesPerLine()) *
+                                   static_cast<size_t>(std::max(0, surface.height()));
+        if (usesGpuTextureCache) {
           if (entry.processedBuffer) {
             entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(
-                gpuOwnerId, gpuCacheSignature, *entry.processedBuffer);
+               gpuOwnerId, gpuCacheSignature, *entry.processedBuffer);
           } else {
             entry.gpuTextureHandle =
                 gpuTextureCacheManager->acquireOrCreate(gpuOwnerId, gpuCacheSignature, surface);
@@ -1177,6 +1206,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         }
         staticCache[ownerId] = entry;
         staticCacheEntry = &staticCache[ownerId];
+        directProcessedBuffer = staticCacheEntry->processedBuffer;
       } else {
         staticCacheEntry->lastFrameNumber = cacheFrameNumber;
       }
@@ -1185,6 +1215,9 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     if (sceneLights && !sceneLights->empty() && !layer->is3D()) {
       const float lift = std::min(0.18f, 0.03f * static_cast<float>(sceneLights->size()));
       if (lift > 0.0f) {
+        if (directProcessedBuffer && !directProcessedBuffer->isEmpty()) {
+          surface = directProcessedBuffer->toQImage();
+        }
         QImage lit = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
         for (int y = 0; y < lit.height(); ++y) {
           QRgb* row = reinterpret_cast<QRgb*>(lit.scanLine(y));
@@ -1200,6 +1233,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           }
         }
         surface = std::move(lit);
+        directProcessedBuffer.reset();
       }
     }
 
@@ -1208,24 +1242,37 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
         const float finalOpacity = baseOpacity * instanceWeight;
 
-        if (layerCacheEnabled && gpuTextureCacheManager &&
-            layerUsesGpuTextureCacheForCompositionView(layer)) {
-          auto *textureEntry = staticCacheEntry
-                                   ? static_cast<StaticLayerGpuCacheEntry*>(staticCacheEntry)
-                                   : nullptr;
-          if (textureEntry && !gpuTextureCacheManager->isValid(textureEntry->gpuTextureHandle)) {
-            const QImage& uploadSurface =
-                textureEntry->processedSurface.isNull() ? surface : textureEntry->processedSurface;
-            if (textureEntry->processedBuffer) {
-              textureEntry->gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(
-                  gpuOwnerId, gpuCacheSignature, *textureEntry->processedBuffer);
+        if (usesGpuTextureCache) {
+          GPUTextureCacheHandle* textureHandle = nullptr;
+          const std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>* processedBuffer = nullptr;
+          const QImage* processedSurface = nullptr;
+          if (staticCacheEntry) {
+            textureHandle = &staticCacheEntry->gpuTextureHandle;
+            processedBuffer = &staticCacheEntry->processedBuffer;
+            processedSurface = &staticCacheEntry->processedSurface;
+          } else if (cacheEntry) {
+            textureHandle = &cacheEntry->gpuTextureHandle;
+            processedBuffer = &cacheEntry->processedBuffer;
+            processedSurface = &cacheEntry->processedSurface;
+          }
+          if (textureHandle &&
+              !gpuTextureCacheManager->isValid(*textureHandle)) {
+            if (processedBuffer && *processedBuffer) {
+              *textureHandle = gpuTextureCacheManager->acquireOrCreate(
+                  gpuOwnerId, gpuCacheSignature, **processedBuffer);
             } else {
-              textureEntry->gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(
-                  gpuOwnerId, gpuCacheSignature, uploadSurface);
+              const QImage& uploadSurface =
+                  processedSurface && !processedSurface->isNull()
+                      ? *processedSurface
+                      : surface;
+              if (!uploadSurface.isNull()) {
+                *textureHandle = gpuTextureCacheManager->acquireOrCreate(
+                    gpuOwnerId, gpuCacheSignature, uploadSurface);
+              }
             }
           }
           const auto binding = gpuTextureCacheManager->bindingRecord(
-              textureEntry ? textureEntry->gpuTextureHandle : GPUTextureCacheHandle{});
+              textureHandle ? *textureHandle : GPUTextureCacheHandle{});
           if (binding.isValid()) {
             renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
                                  static_cast<float>(rect.y()),
@@ -1238,13 +1285,23 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           }
         }
 
-        renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
-                             static_cast<float>(rect.y()),
-                             static_cast<float>(rect.width()),
-                             static_cast<float>(rect.height()),
-                             instanceTransform,
-                             surface,
-                             finalOpacity);
+        if (directProcessedBuffer && !directProcessedBuffer->isEmpty()) {
+          renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
+                               static_cast<float>(rect.y()),
+                               static_cast<float>(rect.width()),
+                               static_cast<float>(rect.height()),
+                               instanceTransform,
+                               *directProcessedBuffer,
+                               finalOpacity);
+        } else {
+          renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
+                               static_cast<float>(rect.y()),
+                               static_cast<float>(rect.width()),
+                               static_cast<float>(rect.height()),
+                               instanceTransform,
+                               surface,
+                               finalOpacity);
+        }
       });
     return true;
   };

@@ -49,7 +49,10 @@ public:
     std::atomic<int64_t> currentFrame_{0};
     FrameRange frameRange_{FramePosition(0), FramePosition(299)};  // デフォルト 300 フレーム
     FrameRate frameRate_{30.0f};
-    float playbackSpeed_{1.0f};
+    // Written by the UI/service thread and consumed by the playback worker.
+    // The worker re-bases its timeline before applying a changed value.
+    std::atomic<float> playbackSpeed_{1.0f};
+    float appliedPlaybackSpeed_ = 1.0f;
     std::atomic<bool> looping_{false};
     std::atomic<bool> pingPong_{false};
     std::atomic<PlaybackSkipMode> skipMode_{PlaybackSkipMode::None};
@@ -188,6 +191,12 @@ public:
         // ポーズ時にaudioTargetBufferedFrames_をリセットして再開時の同期問題を防ぐ
         audioTargetBufferedFrames_ = 0;
     }
+
+    void publishPlaybackSpeedChanged(const float speed) {
+        QMetaObject::invokeMethod(owner_, [this, speed]() {
+            Q_EMIT owner_->playbackSpeedChanged(speed);
+        }, Qt::QueuedConnection);
+    }
     
     /// メイン再生ループ（ワーカースレッドで実行）
     void runPlaybackLoop() {
@@ -195,10 +204,10 @@ public:
         lastFrameTime_ = std::chrono::steady_clock::now();
         
         const double fps = frameRate_.framerate();
-        // インターバルはあくまでベース。実際には毎ループ時間をチェックする。
-        const int64_t frameIntervalUs = static_cast<int64_t>(1000000.0 / (fps * std::abs(playbackSpeed_)));
+        appliedPlaybackSpeed_ = playbackSpeed_.load();
         
-        qDebug() << "[PlaybackEngine] Starting high-precision playback loop at" << (fps * std::abs(playbackSpeed_)) << "fps";
+        qDebug() << "[PlaybackEngine] Starting high-precision playback loop at"
+                 << (fps * std::abs(appliedPlaybackSpeed_)) << "fps";
         
         while (state_ != PlaybackState::Stopped) {
             if (state_ == PlaybackState::Paused) {
@@ -213,13 +222,24 @@ public:
             }
             
             auto now = std::chrono::steady_clock::now();
+
+            const float requestedSpeed = playbackSpeed_.load();
+            if (requestedSpeed != appliedPlaybackSpeed_) {
+                // Rebase at the displayed frame so a live speed change never
+                // reinterprets the whole elapsed playback interval at a new rate.
+                playbackStartFrame_ = currentFrame_.load();
+                playbackStartTime_ = now;
+                appliedPlaybackSpeed_ = requestedSpeed;
+                audioSeekPending_ = true;
+            }
             
             // 経過時間から現在の論理的なターゲットフレームを計算
             auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - playbackStartTime_);
             double elapsedSeconds = elapsed.count() / 1000000.0;
             
             // 重要：フレーム = 開始フレーム + (経過秒 * fps * 再生速度)
-            const double rawFrameOffset = elapsedSeconds * fps * playbackSpeed_;
+            const double rawFrameOffset =
+                elapsedSeconds * fps * appliedPlaybackSpeed_;
             int64_t frameOffset = rawFrameOffset >= 0.0
                 ? static_cast<int64_t>(std::floor(rawFrameOffset))
                 : static_cast<int64_t>(std::ceil(rawFrameOffset));
@@ -245,7 +265,9 @@ public:
                 if (targetFrame > endPos.framePosition()) {
                     if (pingPong_) {
                         // Ping-Pong: reverse direction at boundary
-                        playbackSpeed_ = -playbackSpeed_;
+                        appliedPlaybackSpeed_ = -appliedPlaybackSpeed_;
+                        playbackSpeed_.store(appliedPlaybackSpeed_);
+                        publishPlaybackSpeedChanged(appliedPlaybackSpeed_);
                         playbackStartTime_ = now;
                         playbackStartFrame_ = endPos.framePosition();
                         targetFrame = endPos.framePosition();
@@ -265,7 +287,9 @@ public:
                     }
                 } else if (targetFrame < startPos.framePosition()) {
                     if (pingPong_) {
-                        playbackSpeed_ = -playbackSpeed_;
+                        appliedPlaybackSpeed_ = -appliedPlaybackSpeed_;
+                        playbackSpeed_.store(appliedPlaybackSpeed_);
+                        publishPlaybackSpeedChanged(appliedPlaybackSpeed_);
                         playbackStartTime_ = now;
                         playbackStartFrame_ = startPos.framePosition();
                         targetFrame = startPos.framePosition();
@@ -398,6 +422,19 @@ public:
         // 停止状態なら何もしない（競合防止）
         if (state_.load() == PlaybackState::Stopped) return;
         if (!composition_ || !audioRenderer_) return;
+
+        // Time-stretch/pitch-preserving audio is not implemented in this
+        // realtime path.  Never present 1x audio as if it matched a 0.25x,
+        // 0.5x, 2x, or reverse visual preview.
+        if (std::abs(appliedPlaybackSpeed_ - 1.0f) > 0.0001f) {
+            if (audioRenderer_->isActive() || audioRenderer_->bufferedFrames() > 0) {
+                audioRenderer_->stop();
+                audioRenderer_->clearBuffer();
+            }
+            audioTargetBufferedFrames_ = 0;
+            audioSeekPending_ = true;
+            return;
+        }
 
         const auto fillStart = std::chrono::high_resolution_clock::now();
 
@@ -572,6 +609,7 @@ public:
             provider = audioClockProvider_;
         }
         if (!provider) return;
+        if (std::abs(appliedPlaybackSpeed_ - 1.0f) > 0.0001f) return;
         if (state_.load() != PlaybackState::Playing) return;
         if (!audioRenderer_ || !audioRenderer_->isActive()) return;
         if (composition_ && !composition_->hasAudio()) return;
@@ -694,12 +732,12 @@ FrameRange ArtifactPlaybackEngine::frameRange() const {
 }
 
 void ArtifactPlaybackEngine::setPlaybackSpeed(float speed) {
-    impl_->playbackSpeed_ = speed;
+    impl_->playbackSpeed_.store(speed);
     Q_EMIT playbackSpeedChanged(speed);
 }
 
 float ArtifactPlaybackEngine::playbackSpeed() const {
-    return impl_->playbackSpeed_;
+    return impl_->playbackSpeed_.load();
 }
 
 void ArtifactPlaybackEngine::setLooping(bool loop) {

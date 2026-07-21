@@ -20,6 +20,25 @@ export namespace Artifact
  using ArtifactCore::GpuContext;
  using ArtifactCore::BlendMode;
 
+ struct GlobalIlluminationInputs
+ {
+  ITextureView* depth = nullptr;
+  ITextureView* normal = nullptr;
+  ITextureView* albedo = nullptr;
+  ITextureView* velocity = nullptr;
+  ITextureView* emission = nullptr;
+
+  bool validForScreenSpace() const
+  {
+   return depth != nullptr && normal != nullptr && albedo != nullptr;
+  }
+
+  bool validForTemporalReuse() const
+  {
+   return validForScreenSpace() && velocity != nullptr;
+  }
+ };
+
  class LIBRARY_DLL_API RenderPipeline
  {
  public:
@@ -71,6 +90,21 @@ export namespace Artifact
   ITextureView* albedoSRV() const;
   ITextureView* albedoRTV() const;
   bool hasAlbedoTarget() const;
+  GlobalIlluminationInputs globalIlluminationInputs(
+      ITextureView* depthSRV) const;
+  bool dispatchScreenSpaceGlobalIllumination(
+      IDeviceContext* ctx,
+      const GlobalIlluminationInputs& inputs,
+      float resolutionScale,
+      Uint32 raySteps,
+      float intensity = 1.0f,
+      float depthThickness = 0.01f,
+      bool temporalAccumulation = true,
+      bool denoise = true);
+  void resetScreenSpaceGlobalIlluminationHistory();
+  ITextureView* screenSpaceGlobalIlluminationSRV() const;
+  Uint32 screenSpaceGlobalIlluminationWidth() const;
+  Uint32 screenSpaceGlobalIlluminationHeight() const;
   bool updateMatteSourceFromData(IDeviceContext* ctx,
                                   const void* data,
                                   Uint32 width,

@@ -69,6 +69,42 @@ export struct float3 {
 };
 } // namespace Detail
 
+export enum class GlobalIlluminationMode {
+  Off,
+  Auto,
+  SSGI,
+  DDGI,
+  Hybrid
+};
+
+export enum class GlobalIlluminationQuality {
+  Performance,
+  Balanced,
+  Quality
+};
+
+export struct GlobalIlluminationSettings {
+  bool enabled = false;
+  GlobalIlluminationMode mode = GlobalIlluminationMode::Auto;
+  GlobalIlluminationQuality quality = GlobalIlluminationQuality::Balanced;
+  bool temporalAccumulation = true;
+  bool denoise = true;
+  bool adaptiveBudget = true;
+  float targetGpuTimeMs = 3.0f;
+  float ssgiResolutionScale = 0.5f;
+  unsigned int ssgiRaySteps = 10;
+  unsigned int ddgiRaysPerProbe = 48;
+  unsigned int ddgiProbeUpdateBudget = 128;
+};
+
+export struct GlobalIlluminationState {
+  GlobalIlluminationMode requestedMode = GlobalIlluminationMode::Off;
+  GlobalIlluminationMode selectedMode = GlobalIlluminationMode::Off;
+  GlobalIlluminationQuality quality = GlobalIlluminationQuality::Balanced;
+  bool rayTracingSupported = false;
+  bool usingFallback = false;
+};
+
 export class ArtifactIRenderer {
 public:
   class Impl;
@@ -108,7 +144,15 @@ public:
   quint64 lastFrameGpuTimingExecutionId() const;
   QString particleDebugState() const;
   QString glyphAtlasDebugState() const;
+  QString gpuAdapterDebugState() const;
+  QString gpuAdapterRegistryDebugState() const;
   QString rayTracingDebugState() const;
+  void setGlobalIlluminationSettings(const GlobalIlluminationSettings &settings);
+  static GlobalIlluminationSettings recommendedGlobalIlluminationSettings(
+      GlobalIlluminationQuality quality);
+  GlobalIlluminationSettings globalIlluminationSettings() const;
+  GlobalIlluminationState globalIlluminationState() const;
+  QString globalIlluminationDebugState() const;
 
   QImage readbackToImage() const;
   QImage readbackTextureViewToImage(Diligent::ITextureView *textureView) const;

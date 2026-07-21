@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <algorithm>
+#include <limits>
 #include <QWidget>
 #include <QDebug>
 #include <QSize>
@@ -129,6 +130,196 @@ namespace {
             case RENDER_DEVICE_TYPE_METAL: return "metal";
             case RENDER_DEVICE_TYPE_WEBGPU: return "webgpu";
             default: return "unknown";
+        }
+    }
+
+    QString adapterVendorName(const Uint32 vendorId)
+    {
+        switch (vendorId) {
+            case 0x10de: return QStringLiteral("NVIDIA");
+            case 0x1002:
+            case 0x1022: return QStringLiteral("AMD");
+            case 0x8086: return QStringLiteral("Intel");
+            case 0x106b: return QStringLiteral("Apple");
+            case 0x1414: return QStringLiteral("Microsoft");
+            default: return QStringLiteral("Unknown");
+        }
+    }
+
+    QString adapterTypeName(const ADAPTER_TYPE type)
+    {
+        switch (type) {
+            case ADAPTER_TYPE_SOFTWARE: return QStringLiteral("Software");
+            case ADAPTER_TYPE_INTEGRATED: return QStringLiteral("Integrated");
+            case ADAPTER_TYPE_DISCRETE: return QStringLiteral("Discrete");
+            case ADAPTER_TYPE_UNKNOWN:
+            default: return QStringLiteral("Unknown");
+        }
+    }
+
+    int adapterAutoScore(const GraphicsAdapterInfo& adapter)
+    {
+        int score = 0;
+        switch (adapter.Type) {
+            case ADAPTER_TYPE_DISCRETE: score += 4000; break;
+            case ADAPTER_TYPE_INTEGRATED: score += 2000; break;
+            case ADAPTER_TYPE_SOFTWARE: score -= 10000; break;
+            case ADAPTER_TYPE_UNKNOWN:
+            default: score += 1000; break;
+        }
+        constexpr Uint64 bytesPerGiB = 1024ull * 1024ull * 1024ull;
+        const Uint64 localMemoryGiB = adapter.Memory.LocalMemory / bytesPerGiB;
+        const Uint64 unifiedMemoryGiB = adapter.Memory.UnifiedMemory / bytesPerGiB;
+        score += static_cast<int>(std::min<Uint64>(localMemoryGiB * 128ull, 2048ull));
+        score += static_cast<int>(std::min<Uint64>(unifiedMemoryGiB * 32ull, 512ull));
+        if (adapter.Features.RayTracing != DEVICE_FEATURE_STATE_DISABLED) {
+            score += 1000;
+        }
+        if (adapter.NumOutputs > 0) {
+            score += 50;
+        }
+        return score;
+    }
+
+    enum class GpuAdapterPolicy {
+        Auto,
+        HighPerformance,
+        PowerSaving,
+        Specific
+    };
+
+    GpuAdapterPolicy gpuAdapterPolicyFromEnv()
+    {
+        const QString value =
+            qEnvironmentVariable("ARTIFACT_GPU_POLICY").trimmed().toLower();
+        if (value == "high-performance" || value == "high_performance" ||
+            value == "performance" || value == "discrete" || value == "dgpu") {
+            return GpuAdapterPolicy::HighPerformance;
+        }
+        if (value == "power-saving" || value == "power_saving" ||
+            value == "powersave" || value == "integrated" || value == "igpu") {
+            return GpuAdapterPolicy::PowerSaving;
+        }
+        if (value == "specific" || value == "manual") {
+            return GpuAdapterPolicy::Specific;
+        }
+        return GpuAdapterPolicy::Auto;
+    }
+
+    const char* gpuAdapterPolicyName(const GpuAdapterPolicy policy)
+    {
+        switch (policy) {
+            case GpuAdapterPolicy::HighPerformance: return "high-performance";
+            case GpuAdapterPolicy::PowerSaving: return "power-saving";
+            case GpuAdapterPolicy::Specific: return "specific";
+            case GpuAdapterPolicy::Auto:
+            default: return "auto";
+        }
+    }
+
+    struct GpuAdapterSelection {
+        Uint32 adapterId = DEFAULT_ADAPTER_ID;
+        QString description;
+        GpuAdapterPolicy policy = GpuAdapterPolicy::Auto;
+        bool resolved = false;
+    };
+
+    GpuAdapterSelection selectGpuAdapter(IEngineFactory* factory)
+    {
+        GpuAdapterSelection selection;
+        selection.policy = gpuAdapterPolicyFromEnv();
+        if (!factory) {
+            return selection;
+        }
+
+        Uint32 adapterCount = 0;
+        factory->EnumerateAdapters(Version{}, adapterCount, nullptr);
+        if (adapterCount == 0) {
+            return selection;
+        }
+        std::vector<GraphicsAdapterInfo> adapters(adapterCount);
+        factory->EnumerateAdapters(Version{}, adapterCount, adapters.data());
+        adapters.resize(adapterCount);
+
+        int selectedIndex = -1;
+        if (selection.policy == GpuAdapterPolicy::Specific) {
+            const QString requested =
+                qEnvironmentVariable("ARTIFACT_GPU_ADAPTER").trimmed();
+            bool numericOk = false;
+            const int numericIndex = requested.toInt(&numericOk);
+            if (numericOk && numericIndex >= 0 &&
+                numericIndex < static_cast<int>(adapterCount)) {
+                selectedIndex = numericIndex;
+            } else if (!requested.isEmpty()) {
+                for (Uint32 index = 0; index < adapterCount; ++index) {
+                    const QString name = QString::fromLatin1(
+                        adapters[index].Description).trimmed();
+                    if (name.contains(requested, Qt::CaseInsensitive)) {
+                        selectedIndex = static_cast<int>(index);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (selectedIndex < 0) {
+            int bestScore = std::numeric_limits<int>::min();
+            for (Uint32 index = 0; index < adapterCount; ++index) {
+                const auto& adapter = adapters[index];
+                int score = adapterAutoScore(adapter);
+                if (selection.policy == GpuAdapterPolicy::PowerSaving) {
+                    score += adapter.Type == ADAPTER_TYPE_INTEGRATED ? 6000 : 0;
+                    score -= adapter.Type == ADAPTER_TYPE_DISCRETE ? 3000 : 0;
+                } else if (selection.policy == GpuAdapterPolicy::HighPerformance) {
+                    score += adapter.Type == ADAPTER_TYPE_DISCRETE ? 2000 : 0;
+                }
+                if (score > bestScore) {
+                    bestScore = score;
+                    selectedIndex = static_cast<int>(index);
+                }
+            }
+        }
+
+        if (selectedIndex >= 0) {
+            selection.adapterId = static_cast<Uint32>(selectedIndex);
+            selection.description = QString::fromLatin1(
+                adapters[selection.adapterId].Description).trimmed();
+            selection.resolved = true;
+        }
+        return selection;
+    }
+
+    void appendFactoryAdapters(IEngineFactory* factory,
+                               const QString& backend,
+                               std::vector<GpuAdapterCandidate>& output)
+    {
+        if (!factory) {
+            return;
+        }
+        Uint32 adapterCount = 0;
+        factory->EnumerateAdapters(Version{}, adapterCount, nullptr);
+        if (adapterCount == 0) {
+            return;
+        }
+        std::vector<GraphicsAdapterInfo> adapters(adapterCount);
+        factory->EnumerateAdapters(Version{}, adapterCount, adapters.data());
+        adapters.resize(adapterCount);
+        for (Uint32 index = 0; index < adapterCount; ++index) {
+            const auto& adapter = adapters[index];
+            GpuAdapterCandidate candidate;
+            candidate.adapterId = index;
+            candidate.name = QString::fromLatin1(adapter.Description).trimmed();
+            candidate.vendor = adapterVendorName(adapter.VendorId);
+            candidate.type = adapterTypeName(adapter.Type);
+            candidate.backend = backend;
+            candidate.vendorId = adapter.VendorId;
+            candidate.deviceId = adapter.DeviceId;
+            candidate.localMemoryBytes = adapter.Memory.LocalMemory;
+            candidate.unifiedMemoryBytes = adapter.Memory.UnifiedMemory;
+            candidate.rayTracingSupported =
+                adapter.Features.RayTracing != DEVICE_FEATURE_STATE_DISABLED;
+            candidate.autoScore = adapterAutoScore(adapter);
+            output.push_back(std::move(candidate));
         }
     }
 
@@ -342,6 +533,8 @@ namespace {
         }
 
         EngineD3D12CreateInfo creationAttribs = {};
+        const auto adapterSelection = selectGpuAdapter(pFactory);
+        creationAttribs.AdapterId = adapterSelection.adapterId;
         creationAttribs.EnableValidation = true;
         creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
         creationAttribs.Features.MultithreadedResourceCreation = DEVICE_FEATURE_STATE_DISABLED;
@@ -366,6 +559,18 @@ namespace {
             pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &outDevice, &outImmediateContext);
         }
 
+        if (!outDevice && creationAttribs.AdapterId != DEFAULT_ADAPTER_ID) {
+            qWarning() << "[DiligentDeviceManager] D3D12 adapter selection failed; "
+                          "retrying default adapter"
+                       << "policy=" << gpuAdapterPolicyName(adapterSelection.policy)
+                       << "adapterId=" << creationAttribs.AdapterId
+                       << "adapter=" << adapterSelection.description;
+            creationAttribs.AdapterId = DEFAULT_ADAPTER_ID;
+            creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
+            pFactory->CreateDeviceAndContextsD3D12(
+                creationAttribs, &outDevice, &outImmediateContext);
+        }
+
         return outDevice && outImmediateContext;
     }
 
@@ -382,6 +587,8 @@ namespace {
         }
 
         EngineVkCreateInfo creationAttribs = {};
+        const auto adapterSelection = selectGpuAdapter(pFactory);
+        creationAttribs.AdapterId = adapterSelection.adapterId;
         creationAttribs.EnableValidation = true;
         creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
         creationAttribs.Features.MultithreadedResourceCreation = DEVICE_FEATURE_STATE_DISABLED;
@@ -404,6 +611,18 @@ namespace {
             creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
             qDebug() << "[DiligentDeviceManager] Vulkan: Ray Tracing disabled by default. Set ARTIFACT_ENABLE_RAY_TRACING=1 to enable.";
             pFactory->CreateDeviceAndContextsVk(creationAttribs, &outDevice, &outImmediateContext);
+        }
+
+        if (!outDevice && creationAttribs.AdapterId != DEFAULT_ADAPTER_ID) {
+            qWarning() << "[DiligentDeviceManager] Vulkan adapter selection failed; "
+                          "retrying default adapter"
+                       << "policy=" << gpuAdapterPolicyName(adapterSelection.policy)
+                       << "adapterId=" << creationAttribs.AdapterId
+                       << "adapter=" << adapterSelection.description;
+            creationAttribs.AdapterId = DEFAULT_ADAPTER_ID;
+            creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
+            pFactory->CreateDeviceAndContextsVk(
+                creationAttribs, &outDevice, &outImmediateContext);
         }
 
         return outDevice && outImmediateContext;
@@ -1093,6 +1312,104 @@ bool DiligentDeviceManager::isInitialized() const
 bool DiligentDeviceManager::isRayTracingSupported() const
 {
     return impl_->rtSupported_;
+}
+
+SelectedGpuAdapterInfo DiligentDeviceManager::selectedAdapterInfo() const
+{
+    SelectedGpuAdapterInfo info;
+    if (!impl_ || !impl_->device_) {
+        return info;
+    }
+
+    const auto& adapter = impl_->device_->GetAdapterInfo();
+    info.available = true;
+    info.name = QString::fromLatin1(adapter.Description).trimmed();
+    info.vendorId = adapter.VendorId;
+    info.deviceId = adapter.DeviceId;
+    info.vendor = adapterVendorName(adapter.VendorId);
+    info.backend = QString::fromLatin1(
+        deviceTypeName(impl_->device_->GetDeviceInfo().Type));
+    info.rayTracingSupported = impl_->rtSupported_;
+    info.selectionPolicy = QString::fromLatin1(
+        gpuAdapterPolicyName(gpuAdapterPolicyFromEnv()));
+    info.requestedAdapter =
+        qEnvironmentVariable("ARTIFACT_GPU_ADAPTER").trimmed();
+    return info;
+}
+
+QString DiligentDeviceManager::selectedAdapterDebugState() const
+{
+    const auto info = selectedAdapterInfo();
+    if (!info.available) {
+        return QStringLiteral("adapter=<unavailable>");
+    }
+    return QStringLiteral(
+               "adapter=%1 vendor=%2 vendorId=0x%3 deviceId=0x%4 "
+               "backend=%5 rayTracing=%6 policy=%7 requested=%8")
+        .arg(info.name.isEmpty() ? QStringLiteral("<unnamed>") : info.name)
+        .arg(info.vendor)
+        .arg(info.vendorId, 8, 16, QLatin1Char('0'))
+        .arg(info.deviceId, 8, 16, QLatin1Char('0'))
+        .arg(info.backend)
+        .arg(info.rayTracingSupported)
+        .arg(info.selectionPolicy)
+        .arg(info.requestedAdapter.isEmpty()
+                 ? QStringLiteral("<auto>")
+                 : info.requestedAdapter);
+}
+
+std::vector<GpuAdapterCandidate> DiligentDeviceManager::availableAdapters() const
+{
+    std::vector<GpuAdapterCandidate> adapters;
+    appendFactoryAdapters(resolveD3D12Factory(), QStringLiteral("d3d12"),
+                          adapters);
+    if (hasUsableVulkanLoader()) {
+        appendFactoryAdapters(resolveVkFactory(), QStringLiteral("vulkan"),
+                              adapters);
+    }
+
+    const auto selected = selectedAdapterInfo();
+    for (auto& candidate : adapters) {
+        candidate.selected = selected.available &&
+            candidate.backend == selected.backend &&
+            candidate.vendorId == selected.vendorId &&
+            candidate.deviceId == selected.deviceId &&
+            candidate.name == selected.name;
+    }
+    std::stable_sort(adapters.begin(), adapters.end(),
+                     [](const GpuAdapterCandidate& lhs,
+                        const GpuAdapterCandidate& rhs) {
+        return lhs.autoScore > rhs.autoScore;
+    });
+    return adapters;
+}
+
+QString DiligentDeviceManager::availableAdaptersDebugState() const
+{
+    const auto adapters = availableAdapters();
+    if (adapters.empty()) {
+        return QStringLiteral("adapters=<none>");
+    }
+    QStringList descriptions;
+    descriptions.reserve(static_cast<qsizetype>(adapters.size()));
+    for (const auto& adapter : adapters) {
+        descriptions.push_back(
+            QStringLiteral(
+                "%1:%2 id=%3 type=%4 vendor=%5 localMiB=%6 "
+                "unifiedMiB=%7 rt=%8 score=%9 selected=%10")
+                .arg(adapter.backend)
+                .arg(adapter.name.isEmpty() ? QStringLiteral("<unnamed>")
+                                            : adapter.name)
+                .arg(adapter.adapterId)
+                .arg(adapter.type)
+                .arg(adapter.vendor)
+                .arg(adapter.localMemoryBytes / (1024ull * 1024ull))
+                .arg(adapter.unifiedMemoryBytes / (1024ull * 1024ull))
+                .arg(adapter.rayTracingSupported)
+                .arg(adapter.autoScore)
+                .arg(adapter.selected));
+    }
+    return descriptions.join(QStringLiteral(" | "));
 }
 
 }
