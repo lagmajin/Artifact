@@ -73,6 +73,8 @@ struct Artifact3DGizmo::Impl {
 
 namespace {
 
+constexpr float kScaleHandleLength = 0.92f;
+
 QVector3D axisDirectionFor(GizmoAxis axis) {
     switch (axis) {
     case GizmoAxis::X:
@@ -207,8 +209,7 @@ QVector3D axisHandleEndFor(GizmoAxis axis, const QVector3D& center, float scale)
 
 QVector3D scaleAxisHandleEndFor(GizmoAxis axis, const QVector3D& center, float scale) {
     const QVector3D dir = scaleAxisDirectionFor(axis);
-    const float length = axis == GizmoAxis::Z ? scale * 1.12f : scale * 1.16f;
-    return center + dir * length;
+    return center + dir * (scale * kScaleHandleLength);
 }
 
 float axisHandleHitThreshold(float scale) {
@@ -799,17 +800,20 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         };
 
         const float cubeHalf = s * 0.065f;
-        const QVector3D scaleAxisX = scaleAxisDirectionFor(GizmoAxis::X);
-        const QVector3D scaleAxisY = scaleAxisDirectionFor(GizmoAxis::Y);
-        const QVector3D scaleAxisZ = scaleAxisDirectionFor(GizmoAxis::Z);
+        const QVector3D scaleEndX =
+            scaleAxisHandleEndFor(GizmoAxis::X, impl_->position, s);
+        const QVector3D scaleEndY =
+            scaleAxisHandleEndFor(GizmoAxis::Y, impl_->position, s);
+        const QVector3D scaleEndZ =
+            scaleAxisHandleEndFor(GizmoAxis::Z, impl_->position, s);
         drawScaleAxis(GizmoAxis::X, center,
-                      {impl_->position.x() + scaleAxisX.x() * s * 0.92f, impl_->position.y() + scaleAxisX.y() * s * 0.92f, impl_->position.z() + scaleAxisX.z() * s * 0.92f},
+                      {scaleEndX.x(), scaleEndX.y(), scaleEndX.z()},
                       {1.0f, 0.38f, 0.18f, 1.0f}, cubeHalf);
         drawScaleAxis(GizmoAxis::Y, center,
-                      {impl_->position.x() + scaleAxisY.x() * s * 0.92f, impl_->position.y() + scaleAxisY.y() * s * 0.92f, impl_->position.z() + scaleAxisY.z() * s * 0.92f},
+                      {scaleEndY.x(), scaleEndY.y(), scaleEndY.z()},
                       {0.22f, 1.0f, 0.55f, 1.0f}, cubeHalf);
         drawScaleAxis(GizmoAxis::Z, center,
-                      {impl_->position.x() + scaleAxisZ.x() * s, impl_->position.y() + scaleAxisZ.y() * s, impl_->position.z() + scaleAxisZ.z() * s},
+                      {scaleEndZ.x(), scaleEndZ.y(), scaleEndZ.z()},
                       depthEnabled_ ? FloatColor{0.72f, 0.28f, 1.0f, 1.0f} : FloatColor{0.45f, 0.45f, 0.45f, 0.7f},
                       cubeHalf);
         // Center uniform scale handle
