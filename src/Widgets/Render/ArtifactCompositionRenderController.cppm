@@ -21970,15 +21970,33 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       if (auto device = renderer_->device()) {
 
-        renderPipeline.initialize(device,
+        const bool initializedWithF16 = renderPipeline.initialize(
 
-                                  static_cast<Uint32>(previewRenderWidth),
+            device,
 
-                                  static_cast<Uint32>(previewRenderHeight),
+            static_cast<Uint32>(previewRenderWidth),
 
-                                  RenderConfig::LinearColorFormat,
+            static_cast<Uint32>(previewRenderHeight),
 
-                                  auxiliary3DChannelRequested);
+            RenderConfig::PipelineFormatF16,
+
+            auxiliary3DChannelRequested);
+
+        if (!initializedWithF16) {
+          qWarning() << "[CompositionView] RGBA16_FLOAT pipeline unavailable;"
+                        " falling back to RGBA32_FLOAT";
+          renderPipeline.initialize(
+
+              device,
+
+              static_cast<Uint32>(previewRenderWidth),
+
+              static_cast<Uint32>(previewRenderHeight),
+
+              RenderConfig::PipelineFormatF32,
+
+              auxiliary3DChannelRequested);
+        }
 
         if (!ensurePreviewRenderPipelineDepthSlot(
 
