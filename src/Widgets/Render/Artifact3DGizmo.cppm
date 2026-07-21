@@ -88,6 +88,20 @@ QVector3D axisDirectionFor(GizmoAxis axis) {
     }
 }
 
+QVector3D scaleAxisDirectionFor(GizmoAxis axis) {
+    switch (axis) {
+    case GizmoAxis::X:
+        return QVector3D(1, 0, 0);
+    case GizmoAxis::Y:
+        // Layer transform Y follows the composition's downwards-positive axis.
+        return QVector3D(0, 1, 0);
+    case GizmoAxis::Z:
+        return QVector3D(0, 0, 1);
+    default:
+        return QVector3D();
+    }
+}
+
 bool isPlaneHandle(GizmoAxis axis) {
     return axis == GizmoAxis::XY || axis == GizmoAxis::YZ || axis == GizmoAxis::XZ;
 }
@@ -191,6 +205,12 @@ QVector3D axisHandleEndFor(GizmoAxis axis, const QVector3D& center, float scale)
     return center + dir * length;
 }
 
+QVector3D scaleAxisHandleEndFor(GizmoAxis axis, const QVector3D& center, float scale) {
+    const QVector3D dir = scaleAxisDirectionFor(axis);
+    const float length = axis == GizmoAxis::Z ? scale * 1.12f : scale * 1.16f;
+    return center + dir * length;
+}
+
 float axisHandleHitThreshold(float scale) {
     return std::max(scale * 0.11f, 8.0f);
 }
@@ -286,7 +306,7 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
                 return;
             }
             float t;
-            const QVector3D end = axisHandleEndFor(axis, impl_->position, impl_->currentScale);
+            const QVector3D end = scaleAxisHandleEndFor(axis, impl_->position, impl_->currentScale);
             const float lineDist = impl_->rayLineDistance(ray.origin, ray.direction,
                                                           impl_->position, end, t);
             const float tipDist = rayPointDistance(ray, end);
@@ -297,9 +317,9 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
             }
         };
 
-        checkAxis(axisDirectionFor(GizmoAxis::X), GizmoAxis::X);
-        checkAxis(axisDirectionFor(GizmoAxis::Y), GizmoAxis::Y);
-        checkAxis(axisDirectionFor(GizmoAxis::Z), GizmoAxis::Z);
+        checkAxis(scaleAxisDirectionFor(GizmoAxis::X), GizmoAxis::X);
+        checkAxis(scaleAxisDirectionFor(GizmoAxis::Y), GizmoAxis::Y);
+        checkAxis(scaleAxisDirectionFor(GizmoAxis::Z), GizmoAxis::Z);
 
         const float centerDist = rayPointDistance(ray, impl_->position);
         if (centerDist < axisHandleTipRadius(impl_->currentScale) * 1.25f && centerDist < minDistance) {
@@ -337,7 +357,9 @@ void Artifact3DGizmo::beginDrag(GizmoAxis axis, const Ray& ray) {
     impl_->dragStartScale = impl_->scale;
     impl_->firstDrag = true;
     
-    const QVector3D axisDir = axisDirectionFor(axis);
+    const QVector3D axisDir = mode_ == GizmoMode::Scale
+        ? scaleAxisDirectionFor(axis)
+        : axisDirectionFor(axis);
     const QVector3D viewDir = (ray.origin - impl_->dragStartPosition).normalized();
 
     if (isPlaneHandle(axis)) {
@@ -401,7 +423,9 @@ void Artifact3DGizmo::beginDrag(GizmoAxis axis, const Ray& ray) {
 void Artifact3DGizmo::updateDrag(const Ray& ray) {
     if (activeAxis_ == GizmoAxis::None) return;
     
-    const QVector3D axisDir = axisDirectionFor(activeAxis_);
+    const QVector3D axisDir = mode_ == GizmoMode::Scale
+        ? scaleAxisDirectionFor(activeAxis_)
+        : axisDirectionFor(activeAxis_);
 
     if (isPlaneHandle(activeAxis_)) {
         const auto frame = planeHandleFrameFor(activeAxis_);
@@ -775,14 +799,17 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         };
 
         const float cubeHalf = s * 0.065f;
+        const QVector3D scaleAxisX = scaleAxisDirectionFor(GizmoAxis::X);
+        const QVector3D scaleAxisY = scaleAxisDirectionFor(GizmoAxis::Y);
+        const QVector3D scaleAxisZ = scaleAxisDirectionFor(GizmoAxis::Z);
         drawScaleAxis(GizmoAxis::X, center,
-                      {impl_->position.x() + axisX.x() * s * 0.92f, impl_->position.y() + axisX.y() * s * 0.92f, impl_->position.z() + axisX.z() * s * 0.92f},
+                      {impl_->position.x() + scaleAxisX.x() * s * 0.92f, impl_->position.y() + scaleAxisX.y() * s * 0.92f, impl_->position.z() + scaleAxisX.z() * s * 0.92f},
                       {1.0f, 0.38f, 0.18f, 1.0f}, cubeHalf);
         drawScaleAxis(GizmoAxis::Y, center,
-                      {impl_->position.x() + axisY.x() * s * 0.92f, impl_->position.y() + axisY.y() * s * 0.92f, impl_->position.z() + axisY.z() * s * 0.92f},
+                      {impl_->position.x() + scaleAxisY.x() * s * 0.92f, impl_->position.y() + scaleAxisY.y() * s * 0.92f, impl_->position.z() + scaleAxisY.z() * s * 0.92f},
                       {0.22f, 1.0f, 0.55f, 1.0f}, cubeHalf);
         drawScaleAxis(GizmoAxis::Z, center,
-                      {impl_->position.x() + axisZ.x() * s, impl_->position.y() + axisZ.y() * s, impl_->position.z() + axisZ.z() * s},
+                      {impl_->position.x() + scaleAxisZ.x() * s, impl_->position.y() + scaleAxisZ.y() * s, impl_->position.z() + scaleAxisZ.z() * s},
                       depthEnabled_ ? FloatColor{0.72f, 0.28f, 1.0f, 1.0f} : FloatColor{0.45f, 0.45f, 0.45f, 0.7f},
                       cubeHalf);
         // Center uniform scale handle
