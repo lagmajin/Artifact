@@ -947,7 +947,10 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       if (cacheIt != surfaceCache->end() &&
           cacheIt->ownerId == ownerId &&
           cacheIt->cacheSignature == cacheSignature &&
-          !cacheIt->processedSurface.isNull()) {
+          (!cacheIt->processedSurface.isNull() ||
+           (usesGpuTextureCache &&
+            (cacheIt->processedBuffer ||
+             gpuTextureCacheManager->isValid(cacheIt->gpuTextureHandle))))) {
         cacheEntry = &(*cacheIt);
         surface = cacheIt->processedSurface;
       } else {
@@ -971,6 +974,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         if (usesGpuTextureCache) {
           if (entry.processedBuffer) {
             entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(gpuOwnerId, gpuCacheSignature, *entry.processedBuffer);
+            entry.processedSurface = QImage{};
           } else {
             entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(gpuOwnerId, gpuCacheSignature, surface);
           }
@@ -1003,6 +1007,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           if (entry.processedBuffer) {
             entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(
                 gpuOwnerId, gpuCacheSignature, *entry.processedBuffer);
+            entry.processedSurface = QImage{};
           } else {
             entry.gpuTextureHandle =
                 gpuTextureCacheManager->acquireOrCreate(gpuOwnerId, gpuCacheSignature, surface);
@@ -1042,22 +1047,36 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         const float finalOpacity = baseOpacity * instanceWeight;
 
         if (usesGpuTextureCache) {
-          auto *textureEntry = staticCacheEntry
-                                   ? static_cast<StaticLayerGpuCacheEntry*>(staticCacheEntry)
-                                   : nullptr;
-          if (textureEntry && !gpuTextureCacheManager->isValid(textureEntry->gpuTextureHandle)) {
-            const QImage& uploadSurface =
-                textureEntry->processedSurface.isNull() ? surface : textureEntry->processedSurface;
-            if (textureEntry->processedBuffer) {
-              textureEntry->gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(
-                  gpuOwnerId, gpuCacheSignature, *textureEntry->processedBuffer);
+          GPUTextureCacheHandle* textureHandle = nullptr;
+          const std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>* processedBuffer = nullptr;
+          const QImage* processedSurface = nullptr;
+          if (staticCacheEntry) {
+            textureHandle = &staticCacheEntry->gpuTextureHandle;
+            processedBuffer = &staticCacheEntry->processedBuffer;
+            processedSurface = &staticCacheEntry->processedSurface;
+          } else if (cacheEntry) {
+            textureHandle = &cacheEntry->gpuTextureHandle;
+            processedBuffer = &cacheEntry->processedBuffer;
+            processedSurface = &cacheEntry->processedSurface;
+          }
+          if (textureHandle &&
+              !gpuTextureCacheManager->isValid(*textureHandle)) {
+            if (processedBuffer && *processedBuffer) {
+              *textureHandle = gpuTextureCacheManager->acquireOrCreate(
+                  gpuOwnerId, gpuCacheSignature, **processedBuffer);
             } else {
-              textureEntry->gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(
-                  gpuOwnerId, gpuCacheSignature, uploadSurface);
+              const QImage& uploadSurface =
+                  processedSurface && !processedSurface->isNull()
+                      ? *processedSurface
+                      : surface;
+              if (!uploadSurface.isNull()) {
+                *textureHandle = gpuTextureCacheManager->acquireOrCreate(
+                    gpuOwnerId, gpuCacheSignature, uploadSurface);
+              }
             }
           }
           const auto binding = gpuTextureCacheManager->bindingRecord(
-              textureEntry ? textureEntry->gpuTextureHandle : GPUTextureCacheHandle{});
+              textureHandle ? *textureHandle : GPUTextureCacheHandle{});
           if (binding.isValid()) {
             renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
                                  static_cast<float>(rect.y()),
