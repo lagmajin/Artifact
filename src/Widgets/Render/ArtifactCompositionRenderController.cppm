@@ -21908,10 +21908,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             GlobalIlluminationMode::SSGI ||
         globalIlluminationState.selectedMode ==
             GlobalIlluminationMode::Hybrid;
+    const bool viewportMultiChannelRequested =
+        renderer_->isMultiChannelEnabled();
 
     if (gpuBlendEnabled_ &&
         (hasGpuBlendJustification ||
-         screenSpaceGlobalIlluminationRequested) &&
+         screenSpaceGlobalIlluminationRequested ||
+         viewportMultiChannelRequested) &&
         !blendPipelineReady_) {
       scheduleBlendPipelineInitialization(
           owner, 0,
@@ -21926,7 +21929,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         gpuBlendRequested &&
         (hasGpuBlendJustification ||
-         screenSpaceGlobalIlluminationRequested);
+         screenSpaceGlobalIlluminationRequested ||
+         viewportMultiChannelRequested);
 
 
 
@@ -21954,11 +21958,27 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         renderer_->isChannelEnabled(ArtifactIRenderer::ChannelType::AlbedoB);
 
+    const bool normalChannelRequested =
+
+        renderer_->isChannelEnabled(ArtifactIRenderer::ChannelType::NormalX) ||
+
+        renderer_->isChannelEnabled(ArtifactIRenderer::ChannelType::NormalY) ||
+
+        renderer_->isChannelEnabled(ArtifactIRenderer::ChannelType::NormalZ);
+
+    const bool velocityChannelRequested =
+
+        renderer_->isChannelEnabled(ArtifactIRenderer::ChannelType::VelocityX) ||
+
+        renderer_->isChannelEnabled(ArtifactIRenderer::ChannelType::VelocityY);
+
     const bool auxiliary3DChannelRequested =
 
         emissionChannelRequested || objectIdChannelRequested ||
 
         materialIdChannelRequested || albedoChannelRequested ||
+
+        normalChannelRequested || velocityChannelRequested ||
 
         screenSpaceGlobalIlluminationRequested;
 
