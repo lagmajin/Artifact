@@ -39,6 +39,21 @@ bool intersectInfiniteCone(float3 p, float3 v, float3 pa, float3 va, float sina2
 float4 main(VertexToPixel input) : SV_TARGET
 {
 	ShaderEntity light = load_entity(spotlights().first_item() + (uint)g_xColor.x);
+	#ifdef LIGHT_LOD
+	bool vol_skip_shadow = false;
+	if (GetFrame().options & OPTION_BIT_LIGHT_LOD_ENABLED)
+	{
+		float cullT = f16tof32(GetFrame().light_lod_thresholds >> 16);
+		float shadowT = f16tof32(GetFrame().light_lod_thresholds & 0xFFFF);
+		if (cullT > 0.0 || shadowT > 0.0)
+		{
+			float _ld = length(GetCamera().position - light.position);
+			float _ln = _ld / max(light.GetRange(), 0.001);
+			if (cullT > 0.0 && _ln >= cullT) discard;
+			vol_skip_shadow = (shadowT > 0.0) && (_ln >= shadowT);
+		}
+	}
+	#endif // LIGHT_LOD
 
 	float2 ScreenCoord = input.pos2D.xy / input.pos2D.w * float2(0.5f, -0.5f) + 0.5f;
 	float4 depths = texture_depth.GatherRed(sampler_point_clamp, ScreenCoord);
@@ -105,8 +120,13 @@ float4 main(VertexToPixel input) : SV_TARGET
 			float3 attenuation = attenuation_spotlight(dist2, range, range2, spot_factor, light.GetAngleScale(), light.GetAngleOffset());
 
 			[branch]
-			if (light.IsCastingShadow())
 			{
+				bool _cs = light.IsCastingShadow();
+				#ifdef LIGHT_LOD
+				_cs = _cs && !vol_skip_shadow;
+				#endif
+				if (_cs)
+				{
 				float4 shadow_pos = mul(load_entitymatrix(light.GetMatrixIndex() + 0), float4(P, 1));
 				shadow_pos.xyz /= shadow_pos.w;
 				float2 shadow_uv = shadow_pos.xy * float2(0.5f, -0.5f) + float2(0.5f, 0.5f);
@@ -116,6 +136,7 @@ float4 main(VertexToPixel input) : SV_TARGET
 					attenuation *= shadow_2D(light, shadow_pos.xyz, shadow_uv.xy, 0, input.pos.xy);
 				}
 			}
+		}
 
 			// Evaluate sample height for exponential fog calculation, given 0 for V:
 			attenuation *= g_xColor.y + GetFogAmount(cameraDistance - marchedDistance, P, float3(0.0, 0.0, 0.0));

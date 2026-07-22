@@ -490,7 +490,6 @@ struct alignas(16) ShaderGeometry
 	int vb_clu;
 	int vb_bou;
 
-
 	void init()
 	{
 		ib = -1;
@@ -532,7 +531,7 @@ struct alignas(16) ShaderMeshlet
 	uint instanceIndex;
 	uint geometryIndex;
 	uint primitiveOffset; // either direct triangle offset within index buffer, or masked cluster index for clustered geo
-	uint padding;
+	uint light_lod_thresholds;  // packed: low 16b=shadow_dist_norm(half), high 16b=cull_dist_norm(half)
 };
 
 struct ShaderClusterTriangle
@@ -720,7 +719,6 @@ struct ObjectPushConstants
 	int instances;
 	uint instance_offset;
 };
-
 
 // Warning: the size of this structure directly affects shader performance.
 //	Try to reduce it as much as possible!
@@ -1056,7 +1054,8 @@ enum FRAME_OPTIONS
 	OPTION_BIT_REALISTIC_SKY_HIGH_QUALITY = 1 << 17,
 	OPTION_BIT_REALISTIC_SKY_RECEIVE_SHADOW = 1 << 18,
 	OPTION_BIT_VOLUMETRICCLOUDS_RECEIVE_SHADOW = 1 << 19,
-};
+	OPTION_BIT_LIGHT_LOD_ENABLED = 1 << 20,  // LightLOD: distance-based light quality scaling
+	};
 
 // ---------- Common Constant buffers: -----------------
 
@@ -1118,7 +1117,7 @@ struct alignas(16) FrameCB
 	uint lights;
 	uint decals;
 	uint forces;
-	uint padding;
+	uint light_lod_thresholds;  // packed: low 16b=shadow_dist_norm(half), high 16b=cull_dist_norm(half)
 
 	ShaderEntity entityArray[SHADER_ENTITY_COUNT];
 	float4x4 matrixArray[SHADER_ENTITY_COUNT];
@@ -1335,7 +1334,6 @@ struct alignas(16) CameraCB
 CONSTANTBUFFER(g_xFrame, FrameCB, CBSLOT_RENDERER_FRAME);
 CONSTANTBUFFER(g_xCamera, CameraCB, CBSLOT_RENDERER_CAMERA);
 
-
 // ------- On demand Constant buffers: ----------
 
 CBUFFER(MiscCB, CBSLOT_RENDERER_MISC)
@@ -1369,7 +1367,7 @@ struct LensFlarePush
 struct WetmapPush
 {
 	int wetmap;
-	uint padding;
+	uint light_lod_thresholds;  // packed: low 16b=shadow_dist_norm(half), high 16b=cull_dist_norm(half)
 	uint instanceID;
 	float rain_amount;
 };
@@ -1423,7 +1421,6 @@ struct CopyTextureCB
 	int  xCopySrcMIP;
 	int  xCopyFlags;
 };
-
 
 static const uint PAINT_TEXTURE_BLOCKSIZE = 8;
 
@@ -1527,7 +1524,6 @@ struct VolumetricCloudCapturePushConstants
 	float padding1;
 };
 
-
 struct TerrainVirtualTexturePush
 {
 	int2 offset;
@@ -1597,6 +1593,5 @@ CBUFFER(PaintDecalCB, CBSLOT_RENDERER_MISC)
 	float g_xPaintDecalSlopeBlendPower;
 	int g_xPaintDecalpadding;
 };
-
 
 #endif // WI_SHADERINTEROP_RENDERER_H

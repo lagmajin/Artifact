@@ -2,6 +2,8 @@
 #include "cullingShaderHF.hlsli"
 #include "lightingHF.hlsli"
 
+#define LIGHT_LOD  // LightLOD: distance-based quality scaling for point/spot lights
+
 #define entityCount (GetFrame().entity_culling_count)
 
 RWStructuredBuffer<uint> entityTiles : register(u0);
@@ -328,9 +330,30 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 		Sphere sphere = { positionVS.xyz, entity.GetRange() + entity.GetLength() };
 		if (SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
 		{
+			// --- LightLOD 3-tier ---
+			bool lod_transparent = true;
+			bool lod_opaque = true;
+			#ifdef LIGHT_LOD
+			if (GetFrame().options & OPTION_BIT_LIGHT_LOD_ENABLED)
+			{
+				float shadowThresh = f16tof32(GetFrame().light_lod_thresholds & 0xFFFF);
+				float cullThresh = f16tof32(GetFrame().light_lod_thresholds >> 16);
+				if (shadowThresh > 0.0 || cullThresh > 0.0)
+				{
+				    float camDist = length(GetCamera().position - entity.position);
+				    float range = entity.GetRange() + entity.GetLength();
+				    float normDist = camDist / max(range, 0.001);
+				    lod_opaque = normDist < shadowThresh;
+				    lod_transparent = normDist < cullThresh;
+				}
+			}
+			if (!lod_transparent)
+				continue; // LOD cull: skip this light
+			#endif // LIGHT_LOD
+
 			AppendEntity_Transparent(i);
 
-			if (SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
+			if (lod_opaque && SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit
 			{
 #ifdef ADVANCED_CULLING
 				if (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere))
@@ -356,9 +379,30 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 		Sphere sphere = { positionVS - directionVS * r, r };
 		if (SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
 		{
+			// --- LightLOD 3-tier ---
+			bool lod_transparent = true;
+			bool lod_opaque = true;
+			#ifdef LIGHT_LOD
+			if (GetFrame().options & OPTION_BIT_LIGHT_LOD_ENABLED)
+			{
+				float shadowThresh = f16tof32(GetFrame().light_lod_thresholds & 0xFFFF);
+				float cullThresh = f16tof32(GetFrame().light_lod_thresholds >> 16);
+				if (shadowThresh > 0.0 || cullThresh > 0.0)
+				{
+				    float camDist = length(GetCamera().position - entity.position);
+				    float range = entity.GetRange();
+				    float normDist = camDist / max(range, 0.001);
+				    lod_opaque = normDist < shadowThresh;
+				    lod_transparent = normDist < cullThresh;
+				}
+			}
+			if (!lod_transparent)
+				continue; // LOD cull: skip this light
+			#endif // LIGHT_LOD
+
 			AppendEntity_Transparent(i);
 
-			if (SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
+			if (lod_opaque && SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit
 			{
 #ifdef ADVANCED_CULLING
 				if (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere))

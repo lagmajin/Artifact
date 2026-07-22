@@ -23,6 +23,7 @@ import Artifact.Event.Types;
 import Event.Bus;
 import BrightnessEffect;
 import Artifact.Effect.Creative;
+import Artifact.Effect.SurfaceFX;
 import Artifact.Effect.DirectionalGlow;
 import Artifact.Effect.Rasterizer.Sharpen;
 import Artifact.Effect.Rasterizer.FindEdges;
@@ -166,6 +167,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
  std::unique_ptr<ArtifactAbstractEffect> ArtifactEffectService::createEffect(const EffectID& id) const
  {
   const QString effectId = id.toString();
+  if (effectId == QStringLiteral("surfacefx")) {
+   return std::make_unique<SurfaceFXEffect>();
+  }
   if (effectId == QStringLiteral("effect.colorcorrection.colorwheels")) {
    return std::make_unique<ColorWheelsEffect>();
   }
