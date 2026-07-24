@@ -45,6 +45,7 @@ import Utils.String.UniString;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.InitParams;
+import Artifact.Layer.Abstract;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Composition;
 import Artifact.Layer.ParametricComposition;
@@ -66,12 +67,14 @@ import Artifact.Project.Manager;
 import Artifact.Project.PresetManager;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
+import Artifact.Animation.LayerEffectEnvelope;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Widgets.ArtifactPropertyWidget;
 import Artifact.Widgets.QuickLayerCreationDialog;
 import Artifact.Composition.Abstract;
 import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Widgets.CreatePlaneLayerDialog;
+import Artifact.Widgets.QuickLayerCreationDialog;
 import Artifact.Widgets.CreateCameraLayerDialog;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Tool.CameraTracker;
@@ -87,6 +90,71 @@ namespace Artifact {
 using namespace ArtifactCore;
 
 namespace {
+
+class SetLayerEffectEnvelopeCommand final : public UndoCommand {
+public:
+    SetLayerEffectEnvelopeCommand(ArtifactAbstractLayerPtr layer,
+                                  LayerEffectEnvelope before,
+                                  LayerEffectEnvelope after)
+        : layer_(std::move(layer)), before_(before), after_(after) {}
+
+    void undo() override {
+        if (const auto layer = layer_.lock()) {
+            layer->setEffectEnvelope(before_);
+        }
+    }
+
+    void redo() override {
+        if (const auto layer = layer_.lock()) {
+            layer->setEffectEnvelope(after_);
+        }
+    }
+
+    QString label() const override { return QStringLiteral("Set Layer Envelope"); }
+
+private:
+    ArtifactAbstractLayerWeak layer_;
+    LayerEffectEnvelope before_;
+    LayerEffectEnvelope after_;
+};
+
+LayerMask quickLayerMask(const QuickLayerCreationOptions& options) {
+    MaskPath path;
+    constexpr float kEllipseHandle = 0.55228475f;
+    const float width = static_cast<float>(options.solidParams.width());
+    const float height = static_cast<float>(options.solidParams.height());
+    const QPointF center(width * 0.5f, height * 0.5f);
+
+    if (options.maskShape == QuickLayerMaskShape::Ellipse) {
+        const float rx = width * 0.5f;
+        const float ry = height * 0.5f;
+        const QPointF points[] = {
+            {center.x() + rx, center.y()}, {center.x(), center.y() + ry},
+            {center.x() - rx, center.y()}, {center.x(), center.y() - ry}};
+        const QPointF tangents[] = {
+            {0.0, kEllipseHandle * ry}, {-kEllipseHandle * rx, 0.0},
+            {0.0, -kEllipseHandle * ry}, {kEllipseHandle * rx, 0.0}};
+        for (int i = 0; i < 4; ++i) {
+            MaskVertex vertex;
+            vertex.position = points[i];
+            vertex.inTangent = -tangents[i];
+            vertex.outTangent = tangents[i];
+            path.addVertex(vertex);
+        }
+    } else {
+        const QPointF corners[] = {{0.0, 0.0}, {width, 0.0},
+                                   {width, height}, {0.0, height}};
+        for (const QPointF& corner : corners) {
+            path.addVertex({corner, {}, {}});
+        }
+    }
+    path.setClosed(true);
+    path.setFeather(options.maskFeather);
+
+    LayerMask mask;
+    mask.addMaskPath(path);
+    return mask;
+}
 
 enum class LayerCreationDurationMode {
     Default,
@@ -1030,6 +1098,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createSolidAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateSolid));
     createSolidAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_palette.svg")));
+    createQuickLayerAction = new QAction(QStringLiteral("クイックレイヤー作成..."), createMenu);
+    createQuickLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_add.svg")));
+    createQuickLayerAction->setToolTip(QStringLiteral("平面、マスク、入場・退場をまとめて作成します"));
 
     createQuickLayerAction = new QAction(QStringLiteral("クイック平面作成..."), createMenu);
 
@@ -1945,6 +2016,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
 
     // Creation actions can auto-create first composition when a project exists.
     createSolidAction->setEnabled(hasProject);
+    createQuickLayerAction->setEnabled(hasProject);
     createNullAction->setEnabled(hasProject);
     createConstructionAction->setEnabled(hasProject);
     createAdjustAction->setEnabled(hasProject);
@@ -2287,84 +2359,57 @@ void ArtifactLayerMenu::Impl::handleCreateSolid()
 
 void ArtifactLayerMenu::Impl::handleCreateQuickLayer()
 {
-    auto service = ArtifactProjectService::instance();
-    if (!ensureCurrentComposition() || !service) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr,
-                             QStringLiteral("クイックレイヤー"),
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, QStringLiteral("Layer"),
                              QStringLiteral("コンポジションが選択されていません。"));
         return;
     }
-    QWidget* parentWindow = mainWindow_ ? mainWindow_ :
-        (menu_ ? menu_->window() : nullptr);
+
+    auto* service = ArtifactProjectService::instance();
+    QWidget* parentWindow = mainWindow_ ? mainWindow_ : (menu_ ? menu_->window() : nullptr);
+    if (!service) {
+        return;
+    }
+
     QuickLayerCreationDialog dialog(parentWindow);
     dialog.setModal(true);
-    if (dialog.exec() != QDialog::Accepted) return;
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
 
-    const auto options = dialog.submittedOptions();
+    const QuickLayerCreationOptions options = dialog.submittedOptions();
     service->addLayerToCurrentComposition(
         options.solidParams, true,
-        options.placementMode == LayerCreationPlacementMode::Playhead);
-
-    // The layer service selects the newly-created layer. Reuse that existing
-    // selection path to apply the already-supported envelope atomically from
-    // the user's perspective; mask creation remains a later slice.
-    if (options.envelope.enabled) {
-        if (auto* app = ArtifactApplicationManager::instance()) {
-            if (auto* selection = app->layerSelectionManager()) {
-                const auto selected = selection->selectedLayers();
-                if (!selected.empty() && *selected.cbegin()) {
-                    const auto layer = *selected.cbegin();
-                    layer->setEffectEnvelope(options.envelope);
-                }
-            }
-        }
+        placeAtCurrentFrameRequested());
+    auto* selection = ArtifactLayerSelectionManager::instance();
+    const auto createdLayer = selection ? selection->currentLayer()
+                                        : ArtifactAbstractLayerPtr{};
+    if (!createdLayer) {
+        return;
     }
 
+    const auto composition = service->currentComposition().lock();
+    if (!composition) {
+        return;
+    }
+
+    // The project service owns layer construction. Repackage its initial append and
+    // all requested additions into one existing undo macro before exposing it.
+    composition->removeLayer(createdLayer->id());
+    auto transaction = std::make_unique<MacroUndoCommand>(
+        QStringLiteral("Create Quick Layer"));
+    transaction->addChild(std::make_unique<AddLayerCommand>(composition, createdLayer));
     if (options.maskShape != QuickLayerMaskShape::None) {
-        if (auto* app = ArtifactApplicationManager::instance()) {
-            if (auto* selection = app->layerSelectionManager()) {
-                const auto selected = selection->selectedLayers();
-                if (!selected.empty() && *selected.cbegin()) {
-                    const auto layer = *selected.cbegin();
-                    LayerMask mask;
-                    mask.setEnabled(true);
-                    MaskPath path;
-                    path.setName(UniString(QStringLiteral("Quick Mask")));
-                    path.setClosed(true);
-                    path.setFeather(options.maskFeather);
-
-                    const float width = static_cast<float>(options.solidParams.width());
-                    const float height = static_cast<float>(options.solidParams.height());
-                    if (options.maskShape == QuickLayerMaskShape::Rectangle) {
-                        for (const QPointF point : {QPointF(0.0, 0.0),
-                                                     QPointF(width, 0.0),
-                                                     QPointF(width, height),
-                                                     QPointF(0.0, height)}) {
-                            path.addVertex(MaskVertex{point, {}, {}});
-                        }
-                    } else {
-                        constexpr int kEllipseSegments = 32;
-                        const QPointF center(width * 0.5, height * 0.5);
-                        const double radiusX = width * 0.5;
-                        const double radiusY = height * 0.5;
-                        for (int index = 0; index < kEllipseSegments; ++index) {
-                            const double angle =
-                                (2.0 * std::numbers::pi * static_cast<double>(index)) /
-                                static_cast<double>(kEllipseSegments);
-                            path.addVertex(MaskVertex{
-                                QPointF(center.x() + radiusX * std::cos(angle),
-                                        center.y() + radiusY * std::sin(angle)),
-                                {}, {}});
-                        }
-                    }
-                    if (path.vertexCount() >= 3) {
-                        mask.addMaskPath(path);
-                        layer->addMask(mask);
-                    }
-                }
-            }
-        }
+        std::vector<LayerMask> masks;
+        masks.push_back(quickLayerMask(options));
+        transaction->addChild(std::make_unique<MaskEditCommand>(
+            createdLayer, std::vector<LayerMask>{}, std::move(masks)));
     }
+    if (options.envelope.enabled) {
+        transaction->addChild(std::make_unique<SetLayerEffectEnvelopeCommand>(
+            createdLayer, createdLayer->effectEnvelope(), options.envelope));
+    }
+    UndoManager::instance()->push(std::move(transaction));
 }
 
 void ArtifactLayerMenu::Impl::handleCreateNull()
