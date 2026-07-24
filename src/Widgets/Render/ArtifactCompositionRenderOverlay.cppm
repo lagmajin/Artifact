@@ -254,7 +254,12 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
   renderer->set3DCameraMatrices(*cameraView, *cameraProj);
 
   std::unordered_set<quint64> visitedEdges;
-  visitedEdges.reserve(static_cast<size_t>(mesh.polygonCount()) * 3u);
+  constexpr int kMaxOverlayPolygons = 24000;
+  const int polygonStride = std::max(
+      1, (mesh.polygonCount() + kMaxOverlayPolygons - 1) / kMaxOverlayPolygons);
+  const int sampledPolygonCount =
+      (mesh.polygonCount() + polygonStride - 1) / polygonStride;
+  visitedEdges.reserve(static_cast<size_t>(sampledPolygonCount) * 3u);
 
   auto drawEdge = [&](int a, int b) {
     if (a < 0 || b < 0 || a >= vertexPositions.size() || b >= vertexPositions.size()) {
@@ -276,7 +281,7 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
                          wireColor, thickness);
   };
 
-  for (int polygonIndex = 0; polygonIndex < mesh.polygonCount(); ++polygonIndex) {
+  for (int polygonIndex = 0; polygonIndex < mesh.polygonCount(); polygonIndex += polygonStride) {
     const QVector<int> polygon = mesh.getPolygonVertices(polygonIndex);
     if (polygon.size() < 2) {
       continue;
@@ -292,7 +297,9 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
   }
 
   if (normals && normals->data().size() == vertexPositions.size()) {
-    for (int i = 0; i < vertexPositions.size(); ++i) {
+    const int normalStride = std::max(
+        1, (vertexPositions.size() + kMaxOverlayPolygons - 1) / kMaxOverlayPolygons);
+    for (int i = 0; i < vertexPositions.size(); i += normalStride) {
       QVector3D normal = normals->data()[i];
       if (normal.lengthSquared() < 1.0e-8f) {
         continue;
