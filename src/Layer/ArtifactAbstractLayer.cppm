@@ -7531,6 +7531,14 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
     value->setSoftRange(0.0, 1.0);
     value->setStep(0.01);
     animationGroup.addProperty(value);
+    auto interpolation = makeProp(
+        prefix + QStringLiteral(".interpolation"), PropertyType::Integer,
+        static_cast<int>(animationLayer.values.getKeyFrameInterpolationAt(
+            FramePosition(currentFrame()))), -132);
+    interpolation->setDisplayLabel(QStringLiteral("Interpolation"));
+    interpolation->setHardRange(0.0, 32.0);
+    interpolation->setStep(1.0);
+    animationGroup.addProperty(interpolation);
     auto muted = makeProp(prefix + QStringLiteral(".muted"), PropertyType::Boolean,
                           animationLayer.state.muted, -129);
     muted->setDisplayLabel(QStringLiteral("Mute"));
@@ -7576,6 +7584,14 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       value->setDisplayLabel(QStringLiteral("Value (Current Frame)"));
       value->setStep(0.01);
       animationGroup.addProperty(value);
+      auto interpolation = makeProp(
+          prefix + QStringLiteral(".interpolation"), PropertyType::Integer,
+          static_cast<int>(animationLayer.values.getKeyFrameInterpolationAt(
+              FramePosition(currentFrame()))), -122);
+      interpolation->setDisplayLabel(QStringLiteral("Interpolation"));
+      interpolation->setHardRange(0.0, 32.0);
+      interpolation->setStep(1.0);
+      animationGroup.addProperty(interpolation);
       auto muted = makeProp(prefix + QStringLiteral(".muted"), PropertyType::Boolean,
                             animationLayer.state.muted, -119);
       muted->setDisplayLabel(QStringLiteral("Mute"));
@@ -7663,6 +7679,10 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       if (field == QStringLiteral("value")) {
         animationLayer.values.addKeyFrame(
             FramePosition(currentFrame()), static_cast<float>(value.toDouble()));
+      } else if (field == QStringLiteral("interpolation")) {
+        animationLayer.values.setKeyFrameInterpolationAt(
+            FramePosition(currentFrame()),
+            static_cast<ArtifactCore::InterpolationType>(value.toInt()));
       } else if (field == QStringLiteral("weight")) {
         state.weight = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
       } else if (field == QStringLiteral("muted")) {
@@ -7692,6 +7712,10 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       if (animationParts[2] == QStringLiteral("value")) {
         animationLayer.values.addKeyFrame(
             FramePosition(currentFrame()), static_cast<float>(value.toDouble()));
+      } else if (animationParts[2] == QStringLiteral("interpolation")) {
+        animationLayer.values.setKeyFrameInterpolationAt(
+            FramePosition(currentFrame()),
+            static_cast<ArtifactCore::InterpolationType>(value.toInt()));
       } else if (animationParts[2] == QStringLiteral("weight")) {
         state.weight = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
       } else if (animationParts[2] == QStringLiteral("muted")) {
