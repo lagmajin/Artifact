@@ -369,6 +369,8 @@ public:
       const QString &propertyPath);
   const ArtifactCore::AnimationLayerStackT<float> *animationLayerStack(
       const QString &propertyPath) const;
+  QJsonObject animationLayersSnapshot() const;
+  void restoreAnimationLayersSnapshot(const QJsonObject &snapshot);
   
   QVector3D position3D() const;
   void setPosition3D(const QVector3D &pos);

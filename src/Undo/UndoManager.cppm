@@ -99,14 +99,14 @@ AnimationLayerStackSnapshotCommand::AnimationLayerStackSnapshotCommand(
 
 void AnimationLayerStackSnapshotCommand::undo() {
     if (auto layer = layer_.lock()) {
-        layer->animationLayers().fromJson(before_);
+        layer->restoreAnimationLayersSnapshot(before_);
         layer->changed();
     }
 }
 
 void AnimationLayerStackSnapshotCommand::redo() {
     if (auto layer = layer_.lock()) {
-        layer->animationLayers().fromJson(after_);
+        layer->restoreAnimationLayersSnapshot(after_);
         layer->changed();
     }
 }

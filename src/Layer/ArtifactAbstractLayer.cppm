@@ -3810,6 +3810,30 @@ const ArtifactCore::AnimationLayerStackT<float> *ArtifactAbstractLayer::animatio
   return it == impl_->animationPropertyLayers_.constEnd() ? nullptr : &it.value();
 }
 
+QJsonObject ArtifactAbstractLayer::animationLayersSnapshot() const {
+  QJsonObject snapshot;
+  snapshot[QStringLiteral("shared")] = impl_->animationLayers_.toJson();
+  QJsonObject propertyLayers;
+  for (auto it = impl_->animationPropertyLayers_.constBegin();
+       it != impl_->animationPropertyLayers_.constEnd(); ++it) {
+    propertyLayers[it.key()] = it.value().toJson();
+  }
+  snapshot[QStringLiteral("properties")] = propertyLayers;
+  return snapshot;
+}
+
+void ArtifactAbstractLayer::restoreAnimationLayersSnapshot(const QJsonObject &snapshot) {
+  impl_->animationLayers_.fromJson(snapshot.value(QStringLiteral("shared")).toObject());
+  impl_->animationPropertyLayers_.clear();
+  const auto propertyLayers = snapshot.value(QStringLiteral("properties")).toObject();
+  for (auto it = propertyLayers.constBegin(); it != propertyLayers.constEnd(); ++it) {
+    auto &stack = impl_->animationPropertyLayers_[it.key()];
+    stack.fromJson(it.value().toObject());
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
+}
+
 QVector3D ArtifactAbstractLayer::position3D() const {
   const auto time = currentTimelineTime(this);
   return QVector3D(impl_->transform_.positionXAt(time),

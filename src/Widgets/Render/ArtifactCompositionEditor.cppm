@@ -3040,15 +3040,16 @@ public:
       });
       add(QStringLiteral("Add Animation Layer"), [layer]() {
         if (!layer) return;
-        const QJsonObject before = layer->animationLayers().toJson();
+        const QJsonObject before = layer->animationLayersSnapshot();
         layer->animationLayers().addLayer();
-        const QJsonObject after = layer->animationLayers().toJson();
-        layer->animationLayers().fromJson(before);
+        const QJsonObject after = layer->animationLayersSnapshot();
+        layer->restoreAnimationLayersSnapshot(before);
         UndoManager::instance()->push(
             std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
       });
       add(QStringLiteral("Add Transform Animation Layers"), [layer]() {
         if (!layer) return;
+        const QJsonObject before = layer->animationLayersSnapshot();
         static const QStringList paths{
             QStringLiteral("transform.position.x"),
             QStringLiteral("transform.position.y"),
@@ -3060,10 +3061,14 @@ public:
         for (const auto &path : paths) {
           layer->animationLayerStack(path).addLayer();
         }
-        layer->changed();
+        const QJsonObject after = layer->animationLayersSnapshot();
+        layer->restoreAnimationLayersSnapshot(before);
+        UndoManager::instance()->push(
+            std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
       });
       add(QStringLiteral("Remove Transform Animation Layers"), [layer]() {
         if (!layer) return;
+        const QJsonObject before = layer->animationLayersSnapshot();
         static const QStringList paths{
             QStringLiteral("transform.position.x"),
             QStringLiteral("transform.position.y"),
@@ -3076,16 +3081,19 @@ public:
           auto &stack = layer->animationLayerStack(path);
           stack.clear();
         }
-        layer->changed();
+        const QJsonObject after = layer->animationLayersSnapshot();
+        layer->restoreAnimationLayersSnapshot(before);
+        UndoManager::instance()->push(
+            std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
       });
       if (layer->animationLayers().layerCount() > 0) {
         add(QStringLiteral("Remove Top Animation Layer"), [layer]() {
           if (!layer || layer->animationLayers().layerCount() == 0) return;
-          const QJsonObject before = layer->animationLayers().toJson();
+          const QJsonObject before = layer->animationLayersSnapshot();
           layer->animationLayers().removeLayer(
               layer->animationLayers().layerCount() - 1);
-          const QJsonObject after = layer->animationLayers().toJson();
-          layer->animationLayers().fromJson(before);
+          const QJsonObject after = layer->animationLayersSnapshot();
+          layer->restoreAnimationLayersSnapshot(before);
           UndoManager::instance()->push(
               std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
         });
