@@ -169,7 +169,7 @@ public:
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
         executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-        if (!readbackTexture(device_, context_, outputTex, dst, "ChannelMixer/StagingTexture")) {
+        if (!readbackTexture(device_, context_, outputTex, dst, src.image().colorDescriptor(), "ChannelMixer/StagingTexture")) {
             applyCPU(src, dst);
             return;
         }
@@ -260,6 +260,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
                                 Diligent::IDeviceContext* ctx,
                                 Diligent::ITexture* src,
                                 ImageF32x4RGBAWithCache& dst,
+                                const ArtifactCore::SurfaceColorDescriptor& colorDescriptor,
                                 const char* name)
     {
         if (!device || !ctx || !src) {
@@ -298,7 +299,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
             return false;
         }
         cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp);
+        dst.image().setFromCVMat(temp, colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
         return true;
     }
