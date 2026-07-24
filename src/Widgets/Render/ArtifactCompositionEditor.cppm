@@ -3047,6 +3047,21 @@ public:
         UndoManager::instance()->push(
             std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
       });
+      add(QStringLiteral("Add Transform Animation Layers"), [layer]() {
+        if (!layer) return;
+        static const QStringList paths{
+            QStringLiteral("transform.position.x"),
+            QStringLiteral("transform.position.y"),
+            QStringLiteral("transform.rotation"),
+            QStringLiteral("transform.scale.x"),
+            QStringLiteral("transform.scale.y"),
+            QStringLiteral("transform.anchor.x"),
+            QStringLiteral("transform.anchor.y")};
+        for (const auto &path : paths) {
+          layer->animationLayerStack(path).addLayer();
+        }
+        layer->changed();
+      });
       if (layer->animationLayers().layerCount() > 0) {
         add(QStringLiteral("Remove Top Animation Layer"), [layer]() {
           if (!layer || layer->animationLayers().layerCount() == 0) return;

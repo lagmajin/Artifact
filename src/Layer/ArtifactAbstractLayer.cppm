@@ -7520,6 +7520,46 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
     animationGroup.addProperty(mode);
     groups.push_back(std::move(animationGroup));
   }
+  for (auto propertyIt = impl_->animationPropertyLayers_.constBegin();
+       propertyIt != impl_->animationPropertyLayers_.constEnd(); ++propertyIt) {
+    const QString propertyPath = propertyIt.key();
+    const auto &propertyStack = propertyIt.value();
+    for (std::size_t layerIndex = 0; layerIndex < propertyStack.layerCount(); ++layerIndex) {
+      const auto &animationLayer = propertyStack.layer(layerIndex);
+      PropertyGroup animationGroup(
+          QStringLiteral("Anim: %1 / Layer %2")
+              .arg(propertyPath)
+              .arg(static_cast<int>(layerIndex + 1)));
+      const QString prefix = QStringLiteral("animationLayers.%1.%2").arg(
+          propertyPath, QString::number(static_cast<int>(layerIndex)));
+      auto weight = makeProp(prefix + QStringLiteral(".weight"), PropertyType::Float,
+                              static_cast<double>(animationLayer.state.weight), -120);
+      weight->setDisplayLabel(QStringLiteral("Weight"));
+      weight->setHardRange(0.0, 1.0);
+      weight->setSoftRange(0.0, 1.0);
+      weight->setStep(0.01);
+      animationGroup.addProperty(weight);
+      auto muted = makeProp(prefix + QStringLiteral(".muted"), PropertyType::Boolean,
+                            animationLayer.state.muted, -119);
+      muted->setDisplayLabel(QStringLiteral("Mute"));
+      animationGroup.addProperty(muted);
+      auto solo = makeProp(prefix + QStringLiteral(".solo"), PropertyType::Boolean,
+                           animationLayer.state.solo, -118);
+      solo->setDisplayLabel(QStringLiteral("Solo"));
+      animationGroup.addProperty(solo);
+      auto mode = makeProp(prefix + QStringLiteral(".blendMode"), PropertyType::Integer,
+                           animationLayer.state.blendMode ==
+                                   ArtifactCore::AnimationLayerBlendMode::Override
+                               ? 1
+                               : 0,
+                           -117);
+      mode->setDisplayLabel(QStringLiteral("Blend Mode (0 Additive / 1 Override)"));
+      mode->setHardRange(0.0, 1.0);
+      mode->setStep(1.0);
+      animationGroup.addProperty(mode);
+      groups.push_back(std::move(animationGroup));
+    }
+  }
   groups.push_back(std::move(crowdGroup));
   groups.push_back(std::move(particleEmitterGroup));
   groups.push_back(std::move(fluidGroup));
@@ -7570,6 +7610,37 @@ ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
 bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
                                                   const QVariant &value) {
   const QStringList animationParts = propertyPath.split(QLatin1Char('.'));
+  if (animationParts.size() >= 4 &&
+      animationParts[0] == QStringLiteral("animationLayers")) {
+    bool indexOk = false;
+    const int layerIndex = animationParts[animationParts.size() - 2].toInt(&indexOk);
+    const QString field = animationParts.back();
+    const QString animationPropertyPath =
+        animationParts.mid(1, animationParts.size() - 3).join(QLatin1Char('.'));
+    auto stackIt = impl_->animationPropertyLayers_.find(animationPropertyPath);
+    if (indexOk && stackIt != impl_->animationPropertyLayers_.end() &&
+        layerIndex >= 0 &&
+        static_cast<std::size_t>(layerIndex) < stackIt->layerCount()) {
+      auto &state = stackIt->layer(static_cast<std::size_t>(layerIndex)).state;
+      if (field == QStringLiteral("weight")) {
+        state.weight = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+      } else if (field == QStringLiteral("muted")) {
+        state.muted = value.toBool();
+      } else if (field == QStringLiteral("solo")) {
+        state.solo = value.toBool();
+      } else if (field == QStringLiteral("blendMode")) {
+        state.blendMode = value.toInt() == 1
+                              ? ArtifactCore::AnimationLayerBlendMode::Override
+                              : ArtifactCore::AnimationLayerBlendMode::Additive;
+      } else {
+        return false;
+      }
+      notifyLayerMutation(this, LayerDirtyFlag::Property,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    return false;
+  }
   if (animationParts.size() == 3 && animationParts[0] == QStringLiteral("animationLayers")) {
     bool ok = false;
     const int layerIndex = animationParts[1].toInt(&ok);
