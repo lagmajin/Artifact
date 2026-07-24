@@ -7802,6 +7802,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   if (propertyPath == QStringLiteral("fracture.triggerFrame")) {
     impl_->fractureTriggerFrame_ = std::max<int64_t>(-1, value.toLongLong());
     impl_->fractureTriggerLastFrame_ = std::numeric_limits<int64_t>::min();
+    Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.preset")) {
@@ -7810,6 +7811,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fracturePreset_ = preset;
       resetFractureState();
     }
+    Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.crackThreshold")) {
@@ -7826,6 +7828,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fractureShardCount_ = shardCount;
       resetFractureState();
     }
+    Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.shardDamping")) {
