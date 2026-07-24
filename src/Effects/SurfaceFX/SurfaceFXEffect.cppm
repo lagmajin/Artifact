@@ -1,6 +1,7 @@
 module;
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <opencv2/opencv.hpp>
 
@@ -36,15 +37,27 @@ public:
         const float right = std::clamp(data.anchorX + data.anchorWidth, 0.0f, 1.0f) * width;
         const float bottom = std::clamp(data.anchorY + data.anchorHeight, 0.0f, 1.0f) * height;
 
+        const float currentTime = static_cast<float>(context_.timeSeconds);
         for (const auto& element : data.elements) {
-            const float currentTime = static_cast<float>(context_.timeSeconds);
             if (currentTime < element.inTime ||
                 (element.outTime >= 0.0f && currentTime > element.outTime))
                 continue;
             const float alpha = std::clamp(element.opacity * element.intensity, 0.0f, 1.0f);
             if (alpha <= 0.0f) continue;
             const float x = std::clamp(element.x, data.anchorX, data.anchorX + data.anchorWidth) * width;
-            const float y = std::clamp(element.y, data.anchorY, data.anchorY + data.anchorHeight) * height;
+            float normalizedY = element.y;
+            if (element.type == ArtifactCore::SurfaceFXElementType::Droplet ||
+                element.type == ArtifactCore::SurfaceFXElementType::Streak) {
+                const auto seed = static_cast<std::uint32_t>(data.fieldSeed) ^
+                                  static_cast<std::uint32_t>(element.seedOffset * 0x9e3779b9u);
+                const float speed = 0.04f + static_cast<float>(seed % 7u) * 0.01f;
+                const float anchorHeight = std::max(0.001f, data.anchorHeight);
+                const float localY = (element.y - data.anchorY) +
+                                     std::max(0.0f, currentTime - element.inTime) * speed;
+                normalizedY = data.anchorY + std::fmod(localY, anchorHeight);
+            }
+            const float y = std::clamp(normalizedY, data.anchorY,
+                                       data.anchorY + data.anchorHeight) * height;
             const float w = std::max(1.0f, element.width * width);
             const float h = std::max(1.0f, element.height * height);
             const cv::Point center(static_cast<int>(std::round(x + w * 0.5f)),
