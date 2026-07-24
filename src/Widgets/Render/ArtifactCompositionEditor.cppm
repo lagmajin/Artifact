@@ -2908,6 +2908,7 @@ public:
         selectionManager->clearSelection();
       }
       int pasted = 0;
+      QVector<ArtifactAbstractLayerPtr> pastedLayers;
       for (const auto &val : layersArray) {
         if (!val.isObject()) {
           continue;
@@ -2941,12 +2942,32 @@ public:
         if (selectionManager) {
           selectionManager->addToSelection(pastedLayer);
         }
+        pastedLayers.push_back(pastedLayer);
         ++pasted;
       }
       if (pasted == 0) {
         QMessageBox::warning(this, QStringLiteral("Paste Layers"),
                              QStringLiteral("No layers could be pasted."));
+        return;
       }
+
+      // Repackage the already-created layers as one undoable operation. The
+      // layers are temporarily removed so the existing Add/Move commands can
+      // replay the exact insertion order without introducing a new command type.
+      auto transaction = std::make_unique<MacroUndoCommand>(
+          QStringLiteral("Paste Layers"));
+      for (const auto &pastedLayer : pastedLayers) {
+        if (!pastedLayer) continue;
+        const auto currentLayers = compNow->allLayerRef();
+        const int currentIndex = currentLayers.indexOf(pastedLayer);
+        if (currentIndex < 0) continue;
+        compNow->removeLayer(pastedLayer->id());
+        transaction->addChild(std::make_unique<AddLayerCommand>(
+            compNow, pastedLayer));
+        transaction->addChild(std::make_unique<MoveLayerIndexCommand>(
+            compNow, pastedLayer, 0, currentIndex));
+      }
+      UndoManager::instance()->push(std::move(transaction));
     };
     const auto copyLayerBundle = [this, svc, comp, layer, selectedLayersInComposition]() {
       QVector<ArtifactAbstractLayerPtr> layersToCopy = selectedLayersInComposition();
