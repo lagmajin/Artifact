@@ -15,11 +15,7 @@ export namespace Artifact {
 
 class SurfaceFXEffect final : public ArtifactAbstractEffect {
 public:
-    SurfaceFXEffect() {
-        setEffectID(UniString(QStringLiteral("surfacefx")));
-        setDisplayName(UniString(QStringLiteral("SurfaceFX")));
-        setPipelineStage(EffectPipelineStage::Rasterizer);
-    }
+    SurfaceFXEffect();
 
     ArtifactCore::SurfaceFXData& data() noexcept { return data_; }
     const ArtifactCore::SurfaceFXData& data() const noexcept { return data_; }
@@ -163,9 +159,12 @@ public:
         }
         if (propertyName != QStringLiteral("Surface Preset"))
             presetName_ = QStringLiteral("custom");
+        syncImpl();
     }
 
 private:
+    void syncImpl();
+
     void applyPreset(const QString& presetName) {
         const bool knownPreset =
             presetName == QStringLiteral("cameraLensFineScratches") ||
