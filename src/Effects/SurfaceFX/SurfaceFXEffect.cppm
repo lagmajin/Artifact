@@ -103,6 +103,7 @@ public:
         for (int y = std::max(0, static_cast<int>(top)); y < std::min(height, static_cast<int>(bottom)); ++y) {
             const auto* sourceRow = input.ptr<cv::Vec4f>(y);
             const auto* overlayRow = overlay.ptr<cv::Vec4f>(y);
+            const auto* dropletMaskRow = dropletMask.ptr<float>(y);
             auto* outputRow = output.ptr<cv::Vec4f>(y);
             for (int x = std::max(0, static_cast<int>(left)); x < std::min(width, static_cast<int>(right)); ++x) {
                 float featherMask = 1.0f;
@@ -117,12 +118,12 @@ public:
                 }
                 const float a = std::clamp(overlayRow[x][3] * featherMask, 0.0f, 1.0f);
                 const float dropletAlpha = std::clamp(
-                    dropletMask.at<float>(y, x) * featherMask, 0.0f, 1.0f);
+                    dropletMaskRow[x] * featherMask, 0.0f, 1.0f);
                 const int refractionOffset = dropletAlpha > 0.0f
                     ? std::clamp(static_cast<int>(std::round((dropletAlpha - 0.5f) * 4.0f)), -2, 2)
                     : 0;
                 const int sampleX = std::clamp(x + refractionOffset, 0, width - 1);
-                const auto* refractedSource = input.ptr<cv::Vec4f>(y) + sampleX;
+                const auto* refractedSource = sourceRow + sampleX;
                 for (int c = 0; c < 3; ++c)
                     outputRow[x][c] = refractedSource[0][c] * (1.0f - a) + overlayRow[x][c] * a;
                 outputRow[x][3] = sourceRow[x][3];
