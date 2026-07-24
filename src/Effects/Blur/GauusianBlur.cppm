@@ -176,6 +176,7 @@ static bool readbackTexture(Diligent::IRenderDevice* device,
                             Diligent::IDeviceContext* ctx,
                             Diligent::ITexture* src,
                             ImageF32x4RGBAWithCache& dst,
+                            const ArtifactCore::SurfaceColorDescriptor& colorDescriptor,
                             const char* name)
 {
     if (!device || !ctx || !src) {
@@ -214,7 +215,7 @@ static bool readbackTexture(Diligent::IRenderDevice* device,
         return false;
     }
     cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-    dst.image().setFromCVMat(temp);
+    dst.image().setFromCVMat(temp, colorDescriptor);
     ctx->UnmapTextureSubresource(staging, 0, 0);
     return true;
 }
@@ -398,7 +399,7 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
     resources.executor->dispatch(resources.context, attribs,
                                  Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-    if (!readbackTexture(resources.device, resources.context, outputTex, dst,
+    if (!readbackTexture(resources.device, resources.context, outputTex, dst, src.image().colorDescriptor(),
                          "GaussianBlur/StagingTexture")) {
         applyGaussianBlurCPUFallback(sigma_, src, dst);
         return;

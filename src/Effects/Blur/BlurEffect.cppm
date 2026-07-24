@@ -143,7 +143,8 @@ static void convertBlurColorSpace(cv::Mat& image, const bool toLinear,
 
 static bool readbackTexture(Diligent::IDeviceContext* ctx, Diligent::ITexture* src,
                             Diligent::ITexture* staging,
-                            ImageF32x4RGBAWithCache& dst)
+                            ImageF32x4RGBAWithCache& dst,
+                            const ArtifactCore::SurfaceColorDescriptor& colorDescriptor)
 {
     if (!ctx || !src || !staging) {
         return false;
@@ -165,7 +166,7 @@ static bool readbackTexture(Diligent::IDeviceContext* ctx, Diligent::ITexture* s
         return false;
     }
     cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-    dst.image().setFromCVMat(temp);
+    dst.image().setFromCVMat(temp, colorDescriptor);
     ctx->UnmapTextureSubresource(staging, 0, 0);
     return true;
 }
@@ -501,7 +502,7 @@ public:
             iterationInput = outputTex_;
         }
 
-        if (!readbackTexture(ctx, outputTex_, stagingTex_, dst)) {
+        if (!readbackTexture(ctx, outputTex_, stagingTex_, dst, src.image().colorDescriptor())) {
             applyCPU(src, dst);
             return;
         }

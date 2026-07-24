@@ -44,13 +44,13 @@ bool createTexFromImage(const ImageF32x4RGBAWithCache& src,Diligent::IRenderDevi
     *out=t.Detach();return true;
 }
 
-bool readbackTex(Diligent::IRenderDevice* d,Diligent::IDeviceContext* c,Diligent::ITexture* s,ImageF32x4RGBAWithCache& dst){
+bool readbackTex(Diligent::IRenderDevice* d,Diligent::IDeviceContext* c,Diligent::ITexture* s,ImageF32x4RGBAWithCache& dst,const ArtifactCore::SurfaceColorDescriptor& colorDescriptor){
     if(!d||!c||!s)return false;
     auto sd=s->GetDesc();Diligent::TextureDesc st;st.Type=Diligent::RESOURCE_DIM_TEX_2D;st.Width=sd.Width;st.Height=sd.Height;st.Format=sd.Format;st.ArraySize=1;st.MipLevels=1;st.SampleCount=1;st.Usage=Diligent::USAGE_STAGING;st.CPUAccessFlags=Diligent::CPU_ACCESS_READ;st.Name="OFB/Staging";
     Diligent::RefCntAutoPtr<Diligent::ITexture> staging;d->CreateTexture(st,nullptr,&staging);if(!staging)return false;
     Diligent::CopyTextureAttribs cp(s,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);c->CopyTexture(cp);c->Flush();c->WaitForIdle();
     Diligent::MappedTextureSubresource m{};c->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,m);if(!m.pData||m.Stride==0)return false;
-    cv::Mat tmp((int)sd.Height,(int)sd.Width,CV_32FC4,m.pData,m.Stride);dst.image().setFromCVMat(tmp);c->UnmapTextureSubresource(staging,0,0);return true;
+    cv::Mat tmp((int)sd.Height,(int)sd.Width,CV_32FC4,m.pData,m.Stride);dst.image().setFromCVMat(tmp,colorDescriptor);c->UnmapTextureSubresource(staging,0,0);return true;
 }
 } // namespace
 
@@ -222,7 +222,7 @@ public:
 
         auto at=ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1);
         ex_->dispatch(c,at,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        if(!readbackTex(d,c,ot,dst))cpu.applyCPU(src,dst);
+        if(!readbackTex(d,c,ot,dst,src.image().colorDescriptor()))cpu.applyCPU(src,dst);
         dst.image().setColorDescriptor(src.image().colorDescriptor());
     }
 

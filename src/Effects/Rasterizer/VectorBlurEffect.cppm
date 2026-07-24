@@ -41,12 +41,12 @@ bool vbUp(const ImageF32x4RGBAWithCache& src,Diligent::IRenderDevice* d,Diligent
     c->UpdateTexture(t,0,0,Diligent::Box{0,0,0,(Diligent::Uint32)W,(Diligent::Uint32)H,1},sub,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     *out=t.Detach();return true;
 }
-bool vbDown(Diligent::IRenderDevice*d,Diligent::IDeviceContext*c,Diligent::ITexture*s,ImageF32x4RGBAWithCache&dst){
+bool vbDown(Diligent::IRenderDevice*d,Diligent::IDeviceContext*c,Diligent::ITexture*s,ImageF32x4RGBAWithCache&dst,const ArtifactCore::SurfaceColorDescriptor& colorDescriptor){
     if(!d||!c||!s)return false;auto sd=s->GetDesc();Diligent::TextureDesc st;st.Type=Diligent::RESOURCE_DIM_TEX_2D;st.Width=sd.Width;st.Height=sd.Height;st.Format=sd.Format;st.ArraySize=1;st.MipLevels=1;st.SampleCount=1;st.Usage=Diligent::USAGE_STAGING;st.CPUAccessFlags=Diligent::CPU_ACCESS_READ;
     Diligent::RefCntAutoPtr<Diligent::ITexture> sg;d->CreateTexture(st,nullptr,&sg);if(!sg)return false;
     Diligent::CopyTextureAttribs cp(s,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,sg,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);c->CopyTexture(cp);c->Flush();c->WaitForIdle();
     Diligent::MappedTextureSubresource m{};c->MapTextureSubresource(sg,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,m);if(!m.pData||m.Stride==0)return false;
-    cv::Mat tmp((int)sd.Height,(int)sd.Width,CV_32FC4,m.pData,m.Stride);dst.image().setFromCVMat(tmp);c->UnmapTextureSubresource(sg,0,0);return true;}
+    cv::Mat tmp((int)sd.Height,(int)sd.Width,CV_32FC4,m.pData,m.Stride);dst.image().setFromCVMat(tmp,colorDescriptor);c->UnmapTextureSubresource(sg,0,0);return true;}
 }
 
 class VectorBlurCPUImpl : public ArtifactEffectImplBase {
@@ -104,7 +104,7 @@ public:
         void* m=nullptr;c->MapBuffer(cb_,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,m);if(m){float fp[8]={cpu.shutterAngle_,cpu.exposureComp_,(float)cpu.samples_,(float)od.Width,(float)od.Height,0,0,0};std::memcpy(m,fp,sizeof(fp));c->UnmapBuffer(cb_,Diligent::MAP_WRITE);}
         if(!ex_->setTextureView("InTex",in->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!ex_->setTextureView("OutTex",ot->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){cpu.applyCPU(src,dst);return;}
         auto at=ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1);ex_->dispatch(c,at,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        if(!vbDown(d,c,ot,dst))cpu.applyCPU(src,dst);
+        if(!vbDown(d,c,ot,dst,src.image().colorDescriptor()))cpu.applyCPU(src,dst);
         dst.image().setColorDescriptor(src.image().colorDescriptor());
     }
 private:
