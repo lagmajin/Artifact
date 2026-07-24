@@ -69,10 +69,24 @@ public:
             if (element.type == ArtifactCore::SurfaceFXElementType::Droplet ||
                 element.type == ArtifactCore::SurfaceFXElementType::Dirt ||
                 element.type == ArtifactCore::SurfaceFXElementType::Condensation) {
-                cv::ellipse(overlay, center,
-                            cv::Size(std::max(1, static_cast<int>(w * 0.5f)),
-                                     std::max(1, static_cast<int>(h * 0.5f))),
-                            element.rotation, 0.0, 360.0, color, -1, cv::LINE_AA);
+                const cv::Size radius(std::max(1, static_cast<int>(w * 0.5f)),
+                                      std::max(1, static_cast<int>(h * 0.5f)));
+                cv::ellipse(overlay, center, radius, element.rotation, 0.0, 360.0,
+                            color, -1, cv::LINE_AA);
+                if (element.type == ArtifactCore::SurfaceFXElementType::Droplet) {
+                    const cv::Scalar rim(0.08f, 0.12f, 0.18f, alpha * 0.55f);
+                    cv::ellipse(overlay, center, radius, element.rotation, 0.0, 360.0,
+                                rim, thickness, cv::LINE_AA);
+                    const cv::Point highlight(
+                        center.x - std::max(1, radius.width / 3),
+                        center.y - std::max(1, radius.height / 3));
+                    cv::ellipse(overlay, highlight,
+                                cv::Size(std::max(1, radius.width / 4),
+                                         std::max(1, radius.height / 4)),
+                                element.rotation, 0.0, 360.0,
+                                cv::Scalar(1.0f, 1.0f, 1.0f, alpha * 0.65f),
+                                -1, cv::LINE_AA);
+                }
             } else {
                 const double radians = element.rotation * 3.141592653589793 / 180.0;
                 const cv::Point delta(static_cast<int>(std::round(std::cos(radians) * w)),
