@@ -7524,6 +7524,13 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
     weight->setSoftRange(0.0, 1.0);
     weight->setStep(0.01);
     animationGroup.addProperty(weight);
+    auto value = makeProp(prefix + QStringLiteral(".value"), PropertyType::Float,
+                          static_cast<double>(animationLayer.values.at(
+                              FramePosition(currentFrame()))), -131);
+    value->setDisplayLabel(QStringLiteral("Value (Current Frame)"));
+    value->setSoftRange(0.0, 1.0);
+    value->setStep(0.01);
+    animationGroup.addProperty(value);
     auto muted = makeProp(prefix + QStringLiteral(".muted"), PropertyType::Boolean,
                           animationLayer.state.muted, -129);
     muted->setDisplayLabel(QStringLiteral("Mute"));
@@ -7563,6 +7570,12 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       weight->setSoftRange(0.0, 1.0);
       weight->setStep(0.01);
       animationGroup.addProperty(weight);
+      auto value = makeProp(prefix + QStringLiteral(".value"), PropertyType::Float,
+                            static_cast<double>(animationLayer.values.at(
+                                FramePosition(currentFrame()))), -121);
+      value->setDisplayLabel(QStringLiteral("Value (Current Frame)"));
+      value->setStep(0.01);
+      animationGroup.addProperty(value);
       auto muted = makeProp(prefix + QStringLiteral(".muted"), PropertyType::Boolean,
                             animationLayer.state.muted, -119);
       muted->setDisplayLabel(QStringLiteral("Mute"));
@@ -7646,7 +7659,11 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
         layerIndex >= 0 &&
         static_cast<std::size_t>(layerIndex) < stackIt->layerCount()) {
       auto &state = stackIt->layer(static_cast<std::size_t>(layerIndex)).state;
-      if (field == QStringLiteral("weight")) {
+      auto &animationLayer = stackIt->layer(static_cast<std::size_t>(layerIndex));
+      if (field == QStringLiteral("value")) {
+        animationLayer.values.addKeyFrame(
+            FramePosition(currentFrame()), static_cast<float>(value.toDouble()));
+      } else if (field == QStringLiteral("weight")) {
         state.weight = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
       } else if (field == QStringLiteral("muted")) {
         state.muted = value.toBool();
@@ -7671,7 +7688,11 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     if (ok && layerIndex >= 0 &&
         static_cast<std::size_t>(layerIndex) < impl_->animationLayers_.layerCount()) {
       auto &state = impl_->animationLayers_.layer(static_cast<std::size_t>(layerIndex)).state;
-      if (animationParts[2] == QStringLiteral("weight")) {
+      auto &animationLayer = impl_->animationLayers_.layer(static_cast<std::size_t>(layerIndex));
+      if (animationParts[2] == QStringLiteral("value")) {
+        animationLayer.values.addKeyFrame(
+            FramePosition(currentFrame()), static_cast<float>(value.toDouble()));
+      } else if (animationParts[2] == QStringLiteral("weight")) {
         state.weight = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
       } else if (animationParts[2] == QStringLiteral("muted")) {
         state.muted = value.toBool();
