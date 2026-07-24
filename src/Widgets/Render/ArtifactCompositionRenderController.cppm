@@ -26649,6 +26649,21 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
           renderer_.get(), selectedLayer, overlayViewMatrix,
           overlayProjMatrix);
 
+      // Keep the active layer's gizmo path above, while also showing the
+      // selection overlay for every selected 3D layer. This makes the Phase 2
+      // wireframe feedback useful for multi-selection without changing gizmo
+      // ownership or introducing another event path.
+      if (auto *selectionManager = ArtifactLayerSelectionManager::instance()) {
+        for (const auto &additionalLayer : selectionManager->selectedLayersInOrder()) {
+          if (!additionalLayer || additionalLayer->id() == selectedLayer->id()) {
+            continue;
+          }
+          ::Artifact::drawSelectionOverlay(
+              renderer_.get(), additionalLayer, overlayViewMatrix,
+              overlayProjMatrix);
+        }
+      }
+
     }
 
     if (selectedLayer->isCloneLayer()) {
