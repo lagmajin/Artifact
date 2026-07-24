@@ -141,6 +141,7 @@ SurfaceFXEffect::SurfaceFXEffect() {
     setDisplayName(UniString(QStringLiteral("SurfaceFX")));
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(std::make_shared<SurfaceFXCPUImpl>());
+    setComputeMode(ComputeMode::CPU);
     syncImpl();
 }
 
