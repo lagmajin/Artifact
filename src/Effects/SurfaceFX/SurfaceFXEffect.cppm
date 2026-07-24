@@ -32,6 +32,7 @@ public:
         cv::Mat input(height, width, CV_32FC4,
                       const_cast<float*>(pixels));
         cv::Mat overlay(height, width, CV_32FC4, cv::Scalar(0, 0, 0, 0));
+        bool hasDroplet = false;
         const float left = std::clamp(data.anchorX, 0.0f, 1.0f) * width;
         const float top = std::clamp(data.anchorY, 0.0f, 1.0f) * height;
         const float right = std::clamp(data.anchorX + data.anchorWidth, 0.0f, 1.0f) * width;
@@ -69,6 +70,7 @@ public:
             if (element.type == ArtifactCore::SurfaceFXElementType::Droplet ||
                 element.type == ArtifactCore::SurfaceFXElementType::Dirt ||
                 element.type == ArtifactCore::SurfaceFXElementType::Condensation) {
+                hasDroplet |= element.type == ArtifactCore::SurfaceFXElementType::Droplet;
                 const cv::Size radius(std::max(1, static_cast<int>(w * 0.5f)),
                                       std::max(1, static_cast<int>(h * 0.5f)));
                 cv::ellipse(overlay, center, radius, element.rotation, 0.0, 360.0,
@@ -113,8 +115,13 @@ public:
                     featherMask = featherMask * featherMask * (3.0f - 2.0f * featherMask);
                 }
                 const float a = std::clamp(overlayRow[x][3] * featherMask, 0.0f, 1.0f);
+                const int refractionOffset = hasDroplet
+                    ? std::clamp(static_cast<int>(std::round((overlayRow[x][3] - 0.5f) * 4.0f)), -2, 2)
+                    : 0;
+                const int sampleX = std::clamp(x + refractionOffset, 0, width - 1);
+                const auto* refractedSource = input.ptr<cv::Vec4f>(y) + sampleX;
                 for (int c = 0; c < 3; ++c)
-                    outputRow[x][c] = sourceRow[x][c] * (1.0f - a) + overlayRow[x][c] * a;
+                    outputRow[x][c] = refractedSource[0][c] * (1.0f - a) + overlayRow[x][c] * a;
                 outputRow[x][3] = sourceRow[x][3];
             }
         }
