@@ -365,6 +365,10 @@ public:
   const AnimatableTransform3D &transform3D() const;
   ArtifactCore::AnimationLayerStackT<float> &animationLayers();
   const ArtifactCore::AnimationLayerStackT<float> &animationLayers() const;
+  ArtifactCore::AnimationLayerStackT<float> &animationLayerStack(
+      const QString &propertyPath);
+  const ArtifactCore::AnimationLayerStackT<float> *animationLayerStack(
+      const QString &propertyPath) const;
   
   QVector3D position3D() const;
   void setPosition3D(const QVector3D &pos);

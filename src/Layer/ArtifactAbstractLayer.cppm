@@ -947,6 +947,7 @@ public:
   AnimatableTransform3D transform_;
   AnimatableTransform2D transform2d_;
   ArtifactCore::AnimationLayerStackT<float> animationLayers_;
+  QHash<QString, ArtifactCore::AnimationLayerStackT<float>> animationPropertyLayers_;
   Size_2D sourceSize_;
 
   // エフェクト管理メソッド
@@ -3778,6 +3779,17 @@ const ArtifactCore::AnimationLayerStackT<float> &ArtifactAbstractLayer::animatio
   return impl_->animationLayers_;
 }
 
+ArtifactCore::AnimationLayerStackT<float> &ArtifactAbstractLayer::animationLayerStack(
+    const QString &propertyPath) {
+  return impl_->animationPropertyLayers_[propertyPath];
+}
+
+const ArtifactCore::AnimationLayerStackT<float> *ArtifactAbstractLayer::animationLayerStack(
+    const QString &propertyPath) const {
+  const auto it = impl_->animationPropertyLayers_.constFind(propertyPath);
+  return it == impl_->animationPropertyLayers_.constEnd() ? nullptr : &it.value();
+}
+
 QVector3D ArtifactAbstractLayer::position3D() const {
   const auto time = currentTimelineTime(this);
   return QVector3D(impl_->transform_.positionXAt(time),
@@ -3837,6 +3849,12 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["opacity"] = static_cast<double>(impl_->opacity_);
   obj["effectEnvelope"] = layerEffectEnvelopeToJson(impl_->effectEnvelope_);
   obj["animationLayers"] = impl_->animationLayers_.toJson();
+  QJsonObject animationPropertyLayers;
+  for (auto it = impl_->animationPropertyLayers_.constBegin();
+       it != impl_->animationPropertyLayers_.constEnd(); ++it) {
+    animationPropertyLayers[it.key()] = it.value().toJson();
+  }
+  obj["animationPropertyLayers"] = animationPropertyLayers;
 
   // Mattes
   QJsonArray mattesArr;
@@ -4339,6 +4357,15 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
 void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   if (obj.contains("animationLayers") && obj["animationLayers"].isObject())
     impl_->animationLayers_.fromJson(obj["animationLayers"].toObject());
+  if (obj.contains("animationPropertyLayers") &&
+      obj["animationPropertyLayers"].isObject()) {
+    impl_->animationPropertyLayers_.clear();
+    const auto propertyLayers = obj["animationPropertyLayers"].toObject();
+    for (auto it = propertyLayers.constBegin(); it != propertyLayers.constEnd(); ++it) {
+      auto &stack = impl_->animationPropertyLayers_[it.key()];
+      stack.fromJson(it.value().toObject());
+    }
+  }
   if (obj.contains("name"))
     setLayerName(obj["name"].toString());
   if (obj.contains("layerNote"))
