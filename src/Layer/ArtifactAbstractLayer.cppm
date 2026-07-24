@@ -7439,6 +7439,40 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   for (auto &group : cloneModifierGroups) {
     groups.push_back(std::move(group));
   }
+  for (std::size_t layerIndex = 0;
+       layerIndex < impl_->animationLayers_.layerCount(); ++layerIndex) {
+    const auto &animationLayer = impl_->animationLayers_.layer(layerIndex);
+    PropertyGroup animationGroup(
+        QStringLiteral("Animation Layer %1").arg(static_cast<int>(layerIndex + 1)));
+    const QString prefix = QStringLiteral("animationLayers.%1").arg(
+        static_cast<int>(layerIndex));
+    auto weight = makeProp(prefix + QStringLiteral(".weight"), PropertyType::Float,
+                            static_cast<double>(animationLayer.state.weight), -130);
+    weight->setDisplayLabel(QStringLiteral("Weight"));
+    weight->setHardRange(0.0, 1.0);
+    weight->setSoftRange(0.0, 1.0);
+    weight->setStep(0.01);
+    animationGroup.addProperty(weight);
+    auto muted = makeProp(prefix + QStringLiteral(".muted"), PropertyType::Boolean,
+                          animationLayer.state.muted, -129);
+    muted->setDisplayLabel(QStringLiteral("Mute"));
+    animationGroup.addProperty(muted);
+    auto solo = makeProp(prefix + QStringLiteral(".solo"), PropertyType::Boolean,
+                         animationLayer.state.solo, -128);
+    solo->setDisplayLabel(QStringLiteral("Solo"));
+    animationGroup.addProperty(solo);
+    auto mode = makeProp(prefix + QStringLiteral(".blendMode"), PropertyType::Integer,
+                         animationLayer.state.blendMode ==
+                                 ArtifactCore::AnimationLayerBlendMode::Override
+                             ? 1
+                             : 0,
+                         -127);
+    mode->setDisplayLabel(QStringLiteral("Blend Mode (0 Additive / 1 Override)"));
+    mode->setHardRange(0.0, 1.0);
+    mode->setStep(1.0);
+    animationGroup.addProperty(mode);
+    groups.push_back(std::move(animationGroup));
+  }
   groups.push_back(std::move(crowdGroup));
   groups.push_back(std::move(particleEmitterGroup));
   groups.push_back(std::move(fluidGroup));
@@ -7488,6 +7522,32 @@ ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
 
 bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
                                                   const QVariant &value) {
+  const QStringList animationParts = propertyPath.split(QLatin1Char('.'));
+  if (animationParts.size() == 3 && animationParts[0] == QStringLiteral("animationLayers")) {
+    bool ok = false;
+    const int layerIndex = animationParts[1].toInt(&ok);
+    if (ok && layerIndex >= 0 &&
+        static_cast<std::size_t>(layerIndex) < impl_->animationLayers_.layerCount()) {
+      auto &state = impl_->animationLayers_.layer(static_cast<std::size_t>(layerIndex)).state;
+      if (animationParts[2] == QStringLiteral("weight")) {
+        state.weight = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+      } else if (animationParts[2] == QStringLiteral("muted")) {
+        state.muted = value.toBool();
+      } else if (animationParts[2] == QStringLiteral("solo")) {
+        state.solo = value.toBool();
+      } else if (animationParts[2] == QStringLiteral("blendMode")) {
+        state.blendMode = value.toInt() == 1
+                              ? ArtifactCore::AnimationLayerBlendMode::Override
+                              : ArtifactCore::AnimationLayerBlendMode::Additive;
+      } else {
+        return false;
+      }
+      notifyLayerMutation(this, LayerDirtyFlag::Property,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    return false;
+  }
   if (propertyPath == QStringLiteral("layer.name")) {
     setLayerName(value.toString());
     return true;
