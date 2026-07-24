@@ -2378,10 +2378,17 @@ void ArtifactLayerMenu::Impl::handleCreateQuickLayer()
     }
 
     const QuickLayerCreationOptions options = dialog.submittedOptions();
+    auto* selection = ArtifactLayerSelectionManager::instance();
+    const auto anchorLayer = selection ? selection->currentLayer()
+                                       : ArtifactAbstractLayerPtr{};
+    const auto currentComposition = service->currentComposition().lock();
+    int anchorIndex = -1;
+    if (currentComposition) {
+        anchorIndex = currentComposition->allLayerRef().indexOf(anchorLayer);
+    }
     service->addLayerToCurrentComposition(
         options.solidParams, true,
-        placeAtCurrentFrameRequested());
-    auto* selection = ArtifactLayerSelectionManager::instance();
+        options.placementMode == LayerCreationPlacementMode::Playhead);
     const auto createdLayer = selection ? selection->currentLayer()
                                         : ArtifactAbstractLayerPtr{};
     if (!createdLayer) {
@@ -2399,6 +2406,16 @@ void ArtifactLayerMenu::Impl::handleCreateQuickLayer()
     auto transaction = std::make_unique<MacroUndoCommand>(
         QStringLiteral("Create Quick Layer"));
     transaction->addChild(std::make_unique<AddLayerCommand>(composition, createdLayer));
+    if (options.placementMode != LayerCreationPlacementMode::Playhead) {
+        int targetIndex = 0;
+        if (options.placementMode == LayerCreationPlacementMode::BeforeSelected && anchorIndex >= 0) {
+            targetIndex = anchorIndex;
+        } else if (options.placementMode == LayerCreationPlacementMode::AfterSelected && anchorIndex >= 0) {
+            targetIndex = anchorIndex + 1;
+        }
+        transaction->addChild(std::make_unique<MoveLayerIndexCommand>(
+            composition, createdLayer, 0, targetIndex));
+    }
     if (options.maskShape != QuickLayerMaskShape::None) {
         std::vector<LayerMask> masks;
         masks.push_back(quickLayerMask(options));
