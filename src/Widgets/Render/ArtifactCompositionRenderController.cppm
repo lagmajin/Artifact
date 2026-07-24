@@ -4198,6 +4198,13 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
       QStringLiteral("|size=%1x%2").arg(surface.width()).arg(surface.height());
 
+  const auto *composition =
+      static_cast<ArtifactAbstractComposition *>(layer->composition());
+  key += QStringLiteral("|colorPipeline=%1")
+             .arg(composition
+                      ? composition->colorPipelineVersion()
+                      : ArtifactAbstractComposition::CanonicalColorPipelineVersion);
+
   key += QStringLiteral("|generation=%1").arg(surfaceGeneration);
   key += QStringLiteral("|opacity=%1").arg(layer->opacity(), 0, 'f', 6);
 
