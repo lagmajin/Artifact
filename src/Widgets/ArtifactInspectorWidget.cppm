@@ -19,6 +19,8 @@ module;
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QFileDialog>
@@ -119,6 +121,7 @@ import Artifact.Widgets.Inspector.ComponentTabSurface;
 
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
+import Clipboard.ClipboardManager;
 import Artifact.Project.PresetManager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -4274,6 +4277,69 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
   }
 
   const auto effect = currentEffectById(effectId);
+
+  QAction *copyEffectAction = menu.addAction(QStringLiteral("Copy Effect"));
+  QObject::connect(copyEffectAction, &QAction::triggered,
+                   [this, effect, effectId]() {
+                     if (!effect) return;
+                     QJsonObject effectJson;
+                     effectJson[QStringLiteral("id")] = effectId;
+                     effectJson[QStringLiteral("displayName")] =
+                         effect->displayName().toQString();
+                     effectJson[QStringLiteral("enabled")] = effect->isEnabled();
+                     QJsonArray properties;
+                     for (const auto &property : effect->getProperties()) {
+                       QJsonObject propertyObject;
+                       propertyObject[QStringLiteral("name")] = property.getName();
+                       propertyObject[QStringLiteral("value")] =
+                           QJsonValue::fromVariant(property.getValue());
+                       properties.append(propertyObject);
+                     }
+                     effectJson[QStringLiteral("properties")] = properties;
+                     ArtifactCore::ClipboardManager::instance().copyEffect(
+                         effectJson, effect->displayName().toQString(),
+                         currentLayerId_.toString());
+                   });
+
+  auto &clipboard = ArtifactCore::ClipboardManager::instance();
+  clipboard.syncFromSystemClipboard();
+  QAction *pasteEffectAction = menu.addAction(QStringLiteral("Paste Effect"));
+  pasteEffectAction->setEnabled(clipboard.hasEffectData() &&
+                                 !currentLayerId_.isNil());
+  QObject::connect(pasteEffectAction, &QAction::triggered,
+                   [this]() {
+                     if (currentLayerId_.isNil()) return;
+                     auto &clipboard = ArtifactCore::ClipboardManager::instance();
+                     clipboard.syncFromSystemClipboard();
+                     const QJsonObject effectJson = clipboard.pasteEffect();
+                     const QString sourceId = effectJson.value(QStringLiteral("id")).toString();
+                     auto *effectService = ArtifactEffectService::instance();
+                     auto *projectService = ArtifactProjectService::instance();
+                     if (!effectService || !projectService || sourceId.isEmpty()) return;
+                     auto effectToPaste = effectService->createEffect(EffectID(sourceId));
+                     if (!effectToPaste) {
+                       effectToPaste = std::make_unique<ArtifactAbstractEffect>();
+                       effectToPaste->setEffectID(UniString::fromQString(sourceId));
+                     }
+                     effectToPaste->setDisplayName(
+                         effectJson.value(QStringLiteral("displayName")).toString(sourceId));
+                     effectToPaste->setEnabled(
+                         effectJson.value(QStringLiteral("enabled")).toBool(true));
+                     for (const auto &value : effectJson.value(QStringLiteral("properties")).toArray()) {
+                       const QJsonObject property = value.toObject();
+                       const QString name = property.value(QStringLiteral("name")).toString();
+                       if (!name.isEmpty()) {
+                         effectToPaste->setPropertyValue(
+                             UniString::fromQString(name),
+                             property.value(QStringLiteral("value")).toVariant());
+                       }
+                     }
+                     auto effectPtr = std::shared_ptr<ArtifactAbstractEffect>(effectToPaste.release());
+                     if (projectService->addEffectToLayerWithUndo(currentLayerId_, effectPtr)) {
+                       updateEffectsList();
+                       if (statusLabel) statusLabel->setText(QStringLiteral("Status: Effect pasted"));
+                     }
+                   });
 
   QString layerMaskActionLabel = QStringLiteral("Use Current Layer Mask(s) as Effect Mask...");
   if (!currentCompositionId_.isNil() && !currentLayerId_.isNil()) {
