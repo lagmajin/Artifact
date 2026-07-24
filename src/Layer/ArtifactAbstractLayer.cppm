@@ -7816,10 +7816,12 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("fracture.crackThreshold")) {
     impl_->fractureCrackThreshold_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 1000.0));
+    Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.shatterThreshold")) {
     impl_->fractureShatterThreshold_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 1000.0));
+    Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.shardCount")) {
@@ -7833,14 +7835,17 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("fracture.shardDamping")) {
     impl_->fractureShardDamping_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 1.0));
+    Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.shardGravity")) {
     impl_->fractureShardGravity_ = static_cast<float>(std::clamp(value.toDouble(), -5000.0, 5000.0));
+    Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.impactSensitivity")) {
     impl_->fractureImpactSensitivity_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 10.0));
+    Q_EMIT changed();
     return true;
   }
 
