@@ -64,6 +64,7 @@ import FloatColorPickerDialog;
 import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Widgets.Utils.CSS;
 import Artifact.Layer.Text;
+import Clipboard.ClipboardManager;
 
 namespace {
 constexpr int kPropertyRowMinHeight = 34;
@@ -889,12 +890,26 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
   }
 
   if (chosen == copyAction && editor_) {
-    QApplication::clipboard()->setText(editor_->value().toString());
+    const QVariant value = editor_->value();
+    ArtifactCore::ClipboardManager::instance().copyPropertyValue(
+        propertyName_, value, QString());
   } else if (chosen == pasteAction && editor_) {
-    const QString clipboardText = QApplication::clipboard()->text().trimmed();
-    if (!clipboardText.isEmpty()) {
-      editor_->setValueFromVariant(clipboardText);
-      editor_->commitCurrentValue();
+    auto &clipboard = ArtifactCore::ClipboardManager::instance();
+    clipboard.syncFromSystemClipboard();
+    if (clipboard.hasPropertyValue() &&
+        (clipboard.pastePropertyPath().isEmpty() ||
+         clipboard.pastePropertyPath() == propertyName_)) {
+      const QVariant value = clipboard.pastePropertyValue();
+      if (value.isValid()) {
+        editor_->setValueFromVariant(value);
+        editor_->commitCurrentValue();
+      }
+    } else {
+      const QString clipboardText = QApplication::clipboard()->text().trimmed();
+      if (!clipboardText.isEmpty()) {
+        editor_->setValueFromVariant(clipboardText);
+        editor_->commitCurrentValue();
+      }
     }
   } else if (chosen == resetAction && resetButton_ &&
              resetButton_->property("baseVisible").toBool()) {
