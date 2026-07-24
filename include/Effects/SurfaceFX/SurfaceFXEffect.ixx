@@ -141,16 +141,6 @@ public:
             else if (propertyName == QStringLiteral("Surface Element Seed Offset"))
                 element.seedOffset = value.toInt();
 
-            element.x = std::clamp(element.x, data_.anchorX,
-                                    data_.anchorX + data_.anchorWidth);
-            element.y = std::clamp(element.y, data_.anchorY,
-                                    data_.anchorY + data_.anchorHeight);
-            element.width = std::clamp(element.width, 0.0f,
-                                       data_.anchorX + data_.anchorWidth - element.x);
-            element.height = std::clamp(element.height, 0.0f,
-                                        data_.anchorY + data_.anchorHeight - element.y);
-            if (element.outTime >= 0.0f && element.outTime < element.inTime)
-                element.outTime = element.inTime;
         }
 
         // Keep the normalized anchor a valid rectangle after every edit,
@@ -159,6 +149,18 @@ public:
         data_.anchorHeight = std::clamp(data_.anchorHeight, 0.0f, 1.0f - data_.anchorY);
         data_.anchorX = std::clamp(data_.anchorX, 0.0f, 1.0f);
         data_.anchorY = std::clamp(data_.anchorY, 0.0f, 1.0f);
+        for (auto& element : data_.elements) {
+            element.x = std::clamp(element.x, data_.anchorX,
+                                   data_.anchorX + data_.anchorWidth);
+            element.y = std::clamp(element.y, data_.anchorY,
+                                   data_.anchorY + data_.anchorHeight);
+            element.width = std::clamp(element.width, 0.0f,
+                                       data_.anchorX + data_.anchorWidth - element.x);
+            element.height = std::clamp(element.height, 0.0f,
+                                        data_.anchorY + data_.anchorHeight - element.y);
+            if (element.outTime >= 0.0f && element.outTime < element.inTime)
+                element.outTime = element.inTime;
+        }
         if (propertyName != QStringLiteral("Surface Preset"))
             presetName_ = QStringLiteral("custom");
     }
