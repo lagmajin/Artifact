@@ -664,6 +664,29 @@ private:
  bool afterPathClosed_;
 };
 
+class ShapeOperatorStackCommand final : public Artifact::UndoCommand {
+public:
+ ShapeOperatorStackCommand(Artifact::ArtifactAbstractLayerPtr layer,
+                           QJsonArray before, QJsonArray after)
+     : layer_(std::move(layer)), before_(std::move(before)), after_(std::move(after)) {}
+
+ void undo() override { apply(before_); }
+ void redo() override { apply(after_); }
+ QString label() const override { return QStringLiteral("Edit Shape Operator Stack"); }
+
+private:
+ void apply(const QJsonArray& operators) {
+  auto layer = layer_.lock();
+  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  if (!shape) return;
+  shape->restoreOperatorsFromJson(operators);
+  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+ }
+
+ Artifact::ArtifactAbstractLayerWeak layer_;
+ QJsonArray before_, after_;
+};
+
 enum class MaskHandleType { None, InTangent, OutTangent };
 
 QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskHandleType handleType)
@@ -5282,9 +5305,11 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
                                              : QStringLiteral("Close Path"));
    }
    if (!menu.actions().isEmpty()) {
-    QAction* shapeChosen = menu.exec(event->globalPos());
-    if (shapeChosen) {
+   QAction* shapeChosen = menu.exec(event->globalPos());
+   if (shapeChosen) {
      bool handled = false;
+     const QJsonArray beforeOperatorState =
+         shapeLayer->toJson().value(QStringLiteral("shapeOperators")).toArray();
      if (shapeChosen == clearShapeOperatorsAct) {
       shapeLayer->clearShapeOperators();
       impl_->requestRender();
@@ -5453,6 +5478,14 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
       }
      }
      if (handled) {
+      const QJsonArray afterOperatorState =
+          shapeLayer->toJson().value(QStringLiteral("shapeOperators")).toArray();
+      if (beforeOperatorState != afterOperatorState) {
+       if (auto* undo = UndoManager::instance()) {
+        undo->push(std::make_unique<ShapeOperatorStackCommand>(
+            layer, beforeOperatorState, afterOperatorState));
+       }
+      }
       impl_->requestRender();
       event->accept();
       return;
