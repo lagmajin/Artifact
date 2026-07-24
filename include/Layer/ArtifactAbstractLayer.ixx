@@ -33,6 +33,7 @@ import Layer.Blend;
 import Layer.State;
 import Animation.Transform2D;
 import Animation.Transform3D;
+import Animation.Value;
 import Time.TimeRemap;
 import Artifact.Effect.Abstract;
 import Artifact.Animation.LayerEffectEnvelope;
@@ -362,6 +363,8 @@ public:
   const AnimatableTransform2D &transform2D() const;
   AnimatableTransform3D &transform3D();
   const AnimatableTransform3D &transform3D() const;
+  ArtifactCore::AnimationLayerStackT<float> &animationLayers();
+  const ArtifactCore::AnimationLayerStackT<float> &animationLayers() const;
   
   QVector3D position3D() const;
   void setPosition3D(const QVector3D &pos);

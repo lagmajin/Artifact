@@ -946,6 +946,7 @@ public:
   bool is3D() const;
   AnimatableTransform3D transform_;
   AnimatableTransform2D transform2d_;
+  ArtifactCore::AnimationLayerStackT<float> animationLayers_;
   Size_2D sourceSize_;
 
   // エフェクト管理メソッド
@@ -3767,6 +3768,14 @@ const AnimatableTransform3D &ArtifactAbstractLayer::transform3D() const {
     return var->transform3DOverride.value();
   }
   return impl_->transform_;
+}
+
+ArtifactCore::AnimationLayerStackT<float> &ArtifactAbstractLayer::animationLayers() {
+  return impl_->animationLayers_;
+}
+
+const ArtifactCore::AnimationLayerStackT<float> &ArtifactAbstractLayer::animationLayers() const {
+  return impl_->animationLayers_;
 }
 
 QVector3D ArtifactAbstractLayer::position3D() const {
