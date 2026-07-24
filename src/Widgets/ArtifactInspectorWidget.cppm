@@ -4321,8 +4321,15 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
                        effectToPaste = std::make_unique<ArtifactAbstractEffect>();
                        effectToPaste->setEffectID(UniString::fromQString(sourceId));
                      }
+                     QString pastedId = sourceId + QStringLiteral("__paste");
+                     int pastedIndex = 2;
+                     while (currentEffectById(pastedId)) {
+                       pastedId = QStringLiteral("%1__paste%2").arg(sourceId).arg(pastedIndex++);
+                     }
+                     effectToPaste->setEffectID(UniString::fromQString(pastedId));
                      effectToPaste->setDisplayName(
                          effectJson.value(QStringLiteral("displayName")).toString(sourceId));
+                     effectToPaste->setPipelineStage(EffectPipelineStage::Rasterizer);
                      effectToPaste->setEnabled(
                          effectJson.value(QStringLiteral("enabled")).toBool(true));
                      for (const auto &value : effectJson.value(QStringLiteral("properties")).toArray()) {
