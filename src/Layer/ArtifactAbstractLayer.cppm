@@ -3836,6 +3836,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["labelColorIndex"] = impl_->labelColorIndex_;
   obj["opacity"] = static_cast<double>(impl_->opacity_);
   obj["effectEnvelope"] = layerEffectEnvelopeToJson(impl_->effectEnvelope_);
+  obj["animationLayers"] = impl_->animationLayers_.toJson();
 
   // Mattes
   QJsonArray mattesArr;
@@ -4336,6 +4337,8 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
 }
 
 void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
+  if (obj.contains("animationLayers") && obj["animationLayers"].isObject())
+    impl_->animationLayers_.fromJson(obj["animationLayers"].toObject());
   if (obj.contains("name"))
     setLayerName(obj["name"].toString());
   if (obj.contains("layerNote"))
