@@ -9305,6 +9305,10 @@ float ArtifactAbstractLayer::opacity() const {
       }
     }
   }
+  if (impl_->animationLayers_.layerCount() > 0) {
+    baseOpacity = impl_->animationLayers_.evaluateWithBase(
+        FramePosition(impl_->currentFrame_), baseOpacity);
+  }
   return applyLayerEffectEnvelopeOpacity(impl_->effectEnvelope_, baseOpacity,
                                          impl_->currentFrame_,
                                          impl_->inPoint_,
