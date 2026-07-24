@@ -1113,6 +1113,23 @@ public:
   else for (const auto& selection : selectedKeys_) apply(selection.first, selection.second);
   return changed;
  }
+
+ template <typename Fn>
+ bool applyTangentOperationToSelection(Fn&& operation) {
+  if (selectedKeys_.empty()) {
+   return operation();
+  }
+  const auto selections = selectedKeys_;
+  bool changed = false;
+  for (const auto& selection : selections) {
+   selectedTrack_ = selection.first;
+   selectedKey_ = selection.second;
+   selectedKeys_.clear();
+   changed |= operation();
+  }
+  selectedKeys_ = selections;
+  return changed;
+ }
 };
 
 ArtifactCurveEditorWidget::ArtifactCurveEditorWidget(QWidget* parent)
@@ -1179,7 +1196,8 @@ bool ArtifactCurveEditorWidget::setSelectedKeyAutoTangents() {
   return false;
  }
  Q_EMIT interactionStarted();
- if (!impl_->setSelectedTangentsAuto()) {
+ if (!impl_->applyTangentOperationToSelection(
+         [impl = impl_]() { return impl->setSelectedTangentsAuto(); })) {
   Q_EMIT interactionFinished();
   return false;
  }
@@ -1193,7 +1211,8 @@ bool ArtifactCurveEditorWidget::setSelectedKeyFlatTangents() {
   return false;
  }
  Q_EMIT interactionStarted();
- if (!impl_->setSelectedTangentsFlat()) {
+ if (!impl_->applyTangentOperationToSelection(
+         [impl = impl_]() { return impl->setSelectedTangentsFlat(); })) {
   Q_EMIT interactionFinished();
   return false;
  }
@@ -1207,7 +1226,8 @@ bool ArtifactCurveEditorWidget::setSelectedKeyLinearTangents() {
   return false;
  }
  Q_EMIT interactionStarted();
- if (!impl_->setSelectedTangentsLinear()) {
+ if (!impl_->applyTangentOperationToSelection(
+         [impl = impl_]() { return impl->setSelectedTangentsLinear(); })) {
   Q_EMIT interactionFinished();
   return false;
  }
