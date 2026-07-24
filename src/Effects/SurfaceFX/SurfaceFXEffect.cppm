@@ -88,7 +88,17 @@ public:
             const auto* overlayRow = overlay.ptr<cv::Vec4f>(y);
             auto* outputRow = output.ptr<cv::Vec4f>(y);
             for (int x = std::max(0, static_cast<int>(left)); x < std::min(width, static_cast<int>(right)); ++x) {
-                const float a = std::clamp(overlayRow[x][3], 0.0f, 1.0f);
+                float featherMask = 1.0f;
+                if (data.feather > 0.0f) {
+                    const float u = (static_cast<float>(x) / width - data.anchorX) /
+                                    std::max(0.001f, data.anchorWidth);
+                    const float v = (static_cast<float>(y) / height - data.anchorY) /
+                                    std::max(0.001f, data.anchorHeight);
+                    const float edgeDistance = std::min({u, v, 1.0f - u, 1.0f - v});
+                    featherMask = std::clamp(edgeDistance / data.feather, 0.0f, 1.0f);
+                    featherMask = featherMask * featherMask * (3.0f - 2.0f * featherMask);
+                }
+                const float a = std::clamp(overlayRow[x][3] * featherMask, 0.0f, 1.0f);
                 for (int c = 0; c < 3; ++c)
                     outputRow[x][c] = sourceRow[x][c] * (1.0f - a) + overlayRow[x][c] * a;
                 outputRow[x][3] = sourceRow[x][3];
