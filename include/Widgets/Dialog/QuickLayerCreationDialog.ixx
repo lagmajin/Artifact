@@ -6,7 +6,6 @@ module;
 export module Artifact.Widgets.QuickLayerCreationDialog;
 
 import Artifact.Layer.InitParams;
-import Artifact.Menu.Layer;
 import Artifact.Animation.LayerEffectEnvelope;
 
 export namespace Artifact {
@@ -33,7 +32,6 @@ struct QuickLayerCreationOptions {
   LayerEnvelopeCurve envelopeCurve = LayerEnvelopeCurve::Linear;
   int envelopeFrames = 8;
   LayerEffectEnvelope envelope;
-  LayerCreationPlacementMode placementMode = LayerCreationPlacementMode::AfterSelected;
 };
 
 class QuickLayerCreationDialog final : public QDialog {

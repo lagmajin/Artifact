@@ -41,7 +41,7 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
   resize(460, 560);
 
   auto* root = new QVBoxLayout(this);
-  auto* basic = new QGroupBox(QStringLiteral("平面 / 素材"), this);
+  auto* basic = new QGroupBox(QStringLiteral("平面"), this);
   auto* form = new QFormLayout(basic);
   impl_->name = new QLineEdit(QStringLiteral("平面 1"), basic);
   impl_->width = new QSpinBox(basic);
