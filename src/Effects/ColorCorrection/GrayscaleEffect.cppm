@@ -13,6 +13,7 @@ module GrayscaleEffect;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
+import Color.TransferFunction;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -33,20 +34,14 @@ constexpr float kLinearB = 0.0722f;
 
 float srgbToLinear(float v)
 {
-    v = std::clamp(v, 0.0f, 1.0f);
-    if (v <= 0.04045f) {
-        return v / 12.92f;
-    }
-    return std::pow((v + 0.055f) / 1.055f, 2.4f);
+    return ArtifactCore::ColorTransferFunction::decode(
+        std::clamp(v, 0.0f, 1.0f), ArtifactCore::TransferFunction::sRGB);
 }
 
 float linearToSrgb(float v)
 {
-    v = std::clamp(v, 0.0f, 1.0f);
-    if (v <= 0.0031308f) {
-        return v * 12.92f;
-    }
-    return 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
+    return ArtifactCore::ColorTransferFunction::encode(
+        std::clamp(v, 0.0f, 1.0f), ArtifactCore::TransferFunction::sRGB);
 }
 
 const char* kGrayscaleHlsl = R"(
