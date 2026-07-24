@@ -33,6 +33,7 @@
 #include <QByteArray>
 #include <wobjectdefs.h>
 #include <QString>
+#include <QJsonObject>
 #include <QStringList>
 #include <QVariant>
 #include <QObject>
@@ -75,6 +76,20 @@ private:
     UniString name_;
     QVariant oldValue_;
     QVariant newValue_;
+};
+
+class AnimationLayerStackSnapshotCommand : public UndoCommand {
+public:
+    AnimationLayerStackSnapshotCommand(ArtifactAbstractLayerPtr layer,
+                                       const QJsonObject& before,
+                                       const QJsonObject& after);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    QJsonObject before_;
+    QJsonObject after_;
 };
 
 class MoveLayerCommand : public UndoCommand {

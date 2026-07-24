@@ -3040,15 +3040,23 @@ public:
       });
       add(QStringLiteral("Add Animation Layer"), [layer]() {
         if (!layer) return;
+        const QJsonObject before = layer->animationLayers().toJson();
         layer->animationLayers().addLayer();
-        layer->changed();
+        const QJsonObject after = layer->animationLayers().toJson();
+        layer->animationLayers().fromJson(before);
+        UndoManager::instance()->push(
+            std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
       });
       if (layer->animationLayers().layerCount() > 0) {
         add(QStringLiteral("Remove Top Animation Layer"), [layer]() {
           if (!layer || layer->animationLayers().layerCount() == 0) return;
+          const QJsonObject before = layer->animationLayers().toJson();
           layer->animationLayers().removeLayer(
               layer->animationLayers().layerCount() - 1);
-          layer->changed();
+          const QJsonObject after = layer->animationLayers().toJson();
+          layer->animationLayers().fromJson(before);
+          UndoManager::instance()->push(
+              std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
         });
       }
       add(selectedCount > 1 ? QStringLiteral("Copy Selected Layers as Bundle")

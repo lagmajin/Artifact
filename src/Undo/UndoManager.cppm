@@ -92,6 +92,29 @@ QString SetPropertyCommand::label() const {
     return QStringLiteral("Set Property: %1").arg(name_.toQString());
 }
 
+AnimationLayerStackSnapshotCommand::AnimationLayerStackSnapshotCommand(
+    ArtifactAbstractLayerPtr layer, const QJsonObject& before,
+    const QJsonObject& after)
+    : layer_(layer), before_(before), after_(after) {}
+
+void AnimationLayerStackSnapshotCommand::undo() {
+    if (auto layer = layer_.lock()) {
+        layer->animationLayers().fromJson(before_);
+        layer->changed();
+    }
+}
+
+void AnimationLayerStackSnapshotCommand::redo() {
+    if (auto layer = layer_.lock()) {
+        layer->animationLayers().fromJson(after_);
+        layer->changed();
+    }
+}
+
+QString AnimationLayerStackSnapshotCommand::label() const {
+    return QStringLiteral("Change Animation Layers");
+}
+
 ReplaceLayerSourceCommand::ReplaceLayerSourceCommand(
     ArtifactAbstractLayerPtr layer, QString propertyPath,
     QString oldSourcePath, QString newSourcePath)
