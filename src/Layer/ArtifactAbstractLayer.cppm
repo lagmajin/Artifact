@@ -1873,18 +1873,26 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
   const auto* var = getActiveVariant();
   bool hasTransVar = var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Transform) && var->transform3DOverride.has_value();
 
-  auto evaluateDouble = [this, &time, hasTransVar](const QString &propertyPath, double fallback) {
+  auto evaluateDouble = [this, &time, frameNumber, hasTransVar](const QString &propertyPath,
+                                                                  double fallback) {
     if (hasTransVar) return fallback;
+    double evaluated = fallback;
     const auto it = impl_->propertyCache_.constFind(propertyPath);
-    if (it == impl_->propertyCache_.constEnd() || !it.value()) {
-      return fallback;
+    if (it != impl_->propertyCache_.constEnd() && it.value()) {
+      const auto &property = *it.value();
+      if (property.isAnimatable() && !property.getKeyFrames().empty()) {
+        const QVariant animatedValue = property.interpolateValue(time);
+        if (animatedValue.isValid()) {
+          evaluated = animatedValue.toDouble();
+        }
+      }
     }
-    const auto &property = *it.value();
-    if (!property.isAnimatable() || property.getKeyFrames().empty()) {
-      return fallback;
+    if (const auto *stack = animationLayerStack(propertyPath);
+        stack && stack->layerCount() > 0) {
+      evaluated = stack->evaluateWithBase(FramePosition(frameNumber),
+                                          static_cast<float>(evaluated));
     }
-    const QVariant animatedValue = property.interpolateValue(time);
-    return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
+    return evaluated;
   };
 
   const bool useSpatialPosition = !hasTransVar && t.hasPositionSpatialTangents();
@@ -1894,6 +1902,18 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
   double positionY = useSpatialPosition
       ? t.positionYAt(time)
       : evaluateDouble(QStringLiteral("transform.position.y"), t.positionYAt(time));
+  if (useSpatialPosition) {
+    if (const auto *stack = animationLayerStack(QStringLiteral("transform.position.x"));
+        stack && stack->layerCount() > 0) {
+      positionX = stack->evaluateWithBase(FramePosition(frameNumber),
+                                           static_cast<float>(positionX));
+    }
+    if (const auto *stack = animationLayerStack(QStringLiteral("transform.position.y"));
+        stack && stack->layerCount() > 0) {
+      positionY = stack->evaluateWithBase(FramePosition(frameNumber),
+                                           static_cast<float>(positionY));
+    }
+  }
   double rotation = evaluateDouble(QStringLiteral("transform.rotation"), t.rotationAt(time));
   double scaleX = evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleXAt(time));
   double scaleY = evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleYAt(time));
