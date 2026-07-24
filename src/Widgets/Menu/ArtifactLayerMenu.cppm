@@ -2386,9 +2386,17 @@ void ArtifactLayerMenu::Impl::handleCreateQuickLayer()
     if (currentComposition) {
         anchorIndex = currentComposition->allLayerRef().indexOf(anchorLayer);
     }
-    service->addLayerToCurrentComposition(
-        options.solidParams, true,
-        options.placementMode == LayerCreationPlacementMode::Playhead);
+    if (options.imageSource && !options.imagePath.isEmpty()) {
+        ArtifactImageInitParams imageParams(options.solidParams.name().toQString());
+        imageParams.setImagePath(options.imagePath);
+        service->addLayerToCurrentComposition(
+            imageParams, true,
+            options.placementMode == LayerCreationPlacementMode::Playhead);
+    } else {
+        service->addLayerToCurrentComposition(
+            options.solidParams, true,
+            options.placementMode == LayerCreationPlacementMode::Playhead);
+    }
     const auto createdLayer = selection ? selection->currentLayer()
                                         : ArtifactAbstractLayerPtr{};
     if (!createdLayer) {

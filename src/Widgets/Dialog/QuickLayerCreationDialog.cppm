@@ -2,6 +2,7 @@ module;
 #include <QComboBox>
 #include <QCheckBox>
 #include <QDialogButtonBox>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -24,6 +25,8 @@ W_OBJECT_IMPL(QuickLayerCreationDialog)
 class QuickLayerCreationDialog::Impl {
 public:
   QLineEdit* name = nullptr;
+  QComboBox* source = nullptr;
+  QLineEdit* imagePath = nullptr;
   QSpinBox* width = nullptr;
   QSpinBox* height = nullptr;
   QComboBox* mask = nullptr;
@@ -45,16 +48,40 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
   auto* basic = new QGroupBox(QStringLiteral("平面"), this);
   auto* form = new QFormLayout(basic);
   impl_->name = new QLineEdit(QStringLiteral("平面 1"), basic);
+  impl_->source = new QComboBox(basic);
+  impl_->source->addItem(QStringLiteral("平面"), false);
+  impl_->source->addItem(QStringLiteral("画像"), true);
+  impl_->imagePath = new QLineEdit(basic);
+  auto* browse = new QPushButton(QStringLiteral("参照…"), basic);
+  auto* imageRow = new QWidget(basic);
+  auto* imageLayout = new QHBoxLayout(imageRow);
+  imageLayout->setContentsMargins(0, 0, 0, 0);
+  imageLayout->addWidget(impl_->imagePath);
+  imageLayout->addWidget(browse);
   impl_->width = new QSpinBox(basic);
   impl_->height = new QSpinBox(basic);
   impl_->width->setRange(1, 16384);
   impl_->height->setRange(1, 16384);
   impl_->width->setValue(1920);
   impl_->height->setValue(1080);
+  form->addRow(QStringLiteral("種別"), impl_->source);
   form->addRow(QStringLiteral("名前"), impl_->name);
+  form->addRow(QStringLiteral("画像"), imageRow);
   form->addRow(QStringLiteral("幅"), impl_->width);
   form->addRow(QStringLiteral("高さ"), impl_->height);
   root->addWidget(basic);
+  impl_->imagePath->setEnabled(false);
+  browse->setEnabled(false);
+  QObject::connect(impl_->source, &QComboBox::currentIndexChanged, this,
+                   [this, browse](int index) {
+                     const bool image = impl_->source->itemData(index).toBool();
+                     impl_->imagePath->setEnabled(image);
+                     browse->setEnabled(image);
+                   });
+  QObject::connect(browse, &QPushButton::clicked, this, [this] {
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("画像を選択"));
+    if (!path.isEmpty()) impl_->imagePath->setText(path);
+  });
 
   auto* maskBox = new QGroupBox(QStringLiteral("マスク"), this);
   auto* maskForm = new QFormLayout(maskBox);
@@ -139,6 +166,8 @@ QuickLayerCreationDialog::~QuickLayerCreationDialog() { delete impl_; }
 
 QuickLayerCreationOptions QuickLayerCreationDialog::submittedOptions() const {
   QuickLayerCreationOptions options{ArtifactSolidLayerInitParams(impl_->name->text())};
+  options.imageSource = impl_->source->currentData().toBool();
+  options.imagePath = impl_->imagePath->text().trimmed();
   options.solidParams.setWidth(impl_->width->value());
   options.solidParams.setHeight(impl_->height->value());
   options.maskShape = static_cast<QuickLayerMaskShape>(impl_->mask->currentData().toInt());

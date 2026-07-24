@@ -1,6 +1,7 @@
 module;
 #include <memory>
 #include <QDialog>
+#include <QString>
 #include <QWidget>
 #include <wobjectdefs.h>
 export module Artifact.Widgets.QuickLayerCreationDialog;
@@ -25,6 +26,8 @@ enum class QuickLayerEnvelopeTiming {
 
 struct QuickLayerCreationOptions {
   ArtifactSolidLayerInitParams solidParams;
+  bool imageSource = false;
+  QString imagePath;
   QuickLayerMaskShape maskShape = QuickLayerMaskShape::None;
   float maskFeather = 0.0f;
   bool entryEnvelope = false;
