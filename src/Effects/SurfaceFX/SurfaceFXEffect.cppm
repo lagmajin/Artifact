@@ -37,6 +37,10 @@ public:
         const float bottom = std::clamp(data.anchorY + data.anchorHeight, 0.0f, 1.0f) * height;
 
         for (const auto& element : data.elements) {
+            const float currentTime = static_cast<float>(context_.timeSeconds);
+            if (currentTime < element.inTime ||
+                (element.outTime >= 0.0f && currentTime > element.outTime))
+                continue;
             const float alpha = std::clamp(element.opacity * element.intensity, 0.0f, 1.0f);
             if (alpha <= 0.0f) continue;
             const float x = std::clamp(element.x, data.anchorX, data.anchorX + data.anchorWidth) * width;
