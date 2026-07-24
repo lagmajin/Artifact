@@ -1898,6 +1898,21 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
   return;
  }
 
+ if (event->modifiers().testFlag(Qt::ControlModifier) &&
+     event->modifiers().testFlag(Qt::AltModifier) &&
+     impl_->keyEditingEnabled_) {
+  if (event->key() == Qt::Key_V) {
+   promptSetSelectedKeyValue();
+   event->accept();
+   return;
+  }
+  if (event->key() == Qt::Key_F) {
+   promptSetSelectedKeyFrame();
+   event->accept();
+   return;
+  }
+ }
+
  if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace ||
      event->key() == Qt::Key_X) {
   if (!impl_->keyEditingEnabled_) {
