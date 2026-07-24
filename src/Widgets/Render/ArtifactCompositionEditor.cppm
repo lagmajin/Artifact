@@ -3041,7 +3041,8 @@ public:
       add(QStringLiteral("Add Animation Layer"), [layer]() {
         if (!layer) return;
         const QJsonObject before = layer->animationLayersSnapshot();
-        layer->animationLayers().addLayer();
+        const std::size_t layerIndex = layer->animationLayers().addLayer();
+        layer->animationLayers().layer(layerIndex).values.setCurrent(layer->opacity());
         const QJsonObject after = layer->animationLayersSnapshot();
         layer->restoreAnimationLayersSnapshot(before);
         UndoManager::instance()->push(
@@ -3059,7 +3060,10 @@ public:
             QStringLiteral("transform.anchor.x"),
             QStringLiteral("transform.anchor.y")};
         for (const auto &path : paths) {
-          layer->animationLayerStack(path).addLayer();
+          auto &stack = layer->animationLayerStack(path);
+          const std::size_t layerIndex = stack.addLayer();
+          stack.layer(layerIndex).values.setCurrent(
+              path.contains(QStringLiteral("scale")) ? 1.0f : 0.0f);
         }
         const QJsonObject after = layer->animationLayersSnapshot();
         layer->restoreAnimationLayersSnapshot(before);
