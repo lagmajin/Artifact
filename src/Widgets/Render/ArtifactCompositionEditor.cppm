@@ -3038,6 +3038,19 @@ public:
         ArtifactCore::ClipboardManager::instance().copyLayer(layer->toJson(),
                                                              layer->layerName());
       });
+      add(QStringLiteral("Add Animation Layer"), [layer]() {
+        if (!layer) return;
+        layer->animationLayers().addLayer();
+        layer->changed();
+      });
+      if (layer->animationLayers().layerCount() > 0) {
+        add(QStringLiteral("Remove Top Animation Layer"), [layer]() {
+          if (!layer || layer->animationLayers().layerCount() == 0) return;
+          layer->animationLayers().removeLayer(
+              layer->animationLayers().layerCount() - 1);
+          layer->changed();
+        });
+      }
       add(selectedCount > 1 ? QStringLiteral("Copy Selected Layers as Bundle")
                             : QStringLiteral("Copy Layer as Bundle"),
           copyLayerBundle);
