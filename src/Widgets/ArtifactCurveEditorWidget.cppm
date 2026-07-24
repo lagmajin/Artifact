@@ -1059,58 +1059,59 @@ public:
  }
 
  bool setSelectedTangentsBroken() {
-  CurveTrack* track = nullptr;
-  CurveKey* key = nullptr;
-  const CurveKey* prev = nullptr;
-  const CurveKey* next = nullptr;
-  if (!selectedKeyBounds(track, key, prev, next)) {
-   return false;
-  }
-  key->brokenTangents = true;
-  key->smooth = false;
-  return true;
+  bool changed = false;
+  const auto apply = [&](int trackIndex, int keyIndex) {
+   if (trackIndex < 0 || trackIndex >= static_cast<int>(tracks_.size()) ||
+       keyIndex < 0 || keyIndex >= static_cast<int>(tracks_[trackIndex].keys.size())) return;
+   auto& key = tracks_[trackIndex].keys[keyIndex];
+   changed |= !key.brokenTangents || key.smooth;
+   key.brokenTangents = true;
+   key.smooth = false;
+  };
+  if (selectedKeys_.empty()) apply(selectedTrack_, selectedKey_);
+  else for (const auto& selection : selectedKeys_) apply(selection.first, selection.second);
+  return changed;
  }
 
  bool setSelectedTangentsUnified() {
-  CurveTrack* track = nullptr;
-  CurveKey* key = nullptr;
-  const CurveKey* prev = nullptr;
-  const CurveKey* next = nullptr;
-  if (!selectedKeyBounds(track, key, prev, next)) {
-   return false;
-  }
-  const int64_t inSpan = std::max<int64_t>(1, -key->inHandleFrame);
-  const int64_t outSpan = std::max<int64_t>(1, key->outHandleFrame);
-  const float inSlope = key->inHandleValue / static_cast<float>(inSpan);
-  const float outSlope = key->outHandleValue / static_cast<float>(outSpan);
-  const float slope = 0.5f * (inSlope + outSlope);
-  key->inHandleFrame = -inSpan;
-  key->outHandleFrame = outSpan;
-  key->inHandleValue = -slope * static_cast<float>(inSpan);
-  key->outHandleValue = slope * static_cast<float>(outSpan);
-  key->inTangent = slope;
-  key->outTangent = slope;
-  key->brokenTangents = false;
-  key->smooth = true;
-  return true;
+  bool changed = false;
+  const auto apply = [&](int trackIndex, int keyIndex) {
+   if (trackIndex < 0 || trackIndex >= static_cast<int>(tracks_.size()) ||
+       keyIndex < 0 || keyIndex >= static_cast<int>(tracks_[trackIndex].keys.size())) return;
+   auto& key = tracks_[trackIndex].keys[keyIndex];
+   const int64_t inSpan = std::max<int64_t>(1, -key.inHandleFrame);
+   const int64_t outSpan = std::max<int64_t>(1, key.outHandleFrame);
+   const float inSlope = key.inHandleValue / static_cast<float>(inSpan);
+   const float outSlope = key.outHandleValue / static_cast<float>(outSpan);
+   const float slope = 0.5f * (inSlope + outSlope);
+   key.inHandleFrame = -inSpan;
+   key.outHandleFrame = outSpan;
+   key.inHandleValue = -slope * static_cast<float>(inSpan);
+   key.outHandleValue = slope * static_cast<float>(outSpan);
+   key.inTangent = slope;
+   key.outTangent = slope;
+   changed |= key.brokenTangents || !key.smooth;
+   key.brokenTangents = false;
+   key.smooth = true;
+  };
+  if (selectedKeys_.empty()) apply(selectedTrack_, selectedKey_);
+  else for (const auto& selection : selectedKeys_) apply(selection.first, selection.second);
+  return changed;
  }
 
  bool setSelectedConstant(bool enabled) {
-  CurveTrack* track = nullptr;
-  CurveKey* key = nullptr;
-  const CurveKey* prev = nullptr;
-  const CurveKey* next = nullptr;
-  if (!selectedKeyBounds(track, key, prev, next)) {
-   return false;
-  }
-  const bool changed = key->constant != enabled;
-  key->constant = enabled;
-  if (enabled) {
-   key->smooth = false;
-  } else {
-   key->smooth = true;
-  }
-  return changed || !enabled;
+  bool changed = false;
+  const auto apply = [&](int trackIndex, int keyIndex) {
+   if (trackIndex < 0 || trackIndex >= static_cast<int>(tracks_.size()) ||
+       keyIndex < 0 || keyIndex >= static_cast<int>(tracks_[trackIndex].keys.size())) return;
+   auto& key = tracks_[trackIndex].keys[keyIndex];
+   changed |= key.constant != enabled || (enabled ? key.smooth : !key.smooth);
+   key.constant = enabled;
+   key.smooth = !enabled;
+  };
+  if (selectedKeys_.empty()) apply(selectedTrack_, selectedKey_);
+  else for (const auto& selection : selectedKeys_) apply(selection.first, selection.second);
+  return changed;
  }
 };
 
