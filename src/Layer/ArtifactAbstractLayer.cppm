@@ -3834,6 +3834,26 @@ void ArtifactAbstractLayer::restoreAnimationLayersSnapshot(const QJsonObject &sn
                       LayerDirtyReason::PropertyChanged);
 }
 
+void ArtifactAbstractLayer::bakeAnimationLayersAtCurrentFrame() {
+  const FramePosition frame(currentFrame());
+  if (impl_->animationLayers_.layerCount() > 0) {
+    const float baked = impl_->animationLayers_.evaluateWithBase(
+        frame, impl_->opacity_);
+    impl_->animationLayers_.setBase(baked);
+    impl_->animationLayers_.clear();
+  }
+  for (auto it = impl_->animationPropertyLayers_.begin();
+       it != impl_->animationPropertyLayers_.end(); ++it) {
+    auto &stack = it.value();
+    if (stack.layerCount() == 0) continue;
+    const float baseValue = stack.base(frame);
+    stack.setBase(stack.evaluateWithBase(frame, baseValue));
+    stack.clear();
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
+}
+
 QVector3D ArtifactAbstractLayer::position3D() const {
   const auto time = currentTimelineTime(this);
   return QVector3D(impl_->transform_.positionXAt(time),

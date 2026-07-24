@@ -371,6 +371,7 @@ public:
       const QString &propertyPath) const;
   QJsonObject animationLayersSnapshot() const;
   void restoreAnimationLayersSnapshot(const QJsonObject &snapshot);
+  void bakeAnimationLayersAtCurrentFrame();
   
   QVector3D position3D() const;
   void setPosition3D(const QVector3D &pos);
