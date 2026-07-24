@@ -14,6 +14,8 @@ import Utils.String.UniString;
 
 export namespace Artifact {
 
+using namespace ArtifactCore;
+
 /**
  * @brief Auto Exposure / Eye Adaptation effect.
  *
@@ -52,13 +54,37 @@ public:
     bool isEnabled() const { return enabled_; }
 
     std::vector<AbstractProperty> getProperties() const override {
-        return {
-            makeFloatProperty("MiddleGray", middleGray_, 0.01f, 1.0f),
-            makeFloatProperty("MinExposure", minExposure_, -16.0f, 0.0f),
-            makeFloatProperty("MaxExposure", maxExposure_, 0.0f, 16.0f),
-            makeFloatProperty("AdaptationSpeed", adaptationSpeed_, 0.01f, 10.0f),
-            makeBoolProperty("Enabled", enabled_),
-        };
+        std::vector<AbstractProperty> props;
+        AbstractProperty middleGray;
+        middleGray.setName(QStringLiteral("MiddleGray"));
+        middleGray.setType(PropertyType::Float);
+        middleGray.setValue(middleGray_);
+        props.push_back(middleGray);
+
+        AbstractProperty minExposure;
+        minExposure.setName(QStringLiteral("MinExposure"));
+        minExposure.setType(PropertyType::Float);
+        minExposure.setValue(minExposure_);
+        props.push_back(minExposure);
+
+        AbstractProperty maxExposure;
+        maxExposure.setName(QStringLiteral("MaxExposure"));
+        maxExposure.setType(PropertyType::Float);
+        maxExposure.setValue(maxExposure_);
+        props.push_back(maxExposure);
+
+        AbstractProperty adaptationSpeed;
+        adaptationSpeed.setName(QStringLiteral("AdaptationSpeed"));
+        adaptationSpeed.setType(PropertyType::Float);
+        adaptationSpeed.setValue(adaptationSpeed_);
+        props.push_back(adaptationSpeed);
+
+        AbstractProperty enabled;
+        enabled.setName(QStringLiteral("Enabled"));
+        enabled.setType(PropertyType::Boolean);
+        enabled.setValue(enabled_);
+        props.push_back(enabled);
+        return props;
     }
 
     void setPropertyValue(const UniString& name, const QVariant& value) override {
@@ -70,7 +96,6 @@ public:
     }
 
     bool supportsGPU() const override { return true; }
-    EffectType type() const override { return EffectType::Color; }
 };
 
 } // namespace Artifact

@@ -52,6 +52,8 @@ public:
     mutable Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
     mutable Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
     mutable Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
+    std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
+    std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
     mutable bool pipelineReady_ = false;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -72,8 +74,11 @@ public:
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) { applyCPU(src, dst); return; }
-        auto gpuContext = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
-        auto executor = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext);
+        if (!gpuContext_) {
+            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
+            executor_ = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
+        }
+        if (!executor_) { applyCPU(src, dst); return; }
         if (!paramsCB_) {
             Diligent::BufferDesc cbDesc; cbDesc.Name = "PhotoFilter/ParamsCB"; cbDesc.Size = sizeof(ParamsCB); cbDesc.Usage = Diligent::USAGE_DYNAMIC; cbDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER; cbDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE; device_->CreateBuffer(cbDesc, nullptr, &paramsCB_);
         }
@@ -85,7 +90,7 @@ public:
         };
         if (!pipelineReady_) {
             ArtifactCore::ComputePipelineDesc desc; desc.name="PhotoFilter/PSO"; desc.shaderSource=kPhotoFilterHlsl; desc.entryPoint="main"; desc.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL; desc.variables=vars; desc.variableCount=3; desc.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-            if (!executor->build(desc) || !executor->createShaderResourceBinding(true) || !executor->setBuffer("PhotoFilterParams", paramsCB_)) { applyCPU(src, dst); return; }
+            if (!executor_->build(desc) || !executor_->createShaderResourceBinding(true) || !executor_->setBuffer("PhotoFilterParams", paramsCB_)) { applyCPU(src, dst); return; }
             pipelineReady_ = true;
         }
         Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex; if (!createTextureFromImage(src, device_, &inputTex, "PhotoFilter/InputTexture")) { applyCPU(src, dst); return; }
@@ -93,8 +98,8 @@ public:
         void* mapped = nullptr; context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped); if (!mapped) { applyCPU(src, dst); return; }
         const auto &settings = processor_.settings();
         ParamsCB params{}; params.r=settings.color.r; params.g=settings.color.g; params.b=settings.color.b; params.density=settings.density; params.brightness=settings.brightness; params.contrast=settings.contrast; params.saturationBoost=settings.saturationBoost; params.preserveLuma=settings.preserveLuma ? 1.0f : 0.0f; std::memcpy(mapped,&params,sizeof(params)); context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
-        if (!executor->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) || !executor->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src,dst); return; }
-        auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1); executor->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        if (!executor_->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) || !executor_->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src,dst); return; }
+        auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1); executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         if (!readbackTexture(device_, context_, outputTex, dst, "PhotoFilter/StagingTexture", src.image().colorDescriptor())) { applyCPU(src, dst); return; }
     }
 

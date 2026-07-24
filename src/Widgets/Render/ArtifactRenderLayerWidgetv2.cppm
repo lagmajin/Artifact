@@ -2885,7 +2885,7 @@ void ArtifactLayerEditorWidgetV2::Impl::drawViewportChrome(
  QString canvasStateTitle;
  QString canvasStateDetail;
  if (!layer) {
-  canvasStateTitle = QStringLiteral("No layer selected");
+  canvasStateTitle = QStringLiteral("Select a layer to inspect");
   canvasStateDetail = QStringLiteral("Select a layer to open it in Layer Solo View");
  } else {
   const FramePosition currentFrame = currentLayerViewFrame();

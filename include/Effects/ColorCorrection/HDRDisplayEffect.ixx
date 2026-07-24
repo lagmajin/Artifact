@@ -13,6 +13,8 @@ import Utils.String.UniString;
 
 export namespace Artifact {
 
+using namespace ArtifactCore;
+
 /**
  * @brief HDR Display Output effect.
  *
@@ -50,12 +52,28 @@ public:
     float saturationBoost() const { return saturationBoost_; }
 
     std::vector<AbstractProperty> getProperties() const override {
-        return {
-            makeFloatProperty("PeakNits", peakNits_, 100.0f, 10000.0f),
-            makeFloatProperty("PaperWhite", paperWhiteNits_, 10.0f, 500.0f),
-            makeFloatProperty("SaturationBoost", saturationBoost_, 0.5f, 2.0f),
-            makeIntProperty("DisplayMode", static_cast<int>(mode_), 0, 3),
-        };
+        std::vector<AbstractProperty> props;
+        AbstractProperty peakNits;
+        peakNits.setName(QStringLiteral("PeakNits"));
+        peakNits.setType(PropertyType::Float);
+        peakNits.setValue(peakNits_);
+        props.push_back(peakNits);
+        AbstractProperty paperWhite;
+        paperWhite.setName(QStringLiteral("PaperWhite"));
+        paperWhite.setType(PropertyType::Float);
+        paperWhite.setValue(paperWhiteNits_);
+        props.push_back(paperWhite);
+        AbstractProperty saturationBoost;
+        saturationBoost.setName(QStringLiteral("SaturationBoost"));
+        saturationBoost.setType(PropertyType::Float);
+        saturationBoost.setValue(saturationBoost_);
+        props.push_back(saturationBoost);
+        AbstractProperty displayMode;
+        displayMode.setName(QStringLiteral("DisplayMode"));
+        displayMode.setType(PropertyType::Integer);
+        displayMode.setValue(static_cast<int>(mode_));
+        props.push_back(displayMode);
+        return props;
     }
 
     void setPropertyValue(const UniString& name, const QVariant& value) override {
@@ -66,7 +84,6 @@ public:
     }
 
     bool supportsGPU() const override { return true; }
-    EffectType type() const override { return EffectType::Color; }
 };
 
 } // namespace Artifact

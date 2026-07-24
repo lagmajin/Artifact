@@ -1443,7 +1443,7 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
     painter.setFont(titleFont);
     painter.setPen(QColor(218, 224, 232, 210));
     const QRect titleRect(contentRect.left() + 28, y, contentRect.width() - 56, 24);
-    painter.drawText(titleRect, Qt::AlignCenter, QStringLiteral("No project items yet"));
+    painter.drawText(titleRect, Qt::AlignCenter, QStringLiteral("Import or create an item to begin"));
 
     QFont bodyFont = painter.font();
     bodyFont.setBold(false);

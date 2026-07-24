@@ -57,6 +57,8 @@ public:
     Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
     Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> lutTexture_;
+    std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
+    std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
     bool pipelineReady_ = false;
     bool lutDirty_ = true;
 
@@ -94,8 +96,14 @@ public:
             }
         } guard{this};
 
-        auto gpuContext = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
-        auto executor = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext);
+        if (!gpuContext_) {
+            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
+            executor_ = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
+        }
+        if (!executor_) {
+            applyCPU(src, dst);
+            return;
+        }
 
         if (lutDirty_ || !lutTexture_) {
             if (!buildLUTTexture()) {
@@ -119,7 +127,7 @@ public:
             desc.variables = vars;
             desc.variableCount = 3;
             desc.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-            if (!executor->build(desc) || !executor->createShaderResourceBinding(true)) {
+            if (!executor_->build(desc) || !executor_->createShaderResourceBinding(true)) {
                 applyCPU(src, dst);
                 return;
             }
@@ -143,15 +151,15 @@ public:
             return;
         }
 
-        if (!executor->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-            !executor->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS)) ||
-            !executor->setTextureView("g_LUTTexture", lutTexture_->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))) {
+        if (!executor_->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor_->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS)) ||
+            !executor_->setTextureView("g_LUTTexture", lutTexture_->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))) {
             applyCPU(src, dst);
             return;
         }
 
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
-        executor->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
         if (!readbackTexture(device_, context_, outputTex, dst, "Levels/StagingTexture")) {
             applyCPU(src, dst);

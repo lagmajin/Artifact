@@ -51,6 +51,7 @@ import Artifact.Layer.ParametricComposition;
 import Composition.ParametricComposition;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Video;
+import Artifact.Layer.Text;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Particle;
@@ -67,6 +68,7 @@ import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Widgets.ArtifactPropertyWidget;
+import Artifact.Widgets.QuickLayerCreationDialog;
 import Artifact.Composition.Abstract;
 import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Widgets.CreatePlaneLayerDialog;
@@ -342,6 +344,38 @@ private:
 
     RationalTime time_;
     std::vector<RadialTransformSnapshot> snapshots_;
+};
+
+class AddLayerMaskCommand final : public UndoCommand {
+public:
+    AddLayerMaskCommand(std::shared_ptr<ArtifactAbstractLayer> layer,
+                        LayerMask mask, int index)
+        : layer_(std::move(layer)), mask_(std::move(mask)), index_(index) {}
+
+    void undo() override {
+        if (layer_ && index_ >= 0 && index_ < layer_->maskCount()) {
+            layer_->removeMask(index_);
+            layer_->setDirty(LayerDirtyFlag::Mask);
+            layer_->changed();
+        }
+    }
+
+    void redo() override {
+        if (layer_) {
+            layer_->addMask(mask_);
+            layer_->setDirty(LayerDirtyFlag::Mask);
+            layer_->changed();
+        }
+    }
+
+    QString label() const override {
+        return QStringLiteral("Create Text Mask");
+    }
+
+private:
+    std::shared_ptr<ArtifactAbstractLayer> layer_;
+    LayerMask mask_;
+    int index_ = 0;
 };
 
 class AddCompositionTransformFieldCommand final : public UndoCommand {
@@ -782,6 +816,7 @@ public:
     QActionGroup* proxyQualityGroup = nullptr;
 
     QAction* createSolidAction = nullptr;
+    QAction* createQuickLayerAction = nullptr;
     QAction* createNullAction = nullptr;
     QAction* createConstructionAction = nullptr;
     QAction* createAdjustAction = nullptr;
@@ -841,6 +876,7 @@ public:
     QAction* clearSelectedProxyAction = nullptr;
     QAction* saveMaskPresetAction = nullptr;
     QAction* loadMaskPresetAction = nullptr;
+    QAction* createMaskFromTextAction = nullptr;
 
     QAction* selectParentAction = nullptr;
     QAction* clearParentAction = nullptr;
@@ -898,6 +934,7 @@ public:
     QAction* controllerLearnAction = nullptr;
 
     void handleCreateSolid();
+    void handleCreateQuickLayer();
     void handleCreateNull();
     void handleCreateConstruction();
     void handleCreateAdjust();
@@ -939,6 +976,7 @@ public:
     void handleClearSelectedProxies();
     void handleSaveMaskPreset();
     void handleLoadMaskPreset();
+    void handleCreateMaskFromText();
 
     void handleSelectParent();
     void handleClearParent();
@@ -992,6 +1030,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createSolidAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateSolid));
     createSolidAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_palette.svg")));
+
+    createQuickLayerAction = new QAction(QStringLiteral("クイック平面作成..."), createMenu);
 
     createNullAction = new QAction("ヌルオブジェクト(&N)", createMenu);
     createNullAction->setShortcut(
@@ -1122,6 +1162,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMotionTrackerAction = new QAction("モーショントラッカーを作成(&M)", menu);
 
     createMenu->addAction(createSolidAction);
+    createMenu->addAction(createQuickLayerAction);
     createMenu->addAction(createNullAction);
     createMenu->addAction(createConstructionAction);
     createMenu->addAction(createAdjustAction);
@@ -1234,6 +1275,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     saveMaskPresetAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_save.svg")));
     loadMaskPresetAction = proxyMenu->addAction("マスクプリセットを適用...");
     loadMaskPresetAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_folder_open.svg")));
+    proxyMenu->addSeparator();
+    createMaskFromTextAction = proxyMenu->addAction(QStringLiteral("テキストからマスクパスを作成"));
+    createMaskFromTextAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     for (auto *action : {proxyNoneAction, proxyQuarterAction, proxyHalfAction, proxyFullAction}) {
         action->setCheckable(true);
         proxyQualityGroup->addAction(action);
@@ -1454,6 +1498,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             return;
         }
         if (action == createSolidAction) { handleCreateSolid(); return; }
+        if (action == createQuickLayerAction) { handleCreateQuickLayer(); return; }
         if (action == createNullAction) { handleCreateNull(); return; }
         if (action == createConstructionAction) { handleCreateConstruction(); return; }
         if (action == createAdjustAction) { handleCreateAdjust(); return; }
@@ -1525,6 +1570,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == clearSelectedProxyAction) { handleClearSelectedProxies(); return; }
         if (action == saveMaskPresetAction) { handleSaveMaskPreset(); return; }
         if (action == loadMaskPresetAction) { handleLoadMaskPreset(); return; }
+        if (action == createMaskFromTextAction) { handleCreateMaskFromText(); return; }
         if (action == openInspectorAction) { handleOpenInspector(); return; }
         if (action == openPropertiesAction) { handleOpenProperties(); return; }
         if (action == applyLipSyncAction) { handleApplyLipSyncToSwitchLayer(); return; }
@@ -1966,6 +2012,15 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     toggleLockAction->setEnabled(hasLayer);
     toggleSoloAction->setEnabled(hasLayer);
     toggleShyAction->setEnabled(hasLayer);
+    bool isTextLayerSelected = false;
+    if (hasLayer && service) {
+        if (auto comp = service->currentComposition().lock()) {
+            isTextLayerSelected = static_cast<bool>(
+                std::dynamic_pointer_cast<ArtifactTextLayer>(
+                    comp->layerById(selectedLayerId_)));
+        }
+    }
+    createMaskFromTextAction->setEnabled(isTextLayerSelected);
     cacheDefaultAction->setEnabled(hasLayer);
     cacheEnabledAction->setEnabled(hasLayer);
     cacheDisabledAction->setEnabled(hasLayer);
@@ -2228,6 +2283,88 @@ void ArtifactLayerMenu::Impl::handleCreateSolid()
     service->addLayerToCurrentComposition(
         dialog.submittedParams(), true,
         dialog.submittedPlacementMode() == LayerCreationPlacementMode::Playhead);
+}
+
+void ArtifactLayerMenu::Impl::handleCreateQuickLayer()
+{
+    auto service = ArtifactProjectService::instance();
+    if (!ensureCurrentComposition() || !service) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr,
+                             QStringLiteral("クイックレイヤー"),
+                             QStringLiteral("コンポジションが選択されていません。"));
+        return;
+    }
+    QWidget* parentWindow = mainWindow_ ? mainWindow_ :
+        (menu_ ? menu_->window() : nullptr);
+    QuickLayerCreationDialog dialog(parentWindow);
+    dialog.setModal(true);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const auto options = dialog.submittedOptions();
+    service->addLayerToCurrentComposition(
+        options.solidParams, true,
+        options.placementMode == LayerCreationPlacementMode::Playhead);
+
+    // The layer service selects the newly-created layer. Reuse that existing
+    // selection path to apply the already-supported envelope atomically from
+    // the user's perspective; mask creation remains a later slice.
+    if (options.envelope.enabled) {
+        if (auto* app = ArtifactApplicationManager::instance()) {
+            if (auto* selection = app->layerSelectionManager()) {
+                const auto selected = selection->selectedLayers();
+                if (!selected.empty() && *selected.cbegin()) {
+                    const auto layer = *selected.cbegin();
+                    layer->setEffectEnvelope(options.envelope);
+                }
+            }
+        }
+    }
+
+    if (options.maskShape != QuickLayerMaskShape::None) {
+        if (auto* app = ArtifactApplicationManager::instance()) {
+            if (auto* selection = app->layerSelectionManager()) {
+                const auto selected = selection->selectedLayers();
+                if (!selected.empty() && *selected.cbegin()) {
+                    const auto layer = *selected.cbegin();
+                    LayerMask mask;
+                    mask.setEnabled(true);
+                    MaskPath path;
+                    path.setName(UniString(QStringLiteral("Quick Mask")));
+                    path.setClosed(true);
+                    path.setFeather(options.maskFeather);
+
+                    const float width = static_cast<float>(options.solidParams.width());
+                    const float height = static_cast<float>(options.solidParams.height());
+                    if (options.maskShape == QuickLayerMaskShape::Rectangle) {
+                        for (const QPointF point : {QPointF(0.0, 0.0),
+                                                     QPointF(width, 0.0),
+                                                     QPointF(width, height),
+                                                     QPointF(0.0, height)}) {
+                            path.addVertex(MaskVertex{point, {}, {}});
+                        }
+                    } else {
+                        constexpr int kEllipseSegments = 32;
+                        const QPointF center(width * 0.5, height * 0.5);
+                        const double radiusX = width * 0.5;
+                        const double radiusY = height * 0.5;
+                        for (int index = 0; index < kEllipseSegments; ++index) {
+                            const double angle =
+                                (2.0 * std::numbers::pi * static_cast<double>(index)) /
+                                static_cast<double>(kEllipseSegments);
+                            path.addVertex(MaskVertex{
+                                QPointF(center.x() + radiusX * std::cos(angle),
+                                        center.y() + radiusY * std::sin(angle)),
+                                {}, {}});
+                        }
+                    }
+                    if (path.vertexCount() >= 3) {
+                        mask.addMaskPath(path);
+                        layer->addMask(mask);
+                    }
+                }
+            }
+        }
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleCreateNull()
@@ -3125,6 +3262,42 @@ void ArtifactLayerMenu::Impl::handleSaveMaskPreset()
     if (!ArtifactPresetManager::saveMaskPreset(mask, resolvedPath)) {
         QMessageBox::warning(menu_->window(), QStringLiteral("Mask Preset"),
                              QStringLiteral("マスクプリセットを保存できませんでした。"));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleCreateMaskFromText()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+        return;
+    }
+
+    auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(
+        comp->layerById(selectedLayerId_));
+    if (!textLayer) {
+        return;
+    }
+
+    const LayerMask mask = textLayer->createMaskFromText();
+    if (!mask.isEnabled() || mask.maskPathCount() == 0) {
+        QMessageBox::information(menu_->window(), QStringLiteral("テキストマスク"),
+                                 QStringLiteral("マスク化できる文字がありません。"));
+        return;
+    }
+
+    const int maskIndex = textLayer->maskCount();
+    if (auto* undo = UndoManager::instance()) {
+        undo->push(std::make_unique<AddLayerMaskCommand>(
+            textLayer, mask, maskIndex));
+    } else {
+        textLayer->addMask(mask);
+        textLayer->setDirty(LayerDirtyFlag::Mask);
+        textLayer->changed();
     }
 }
 

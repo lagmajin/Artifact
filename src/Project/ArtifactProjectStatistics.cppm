@@ -336,7 +336,11 @@ void FontUsageCollector::onProperty(const ArtifactCore::MetadataNode& node) {
         if (!families_.contains(value)) families_.push_back(value);
 
         const QFont font(value);
-        Q_UNUSED(QRawFont::fromFont(font, QFontDatabase::Any));
+        const QRawFont rawFont = QRawFont::fromFont(font, QFontDatabase::Any);
+        const QString resolvedPath = rawFont.isValid() ? rawFont.fileName() : QString();
+        if (!resolvedPath.trimmed().isEmpty() && !files_.contains(resolvedPath)) {
+            files_.push_back(resolvedPath);
+        }
     } else if (key.endsWith(QStringLiteral("fontpath")) ||
                key.endsWith(QStringLiteral("fontfile"))) {
         if (!files_.contains(value)) files_.push_back(value);
@@ -390,14 +394,22 @@ ArtifactCore::MetadataReport FontUsageCollector::report() const {
     report.addCount(QStringLiteral("font.family.count"), families_.size());
     report.addCount(QStringLiteral("font.file.count"), files_.size());
     qint64 attestedCount = 0;
+    qint64 unresolvedCount = 0;
     if (licenseRegistry_) {
         for (const auto& family : families_) {
-            if (licenseRegistry_->isAttested(family)) ++attestedCount;
+            const QRawFont rawFont = QRawFont::fromFont(QFont(family), QFontDatabase::Any);
+            const QString style = rawFont.isValid() ? rawFont.styleName() : QString();
+            if (licenseRegistry_->isAttested(family, style)) ++attestedCount;
         }
+    }
+    for (const auto& family : families_) {
+        const QRawFont rawFont = QRawFont::fromFont(QFont(family), QFontDatabase::Any);
+        if (!rawFont.isValid() || rawFont.fileName().trimmed().isEmpty()) ++unresolvedCount;
     }
     report.addCount(QStringLiteral("font.license.attested.count"), attestedCount);
     report.addCount(QStringLiteral("font.license.unattested.count"),
                     families_.size() - attestedCount);
+    report.addCount(QStringLiteral("font.unresolved.count"), unresolvedCount);
     return report;
 }
 
@@ -407,8 +419,22 @@ QJsonObject FontUsageCollector::manifestJson() const {
     for (const auto& family : families_) {
         QJsonObject font;
         font.insert(QStringLiteral("family"), family);
+        const QRawFont rawFont = QRawFont::fromFont(
+            QFont(family), QFontDatabase::Any);
+        const QString filePath = rawFont.isValid() ? rawFont.fileName() : QString();
+        font.insert(QStringLiteral("filePath"), filePath);
+        font.insert(QStringLiteral("resolved"), !filePath.trimmed().isEmpty());
+        font.insert(QStringLiteral("resolvedFamily"),
+                    rawFont.isValid() ? rawFont.familyName() : QString());
+        font.insert(QStringLiteral("style"),
+                    rawFont.isValid() ? rawFont.styleName() : QString());
+        font.insert(QStringLiteral("weight"),
+                    rawFont.isValid() ? rawFont.weight() : 0);
+        font.insert(QStringLiteral("italic"),
+                    rawFont.isValid() && rawFont.style() == QFont::StyleItalic);
+        const QString style = rawFont.isValid() ? rawFont.styleName() : QString();
         const ArtifactCore::FontLicenseEntry license =
-            licenseRegistry_ ? licenseRegistry_->entry(family)
+            licenseRegistry_ ? licenseRegistry_->entry(family, style)
                              : ArtifactCore::FontLicenseEntry{};
         font.insert(QStringLiteral("licenseFilePath"),
                     license.licenseFilePath);
@@ -424,14 +450,22 @@ QJsonObject FontUsageCollector::manifestJson() const {
     counts.insert(QStringLiteral("family"), families_.size());
     counts.insert(QStringLiteral("resolvedFile"), files_.size());
     qint64 attested = 0;
+    qint64 unresolved = 0;
     if (licenseRegistry_) {
         for (const auto& family : families_) {
-            if (licenseRegistry_->isAttested(family)) ++attested;
+            const QRawFont rawFont = QRawFont::fromFont(QFont(family), QFontDatabase::Any);
+            const QString style = rawFont.isValid() ? rawFont.styleName() : QString();
+            if (licenseRegistry_->isAttested(family, style)) ++attested;
         }
     }
     counts.insert(QStringLiteral("licenseAttested"), attested);
     counts.insert(QStringLiteral("licenseUnattested"),
                  families_.size() - attested);
+    for (const auto& fontValue : fonts) {
+        if (!fontValue.toObject().value(QStringLiteral("resolved")).toBool()) ++unresolved;
+    }
+    counts.insert(QStringLiteral("unresolved"), unresolved);
+    result.insert(QStringLiteral("version"), 1);
     result.insert(QStringLiteral("fonts"), fonts);
     result.insert(QStringLiteral("resolvedFiles"), files);
     result.insert(QStringLiteral("counts"), counts);
@@ -445,16 +479,30 @@ QString FontUsageCollector::manifestCsv() const {
         return QStringLiteral("\"%1\"").arg(result);
     };
     QStringList lines;
-    lines << QStringLiteral("family,licenseFilePath,attestation,licenseStatus");
+    lines << QStringLiteral("family,filePath,resolved,resolvedFamily,style,weight,italic,licenseFilePath,attestation,licenseStatus");
     for (const auto& family : families_) {
         ArtifactCore::FontLicenseEntry license;
-        if (licenseRegistry_) license = licenseRegistry_->entry(family);
-        lines << QStringLiteral("%1,%2,%3,%4")
+        const QRawFont rawFont = QRawFont::fromFont(
+            QFont(family), QFontDatabase::Any);
+        if (licenseRegistry_) {
+            const QString style = rawFont.isValid() ? rawFont.styleName() : QString();
+            license = licenseRegistry_->entry(family, style);
+        }
+        const QString filePath = rawFont.isValid() ? rawFont.fileName() : QString();
+        lines << QStringLiteral("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10")
                      .arg(escape(family))
+                     .arg(escape(filePath))
+                     .arg(!filePath.trimmed().isEmpty() ? QStringLiteral("true")
+                                                        : QStringLiteral("false"))
+                     .arg(escape(rawFont.isValid() ? rawFont.familyName() : QString()))
+                     .arg(escape(rawFont.isValid() ? rawFont.styleName() : QString()))
+                     .arg(rawFont.isValid() ? QString::number(rawFont.weight()) : QStringLiteral("0"))
+                     .arg(rawFont.isValid() && rawFont.style() == QFont::StyleItalic
+                              ? QStringLiteral("true") : QStringLiteral("false"))
                      .arg(escape(license.licenseFilePath))
                      .arg(escape(license.attestation))
                      .arg(license.isAttested() ? QStringLiteral("attested")
-                                               : QStringLiteral("unattested"));
+                                                : QStringLiteral("unattested"));
     }
     return lines.join(QChar('\n'));
 }

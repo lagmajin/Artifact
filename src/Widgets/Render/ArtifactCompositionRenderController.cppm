@@ -205,6 +205,9 @@ import Tracking.MotionTracker;
 import Track.NccTracker;
 
 import Artifact.Render.OffscreenComposition;
+import Artifact.Render.PointwiseEffectFusion;
+
+import ExposureEffect;
 
 import Artifact.Widgets.PieMenu;
 
@@ -4196,6 +4199,7 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
       QStringLiteral("|size=%1x%2").arg(surface.width()).arg(surface.height());
 
   key += QStringLiteral("|generation=%1").arg(surfaceGeneration);
+  key += QStringLiteral("|opacity=%1").arg(layer->opacity(), 0, 'f', 6);
 
   bool hasAnimatedEffectProperty = false;
   for (const auto &effect : layer->getEffects()) {
@@ -8709,7 +8713,7 @@ public:
 
       const QMatrix4x4& cameraViewMatrix, const QMatrix4x4& cameraProjMatrix,
 
-      bool preserveSceneDepth) {
+      bool preserveSceneDepth, RenderPipeline* renderPipeline) {
 
     renderer_->setOverrideRTV(layerRTV);
 
@@ -8731,17 +8735,69 @@ public:
 
       renderer_->setPan(0.0f, 0.0f);
 
-      renderer_->drawSprite(0.0f, 0.0f, rcw, rch, accumSRV, 1.0f);
+      // Pointwise adjustment effects can stay on the existing accumulation
+      // texture.  Unsupported effects deliberately fall through to the
+      // established full-quality path below.
+      ArtifactCore::PointwiseEffectStack pointwiseStack;
+      bool canApplyPointwise = true;
+      bool pointwiseApplied = false;
+      std::uint32_t parameterSlot = 0;
+      for (const auto& effect : layer->getEffects()) {
+        const auto exposure = std::dynamic_pointer_cast<ExposureEffect>(effect);
+        if (!effect || !effect->isEnabled()) {
+          continue;
+        }
+        if (!exposure || effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
+          canApplyPointwise = false;
+          break;
+        }
+        pointwiseStack.addNode(
+            ArtifactCore::PointwiseNodeKind::Exposure, parameterSlot);
+        pointwiseStack.setParameter(
+            parameterSlot, {exposure->exposure(), 0.0f, 0.0f, 0.0f});
+        ++parameterSlot;
+        if (std::abs(exposure->offset()) > 1.0e-6f) {
+          pointwiseStack.addNode(
+              ArtifactCore::PointwiseNodeKind::Offset, parameterSlot);
+          pointwiseStack.setParameter(
+              parameterSlot, {exposure->offset(), 0.0f, 0.0f, 0.0f});
+          ++parameterSlot;
+        }
+        if (std::abs(exposure->gammaCorrection() - 1.0f) > 1.0e-6f) {
+          pointwiseStack.addNode(
+              ArtifactCore::PointwiseNodeKind::Gamma, parameterSlot);
+          pointwiseStack.setParameter(
+              parameterSlot, {exposure->gammaCorrection(), 0.0f, 0.0f, 0.0f});
+          ++parameterSlot;
+        }
+      }
+      if (canApplyPointwise && !pointwiseStack.nodes().empty()) {
+        const auto context = renderer_->immediateContext();
+        if (renderPipeline && renderPipeline->applyPointwise(
+                context, pointwiseStack)) {
+          renderer_->drawSprite(0.0f, 0.0f, rcw, rch,
+                                renderPipeline->accumSRV(), 1.0f);
+          pointwiseApplied = true;
+        }
+      }
+      if (!pointwiseApplied) {
+        renderer_->drawSprite(0.0f, 0.0f, rcw, rch, accumSRV, 1.0f);
+      }
 
       renderer_->setCanvasSize(cw, ch);
-
       renderer_->setZoom(savedZoom);
-
       renderer_->setPan(savedPanX, savedPanY);
 
-      // Interactive/draft mode: skip effect processing for adjustment layers
+      if (pointwiseApplied) {
+        renderer_->flush();
+        renderer_->setOverrideRTV(nullptr);
+        renderer_->unbindColorTargetsForCompute();
+        return;
+      }
 
-      // to avoid GPU->CPU readback. Full-quality render will apply effects.
+      // Interactive/draft mode: skip only the remaining CPU effect processing
+      // for adjustment layers to avoid GPU->CPU readback. Pointwise effects
+      // above have already stayed entirely on the GPU.
 
       if (viewportInteracting_ || previewDownsample_ >= interactivePreviewDownsampleFloor_) {
 
@@ -8792,13 +8848,13 @@ public:
 
         has3DCamera ? &cameraViewMatrix : nullptr,
 
-        has3DCamera ? &cameraProjMatrix : nullptr,
-        nullptr, nullptr, &matteResolver, &sceneLights,
-        viewportInteracting_ ||
+                    has3DCamera ? &cameraProjMatrix : nullptr,
+                    nullptr, nullptr, &matteResolver, &sceneLights,
+                    viewportInteracting_ ||
 
             previewDownsample_ >= interactivePreviewDownsampleFloor_,
 
-        viewportOrientationActive_, surfaceGeneration(layer),
+                    viewportOrientationActive_, surfaceGeneration(layer),
         &precompGpuResolver);
 
     renderer_->flush();
@@ -16171,17 +16227,14 @@ CompositionRenderController::frameDebugSnapshot() const {
 
     textureCacheResource.stale = false;
 
-    textureCacheResource.note =
-
-        QStringLiteral("entries=%1 bytes=%2 hits=%3 misses=%4")
-
-            .arg(stats.entryCount)
-
-            .arg(static_cast<qulonglong>(stats.memoryBytes))
-
-            .arg(static_cast<qulonglong>(stats.hitCount))
-
-            .arg(static_cast<qulonglong>(stats.missCount));
+    textureCacheResource.note = QStringLiteral(
+        "entries=%1 bytes=%2 hits=%3 misses=%4 invalidations=%5 lastReason=%6")
+        .arg(stats.entryCount)
+        .arg(static_cast<qulonglong>(stats.memoryBytes))
+        .arg(static_cast<qulonglong>(stats.hitCount))
+        .arg(static_cast<qulonglong>(stats.missCount))
+        .arg(static_cast<qulonglong>(stats.invalidationCount))
+        .arg(gpuTextureCacheInvalidationReasonText(stats.lastInvalidationReason));
 
     snapshot.resources.push_back(textureCacheResource);
 
@@ -20937,7 +20990,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         renderer->beginFrameCostCapture();
 
-        renderer->beginFrameGpuProfiling();
+        renderer->beginFrameGpuProfiling(frame);
 
       }
 
@@ -23291,7 +23344,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     has3DCamera, cameraViewMatrix, cameraProjMatrix,
 
-                    preserveSceneDepth);
+                    preserveSceneDepth, resources.pipeline);
+                // applyPointwise() may swap the accumulation ping-pong
+                // textures. Keep the following mask/blend passes on the
+                // resulting resource rather than the pre-effect SRV.
+                resources.accumSRV = resources.pipeline->accumSRV();
+                resources.tempUAV = resources.pipeline->tempUAV();
+                accumSRV = resources.accumSRV;
+                tempUAV = resources.tempUAV;
 
                 if ((!draftRendering || emissionChannelRequested) && emissionRTV) {
 

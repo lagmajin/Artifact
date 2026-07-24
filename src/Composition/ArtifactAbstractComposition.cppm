@@ -50,6 +50,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.CloneEffectSupport;
 import Artifact.Layer.Factory;
 import Artifact.Effect.Abstract;
+import Artifact.Effect.SurfaceFX;
 import Artifact.Render.CompositionViewDrawing;
 import Artifact.Event.Types;
 import Event.Bus;
@@ -744,6 +745,9 @@ QJsonObject serializeEffect(const std::shared_ptr<ArtifactAbstractEffect>& effec
   eobj["displayName"] = effect->displayName().toQString();
   eobj["enabled"] = effect->isEnabled();
   eobj["pipelineStage"] = static_cast<int>(effect->pipelineStage());
+  if (const auto surfaceFx = std::dynamic_pointer_cast<const SurfaceFXEffect>(effect)) {
+    eobj["surfaceFX"] = surfaceFx->data().toJson();
+  }
 
   QJsonArray propsArr;
   for (const auto& property : effect->getProperties()) {
@@ -779,7 +783,13 @@ QJsonObject serializeEffect(const std::shared_ptr<ArtifactAbstractEffect>& effec
 
 std::shared_ptr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
 {
-  auto effect = std::make_shared<ArtifactAbstractEffect>();
+  std::shared_ptr<ArtifactAbstractEffect> effect;
+  const QString effectId = eobj.value(QStringLiteral("id")).toString();
+  if (effectId == QStringLiteral("surfacefx")) {
+    effect = std::make_shared<SurfaceFXEffect>();
+  } else {
+    effect = std::make_shared<ArtifactAbstractEffect>();
+  }
   effect->setEffectID(UniString::fromQString(eobj.value(QStringLiteral("id")).toString()));
   effect->setDisplayName(UniString::fromQString(
       eobj.value(QStringLiteral("displayName")).toString(effect->effectID().toQString())));
@@ -817,6 +827,11 @@ std::shared_ptr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eob
       propertyValue = pobj.value(QStringLiteral("value")).toVariant();
     }
     effect->setPropertyValue(UniString::fromQString(name), propertyValue);
+  }
+  if (const auto surfaceFx = std::dynamic_pointer_cast<SurfaceFXEffect>(effect);
+      surfaceFx && eobj.value(QStringLiteral("surfaceFX")).isObject()) {
+    surfaceFx->data() = ArtifactCore::SurfaceFXData::fromJson(
+        eobj.value(QStringLiteral("surfaceFX")).toObject());
   }
   return effect;
 }

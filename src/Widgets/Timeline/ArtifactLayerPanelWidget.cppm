@@ -6035,7 +6035,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       return;
     }
     p.setPen(text.darker(120));
-    p.drawText(rect(), Qt::AlignCenter, "No layers yet");
+    p.drawText(rect(), Qt::AlignCenter, "Add a layer to begin");
     return;
   }
 

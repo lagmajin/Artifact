@@ -26,6 +26,27 @@ enum class GPUTextureBindingMode {
     BindlessCandidate
 };
 
+enum class GPUTextureCacheInvalidationReason {
+    Explicit,
+    OwnerChanged,
+    BudgetEviction,
+    DeviceReset,
+    ClearAll,
+};
+
+inline QString gpuTextureCacheInvalidationReasonText(
+    GPUTextureCacheInvalidationReason reason)
+{
+    switch (reason) {
+    case GPUTextureCacheInvalidationReason::Explicit: return QStringLiteral("explicit");
+    case GPUTextureCacheInvalidationReason::OwnerChanged: return QStringLiteral("owner-changed");
+    case GPUTextureCacheInvalidationReason::BudgetEviction: return QStringLiteral("budget-eviction");
+    case GPUTextureCacheInvalidationReason::DeviceReset: return QStringLiteral("device-reset");
+    case GPUTextureCacheInvalidationReason::ClearAll: return QStringLiteral("clear-all");
+    }
+    return QStringLiteral("unknown");
+}
+
 struct GPUTextureCacheHandle {
     quint64 id = 0;
     quint64 generation = 0;
@@ -47,6 +68,9 @@ struct GPUTextureCacheStats {
     int entryCount = 0;
     size_t hitCount = 0;
     size_t missCount = 0;
+    quint64 invalidationCount = 0;
+    GPUTextureCacheInvalidationReason lastInvalidationReason =
+        GPUTextureCacheInvalidationReason::Explicit;
 };
 
 class GPUTextureCacheManager {
@@ -78,7 +102,11 @@ public:
     GPUTextureBindingRecord bindingRecord(const GPUTextureCacheHandle& handle) const;
     bool isValid(const GPUTextureCacheHandle& handle) const;
     void invalidate(const GPUTextureCacheHandle& handle);
+    void invalidate(const GPUTextureCacheHandle& handle,
+                    GPUTextureCacheInvalidationReason reason);
     void invalidateOwner(const QString& ownerId);
+    void invalidateOwner(const QString& ownerId,
+                         GPUTextureCacheInvalidationReason reason);
     void clear();
 
     GPUTextureCacheStats stats() const;
@@ -125,6 +153,9 @@ private:
     size_t currentBytes_ = 0;
     size_t hitCount_ = 0;
     size_t missCount_ = 0;
+    size_t invalidationCount_ = 0;
+    GPUTextureCacheInvalidationReason lastInvalidationReason_ =
+        GPUTextureCacheInvalidationReason::Explicit;
 };
 
 } // namespace Artifact

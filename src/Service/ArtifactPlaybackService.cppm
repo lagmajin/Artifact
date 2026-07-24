@@ -6,6 +6,10 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QMetaObject>
 #include <QSaveFile>
 #include <QStandardPaths>
@@ -182,6 +186,8 @@ public:
     QString filePath;
     ArtifactCore::ImageF32x4_RGBA image;
     QString compositionId;
+    QString renderContract;
+    QString stateHash;
     uint64_t generation = 0;
   };
   std::mutex previewDiskWriteMutex_;
@@ -193,6 +199,7 @@ public:
       512LL * 1024LL * 1024LL;
   static constexpr qint64 kPreviewDiskCacheGlobalBudgetBytes =
       2LL * 1024LL * 1024LL * 1024LL;
+  static constexpr int kPreviewDiskManifestSchema = 1;
   size_t previewDiskWritesSinceGlobalBudgetCheck_ = 0;
   // A disk cache invalidation must also invalidate queued writes.  Without
   // this generation, an old encode can recreate a cache file after its
@@ -210,6 +217,11 @@ public:
   std::atomic<int64_t> pendingCompositionFrame_{0};
   std::atomic_bool compositionFrameSyncQueued_{false};
   QString previewDiskCacheRoot_;
+  // The namespace last used for the active composition.  Keep this separate
+  // from the namespace derived from current state so invalidation after an
+  // edit can remove the old cache directory as well.
+  QString previewDiskActiveNamespace_;
+  QString previewDiskCompositionStateHash_;
   // The final-frame cache is valid only for the render contract that produced
   // it.  Layer state is still invalidated by the composition edit paths;
   // this contract closes the quality/render-path gap at the service boundary.
@@ -295,6 +307,10 @@ public:
                 evictedFrames.insert(evictedFrames.end(), globalEvictions.begin(),
                                      globalEvictions.end());
               }
+              writePreviewDiskManifest(
+                  QFileInfo(task.filePath).absolutePath(),
+                  QFileInfo(task.filePath).absoluteDir().dirName(),
+                  task.compositionId, task.renderContract, task.stateHash);
             }
           }
         }
@@ -384,6 +400,8 @@ public:
                 previewDiskWriteQueue_.push_back(
                     PreviewDiskWriteTask{frameNumber, diskCacheFramePath,
                                          frameBuffer, compositionId,
+                                         previewDiskRenderContract_,
+                                         currentCompositionStateHash(),
                                          previewDiskGeneration_.load()});
               }
               previewDiskWriteCv_.notify_one();
@@ -810,17 +828,35 @@ public:
     return previewDiskCacheRoot_;
   }
 
-  QString currentCompositionDiskCacheNamespace() const {
+  QString currentCompositionStateHash() {
+    if (!previewDiskCompositionStateHash_.isEmpty()) {
+      return previewDiskCompositionStateHash_;
+    }
+    if (!currentComposition_) {
+      return QStringLiteral("no-composition");
+    }
+    const QByteArray compositionState =
+        currentComposition_->toJson().toJson(QJsonDocument::Compact);
+    previewDiskCompositionStateHash_ = QString::fromLatin1(
+        QCryptographicHash::hash(compositionState, QCryptographicHash::Sha256)
+            .toHex()
+            .left(24));
+    return previewDiskCompositionStateHash_;
+  }
+
+  QString currentCompositionDiskCacheNamespace() {
     if (!currentComposition_) {
       return QStringLiteral("no-composition");
     }
 
     const auto settings = currentComposition_->settings();
     const QSize compSize = settings.compositionSize();
-    // v2 deliberately separates files produced before disk-write generation
+    // v3 adds the serialized composition state hash so edits cannot reuse a
+    // prior composition namespace.  Older namespaces remain unreachable.
+    // v2 deliberately separated files produced before disk-write generation
     // checks were introduced.  Do not reuse a v1 frame whose invalidation
     // provenance cannot be established.
-    const QString basis = QStringLiteral("preview-frame-v2|%1|%2|%3x%4|%5|%6|%7")
+    const QString basis = QStringLiteral("preview-frame-v3|%1|%2|%3x%4|%5|%6|%7|%8")
                               .arg(currentComposition_->id().toString(),
                                    settings.compositionName()
                                        .toQString()
@@ -834,7 +870,8 @@ public:
                                    QString::number(currentComposition_
                                                        ->frameRange()
                                                        .duration()),
-                                   previewDiskRenderContract_);
+                                   previewDiskRenderContract_,
+                                   currentCompositionStateHash());
     const QByteArray digest =
         QCryptographicHash::hash(basis.toUtf8(), QCryptographicHash::Sha256);
     return QString::fromLatin1(digest.toHex().left(24));
@@ -843,17 +880,25 @@ public:
   QString currentCompositionDiskCacheDir() {
     QDir root(previewDiskCacheRoot());
     const QString compositionKey = currentCompositionDiskCacheNamespace();
+    previewDiskActiveNamespace_ = compositionKey;
     root.mkpath(compositionKey);
     return root.filePath(compositionKey);
   }
 
   void clearPreviewDiskCacheForCurrentComposition() {
     if (!currentComposition_) {
+      previewDiskActiveNamespace_.clear();
+      previewDiskCompositionStateHash_.clear();
       return;
     }
 
     const QString compositionId = currentComposition_->id().toString();
-    QDir dir(currentCompositionDiskCacheDir());
+    QString namespaceToClear = previewDiskActiveNamespace_;
+    if (namespaceToClear.isEmpty()) {
+      namespaceToClear = currentCompositionDiskCacheNamespace();
+    }
+    QDir root(previewDiskCacheRoot());
+    QDir dir(root.filePath(namespaceToClear));
     {
       // A queued frame write belongs to the old cache generation and must not
       // recreate this directory after it has been cleared.
@@ -866,6 +911,10 @@ public:
       if (dir.exists()) {
         dir.removeRecursively();
       }
+      if (previewDiskActiveNamespace_ == namespaceToClear) {
+        previewDiskActiveNamespace_.clear();
+      }
+      previewDiskCompositionStateHash_.clear();
     }
   }
 
@@ -1012,14 +1061,72 @@ public:
       }
     }
 
-    // Empty namespace directories contain only generated preview data.
+    // Empty namespace directories contain only generated preview data.  The
+    // manifest is generated data too, so it must not keep an otherwise empty
+    // namespace alive after the last frame was evicted.
     for (const QFileInfo &entry : root.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
       QDir namespaceDir(entry.absoluteFilePath());
-      if (namespaceDir.entryList(QDir::NoDotAndDotDot | QDir::AllEntries).isEmpty()) {
+      const QStringList namespaceEntries =
+          namespaceDir.entryList(QDir::NoDotAndDotDot | QDir::AllEntries);
+      const bool containsOnlyManifest =
+          !namespaceEntries.isEmpty() &&
+          std::all_of(namespaceEntries.begin(), namespaceEntries.end(),
+                      [](const QString &name) {
+                        return name == QStringLiteral("manifest.json");
+                      });
+      if (namespaceEntries.isEmpty() || containsOnlyManifest) {
+        if (containsOnlyManifest) {
+          namespaceDir.remove(QStringLiteral("manifest.json"));
+        }
         root.rmdir(entry.fileName());
       }
     }
     return evictedCurrentFrames;
+  }
+
+  bool writePreviewDiskManifest(const QString &directoryPath,
+                                const QString &namespaceKey,
+                                const QString &compositionId,
+                                const QString &renderContract,
+                                const QString &stateHash) {
+    QDir directory(directoryPath);
+    if (!directory.exists()) {
+      return false;
+    }
+
+    QJsonArray frames;
+    const QFileInfoList files = directory.entryInfoList(
+        QStringList{QStringLiteral("frame_*.png")}, QDir::Files, QDir::Name);
+    for (const QFileInfo &file : files) {
+      bool validFrame = false;
+      const int64_t frame = file.completeBaseName()
+                                .mid(QStringLiteral("frame_").size())
+                                .toLongLong(&validFrame);
+      if (!validFrame) {
+        continue;
+      }
+      QJsonObject frameEntry;
+      frameEntry.insert(QStringLiteral("frame"), frame);
+      frameEntry.insert(QStringLiteral("file"), file.fileName());
+      frameEntry.insert(QStringLiteral("bytes"), file.size());
+      frames.append(frameEntry);
+    }
+
+    QJsonObject manifest;
+    manifest.insert(QStringLiteral("schema"), kPreviewDiskManifestSchema);
+    manifest.insert(QStringLiteral("namespace"), namespaceKey);
+    manifest.insert(QStringLiteral("compositionId"), compositionId);
+    manifest.insert(QStringLiteral("renderContract"), renderContract);
+    manifest.insert(QStringLiteral("stateHash"), stateHash);
+    manifest.insert(QStringLiteral("frameCount"), frames.size());
+    manifest.insert(QStringLiteral("frames"), frames);
+
+    QSaveFile file(directory.filePath(QStringLiteral("manifest.json")));
+    if (!file.open(QIODevice::WriteOnly)) {
+      return false;
+    }
+    file.write(QJsonDocument(manifest).toJson(QJsonDocument::Compact));
+    return file.commit();
   }
 
   bool persistPreviewFrameToDisk(const QString &filePath, const QImage &image) {
@@ -1064,12 +1171,58 @@ public:
     return cpuImage;
   }
 
+  bool isPreviewDiskManifestFrameValid(const int64_t frame,
+                                       const QString &filePath) {
+    const QFileInfo frameInfo(filePath);
+    const QString manifestPath =
+        QDir(frameInfo.absolutePath()).filePath(QStringLiteral("manifest.json"));
+    QFile manifestFile(manifestPath);
+    if (!manifestFile.open(QIODevice::ReadOnly)) {
+      return false;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument document =
+        QJsonDocument::fromJson(manifestFile.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+      return false;
+    }
+
+    const QJsonObject object = document.object();
+    const QJsonArray frames = object.value(QStringLiteral("frames")).toArray();
+    if (object.value(QStringLiteral("schema")).toInt() !=
+            kPreviewDiskManifestSchema ||
+        object.value(QStringLiteral("frameCount")).toInt() != frames.size() ||
+        object.value(QStringLiteral("namespace")).toString() !=
+            currentCompositionDiskCacheNamespace() ||
+        object.value(QStringLiteral("compositionId")).toString() !=
+            currentComposition_->id().toString() ||
+        object.value(QStringLiteral("renderContract")).toString() !=
+            previewDiskRenderContract_ ||
+        object.value(QStringLiteral("stateHash")).toString() !=
+            currentCompositionStateHash()) {
+      return false;
+    }
+
+    for (const QJsonValue &value : frames) {
+      const QJsonObject entry = value.toObject();
+      if (entry.value(QStringLiteral("frame")).toVariant().toLongLong() == frame &&
+          entry.value(QStringLiteral("file")).toString() == frameInfo.fileName() &&
+          entry.value(QStringLiteral("bytes")).toVariant().toLongLong() ==
+              frameInfo.size()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   bool hasPreviewFrameOnDisk(const int64_t frame) {
     if (!currentComposition_ || frame < 0 ||
         previewDiskRenderContract_ == QStringLiteral("unbound")) {
       return false;
     }
-    return QFileInfo::exists(previewDiskCacheFramePath(frame));
+    const QString filePath = previewDiskCacheFramePath(frame);
+    return QFileInfo::exists(filePath) &&
+           isPreviewDiskManifestFrameValid(frame, filePath);
   }
 
   void resizeFrameCacheStateStorage(const int64_t frameCount) {
@@ -1229,6 +1382,8 @@ public:
                 frame, filePath, imageToCpuPreviewFrame(image),
                 currentComposition_ ? currentComposition_->id().toString()
                                     : QString(),
+                previewDiskRenderContract_,
+                currentCompositionStateHash(),
                 previewDiskGeneration_.load()});
       }
       previewDiskWriteCv_.notify_one();
@@ -1258,6 +1413,8 @@ public:
                 frame, filePath, image,
                 currentComposition_ ? currentComposition_->id().toString()
                                     : QString(),
+                previewDiskRenderContract_,
+                currentCompositionStateHash(),
                 previewDiskGeneration_.load()});
       }
       previewDiskWriteCv_.notify_one();
@@ -1355,7 +1512,8 @@ public:
     }
 
     const QString filePath = previewDiskCacheFramePath(frame);
-    if (!QFileInfo::exists(filePath)) {
+    if (!QFileInfo::exists(filePath) ||
+        !isPreviewDiskManifestFrameValid(frame, filePath)) {
       auto &state = frameCacheStates_[static_cast<size_t>(frame)];
       state.onDisk = false;
       if (!state.failed && !state.inRam) {
@@ -2198,6 +2356,9 @@ void ArtifactPlaybackService::setAudioMasterMuted(bool muted) {
 void ArtifactPlaybackService::setCurrentComposition(
     ArtifactCompositionPtr composition) {
   if (impl_->currentComposition_ != composition) {
+    // Remove the previously active namespace before replacing the composition
+    // pointer; after replacement its state hash would address a new namespace.
+    impl_->clearPreviewDiskCacheForCurrentComposition();
     impl_->currentComposition_ = composition;
     impl_->previewDiskRenderContract_ = QStringLiteral("unbound");
     impl_->cancelRamPreviewBuild(QStringLiteral("composition-changed"));

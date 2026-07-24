@@ -96,6 +96,8 @@ void GPUTextureCacheManager::setDevice(RefCntAutoPtr<IRenderDevice> device,
                                        TEXTURE_FORMAT format)
 {
     QMutexLocker locker(&mutex_);
+    ++invalidationCount_;
+    lastInvalidationReason_ = GPUTextureCacheInvalidationReason::DeviceReset;
     clearLocked();
     device_ = std::move(device);
     textureFormat_ = format;
@@ -104,6 +106,8 @@ void GPUTextureCacheManager::setDevice(RefCntAutoPtr<IRenderDevice> device,
 void GPUTextureCacheManager::clearDevice()
 {
     QMutexLocker locker(&mutex_);
+    ++invalidationCount_;
+    lastInvalidationReason_ = GPUTextureCacheInvalidationReason::DeviceReset;
     clearLocked();
     device_.Release();
 }
@@ -449,11 +453,27 @@ bool GPUTextureCacheManager::isValid(const GPUTextureCacheHandle& handle) const
 
 void GPUTextureCacheManager::invalidate(const GPUTextureCacheHandle& handle)
 {
+    invalidate(handle, GPUTextureCacheInvalidationReason::Explicit);
+}
+
+void GPUTextureCacheManager::invalidate(
+    const GPUTextureCacheHandle& handle,
+    GPUTextureCacheInvalidationReason reason)
+{
     QMutexLocker locker(&mutex_);
+    ++invalidationCount_;
+    lastInvalidationReason_ = reason;
     eraseEntryByIdLocked(handle.id);
 }
 
 void GPUTextureCacheManager::invalidateOwner(const QString& ownerId)
+{
+    invalidateOwner(ownerId, GPUTextureCacheInvalidationReason::OwnerChanged);
+}
+
+void GPUTextureCacheManager::invalidateOwner(
+    const QString& ownerId,
+    GPUTextureCacheInvalidationReason reason)
 {
     QMutexLocker locker(&mutex_);
     auto it = ownerToIds_.find(ownerId);
@@ -461,6 +481,8 @@ void GPUTextureCacheManager::invalidateOwner(const QString& ownerId)
         return;
     }
     const auto ids = it.value();
+    ++invalidationCount_;
+    lastInvalidationReason_ = reason;
     for (quint64 id : ids) {
         eraseEntryByIdLocked(id);
     }
@@ -470,6 +492,8 @@ void GPUTextureCacheManager::invalidateOwner(const QString& ownerId)
 void GPUTextureCacheManager::clear()
 {
     QMutexLocker locker(&mutex_);
+    ++invalidationCount_;
+    lastInvalidationReason_ = GPUTextureCacheInvalidationReason::ClearAll;
     clearLocked();
 }
 
@@ -489,7 +513,9 @@ GPUTextureCacheStats GPUTextureCacheManager::stats() const
         currentBytes_,
         static_cast<int>(entries_.size()),
         hitCount_,
-        missCount_
+        missCount_,
+        invalidationCount_,
+        lastInvalidationReason_
     };
 }
 
@@ -554,6 +580,8 @@ void GPUTextureCacheManager::pruneLocked()
         if (lruId == 0) {
             break;
         }
+        ++invalidationCount_;
+        lastInvalidationReason_ = GPUTextureCacheInvalidationReason::BudgetEviction;
         eraseEntryByIdLocked(lruId);
     }
 }

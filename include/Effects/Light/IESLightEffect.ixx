@@ -2,6 +2,7 @@ module;
 #include <QString>
 #include <QVariant>
 #include <vector>
+#include <algorithm>
 
 export module IESLightEffect;
 
@@ -10,6 +11,8 @@ import Property.Abstract;
 import Utils.String.UniString;
 
 export namespace Artifact {
+
+using namespace ArtifactCore;
 
 /**
  * @brief IES Photometric Light Profile effect.
@@ -45,12 +48,28 @@ public:
     float temperature() const { return temperature_; }
 
     std::vector<AbstractProperty> getProperties() const override {
-        return {
-            makeFloatProperty("Intensity", intensity_, 0.0f, 100.0f),
-            makeFloatProperty("Temperature", temperature_, 1000.0f, 40000.0f),
-            makeBoolProperty("UseTemperature", useTemperature_),
-            makeStringProperty("IESPath", iesFilePath_.toStdString()),
-        };
+        std::vector<AbstractProperty> props;
+        AbstractProperty intensity;
+        intensity.setName(QStringLiteral("Intensity"));
+        intensity.setType(PropertyType::Float);
+        intensity.setValue(intensity_);
+        props.push_back(intensity);
+        AbstractProperty temperature;
+        temperature.setName(QStringLiteral("Temperature"));
+        temperature.setType(PropertyType::Float);
+        temperature.setValue(temperature_);
+        props.push_back(temperature);
+        AbstractProperty useTemperature;
+        useTemperature.setName(QStringLiteral("UseTemperature"));
+        useTemperature.setType(PropertyType::Boolean);
+        useTemperature.setValue(useTemperature_);
+        props.push_back(useTemperature);
+        AbstractProperty iesPath;
+        iesPath.setName(QStringLiteral("IESPath"));
+        iesPath.setType(PropertyType::String);
+        iesPath.setValue(iesFilePath_);
+        props.push_back(iesPath);
+        return props;
     }
 
     void setPropertyValue(const UniString& name, const QVariant& value) override {
@@ -61,7 +80,6 @@ public:
     }
 
     bool supportsGPU() const override { return true; }
-    EffectType type() const override { return EffectType::Light; }
 };
 
 inline bool IESLightEffect::loadIES(const QString& path) {

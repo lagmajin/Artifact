@@ -319,6 +319,8 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   TextureBundle albedo_;
   TextureBundle screenSpaceGI_;
   std::shared_ptr<GpuContext> screenSpaceGIContext_;
+  std::shared_ptr<GpuContext> blendContext_;
+  std::unique_ptr<LayerBlendPipeline> blendPipeline_;
   std::unique_ptr<ArtifactCore::ComputeExecutor> screenSpaceGIExecutor_;
   RefCntAutoPtr<IBuffer> screenSpaceGIParams_;
   std::unique_ptr<ArtifactCore::ComputeExecutor> screenSpaceGIResolveExecutor_;
@@ -418,6 +420,8 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->materialId_ = {};
   impl_->albedo_ = {};
   impl_->screenSpaceGI_ = {};
+  impl_->blendPipeline_.reset();
+  impl_->blendContext_.reset();
   impl_->screenSpaceGIExecutor_.reset();
   impl_->screenSpaceGIContext_.reset();
   impl_->screenSpaceGIParams_.Release();
@@ -432,6 +436,63 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->format_ = TEX_FORMAT_UNKNOWN;
   impl_->emissionEnabled_ = false;
   impl_->device_ = nullptr;
+ }
+
+ bool RenderPipeline::applyPointwise(
+    IDeviceContext* ctx,
+    const ArtifactCore::PointwiseEffectStack& stack,
+    ITextureView* backgroundSRV,
+    ITextureView* lutSRV,
+    ITextureView* historySRV)
+ {
+  if (!ctx || !ready() || stack.nodes().empty()) {
+   return false;
+  }
+  if (!impl_->blendPipeline_) {
+   impl_->blendContext_ = std::make_shared<GpuContext>(impl_->device_, ctx);
+   impl_->blendPipeline_ = std::make_unique<LayerBlendPipeline>(impl_->blendContext_);
+   if (!impl_->blendPipeline_->initialize()) {
+    impl_->blendPipeline_.reset();
+    impl_->blendContext_.reset();
+    return false;
+   }
+  }
+
+  const auto segments = stack.segments();
+  if (segments.empty()) {
+   return false;
+  }
+  for (const auto& segment : segments) {
+   if (!ArtifactCore::PointwiseEffectFusion::validateSegment(
+           stack.nodes(), segment).valid) {
+    // A mixed stack must remain on the existing compositor path until its
+    // non-pointwise boundary has a GPU implementation.  Do not apply only a
+    // prefix, otherwise the visible result would silently lose effects.
+    return false;
+   }
+  }
+  if (!impl_->blendPipeline_->updatePointwiseParameters(ctx, stack)) {
+   return false;
+  }
+
+  bool applied = false;
+  for (const auto& segment : segments) {
+   if (segment.nodeCount == 0) {
+    continue;
+   }
+   const auto plan = ArtifactCore::PointwiseEffectFusion::makeComputePlan(
+       "diligent", "rgba16f", stack.nodes(), segment,
+       impl_->width_, impl_->height_);
+   if (!plan.valid() || !impl_->blendPipeline_->applyPointwise(
+           ctx, impl_->accum_.srv, impl_->temp_.uav,
+           impl_->blendPipeline_->createPointwiseParameterBuffer(), plan,
+           backgroundSRV, lutSRV, historySRV)) {
+    return false;
+   }
+   std::swap(impl_->accum_, impl_->temp_);
+   applied = true;
+  }
+  return applied;
  }
 
  bool RenderPipeline::ready() const

@@ -470,6 +470,34 @@ std::vector<EffectCatalogEntry> buildEffectCatalogEntries() {
        QStringLiteral("Film Damage"), QStringLiteral("Film"),
        QStringLiteral("Grain, dust, scratches, gate weave, flicker, and film burn."),
        QStringLiteral("film damage grain dust scratch burn flicker vintage")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("vignette"),
+       QStringLiteral("Vignette"), QStringLiteral("Light"),
+       QStringLiteral("Darken the frame edges with a soft radial falloff."),
+       QStringLiteral("vignette edges darken falloff lens")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("stripes"),
+       QStringLiteral("Stripes"), QStringLiteral("Generate"),
+       QStringLiteral("Repeating stripe pattern generator."),
+       QStringLiteral("stripes lines pattern generate")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("voronoi"),
+       QStringLiteral("Voronoi"), QStringLiteral("Generate"),
+       QStringLiteral("Cell-based voronoi pattern generator."),
+       QStringLiteral("voronoi cells pattern generate procedural")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("bricks"),
+       QStringLiteral("Bricks"), QStringLiteral("Generate"),
+       QStringLiteral("Brick wall pattern with mortar and offset rows."),
+       QStringLiteral("bricks wall mortar pattern generate")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("hex_grid"),
+       QStringLiteral("Hex Grid"), QStringLiteral("Generate"),
+       QStringLiteral("Hexagonal grid pattern generator."),
+       QStringLiteral("hex grid hexagon honeycomb pattern generate")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("edge"),
+       QStringLiteral("Edge"), QStringLiteral("Detail"),
+       QStringLiteral("Edge-detected outline pass for stylized contours."),
+       QStringLiteral("edge outline contour detect detail")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("effect.colorcorrection.invert"),
+       QStringLiteral("Invert"), QStringLiteral("Color"),
+       QStringLiteral("Invert individual color channels or the whole image."),
+       QStringLiteral("invert negative channel color")},
       {EffectPipelineStage::Rasterizer,
        QStringLiteral("effect.colorcorrection.brightness"),
        QStringLiteral("Brightness / Contrast"),
@@ -3040,7 +3068,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
       effectEnableButton->setEnabled(false);
     }
     if (effectEditorTitleLabel) {
-      effectEditorTitleLabel->setText(QStringLiteral("No effect selected"));
+      effectEditorTitleLabel->setText(QStringLiteral("Select an effect to inspect"));
     }
     if (effectParametersHintLabel) {
       effectParametersHintLabel->setText(
@@ -3074,7 +3102,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     if (effectEditorTitleLabel) {
       effectEditorTitleLabel->setText(showPropertyWidget
                                           ? QStringLiteral("Effect Editor")
-                                          : QStringLiteral("No effect selected"));
+                                          : QStringLiteral("Select an effect to inspect"));
     }
     if (effectParametersHintLabel) {
       effectParametersHintLabel->setText(text);
@@ -5140,7 +5168,7 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
     effectParametersHintLabel->setVisible(true);
   }
   if (effectsTargetLabel) {
-    effectsTargetLabel->setText(QStringLiteral("Target: No project open"));
+    effectsTargetLabel->setText(QStringLiteral("Target: Open a project to inspect effects"));
   }
   if (effectsStackSummaryLabel) {
     effectsStackSummaryLabel->setText(
@@ -5283,7 +5311,7 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
     setEffectRackEnabled(false);
     setEffectsStateText("Open a project to manage effects.", true);
     if (effectsTargetLabel) {
-      effectsTargetLabel->setText(QStringLiteral("Target: No project open"));
+    effectsTargetLabel->setText(QStringLiteral("Target: Open a project to inspect effects"));
     }
     if (effectsStackSummaryLabel) {
       effectsStackSummaryLabel->setText(
@@ -5298,7 +5326,7 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
     setEffectsStateText("Open a composition to manage effects.", true);
     if (effectsTargetLabel) {
       effectsTargetLabel->setText(
-          QStringLiteral("Target: No composition selected"));
+          QStringLiteral("Target: Select a composition to inspect effects"));
     }
     if (effectsStackSummaryLabel) {
       effectsStackSummaryLabel->setText(
@@ -5561,7 +5589,7 @@ EffectTabState collectEffectTabState(
 
   if (!projectService) {
     state.stateText = QStringLiteral("Open a project to manage effects.");
-    state.targetText = QStringLiteral("Target: No project open");
+    state.targetText = QStringLiteral("Target: Open a project to inspect effects");
     state.stackSummaryText =
         QStringLiteral("Choose a project and composition to browse the effect stack.");
     return state;
@@ -5569,7 +5597,7 @@ EffectTabState collectEffectTabState(
 
   if (currentCompositionId.isNil()) {
     state.stateText = QStringLiteral("Open a composition to manage effects.");
-    state.targetText = QStringLiteral("Target: No composition selected");
+    state.targetText = QStringLiteral("Target: Select a composition to inspect effects");
     state.stackSummaryText =
         QStringLiteral("The stack appears once a composition is active.");
     return state;
@@ -7176,7 +7204,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   effectsHeaderLayout->addWidget(impl_->effectsStateLabel);
 
   impl_->effectsTargetLabel = new InspectorChromeLabel(
-      QStringLiteral("Target: No composition selected"),
+      QStringLiteral("Target: Select a composition to inspect effects"),
       InspectorChromeLabel::Role::Active, effectsHeaderFrame);
   impl_->effectsTargetLabel->setMinimumHeight(30);
   impl_->effectsTargetLabel->setWordWrap(true);

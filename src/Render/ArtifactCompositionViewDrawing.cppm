@@ -443,6 +443,10 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
              .arg(composition
                       ? composition->colorPipelineVersion()
                       : ArtifactAbstractComposition::CanonicalColorPipelineVersion);
+  // Opacity affects the processed surface alpha. Keep it in the cache identity
+  // so an opacity-only edit cannot reuse a stale opaque surface.
+  key += QStringLiteral("|opacity=%1")
+             .arg(layer->opacity(), 0, 'f', 6);
 
   bool hasAnimatedEffectProperty = false;
   for (const auto& effect : layer->getEffects()) {
@@ -644,23 +648,8 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
       // ROI hint を収集して必要な拡張量を計算する。
       // 調整レイヤーは hint に関わらず常に full-frame が必要。
       const EffectROIHint hint = effect->roiHint();
-      if (isAdjustment && !hint.requiresFullFrame) {
-        // 調整レイヤーの場合は必ず full-frame 前提で処理するため、
-        // 縮小 ROI でエフェクトが欠けることはない（surface 自体が full-frame）。
-        qDebug()
-            << "[Rasterizer][AdjLayer] effect"
-            << effect->displayName().toQString()
-            << "treated as full-frame due to adjustment layer";
-      } else if (!hint.isEmpty()) {
-        // ROI 拡張が必要なエフェクト（ブラー、グローなど）のログ。
-        // 実際の ROI 拡張は上位の描画ループが担う。
-        // ここでは surface がすでに適切なサイズで渡されている前提。
-        qDebug()
-            << "[Rasterizer] effect" << effect->displayName().toQString()
-            << "roiHint: kind=" << static_cast<int>(hint.kind)
-            << "expansionPx=" << hint.expansionPixels
-            << "fullFrame=" << hint.requiresFullFrame;
-      }
+      Q_UNUSED(isAdjustment);
+      Q_UNUSED(hint);
 
       ArtifactCore::ImageF32x4RGBAWithCache next;
       effect->setContext(makeLayerEffectContext(

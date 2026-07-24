@@ -10,6 +10,7 @@ import Artifact.Layer.Camera;
 
 export namespace Artifact {
 
+// Keep the dialog interface IFC synchronized with its implementation unit.
 /// カメラ設定ダイアログ
 /// docs/image/カメラレイヤー.jpeg に基づく UI
 class CreateCameraLayerDialog final : public QDialog {

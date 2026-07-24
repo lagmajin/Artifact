@@ -14,6 +14,7 @@ module;
 #include <QPainter>
 #include <QPainterPath>
 #include <QRect>
+#include <QRegularExpression>
 #include <QSize>
 #include <QSizeF>
 #include <QString>
@@ -4439,7 +4440,9 @@ LayerMask ArtifactTextLayer::createMaskFromText() const
 {
     LayerMask mask;
 
-    const QString text = impl_->text_.toQString().trimmed();
+    // Evaluate source text at the current frame so text keyframes and the
+    // ordinary text value use the same visible content.
+    const QString text = resolvedSourceTextAtTime(this);
     if (text.isEmpty()) {
         mask.setEnabled(false);
         return mask;
@@ -4447,7 +4450,17 @@ LayerMask ArtifactTextLayer::createMaskFromText() const
 
     const QFont font = makeTextFont(impl_->textStyle_, text);
     QPainterPath path;
-    path.addText(QPointF(0.0, 0.0), font, text);
+    // Keep multiline text on distinct baselines.  Passing embedded newlines
+    // directly to addText() does not preserve the text layer line layout.
+    const QStringList lines = text.split(QRegularExpression(QStringLiteral("\\r\\n|\\n|\\r")));
+    const QFontMetricsF metrics(font);
+    const qreal lineHeight = std::max<qreal>(metrics.lineSpacing(), 1.0);
+    for (int lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+        const QString &line = lines.at(lineIndex);
+        if (!line.isEmpty()) {
+            path.addText(QPointF(0.0, lineHeight * lineIndex), font, line);
+        }
+    }
 
     auto maskPaths = MaskPath::fromQPainterPath(path, text);
     for (auto& mp : maskPaths) {

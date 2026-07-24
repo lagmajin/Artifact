@@ -340,9 +340,14 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
         checkAxis(scaleAxisDirectionFor(GizmoAxis::Y), GizmoAxis::Y);
         checkAxis(scaleAxisDirectionFor(GizmoAxis::Z), GizmoAxis::Z);
 
-        const float centerDist = rayPointDistance(ray, impl_->position);
-        if (centerDist < axisHandleTipRadius(impl_->currentScale) * 1.25f && centerDist < minDistance) {
-            result = GizmoAxis::Screen;
+        QVector3D scaleRingHit;
+        if (impl_->intersectRayPlane(ray, impl_->position,
+                                     axisDirectionFor(GizmoAxis::Z), scaleRingHit)) {
+            const float ringDistance = (scaleRingHit - impl_->position).length();
+            if (std::abs(ringDistance - impl_->currentScale * 0.60f) <
+                    axisHandleHitThreshold(impl_->currentScale)) {
+                result = GizmoAxis::Screen;
+            }
         }
     }
     else if (mode_ == GizmoMode::Rotate) {
@@ -350,7 +355,8 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
             QVector3D hit;
             if (impl_->intersectRayPlane(ray, impl_->position, planeNormal, hit)) {
                 float distToCenter = (hit - impl_->position).length();
-                float ringRadius = impl_->currentScale * 1.0f;
+                const float ringRadius = impl_->currentScale *
+                    (axis == GizmoAxis::Screen ? 1.18f : 1.04f);
                 if (std::abs(distToCenter - ringRadius) < threshold) {
                     float depth = (view * QVector4D(hit, 1.0f)).z();
                     if (depth < minDistance) {
@@ -362,6 +368,7 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
         checkRing(axisDirectionFor(GizmoAxis::X), GizmoAxis::X);
         checkRing(axisDirectionFor(GizmoAxis::Y), GizmoAxis::Y);
         checkRing(axisDirectionFor(GizmoAxis::Z), GizmoAxis::Z);
+        checkRing(axisDirectionFor(GizmoAxis::Z), GizmoAxis::Screen);
     }
 
     hoverAxis_ = result;

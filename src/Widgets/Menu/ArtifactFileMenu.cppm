@@ -32,6 +32,7 @@ import std;
 
 import Artifact.Project.Manager;
 import Artifact.Project.Packager;
+import Artifact.Project.Statistics;
 import Artifact.Composition.InitParams;
 import Artifact.Service.Project;
 import Artifact.Widgets.ImportAssetsDialog;
@@ -173,6 +174,7 @@ public:
     QAction* newCompositionAction = nullptr;
     QAction* importAssetsAction = nullptr;
     QAction* revealProjectFolderAction = nullptr;
+    QAction* exportFontUsageAction = nullptr;
     QAction* restartAction = nullptr;
     QAction* quitAction = nullptr;
     QMenu* exportMenu = nullptr;
@@ -194,6 +196,7 @@ public:
     void handleExportCurrentFrame();
     void handleExportWorkArea();
     void handleExportProjectPackage();
+    void handleExportFontUsage();
     void openProjectPath(const QString& path, bool addToRecent);
 };
 
@@ -230,6 +233,8 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     revealProjectFolderAction = new QAction("プロジェクトフォルダを開く");
     revealProjectFolderAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_reveal_folder.svg")));
 
+    exportFontUsageAction = new QAction(QStringLiteral("使用フォントレポートを書き出す..."));
+
     restartAction = new QAction("再起動");
     restartAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_restart.svg")));
     
@@ -248,6 +253,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     menu->addSeparator();
     menu->addAction(closeProjectAction);
     menu->addAction(revealProjectFolderAction);
+    menu->addAction(exportFontUsageAction);
     recentProjectsMenu = menu->addMenu("最近使ったプロジェクト");
     recentProjectsMenu->setIcon(QIcon(resolveIconPath("Studio/filemenu_recent_projects.svg")));
     menu->addSeparator();
@@ -261,6 +267,8 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     QObject::connect(newCompositionAction, &QAction::triggered, menu, [this]() { handleNewComposition(); });
     QObject::connect(importAssetsAction, &QAction::triggered, menu, [this]() { handleImportAssets(); });
     QObject::connect(revealProjectFolderAction, &QAction::triggered, menu, [this]() { handleRevealProjectFolder(); });
+    QObject::connect(exportFontUsageAction, &QAction::triggered, menu,
+                     [this]() { handleExportFontUsage(); });
     QObject::connect(closeProjectAction, &QAction::triggered, menu, &ArtifactFileMenu::projectClosed);
     QObject::connect(restartAction, &QAction::triggered, menu, &ArtifactFileMenu::restartApplication);
     QObject::connect(quitAction, &QAction::triggered, menu, &ArtifactFileMenu::quitApplication);
@@ -710,6 +718,32 @@ void ArtifactFileMenu::Impl::handleExportProjectPackage()
                              QStringLiteral("プロジェクトをパッケージ化しました。\n%1").arg(dirPath));
 }
 
+void ArtifactFileMenu::Impl::handleExportFontUsage()
+{
+    if (!menu_) return;
+    auto* service = ArtifactProjectService::instance();
+    if (!service || !service->hasProject()) {
+        QMessageBox::warning(menu_, QStringLiteral("フォントレポート"),
+                             QStringLiteral("プロジェクトが開かれていません。"));
+        return;
+    }
+    const QString directory = QFileDialog::getExistingDirectory(
+        menu_, QStringLiteral("使用フォントレポートの出力先"),
+        QString(), QFileDialog::ShowDirsOnly);
+    if (directory.isEmpty()) return;
+    auto project = service->getCurrentProjectSharedPtr();
+    if (!project || !ArtifactProjectStatistics::exportFontUsagePackage(
+                        project.get(), directory)) {
+        QMessageBox::warning(menu_, QStringLiteral("フォントレポート"),
+                             QStringLiteral("フォントレポートの出力に失敗しました。"));
+        return;
+    }
+    QMessageBox::information(
+        menu_, QStringLiteral("フォントレポート"),
+        QStringLiteral("font-usage.json / font-usage.csv とフォント実体を出力しました。\n%1")
+            .arg(directory));
+}
+
 void ArtifactFileMenu::Impl::rebuildMenu()
 {
     auto service = ArtifactProjectService::instance();
@@ -720,6 +754,7 @@ void ArtifactFileMenu::Impl::rebuildMenu()
     newCompositionAction->setEnabled(service != nullptr);
     importAssetsAction->setEnabled(hasProject);
     revealProjectFolderAction->setEnabled(hasProject);
+    exportFontUsageAction->setEnabled(hasProject);
 
     // 最近使ったプロジェクトメニューを更新
     if (recentProjectsMenu) {

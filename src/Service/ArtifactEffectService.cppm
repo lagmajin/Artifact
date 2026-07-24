@@ -84,9 +84,16 @@ import Artifact.Effect.Glow.PhysicalHalation;
 import Artifact.Effect.Rasterizer.ReactionDiffusionBlur;
 import Artifact.Effect.Glow.LuminescenceCaustics;
 import Artifact.Effect.Rasterizer.ApertureShapeBlur;
+import Artifact.Effect.Rasterizer.ScreenShake;
 import Artifact.Effect.Generate.SimpleRain;
 import Artifact.Effect.Rasterizer.ChromaticRelief;
 import Artifact.Effect.Rasterizer.FilmDamage;
+import Artifact.Effect.Rasterizer.Vignette;
+import Artifact.Effect.Rasterizer.Stripes;
+import Artifact.Effect.Rasterizer.Voronoi;
+import Artifact.Effect.Rasterizer.Bricks;
+import Artifact.Effect.Rasterizer.HexGrid;
+import InvertEffect;
 
 namespace Artifact
 {
@@ -496,6 +503,13 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Displacement Map"));
    return effect;
   }
+  if (effectId == QStringLiteral("screen_shake") ||
+      effectId == QStringLiteral("effect.distort.screenshake")) {
+   auto effect = std::make_unique<ScreenShakeEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Screen Shake"));
+   return effect;
+  }
   if (effectId == QStringLiteral("rim_light") ||
       effectId == QStringLiteral("effect.stylize.rimlight")) {
    auto effect = std::make_unique<RimLightEffect>();
@@ -608,6 +622,49 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Film Damage"));
    return effect;
   }
+  if (effectId == QStringLiteral("vignette")) {
+   auto effect = std::make_unique<VignetteEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Vignette"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("stripes")) {
+   auto effect = std::make_unique<StripesEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Stripes"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("voronoi")) {
+   auto effect = std::make_unique<VoronoiEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Voronoi"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("bricks")) {
+   auto effect = std::make_unique<BricksEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Bricks"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("hex_grid")) {
+   auto effect = std::make_unique<HexGridEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Hex Grid"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("edge")) {
+   auto effect = std::make_unique<EdgeEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Edge"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("invert") ||
+      effectId == QStringLiteral("effect.colorcorrection.invert")) {
+   auto effect = std::make_unique<InvertEffect>();
+   effect->setEffectID(UniString::fromQString(QStringLiteral("effect.colorcorrection.invert")));
+   effect->setDisplayName(QStringLiteral("Invert"));
+   return effect;
+  }
   if (effectId.startsWith(QStringLiteral("ofx."))) {
    const QString pluginId = effectId.mid(QStringLiteral("ofx.").size());
    Artifact::Ofx::ArtifactOfxHost::instance().initialize();
@@ -707,6 +764,13 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("simple_rain"), "Simple Rain"});
   effects.push_back({EffectID("chromatic_relief"), "Chromatic Relief"});
   effects.push_back({EffectID("film_damage"), "Film Damage"});
+  effects.push_back({EffectID("vignette"), "Vignette"});
+  effects.push_back({EffectID("stripes"), "Stripes"});
+  effects.push_back({EffectID("voronoi"), "Voronoi"});
+  effects.push_back({EffectID("bricks"), "Bricks"});
+  effects.push_back({EffectID("hex_grid"), "Hex Grid"});
+  effects.push_back({EffectID("edge"), "Edge"});
+  effects.push_back({EffectID("effect.colorcorrection.invert"), "Invert"});
 
   Artifact::Ofx::ArtifactOfxHost::instance().initialize();
   for (const auto& plugin : Artifact::Ofx::ArtifactOfxHost::instance().getLoadedPlugins()) {

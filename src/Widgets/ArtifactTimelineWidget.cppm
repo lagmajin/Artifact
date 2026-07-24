@@ -3082,6 +3082,7 @@ CurveEditorPayload collectCurveEditorPayload(
           curveKey.frame = frames[i];
           curveKey.value = static_cast<float>(values[i]);
           curveKey.smooth = interpolations[i] == ArtifactCore::InterpolationType::Bezier;
+          curveKey.constant = interpolations[i] == ArtifactCore::InterpolationType::Constant;
           const auto& sourceKeyframe = hasKeyframes ? keyframes[static_cast<size_t>(i)] : ArtifactCore::KeyFrame();
 
           if (hasKeyframes && i > 0 && keyframes[static_cast<size_t>(i - 1)].interpolation ==
@@ -3426,7 +3427,8 @@ bool applyCurveEditorTrackToProperty(
     const auto& next = track.keys[static_cast<size_t>(i + 1)];
     auto& keyframe = updatedKeyframes[static_cast<size_t>(i)];
 
-    if (keyframe.interpolation == ArtifactCore::InterpolationType::Constant) {
+    if (current.constant) {
+      keyframe.interpolation = ArtifactCore::InterpolationType::Constant;
       continue;
     }
 
@@ -3467,6 +3469,139 @@ bool applyCurveEditorTrackToProperty(
   }
   layer->changed();
   return true;
+}
+
+bool curveTrackEqualsForWriteback(const CurveTrack& a, const CurveTrack& b)
+{
+  if (a.keys.size() != b.keys.size()) {
+    return false;
+  }
+  for (std::size_t i = 0; i < a.keys.size(); ++i) {
+    const auto& ka = a.keys[i];
+    const auto& kb = b.keys[i];
+    if (ka.frame != kb.frame || ka.value != kb.value ||
+        ka.inHandleFrame != kb.inHandleFrame ||
+        ka.inHandleValue != kb.inHandleValue ||
+        ka.outHandleFrame != kb.outHandleFrame ||
+        ka.outHandleValue != kb.outHandleValue ||
+        ka.smooth != kb.smooth ||
+        ka.constant != kb.constant ||
+        ka.brokenTangents != kb.brokenTangents) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// CE-1: Tangent/handle edits live only in the widget tracks. Write back
+// tracks that differ from the cached copy so they persist on the property
+// and are captured by the surrounding undo snapshot. Key moves are skipped
+// because applyCurveEditorMove already handled them (cache stays in sync).
+int writeBackCurveEditorTangentEdits(
+    const ArtifactCompositionPtr& composition,
+    const QVector<CurveTrackBinding>& bindings,
+    std::vector<CurveTrack>& cachedTracks,
+    const std::vector<CurveTrack>& widgetTracks)
+{
+  if (!composition) {
+    return 0;
+  }
+  int written = 0;
+  const int count = std::min<int>({static_cast<int>(bindings.size()),
+                                  static_cast<int>(cachedTracks.size()),
+                                  static_cast<int>(widgetTracks.size())});
+  for (int i = 0; i < count; ++i) {
+    if (curveTrackEqualsForWriteback(widgetTracks[i], cachedTracks[i])) {
+      continue;
+    }
+    if (applyCurveEditorTrackToProperty(composition, bindings[i], widgetTracks[i])) {
+      cachedTracks[i] = widgetTracks[i];
+      ++written;
+    }
+  }
+  return written;
+}
+
+// CE-3/CE-5: sync key insertions and removals from the widget tracks to
+// the properties. The cached tracks mirror the properties, so frame-set
+// diffs against the cache identify inserted and removed keys.
+int writeBackCurveEditorStructureDiffs(
+    const ArtifactCompositionPtr& composition,
+    const QVector<CurveTrackBinding>& bindings,
+    std::vector<CurveTrack>& cachedTracks,
+    const std::vector<CurveTrack>& widgetTracks)
+{
+  if (!composition) {
+    return 0;
+  }
+  int written = 0;
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const int64_t fpsInt = static_cast<int64_t>(std::llround(fps));
+  const int count = std::min<int>({static_cast<int>(bindings.size()),
+                                  static_cast<int>(cachedTracks.size()),
+                                  static_cast<int>(widgetTracks.size())});
+  for (int i = 0; i < count; ++i) {
+    if (curveTrackEqualsForWriteback(widgetTracks[i], cachedTracks[i])) {
+      continue;
+    }
+    const auto& binding = bindings[i];
+    auto layer = composition->layerById(binding.layerId);
+    if (!layer) {
+      continue;
+    }
+    const auto property = findLayerPropertyByPath(layer, binding.propertyPath);
+    if (!property) {
+      continue;
+    }
+    if (!timelinePropertyAllowedByKeyingSet(binding.propertyPath)) {
+      continue;
+    }
+
+    QSet<int64_t> cachedFrames;
+    for (const auto& key : cachedTracks[i].keys) {
+      cachedFrames.insert(key.frame);
+    }
+    QSet<int64_t> widgetFrames;
+    for (const auto& key : widgetTracks[i].keys) {
+      widgetFrames.insert(key.frame);
+    }
+
+    // Removals: frames present in the cache but missing from the widget.
+    for (const int64_t frame : cachedFrames) {
+      if (!widgetFrames.contains(frame)) {
+        const RationalTime time(frame, fpsInt);
+        if (property->hasKeyFrameAt(time)) {
+          property->removeKeyFrame(time);
+        }
+      }
+    }
+    // Insertions: frames present in the widget but missing from the cache.
+    for (const int64_t frame : widgetFrames) {
+      if (!cachedFrames.contains(frame)) {
+        const auto it = std::find_if(
+            widgetTracks[i].keys.begin(), widgetTracks[i].keys.end(),
+            [frame](const CurveKey& key) { return key.frame == frame; });
+        if (it != widgetTracks[i].keys.end()) {
+          const RationalTime time(frame, fpsInt);
+          property->addKeyFrame(time, QVariant(it->value),
+                                ArtifactCore::InterpolationType::Bezier,
+                                0.42f, 0.0f, 0.58f, 1.0f, false);
+        }
+      }
+    }
+
+    // Counts now match; let the tangent write-back pass sync the rest.
+    if (applyCurveEditorTrackToProperty(composition, binding, widgetTracks[i])) {
+      cachedTracks[i] = widgetTracks[i];
+      ++written;
+    } else {
+      layer->changed();
+      cachedTracks[i] = widgetTracks[i];
+      ++written;
+    }
+  }
+  return written;
 }
 
 KeyframeNavigationState collectKeyframeNavigationState(
@@ -4372,10 +4507,15 @@ public:
   QToolButton *curveEditorModeButton_ = nullptr;
   QToolButton *curveEditorFitButton_ = nullptr;
   QToolButton *curveEditorValueButton_ = nullptr;
+  QToolButton *curveEditorFrameButton_ = nullptr;
   QToolButton *curveEditorHandleButton_ = nullptr;
   QToolButton *curveEditorAutoTangentButton_ = nullptr;
   QToolButton *curveEditorFlatTangentButton_ = nullptr;
   QToolButton *curveEditorLinearTangentButton_ = nullptr;
+  QToolButton *curveEditorBrokenTangentButton_ = nullptr;
+  QToolButton *curveEditorUnifiedTangentButton_ = nullptr;
+  QToolButton *curveEditorConstantButton_ = nullptr;
+  QToolButton *curveEditorBezierButton_ = nullptr;
   QToolButton *curveEditorPinButton_ = nullptr;
   bool curveHandleEditingEnabled_ = false;
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
@@ -4658,9 +4798,18 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
                    ? QStringLiteral("Set the numeric value of selected keyframes")
                    : QStringLiteral("Select one or more keyframes to set their value")));
   }
+  if (impl_->curveEditorFrameButton_) {
+    const bool hasSelection =
+        impl_->painterTrackView_ && impl_->painterTrackView_->hasNumericSelectedKeyframes();
+    impl_->curveEditorFrameButton_->setEnabled(editableValueGraph && hasSelection);
+  }
   for (auto *button : {impl_->curveEditorAutoTangentButton_,
                        impl_->curveEditorFlatTangentButton_,
-                       impl_->curveEditorLinearTangentButton_}) {
+                       impl_->curveEditorLinearTangentButton_,
+                       impl_->curveEditorBrokenTangentButton_,
+                       impl_->curveEditorUnifiedTangentButton_,
+                       impl_->curveEditorConstantButton_,
+                       impl_->curveEditorBezierButton_}) {
     if (button) {
       button->setEnabled(editableValueGraph);
     }
@@ -6060,6 +6209,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       impl_->curveEditor_->promptSetSelectedKeyValue();
     }
   });
+  impl_->curveEditorFrameButton_ = new QToolButton(curveHeader);
+  styleTimelineToolButton(impl_->curveEditorFrameButton_);
+  impl_->curveEditorFrameButton_->setText(QStringLiteral("Frame..."));
+  impl_->curveEditorFrameButton_->setToolTip(
+      QStringLiteral("Set the frame of the selected keyframe"));
+  QObject::connect(impl_->curveEditorFrameButton_, &QToolButton::clicked, this, [this]() {
+    if (impl_ && impl_->curveEditor_) {
+      impl_->curveEditor_->promptSetSelectedKeyFrame();
+    }
+  });
   impl_->curveEditorHandleButton_ = new QToolButton(curveHeader);
   impl_->curveEditorHandleButton_->setObjectName(QStringLiteral("timelineCurveEditorHandleButton"));
   styleTimelineToolButton(impl_->curveEditorHandleButton_);
@@ -6085,32 +6244,105 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         button->setToolTip(tooltip);
         return button;
       };
+  auto applyTangentEditWithUndo = [this](const QString& label,
+                                         const std::function<bool()>& op) {
+    if (!impl_ || !impl_->curveEditor_) {
+      return;
+    }
+    const auto composition = safeCompositionLookup(impl_->compositionId_);
+    if (!composition) {
+      return;
+    }
+    const auto beforeSnapshots =
+        captureCurveEditorPropertySnapshots(composition, impl_->curveBindings_);
+    if (!op()) {
+      return;
+    }
+    writeBackCurveEditorTangentEdits(composition, impl_->curveBindings_,
+                                     impl_->curveTracks_, impl_->curveEditor_->tracks());
+    const auto afterSnapshots =
+        captureCurveEditorPropertySnapshots(composition, impl_->curveBindings_);
+    if (!sameCurveEditorSnapshots(beforeSnapshots, afterSnapshots)) {
+      if (auto* mgr = UndoManager::instance()) {
+        QPointer<ArtifactTimelineWidget> self(this);
+        mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+            label,
+            [self, composition, afterSnapshots]() {
+              applyKeyframePropertySnapshots(composition, afterSnapshots);
+              if (self && self->impl_ && self->impl_->curveEditor_) {
+                self->refreshCurveEditorTracks();
+              }
+            },
+            [self, composition, beforeSnapshots]() {
+              applyKeyframePropertySnapshots(composition, beforeSnapshots);
+              if (self && self->impl_ && self->impl_->curveEditor_) {
+                self->refreshCurveEditorTracks();
+              }
+            }));
+      }
+    }
+    refreshCurveEditorTracks();
+  };
   impl_->curveEditorAutoTangentButton_ = makeTangentButton(
       QStringLiteral("Auto"), QStringLiteral("Auto tangent for selected FCurve key"));
   static_cast<TimelineToolCallbackButton *>(impl_->curveEditorAutoTangentButton_)
-      ->setCallback([this]() {
-        if (impl_ && impl_->curveEditor_ &&
-            impl_->curveEditor_->setSelectedKeyAutoTangents()) {
-          refreshCurveEditorTracks();
-        }
+      ->setCallback([this, applyTangentEditWithUndo]() {
+        applyTangentEditWithUndo(QStringLiteral("Auto Tangent"), [this]() {
+          return impl_ && impl_->curveEditor_ &&
+                 impl_->curveEditor_->setSelectedKeyAutoTangents();
+        });
       });
   impl_->curveEditorFlatTangentButton_ = makeTangentButton(
       QStringLiteral("Flat"), QStringLiteral("Flat tangent for selected FCurve key"));
   static_cast<TimelineToolCallbackButton *>(impl_->curveEditorFlatTangentButton_)
-      ->setCallback([this]() {
-        if (impl_ && impl_->curveEditor_ &&
-            impl_->curveEditor_->setSelectedKeyFlatTangents()) {
-          refreshCurveEditorTracks();
-        }
+      ->setCallback([this, applyTangentEditWithUndo]() {
+        applyTangentEditWithUndo(QStringLiteral("Flat Tangent"), [this]() {
+          return impl_ && impl_->curveEditor_ &&
+                 impl_->curveEditor_->setSelectedKeyFlatTangents();
+        });
       });
   impl_->curveEditorLinearTangentButton_ = makeTangentButton(
       QStringLiteral("Linear"), QStringLiteral("Linear tangent for selected FCurve key"));
   static_cast<TimelineToolCallbackButton *>(impl_->curveEditorLinearTangentButton_)
-      ->setCallback([this]() {
-        if (impl_ && impl_->curveEditor_ &&
-            impl_->curveEditor_->setSelectedKeyLinearTangents()) {
-          refreshCurveEditorTracks();
-        }
+      ->setCallback([this, applyTangentEditWithUndo]() {
+        applyTangentEditWithUndo(QStringLiteral("Linear Tangent"), [this]() {
+          return impl_ && impl_->curveEditor_ &&
+                 impl_->curveEditor_->setSelectedKeyLinearTangents();
+        });
+      });
+  impl_->curveEditorBrokenTangentButton_ = makeTangentButton(
+      QStringLiteral("Break"), QStringLiteral("Break incoming and outgoing tangents"));
+  static_cast<TimelineToolCallbackButton *>(impl_->curveEditorBrokenTangentButton_)
+      ->setCallback([this, applyTangentEditWithUndo]() {
+        applyTangentEditWithUndo(QStringLiteral("Break Tangents"), [this]() {
+          return impl_ && impl_->curveEditor_ &&
+                 impl_->curveEditor_->setSelectedKeyBrokenTangents();
+        });
+      });
+  impl_->curveEditorUnifiedTangentButton_ = makeTangentButton(
+      QStringLiteral("Unify"), QStringLiteral("Unify incoming and outgoing tangents"));
+  static_cast<TimelineToolCallbackButton *>(impl_->curveEditorUnifiedTangentButton_)
+      ->setCallback([this, applyTangentEditWithUndo]() {
+        applyTangentEditWithUndo(QStringLiteral("Unify Tangents"), [this]() {
+          return impl_ && impl_->curveEditor_ &&
+                 impl_->curveEditor_->setSelectedKeyUnifiedTangents();
+        });
+      });
+  impl_->curveEditorConstantButton_ = makeTangentButton(
+      QStringLiteral("Step"), QStringLiteral("Use constant interpolation to the next key"));
+  static_cast<TimelineToolCallbackButton *>(impl_->curveEditorConstantButton_)
+      ->setCallback([this, applyTangentEditWithUndo]() {
+        applyTangentEditWithUndo(QStringLiteral("Constant Interpolation"), [this]() {
+          return impl_ && impl_->curveEditor_ && impl_->curveEditor_->setSelectedKeyConstant();
+        });
+      });
+  impl_->curveEditorBezierButton_ = makeTangentButton(
+      QStringLiteral("Bezier"), QStringLiteral("Use Bezier interpolation to the next key"));
+  static_cast<TimelineToolCallbackButton *>(impl_->curveEditorBezierButton_)
+      ->setCallback([this, applyTangentEditWithUndo]() {
+        applyTangentEditWithUndo(QStringLiteral("Bezier Interpolation"), [this]() {
+          return impl_ && impl_->curveEditor_ && impl_->curveEditor_->setSelectedKeyBezier();
+        });
       });
   impl_->curveEditorPinButton_ = new QToolButton(curveHeader);
   impl_->curveEditorPinButton_->setObjectName(QStringLiteral("timelineCurveEditorPinButton"));
@@ -6139,10 +6371,15 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curveHeaderLayout->addWidget(impl_->curveEditorModeButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorFitButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorValueButton_);
+  curveHeaderLayout->addWidget(impl_->curveEditorFrameButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorHandleButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorAutoTangentButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorFlatTangentButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorLinearTangentButton_);
+  curveHeaderLayout->addWidget(impl_->curveEditorBrokenTangentButton_);
+  curveHeaderLayout->addWidget(impl_->curveEditorUnifiedTangentButton_);
+  curveHeaderLayout->addWidget(impl_->curveEditorConstantButton_);
+  curveHeaderLayout->addWidget(impl_->curveEditorBezierButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorPinButton_);
   timeNavigatorWidget->setTotalFrames(kDefaultTimelineFrames);
   timeNavigatorWidget->setFixedHeight(kTimelineTopRowHeight);
@@ -6625,6 +6862,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      const auto beforeSelectionKeys = impl_->curveEditorUndoBeforeSelectionKeys_;
                      bool pushedUndo = false;
                      if (composition && impl_->curveEditorUndoPending_) {
+                       // CE-1: persist widget-local tangent/handle edits so the
+                       // after snapshot covers them in the same undo command.
+                       if (impl_->curveEditor_) {
+                         writeBackCurveEditorStructureDiffs(
+                             composition, impl_->curveBindings_, impl_->curveTracks_,
+                             impl_->curveEditor_->tracks());
+                         writeBackCurveEditorTangentEdits(
+                             composition, impl_->curveBindings_, impl_->curveTracks_,
+                             impl_->curveEditor_->tracks());
+                       }
                        const auto afterSnapshots = captureCurveEditorPropertySnapshots(
                            composition, impl_->curveBindings_);
                        if (!sameCurveEditorSnapshots(beforeSnapshots, afterSnapshots)) {

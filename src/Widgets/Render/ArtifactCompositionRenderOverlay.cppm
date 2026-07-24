@@ -314,6 +314,14 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
 
 } // namespace
 
+void draw3DSelectionWireframeOverlay(ArtifactIRenderer *renderer,
+                                     const ArtifactAbstractLayerPtr &layer,
+                                     const QMatrix4x4 *cameraView,
+                                     const QMatrix4x4 *cameraProj)
+{
+  draw3DSelectionWireframeOverlayImpl(renderer, layer, cameraView, cameraProj);
+}
+
 #if 0
 __declspec(dllexport) void drawViewportCommandPaletteOverlay(ArtifactIRenderer *renderer,
                                       float overlayWf,

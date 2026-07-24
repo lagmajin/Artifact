@@ -103,8 +103,14 @@ public:
             return Guard{this};
         }();
 
-        auto gpuContext = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
-        auto executor = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext);
+        if (!gpuContext_) {
+            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
+            executor_ = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
+        }
+        if (!executor_) {
+            applyCPU(src, dst);
+            return;
+        }
 
         if (!paramsCB_) {
             Diligent::BufferDesc cbDesc;
@@ -135,8 +141,8 @@ public:
             desc.variables = vars;
             desc.variableCount = 3;
             desc.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-            if (!executor->build(desc) || !executor->createShaderResourceBinding(true) ||
-                !executor->setBuffer("BrightnessContrastParams", paramsCB_)) {
+            if (!executor_->build(desc) || !executor_->createShaderResourceBinding(true) ||
+                !executor_->setBuffer("BrightnessContrastParams", paramsCB_)) {
                 applyCPU(src, dst);
                 return;
             }
@@ -174,14 +180,14 @@ public:
         std::memcpy(mapped, &params, sizeof(params));
         context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
 
-        if (!executor->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-            !executor->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
+        if (!executor_->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor_->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
             applyCPU(src, dst);
             return;
         }
 
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
-        executor->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
         if (!readbackTexture(device_, context_, outputTex, dst, "BrightnessContrast/StagingTexture")) {
             applyCPU(src, dst);
@@ -282,6 +288,8 @@ private:
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
     Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
     Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
+    std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
+    std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
     bool pipelineReady_ = false;
     static constexpr const char* kBrightnessContrastHlsl = R"(
 Texture2D<float4> g_InputTexture : register(t0);

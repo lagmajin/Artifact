@@ -1,7 +1,11 @@
-﻿module;
+module;
 #include <utility>
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <set>
+#include <limits>
+#include <vector>
 #include <QWidget>
 #include <QPainter>
 #include <QMouseEvent>
@@ -168,6 +172,11 @@ public:
  ArtifactCurveEditorWidget* owner_ = nullptr;
 
  std::vector<CurveTrack> tracks_;
+ std::vector<CurveTrack> bufferTracks_;
+ bool bufferCurveVisible_ = false;
+ std::vector<CurveKey> copiedKeys_;
+ int copiedSourceTrack_ = -1;
+ bool normalizedView_ = false;
  int64_t currentFrame_ = 0;
 
  // View range (data coordinates)
@@ -177,7 +186,7 @@ public:
  float yMax_ = 110.0f;
 
  // Interaction state
- enum class DragMode { None, Pan, MoveKey, MoveHandleIn, MoveHandleOut, ScrubPlayhead };
+ enum class DragMode { None, Pan, MoveKey, MoveHandleIn, MoveHandleOut, ScrubPlayhead, Marquee };
  DragMode dragMode_ = DragMode::None;
  QPoint dragStart_;
  float dragStartXMin_, dragStartXMax_, dragStartYMin_, dragStartYMax_;
@@ -191,6 +200,20 @@ public:
  // Selection
  int selectedTrack_ = -1;
  int selectedKey_ = -1;
+ // CE-3: multi-key selection. selectedTrack_/selectedKey_ remain the
+ // primary selection used for tangent handle display and editing.
+ std::set<std::pair<int, int>> selectedKeys_;
+ struct DraggedKey {
+  int track = -1;
+  int key = -1;
+  int64_t frame = 0;
+  float value = 0.0f;
+  int64_t finalFrame = 0;
+  float finalValue = 0.0f;
+ };
+ std::vector<DraggedKey> draggedKeys_;
+ bool marqueeAdditive_ = false;
+ QRectF marqueeRectData_;  // data-space rect while DragMode::Marquee
  bool handlesInteractive_ = true;
   bool keyEditingEnabled_ = true;
 
@@ -322,7 +345,49 @@ public:
   return 10.0f * mag;
  }
 
- void drawCurve(QPainter& p, const CurveTrack& track, int trackIndex) {
+ float displayValue(const CurveTrack& track, float value) const {
+  if (!normalizedView_ || track.keys.empty()) {
+   return value;
+  }
+  float minValue = track.keys.front().value;
+  float maxValue = minValue;
+  for (const auto& key : track.keys) {
+   minValue = std::min(minValue, key.value);
+   maxValue = std::max(maxValue, key.value);
+  }
+  const float span = maxValue - minValue;
+  return span > 0.0001f ? -1.0f + 2.0f * (value - minValue) / span : 0.0f;
+ }
+
+ float displayDeltaToValue(const CurveTrack& track, float delta) const {
+  if (!normalizedView_ || track.keys.empty()) return delta;
+  float minValue = track.keys.front().value;
+  float maxValue = minValue;
+  for (const auto& key : track.keys) {
+   minValue = std::min(minValue, key.value);
+   maxValue = std::max(maxValue, key.value);
+  }
+  return delta * (maxValue - minValue) * 0.5f;
+ }
+
+ float displayToValue(const CurveTrack& track, float display) const {
+  if (!normalizedView_ || track.keys.empty()) return display;
+  float minValue = track.keys.front().value;
+  float maxValue = minValue;
+  for (const auto& key : track.keys) {
+   minValue = std::min(minValue, key.value);
+   maxValue = std::max(maxValue, key.value);
+  }
+  const float span = maxValue - minValue;
+  return span > 0.0001f ? minValue + (display + 1.0f) * span * 0.5f : minValue;
+ }
+
+ QPointF trackToPixel(const CurveTrack& track, float frame, float value) const {
+  return dataToPixel(frame, displayValue(track, value));
+ }
+
+ void drawCurve(QPainter& p, const CurveTrack& track, int trackIndex,
+                bool buffer = false) {
   if (!track.visible || track.keys.size() < 2) return;
 
   QRectF pr = plotRect();
@@ -332,7 +397,7 @@ public:
   int n = static_cast<int>(keys.size());
 
   // Build bezier path through all keyframes
-  QPointF startPos = dataToPixel(
+  QPointF startPos = trackToPixel(track,
    static_cast<float>(keys[0].frame), keys[0].value);
   path.moveTo(startPos);
 
@@ -340,17 +405,22 @@ public:
    const auto& k0 = keys[i];
    const auto& k1 = keys[i+1];
 
-   float cp0F, cp0V, cp1F, cp1V;
-   getBezierControls(k0, k1, cp0F, cp0V, cp1F, cp1V);
-
-   QPointF cp0 = dataToPixel(cp0F, cp0V);
-   QPointF cp1 = dataToPixel(cp1F, cp1V);
-   QPointF endPos = dataToPixel(static_cast<float>(k1.frame), k1.value);
-
-   path.cubicTo(cp0, cp1, endPos);
+   QPointF endPos = trackToPixel(track, static_cast<float>(k1.frame), k1.value);
+   if (k0.constant) {
+    path.lineTo(trackToPixel(track, static_cast<float>(k1.frame), k0.value));
+    path.lineTo(endPos);
+   } else {
+    float cp0F, cp0V, cp1F, cp1V;
+    getBezierControls(k0, k1, cp0F, cp0V, cp1F, cp1V);
+    path.cubicTo(trackToPixel(track, cp0F, cp0V),
+                 trackToPixel(track, cp1F, cp1V), endPos);
+   }
   }
 
   QColor curveColor = track.color;
+  if (buffer) {
+   curveColor.setAlpha(90);
+  }
   const bool focusedTrack = (selectedTrack_ == trackIndex);
   if (focusedTrack) {
    curveColor = curveColor.lighter(130);
@@ -361,8 +431,189 @@ public:
   // Clip to plot rect
   p.save();
   p.setClipRect(pr);
+  // CE-11: non-destructive linear Infinity preview outside the keyed range.
+  // The key data remains unchanged; the dashed extensions only communicate
+  // the extrapolation direction while the curve editor is in view.
+  if (!buffer && keys.size() >= 2) {
+   const auto& first = keys.front();
+   const auto& second = keys[1];
+   const auto& penultimate = keys[keys.size() - 2];
+   const auto& last = keys.back();
+   const float inFrameSpan = static_cast<float>(second.frame - first.frame);
+   const float outFrameSpan = static_cast<float>(last.frame - penultimate.frame);
+   const float inSlope = std::abs(inFrameSpan) > 0.0001f
+       ? (second.value - first.value) / inFrameSpan : 0.0f;
+   const float outSlope = std::abs(outFrameSpan) > 0.0001f
+       ? (last.value - penultimate.value) / outFrameSpan : 0.0f;
+   const float preFrame = std::min(xMin_, static_cast<float>(first.frame));
+   const float postFrame = std::max(xMax_, static_cast<float>(last.frame));
+   QPainterPath infinityPath;
+   infinityPath.moveTo(trackToPixel(track, preFrame,
+       first.value + (preFrame - static_cast<float>(first.frame)) * inSlope));
+   infinityPath.lineTo(trackToPixel(track, static_cast<float>(first.frame), first.value));
+   infinityPath.moveTo(trackToPixel(track, static_cast<float>(last.frame), last.value));
+   infinityPath.lineTo(trackToPixel(track, postFrame,
+       last.value + (postFrame - static_cast<float>(last.frame)) * outSlope));
+   QColor infinityColor = curveColor;
+   infinityColor.setAlpha(115);
+   p.setPen(QPen(infinityColor, 1.0, Qt::DashLine));
+   p.drawPath(infinityPath);
+   p.setPen(QPen(curveColor, focusedTrack ? 3 : 2));
+
+   // Repeat the keyed segment as a cycle (pre/post infinity).  Translation
+   // in pixel space preserves the authored curve shape and tangent geometry.
+   const float periodFrames = static_cast<float>(last.frame - first.frame);
+   if (periodFrames > 0.0f) {
+    const float periodPixels =
+        dataToPixel(static_cast<float>(first.frame) + periodFrames, 0.0f).x() -
+        dataToPixel(static_cast<float>(first.frame), 0.0f).x();
+    if (periodPixels > 0.01f) {
+     QPen cyclePen(curveColor, 1.0, Qt::DashLine);
+     cyclePen.setColor(QColor(curveColor.red(), curveColor.green(),
+                              curveColor.blue(), 95));
+     p.setPen(cyclePen);
+     const float firstPixel = dataToPixel(static_cast<float>(first.frame), 0.0f).x();
+     const float lastPixel = dataToPixel(static_cast<float>(last.frame), 0.0f).x();
+     for (float shift = -periodPixels;
+          firstPixel + shift > pr.left() - periodPixels;
+          shift -= periodPixels) {
+      if (lastPixel + shift < pr.left()) break;
+      p.save();
+      p.translate(shift, 0.0);
+      p.drawPath(path);
+      p.restore();
+     }
+     for (float shift = periodPixels;
+          lastPixel + shift < pr.right() + periodPixels;
+          shift += periodPixels) {
+      if (firstPixel + shift > pr.right()) break;
+      p.save();
+      p.translate(shift, 0.0);
+      p.drawPath(path);
+      p.restore();
+     }
+     p.setPen(QPen(curveColor, focusedTrack ? 3 : 2));
+    }
+   }
+  }
   p.drawPath(path);
   p.restore();
+ }
+
+ void captureBufferCurve() {
+  if (bufferTracks_.empty()) {
+   bufferTracks_ = tracks_;
+  }
+  bufferCurveVisible_ = true;
+ }
+
+ bool copySelectedKeys() {
+  copiedKeys_.clear();
+  copiedSourceTrack_ = selectedTrack_;
+  if (copiedSourceTrack_ < 0) return false;
+  for (const auto& selection : selectedKeys_) {
+   if (selection.first != copiedSourceTrack_ ||
+       selection.second < 0 ||
+       selection.second >= static_cast<int>(tracks_[copiedSourceTrack_].keys.size())) {
+    continue;
+   }
+   copiedKeys_.push_back(tracks_[copiedSourceTrack_].keys[selection.second]);
+  }
+  if (copiedKeys_.empty() && selectedKey_ >= 0 &&
+      selectedKey_ < static_cast<int>(tracks_[copiedSourceTrack_].keys.size())) {
+   copiedKeys_.push_back(tracks_[copiedSourceTrack_].keys[selectedKey_]);
+  }
+  std::sort(copiedKeys_.begin(), copiedKeys_.end(),
+            [](const CurveKey& lhs, const CurveKey& rhs) { return lhs.frame < rhs.frame; });
+  return !copiedKeys_.empty();
+ }
+
+ bool pasteCopiedKeys() {
+  if (copiedKeys_.empty() || selectedTrack_ < 0 ||
+      selectedTrack_ >= static_cast<int>(tracks_.size())) return false;
+  const int64_t anchorFrame = selectedKey_ >= 0 &&
+      selectedKey_ < static_cast<int>(tracks_[selectedTrack_].keys.size())
+      ? tracks_[selectedTrack_].keys[selectedKey_].frame : copiedKeys_.front().frame;
+  const int64_t frameOffset = anchorFrame - copiedKeys_.front().frame;
+  auto& targetKeys = tracks_[selectedTrack_].keys;
+  std::set<int64_t> pastedFrames;
+  for (const auto& sourceKey : copiedKeys_) {
+   CurveKey pasted = sourceKey;
+   pasted.frame += frameOffset;
+   auto existing = std::find_if(targetKeys.begin(), targetKeys.end(),
+       [&](const CurveKey& key) { return key.frame == pasted.frame; });
+   if (existing != targetKeys.end()) {
+    *existing = pasted;
+   } else {
+    targetKeys.push_back(pasted);
+   }
+   pastedFrames.insert(pasted.frame);
+  }
+  std::sort(targetKeys.begin(), targetKeys.end(),
+            [](const CurveKey& lhs, const CurveKey& rhs) { return lhs.frame < rhs.frame; });
+  selectedKeys_.clear();
+  for (int index = 0; index < static_cast<int>(targetKeys.size()); ++index) {
+   if (pastedFrames.count(targetKeys[index].frame)) {
+    selectedKeys_.insert({selectedTrack_, index});
+   }
+  }
+  selectedKey_ = selectedKeys_.empty() ? -1 : selectedKeys_.begin()->second;
+  return !selectedKeys_.empty();
+ }
+
+ bool cloneSelectedKeys() {
+  if (selectedTrack_ < 0 || selectedTrack_ >= static_cast<int>(tracks_.size()) ||
+      selectedKeys_.empty()) {
+   return false;
+  }
+
+  auto& targetKeys = tracks_[selectedTrack_].keys;
+  std::vector<CurveKey> sourceKeys;
+  for (const auto& selection : selectedKeys_) {
+   if (selection.first != selectedTrack_ || selection.second < 0 ||
+       selection.second >= static_cast<int>(targetKeys.size())) {
+    continue;
+   }
+   sourceKeys.push_back(targetKeys[selection.second]);
+  }
+  if (sourceKeys.empty()) {
+   return false;
+  }
+
+  std::sort(sourceKeys.begin(), sourceKeys.end(),
+            [](const CurveKey& lhs, const CurveKey& rhs) {
+              return lhs.frame < rhs.frame;
+            });
+  const int64_t sourceStart = sourceKeys.front().frame;
+  const int64_t sourceEnd = sourceKeys.back().frame;
+  const int64_t offset = std::max<int64_t>(1, sourceEnd - sourceStart + 1);
+
+  std::set<int64_t> clonedFrames;
+  for (const auto& sourceKey : sourceKeys) {
+   CurveKey clone = sourceKey;
+   clone.frame += offset;
+   auto existing = std::find_if(targetKeys.begin(), targetKeys.end(),
+       [&](const CurveKey& key) { return key.frame == clone.frame; });
+   if (existing != targetKeys.end()) {
+    *existing = clone;
+   } else {
+    targetKeys.push_back(clone);
+   }
+   clonedFrames.insert(clone.frame);
+  }
+
+  std::sort(targetKeys.begin(), targetKeys.end(),
+            [](const CurveKey& lhs, const CurveKey& rhs) {
+              return lhs.frame < rhs.frame;
+            });
+  selectedKeys_.clear();
+  for (int index = 0; index < static_cast<int>(targetKeys.size()); ++index) {
+   if (clonedFrames.count(targetKeys[index].frame)) {
+    selectedKeys_.insert({selectedTrack_, index});
+   }
+  }
+  selectedKey_ = selectedKeys_.empty() ? -1 : selectedKeys_.begin()->second;
+  return !selectedKeys_.empty();
  }
 
  void drawHandles(QPainter& p, const CurveTrack& track, int trackIndex) {
@@ -377,14 +628,14 @@ public:
 
   for (int i = 0; i < n; ++i) {
    const auto& key = keys[i];
-   QPointF kp = dataToPixel(static_cast<float>(key.frame), key.value);
+   QPointF kp = trackToPixel(track, static_cast<float>(key.frame), key.value);
 
    // Draw tangent handles
-   const bool isSelected = (selectedTrack_ == trackIndex && selectedKey_ == i);
+   const bool isSelected = isKeySelected(trackIndex, i);
    if (i > 0 && isSelected) {
     float cp1F = static_cast<float>(key.frame + key.inHandleFrame);
     float cp1V = key.value + key.inHandleValue;
-    QPointF hp = dataToPixel(cp1F, cp1V);
+    QPointF hp = trackToPixel(track, cp1F, cp1V);
     p.setPen(QPen(QColor(245, 245, 245), 2));
     p.drawLine(kp, hp);
     p.setPen(QPen(QColor(255, 230, 120), 2));
@@ -395,7 +646,7 @@ public:
    if (i < n - 1 && isSelected) {
     float cp0F = static_cast<float>(key.frame + key.outHandleFrame);
     float cp0V = key.value + key.outHandleValue;
-    QPointF hp = dataToPixel(cp0F, cp0V);
+    QPointF hp = trackToPixel(track, cp0F, cp0V);
     p.setPen(QPen(QColor(245, 245, 245), 2));
     p.drawLine(kp, hp);
     p.setPen(QPen(QColor(255, 230, 120), 2));
@@ -525,6 +776,161 @@ public:
   return outTrackIndex >= 0 ? 0 : -1;
  }
 
+ bool isKeySelected(int trackIndex, int keyIndex) const {
+  return selectedKeys_.count({trackIndex, keyIndex}) > 0;
+ }
+
+ void clearKeySelection() {
+  selectedTrack_ = -1;
+  selectedKey_ = -1;
+  selectedKeys_.clear();
+ }
+
+ void setPrimaryKeySelection(int trackIndex, int keyIndex) {
+  selectedTrack_ = trackIndex;
+  selectedKey_ = keyIndex;
+  selectedKeys_.clear();
+  selectedKeys_.insert({trackIndex, keyIndex});
+ }
+
+ void collectDraggedKeys() {
+  draggedKeys_.clear();
+  for (const auto& sel : selectedKeys_) {
+   const int t = sel.first;
+   const int k = sel.second;
+   if (t < 0 || t >= static_cast<int>(tracks_.size())) continue;
+   if (k < 0 || k >= static_cast<int>(tracks_[t].keys.size())) continue;
+   draggedKeys_.push_back({t, k, tracks_[t].keys[k].frame,
+                           tracks_[t].keys[k].value,
+                           tracks_[t].keys[k].frame,
+                           tracks_[t].keys[k].value});
+  }
+ }
+
+ // CE-5: insert a key at the given data position. The target track is the
+ // selected one when valid, otherwise the track whose curve passes nearest
+ // to the insert position, otherwise the first visible track.
+ bool insertKeyAt(const QPointF& dataPos) {
+  int target = -1;
+  if (selectedTrack_ >= 0 && selectedTrack_ < static_cast<int>(tracks_.size()) &&
+      tracks_[selectedTrack_].visible) {
+   target = selectedTrack_;
+  } else {
+   float bestDist = std::numeric_limits<float>::max();
+   for (int ti = 0; ti < static_cast<int>(tracks_.size()); ++ti) {
+    if (!tracks_[ti].visible || tracks_[ti].keys.empty()) continue;
+    const auto& keys = tracks_[ti].keys;
+    const float x = static_cast<float>(dataPos.x());
+    float curveY = keys.front().value;
+    if (x <= keys.front().frame) {
+     curveY = keys.front().value;
+    } else if (x >= keys.back().frame) {
+     curveY = keys.back().value;
+    } else {
+     for (std::size_t i = 0; i + 1 < keys.size(); ++i) {
+      if (x >= keys[i].frame && x <= keys[i + 1].frame) {
+       const float span = static_cast<float>(std::max<int64_t>(1, keys[i + 1].frame - keys[i].frame));
+       const float t = (x - static_cast<float>(keys[i].frame)) / span;
+       curveY = keys[i].value + t * (keys[i + 1].value - keys[i].value);
+       break;
+      }
+     }
+    }
+    const float dist = std::abs(curveY - static_cast<float>(dataPos.y()));
+    if (dist < bestDist) {
+     bestDist = dist;
+     target = ti;
+    }
+   }
+  }
+  if (target < 0) {
+   for (int ti = 0; ti < static_cast<int>(tracks_.size()); ++ti) {
+    if (tracks_[ti].visible) { target = ti; break; }
+   }
+  }
+  if (target < 0) return false;
+
+  auto& keys = tracks_[target].keys;
+  CurveKey key;
+  key.frame = static_cast<int64_t>(std::llround(dataPos.x()));
+  key.value = displayToValue(tracks_[target], static_cast<float>(dataPos.y()));
+  key.smooth = true;
+
+  const auto it = std::lower_bound(keys.begin(), keys.end(), key.frame,
+    [](const CurveKey& k, int64_t frame) { return k.frame < frame; });
+  const int idx = static_cast<int>(it - keys.begin());
+  // Auto bezier handles from neighbors (25% rule, same as sampleSpeedGraph).
+  if (idx > 0) {
+   const auto& prev = keys[idx - 1];
+   const float df = static_cast<float>(std::max<int64_t>(1, key.frame - prev.frame));
+   key.inTangent = (key.value - prev.value) / df;
+   key.inHandleFrame = -std::max<int64_t>(1, static_cast<int64_t>(std::llround(df * 0.25f)));
+   key.inHandleValue = key.inTangent * static_cast<float>(-key.inHandleFrame);
+  }
+  if (idx < static_cast<int>(keys.size())) {
+   const auto& next = keys[idx];
+   const float df = static_cast<float>(std::max<int64_t>(1, next.frame - key.frame));
+   key.outTangent = (next.value - key.value) / df;
+   key.outHandleFrame = std::max<int64_t>(1, static_cast<int64_t>(std::llround(df * 0.25f)));
+   key.outHandleValue = key.outTangent * static_cast<float>(key.outHandleFrame);
+  }
+  keys.insert(keys.begin() + idx, key);
+  setPrimaryKeySelection(target, idx);
+  return true;
+ }
+
+ // CE-3: delete every selected key. Returns true when anything was removed.
+ bool deleteSelectedKeys() {
+  if (selectedKeys_.empty()) {
+   return false;
+  }
+  std::map<int, std::vector<int>> perTrack;
+  for (const auto& sel : selectedKeys_) {
+   perTrack[sel.first].push_back(sel.second);
+  }
+  bool removed = false;
+  for (auto& entry : perTrack) {
+   const int trackIndex = entry.first;
+   auto& keyIndices = entry.second;
+   if (trackIndex < 0 || trackIndex >= static_cast<int>(tracks_.size())) continue;
+   auto& keys = tracks_[trackIndex].keys;
+   std::sort(keyIndices.rbegin(), keyIndices.rend());
+   for (const int keyIndex : keyIndices) {
+    if (keyIndex >= 0 && keyIndex < static_cast<int>(keys.size())) {
+     keys.erase(keys.begin() + keyIndex);
+     removed = true;
+    }
+   }
+  }
+  clearKeySelection();
+  return removed;
+ }
+
+ void selectKeysInDataRect(const QRectF& rect, bool additive) {
+  if (!additive) {
+   clearKeySelection();
+  }
+  const float x1 = static_cast<float>(std::min(rect.left(), rect.right()));
+  const float x2 = static_cast<float>(std::max(rect.left(), rect.right()));
+  const float y1 = static_cast<float>(std::min(rect.top(), rect.bottom()));
+  const float y2 = static_cast<float>(std::max(rect.top(), rect.bottom()));
+  for (int ti = 0; ti < static_cast<int>(tracks_.size()); ++ti) {
+   if (!tracks_[ti].visible) continue;
+   for (int ki = 0; ki < static_cast<int>(tracks_[ti].keys.size()); ++ki) {
+    const auto& key = tracks_[ti].keys[ki];
+    const float kf = static_cast<float>(key.frame);
+    if (kf >= x1 && kf <= x2 && key.value >= y1 && key.value <= y2) {
+     selectedKeys_.insert({ti, ki});
+    }
+   }
+  }
+  if (!selectedKeys_.empty()) {
+   const auto& first = *selectedKeys_.begin();
+   selectedTrack_ = first.first;
+   selectedKey_ = first.second;
+  }
+ }
+
  bool deleteSelectedKey() {
   if (selectedTrack_ < 0 || selectedTrack_ >= static_cast<int>(tracks_.size()) ||
       selectedKey_ < 0 || selectedKey_ >= static_cast<int>(tracks_[selectedTrack_].keys.size())) {
@@ -651,6 +1057,61 @@ public:
   key->smooth = false;
   return true;
  }
+
+ bool setSelectedTangentsBroken() {
+  CurveTrack* track = nullptr;
+  CurveKey* key = nullptr;
+  const CurveKey* prev = nullptr;
+  const CurveKey* next = nullptr;
+  if (!selectedKeyBounds(track, key, prev, next)) {
+   return false;
+  }
+  key->brokenTangents = true;
+  key->smooth = false;
+  return true;
+ }
+
+ bool setSelectedTangentsUnified() {
+  CurveTrack* track = nullptr;
+  CurveKey* key = nullptr;
+  const CurveKey* prev = nullptr;
+  const CurveKey* next = nullptr;
+  if (!selectedKeyBounds(track, key, prev, next)) {
+   return false;
+  }
+  const int64_t inSpan = std::max<int64_t>(1, -key->inHandleFrame);
+  const int64_t outSpan = std::max<int64_t>(1, key->outHandleFrame);
+  const float inSlope = key->inHandleValue / static_cast<float>(inSpan);
+  const float outSlope = key->outHandleValue / static_cast<float>(outSpan);
+  const float slope = 0.5f * (inSlope + outSlope);
+  key->inHandleFrame = -inSpan;
+  key->outHandleFrame = outSpan;
+  key->inHandleValue = -slope * static_cast<float>(inSpan);
+  key->outHandleValue = slope * static_cast<float>(outSpan);
+  key->inTangent = slope;
+  key->outTangent = slope;
+  key->brokenTangents = false;
+  key->smooth = true;
+  return true;
+ }
+
+ bool setSelectedConstant(bool enabled) {
+  CurveTrack* track = nullptr;
+  CurveKey* key = nullptr;
+  const CurveKey* prev = nullptr;
+  const CurveKey* next = nullptr;
+  if (!selectedKeyBounds(track, key, prev, next)) {
+   return false;
+  }
+  const bool changed = key->constant != enabled;
+  key->constant = enabled;
+  if (enabled) {
+   key->smooth = false;
+  } else {
+   key->smooth = true;
+  }
+  return changed || !enabled;
+ }
 };
 
 ArtifactCurveEditorWidget::ArtifactCurveEditorWidget(QWidget* parent)
@@ -754,6 +1215,58 @@ bool ArtifactCurveEditorWidget::setSelectedKeyLinearTangents() {
  return true;
 }
 
+bool ArtifactCurveEditorWidget::setSelectedKeyBrokenTangents() {
+ if (!impl_) {
+  return false;
+ }
+ Q_EMIT interactionStarted();
+ if (!impl_->setSelectedTangentsBroken()) {
+  Q_EMIT interactionFinished();
+  return false;
+ }
+ update();
+ Q_EMIT interactionFinished();
+ return true;
+}
+
+bool ArtifactCurveEditorWidget::setSelectedKeyUnifiedTangents() {
+ if (!impl_) {
+  return false;
+ }
+ Q_EMIT interactionStarted();
+ if (!impl_->setSelectedTangentsUnified()) {
+  Q_EMIT interactionFinished();
+  return false;
+ }
+ update();
+ Q_EMIT interactionFinished();
+ return true;
+}
+
+bool ArtifactCurveEditorWidget::setSelectedKeyConstant() {
+ if (!impl_) return false;
+ Q_EMIT interactionStarted();
+ if (!impl_->setSelectedConstant(true)) {
+  Q_EMIT interactionFinished();
+  return false;
+ }
+ update();
+ Q_EMIT interactionFinished();
+ return true;
+}
+
+bool ArtifactCurveEditorWidget::setSelectedKeyBezier() {
+ if (!impl_) return false;
+ Q_EMIT interactionStarted();
+ if (!impl_->setSelectedConstant(false)) {
+  Q_EMIT interactionFinished();
+  return false;
+ }
+ update();
+ Q_EMIT interactionFinished();
+ return true;
+}
+
 bool ArtifactCurveEditorWidget::promptSetSelectedKeyValue() {
  if (!impl_ || !impl_->keyEditingEnabled_) {
   return false;
@@ -776,13 +1289,76 @@ bool ArtifactCurveEditorWidget::promptSetSelectedKeyValue() {
   return false;
  }
 
- if (std::abs(static_cast<double>(key.value) - nextValue) < 0.0001) {
+ const float valueDelta = static_cast<float>(nextValue) - key.value;
+ if (std::abs(static_cast<double>(valueDelta)) < 0.0001) {
   return false;
  }
 
+ std::vector<std::pair<int, int>> keysToMove;
+ for (const auto& selection : impl_->selectedKeys_) {
+  if (selection.first >= 0 && selection.first < static_cast<int>(impl_->tracks_.size()) &&
+      selection.second >= 0 &&
+      selection.second < static_cast<int>(impl_->tracks_[selection.first].keys.size())) {
+   keysToMove.push_back(selection);
+  }
+ }
+ if (keysToMove.empty()) {
+  keysToMove.push_back({trackIndex, keyIndex});
+ }
+
+ impl_->captureBufferCurve();
  Q_EMIT interactionStarted();
- key.value = static_cast<float>(nextValue);
- Q_EMIT keyMoved(trackIndex, keyIndex, key.frame, key.value);
+ for (const auto& selection : keysToMove) {
+  auto& selectedKey = impl_->tracks_[selection.first].keys[selection.second];
+  selectedKey.value += valueDelta;
+  Q_EMIT keyMoved(selection.first, selection.second, selectedKey.frame, selectedKey.value);
+ }
+ Q_EMIT interactionFinished();
+ update();
+ return true;
+}
+
+bool ArtifactCurveEditorWidget::promptSetSelectedKeyFrame() {
+ if (!impl_ || !impl_->keyEditingEnabled_) {
+  return false;
+ }
+ const int trackIndex = impl_->selectedTrack_;
+ const int keyIndex = impl_->selectedKey_;
+ if (trackIndex < 0 || keyIndex < 0 ||
+     trackIndex >= static_cast<int>(impl_->tracks_.size()) ||
+     keyIndex >= static_cast<int>(impl_->tracks_[trackIndex].keys.size())) {
+  return false;
+ }
+ auto& key = impl_->tracks_[trackIndex].keys[keyIndex];
+ const int64_t primaryFrame = key.frame;
+ bool accepted = false;
+ const int64_t nextFrame = static_cast<int64_t>(QInputDialog::getInt(
+     this, QStringLiteral("Set Keyframe Frame"), QStringLiteral("Frame:"),
+     static_cast<int>(std::clamp<int64_t>(key.frame, -1000000000, 1000000000)),
+     -1000000000, 1000000000, 1, &accepted));
+ const int64_t frameDelta = nextFrame - primaryFrame;
+ if (!accepted || frameDelta == 0) {
+  return false;
+ }
+ std::vector<std::pair<int, int>> keysToMove;
+ for (const auto& selection : impl_->selectedKeys_) {
+  if (selection.first >= 0 && selection.first < static_cast<int>(impl_->tracks_.size()) &&
+      selection.second >= 0 &&
+      selection.second < static_cast<int>(impl_->tracks_[selection.first].keys.size())) {
+   keysToMove.push_back(selection);
+  }
+ }
+ if (keysToMove.empty()) {
+  keysToMove.push_back({trackIndex, keyIndex});
+ }
+
+ impl_->captureBufferCurve();
+ Q_EMIT interactionStarted();
+ for (const auto& selection : keysToMove) {
+  auto& selectedKey = impl_->tracks_[selection.first].keys[selection.second];
+  selectedKey.frame += frameDelta;
+  Q_EMIT keyMoved(selection.first, selection.second, selectedKey.frame, selectedKey.value);
+ }
  Q_EMIT interactionFinished();
  update();
  return true;
@@ -871,6 +1447,11 @@ void ArtifactCurveEditorWidget::paintEvent(QPaintEvent* /*event*/) {
  impl_->drawGrid(p);
 
  // Curves
+ if (impl_->bufferCurveVisible_) {
+  for (int ti = 0; ti < static_cast<int>(impl_->bufferTracks_.size()); ++ti) {
+   impl_->drawCurve(p, impl_->bufferTracks_[ti], ti, true);
+  }
+ }
  for (int ti = 0; ti < static_cast<int>(impl_->tracks_.size()); ++ti) {
   impl_->drawCurve(p, impl_->tracks_[ti], ti);
  }
@@ -889,6 +1470,17 @@ void ArtifactCurveEditorWidget::paintEvent(QPaintEvent* /*event*/) {
 
  // Playhead
  impl_->drawPlayhead(p);
+
+ // CE-3: marquee (box) selection rectangle
+ if (impl_->dragMode_ == Impl::DragMode::Marquee && !impl_->marqueeRectData_.isNull()) {
+  const QPointF mp0 = impl_->dataToPixel(static_cast<float>(impl_->marqueeRectData_.left()),
+                                        static_cast<float>(impl_->marqueeRectData_.top()));
+  const QPointF mp1 = impl_->dataToPixel(static_cast<float>(impl_->marqueeRectData_.right()),
+                                        static_cast<float>(impl_->marqueeRectData_.bottom()));
+  p.setPen(QPen(QColor(120, 170, 255, 200), 1, Qt::DashLine));
+  p.setBrush(QColor(120, 170, 255, 40));
+  p.drawRect(QRectF(mp0, mp1).normalized());
+ }
 
  // Track names
  QFont font("Consolas", 9);
@@ -922,6 +1514,16 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
   return;
  }
 
+ // CE-5: Ctrl+Click inserts a key at the click position (Blender style).
+ if ((event->modifiers() & Qt::ControlModifier) && impl_->keyEditingEnabled_) {
+  const QPointF data = impl_->pixelToData(pos);
+  Q_EMIT interactionStarted();
+  impl_->insertKeyAt(data);
+  Q_EMIT interactionFinished();
+  update();
+  return;
+ }
+
  // Check for handle hit first
  if (!impl_->keyEditingEnabled_) {
   impl_->dragMode_ = Impl::DragMode::Pan;
@@ -947,8 +1549,7 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
   impl_->dragTrackIndex_ = ht;
   impl_->dragKeyIndex_ = hk;
   impl_->dragStart_ = pos.toPoint();
-  impl_->selectedTrack_ = ht;
-  impl_->selectedKey_ = hk;
+  impl_->setPrimaryKeySelection(ht, hk);
   if (startedInteraction) {
    Q_EMIT interactionStarted();
   }
@@ -959,16 +1560,57 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
  // Check for key hit
  int tk, kk;
  if (impl_->hitTestKey(pos, tk, kk) == 0) {
+  if (event->modifiers() & Qt::ShiftModifier) {
+   // CE-3: shift-click toggles membership in the multi-selection.
+   const std::pair<int, int> sel{tk, kk};
+   if (impl_->selectedKeys_.count(sel)) {
+    impl_->selectedKeys_.erase(sel);
+    if (impl_->selectedTrack_ == tk && impl_->selectedKey_ == kk) {
+     if (!impl_->selectedKeys_.empty()) {
+      const auto& first = *impl_->selectedKeys_.begin();
+      impl_->selectedTrack_ = first.first;
+      impl_->selectedKey_ = first.second;
+     } else {
+      impl_->selectedTrack_ = -1;
+      impl_->selectedKey_ = -1;
+     }
+    }
+   } else {
+    impl_->selectedKeys_.insert(sel);
+    impl_->selectedTrack_ = tk;
+    impl_->selectedKey_ = kk;
+   }
+   update();
+   return;
+  }
   impl_->dragMode_ = Impl::DragMode::MoveKey;
   startedInteraction = true;
+  impl_->captureBufferCurve();
   impl_->dragTrackIndex_ = tk;
   impl_->dragKeyIndex_ = kk;
   impl_->dragStart_ = pos.toPoint();
   impl_->dragOrigFrame_ = impl_->tracks_[tk].keys[kk].frame;
   impl_->dragOrigValue_ = impl_->tracks_[tk].keys[kk].value;
-  impl_->selectedTrack_ = tk;
-  impl_->selectedKey_ = kk;
+  if (!impl_->isKeySelected(tk, kk)) {
+   impl_->setPrimaryKeySelection(tk, kk);
+  }
+  impl_->collectDraggedKeys();
   Q_EMIT keySelected(tk, kk);
+  if (startedInteraction) {
+   Q_EMIT interactionStarted();
+  }
+  update();
+  return;
+ }
+
+ // CE-3: shift+drag on empty space starts a marquee (box) selection.
+ if (event->modifiers() & Qt::ShiftModifier) {
+  impl_->dragMode_ = Impl::DragMode::Marquee;
+  impl_->marqueeAdditive_ = false;
+  const QPointF data = impl_->pixelToData(pos);
+  impl_->marqueeRectData_ = QRectF(data, data);
+  impl_->dragStart_ = pos.toPoint();
+  startedInteraction = true;
   if (startedInteraction) {
    Q_EMIT interactionStarted();
   }
@@ -986,8 +1628,7 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
  startedInteraction = true;
 
  // Deselect
- impl_->selectedTrack_ = -1;
- impl_->selectedKey_ = -1;
+ impl_->clearKeySelection();
  if (startedInteraction) {
   Q_EMIT interactionStarted();
  }
@@ -1017,14 +1658,51 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
    float frameDelta = static_cast<float>(data.x() - origData.x());
    float valueDelta = static_cast<float>(data.y() - origData.y());
 
-   int64_t newFrame = impl_->dragOrigFrame_ + static_cast<int64_t>(std::round(frameDelta));
-   float newValue = impl_->dragOrigValue_ + valueDelta;
+   // CE-12: frame movement is already quantized to integer frames below.
+   // Ctrl enables a predictable value-grid snap without adding another
+   // shortcut or changing the normal free-form curve editing path.
+   if (event->modifiers().testFlag(Qt::ControlModifier)) {
+    valueDelta = std::round(valueDelta);
+   }
 
-   auto& key = impl_->tracks_[impl_->dragTrackIndex_].keys[impl_->dragKeyIndex_];
-   key.frame = newFrame;
-   key.value = newValue;
+   // CE-4: move every selected key by the same delta.
+   if (impl_->draggedKeys_.empty()) {
+    impl_->collectDraggedKeys();
+   }
+   for (auto& dragged : impl_->draggedKeys_) {
+    if (dragged.track < 0 || dragged.track >= static_cast<int>(impl_->tracks_.size())) continue;
+    auto& keys = impl_->tracks_[dragged.track].keys;
+    if (dragged.key < 0 || dragged.key >= static_cast<int>(keys.size())) continue;
+    int64_t newFrame = dragged.frame + static_cast<int64_t>(std::llround(frameDelta));
+    if (event->modifiers().testFlag(Qt::ControlModifier)) {
+     const auto& candidateKeys = impl_->tracks_[dragged.track].keys;
+     for (int candidateIndex = 0;
+          candidateIndex < static_cast<int>(candidateKeys.size()); ++candidateIndex) {
+      if (candidateIndex == dragged.key ||
+          impl_->selectedKeys_.count({dragged.track, candidateIndex}) > 0) {
+       continue;
+      }
+      if (std::abs(candidateKeys[candidateIndex].frame - newFrame) <= 2) {
+       newFrame = candidateKeys[candidateIndex].frame;
+       break;
+      }
+     }
+    }
+    const float newValue = dragged.value +
+        impl_->displayDeltaToValue(impl_->tracks_[dragged.track], valueDelta);
+    keys[dragged.key].frame = newFrame;
+    keys[dragged.key].value = newValue;
+    dragged.finalFrame = newFrame;
+    dragged.finalValue = newValue;
+    Q_EMIT keyMoved(dragged.track, dragged.key, newFrame, newValue);
+   }
+   update();
+   break;
+  }
 
-   Q_EMIT keyMoved(impl_->dragTrackIndex_, impl_->dragKeyIndex_, newFrame, newValue);
+  case Impl::DragMode::Marquee: {
+   const QPointF data = impl_->pixelToData(pos);
+   impl_->marqueeRectData_.setBottomRight(data);
    update();
    break;
   }
@@ -1032,9 +1710,11 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
   case Impl::DragMode::MoveHandleIn: {
    QPointF data = impl_->pixelToData(pos);
    auto& key = impl_->tracks_[impl_->dragTrackIndex_].keys[impl_->dragKeyIndex_];
+   const float rawValue = impl_->displayToValue(impl_->tracks_[impl_->dragTrackIndex_],
+                                                static_cast<float>(data.y()));
    const bool wasBroken = key.brokenTangents;
    key.inHandleFrame = static_cast<int64_t>(data.x()) - key.frame;
-   key.inHandleValue = static_cast<float>(data.y()) - key.value;
+   key.inHandleValue = rawValue - key.value;
    if (!wasBroken) {
     key.outHandleFrame = -key.inHandleFrame;
     key.outHandleValue = -key.inHandleValue;
@@ -1048,9 +1728,11 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
   case Impl::DragMode::MoveHandleOut: {
    QPointF data = impl_->pixelToData(pos);
    auto& key = impl_->tracks_[impl_->dragTrackIndex_].keys[impl_->dragKeyIndex_];
+   const float rawValue = impl_->displayToValue(impl_->tracks_[impl_->dragTrackIndex_],
+                                                static_cast<float>(data.y()));
    const bool wasBroken = key.brokenTangents;
    key.outHandleFrame = static_cast<int64_t>(data.x()) - key.frame;
-   key.outHandleValue = static_cast<float>(data.y()) - key.value;
+   key.outHandleValue = rawValue - key.value;
    if (!wasBroken) {
     key.inHandleFrame = -key.outHandleFrame;
     key.inHandleValue = -key.outHandleValue;
@@ -1076,27 +1758,55 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void ArtifactCurveEditorWidget::mouseReleaseEvent(QMouseEvent* /*event*/) {
- const bool hadDrag = impl_->dragMode_ != Impl::DragMode::None;
- if (impl_->dragMode_ == Impl::DragMode::MoveKey) {
-  // Re-sort keys after move
-  auto& keys = impl_->tracks_[impl_->dragTrackIndex_].keys;
-  std::sort(keys.begin(), keys.end(),
-   [](const CurveKey& a, const CurveKey& b) { return a.frame < b.frame; });
-
-  // Find new index of moved key
-  for (int i = 0; i < static_cast<int>(keys.size()); ++i) {
-   if (keys[i].frame == impl_->dragOrigFrame_ &&
-       std::abs(keys[i].value - impl_->dragOrigValue_) < 0.0001f) {
-    impl_->selectedKey_ = i;
-    break;
+ const Impl::DragMode finishedMode = impl_->dragMode_;
+ const bool hadDrag = finishedMode != Impl::DragMode::None;
+ if (finishedMode == Impl::DragMode::MoveKey) {
+  // Re-sort every affected track, then rebuild the selection against
+  // the new key order using the final dragged positions.
+  std::set<int> affectedTracks;
+  for (const auto& dragged : impl_->draggedKeys_) {
+   affectedTracks.insert(dragged.track);
+  }
+  for (const int trackIndex : affectedTracks) {
+   if (trackIndex < 0 || trackIndex >= static_cast<int>(impl_->tracks_.size())) continue;
+   auto& keys = impl_->tracks_[trackIndex].keys;
+   std::sort(keys.begin(), keys.end(),
+    [](const CurveKey& lhs, const CurveKey& rhs) { return lhs.frame < rhs.frame; });
+  }
+  std::set<std::pair<int, int>> newSelection;
+  for (const auto& dragged : impl_->draggedKeys_) {
+   if (dragged.track < 0 || dragged.track >= static_cast<int>(impl_->tracks_.size())) continue;
+   const auto& keys = impl_->tracks_[dragged.track].keys;
+   for (int i = 0; i < static_cast<int>(keys.size()); ++i) {
+    if (keys[i].frame == dragged.finalFrame &&
+        std::abs(keys[i].value - dragged.finalValue) < 0.0001f) {
+     newSelection.insert({dragged.track, i});
+     break;
+    }
    }
+  }
+  impl_->selectedKeys_ = newSelection;
+  if (!newSelection.empty()) {
+   const auto& first = *newSelection.begin();
+   impl_->selectedTrack_ = first.first;
+   impl_->selectedKey_ = first.second;
+  } else {
+   impl_->selectedTrack_ = -1;
+   impl_->selectedKey_ = -1;
   }
  }
 
+ if (finishedMode == Impl::DragMode::Marquee) {
+  impl_->selectKeysInDataRect(impl_->marqueeRectData_, impl_->marqueeAdditive_);
+  impl_->marqueeRectData_ = QRectF();
+ }
+
  impl_->dragMode_ = Impl::DragMode::None;
+ impl_->draggedKeys_.clear();
  if (hadDrag) {
   Q_EMIT interactionFinished();
  }
+ update();
 }
 
 void ArtifactCurveEditorWidget::wheelEvent(QWheelEvent* event) {
@@ -1167,19 +1877,81 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
   return;
  }
 
- if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
+ if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace ||
+     event->key() == Qt::Key_X) {
   if (!impl_->keyEditingEnabled_) {
    event->accept();
    return;
   }
-  const int oldTrack = impl_->selectedTrack_;
-  const int oldKey = impl_->selectedKey_;
-  if (impl_->deleteSelectedKey()) {
-   Q_EMIT keyDeleted(oldTrack, oldKey);
+  // CE-3: delete every selected key. The removal is written back to
+  // the properties at interactionFinished and covered by one undo step.
+  if (!impl_->selectedKeys_.empty()) {
+   Q_EMIT interactionStarted();
+   impl_->deleteSelectedKeys();
+   Q_EMIT interactionFinished();
    update();
    event->accept();
    return;
   }
+ }
+
+ if (event->key() == Qt::Key_C && impl_->keyEditingEnabled_) {
+  if (impl_->copySelectedKeys()) {
+   event->accept();
+   return;
+  }
+ }
+
+ if (event->key() == Qt::Key_V && impl_->keyEditingEnabled_) {
+  if (!impl_->copiedKeys_.empty() &&
+      impl_->selectedTrack_ >= 0 &&
+      impl_->selectedTrack_ < static_cast<int>(impl_->tracks_.size())) {
+   Q_EMIT interactionStarted();
+   if (impl_->pasteCopiedKeys()) {
+   Q_EMIT interactionFinished();
+   update();
+   event->accept();
+   return;
+   }
+  }
+ }
+
+ if (event->key() == Qt::Key_D &&
+     event->modifiers().testFlag(Qt::ShiftModifier) &&
+     impl_->keyEditingEnabled_) {
+  if (!impl_->selectedKeys_.empty()) {
+   Q_EMIT interactionStarted();
+   const bool cloned = impl_->cloneSelectedKeys();
+   Q_EMIT interactionFinished();
+   if (cloned) {
+    update();
+    event->accept();
+    return;
+   }
+  }
+ }
+
+ if (event->key() == Qt::Key_B) {
+  if (impl_->bufferTracks_.empty()) {
+   impl_->bufferTracks_ = impl_->tracks_;
+  }
+  impl_->bufferCurveVisible_ = !impl_->bufferCurveVisible_;
+  update();
+  event->accept();
+  return;
+ }
+
+ if (event->key() == Qt::Key_N) {
+  impl_->normalizedView_ = !impl_->normalizedView_;
+  if (impl_->normalizedView_) {
+   impl_->yMin_ = -1.2f;
+   impl_->yMax_ = 1.2f;
+  } else {
+   fitToContent();
+  }
+  update();
+  event->accept();
+  return;
  }
 
  if (event->key() == Qt::Key_F) {
@@ -1192,7 +1964,35 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
   return;
  }
 
- if (event->key() == Qt::Key_A || event->key() == Qt::Key_Escape) {
+ if (event->key() == Qt::Key_A) {
+  // CE-3: select all keys across visible tracks (toggle to deselect).
+  int totalKeys = 0;
+  for (const auto& track : impl_->tracks_) {
+   if (track.visible) totalKeys += static_cast<int>(track.keys.size());
+  }
+  if (totalKeys > 0 && static_cast<int>(impl_->selectedKeys_.size()) == totalKeys) {
+   impl_->clearKeySelection();
+  } else {
+   impl_->clearKeySelection();
+   for (int ti = 0; ti < static_cast<int>(impl_->tracks_.size()); ++ti) {
+    if (!impl_->tracks_[ti].visible) continue;
+    for (int ki = 0; ki < static_cast<int>(impl_->tracks_[ti].keys.size()); ++ki) {
+     impl_->selectedKeys_.insert({ti, ki});
+    }
+   }
+   if (!impl_->selectedKeys_.empty()) {
+    const auto& first = *impl_->selectedKeys_.begin();
+    impl_->selectedTrack_ = first.first;
+    impl_->selectedKey_ = first.second;
+   }
+  }
+  update();
+  event->accept();
+  return;
+ }
+
+ if (event->key() == Qt::Key_Escape) {
+  impl_->clearKeySelection();
   focusTrack(-1);
   event->accept();
   return;

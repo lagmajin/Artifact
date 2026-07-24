@@ -2245,7 +2245,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   if (leftHubSelectionLabel_) {
    const QStringList paths = selectedAssetPaths();
    if (paths.isEmpty()) {
-    leftHubSelectionLabel_->setText(QStringLiteral("No asset selected"));
+    leftHubSelectionLabel_->setText(QStringLiteral("Select an asset to inspect"));
     leftHubSelectionLabel_->setToolTip(QStringLiteral("Select an asset to inspect details."));
    } else {
     QString name = QFileInfo(paths.first()).fileName();

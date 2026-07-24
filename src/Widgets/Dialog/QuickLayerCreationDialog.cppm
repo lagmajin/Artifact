@@ -33,6 +33,7 @@ public:
   QComboBox* timing = nullptr;
   QComboBox* curve = nullptr;
   QSpinBox* frames = nullptr;
+  QComboBox* placement = nullptr;
 };
 
 QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
@@ -96,6 +97,20 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
   envelopeForm->addRow(QStringLiteral("カーブ"), impl_->curve);
   envelopeForm->addRow(QStringLiteral("長さ"), impl_->frames);
   root->addWidget(envelopeBox);
+
+  auto* placementBox = new QGroupBox(QStringLiteral("配置"), this);
+  auto* placementForm = new QFormLayout(placementBox);
+  impl_->placement = new QComboBox(placementBox);
+  impl_->placement->addItem(QStringLiteral("選択レイヤーの後"),
+                            static_cast<int>(LayerCreationPlacementMode::AfterSelected));
+  impl_->placement->addItem(QStringLiteral("選択レイヤーの前"),
+                            static_cast<int>(LayerCreationPlacementMode::BeforeSelected));
+  impl_->placement->addItem(QStringLiteral("コンポジション開始"),
+                            static_cast<int>(LayerCreationPlacementMode::CompositionStart));
+  impl_->placement->addItem(QStringLiteral("現在フレーム"),
+                            static_cast<int>(LayerCreationPlacementMode::Playhead));
+  placementForm->addRow(QStringLiteral("追加位置"), impl_->placement);
+  root->addWidget(placementBox);
   root->addStretch();
 
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel | QDialogButtonBox::Ok, this);
@@ -116,6 +131,7 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
   impl_->timing->setCurrentIndex(settings.value(QStringLiteral("timing"), 0).toInt());
   impl_->curve->setCurrentIndex(settings.value(QStringLiteral("curve"), 0).toInt());
   impl_->frames->setValue(settings.value(QStringLiteral("frames"), 8).toInt());
+  impl_->placement->setCurrentIndex(settings.value(QStringLiteral("placement"), 0).toInt());
   settings.endGroup();
 }
 
@@ -132,10 +148,14 @@ QuickLayerCreationOptions QuickLayerCreationDialog::submittedOptions() const {
   options.envelopeTiming = static_cast<QuickLayerEnvelopeTiming>(impl_->timing->currentData().toInt());
   options.envelopeCurve = static_cast<LayerEnvelopeCurve>(impl_->curve->currentData().toInt());
   options.envelopeFrames = impl_->frames->value();
+  options.placementMode = static_cast<LayerCreationPlacementMode>(
+      impl_->placement->currentData().toInt());
   options.envelope.enabled = options.entryEnvelope || options.exitEnvelope;
   options.envelope.entry = options.entryEnvelope;
   options.envelope.exit = options.exitEnvelope;
   options.envelope.durationFrames = options.envelopeFrames;
+  options.envelope.effectStart = 0.0f;
+  options.envelope.effectEnd = 1.0f;
   options.envelope.curve = options.envelopeCurve;
 
   QSettings settings;
@@ -149,6 +169,7 @@ QuickLayerCreationOptions QuickLayerCreationDialog::submittedOptions() const {
   settings.setValue(QStringLiteral("timing"), impl_->timing->currentIndex());
   settings.setValue(QStringLiteral("curve"), impl_->curve->currentIndex());
   settings.setValue(QStringLiteral("frames"), impl_->frames->value());
+  settings.setValue(QStringLiteral("placement"), impl_->placement->currentIndex());
   settings.endGroup();
   switch (options.envelopeTiming) {
   case QuickLayerEnvelopeTiming::OpacityLead:

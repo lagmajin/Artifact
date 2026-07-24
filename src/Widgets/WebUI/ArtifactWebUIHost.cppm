@@ -33,6 +33,7 @@ namespace Artifact {
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
 
+#ifdef USE_WEBENGINE
         // ---- WebEngineView の作成 ----
         impl_->webView = new QWebEngineView(this);
         layout->addWidget(impl_->webView);
@@ -42,14 +43,14 @@ namespace Artifact {
         impl_->bridge = new ArtifactWebBridge(this);
 
         // "bridge" という名前で JS 側からアクセス可能にする
-        // JS側: new QWebChannel(qt.webChannelTransport, function(channel) {
-        //            var bridge = channel.objects.bridge;
-        //            bridge.selectLayer("...");
-        //        });
         impl_->channel->registerObject(QStringLiteral("bridge"), impl_->bridge);
         impl_->webView->page()->setWebChannel(impl_->channel);
 
         qDebug() << "[WebUIHost] Initialized with QWebChannel bridge";
+#else
+        Q_UNUSED(layout);
+        qWarning() << "[WebUIHost] Qt WebEngine is not enabled";
+#endif
     }
 
     ArtifactWebUIHost::~ArtifactWebUIHost()
@@ -59,8 +60,12 @@ namespace Artifact {
 
     void ArtifactWebUIHost::loadUrl(const QString& url)
     {
+#ifdef USE_WEBENGINE
         qDebug() << "[WebUIHost] Loading URL:" << url;
         impl_->webView->load(QUrl(url));
+#else
+        Q_UNUSED(url);
+#endif
     }
 
     void ArtifactWebUIHost::connectToDevServer(int port)
@@ -81,9 +86,13 @@ namespace Artifact {
 
     void ArtifactWebUIHost::runJavaScript(const QString& js)
     {
+#ifdef USE_WEBENGINE
         if (impl_->webView) {
             impl_->webView->page()->runJavaScript(js);
         }
+#else
+        Q_UNUSED(js);
+#endif
     }
 
 

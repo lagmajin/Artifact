@@ -2,6 +2,7 @@ module;
 #include <QString>
 #include <QVariant>
 #include <vector>
+#include <algorithm>
 
 export module DecalEffect;
 
@@ -12,6 +13,8 @@ import Image.ImageF32x4RGBAWithCache;
 import Utils.String.UniString;
 
 export namespace Artifact {
+
+using namespace ArtifactCore;
 
 /**
  * @brief Decal projector effect.
@@ -36,10 +39,18 @@ public:
     float normalFade() const { return normalFade_; }
 
     std::vector<AbstractProperty> getProperties() const override {
-        return {
-            makeFloatProperty("Opacity", opacity_, 0.0f, 1.0f),
-            makeFloatProperty("NormalFade", normalFade_, 0.0f, 1.0f),
-        };
+        std::vector<AbstractProperty> props;
+        AbstractProperty opacity;
+        opacity.setName(QStringLiteral("Opacity"));
+        opacity.setType(PropertyType::Float);
+        opacity.setValue(opacity_);
+        props.push_back(opacity);
+        AbstractProperty normalFade;
+        normalFade.setName(QStringLiteral("NormalFade"));
+        normalFade.setType(PropertyType::Float);
+        normalFade.setValue(normalFade_);
+        props.push_back(normalFade);
+        return props;
     }
 
     void setPropertyValue(const UniString& name, const QVariant& value) override {
@@ -48,7 +59,6 @@ public:
     }
 
     bool supportsGPU() const override { return true; }
-    EffectType type() const override { return EffectType::Rasterizer; }
 };
 
 } // namespace Artifact

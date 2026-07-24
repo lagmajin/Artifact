@@ -215,8 +215,8 @@ foreach(file_path ${POTENTIAL_SOURCES})
        file_path MATCHES "include/Color/ArtifactColorWheels\\.ixx" OR
        file_path MATCHES "src/Color/ArtifactColorWheels\\.cppm" OR
        file_path MATCHES "include/Preview/ArtifactTimelineClock\\.ixx" OR
-       file_path MATCHES "src/Preview/ArtifactTimelineClock\\.cppm" OR
-       file_path MATCHES "src/Widgets/WebUI/ArtifactWebUIHost\\.cppm")
+       file_path MATCHES "src/Preview/ArtifactTimelineClock\\.cppm"
+       )
         continue()
     endif()
 
@@ -254,6 +254,46 @@ foreach(file_path ${POTENTIAL_SOURCES})
         list(APPEND APP_IMPL "${file_path}")
     endif()
 endforeach()
+
+# A .ixx file is the authoritative interface provider for its named module.
+# Some implementation .cppm files still use `export module` for historical
+# reasons.  Their classification must not depend on GLOB_RECURSE ordering:
+# when an .ixx provider exists, always compile the matching .cppm as a private
+# implementation unit.  Source-only .cppm interfaces and module partitions
+# remain in APP_MODULES.
+set(_artifact_ixx_module_names "")
+foreach(_artifact_module_source IN LISTS APP_MODULES)
+    if(_artifact_module_source MATCHES "\\.ixx$")
+        file(READ "${_artifact_module_source}" _artifact_module_content LIMIT 32768)
+        string(REGEX REPLACE "//[^\n]*" "" _artifact_module_content "${_artifact_module_content}")
+        string(REGEX REPLACE "/\\*.*\\*/" "" _artifact_module_content "${_artifact_module_content}")
+        if(_artifact_module_content MATCHES "export[ \t\r\n]+module[ \t\r\n]+([a-zA-Z0-9\\._:]+)[ \t\r\n]*;")
+            list(APPEND _artifact_ixx_module_names "${CMAKE_MATCH_1}")
+        endif()
+    endif()
+endforeach()
+list(REMOVE_DUPLICATES _artifact_ixx_module_names)
+
+set(_artifact_cppm_implementation_units "")
+foreach(_artifact_module_source IN LISTS APP_MODULES)
+    if(_artifact_module_source MATCHES "\\.cppm$")
+        file(READ "${_artifact_module_source}" _artifact_module_content LIMIT 32768)
+        string(REGEX REPLACE "//[^\n]*" "" _artifact_module_content "${_artifact_module_content}")
+        string(REGEX REPLACE "/\\*.*\\*/" "" _artifact_module_content "${_artifact_module_content}")
+        if(_artifact_module_content MATCHES "export[ \t\r\n]+module[ \t\r\n]+([a-zA-Z0-9\\._]+)[ \t\r\n]*;")
+            list(FIND _artifact_ixx_module_names "${CMAKE_MATCH_1}" _artifact_ixx_provider_idx)
+            if(NOT _artifact_ixx_provider_idx EQUAL -1)
+                list(APPEND _artifact_cppm_implementation_units "${_artifact_module_source}")
+            endif()
+        endif()
+    endif()
+endforeach()
+
+if(_artifact_cppm_implementation_units)
+    list(REMOVE_ITEM APP_MODULES ${_artifact_cppm_implementation_units})
+    list(APPEND APP_IMPL ${_artifact_cppm_implementation_units})
+    list(REMOVE_DUPLICATES APP_IMPL)
+endif()
 
 # CMake の module 自動分類で AppDebuggerWidget.cppm が link 対象から漏れるケースがあるため、
 # 明示的に private source として固定する。
@@ -426,6 +466,26 @@ foreach(_new_effect IN ITEMS Kaleidoscope Dithering Kuwahara)
     list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_new_effect}/${_new_effect}Effect.cppm" _new_effect_impl_idx)
     if(_new_effect_impl_idx EQUAL -1)
         list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_new_effect}/${_new_effect}Effect.cppm")
+    endif()
+endforeach()
+
+# EffectService imports these modules directly.  Keep both the interface and
+# implementation units explicit so the C++ module mapper always emits their
+# IFC references, including files that glob discovery can miss.
+foreach(_service_effect IN ITEMS
+    "ColorCorrection/InvertEffect"
+    "Rasterizer/VignetteEffect"
+    "Rasterizer/StripesEffect"
+    "Rasterizer/VoronoiEffect"
+    "Rasterizer/BricksEffect"
+    "Rasterizer/HexGridEffect")
+    list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/${_service_effect}.ixx" _service_effect_module_idx)
+    if(_service_effect_module_idx EQUAL -1)
+        list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/${_service_effect}.ixx")
+    endif()
+    list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_service_effect}.cppm" _service_effect_impl_idx)
+    if(_service_effect_impl_idx EQUAL -1)
+        list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_service_effect}.cppm")
     endif()
 endforeach()
 

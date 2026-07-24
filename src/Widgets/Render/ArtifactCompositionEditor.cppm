@@ -7520,6 +7520,7 @@ public:
   QComboBox *resolutionCombo_ = nullptr;
   QToolButton *fastPreviewBtn_ = nullptr;
   QToolButton *displayOptionsBtn_ = nullptr;
+  bool compactViewportControls_ = false;
   bool layerChromeVisible_ = true;
   bool lockViewToSelection_ = false;
   bool autoAssignFourUpViews_ = true;
@@ -7992,7 +7993,34 @@ public:
     const QPoint viewportTopLeft =
         overlayViewport->mapTo(owner, QPoint(0, 0));
     const QRect viewportGeometry(viewportTopLeft, overlayViewport->size());
+    if (viewportGeometry.isEmpty()) {
+      return;
+    }
     const int overlayInset = 14;
+    const int overlayWidth = std::max(0, viewportGeometry.width() -
+                                          overlayInset * 2);
+
+    // The bottom controls duplicate commands already available in the View
+    // menu.  Keep the full set while it fits, then retain one compact entry
+    // point instead of allowing an overlay to extend past the viewport.
+    const bool compactControls = overlayWidth < 360;
+    const bool controlDensityChanged =
+        compactViewportControls_ != compactControls;
+    if (controlDensityChanged) {
+      compactViewportControls_ = compactControls;
+    }
+    if (resolutionCombo_) {
+      resolutionCombo_->setVisible(!compactControls);
+    }
+    if (fastPreviewBtn_) {
+      fastPreviewBtn_->setVisible(!compactControls);
+    }
+    if (displayOptionsBtn_) {
+      displayOptionsBtn_->setVisible(!compactControls);
+    }
+    if (controlDensityChanged) {
+      refreshViewportStateLabels();
+    }
 
     const auto placeHud = [&](QWidget *hud, const QPoint &defaultPosition) {
       if (!hud) {
@@ -8066,14 +8094,18 @@ public:
     }
     if (viewOrientationWidget_) {
       const QSize sz = viewOrientationWidget_->sizeHint();
-      const int x = viewportGeometry.right() - sz.width() - overlayInset;
+      const int x = std::max(viewportGeometry.left() + overlayInset,
+                             viewportGeometry.right() - sz.width() -
+                                 overlayInset + 1);
       const int y = viewportGeometry.top() + 24;
       viewOrientationWidget_->setGeometry(x, y, sz.width(), sz.height());
       if (auto *controller = activeRenderController()) {
         viewOrientationWidget_->setOrientationQuaternion(
             controller->viewportOrientationQuaternion());
       }
-      const bool showNavigator = hasComposition;
+      // The cube is a convenience control; orientation presets remain
+      // available from the View menu when the viewport cannot contain it.
+      const bool showNavigator = hasComposition && overlayWidth >= sz.width();
       if (viewOrientationWidget_->isVisible() != showNavigator) {
         viewOrientationWidget_->setVisible(showNavigator);
       }
@@ -8084,10 +8116,11 @@ public:
     }
     if (chromeStrip_) {
       chromeStrip_->adjustSize();
-      const int width = std::min(440, chromeStrip_->sizeHint().width());
+      const int width = std::min({440, chromeStrip_->sizeHint().width(),
+                                  overlayWidth});
       chromeStrip_->setGeometry(viewportGeometry.left() + overlayInset,
                                 viewportGeometry.bottom() -
-                                    chromeStrip_->sizeHint().height() - overlayInset,
+                                    chromeStrip_->sizeHint().height() - overlayInset + 1,
                                 width, chromeStrip_->sizeHint().height());
       if (chromeStrip_->isVisible() != hasComposition) {
         chromeStrip_->setVisible(hasComposition);
@@ -8099,11 +8132,13 @@ public:
     if (bottomBar_) {
       bottomBar_->adjustSize();
       const QSize sz = bottomBar_->sizeHint();
-      bottomBar_->setGeometry(viewportGeometry.right() - sz.width() - overlayInset,
-                              viewportGeometry.bottom() - sz.height() - overlayInset,
-                              sz.width(), sz.height());
-      if (bottomBar_->isVisible() != hasComposition) {
-        bottomBar_->setVisible(hasComposition);
+      const int width = std::min(sz.width(), overlayWidth);
+      bottomBar_->setGeometry(viewportGeometry.right() - width - overlayInset + 1,
+                              viewportGeometry.bottom() - sz.height() - overlayInset + 1,
+                              width, sz.height());
+      const bool showBottomBar = hasComposition && width >= 96;
+      if (bottomBar_->isVisible() != showBottomBar) {
+        bottomBar_->setVisible(showBottomBar);
       }
       if (bottomBar_->isVisible()) {
         bottomBar_->raise();
@@ -8267,7 +8302,9 @@ public:
 
   void refreshViewportStateLabels() {
     if (shadingButton_) {
-      shadingButton_->setText(viewportChannelDisplayLabel());
+      shadingButton_->setText(compactViewportControls_
+                                  ? QStringLiteral("View")
+                                  : viewportChannelDisplayLabel());
       shadingButton_->setToolTip(shadingButtonTooltip());
     }
     if (gizmoModeButton_) {

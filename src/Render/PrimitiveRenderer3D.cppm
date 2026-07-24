@@ -514,6 +514,21 @@ public:
             return;
         }
 
+        // CreateGraphicsPipelineState writes through the output pointer and
+        // requires it to be empty.  RTV format changes (for example when the
+        // viewport switches preview channels) rebuild this PSO set, so drop
+        // the previous objects before recreating them.
+        srb_ = nullptr;
+        pso_ = nullptr;
+        cardDepthWriteSRB_ = nullptr;
+        cardTransparentSRB_ = nullptr;
+        cardDepthWritePSO_ = nullptr;
+        cardTransparentPSO_ = nullptr;
+        shapeDepthWriteSRB_ = nullptr;
+        shapeTransparentSRB_ = nullptr;
+        shapeDepthWritePSO_ = nullptr;
+        shapeTransparentPSO_ = nullptr;
+
         GraphicsPipelineStateCreateInfo psoCI;
         psoCI.PSODesc.Name = "PrimitiveRenderer3D Billboard PSO";
         psoCI.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
@@ -551,10 +566,12 @@ public:
         blend.BlendOpAlpha = BLEND_OPERATION_ADD;
         blend.RenderTargetWriteMask = COLOR_MASK_ALL;
 
-        device_->CreateGraphicsPipelineState(psoCI, &pso_);
-        if (!pso_) {
+        RefCntAutoPtr<IPipelineState> newPSO;
+        device_->CreateGraphicsPipelineState(psoCI, &newPSO);
+        if (!newPSO) {
             return;
         }
+        pso_ = newPSO;
 
         if (auto* cbVar = pso_->GetStaticVariableByName(SHADER_TYPE_VERTEX, "BillboardCB")) {
             cbVar->Set(constantBuffer_);
@@ -564,7 +581,9 @@ public:
                 sampVar->Set(sampler_);
             }
         }
-        pso_->CreateShaderResourceBinding(&srb_, true);
+        RefCntAutoPtr<IShaderResourceBinding> newSRB;
+        pso_->CreateShaderResourceBinding(&newSRB, true);
+        srb_ = newSRB;
 
         if (!cardVS_ || !cardPS_ || !cardConstantBuffer_) {
             return;
@@ -616,10 +635,12 @@ public:
             cardBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
             cardBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
 
-            device_->CreateGraphicsPipelineState(cardCI, &cardPSO);
-            if (!cardPSO) {
+            RefCntAutoPtr<IPipelineState> newCardPSO;
+            device_->CreateGraphicsPipelineState(cardCI, &newCardPSO);
+            if (!newCardPSO) {
                 return;
             }
+            cardPSO = newCardPSO;
             if (auto* cbVar = cardPSO->GetStaticVariableByName(
                     SHADER_TYPE_VERTEX, "CardCB")) {
                 cbVar->Set(cardConstantBuffer_);
@@ -634,7 +655,9 @@ public:
                     sampVar->Set(sampler_);
                 }
             }
-            cardPSO->CreateShaderResourceBinding(&cardSRB, true);
+            RefCntAutoPtr<IShaderResourceBinding> newCardSRB;
+            cardPSO->CreateShaderResourceBinding(&newCardSRB, true);
+            cardSRB = newCardSRB;
         };
 
         createCardPSO("PrimitiveRenderer3D Card Depth Write PSO", true,

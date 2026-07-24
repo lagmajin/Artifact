@@ -682,7 +682,7 @@ inline LayerComponentDescriptor makeFractureComponentDescriptor(bool enabled) {
         LayerComponentPhase::Topology,
         LayerComponentScope::InstanceSet,
         600,
-        {QStringLiteral("artifact.component.collision")},
+        {},
         {},
     };
 }

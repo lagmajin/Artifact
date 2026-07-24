@@ -64,6 +64,24 @@ struct FramePositionHash {
 
 class FrameCache::Impl {
 public:
+    struct AccessCandidate {
+        uint64_t key = 0;
+        int64_t frame = 0;
+        bool operator>(const AccessCandidate& other) const {
+            if (key != other.key) return key > other.key;
+            return frame > other.frame;
+        }
+    };
+
+    struct SizeCandidate {
+        size_t key = 0;
+        int64_t frame = 0;
+        bool operator<(const SizeCandidate& other) const {
+            if (key != other.key) return key < other.key;
+            return frame < other.frame;
+        }
+    };
+
     // Cache storage
     std::unordered_map<FramePosition, std::shared_ptr<FrameCacheEntry>, FramePositionHash> entries_;
     
@@ -71,6 +89,11 @@ public:
     std::unordered_map<FramePosition, uint64_t, FramePositionHash> accessTimes_;
     std::unordered_map<FramePosition, int, FramePositionHash> accessCounts_;  // For LFU
     std::deque<FramePosition> insertionOrder_;    // For FIFO
+    std::priority_queue<AccessCandidate, std::vector<AccessCandidate>,
+                        std::greater<AccessCandidate>> lruCandidates_;
+    std::priority_queue<AccessCandidate, std::vector<AccessCandidate>,
+                        std::greater<AccessCandidate>> lfuCandidates_;
+    std::priority_queue<SizeCandidate> sizeCandidates_;
     
     // Configuration
     size_t maxMemory_ = 512 * 1024 * 1024; // 512 MB default
@@ -80,6 +103,7 @@ public:
     // Statistics
     size_t hitCount_ = 0;
     size_t missCount_ = 0;
+    size_t memoryUsage_ = 0;
     uint64_t generation_ = 1;
     
     // Thread safety
@@ -91,11 +115,49 @@ public:
     bool prefetchEnabled_ = true;
     
     size_t currentMemoryUsage() const {
-        size_t total = 0;
-        for (auto& [pos, entry] : entries_) {
-            total += entry->memorySize;
+        return memoryUsage_;
+    }
+
+    void rebuildCandidates() {
+        lruCandidates_ = {};
+        lfuCandidates_ = {};
+        sizeCandidates_ = {};
+        for (const auto& [frame, timestamp] : accessTimes_) {
+            if (entries_.find(frame) != entries_.end()) {
+                lruCandidates_.push({timestamp, frame.framePosition()});
+            }
         }
-        return total;
+        for (const auto& [frame, count] : accessCounts_) {
+            if (entries_.find(frame) != entries_.end()) {
+                lfuCandidates_.push(
+                    {static_cast<uint64_t>(count), frame.framePosition()});
+            }
+        }
+        for (const auto& [frame, entry] : entries_) {
+            if (entry) {
+                sizeCandidates_.push(
+                    {entry->memorySize, frame.framePosition()});
+            }
+        }
+    }
+
+    void maybeRebuildCandidates() {
+        const size_t liveEntries = entries_.size();
+        const size_t threshold = liveEntries * 8u + 64u;
+        if (lruCandidates_.size() > threshold ||
+            lfuCandidates_.size() > threshold ||
+            sizeCandidates_.size() > threshold) {
+            rebuildCandidates();
+        }
+    }
+
+    void recordAccess(const FramePosition& frame, const uint64_t timestamp) {
+        accessTimes_[frame] = timestamp;
+        accessCounts_[frame]++;
+        lruCandidates_.push({timestamp, frame.framePosition()});
+        lfuCandidates_.push({static_cast<uint64_t>(accessCounts_[frame]),
+                             frame.framePosition()});
+        maybeRebuildCandidates();
     }
     
     std::shared_ptr<FrameCacheEntry> evictOne() {
@@ -105,39 +167,56 @@ public:
         
         switch (policy_) {
             case CachePolicy::LRU: {
-                // Find oldest access
-                uint64_t oldest = UINT64_MAX;
-                for (auto& [pos, time] : accessTimes_) {
-                    if (time < oldest) {
-                        oldest = time;
-                        toEvict = pos;
+                while (!lruCandidates_.empty()) {
+                    const auto candidate = lruCandidates_.top();
+                    lruCandidates_.pop();
+                    const FramePosition frame(candidate.frame);
+                    auto timeIt = accessTimes_.find(frame);
+                    if (timeIt != accessTimes_.end() &&
+                        timeIt->second == candidate.key &&
+                        entries_.find(frame) != entries_.end()) {
+                        toEvict = frame;
+                        break;
                     }
                 }
                 break;
             }
             case CachePolicy::LFU: {
-                // Find least frequently used
-                int minCount = INT_MAX;
-                for (auto& [pos, count] : accessCounts_) {
-                    if (count < minCount) {
-                        minCount = count;
-                        toEvict = pos;
+                while (!lfuCandidates_.empty()) {
+                    const auto candidate = lfuCandidates_.top();
+                    lfuCandidates_.pop();
+                    const FramePosition frame(candidate.frame);
+                    auto countIt = accessCounts_.find(frame);
+                    if (countIt != accessCounts_.end() &&
+                        countIt->second == static_cast<int>(candidate.key) &&
+                        entries_.find(frame) != entries_.end()) {
+                        toEvict = frame;
+                        break;
                     }
                 }
                 break;
             }
             case CachePolicy::FIFO: {
-                toEvict = insertionOrder_.front();
-                insertionOrder_.pop_front();
+                while (!insertionOrder_.empty()) {
+                    const FramePosition frame = insertionOrder_.front();
+                    insertionOrder_.pop_front();
+                    if (entries_.find(frame) != entries_.end()) {
+                        toEvict = frame;
+                        break;
+                    }
+                }
                 break;
             }
             case CachePolicy::Size: {
-                // Find largest
-                size_t maxSize = 0;
-                for (auto& [pos, entry] : entries_) {
-                    if (entry->memorySize > maxSize) {
-                        maxSize = entry->memorySize;
-                        toEvict = pos;
+                while (!sizeCandidates_.empty()) {
+                    const auto candidate = sizeCandidates_.top();
+                    sizeCandidates_.pop();
+                    const FramePosition frame(candidate.frame);
+                    auto entryIt = entries_.find(frame);
+                    if (entryIt != entries_.end() && entryIt->second &&
+                        entryIt->second->memorySize == candidate.key) {
+                        toEvict = frame;
+                        break;
                     }
                 }
                 break;
@@ -149,6 +228,7 @@ public:
         auto it = entries_.find(toEvict);
         if (it != entries_.end()) {
             auto entry = it->second;
+            memoryUsage_ -= entry ? entry->memorySize : 0;
             entries_.erase(it);
             accessTimes_.erase(toEvict);
             accessCounts_.erase(toEvict);
@@ -192,7 +272,7 @@ size_t FrameCache::maxMemoryBytes() const {
 
 void FrameCache::setMaxFrameCount(int count) {
     QMutexLocker locker(&impl_->mutex_);
-    impl_->maxFrameCount_ = count;
+    impl_->maxFrameCount_ = std::max(0, count);
     impl_->evictToFit(impl_->maxMemory_, impl_->maxFrameCount_);
 }
 
@@ -204,6 +284,7 @@ int FrameCache::maxFrameCount() const {
 void FrameCache::setPolicy(CachePolicy policy) {
     QMutexLocker locker(&impl_->mutex_);
     impl_->policy_ = policy;
+    impl_->rebuildCandidates();
 }
 
 CachePolicy FrameCache::policy() const {
@@ -213,7 +294,9 @@ CachePolicy FrameCache::policy() const {
 
 bool FrameCache::contains(const FramePosition& frame) const {
     QMutexLocker locker(&impl_->mutex_);
-    return impl_->entries_.count(frame) > 0;
+    const auto it = impl_->entries_.find(frame);
+    return it != impl_->entries_.end() && it->second &&
+           it->second->generation == impl_->generation_;
 }
 
 std::shared_ptr<FrameCacheEntry> FrameCache::get(const FramePosition& frame) {
@@ -222,6 +305,7 @@ std::shared_ptr<FrameCacheEntry> FrameCache::get(const FramePosition& frame) {
     auto it = impl_->entries_.find(frame);
     if (it != impl_->entries_.end()) {
         if (it->second && it->second->generation != impl_->generation_) {
+            impl_->memoryUsage_ -= it->second->memorySize;
             impl_->entries_.erase(it);
             impl_->accessTimes_.erase(frame);
             impl_->accessCounts_.erase(frame);
@@ -231,8 +315,8 @@ std::shared_ptr<FrameCacheEntry> FrameCache::get(const FramePosition& frame) {
         impl_->hitCount_++;
         
         // Update access tracking
-        impl_->accessTimes_[frame] = std::chrono::steady_clock::now().time_since_epoch().count();
-        impl_->accessCounts_[frame]++;
+        impl_->recordAccess(
+            frame, std::chrono::steady_clock::now().time_since_epoch().count());
         
         return it->second;
     }
@@ -244,16 +328,17 @@ std::shared_ptr<FrameCacheEntry> FrameCache::get(const FramePosition& frame) {
 void FrameCache::put(std::shared_ptr<FrameCacheEntry> entry) {
     if (!entry) return;
 
+    QMutexLocker locker(&impl_->mutex_);
+
     // Validate entry memory size
     if (entry->memorySize == 0 || entry->memorySize > impl_->maxMemory_) {
         throw std::invalid_argument("Frame entry memory size exceeds cache capacity");
     }
 
-    QMutexLocker locker(&impl_->mutex_);
-
     // Remove old entry if exists
     auto it = impl_->entries_.find(entry->frame);
     if (it != impl_->entries_.end()) {
+        impl_->memoryUsage_ -= it->second ? it->second->memorySize : 0;
         impl_->entries_.erase(it);
     }
 
@@ -265,8 +350,12 @@ void FrameCache::put(std::shared_ptr<FrameCacheEntry> entry) {
     // Add new entry
     entry->generation = impl_->generation_;
     impl_->entries_[entry->frame] = entry;
-    impl_->accessTimes_[entry->frame] = std::chrono::steady_clock::now().time_since_epoch().count();
-    impl_->accessCounts_[entry->frame] = 1;
+    impl_->memoryUsage_ += entry->memorySize;
+    impl_->accessCounts_[entry->frame] = 0;
+    impl_->recordAccess(
+        entry->frame, std::chrono::steady_clock::now().time_since_epoch().count());
+    impl_->sizeCandidates_.push(
+        {entry->memorySize, entry->frame.framePosition()});
     impl_->insertionOrder_.push_back(entry->frame);
 
     // Emit signals
@@ -291,6 +380,7 @@ void FrameCache::invalidate(const FramePosition& frame) {
     auto it = impl_->entries_.find(frame);
     if (it != impl_->entries_.end()) {
         emit frameRemoved(frame);
+        impl_->memoryUsage_ -= it->second ? it->second->memorySize : 0;
         impl_->entries_.erase(it);
         impl_->accessTimes_.erase(frame);
         impl_->accessCounts_.erase(frame);
@@ -309,6 +399,10 @@ void FrameCache::invalidateRange(const FrameRange& range) {
     
     for (auto& frame : toRemove) {
         emit frameRemoved(frame);
+        auto it = impl_->entries_.find(frame);
+        if (it != impl_->entries_.end()) {
+            impl_->memoryUsage_ -= it->second ? it->second->memorySize : 0;
+        }
         impl_->entries_.erase(frame);
         impl_->accessTimes_.erase(frame);
         impl_->accessCounts_.erase(frame);
@@ -325,6 +419,10 @@ void FrameCache::invalidateStaleGenerations(uint64_t minGenerationToKeep) {
     }
     for (const auto& frame : toRemove) {
         emit frameRemoved(frame);
+        auto it = impl_->entries_.find(frame);
+        if (it != impl_->entries_.end()) {
+            impl_->memoryUsage_ -= it->second ? it->second->memorySize : 0;
+        }
         impl_->entries_.erase(frame);
         impl_->accessTimes_.erase(frame);
         impl_->accessCounts_.erase(frame);
@@ -334,9 +432,13 @@ void FrameCache::invalidateStaleGenerations(uint64_t minGenerationToKeep) {
 void FrameCache::invalidateAll() {
     QMutexLocker locker(&impl_->mutex_);
     impl_->entries_.clear();
+    impl_->memoryUsage_ = 0;
     impl_->accessTimes_.clear();
     impl_->accessCounts_.clear();
     impl_->insertionOrder_.clear();
+    impl_->lruCandidates_ = {};
+    impl_->lfuCandidates_ = {};
+    impl_->sizeCandidates_ = {};
     impl_->generation_++;
     emit cacheCleared();
     emit generationChanged(impl_->generation_, QStringLiteral("invalidateAll"));
@@ -411,8 +513,11 @@ void FrameCache::clear() {
 
 void FrameCache::touch(const FramePosition& frame) {
     QMutexLocker locker(&impl_->mutex_);
-    impl_->accessTimes_[frame] = std::chrono::steady_clock::now().time_since_epoch().count();
-    impl_->accessCounts_[frame]++;
+    if (impl_->entries_.find(frame) == impl_->entries_.end()) {
+        return;
+    }
+    impl_->recordAccess(
+        frame, std::chrono::steady_clock::now().time_since_epoch().count());
 }
 
 // ==================== ProgressiveRenderer::Impl ====================

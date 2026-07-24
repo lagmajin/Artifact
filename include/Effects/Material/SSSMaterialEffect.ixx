@@ -2,6 +2,7 @@ module;
 #include <QString>
 #include <QVariant>
 #include <vector>
+#include <algorithm>
 
 export module SSSMaterialEffect;
 
@@ -11,6 +12,8 @@ import Property.Abstract;
 import Utils.String.UniString;
 
 export namespace Artifact {
+
+using namespace ArtifactCore;
 
 /**
  * @brief Subsurface Scattering material effect.
@@ -60,13 +63,24 @@ public:
     float radiusMM() const { return radiusMM_; }
 
     std::vector<AbstractProperty> getProperties() const override {
-        return {
-            makeFloatProperty("StrengthR", strengthR_, 0.0f, 1.0f),
-            makeFloatProperty("StrengthG", strengthG_, 0.0f, 1.0f),
-            makeFloatProperty("StrengthB", strengthB_, 0.0f, 1.0f),
-            makeFloatProperty("Radius", radiusMM_, 0.1f, 50.0f),
-            makeIntProperty("Preset", static_cast<int>(preset_), 0, 3),
+        std::vector<AbstractProperty> props;
+        auto addFloat = [&props](const QString& name, float value) {
+            AbstractProperty prop;
+            prop.setName(name);
+            prop.setType(PropertyType::Float);
+            prop.setValue(value);
+            props.push_back(prop);
         };
+        addFloat(QStringLiteral("StrengthR"), strengthR_);
+        addFloat(QStringLiteral("StrengthG"), strengthG_);
+        addFloat(QStringLiteral("StrengthB"), strengthB_);
+        addFloat(QStringLiteral("Radius"), radiusMM_);
+        AbstractProperty preset;
+        preset.setName(QStringLiteral("Preset"));
+        preset.setType(PropertyType::Integer);
+        preset.setValue(static_cast<int>(preset_));
+        props.push_back(preset);
+        return props;
     }
 
     void setPropertyValue(const UniString& name, const QVariant& value) override {
@@ -78,7 +92,6 @@ public:
     }
 
     bool supportsGPU() const override { return true; }
-    EffectType type() const override { return EffectType::Material; }
 };
 
 } // namespace Artifact

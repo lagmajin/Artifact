@@ -263,7 +263,7 @@ namespace {
         }
 
         if (selectedIndex < 0) {
-            int bestScore = std::numeric_limits<int>::min();
+            int bestScore = (std::numeric_limits<int>::lowest)();
             for (Uint32 index = 0; index < adapterCount; ++index) {
                 const auto& adapter = adapters[index];
                 int score = adapterAutoScore(adapter);

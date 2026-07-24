@@ -10,6 +10,7 @@ module;
 export module Artifact.Render.Pipeline;
 import Layer.Blend;
 import Artifact.Layer.Abstract;
+import Artifact.Render.PointwiseEffectFusion;
 import Graphics.LayerBlendPipeline;
 import Graphics.GPUcomputeContext;
 
@@ -58,6 +59,16 @@ export namespace Artifact
    const std::vector<ArtifactAbstractLayerPtr>& layers,
    int64_t currentFrame,
    ITextureView* outputRTV
+  );
+
+  // Apply a pointwise effect stack to the current accumulation entirely on GPU.
+  // The result remains available through accumSRV().
+  bool applyPointwise(
+   IDeviceContext* ctx,
+   const ArtifactCore::PointwiseEffectStack& stack,
+   ITextureView* backgroundSRV = nullptr,
+   ITextureView* lutSRV = nullptr,
+   ITextureView* historySRV = nullptr
   );
 
   ITextureView* accumSRV() const;
