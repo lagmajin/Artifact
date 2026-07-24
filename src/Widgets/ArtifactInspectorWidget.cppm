@@ -4287,6 +4287,10 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
                      effectJson[QStringLiteral("displayName")] =
                          effect->displayName().toQString();
                      effectJson[QStringLiteral("enabled")] = effect->isEnabled();
+                     effectJson[QStringLiteral("pipelineStage")] =
+                         static_cast<int>(effect->pipelineStage());
+                     effectJson[QStringLiteral("computeMode")] =
+                         static_cast<int>(effect->computeMode());
                      QJsonArray properties;
                      for (const auto &property : effect->getProperties()) {
                        QJsonObject propertyObject;
@@ -4329,7 +4333,11 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
                      effectToPaste->setEffectID(UniString::fromQString(pastedId));
                      effectToPaste->setDisplayName(
                          effectJson.value(QStringLiteral("displayName")).toString(sourceId));
-                     effectToPaste->setPipelineStage(EffectPipelineStage::Rasterizer);
+                     effectToPaste->setPipelineStage(static_cast<EffectPipelineStage>(
+                         effectJson.value(QStringLiteral("pipelineStage"))
+                             .toInt(static_cast<int>(EffectPipelineStage::Rasterizer))));
+                     effectToPaste->setComputeMode(static_cast<ComputeMode>(
+                         effectJson.value(QStringLiteral("computeMode")).toInt(0)));
                      effectToPaste->setEnabled(
                          effectJson.value(QStringLiteral("enabled")).toBool(true));
                      for (const auto &value : effectJson.value(QStringLiteral("properties")).toArray()) {
