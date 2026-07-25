@@ -3747,25 +3747,36 @@ if (!item.isFolder) {
   addAction(frequentMenu, QStringLiteral("Find References"), [this, filePath]() {
     if (filePath.isEmpty()) return;
     auto *service = ArtifactProjectService::instance();
-    const auto composition = service ? service->currentComposition().lock()
-                                     : ArtifactCompositionPtr{};
+    const auto project = service ? service->getCurrentProjectSharedPtr()
+                                 : std::shared_ptr<ArtifactProject>{};
     QStringList references;
-    if (composition) {
-      for (const auto &layer : composition->allLayerRef()) {
-        if (!layer) continue;
-        const QByteArray serialized =
-            QJsonDocument(layer->toJson()).toJson(QJsonDocument::Compact);
-        if (QString::fromUtf8(serialized).contains(filePath, Qt::CaseInsensitive)) {
-          references.push_back(QStringLiteral("%1 (%2)")
-                                   .arg(layer->layerName(), layer->id().toString()));
+    if (project) {
+      std::function<void(ProjectItem*)> visit = [&](ProjectItem *item) {
+        if (!item) return;
+        if (item->type() == eProjectItemType::Composition) {
+          const auto composition = project->findComposition(item->compositionId).ptr.lock();
+          if (composition) {
+            for (const auto &layer : composition->allLayerRef()) {
+              if (!layer) continue;
+              const QByteArray serialized =
+                  QJsonDocument(layer->toJson()).toJson(QJsonDocument::Compact);
+              if (QString::fromUtf8(serialized).contains(filePath, Qt::CaseInsensitive)) {
+                references.push_back(QStringLiteral("Composition %1 / %2 (%3)")
+                                         .arg(composition->id().toString(),
+                                              layer->layerName(), layer->id().toString()));
+              }
+            }
+          }
         }
-      }
+        for (auto *child : item->children) visit(child);
+      };
+      for (auto *root : project->projectItems()) visit(root);
     }
     QMessageBox::information(
         this, QStringLiteral("Find References"),
         references.isEmpty()
-            ? QStringLiteral("No references found in the current composition.")
-            : QStringLiteral("References in the current composition:\n\n%1")
+            ? QStringLiteral("No references found in the current project.")
+            : QStringLiteral("References in the current project:\n\n%1")
                   .arg(references.join(QStringLiteral("\n"))));
   });
 
