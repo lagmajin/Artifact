@@ -1,6 +1,6 @@
 # Milestone: Mask Keyframe Foundation
 
-**Status:** Investigation complete, implementation not started
+**Status:** Phase 1-3 implemented, runtime verification pending
 **Goal:** make layer mask parameters time-addressable without rebuilding the whole mask editor
 
 ## Why this exists
@@ -20,6 +20,13 @@ This milestone separates the problem into a smaller first slice:
 - `LayerMask` stores a list of `MaskPath` objects and applies them directly.
 - `ArtifactAbstractLayer` exposes mask containers, but not per-mask animatable properties.
 - Timeline keyframe UI already knows how to work with `AbstractProperty`, but mask parameters are not wired into that system yet.
+
+## Implementation Status (2026-07-25)
+
+- Phase 1 is implemented in `ArtifactAbstractLayer::getLayerPropertyGroups()`: mask enabled state and per-path closed, opacity, feather, directional feather, expansion, inverted, and mode properties are exposed as animatable properties.
+- Phase 2 is implemented in `applyMaskPropertyState()` and `ArtifactAbstractLayer::mask()`: property values are evaluated at the current timeline time before the resolved mask is returned to the render path.
+- Phase 3 is connected through the existing property/keyframe path handling in `setLayerPropertyValue()` and the timeline keyframe model; geometry remains separate from parameter animation.
+- Runtime verification is still pending for interpolation, no-keyframe fallback, multiple mask paths, and the existing spatial editor.
 
 ## Recommended First Slice
 
