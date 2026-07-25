@@ -2584,6 +2584,8 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
   setMouseTracking(true);
   setAcceptDrops(true);
   setFocusPolicy(Qt::StrongFocus);
+  setAccessibleName(QStringLiteral("Timeline Layer Panel"));
+  setAccessibleDescription(QStringLiteral("Select and manage composition layers"));
   for (int i = 0; i < kLayerPropertyColumnCount; ++i) {
     impl_->columnWidths_[i] = kLayerColumnWidth;
   }
