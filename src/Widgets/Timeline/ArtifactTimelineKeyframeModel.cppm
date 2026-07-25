@@ -34,6 +34,28 @@ QString editablePathDisplayLabel(const QString &propertyPath) {
     return {};
   }
 
+  if (parts.size() >= 3 &&
+      parts[0].compare(QStringLiteral("text"), Qt::CaseInsensitive) == 0 &&
+      parts[1].compare(QStringLiteral("animators"), Qt::CaseInsensitive) == 0) {
+    const int animatorIndex = parts[2].toInt();
+    if (parts.size() == 3) {
+      return QStringLiteral("Text Animator %1")
+          .arg(animatorIndex + 1);
+    }
+    if (parts.size() < 4) {
+      return QStringLiteral("Text Animator %1")
+          .arg(animatorIndex + 1);
+    }
+    const QString field = parts[3];
+    QString fieldLabel = field;
+    if (!fieldLabel.isEmpty()) {
+      fieldLabel[0] = fieldLabel[0].toUpper();
+    }
+    return QStringLiteral("Text Animator %1 / %2")
+        .arg(animatorIndex + 1)
+        .arg(fieldLabel);
+  }
+
   const bool isMaskPath =
       parts.front().compare(QStringLiteral("mask"), Qt::CaseInsensitive) == 0;
   const bool isRotoPath =
@@ -65,61 +87,17 @@ QString editablePathDisplayLabel(const QString &propertyPath) {
                                   .arg(maskIndex + 1)
                                   .arg(pathIndex + 1);
     const QString field = parts[4];
-    if (field.compare(QStringLiteral("closed"), Qt::CaseInsensitive) == 0) {
-      return pathLabel + QStringLiteral(" / Closed");
-    }
-    if (field.compare(QStringLiteral("opacity"), Qt::CaseInsensitive) == 0) {
-      return pathLabel + QStringLiteral(" / Opacity");
-    }
-    if (field.compare(QStringLiteral("feather"), Qt::CaseInsensitive) == 0) {
-      return pathLabel + QStringLiteral(" / Feather");
-    }
-    if (field.compare(QStringLiteral("featherHorizontal"), Qt::CaseInsensitive) == 0) {
-      return pathLabel + QStringLiteral(" / Feather H");
-    }
-    if (field.compare(QStringLiteral("featherVertical"), Qt::CaseInsensitive) == 0) {
-      return pathLabel + QStringLiteral(" / Feather V");
-    }
-    if (field.compare(QStringLiteral("featherInner"), Qt::CaseInsensitive) == 0) {
-      return pathLabel + QStringLiteral(" / Feather Inner");
-    }
-    if (field.compare(QStringLiteral("featherOuter"), Qt::CaseInsensitive) == 0) {
-      return pathLabel + QStringLiteral(" / Feather Outer");
-    }
-    if (field.compare(QStringLiteral("expansion"), Qt::CaseInsensitive) == 0) {
-      return pathLabel + QStringLiteral(" / Expansion");
-    }
-    if (field.compare(QStringLiteral("inverted"), Qt::CaseInsensitive) == 0) {
-      return pathLabel + QStringLiteral(" / Inverted");
-    }
-    if (field.compare(QStringLiteral("mode"), Qt::CaseInsensitive) == 0) {
-      return pathLabel + QStringLiteral(" / Mode");
-    }
-    if (field.compare(QStringLiteral("name"), Qt::CaseInsensitive) == 0) {
-      return pathLabel + QStringLiteral(" / Name");
-    }
-  }
-
-  if (parts.size() >= 3 &&
-      parts[0].compare(QStringLiteral("text"), Qt::CaseInsensitive) == 0 &&
-      parts[1].compare(QStringLiteral("animators"), Qt::CaseInsensitive) == 0) {
-    const int animatorIndex = parts[2].toInt();
-    if (parts.size() == 3) {
-      return QStringLiteral("Text Animator %1")
-          .arg(animatorIndex + 1);
-    }
-    if (parts.size() < 4) {
-      return QStringLiteral("Text Animator %1")
-          .arg(animatorIndex + 1);
-    }
-    const QString field = parts[3];
-    QString fieldLabel = field;
-    if (!fieldLabel.isEmpty()) {
-      fieldLabel[0] = fieldLabel[0].toUpper();
-    }
-    return QStringLiteral("Text Animator %1 / %2")
-        .arg(animatorIndex + 1)
-        .arg(fieldLabel);
+    if (field.compare(QStringLiteral("closed"), Qt::CaseInsensitive) == 0) return pathLabel + QStringLiteral(" / Closed");
+    if (field.compare(QStringLiteral("opacity"), Qt::CaseInsensitive) == 0) return pathLabel + QStringLiteral(" / Opacity");
+    if (field.compare(QStringLiteral("feather"), Qt::CaseInsensitive) == 0) return pathLabel + QStringLiteral(" / Feather");
+    if (field.compare(QStringLiteral("featherHorizontal"), Qt::CaseInsensitive) == 0) return pathLabel + QStringLiteral(" / Feather H");
+    if (field.compare(QStringLiteral("featherVertical"), Qt::CaseInsensitive) == 0) return pathLabel + QStringLiteral(" / Feather V");
+    if (field.compare(QStringLiteral("featherInner"), Qt::CaseInsensitive) == 0) return pathLabel + QStringLiteral(" / Feather Inner");
+    if (field.compare(QStringLiteral("featherOuter"), Qt::CaseInsensitive) == 0) return pathLabel + QStringLiteral(" / Feather Outer");
+    if (field.compare(QStringLiteral("expansion"), Qt::CaseInsensitive) == 0) return pathLabel + QStringLiteral(" / Expansion");
+    if (field.compare(QStringLiteral("inverted"), Qt::CaseInsensitive) == 0) return pathLabel + QStringLiteral(" / Inverted");
+    if (field.compare(QStringLiteral("mode"), Qt::CaseInsensitive) == 0) return pathLabel + QStringLiteral(" / Mode");
+    if (field.compare(QStringLiteral("name"), Qt::CaseInsensitive) == 0) return pathLabel + QStringLiteral(" / Name");
   }
 
   return QStringLiteral("%1 / %2")
