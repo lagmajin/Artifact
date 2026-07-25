@@ -120,7 +120,7 @@ void styleTimelineToolButton(QToolButton* button)
   }
   button->setAutoRaise(true);
   button->setCursor(Qt::PointingHandCursor);
-  button->setMinimumHeight(24);
+  button->setMinimumHeight(Artifact::Accessibility::scaledSize(24));
   button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   QFont font = button->font();
   font.setPixelSize(11);
