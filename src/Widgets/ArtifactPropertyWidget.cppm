@@ -658,6 +658,9 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
           ? ArtifactNumericEditorLayoutMode::SliderThenValue
           : ArtifactNumericEditorLayoutMode::ValueThenSlider);
   setObjectName(QStringLiteral("artifactPropertyWidget"));
+  setFocusPolicy(Qt::StrongFocus);
+  setAccessibleName(QStringLiteral("Property Editor"));
+  setAccessibleDescription(QStringLiteral("Edit properties for the selected layer or effect"));
   setMinimumWidth(360);
   setWidgetResizable(true);
   setFrameShape(QFrame::NoFrame);
