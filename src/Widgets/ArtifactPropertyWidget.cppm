@@ -1754,6 +1754,29 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             row->setEnabled(false);
           }
         }
+        auto *keySelectedButton =
+            new QPushButton(QStringLiteral("Key Selected"), channelBox);
+        keySelectedButton->setToolTip(QStringLiteral(
+            "Insert a keyframe for the active Channel Box row"));
+        QObject::connect(
+            keySelectedButton, &QPushButton::clicked, channelBox,
+            [layer, channelRows, currentLayerTime]() {
+              if (!layer) return;
+              QWidget *focus = QApplication::focusWidget();
+              ArtifactPropertyEditorRowWidget *selectedRow = nullptr;
+              for (auto *row : channelRows) {
+                if (row && (row->hasFocus() || (focus && row->isAncestorOf(focus)))) {
+                  selectedRow = row;
+                  break;
+                }
+              }
+              if (!selectedRow) return;
+              const auto property = layer->getProperty(selectedRow->propertyName());
+              if (!property) return;
+              property->addKeyFrame(currentLayerTime(), property->getValue());
+              notifyLayerPropertyAnimationChanged(layer);
+            });
+        channelLayout->addWidget(keySelectedButton);
         mainLayout->addWidget(channelBox);
       } else {
         delete channelBox;
