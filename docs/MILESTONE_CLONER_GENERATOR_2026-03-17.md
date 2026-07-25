@@ -1,5 +1,7 @@
 # M12 Cloner Generator Foundation (2026-03-17)
 
+**Status:** Core generator/effector and clone render path implemented; future extensions and runtime verification pending
+
 日付：2026-03-17  
 目標：Cloner system 風のジェネレーター/エフェクターシステムを実装する
 
