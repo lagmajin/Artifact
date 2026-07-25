@@ -3136,6 +3136,8 @@ namespace Artifact
 ArtifactContentsViewer::ArtifactContentsViewer(QWidget* parent/*=nullptr*/) :QWidget(parent), impl_(new Impl(this))
 {
  setFocusPolicy(Qt::StrongFocus);
+ setAccessibleName(QStringLiteral("Contents Viewer"));
+ setAccessibleDescription(QStringLiteral("Inspect the active asset or comparison sources"));
  impl_->installEventFilters();
 }
 
