@@ -1,5 +1,7 @@
 # Audio Bus Routing UI Milestone
 
+**Status:** AUR-1 partial implementation, AUR-2〜4 UI integration pending
+
 Date: 2026-04-09
 
 ## Goal
@@ -98,3 +100,11 @@ Date: 2026-04-09
 - `ArtifactWidgets/include/Audio/AudioBusWidget.ixx` is currently a stub, so it is a natural entry point for the bus editor shell.
 - The existing `Artifact/src/Widgets/ArtifactCompositionAudioMixerWidget.cppm` already provides a composition-aware surface and can be used as the first integration target.
 - If the routing UI grows too large, split the advanced graph editor into a secondary panel while keeping the current strip view as the main surface.
+
+## Implementation Status (2026-07-25)
+
+- `ArtifactCore::AudioMixer` already owns buses, primary routing, sidechain sends, deterministic topological processing, and JSON serialization/restore.
+- `AudioBus` already stores volume, pan, mute, solo, effects, sidechain source, and meter state.
+- The current `AudioMixerWidget` exposes channel/master strip controls and effects, but does not yet expose bus creation, deletion, routing target selection, or send/return editing.
+- Composition mixer synchronization currently creates layer buses and connects strip controls; a user-facing routing graph editor and composition-level topology persistence are still pending.
+- Runtime thread-safety validation and end-to-end playback verification remain pending.
