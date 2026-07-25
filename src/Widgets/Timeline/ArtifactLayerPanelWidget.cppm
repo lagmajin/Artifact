@@ -2457,17 +2457,24 @@ public:
       if (!hasVisibleProperties) {
        continue;
       }
+      const bool textAnimatorGroup = std::any_of(
+          groupDef.sortedProperties().cbegin(), groupDef.sortedProperties().cend(),
+          [](const auto& property) {
+            return property && property->getName().startsWith(
+                QStringLiteral("text.animators."), Qt::CaseInsensitive);
+          });
       visibleRows.push_back(VisibleRow{
        node,
        depth + 1,
        true,
        groupExpanded,
-      RowKind::Group,
-      groupName,
-      QString(),
-      groupKey,
-       QStringLiteral("Grp"),
-       LayerPresentationBadgeTone::Container
+       RowKind::Group,
+       groupName,
+       QString(),
+       groupKey,
+       textAnimatorGroup ? QStringLiteral("Anim") : QStringLiteral("Grp"),
+       textAnimatorGroup ? LayerPresentationBadgeTone::Motion
+                         : LayerPresentationBadgeTone::Container
       });
 
       if (groupExpanded) {
@@ -3763,7 +3770,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         return;
       }
       const auto sourceFilter = QStringLiteral(
-          "Image Files (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp *.exr);;"
+          "Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;"
           "All Files (*.*)");
       const QString currentPath = [&]() -> QString {
         if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
