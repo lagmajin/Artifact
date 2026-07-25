@@ -9743,6 +9743,9 @@ public:
   bool showOnionSkin_ = false;
 
   bool showAudioWaveformOverlay_ = true;
+  QString audioWaveformCacheSourcePath_;
+  std::vector<float> audioWaveformCachePeaks_;
+  std::vector<float> audioWaveformCacheRms_;
 
   int onionSkinFrameCount_ = 2;
 
@@ -26451,11 +26454,20 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
   if (auto *audioLayer = selectedLayer
                               ? dynamic_cast<ArtifactAudioLayer *>(selectedLayer.get())
                               : nullptr) {
-    const auto waveform = audioLayer->buildWaveformData(256);
-    std::vector<float> peaks(waveform.peaks.cbegin(), waveform.peaks.cend());
-    std::vector<float> rms(waveform.rms.cbegin(), waveform.rms.cend());
-    drawAudioWaveformOverlay(renderer_.get(), peaks, rms, cw, ch);
+    const QString sourcePath = audioLayer->sourcePath();
+    if (sourcePath != audioWaveformCacheSourcePath_) {
+      const auto waveform = audioLayer->buildWaveformData(256);
+      audioWaveformCachePeaks_.assign(waveform.peaks.cbegin(), waveform.peaks.cend());
+      audioWaveformCacheRms_.assign(waveform.rms.cbegin(), waveform.rms.cend());
+      audioWaveformCacheSourcePath_ = sourcePath;
+    }
+    drawAudioWaveformOverlay(renderer_.get(), audioWaveformCachePeaks_,
+                             audioWaveformCacheRms_, cw, ch);
   }
+  } else {
+    audioWaveformCacheSourcePath_.clear();
+    audioWaveformCachePeaks_.clear();
+    audioWaveformCacheRms_.clear();
   }
 
   renderer_->setUseExternalMatrices(false);
