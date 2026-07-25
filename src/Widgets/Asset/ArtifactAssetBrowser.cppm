@@ -244,6 +244,42 @@ private:
   bool firstRedo_ = true;
 };
 
+class DeleteAssetFileCommand final : public UndoCommand {
+public:
+  DeleteAssetFileCommand(std::shared_ptr<ArtifactProject> project,
+                         QString path)
+      : project_(std::move(project)), path_(std::move(path)) {
+    const QString root = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) +
+                         QStringLiteral("/ArtifactStudio/AssetUndo");
+    QDir().mkpath(root);
+    backupPath_ = QDir(root).filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) +
+                                      QStringLiteral(".asset"));
+  }
+
+  void undo() override {
+    if (QFileInfo::exists(backupPath_) && !QFileInfo::exists(path_) &&
+        QFile::copy(backupPath_, path_) && project_) {
+      project_->addAssetFromPath(path_);
+    }
+  }
+
+  void redo() override {
+    if (!QFileInfo::exists(path_)) return;
+    if (QFile::copy(path_, backupPath_) && QFile::remove(path_) && project_) {
+      project_->removeAssetByPath(path_);
+    }
+  }
+
+  QString label() const override {
+    return QStringLiteral("Delete Asset File");
+  }
+
+private:
+  std::shared_ptr<ArtifactProject> project_;
+  QString path_;
+  QString backupPath_;
+};
+
 constexpr int kAssetThumbnailMinPx = 25;
 constexpr int kAssetThumbnailMaxPx = 256;
 constexpr int kAssetThumbnailDefaultPx = 128;
@@ -4279,6 +4315,9 @@ void ArtifactAssetBrowser::Impl::deleteSelected()
   if (!confirmDelete(paths)) return;
 
   int deletedCount = 0;
+  const auto project = ArtifactProjectService::instance()
+                           ? ArtifactProjectService::instance()->getCurrentProjectSharedPtr()
+                           : std::shared_ptr<ArtifactProject>{};
   for (const QString& path : paths) {
     QFileInfo fi(path);
     if (fi.isDir()) {
@@ -4286,22 +4325,15 @@ void ArtifactAssetBrowser::Impl::deleteSelected()
         ++deletedCount;
       }
     } else {
-      if (QFile::remove(path)) {
+      UndoManager::instance()->push(
+          std::make_unique<DeleteAssetFileCommand>(project, path));
+      if (!QFileInfo::exists(path)) {
         ++deletedCount;
       }
     }
   }
 
   if (deletedCount > 0) {
-    auto* svc = ArtifactProjectService::instance();
-    if (svc) {
-      svc->removeAllAssets();
-      for (const QString& path : paths) {
-        if (QFileInfo::exists(path)) {
-          svc->importAssetsFromPaths(QStringList() << path);
-        }
-      }
-    }
     clearThumbnailCache();
     applyFilters();
   }
