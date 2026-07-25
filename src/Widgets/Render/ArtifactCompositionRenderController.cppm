@@ -9746,6 +9746,7 @@ public:
   bool showOnionSkin_ = false;
 
   bool showAudioWaveformOverlay_ = true;
+  bool showAudioSpectrumOverlay_ = true;
   QString audioWaveformCacheSourcePath_;
   std::vector<float> audioWaveformCachePeaks_;
   std::vector<float> audioWaveformCacheRms_;
@@ -12046,6 +12047,8 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
   impl_->showAudioWaveformOverlay_ = QSettings().value(
       QStringLiteral("ArtifactStudio/AudioWaveformOverlay"), true).toBool();
+  impl_->showAudioSpectrumOverlay_ = QSettings().value(
+      QStringLiteral("ArtifactStudio/AudioSpectrumOverlay"), true).toBool();
 
   impl_->viewportClearColor_ =
 
@@ -13809,6 +13812,18 @@ void CompositionRenderController::setShowAudioWaveformOverlay(bool show) {
 
 bool CompositionRenderController::isShowAudioWaveformOverlay() const {
   return impl_ ? impl_->showAudioWaveformOverlay_ : false;
+}
+
+void CompositionRenderController::setShowAudioSpectrumOverlay(bool show) {
+  if (!impl_ || impl_->showAudioSpectrumOverlay_ == show) return;
+  impl_->showAudioSpectrumOverlay_ = show;
+  QSettings().setValue(QStringLiteral("ArtifactStudio/AudioSpectrumOverlay"), show);
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isShowAudioSpectrumOverlay() const {
+  return impl_ ? impl_->showAudioSpectrumOverlay_ : false;
 }
 
 void CompositionRenderController::setOnionSkinFrameCount(int count) {
@@ -26462,44 +26477,49 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
                                           : ArtifactAbstractLayerPtr{};
 
-  if (showAudioWaveformOverlay_) {
-  if (auto *audioLayer = selectedLayer
-                              ? dynamic_cast<ArtifactAudioLayer *>(selectedLayer.get())
-                              : nullptr) {
-    const QString sourcePath = audioLayer->sourcePath();
-    const QFileInfo sourceInfo(sourcePath);
-    const qint64 fileSize = sourceInfo.exists() ? sourceInfo.size() : -1;
-    const qint64 modifiedMs = sourceInfo.exists()
-                                  ? sourceInfo.lastModified().toMSecsSinceEpoch()
-                                  : -1;
-    if (sourcePath != audioWaveformCacheSourcePath_ ||
-        fileSize != audioWaveformCacheFileSize_ ||
-        modifiedMs != audioWaveformCacheModifiedMs_) {
-      const auto waveform = audioLayer->buildWaveformData(256);
-      audioWaveformCachePeaks_.assign(waveform.peaks.cbegin(), waveform.peaks.cend());
-      audioWaveformCacheRms_.assign(waveform.rms.cbegin(), waveform.rms.cend());
-      audioWaveformCacheSourcePath_ = sourcePath;
-      audioWaveformCacheFileSize_ = fileSize;
-      audioWaveformCacheModifiedMs_ = modifiedMs;
-    }
-    drawAudioWaveformOverlay(renderer_.get(), audioWaveformCachePeaks_,
-                             audioWaveformCacheRms_, cw, ch);
-    if (sourcePath != audioSpectrumCacheSourcePath_ ||
-        currentFrame.framePosition() != audioSpectrumCacheFrame_) {
-      ArtifactCore::AudioSegment segment;
-      if (audioLayer->getAudio(segment, currentFrame, 1024, audioLayer->sampleRate())) {
-        ArtifactCore::AudioSpectrum analyzer;
-        analyzer.setBins(48);
-        analyzer.process(segment);
-        audioSpectrumCache_ = analyzer.getSpectrum();
-      } else {
-        audioSpectrumCache_.clear();
+  if (showAudioWaveformOverlay_ || showAudioSpectrumOverlay_) {
+    if (auto *audioLayer = selectedLayer
+                                ? dynamic_cast<ArtifactAudioLayer *>(selectedLayer.get())
+                                : nullptr) {
+      const QString sourcePath = audioLayer->sourcePath();
+      if (showAudioWaveformOverlay_) {
+        const QFileInfo sourceInfo(sourcePath);
+        const qint64 fileSize = sourceInfo.exists() ? sourceInfo.size() : -1;
+        const qint64 modifiedMs = sourceInfo.exists()
+                                      ? sourceInfo.lastModified().toMSecsSinceEpoch()
+                                      : -1;
+        if (sourcePath != audioWaveformCacheSourcePath_ ||
+            fileSize != audioWaveformCacheFileSize_ ||
+            modifiedMs != audioWaveformCacheModifiedMs_) {
+          const auto waveform = audioLayer->buildWaveformData(256);
+          audioWaveformCachePeaks_.assign(waveform.peaks.cbegin(), waveform.peaks.cend());
+          audioWaveformCacheRms_.assign(waveform.rms.cbegin(), waveform.rms.cend());
+          audioWaveformCacheSourcePath_ = sourcePath;
+          audioWaveformCacheFileSize_ = fileSize;
+          audioWaveformCacheModifiedMs_ = modifiedMs;
+        }
+        drawAudioWaveformOverlay(renderer_.get(), audioWaveformCachePeaks_,
+                                 audioWaveformCacheRms_, cw, ch);
       }
-      audioSpectrumCacheSourcePath_ = sourcePath;
-      audioSpectrumCacheFrame_ = currentFrame.framePosition();
+      if (showAudioSpectrumOverlay_ &&
+          (sourcePath != audioSpectrumCacheSourcePath_ ||
+           currentFrame.framePosition() != audioSpectrumCacheFrame_)) {
+        ArtifactCore::AudioSegment segment;
+        if (audioLayer->getAudio(segment, currentFrame, 1024, audioLayer->sampleRate())) {
+          ArtifactCore::AudioSpectrum analyzer;
+          analyzer.setBins(48);
+          analyzer.process(segment);
+          audioSpectrumCache_ = analyzer.getSpectrum();
+        } else {
+          audioSpectrumCache_.clear();
+        }
+        audioSpectrumCacheSourcePath_ = sourcePath;
+        audioSpectrumCacheFrame_ = currentFrame.framePosition();
+      }
+      if (showAudioSpectrumOverlay_) {
+        drawAudioSpectrumOverlay(renderer_.get(), audioSpectrumCache_, cw, ch);
+      }
     }
-    drawAudioSpectrumOverlay(renderer_.get(), audioSpectrumCache_, cw, ch);
-  }
   } else {
     audioWaveformCacheSourcePath_.clear();
     audioWaveformCachePeaks_.clear();
