@@ -33,6 +33,8 @@ typedef const ArtifactPluginDescriptor* (*PFN_ArtifactPlugin_GetPlugin)(int);
 
 struct ArtifactPluginLoader::Impl {
     std::vector<LoadResult> results;
+    std::vector<std::unique_ptr<QLibrary>> loadedLibs;
+    std::function<PluginLoadedCallback> onPluginLoaded;
 
     QStringList defaultSearchPaths() {
         return {
@@ -48,22 +50,21 @@ struct ArtifactPluginLoader::Impl {
         result.pluginPath = path.toStdString();
         result.loadedMode = PluginLoadMode::DllInProcess;
 
-        QLibrary lib(path);
-        if (!lib.load()) {
+        auto lib = std::make_unique<QLibrary>(path);
+        if (!lib->load()) {
             result.success = false;
-            result.errorMessage = lib.errorString().toStdString();
+            result.errorMessage = lib->errorString().toStdString();
             return result;
         }
 
         auto fnVersion = reinterpret_cast<PFN_ArtifactPlugin_GetAPIVersion>(
-            lib.resolve("ArtifactPlugin_GetAPIVersion"));
+            lib->resolve("ArtifactPlugin_GetAPIVersion"));
         auto fnCount = reinterpret_cast<PFN_ArtifactPlugin_GetPluginCount>(
-            lib.resolve("ArtifactPlugin_GetPluginCount"));
+            lib->resolve("ArtifactPlugin_GetPluginCount"));
         auto fnPlugin = reinterpret_cast<PFN_ArtifactPlugin_GetPlugin>(
-            lib.resolve("ArtifactPlugin_GetPlugin"));
+            lib->resolve("ArtifactPlugin_GetPlugin"));
 
         if (!fnVersion || !fnCount || !fnPlugin) {
-            lib.unload();
             result.success = false;
             result.errorMessage = "Missing required exports: ArtifactPlugin_GetAPIVersion, _GetPluginCount, _GetPlugin";
             return result;
@@ -71,7 +72,6 @@ struct ArtifactPluginLoader::Impl {
 
         const int apiVersion = fnVersion();
         if (apiVersion < 1 || apiVersion > ARTIFACT_PLUGIN_API_VERSION) {
-            lib.unload();
             result.success = false;
             result.errorMessage = "Unsupported API version: " + std::to_string(apiVersion);
             return result;
@@ -79,6 +79,7 @@ struct ArtifactPluginLoader::Impl {
 
         const int count = fnCount();
         bool anySucceeded = false;
+        void* libRaw = lib.get();
 
         for (int i = 0; i < count; ++i) {
             const auto* desc = fnPlugin(i);
@@ -100,17 +101,25 @@ struct ArtifactPluginLoader::Impl {
             auto& registry = ArtifactPluginRegistry::instance();
             registry.registerPlugin(pd);
 
+            // Fire category-specific callback so consumers (e.g. PluginLayerFactory)
+            // can resolve additional ABI functions while the library is still loaded.
+            if (onPluginLoaded) {
+                onPluginLoaded(QDir::toNativeSeparators(path), libRaw, pd);
+            }
+
             result.pluginId = pd.id;
             result.success = true;
             anySucceeded = true;
         }
 
         if (!anySucceeded) {
-            lib.unload();
             result.success = false;
             result.errorMessage = "No valid plugins found in DLL";
             return result;
         }
+
+        // Keep the library loaded for consumers that resolved ABI via callback.
+        loadedLibs.push_back(std::move(lib));
 
         if (!result.success) {
             result.success = true;
@@ -126,7 +135,10 @@ struct ArtifactPluginLoader::Impl {
         result.loadedMode = PluginLoadMode::Subprocess;
 
         result.success = false;
-        result.errorMessage = "Subprocess plugin loading not yet implemented";
+        result.errorMessage =
+            "Subprocess loading requires a plugin runner executable. "
+            "See docs/PLUGIN_SUBPROCESS_PROTOCOL.md for the JSON IPC spec. "
+            "PluginSandbox is ready to manage the subprocess lifecycle.";
         return result;
     }
 
@@ -161,6 +173,10 @@ void ArtifactPluginLoader::discoverAndLoad(const QStringList& searchPaths,
     }
 }
 
+void ArtifactPluginLoader::setOnPluginLoaded(std::function<PluginLoadedCallback> callback) {
+    impl_->onPluginLoaded = std::move(callback);
+}
+
 LoadResult ArtifactPluginLoader::loadPlugin(const QString& path, PluginLoadMode mode) {
     LoadResult r;
     r.pluginPath = path.toStdString();
@@ -178,6 +194,7 @@ LoadResult ArtifactPluginLoader::loadPlugin(const QString& path, PluginLoadMode 
 
 void ArtifactPluginLoader::unloadAll() {
     impl_->results.clear();
+    impl_->loadedLibs.clear();
 }
 
 std::vector<LoadResult> ArtifactPluginLoader::loadResults() const {

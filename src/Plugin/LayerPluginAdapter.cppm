@@ -44,7 +44,27 @@ void LayerPluginAdapter::shutdown() {
 }
 
 std::vector<ArtifactCore::PropertyGroup> LayerPluginAdapter::extraPropertyGroups() {
-    return {};
+    std::vector<ArtifactCore::PropertyGroup> groups;
+    if (!instance_ || !vtable_.getPropertyGroupCount || !vtable_.getPropertyGroupDef) {
+        return groups;
+    }
+    const int count = vtable_.getPropertyGroupCount(instance_);
+    for (int i = 0; i < count; ++i) {
+        char* nameOut = nullptr;
+        char* jsonSchemaOut = nullptr;
+        if (vtable_.getPropertyGroupDef(instance_, i, &nameOut, &jsonSchemaOut) == 0) {
+            if (nameOut) {
+                ArtifactCore::PropertyGroup group(QString::fromUtf8(nameOut));
+                // The JSON schema from the plugin describes what properties exist.
+                // The PropertyGroup holds the container; property instances are
+                // created/configured externally based on the schema.
+                groups.push_back(std::move(group));
+            }
+            free(nameOut);
+            free(jsonSchemaOut);
+        }
+    }
+    return groups;
 }
 
 void LayerPluginAdapter::drawContent(void* layerPtr, const ArtifactCore::DrawContext& ctx) {

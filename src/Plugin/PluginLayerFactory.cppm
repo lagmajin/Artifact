@@ -1,8 +1,14 @@
 ﻿module;
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
+
+#include <QCoreApplication>
+#include <QDir>
+#include <QLibrary>
+#include <QStringList>
 
 #include "Plugin/ArtifactPluginABI.h"
 
@@ -11,6 +17,7 @@ module Artifact.Plugin.Layer.Factory;
 import ArtifactCore.Plugin.Common;
 import ArtifactCore.Plugin.Registry;
 import ArtifactCore.Plugin.Layer.Interface;
+import Artifact.Plugin.Loader;   // ArtifactPluginLoader
 import Artifact.Plugin.Layer.Adapter;
 
 namespace Artifact {
@@ -39,12 +46,37 @@ PluginLayerFactory& PluginLayerFactory::instance() {
 }
 
 void PluginLayerFactory::scanAndRegister() {
-    // Delegate to PluginLoader for DLL discovery
-    auto& registry = ArtifactPluginRegistry::instance();
-    auto layerPlugins = registry.pluginsOfCategory(PluginCategory::Layer);
-    for (const auto& desc : layerPlugins) {
-        // Load DLL and get vtable — delegated to PluginLoader integration
-    }
+    ArtifactPluginLoader loader;
+
+    // For each loaded layer plugin DLL, resolve the layer-specific ABI functions
+    // and create an adapter via registerFromDll.
+    loader.setOnPluginLoaded([this](const QString& dllPath, void* libHandle,
+                                     const ArtifactCore::PluginDescriptor& desc) {
+        if (desc.category != PluginCategory::Layer) return;
+
+        auto* lib = static_cast<QLibrary*>(libHandle);
+
+        using CreateLayerFn = ArtifactPluginInstance (*)(const char*);
+        using GetVTableFn = const ArtifactLayerPluginVTable* (*)(const char*);
+        auto fnCreate = reinterpret_cast<CreateLayerFn>(
+            lib->resolve("ArtifactPlugin_CreateLayer"));
+        auto fnVTable = reinterpret_cast<GetVTableFn>(
+            lib->resolve("ArtifactPlugin_GetLayerVTable"));
+
+        if (!fnCreate || !fnVTable) return;
+
+        auto instance = fnCreate(desc.id.c_str());
+        auto vtable = fnVTable(desc.id.c_str());
+        if (instance && vtable) {
+            registerFromDll(desc.id, instance, *vtable);
+        }
+    });
+
+    // Scan standard layer plugin directories
+    QStringList paths = {
+        QDir(QCoreApplication::applicationDirPath()).filePath("plugins/layers"),
+    };
+    loader.discoverAndLoad(paths, PluginLoadMode::DllInProcess);
 }
 
 void PluginLayerFactory::registerFromDll(const std::string& pluginId,

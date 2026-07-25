@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -31,6 +32,11 @@ public:
     ArtifactPluginLoader();
     ~ArtifactPluginLoader();
 
+    using PluginLoadedCallback = void(const QString& dllPath,
+                                      void* libHandle, // QLibrary* as void* so header stays light
+                                      const ArtifactCore::PluginDescriptor& descriptor);
+
+    void setOnPluginLoaded(std::function<PluginLoadedCallback> callback);
     void discoverAndLoad(const QStringList& searchPaths,
                          PluginLoadMode mode = PluginLoadMode::Auto);
     LoadResult loadPlugin(const QString& path,
