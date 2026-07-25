@@ -1480,6 +1480,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       button->setToolButtonStyle(Qt::ToolButtonTextOnly);
       button->setText(QString::fromLatin1(toggleDef.label));
       button->setToolTip(QString::fromLatin1(toggleDef.tooltip));
+      button->setAccessibleName(button->text());
+      button->setAccessibleDescription(button->toolTip());
       button->setObjectName(QStringLiteral("layerStateToggleButton"));
       button->setChecked(property->getValue().toBool());
       button->setCursor(Qt::PointingHandCursor);
