@@ -13,6 +13,7 @@ module;
 #include <QMatrix4x4>
 #include <QSize>
 #include <QVector>
+#include <vector>
 
 export module Artifact.Widgets.CompositionRenderOverlay;
 
@@ -87,6 +88,12 @@ void drawViewportStatusChipOverlay(ArtifactIRenderer *renderer,
                                    int overlayH,
                                    const QString &statusText,
                                    const QSize *restoreCanvasSize = nullptr);
+
+void drawAudioWaveformOverlay(ArtifactIRenderer *renderer,
+                              const std::vector<float> &peaks,
+                              const std::vector<float> &rms,
+                              float overlayW,
+                              float overlayH);
 
 void drawPaintLayerOnionSkinOverlay(ArtifactIRenderer *renderer,
                                     const ArtifactAbstractLayerPtr &paintLayer,

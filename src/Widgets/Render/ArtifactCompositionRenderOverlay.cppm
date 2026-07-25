@@ -1482,6 +1482,48 @@ void drawViewportStatusChipOverlay(ArtifactIRenderer *renderer,
   (void)restoreCanvasSize;
 }
 
+void drawAudioWaveformOverlay(ArtifactIRenderer *renderer,
+                              const std::vector<float> &peaks,
+                              const std::vector<float> &rms,
+                              float overlayW,
+                              float overlayH) {
+  if (!renderer || peaks.empty() || overlayW <= 0.0f || overlayH <= 0.0f) return;
+  const float panelH = std::min(96.0f, std::max(48.0f, overlayH * 0.18f));
+  const float panelY = overlayH - panelH - 12.0f;
+  renderer->drawOverlayPanel(
+      12.0f, panelY, overlayW - 24.0f, panelH,
+      FloatColor{0.03f, 0.05f, 0.08f, 0.78f},
+      FloatColor{0.35f, 0.75f, 1.0f, 0.9f}, 1.0f);
+
+  const float left = 20.0f;
+  const float right = std::max(left + 1.0f, overlayW - 20.0f);
+  const float centerY = panelY + panelH * 0.5f;
+  const float halfHeight = panelH * 0.38f;
+  std::vector<Detail::float2> peakPoints;
+  peakPoints.reserve(peaks.size());
+  for (std::size_t i = 0; i < peaks.size(); ++i) {
+    const float t = peaks.size() > 1
+                        ? static_cast<float>(i) / static_cast<float>(peaks.size() - 1)
+                        : 0.0f;
+    const float amplitude = std::clamp(peaks[i], 0.0f, 1.0f);
+    peakPoints.push_back({left + (right - left) * t,
+                          centerY - halfHeight * amplitude});
+  }
+  renderer->drawPolyline(peakPoints, FloatColor{0.35f, 0.85f, 1.0f, 0.95f}, 1.5f);
+  if (rms.size() == peaks.size()) {
+    std::vector<Detail::float2> rmsPoints;
+    rmsPoints.reserve(rms.size());
+    for (std::size_t i = 0; i < rms.size(); ++i) {
+      const float t = rms.size() > 1
+                          ? static_cast<float>(i) / static_cast<float>(rms.size() - 1)
+                          : 0.0f;
+      rmsPoints.push_back({left + (right - left) * t,
+                           centerY + halfHeight * std::clamp(rms[i], 0.0f, 1.0f)});
+    }
+    renderer->drawPolyline(rmsPoints, FloatColor{0.25f, 1.0f, 0.55f, 0.78f}, 1.0f);
+  }
+}
+
 void drawViewportSnapHintOverlay(ArtifactIRenderer *renderer,
                                  int overlayW,
                                  int overlayH,

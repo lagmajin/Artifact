@@ -126,6 +126,7 @@ import Analyze.SmartPalette;
 import Color.Harmonizer;
 
 import Artifact.Widgets.CompositionRenderOverlay;
+import Artifact.Layer.Audio;
 
 import Artifact.Preview.Pipeline;
 
@@ -26432,6 +26433,15 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
       (!selectedLayerId_.isNil() && comp) ? comp->layerById(selectedLayerId_)
 
                                           : ArtifactAbstractLayerPtr{};
+
+  if (auto *audioLayer = selectedLayer
+                              ? dynamic_cast<ArtifactAudioLayer *>(selectedLayer.get())
+                              : nullptr) {
+    const auto waveform = audioLayer->buildWaveformData(256);
+    std::vector<float> peaks(waveform.peaks.cbegin(), waveform.peaks.cend());
+    std::vector<float> rms(waveform.rms.cbegin(), waveform.rms.cend());
+    drawAudioWaveformOverlay(renderer_.get(), peaks, rms, cw, ch);
+  }
 
   renderer_->setUseExternalMatrices(false);
 
