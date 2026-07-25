@@ -2414,6 +2414,8 @@ ArtifactProjectView::ArtifactProjectView(QWidget* parent) : QWidget(parent), imp
     setAutoFillBackground(false);
     setAttribute(Qt::WA_OpaquePaintEvent, true);
     setFocusPolicy(Qt::StrongFocus);
+    setAccessibleName(QStringLiteral("Project View"));
+    setAccessibleDescription(QStringLiteral("Browse project items and compositions"));
     impl_->hoverTimer = new QTimer(this);
     impl_->hoverTimer->setSingleShot(true);
     
