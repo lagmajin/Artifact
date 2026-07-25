@@ -1163,6 +1163,33 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
   impl_->addAssetFromPath(filepath, sequencePaths, frameRate);
  }
 
+ bool ArtifactProject::removeAssetByPath(const QString& filepath)
+ {
+  if (!impl_ || filepath.isEmpty()) return false;
+  QFileInfo targetInfo(filepath);
+  QString targetPath = targetInfo.canonicalFilePath();
+  if (targetPath.isEmpty()) targetPath = targetInfo.absoluteFilePath();
+  for (ProjectItem* root : projectItems()) {
+   if (!root) continue;
+   QVector<ProjectItem*> pending{root};
+   while (!pending.isEmpty()) {
+    ProjectItem* item = pending.takeLast();
+    if (!item) continue;
+    if (item->type() == eProjectItemType::Footage) {
+     auto* footage = static_cast<FootageItem*>(item);
+     QFileInfo itemInfo(footage->filePath);
+     QString itemPath = itemInfo.canonicalFilePath();
+     if (itemPath.isEmpty()) itemPath = itemInfo.absoluteFilePath();
+     if (!itemPath.isEmpty() && itemPath.compare(targetPath, Qt::CaseInsensitive) == 0) {
+      return removeItem(item);
+     }
+    }
+    for (ProjectItem* child : item->children) pending.push_back(child);
+   }
+  }
+  return false;
+ }
+
 
   bool ArtifactProject::removeCompositionById(const CompositionID& id)
   {

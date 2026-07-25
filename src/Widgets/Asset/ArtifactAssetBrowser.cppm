@@ -185,6 +185,29 @@ void saveAssetThumbnailToDisk(const QFileInfo& fileInfo, const QImage& image) {
 using namespace ArtifactCore;
 
 namespace {
+class AssetRegistrationCommand final : public UndoCommand {
+public:
+  AssetRegistrationCommand(std::shared_ptr<ArtifactProject> project,
+                           const QString& path)
+      : project_(std::move(project)), path_(path) {}
+
+  void undo() override {
+    if (project_) project_->removeAssetByPath(path_);
+  }
+
+  void redo() override {
+    if (project_) project_->addAssetFromPath(path_);
+  }
+
+  QString label() const override {
+    return QStringLiteral("Add Asset to Project");
+  }
+
+private:
+  std::shared_ptr<ArtifactProject> project_;
+  QString path_;
+};
+
 constexpr int kAssetThumbnailMinPx = 25;
 constexpr int kAssetThumbnailMaxPx = 256;
 constexpr int kAssetThumbnailDefaultPx = 128;
@@ -3700,6 +3723,12 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    if (!svc) return;
    const QStringList imported = svc->importAssetsFromPaths(importTargets.isEmpty() ? QStringList{filePath} : importTargets);
    if (!imported.isEmpty()) {
+    if (auto project = svc->getCurrentProjectSharedPtr()) {
+     for (const QString& importedPath : imported) {
+      UndoManager::instance()->push(
+          std::make_unique<AssetRegistrationCommand>(project, importedPath));
+     }
+    }
     filesDropped(imported);
     impl_->applyFilters();
    }
