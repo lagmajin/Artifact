@@ -1,5 +1,11 @@
 # Primitive 3D Render Path Milestone
 
+**進捗状態:** P3D-1〜4 は実装済み、P3D-5 は backend 側の基盤実装済みで parity の runtime 検証待ち。
+
+### 実装状況（2026-07-25 確認）
+
+責務分離、Solid/Wireframe mesh 描画、Material／Depth pass、mesh geometry cache、camera／gizmo／selection overlay、offline depth 出力と Diligent 経路を確認した。残課題は software fallback と backend の画素単位 parity、診断 widget を使った比較、複雑 mesh／透明境界の実機検証。
+
 `primitive2d` 側で行っている「描画の下請け化」を、3D でも同じ思想で扱えるようにするためのマイルストーン。
 2D の延長で 3D を雑に載せるのではなく、`mesh / camera / material / light / pass / overlay` を分けて、後から editor へ接続しやすい形に整理する。
 
