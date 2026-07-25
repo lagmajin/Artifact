@@ -2627,6 +2627,14 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
    assetToolBar->addSeparator();
 
+   // Keep the unused-asset query close to the type filters.  The underlying
+   // reference scan is already shared with the status filter; exposing this
+   // action avoids requiring a context-menu-only workflow.
+   unusedBtn->show();
+   unusedBtn->setText(QStringLiteral("Unused"));
+   unusedBtn->setToolTip(QStringLiteral("Show assets with no project references"));
+   assetToolBar->addWidget(unusedBtn);
+
    // Sort by combo box
    auto* sortByCombo = new QComboBox();
    sortByCombo->addItem("Sort: Name", "name");
