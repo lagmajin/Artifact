@@ -6,6 +6,7 @@ module;
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QFocusEvent>
+#include <QFocusFrame>
 #include <QEvent>
 #include <QHash>
 #include <QIcon>
@@ -5328,6 +5329,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   setFocusPolicy(Qt::StrongFocus);
   setAccessibleName(QStringLiteral("Timeline"));
   setAccessibleDescription(QStringLiteral("Edit layers and keyframes over time"));
+  auto *focusFrame = new QFocusFrame(this);
+  focusFrame->setWidget(this);
   setMinimumHeight(500);
   setBaseSize(1200, 500);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
