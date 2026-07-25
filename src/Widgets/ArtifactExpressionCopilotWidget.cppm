@@ -1008,9 +1008,19 @@ void ArtifactExpressionCopilotWidget::setApplyHandler(std::function<void(const Q
     impl_->applyHandler = std::move(handler);
 }
 
-void ArtifactExpressionCopilotWidget::setReferenceItems(const QStringList& layerNames) {
+void ArtifactExpressionCopilotWidget::setReferenceItems(
+    const QStringList& layerNames, const QString& propertyPath) {
     if (!impl_ || !impl_->referenceList) return;
     impl_->referenceList->clear();
+    const QString normalizedProperty = propertyPath.trimmed();
+    if (!normalizedProperty.isEmpty()) {
+        auto* propertyItem = new QListWidgetItem(
+            QStringLiteral("Property: thisLayer.%1").arg(normalizedProperty),
+            impl_->referenceList);
+        propertyItem->setData(
+            Qt::UserRole,
+            QStringLiteral("thisLayer.%1").arg(normalizedProperty));
+    }
     for (const QString& layerName : layerNames) {
         auto* item = new QListWidgetItem(layerName, impl_->referenceList);
         item->setData(Qt::UserRole,

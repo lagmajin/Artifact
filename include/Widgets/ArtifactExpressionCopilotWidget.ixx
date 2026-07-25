@@ -24,7 +24,8 @@ export namespace Artifact {
         void setExpressionText(const QString& expression);
         QString expressionText() const;
         void setApplyHandler(std::function<void(const QString& expression)> handler);
-        void setReferenceItems(const QStringList& layerNames);
+        void setReferenceItems(const QStringList& layerNames,
+                               const QString& propertyPath = {});
         void setPreviewContext(const QString& compositionName,
                                const QSize& compositionSize,
                                const QStringList& layerNames,
