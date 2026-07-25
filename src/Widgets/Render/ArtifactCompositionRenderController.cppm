@@ -47,6 +47,7 @@ module;
 #include <QSizeF>
 
 #include <QSet>
+#include <QSettings>
 
 #include <QStringList>
 #include <QString>
@@ -12036,6 +12037,9 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
     : QObject(parent), impl_(new Impl()) {
 
+  impl_->showAudioWaveformOverlay_ = QSettings().value(
+      QStringLiteral("ArtifactStudio/AudioWaveformOverlay"), true).toBool();
+
   impl_->viewportClearColor_ =
 
       FloatColor{QColor(28, 40, 56).redF(), QColor(28, 40, 56).greenF(),
@@ -13791,6 +13795,7 @@ bool CompositionRenderController::isShowOnionSkin() const {
 void CompositionRenderController::setShowAudioWaveformOverlay(bool show) {
   if (!impl_ || impl_->showAudioWaveformOverlay_ == show) return;
   impl_->showAudioWaveformOverlay_ = show;
+  QSettings().setValue(QStringLiteral("ArtifactStudio/AudioWaveformOverlay"), show);
   impl_->invalidateOverlayComposite();
   markRenderDirty();
 }
