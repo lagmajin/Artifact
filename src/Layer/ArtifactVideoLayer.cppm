@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QDir>
 #include <QFileInfo>
+#include <QProcess>
 #include <QVariant>
 #include <QLoggingCategory>
 #include <QMetaObject>
@@ -86,6 +87,7 @@ import Property;
 import MediaPlaybackController;
 import Asset.Manager;
 import AssetType;
+import Proxy.Service;
 
 namespace Artifact {
 
@@ -2182,9 +2184,89 @@ QString ArtifactVideoLayer::proxyPath() const
 
 bool ArtifactVideoLayer::generateProxy(ProxyQuality quality)
 {
-    // プロキシ生成は ProxyManager サービスに委譲
-    qWarning() << "[VideoLayer] generateProxy() is deprecated. Use ArtifactProxyManager::instance()->generateProxy() instead.";
-    return false;
+    if (quality == ProxyQuality::None || quality == ProxyQuality::Full ||
+        impl_->sourcePath_.trimmed().isEmpty()) {
+        return false;
+    }
+    const auto serviceQuality = quality == ProxyQuality::Quarter
+        ? ProxyServiceQuality::Quarter : ProxyServiceQuality::Half;
+    const QString path = ArtifactProxyManager::instance()->generateProxy(
+        impl_->sourcePath_, serviceQuality);
+    if (path.isEmpty()) return false;
+    impl_->proxyPath_ = path;
+    impl_->proxyQuality_ = quality;
+    return true;
+}
+
+ArtifactProxyManager* ArtifactProxyManager::instance() {
+    static ArtifactProxyManager manager;
+    return &manager;
+}
+
+QString ArtifactProxyManager::proxyDirectory(const QString& sourcePath) {
+    const QFileInfo info(sourcePath);
+    return QDir(info.absolutePath()).filePath(QStringLiteral(".proxy"));
+}
+
+QString ArtifactProxyManager::proxyFilePath(const QString& sourcePath,
+                                            ProxyServiceQuality quality) {
+    const QFileInfo info(sourcePath);
+    const QString suffix = quality == ProxyServiceQuality::Half
+        ? QStringLiteral("half")
+        : quality == ProxyServiceQuality::Quarter ? QStringLiteral("quarter")
+                                                  : QStringLiteral("eighth");
+    return QDir(proxyDirectory(sourcePath)).filePath(
+        QStringLiteral("%1_proxy_%2.mp4").arg(info.completeBaseName(), suffix));
+}
+
+QString ArtifactProxyManager::generateProxy(const QString& sourcePath,
+                                            ProxyServiceQuality quality) {
+    if (sourcePath.trimmed().isEmpty() || quality == ProxyServiceQuality::None ||
+        !QFileInfo::exists(sourcePath)) return {};
+    const QString output = proxyFilePath(sourcePath, quality);
+    if (!QDir().mkpath(proxyDirectory(sourcePath))) return {};
+    const double scale = quality == ProxyServiceQuality::Half ? 0.5
+                       : quality == ProxyServiceQuality::Quarter ? 0.25 : 0.125;
+    QProcess process;
+    QStringList args{QStringLiteral("-y"), QStringLiteral("-i"), sourcePath,
+        QStringLiteral("-vf"), QStringLiteral("scale=trunc(iw*%1/2)*2:trunc(ih*%1/2)*2").arg(scale, 0, 'f', 3),
+        QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-preset"), QStringLiteral("fast"),
+        QStringLiteral("-crf"), QStringLiteral("23"), QStringLiteral("-c:a"), QStringLiteral("aac"), output};
+    process.start(QStringLiteral("ffmpeg"), args);
+    if (!process.waitForFinished(-1) || process.exitCode() != 0 || !QFileInfo::exists(output)) {
+        if (QFileInfo::exists(output)) QFile::remove(output);
+        return {};
+    }
+    return output;
+}
+
+bool ArtifactProxyManager::clearProxy(const QString& proxyPath) {
+    return !proxyPath.isEmpty() && (!QFileInfo::exists(proxyPath) || QFile::remove(proxyPath));
+}
+
+bool ArtifactProxyManager::hasProxy(const QString& sourcePath,
+                                    ProxyServiceQuality quality) const {
+    return QFileInfo::exists(proxyFilePath(sourcePath, quality));
+}
+
+ProxyServiceInfo ArtifactProxyManager::getProxyInfo(const QString& sourcePath,
+                                                    ProxyServiceQuality quality) const {
+    ProxyServiceInfo info;
+    info.sourcePath = sourcePath;
+    info.proxyPath = proxyFilePath(sourcePath, quality);
+    info.hasProxy = QFileInfo::exists(info.proxyPath);
+    info.quality = quality;
+    info.scaleFactor = static_cast<float>(scaleFactor(quality));
+    return info;
+}
+
+int ArtifactProxyManager::generateProxiesBatch(const QStringList& sourcePaths,
+                                               ProxyServiceQuality quality) {
+    int generated = 0;
+    for (const QString& path : sourcePaths) {
+        if (!generateProxy(path, quality).isEmpty()) ++generated;
+    }
+    return generated;
 }
 
 void ArtifactVideoLayer::setProxyPath(const QString& path)

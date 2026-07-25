@@ -20,7 +20,7 @@ export namespace Artifact
  // Proxy Quality Enum
  // ============================================================
 
- enum class ProxyQuality {
+ enum class ProxyServiceQuality {
   None = 0,
   Half = 1,
   Quarter = 2,
@@ -35,7 +35,7 @@ export namespace Artifact
   bool hasProxy = false;
   QString proxyPath;
   QString sourcePath;
-  ProxyQuality quality = ProxyQuality::None;
+  ProxyServiceQuality quality = ProxyServiceQuality::None;
   int proxyWidth = 0;
   int proxyHeight = 0;
   float scaleFactor = 1.0f;
@@ -52,35 +52,35 @@ export namespace Artifact
 
   // Generate proxy for a source file
   // Returns the generated proxy path, or empty string on failure
-  QString generateProxy(const QString& sourcePath, ProxyQuality quality);
+  QString generateProxy(const QString& sourcePath, ProxyServiceQuality quality);
 
   // Clear (delete) proxy for a source file
   bool clearProxy(const QString& proxyPath);
 
   // Check if proxy exists for a source file
-  bool hasProxy(const QString& sourcePath, ProxyQuality quality) const;
+  bool hasProxy(const QString& sourcePath, ProxyServiceQuality quality) const;
 
   // Get proxy info for a source file
-  ProxyServiceInfo getProxyInfo(const QString& sourcePath, ProxyQuality quality) const;
+  ProxyServiceInfo getProxyInfo(const QString& sourcePath, ProxyServiceQuality quality) const;
 
   // Batch generate proxies
-  int generateProxiesBatch(const QStringList& sourcePaths, ProxyQuality quality);
+  int generateProxiesBatch(const QStringList& sourcePaths, ProxyServiceQuality quality);
 
   // Get proxy directory for a source file
   static QString proxyDirectory(const QString& sourcePath);
 
   // Get proxy file path for a source file and quality
-  static QString proxyFilePath(const QString& sourcePath, ProxyQuality quality);
+  static QString proxyFilePath(const QString& sourcePath, ProxyServiceQuality quality);
 
  private:
   ArtifactProxyManager() = default;
   ~ArtifactProxyManager() = default;
 
-  static double scaleFactor(ProxyQuality quality) {
+  static double scaleFactor(ProxyServiceQuality quality) {
    switch (quality) {
-    case ProxyQuality::Half: return 0.5;
-    case ProxyQuality::Quarter: return 0.25;
-    case ProxyQuality::Eighth: return 0.125;
+    case ProxyServiceQuality::Half: return 0.5;
+    case ProxyServiceQuality::Quarter: return 0.25;
+    case ProxyServiceQuality::Eighth: return 0.125;
     default: return 1.0;
    }
   }
