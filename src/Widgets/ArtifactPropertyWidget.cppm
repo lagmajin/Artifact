@@ -398,6 +398,7 @@ public:
   bool isPlaying = false;
   int localPropertyEditDepth = 0;
   QMultiHash<QString, ArtifactPropertyEditorRowWidget *> propertyEditors;
+  QSet<QString> channelLockedPaths;
   QString rebuildSignature;
   QString pendingScrollGroupName;
   qint64 lastPropertyUpdateFramePosition = std::numeric_limits<qint64>::min();
@@ -1694,6 +1695,36 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                          notifyLayerPropertyAnimationChanged(layer);
                        });
       channelLayout->addWidget(keyAllButton);
+      auto *lockButton = new QPushButton(QStringLiteral("Lock Channels"), channelBox);
+      lockButton->setToolTip(QStringLiteral(
+          "Lock or unlock all visible Channel Box properties"));
+      const bool allChannelsLocked = std::all_of(
+          channelPaths.cbegin(), channelPaths.cend(),
+          [this](const QString &path) { return channelLockedPaths.contains(path); });
+      lockButton->setText(allChannelsLocked ? QStringLiteral("Unlock Channels")
+                                             : QStringLiteral("Lock Channels"));
+      QObject::connect(lockButton, &QPushButton::clicked, channelBox,
+                       [this, channelPaths, lockButton]() {
+                         const bool shouldUnlock = std::all_of(
+                             channelPaths.cbegin(), channelPaths.cend(),
+                             [this](const QString &path) {
+                               return channelLockedPaths.contains(path);
+                             });
+                         if (shouldUnlock) {
+                           for (const auto &path : channelPaths) {
+                             channelLockedPaths.remove(path);
+                           }
+                         } else {
+                           for (const auto &path : channelPaths) {
+                             channelLockedPaths.insert(path);
+                           }
+                         }
+                         lockButton->setText(shouldUnlock
+                                                 ? QStringLiteral("Lock Channels")
+                                                 : QStringLiteral("Unlock Channels"));
+                         scheduleRebuild(0);
+                       });
+      channelLayout->addWidget(lockButton);
       std::vector<ArtifactPropertyEditorRowWidget *> channelRows;
       addRowsFromProperties(
           channelBox, channelLayout, channelProperties, filterText,
@@ -1703,6 +1734,11 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           decorateLayerRow, updateLayerRowValue);
       if (!channelRows.empty()) {
         alignPropertyRowLabels(channelRows, 132, 184);
+        for (auto *row : channelRows) {
+          if (row && channelLockedPaths.contains(row->propertyName())) {
+            row->setEnabled(false);
+          }
+        }
         mainLayout->addWidget(channelBox);
       } else {
         delete channelBox;
