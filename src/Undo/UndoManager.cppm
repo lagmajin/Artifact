@@ -693,6 +693,27 @@ QString MacroUndoCommand::label() const {
     return label_;
 }
 
+// --- MoveAssetFileCommand ---
+MoveAssetFileCommand::MoveAssetFileCommand(const QString& oldPath,
+                                           const QString& newPath)
+    : oldPath_(oldPath), newPath_(newPath) {}
+
+void MoveAssetFileCommand::undo() {
+    if (QFile::rename(newPath_, oldPath_)) {
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+void MoveAssetFileCommand::redo() {
+    if (QFile::rename(oldPath_, newPath_)) {
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+QString MoveAssetFileCommand::label() const {
+    return QStringLiteral("Move Asset File");
+}
+
 // --- UndoManager ---
 UndoManager::UndoManager(): impl_(new Impl()) {}
 

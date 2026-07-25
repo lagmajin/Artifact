@@ -37,6 +37,7 @@
 #include <QStringList>
 #include <QVariant>
 #include <QObject>
+#include <QFile>
 export module Undo.UndoManager;
 
 
@@ -430,6 +431,17 @@ public:
 private:
     std::vector<std::unique_ptr<UndoCommand>> children_;
     QString label_;
+};
+
+class MoveAssetFileCommand : public UndoCommand {
+public:
+    MoveAssetFileCommand(const QString& oldPath, const QString& newPath);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    QString oldPath_;
+    QString newPath_;
 };
 
 class UndoManager : public QObject {

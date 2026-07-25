@@ -129,6 +129,7 @@ import Artifact.Audio.Waveform;
 import Audio.Segment;
 import Audio.SimpleWav;
 import Input.Operator;
+import Undo.UndoManager;
 
 namespace Artifact {
 
@@ -4179,9 +4180,12 @@ void ArtifactAssetBrowser::Impl::renameSelected()
   if (newName.isEmpty() || newName == fi.fileName()) return;
 
   QString newPath = fi.absolutePath() + "/" + newName;
-  if (QFile::rename(oldPath, newPath)) {
+  if (!QFileInfo::exists(newPath)) {
+    UndoManager::instance()->push(std::make_unique<MoveAssetFileCommand>(oldPath, newPath));
+    if (!QFileInfo::exists(oldPath) && QFileInfo::exists(newPath)) {
     clearThumbnailCache();
     applyFilters();
+    }
   }
 }
 
