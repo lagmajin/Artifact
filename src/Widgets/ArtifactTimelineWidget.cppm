@@ -124,6 +124,9 @@ void styleTimelineToolButton(QToolButton* button)
   button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   QFont font = button->font();
   font.setPixelSize(11);
+  if (Artifact::Accessibility::preferHighContrastHints()) {
+    font.setBold(true);
+  }
   button->setFont(font);
   const auto& theme = ArtifactCore::currentDCCTheme();
   QPalette pal = button->palette();
