@@ -122,6 +122,12 @@ public:
   QSpinBox *menuBarFontScaleSpinBox_;
   QSpinBox *dockTabFontSizeSpinBox_;
   QComboBox *themeCombo_;
+  QComboBox *handednessCombo_;
+  QCheckBox *largeTargetsCheckBox_;
+  QCheckBox *highContrastHintsCheckBox_;
+  QSpinBox *accessibilityFontScaleSpinBox_;
+  QComboBox *colorDeficiencyCombo_;
+  QCheckBox *reduceHoverDependencyCheckBox_;
 };
 
 GeneralSettingPage::Impl::Impl() {}
@@ -200,6 +206,45 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   themeLayout->addStretch();
   uiLayout->addLayout(themeLayout);
 
+  auto *accessibilityGroup = new QGroupBox("Accessibility", this);
+  auto *accessibilityLayout = new QVBoxLayout(accessibilityGroup);
+  auto *handednessLayout = new QHBoxLayout();
+  handednessLayout->addWidget(new QLabel("Preferred hand:", this));
+  impl_->handednessCombo_ = new QComboBox(this);
+  impl_->handednessCombo_->addItem("Right", "right");
+  impl_->handednessCombo_->addItem("Left", "left");
+  handednessLayout->addWidget(impl_->handednessCombo_);
+  handednessLayout->addStretch();
+  accessibilityLayout->addLayout(handednessLayout);
+
+  impl_->largeTargetsCheckBox_ = new QCheckBox("Use larger hit targets", this);
+  impl_->highContrastHintsCheckBox_ = new QCheckBox("Emphasize high-contrast hints", this);
+  impl_->reduceHoverDependencyCheckBox_ = new QCheckBox("Reduce hover dependency", this);
+  accessibilityLayout->addWidget(impl_->largeTargetsCheckBox_);
+  accessibilityLayout->addWidget(impl_->highContrastHintsCheckBox_);
+  accessibilityLayout->addWidget(impl_->reduceHoverDependencyCheckBox_);
+
+  auto *accessibilityFontLayout = new QHBoxLayout();
+  accessibilityFontLayout->addWidget(new QLabel("Accessibility font scale:", this));
+  impl_->accessibilityFontScaleSpinBox_ = new QSpinBox(this);
+  impl_->accessibilityFontScaleSpinBox_->setRange(100, 200);
+  impl_->accessibilityFontScaleSpinBox_->setSuffix(" %");
+  accessibilityFontLayout->addWidget(impl_->accessibilityFontScaleSpinBox_);
+  accessibilityFontLayout->addStretch();
+  accessibilityLayout->addLayout(accessibilityFontLayout);
+
+  auto *colorDeficiencyLayout = new QHBoxLayout();
+  colorDeficiencyLayout->addWidget(new QLabel("Color vision assist:", this));
+  impl_->colorDeficiencyCombo_ = new QComboBox(this);
+  impl_->colorDeficiencyCombo_->addItem("None", "none");
+  impl_->colorDeficiencyCombo_->addItem("Protanopia", "protanopia");
+  impl_->colorDeficiencyCombo_->addItem("Deuteranopia", "deuteranopia");
+  impl_->colorDeficiencyCombo_->addItem("Tritanopia", "tritanopia");
+  colorDeficiencyLayout->addWidget(impl_->colorDeficiencyCombo_);
+  colorDeficiencyLayout->addStretch();
+  accessibilityLayout->addLayout(colorDeficiencyLayout);
+  uiLayout->addWidget(accessibilityGroup);
+
   mainLayout->addWidget(uiGroup);
 
   mainLayout->addStretch();
@@ -229,6 +274,14 @@ void GeneralSettingPage::loadSettings() {
       impl_->themeCombo_->setCurrentIndex(0);
     }
   }
+  impl_->handednessCombo_->setCurrentIndex(
+      impl_->handednessCombo_->findData(settings->accessibilityHandedness()));
+  impl_->largeTargetsCheckBox_->setChecked(settings->accessibilityPreferLargeTargets());
+  impl_->highContrastHintsCheckBox_->setChecked(settings->accessibilityPreferHighContrastHints());
+  impl_->accessibilityFontScaleSpinBox_->setValue(settings->accessibilityFontScalePercent());
+  impl_->colorDeficiencyCombo_->setCurrentIndex(
+      impl_->colorDeficiencyCombo_->findData(settings->accessibilityColorDeficiencyMode()));
+  impl_->reduceHoverDependencyCheckBox_->setChecked(settings->accessibilityReduceHoverDependency());
   // autoSaveEnabled の項目が AppSettings にまだないので、将来的に追加が必要
 }
 
@@ -248,6 +301,18 @@ void GeneralSettingPage::saveSettings() {
   if (impl_->themeCombo_) {
     settings->setThemeName(impl_->themeCombo_->currentText());
   }
+  settings->setAccessibilityHandedness(
+      impl_->handednessCombo_->currentData().toString());
+  settings->setAccessibilityPreferLargeTargets(
+      impl_->largeTargetsCheckBox_->isChecked());
+  settings->setAccessibilityPreferHighContrastHints(
+      impl_->highContrastHintsCheckBox_->isChecked());
+  settings->setAccessibilityFontScalePercent(
+      impl_->accessibilityFontScaleSpinBox_->value());
+  settings->setAccessibilityColorDeficiencyMode(
+      impl_->colorDeficiencyCombo_->currentData().toString());
+  settings->setAccessibilityReduceHoverDependency(
+      impl_->reduceHoverDependencyCheckBox_->isChecked());
 }
 
 QList<SettingItemInfo> GeneralSettingPage::searchableItems() const {
