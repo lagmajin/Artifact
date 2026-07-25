@@ -1,5 +1,7 @@
 # Audio Engine Implementation Milestone
 
+**Status:** M-AUDIO-1〜3 partial/implemented, M-AUDIO-4 and runtime verification pending
+
 Date: 2026-03-22
 
 ## Goal
@@ -42,3 +44,11 @@ Date: 2026-03-22
 - Volume slider in the property widget alters the playback loudness in real-time.
 - Mute/Solo buttons work as expected and stop/start the audio dispatch for specific tracks.
 - A 5-minute video plays perfectly in sync without accumulating lip-sync delay.
+
+## Implementation Status (2026-07-25)
+
+- Audio output backends exist for WASAPI and PortAudio, with `AudioRenderer` / `AudioScrubController` providing PCM device output paths.
+- Core audio processing includes `AudioRingBuffer`, decoding/cache primitives, resampling/downmix helpers, and `AudioMixer` bus processing.
+- `ArtifactAudioMixer` synchronizes layer strips with core buses and exposes volume, pan, mute, solo, and master controls.
+- `AudioClockProvider` and scrub playback provide clock infrastructure, but the full Composition playback path has not been verified as hardware-audio-clock-driven end to end.
+- The validation checklist (audible full playback, real-time controls, and long-run A/V sync) remains pending because build/runtime testing is intentionally not run yet.
