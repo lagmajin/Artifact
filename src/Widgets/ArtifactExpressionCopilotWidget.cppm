@@ -1015,11 +1015,9 @@ void ArtifactExpressionCopilotWidget::setReferenceItems(
     const QString normalizedProperty = propertyPath.trimmed();
     if (!normalizedProperty.isEmpty()) {
         auto* propertyItem = new QListWidgetItem(
-            QStringLiteral("Property: thisLayer.%1").arg(normalizedProperty),
+            QStringLiteral("Property: value (%1)").arg(normalizedProperty),
             impl_->referenceList);
-        propertyItem->setData(
-            Qt::UserRole,
-            QStringLiteral("thisLayer.%1").arg(normalizedProperty));
+        propertyItem->setData(Qt::UserRole, QStringLiteral("value"));
     }
     for (const QString& layerName : layerNames) {
         auto* item = new QListWidgetItem(layerName, impl_->referenceList);
