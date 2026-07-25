@@ -5325,6 +5325,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   setWindowFlags(Qt::FramelessWindowHint);
 
   setWindowTitle("Timeline");
+  setFocusPolicy(Qt::StrongFocus);
+  setAccessibleName(QStringLiteral("Timeline"));
+  setAccessibleDescription(QStringLiteral("Edit layers and keyframes over time"));
   setMinimumHeight(500);
   setBaseSize(1200, 500);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);

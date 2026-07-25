@@ -494,7 +494,9 @@ int compositionPreviewIntervalMs(
   setAttribute(Qt::WA_NoSystemBackground);
   setMouseTracking(true);
   setFocusPolicy(Qt::StrongFocus);
- }
+  setAccessibleName(QStringLiteral("Composition View"));
+  setAccessibleDescription(QStringLiteral("Preview and interact with the active composition"));
+}
 
  ArtifactCompositionRenderWidget::~ArtifactCompositionRenderWidget() {
   delete impl_;
