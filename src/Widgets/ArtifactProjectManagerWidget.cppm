@@ -960,9 +960,8 @@ void collectImportablePaths(const QString& input, QStringList& out)
     addPath(trimmed);
 }
 
-enum class ProjectProxyQuality { Quarter, Half, Full };
 struct ProxyMeta {
-    ProjectProxyQuality quality = ProjectProxyQuality::Half;
+    ProxyQuality quality = ProxyQuality::Half;
     bool enabled = true;
     QDateTime sourceLastModified;
     QString qualityLabel;
@@ -5952,9 +5951,9 @@ public:
             dl->addWidget(new QLabel(QStringLiteral("Select proxy resolution:"), &dlg));
             auto* combo = new QComboBox(&dlg);
             combo->setObjectName(QStringLiteral("projectProxyResolutionCombo"));
-            combo->addItem(QStringLiteral("1/4 (Quarter)"), static_cast<int>(ProjectProxyQuality::Quarter));
-            combo->addItem(QStringLiteral("1/2 (Half)"), static_cast<int>(ProjectProxyQuality::Half));
-            combo->addItem(QStringLiteral("Full (1:1)"), static_cast<int>(ProjectProxyQuality::Full));
+            combo->addItem(QStringLiteral("1/4 (Quarter)"), static_cast<int>(ProxyQuality::Quarter));
+            combo->addItem(QStringLiteral("1/2 (Half)"), static_cast<int>(ProxyQuality::Half));
+            combo->addItem(QStringLiteral("Full (1:1)"), static_cast<int>(ProxyQuality::Full));
             combo->setCurrentIndex(1);
             dl->addWidget(combo);
             auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
@@ -5962,7 +5961,7 @@ public:
             connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
             dl->addWidget(btns);
             if (dlg.exec() != QDialog::Accepted) return;
-            const auto q = static_cast<ProjectProxyQuality>(combo->itemData(combo->currentIndex()).toInt());
+            const auto q = static_cast<ProxyQuality>(combo->itemData(combo->currentIndex()).toInt());
             proxyMetadata()[path].quality = q;
             proxyMetadata()[path].qualityLabel = combo->currentText();
         }
@@ -5999,9 +5998,9 @@ public:
             dl->addWidget(new QLabel(QStringLiteral("Select proxy resolution:"), &dlg));
             auto* combo = new QComboBox(&dlg);
             combo->setObjectName(QStringLiteral("projectProxyResolutionCombo"));
-            combo->addItem(QStringLiteral("1/4 (Quarter)"), static_cast<int>(ProjectProxyQuality::Quarter));
-            combo->addItem(QStringLiteral("1/2 (Half)"), static_cast<int>(ProjectProxyQuality::Half));
-            combo->addItem(QStringLiteral("Full (1:1)"), static_cast<int>(ProjectProxyQuality::Full));
+            combo->addItem(QStringLiteral("1/4 (Quarter)"), static_cast<int>(ProxyQuality::Quarter));
+            combo->addItem(QStringLiteral("1/2 (Half)"), static_cast<int>(ProxyQuality::Half));
+            combo->addItem(QStringLiteral("Full (1:1)"), static_cast<int>(ProxyQuality::Full));
             combo->setCurrentIndex(1);
             dl->addWidget(combo);
             auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
@@ -6010,7 +6009,7 @@ public:
             dl->addWidget(btns);
             if (dlg.exec() != QDialog::Accepted) return;
             const int selIdx = combo->currentIndex();
-            const auto q = static_cast<ProjectProxyQuality>(combo->itemData(selIdx).toInt());
+            const auto q = static_cast<ProxyQuality>(combo->itemData(selIdx).toInt());
             proxyMetadata()[targetPath].quality = q;
             proxyMetadata()[targetPath].qualityLabel = combo->currentText();
         }
@@ -6262,8 +6261,8 @@ public:
             auto& meta = proxyMetadata()[src.absoluteFilePath()];
             meta.sourceLastModified = src.lastModified();
 
-            const double scale = meta.quality == ProjectProxyQuality::Quarter ? 0.25
-                               : meta.quality == ProjectProxyQuality::Full  ? 1.0
+            const double scale = meta.quality == ProxyQuality::Quarter ? 0.25
+                               : meta.quality == ProxyQuality::Full  ? 1.0
                                : 0.5;
             const QString suffix = src.suffix().toLower();
             const bool video = QStringList{QStringLiteral("mp4"), QStringLiteral("mov"),

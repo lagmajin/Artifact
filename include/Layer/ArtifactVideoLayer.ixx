@@ -45,6 +45,7 @@ export module Artifact.Layer.Video;
 import Artifact.Layer.Abstract;
 import Image.ImageF32x4_RGBA;
 import Video.VideoFrame;
+import Proxy.Service;
 
 
 export namespace Artifact {
@@ -76,12 +77,7 @@ struct VideoStreamInfo {
 };
 
 /// Proxy quality levels for video playback
-enum class ProxyQuality {
-    None = 0,       // Full resolution
-    Quarter = 1,    // 1/4 resolution
-    Half = 2,       // 1/2 resolution
-    Full = 3        // Full resolution (same as None, for clarity)
-};
+using ProxyQuality = ProxyServiceQuality;
 
 /// Canonical video layer for timeline-based imported footage.
 /// Supports:

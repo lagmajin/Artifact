@@ -21,10 +21,11 @@ export namespace Artifact
  // ============================================================
 
  enum class ProxyServiceQuality {
-  None = 0,
-  Half = 1,
-  Quarter = 2,
-  Eighth = 3,
+    None = 0,
+    Quarter = 1,
+    Half = 2,
+    Full = 3,
+    Eighth = 4,
  };
 
  // ============================================================
@@ -80,6 +81,7 @@ export namespace Artifact
    switch (quality) {
     case ProxyServiceQuality::Half: return 0.5;
     case ProxyServiceQuality::Quarter: return 0.25;
+    case ProxyServiceQuality::Full: return 1.0;
     case ProxyServiceQuality::Eighth: return 0.125;
     default: return 1.0;
    }
