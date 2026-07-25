@@ -3099,6 +3099,17 @@ public:
         UndoManager::instance()->push(
             std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
       });
+      add(QStringLiteral("Bake Animation Layers Over Work Area"), [layer, comp]() {
+        if (!layer || !comp) return;
+        const auto range = comp->workAreaRange();
+        if (!range.isValid() || range.isEmpty()) return;
+        const QJsonObject before = layer->animationLayersSnapshot();
+        layer->bakeAnimationLayersOverRange(range.start(), range.end());
+        const QJsonObject after = layer->animationLayersSnapshot();
+        layer->restoreAnimationLayersSnapshot(before);
+        UndoManager::instance()->push(
+            std::make_unique<AnimationLayerStackSnapshotCommand>(layer, before, after));
+      });
       if (layer->animationLayers().layerCount() > 0) {
         add(QStringLiteral("Remove Top Animation Layer"), [layer]() {
           if (!layer || layer->animationLayers().layerCount() == 0) return;
