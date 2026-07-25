@@ -1657,6 +1657,46 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         updateScaleSupplementaryText(row, layer, property, value);
       };
 
+  // Keep a compact Channel Box surface at the top of the Inspector.  It
+  // reuses the normal property-editor rows so keying, Auto-Key, undo, and
+  // scrub behavior stay on the established property path.
+  if (focusedEffectId.trimmed().isEmpty()) {
+    static const QStringList channelPaths{
+        QStringLiteral("transform.position.x"),
+        QStringLiteral("transform.position.y"),
+        QStringLiteral("transform.rotation"),
+        QStringLiteral("transform.scale.x"),
+        QStringLiteral("transform.scale.y"),
+        QStringLiteral("layer.opacity")};
+    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> channelProperties;
+    for (const auto &path : channelPaths) {
+      if (const auto property = layer->getProperty(path)) {
+        channelProperties.push_back(property);
+      }
+    }
+    if (!channelProperties.empty()) {
+      auto *channelBox = new QGroupBox(QStringLiteral("Channel Box"),
+                                       impl_->containerWidget);
+      auto *channelLayout = new QVBoxLayout(channelBox);
+      channelLayout->setContentsMargins(10, 8, 10, 8);
+      channelLayout->setSpacing(4);
+      applyPropertySectionBox(channelBox);
+      std::vector<ArtifactPropertyEditorRowWidget *> channelRows;
+      addRowsFromProperties(
+          channelBox, channelLayout, channelProperties, filterText,
+          commitLayerValue, previewLayerValue, currentLayerTime,
+          notifyLayerKeyframeChanged, layer, nullptr,
+          QStringLiteral("channelBox"), &propertyEditors, &channelRows,
+          decorateLayerRow, updateLayerRowValue);
+      if (!channelRows.empty()) {
+        alignPropertyRowLabels(channelRows, 132, 184);
+        mainLayout->addWidget(channelBox);
+      } else {
+        delete channelBox;
+      }
+    }
+  }
+
   const auto effects = layer->getEffects();
   const bool hasFocusedEffect = !focusedEffectId.trimmed().isEmpty();
   // The dedicated Components tab owns component configuration. Its embedded
