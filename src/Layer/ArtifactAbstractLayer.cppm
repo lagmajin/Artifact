@@ -3835,27 +3835,43 @@ void ArtifactAbstractLayer::restoreAnimationLayersSnapshot(const QJsonObject &sn
 }
 
 void ArtifactAbstractLayer::bakeAnimationLayersAtCurrentFrame() {
-  const FramePosition frame(currentFrame());
-  if (impl_->animationLayers_.layerCount() > 0) {
-    const float baked = impl_->animationLayers_.evaluateWithBase(
-        frame, impl_->opacity_);
-    impl_->animationLayers_.clear();
+  bakeAnimationLayersOverRange(currentFrame(), currentFrame());
+}
+
+void ArtifactAbstractLayer::bakeAnimationLayersOverRange(int64_t startFrame,
+                                                         int64_t endFrame,
+                                                         int64_t step) {
+  if (step <= 0) step = 1;
+  if (endFrame < startFrame) std::swap(startFrame, endFrame);
+  const auto bakeStack = [startFrame, endFrame, step](auto& stack, auto baseAt) {
+    if (stack.layerCount() == 0) return;
     ArtifactCore::AnimationLayerState state;
     state.blendMode = ArtifactCore::AnimationLayerBlendMode::Override;
-    const std::size_t layerIndex = impl_->animationLayers_.addLayer(state);
-    impl_->animationLayers_.layer(layerIndex).values.setCurrent(baked);
-  }
+    std::vector<std::pair<FramePosition, float>> samples;
+    samples.reserve(static_cast<std::size_t>((endFrame - startFrame) / step + 1));
+    for (int64_t frameNumber = startFrame; frameNumber <= endFrame;
+         frameNumber += step) {
+      const FramePosition frame(frameNumber);
+      samples.emplace_back(frame, stack.evaluateWithBase(frame, baseAt(frame)));
+      if (frameNumber > endFrame - step) break;
+    }
+    stack.clear();
+    const std::size_t layerIndex = stack.addLayer(state);
+    auto& values = stack.layer(layerIndex).values;
+    values.setCurrent(samples.front().second);
+    for (const auto& sample : samples) {
+      values.addKeyFrame(sample.first, sample.second);
+    }
+  };
+
+  bakeStack(impl_->animationLayers_, [this](const FramePosition&) {
+    return impl_->opacity_;
+  });
   for (auto it = impl_->animationPropertyLayers_.begin();
        it != impl_->animationPropertyLayers_.end(); ++it) {
-    auto &stack = it.value();
-    if (stack.layerCount() == 0) continue;
-    const float baseValue = stack.base(frame);
-    const float baked = stack.evaluateWithBase(frame, baseValue);
-    stack.clear();
-    ArtifactCore::AnimationLayerState state;
-    state.blendMode = ArtifactCore::AnimationLayerBlendMode::Override;
-    const std::size_t layerIndex = stack.addLayer(state);
-    stack.layer(layerIndex).values.setCurrent(baked);
+    bakeStack(it.value(), [&it](const FramePosition& frame) {
+      return it.value().base(frame);
+    });
   }
   notifyLayerMutation(this, LayerDirtyFlag::Property,
                       LayerDirtyReason::PropertyChanged);

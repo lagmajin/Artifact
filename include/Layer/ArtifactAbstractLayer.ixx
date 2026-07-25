@@ -372,6 +372,8 @@ public:
   QJsonObject animationLayersSnapshot() const;
   void restoreAnimationLayersSnapshot(const QJsonObject &snapshot);
   void bakeAnimationLayersAtCurrentFrame();
+  void bakeAnimationLayersOverRange(int64_t startFrame, int64_t endFrame,
+                                    int64_t step = 1);
   
   QVector3D position3D() const;
   void setPosition3D(const QVector3D &pos);
