@@ -1,5 +1,7 @@
 # AI Cloud UI / Provider Milestone (2026-04-09)
 
+**Status:** AI-1〜2 and cloud adapter foundation implemented; AI-3〜5 integration pending
+
 `ローカル AI を既定に保ちつつ、必要なときだけクラウド AI を選べるようにする`
 ためのマイルストーン。
 
@@ -145,3 +147,11 @@
 - `AIChatWidget` の provider combo は現在 local 前提なので、ここを最初の分岐点にすると影響範囲が小さい
 - `AIClient` は cloud agent を持てるので、UI 側の切替だけでなく設定保存の整理が重要になる
 - `OpenRouter` を先に通すと、OpenAI-compatible provider の抽象化がそのまま `Kilo Gateway` に流用できる
+
+## Implementation Status (2026-07-25)
+
+- `CloudAgent` provides OpenRouter chat/post paths, provider normalization, supported provider inventory, and explicit missing-key errors.
+- `APIKeyManager` persists provider-specific API keys and proxy settings for OpenRouter, Anthropic, and OpenAI-compatible paths.
+- `AIClient`/tiered AI paths can select local versus cloud agents, and a separate AI Cloud surface exists in the application.
+- The primary `AIChatWidget` still exposes a local-model-path bar and does not yet provide the complete provider-dependent cloud form (API key, base URL, model, and cloud-specific load controls).
+- Provider migration cleanup, cloud/local state transitions, and end-to-end OpenRouter UI validation remain pending.
