@@ -1,6 +1,6 @@
 # Milestone: AI Cloud Widget Hardening / OpenRouter-Kilo Gateway Trial (2026-04-09)
 
-**Status:** Draft  
+**Status:** Phases 1〜6 implemented, runtime/provider verification pending  
 **Goal:** まだ実運用に耐えないクラウド AI ウィジェットを、`Kilo Gateway` 優先で試せる程度まで整備し、あわせてまともな設定ウィジェットを用意する。
 
 ---
@@ -177,6 +177,14 @@
 - 再起動後に last used provider が復元される
 - API key / URL / model の欠損が UI で分かる
 - local AI が cloud UI の変更で壊れない
+
+## Implementation Status (2026-07-25)
+
+- `ArtifactAICloudWidget` now exposes provider selection, API key, base URL, model filtering/listing, request state, and visible error output for OpenAI-compatible endpoints.
+- `ArtifactAICloudSettingsWidget` separates provider, endpoint, model, and credential settings from the chat surface and persists the provider state.
+- OpenRouter, Kilo Gateway, OpenAI-compatible routing, model discovery, timeout/error handling, and tool-call response parsing are present in the cloud widget path.
+- Core `CloudAgent` / `APIKeyManager` provide the shared provider and credential foundation used by the broader AI paths.
+- Actual Kilo/OpenRouter network send/receive, restart restoration, and local/cloud coexistence remain runtime verification items; no build or network test has been run.
 
 ---
 
