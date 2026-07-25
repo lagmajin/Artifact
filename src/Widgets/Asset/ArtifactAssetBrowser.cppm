@@ -74,6 +74,7 @@ module;
 #include <QJsonValue>
 #include <QMetaObject>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QHBoxLayout>
 #include <QAbstractItemView>
 #include <QComboBox>
@@ -155,6 +156,14 @@ QString assetThumbnailDiskPath(const QFileInfo& fileInfo) {
 QIcon loadAssetThumbnailFromDisk(const QFileInfo& fileInfo) {
   const QString path = assetThumbnailDiskPath(fileInfo);
   if (path.isEmpty()) return {};
+  constexpr qint64 kThumbnailCacheMaxAgeDays = 30;
+  const QFileInfo cachedFile(path);
+  if (cachedFile.exists() &&
+      cachedFile.lastModified().daysTo(QDateTime::currentDateTime()) >
+          kThumbnailCacheMaxAgeDays) {
+    QFile::remove(path);
+    return {};
+  }
   QPixmap pixmap;
   if (!pixmap.load(path, "PNG")) return {};
   return QIcon(pixmap);
@@ -259,6 +268,41 @@ bool copyAssetTree(const QString& sourcePath, const QString& destinationPath) {
   return true;
 }
 
+void collectAssetFiles(const QString& path, QStringList& files) {
+  const QFileInfo info(path);
+  if (info.isFile()) {
+    files.push_back(info.absoluteFilePath());
+    return;
+  }
+  if (!info.isDir()) return;
+  const QDir dir(path);
+  for (const QFileInfo& entry : dir.entryInfoList(QDir::NoDotAndDotDot |
+                                                  QDir::AllEntries)) {
+    collectAssetFiles(entry.absoluteFilePath(), files);
+  }
+}
+
+void collectAssetRegistrationMetadata(
+    const std::shared_ptr<ArtifactProject>& project,
+    const QStringList& files,
+    QHash<QString, QPair<QStringList, double>>& metadata) {
+  if (!project) return;
+  QSet<QString> targets;
+  for (const QString& file : files) targets.insert(QFileInfo(file).absoluteFilePath());
+  std::function<void(ProjectItem*)> visit = [&](ProjectItem* item) {
+    if (!item) return;
+    if (item->type() == eProjectItemType::Footage) {
+      auto* footage = static_cast<FootageItem*>(item);
+      const QString path = QFileInfo(footage->filePath).absoluteFilePath();
+      if (targets.contains(path)) {
+        metadata.insert(path, qMakePair(footage->sequencePaths, footage->frameRate));
+      }
+    }
+    for (ProjectItem* child : item->children) visit(child);
+  };
+  for (ProjectItem* root : project->projectItems()) visit(root);
+}
+
 class DeleteAssetFileCommand final : public UndoCommand {
 public:
   DeleteAssetFileCommand(std::shared_ptr<ArtifactProject> project,
@@ -273,19 +317,28 @@ public:
 
   void undo() override {
     if (QFileInfo::exists(backupPath_) && !QFileInfo::exists(path_) &&
-        copyAssetTree(backupPath_, path_) && project_) {
-      project_->addAssetFromPath(path_);
+        copyAssetTree(backupPath_, path_)) {
+      if (project_) {
+        for (const QString& file : deletedFiles_) {
+          const auto registration = registrationMetadata_.value(file);
+          project_->addAssetFromPath(file, registration.first, registration.second);
+        }
+      }
     }
   }
 
   void redo() override {
     if (!QFileInfo::exists(path_)) return;
+    if (deletedFiles_.isEmpty()) collectAssetFiles(path_, deletedFiles_);
+    if (registrationMetadata_.isEmpty()) {
+      collectAssetRegistrationMetadata(project_, deletedFiles_, registrationMetadata_);
+    }
     const bool copied = copyAssetTree(path_, backupPath_);
     const bool removed = QFileInfo(path_).isDir()
                              ? QDir(path_).removeRecursively()
                              : QFile::remove(path_);
     if (copied && removed && project_) {
-      project_->removeAssetByPath(path_);
+      for (const QString& file : deletedFiles_) project_->removeAssetByPath(file);
     }
   }
 
@@ -297,6 +350,8 @@ private:
   std::shared_ptr<ArtifactProject> project_;
   QString path_;
   QString backupPath_;
+  QStringList deletedFiles_;
+  QHash<QString, QPair<QStringList, double>> registrationMetadata_;
 };
 
 constexpr int kAssetThumbnailMinPx = 25;
@@ -4337,10 +4392,19 @@ void ArtifactAssetBrowser::Impl::deleteSelected()
   const auto project = ArtifactProjectService::instance()
                            ? ArtifactProjectService::instance()->getCurrentProjectSharedPtr()
                            : std::shared_ptr<ArtifactProject>{};
+  auto deleteBatch = std::make_unique<MacroUndoCommand>(
+      QStringLiteral("Delete Assets"));
+  QStringList deleteCandidates;
   for (const QString& path : paths) {
     if (!QFileInfo::exists(path)) continue;
-    UndoManager::instance()->push(
+    deleteCandidates.push_back(path);
+    deleteBatch->addChild(
         std::make_unique<DeleteAssetFileCommand>(project, path));
+  }
+  if (!deleteCandidates.isEmpty()) {
+    UndoManager::instance()->push(std::move(deleteBatch));
+  }
+  for (const QString& path : deleteCandidates) {
     if (!QFileInfo::exists(path)) {
       ++deletedCount;
     }
