@@ -1682,6 +1682,16 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       channelLayout->setContentsMargins(10, 8, 10, 8);
       channelLayout->setSpacing(4);
       applyPropertySectionBox(channelBox);
+      const QString lockSettingsKey =
+          QStringLiteral("UI/ChannelBox/Locked/") +
+          layer->id().toString();
+      const QSet<QString> persistedLocks = QSet<QString>::fromList(
+          QSettings().value(lockSettingsKey).toStringList());
+      for (const auto &path : persistedLocks) {
+        if (channelPaths.contains(path)) {
+          channelLockedPaths.insert(path);
+        }
+      }
       auto *keyAllButton = new QPushButton(QStringLiteral("Key All"), channelBox);
       keyAllButton->setToolTip(QStringLiteral(
           "Insert keyframes for all visible Channel Box properties"));
@@ -1704,7 +1714,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       lockButton->setText(allChannelsLocked ? QStringLiteral("Unlock Channels")
                                              : QStringLiteral("Lock Channels"));
       QObject::connect(lockButton, &QPushButton::clicked, channelBox,
-                       [this, channelPaths, lockButton]() {
+                       [this, channelPaths, lockButton, lockSettingsKey]() {
                          const bool shouldUnlock = std::all_of(
                              channelPaths.cbegin(), channelPaths.cend(),
                              [this](const QString &path) {
@@ -1719,6 +1729,11 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                              channelLockedPaths.insert(path);
                            }
                          }
+                         QStringList persisted;
+                         for (const auto &path : channelLockedPaths) {
+                           persisted.append(path);
+                         }
+                         QSettings().setValue(lockSettingsKey, persisted);
                          lockButton->setText(shouldUnlock
                                                  ? QStringLiteral("Lock Channels")
                                                  : QStringLiteral("Unlock Channels"));
