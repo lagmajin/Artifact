@@ -2751,8 +2751,11 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
  ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
-  impl_->owner_ = this;
+ impl_->owner_ = this;
   setWindowTitle("AssetBrowser");
+  setFocusPolicy(Qt::StrongFocus);
+  setAccessibleName(QStringLiteral("Asset Browser"));
+  setAccessibleDescription(QStringLiteral("Browse, search, import, and organize project assets"));
 
   // Enable drag and drop
   setAcceptDrops(true);
