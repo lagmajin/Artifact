@@ -196,6 +196,10 @@ public:
   }
 
   void redo() override {
+    if (firstRedo_) {
+      firstRedo_ = false;
+      return;
+    }
     if (project_) project_->addAssetFromPath(path_);
   }
 
@@ -206,6 +210,38 @@ public:
 private:
   std::shared_ptr<ArtifactProject> project_;
   QString path_;
+  bool firstRedo_ = true;
+};
+
+class RelinkAssetCommand final : public UndoCommand {
+public:
+  RelinkAssetCommand(QString oldPath, QString newPath)
+      : oldPath_(std::move(oldPath)), newPath_(std::move(newPath)) {}
+
+  void undo() override {
+    if (auto* service = ArtifactProjectService::instance()) {
+      service->relinkFootageByPath(newPath_, oldPath_);
+    }
+  }
+
+  void redo() override {
+    if (firstRedo_) {
+      firstRedo_ = false;
+      return;
+    }
+    if (auto* service = ArtifactProjectService::instance()) {
+      service->relinkFootageByPath(oldPath_, newPath_);
+    }
+  }
+
+  QString label() const override {
+    return QStringLiteral("Relink Asset");
+  }
+
+private:
+  QString oldPath_;
+  QString newPath_;
+  bool firstRedo_ = true;
 };
 
 constexpr int kAssetThumbnailMinPx = 25;
@@ -3764,6 +3800,8 @@ if (!item.isFolder) {
     if (!svc) return;
     bool success = svc->relinkFootageByPath(filePath, newPath);
     if (success) {
+      UndoManager::instance()->push(
+          std::make_unique<RelinkAssetCommand>(filePath, newPath));
       impl_->applyFilters();
     }
   });
