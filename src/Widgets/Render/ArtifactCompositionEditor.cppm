@@ -1163,6 +1163,8 @@ public:
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
+    setAccessibleName(QStringLiteral("Composition Editor"));
+    setAccessibleDescription(QStringLiteral("Edit and preview the active composition"));
     setAcceptDrops(true); // アセットブラウザからのD&Dを受け付ける
 
     resizeDebounceTimer_ = new QTimer(this);
