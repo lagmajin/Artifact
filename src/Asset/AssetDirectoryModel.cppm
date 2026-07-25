@@ -6,6 +6,7 @@
 #include <QVector>
 #include <QDir>
 #include <QFileInfo>
+#include <QFile>
 #include <QIcon>
 #include <QMimeData>
 #include <QPainter>
@@ -50,6 +51,8 @@
 #include <regex>
 #include <random>
 module AssetDirectoryModel;
+
+import Undo.UndoManager;
 
 
 
@@ -401,7 +404,40 @@ namespace Artifact {
   if (!parent.isValid()) return false;
   
   TreeItem* targetItem = static_cast<TreeItem*>(parent.internalPointer());
-  if (!targetItem || targetItem->guid != "favorites") return false;
+  if (!targetItem) return false;
+
+  if (targetItem->guid != "favorites") {
+   if (action != Qt::MoveAction || targetItem->isVirtual || !targetItem->isFolder ||
+       targetItem->physicalPath.isEmpty() || impl_->assetRootPath.isEmpty()) {
+    return false;
+   }
+   const QString assetRoot = QDir::cleanPath(QFileInfo(impl_->assetRootPath).absoluteFilePath());
+   const QString targetDir = QDir::cleanPath(QFileInfo(targetItem->physicalPath).absoluteFilePath());
+   const QString rootPrefix = assetRoot.endsWith(QDir::separator())
+                                  ? assetRoot
+                                  : assetRoot + QDir::separator();
+   if (targetDir != assetRoot && !targetDir.startsWith(rootPrefix, Qt::CaseInsensitive)) return false;
+
+   bool moved = false;
+   for (const QUrl& url : data->urls()) {
+    if (!url.isLocalFile()) continue;
+    const QFileInfo sourceInfo(url.toLocalFile());
+    if (!sourceInfo.exists() || !sourceInfo.isFile()) continue;
+    const QString sourcePath = QDir::cleanPath(sourceInfo.absoluteFilePath());
+    if (!sourcePath.startsWith(rootPrefix, Qt::CaseInsensitive)) continue;
+    if (sourceInfo.absolutePath().compare(targetDir, Qt::CaseInsensitive) == 0) continue;
+    const QString destination = QDir(targetDir).filePath(sourceInfo.fileName());
+    if (QFileInfo::exists(destination)) continue;
+    UndoManager::instance()->push(std::make_unique<MoveAssetFileCommand>(sourcePath, destination));
+    if (!QFileInfo::exists(sourcePath) && QFileInfo::exists(destination)) moved = true;
+   }
+   if (moved) {
+    beginResetModel();
+    impl_->buildRootTree();
+    endResetModel();
+   }
+   return moved;
+  }
 
   bool added = false;
   for (const QUrl& url : data->urls()) {
