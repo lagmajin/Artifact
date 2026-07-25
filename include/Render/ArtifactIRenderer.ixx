@@ -215,6 +215,8 @@ public:
   void setPan(float x, float y);
   void getPan(float &x, float &y) const;
   void setZoom(float zoom);
+  void setRotation(float degrees);
+  float getRotation() const;
   float getZoom() const;
   void panBy(float dx, float dy);
   void resetView();

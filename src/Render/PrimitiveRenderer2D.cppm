@@ -282,6 +282,8 @@ void PrimitiveRenderer2D::getPan(float& x, float& y) const
  y = p.y;
 }
 void PrimitiveRenderer2D::setZoom(float zoom)                { impl_->viewport_.SetZoom(zoom); }float PrimitiveRenderer2D::getZoom() const                   { return impl_->viewport_.GetZoom(); }
+void PrimitiveRenderer2D::setRotation(float degrees)         { impl_->viewport_.SetRotation(degrees); }
+float PrimitiveRenderer2D::getRotation() const               { return impl_->viewport_.GetRotation(); }
 void PrimitiveRenderer2D::panBy(float dx, float dy)          { impl_->viewport_.PanBy(dx, dy); }
 void PrimitiveRenderer2D::resetView()                        { impl_->viewport_.ResetView(); }
 void PrimitiveRenderer2D::fitToViewport(float margin)        { impl_->viewport_.FitCanvasToViewport(margin); }

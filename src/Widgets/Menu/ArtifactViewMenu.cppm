@@ -157,6 +157,7 @@ namespace Artifact {
    double zoom = 1.0;
    double panX = 0.0;
    double panY = 0.0;
+   double rotation = 0.0;
    QQuaternion orientation;
   };
 
@@ -165,6 +166,7 @@ namespace Artifact {
    double zoom = 1.0;
    double panX = 0.0;
    double panY = 0.0;
+   double rotation = 0.0;
    bool showGrid = true;
    bool showGuides = true;
    bool showSafeMargins = true;
@@ -199,6 +201,7 @@ namespace Artifact {
     map.insert(QStringLiteral("zoom"), entry.zoom);
     map.insert(QStringLiteral("panX"), entry.panX);
     map.insert(QStringLiteral("panY"), entry.panY);
+    map.insert(QStringLiteral("rotation"), entry.rotation);
     map.insert(QStringLiteral("orientationW"), entry.orientation.scalar());
     map.insert(QStringLiteral("orientationX"), entry.orientation.x());
     map.insert(QStringLiteral("orientationY"), entry.orientation.y());
@@ -219,6 +222,7 @@ namespace Artifact {
     entry.zoom = map.value(QStringLiteral("zoom"), 1.0).toDouble();
     entry.panX = map.value(QStringLiteral("panX"), 0.0).toDouble();
     entry.panY = map.value(QStringLiteral("panY"), 0.0).toDouble();
+    entry.rotation = map.value(QStringLiteral("rotation"), 0.0).toDouble();
     entry.orientation = QQuaternion(
         static_cast<float>(map.value(QStringLiteral("orientationW"), 1.0).toDouble()),
         static_cast<float>(map.value(QStringLiteral("orientationX"), 0.0).toDouble()),
@@ -358,6 +362,7 @@ namespace Artifact {
     map.insert(QStringLiteral("zoom"), entry.zoom);
     map.insert(QStringLiteral("panX"), entry.panX);
     map.insert(QStringLiteral("panY"), entry.panY);
+    map.insert(QStringLiteral("rotation"), entry.rotation);
     map.insert(QStringLiteral("showGrid"), entry.showGrid);
     map.insert(QStringLiteral("showGuides"), entry.showGuides);
     map.insert(QStringLiteral("showSafeMargins"), entry.showSafeMargins);
@@ -379,6 +384,7 @@ namespace Artifact {
     entry.zoom = map.value(QStringLiteral("zoom"), 1.0).toDouble();
     entry.panX = map.value(QStringLiteral("panX"), 0.0).toDouble();
     entry.panY = map.value(QStringLiteral("panY"), 0.0).toDouble();
+    entry.rotation = map.value(QStringLiteral("rotation"), 0.0).toDouble();
     entry.showGrid = map.value(QStringLiteral("showGrid"), true).toBool();
     entry.showGuides = map.value(QStringLiteral("showGuides"), true).toBool();
     entry.showSafeMargins = map.value(QStringLiteral("showSafeMargins"), true).toBool();
@@ -647,6 +653,7 @@ namespace Artifact {
    entry.zoom = std::max(0.001, static_cast<double>(renderer->getZoom()));
    entry.panX = static_cast<double>(panX);
    entry.panY = static_cast<double>(panY);
+   entry.rotation = static_cast<double>(renderer->getRotation());
    entry.orientation = controller->viewportOrientationQuaternion();
    return entry;
   }
@@ -676,6 +683,7 @@ namespace Artifact {
    entry.zoom = std::max(0.001, static_cast<double>(renderer->getZoom()));
    entry.panX = static_cast<double>(panX);
    entry.panY = static_cast<double>(panY);
+   entry.rotation = static_cast<double>(renderer->getRotation());
    entry.showGrid = controller->isShowGrid();
    entry.showGuides = controller->isShowGuides();
    entry.showSafeMargins = controller->isShowSafeMargins();
@@ -719,6 +727,7 @@ namespace Artifact {
 
    renderer->setZoom(static_cast<float>(std::max(0.001, entry.zoom)));
    renderer->setPan(static_cast<float>(entry.panX), static_cast<float>(entry.panY));
+   renderer->setRotation(static_cast<float>(entry.rotation));
    controller->setViewportOrientationQuaternion(entry.orientation);
    controller->markRenderDirty();
    return true;
@@ -743,6 +752,7 @@ namespace Artifact {
 
    renderer->setZoom(static_cast<float>(std::max(0.001, entry.zoom)));
    renderer->setPan(static_cast<float>(entry.panX), static_cast<float>(entry.panY));
+   renderer->setRotation(static_cast<float>(entry.rotation));
    controller->setShowGrid(entry.showGrid);
    controller->setShowGuides(entry.showGuides);
    controller->setShowSafeMargins(entry.showSafeMargins);

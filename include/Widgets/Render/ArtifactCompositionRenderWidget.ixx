@@ -53,6 +53,7 @@ export namespace Artifact {
   void zoomOut();
   void zoomFit();
   void zoom100();
+  void rotateCanvas(float degrees);
  };
 
 }

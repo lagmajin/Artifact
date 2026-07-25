@@ -3355,6 +3355,8 @@ bool ArtifactIRenderer::isMeshAlbedoOnlyPass() const {
  void ArtifactIRenderer::setPan(float x, float y)               { impl_->setPan(x, y); }
  void ArtifactIRenderer::getPan(float& x, float& y) const       { impl_->getPan(x, y); }
  void ArtifactIRenderer::setZoom(float zoom)                    { impl_->setZoom(zoom); }
+ void ArtifactIRenderer::setRotation(float degrees)              { impl_->primitiveRenderer_.setRotation(degrees); }
+ float ArtifactIRenderer::getRotation() const                    { return impl_->primitiveRenderer_.getRotation(); }
  float ArtifactIRenderer::getZoom() const                       { return impl_->getZoom(); }
  void ArtifactIRenderer::panBy(float dx, float dy)              { impl_->panBy(dx, dy); }
  void ArtifactIRenderer::resetView()                            { impl_->resetView(); }

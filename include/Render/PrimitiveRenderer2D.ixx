@@ -53,6 +53,8 @@ public:
     void getPan(float& x, float& y) const;
     void setZoom(float zoom);
     float getZoom() const;
+    void setRotation(float degrees);
+    float getRotation() const;
     void panBy(float dx, float dy);
     void resetView();
     void fitToViewport(float margin);

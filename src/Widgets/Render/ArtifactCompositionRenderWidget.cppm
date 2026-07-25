@@ -236,6 +236,8 @@ int compositionPreviewIntervalMs(
   ArtifactCore::LayerID selectedLayerId_ = ArtifactCore::LayerID::Nil();
   bool isDraggingLayer_ = false;
   bool isPanningViewport_ = false;
+  bool isRotatingViewport_ = false;
+  float rotationDragStart_ = 0.0f;
   LayerDragMode dragMode_ = LayerDragMode::None;
   QPointF dragStartCanvasPos_;
   QPointF dragStartLayerPos_;
@@ -593,6 +595,13 @@ int compositionPreviewIntervalMs(
   }
  }
 
+ void ArtifactCompositionRenderWidget::rotateCanvas(float degrees) {
+  if (!impl_->renderer_) return;
+  std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+  impl_->renderer_->setRotation(degrees);
+  impl_->requestRender();
+ }
+
  void ArtifactCompositionRenderWidget::resizeEvent(QResizeEvent* event) {
   QWidget::resizeEvent(event);
   if (impl_->initialized_) {
@@ -706,6 +715,15 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
                                 << "modifiers:" << event->modifiers();
 
   auto* tm = ArtifactApplicationManager::instance()->toolManager();
+  if (event->button() == Qt::LeftButton &&
+      (event->modifiers() & Qt::ShiftModifier)) {
+   impl_->lastMousePos_ = event->position();
+   impl_->rotationDragStart_ = impl_->renderer_ ? impl_->renderer_->getRotation() : 0.0f;
+   impl_->isRotatingViewport_ = true;
+   grabMouse();
+   event->accept();
+   return;
+  }
   bool isHandShortcut = false; // Space checking needs explicit key tracking
 
   if (event->button() == Qt::MiddleButton || (event->button() == Qt::LeftButton && (tm->activeTool() == ToolType::Hand || isHandShortcut))) {
@@ -854,6 +872,7 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
    impl_->updateHoverCursor(event->position());
   }
   impl_->isDraggingLayer_ = false;
+  impl_->isRotatingViewport_ = false;
   impl_->isPanningViewport_ = false;
   releaseMouse();
   impl_->dragMode_ = LayerDragMode::None;
@@ -865,7 +884,15 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   qCDebug(compositionWidgetLog) << "[MouseMove] ENTER pos:" << event->position()
                                 << "buttons:" << event->buttons();
 
-  if (impl_->isPanningViewport_) {
+  if (impl_->isRotatingViewport_) {
+   const QPointF delta = event->position() - impl_->lastMousePos_;
+   if (impl_->renderer_) {
+    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+    impl_->renderer_->setRotation(impl_->rotationDragStart_ + static_cast<float>(delta.x()));
+    impl_->requestRender();
+   }
+   event->accept();
+  } else if (impl_->isPanningViewport_) {
    QPointF delta = event->position() - impl_->lastMousePos_;
    impl_->lastMousePos_ = event->position();
    if (impl_->renderer_) {
@@ -1040,6 +1067,11 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
           } else {
               zoomFit();
           }
+      }
+      else if (event->key() == Qt::Key_R && event->modifiers() == Qt::NoModifier) {
+          rotateCanvas(0.0f);
+          event->accept();
+          return;
       }
       else if (event->key() == Qt::Key_1 && (event->modifiers() & Qt::ControlModifier)) {
           zoom100();
