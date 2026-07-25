@@ -2457,8 +2457,9 @@ public:
       if (!hasVisibleProperties) {
        continue;
       }
+      const auto groupProperties = groupDef.sortedProperties();
       const bool textAnimatorGroup = std::any_of(
-          groupDef.sortedProperties().cbegin(), groupDef.sortedProperties().cend(),
+          groupProperties.cbegin(), groupProperties.cend(),
           [](const auto& property) {
             return property && property->getName().startsWith(
                 QStringLiteral("text.animators."), Qt::CaseInsensitive);
