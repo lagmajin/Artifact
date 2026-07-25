@@ -124,6 +124,7 @@ module Artifact.Widgets.ProjectManagerWidget;
 
 import std;
 import Artifact.Widgets.ProjectManagerWidget;
+import Proxy.Service;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import FloatColorPickerDialog;
 import Widgets.Utils.CSS;
@@ -6264,7 +6265,18 @@ public:
             const double scale = meta.quality == ProjectProxyQuality::Quarter ? 0.25
                                : meta.quality == ProjectProxyQuality::Full  ? 1.0
                                : 0.5;
-            proxyJobs_.push_back({src.absoluteFilePath(), out, scale});
+            const QString suffix = src.suffix().toLower();
+            const bool video = QStringList{QStringLiteral("mp4"), QStringLiteral("mov"),
+                                           QStringLiteral("mkv"), QStringLiteral("avi"),
+                                           QStringLiteral("webm"), QStringLiteral("m4v")}
+                                  .contains(suffix);
+            const QString serviceOut = video
+                ? ArtifactProxyManager::proxyFilePath(
+                    src.absoluteFilePath(),
+                    scale <= 0.25 ? ProxyServiceQuality::Quarter
+                                  : ProxyServiceQuality::Half)
+                : out;
+            proxyJobs_.push_back({src.absoluteFilePath(), serviceOut, scale});
         }
         if (!proxyQueueTimer_) {
             proxyQueueTimer_ = new QTimer();
@@ -6292,13 +6304,28 @@ public:
 
         const ProxyJob job = proxyJobs_.front();
         proxyJobs_.pop_front();
-        QImage img(job.inputPath);
-        if (!img.isNull()) {
+        const QString suffix = QFileInfo(job.inputPath).suffix().toLower();
+        const bool video = QStringList{QStringLiteral("mp4"), QStringLiteral("mov"),
+                                       QStringLiteral("mkv"), QStringLiteral("avi"),
+                                       QStringLiteral("webm"), QStringLiteral("m4v")}
+                              .contains(suffix);
+        if (video) {
+            const auto quality = job.scaleFactor <= 0.25
+                ? ProxyServiceQuality::Quarter : ProxyServiceQuality::Half;
+            const QString generated = ArtifactProxyManager::instance()->generateProxy(
+                job.inputPath, quality);
+            if (!generated.isEmpty()) {
+                syncProxyPathToProject(job.inputPath, generated, true, proxyGlobalEnabled_);
+            }
+        } else {
+            QImage img(job.inputPath);
+            if (!img.isNull()) {
             const int targetW = qMax(64, static_cast<int>(img.width() * job.scaleFactor));
             const int targetH = qMax(64, static_cast<int>(img.height() * job.scaleFactor));
             const QImage scaled = img.scaled(targetW, targetH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
             const int jpegQuality = job.scaleFactor >= 0.9 ? 92 : 80;
             scaled.save(job.outputPath, "JPG", jpegQuality);
+            }
         }
 
         if (proxyQueueProgress) {
