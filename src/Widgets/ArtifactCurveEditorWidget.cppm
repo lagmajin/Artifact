@@ -1203,6 +1203,8 @@ ArtifactCurveEditorWidget::ArtifactCurveEditorWidget(QWidget* parent)
  setMouseTracking(true);
  setMinimumHeight(120);
  setFocusPolicy(Qt::StrongFocus);
+ setAccessibleName(QStringLiteral("Curve Editor"));
+ setAccessibleDescription(QStringLiteral("Edit animation curves and keyframes"));
 }
 
 ArtifactCurveEditorWidget::~ArtifactCurveEditorWidget() {
