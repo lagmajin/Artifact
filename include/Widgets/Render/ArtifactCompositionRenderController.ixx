@@ -192,6 +192,8 @@ void setShowIsolationOverlay(bool show);
 bool isShowIsolationOverlay() const;
 void setShowOnionSkin(bool show);
 bool isShowOnionSkin() const;
+void setShowAudioWaveformOverlay(bool show);
+bool isShowAudioWaveformOverlay() const;
 void setOnionSkinFrameCount(int count);
 int onionSkinFrameCount() const;
 void setOnionSkinOpacity(int percent);

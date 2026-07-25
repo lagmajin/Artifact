@@ -9742,6 +9742,8 @@ public:
 
   bool showOnionSkin_ = false;
 
+  bool showAudioWaveformOverlay_ = true;
+
   int onionSkinFrameCount_ = 2;
 
   int onionSkinOpacity_ = 30;
@@ -13781,6 +13783,17 @@ bool CompositionRenderController::isShowOnionSkin() const {
 
   return impl_->showOnionSkin_;
 
+}
+
+void CompositionRenderController::setShowAudioWaveformOverlay(bool show) {
+  if (!impl_ || impl_->showAudioWaveformOverlay_ == show) return;
+  impl_->showAudioWaveformOverlay_ = show;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isShowAudioWaveformOverlay() const {
+  return impl_ ? impl_->showAudioWaveformOverlay_ : false;
 }
 
 void CompositionRenderController::setOnionSkinFrameCount(int count) {
@@ -26434,6 +26447,7 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
                                           : ArtifactAbstractLayerPtr{};
 
+  if (showAudioWaveformOverlay_) {
   if (auto *audioLayer = selectedLayer
                               ? dynamic_cast<ArtifactAudioLayer *>(selectedLayer.get())
                               : nullptr) {
@@ -26441,6 +26455,7 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
     std::vector<float> peaks(waveform.peaks.cbegin(), waveform.peaks.cend());
     std::vector<float> rms(waveform.rms.cbegin(), waveform.rms.cend());
     drawAudioWaveformOverlay(renderer_.get(), peaks, rms, cw, ch);
+  }
   }
 
   renderer_->setUseExternalMatrices(false);
