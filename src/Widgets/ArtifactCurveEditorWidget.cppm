@@ -11,6 +11,9 @@ module;
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QInputDialog>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QSignalBlocker>
 #include <QWheelEvent>
 #include <QPointF>
 #include <QRectF>
@@ -216,6 +219,8 @@ public:
  QRectF marqueeRectData_;  // data-space rect while DragMode::Marquee
  bool handlesInteractive_ = true;
   bool keyEditingEnabled_ = true;
+ QSpinBox* selectedFrameEditor_ = nullptr;
+ QDoubleSpinBox* selectedValueEditor_ = nullptr;
 
  static constexpr int KEY_RADIUS = 5;
  static constexpr int HANDLE_RADIUS = 4;
@@ -224,7 +229,67 @@ public:
  static constexpr int MARGIN_RIGHT = 20;
  static constexpr int MARGIN_BOTTOM = 30;
 
- Impl(ArtifactCurveEditorWidget* owner) : owner_(owner) {}
+ Impl(ArtifactCurveEditorWidget* owner) : owner_(owner) {
+  selectedFrameEditor_ = new QSpinBox(owner_);
+  selectedFrameEditor_->setRange(std::numeric_limits<int>::min(),
+                                 std::numeric_limits<int>::max());
+  selectedFrameEditor_->setPrefix(QStringLiteral("F "));
+  selectedFrameEditor_->setToolTip(QStringLiteral("Selected key frame"));
+  selectedValueEditor_ = new QDoubleSpinBox(owner_);
+  selectedValueEditor_->setRange(-1000000.0, 1000000.0);
+  selectedValueEditor_->setDecimals(4);
+  selectedValueEditor_->setToolTip(QStringLiteral("Selected key value"));
+  selectedFrameEditor_->hide();
+  selectedValueEditor_->hide();
+  QObject::connect(selectedFrameEditor_, &QSpinBox::valueChanged, owner_,
+                   [this](int frame) {
+                     if (!keyEditingEnabled_ || selectedTrack_ < 0 ||
+                         selectedKey_ < 0 || selectedTrack_ >= static_cast<int>(tracks_.size()) ||
+                         selectedKey_ >= static_cast<int>(tracks_[selectedTrack_].keys.size())) return;
+                     const float value = tracks_[selectedTrack_].keys[selectedKey_].value;
+                     owner_->interactionStarted();
+                     tracks_[selectedTrack_].keys[selectedKey_].frame = frame;
+                     owner_->keyMoved(selectedTrack_, selectedKey_, frame, value);
+                     owner_->interactionFinished();
+                     owner_->update();
+                   });
+  QObject::connect(selectedValueEditor_, &QDoubleSpinBox::valueChanged, owner_,
+                   [this](double value) {
+                     if (!keyEditingEnabled_ || selectedTrack_ < 0 ||
+                         selectedKey_ < 0 || selectedTrack_ >= static_cast<int>(tracks_.size()) ||
+                         selectedKey_ >= static_cast<int>(tracks_[selectedTrack_].keys.size())) return;
+                     const int64_t frame = tracks_[selectedTrack_].keys[selectedKey_].frame;
+                     owner_->interactionStarted();
+                     tracks_[selectedTrack_].keys[selectedKey_].value = static_cast<float>(value);
+                     owner_->keyMoved(selectedTrack_, selectedKey_, frame, static_cast<float>(value));
+                     owner_->interactionFinished();
+                     owner_->update();
+                   });
+ }
+
+ void syncSelectedEditors() {
+  const bool valid = selectedTrack_ >= 0 && selectedKey_ >= 0 &&
+                     selectedTrack_ < static_cast<int>(tracks_.size()) &&
+                     selectedKey_ < static_cast<int>(tracks_[selectedTrack_].keys.size());
+  if (!valid) {
+   selectedFrameEditor_->hide();
+   selectedValueEditor_->hide();
+   return;
+  }
+  const auto& key = tracks_[selectedTrack_].keys[selectedKey_];
+  {
+   const QSignalBlocker blocker(selectedFrameEditor_);
+   selectedFrameEditor_->setValue(static_cast<int>(key.frame));
+  }
+  {
+   const QSignalBlocker blocker(selectedValueEditor_);
+   selectedValueEditor_->setValue(static_cast<double>(key.value));
+  }
+  selectedFrameEditor_->setGeometry(width() - 230, 4, 105, 24);
+  selectedValueEditor_->setGeometry(width() - 120, 4, 115, 24);
+  selectedFrameEditor_->show();
+  selectedValueEditor_->show();
+ }
 
  QRectF plotRect() const {
   return QRectF(
@@ -1458,6 +1523,7 @@ void ArtifactCurveEditorWidget::focusTrack(int trackIndex) {
 }
 
 void ArtifactCurveEditorWidget::paintEvent(QPaintEvent* /*event*/) {
+ impl_->syncSelectedEditors();
  QPainter p(this);
  p.setRenderHint(QPainter::Antialiasing);
 
