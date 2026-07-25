@@ -509,6 +509,7 @@ public:
     };
 
     std::shared_ptr<ArtifactCore::MediaPlaybackController> playbackController_;
+    std::shared_ptr<ArtifactCore::MediaPlaybackController> proxyController_;
     FrameCache frameCache_;
     VideoStreamInfo streamInfo_;
     
@@ -896,7 +897,10 @@ public:
             lastDecodeState_ = QStringLiteral("opening");
             return std::nullopt;
         }
-        if (!playbackController_ || !playbackController_->isMediaOpen()) {
+        const auto activeController = proxyController_ && proxyController_->isMediaOpen()
+            ? proxyController_ : playbackController_;
+        const bool usingProxy = activeController && activeController != playbackController_;
+        if (!activeController || !activeController->isMediaOpen()) {
             lastDecodeState_ = QStringLiteral("not-open");
             return std::nullopt;
         }
@@ -953,7 +957,7 @@ public:
             return std::nullopt;
         }
 
-        if (!sourceAssetId_.isNull()) {
+        if (!usingProxy && !sourceAssetId_.isNull()) {
             const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(sourceAssetId_);
             const auto sharedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
                 ArtifactCore::AssetManager::instance().decodedPayload(
@@ -979,7 +983,7 @@ public:
         }
 
         ArtifactCore::ImageF32x4_RGBA cachedFrame;
-        if (frameCache_.get(sourceFrame, cachedFrame)) {
+        if (!usingProxy && frameCache_.get(sourceFrame, cachedFrame)) {
             discardPendingRequestIfCurrent(requestId);
             {
                 std::lock_guard<std::mutex> lock(frameStateMutex_);
@@ -1003,11 +1007,11 @@ public:
         }
 
         DecodeRequest request;
-        request.controller = playbackController_;
+        request.controller = activeController;
         request.timelineFrame = timelineFrame;
         request.sourceFrame = sourceFrame;
         request.hasCurrentBuffer = hasBufferForLog;
-        request.backendName = decoderBackendName(playbackController_.get());
+        request.backendName = decoderBackendName(activeController.get());
         request.generation = generation;
         request.requestId = requestId;
         beginFrameTicket(timelineFrame, sourceFrame, QStringLiteral("decoder"));
@@ -1036,6 +1040,7 @@ ArtifactVideoLayer::ArtifactVideoLayer()
 ArtifactVideoLayer::~ArtifactVideoLayer()
 {
     impl_->cancelPendingDecode();
+    impl_->proxyController_.reset();
     ++impl_->openRequestId_;
     if (impl_->openFuture_.isRunning()) {
         impl_->openFuture_.waitForFinished();
@@ -1090,6 +1095,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
                           << "thread=" << threadIdTag();
 
     impl_->cancelPendingDecode();
+    impl_->proxyController_.reset();
     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     impl_->sourceAssetId_ = nextAssetId;
     impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
@@ -2165,6 +2171,23 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
 void ArtifactVideoLayer::setProxyQuality(ProxyQuality quality)
 {
     impl_->proxyQuality_ = quality;
+    impl_->proxyController_.reset();
+    impl_->frameCache_.clear();
+    impl_->invalidatePendingDecode();
+    if (quality != ProxyQuality::None && quality != ProxyQuality::Full &&
+        !impl_->proxyPath_.isEmpty() && QFileInfo::exists(impl_->proxyPath_)) {
+        auto candidate = std::make_shared<ArtifactCore::MediaPlaybackController>();
+        candidate->setDecoderBackend(ArtifactCore::DecoderBackend::FFmpeg);
+        if (candidate->openMediaFile(impl_->proxyPath_)) {
+            impl_->proxyController_ = std::move(candidate);
+        } else {
+            qWarning() << "[VideoLayer] proxy open failed:" << impl_->proxyPath_;
+            impl_->proxyQuality_ = ProxyQuality::None;
+        }
+    }
+    if (impl_->isLoaded_) {
+        decodeCurrentFrame();
+    }
 }
 
 ProxyQuality ArtifactVideoLayer::proxyQuality() const
@@ -2194,7 +2217,7 @@ bool ArtifactVideoLayer::generateProxy(ProxyQuality quality)
         impl_->sourcePath_, serviceQuality);
     if (path.isEmpty()) return false;
     impl_->proxyPath_ = path;
-    impl_->proxyQuality_ = quality;
+    setProxyQuality(quality);
     return true;
 }
 
@@ -2272,10 +2295,15 @@ int ArtifactProxyManager::generateProxiesBatch(const QStringList& sourcePaths,
 void ArtifactVideoLayer::setProxyPath(const QString& path)
 {
     impl_->proxyPath_ = path;
+    if (impl_->proxyQuality_ != ProxyQuality::None &&
+        impl_->proxyQuality_ != ProxyQuality::Full) {
+        setProxyQuality(impl_->proxyQuality_);
+    }
 }
 
 void ArtifactVideoLayer::clearProxy()
 {
+    impl_->proxyController_.reset();
     impl_->proxyPath_.clear();
     impl_->proxyQuality_ = ProxyQuality::None;
     qDebug() << "[VideoLayer] Proxy cleared";
