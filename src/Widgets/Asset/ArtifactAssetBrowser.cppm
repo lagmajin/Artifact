@@ -162,7 +162,22 @@ QIcon loadAssetThumbnailFromDisk(const QFileInfo& fileInfo) {
 
 void saveAssetThumbnailToDisk(const QFileInfo& fileInfo, const QImage& image) {
   const QString path = assetThumbnailDiskPath(fileInfo);
-  if (!path.isEmpty() && !image.isNull()) image.save(path, "PNG");
+  if (path.isEmpty() || image.isNull() || !image.save(path, "PNG")) return;
+
+  constexpr qint64 kMaxThumbnailCacheBytes = 256LL * 1024LL * 1024LL;
+  const QFileInfo cacheFile(path);
+  const QDir cacheDir(cacheFile.absolutePath());
+  QFileInfoList entries = cacheDir.entryInfoList(
+      QStringList() << QStringLiteral("*.png"),
+      QDir::Files | QDir::Readable,
+      QDir::Time | QDir::Reversed);
+  qint64 totalBytes = 0;
+  for (const QFileInfo& entry : entries) totalBytes += entry.size();
+  for (const QFileInfo& entry : entries) {
+    if (totalBytes <= kMaxThumbnailCacheBytes) break;
+    if (entry.absoluteFilePath() == cacheFile.absoluteFilePath()) continue;
+    if (QFile::remove(entry.absoluteFilePath())) totalBytes -= entry.size();
+  }
 }
 
 } // namespace
