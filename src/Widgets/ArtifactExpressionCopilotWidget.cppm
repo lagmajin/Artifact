@@ -6,6 +6,9 @@ module;
 #include <QColor>
 #include <QEvent>
 #include <QClipboard>
+#include <QDrag>
+#include <QMimeData>
+#include <QDropEvent>
 #include <QFont>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -242,6 +245,7 @@ public:
     QLabel* hintLabel = nullptr;
     QWidget* suggestionPopup = nullptr;
     QListWidget* suggestionList = nullptr;
+    QListWidget* referenceList = nullptr;
     QPushButton* generateBtn = nullptr;
     QPushButton* applyBtn = nullptr;
     QPushButton* copyBtn = nullptr;
@@ -712,8 +716,16 @@ public:
         expressionEdit->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
         expressionEdit->setPlaceholderText(QStringLiteral("Enter an expression here..."));
         expressionEdit->setLineWrapMode(QTextEdit::NoWrap);
+        expressionEdit->setAcceptDrops(true);
         expressionEdit->setTabStopDistance(expressionEdit->fontMetrics().horizontalAdvance(QLatin1Char(' ')) * 4.0);
         layout->addWidget(expressionEdit);
+
+        layout->addWidget(new QLabel(QStringLiteral("Expression Pick Whip (drag a layer into the editor)")));
+        referenceList = new QListWidget();
+        referenceList->setDragEnabled(true);
+        referenceList->setSelectionMode(QAbstractItemView::SingleSelection);
+        referenceList->setMaximumHeight(90);
+        layout->addWidget(referenceList);
 
         statusLabel = new QLabel(QStringLiteral("Ready"));
         statusLabel->setWordWrap(true);
@@ -793,6 +805,17 @@ ArtifactExpressionCopilotWidget::ArtifactExpressionCopilotWidget(QWidget* parent
 
     connect(impl_->wiggleBtn, &QPushButton::clicked, this, [this]() {
         impl_->promptInput->setText(QStringLiteral("wiggle 3 times a second"));
+    });
+
+    connect(impl_->referenceList, &QListWidget::itemPressed, this,
+            [this](QListWidgetItem* item) {
+        if (!item || !impl_->referenceList) return;
+        auto* mime = new QMimeData();
+        mime->setData(QStringLiteral("application/x-artifact-expression-reference").toUtf8(),
+                      item->data(Qt::UserRole).toString().toUtf8());
+        auto* drag = new QDrag(impl_->referenceList);
+        drag->setMimeData(mime);
+        drag->exec(Qt::CopyAction);
     });
     connect(impl_->loopBtn, &QPushButton::clicked, this, [this]() {
         impl_->promptInput->setText(QStringLiteral("make it loop"));
@@ -949,6 +972,22 @@ bool ArtifactExpressionCopilotWidget::eventFilter(QObject* watched, QEvent* even
         }
     }
 
+    if (event->type() == QEvent::Drop) {
+        auto* drop = static_cast<QDropEvent*>(event);
+        const QString mimeType = QStringLiteral("application/x-artifact-expression-reference");
+        if (drop->mimeData()->hasFormat(mimeType)) {
+            const QString reference = QString::fromUtf8(drop->mimeData()->data(mimeType)).trimmed();
+            if (!reference.isEmpty()) {
+                QTextCursor cursor = impl_->expressionEdit->textCursor();
+                cursor.insertText(reference);
+                impl_->expressionEdit->setTextCursor(cursor);
+                impl_->validateExpression();
+                drop->acceptProposedAction();
+                return true;
+            }
+        }
+    }
+
     return QWidget::eventFilter(watched, event);
 }
 
@@ -967,6 +1006,16 @@ void ArtifactExpressionCopilotWidget::setApplyHandler(std::function<void(const Q
         return;
     }
     impl_->applyHandler = std::move(handler);
+}
+
+void ArtifactExpressionCopilotWidget::setReferenceItems(const QStringList& layerNames) {
+    if (!impl_ || !impl_->referenceList) return;
+    impl_->referenceList->clear();
+    for (const QString& layerName : layerNames) {
+        auto* item = new QListWidgetItem(layerName, impl_->referenceList);
+        item->setData(Qt::UserRole,
+                      QStringLiteral("thisComp.layer(\"%1\")").arg(layerName));
+    }
 }
 
 QSize ArtifactExpressionCopilotWidget::sizeHint() const {

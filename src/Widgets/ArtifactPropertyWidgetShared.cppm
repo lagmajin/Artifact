@@ -965,6 +965,7 @@ void launchExpressionCopilot(
         layer->layerName(),
         propertyPtr ? propertyPtr->getValue() : QVariant(),
         currentTime.toDouble());
+    copilot->setReferenceItems(layerNames);
   } else {
     copilot->clearPreviewContext();
   }
