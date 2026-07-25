@@ -8822,7 +8822,8 @@ void ArtifactTimelineWidget::updateSelectionState()
         selectionText +=
             QStringLiteral(" | %1").arg(selectedAreaSummaryText(selectedMarkers));
       }
-      if (hoveredMarker.trackIndex >= 0) {
+      if (!Artifact::Accessibility::reduceHoverDependency() &&
+          hoveredMarker.trackIndex >= 0) {
         const QString hoveredText =
             formatHoveredKeyframeSummary(hoveredMarker, frameLabelValue);
         if (!hoveredText.isEmpty()) {
