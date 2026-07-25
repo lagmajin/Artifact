@@ -130,8 +130,10 @@ void styleTimelineToolButton(QToolButton* button)
   button->setFont(font);
   const auto& theme = ArtifactCore::currentDCCTheme();
   QPalette pal = button->palette();
-  pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
-  pal.setColor(QPalette::WindowText, QColor(theme.textColor));
+  const QColor accessibleText =
+      Artifact::Accessibility::adjustColorForDeficiency(QColor(theme.textColor));
+  pal.setColor(QPalette::ButtonText, accessibleText);
+  pal.setColor(QPalette::WindowText, accessibleText);
   button->setPalette(pal);
 }
 
