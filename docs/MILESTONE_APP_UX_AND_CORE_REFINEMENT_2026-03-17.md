@@ -7,6 +7,12 @@ DCCツールとして不可欠な「滑らかで安定したUI操作」と「確
 
 ---
 
+**Status:** M-REFINE-2〜3 は実装済み、M-REFINE-1 と M-REFINE-4 は部分実装。実機での UI リサイズ・操作感・書き出し検証待ち。
+
+### 実装状況（2026-07-25 確認）
+
+キーフレーム操作と状態同期、実コンポジションを使う GPU/CPU レンダーキュー、音声・動画出力経路を確認した。Inspector にはまだ `QScrollArea` ベースの領域が残り、レンダーサービスにも composition 不在時のダミーフォールバックがあるため、UI 描画安定化と完全な production 経路は未完了として扱う。
+
 ## M-REFINE-1 UI Rendering Stability (脱 QAbstractScrollArea)
 - **目標**: Windows 環境下でのドックのリサイズ、フローティング時の描画崩れ（黒い隙間や残像）を完全に撲滅する。
 - **内容**:
