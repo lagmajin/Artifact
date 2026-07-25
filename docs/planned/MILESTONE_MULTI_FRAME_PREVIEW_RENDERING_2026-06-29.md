@@ -1,7 +1,7 @@
 # Milestone: Multi-Frame Preview Rendering
 
 **Date:** 2026-06-29  
-**Status:** Planned  
+**Status:** Phase 0 audit complete, Phase 1 implemented; Phase 2+ planned
 **Primary goal:** 同一 Diligent device / immediate context のままフレーム別 render target を持ち、RAM Preview の複数フレームをパイプライン処理できるようにする
 
 ## Goal
@@ -93,6 +93,13 @@ Phase 2で複製する単位は最終 color RT 1枚だけではない。
 - disk writer completion は task の composition ID が現在値と一致する場合だけ cache state を更新する
 
 この slice は frame別RTをまだ追加しない。multi-frame化の前に stale result と cross-thread cache mutation を止めるための土台とする。
+
+## Implementation Status (2026-07-25)
+
+- Phase 0 の単一 immediate context、共有 render target、readback 完了経路の監査結果を維持する。
+- Phase 1 の stale-result 防止は実装済み。`ArtifactPlaybackService` の owner thread への queued publish、composition ID / generation / pending frame の照合、disk writer 完了時の世代照合を確認した。
+- Phase 2 の frame-local color/depth target と `RenderPipeline` scratch 分離、Phase 3 以降の CPU preparation worker・非同期 readback・RAM Preview 統合は未着手である。
+- したがって、現時点では「安全な single-frame preview の結果受領基盤」までであり、multi-frame GPU pipeline 完了とは扱わない。
 
 ## Core Design
 
