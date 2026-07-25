@@ -73,6 +73,7 @@ module;
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QMetaObject>
+#include <QCryptographicHash>
 #include <QHBoxLayout>
 #include <QAbstractItemView>
 #include <QComboBox>
@@ -130,6 +131,40 @@ import Audio.SimpleWav;
 import Input.Operator;
 
 namespace Artifact {
+
+namespace {
+
+QString assetThumbnailDiskPath(const QFileInfo& fileInfo) {
+  if (!fileInfo.exists() || !fileInfo.isFile()) return {};
+  const QString cacheRoot = QStandardPaths::writableLocation(
+      QStandardPaths::CacheLocation) +
+      QStringLiteral("/ArtifactStudio/AssetThumbnails");
+  QDir().mkpath(cacheRoot);
+  const QByteArray identity =
+      (fileInfo.absoluteFilePath() + QStringLiteral("|") +
+       QString::number(fileInfo.size()) + QStringLiteral("|") +
+       QString::number(fileInfo.lastModified().toMSecsSinceEpoch()))
+          .toUtf8();
+  const QByteArray digest = QCryptographicHash::hash(
+      identity, QCryptographicHash::Sha1).toHex();
+  return cacheRoot + QLatin1Char('/') + QString::fromLatin1(digest) +
+         QStringLiteral(".png");
+}
+
+QIcon loadAssetThumbnailFromDisk(const QFileInfo& fileInfo) {
+  const QString path = assetThumbnailDiskPath(fileInfo);
+  if (path.isEmpty()) return {};
+  QPixmap pixmap;
+  if (!pixmap.load(path, "PNG")) return {};
+  return QIcon(pixmap);
+}
+
+void saveAssetThumbnailToDisk(const QFileInfo& fileInfo, const QImage& image) {
+  const QString path = assetThumbnailDiskPath(fileInfo);
+  if (!path.isEmpty() && !image.isNull()) image.save(path, "PNG");
+}
+
+} // namespace
 
 using namespace ArtifactCore;
 
@@ -1707,6 +1742,12 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
 
   QFileInfo fileInfo(filePath);
 
+  if (const QIcon diskIcon = loadAssetThumbnailFromDisk(fileInfo);
+      !diskIcon.isNull()) {
+    thumbnailCache_[filePath] = diskIcon;
+    return diskIcon;
+  }
+
   // For folders, use folder icon
   if (fileInfo.isDir()) {
    QStyle* style = QApplication::style();
@@ -1848,6 +1889,7 @@ void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QStr
     }
     if (!image.isNull()) {
       const QIcon icon(QPixmap::fromImage(image));
+      saveAssetThumbnailToDisk(QFileInfo(filePath), image);
       {
         std::lock_guard<std::mutex> lock(thumbnailMutex_);
         thumbnailCache_[filePath] = icon;
