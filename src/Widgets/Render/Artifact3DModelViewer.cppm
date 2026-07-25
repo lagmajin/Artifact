@@ -200,6 +200,8 @@ Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
     impl_->renderContainer = QWidget::createWindowContainer(impl_->renderWindow, this);
     impl_->renderContainer->setMinimumSize(400, 280);
     impl_->renderContainer->setFocusPolicy(Qt::StrongFocus);
+    impl_->renderContainer->setAccessibleName(QStringLiteral("3D Model View"));
+    impl_->renderContainer->setAccessibleDescription(QStringLiteral("Inspect and navigate the active 3D model"));
     impl_->renderContainer->installEventFilter(this);
     rootLayout->addWidget(impl_->renderContainer, 1);
 
