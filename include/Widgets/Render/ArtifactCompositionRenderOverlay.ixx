@@ -95,6 +95,11 @@ void drawAudioWaveformOverlay(ArtifactIRenderer *renderer,
                               float overlayW,
                               float overlayH);
 
+void drawAudioSpectrumOverlay(ArtifactIRenderer *renderer,
+                              const std::vector<float> &spectrum,
+                              float overlayW,
+                              float overlayH);
+
 void drawPaintLayerOnionSkinOverlay(ArtifactIRenderer *renderer,
                                     const ArtifactAbstractLayerPtr &paintLayer,
                                     const ArtifactCompositionPtr &comp,

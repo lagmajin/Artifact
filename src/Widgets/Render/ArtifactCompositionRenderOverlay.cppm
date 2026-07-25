@@ -1524,6 +1524,30 @@ void drawAudioWaveformOverlay(ArtifactIRenderer *renderer,
   }
 }
 
+void drawAudioSpectrumOverlay(ArtifactIRenderer *renderer,
+                              const std::vector<float> &spectrum,
+                              float overlayW,
+                              float overlayH) {
+  if (!renderer || spectrum.empty() || overlayW <= 0.0f || overlayH <= 0.0f) return;
+  const float panelW = std::min(220.0f, std::max(120.0f, overlayW * 0.24f));
+  const float panelH = 82.0f;
+  const float panelX = overlayW - panelW - 12.0f;
+  const float panelY = 12.0f;
+  renderer->drawOverlayPanel(
+      panelX, panelY, panelW, panelH,
+      FloatColor{0.03f, 0.05f, 0.08f, 0.78f},
+      FloatColor{0.75f, 0.45f, 1.0f, 0.9f}, 1.0f);
+  const float barW = std::max(1.0f, (panelW - 16.0f) / static_cast<float>(spectrum.size()));
+  for (std::size_t i = 0; i < spectrum.size(); ++i) {
+    const float magnitude = std::clamp(spectrum[i], 0.0f, 1.0f);
+    const float height = (panelH - 16.0f) * magnitude;
+    renderer->drawSolidRect(panelX + 8.0f + static_cast<float>(i) * barW,
+                            panelY + panelH - 8.0f - height,
+                            std::max(0.5f, barW - 1.0f), height,
+                            FloatColor{0.65f, 0.35f, 1.0f, 0.9f});
+  }
+}
+
 void drawViewportSnapHintOverlay(ArtifactIRenderer *renderer,
                                  int overlayW,
                                  int overlayH,

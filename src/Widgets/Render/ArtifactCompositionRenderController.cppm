@@ -129,6 +129,7 @@ import Color.Harmonizer;
 
 import Artifact.Widgets.CompositionRenderOverlay;
 import Artifact.Layer.Audio;
+import Audio.Effect.Spectrum;
 
 import Artifact.Preview.Pipeline;
 
@@ -9750,6 +9751,9 @@ public:
   std::vector<float> audioWaveformCacheRms_;
   qint64 audioWaveformCacheFileSize_ = -1;
   qint64 audioWaveformCacheModifiedMs_ = -1;
+  QString audioSpectrumCacheSourcePath_;
+  qint64 audioSpectrumCacheFrame_ = -1;
+  std::vector<float> audioSpectrumCache_;
 
   int onionSkinFrameCount_ = 2;
 
@@ -26480,6 +26484,21 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
     }
     drawAudioWaveformOverlay(renderer_.get(), audioWaveformCachePeaks_,
                              audioWaveformCacheRms_, cw, ch);
+    if (sourcePath != audioSpectrumCacheSourcePath_ ||
+        currentFrame.framePosition() != audioSpectrumCacheFrame_) {
+      ArtifactCore::AudioSegment segment;
+      if (audioLayer->getAudio(segment, currentFrame, 1024, audioLayer->sampleRate())) {
+        ArtifactCore::AudioSpectrum analyzer;
+        analyzer.setBins(48);
+        analyzer.process(segment);
+        audioSpectrumCache_ = analyzer.getSpectrum();
+      } else {
+        audioSpectrumCache_.clear();
+      }
+      audioSpectrumCacheSourcePath_ = sourcePath;
+      audioSpectrumCacheFrame_ = currentFrame.framePosition();
+    }
+    drawAudioSpectrumOverlay(renderer_.get(), audioSpectrumCache_, cw, ch);
   }
   } else {
     audioWaveformCacheSourcePath_.clear();
@@ -26487,6 +26506,9 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
     audioWaveformCacheRms_.clear();
     audioWaveformCacheFileSize_ = -1;
     audioWaveformCacheModifiedMs_ = -1;
+    audioSpectrumCacheSourcePath_.clear();
+    audioSpectrumCacheFrame_ = -1;
+    audioSpectrumCache_.clear();
   }
 
   renderer_->setUseExternalMatrices(false);
