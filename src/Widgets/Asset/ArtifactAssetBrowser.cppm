@@ -3744,6 +3744,31 @@ if (!item.isFolder) {
    impl_->syncDirectorySelection();
   });
 
+  addAction(frequentMenu, QStringLiteral("Find References"), [this, filePath]() {
+    if (filePath.isEmpty()) return;
+    auto *service = ArtifactProjectService::instance();
+    const auto composition = service ? service->currentComposition().lock()
+                                     : ArtifactCompositionPtr{};
+    QStringList references;
+    if (composition) {
+      for (const auto &layer : composition->allLayerRef()) {
+        if (!layer) continue;
+        const QByteArray serialized =
+            QJsonDocument(layer->toJson()).toJson(QJsonDocument::Compact);
+        if (QString::fromUtf8(serialized).contains(filePath, Qt::CaseInsensitive)) {
+          references.push_back(QStringLiteral("%1 (%2)")
+                                   .arg(layer->layerName(), layer->id().toString()));
+        }
+      }
+    }
+    QMessageBox::information(
+        this, QStringLiteral("Find References"),
+        references.isEmpty()
+            ? QStringLiteral("No references found in the current composition.")
+            : QStringLiteral("References in the current composition:\n\n%1")
+                  .arg(references.join(QStringLiteral("\n"))));
+  });
+
   if (filePath.toLower().endsWith(QStringLiteral(".mask.json"))) {
     addAction(frequentMenu, QStringLiteral("Apply Mask Preset to Selected Layer"), [this, filePath]() {
       auto* app = ArtifactApplicationManager::instance();
