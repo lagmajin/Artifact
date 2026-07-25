@@ -1,5 +1,7 @@
 # 3D Transform Gizmo Implementation Milestone (2026-03-25)
 
+**Status:** GIZ-1〜4 implemented, GIZ-5 and runtime verification pending
+
 `ArtifactCompositionEditor` で、3Dレイヤーや3D空間内のオブジェクトを直感的に操作するための **3D Manipulator (Gizmo)** を導入するマイルストーン。
 Blender, After Effects, Unity 等の標準的な操作体系に準拠し、X/Y/Z軸の移動・回転・拡大縮小をサポートする。
 
@@ -111,3 +113,11 @@ Blender, After Effects, Unity 等の標準的な操作体系に準拠し、X/Y/Z
 - 各軸をドラッグして、位置・回転・拡大縮小が意図通りに変化する
 - カメラを回しても、Gizmo が常に正しい方向を向き、サイズが適切に保たれる
 - 操作が Undo 可能である
+
+## Implementation Status (2026-07-25)
+
+- GIZ-1: 3D axis / plane / screen handles are rendered with camera matrices and screen-space-aware scale.
+- GIZ-2: ray-based axis, plane, screen, and rotation-ring hit testing is connected to the Composition Render Controller.
+- GIZ-3: constrained translation, rotation, and scale drag operations are applied to the selected 3D layer and recorded through the existing undo path.
+- GIZ-4: 2D/3D context switching, depth visibility, hover state, and controller input routing are connected.
+- GIZ-5 の数値オーバーレイ等の高度な視覚フィードバックと実機確認は未完了。
