@@ -1483,7 +1483,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       button->setObjectName(QStringLiteral("layerStateToggleButton"));
       button->setChecked(property->getValue().toBool());
       button->setCursor(Qt::PointingHandCursor);
-      button->setMinimumWidth(56);
+      button->setMinimumWidth(Accessibility::scaledSize(56));
       stateLayout->addWidget(button);
       QObject::connect(button, &QToolButton::toggled, stateRow,
                        [this, propertyName = QString::fromLatin1(toggleDef.propertyName)](bool checked) {
