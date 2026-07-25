@@ -244,6 +244,21 @@ private:
   bool firstRedo_ = true;
 };
 
+bool copyAssetTree(const QString& sourcePath, const QString& destinationPath) {
+  const QFileInfo sourceInfo(sourcePath);
+  if (sourceInfo.isFile()) return QFile::copy(sourcePath, destinationPath);
+  if (!sourceInfo.isDir() || !QDir().mkpath(destinationPath)) return false;
+  const QDir sourceDir(sourcePath);
+  for (const QFileInfo& entry : sourceDir.entryInfoList(QDir::NoDotAndDotDot |
+                                                        QDir::AllEntries)) {
+    if (!copyAssetTree(entry.absoluteFilePath(),
+                       QDir(destinationPath).filePath(entry.fileName()))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 class DeleteAssetFileCommand final : public UndoCommand {
 public:
   DeleteAssetFileCommand(std::shared_ptr<ArtifactProject> project,
@@ -258,14 +273,18 @@ public:
 
   void undo() override {
     if (QFileInfo::exists(backupPath_) && !QFileInfo::exists(path_) &&
-        QFile::copy(backupPath_, path_) && project_) {
+        copyAssetTree(backupPath_, path_) && project_) {
       project_->addAssetFromPath(path_);
     }
   }
 
   void redo() override {
     if (!QFileInfo::exists(path_)) return;
-    if (QFile::copy(path_, backupPath_) && QFile::remove(path_) && project_) {
+    const bool copied = copyAssetTree(path_, backupPath_);
+    const bool removed = QFileInfo(path_).isDir()
+                             ? QDir(path_).removeRecursively()
+                             : QFile::remove(path_);
+    if (copied && removed && project_) {
       project_->removeAssetByPath(path_);
     }
   }
@@ -4319,17 +4338,11 @@ void ArtifactAssetBrowser::Impl::deleteSelected()
                            ? ArtifactProjectService::instance()->getCurrentProjectSharedPtr()
                            : std::shared_ptr<ArtifactProject>{};
   for (const QString& path : paths) {
-    QFileInfo fi(path);
-    if (fi.isDir()) {
-      if (QDir(path).removeRecursively()) {
-        ++deletedCount;
-      }
-    } else {
-      UndoManager::instance()->push(
-          std::make_unique<DeleteAssetFileCommand>(project, path));
-      if (!QFileInfo::exists(path)) {
-        ++deletedCount;
-      }
+    if (!QFileInfo::exists(path)) continue;
+    UndoManager::instance()->push(
+        std::make_unique<DeleteAssetFileCommand>(project, path));
+    if (!QFileInfo::exists(path)) {
+      ++deletedCount;
     }
   }
 
