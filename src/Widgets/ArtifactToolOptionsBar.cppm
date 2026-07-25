@@ -633,6 +633,8 @@ void ArtifactToolOptionsBar::Impl::connectSignals() {
 
 ArtifactToolOptionsBar::ArtifactToolOptionsBar(QWidget *parent)
     : QWidget(parent), impl_(new Impl(this)) {
+  setAccessibleName(QStringLiteral("Tool Options"));
+  setAccessibleDescription(QStringLiteral("Adjust options for the active editing tool"));
   setMinimumHeight(32);
   setMaximumHeight(40);
 
