@@ -1681,6 +1681,19 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       channelLayout->setContentsMargins(10, 8, 10, 8);
       channelLayout->setSpacing(4);
       applyPropertySectionBox(channelBox);
+      auto *keyAllButton = new QPushButton(QStringLiteral("Key All"), channelBox);
+      keyAllButton->setToolTip(QStringLiteral(
+          "Insert keyframes for all visible Channel Box properties"));
+      QObject::connect(keyAllButton, &QPushButton::clicked, channelBox,
+                       [layer, channelProperties, currentLayerTime]() {
+                         if (!layer) return;
+                         const auto time = currentLayerTime();
+                         for (const auto &property : channelProperties) {
+                           if (property) property->addKeyFrame(time, property->getValue());
+                         }
+                         notifyLayerPropertyAnimationChanged(layer);
+                       });
+      channelLayout->addWidget(keyAllButton);
       std::vector<ArtifactPropertyEditorRowWidget *> channelRows;
       addRowsFromProperties(
           channelBox, channelLayout, channelProperties, filterText,
