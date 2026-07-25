@@ -129,8 +129,8 @@ bool tryComputeEasyEaseHandles(const std::vector<ArtifactCore::KeyFrame>& keyfra
     if (d1 <= 0.0 || d2 <= 0.0) {
         return false;
     }
-    const double v1 = curVal - prevVal;
-    const double v2 = nextVal - curVal;
+    const double v1 = (curVal - prevVal) / d1;
+    const double v2 = (nextVal - curVal) / d2;
 
     const double valueSpan = nextVal - prevVal;
     const double vEps = 1e-6;
@@ -141,20 +141,18 @@ bool tryComputeEasyEaseHandles(const std::vector<ArtifactCore::KeyFrame>& keyfra
     // Keep control-point coordinates in the normalized segment space. The
     // neighboring value deltas provide the local velocity estimate.
     float inX = 1.0f / 3.0f;
-    float inY = static_cast<float>(v1 / (3.0 * valueSpan));
+    // Convert neighboring velocities into the current segment's normalized
+    // value/time space. This keeps unevenly spaced keyframes velocity-aware.
+    float inY = static_cast<float>(v1 * d2 / (3.0 * valueSpan));
     float outX = 2.0f / 3.0f;
-    float outY = static_cast<float>(1.0 - v2 / (3.0 * valueSpan));
+    float outY = static_cast<float>(1.0 - v2 * d2 / (3.0 * valueSpan));
     inY = std::clamp(inY, -2.0f, 2.0f);
     outY = std::clamp(outY, -2.0f, 2.0f);
 
-    if (easeIn) {
-        inY *= 0.0f;
-        inX = std::min(inX, 0.33f);
-    }
-    if (easeOut) {
-        outY *= 0.0f;
-        outX = std::max(outX, 0.67f);
-    }
+    // EaseIn/EaseOut select which side of the current keyframe is affected;
+    // neither side should discard the velocity-derived tangent.
+    if (easeIn) inX = std::min(inX, 0.33f);
+    if (easeOut) outX = std::max(outX, 0.67f);
 
     outCp1x = inX;
     outCp1y = inY;
