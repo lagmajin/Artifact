@@ -661,6 +661,8 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
   setFocusPolicy(Qt::StrongFocus);
   setAccessibleName(QStringLiteral("Property Editor"));
   setAccessibleDescription(QStringLiteral("Edit properties for the selected layer or effect"));
+  auto *focusFrame = new QFocusFrame(this);
+  focusFrame->setWidget(this);
   setMinimumWidth(360);
   setWidgetResizable(true);
   setFrameShape(QFrame::NoFrame);

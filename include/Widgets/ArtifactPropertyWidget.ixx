@@ -34,6 +34,7 @@
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QScrollArea>
+#include <QFocusFrame>
 #include <QGroupBox>
 #include <QLabel>
 #include <QSet>
