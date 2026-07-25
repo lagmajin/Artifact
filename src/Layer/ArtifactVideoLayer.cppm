@@ -2207,12 +2207,11 @@ QString ArtifactVideoLayer::proxyPath() const
 
 bool ArtifactVideoLayer::generateProxy(ProxyQuality quality)
 {
-    if (quality == ProxyQuality::None || quality == ProxyQuality::Full ||
+    if (quality == ProxyQuality::None ||
         impl_->sourcePath_.trimmed().isEmpty()) {
         return false;
     }
-    const auto serviceQuality = quality == ProxyQuality::Quarter
-        ? ProxyServiceQuality::Quarter : ProxyServiceQuality::Half;
+    const auto serviceQuality = static_cast<ProxyServiceQuality>(quality);
     const QString path = ArtifactProxyManager::instance()->generateProxy(
         impl_->sourcePath_, serviceQuality);
     if (path.isEmpty()) return false;
@@ -2234,8 +2233,9 @@ QString ArtifactProxyManager::proxyDirectory(const QString& sourcePath) {
 QString ArtifactProxyManager::proxyFilePath(const QString& sourcePath,
                                             ProxyServiceQuality quality) {
     const QFileInfo info(sourcePath);
-    const QString suffix = quality == ProxyServiceQuality::Half
-        ? QStringLiteral("half")
+    const QString suffix = quality == ProxyServiceQuality::Full
+        ? QStringLiteral("full")
+        : quality == ProxyServiceQuality::Half ? QStringLiteral("half")
         : quality == ProxyServiceQuality::Quarter ? QStringLiteral("quarter")
                                                   : QStringLiteral("eighth");
     return QDir(proxyDirectory(sourcePath)).filePath(
@@ -2248,7 +2248,8 @@ QString ArtifactProxyManager::generateProxy(const QString& sourcePath,
         !QFileInfo::exists(sourcePath)) return {};
     const QString output = proxyFilePath(sourcePath, quality);
     if (!QDir().mkpath(proxyDirectory(sourcePath))) return {};
-    const double scale = quality == ProxyServiceQuality::Half ? 0.5
+    const double scale = quality == ProxyServiceQuality::Full ? 1.0
+                       : quality == ProxyServiceQuality::Half ? 0.5
                        : quality == ProxyServiceQuality::Quarter ? 0.25 : 0.125;
     QProcess process;
     QStringList args{QStringLiteral("-y"), QStringLiteral("-i"), sourcePath,

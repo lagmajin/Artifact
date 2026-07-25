@@ -6272,8 +6272,9 @@ public:
             const QString serviceOut = video
                 ? ArtifactProxyManager::proxyFilePath(
                     src.absoluteFilePath(),
-                    scale <= 0.25 ? ProxyServiceQuality::Quarter
-                                  : ProxyServiceQuality::Half)
+                    scale >= 0.9 ? ProxyServiceQuality::Full
+                    : scale <= 0.25 ? ProxyServiceQuality::Quarter
+                                    : ProxyServiceQuality::Half)
                 : out;
             proxyJobs_.push_back({src.absoluteFilePath(), serviceOut, scale});
         }
@@ -6309,8 +6310,10 @@ public:
                                        QStringLiteral("webm"), QStringLiteral("m4v")}
                               .contains(suffix);
         if (video) {
-            const auto quality = job.scaleFactor <= 0.25
-                ? ProxyServiceQuality::Quarter : ProxyServiceQuality::Half;
+            const auto quality = job.scaleFactor >= 0.9
+                ? ProxyServiceQuality::Full
+                : job.scaleFactor <= 0.25 ? ProxyServiceQuality::Quarter
+                                          : ProxyServiceQuality::Half;
             const QString generated = ArtifactProxyManager::instance()->generateProxy(
                 job.inputPath, quality);
             if (!generated.isEmpty()) {
