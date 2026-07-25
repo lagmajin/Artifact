@@ -6119,6 +6119,8 @@ void ArtifactInspectorWidget::keyPressEvent(QKeyEvent* event)
 ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     : QScrollArea(parent), impl_(new Impl()) {
   setFocusPolicy(Qt::StrongFocus);
+  setAccessibleName(QStringLiteral("Inspector"));
+  setAccessibleDescription(QStringLiteral("Inspect and edit the selected layer and composition"));
   // メインレイアウト
   auto mainLayout = new QVBoxLayout();
   impl_->containerWidget = new QWidget();
