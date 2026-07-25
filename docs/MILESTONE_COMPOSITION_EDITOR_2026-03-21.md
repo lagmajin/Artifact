@@ -1,5 +1,7 @@
 # Composition Editor Milestone (2026-03-21)
 
+**Status:** Core editor workflow implemented; smart-guide/pivot-space extensions and runtime verification pending
+
 `コンポジションを開く -> レイヤーを見ながら編集する -> セーフエリアやグリッドを切り替える -> タイムラインと同期する`
 という日常導線を、破綻なく使えるレベルまで固めるためのマイルストーン。
 
