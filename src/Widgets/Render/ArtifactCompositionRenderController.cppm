@@ -21,6 +21,7 @@ module;
 #include <QFont>
 
 #include <QFontMetrics>
+#include <QFileInfo>
 
 #include <QFuture>
 
@@ -9747,6 +9748,8 @@ public:
   QString audioWaveformCacheSourcePath_;
   std::vector<float> audioWaveformCachePeaks_;
   std::vector<float> audioWaveformCacheRms_;
+  qint64 audioWaveformCacheFileSize_ = -1;
+  qint64 audioWaveformCacheModifiedMs_ = -1;
 
   int onionSkinFrameCount_ = 2;
 
@@ -26460,11 +26463,20 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
                               ? dynamic_cast<ArtifactAudioLayer *>(selectedLayer.get())
                               : nullptr) {
     const QString sourcePath = audioLayer->sourcePath();
-    if (sourcePath != audioWaveformCacheSourcePath_) {
+    const QFileInfo sourceInfo(sourcePath);
+    const qint64 fileSize = sourceInfo.exists() ? sourceInfo.size() : -1;
+    const qint64 modifiedMs = sourceInfo.exists()
+                                  ? sourceInfo.lastModified().toMSecsSinceEpoch()
+                                  : -1;
+    if (sourcePath != audioWaveformCacheSourcePath_ ||
+        fileSize != audioWaveformCacheFileSize_ ||
+        modifiedMs != audioWaveformCacheModifiedMs_) {
       const auto waveform = audioLayer->buildWaveformData(256);
       audioWaveformCachePeaks_.assign(waveform.peaks.cbegin(), waveform.peaks.cend());
       audioWaveformCacheRms_.assign(waveform.rms.cbegin(), waveform.rms.cend());
       audioWaveformCacheSourcePath_ = sourcePath;
+      audioWaveformCacheFileSize_ = fileSize;
+      audioWaveformCacheModifiedMs_ = modifiedMs;
     }
     drawAudioWaveformOverlay(renderer_.get(), audioWaveformCachePeaks_,
                              audioWaveformCacheRms_, cw, ch);
@@ -26473,6 +26485,8 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
     audioWaveformCacheSourcePath_.clear();
     audioWaveformCachePeaks_.clear();
     audioWaveformCacheRms_.clear();
+    audioWaveformCacheFileSize_ = -1;
+    audioWaveformCacheModifiedMs_ = -1;
   }
 
   renderer_->setUseExternalMatrices(false);
