@@ -1611,7 +1611,9 @@ ArtifactAssetBrowser::Impl::~Impl()
           lower.endsWith(".gif") || lower.endsWith(".tga") ||
           lower.endsWith(".tif") || lower.endsWith(".tiff") ||
           lower.endsWith(".hdr") || lower.endsWith(".exr") ||
-          lower.endsWith(".webp");
+          lower.endsWith(".webp") || lower.endsWith(".ico") ||
+          lower.endsWith(".dds") || lower.endsWith(".ktx") ||
+          lower.endsWith(".psd") || lower.endsWith(".psb");
   }
   else if (currentFileTypeFilter_ == "videos") {
    return lower.endsWith(".mp4") || lower.endsWith(".mov") ||
@@ -2141,7 +2143,12 @@ void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QStr
           || suffix == QStringLiteral("tiff")
           || suffix == QStringLiteral("hdr")
           || suffix == QStringLiteral("exr")
-          || suffix == QStringLiteral("webp");
+          || suffix == QStringLiteral("webp")
+          || suffix == QStringLiteral("ico")
+          || suffix == QStringLiteral("dds")
+          || suffix == QStringLiteral("ktx")
+          || suffix == QStringLiteral("psd")
+          || suffix == QStringLiteral("psb");
     };
     const auto isVideoExt = [&]() {
       return suffix == QStringLiteral("mp4")
@@ -3774,7 +3781,11 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    if (lowerName.endsWith(".png") || lowerName.endsWith(".jpg") ||
        lowerName.endsWith(".jpeg") || lowerName.endsWith(".bmp") ||
        lowerName.endsWith(".gif") || lowerName.endsWith(".tga") ||
-       lowerName.endsWith(".tiff") || lowerName.endsWith(".exr")) {
+       lowerName.endsWith(".tiff") || lowerName.endsWith(".webp") ||
+       lowerName.endsWith(".hdr") || lowerName.endsWith(".exr") ||
+       lowerName.endsWith(".ico") || lowerName.endsWith(".dds") ||
+       lowerName.endsWith(".ktx") || lowerName.endsWith(".psd") ||
+       lowerName.endsWith(".psb")) {
     QSize imageSize;
     QString imageError;
     const QImage imagePreview = loadImageThumbnailViaOIIO(filePath, QSize(), &imageError);

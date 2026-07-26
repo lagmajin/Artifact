@@ -1044,6 +1044,15 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
       motionDynamicsEnabled_;
   componentHost_.upsert(std::move(motion));
 
+  auto sequencePlayer = makeSequencePlayerComponentDescriptor(false);
+  sequencePlayer.settings[QStringLiteral("sequenceSource")] =
+      QStringLiteral("inline");
+  sequencePlayer.settings[QStringLiteral("targetScope")] =
+      QStringLiteral("children");
+  sequencePlayer.settings[QStringLiteral("trigger")] =
+      QStringLiteral("on-start");
+  componentHost_.upsert(std::move(sequencePlayer));
+
   auto collision =
       makeCollisionComponentDescriptor(collisionComponentEnabled_);
   collision.settings[QStringLiteral("shape")] = collisionShape_;

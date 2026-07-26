@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QAbstractItemModel>
 #include <QString>
@@ -90,7 +90,7 @@ namespace Artifact {
 
   static bool isImageFile(const QString& fileName) {
     const QString ext = QFileInfo(fileName).suffix().toLower();
-    return ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "tif" || ext == "tiff" || ext == "bmp" || ext == "exr" || ext == "tga" || ext == "psd";
+    return ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "tif" || ext == "tiff" || ext == "bmp" || ext == "gif" || ext == "exr" || ext == "hdr" || ext == "tga" || ext == "webp" || ext == "ico" || ext == "dds" || ext == "ktx" || ext == "psd" || ext == "psb";
   }
   static bool isVideoFile(const QString& fileName) {
     const QString ext = QFileInfo(fileName).suffix().toLower();

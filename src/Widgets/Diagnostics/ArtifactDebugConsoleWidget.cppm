@@ -153,6 +153,7 @@ public:
     QDateTimeEdit* endTimeEdit_ = nullptr;
     QCheckBox* timeFilterCheck_ = nullptr;
     QComboBox* contextFilterCombo_ = nullptr;
+    QComboBox* categoryFilterCombo_ = nullptr;
     QToolButton* saveFiltersBtn_ = nullptr;
     QToolButton* loadFiltersBtn_ = nullptr;
     QLabel* fontSizeLabel_ = nullptr;
@@ -185,6 +186,8 @@ public:
     QStringList contextFilters_;
     QStringList availableContexts_;
     bool useContextFilter_ = false;
+    QString categoryFilter_;
+    QStringList availableCategories_;
     int consoleFontPointSize_ = 12;
     int pendingWhilePaused_ = 0;
     int totalDebugCount_ = 0;
@@ -334,6 +337,19 @@ public:
             contextFilterCombo_->setPalette(pal);
         }
         toolbarLayout->addWidget(contextFilterCombo_);
+
+        QLabel* categoryLabel = new QLabel("Category:");
+        categoryLabel->setPalette([&]() {
+            QPalette pal = categoryLabel->palette();
+            pal.setColor(QPalette::WindowText, muted);
+            return pal;
+        }());
+        toolbarLayout->addWidget(categoryLabel);
+
+        categoryFilterCombo_ = new QComboBox();
+        categoryFilterCombo_->addItem("All", QString());
+        categoryFilterCombo_->setPalette(contextFilterCombo_->palette());
+        toolbarLayout->addWidget(categoryFilterCombo_);
 
         saveFiltersBtn_ = createToolButton("MaterialVS/colored/E3E3E3/save.svg", "Save current filters");
         toolbarLayout->addWidget(saveFiltersBtn_);
@@ -505,6 +521,12 @@ public:
             QString selected = contextFilterCombo_->itemData(index).toString();
             useContextFilter_ = !selected.isEmpty();
             contextFilters_ = useContextFilter_ ? QStringList{selected} : QStringList{};
+            saveFilterPreset();
+            refreshList();
+        });
+
+        QObject::connect(categoryFilterCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), owner_, [this](int index) {
+            categoryFilter_ = categoryFilterCombo_->itemData(index).toString();
             saveFilterPreset();
             refreshList();
         });
@@ -739,6 +761,15 @@ public:
         if (useContextFilter_ && !contextFilters_.contains(context)) {
             return false;
         }
+        if (!categoryFilter_.isEmpty()) {
+            const QString categoryPrefix = QStringLiteral("category=");
+            const int start = context.indexOf(categoryPrefix);
+            const int end = start >= 0 ? context.indexOf(QChar(' '), start) : -1;
+            const QString category = start >= 0
+                ? context.mid(start + categoryPrefix.size(), end >= 0 ? end - start - categoryPrefix.size() : -1)
+                : QString();
+            if (category != categoryFilter_) return false;
+        }
         if (importantOnly_ && !(level == LogLevel::Warning || level == LogLevel::Error || level == LogLevel::Fatal)) {
             return false;
         }
@@ -773,15 +804,28 @@ public:
     }
 
     void recountTotalsFromLogger() {
+        Logger::instance()->drainFastLogs();
         totalDebugCount_ = 0;
         totalInfoCount_ = 0;
         totalWarningCount_ = 0;
         totalErrorCount_ = 0;
         availableContexts_.clear();
+        availableCategories_.clear();
         const auto logs = Logger::instance()->getLogs();
         for (const auto& log : logs) {
             if (!log.context.isEmpty() && !availableContexts_.contains(log.context)) {
                 availableContexts_.append(log.context);
+            }
+            const QString categoryPrefix = QStringLiteral("category=");
+            const int categoryStart = log.context.indexOf(categoryPrefix);
+            if (categoryStart >= 0) {
+                const int categoryEnd = log.context.indexOf(QChar(' '), categoryStart);
+                const QString category = log.context.mid(
+                    categoryStart + categoryPrefix.size(),
+                    categoryEnd >= 0 ? categoryEnd - categoryStart - categoryPrefix.size() : -1);
+                if (!category.isEmpty() && !availableCategories_.contains(category)) {
+                    availableCategories_.append(category);
+                }
             }
             if (log.level == LogLevel::Debug) {
                 ++totalDebugCount_;
@@ -794,6 +838,16 @@ public:
             }
         }
         updateContextCombo();
+        if (categoryFilterCombo_) {
+            const QSignalBlocker blocker(categoryFilterCombo_);
+            categoryFilterCombo_->clear();
+            categoryFilterCombo_->addItem("All", QString());
+            for (const QString& category : availableCategories_) {
+                categoryFilterCombo_->addItem(category, category);
+            }
+            const int index = categoryFilterCombo_->findData(categoryFilter_);
+            categoryFilterCombo_->setCurrentIndex(index >= 0 ? index : 0);
+        }
     }
 
     void updateContextCombo() {
@@ -843,6 +897,7 @@ public:
         settings.setValue("endTime", endTime_);
         settings.setValue("useContextFilter", useContextFilter_);
         settings.setValue("contextFilters", contextFilters_);
+        settings.setValue("categoryFilter", categoryFilter_);
         settings.setValue("importantOnly", importantOnly_);
         settings.setValue("searchFilter", searchFilter_);
         settings.endGroup();
@@ -868,6 +923,7 @@ public:
         endTime_ = legacy("endTime", QDateTime::currentDateTime()).toDateTime();
         useContextFilter_ = legacy("useContextFilter", false).toBool();
         contextFilters_ = legacy("contextFilters", QStringList{}).toStringList();
+        categoryFilter_ = legacy("categoryFilter", QString{}).toString();
         importantOnly_ = legacy("importantOnly", false).toBool();
         searchFilter_ = legacy("searchFilter", QString{}).toString();
         regexFilter_.setPattern(searchFilter_);
@@ -1218,6 +1274,7 @@ public:
             ? QStringLiteral("%1 - %2").arg(startTime_.toString("yyyy-MM-dd hh:mm:ss"), endTime_.toString("yyyy-MM-dd hh:mm:ss"))
             : QStringLiteral("off"));
         parts << QStringLiteral("Context: %1").arg(useContextFilter_ && !contextFilters_.isEmpty() ? contextFilters_.join(", ") : QStringLiteral("all"));
+        parts << QStringLiteral("Category: %1").arg(categoryFilter_.isEmpty() ? QStringLiteral("all") : categoryFilter_);
         parts << QStringLiteral("Levels: %1%2%3%4")
             .arg(showDebug_ ? QStringLiteral("D") : QStringLiteral("-"))
             .arg(showInfo_ ? QStringLiteral("I") : QStringLiteral("-"))

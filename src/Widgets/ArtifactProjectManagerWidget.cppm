@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QVector>
 #include <QWidget>
 #include <QFormLayout>
@@ -1118,7 +1118,11 @@ QPixmap projectItemPreviewPixmap(ProjectItem* item, const QSize& targetSize)
         return lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") ||
                lowerPath.endsWith(".jpeg") || lowerPath.endsWith(".bmp") ||
                lowerPath.endsWith(".gif") || lowerPath.endsWith(".tga") ||
-               lowerPath.endsWith(".tiff") || lowerPath.endsWith(".exr");
+               lowerPath.endsWith(".tiff") || lowerPath.endsWith(".webp") ||
+               lowerPath.endsWith(".hdr") || lowerPath.endsWith(".exr") ||
+               lowerPath.endsWith(".ico") || lowerPath.endsWith(".dds") ||
+               lowerPath.endsWith(".ktx") || lowerPath.endsWith(".psd") ||
+               lowerPath.endsWith(".psb");
     };
     const auto isVideoFile = [](const QString& lowerPath) {
         return lowerPath.endsWith(".mp4") || lowerPath.endsWith(".mov") ||
@@ -1189,7 +1193,11 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
         return lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") ||
                lowerPath.endsWith(".jpeg") || lowerPath.endsWith(".bmp") ||
                lowerPath.endsWith(".gif") || lowerPath.endsWith(".tga") ||
-               lowerPath.endsWith(".tiff") || lowerPath.endsWith(".exr");
+               lowerPath.endsWith(".tiff") || lowerPath.endsWith(".webp") ||
+               lowerPath.endsWith(".hdr") || lowerPath.endsWith(".exr") ||
+               lowerPath.endsWith(".ico") || lowerPath.endsWith(".dds") ||
+               lowerPath.endsWith(".ktx") || lowerPath.endsWith(".psd") ||
+               lowerPath.endsWith(".psb");
     };
     const auto isVideoFile = [](const QString& lowerPath) {
         return lowerPath.endsWith(".mp4") || lowerPath.endsWith(".mov") ||

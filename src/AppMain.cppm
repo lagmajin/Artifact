@@ -54,6 +54,7 @@ module;
 #include <QMetaObject>
 #include <QObject>
 #include <QTimer>
+#include <QTimerEvent>
 #include <QThread>
 #include <QUrl>
 #include <QWidget>
@@ -148,6 +149,92 @@ import Artifact.Render.Queue.Service;
 import Core.Diagnostics.SessionLedger;
 import Core.Diagnostics.Trace;
 import Frame.Debug;
+
+namespace {
+
+class ArtifactDebugAgent final : public QObject {
+public:
+  explicit ArtifactDebugAgent(QObject* parent = nullptr)
+      : QObject(parent) {
+    timerId_ = startTimer(100, Qt::PreciseTimer);
+  }
+
+protected:
+  void timerEvent(QTimerEvent* event) override {
+    if (event && event->timerId() == timerId_) {
+      sample();
+      return;
+    }
+    QObject::timerEvent(event);
+  }
+
+private:
+  int timerId_ = 0;
+  qint64 tickCount_ = 0;
+  qint64 lastFrame_ = std::numeric_limits<qint64>::min();
+
+  static QString stateFilePath() {
+    const QString configured = qEnvironmentVariable("ARTIFACT_DEBUG_MCP_STATE_FILE").trimmed();
+    if (!configured.isEmpty()) return configured;
+    const QString root = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+        + QStringLiteral("/ArtifactStudio");
+    QDir().mkpath(root);
+    return root + QStringLiteral("/debug-mcp-state.json");
+  }
+
+  static QString bridgeFilePath() {
+    const QString configured = qEnvironmentVariable("ARTIFACT_DEBUG_BRIDGE_FILE").trimmed();
+    if (!configured.isEmpty()) return configured;
+    const QString root = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+        + QStringLiteral("/ArtifactStudio");
+    QDir().mkpath(root);
+    return root + QStringLiteral("/debug-bridge.json");
+  }
+
+  static QJsonObject readState() {
+    QFile file(stateFilePath());
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    return doc.isObject() ? doc.object() : QJsonObject{};
+  }
+
+  void sample() {
+    auto* playback = Artifact::ArtifactPlaybackService::instance();
+    if (!playback) return;
+
+    const qint64 frame = playback->currentFrame().framePosition();
+    const QString playbackState = playback->isPlaying()
+        ? QStringLiteral("Playing") : QStringLiteral("Paused");
+    QJsonObject snapshot;
+    snapshot.insert(QStringLiteral("timestampMs"), QDateTime::currentMSecsSinceEpoch());
+    snapshot.insert(QStringLiteral("playback"), QJsonObject{
+      {QStringLiteral("state"), playbackState},
+      {QStringLiteral("frame"), frame},
+      {QStringLiteral("previousFrame"), lastFrame_ == std::numeric_limits<qint64>::min()
+          ? frame : lastFrame_}
+    });
+    snapshot.insert(QStringLiteral("agent"), QJsonObject{
+      {QStringLiteral("mode"), QStringLiteral("resident")},
+      {QStringLiteral("checkpoint"), QStringLiteral("playback-tick")},
+      {QStringLiteral("tick"), ++tickCount_}
+    });
+
+    QSaveFile bridge(bridgeFilePath());
+    if (bridge.open(QIODevice::WriteOnly)) {
+      bridge.write(QJsonDocument(snapshot).toJson(QJsonDocument::Compact));
+      bridge.commit();
+    }
+
+    const QJsonObject state = readState();
+    const QJsonObject session = state.value(QStringLiteral("session")).toObject();
+    if (session.value(QStringLiteral("paused")).toBool(false) && playback->isPlaying()) {
+      playback->pause();
+    }
+    lastFrame_ = frame;
+  }
+};
+
+}
 import Artifact.Widgets.RenderCenterWindow;
 import Artifact.Render.Scheduler;
 import Artifact.Contents.Viewer;
@@ -2022,6 +2109,7 @@ int main(int argc, char *argv[]) {
 
   QApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
   QApplication a(argc, argv);
+  ArtifactDebugAgent debugAgent(&a);
   DialogLatencyEventFilter dialogLatencyFilter;
   a.installEventFilter(&dialogLatencyFilter);
   configureQtPaths();

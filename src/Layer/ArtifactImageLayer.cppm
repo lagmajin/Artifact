@@ -175,6 +175,15 @@ QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* 
     return image;
 }
 
+std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> loadFloatImageViaOIIO(const QString& path)
+{
+    auto image = std::make_shared<ArtifactCore::ImageF32x4_RGBA>();
+    if (!image->load(path) || image->isEmpty()) {
+        return {};
+    }
+    return image;
+}
+
 QImage makeMissingImagePlaceholder(const QSize& size = QSize(256, 256), const QString& label = QStringLiteral("Image unavailable"))
 {
     const QSize safeSize = size.isValid() ? size.expandedTo(QSize(64, 64)) : QSize(256, 256);
@@ -221,6 +230,7 @@ public:
     struct PrefetchResult {
         std::uint64_t generation = 0;
         QImage image;
+        std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> floatImage;
     };
     mutable QFuture<PrefetchResult> prefetchFuture_;
     mutable QFutureWatcher<PrefetchResult> prefetchWatcher_;
@@ -236,7 +246,7 @@ public:
             [path, generation]() -> PrefetchResult {
                 ArtifactCore::ScopedThreadName threadName(
                     QStringLiteral("ImageLayer/prefetch:%1").arg(QFileInfo(path).fileName()));
-                return PrefetchResult{generation, loadImageViaOIIO(path)};
+                return PrefetchResult{generation, loadImageViaOIIO(path), loadFloatImageViaOIIO(path)};
             });
         prefetchWatcher_.setFuture(prefetchFuture_);
     }
@@ -280,17 +290,23 @@ ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
             return;
         }
         QImage loaded = result.image;
-        if (!loaded.isNull()) {
-            impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
-            impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
+        if (!loaded.isNull() || result.floatImage) {
+            if (!loaded.isNull()) {
+                impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
+            } else {
+                impl_->cache_ = std::make_shared<QImage>(result.floatImage->toQImage());
+            }
+            impl_->cacheBuffer_ = result.floatImage
+                ? result.floatImage
+                : std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
             const auto version = ArtifactCore::AssetManager::instance().sourceVersion(
                 impl_->sourceAssetId_);
             impl_->cacheBuffer_ = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
                 ArtifactCore::AssetManager::instance().publishDecodedPayload(
                     impl_->sourceAssetId_, version, kImageF32Representation,
                     impl_->cacheBuffer_));
-            impl_->width_ = impl_->cache_->width();
-            impl_->height_ = impl_->cache_->height();
+            impl_->width_ = impl_->cache_ ? impl_->cache_->width() : result.floatImage->width();
+            impl_->height_ = impl_->cache_ ? impl_->cache_->height() : result.floatImage->height();
             setSourceSize(Size_2D(impl_->width_, impl_->height_));
             impl_->sourceCrop_.clampToSource(QSizeF(impl_->width_, impl_->height_));
         }
@@ -839,11 +855,17 @@ QImage ArtifactImageLayer::toQImage() const
         QImage loaded = result.generation == impl_->prefetchGeneration_
             ? result.image
             : QImage();
-        if (!loaded.isNull()) {
-            impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
-            impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
-            impl_->width_  = impl_->cache_->width();
-            impl_->height_ = impl_->cache_->height();
+        if (!loaded.isNull() || result.floatImage) {
+            if (!loaded.isNull()) {
+                impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
+            } else {
+                impl_->cache_ = std::make_shared<QImage>(result.floatImage->toQImage());
+            }
+            impl_->cacheBuffer_ = result.floatImage
+                ? result.floatImage
+                : std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
+            impl_->width_  = impl_->cache_ ? impl_->cache_->width() : result.floatImage->width();
+            impl_->height_ = impl_->cache_ ? impl_->cache_->height() : result.floatImage->height();
         }
         impl_->prefetchDone_ = true;
     }

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <QAbstractButton>
 #include <QAction>
@@ -423,8 +423,8 @@ QString fileDialogFilterForProperty(const QString &propertyName) {
   if (propertyName.contains(QStringLiteral("image"), Qt::CaseInsensitive) ||
       propertyName.endsWith(QStringLiteral("sourcePath"),
                             Qt::CaseInsensitive)) {
-    return QStringLiteral("Image Files (*.png *.jpg *.jpeg *.bmp *.tif *.tiff "
-                          "*.webp *.exr);;All Files (*.*)");
+    return QStringLiteral("Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff "
+                          "*.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;All Files (*.*)");
   }
   return QStringLiteral("All Files (*.*)");
 }

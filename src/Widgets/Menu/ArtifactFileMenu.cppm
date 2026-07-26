@@ -87,10 +87,10 @@ QStringList pruneMissingRecentProjects(const QStringList& paths)
 QString supportedAssetFilter()
 {
     return QStringLiteral(
-        "対応アセット (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.exr *.hdr "
+        "対応アセット (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb "
         "*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.ogg *.aac *.m4a "
         "*.obj *.fbx *.gltf *.glb *.abc *.usd *.usda *.usdc);;"
-        "画像 (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.exr *.hdr);;"
+        "画像 (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;"
         "動画 (*.mp4 *.mov *.mkv *.avi *.webm);;"
         "音声 (*.mp3 *.wav *.flac *.ogg *.aac *.m4a);;"
         "3D (*.obj *.fbx *.gltf *.glb *.abc *.usd *.usda *.usdc)"

@@ -659,6 +659,21 @@ inline LayerComponentDescriptor makeMotionDynamicsComponentDescriptor(
     };
 }
 
+inline LayerComponentDescriptor makeSequencePlayerComponentDescriptor(
+    bool enabled) {
+    return {
+        QStringLiteral("builtin.sequence-player"),
+        QStringLiteral("artifact.component.sequence-player"),
+        1,
+        enabled,
+        LayerComponentPhase::Drive,
+        LayerComponentScope::InstanceSet,
+        350,
+        {},
+        {},
+    };
+}
+
 inline LayerComponentDescriptor makeCollisionComponentDescriptor(bool enabled) {
     return {
         QStringLiteral("builtin.collision"),
