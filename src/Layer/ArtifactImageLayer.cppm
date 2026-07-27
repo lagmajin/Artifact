@@ -667,6 +667,7 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
     if (propertyPath == QStringLiteral("sourceCrop.enabled")) {
         impl_->sourceCrop_.setEnabled(value.toBool());
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.cropX") ||
@@ -690,6 +691,7 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
         impl_->sourceCrop_.setCropRect(rect);
         impl_->sourceCrop_.clampToSource(QSizeF(size.width, size.height));
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.panX") ||
@@ -702,16 +704,19 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
         }
         impl_->sourceCrop_.setPan(pan);
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.zoom")) {
         impl_->sourceCrop_.setZoom(value.toDouble());
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.rotation")) {
         impl_->sourceCrop_.setRotation(value.toDouble());
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.anchorX") ||
@@ -724,11 +729,13 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
         }
         impl_->sourceCrop_.setAnchor(anchor);
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.preserveAspect")) {
         impl_->sourceCrop_.setPreserveAspect(value.toBool());
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     
