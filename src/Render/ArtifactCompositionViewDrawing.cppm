@@ -74,6 +74,16 @@ export struct StaticLayerGpuCacheEntry
   size_t byteSize = 0;
 };
 
+export struct StaticLayerGpuCacheDiagnostics
+{
+  quint64 hitCount = 0;
+  quint64 missCount = 0;
+  int entryCount = 0;
+  size_t totalBytes = 0;
+};
+
+export StaticLayerGpuCacheDiagnostics staticLayerGpuCacheDiagnostics();
+
 export bool layerHasCpuRasterizerWork(ArtifactAbstractLayer* layer);
 export bool layerUsesSurfaceUploadForCompositionView(ArtifactAbstractLayer* layer);
 export bool layerUsesGpuTextureCacheForCompositionView(ArtifactAbstractLayer* layer);
@@ -256,6 +266,17 @@ QHash<QString, StaticLayerGpuCacheEntry> &staticLayerGpuCache()
 {
   static QHash<QString, StaticLayerGpuCacheEntry> cache;
   return cache;
+}
+
+struct StaticLayerGpuCacheCounters {
+  quint64 hitCount = 0;
+  quint64 missCount = 0;
+};
+
+StaticLayerGpuCacheCounters& staticLayerGpuCacheCounters()
+{
+  static StaticLayerGpuCacheCounters counters;
+  return counters;
 }
 
 void trimStaticLayerGpuCache()
@@ -932,6 +953,20 @@ QImage applyMatteStackToSurface(const QImage& surface,
 
 } // namespace
 
+StaticLayerGpuCacheDiagnostics staticLayerGpuCacheDiagnostics()
+{
+  StaticLayerGpuCacheDiagnostics diagnostics;
+  const auto& cache = staticLayerGpuCache();
+  const auto& counters = staticLayerGpuCacheCounters();
+  diagnostics.hitCount = counters.hitCount;
+  diagnostics.missCount = counters.missCount;
+  diagnostics.entryCount = cache.size();
+  for (const auto& entry : cache) {
+    diagnostics.totalBytes += entry.byteSize;
+  }
+  return diagnostics;
+}
+
 void applyRasterizerEffectsAndMasksToSurface(
     ArtifactAbstractLayer* targetLayer, QImage& surface, DetailLevel lod)
 {
@@ -1133,11 +1168,14 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       auto it = staticCache.find(ownerId);
       if (it != staticCache.end() && it->ownerId == ownerId &&
           it->cacheSignature == cacheSignature) {
+        ++staticLayerGpuCacheCounters().hitCount;
         staticCacheEntry = &(*it);
         directProcessedBuffer = staticCacheEntry->processedBuffer;
         if (!staticCacheEntry->processedSurface.isNull()) {
           surface = staticCacheEntry->processedSurface;
         }
+      } else {
+        ++staticLayerGpuCacheCounters().missCount;
       }
     }
 
