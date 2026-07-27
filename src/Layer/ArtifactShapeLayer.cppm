@@ -51,6 +51,26 @@ static ArtifactCore::ShapePath buildShapePath(Artifact::ShapeType shapeType,
                                 float starInnerRadius,
                                 int polygonSides);
 
+static ArtifactCore::ShapePath buildCustomShapePath(
+    const std::vector<Artifact::CustomPathVertex>& vertices,
+    bool closed) {
+ ArtifactCore::ShapePath path;
+ if (vertices.empty()) return path;
+ path.moveTo(vertices.front().pos);
+ for (size_t i = 0; i + 1 < vertices.size(); ++i) {
+  const auto& v0 = vertices[i];
+  const auto& v1 = vertices[i + 1];
+  path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
+ }
+ if (closed && vertices.size() >= 2) {
+  const auto& v0 = vertices.back();
+  const auto& v1 = vertices.front();
+  path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
+  path.close();
+ }
+ return path;
+}
+
 QPointF mapPoint(const QMatrix4x4& transform, const QPointF& point) {
  QVector4D v = transform * QVector4D(static_cast<float>(point.x()),
                                      static_cast<float>(point.y()), 0.0f, 1.0f);
@@ -1354,21 +1374,8 @@ QRectF ArtifactShapeLayer::localBounds() const
     bounds = bounds.isNull() ? pathBounds : bounds.united(pathBounds);
    }
   } else if (impl_->customPathVertices_.size() >= 3) {
-   ShapePath path;
-   path.moveTo(impl_->customPathVertices_.front().pos);
-   const size_t count = impl_->customPathVertices_.size();
-   for (size_t i = 0; i + 1 < count; ++i) {
-    const auto& v0 = impl_->customPathVertices_[i];
-    const auto& v1 = impl_->customPathVertices_[i + 1];
-    path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
-   }
-   if (impl_->customPathClosed_) {
-    const auto& v0 = impl_->customPathVertices_.back();
-    const auto& v1 = impl_->customPathVertices_.front();
-    path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
-    path.close();
-   }
-   bounds = path.boundingRect();
+   bounds = buildCustomShapePath(impl_->customPathVertices_,
+                                 impl_->customPathClosed_).boundingRect();
   } else if (impl_->customPathVertices_.size() >= 2) {
    std::vector<QPointF> pts;
    pts.reserve(impl_->customPathVertices_.size());
@@ -1449,24 +1456,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
     }
 
     if (impl->customPathVertices_.size() >= 3) {
-     ShapePath path;
-     path.moveTo(impl->customPathVertices_.front().pos);
-     const size_t count = impl->customPathVertices_.size();
-     for (size_t i = 0; i + 1 < count; ++i) {
-      const auto& v0 = impl->customPathVertices_[i];
-      const auto& v1 = impl->customPathVertices_[i + 1];
-      path.cubicTo(v0.pos + v0.outTangent,
-                   v1.pos + v1.inTangent,
-                   v1.pos);
-     }
-     if (impl->customPathClosed_) {
-      const auto& v0 = impl->customPathVertices_.back();
-      const auto& v1 = impl->customPathVertices_.front();
-      path.cubicTo(v0.pos + v0.outTangent,
-                   v1.pos + v1.inTangent,
-                   v1.pos);
-      path.close();
-     }
+     const ShapePath path = buildCustomShapePath(
+         impl->customPathVertices_, impl->customPathClosed_);
 
      const auto segments = path.flatten();
      std::vector<QPointF> mapped;
