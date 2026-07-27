@@ -744,7 +744,7 @@ void ArtifactImageLayer::setFromCvMat(const cv::Mat& mat)
         impl_->width_ = 0;
         impl_->height_ = 0;
         setSourceSize(Size_2D(0, 0));
-        setDirty(LayerDirtyFlag::Content);
+        setDirty(LayerDirtyFlag::Source);
         Q_EMIT changed();
         return;
     }
@@ -977,7 +977,7 @@ void ArtifactImageLayer::setFromQImage(const QImage& image)
         impl_->width_ = 0;
         impl_->height_ = 0;
         setSourceSize(Size_2D(0, 0));
-        setDirty(LayerDirtyFlag::Content);
+        setDirty(LayerDirtyFlag::Source);
         Q_EMIT changed();
         return;
     }
@@ -990,7 +990,7 @@ void ArtifactImageLayer::setFromQImage(const QImage& image)
 
     setSourceSize(Size_2D(image.width(), image.height()));
     impl_->sourceCrop_.clampToSource(QSizeF(image.width(), image.height()));
-    setDirty(LayerDirtyFlag::Content);
+    setDirty(LayerDirtyFlag::Source);
     Q_EMIT changed();
 }
 
