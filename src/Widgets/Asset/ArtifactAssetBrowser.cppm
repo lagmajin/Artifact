@@ -2834,6 +2834,16 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     if (a.isFolder && !b.isFolder) return true;
     if (!a.isFolder && b.isFolder) return false;
 
+    if (a.isSequenceFrame && !b.isSequenceFrame &&
+        a.sequenceParentPath == b.path.toQString()) return false;
+    if (!a.isSequenceFrame && b.isSequenceFrame &&
+        a.path.toQString() == b.sequenceParentPath) return true;
+    if (a.isSequenceFrame && b.isSequenceFrame &&
+        a.sequenceParentPath == b.sequenceParentPath &&
+        a.sequenceFrameNumber != b.sequenceFrameNumber) {
+     return a.sequenceFrameNumber < b.sequenceFrameNumber;
+    }
+
     if (currentSortBy_ == "name") {
      int result = a.name.toQString().compare(b.name.toQString(), Qt::CaseInsensitive);
      return sortAscending_ ? result < 0 : result > 0;
