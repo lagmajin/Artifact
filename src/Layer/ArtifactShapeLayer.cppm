@@ -805,13 +805,21 @@ public:
       const float cy = static_cast<float>(h) * fillGradientCenterY_;
       const float radius = static_cast<float>(std::max(w, h)) * fillGradientRadius_;
       QGradient* grad = nullptr;
-      if (fillType_ == ArtifactSolidFillType::LinearGradient) {
+      if (fillType_ == ArtifactSolidFillType::LinearGradient ||
+          fillType_ == ArtifactSolidFillType::RepeatingGradient ||
+          fillType_ == ArtifactSolidFillType::MirroredGradient) {
        const float rad = fillGradientAngleDegrees_ * static_cast<float>(M_PI) / 180.0f;
        const float dx = std::cos(rad) * static_cast<float>(w) * 0.5f;
        const float dy = std::sin(rad) * static_cast<float>(h) * 0.5f;
        const QPointF start(static_cast<qreal>(cx - dx), static_cast<qreal>(cy - dy));
        const QPointF end(static_cast<qreal>(cx + dx), static_cast<qreal>(cy + dy));
-       grad = new QLinearGradient(start, end);
+       auto* linear = new QLinearGradient(start, end);
+       if (fillType_ == ArtifactSolidFillType::RepeatingGradient) {
+        linear->setSpread(QGradient::RepeatSpread);
+       } else if (fillType_ == ArtifactSolidFillType::MirroredGradient) {
+        linear->setSpread(QGradient::ReflectSpread);
+       }
+       grad = linear;
       } else if (fillType_ == ArtifactSolidFillType::RadialGradient) {
        auto* rg = new QRadialGradient(QPointF(cx, cy), radius);
        grad = rg;
