@@ -1355,11 +1355,20 @@ QRectF ArtifactShapeLayer::localBounds() const
     bounds = bounds.isNull() ? pathBounds : bounds.united(pathBounds);
    }
   } else if (impl_->customPathVertices_.size() >= 3) {
-   const QPainterPath path = buildLayerPath(
-       impl_->shapeType_, impl_->width_, impl_->height_, impl_->cornerRadius_,
-       impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_,
-       impl_->customPolygonPoints_, impl_->customPolygonClosed_,
-       impl_->customPathVertices_, impl_->customPathClosed_);
+   ShapePath path;
+   path.moveTo(impl_->customPathVertices_.front().pos);
+   const size_t count = impl_->customPathVertices_.size();
+   for (size_t i = 0; i + 1 < count; ++i) {
+    const auto& v0 = impl_->customPathVertices_[i];
+    const auto& v1 = impl_->customPathVertices_[i + 1];
+    path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
+   }
+   if (impl_->customPathClosed_) {
+    const auto& v0 = impl_->customPathVertices_.back();
+    const auto& v1 = impl_->customPathVertices_.front();
+    path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
+    path.close();
+   }
    bounds = path.boundingRect();
   } else if (impl_->customPathVertices_.size() >= 2) {
    std::vector<QPointF> pts;
