@@ -559,8 +559,9 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
   }
 
   if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
-    key += QStringLiteral("|image|src=%1|fit=%2|size=%3x%4")
+    key += QStringLiteral("|image|src=%1|rev=%2|fit=%3|size=%4x%5")
                .arg(imageLayer->sourcePath())
+               .arg(imageLayer->sourceVersion())
                .arg(imageLayer->fitToLayer() ? 1 : 0)
                .arg(surface.width())
                .arg(surface.height());
