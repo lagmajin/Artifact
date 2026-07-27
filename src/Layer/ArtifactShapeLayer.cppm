@@ -1210,6 +1210,7 @@ void ArtifactShapeLayer::setCustomPathVertices(const std::vector<CustomPathVerte
 void ArtifactShapeLayer::clearCustomPath() {
   if (impl_->customPathVertices_.empty()) return;
   impl_->customPathVertices_.clear();
+  impl_->customPathClosed_ = true;
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
