@@ -35,6 +35,9 @@
 - `PrimitiveRenderer2D`
   - `QImage.cacheKey()` ベースで texture を部分的に reuse
 
+現行実装では、静止レイヤー用キャッシュに最大エントリ数と総バイト上限を設け、
+`lastFrameNumber` が古いエントリから bounded eviction する。
+
 まではあるが、static layer を跨いだ `GPU texture` の明示的な cache policy はない。
 
 そのため、見た目が変わらない静止レイヤーでも、
