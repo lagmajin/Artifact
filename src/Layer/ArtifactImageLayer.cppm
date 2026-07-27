@@ -343,9 +343,10 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         setSourceSize(Size_2D(impl_->width_, impl_->height_));
         ArtifactCore::FallbackTracker::instance()->record(
             ArtifactCore::FallbackCategory::Image,
-            ArtifactCore::FallbackAction::Fallback,
+        ArtifactCore::FallbackAction::Fallback,
             path, "placeholder",
             QStringLiteral("Image missing, using placeholder"));
+        Q_EMIT changed();
         return false;
     }
     const OIIO::ImageSpec& spec = headerOnly.spec();
@@ -361,9 +362,10 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         setSourceSize(Size_2D(impl_->width_, impl_->height_));
         ArtifactCore::FallbackTracker::instance()->record(
             ArtifactCore::FallbackCategory::Image,
-            ArtifactCore::FallbackAction::Fallback,
+        ArtifactCore::FallbackAction::Fallback,
             path, "placeholder",
             QStringLiteral("Image missing, using placeholder"));
+        Q_EMIT changed();
         return false;
     }
 
@@ -394,6 +396,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
 
     qDebug() << "[ArtifactImageLayer] OIIO prefetch started:" << path
              << "sizeHint=" << QSize(spec.width, spec.height);
+    Q_EMIT changed();
     return true;
 }
 
