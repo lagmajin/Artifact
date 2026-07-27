@@ -1012,7 +1012,13 @@ void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) {
  Q_EMIT changed();
 }
 FloatColor ArtifactShapeLayer::strokeColor() const { return impl_->strokeColor_; }
-void ArtifactShapeLayer::setStrokeWidth(float w) { impl_->strokeWidth_ = w; impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeWidth(float w) {
+ impl_->strokeWidth_ = std::max(0.0f, w);
+ impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 float ArtifactShapeLayer::strokeWidth() const { return impl_->strokeWidth_; }
 void ArtifactShapeLayer::setFillEnabled(bool e) { impl_->fillEnabled_ = e; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 bool ArtifactShapeLayer::fillEnabled() const { return impl_->fillEnabled_; }
