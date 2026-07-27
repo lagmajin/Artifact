@@ -83,6 +83,7 @@ export struct StaticLayerGpuCacheDiagnostics
 };
 
 export StaticLayerGpuCacheDiagnostics staticLayerGpuCacheDiagnostics();
+export void clearStaticLayerGpuCache();
 
 export bool layerHasCpuRasterizerWork(ArtifactAbstractLayer* layer);
 export bool layerUsesSurfaceUploadForCompositionView(ArtifactAbstractLayer* layer);
@@ -965,6 +966,12 @@ StaticLayerGpuCacheDiagnostics staticLayerGpuCacheDiagnostics()
     diagnostics.totalBytes += entry.byteSize;
   }
   return diagnostics;
+}
+
+void clearStaticLayerGpuCache()
+{
+  staticLayerGpuCache().clear();
+  staticLayerGpuCacheCounters() = {};
 }
 
 void applyRasterizerEffectsAndMasksToSurface(
