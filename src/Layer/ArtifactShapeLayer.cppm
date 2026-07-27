@@ -781,8 +781,7 @@ public:
  std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> shapeOperators_;
 
   bool useCachePipeline() const {
-   return customPathVertices_.size() >= 3 ||
-          fillType_ != ArtifactSolidFillType::Solid ||
+   return fillType_ != ArtifactSolidFillType::Solid ||
           strokeCap_ != StrokeCap::Flat ||
           strokeJoin_ != StrokeJoin::Miter ||
           strokeAlign_ != StrokeAlign::Center ||
@@ -1446,6 +1445,58 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
         drawSoftBodyGrid(this, renderer, transform, fill, stroke,
                          std::max(1.0f, impl->strokeWidth_),
                          impl->strokeEnabled_)) {
+     return;
+    }
+
+    if (impl->customPathVertices_.size() >= 3) {
+     ShapePath path;
+     path.moveTo(impl->customPathVertices_.front().pos);
+     const size_t count = impl->customPathVertices_.size();
+     for (size_t i = 0; i + 1 < count; ++i) {
+      const auto& v0 = impl->customPathVertices_[i];
+      const auto& v1 = impl->customPathVertices_[i + 1];
+      path.cubicTo(v0.pos + v0.outTangent,
+                   v1.pos + v1.inTangent,
+                   v1.pos);
+     }
+     if (impl->customPathClosed_) {
+      const auto& v0 = impl->customPathVertices_.back();
+      const auto& v1 = impl->customPathVertices_.front();
+      path.cubicTo(v0.pos + v0.outTangent,
+                   v1.pos + v1.inTangent,
+                   v1.pos);
+      path.close();
+     }
+
+     const auto segments = path.flatten();
+     std::vector<QPointF> mapped;
+     mapped.reserve(segments.size() + 1);
+     for (const auto& segment : segments) {
+      mapped.push_back(mapPoint(transform, segment.p0));
+     }
+     if (!segments.empty() && !impl->customPathClosed_) {
+      mapped.push_back(mapPoint(transform, segments.back().p1));
+     }
+
+     if (impl->fillEnabled_ && impl->customPathClosed_ && mapped.size() >= 3) {
+      std::vector<Detail::float2> polygon;
+      polygon.reserve(mapped.size());
+      for (const auto& point : mapped) {
+       polygon.push_back({static_cast<float>(point.x()),
+                          static_cast<float>(point.y())});
+      }
+      renderer->drawSolidPolygonLocal(polygon, fill);
+     }
+     if (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f) {
+      for (const auto& segment : segments) {
+       const QPointF p0 = mapPoint(transform, segment.p0);
+       const QPointF p1 = mapPoint(transform, segment.p1);
+       renderer->drawThickLineLocal(
+           {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+           {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
+           std::max(1.0f, impl->strokeWidth_), stroke);
+      }
+     }
      return;
     }
 
