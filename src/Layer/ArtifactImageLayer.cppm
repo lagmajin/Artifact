@@ -996,7 +996,12 @@ void ArtifactImageLayer::setFromQImage(const QImage& image)
 
 void ArtifactImageLayer::setFitToLayer(bool fit)
 {
+    if (impl_->fitToLayer_ == fit) {
+        return;
+    }
     impl_->fitToLayer_ = fit;
+    setDirty(LayerDirtyFlag::Property);
+    Q_EMIT changed();
 }
 
 bool ArtifactImageLayer::fitToLayer() const
