@@ -995,7 +995,19 @@ int ArtifactShapeLayer::shapeHeight() const { return impl_->height_; }
 
 void ArtifactShapeLayer::setFillColor(const FloatColor& c) { impl_->fillColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::fillColor() const { return impl_->fillColor_; }
-void ArtifactShapeLayer::setFillType(ArtifactSolidFillType t) { impl_->fillType_ = t; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setFillType(ArtifactSolidFillType t) {
+ int raw = std::clamp(static_cast<int>(t),
+                      static_cast<int>(ArtifactSolidFillType::Solid),
+                      static_cast<int>(ArtifactSolidFillType::MirroredGradient));
+ const auto normalized = static_cast<ArtifactSolidFillType>(raw);
+ if (impl_->fillType_ == normalized) {
+  return;
+ }
+ impl_->fillType_ = normalized;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 ArtifactSolidFillType ArtifactShapeLayer::fillType() const { return impl_->fillType_; }
 void ArtifactShapeLayer::setFillGradientStartColor(const FloatColor& c) { impl_->fillGradientStartColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::fillGradientStartColor() const { return impl_->fillGradientStartColor_; }
