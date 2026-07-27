@@ -231,6 +231,10 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
   footageUp->sequencePaths = sequencePaths;
   footageUp->frameRate = frameRate > 0.0 ? frameRate : 0.0;
   footageUp->isSequence = sequencePaths.size() > 1;
+  if (footageUp->isSequence) {
+    footageUp->filePath = sequencePaths.first();
+    footageUp->name.setQString(QFileInfo(footageUp->filePath).fileName());
+  }
 
   // attach to project root if exists
   ProjectItem* projectRoot = nullptr;
