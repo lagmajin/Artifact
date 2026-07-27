@@ -1346,11 +1346,10 @@ QRectF ArtifactShapeLayer::localBounds() const
   } else if (impl_->customPolygonPoints_.size() >= 2) {
    bounds = boundsOfPoints(impl_->customPolygonPoints_);
   } else {
-   const QPainterPath path = buildShapePath(impl_->shapeType_, impl_->width_, impl_->height_,
-                                           impl_->cornerRadius_, impl_->starPoints_,
-                                           impl_->starInnerRadius_, impl_->polygonSides_)
-                                .toPainterPath();
-   bounds = path.boundingRect();
+   bounds = buildShapePath(impl_->shapeType_, impl_->width_, impl_->height_,
+                           impl_->cornerRadius_, impl_->starPoints_,
+                           impl_->starInnerRadius_, impl_->polygonSides_)
+                .boundingRect();
   }
 
   if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
