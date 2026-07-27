@@ -4209,8 +4209,34 @@ if (!item.isFolder) {
                             info);
   });
 
+  if (item.isSequence && !item.sequencePaths.isEmpty()) {
+    QMenu *framesMenu = frequentMenu->addMenu(
+        QStringLiteral("Preview Sequence Frame"));
+    constexpr int kMaxFrameMenuItems = 100;
+    const int visibleFrameCount = std::min(kMaxFrameMenuItems,
+                                           item.sequencePaths.size());
+    for (int frameIndex = 0; frameIndex < visibleFrameCount; ++frameIndex) {
+      const QString framePath = item.sequencePaths.at(frameIndex);
+      QAction *frameAction = framesMenu->addAction(
+          QFileInfo(framePath).fileName());
+      frameAction->setData(framePath);
+    }
+    if (item.sequencePaths.size() > visibleFrameCount) {
+      QAction *moreAction = framesMenu->addAction(
+          QStringLiteral("… (%1 more frames)")
+              .arg(item.sequencePaths.size() - visibleFrameCount));
+      moreAction->setEnabled(false);
+    }
+  }
+
   // Show menu at cursor position
-  contextMenu.exec(impl_->fileView_->mapToGlobal(pos));
+  QAction *chosenAction = contextMenu.exec(impl_->fileView_->mapToGlobal(pos));
+  if (chosenAction && chosenAction->data().isValid()) {
+    const QString framePath = chosenAction->data().toString();
+    if (!framePath.isEmpty()) {
+      itemDoubleClicked(framePath);
+    }
+  }
  }
 
 // ─────────────────────────────────────────────
