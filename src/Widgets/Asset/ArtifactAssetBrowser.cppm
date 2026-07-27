@@ -4042,6 +4042,14 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    if (!svc) return;
    const QStringList imported = svc->importAssetsFromPaths(importTargets.isEmpty() ? QStringList{filePath} : importTargets);
    if (!imported.isEmpty()) {
+    const int requestedCount = importTargets.isEmpty() ? 1 : importTargets.size();
+    if (imported.size() < requestedCount) {
+     QMessageBox::warning(
+         this, QStringLiteral("Import Incomplete"),
+         QStringLiteral("Imported %1 of %2 requested files.")
+             .arg(imported.size())
+             .arg(requestedCount));
+    }
     if (auto project = svc->getCurrentProjectSharedPtr()) {
      for (const QString& importedPath : imported) {
       UndoManager::instance()->push(
