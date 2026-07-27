@@ -200,6 +200,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
     impl_->renderMode_ = RenderMode::Solid;
     impl_->sourcePath_ = filePath;
     setLayerName(QFileInfo(filePath).baseName());
+    Q_EMIT changed();
     return;
   }
 
