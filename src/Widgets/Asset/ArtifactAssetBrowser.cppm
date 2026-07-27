@@ -4306,22 +4306,31 @@ if (!item.isFolder) {
     const int leadingFrameCount = totalFrameCount <= kFrameMenuSideCount * 2
         ? totalFrameCount
         : kFrameMenuSideCount;
+    const auto addFramePreviewAction = [framesMenu](const QString& framePath) {
+      QImageReader reader(framePath);
+      const bool readable = reader.canRead();
+      const QString label = readable
+          ? QFileInfo(framePath).fileName()
+          : QStringLiteral("%1 (Unreadable)")
+                .arg(QFileInfo(framePath).fileName());
+      QAction *frameAction = framesMenu->addAction(label);
+      frameAction->setEnabled(readable);
+      if (readable) {
+        frameAction->setData(framePath);
+      }
+    };
     for (int frameIndex = 0; frameIndex < leadingFrameCount; ++frameIndex) {
       const QString framePath = item.sequencePaths.at(frameIndex);
-      QAction *frameAction = framesMenu->addAction(
-          QFileInfo(framePath).fileName());
-      frameAction->setData(framePath);
+      addFramePreviewAction(framePath);
     }
     const int trailingStart = std::max(leadingFrameCount,
                                        totalFrameCount - kFrameMenuSideCount);
     if (trailingStart > leadingFrameCount) {
       framesMenu->addSeparator();
-      for (int frameIndex = trailingStart; frameIndex < totalFrameCount;
+        for (int frameIndex = trailingStart; frameIndex < totalFrameCount;
            ++frameIndex) {
         const QString framePath = item.sequencePaths.at(frameIndex);
-        QAction *frameAction = framesMenu->addAction(
-            QFileInfo(framePath).fileName());
-        frameAction->setData(framePath);
+        addFramePreviewAction(framePath);
       }
     }
     if (trailingStart > leadingFrameCount) {
