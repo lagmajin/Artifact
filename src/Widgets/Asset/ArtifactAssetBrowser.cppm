@@ -2555,6 +2555,14 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   QDir dir(currentDirectoryPath_);
   if (!dir.exists()) return;
 
+  const QString currentDirectoryPrefix =
+      QDir::cleanPath(currentDirectoryPath_) + QDir::separator();
+  for (const QString& expandedPath : expandedSequencePaths_.values()) {
+   if (!expandedPath.startsWith(currentDirectoryPrefix, Qt::CaseInsensitive)) {
+    expandedSequencePaths_.remove(expandedPath);
+   }
+  }
+
   if (breadcrumb_) {
    breadcrumb_->setPath(currentDirectoryPath_);
   }
