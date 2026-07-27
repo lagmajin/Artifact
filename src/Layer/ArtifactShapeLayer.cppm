@@ -247,23 +247,8 @@ QPainterPath buildLayerPath(const Artifact::ShapeType shapeType,
                             const bool customPolygonClosed,
                             const std::vector<Artifact::CustomPathVertex>& customPathVertices,
                             const bool customPathClosed) {
- QPainterPath path;
  if (customPathVertices.size() >= 3) {
-  path.moveTo(customPathVertices.front().pos);
-  const size_t count = customPathVertices.size();
-  for (size_t i = 0; i < count; ++i) {
-   const size_t next = (i + 1) % count;
-   if (!customPathClosed && next == 0) {
-    break;
-   }
-   const auto& v0 = customPathVertices[i];
-   const auto& v1 = customPathVertices[next];
-   path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
-  }
-  if (customPathClosed) {
-   path.closeSubpath();
-  }
-  return path;
+  return buildCustomShapePath(customPathVertices, customPathClosed).toPainterPath();
  }
 
  if (customPolygonPoints.size() >= 3) {
