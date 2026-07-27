@@ -10,6 +10,7 @@ module;
 #include <QJsonObject>
 #include <QMatrix4x4>
 #include <QTransform>
+#include <QPolygonF>
 #include <QPainter>
 #include <QRect>
 #include <QRectF>
