@@ -198,8 +198,12 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
       }
     }
     impl_->renderMode_ = RenderMode::Solid;
-    impl_->sourcePath_ = filePath;
-    setLayerName(QFileInfo(filePath).baseName());
+    const QFileInfo sourceInfo(filePath);
+    const QString normalizedSourcePath = sourceInfo.canonicalFilePath().isEmpty()
+        ? sourceInfo.absoluteFilePath()
+        : sourceInfo.canonicalFilePath();
+    impl_->sourcePath_ = normalizedSourcePath;
+    setLayerName(sourceInfo.baseName());
     Q_EMIT changed();
     return;
   }
