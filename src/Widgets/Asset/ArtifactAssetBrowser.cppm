@@ -2637,9 +2637,28 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     int count = seq.size();
     int pad = seq.first().pad;
     int missingFrameCount = 0;
+    int unreadableFrameCount = 0;
+    bool hasSizeMismatch = false;
+    QSize sequenceFrameSize;
     for (int frameIndex = 1; frameIndex < seq.size(); ++frameIndex) {
      const int gap = seq[frameIndex].frame - seq[frameIndex - 1].frame - 1;
      if (gap > 0) missingFrameCount += gap;
+    }
+    for (const auto& sf : seq) {
+     QImageReader reader(sf.fullPath);
+     if (!reader.canRead()) {
+      ++unreadableFrameCount;
+      continue;
+     }
+     const QSize frameSize = reader.size();
+     if (!frameSize.isValid()) {
+      continue;
+     }
+     if (!sequenceFrameSize.isValid()) {
+      sequenceFrameSize = frameSize;
+     } else if (sequenceFrameSize != frameSize) {
+      hasSizeMismatch = true;
+     }
     }
     QFileInfo fi(seq.first().name);
     QString ext = fi.suffix().toUpper();
@@ -2671,7 +2690,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
      if (isMissingAssetPath(sf.fullPath)) anyMissing = true;
      if (!isFavoriteAssetPath(sf.fullPath)) allFav = false;
     }
-    anyMissing = anyMissing || missingFrameCount > 0;
+    anyMissing = anyMissing || missingFrameCount > 0 ||
+                 unreadableFrameCount > 0 || hasSizeMismatch;
     // Apply status filter
     if (currentStatusFilter_ != "all") {
      bool matchFilter = false;
@@ -2687,6 +2707,12 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     if (anyMissing) markers.append(QStringLiteral("Missing"));
     if (missingFrameCount > 0) {
      markers.append(QStringLiteral("Missing Frames: %1").arg(missingFrameCount));
+    }
+    if (unreadableFrameCount > 0) {
+     markers.append(QStringLiteral("Unreadable: %1").arg(unreadableFrameCount));
+    }
+    if (hasSizeMismatch) {
+     markers.append(QStringLiteral("Size Mismatch"));
     }
     if (allImported) markers.append(QStringLiteral("Imported"));
     if (allUnused) markers.append(QStringLiteral("Unused"));
