@@ -4212,19 +4212,33 @@ if (!item.isFolder) {
   if (item.isSequence && !item.sequencePaths.isEmpty()) {
     QMenu *framesMenu = frequentMenu->addMenu(
         QStringLiteral("Preview Sequence Frame"));
-    constexpr int kMaxFrameMenuItems = 100;
-    const int visibleFrameCount = std::min(kMaxFrameMenuItems,
-                                           item.sequencePaths.size());
-    for (int frameIndex = 0; frameIndex < visibleFrameCount; ++frameIndex) {
+    constexpr int kFrameMenuSideCount = 50;
+    const int totalFrameCount = item.sequencePaths.size();
+    const int leadingFrameCount = totalFrameCount <= kFrameMenuSideCount * 2
+        ? totalFrameCount
+        : kFrameMenuSideCount;
+    for (int frameIndex = 0; frameIndex < leadingFrameCount; ++frameIndex) {
       const QString framePath = item.sequencePaths.at(frameIndex);
       QAction *frameAction = framesMenu->addAction(
           QFileInfo(framePath).fileName());
       frameAction->setData(framePath);
     }
-    if (item.sequencePaths.size() > visibleFrameCount) {
+    const int trailingStart = std::max(leadingFrameCount,
+                                       totalFrameCount - kFrameMenuSideCount);
+    if (trailingStart > leadingFrameCount) {
+      framesMenu->addSeparator();
+      for (int frameIndex = trailingStart; frameIndex < totalFrameCount;
+           ++frameIndex) {
+        const QString framePath = item.sequencePaths.at(frameIndex);
+        QAction *frameAction = framesMenu->addAction(
+            QFileInfo(framePath).fileName());
+        frameAction->setData(framePath);
+      }
+    }
+    if (trailingStart > leadingFrameCount) {
       QAction *moreAction = framesMenu->addAction(
-          QStringLiteral("… (%1 more frames)")
-              .arg(item.sequencePaths.size() - visibleFrameCount));
+          QStringLiteral("Middle frames omitted (%1)")
+              .arg(trailingStart - leadingFrameCount));
       moreAction->setEnabled(false);
     }
   }
