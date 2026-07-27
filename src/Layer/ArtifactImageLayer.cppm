@@ -760,14 +760,7 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
 void ArtifactImageLayer::setFromCvMat(const cv::Mat& mat)
 {
     if (mat.empty()) {
-        impl_->hasImage_ = false;
-        impl_->cache_.reset();
-        impl_->cacheBuffer_.reset();
-        impl_->width_ = 0;
-        impl_->height_ = 0;
-        setSourceSize(Size_2D(0, 0));
-        setDirty(LayerDirtyFlag::Source);
-        Q_EMIT changed();
+        setFromQImage(QImage());
         return;
     }
 
