@@ -1593,6 +1593,30 @@ ArtifactAssetBrowser::Impl::~Impl()
 
  void ArtifactAssetBrowser::Impl::handleDoubleClicked()
  {
+  if (!owner_ || !fileView_ || !assetModel_ || !fileView_->selectionModel()) {
+   return;
+  }
+
+  const QModelIndex index = fileView_->selectionModel()->currentIndex();
+  if (!index.isValid()) {
+   return;
+  }
+
+  const AssetMenuItem item = assetModel_->itemAt(index.row());
+  const QString path = item.path.toQString();
+  if (path.isEmpty()) {
+   return;
+  }
+
+  if (item.isFolder) {
+   owner_->navigateToFolder(path);
+   return;
+  }
+
+  // Browsing and importing are deliberately separate actions. Double-click
+  // only selects the source and refreshes the metadata/preview surface;
+  // import remains an explicit toolbar or context-menu action.
+  owner_->updateFileInfo(path);
  }
 
  void ArtifactAssetBrowser::Impl::defaultHandleMousePressEvent(QMouseEvent* event)
