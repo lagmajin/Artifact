@@ -4224,6 +4224,10 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
                       : ArtifactAbstractComposition::CanonicalColorPipelineVersion);
 
   key += QStringLiteral("|generation=%1").arg(surfaceGeneration);
+  // Include the actual source surface identity so an image/sequence file
+  // replaced in place cannot reuse a texture created from the old pixels.
+  key += QStringLiteral("|surfaceCacheKey=%1")
+             .arg(static_cast<qulonglong>(surface.cacheKey()));
   key += QStringLiteral("|opacity=%1").arg(layer->opacity(), 0, 'f', 6);
 
   bool hasAnimatedEffectProperty = false;

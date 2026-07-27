@@ -118,25 +118,14 @@ Artifact3DLayer::Artifact3DLayer(FixedGeometry3D geometry) : impl_(new Impl()) {
 Artifact3DLayer::~Artifact3DLayer() { delete impl_; }
 
 void Artifact3DLayer::loadFromFile() {
-  impl_->sourcePath_.clear();
-  impl_->fixedGeometry_ = FixedGeometry3D::Auto;
-  // Try loading via MeshImporter (ufbx for FBX, tinyobj for OBJ)
-  ArtifactCore::MeshImporter importer;
-  auto mesh = importer.importMeshFromFile(UniString("")); // Will be set by user
-
-  if (mesh && mesh->vertexCount() > 0) {
-    impl_->mesh_ = *mesh;
-    centerMeshPositions(impl_->mesh_);
-    impl_->meshLoaded_ = true;
-    updateSourceSizeFromMesh();
+  const QString reloadPath = impl_->sourcePath_;
+  if (reloadPath.isEmpty()) {
+    qWarning() << "[Artifact3DLayer] Cannot reload model without a source path";
     return;
   }
-
-  // Fallback: create a simple cube mesh programmatically
-  if (!impl_->meshLoaded_) {
-    createCubeMesh();
-    impl_->meshLoaded_ = true;
-  }
+  // Keep reload behavior identical to explicit loading, including imported
+  // material textures and source metadata.
+  loadFromFile(reloadPath);
 }
 
 void Artifact3DLayer::loadFromFile(const QString &filePath) {

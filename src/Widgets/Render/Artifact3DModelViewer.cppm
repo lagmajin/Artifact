@@ -310,6 +310,20 @@ void Artifact3DModelViewer::resetView()
     impl_->orbitYaw_ = 0.0f;
     impl_->orbitPitch_ = 0.0f;
     impl_->orbitDistance_ = 5.0f;
+
+    if (impl_->currentMesh && impl_->currentMesh->isValid()) {
+        const QVector3D minBounds = impl_->currentMesh->boundingBoxMin();
+        const QVector3D maxBounds = impl_->currentMesh->boundingBoxMax();
+        const QVector3D center = (minBounds + maxBounds) * 0.5f;
+        const QVector3D extents = maxBounds - minBounds;
+        const float radius = 0.5f * extents.length();
+
+        // Keep a comfortable margin while remaining usable for very small
+        // imported assets. The viewer's zoom mapping is distance-based.
+        impl_->orbitTarget_ = center;
+        impl_->orbitDistance_ = std::clamp(radius * 2.8f, 0.5f, 100000.0f);
+    }
+
     impl_->pushCamera();
     requestUpdate();
 }
