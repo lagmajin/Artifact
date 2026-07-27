@@ -53,6 +53,7 @@ import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.ArtifactPropertyWidget;
 import Property.Abstract;
 import Property.ExposedPropertyRegistry;
+import Memory.SharedPtr;
 import Dialog.Composition;
 import FloatColorPickerDialog;
 import Artifact.Widgets.AppDialogs;
@@ -299,9 +300,9 @@ private:
   for (const auto& change : changes_) {
    const auto parent = service->findComposition(change.parentCompositionId).ptr.lock();
    const auto layer = parent
-    ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(
+    ? ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(
        parent->layerById(change.precompLayerId))
-    : std::shared_ptr<ArtifactCompositionLayer>{};
+    : ArtifactCore::SharedPtr<ArtifactCompositionLayer>{};
    if (layer) {
     layer->setExposedProperties(useAfter ? change.after : change.before);
     const auto& overrides = useAfter
@@ -691,9 +692,9 @@ void ArtifactCompositionMenu::Impl::showSettings()
  const QString focusedPropertyPath = focusedPropertyWidget
   ? focusedPropertyWidget->activePropertyPath().trimmed()
   : QString{};
- const auto focusedProperty = focusedPropertyLayer && !focusedPropertyPath.isEmpty()
+  const auto focusedProperty = focusedPropertyLayer && !focusedPropertyPath.isEmpty()
   ? focusedPropertyLayer->getProperty(focusedPropertyPath)
-  : std::shared_ptr<ArtifactCore::AbstractProperty>{};
+  : ArtifactCore::SharedPtr<ArtifactCore::AbstractProperty>{};
  const QVariant focusedPropertyBaseline = focusedProperty
   ? focusedProperty->getValue()
   : QVariant{};
@@ -931,7 +932,7 @@ void ArtifactCompositionMenu::Impl::showSettings()
     }
     for (const auto& candidate : parent->allLayerRef()) {
      const auto precompLayer =
-      std::dynamic_pointer_cast<ArtifactCompositionLayer>(candidate);
+      ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(candidate);
      if (!precompLayer || precompLayer->sourceCompositionId() != current->id()) {
       continue;
      }
@@ -1246,9 +1247,9 @@ void ArtifactCompositionMenu::Impl::showSettings()
     for (const auto& change : masterPropertyChanges) {
      const auto parent = service->findComposition(change.parentCompositionId).ptr.lock();
      const auto precompLayer = parent
-      ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(
+      ? ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(
          parent->layerById(change.precompLayerId))
-      : std::shared_ptr<ArtifactCompositionLayer>{};
+      : ArtifactCore::SharedPtr<ArtifactCompositionLayer>{};
      if (precompLayer) {
       precompLayer->setExposedProperties(change.after);
       for (auto it = change.afterOverrides.cbegin();

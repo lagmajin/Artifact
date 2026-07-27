@@ -22,6 +22,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -304,20 +305,20 @@ ExposureEffect::ExposureEffect() {
     setEffectID(UniString("effect.colorcorrection.exposure"));
     setDisplayName(UniString("Exposure"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<ExposureEffectCPUImpl>());
-    setGPUImpl(std::make_shared<ExposureEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<ExposureEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<ExposureEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 
 ExposureEffect::~ExposureEffect() = default;
 
 void ExposureEffect::syncImpls() {
-    if (auto cpu = std::dynamic_pointer_cast<ExposureEffectCPUImpl>(cpuImpl())) {
+    if (auto cpu = ArtifactCore::dynamicPointerCast<ExposureEffectCPUImpl>(cpuImpl())) {
         cpu->exposure_ = exposure_;
         cpu->offset_ = offset_;
         cpu->gammaCorrection_ = gammaCorrection_;
     }
-    if (auto gpu = std::dynamic_pointer_cast<ExposureEffectGPUImpl>(gpuImpl())) {
+    if (auto gpu = ArtifactCore::dynamicPointerCast<ExposureEffectGPUImpl>(gpuImpl())) {
         gpu->exposure_ = exposure_;
         gpu->offset_ = offset_;
         gpu->gammaCorrection_ = gammaCorrection_;

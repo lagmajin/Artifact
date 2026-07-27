@@ -48,6 +48,7 @@ import Size;
 import Image.Raw;
 import Color.Float;
 import Transform._2D;
+import Memory.SharedPtr;
 
 export namespace Artifact
 {
@@ -77,7 +78,7 @@ export namespace Artifact
 
 
 
- typedef std::shared_ptr<OffscreenRenderer2D> OffscreenRenderer2DPtr;
+ typedef SharedPtr<OffscreenRenderer2D> OffscreenRenderer2DPtr;
 
 
  class Renderer2DFactory

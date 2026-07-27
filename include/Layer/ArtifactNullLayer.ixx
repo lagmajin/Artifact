@@ -5,6 +5,7 @@ export module Artifact.Layer.Null;
 
 import Artifact.Layers;
 import Artifact.Layer.Abstract;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -36,7 +37,7 @@ export namespace Artifact {
 
     QJsonObject toJson() const override;
 
-    static std::shared_ptr<ArtifactNullLayer> fromJson(const QJsonObject& obj);
+    static SharedPtr<ArtifactNullLayer> fromJson(const QJsonObject& obj);
 
     bool isAdjustmentLayer() const override;
 

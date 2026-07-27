@@ -135,7 +135,7 @@ void appendDiffRecursive(const QString &path, const QJsonValue &lhs,
   out.push_back(diff);
 }
 
-QJsonObject projectSnapshotAsJson(const std::shared_ptr<ArtifactProject> &project) {
+QJsonObject projectSnapshotAsJson(const ArtifactProjectPtr &project) {
   if (!project) {
     return {};
   }

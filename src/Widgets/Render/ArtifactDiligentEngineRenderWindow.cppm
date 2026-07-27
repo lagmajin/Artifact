@@ -481,7 +481,7 @@ bool ArtifactDiligentEngineRenderWindow::initialize()
   return true;
  }
 
- void ArtifactDiligentEngineRenderWindow::setMesh(std::shared_ptr<ArtifactCore::Mesh> mesh)
+ void ArtifactDiligentEngineRenderWindow::setMesh(ArtifactCore::SharedPtr<ArtifactCore::Mesh> mesh)
  {
   mesh_ = std::move(mesh);
   meshDirty_ = true;

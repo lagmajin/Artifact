@@ -12,6 +12,7 @@ module;
 export module Artifact.Layer.Procedural3D;
 
 import Artifact.Layer.Abstract;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -50,7 +51,7 @@ public:
     bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 };
 
-std::shared_ptr<ArtifactProcedural3DLayer> createTerrainLayer();
-std::shared_ptr<ArtifactProcedural3DLayer> createPathTubeLayer();
+ArtifactCore::SharedPtr<ArtifactProcedural3DLayer> createTerrainLayer();
+ArtifactCore::SharedPtr<ArtifactProcedural3DLayer> createPathTubeLayer();
 
 } // namespace Artifact

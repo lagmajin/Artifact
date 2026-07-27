@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QString>
 #include <QColor>
@@ -99,7 +99,7 @@ namespace Artifact
     // TODO: 実装
   }
 
-  void AbstractGeneratorEffector::applyToLayer(std::shared_ptr<ArtifactAbstractLayer> layer)
+  void AbstractGeneratorEffector::applyToLayer(ArtifactCore::SharedPtr<ArtifactAbstractLayer> layer)
   {
     if (!layer || !impl_->enabled_) {
       return;

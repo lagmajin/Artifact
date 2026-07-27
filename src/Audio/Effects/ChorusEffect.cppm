@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QList>
 #include <cmath>
 #include <vector>
@@ -93,7 +93,7 @@ std::vector<AudioEffectParameter> ChorusEffect::getUiParameters() const {
     };
 }
 
-void ChorusEffect::setParameter(const std::string& name, float value) {
+void ChorusEffect::setParameter(const String& name, float value) {
     if      (name == "rate")      rate_     = value;
     else if (name == "depth")     depth_    = value;
     else if (name == "delay")     delayMs_  = value;
@@ -104,7 +104,7 @@ void ChorusEffect::setParameter(const std::string& name, float value) {
     initializeEngine();
 }
 
-float ChorusEffect::getParameter(const std::string& name) const {
+float ChorusEffect::getParameter(const String& name) const {
     if      (name == "rate")      return rate_;
     else if (name == "depth")     return depth_;
     else if (name == "delay")     return delayMs_;

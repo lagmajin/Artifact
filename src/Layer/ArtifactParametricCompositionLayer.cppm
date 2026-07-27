@@ -17,6 +17,7 @@ import Artifact.Service.Project;
 import Composition.ParametricComposition;
 import Property.Abstract;
 import Property.Group;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -100,13 +101,13 @@ const ParametricCompositionInstance& ArtifactParametricCompositionLayer::paramet
 }
 
 void ArtifactParametricCompositionLayer::setDefinition(
-    std::shared_ptr<const ParametricCompositionDefinition> definition)
+    SharedPtr<const ParametricCompositionDefinition> definition)
 {
     impl_->instance_.setDefinition(std::move(definition));
     Q_EMIT changed();
 }
 
-std::shared_ptr<const ParametricCompositionDefinition>
+SharedPtr<const ParametricCompositionDefinition>
 ArtifactParametricCompositionLayer::definition() const
 {
     return impl_->instance_.definition();
@@ -186,7 +187,7 @@ bool ArtifactParametricCompositionLayer::addParameterDefinition(
     }
 
     auto currentDefinition = impl_->instance_.definition();
-    auto updatedDefinition = std::make_shared<ParametricCompositionDefinition>(
+    auto updatedDefinition = ArtifactCore::makeShared<ParametricCompositionDefinition>(
         currentDefinition ? *currentDefinition
                           : makeDefaultParametricCompositionDefinition(
                                 QStringLiteral("parametric.layer"),
@@ -220,7 +221,7 @@ bool ArtifactParametricCompositionLayer::publishParameter(
     }
 
     auto updatedDefinition =
-        std::make_shared<ParametricCompositionDefinition>(*currentDefinition);
+        ArtifactCore::makeShared<ParametricCompositionDefinition>(*currentDefinition);
     ParametricCompositionPublishedControl control;
     control.sourceParameterKey = key;
     control.controlId = controlId.trimmed().isEmpty()
@@ -257,7 +258,7 @@ bool ArtifactParametricCompositionLayer::unpublishControl(const QString& control
     }
 
     auto updatedDefinition =
-        std::make_shared<ParametricCompositionDefinition>(*currentDefinition);
+        ArtifactCore::makeShared<ParametricCompositionDefinition>(*currentDefinition);
     if (!updatedDefinition->removePublishedControl(controlId)) {
         return false;
     }

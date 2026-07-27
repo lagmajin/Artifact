@@ -20,6 +20,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 import Core.Parallel;
 
 namespace Artifact {
@@ -337,8 +338,8 @@ ColorBalanceEffect::ColorBalanceEffect() {
     setEffectID(UniString("effect.colorcorrection.colorbalance"));
     setDisplayName(UniString("Color Balance"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<ColorBalanceEffectCPUImpl>());
-    setGPUImpl(std::make_shared<ColorBalanceEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<ColorBalanceEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<ColorBalanceEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     applyPreset(preset_);
     syncImpls();

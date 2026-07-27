@@ -121,6 +121,7 @@ import Artifact.Widgets.Inspector.ComponentTabSurface;
 
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
+import Memory.SharedPtr;
 import Clipboard.ClipboardManager;
 import Artifact.Project.PresetManager;
 import Artifact.Composition.Abstract;
@@ -1758,7 +1759,7 @@ QString proxySummary(const ArtifactAbstractLayerPtr &layer,
   if (hasProxyOut) {
     *hasProxyOut = false;
   }
-  const auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+  const auto videoLayer = layer ? ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) : nullptr;
   if (!videoLayer) {
     return QStringLiteral("Proxy: not available");
   }
@@ -2148,8 +2149,8 @@ public:
 
   void setProxyContext(const ArtifactAbstractLayerPtr &layer) {
     layer_ = layer;
-    const bool hasProxy = layer && std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) &&
-                          std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)->hasProxy();
+    const bool hasProxy = layer && ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) &&
+                          ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)->hasProxy();
     setCursor(hasProxy ? Qt::PointingHandCursor : Qt::ArrowCursor);
   }
 
@@ -2160,7 +2161,7 @@ protected:
       return;
     }
     if (event->button() == Qt::LeftButton) {
-      const auto videoLayer = layer_ ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer_) : nullptr;
+      const auto videoLayer = layer_ ? ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer_) : nullptr;
       if (videoLayer && videoLayer->hasProxy()) {
         const QString proxyPath = videoLayer->proxyPath();
         if (!proxyPath.isEmpty() && QFileInfo::exists(proxyPath)) {
@@ -3910,10 +3911,10 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   }
 
   if (applyLipSyncButton) {
-    const auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer);
+    const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
     const bool canShow = static_cast<bool>(audioLayer);
     bool canApply = false;
-    std::shared_ptr<ArtifactSwitchLayer> switchTarget;
+    ArtifactCore::SharedPtr<ArtifactSwitchLayer> switchTarget;
     if (audioLayer) {
       auto *projectService = ArtifactProjectService::instance();
       auto *selMgr = ArtifactLayerSelectionManager::instance();
@@ -3922,7 +3923,7 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
         if (!selectedLayer || selectedLayer == layer) {
           continue;
         }
-        switchTarget = std::dynamic_pointer_cast<ArtifactSwitchLayer>(selectedLayer);
+        switchTarget = ArtifactCore::dynamicPointerCast<ArtifactSwitchLayer>(selectedLayer);
         if (switchTarget) {
           break;
         }
@@ -3934,7 +3935,7 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
           if (!candidate || candidate == layer) {
             continue;
           }
-          switchTarget = std::dynamic_pointer_cast<ArtifactSwitchLayer>(candidate);
+          switchTarget = ArtifactCore::dynamicPointerCast<ArtifactSwitchLayer>(candidate);
           if (switchTarget) {
             break;
           }
@@ -4349,7 +4350,8 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
                              property.value(QStringLiteral("value")).toVariant());
                        }
                      }
-                     auto effectPtr = std::shared_ptr<ArtifactAbstractEffect>(effectToPaste.release());
+                     auto effectPtr = ArtifactCore::makeShared(effectToPaste.release(),
+                         [](ArtifactAbstractEffect* p) { delete p; });
                      if (projectService->addEffectToLayerWithUndo(currentLayerId_, effectPtr)) {
                        updateEffectsList();
                        if (statusLabel) statusLabel->setText(QStringLiteral("Status: Effect pasted"));
@@ -4374,7 +4376,7 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
 
   auto buildEffectMaskImageFromLayer =
       [](const ArtifactAbstractLayerPtr &sourceLayer)
-          -> std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> {
+          -> ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> {
     if (!sourceLayer || !sourceLayer->hasMasks()) {
       return {};
     }
@@ -4396,14 +4398,14 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
       sourceMask.applyToImage(maskW, maskH, &maskMat);
     }
 
-    auto maskImage = std::make_shared<ArtifactCore::ImageF32x4_RGBA>();
+    auto maskImage = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>();
     maskImage->setFromRGBA32F(maskMat.ptr<float>(), maskW, maskH);
     return maskImage;
   };
 
   auto captureEffectMaskImages =
-      [](const std::shared_ptr<ArtifactAbstractEffect> &effect) {
-        std::vector<std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>> masks;
+      [](const ArtifactAbstractEffectPtr &effect) {
+        std::vector<ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>> masks;
         if (!effect) {
           return masks;
         }
@@ -4523,7 +4525,7 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
       if (beforeMasks.empty()) {
         return;
       }
-      const std::vector<std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>> afterMasks;
+      const std::vector<ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>> afterMasks;
       if (auto *mgr = UndoManager::instance()) {
         mgr->push(std::make_unique<SetEffectMaskImagesCommand>(
             effect, beforeMasks, afterMasks, QStringLiteral("Clear Effect Mask Images")));
@@ -4719,7 +4721,7 @@ bool ArtifactInspectorWidget::Impl::removeEffectById(const QString &effectId) {
     return projectService->removeEffectFromCurrentComposition(effectId);
   }
 
-  std::shared_ptr<ArtifactAbstractEffect> capturedEffect;
+  ArtifactAbstractEffectPtr capturedEffect;
   if (auto layer = comp->layerById(currentLayerId_)) {
     for (const auto &e : layer->getEffects()) {
       if (e && e->effectID().toQString() == effectId) {
@@ -5776,17 +5778,18 @@ void ArtifactInspectorWidget::Impl::addSelectedEffectToCurrentTarget(
     return;
   }
 
-  std::shared_ptr<ArtifactAbstractEffect> newEffect;
+  ArtifactAbstractEffectPtr newEffect;
   if (normalizedId == QStringLiteral("fractal_noise")) {
-    newEffect = std::make_shared<FractalNoiseGenerator>();
+    newEffect = ArtifactCore::makeShared<FractalNoiseGenerator>();
   } else if (normalizedId == QStringLiteral("procedural_texture")) {
-    newEffect = std::make_shared<ProceduralTextureGeneratorEffect>();
+    newEffect = ArtifactCore::makeShared<ProceduralTextureGeneratorEffect>();
   } else if (normalizedId == QStringLiteral("transform_2d")) {
-    newEffect = std::make_shared<LayerTransform2D>();
+    newEffect = ArtifactCore::makeShared<LayerTransform2D>();
   } else {
     auto effect = effectService->createEffect(EffectID(normalizedId));
     if (effect) {
-      newEffect = std::shared_ptr<ArtifactAbstractEffect>(std::move(effect));
+      newEffect = ArtifactCore::makeShared(effect.release(),
+                                           [](ArtifactAbstractEffect* p) { delete p; });
     }
   }
 
@@ -5862,7 +5865,7 @@ void ArtifactInspectorWidget::Impl::addSelectedEffectToCurrentTarget(
       const auto targetEffects = targetLayer->getEffects();
       added = std::any_of(
           targetEffects.begin(), targetEffects.end(),
-          [&newEffect](const std::shared_ptr<ArtifactAbstractEffect> &effect) {
+          [&newEffect](const ArtifactAbstractEffectPtr &effect) {
             return effect == newEffect;
           });
     }
@@ -5986,7 +5989,7 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex) {
                                ? projectService
                                      ->removeEffectFromCurrentComposition(eid)
                                : [&]() {
-                                   std::shared_ptr<ArtifactAbstractEffect>
+                                   ArtifactAbstractEffectPtr
                                        capturedEffect;
                                    if (auto layer =
                                            comp->layerById(currentLayerId_)) {
@@ -6039,21 +6042,21 @@ void ArtifactInspectorWidget::Impl::handleApplyLipSyncToSwitchLayer() {
   }
 
   auto layer = comp->layerById(currentLayerId_);
-  auto audio = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer);
+  auto audio = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
   if (!audio) {
     QMessageBox::warning(containerWidget, QStringLiteral("Lip Sync"),
                          QStringLiteral("Select an audio layer first."));
     return;
   }
 
-  std::shared_ptr<ArtifactSwitchLayer> switchTarget;
+  ArtifactCore::SharedPtr<ArtifactSwitchLayer> switchTarget;
   auto *selMgr = ArtifactLayerSelectionManager::instance();
   const auto selected = selMgr ? selMgr->selectedLayers() : QSet<ArtifactAbstractLayerPtr>{};
   for (const auto &selectedLayer : selected) {
     if (!selectedLayer || selectedLayer == layer) {
       continue;
     }
-    switchTarget = std::dynamic_pointer_cast<ArtifactSwitchLayer>(selectedLayer);
+    switchTarget = ArtifactCore::dynamicPointerCast<ArtifactSwitchLayer>(selectedLayer);
     if (switchTarget) {
       break;
     }
@@ -6063,7 +6066,7 @@ void ArtifactInspectorWidget::Impl::handleApplyLipSyncToSwitchLayer() {
       if (!candidate || candidate == layer) {
         continue;
       }
-      switchTarget = std::dynamic_pointer_cast<ArtifactSwitchLayer>(candidate);
+      switchTarget = ArtifactCore::dynamicPointerCast<ArtifactSwitchLayer>(candidate);
       if (switchTarget) {
         break;
       }

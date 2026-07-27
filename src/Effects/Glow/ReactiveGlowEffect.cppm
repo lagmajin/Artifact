@@ -22,6 +22,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -165,15 +166,15 @@ ReactiveGlowEffect::ReactiveGlowEffect() {
     setEffectID(UniString("reactive_glow"));
     setDisplayName(UniString("Reactive Glow"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<ReactiveGlowEffectCPUImpl>());
-    setGPUImpl(std::make_shared<ReactiveGlowEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<ReactiveGlowEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<ReactiveGlowEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 
 ReactiveGlowEffect::~ReactiveGlowEffect() = default;
 
 void ReactiveGlowEffect::syncImpls() {
-    if (auto cpu = std::dynamic_pointer_cast<ReactiveGlowEffectCPUImpl>(cpuImpl())) {
+    if (auto cpu = ArtifactCore::dynamicPointerCast<ReactiveGlowEffectCPUImpl>(cpuImpl())) {
         cpu->threshold_ = threshold_;
         cpu->radius_ = radius_;
         cpu->intensity_ = intensity_;
@@ -181,7 +182,7 @@ void ReactiveGlowEffect::syncImpls() {
         cpu->saturationWeight_ = saturationWeight_;
         cpu->tintMix_ = tintMix_;
     }
-    if (auto gpu = std::dynamic_pointer_cast<ReactiveGlowEffectGPUImpl>(gpuImpl())) {
+    if (auto gpu = ArtifactCore::dynamicPointerCast<ReactiveGlowEffectGPUImpl>(gpuImpl())) {
         gpu->threshold_ = threshold_;
         gpu->radius_ = radius_;
         gpu->intensity_ = intensity_;

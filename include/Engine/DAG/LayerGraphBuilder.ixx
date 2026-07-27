@@ -42,6 +42,7 @@ import Artifact.Engine.DAG.Node;
 import Artifact.Engine.DAG.Connection;
 import Artifact.Engine.DAG.Graph;
 import Artifact.Effect.Abstract;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -92,7 +93,7 @@ export namespace Artifact {
                 auto stage = static_cast<EffectPipelineStage>(s);
                 for (const auto& effect : stageEffects[s]) {
                     auto nodeId = NodeID(QString("node_%1").arg(nodeCounter++));
-                    auto node = std::make_shared<EffectNode>(
+                    auto node = ArtifactCore::makeShared<EffectNode>(
                         nodeId, effect->displayName(), stage, effect
                     );
                     graph.addNode(node);

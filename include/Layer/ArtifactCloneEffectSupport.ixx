@@ -27,6 +27,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Component.System;
 import Artifact.Effect.Generator.Cloner;
 import Property.Abstract;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -803,7 +804,7 @@ inline std::vector<CloneRenderInstance> cloneRenderInstancesImpl(
     bool hasLegacyEffectCloner = false;
     std::vector<CloneRenderInstance> legacyEffectInstances;
     for (const auto& effect : layer->getEffects()) {
-        const auto cloner = std::dynamic_pointer_cast<ClonerGenerator>(effect);
+        const auto cloner = ArtifactCore::dynamicPointerCast<ClonerGenerator>(effect);
         if (!cloner || !cloner->isEnabled()) {
             continue;
         }

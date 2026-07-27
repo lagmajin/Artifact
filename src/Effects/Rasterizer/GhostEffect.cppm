@@ -16,6 +16,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -98,7 +99,7 @@ void GhostEffect::setPropertyValue(const UniString& n,const QVariant& v){
     else if(k=="ghostCount")setGhostCount(v.toInt());
 }
 void GhostEffect::syncImpls(){
-    auto c=std::make_shared<GhostCPUImpl>();
+    auto c=ArtifactCore::makeShared<GhostCPUImpl>();
     c->opacity_=opacity_;c->ghostCount_=ghostCount_;setCPUImpl(c);
 }
 } // namespace Artifact

@@ -57,11 +57,18 @@ import Artifact.Mask.LayerMask;
 import Layer.Blend;
 import Event.Bus;
 import Artifact.Event.Types;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
 namespace {
 Q_LOGGING_CATEGORY(softwareInspectorPerfLog, "artifact.softwareinspectorperf")
+
+template<typename T, typename Ptr>
+ArtifactCore::SharedPtr<T> toShared(const Ptr& ptr)
+{
+    return ArtifactCore::SharedPtr<T>(ptr);
+}
 
 QString blendLabel(const ArtifactCore::BlendMode mode)
 {
@@ -488,7 +495,7 @@ QSize safeLayerSize(const ArtifactAbstractLayerPtr& layer, const QSize& fallback
     return QSize(std::max(16, source.width), std::max(16, source.height));
 }
 
-QImage renderTextLayerSurface(const std::shared_ptr<ArtifactTextLayer>& textLayer, const QSize& size)
+QImage renderTextLayerSurface(const ArtifactCore::SharedPtr<ArtifactTextLayer>& textLayer, const QSize& size)
 {
     if (!textLayer) {
         return {};
@@ -497,7 +504,7 @@ QImage renderTextLayerSurface(const std::shared_ptr<ArtifactTextLayer>& textLaye
     return textLayer->toQImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
 }
 
-QImage renderVideoLayerSurface(const std::shared_ptr<ArtifactVideoLayer>& videoLayer, const QSize& size)
+QImage renderVideoLayerSurface(const ArtifactCore::SharedPtr<ArtifactVideoLayer>& videoLayer, const QSize& size)
 {
     QImage image(size, QImage::Format_ARGB32_Premultiplied);
     image.fill(QColor(20, 24, 30));
@@ -543,7 +550,7 @@ QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer)
 
     const QSize layerSize = safeLayerSize(layer);
 
-    if (const auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+    if (const auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(toShared(layer))) {
         QImage image = imageLayer->toQImage();
         if (!image.isNull()) {
             return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
@@ -558,7 +565,7 @@ QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer)
         return placeholder;
     }
 
-    if (const auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+    if (const auto svgLayer = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(toShared(layer))) {
         if (svgLayer->isLoaded()) {
             QImage image = svgLayer->toQImage();
             if (!image.isNull()) {
@@ -574,7 +581,7 @@ QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer)
         return placeholder;
     }
 
-    if (const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+    if (const auto solidLayer = ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(toShared(layer))) {
         QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
         if (solidLayer->isGradientEnabled()) {
             QPainter painter(&image);
@@ -594,7 +601,7 @@ QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer)
         return image;
     }
 
-    if (const auto solid2DLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+    if (const auto solid2DLayer = ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(toShared(layer))) {
         QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
         if (solid2DLayer->isGradientEnabled()) {
             QPainter painter(&image);
@@ -614,15 +621,15 @@ QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer)
         return image;
     }
 
-    if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+    if (const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(toShared(layer))) {
         return renderTextLayerSurface(textLayer, layerSize);
     }
 
-    if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    if (const auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(toShared(layer))) {
         return renderVideoLayerSurface(videoLayer, layerSize);
     }
 
-    if (const auto shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+    if (const auto shapeLayer = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(toShared(layer))) {
         const QImage image = shapeLayer->toQImage();
         if (!image.isNull()) {
             return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
@@ -639,7 +646,9 @@ void drawLayerOnCanvas(QPainter& painter, const ArtifactAbstractLayerPtr& layer,
     }
 
     const QImage surface = renderLayerSurface(layer);
-    if (surface.isNull() && !std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) && !std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+    if (surface.isNull() &&
+        !ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(toShared(layer)) &&
+        !ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(toShared(layer))) {
         return;
     }
 
@@ -674,7 +683,7 @@ void drawLayerOnCanvas(QPainter& painter, const ArtifactAbstractLayerPtr& layer,
 
     // 4. Draw Content
     const auto size = layer->sourceSize();
-    if (const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+    if (const auto solidLayer = ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(toShared(layer))) {
         if (solidLayer->isGradientEnabled()) {
             fillRectWithGradient(painter,
                                  QRectF(0, 0, size.width, size.height),
@@ -689,7 +698,7 @@ void drawLayerOnCanvas(QPainter& painter, const ArtifactAbstractLayerPtr& layer,
         } else {
             painter.fillRect(QRectF(0, 0, size.width, size.height), toQColor(solidLayer->color()));
         }
-    } else if (const auto solid2D = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+    } else if (const auto solid2D = ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(toShared(layer))) {
         if (solid2D->isGradientEnabled()) {
             fillRectWithGradient(painter,
                                  QRectF(0, 0, size.width, size.height),
@@ -799,12 +808,13 @@ QString compositionSummaryText(const ArtifactCompositionPtr& composition)
         if (layer->isVisible()) {
             ++visibleCount;
         }
-        if (std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer) || std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+        if (ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(toShared(layer)) ||
+            ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(toShared(layer))) {
             ++solidCount;
-        } else if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer) ||
-                   std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+        } else if (ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(toShared(layer)) ||
+                   ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(toShared(layer))) {
             ++imageCount;
-        } else if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+        } else if (ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(toShared(layer))) {
             ++textCount;
         }
     }

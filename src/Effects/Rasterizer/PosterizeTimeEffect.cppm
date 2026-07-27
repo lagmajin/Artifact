@@ -15,6 +15,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -70,6 +71,6 @@ void PosterizeTimeEffect::setPropertyValue(const UniString& n,const QVariant& v)
     if(n.toQString()=="frameRate")setFrameRate(v.toFloat());
 }
 void PosterizeTimeEffect::syncImpls(){
-    auto c=std::make_shared<PosterizeTimeCPUImpl>();c->frameRate_=frameRate_;setCPUImpl(c);
+    auto c=ArtifactCore::makeShared<PosterizeTimeCPUImpl>();c->frameRate_=frameRate_;setCPUImpl(c);
 }
 } // namespace Artifact

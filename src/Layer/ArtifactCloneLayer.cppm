@@ -20,6 +20,7 @@ import Artifact.Layers;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Clone.Core;
 import Artifact.Effect.Abstract;
+import Memory.SharedPtr;
 import Color.Float;
 import Utils.String.UniString;
 import Artifact.Render.IRenderer;
@@ -116,7 +117,7 @@ public:
     Impl();
     ~Impl();
     ArtifactCloneLayerSettings settings_;
-    std::vector<std::shared_ptr<AbstractCloneEffector>> effectors_;
+    std::vector<SharedPtr<AbstractCloneEffector>> effectors_;
 };
 
 ArtifactCloneLayer::Impl::Impl() {
@@ -372,7 +373,7 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
     return clones;
 }
 
-void ArtifactCloneLayer::addEffector(std::shared_ptr<AbstractCloneEffector> effector) {
+void ArtifactCloneLayer::addEffector(SharedPtr<AbstractCloneEffector> effector) {
     if (effector) {
         impl_->effectors_.push_back(effector);
     }
@@ -392,7 +393,7 @@ int ArtifactCloneLayer::effectorCount() const {
     return static_cast<int>(impl_->effectors_.size());
 }
 
-std::shared_ptr<AbstractCloneEffector> ArtifactCloneLayer::effectorAt(int index) const {
+SharedPtr<AbstractCloneEffector> ArtifactCloneLayer::effectorAt(int index) const {
     if (index >= 0 && index < static_cast<int>(impl_->effectors_.size())) {
         return impl_->effectors_[static_cast<size_t>(index)];
     }

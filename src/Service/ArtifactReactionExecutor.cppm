@@ -26,7 +26,7 @@ import Animation.Value;
 namespace Artifact {
 
 struct ArtifactReactionExecutor::Impl {
-    std::shared_ptr<ArtifactAbstractComposition> composition;
+    ArtifactCompositionPtr composition;
     ArtifactCompositionPlaybackController* playbackController = nullptr;
 
     ArtifactAbstractLayerPtr findLayer(const QString& layerId) const {
@@ -96,11 +96,11 @@ ArtifactReactionExecutor::ArtifactReactionExecutor(QObject* parent)
 
 ArtifactReactionExecutor::~ArtifactReactionExecutor() { delete impl_; }
 
-void ArtifactReactionExecutor::setComposition(const std::shared_ptr<ArtifactAbstractComposition>& comp) {
+void ArtifactReactionExecutor::setComposition(ArtifactCompositionPtr comp) {
     impl_->composition = comp;
 }
 
-std::shared_ptr<ArtifactAbstractComposition> ArtifactReactionExecutor::composition() const {
+ArtifactCompositionPtr ArtifactReactionExecutor::composition() const {
     return impl_->composition;
 }
 

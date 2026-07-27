@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <iostream>
 #include <vector>
@@ -33,6 +33,7 @@
 
 #include <QObject>
 #include <QString>
+
 #include <QStringList>
 #include <QTimer>
 #include <QDateTime>
@@ -43,8 +44,11 @@
 
 export module Artifact.Project.AutoSaveManager;
 
+import Core.ArtifactString;
 
 export namespace Artifact {
+
+using ArtifactCore::String;
 
   enum class AutoSaveStatus {
     Idle,
@@ -154,7 +158,7 @@ export namespace Artifact {
       }
     }
 
-    bool createRecoveryPoint(const std::string& projectSnapshotJsonUtf8, std::string* outPath = nullptr) {
+    bool createRecoveryPoint(const String& projectSnapshotJsonUtf8, String* outPath = nullptr) {
       const QString dirPath = ensureAutoSaveDir();
       if (dirPath.isEmpty()) {
         status_ = AutoSaveStatus::SaveFailed;
@@ -183,7 +187,7 @@ export namespace Artifact {
       isDirty_ = false;
       status_ = AutoSaveStatus::SaveComplete;
       lastError_.clear();
-      if (outPath) *outPath = fullPath.toStdString();
+      if (outPath) *outPath = String(fullPath.toUtf8().constData(), static_cast<std::size_t>(fullPath.toUtf8().size()));
       return true;
     }
 
@@ -204,7 +208,7 @@ export namespace Artifact {
       return result;
     }
 
-    bool loadLatestRecoveryPoint(std::string* outJsonUtf8, std::string* outPath = nullptr) {
+    bool loadLatestRecoveryPoint(String* outJsonUtf8, String* outPath = nullptr) {
       if (!outJsonUtf8) return false;
       QDir dir(ensureAutoSaveDir());
       if (!dir.exists()) return false;
@@ -216,9 +220,10 @@ export namespace Artifact {
       QFile file(latest);
       if (!file.open(QIODevice::ReadOnly)) return false;
 
-      *outJsonUtf8 = file.readAll().toStdString();
+      const QByteArray contents = file.readAll();
+      *outJsonUtf8 = String(contents.constData(), static_cast<std::size_t>(contents.size()));
       file.close();
-      if (outPath) *outPath = latest.toStdString();
+      if (outPath) *outPath = String(latest.toUtf8().constData(), static_cast<std::size_t>(latest.toUtf8().size()));
       status_ = AutoSaveStatus::RecoveringFromCrash;
       return !outJsonUtf8->empty();
     }

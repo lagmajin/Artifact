@@ -23,6 +23,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -182,15 +183,15 @@ ChromaticGlowEffect::ChromaticGlowEffect() {
     setEffectID(UniString("chromatic_glow"));
     setDisplayName(UniString("Chromatic Glow"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<ChromaticGlowEffectCPUImpl>());
-    setGPUImpl(std::make_shared<ChromaticGlowEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<ChromaticGlowEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<ChromaticGlowEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 
 ChromaticGlowEffect::~ChromaticGlowEffect() = default;
 
 void ChromaticGlowEffect::syncImpls() {
-    if (auto cpu = std::dynamic_pointer_cast<ChromaticGlowEffectCPUImpl>(cpuImpl())) {
+    if (auto cpu = ArtifactCore::dynamicPointerCast<ChromaticGlowEffectCPUImpl>(cpuImpl())) {
         cpu->threshold_ = threshold_;
         cpu->radius_ = radius_;
         cpu->intensity_ = intensity_;
@@ -198,7 +199,7 @@ void ChromaticGlowEffect::syncImpls() {
         cpu->angle_ = angle_;
         cpu->tintMix_ = tintMix_;
     }
-    if (auto gpu = std::dynamic_pointer_cast<ChromaticGlowEffectGPUImpl>(gpuImpl())) {
+    if (auto gpu = ArtifactCore::dynamicPointerCast<ChromaticGlowEffectGPUImpl>(gpuImpl())) {
         gpu->threshold_ = threshold_;
         gpu->radius_ = radius_;
         gpu->intensity_ = intensity_;

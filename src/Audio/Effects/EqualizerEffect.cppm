@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <cmath>
 #include <vector>
 #include <string>
@@ -66,7 +66,7 @@ std::vector<AudioEffectParameter> EqualizerEffect::getUiParameters() const {
     return params;
 }
 
-void EqualizerEffect::setParameter(const std::string& name, float value) {
+void EqualizerEffect::setParameter(const String& name, float value) {
     if (name == "gain_Low" && bands_.size() > 0) bands_[0].gain = value;
     else if (name == "gain_LowMid" && bands_.size() > 1) bands_[1].gain = value;
     else if (name == "gain_Mid" && bands_.size() > 2) bands_[2].gain = value;
@@ -74,7 +74,7 @@ void EqualizerEffect::setParameter(const std::string& name, float value) {
     else if (name == "gain_High" && bands_.size() > 4) bands_[4].gain = value;
 }
 
-float EqualizerEffect::getParameter(const std::string& name) const {
+float EqualizerEffect::getParameter(const String& name) const {
     if (name == "gain_Low" && bands_.size() > 0) return bands_[0].gain;
     else if (name == "gain_LowMid" && bands_.size() > 1) return bands_[1].gain;
     else if (name == "gain_Mid" && bands_.size() > 2) return bands_[2].gain;

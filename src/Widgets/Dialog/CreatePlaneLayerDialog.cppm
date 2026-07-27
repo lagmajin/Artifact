@@ -34,6 +34,7 @@ module;
 module Artifact.Widgets.CreatePlaneLayerDialog;
 
 import std;
+import Memory.SharedPtr;
 import Widgets.Dialog.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.InitParams;
@@ -1306,7 +1307,7 @@ void EditPlaneLayerSettingDialog::showAnimated()
     show();
 }
 
-void EditPlaneLayerSettingDialog::setupEdit(std::shared_ptr<ArtifactSolidImageLayer> layer)
+void EditPlaneLayerSettingDialog::setupEdit(SharedPtr<ArtifactSolidImageLayer> layer)
 {
     if (!layer) return;
     impl_->targetLayer = layer.get();

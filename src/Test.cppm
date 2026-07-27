@@ -17,6 +17,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 export module Artifact.TestRunner;
+import Memory.SharedPtr;
 
 import Artifact.Render.DiligentDeviceManager;
 import Artifact.Render.CompositionViewDrawing;
@@ -311,7 +312,7 @@ int runGpuBlendTests()
         return 1;
     }
 
-    auto gpuContext = std::make_shared<ArtifactCore::GpuContext>(device, context);
+    auto gpuContext = ArtifactCore::makeShared<ArtifactCore::GpuContext>(device, context);
     ArtifactCore::LayerBlendPipeline pipeline(gpuContext);
     if (!pipeline.initialize() || !pipeline.ready()) {
         qCritical().noquote() << "[GpuBlendTest] LayerBlendPipeline initialization failed";

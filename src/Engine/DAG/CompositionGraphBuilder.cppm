@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -7,16 +7,17 @@ module Artifact.Engine.DAG.CompositionGraphBuilder;
 
 import Artifact.Composition.Abstract;
 import Artifact.Engine.DAG.Node;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
-std::shared_ptr<EffectGraph> CompositionGraphBuilder::build(ArtifactAbstractComposition* comp)
+SharedPtr<EffectGraph> CompositionGraphBuilder::build(ArtifactAbstractComposition* comp)
 {
     if (!comp) {
         return nullptr;
     }
 
-    auto graph = std::make_shared<EffectGraph>(QString("Composition_%1").arg(comp->id().toString()));
+    auto graph = makeShared<EffectGraph>(QString("Composition_%1").arg(comp->id().toString()));
     auto layers = comp->allLayer();
 
     std::unordered_map<std::string, EffectNodePtr> layerOutputNodes;
@@ -29,7 +30,7 @@ std::shared_ptr<EffectGraph> CompositionGraphBuilder::build(ArtifactAbstractComp
 
         std::string layerIdStr = layer->id().toString().toStdString();
 
-        auto transformNode = std::make_shared<EffectNode>(
+        auto transformNode = makeShared<EffectNode>(
             NodeID(QString("Transform_%1").arg(layer->id().toString())),
             "Transform",
             EffectPipelineStage::PreProcess,
@@ -37,7 +38,7 @@ std::shared_ptr<EffectGraph> CompositionGraphBuilder::build(ArtifactAbstractComp
         graph->addNode(transformNode);
         layerTransformNodes[layerIdStr] = transformNode;
 
-        auto renderNode = std::make_shared<EffectNode>(
+        auto renderNode = makeShared<EffectNode>(
             NodeID(QString("Render_%1").arg(layer->id().toString())),
             "LayerRender",
             EffectPipelineStage::Rasterizer,
@@ -64,7 +65,7 @@ std::shared_ptr<EffectGraph> CompositionGraphBuilder::build(ArtifactAbstractComp
         }
     }
 
-    auto compositeNode = std::make_shared<EffectNode>(
+    auto compositeNode = makeShared<EffectNode>(
         NodeID("Composite_Output"),
         "Final Composite",
         EffectPipelineStage::LayerTransform,

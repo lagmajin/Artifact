@@ -4,6 +4,7 @@ module;
 #include <QSettings>
 module Artifact.Core.SmartGuidesManager;
 import std;
+import Memory.SharedPtr;
 import Utils.Path;
 import Artifact.Layer.Construction;
 namespace Artifact {
@@ -94,7 +95,7 @@ void SmartGuidesManager::buildCustomGuides(ArtifactCompositionPtr comp, std::vec
             continue;
         }
         const auto constructionLayer =
-            std::dynamic_pointer_cast<ArtifactConstructionLayer>(layer);
+            ArtifactCore::dynamicPointerCast<ArtifactConstructionLayer>(layer);
         if (!constructionLayer) {
             continue;
         }

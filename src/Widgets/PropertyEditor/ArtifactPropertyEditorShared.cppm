@@ -486,7 +486,7 @@ bool shouldShowNumericSlider(const ArtifactCore::AbstractProperty &property) {
   return true;
 }
 
-std::optional<ArtifactEnumPropertyEditor::OptionList>
+ArtifactCore::Optional<ArtifactEnumPropertyEditor::OptionList>
 parseTooltipEnumOptions(const QString &tooltip) {
   ArtifactEnumPropertyEditor::OptionList options;
   const auto entries = tooltip.split(',', Qt::SkipEmptyParts);
@@ -494,29 +494,29 @@ parseTooltipEnumOptions(const QString &tooltip) {
     const QString entry = rawEntry.trimmed();
     const int equalIndex = entry.indexOf('=');
     if (equalIndex <= 0 || equalIndex + 1 >= entry.size()) {
-      return std::nullopt;
+      return {};
     }
     bool ok = false;
     const int value = entry.left(equalIndex).trimmed().toInt(&ok);
     if (!ok) {
-      return std::nullopt;
+      return {};
     }
     const QString label = entry.mid(equalIndex + 1).trimmed();
     if (label.isEmpty()) {
-      return std::nullopt;
+      return {};
     }
     options.emplace_back(value, label);
   }
   if (options.empty()) {
-    return std::nullopt;
+    return {};
   }
   return options;
 }
 
-std::optional<ArtifactEnumPropertyEditor::OptionList>
+ArtifactCore::Optional<ArtifactEnumPropertyEditor::OptionList>
 enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
   if (property.getType() != ArtifactCore::PropertyType::Integer) {
-    return std::nullopt;
+    return {};
   }
 
   const auto meta = property.metadata();
@@ -605,7 +605,7 @@ enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
         {5, QStringLiteral("Mirrored Gradient")}};
   }
 
-  return std::nullopt;
+  return {};
 }
 
 std::pair<double, double>

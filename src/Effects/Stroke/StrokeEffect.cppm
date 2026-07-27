@@ -25,6 +25,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -168,8 +169,8 @@ StrokeEffect::StrokeEffect()
     setDisplayName(UniString("Stroke (Rasterizer)"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
 
-    auto cpu = std::make_shared<StrokeCPUImpl>();
-    auto gpu = std::make_shared<StrokeGPUImpl>();
+    auto cpu = ArtifactCore::makeShared<StrokeCPUImpl>();
+    auto gpu = ArtifactCore::makeShared<StrokeGPUImpl>();
     setCPUImpl(cpu);
     setGPUImpl(gpu);
 }

@@ -17,6 +17,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -197,7 +198,7 @@ void EdgeEffect::setPropertyValue(const UniString& n,const QVariant& v){
     if(k=="mode")setMode(v.toFloat());else if(k=="intensity")setIntensity(v.toFloat());else if(k=="threshold")setThreshold(v.toFloat());else if(k=="invert")setInvert(v.toFloat());
 }
 void EdgeEffect::syncImpls(){
-    auto c=std::make_shared<EdgeCPUImpl>();c->mode_=mode_;c->intensity_=intensity_;c->threshold_=threshold_;c->invert_=invert_;setCPUImpl(c);
+    auto c=ArtifactCore::makeShared<EdgeCPUImpl>();c->mode_=mode_;c->intensity_=intensity_;c->threshold_=threshold_;c->invert_=invert_;setCPUImpl(c);
 }
 
 RimLightEffect::RimLightEffect() : ArtifactAbstractEffect() {
@@ -260,7 +261,7 @@ void RimLightEffect::setPropertyValue(const UniString& name, const QVariant& val
 }
 
 void RimLightEffect::syncImpl() {
-    auto impl = std::make_shared<RimLightCPUImpl>();
+    auto impl = ArtifactCore::makeShared<RimLightCPUImpl>();
     impl->angle_ = angle_;
     impl->width_ = width_;
     impl->softness_ = softness_;

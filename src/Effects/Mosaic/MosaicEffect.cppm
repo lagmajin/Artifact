@@ -22,6 +22,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -167,8 +168,8 @@ cbuffer MosaicParams : register(b0){ float g_CellSize; float g_ShapeMode; float2
 MosaicEffect::MosaicEffect() {
     setDisplayName(UniString("Mosaic"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<MosaicEffectCPUImpl>());
-    setGPUImpl(std::make_shared<MosaicEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<MosaicEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<MosaicEffectGPUImpl>());
 }
 MosaicEffect::~MosaicEffect() = default;
 

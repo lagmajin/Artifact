@@ -21,6 +21,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -309,8 +310,8 @@ ChannelMixerEffect::ChannelMixerEffect() {
     setEffectID(UniString("effect.colorcorrection.channelmixer"));
     setDisplayName(UniString("Channel Mixer"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<ChannelMixerEffectCPUImpl>());
-    setGPUImpl(std::make_shared<ChannelMixerEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<ChannelMixerEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<ChannelMixerEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     applyPreset(preset_);
     syncImpls();

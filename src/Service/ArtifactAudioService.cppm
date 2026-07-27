@@ -14,6 +14,7 @@ import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import Audio.Mixer;
 import Audio.Bus;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -34,7 +35,7 @@ public:
  float masterVolume = 1.0f;
  bool masterMuted = false;
 
- std::shared_ptr<ArtifactCore::AudioMixer> currentMixer() const
+ ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> currentMixer() const
  {
   auto* projectService = ArtifactProjectService::instance();
   const auto composition = projectService
@@ -93,11 +94,11 @@ bool ArtifactAudioService::syncCurrentComposition()
   if (!bus) {
    continue;
   }
-  if (const auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+  if (const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
    bus->setVolume(linearToDecibels(audioLayer->volume()));
    bus->setPan(audioLayer->pan());
    bus->setMute(audioLayer->isMuted());
-  } else if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+  } else if (const auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
    bus->setVolume(linearToDecibels(static_cast<float>(videoLayer->audioVolume())));
    bus->setPan(static_cast<float>(videoLayer->audioPan()));
    bus->setMute(videoLayer->isAudioMuted());
@@ -121,7 +122,7 @@ QStringList ArtifactAudioService::busNames() const
  QStringList result;
  if (const auto mixer = impl_->currentMixer()) {
   for (const auto& name : mixer->busNames()) {
-   result.append(QString::fromStdString(name));
+   result.append(QString::fromUtf8(name.data(), static_cast<int>(name.length())));
   }
  }
  return result;
@@ -161,9 +162,9 @@ bool ArtifactAudioService::setLayerBusVolume(
  if (!bus) return false;
  const float normalized = std::clamp(volume, 0.0f, 2.0f);
  if (const auto layer = impl_->currentLayer(layerId)) {
-  if (const auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+  if (const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
    audioLayer->setVolume(normalized);
-  } else if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+  } else if (const auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
    videoLayer->setAudioVolume(normalized);
    layer->changed();
   }
@@ -180,9 +181,9 @@ bool ArtifactAudioService::setLayerBusPan(
  if (!bus) return false;
  const float normalized = std::clamp(pan, -1.0f, 1.0f);
  if (const auto layer = impl_->currentLayer(layerId)) {
-  if (const auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+  if (const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
    audioLayer->setPan(normalized);
-  } else if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+  } else if (const auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
    videoLayer->setAudioPan(normalized);
    layer->changed();
   }
@@ -198,11 +199,11 @@ bool ArtifactAudioService::setLayerBusMuted(
  const auto bus = mixer ? mixer->findBusByName(layerBusName(layerId)) : nullptr;
  if (!bus) return false;
  if (const auto layer = impl_->currentLayer(layerId)) {
-  if (const auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+  if (const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
    if (audioLayer->isMuted() != muted) {
     audioLayer->mute();
    }
-  } else if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+  } else if (const auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
    videoLayer->setAudioMuted(muted);
    layer->changed();
   }

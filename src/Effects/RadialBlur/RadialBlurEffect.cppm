@@ -22,6 +22,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -135,8 +136,8 @@ float4 sample(float2 p,uint w,uint h){p=clamp(p,float2(0,0),float2(w-1,h-1));int
 RadialBlurEffect::RadialBlurEffect() {
     setDisplayName(UniString("Radial Blur"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<RadialBlurEffectCPUImpl>());
-    setGPUImpl(std::make_shared<RadialBlurEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<RadialBlurEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<RadialBlurEffectGPUImpl>());
 }
 RadialBlurEffect::~RadialBlurEffect() = default;
 

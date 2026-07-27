@@ -32,8 +32,11 @@ LODManager::DetailLevel LODManager::getDetailLevel(float zoom) const
     
     // 状態変化を検出してシグナル発火
     if (newLevel != currentLevel_) {
-        const_cast<LODManager*>(this)->currentLevel_ = newLevel;
-        emit const_cast<LODManager*>(this)->detailLevelChanged(static_cast<int>(currentLevel_), static_cast<int>(newLevel));
+        const DetailLevel previousLevel = currentLevel_;
+        auto* mutableThis = const_cast<LODManager*>(this);
+        mutableThis->currentLevel_ = newLevel;
+        emit mutableThis->detailLevelChanged(static_cast<int>(previousLevel),
+                                             static_cast<int>(newLevel));
     }
     
     return newLevel;

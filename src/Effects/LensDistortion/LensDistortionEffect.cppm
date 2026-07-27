@@ -52,6 +52,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -130,12 +131,12 @@ void LensDistortionEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, I
 
 class LensDistortionEffect::Impl {
 public:
-    std::shared_ptr<LensDistortionEffectCPUImpl> cpuImpl_;
-    std::shared_ptr<LensDistortionEffectGPUImpl> gpuImpl_;
+    ArtifactCore::SharedPtr<LensDistortionEffectCPUImpl> cpuImpl_;
+    ArtifactCore::SharedPtr<LensDistortionEffectGPUImpl> gpuImpl_;
 
     Impl() {
-        cpuImpl_ = std::make_shared<LensDistortionEffectCPUImpl>();
-        gpuImpl_ = std::make_shared<LensDistortionEffectGPUImpl>();
+        cpuImpl_ = ArtifactCore::makeShared<LensDistortionEffectCPUImpl>();
+        gpuImpl_ = ArtifactCore::makeShared<LensDistortionEffectGPUImpl>();
     }
 };
 

@@ -38,8 +38,8 @@ public:
     explicit ArtifactReactionExecutor(QObject* parent = nullptr);
     ~ArtifactReactionExecutor();
 
-    void setComposition(const std::shared_ptr<ArtifactAbstractComposition>& comp);
-    std::shared_ptr<ArtifactAbstractComposition> composition() const;
+    void setComposition(ArtifactCompositionPtr comp);
+    ArtifactCompositionPtr composition() const;
 
     void setPlaybackController(ArtifactCompositionPlaybackController* ctrl);
 

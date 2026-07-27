@@ -22,6 +22,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -133,8 +134,8 @@ PhotoFilterEffect::PhotoFilterEffect() {
     setEffectID(UniString("effect.colorcorrection.photofilter"));
     setDisplayName(UniString("Photo Filter"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<PhotoFilterEffectCPUImpl>());
-    setGPUImpl(std::make_shared<PhotoFilterEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<PhotoFilterEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<PhotoFilterEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     applyPreset(preset_);
     syncImpls();

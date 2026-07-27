@@ -47,6 +47,7 @@ import Artifact.Service.Project;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -74,9 +75,9 @@ LocalAIAgentPtr createLocalAgentForProvider(const UniString &provider) {
       normalized == QStringLiteral("onnx-dml") ||
       normalized == QStringLiteral("onnxdml") ||
       normalized == QStringLiteral("directml")) {
-    return std::make_shared<OnnxDmlLocalAgent>();
+    return ArtifactCore::makeShared<OnnxDmlLocalAgent>();
   }
-  return std::make_shared<LlamaLocalAgent>();
+  return ArtifactCore::makeShared<LlamaLocalAgent>();
 }
 
 bool backendProviderChanged(const UniString &current, const UniString &next) {
@@ -100,7 +101,7 @@ bool looksLikeToolCallText(const QString &text) {
 } // namespace
 
 AIClient::AIClient() : impl_(new Impl()) {
-  impl_->localAgent = std::make_shared<LlamaLocalAgent>();
+  impl_->localAgent = ArtifactCore::makeShared<LlamaLocalAgent>();
 }
 
 AIClient::~AIClient() { delete impl_; }

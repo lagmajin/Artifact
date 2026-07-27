@@ -27,6 +27,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -171,7 +172,7 @@ void VectorBlurEffect::setPropertyValue(const UniString& n,const QVariant& v){
     const QString k=n.toQString();if(k=="shutterAngle")setShutterAngle(v.toFloat());else if(k=="samples")setSamples(v.toInt());else if(k=="exposureCompensation")setExposureCompensation(v.toFloat());
 }
 void VectorBlurEffect::syncImpls(){
-    auto c=std::make_shared<VectorBlurCPUImpl>();c->shutterAngle_=shutterAngle_;c->samples_=samples_;c->exposureComp_=exposureComp_;setCPUImpl(c);
-    auto g=std::make_shared<VectorBlurGPUImpl>();g->cpu.shutterAngle_=shutterAngle_;g->cpu.samples_=samples_;g->cpu.exposureComp_=exposureComp_;setGPUImpl(g);
+    auto c=ArtifactCore::makeShared<VectorBlurCPUImpl>();c->shutterAngle_=shutterAngle_;c->samples_=samples_;c->exposureComp_=exposureComp_;setCPUImpl(c);
+    auto g=ArtifactCore::makeShared<VectorBlurGPUImpl>();g->cpu.shutterAngle_=shutterAngle_;g->cpu.samples_=samples_;g->cpu.exposureComp_=exposureComp_;setGPUImpl(g);
 }
 } // namespace Artifact

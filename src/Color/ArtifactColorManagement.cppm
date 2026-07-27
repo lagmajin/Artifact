@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <cmath>
 
@@ -387,7 +387,7 @@ bool LUTData::is1D() const
 class ColorLUTEffect::Impl
 {
 public:
-    std::shared_ptr<LUTData> lut_;
+    ArtifactCore::SharedPtr<LUTData> lut_;
     float intensity_ = 1.0f;
     GammaFunction inputGamma_ = GammaFunction::Linear;
     GammaFunction outputGamma_ = GammaFunction::sRGB;
@@ -405,12 +405,12 @@ ColorLUTEffect::~ColorLUTEffect()
     delete impl_;
 }
 
-void ColorLUTEffect::setLUT(std::shared_ptr<LUTData> lut)
+void ColorLUTEffect::setLUT(ArtifactCore::SharedPtr<LUTData> lut)
 {
     impl_->lut_ = lut;
 }
 
-std::shared_ptr<LUTData> ColorLUTEffect::lut() const
+ArtifactCore::SharedPtr<LUTData> ColorLUTEffect::lut() const
 {
     return impl_->lut_;
 }

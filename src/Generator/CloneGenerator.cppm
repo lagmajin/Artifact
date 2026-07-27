@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QVector>
 #include <QMatrix4x4>
 #include <QString>
@@ -87,7 +87,7 @@ namespace Artifact
   float rotationStep_ = 0.0f;
 
   // Spline
-  std::shared_ptr<SimpleSpline> spline_;
+  ArtifactCore::SharedPtr<SimpleSpline> spline_;
 
   // ヘルパー: 線形補間
   float lerp(float a, float b, float t) const { return a + (b - a) * t; }
@@ -321,12 +321,12 @@ namespace Artifact
  }
 
  // Spline
- void CloneGenerator::setSpline(std::shared_ptr<SimpleSpline> spline)
+ void CloneGenerator::setSpline(ArtifactCore::SharedPtr<SimpleSpline> spline)
  {
   impl_->spline_ = spline;
  }
 
- std::shared_ptr<SimpleSpline> CloneGenerator::spline() const
+ ArtifactCore::SharedPtr<SimpleSpline> CloneGenerator::spline() const
  {
   return impl_->spline_;
  }
@@ -579,4 +579,3 @@ namespace Artifact
  }
 
 };
-

@@ -17,6 +17,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -95,5 +96,5 @@ std::vector<AbstractProperty> RasterizerKaleidoscopeEffect::getProperties()const
     return props;
 }
 void RasterizerKaleidoscopeEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="segments")setSegments(v.toInt());else if(k=="rotation")setRotation(v.toFloat());else if(k=="centerX")setCenterX(v.toFloat());else if(k=="centerY")setCenterY(v.toFloat());}
-void RasterizerKaleidoscopeEffect::syncImpls(){auto c=std::make_shared<KaleidoscopeCPUImpl>();c->segments_=segments_;c->rotation_=rotation_;c->cx_=cx_;c->cy_=cy_;setCPUImpl(c);}
+void RasterizerKaleidoscopeEffect::syncImpls(){auto c=ArtifactCore::makeShared<KaleidoscopeCPUImpl>();c->segments_=segments_;c->rotation_=rotation_;c->cx_=cx_;c->cy_=cy_;setCPUImpl(c);}
 } // namespace Artifact

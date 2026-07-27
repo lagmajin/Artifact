@@ -11,6 +11,7 @@ export module Artifact.Layer.EnvironmentMap;
 
 import Artifact.Layer.Abstract;
 import Property.Group;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -136,6 +137,6 @@ private:
     std::uint64_t revision_ = 1;
 };
 
-using ArtifactEnvironmentMapLayerPtr = std::shared_ptr<ArtifactEnvironmentMapLayer>;
+using ArtifactEnvironmentMapLayerPtr = SharedPtr<ArtifactEnvironmentMapLayer>;
 
 } // namespace Artifact

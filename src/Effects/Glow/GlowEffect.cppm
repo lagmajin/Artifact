@@ -25,6 +25,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -468,12 +469,12 @@ void GlowEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
 
 class GlowEffect::Impl {
 public:
-    std::shared_ptr<GlowEffectCPUImpl> cpuImpl_;
-    std::shared_ptr<GlowEffectGPUImpl> gpuImpl_;
+    ArtifactCore::SharedPtr<GlowEffectCPUImpl> cpuImpl_;
+    ArtifactCore::SharedPtr<GlowEffectGPUImpl> gpuImpl_;
 
     Impl() {
-        cpuImpl_ = std::make_shared<GlowEffectCPUImpl>();
-        gpuImpl_ = std::make_shared<GlowEffectGPUImpl>();
+        cpuImpl_ = ArtifactCore::makeShared<GlowEffectCPUImpl>();
+        gpuImpl_ = ArtifactCore::makeShared<GlowEffectGPUImpl>();
     }
 };
 

@@ -23,6 +23,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -117,20 +118,20 @@ Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTextur
 WhiteBalanceEffect::WhiteBalanceEffect() {
     setDisplayName(UniString("White Balance"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<WhiteBalanceCPUImpl>());
-    setGPUImpl(std::make_shared<WhiteBalanceGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<WhiteBalanceCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<WhiteBalanceGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 
 WhiteBalanceEffect::~WhiteBalanceEffect() = default;
 
 void WhiteBalanceEffect::syncImpls() {
-    if (auto cpu = std::dynamic_pointer_cast<WhiteBalanceCPUImpl>(cpuImpl())) {
+    if (auto cpu = ArtifactCore::dynamicPointerCast<WhiteBalanceCPUImpl>(cpuImpl())) {
         cpu->temperature_ = temperature_;
         cpu->tint_ = tint_;
         cpu->brightness_ = brightness_;
     }
-    if (auto gpu = std::dynamic_pointer_cast<WhiteBalanceGPUImpl>(gpuImpl())) {
+    if (auto gpu = ArtifactCore::dynamicPointerCast<WhiteBalanceGPUImpl>(gpuImpl())) {
         gpu->temperature_ = temperature_;
         gpu->tint_ = tint_;
         gpu->brightness_ = brightness_;

@@ -16,6 +16,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -74,5 +75,5 @@ std::vector<AbstractProperty> HalftoneEffect::getProperties()const{
     return props;
 }
 void HalftoneEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="dotSize")setDotSize(v.toFloat());else if(k=="angle")setAngle(v.toFloat());else if(k=="contrast")setContrast(v.toFloat());}
-void HalftoneEffect::syncImpls(){auto c=std::make_shared<HalftoneCPUImpl>();c->dotSize_=dotSize_;c->angle_=angle_;c->contrast_=contrast_;setCPUImpl(c);}
+void HalftoneEffect::syncImpls(){auto c=ArtifactCore::makeShared<HalftoneCPUImpl>();c->dotSize_=dotSize_;c->angle_=angle_;c->contrast_=contrast_;setCPUImpl(c);}
 } // namespace Artifact

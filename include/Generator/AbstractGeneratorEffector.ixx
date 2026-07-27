@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -33,6 +33,8 @@
 #include <QColor>
 #include <QHash>
 export module Generator.Effector;
+
+import Memory.SharedPtr;
 #
 
 
@@ -66,7 +68,7 @@ export namespace Artifact
 
     // レイヤーに適用
     void apply();
-    void applyToLayer(std::shared_ptr<ArtifactAbstractLayer> layer);
+    void applyToLayer(ArtifactCore::SharedPtr<ArtifactAbstractLayer> layer);
 
     // 基本情報
     void setName(const UniString& name);

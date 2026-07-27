@@ -18,6 +18,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -137,7 +138,7 @@ DisplacementMapEffect::DisplacementMapEffect()
     setDisplayName(UniString("Displacement Map"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
 
-    auto cpu = std::make_shared<DisplacementMapCPUImpl>();
+    auto cpu = ArtifactCore::makeShared<DisplacementMapCPUImpl>();
     setCPUImpl(cpu);
     // GPU 実装は将来フェーズ
 }

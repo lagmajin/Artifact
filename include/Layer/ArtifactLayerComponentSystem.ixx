@@ -2,7 +2,6 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <optional>
 #include <utility>
 #include <vector>
 
@@ -15,6 +14,8 @@ module;
 #include <QVector3D>
 
 export module Artifact.Layer.Component.System;
+
+import Utils.Optional;
 
 export namespace Artifact {
 
@@ -95,7 +96,7 @@ inline QJsonObject toJsonObject(const LayerGeneratorDescriptor& descriptor) {
     return obj;
 }
 
-inline std::optional<LayerGeneratorDescriptor>
+inline ArtifactCore::Optional<LayerGeneratorDescriptor>
 layerGeneratorDescriptorFromJson(const QJsonObject& obj) {
     LayerGeneratorDescriptor descriptor;
     descriptor.generatorId =
@@ -103,7 +104,7 @@ layerGeneratorDescriptorFromJson(const QJsonObject& obj) {
     descriptor.typeId =
         obj.value(QStringLiteral("typeId")).toString().trimmed();
     if (descriptor.generatorId.isEmpty() || descriptor.typeId.isEmpty()) {
-        return std::nullopt;
+        return {};
     }
     descriptor.version = static_cast<std::uint32_t>(
         std::max<qint64>(1, obj.value(QStringLiteral("version")).toInteger(1)));
@@ -133,7 +134,7 @@ inline QJsonObject toJsonObject(const LayerFieldDescriptor& descriptor) {
     return obj;
 }
 
-inline std::optional<LayerFieldDescriptor>
+inline ArtifactCore::Optional<LayerFieldDescriptor>
 layerFieldDescriptorFromJson(const QJsonObject& obj) {
     LayerFieldDescriptor descriptor;
     descriptor.fieldId =
@@ -141,7 +142,7 @@ layerFieldDescriptorFromJson(const QJsonObject& obj) {
     descriptor.typeId =
         obj.value(QStringLiteral("typeId")).toString().trimmed();
     if (descriptor.fieldId.isEmpty() || descriptor.typeId.isEmpty()) {
-        return std::nullopt;
+        return {};
     }
     descriptor.version = static_cast<std::uint32_t>(
         std::max<qint64>(1, obj.value(QStringLiteral("version")).toInteger(1)));
@@ -173,7 +174,7 @@ inline QJsonObject toJsonObject(const LayerModifierDescriptor& descriptor) {
     return obj;
 }
 
-inline std::optional<LayerModifierDescriptor>
+inline ArtifactCore::Optional<LayerModifierDescriptor>
 layerModifierDescriptorFromJson(const QJsonObject& obj) {
     LayerModifierDescriptor descriptor;
     descriptor.modifierId =
@@ -181,7 +182,7 @@ layerModifierDescriptorFromJson(const QJsonObject& obj) {
     descriptor.typeId =
         obj.value(QStringLiteral("typeId")).toString().trimmed();
     if (descriptor.modifierId.isEmpty() || descriptor.typeId.isEmpty()) {
-        return std::nullopt;
+        return {};
     }
     descriptor.version = static_cast<std::uint32_t>(
         std::max<qint64>(1, obj.value(QStringLiteral("version")).toInteger(1)));
@@ -336,7 +337,7 @@ inline QString layerComponentPhaseName(LayerComponentPhase phase) {
     return QStringLiteral("source");
 }
 
-inline std::optional<LayerComponentPhase>
+inline ArtifactCore::Optional<LayerComponentPhase>
 layerComponentPhaseFromName(const QString& name) {
     const QString normalized = name.trimmed().toLower();
     if (normalized == QStringLiteral("source"))
@@ -357,7 +358,7 @@ layerComponentPhaseFromName(const QString& name) {
         return LayerComponentPhase::Emit;
     if (normalized == QStringLiteral("render"))
         return LayerComponentPhase::RenderExtraction;
-    return std::nullopt;
+    return {};
 }
 
 inline QString layerComponentScopeName(LayerComponentScope scope) {

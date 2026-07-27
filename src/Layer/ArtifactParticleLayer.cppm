@@ -45,11 +45,13 @@
 #include <regex>
 #include <random>
 module Artifact.Layer.Particle;
+import Memory.SharedPtr;
 
 
 
 
 import Artifact.Layer.Abstract;
+import Memory.SharedPtr;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Generator.Particle;
@@ -592,7 +594,7 @@ QJsonObject ArtifactParticleLayer::toJson() const
 
 ArtifactAbstractLayerPtr ArtifactParticleLayer::fromJson(const QJsonObject& obj)
 {
-    auto layer = std::make_shared<ArtifactParticleLayer>();
+    auto layer = ArtifactCore::makeShared<ArtifactParticleLayer>();
     layer->ArtifactAbstractLayer::fromJsonProperties(obj);
     layer->applyPropertiesFromJson(obj);
     return layer;
@@ -2465,14 +2467,14 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
 
 // ==================== Factory Functions ====================
 
-std::shared_ptr<ArtifactParticleLayer> createParticleLayer()
+SharedPtr<ArtifactParticleLayer> createParticleLayer()
 {
-    return std::make_shared<ArtifactParticleLayer>();
+    return ArtifactCore::makeShared<ArtifactParticleLayer>();
 }
 
-std::shared_ptr<ArtifactParticleLayer> createParticleLayer(const QString& preset)
+SharedPtr<ArtifactParticleLayer> createParticleLayer(const QString& preset)
 {
-    auto layer = std::make_shared<ArtifactParticleLayer>();
+    auto layer = ArtifactCore::makeShared<ArtifactParticleLayer>();
     layer->loadPreset(preset);
     return layer;
 }
@@ -2535,9 +2537,9 @@ void ArtifactParticleDebugLayer::draw(ArtifactIRenderer* renderer)
                          opacity());
 }
 
-std::shared_ptr<ArtifactParticleDebugLayer> createParticleDebugLayer()
+SharedPtr<ArtifactParticleDebugLayer> createParticleDebugLayer()
 {
-    return std::make_shared<ArtifactParticleDebugLayer>();
+    return ArtifactCore::makeShared<ArtifactParticleDebugLayer>();
 }
 
 } // namespace Artifact

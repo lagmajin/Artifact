@@ -16,6 +16,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -89,7 +90,7 @@ void FrameBlendEffect::setPropertyValue(const UniString& n, const QVariant& v) {
     if (n.toQString() == "blend") setBlend(v.toFloat());
 }
 void FrameBlendEffect::syncImpls() {
-    auto c = std::make_shared<FrameBlendCPUImpl>();
+    auto c = ArtifactCore::makeShared<FrameBlendCPUImpl>();
     c->blend_ = blend_;
     setCPUImpl(c);
 }

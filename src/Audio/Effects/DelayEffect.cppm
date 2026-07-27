@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -76,7 +76,7 @@ std::vector<AudioEffectParameter> DelayEffect::getUiParameters() const {
     };
 }
 
-void DelayEffect::setParameter(const std::string& name, float value) {
+void DelayEffect::setParameter(const String& name, float value) {
     if      (name == "delay_l")   delayTimeL_ = value;
     else if (name == "delay_r")   delayTimeR_ = value;
     else if (name == "feedback")  feedback_   = std::min(value, 0.95f);
@@ -86,7 +86,7 @@ void DelayEffect::setParameter(const std::string& name, float value) {
     else if (name == "ping_pong") pingPong_   = (value > 0.5f);
 }
 
-float DelayEffect::getParameter(const std::string& name) const {
+float DelayEffect::getParameter(const String& name) const {
     if      (name == "delay_l")   return delayTimeL_;
     else if (name == "delay_r")   return delayTimeR_;
     else if (name == "feedback")  return feedback_;

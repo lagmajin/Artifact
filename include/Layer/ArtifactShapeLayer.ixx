@@ -14,6 +14,7 @@ import Artifact.Layer.InitParams;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
 import Shape.Operator;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 using namespace ArtifactCore;
@@ -150,7 +151,7 @@ public:
   void draw(ArtifactIRenderer *renderer) override;
   QImage toQImage() const;
   QJsonObject toJson() const override;
-  static std::shared_ptr<ArtifactShapeLayer> fromJson(const QJsonObject &obj);
+  static SharedPtr<ArtifactShapeLayer> fromJson(const QJsonObject &obj);
 };
 
 } // namespace Artifact

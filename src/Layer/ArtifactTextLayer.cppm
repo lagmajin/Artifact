@@ -88,6 +88,7 @@ import Text.Animator;
 import Time.Rational;
 import Artifact.Mask.Path;
 import Artifact.Mask.LayerMask;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -114,7 +115,7 @@ public:
   float rubyScale_ = 0.5f;
   TextLayoutMode layoutMode_ = defaultTextLayoutMode();
   QImage renderedImage_;
-  mutable std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> renderedBuffer_;
+  mutable SharedPtr<ArtifactCore::ImageF32x4_RGBA> renderedBuffer_;
   bool isDirty_ = true;
   std::optional<int64_t> lastAnimatedTextPropertyFrame_;
   bool applyingAnimatedTextProperties_ = false;
@@ -4153,7 +4154,7 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
     painter.restore();
     painter.end();
 
-    impl_->renderedBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>();
+    impl_->renderedBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>();
     const cv::Mat mat =
         ArtifactCore::CvUtils::qImageToCvMat(impl_->renderedImage_, true);
     if (!mat.empty()) {
@@ -4416,7 +4417,7 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
 
   painter.end();
   setSourceSize(Size_2D(width, height));
-  impl_->renderedBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>();
+  impl_->renderedBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>();
   const cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(impl_->renderedImage_, true);
   if (!mat.empty()) {
     cv::Mat rgba = mat;

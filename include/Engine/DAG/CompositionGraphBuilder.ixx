@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <vector>
 #include <unordered_map>
 #include <memory>
@@ -38,6 +38,8 @@
 #include <QList>
 export module Artifact.Engine.DAG.CompositionGraphBuilder;
 
+import Memory.SharedPtr;
+
 
 
 
@@ -60,7 +62,7 @@ export namespace Artifact {
     class CompositionGraphBuilder {
     public:
         // コンポジションから評価・レンダリング用グラフを構築
-        static std::shared_ptr<EffectGraph> build(ArtifactAbstractComposition* comp);
+        static SharedPtr<EffectGraph> build(ArtifactAbstractComposition* comp);
     };
 
 }

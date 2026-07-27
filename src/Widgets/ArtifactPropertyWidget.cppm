@@ -78,6 +78,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Widgets.PropertyEditor;
 import Property;
 import Property.Abstract;
+import Memory.SharedPtr;
 import Property.Group;
 import Undo.UndoManager;
 import Artifact.Effect.Abstract;
@@ -101,6 +102,8 @@ namespace Artifact {
 
 namespace detail {
 
+using AbstractPropertyPtr = ArtifactCore::AbstractPropertyPtr;
+
 struct LayerStateToggleDef {
   const char *propertyName;
   const char *label;
@@ -113,11 +116,11 @@ void clearLayoutRecursive(QLayout *layout);
 void updateScaleSupplementaryText(
     ArtifactPropertyEditorRowWidget *row,
     const ArtifactAbstractLayerPtr &layer,
-    const std::shared_ptr<ArtifactCore::AbstractProperty> &property,
+    const AbstractPropertyPtr &property,
     const QVariant &value);
 void launchExpressionCopilot(
     QWidget *parent, const QString &propertyName,
-    const std::shared_ptr<ArtifactCore::AbstractProperty> &propertyPtr,
+    const AbstractPropertyPtr &propertyPtr,
     const QString &initialExpression, const ArtifactAbstractLayerPtr &layer,
     const RationalTime &currentTime,
     const std::function<void(const QString &)> &applyHandler);
@@ -254,20 +257,20 @@ bool isTextAnimatorPropertyGroup(
     const ArtifactCore::PropertyGroup &group);
 void applyPresentationPropertyRules(
     const PropertyPresentationProfile &profile, const QString &groupName,
-    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &properties);
-std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+    std::vector<AbstractPropertyPtr> &properties);
+std::vector<AbstractPropertyPtr>
 applyFavoriteFilter(
-    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+    const std::vector<AbstractPropertyPtr>
         &properties,
     bool favoriteOnly);
-std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+std::vector<AbstractPropertyPtr>
 filteredGroupProperties(
     const ArtifactAbstractLayerPtr &layer, const QString &groupName,
-    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+    const std::vector<AbstractPropertyPtr>
         &properties);
-std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+std::vector<AbstractPropertyPtr>
 inspectorProperties(
-    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+    const std::vector<AbstractPropertyPtr>
         &properties);
 void registerCurrentLayerPropertySnapshot(
     const ArtifactAbstractLayerPtr &layer, const QString &focusedEffectId);
@@ -276,7 +279,7 @@ void alignPropertyRowLabels(
     int maxWidth);
 void addRowsFromProperties(
     QWidget *owner, QVBoxLayout *layout,
-    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+    const std::vector<AbstractPropertyPtr>
         &properties,
     const QString &filterText,
     const std::function<void(const QString &, const QVariant &)> &commitValue,
@@ -288,11 +291,11 @@ void addRowsFromProperties(
     QMultiHash<QString, ArtifactPropertyEditorRowWidget *> *registry = nullptr,
     std::vector<ArtifactPropertyEditorRowWidget *> *collectedRows = nullptr,
     const std::function<void(ArtifactPropertyEditorRowWidget *,
-                             const std::shared_ptr<ArtifactCore::AbstractProperty> &)>
+                             const AbstractPropertyPtr &)>
         &decorateRow = {},
     const std::function<void(
         ArtifactPropertyEditorRowWidget *,
-        const std::shared_ptr<ArtifactCore::AbstractProperty> &,
+        const AbstractPropertyPtr &,
         const QVariant &)> &rowValueChanged = {});
 
 } // namespace detail
@@ -303,7 +306,7 @@ namespace detail {
 
 PropertyPresentationProfile
 propertyPresentationProfile(const ArtifactAbstractLayerPtr &layer) {
-  if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+  if (ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
     return {QStringLiteral("text"),
             {QStringLiteral("Initial"), QStringLiteral("Transform"),
              QStringLiteral("Text"), QStringLiteral("Path Options")}};
@@ -337,7 +340,7 @@ bool isTextAnimatorPropertyGroup(const ArtifactCore::PropertyGroup &group) {
 
 void applyPresentationPropertyRules(
     const PropertyPresentationProfile &profile, const QString &groupName,
-    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &properties) {
+    std::vector<AbstractPropertyPtr> &properties) {
   if (profile.id != QStringLiteral("solid") ||
       groupName.compare(QStringLiteral("Solid"), Qt::CaseInsensitive) != 0) {
     return;
@@ -438,11 +441,11 @@ public:
   void updatePropertyValues();
   void applyLockState();
   ArtifactPropertyEditorRowWidget* activeExpressionRow() const;
-  std::shared_ptr<ArtifactCore::AbstractProperty> resolveRowProperty(
+  AbstractPropertyPtr resolveRowProperty(
       const ArtifactPropertyEditorRowWidget *row) const;
   void openExpressionCopilotForProperty(
       const QString& propertyName,
-      const std::shared_ptr<ArtifactCore::AbstractProperty>& propertyPtr,
+      const AbstractPropertyPtr& propertyPtr,
       const QString& initialExpression,
       const RationalTime& currentTime);
 };
@@ -461,7 +464,7 @@ void ArtifactPropertyWidget::showEvent(QShowEvent *event) {
   }
 }
 
-std::shared_ptr<ArtifactCore::AbstractProperty>
+AbstractPropertyPtr
 ArtifactPropertyWidget::Impl::resolveRowProperty(
     const ArtifactPropertyEditorRowWidget *row) const {
   if (!row || !currentLayer) {
@@ -627,7 +630,7 @@ QString ArtifactPropertyWidget::Impl::computeRebuildSignature() const {
     ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
     for (const auto &property : effect->getProperties()) {
       propGroup.addProperty(
-          std::make_shared<ArtifactCore::AbstractProperty>(property));
+          ArtifactCore::makeShared<ArtifactCore::AbstractProperty>(property));
     }
 
     const auto effectSummary =
@@ -791,7 +794,7 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
 }
 
 void ArtifactPropertyWidget::setCompositionEffects(
-    const std::vector<std::shared_ptr<ArtifactAbstractEffect>>& effects) {
+    const std::vector<ArtifactAbstractEffectPtr>& effects) {
   if (impl_->currentLayerChangedConnection) {
     QObject::disconnect(impl_->currentLayerChangedConnection);
     impl_->currentLayerChangedConnection = {};
@@ -1336,7 +1339,7 @@ ArtifactPropertyEditorRowWidget* ArtifactPropertyWidget::Impl::activeExpressionR
 
 void ArtifactPropertyWidget::Impl::openExpressionCopilotForProperty(
     const QString& propertyName,
-    const std::shared_ptr<ArtifactCore::AbstractProperty>& propertyPtr,
+    const AbstractPropertyPtr& propertyPtr,
     const QString& initialExpression,
     const RationalTime& currentTime) {
   if (!propertyPtr) {
@@ -1563,7 +1566,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       if (favoriteOnly) {
         const auto favs = loadFavoriteProperties();
         if (!favs.isEmpty()) {
-          std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> favFiltered;
+          std::vector<AbstractPropertyPtr> favFiltered;
           favFiltered.reserve(sortedProps.size());
           for (const auto &p : sortedProps) {
             if (p && favs.contains(p->getName(), Qt::CaseInsensitive)) {
@@ -1641,7 +1644,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
   const auto decorateLayerRow =
       [this, layer](ArtifactPropertyEditorRowWidget *row,
-                    const std::shared_ptr<ArtifactCore::AbstractProperty> &property) {
+                    const AbstractPropertyPtr &property) {
         if (!row || !property) {
           return;
         }
@@ -1661,7 +1664,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       };
   const auto updateLayerRowValue =
       [layer](ArtifactPropertyEditorRowWidget *row,
-              const std::shared_ptr<ArtifactCore::AbstractProperty> &property,
+              const AbstractPropertyPtr &property,
               const QVariant &value) {
         updateScaleSupplementaryText(row, layer, property, value);
       };
@@ -1686,7 +1689,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         QStringLiteral("transform.scale.x"),
         QStringLiteral("transform.scale.y"),
         QStringLiteral("layer.opacity")};
-    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> channelProperties;
+    std::vector<AbstractPropertyPtr> channelProperties;
     for (const auto &path : channelPaths) {
       if (const auto property = layer->getProperty(path)) {
         channelProperties.push_back(property);
@@ -1904,7 +1907,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
     bool addedGroupProperties = false;
     std::vector<ArtifactPropertyEditorRowWidget *> groupRows;
-    auto groupPreviewOpacity = std::make_shared<std::optional<float>>();
+    auto groupPreviewOpacity = ArtifactCore::makeShared<std::optional<float>>();
     auto commitLayerValue = [this, layer, groupPreviewOpacity](
                                  const QString &name, const QVariant &value) {
       if (!layer) { return; }
@@ -2007,8 +2010,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         scheduleRebuild(0);
       });
 
-      std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> baseProps;
-      std::map<int, std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>> transformProps;
+      std::vector<AbstractPropertyPtr> baseProps;
+      std::map<int, std::vector<AbstractPropertyPtr>> transformProps;
       for (const auto &prop : sortedProps) {
         if (!prop) {
           continue;
@@ -2055,7 +2058,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                                    return candidate &&
                                        candidate->getName().compare(target, Qt::CaseInsensitive) == 0;
                                  });
-          return it != props.end() ? *it : std::shared_ptr<ArtifactCore::AbstractProperty>{};
+          return it != props.end() ? *it : AbstractPropertyPtr{};
         };
         const auto nameProp = findProp(QStringLiteral("name"));
         const QString transformTitle =
@@ -2284,13 +2287,13 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         scheduleRebuild(0);
       });
 
-      auto collectProps = [](const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &src,
+      auto collectProps = [](const std::vector<AbstractPropertyPtr> &src,
                              const auto &names) {
-        std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> out;
+        std::vector<AbstractPropertyPtr> out;
         for (const auto &name : names) {
           const QString target = QString::fromUtf8(name);
           auto it = std::find_if(src.begin(), src.end(),
-                                 [&target](const std::shared_ptr<ArtifactCore::AbstractProperty> &prop) {
+                                 [&target](const AbstractPropertyPtr &prop) {
                                    return prop && prop->getName().compare(target, Qt::CaseInsensitive) == 0;
                                  });
           if (it != src.end()) {
@@ -2461,7 +2464,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     if (favoriteOnly) {
       const auto favs = loadFavoriteProperties();
       if (!favs.isEmpty()) {
-        std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> favFiltered;
+        std::vector<AbstractPropertyPtr> favFiltered;
         favFiltered.reserve(sortedProps.size());
         for (const auto &p : sortedProps) {
           if (p && favs.contains(p->getName(), Qt::CaseInsensitive)) {

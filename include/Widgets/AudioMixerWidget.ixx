@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <memory>
 #include <string>
@@ -12,6 +12,7 @@ export module Artifact.Widgets.AudioMixer;
 import Audio.Mixer;
 import Audio.Bus;
 import Audio.Analyze;
+import Memory.SharedPtr;
 import Artifact.Widgets.SpectrumAnalyzer;
 
 export namespace Artifact {
@@ -22,7 +23,7 @@ export namespace Artifact {
 class AudioEffectSlotWidget : public QWidget {
     W_OBJECT(AudioEffectSlotWidget)
 public:
-    AudioEffectSlotWidget(std::shared_ptr<ArtifactCore::AudioBus> bus, int slotIndex, QWidget* parent = nullptr);
+    AudioEffectSlotWidget(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus, int slotIndex, QWidget* parent = nullptr);
     virtual ~AudioEffectSlotWidget();
 
 protected:
@@ -30,7 +31,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
 
 private:
-    std::shared_ptr<ArtifactCore::AudioBus> bus_;
+    ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus_;
     int slotIndex_;
 };
 
@@ -41,7 +42,7 @@ private:
 class AudioChannelStripWidget : public QWidget {
 	W_OBJECT(AudioChannelStripWidget)
 public:
-    AudioChannelStripWidget(std::shared_ptr<ArtifactCore::AudioBus> bus, QWidget* parent = nullptr);
+    AudioChannelStripWidget(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus, QWidget* parent = nullptr);
     virtual ~AudioChannelStripWidget();
 
     void updateMeters(); // 定期的に呼び出してレベル表示を更新
@@ -50,7 +51,7 @@ protected:
     void paintEvent(QPaintEvent* event) override;
 
 private:
-    std::shared_ptr<ArtifactCore::AudioBus> bus_;
+    ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus_;
     SpectrumAnalyzerWidget* analyzerWidget_;
     std::unique_ptr<ArtifactCore::AudioAnalyzer> analyzer_;
     QElapsedTimer clipTimer_;

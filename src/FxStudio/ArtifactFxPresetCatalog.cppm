@@ -1,7 +1,6 @@
 module;
 
 #include <algorithm>
-#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -11,11 +10,11 @@ namespace Artifact::FxStudio {
 
 namespace {
 
-constexpr std::string_view kGlitchBurstId = "fx.glitch.burst";
-constexpr std::string_view kImpactPunchId = "fx.impact.punch";
-constexpr std::string_view kRevealSweepId = "fx.reveal.sweep";
-constexpr std::string_view kEnergySurgeId = "fx.energy.surge";
-constexpr std::string_view kGlitchTransitionId = "fx.transition.glitch";
+constexpr const char* kGlitchBurstId = "fx.glitch.burst";
+constexpr const char* kImpactPunchId = "fx.impact.punch";
+constexpr const char* kRevealSweepId = "fx.reveal.sweep";
+constexpr const char* kEnergySurgeId = "fx.energy.surge";
+constexpr const char* kGlitchTransitionId = "fx.transition.glitch";
 
 }
 
@@ -35,14 +34,14 @@ const std::vector<PresetDescriptor>& PresetCatalog::descriptors() {
   return entries;
 }
 
-const PresetDescriptor* PresetCatalog::find(const std::string_view id) {
+const PresetDescriptor* PresetCatalog::find(const ArtifactCore::String& id) {
   const auto& entries = descriptors();
   const auto it = std::find_if(entries.begin(), entries.end(),
                                [id](const PresetDescriptor& entry) { return entry.id == id; });
   return it != entries.end() ? &*it : nullptr;
 }
 
-std::optional<Sequence> PresetCatalog::create(const std::string_view id) {
+ArtifactCore::Optional<Sequence> PresetCatalog::create(const ArtifactCore::String& id) {
   if (id == kGlitchBurstId) {
     return makeGlitchBurstSequence();
   }
@@ -58,7 +57,7 @@ std::optional<Sequence> PresetCatalog::create(const std::string_view id) {
   if (id == kGlitchTransitionId) {
     return makeGlitchTransitionSequence();
   }
-  return std::nullopt;
+  return {};
 }
 
 Sequence makeImpactPunchSequence() {

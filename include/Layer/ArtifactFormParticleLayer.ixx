@@ -15,6 +15,7 @@ module;
 export module Artifact.Layer.FormParticle;
 
 import Artifact.Layer.Abstract;
+import Memory.SharedPtr;
 import Size;
 
 export namespace Artifact {
@@ -137,7 +138,7 @@ public:
     void applyPropertiesFromJson(const QJsonObject& obj);
 };
 
-std::shared_ptr<ArtifactFormParticleLayer> createFormParticleLayer();
-std::shared_ptr<ArtifactFormParticleLayer> createFormParticleLayer(const QString& preset);
+SharedPtr<ArtifactFormParticleLayer> createFormParticleLayer();
+SharedPtr<ArtifactFormParticleLayer> createFormParticleLayer(const QString& preset);
 
 } // namespace Artifact

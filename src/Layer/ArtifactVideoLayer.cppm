@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QImage>
 #include <QUuid>
 #include <QMatrix4x4>
@@ -79,6 +79,7 @@ import Artifact.Event.Types;
 import CvUtils;
 import Graphics.SurfaceColorContract;
 import Image.ImageF32x4_RGBA;
+import Memory.SharedPtr;
 import Artifact.Layer.SourceCrop;
 import Utils.String.UniString;
 import Utils.Id;
@@ -495,11 +496,11 @@ public:
         QString error;
         VideoStreamInfo streamInfo;
         int64_t defaultOutPoint = 300;
-        std::shared_ptr<ArtifactCore::MediaPlaybackController> controller;
+        ArtifactCore::SharedPtr<ArtifactCore::MediaPlaybackController> controller;
     };
 
     struct DecodeRequest {
-        std::shared_ptr<ArtifactCore::MediaPlaybackController> controller;
+        ArtifactCore::SharedPtr<ArtifactCore::MediaPlaybackController> controller;
         int64_t timelineFrame = 0;
         int64_t sourceFrame = 0;
         bool hasCurrentBuffer = false;
@@ -508,8 +509,8 @@ public:
         uint64_t requestId = 0;
     };
 
-    std::shared_ptr<ArtifactCore::MediaPlaybackController> playbackController_;
-    std::shared_ptr<ArtifactCore::MediaPlaybackController> proxyController_;
+    ArtifactCore::SharedPtr<ArtifactCore::MediaPlaybackController> playbackController_;
+    ArtifactCore::SharedPtr<ArtifactCore::MediaPlaybackController> proxyController_;
     FrameCache frameCache_;
     VideoStreamInfo streamInfo_;
     
@@ -539,9 +540,9 @@ public:
     
     mutable std::mutex frameStateMutex_;
     ArtifactCore::ImageF32x4_RGBA currentFrameBuffer_;
-    std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> currentSharedFrame_;
+    ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> currentSharedFrame_;
     mutable std::mutex sharedFramePayloadMutex_;
-    std::unordered_map<int64_t, std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>> sharedFramePayloads_;
+    std::unordered_map<int64_t, ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>> sharedFramePayloads_;
     bool hasCurrentFrameBuffer_ = false;
     int64_t lastDecodedFrame_ = -1;
     int64_t currentTimelineFrame_ = 0;
@@ -568,11 +569,11 @@ public:
     FrameTicket frameTicket_;
     std::deque<FrameOutcome> recentFrameOutcomes_;
 
-    Impl() : playbackController_(std::make_shared<ArtifactCore::MediaPlaybackController>()), frameCache_(120) {}
+    Impl() : playbackController_(ArtifactCore::makeShared<ArtifactCore::MediaPlaybackController>()), frameCache_(120) {}
     ~Impl() = default;
 
     void retainSharedFrame(const int64_t sourceFrame,
-                           const std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>& payload)
+                           const ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>& payload)
     {
         if (!payload || payload->isEmpty()) {
             return;
@@ -959,7 +960,7 @@ public:
 
         if (!usingProxy && !sourceAssetId_.isNull()) {
             const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(sourceAssetId_);
-            const auto sharedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+            const auto sharedFrame = ArtifactCore::staticPointerCast<ArtifactCore::ImageF32x4_RGBA>(
                 ArtifactCore::AssetManager::instance().decodedPayload(
                     sourceAssetId_, sourceVersion, videoFramePayloadRepresentation(sourceFrame)));
             if (sharedFrame && !sharedFrame->isEmpty()) {
@@ -1132,7 +1133,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
         Impl::AsyncOpenResult result;
         result.normalizedPath = normalizedPath;
 
-        auto controller = std::make_shared<ArtifactCore::MediaPlaybackController>();
+        auto controller = ArtifactCore::makeShared<ArtifactCore::MediaPlaybackController>();
         controller->setDecoderBackend(ArtifactCore::DecoderBackend::FFmpeg);
         if (!controller->openMediaFile(normalizedPath)) {
             result.error = controller->getLastError();
@@ -1634,11 +1635,11 @@ void ArtifactVideoLayer::decodeCurrentFrame()
             const auto sourceVersion =
                 ArtifactCore::AssetManager::instance().sourceVersion(sourceAssetId);
             auto sharedFrame = !sourceAssetId.isNull()
-                ? std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+                ? ArtifactCore::staticPointerCast<ArtifactCore::ImageF32x4_RGBA>(
                     ArtifactCore::AssetManager::instance().decodedPayload(
                         sourceAssetId, sourceVersion,
                         videoFramePayloadRepresentation(activeRequest.sourceFrame)))
-                : std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>{};
+                : ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>{};
             ArtifactCore::DecodedVideoFrame rawDecoded = std::monostate{};
             ArtifactCore::ImageF32x4_RGBA decoded;
             if (sharedFrame && !sharedFrame->isEmpty()) {
@@ -1655,13 +1656,13 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                 impl_->decodeGeneration_.load(std::memory_order_acquire);
             const bool hasGpuOnlyFrame =
                 decoded.isEmpty() && decodedVideoFrameHasGpuPayload(rawDecoded);
-            std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> publishedFrame = sharedFrame;
+            ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> publishedFrame = sharedFrame;
             if (generationCurrent && !decoded.isEmpty()) {
                 if (!publishedFrame && !sourceAssetId.isNull() && sourceVersion > 0) {
                     publishedFrame =
-                        std::make_shared<ArtifactCore::ImageF32x4_RGBA>(decoded);
+                        ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(decoded);
                     publishedFrame =
-                        std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+                        ArtifactCore::staticPointerCast<ArtifactCore::ImageF32x4_RGBA>(
                             ArtifactCore::AssetManager::instance().publishDecodedPayload(
                                 sourceAssetId, sourceVersion,
                                 videoFramePayloadRepresentation(activeRequest.sourceFrame),
@@ -1810,11 +1811,11 @@ void ArtifactVideoLayer::decodeCurrentFrame()
             if (prefetchSourceFrame &&
                 !impl_->frameCache_.contains(*prefetchSourceFrame)) {
                 auto prefetchedSharedFrame = !sourceAssetId.isNull()
-                    ? std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+                    ? ArtifactCore::staticPointerCast<ArtifactCore::ImageF32x4_RGBA>(
                         ArtifactCore::AssetManager::instance().decodedPayload(
                             sourceAssetId, sourceVersion,
                             videoFramePayloadRepresentation(*prefetchSourceFrame)))
-                    : std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>{};
+                    : ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>{};
                 ArtifactCore::ImageF32x4_RGBA prefetchedFrame;
                 if (prefetchedSharedFrame && !prefetchedSharedFrame->isEmpty()) {
                     prefetchedFrame = *prefetchedSharedFrame;
@@ -1847,9 +1848,9 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                     if (!prefetchedSharedFrame && !sourceAssetId.isNull() &&
                         sourceVersion > 0) {
                         prefetchedSharedFrame =
-                            std::make_shared<ArtifactCore::ImageF32x4_RGBA>(
+                            ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
                                 prefetchedFrame);
-                        prefetchedSharedFrame = std::static_pointer_cast<
+                        prefetchedSharedFrame = ArtifactCore::staticPointerCast<
                             ArtifactCore::ImageF32x4_RGBA>(
                             ArtifactCore::AssetManager::instance()
                                 .publishDecodedPayload(
@@ -1966,7 +1967,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64
     if (!impl_->sourceAssetId_.isNull()) {
         const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(
             impl_->sourceAssetId_);
-        const auto sharedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+        const auto sharedFrame = ArtifactCore::staticPointerCast<ArtifactCore::ImageF32x4_RGBA>(
             ArtifactCore::AssetManager::instance().decodedPayload(
                 impl_->sourceAssetId_, sourceVersion,
                 videoFramePayloadRepresentation(sourceFrame)));
@@ -2016,12 +2017,12 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64
     const ArtifactCore::ImageF32x4_RGBA decoded =
         decodedVideoFrameToImageF32x4_RGBA(rawDecoded);
     if (!decoded.isEmpty()) {
-        std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> sharedFrame;
+        ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> sharedFrame;
         if (!impl_->sourceAssetId_.isNull()) {
             const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(
                 impl_->sourceAssetId_);
-            sharedFrame = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(decoded);
-            sharedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+            sharedFrame = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(decoded);
+            sharedFrame = ArtifactCore::staticPointerCast<ArtifactCore::ImageF32x4_RGBA>(
                 ArtifactCore::AssetManager::instance().publishDecodedPayload(
                     impl_->sourceAssetId_, sourceVersion,
                     videoFramePayloadRepresentation(sourceFrame), sharedFrame));
@@ -2128,7 +2129,7 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
                 if (!impl_->sourceAssetId_.isNull()) {
                     const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(
                         impl_->sourceAssetId_);
-                    const auto sharedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+                    const auto sharedFrame = ArtifactCore::staticPointerCast<ArtifactCore::ImageF32x4_RGBA>(
                         ArtifactCore::AssetManager::instance().decodedPayload(
                             impl_->sourceAssetId_, sourceVersion,
                             videoFramePayloadRepresentation(sourceFrame)));
@@ -2144,8 +2145,8 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
                     if (!impl_->sourceAssetId_.isNull()) {
                         const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(
                             impl_->sourceAssetId_);
-                        auto sharedFrame = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(frameData);
-                        const auto publishedFrame = std::static_pointer_cast<ArtifactCore::ImageF32x4_RGBA>(
+                        auto sharedFrame = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(frameData);
+                        const auto publishedFrame = ArtifactCore::staticPointerCast<ArtifactCore::ImageF32x4_RGBA>(
                             ArtifactCore::AssetManager::instance().publishDecodedPayload(
                                 impl_->sourceAssetId_, sourceVersion,
                                 videoFramePayloadRepresentation(sourceFrame), sharedFrame));
@@ -2176,7 +2177,7 @@ void ArtifactVideoLayer::setProxyQuality(ProxyQuality quality)
     impl_->invalidatePendingDecode();
     if (quality != ProxyQuality::None && quality != ProxyQuality::Full &&
         !impl_->proxyPath_.isEmpty() && QFileInfo::exists(impl_->proxyPath_)) {
-        auto candidate = std::make_shared<ArtifactCore::MediaPlaybackController>();
+        auto candidate = ArtifactCore::makeShared<ArtifactCore::MediaPlaybackController>();
         candidate->setDecoderBackend(ArtifactCore::DecoderBackend::FFmpeg);
         if (candidate->openMediaFile(impl_->proxyPath_)) {
             impl_->proxyController_ = std::move(candidate);
@@ -2471,9 +2472,9 @@ QJsonObject ArtifactVideoLayer::toJson() const
     return obj;
 }
 
-std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObject& obj)
+ArtifactCore::SharedPtr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObject& obj)
 {
-    auto layer = std::make_shared<ArtifactVideoLayer>();
+    auto layer = ArtifactCore::makeShared<ArtifactVideoLayer>();
     layer->ArtifactAbstractLayer::fromJsonProperties(obj);
     
     const QString sourcePath = obj.contains("video.sourcePath")

@@ -31,6 +31,7 @@ export module Artifact.Effect.Ofx.Host;
 import Property.Abstract;
 import Utils.String.UniString;
 import Artifact.Effect.Context;
+import Memory.SharedPtr;
 
 namespace Artifact {
 namespace Ofx {
@@ -127,7 +128,7 @@ export struct OfxPluginDescriptor {
   UniString version;
   QStringList supportedContexts;
   std::vector<AbstractProperty> previewProperties;
-  std::shared_ptr<ImageEffectState> descriptorState;
+  SharedPtr<ImageEffectState> descriptorState;
   HMODULE libraryHandle = nullptr;
 };
 
@@ -1315,9 +1316,9 @@ const OfxParameterSuiteV1 *parameterSuite() {
   return &suite;
 }
 
-std::shared_ptr<ImageEffectState> makeDescriptorState(const OfxPlugin &plugin,
+SharedPtr<ImageEffectState> makeDescriptorState(const OfxPlugin &plugin,
                                                        const QString &bundlePath) {
-  auto state = std::make_shared<ImageEffectState>();
+  auto state = ArtifactCore::makeShared<ImageEffectState>();
   initEffectProperties(state->properties, plugin.pluginIdentifier, kOfxTypeImageEffect);
   setStringProperty(state->properties, kOfxPluginPropFilePath, bundlePath.toUtf8().constData());
   setPointerProperty(state->properties, kOfxImageEffectPropPluginHandle, state.get());
@@ -1692,10 +1693,10 @@ public:
     return nullptr;
   }
 
-  std::shared_ptr<ImageEffectState> createRenderInstance(const UniString &identifier) {
+  SharedPtr<ImageEffectState> createRenderInstance(const UniString &identifier) {
     auto *desc = findDescriptor(identifier);
     if (!desc || !desc->descriptorState) return nullptr;
-    auto state = std::make_shared<ImageEffectState>();
+    auto state = ArtifactCore::makeShared<ImageEffectState>();
     state->properties = desc->descriptorState->properties;
     state->paramSet = cloneParamSetState(desc->descriptorState->paramSet);
     state->clips.clear();

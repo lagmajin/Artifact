@@ -24,6 +24,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -80,7 +81,7 @@ Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTextur
 )";
 };
 
-StripesEffect::StripesEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();setGPUImpl(std::make_shared<StripesGPUImpl>());setComputeMode(ComputeMode::AUTO);}
+    StripesEffect::StripesEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();setGPUImpl(ArtifactCore::makeShared<StripesGPUImpl>());setComputeMode(ComputeMode::AUTO);}
 StripesEffect::~StripesEffect()=default;
 float StripesEffect::frequency()const{return frequency_;}void StripesEffect::setFrequency(float v){frequency_=std::max(v,0.5f);syncImpls();}
 float StripesEffect::angle()const{return angle_;}void StripesEffect::setAngle(float v){angle_=v;syncImpls();}
@@ -109,5 +110,5 @@ std::vector<AbstractProperty> StripesEffect::getProperties()const{
     return props;
 }
 void StripesEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="frequency")setFrequency(v.toFloat());else if(k=="angle")setAngle(v.toFloat());else if(k=="thickness")setThickness(v.toFloat());else if(k=="offset")setOffset(v.toFloat());}
-void StripesEffect::syncImpls(){auto c=std::make_shared<StripesCPUImpl>();c->frequency_=frequency_;c->angle_=angle_;c->thickness_=thickness_;c->offset_=offset_;setCPUImpl(c);if(auto* g=dynamic_cast<StripesGPUImpl*>(gpuImpl().get())){g->frequency_=frequency_;g->angle_=angle_;g->thickness_=thickness_;g->offset_=offset_;}}
+void StripesEffect::syncImpls(){auto c=ArtifactCore::makeShared<StripesCPUImpl>();c->frequency_=frequency_;c->angle_=angle_;c->thickness_=thickness_;c->offset_=offset_;setCPUImpl(c);if(auto* g=dynamic_cast<StripesGPUImpl*>(gpuImpl().get())){g->frequency_=frequency_;g->angle_=angle_;g->thickness_=thickness_;g->offset_=offset_;}}
 } // namespace Artifact

@@ -154,7 +154,7 @@ void setTimelineStudioToolIcon(QToolButton* button, const QString& iconName)
   button->setText(QString{});
 }
 
-std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr& layer, const QString& propertyPath);
 
 constexpr double kTimelineRowHeight = 28.0;
@@ -619,7 +619,7 @@ bool applyTimelineLayerTrim(const CompositionID &compositionId,
                                      durationFrame, false);
 }
 
-std::shared_ptr<ArtifactAbstractComposition>
+ArtifactCompositionPtr
 safeCompositionLookup(const CompositionID &id) {
   if (id.isNil())
     return nullptr;
@@ -2075,7 +2075,7 @@ QString curveEditorSummaryForTracks(
       .arg(formatKeyframeCountSummary(totalKeyCount));
 }
 
-std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr& layer, const QString& propertyPath);
 
 QVector<qint64> collectSelectedKeyframeFrames(
@@ -2528,7 +2528,7 @@ QString interpolationTypeLabel(const ArtifactCore::InterpolationType type)
   }
 }
 
-std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr& layer,
     const QString& propertyPath);
 
@@ -2929,7 +2929,7 @@ enum class CurveEditorGraphMode {
   Speed,
 };
 
-std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr& layer, const QString& propertyPath)
 {
   if (!layer || propertyPath.trimmed().isEmpty()) {
@@ -7654,7 +7654,7 @@ void ArtifactTimelineWidget::refreshTracks() {
         std::max(1.0, static_cast<double>(layer->outPoint().framePosition() -
                                           layer->inPoint().framePosition()));
     if (impl_->painterTrackView_) {
-      const auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer);
+      const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
       ArtifactTimelineTrackPainterView::TrackClipVisual visual;
       visual.clipId = row.layerId.toString();
       visual.layerId = row.layerId;
@@ -7688,7 +7688,7 @@ void ArtifactTimelineWidget::refreshTracks() {
             firstWaveformPreview = audioLayer->waveformPreviewSummary();
           }
         }
-      } else if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+      } else if (ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
         visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video;
       }
       const qint64 inPointFrame = layer->inPoint().framePosition();
@@ -7698,7 +7698,7 @@ void ArtifactTimelineWidget::refreshTracks() {
         sourceDurationFrames =
             std::max(1.0, std::round(audioLayer->duration() * compositionFps));
       } else if (const auto videoLayer =
-                     std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+                     ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
         const auto &streamInfo = videoLayer->streamInfo();
         if (streamInfo.frameCount > 0) {
           sourceDurationFrames = static_cast<double>(streamInfo.frameCount);

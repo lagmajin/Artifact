@@ -14,6 +14,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Group;
 import Artifact.Layer.InitParams;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -47,7 +48,7 @@ export int runLayerGroupTests()
     auto childResult = factory.createLayer(childParams);
     report.check(childResult.success && childResult.layer, QStringLiteral("child layer can be created"));
 
-    auto group = std::dynamic_pointer_cast<ArtifactGroupLayer>(groupResult.layer);
+    auto group = ArtifactCore::dynamicPointerCast<ArtifactGroupLayer>(groupResult.layer);
     report.check(static_cast<bool>(group), QStringLiteral("group layer casts correctly"));
 
     if (!group || !childResult.layer) {
@@ -63,7 +64,7 @@ export int runLayerGroupTests()
     compParams.setResolution(1280, 720);
     compParams.setDurationFrames(120);
     const CompositionID compId(QStringLiteral("group-test-comp"));
-    auto composition = std::make_shared<ArtifactAbstractComposition>(compId, compParams);
+    auto composition = ArtifactCore::makeShared<ArtifactAbstractComposition>(compId, compParams);
 
     composition->appendLayerTop(group);
     report.check(group->composition() == composition.get(), QStringLiteral("group gets composition pointer"));
@@ -74,7 +75,7 @@ export int runLayerGroupTests()
     report.check(static_cast<bool>(loaded), QStringLiteral("composition roundtrip loads"));
 
     if (loaded) {
-        auto loadedGroupLayer = std::dynamic_pointer_cast<ArtifactGroupLayer>(loaded->layerById(group->id()));
+        auto loadedGroupLayer = ArtifactCore::dynamicPointerCast<ArtifactGroupLayer>(loaded->layerById(group->id()));
         report.check(static_cast<bool>(loadedGroupLayer), QStringLiteral("loaded group layer is preserved"));
         if (loadedGroupLayer) {
             report.check(loadedGroupLayer->children().size() == 1, QStringLiteral("loaded group preserves child count"));

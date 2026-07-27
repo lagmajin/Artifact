@@ -39,6 +39,7 @@ import Artifact.Effect.Field;
 import Utils.String.UniString;
 import Property.Group;
 import Property.Abstract;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -63,13 +64,13 @@ export namespace Artifact {
             : ArtifactAbstractField(FieldType::Spherical, UniString("Spherical Field"))
         {
             // Properties の初期設定
-            auto radiusProp = std::make_shared<AbstractProperty>();
+            auto radiusProp = ArtifactCore::makeShared<AbstractProperty>();
             radiusProp->setName("Radius");
             radiusProp->setType(PropertyType::Float);
             radiusProp->setValue(radius_);
             properties_->addProperty(radiusProp);
 
-            auto falloffProp = std::make_shared<AbstractProperty>();
+            auto falloffProp = ArtifactCore::makeShared<AbstractProperty>();
             falloffProp->setName("Falloff Width");
             falloffProp->setType(PropertyType::Float);
             falloffProp->setValue(falloffWidth_);

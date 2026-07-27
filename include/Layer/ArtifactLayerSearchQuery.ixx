@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <memory>
 #include <string>
 #include <QString>
@@ -34,6 +34,8 @@
 #include <regex>
 #include <random>
 export module Artifact.Layer.Search.Query;
+
+import Memory.SharedPtr;
 
 
 
@@ -72,10 +74,10 @@ export namespace Artifact {
    int sortField = 0;
    int sortOrder = 0;
   };
-  std::shared_ptr<Data> data_;
+  SharedPtr<Data> data_;
 
  public:
-  ArtifactLayerSearchQuery() : data_(std::make_shared<Data>()) {}
+  ArtifactLayerSearchQuery() : data_(makeShared<Data>()) {}
   ~ArtifactLayerSearchQuery() = default;
   ArtifactLayerSearchQuery(const ArtifactLayerSearchQuery&) = default;
   ArtifactLayerSearchQuery(ArtifactLayerSearchQuery&&) noexcept = default;

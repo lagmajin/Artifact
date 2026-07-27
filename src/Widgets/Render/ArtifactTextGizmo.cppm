@@ -29,7 +29,7 @@ void TextGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
 void TextGizmo::draw(ArtifactIRenderer* renderer) {
     if (!layer_ || !renderer) return;
 
-    const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_);
+    const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
     if (!textLayer) return;
 
     const float zoom = renderer->getZoom();
@@ -153,7 +153,7 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
 TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer) const {
     if (!layer_ || !renderer) return HandleType::None;
 
-    const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_);
+    const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
     if (!textLayer) return HandleType::None;
 
     // マウス位置をキャンバス座標に変換
@@ -254,7 +254,7 @@ bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* 
 bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* renderer) {
     if (!isDragging_ || !layer_ || !renderer) return false;
 
-    const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_);
+    const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
     if (!textLayer) return false;
 
     auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});

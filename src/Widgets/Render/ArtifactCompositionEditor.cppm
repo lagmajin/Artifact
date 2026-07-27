@@ -94,6 +94,7 @@ module;
 
 module Artifact.Widgets.CompositionEditor;
 import std;
+import Memory.SharedPtr;
 
 import Artifact.Widgets.CompositionRenderController;
 import Artifact.Service.Application;
@@ -312,26 +313,26 @@ QImage selectedLayerDebugImage(const ArtifactAbstractLayerPtr& layer) {
     return {};
   }
 
-  if (const auto video = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+  if (const auto video = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
     return video->currentFrameToQImage();
   }
-  if (const auto text = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+  if (const auto text = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
     return text->toQImage();
   }
-  if (const auto image = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+  if (const auto image = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
     return image->toQImage();
   }
   if (const auto solidImage =
-          std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+          ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer)) {
     return solidImage->toQImage();
   }
-  if (const auto svg = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+  if (const auto svg = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(layer)) {
     return svg->toQImage();
   }
-  if (const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+  if (const auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer)) {
     return shape->toQImage();
   }
-  if (const auto clone = std::dynamic_pointer_cast<ArtifactCloneLayer>(layer)) {
+  if (const auto clone = ArtifactCore::dynamicPointerCast<ArtifactCloneLayer>(layer)) {
     return clone->toQImage();
   }
   return {};
@@ -426,7 +427,7 @@ QString shapeTypeDisplayName(ShapeType type) {
   return QStringLiteral("Shape");
 }
 
-QString shapeSelectionDetail(const std::shared_ptr<ArtifactShapeLayer> &shape) {
+QString shapeSelectionDetail(const ArtifactCore::SharedPtr<ArtifactShapeLayer> &shape) {
   if (!shape) {
     return {};
   }
@@ -501,7 +502,7 @@ ArtifactCompositionPtr resolvePreferredComposition() {
   return {};
 }
 
-qint64 textEditFrame(const std::shared_ptr<ArtifactTextLayer> &layer) {
+qint64 textEditFrame(const ArtifactCore::SharedPtr<ArtifactTextLayer> &layer) {
   if (!layer) {
     return 0;
   }
@@ -512,7 +513,7 @@ qint64 textEditFrame(const std::shared_ptr<ArtifactTextLayer> &layer) {
   return 0;
 }
 
-QString textEditorValue(const std::shared_ptr<ArtifactTextLayer> &layer) {
+QString textEditorValue(const ArtifactCore::SharedPtr<ArtifactTextLayer> &layer) {
   if (!layer) {
     return {};
   }
@@ -521,7 +522,7 @@ QString textEditorValue(const std::shared_ptr<ArtifactTextLayer> &layer) {
              : layer->text().toQString();
 }
 
-bool commitTextEditorValue(const std::shared_ptr<ArtifactTextLayer> &layer,
+bool commitTextEditorValue(const ArtifactCore::SharedPtr<ArtifactTextLayer> &layer,
                            const QString &nextText) {
   if (!layer) {
     return false;
@@ -574,7 +575,7 @@ bool commitTextEditorValue(const std::shared_ptr<ArtifactTextLayer> &layer,
 class TextOverlayFilter : public QObject {
 public:
   TextOverlayFilter(QPlainTextEdit *editor,
-                    std::shared_ptr<ArtifactTextLayer> layer,
+                    ArtifactCore::SharedPtr<ArtifactTextLayer> layer,
                     CompositionRenderController *ctrl)
       : QObject(editor), editor_(editor), layer_(layer), ctrl_(ctrl) {}
 
@@ -642,7 +643,7 @@ private:
   }
 
   QPlainTextEdit *editor_;
-  std::shared_ptr<ArtifactTextLayer> layer_;
+  ArtifactCore::SharedPtr<ArtifactTextLayer> layer_;
   CompositionRenderController *ctrl_;
 };
 
@@ -656,7 +657,7 @@ public:
     setAttribute(Qt::WA_DeleteOnClose);
     setModal(false);
 
-    const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_);
+    const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
     const auto theme = ArtifactCore::currentDCCTheme();
 
     auto *root = new QVBoxLayout(this);
@@ -786,7 +787,7 @@ protected:
   }
 
 private:
-  static QString editorSummaryText(const std::shared_ptr<ArtifactTextLayer> &textLayer) {
+  static QString editorSummaryText(const ArtifactCore::SharedPtr<ArtifactTextLayer> &textLayer) {
     if (!textLayer) {
       return QStringLiteral("No text layer selected.");
     }
@@ -813,7 +814,7 @@ private:
     painter.fillRect(widget->rect(), widget->palette().window());
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_);
+    const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
     const QRectF inner = widget->rect().adjusted(20, 20, -20, -20);
     painter.setPen(QPen(QColor(120, 160, 220, 220), 1.5));
     painter.drawRoundedRect(inner, 8, 8);
@@ -845,7 +846,7 @@ private:
       return;
     }
 
-    const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_);
+    const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
     if (!textLayer) {
       return;
     }
@@ -889,7 +890,7 @@ private:
 
 bool editTextLayerInline(QWidget *parent, const ArtifactAbstractLayerPtr &layer,
                          CompositionRenderController *controller) {
-  const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer);
+  const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer);
   if (!textLayer || !parent) {
     return false;
   }
@@ -1649,7 +1650,7 @@ public:
               const QString anchorSource = sourcePath(anchor);
               const auto anchorParent = anchor->parentLayer();
               const QSet<QString> anchorEffects = effectIds(anchor);
-              const auto anchorText = std::dynamic_pointer_cast<ArtifactTextLayer>(anchor);
+              const auto anchorText = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(anchor);
               const QString anchorFont = anchorText
                   ? anchorText->fontFamily().toQString().trimmed().toCaseFolded()
                   : QString();
@@ -1670,7 +1671,7 @@ public:
                 } else if (criterion == criteria.at(3)) {
                   match = effectIds(candidate) == anchorEffects;
                 } else if (criterion == criteria.at(4)) {
-                  const auto text = std::dynamic_pointer_cast<ArtifactTextLayer>(candidate);
+                  const auto text = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(candidate);
                   match = text && !anchorFont.isEmpty() &&
                           text->fontFamily().toQString().trimmed().toCaseFolded() == anchorFont;
                 }
@@ -2147,7 +2148,7 @@ public:
                 }
               }
               if (const auto parametric =
-                      std::dynamic_pointer_cast<ArtifactParametricCompositionLayer>(candidate)) {
+                      ArtifactCore::dynamicPointerCast<ArtifactParametricCompositionLayer>(candidate)) {
                 for (const auto &binding : parametric->parametricInstance().inputBindings()) {
                   if (selectedIds.contains(binding.sourceLayerId)) {
                     dependencies.push_back(
@@ -2272,9 +2273,9 @@ public:
       add(QStringLiteral("Adaptive Text Fit..."),
           [this, comp, orderedSelectedLayers]() {
             if (!comp) return;
-            QVector<std::shared_ptr<ArtifactTextLayer>> textLayers;
+            QVector<ArtifactCore::SharedPtr<ArtifactTextLayer>> textLayers;
             for (const auto &layer : orderedSelectedLayers) {
-              if (auto text = std::dynamic_pointer_cast<ArtifactTextLayer>(layer);
+              if (auto text = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer);
                   text && !text->isLocked()) {
                 textLayers.push_back(text);
               }
@@ -2344,7 +2345,7 @@ public:
               const QJsonArray records = QJsonDocument::fromJson(state).array();
               for (const auto &value : records) {
                 const QJsonObject record = value.toObject();
-                const auto text = std::dynamic_pointer_cast<ArtifactTextLayer>(
+                const auto text = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(
                     targetComp->layerById(LayerID(record.value(QStringLiteral("id")).toString())));
                 if (!text) continue;
                 text->setFontSize(static_cast<float>(
@@ -2568,7 +2569,7 @@ public:
           }, true);
     }
     if (selectedCount == 1 && !orderedSelectedLayers.isEmpty()) {
-      const auto parametricLayer = std::dynamic_pointer_cast<ArtifactParametricCompositionLayer>(
+      const auto parametricLayer = ArtifactCore::dynamicPointerCast<ArtifactParametricCompositionLayer>(
           orderedSelectedLayers.front());
       if (parametricLayer && parametricLayer->definition() &&
           !parametricLayer->definition()->publishedControls().isEmpty()) {
@@ -3031,7 +3032,7 @@ public:
           controller_->focusSelectedLayer();
         }
       });
-      if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+      if (ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
         add(QStringLiteral("Edit Text"), [this, layer]() {
           editTextLayerInline(this, layer, controller_);
         });
@@ -3535,7 +3536,7 @@ public:
         auto* selectionManager = ArtifactLayerSelectionManager::instance();
         const ArtifactCameraLayerPtr camera =
             selectionManager
-                ? std::dynamic_pointer_cast<ArtifactCameraLayer>(
+                ? ArtifactCore::dynamicPointerCast<ArtifactCameraLayer>(
                       selectionManager->currentLayer())
                 : ArtifactCameraLayerPtr{};
         if (!camera) {
@@ -4093,7 +4094,7 @@ protected:
       if (!layerId.isNil()) {
         if (const auto comp = currentComposition()) {
           if (auto layer = comp->layerById(layerId)) {
-            if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+            if (ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
               editTextLayerInline(this, layer, controller_);
               event->accept();
               return;
@@ -5283,27 +5284,18 @@ protected:
     if (auto *gizmo3D = controller_->gizmo3D()) {
       model.items.push_back({"3D Move", QIcon(), "gizmo3d.move", true,
                              gizmo3D->mode() == GizmoMode::Move,
-                             [this, gizmo3D]() {
-                               gizmo3D->setMode(GizmoMode::Move);
-                               controller_->markRenderDirty();
+                             [this]() {
+                               controller_->setGizmoMode(TransformGizmo::Mode::Move);
                              }});
       model.items.push_back({"3D Rotate", QIcon(), "gizmo3d.rotate", true,
                              gizmo3D->mode() == GizmoMode::Rotate,
-                             [this, gizmo3D]() {
-                               gizmo3D->setMode(GizmoMode::Rotate);
-                               controller_->markRenderDirty();
+                             [this]() {
+                               controller_->setGizmoMode(TransformGizmo::Mode::Rotate);
                              }});
       model.items.push_back({"3D Scale", QIcon(), "gizmo3d.scale", true,
                              gizmo3D->mode() == GizmoMode::Scale,
-                             [this, gizmo3D]() {
-                               gizmo3D->setMode(GizmoMode::Scale);
-                               controller_->markRenderDirty();
-                             }});
-      model.items.push_back({"3D Full", QIcon(), "gizmo3d.full", true,
-                             gizmo3D->mode() == GizmoMode::Full,
-                             [this, gizmo3D]() {
-                               gizmo3D->setMode(GizmoMode::Full);
-                               controller_->markRenderDirty();
+                             [this]() {
+                               controller_->setGizmoMode(TransformGizmo::Mode::Scale);
                              }});
       model.items.push_back({"3D World", QIcon(), "gizmo3d.world", true,
                              gizmo3D->space() == GizmoSpace::World,
@@ -6039,7 +6031,7 @@ std::vector<CompositionCleanupCandidate> analyzeCompositionCleanup(
   };
   const float backgroundLuminance = relativeLuminance(compositionBackground);
   for (const auto& item : layers) {
-    const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(item.layer);
+    const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(item.layer);
     if (!textLayer) {
       continue;
     }
@@ -8007,7 +7999,7 @@ public:
               : QStringLiteral("Selection: %1 layers").arg(selectedCount);
       if (selectedCount == 1) {
         if (const auto shape =
-                std::dynamic_pointer_cast<ArtifactShapeLayer>(current)) {
+                ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(current)) {
           detail = QStringLiteral("Selection: 1 layer | %1")
                        .arg(shapeSelectionDetail(shape));
         }
@@ -8027,7 +8019,7 @@ public:
     if (editTextAction_) {
       editTextAction_->setEnabled(
           selectedCount == 1 && current &&
-          std::dynamic_pointer_cast<ArtifactTextLayer>(current));
+          ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(current));
     }
     syncChromeSummary(owner);
     syncOverlayGeometry(owner);
@@ -10874,7 +10866,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     auto *selection = ArtifactLayerSelectionManager::instance();
     const auto layer =
         selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
-    if (!layer || !std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+    if (!layer || !ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
       return;
     }
     auto *view = impl_ ? impl_->activeViewport() : nullptr;

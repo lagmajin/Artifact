@@ -19,6 +19,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -162,8 +163,8 @@ InnerShadowEffect::InnerShadowEffect()
     setDisplayName(UniString("Inner Shadow (Rasterizer)"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
 
-    auto cpu = std::make_shared<InnerShadowCPUImpl>();
-    auto gpu = std::make_shared<InnerShadowGPUImpl>();
+    auto cpu = ArtifactCore::makeShared<InnerShadowCPUImpl>();
+    auto gpu = ArtifactCore::makeShared<InnerShadowGPUImpl>();
     setCPUImpl(cpu);
     setGPUImpl(gpu);
 }

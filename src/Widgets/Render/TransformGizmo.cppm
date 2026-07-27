@@ -34,6 +34,7 @@ import Animation.Transform3D;
 import Artifact.Service.Project;
 import Widgets.Utils.CSS;
 import ArtifactCore.Utils.PerformanceProfiler;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -248,7 +249,7 @@ struct SnapGuideSet {
  std::vector<float> horizontal;
 };
 
-GuideType guideTypeForAxisValue(const std::shared_ptr<ArtifactAbstractComposition>& comp,
+GuideType guideTypeForAxisValue(const ArtifactCompositionPtr& comp,
                                 const float value,
                                 const bool isVertical)
 {
@@ -304,7 +305,7 @@ void appendEdgeBoundsToSnapGuides(const QRectF& bounds, SnapGuideSet& guides)
  guides.horizontal.push_back(static_cast<float>(bounds.bottom()));
 }
 
-SnapGuideSet buildSnapGuides(const std::shared_ptr<ArtifactAbstractComposition>& comp,
+SnapGuideSet buildSnapGuides(const ArtifactCompositionPtr& comp,
                              const ArtifactAbstractLayerPtr& ignoreLayer)
 {
  SnapGuideSet guides;
@@ -331,7 +332,7 @@ SnapGuideSet buildSnapGuides(const std::shared_ptr<ArtifactAbstractComposition>&
  return guides;
 }
 
-SnapGuideSet buildSpacingGuides(const std::shared_ptr<ArtifactAbstractComposition>& comp,
+SnapGuideSet buildSpacingGuides(const ArtifactCompositionPtr& comp,
                                 const ArtifactAbstractLayerPtr& ignoreLayer)
 {
  SnapGuideSet guides;
@@ -358,7 +359,7 @@ SnapGuideSet buildSpacingGuides(const std::shared_ptr<ArtifactAbstractCompositio
 
 bool snapValueToGuides(float& value, const std::vector<float>& guides,
                        const float threshold, const bool isVertical,
-                       const std::shared_ptr<ArtifactAbstractComposition>& comp,
+                       const ArtifactCompositionPtr& comp,
                        std::vector<SnapLine>& activeSnapLines)
 {
  float bestDist = threshold;
@@ -382,7 +383,7 @@ bool snapValueToGuides(float& value, const std::vector<float>& guides,
 
 bool snapBoundingBoxAxis(QRectF& box, const std::vector<float>& guides,
                          const float threshold, const bool snapVertical,
-                         const std::shared_ptr<ArtifactAbstractComposition>& comp,
+                         const ArtifactCompositionPtr& comp,
                          std::vector<SnapLine>& activeSnapLines,
                          std::vector<SnapLabel>* activeSnapLabels)
 {
@@ -457,7 +458,7 @@ bool snapBoundingBoxAxis(QRectF& box, const std::vector<float>& guides,
 
 bool snapBoxBetweenGuides(QRectF& box, const std::vector<float>& guides,
                           const float threshold, const bool snapVertical,
-                          const std::shared_ptr<ArtifactAbstractComposition>& comp,
+                          const ArtifactCompositionPtr& comp,
                           std::vector<SnapLine>& activeSnapLines,
                           std::vector<SnapLabel>* activeSnapLabels)
 {
@@ -526,7 +527,7 @@ bool snapBoxBetweenGuides(QRectF& box, const std::vector<float>& guides,
 
 bool snapResizePointToGuides(QPointF& point, const TransformGizmo::HandleType handle,
                              const SnapGuideSet& guides, const float threshold,
-                             const std::shared_ptr<ArtifactAbstractComposition>& comp,
+                             const ArtifactCompositionPtr& comp,
                              std::vector<SnapLine>& activeSnapLines)
 {
  bool snapped = false;
@@ -1293,7 +1294,7 @@ TransformSnapshot captureTransformSnapshot(const ArtifactAbstractLayerPtr& layer
  snapshot.anchorY = t3d.anchorY();
  snapshot.anchorZ = t3d.anchorZ();
 
- if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+ if (const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
   snapshot.hasTextBoxState = true;
   snapshot.textBoxWidth = textLayer->maxWidth();
   snapshot.textBoxHeight = textLayer->boxHeight();
@@ -1447,7 +1448,7 @@ private:
   applyRotationSnapshot(t3d, time, snapshot);
   applyScaleSnapshot(t3d, time, snapshot);
   if (snapshot.hasTextBoxState) {
-   if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+   if (const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
     textLayer->setMaxWidth(snapshot.textBoxWidth);
     textLayer->setBoxHeight(snapshot.textBoxHeight);
    }
@@ -1501,7 +1502,7 @@ private:
    applyRotationSnapshot(t3d, time, snapshot);
    applyScaleSnapshot(t3d, time, snapshot);
    if (snapshot.hasTextBoxState) {
-    if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+    if (const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
      textLayer->setMaxWidth(snapshot.textBoxWidth);
      textLayer->setBoxHeight(snapshot.textBoxHeight);
     }
@@ -1687,7 +1688,7 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  const float lineThickness = std::clamp(3.0f * invZoom, 1.65f, 5.4f);
   const float handleSize = std::clamp(HANDLE_SIZE * 1.62f * 1.5f * invZoom, 11.0f, 28.0f);
 
- const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_);
+ const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
  const bool isTextLayer = static_cast<bool>(textLayer);
 
  QRectF localRect = layer_->localBounds();
@@ -2545,7 +2546,7 @@ bool TransformGizmo::beginHandleDrag(HandleType handle,
   dragStartAnchorZ_ = t3d.anchorZ();
   dragStartTextBoxWidth_ = 0.0f;
   dragStartTextBoxHeight_ = 0.0f;
-  if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_)) {
+  if (const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_)) {
    dragStartHasTextBoxState_ = true;
    dragStartTextBoxWidth_ = textLayer->maxWidth();
    dragStartTextBoxHeight_ = textLayer->boxHeight();
@@ -2961,13 +2962,13 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
       const int newHeight = std::max(1, static_cast<int>(std::lround(targetBox.height())));
       for (const auto& target : targets) {
        if (!target) continue;
-       if (const auto shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(target)) {
+       if (const auto shapeLayer = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(target)) {
         shapeLayer->setSize(newWidth, newHeight);
-       } else if (const auto solidImageLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(target)) {
+       } else if (const auto solidImageLayer = ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(target)) {
         solidImageLayer->setSize(newWidth, newHeight);
-       } else if (const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(target)) {
+       } else if (const auto solidLayer = ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(target)) {
         solidLayer->setSize(newWidth, newHeight);
-       } else if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(target)) {
+       } else if (const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(target)) {
         textLayer->setMaxWidth(static_cast<float>(newWidth));
         textLayer->setBoxHeight(static_cast<float>(newHeight));
        }
@@ -2981,7 +2982,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      bool invertible = false;
      const QTransform inv = dragStartGlobalTransform_.inverted(&invertible);
      if (invertible) {
-      if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_)) {
+      if (const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_)) {
      textMargin = std::max(0.0f, textEffectMargin(*textLayer));
      if (textLayer->isBoxText()) {
       const int boxWidth = static_cast<int>(std::lround(std::max(1.0, targetBox.width() - textMargin * 2.0)));

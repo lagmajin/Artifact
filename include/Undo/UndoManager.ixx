@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -68,12 +68,12 @@ public:
 
 class SetPropertyCommand : public UndoCommand {
 public:
-    SetPropertyCommand(std::shared_ptr<ArtifactAbstractEffect> target, const UniString& propName, const QVariant& oldValue, const QVariant& newValue);
+    SetPropertyCommand(ArtifactAbstractEffectPtr target, const UniString& propName, const QVariant& oldValue, const QVariant& newValue);
     void undo() override;
     void redo() override;
     QString label() const override;
 private:
-    std::weak_ptr<ArtifactAbstractEffect> target_;
+    ArtifactAbstractEffectWeakPtr target_;
     UniString name_;
     QVariant oldValue_;
     QVariant newValue_;
@@ -224,17 +224,17 @@ private:
 
 class SetEffectMaskImagesCommand : public UndoCommand {
 public:
-    SetEffectMaskImagesCommand(std::shared_ptr<ArtifactAbstractEffect> effect,
-                               std::vector<std::shared_ptr<ImageF32x4_RGBA>> beforeMasks,
-                               std::vector<std::shared_ptr<ImageF32x4_RGBA>> afterMasks,
+    SetEffectMaskImagesCommand(ArtifactAbstractEffectPtr effect,
+                               std::vector<SharedPtr<ImageF32x4_RGBA>> beforeMasks,
+                               std::vector<SharedPtr<ImageF32x4_RGBA>> afterMasks,
                                QString label = QStringLiteral("Edit Effect Mask Images"));
     void undo() override;
     void redo() override;
     QString label() const override;
 private:
-    std::weak_ptr<ArtifactAbstractEffect> effect_;
-    std::vector<std::shared_ptr<ImageF32x4_RGBA>> beforeMasks_;
-    std::vector<std::shared_ptr<ImageF32x4_RGBA>> afterMasks_;
+    ArtifactAbstractEffectWeakPtr effect_;
+    std::vector<SharedPtr<ImageF32x4_RGBA>> beforeMasks_;
+    std::vector<SharedPtr<ImageF32x4_RGBA>> afterMasks_;
     QString label_;
 };
 
@@ -311,13 +311,13 @@ private:
 // 新規コマンド：Variant 作成
 class CreateVariantCommand : public UndoCommand {
 public:
-    CreateVariantCommand(ArtifactAbstractLayerPtr layer, const std::string& name);
+    CreateVariantCommand(ArtifactAbstractLayerPtr layer, const ArtifactCore::String& name);
     void undo() override;
     void redo() override;
     QString label() const override;
 private:
     ArtifactAbstractLayerWeak layer_;
-    std::string name_;
+    ArtifactCore::String name_;
     size_t index_;
     std::unique_ptr<LayerVariant> extracted_;
 };

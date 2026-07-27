@@ -20,6 +20,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 import Core.Parallel;
 
 namespace Artifact {
@@ -130,8 +131,8 @@ SelectiveColorEffect::SelectiveColorEffect() {
     setEffectID(UniString("effect.colorcorrection.selectivecolor"));
     setDisplayName(UniString("Selective Color"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<SelectiveColorEffectCPUImpl>());
-    setGPUImpl(std::make_shared<SelectiveColorEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<SelectiveColorEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<SelectiveColorEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     applyPreset(preset_);
     syncImpls();

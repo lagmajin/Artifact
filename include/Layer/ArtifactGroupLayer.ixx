@@ -13,6 +13,7 @@ export module Artifact.Layer.Group;
 import Artifact.Layer.Abstract;
 import Utils.Id;
 import Artifact.Render.IRenderer;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -79,11 +80,11 @@ private:
     // Offscreen rendering helpers
     void renderToOffscreen(ArtifactIRenderer* renderer);
     void drawChildrenDirect(ArtifactIRenderer* renderer);
-    std::shared_ptr<GroupOffscreenTexture> createOffscreenTexture(
+    ArtifactCore::SharedPtr<GroupOffscreenTexture> createOffscreenTexture(
         ArtifactIRenderer* renderer, int width, int height);
     void applyGroupEffects(
         ArtifactIRenderer* renderer,
-        const std::shared_ptr<GroupOffscreenTexture>& offscreen,
+        const ArtifactCore::SharedPtr<GroupOffscreenTexture>& offscreen,
         const QRectF& bounds);
     std::vector<ArtifactAbstractLayerPtr> childrenForRender() const;
     void promoteEmbeddedChildrenToComposition();

@@ -28,6 +28,8 @@ module Artifact.Layer.FormParticle;
 import std;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
+import Memory.SharedPtr;
+import Memory.SharedPtr;
 
 import Graphics.ParticleData;
 import Image.ImageF32x4_RGBA;
@@ -706,7 +708,7 @@ QJsonObject ArtifactFormParticleLayer::toJson() const
 
 ArtifactAbstractLayerPtr ArtifactFormParticleLayer::fromJson(const QJsonObject& obj)
 {
-    auto layer = std::make_shared<ArtifactFormParticleLayer>();
+    auto layer = ArtifactCore::makeShared<ArtifactFormParticleLayer>();
     layer->applyPropertiesFromJson(obj);
     return layer;
 }
@@ -1070,14 +1072,14 @@ void ArtifactFormParticleLayer::fromJsonProperties(const QJsonObject& obj)
     applyPropertiesFromJson(obj);
 }
 
-std::shared_ptr<ArtifactFormParticleLayer> createFormParticleLayer()
+SharedPtr<ArtifactFormParticleLayer> createFormParticleLayer()
 {
-    return std::make_shared<ArtifactFormParticleLayer>();
+    return ArtifactCore::makeShared<ArtifactFormParticleLayer>();
 }
 
-std::shared_ptr<ArtifactFormParticleLayer> createFormParticleLayer(const QString& preset)
+SharedPtr<ArtifactFormParticleLayer> createFormParticleLayer(const QString& preset)
 {
-    auto layer = std::make_shared<ArtifactFormParticleLayer>();
+    auto layer = ArtifactCore::makeShared<ArtifactFormParticleLayer>();
     layer->loadPreset(preset);
     return layer;
 }

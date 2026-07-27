@@ -185,7 +185,7 @@ ArtifactTimelineKeyframeModel::~ArtifactTimelineKeyframeModel() {}
 
 namespace {
 struct LayerPropertyLookup {
-    std::shared_ptr<ArtifactCore::AbstractProperty> prop;
+    ArtifactCore::AbstractPropertyPtr prop;
     ArtifactAbstractLayerPtr layer;
     bool success = false;
 };
@@ -223,7 +223,7 @@ QString dopeSheetPropertyKey(const LayerID& layerId, const QString& propertyPath
     return QStringLiteral("%1|%2").arg(layerId.toString(), propertyPath);
 }
 
-std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr& layer,
     const QString& propertyPath) {
     if (!layer) {
@@ -242,7 +242,7 @@ std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
     return {};
 }
 
-void restorePropertyKeyframes(const std::shared_ptr<ArtifactCore::AbstractProperty>& property,
+void restorePropertyKeyframes(const ArtifactCore::AbstractPropertyPtr& property,
                               const std::vector<KeyFrame>& keyframes) {
     if (!property) {
         return;

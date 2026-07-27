@@ -23,6 +23,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -104,8 +105,8 @@ ColorWheelsEffect::ColorWheelsEffect() {
     setEffectID(UniString("effect.colorcorrection.colorwheels"));
     setDisplayName(UniString("Color Wheels"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<ColorWheelsEffectCPUImpl>());
-    setGPUImpl(std::make_shared<ColorWheelsEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<ColorWheelsEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<ColorWheelsEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     syncImpls();
 }

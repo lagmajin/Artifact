@@ -11,6 +11,7 @@ import Artifact.Layer.InitParams;
 import Artifact.Menu.Layer;
 import Color.Float;
 import Artifact.Layers.SolidImage;
+import Memory.SharedPtr;
 
 
 export namespace Artifact {
@@ -87,7 +88,7 @@ export namespace Artifact {
   explicit EditPlaneLayerSettingDialog(QWidget* parent = nullptr);
   ~EditPlaneLayerSettingDialog();
   void showAnimated();
-  void setupEdit(std::shared_ptr<ArtifactSolidImageLayer> layer);
+  void setupEdit(SharedPtr<ArtifactSolidImageLayer> layer);
   public/*signals*/:
  };
 

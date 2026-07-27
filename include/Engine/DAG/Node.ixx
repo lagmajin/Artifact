@@ -40,6 +40,7 @@ import Utils.String.UniString;
 import Utils.Id;
 import Artifact.Engine.DAG.Port;
 import Artifact.Effect.Abstract;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -181,6 +182,6 @@ export namespace Artifact {
         }
     };
 
-    typedef std::shared_ptr<EffectNode> EffectNodePtr;
+    typedef SharedPtr<EffectNode> EffectNodePtr;
 
 }

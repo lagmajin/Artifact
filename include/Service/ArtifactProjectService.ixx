@@ -67,7 +67,7 @@ export namespace Artifact {
  
  class ArtifactProjectService;
 
- typedef std::shared_ptr<ArtifactProjectService> ArtifactProjectServicePtr;
+ typedef SharedPtr<ArtifactProjectService> ArtifactProjectServicePtr;
 
 	
  class ArtifactProjectService :public QObject
@@ -147,11 +147,11 @@ export namespace Artifact {
   bool layerHasParentInCurrentComposition(const LayerID& layerId);
   LayerID layerParentIdInCurrentComposition(const LayerID& layerId);
   QString layerNameInCurrentComposition(const LayerID& layerId);
-  bool addEffectToLayerInCurrentComposition(const LayerID& layerId, std::shared_ptr<ArtifactAbstractEffect> effect);
+  bool addEffectToLayerInCurrentComposition(const LayerID& layerId, SharedPtr<ArtifactAbstractEffect> effect);
   bool removeEffectFromLayerInCurrentComposition(const LayerID& layerId, const QString& effectId);
   bool setEffectEnabledInLayerInCurrentComposition(const LayerID& layerId, const QString& effectId, bool enabled);
   bool moveEffectInLayerInCurrentComposition(const LayerID& layerId, const QString& effectId, int direction);
-  bool addEffectToCurrentComposition(std::shared_ptr<ArtifactAbstractEffect> effect);
+  bool addEffectToCurrentComposition(SharedPtr<ArtifactAbstractEffect> effect);
   bool removeEffectFromCurrentComposition(const QString& effectId);
   bool setEffectEnabledInCurrentComposition(const QString& effectId, bool enabled);
   bool moveEffectInCurrentComposition(const QString& effectId, int direction);
@@ -209,10 +209,10 @@ export namespace Artifact {
 
   // Undo-aware effect operations
   bool addEffectToLayerWithUndo(const LayerID& layerId,
-                                std::shared_ptr<ArtifactAbstractEffect> effect);
+                                SharedPtr<ArtifactAbstractEffect> effect);
   bool removeEffectFromLayerWithUndo(const LayerID& layerId,
                                      const QString& effectId,
-                                     std::shared_ptr<ArtifactAbstractEffect> effect);
+                                     SharedPtr<ArtifactAbstractEffect> effect);
   bool setEffectEnabledWithUndo(const LayerID& layerId,
                                 const QString& effectId,
                                 bool enabled,
@@ -221,7 +221,7 @@ export namespace Artifact {
                           const QString& effectId,
                           int direction);
    void splitLayerAtCurrentTime(const CompositionID& compositionId, const LayerID& layerId);
-   std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr() const;
+   ArtifactProjectPtr getCurrentProjectSharedPtr() const;
    // Relink functions
    bool relinkFootage(ProjectItem* footageItem, const QString& newFilePath);
    int relinkFootageItems(const QVector<FootageItem*>& footageItems, const QString& newFilePath);

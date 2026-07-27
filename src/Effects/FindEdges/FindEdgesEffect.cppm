@@ -21,6 +21,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -104,8 +105,8 @@ float luma(float3 c){return dot(c,float3(0.299,0.587,0.114));}float4 sampleP(int
 FindEdgesEffect::FindEdgesEffect() {
     setDisplayName(UniString("Find Edges"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<FindEdgesEffectCPUImpl>());
-    auto gpu=std::make_shared<FindEdgesEffectGPUImpl>();gpu->amount_=amount_;gpu->invert_=invert_;setGPUImpl(gpu);setComputeMode(ComputeMode::AUTO);
+    setCPUImpl(ArtifactCore::makeShared<FindEdgesEffectCPUImpl>());
+    auto gpu=ArtifactCore::makeShared<FindEdgesEffectGPUImpl>();gpu->amount_=amount_;gpu->invert_=invert_;setGPUImpl(gpu);setComputeMode(ComputeMode::AUTO);
 }
 
 FindEdgesEffect::~FindEdgesEffect() = default;

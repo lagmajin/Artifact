@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -372,7 +372,7 @@ std::vector<AudioEffectParameter> ReverbEffect::getUiParameters() const {
     };
 }
 
-void ReverbEffect::setParameter(const std::string& name, float value) {
+void ReverbEffect::setParameter(const String& name, float value) {
     if      (name == "algorithm")    algorithm_   = static_cast<ReverbAlgorithm>(static_cast<int>(value + 0.5f));
     else if (name == "pre_delay")    preDelayMs_  = value;
     else if (name == "decay")        decay_       = value;
@@ -391,7 +391,7 @@ void ReverbEffect::setParameter(const std::string& name, float value) {
     else if (name == "dry_level")    dryLevel_    = value;
 }
 
-float ReverbEffect::getParameter(const std::string& name) const {
+float ReverbEffect::getParameter(const String& name) const {
     if      (name == "algorithm")    return static_cast<float>(algorithm_);
     else if (name == "pre_delay")    return preDelayMs_;
     else if (name == "decay")        return decay_;
@@ -411,7 +411,7 @@ float ReverbEffect::getParameter(const std::string& name) const {
     return 0.0f;
 }
 
-std::string ReverbEffect::getDescription() const {
+String ReverbEffect::getDescription() const {
     switch (algorithm_) {
         case ReverbAlgorithm::DattorroPlate: return "Dattorro Plate Reverb with modulated diffusion and cross-coupled tank";
         case ReverbAlgorithm::FDNHall:       return "FDN Hall Reverb with 8-voice feedback delay network and Hadamard mixing";

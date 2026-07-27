@@ -20,6 +20,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -221,8 +222,8 @@ InvertEffect::InvertEffect() {
     setEffectID(UniString("effect.colorcorrection.invert"));
     setDisplayName(UniString("Invert"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<InvertEffectCPUImpl>());
-    setGPUImpl(std::make_shared<InvertEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<InvertEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<InvertEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 

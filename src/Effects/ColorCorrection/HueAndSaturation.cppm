@@ -20,6 +20,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 import Core.Parallel;
 
 namespace Artifact {
@@ -319,8 +320,8 @@ HueAndSaturation::HueAndSaturation() {
     setEffectID(UniString("effect.colorcorrection.hsl"));
     setDisplayName(UniString("Hue / Saturation"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<HueAndSaturationCPUImpl>());
-    setGPUImpl(std::make_shared<HueAndSaturationGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<HueAndSaturationCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<HueAndSaturationGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 

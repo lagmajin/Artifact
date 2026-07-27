@@ -31,6 +31,7 @@
 #include <random>
 #include <QJsonObject>
 export module Artifact.Layer.Factory;
+import Memory.SharedPtr;
 
 
 
@@ -56,7 +57,7 @@ export namespace Artifact {
   static ArtifactAbstractLayerPtr createFromJson(const QJsonObject& json) noexcept;
  };
 
- std::shared_ptr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json);
+ ArtifactCore::SharedPtr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json);
 
 
 

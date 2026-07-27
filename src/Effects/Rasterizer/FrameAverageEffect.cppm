@@ -17,6 +17,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -103,7 +104,7 @@ void FrameAverageEffect::setPropertyValue(const UniString& n,const QVariant& v){
     else if(k=="temporalWeight")setTemporalWeight(v.toFloat());
 }
 void FrameAverageEffect::syncImpls(){
-    auto c=std::make_shared<FrameAverageCPUImpl>();
+    auto c=ArtifactCore::makeShared<FrameAverageCPUImpl>();
     c->frameCount_=frameCount_;c->temporalWeight_=temporalWeight_;setCPUImpl(c);
 }
 } // namespace Artifact

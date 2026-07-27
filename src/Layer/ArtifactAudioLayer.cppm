@@ -11,6 +11,7 @@ module Artifact.Layer.Audio;
 import std;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Audio.Panner;
+import Memory.SharedPtr;
 
 import Property.Abstract;
 import Property.Group;
@@ -36,7 +37,7 @@ namespace Artifact
    QUuid sourceAssetId_;
    std::uint64_t cachedSourceVersion_ = 0;
    ArtifactCore::SimpleWav wav_;
-   std::shared_ptr<QVector<float>> sharedPcm_;
+   SharedPtr<QVector<float>> sharedPcm_;
    int sourceSampleRate_ = 0;
    int sourceChannelCount_ = 0;
    bool isLoaded_ = false;
@@ -86,12 +87,12 @@ namespace Artifact
        return true;
      }
 
-     sharedPcm_ = std::static_pointer_cast<QVector<float>>(
+     sharedPcm_ = ArtifactCore::staticPointerCast<QVector<float>>(
          ArtifactCore::AssetManager::instance().decodedPayload(
              sourceAssetId_, currentVersion, QStringLiteral("audio.pcm.f32")));
      if (!sharedPcm_) {
-       sharedPcm_ = std::make_shared<QVector<float>>(wav_.getAudioData());
-       sharedPcm_ = std::static_pointer_cast<QVector<float>>(
+       sharedPcm_ = ArtifactCore::makeShared<QVector<float>>(wav_.getAudioData());
+       sharedPcm_ = ArtifactCore::staticPointerCast<QVector<float>>(
            ArtifactCore::AssetManager::instance().publishDecodedPayload(
                sourceAssetId_, currentVersion, QStringLiteral("audio.pcm.f32"),
                sharedPcm_));
@@ -187,12 +188,12 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
 
    impl_->sourcePath_ = trimmed;
    const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
-   impl_->sharedPcm_ = std::static_pointer_cast<QVector<float>>(
+   impl_->sharedPcm_ = ArtifactCore::staticPointerCast<QVector<float>>(
        ArtifactCore::AssetManager::instance().decodedPayload(
            nextAssetId, sourceVersion, QStringLiteral("audio.pcm.f32")));
    if (!impl_->sharedPcm_) {
-     impl_->sharedPcm_ = std::make_shared<QVector<float>>(impl_->wav_.getAudioData());
-     impl_->sharedPcm_ = std::static_pointer_cast<QVector<float>>(
+     impl_->sharedPcm_ = ArtifactCore::makeShared<QVector<float>>(impl_->wav_.getAudioData());
+     impl_->sharedPcm_ = ArtifactCore::staticPointerCast<QVector<float>>(
          ArtifactCore::AssetManager::instance().publishDecodedPayload(
              nextAssetId, sourceVersion, QStringLiteral("audio.pcm.f32"), impl_->sharedPcm_));
    }

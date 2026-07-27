@@ -17,6 +17,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -73,5 +74,5 @@ std::vector<AbstractProperty> RasterizerGlowEffect::getProperties()const{
     return props;
 }
 void RasterizerGlowEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="threshold")setThreshold(v.toFloat());else if(k=="radius")setRadius(v.toFloat());else if(k=="intensity")setIntensity(v.toFloat());}
-void RasterizerGlowEffect::syncImpls(){auto c=std::make_shared<GlowCPUImpl>();c->threshold_=threshold_;c->radius_=radius_;c->intensity_=intensity_;setCPUImpl(c);}
+void RasterizerGlowEffect::syncImpls(){auto c=ArtifactCore::makeShared<GlowCPUImpl>();c->threshold_=threshold_;c->radius_=radius_;c->intensity_=intensity_;setCPUImpl(c);}
 } // namespace Artifact

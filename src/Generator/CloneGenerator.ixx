@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QVector>
 #include <QMatrix4x4>
 #include <QString>
@@ -146,8 +146,8 @@ namespace Artifact {
         void setRotationStep(float degrees);
         float rotationStep() const;
 
-        void setSpline(std::shared_ptr<SimpleSpline> spline);
-        std::shared_ptr<SimpleSpline> spline() const;
+        void setSpline(ArtifactCore::SharedPtr<SimpleSpline> spline);
+        ArtifactCore::SharedPtr<SimpleSpline> spline() const;
 
         // 既存の QVector<QMatrix4x4> を返すメソッド（互換性のため残す）
         QVector<QMatrix4x4> generateTransforms() const;
@@ -156,4 +156,3 @@ namespace Artifact {
         std::vector<CloneData> generateCloneData() const;
     };
 }
-

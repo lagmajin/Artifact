@@ -89,6 +89,8 @@ module;
 
 #include <limits>
 
+import Memory.SharedPtr;
+
 #include <memory>
 
 #include <opencv2/core.hpp>
@@ -117,6 +119,7 @@ import Artifact.Grid.System;
 import Artifact.Render.GPUTextureCacheManager;
 
 import Artifact.Render.CompositionViewDrawing;
+import Memory.SharedPtr;
 
 import Artifact.Render.CompositionRenderer;
 
@@ -801,7 +804,7 @@ void drawClonerFrameOverlay(ArtifactIRenderer* renderer,
 
 
 
-  const auto cloneLayer = std::dynamic_pointer_cast<ArtifactCloneLayer>(layer);
+  const auto cloneLayer = ArtifactCore::dynamicPointerCast<ArtifactCloneLayer>(layer);
 
   if (!cloneLayer) {
 
@@ -6712,7 +6715,7 @@ void drawLayerForCompositionView(
                                     : QStringLiteral("|full"));
 
     LayerSurfaceCacheEntry *cacheEntry = nullptr;
-    std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> directProcessedBuffer;
+    ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> directProcessedBuffer;
 
 
 
@@ -6741,7 +6744,7 @@ void drawLayerForCompositionView(
 
       } else {
 
-        std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
+        ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
 
         if (allowSurfaceCache) {
 
@@ -6752,8 +6755,7 @@ void drawLayerForCompositionView(
           if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
 
             processedBuffer =
-
-                std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
+                ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(processed);
             directProcessedBuffer = processedBuffer;
 
           }
@@ -6816,7 +6818,7 @@ void drawLayerForCompositionView(
 
           !processed.isEmpty()) {
         directProcessedBuffer =
-            std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
+            ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(processed);
 
       }
 
@@ -8897,7 +8899,7 @@ public:
       bool pointwiseApplied = false;
       std::uint32_t parameterSlot = 0;
       for (const auto& effect : layer->getEffects()) {
-        const auto exposure = std::dynamic_pointer_cast<ExposureEffect>(effect);
+        const auto exposure = ArtifactCore::dynamicPointerCast<ExposureEffect>(effect);
         if (!effect || !effect->isEnabled()) {
           continue;
         }
@@ -13254,6 +13256,28 @@ void CompositionRenderController::setGizmoMode(
 
     impl_->gizmo_->setMode(mode);
 
+  }
+
+  if (impl_->gizmo3D_) {
+    // 3D has no anchor-only equivalent. Its former Full mode had no draw or
+    // hit-test implementation, so the combined 2D mode intentionally maps to
+    // the usable 3D move handles until a true unified 3D handle set exists.
+    GizmoMode gizmo3DMode = GizmoMode::Move;
+    switch (mode) {
+    case TransformGizmo::Mode::Rotate:
+      gizmo3DMode = GizmoMode::Rotate;
+      break;
+    case TransformGizmo::Mode::Scale:
+      gizmo3DMode = GizmoMode::Scale;
+      break;
+    case TransformGizmo::Mode::All:
+    case TransformGizmo::Mode::Move:
+    case TransformGizmo::Mode::AnchorPoint:
+    case TransformGizmo::Mode::None:
+    default:
+      break;
+    }
+    impl_->gizmo3D_->setMode(gizmo3DMode);
   }
 
   impl_->invalidateOverlayComposite();
@@ -18572,7 +18596,7 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
       if (hitLayer) {
 
-        const std::shared_ptr<ArtifactAbstractLayer> hitLayerRef = hitLayer;
+        const ArtifactAbstractLayerPtr hitLayerRef = hitLayer;
 
         if (selection) {
 
@@ -19913,7 +19937,7 @@ void CompositionRenderController::handleMouseRelease() {
 
         }
 
-        const std::shared_ptr<ArtifactAbstractLayer> layerRef = layer;
+        const ArtifactAbstractLayerPtr layerRef = layer;
 
         if (impl_->selectionMode_ == SelectionMode::Toggle) {
 
@@ -20087,7 +20111,7 @@ void CompositionRenderController::handleMouseRelease() {
 
           if (auto shapeLayer =
 
-                  std::dynamic_pointer_cast<ArtifactShapeLayer>(createdLayer)) {
+                  ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(createdLayer)) {
 
             shapeLayer->setSize(
 

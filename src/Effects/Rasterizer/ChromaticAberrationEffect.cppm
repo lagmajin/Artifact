@@ -24,6 +24,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -81,7 +82,7 @@ float4 atp(int2 p,uint w,uint h){return g_InputTexture[uint2(clamp(p.x,0,(int)w-
 )";
 };
 
-ChromaticAberrationEffect::ChromaticAberrationEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();setGPUImpl(std::make_shared<ChromaticAberrationGPUImpl>());}
+ChromaticAberrationEffect::ChromaticAberrationEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();setGPUImpl(ArtifactCore::makeShared<ChromaticAberrationGPUImpl>());}
 ChromaticAberrationEffect::~ChromaticAberrationEffect()=default;
 float ChromaticAberrationEffect::redShift()const{return redShift_;}void ChromaticAberrationEffect::setRedShift(float v){redShift_=std::clamp(v,0.0f,50.0f);syncImpls();}
 float ChromaticAberrationEffect::blueShift()const{return blueShift_;}void ChromaticAberrationEffect::setBlueShift(float v){blueShift_=std::clamp(v,0.0f,50.0f);syncImpls();}
@@ -110,5 +111,5 @@ std::vector<AbstractProperty> ChromaticAberrationEffect::getProperties()const{
     return props;
 }
 void ChromaticAberrationEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="redShift")setRedShift(v.toFloat());else if(k=="blueShift")setBlueShift(v.toFloat());else if(k=="centerX")setCenterX(v.toFloat());else if(k=="centerY")setCenterY(v.toFloat());}
-void ChromaticAberrationEffect::syncImpls(){auto c=std::make_shared<ChromaticAberrationCPUImpl>();c->redShift_=redShift_;c->blueShift_=blueShift_;c->cx_=cx_;c->cy_=cy_;setCPUImpl(c);if(auto* g=dynamic_cast<ChromaticAberrationGPUImpl*>(gpuImpl().get())){g->redShift_=redShift_;g->blueShift_=blueShift_;g->cx_=cx_;g->cy_=cy_;}}
+void ChromaticAberrationEffect::syncImpls(){auto c=ArtifactCore::makeShared<ChromaticAberrationCPUImpl>();c->redShift_=redShift_;c->blueShift_=blueShift_;c->cx_=cx_;c->cy_=cy_;setCPUImpl(c);if(auto* g=dynamic_cast<ChromaticAberrationGPUImpl*>(gpuImpl().get())){g->redShift_=redShift_;g->blueShift_=blueShift_;g->cx_=cx_;g->cy_=cy_;}}
 } // namespace Artifact

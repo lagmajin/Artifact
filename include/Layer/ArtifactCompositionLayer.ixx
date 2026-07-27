@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <algorithm>
 #include <any>
@@ -76,7 +76,7 @@ public:
   QJsonObject toJson() const override;
   void fromJsonProperties(const QJsonObject &obj) override;
 
-  std::shared_ptr<ArtifactAbstractComposition> sourceComposition() const;
+    SharedPtr<ArtifactAbstractComposition> sourceComposition() const;
 
   // ArtifactAbstractLayer overrides
   void draw(ArtifactIRenderer *renderer) override;

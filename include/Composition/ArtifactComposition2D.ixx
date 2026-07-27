@@ -9,6 +9,7 @@ import Color.Float;
 import Artifact.Layers;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -27,6 +28,6 @@ public:
 };
 
 using ArtifactComposition = ArtifactComposition2D;
-using ArtifactComposition2DPtr = std::shared_ptr<ArtifactComposition2D>;
+using ArtifactComposition2DPtr = SharedPtr<ArtifactComposition2D>;
 
 }

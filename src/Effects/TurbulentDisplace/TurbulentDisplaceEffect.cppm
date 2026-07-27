@@ -18,6 +18,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -151,8 +152,8 @@ public:
 TurbulentDisplaceEffect::TurbulentDisplaceEffect() {
     setDisplayName(UniString("Turbulent Displace"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<TurbulentDisplaceEffectCPUImpl>());
-    setGPUImpl(std::make_shared<TurbulentDisplaceEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<TurbulentDisplaceEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<TurbulentDisplaceEffectGPUImpl>());
 }
 TurbulentDisplaceEffect::~TurbulentDisplaceEffect() = default;
 

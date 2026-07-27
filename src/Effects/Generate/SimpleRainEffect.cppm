@@ -16,6 +16,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -113,7 +114,7 @@ public:
 SimpleRainEffect::SimpleRainEffect() {
     setDisplayName(UniString("Simple Rain"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<SimpleRainCPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<SimpleRainCPUImpl>());
     syncImpl();
 }
 

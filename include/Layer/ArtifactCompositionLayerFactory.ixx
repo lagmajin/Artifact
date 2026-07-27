@@ -4,9 +4,10 @@ module;
 export module Artifact.Layer.Composition.Factory;
 
 import Artifact.Layer.Abstract;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
-std::shared_ptr<ArtifactAbstractLayer> createArtifactCompositionLayer();
+SharedPtr<ArtifactAbstractLayer> createArtifactCompositionLayer();
 
 } // namespace Artifact

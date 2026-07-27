@@ -14,6 +14,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -60,6 +61,6 @@ std::vector<AbstractProperty> FreezeFrameEffect::getProperties()const{
 }
 void FreezeFrameEffect::setPropertyValue(const UniString&,const QVariant&){}
 void FreezeFrameEffect::syncImpls(){
-    auto c=std::make_shared<FreezeFrameCPUImpl>();setCPUImpl(c);
+    auto c=ArtifactCore::makeShared<FreezeFrameCPUImpl>();setCPUImpl(c);
 }
 } // namespace Artifact

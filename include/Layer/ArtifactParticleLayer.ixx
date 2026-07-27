@@ -43,6 +43,7 @@ export module Artifact.Layer.Particle;
 
 
 import Artifact.Layer.Abstract;
+import Memory.SharedPtr;
 import Artifact.Composition.PlaybackController;
 import Playback.State;
 import Artifact.Generator.Particle;
@@ -169,8 +170,8 @@ public:
 };
 
 // Factory function for creating particle layers
-std::shared_ptr<ArtifactParticleLayer> createParticleLayer();
-std::shared_ptr<ArtifactParticleLayer> createParticleLayer(const QString& preset);
-std::shared_ptr<ArtifactParticleDebugLayer> createParticleDebugLayer();
+SharedPtr<ArtifactParticleLayer> createParticleLayer();
+SharedPtr<ArtifactParticleLayer> createParticleLayer(const QString& preset);
+SharedPtr<ArtifactParticleDebugLayer> createParticleDebugLayer();
 
 } // namespace Artifact

@@ -17,6 +17,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -145,7 +146,7 @@ void PixelSortEffect::setPropertyValue(const UniString& n,const QVariant& v){
     else if(k=="blend")setBlend(v.toFloat());
 }
 void PixelSortEffect::syncImpls(){
-    auto c=std::make_shared<PixelSortCPUImpl>();
+    auto c=ArtifactCore::makeShared<PixelSortCPUImpl>();
     c->sortLen_=sortLen_;c->sortKey_=sortKey_;c->sortOrder_=sortOrder_;c->blend_=blend_;setCPUImpl(c);
 }
 } // namespace Artifact

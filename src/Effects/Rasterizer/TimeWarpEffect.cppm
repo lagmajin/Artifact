@@ -18,6 +18,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -138,7 +139,7 @@ void TimeWarpEffect::setPropertyValue(const UniString& n,const QVariant& v){
     else if(k=="smoothness")setSmoothness(v.toFloat());
 }
 void TimeWarpEffect::syncImpls(){
-    auto c=std::make_shared<TimeWarpCPUImpl>();
+    auto c=ArtifactCore::makeShared<TimeWarpCPUImpl>();
     c->maxOffset_=maxOffset_;c->smoothness_=smoothness_;c->channel_=channel_;setCPUImpl(c);
 }
 } // namespace Artifact

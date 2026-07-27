@@ -10,6 +10,7 @@ export module Artifact.Audio.Mixer;
 
 import Audio.Bus;
 import Audio.Mixer;
+import Memory.SharedPtr;
 
 
 import Artifact.Layer.Abstract;
@@ -71,8 +72,8 @@ public:
 
     void resetPeak();
 
-    void setCoreBus(std::shared_ptr<ArtifactCore::AudioBus> coreBus);
-    std::shared_ptr<ArtifactCore::AudioBus> coreBus() const;
+    void setCoreBus(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> coreBus);
+    ArtifactCore::SharedPtr<ArtifactCore::AudioBus> coreBus() const;
 
 
     void volumeChanged(float volume) W_SIGNAL(volumeChanged, volume);
@@ -113,12 +114,12 @@ public:
   /**
    * @brief Connect this master bus to a Core AudioBus for bus-level volume/mute sync.
    */
-  void connectToCoreBus(std::shared_ptr<ArtifactCore::AudioBus> coreBus);
+  void connectToCoreBus(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> coreBus);
 
   /**
    * @brief Get the connected Core AudioBus (may be null).
    */
-  std::shared_ptr<ArtifactCore::AudioBus> coreBus() const;
+  ArtifactCore::SharedPtr<ArtifactCore::AudioBus> coreBus() const;
 
 
 
@@ -156,12 +157,12 @@ public:
    * @brief Connect this UI mixer to a Core AudioMixer for bus-level control.
    *        Existing strips will be re-synced with the Core mixer's buses.
    */
-  void connectToCoreMixer(std::shared_ptr<ArtifactCore::AudioMixer> coreMixer);
+  void connectToCoreMixer(ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> coreMixer);
 
   /**
    * @brief Get the connected Core AudioMixer (may be null).
    */
-  std::shared_ptr<ArtifactCore::AudioMixer> coreMixer() const;
+  ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> coreMixer() const;
 
 
     // Solo管理（複数のsolo状態管理）

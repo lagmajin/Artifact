@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -252,7 +252,7 @@ void ProfilerOverlayWidget::paintEvent(QPaintEvent*) {
             p.setPen(isWarn ? kTextWarn : kTextNormal);
 
             const std::string indent(static_cast<std::size_t>(s.depth * 2), ' ');
-            const QString name = QString::fromStdString(indent + s.name).left(18);
+            const QString name = QString::fromStdString(indent + ArtifactCore::toStdString(s.name)).left(18);
             p.drawText(colName, curY + fm.ascent(), name);
             p.drawText(colLast, curY + fm.ascent(),
                        QString::asprintf("%5.1f", sMs));

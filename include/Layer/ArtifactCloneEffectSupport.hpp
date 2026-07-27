@@ -6,11 +6,12 @@
 #include <functional>
 #include <vector>
 #include <memory>
+#include <Memory/SharedPtr.h>
 
 namespace Artifact {
 
 class ArtifactAbstractLayer;
-using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
+using ArtifactAbstractLayerPtr = ArtifactCore::SharedPtr<ArtifactAbstractLayer>;
 
 struct CloneRenderInstance {
     QMatrix4x4 transform;

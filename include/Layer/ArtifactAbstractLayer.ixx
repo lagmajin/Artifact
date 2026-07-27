@@ -1,9 +1,8 @@
-﻿module;
+module;
 #include <utility>
 #include <memory>
 #include <typeindex>
 #include <vector>
-#include <optional>
 #include <cstdint>
 #include <cstddef>
 #include <string>
@@ -27,8 +26,11 @@ export module Artifact.Layer.Abstract;
 
 import Size;
 import Utils.Id;
+import Utils.Optional;
 import Utils.String.Like;
 import Utils.String.UniString;
+import Core.ArtifactString;
+import Memory.SharedPtr;
 import Layer.Blend;
 import Layer.State;
 import Animation.Transform2D;
@@ -67,7 +69,7 @@ export namespace Artifact {
  };
 
  struct LayerComponentRuntimeSnapshot {
-  std::shared_ptr<const void> storage;
+  SharedPtr<const void> storage;
   std::size_t estimatedBytes = 0;
 
   bool isValid() const noexcept { return static_cast<bool>(storage); }
@@ -110,21 +112,21 @@ class ArtifactLayerModifier;
 
 class LayerVariant {
 public:
-    LayerVariant(ArtifactAbstractLayer* parentLayer, const std::string& name)
+    LayerVariant(ArtifactAbstractLayer* parentLayer, const ArtifactCore::String& name)
         : parentLayer_(parentLayer), name_(name) {}
 
-    std::string GetName() const { return name_; }
-    void SetName(const std::string& name) { name_ = name; }
+    ArtifactCore::String GetName() const { return name_; }
+    void SetName(const ArtifactCore::String& name) { name_ = name; }
 
     VariantOverrideFlags overrideFlags_ = VariantOverrideFlags::None;
 
-    std::optional<AnimatableTransform2D> transform2DOverride;
-    std::optional<AnimatableTransform3D> transform3DOverride;
-    std::optional<float> opacityOverride;
-    std::optional<LAYER_BLEND_TYPE> blendModeOverride;
+    ArtifactCore::Optional<AnimatableTransform2D> transform2DOverride;
+    ArtifactCore::Optional<AnimatableTransform3D> transform3DOverride;
+    ArtifactCore::Optional<float> opacityOverride;
+    ArtifactCore::Optional<LAYER_BLEND_TYPE> blendModeOverride;
 
     QPointer<ArtifactAbstractLayer> parentLayer_;
-    std::string name_;
+    ArtifactCore::String name_;
 };
 
 enum class LayerType {
@@ -300,7 +302,7 @@ private:
 
 protected:
   void setSourceSize(const Size_2D &size);
-  std::shared_ptr<ArtifactCore::AbstractProperty>
+  SharedPtr<ArtifactCore::AbstractProperty>
   persistentLayerProperty(const QString &propertyPath,
                           ArtifactCore::PropertyType type,
                           const QVariant &value,
@@ -315,7 +317,7 @@ protected:
 
 public:
   virtual QJsonObject toJson() const;
-  static std::shared_ptr<ArtifactAbstractLayer> fromJson(const QJsonObject &obj);
+  static ArtifactAbstractLayerPtr fromJson(const QJsonObject &obj);
   void Show();
   void Hide();
   bool isVisible() const;
@@ -408,7 +410,7 @@ public:
   void applyFractureImpact(const ArtifactCore::FractureImpact& impact);
   void drawFractureOverlay(ArtifactIRenderer* renderer, const QMatrix4x4& baseTransform,
                            const QSizeF& sourceSize, float opacityScale = 1.0f);
-  std::shared_ptr<ArtifactAbstractLayer> parentLayer() const;
+  ArtifactAbstractLayerPtr parentLayer() const;
   bool isTimeRemapEnabled() const;
   void setTimeRemapEnabled(bool);
   void clearTimeRemap();
@@ -523,7 +525,7 @@ public:
    size_t getActiveVariantIndex() const;
    void setActiveVariant(size_t index);
    LayerVariant* getActiveVariant() const;
-   LayerVariant* createVariantFromCurrent(const std::string& newName);
+   LayerVariant* createVariantFromCurrent(const ArtifactCore::String& newName);
    void resetVariantOverride(VariantOverrideFlags specificFlag = VariantOverrideFlags::None);
    std::vector<LayerVariant*> getVariants() const;
    std::unique_ptr<LayerVariant> extractVariant(size_t index);
@@ -532,22 +534,22 @@ public:
 
    /*Effects*/
 public:
-   void addEffect(std::shared_ptr<ArtifactAbstractEffect> effect);
+   void addEffect(SharedPtr<ArtifactAbstractEffect> effect);
    void removeEffect(const UniString &effectID);
    void clearEffects();
-   std::vector<std::shared_ptr<ArtifactAbstractEffect>> getEffects() const;
-   std::shared_ptr<ArtifactAbstractEffect>
+   std::vector<SharedPtr<ArtifactAbstractEffect>> getEffects() const;
+   SharedPtr<ArtifactAbstractEffect>
    getEffect(const UniString &effectID) const;
    int effectCount() const;
    /*Effects*/
 
    /*Modifiers*/
 public:
-   void addModifier(std::shared_ptr<ArtifactLayerModifier> modifier);
+   void addModifier(SharedPtr<ArtifactLayerModifier> modifier);
    void removeModifier(const QString& modifierId);
    void clearModifiers();
-   std::vector<std::shared_ptr<ArtifactLayerModifier>> getModifiers() const;
-   std::shared_ptr<ArtifactLayerModifier> getModifier(const QString& modifierId) const;
+   std::vector<SharedPtr<ArtifactLayerModifier>> getModifiers() const;
+   SharedPtr<ArtifactLayerModifier> getModifier(const QString& modifierId) const;
    int modifierCount() const;
    bool hasModifiers() const;
    /*Modifiers*/
@@ -563,7 +565,7 @@ public:
   validateLayerComponents() const;
   void setAuthoritativeComponentEvaluationState(
       const LayerEvaluationState& state, std::int64_t frame);
-  std::optional<LayerEvaluationState>
+  ArtifactCore::Optional<LayerEvaluationState>
   authoritativeComponentEvaluationState() const;
   void clearAuthoritativeComponentEvaluationState();
   LayerComponentRuntimeSnapshot captureComponentRuntimeSnapshot() const;
@@ -590,7 +592,7 @@ public:
   getLayerPropertyGroups() const;
   virtual bool setLayerPropertyValue(const QString &propertyPath,
                                      const QVariant &value);
-  std::shared_ptr<ArtifactCore::AbstractProperty> getProperty(const QString &name) const;
+  SharedPtr<ArtifactCore::AbstractProperty> getProperty(const QString &name) const;
   /*Generic Properties*/
 
   /*Masks*/
@@ -625,8 +627,8 @@ public:
 
 // Aliases defined AFTER the complete class definition so MSVC attaches
 // module context to the shared_ptr<T> template argument correctly.
-using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
-using ArtifactAbstractLayerWeak = std::weak_ptr<ArtifactAbstractLayer>;
+using ArtifactAbstractLayerPtr = SharedPtr<ArtifactAbstractLayer>;
+using ArtifactAbstractLayerWeak = WeakPtr<ArtifactAbstractLayer>;
 
 inline uint qHash(const Artifact::ArtifactAbstractLayerPtr &key,
                   uint seed = 0) noexcept {

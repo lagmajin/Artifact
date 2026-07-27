@@ -23,6 +23,7 @@ import Artifact.Layer.Abstract;
 
 
 import Utils;
+import Memory.SharedPtr;
 import Composition.Settings;
 
 import Artifact.Composition.Result;
@@ -167,7 +168,7 @@ inline void ArtifactProject::createComposition(NameT name, SizeT size)
  }
 
 
- typedef std::shared_ptr<ArtifactProject> ArtifactProjectPtr;
- typedef std::weak_ptr<ArtifactProject>	 ArtifactProjectWeakPtr;
+ typedef SharedPtr<ArtifactProject> ArtifactProjectPtr;
+ typedef WeakPtr<ArtifactProject> ArtifactProjectWeakPtr;
 
 }

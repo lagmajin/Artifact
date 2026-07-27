@@ -12,6 +12,7 @@ export module Artifact.Layer.Camera;
 
 import Artifact.Layer.Abstract;
 import Property.Group;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -138,6 +139,6 @@ export namespace Artifact {
   Impl* camImpl_;
  };
 
- using ArtifactCameraLayerPtr = std::shared_ptr<ArtifactCameraLayer>;
+ using ArtifactCameraLayerPtr = SharedPtr<ArtifactCameraLayer>;
 
 } // namespace Artifact

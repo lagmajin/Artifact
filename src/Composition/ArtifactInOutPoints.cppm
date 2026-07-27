@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <algorithm>
 #include <optional>
@@ -205,8 +205,8 @@ bool ArtifactMarker::operator==(const ArtifactMarker& other) const {
 
 class ArtifactInOutPoints::Impl {
 public:
-    std::optional<FramePosition> inPoint_;
-    std::optional<FramePosition> outPoint_;
+    ArtifactCore::Optional<FramePosition> inPoint_;
+    ArtifactCore::Optional<FramePosition> outPoint_;
     
     // Markers sorted by position for fast lookup
     std::map<FramePosition, ArtifactMarker*> markers_;
@@ -246,12 +246,12 @@ void ArtifactInOutPoints::setInPoint(const FramePosition& frame) {
 }
 
 void ArtifactInOutPoints::clearInPoint() {
-    impl_->inPoint_ = std::nullopt;
+    impl_->inPoint_ = {};
     ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
         PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(), impl_->outPoint_.has_value()});
 }
 
-std::optional<FramePosition> ArtifactInOutPoints::inPoint() const {
+ArtifactCore::Optional<FramePosition> ArtifactInOutPoints::inPoint() const {
     return impl_->inPoint_;
 }
 
@@ -271,12 +271,12 @@ void ArtifactInOutPoints::setOutPoint(const FramePosition& frame) {
 }
 
 void ArtifactInOutPoints::clearOutPoint() {
-    impl_->outPoint_ = std::nullopt;
+    impl_->outPoint_ = {};
     ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
         PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(), impl_->outPoint_.has_value()});
 }
 
-std::optional<FramePosition> ArtifactInOutPoints::outPoint() const {
+ArtifactCore::Optional<FramePosition> ArtifactInOutPoints::outPoint() const {
     return impl_->outPoint_;
 }
 
@@ -306,8 +306,8 @@ bool ArtifactInOutPoints::isRangeLimited() const {
 }
 
 void ArtifactInOutPoints::clearAllPoints() {
-    impl_->inPoint_ = std::nullopt;
-    impl_->outPoint_ = std::nullopt;
+    impl_->inPoint_ = {};
+    impl_->outPoint_ = {};
     ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
         PlaybackInOutPointsChangedEvent{false, false});
 }
@@ -488,24 +488,24 @@ size_t ArtifactInOutPoints::markerCount() const {
 }
 
 // Navigation
-std::optional<FramePosition> ArtifactInOutPoints::nextMarker(const FramePosition& current) const {
+ArtifactCore::Optional<FramePosition> ArtifactInOutPoints::nextMarker(const FramePosition& current) const {
     auto it = impl_->markers_.upper_bound(current);
     if (it != impl_->markers_.end()) {
         return it->first;
     }
-    return std::nullopt;
+    return {};
 }
 
-std::optional<FramePosition> ArtifactInOutPoints::previousMarker(const FramePosition& current) const {
+ArtifactCore::Optional<FramePosition> ArtifactInOutPoints::previousMarker(const FramePosition& current) const {
     auto it = impl_->markers_.lower_bound(current);
     if (it != impl_->markers_.begin()) {
         --it;
         return it->first;
     }
-    return std::nullopt;
+    return {};
 }
 
-std::optional<FramePosition> ArtifactInOutPoints::nextChapter(const FramePosition& current) const {
+ArtifactCore::Optional<FramePosition> ArtifactInOutPoints::nextChapter(const FramePosition& current) const {
     impl_->updateChapters();
     
     for (auto* chapter : impl_->chapters_) {
@@ -513,13 +513,13 @@ std::optional<FramePosition> ArtifactInOutPoints::nextChapter(const FramePositio
             return chapter->position();
         }
     }
-    return std::nullopt;
+    return {};
 }
 
-std::optional<FramePosition> ArtifactInOutPoints::previousChapter(const FramePosition& current) const {
+ArtifactCore::Optional<FramePosition> ArtifactInOutPoints::previousChapter(const FramePosition& current) const {
     impl_->updateChapters();
     
-    std::optional<FramePosition> result;
+    ArtifactCore::Optional<FramePosition> result;
     for (auto* chapter : impl_->chapters_) {
         if (chapter->position() < current) {
             result = chapter->position();

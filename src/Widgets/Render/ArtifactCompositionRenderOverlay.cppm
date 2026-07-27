@@ -39,6 +39,7 @@ import Artifact.Widgets.PieMenu;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Tracking.MotionTracker;
 import Artifact.Render.IRenderer;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -86,7 +87,7 @@ QString layerOverlayDetailText(const ArtifactAbstractLayerPtr &layer)
       .arg(QString::number(std::max(0.0, boundsSize.width()), 'f', 0))
       .arg(QString::number(std::max(0.0, boundsSize.height()), 'f', 0));
 
-  if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+  if (const auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
     const int trackerId = videoLayer->motionTrackerId();
     if (trackerId > 0) {
       const auto *tracker = ArtifactCore::TrackerManager::instance().tracker(trackerId);
@@ -225,7 +226,7 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
     return;
   }
 
-  const auto modelLayer = std::dynamic_pointer_cast<Artifact3DLayer>(layer);
+  const auto modelLayer = ArtifactCore::dynamicPointerCast<Artifact3DLayer>(layer);
   if (!modelLayer) {
     return;
   }
@@ -878,7 +879,7 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
   const float nodeSize = std::max(4.5f, 7.5f / zoom);
   const FloatColor nodeColor{1.0f, 0.94f, 0.32f, 0.98f};
 
-  if (const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+  if (const auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer)) {
     const auto type = shape->shapeType();
     if (type == ShapeType::Polygon) {
       const auto points = shape->customPolygonPoints();
@@ -1162,7 +1163,7 @@ void drawCameraSelectionOverlay(ArtifactIRenderer *renderer,
     return;
   }
 
-  const auto camera = std::dynamic_pointer_cast<ArtifactCameraLayer>(layer);
+  const auto camera = ArtifactCore::dynamicPointerCast<ArtifactCameraLayer>(layer);
   if (!camera) {
     return;
   }

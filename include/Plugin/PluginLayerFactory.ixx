@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <memory>
 #include <string>
@@ -11,14 +11,15 @@ import ArtifactCore.Plugin.Common;
 import ArtifactCore.Plugin.Registry;
 import ArtifactCore.Plugin.Layer.Interface;
 import Artifact.Plugin.Layer.Adapter;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
 struct LayerPluginInfo {
-    std::string id;
-    std::string displayName;
-    std::string version;
-    std::shared_ptr<ArtifactCore::ILayerPlugin> plugin;
+    ArtifactCore::String id;
+    ArtifactCore::String displayName;
+    ArtifactCore::String version;
+    ArtifactCore::SharedPtr<ArtifactCore::ILayerPlugin> plugin;
 };
 
 class PluginLayerFactory {
@@ -26,13 +27,13 @@ public:
     static PluginLayerFactory& instance();
 
     void scanAndRegister();
-    void registerFromDll(const std::string& pluginId,
+    void registerFromDll(const ArtifactCore::String& pluginId,
                          ArtifactPluginInstance instance,
                          ArtifactLayerPluginVTable vtable);
     void unregisterAll();
 
     std::vector<LayerPluginInfo> availablePlugins() const;
-    std::shared_ptr<ArtifactCore::ILayerPlugin> pluginById(const std::string& id) const;
+    ArtifactCore::SharedPtr<ArtifactCore::ILayerPlugin> pluginById(const ArtifactCore::String& id) const;
 
 private:
     PluginLayerFactory() = default;

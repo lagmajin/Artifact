@@ -24,6 +24,7 @@ import Property.Abstract;
 import Property.Group;
 import Artifact.Render.IRenderer;
 import Size;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -90,8 +91,8 @@ public:
     int height_ = 0;
     QString sourcePath_;
     std::uint64_t sourceVersion_ = 0;
-    mutable std::shared_ptr<QImage> cache_;
-    mutable std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> cacheBuffer_;
+    mutable ArtifactCore::SharedPtr<QImage> cache_;
+    mutable ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> cacheBuffer_;
     mutable QFuture<QImage> prefetchFuture_;
     mutable bool prefetchDone_ = false;
 };
@@ -178,7 +179,7 @@ QImage ArtifactSvgLayer::toQImage() const
     if (!impl_->prefetchDone_ && impl_->prefetchFuture_.isFinished()) {
         QImage loaded = impl_->prefetchFuture_.result();
         if (!loaded.isNull()) {
-            impl_->cache_ = std::make_shared<QImage>(loaded);
+            impl_->cache_ = ArtifactCore::makeShared<QImage>(loaded);
             impl_->cacheBuffer_.reset();
             if (impl_->width_ <= 0 || impl_->height_ <= 0) {
                 impl_->width_ = loaded.width();
@@ -197,7 +198,7 @@ QImage ArtifactSvgLayer::toQImage() const
                                : svgNaturalSize(impl_->sourcePath_);
         QImage loaded = renderSvgToImage(impl_->sourcePath_, size);
         if (!loaded.isNull()) {
-            impl_->cache_ = std::make_shared<QImage>(loaded);
+            impl_->cache_ = ArtifactCore::makeShared<QImage>(loaded);
             impl_->cacheBuffer_.reset();
             if (impl_->width_ <= 0 || impl_->height_ <= 0) {
                 impl_->width_ = loaded.width();
@@ -221,7 +222,7 @@ const ArtifactCore::ImageF32x4_RGBA &ArtifactSvgLayer::currentFrameBuffer() cons
     }
 
     if (!impl_->cacheBuffer_ && impl_->cache_) {
-        impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>();
+        impl_->cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>();
         const QImage rgba = (impl_->cache_->format() == QImage::Format_RGBA8888)
                                 ? *impl_->cache_
                                 : impl_->cache_->convertToFormat(QImage::Format_RGBA8888);

@@ -14,6 +14,7 @@ import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Composition._2D;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Matte;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -109,7 +110,7 @@ auto ArtifactMatteReferenceRule::validate(const void* project) -> std::vector<Ar
     const auto layers = const_cast<ArtifactComposition*>(comp)->allLayer();
 
     // Build lookup: layerId -> layer
-    QHash<QString, std::shared_ptr<ArtifactAbstractLayer>> layerMap;
+    QHash<QString, SharedPtr<ArtifactAbstractLayer>> layerMap;
     for (const auto& layer : layers) {
         if (layer) {
             layerMap[layer->id().toString()] = layer;

@@ -26,6 +26,7 @@ import Artifact.Render.IRenderer;
 import Artifact.Widgets.CompositionRenderOverlay;
 import Event.Bus;
 import ArtifactCore.ImageProcessing.OpenCV.PuppetEngine;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -188,7 +189,7 @@ void ArtifactPuppetTool::deformLayer(const LayerID& layerId, ArtifactIRenderer* 
     if (!selection) return;
     auto layer = selection->currentLayer();
     if (!layer || layer->id() != layerId) return;
-    auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer);
+    auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer);
     if (!imageLayer) return;
 
     // Bind image to engine if dirty

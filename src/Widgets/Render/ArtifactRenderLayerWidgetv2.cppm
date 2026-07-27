@@ -63,6 +63,7 @@ import Artifact.Preview.Pipeline;
 import Artifact.Layer.Image;
 import Artifact.Widgets.TransformGizmo;
 import Utils.Path;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -127,9 +128,9 @@ QString layerTypeLabel(const ArtifactAbstractLayerPtr& layer)
   if (!layer) return QStringLiteral("—");
 
   QString type;
-  if (std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+  if (ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer))) {
     type = QStringLiteral("Shape");
-  } else if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+  } else if (ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer))) {
     type = QStringLiteral("Image");
   } else {
     type = layer->className().toQString().trimmed();
@@ -174,7 +175,7 @@ bool layerEditModeAvailable(const ArtifactAbstractLayerPtr& layer,
   if (mode == EditMode::View) return true;
   if (!layer || !layer->isVisible() || layer->isLocked()) return false;
   if (mode == EditMode::Shape || mode == EditMode::Paint) {
-    return static_cast<bool>(std::dynamic_pointer_cast<ArtifactShapeLayer>(layer));
+    return static_cast<bool>(ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer)));
   }
   if (mode == EditMode::Mask) return layer->maskCount() > 0;
   return true;
@@ -516,7 +517,8 @@ private:
   if (!layer) {
    return;
   }
-  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
+      ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
   if (!shape) {
    return;
   }
@@ -546,7 +548,8 @@ private:
  void apply(float r) {
   auto layer = layer_.lock();
   if (!layer) return;
-  if (auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer))
+  if (auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
+          ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer)))
    shape->setCornerRadius(r);
   if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
  }
@@ -565,7 +568,8 @@ private:
  void apply(float r) {
   auto layer = layer_.lock();
   if (!layer) return;
-  if (auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer))
+  if (auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
+          ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer)))
    shape->setStarInnerRadius(r);
   if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
  }
@@ -589,7 +593,8 @@ private:
  void apply(const std::vector<Artifact::CustomPathVertex>& verts, bool closed) {
   auto layer = layer_.lock();
   if (!layer) return;
-  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
+      ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
   if (!shape) return;
   if (verts.size() >= 3)
    shape->setCustomPathVertices(verts, closed);
@@ -634,7 +639,8 @@ private:
   if (!layer) {
    return;
   }
-  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
+      ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
   if (!shape) {
    return;
   }
@@ -677,7 +683,8 @@ public:
 private:
  void apply(const QJsonArray& operators) {
   auto layer = layer_.lock();
-  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  auto shape = ArtifactCore::dynamicPointerCast<Artifact::ArtifactShapeLayer>(
+      ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
   if (!shape) return;
   shape->restoreOperatorsFromJson(operators);
   if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
@@ -1611,7 +1618,8 @@ void ArtifactLayerEditorWidgetV2::Impl::beginShapeEditTransaction(const Artifact
  shapeEditDirty_ = false;
  shapeEditLayer_ = layer;
  shapeEditBefore_.clear();
- if (auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+  if (auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+          ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer))) {
   shapeEditBefore_ = shape->customPolygonPoints();
  }
 }
@@ -1637,7 +1645,8 @@ void ArtifactLayerEditorWidgetV2::Impl::commitShapeEditTransaction()
   return;
  }
  std::vector<QPointF> afterPoints;
- if (auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+ if (auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+         ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer))) {
   afterPoints = shape->customPolygonPoints();
  }
  if (auto* undo = UndoManager::instance()) {
@@ -1654,7 +1663,8 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestShapeVertex(const ArtifactAbstrac
  if (!renderer_ || !layer) {
   return false;
  }
- const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ const auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
  if (!shape || !shape->hasCustomPolygon()) {
   return false;
  }
@@ -1688,7 +1698,8 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestShapeSegment(const ArtifactAbstra
  if (!renderer_ || !layer) {
   return false;
  }
- const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ const auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
  if (!shape || !shape->hasCustomPolygon()) {
   return false;
  }
@@ -1759,7 +1770,8 @@ void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractL
  if (!renderer_ || !layer) {
   return;
  }
- const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ const auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
  if (!shape) return;
  if (shape->hasCustomPath()) {
   drawCustomPathOverlay(layer);
@@ -1962,8 +1974,9 @@ QPointF ArtifactLayerEditorWidgetV2::Impl::starInnerRadiusHandleCanvasPos(const 
 
 bool ArtifactLayerEditorWidgetV2::Impl::hitTestCornerRadiusHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos) const
 {
-if (!layer) return false;
-auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ if (!layer) return false;
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
 if (!shape || (shape->shapeType() != Artifact::ShapeType::Rect &&
                shape->shapeType() != Artifact::ShapeType::Square)) return false;
  const QPointF localHandle = cornerRadiusHandleCanvasPos(*shape);
@@ -1980,7 +1993,8 @@ if (!shape || (shape->shapeType() != Artifact::ShapeType::Rect &&
 bool ArtifactLayerEditorWidgetV2::Impl::hitTestStarInnerRadiusHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos) const
 {
  if (!layer) return false;
- auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
  if (!shape || shape->shapeType() != Artifact::ShapeType::Star) return false;
  const QPointF localHandle = starInnerRadiusHandleCanvasPos(*shape);
  const QTransform globalTransform = layer->getGlobalTransform();
@@ -1996,7 +2010,8 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestStarInnerRadiusHandle(const Artif
 void ArtifactLayerEditorWidgetV2::Impl::drawShapeParamHandles(const ArtifactAbstractLayerPtr& layer)
 {
 if (!renderer_ || !layer) return;
-auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+    ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
 if (!shape) return;
 const QTransform globalTransform = layer->getGlobalTransform();
 const float zoom = renderer_->getZoom();
@@ -3310,7 +3325,8 @@ bool ArtifactLayerEditorWidgetV2::Impl::updateViewportChromeHover(
 void ArtifactLayerEditorWidgetV2::Impl::beginPathEditTransaction(const ArtifactAbstractLayerPtr& layer)
 {
  if (!layer) return;
- auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
  if (!shape) return;
  pathEditLayer_ = layer;
  pathEditBefore_ = shape->customPathVertices();
@@ -3330,7 +3346,8 @@ void ArtifactLayerEditorWidgetV2::Impl::commitPathEditTransaction()
  if (!pathEditDirty_) return;
  auto layer = pathEditLayer_.lock();
  if (!layer) return;
- auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
  if (!shape) return;
  const auto afterVerts = shape->customPathVertices();
  const bool afterClosed = shape->customPathClosed();
@@ -3346,7 +3363,8 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestCustomPathVertex(
     const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos, int& vertexIndex) const
 {
  if (!layer || !renderer_) return false;
- auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
  if (!shape || !shape->hasCustomPath()) return false;
  const QTransform gt = layer->getGlobalTransform();
  const float zoom = renderer_->getZoom();
@@ -3368,7 +3386,8 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestCustomPathTangent(
     const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos, int& vertexIndex, int& tangentType) const
 {
  if (!layer || !renderer_) return false;
- auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
  if (!shape || !shape->hasCustomPath()) return false;
  const QTransform gt = layer->getGlobalTransform();
  const float zoom = renderer_->getZoom();
@@ -3400,7 +3419,8 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestCustomPathTangent(
 void ArtifactLayerEditorWidgetV2::Impl::drawCustomPathOverlay(const ArtifactAbstractLayerPtr& layer)
 {
  if (!renderer_ || !layer) return;
- auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
  if (!shape || !shape->hasCustomPath()) return;
  const QTransform gt = layer->getGlobalTransform();
  const float zoom = renderer_->getZoom();
@@ -3495,7 +3515,8 @@ bool ArtifactLayerEditorWidgetV2::Impl::deleteHoveredShapeVertex(const ArtifactA
  if (!layer || hoveredShapeVertexIndex_ < 0) {
   return false;
  }
- auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
  if (!shape || !shape->hasCustomPolygon()) {
   return false;
  }
@@ -3523,7 +3544,8 @@ bool ArtifactLayerEditorWidgetV2::Impl::insertPointOnHoveredShapeSegment(
  if (!layer || hoveredShapeSegmentIndex_ < 0) {
   return false;
  }
- auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
  if (!shape || !shape->hasCustomPolygon()) {
   return false;
  }
@@ -3565,7 +3587,8 @@ bool ArtifactLayerEditorWidgetV2::Impl::splitHoveredShapeSegment(const ArtifactA
  if (!layer || hoveredShapeSegmentIndex_ < 0) {
   return false;
  }
- auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
  if (!shape || !shape->hasCustomPolygon()) {
   return false;
  }
@@ -4424,7 +4447,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
         {(float)event->position().x(), (float)event->position().y()});
     const QPointF canvasPoint(cp.x, cp.y);
     if (impl_->hitTestCornerRadiusHandle(layer, canvasPoint)) {
-     auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
      impl_->isDraggingCornerRadius_ = true;
      impl_->cornerRadiusDragStart_ = shape->cornerRadius();
      impl_->cornerRadiusBefore_ = shape->cornerRadius();
@@ -4437,7 +4461,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      return;
     }
     if (impl_->hitTestStarInnerRadiusHandle(layer, canvasPoint)) {
-     auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
      impl_->isDraggingStarInnerRadius_ = true;
      impl_->starInnerRadiusDragStart_ = shape->starInnerRadius();
      impl_->starInnerRadiusBefore_ = shape->starInnerRadius();
@@ -4463,7 +4488,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      isShapeEditingMode(impl_->editMode_) &&
      event->button() == Qt::LeftButton && impl_->renderer_) {
    auto layer = impl_->targetLayer();
-   auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
    if (shape && shape->shapeType() != ShapeType::Line) {
     const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
         {(float)event->position().x(), (float)event->position().y()});
@@ -4728,7 +4754,8 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
     impl_->isDraggingCornerRadius_ = false;
     unsetCursor();
     auto layer = impl_->paramHandleEditLayer_.lock();
-    auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
     if (shape) {
      const float after = shape->cornerRadius();
      if (std::abs(after - impl_->cornerRadiusBefore_) > 0.001f) {
@@ -4745,7 +4772,8 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
     impl_->isDraggingStarInnerRadius_ = false;
     unsetCursor();
     auto layer = impl_->paramHandleEditLayer_.lock();
-    auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+     ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
     if (shape) {
      const float after = shape->starInnerRadius();
      if (std::abs(after - impl_->starInnerRadiusBefore_) > 0.001f) {
@@ -4853,7 +4881,8 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
   // Phase 1: parametric shape handle drag
   if ((impl_->isDraggingCornerRadius_ || impl_->isDraggingStarInnerRadius_) && impl_->renderer_) {
    auto layer = impl_->paramHandleEditLayer_.lock();
-   auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+   auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+       ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
    if (shape) {
     if (impl_->isDraggingCornerRadius_) {
      const float dx = static_cast<float>(event->position().x()) - impl_->cornerRadiusDragAnchorX_;
@@ -5003,8 +5032,9 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
       isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
    auto layer = impl_->targetLayer();
    auto shape = layer && layer->isVisible() && !layer->isLocked()
-       ? std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)
-       : std::shared_ptr<ArtifactShapeLayer>{};
+       ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+             ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer))
+       : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
    if (shape) {
     const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
         {(float)event->position().x(), (float)event->position().y()});
@@ -5227,12 +5257,13 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* pathDeletePointAct = nullptr;
  QAction* pathToggleSmoothAct = nullptr;
  QAction* pathToggleClosedAct = nullptr;
- std::shared_ptr<ArtifactShapeLayer> shapeLayer;
+ ArtifactCore::SharedPtr<ArtifactShapeLayer> shapeLayer;
  if (impl_->displayMode_ != DisplayMode::Mask &&
      isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
   auto layer = impl_->targetLayer();
   if (layer && layer->isVisible() && !layer->isLocked()) {
-   shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+   shapeLayer = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+       ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
   }
   if (shapeLayer) {
    QMenu* shapeOpsMenu = menu.addMenu(QStringLiteral("Add Operator"));
@@ -5655,7 +5686,8 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
      }
      if (layer->isVisible() && !layer->isLocked() &&
          isShapeEditingMode(impl_->editMode_)) {
-      if (auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+      if (auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+              ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer))) {
        if (!shape->hasCustomPolygon()) {
         const std::vector<QPointF> points = buildShapeEditSeedPoints(*shape);
         if (points.size() >= 3) {
@@ -5769,7 +5801,8 @@ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, fl
     if (auto composition = service->currentComposition().lock()) {
      if (auto layer = composition->layerById(impl_->targetLayerId_);
          layer && layer->isVisible() && !layer->isLocked()) {
-      if (auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+      if (auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
+              ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer))) {
        if (!shape->hasCustomPolygon()) {
         const std::vector<QPointF> points = buildShapeEditSeedPoints(*shape);
         if (points.size() >= 3) {

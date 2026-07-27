@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -98,7 +98,7 @@ std::vector<AudioEffectParameter> DistortionEffect::getUiParameters() const {
     };
 }
 
-void DistortionEffect::setParameter(const std::string& name, float value) {
+void DistortionEffect::setParameter(const String& name, float value) {
     if      (name == "mode")        mode_ = static_cast<Mode>(static_cast<int>(value));
     else if (name == "drive")       drive_ = value;
     else if (name == "tone")        tone_ = value;
@@ -108,7 +108,7 @@ void DistortionEffect::setParameter(const std::string& name, float value) {
     else if (name == "downsample")  downsample_ = std::max(1.0f, value);
 }
 
-float DistortionEffect::getParameter(const std::string& name) const {
+float DistortionEffect::getParameter(const String& name) const {
     if      (name == "mode")        return static_cast<float>(static_cast<int>(mode_));
     else if (name == "drive")       return drive_;
     else if (name == "tone")        return tone_;

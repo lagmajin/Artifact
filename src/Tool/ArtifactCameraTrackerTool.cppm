@@ -15,6 +15,7 @@ import Artifact.Layer.Factory;
 import Tracking.CameraTracker;
 import Frame.Position;
 import Frame.Range;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -37,7 +38,7 @@ public:
                     ProgressCallback&& progress) {
         if (!comp || !videoLayer) return false;
 
-        const auto sourceLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(videoLayer);
+        const auto sourceLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(videoLayer);
         if (!sourceLayer) {
             return false;
         }

@@ -17,6 +17,7 @@ import ImageProcessing.Distortion;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -160,7 +161,7 @@ void ScreenShakeEffect::setPropertyValue(const UniString& n,const QVariant& v){
     else if(k=="wrapMode")setWrapMode(v.toInt());
 }
 void ScreenShakeEffect::syncImpls(){
-    auto c=std::make_shared<ScreenShakeCPUImpl>();
+    auto c=ArtifactCore::makeShared<ScreenShakeCPUImpl>();
     c->ampX_=amplitudeX_; c->ampY_=amplitudeY_; c->freq_=frequency_;
     c->decay_=decay_; c->seed_=seed_; c->wrap_=wrapMode_;
     setCPUImpl(c);

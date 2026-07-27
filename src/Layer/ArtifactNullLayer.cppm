@@ -5,6 +5,7 @@ module;
 module Artifact.Layer.Null;
 import std;
 import Artifact.Layer.Abstract;
+import Memory.SharedPtr;
 
 
 namespace Artifact {
@@ -62,9 +63,9 @@ namespace Artifact {
     return ArtifactAbstractLayer::toJson();
   }
 
-  std::shared_ptr<ArtifactNullLayer> ArtifactNullLayer::fromJson(const QJsonObject& obj)
+  SharedPtr<ArtifactNullLayer> ArtifactNullLayer::fromJson(const QJsonObject& obj)
   {
-    auto layer = std::make_shared<ArtifactNullLayer>();
+    auto layer = ArtifactCore::makeShared<ArtifactNullLayer>();
     layer->fromJsonProperties(obj);
     return layer;
   }

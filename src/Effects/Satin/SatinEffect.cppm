@@ -25,6 +25,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -218,8 +219,8 @@ SatinEffect::SatinEffect()
     setDisplayName(UniString("Satin (Rasterizer)"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
 
-    auto cpu = std::make_shared<SatinCPUImpl>();
-    auto gpu = std::make_shared<SatinGPUImpl>();
+    auto cpu = ArtifactCore::makeShared<SatinCPUImpl>();
+    auto gpu = ArtifactCore::makeShared<SatinGPUImpl>();
     setCPUImpl(cpu);
     setGPUImpl(gpu);
 }

@@ -39,6 +39,7 @@ import Artifact.Effect.Field;
 import Utils.String.UniString;
 import Property.Group;
 import Property.Abstract;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -63,13 +64,13 @@ export namespace Artifact {
         RadialField()
             : ArtifactAbstractField(FieldType::Radial, UniString("Radial Field"))
         {
-            auto innerProp = std::make_shared<AbstractProperty>();
+            auto innerProp = ArtifactCore::makeShared<AbstractProperty>();
             innerProp->setName("Inner Radius");
             innerProp->setType(PropertyType::Float);
             innerProp->setValue(innerRadius_);
             properties_->addProperty(innerProp);
 
-            auto outerProp = std::make_shared<AbstractProperty>();
+            auto outerProp = ArtifactCore::makeShared<AbstractProperty>();
             outerProp->setName("Outer Radius");
             outerProp->setType(PropertyType::Float);
             outerProp->setValue(outerRadius_);
@@ -130,4 +131,3 @@ export namespace Artifact {
     };
 
 }
-

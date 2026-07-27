@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -15,39 +15,39 @@ ArtifactAudioEffectManager& ArtifactAudioEffectManager::instance()
     return manager;
 }
 
-void ArtifactAudioEffectManager::registerEffectFactory(const std::string& effectId, AudioEffectFactory factory)
+void ArtifactAudioEffectManager::registerEffectFactory(const String& effectId, AudioEffectFactory factory)
 {
     if (effectId.empty() || factory == nullptr) {
         return;
     }
-    effectFactories_[effectId] = factory;
+    effectFactories_[ArtifactCore::toStdString(effectId)] = factory;
 }
 
-std::unique_ptr<ArtifactAbstractAudioEffect> ArtifactAudioEffectManager::createEffect(const std::string& effectId)
+std::unique_ptr<ArtifactAbstractAudioEffect> ArtifactAudioEffectManager::createEffect(const String& effectId)
 {
-    const auto it = effectFactories_.find(effectId);
+    const auto it = effectFactories_.find(ArtifactCore::toStdString(effectId));
     if (it == effectFactories_.end() || it->second == nullptr) {
         return {};
     }
     return it->second();
 }
 
-std::vector<std::string> ArtifactAudioEffectManager::getAvailableEffects() const
+std::vector<String> ArtifactAudioEffectManager::getAvailableEffects() const
 {
-    std::vector<std::string> effects;
+    std::vector<String> effects;
     effects.reserve(effectFactories_.size());
     for (const auto& [id, factory] : effectFactories_) {
         if (factory != nullptr) {
-            effects.push_back(id);
+            effects.emplace_back(id);
         }
     }
     std::sort(effects.begin(), effects.end());
     return effects;
 }
 
-bool ArtifactAudioEffectManager::hasEffect(const std::string& effectId) const
+bool ArtifactAudioEffectManager::hasEffect(const String& effectId) const
 {
-    return effectFactories_.find(effectId) != effectFactories_.end();
+    return effectFactories_.find(ArtifactCore::toStdString(effectId)) != effectFactories_.end();
 }
 
 } // namespace Artifact

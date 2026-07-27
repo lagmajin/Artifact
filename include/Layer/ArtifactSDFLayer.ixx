@@ -12,6 +12,7 @@ export module Artifact.Layer.SDF;
 import Artifact.Layer.Abstract;
 import Property.Group;
 import Color.Float;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -99,6 +100,6 @@ private:
     Impl* sdfImpl_;
 };
 
-using ArtifactSDFLayerPtr = std::shared_ptr<ArtifactSDFLayer>;
+using ArtifactSDFLayerPtr = SharedPtr<ArtifactSDFLayer>;
 
 } // namespace Artifact

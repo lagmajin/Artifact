@@ -197,7 +197,7 @@ using namespace ArtifactCore;
 namespace {
 class AssetRegistrationCommand final : public UndoCommand {
 public:
-  AssetRegistrationCommand(std::shared_ptr<ArtifactProject> project,
+  AssetRegistrationCommand(ArtifactProjectPtr project,
                            const QString& path)
       : project_(std::move(project)), path_(path) {}
 
@@ -218,7 +218,7 @@ public:
   }
 
 private:
-  std::shared_ptr<ArtifactProject> project_;
+  ArtifactProjectPtr project_;
   QString path_;
   bool firstRedo_ = true;
 };
@@ -284,7 +284,7 @@ void collectAssetFiles(const QString& path, QStringList& files) {
 }
 
 void collectAssetRegistrationMetadata(
-    const std::shared_ptr<ArtifactProject>& project,
+    const ArtifactProjectPtr& project,
     const QStringList& files,
     QHash<QString, QPair<QStringList, double>>& metadata) {
   if (!project) return;
@@ -306,7 +306,7 @@ void collectAssetRegistrationMetadata(
 
 class DeleteAssetFileCommand final : public UndoCommand {
 public:
-  DeleteAssetFileCommand(std::shared_ptr<ArtifactProject> project,
+  DeleteAssetFileCommand(ArtifactProjectPtr project,
                          QString path)
       : project_(std::move(project)), path_(std::move(path)) {
     const QString root = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) +
@@ -348,7 +348,7 @@ public:
   }
 
 private:
-  std::shared_ptr<ArtifactProject> project_;
+  ArtifactProjectPtr project_;
   QString path_;
   QString backupPath_;
   QStringList deletedFiles_;
@@ -4298,7 +4298,7 @@ if (!item.isFolder) {
     if (filePath.isEmpty()) return;
     auto *service = ArtifactProjectService::instance();
     const auto project = service ? service->getCurrentProjectSharedPtr()
-                                 : std::shared_ptr<ArtifactProject>{};
+                                 : ArtifactProjectPtr{};
     QStringList references;
     if (project) {
       std::function<void(ProjectItem*)> visit = [&](ProjectItem *item) {
@@ -4759,7 +4759,7 @@ void ArtifactAssetBrowser::Impl::deleteSelected()
   int deletedCount = 0;
   const auto project = ArtifactProjectService::instance()
                            ? ArtifactProjectService::instance()->getCurrentProjectSharedPtr()
-                           : std::shared_ptr<ArtifactProject>{};
+                           : ArtifactProjectPtr{};
   auto deleteBatch = std::make_unique<MacroUndoCommand>(
       QStringLiteral("Delete Assets"));
   QStringList deleteCandidates;

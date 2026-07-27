@@ -15,6 +15,7 @@ import Property.SerializationBridge;
 import Time.Rational;
 import Animation.Value;
 import Frame.Position;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -108,9 +109,9 @@ export int runPropertyKeyframeTests()
     report.check(animatableKeys.size() == 1 && animatableKeys[0].value == 1.0,
                  QStringLiteral("AnimatableValue move replaces a destination collision deterministically"));
 
-    AbstractPropertyPtr serializable = std::make_shared<AbstractProperty>(property);
+    AbstractPropertyPtr serializable = ArtifactCore::makeShared<AbstractProperty>(property);
     const auto serialized = PropertySerializationBridge::serializeProperty(serializable);
-    AbstractPropertyPtr roundTripped = std::make_shared<AbstractProperty>();
+    AbstractPropertyPtr roundTripped = ArtifactCore::makeShared<AbstractProperty>();
     roundTripped->setType(PropertyType::Float);
     roundTripped->setAnimatable(true);
     PropertySerializationBridge::deserializeProperty(roundTripped, serialized);

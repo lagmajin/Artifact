@@ -13,6 +13,7 @@ import Image.ImageF32x4RGBAWithCache;
 import ImageProcessing;
 import Property.Abstract;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -33,7 +34,7 @@ public:
 VectorFlowGlitchEffect::VectorFlowGlitchEffect() {
     setDisplayName(UniString("Vector Flow Glitch"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<VectorFlowGlitchCPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<VectorFlowGlitchCPUImpl>());
     syncImpl();
 }
 

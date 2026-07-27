@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <iostream>
 #include <vector>
@@ -37,6 +37,8 @@
 
 export module Artifact.Widgets.ColorPaletteWidget;
 
+import Memory.SharedPtr;
+
 
 
 
@@ -58,7 +60,7 @@ public:
     void updatePaletteList();
 
     // デフォルトのパレットマネージャーを外部からセットする
-    void setPaletteManager(std::shared_ptr<ArtifactCore::Color::ColorPaletteManager> manager);
+    void setPaletteManager(ArtifactCore::SharedPtr<ArtifactCore::Color::ColorPaletteManager> manager);
 
 public Q_SLOTS:
     void onGenerateHarmonicPalette();

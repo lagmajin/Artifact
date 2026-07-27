@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <vector>
 #include <string>
 #include <memory>
@@ -17,14 +17,14 @@ public:
     ~CompressorEffect() override = default;
 
     void process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain = nullptr) override;
-    std::string getName() const override { return "Compressor"; }
-    std::string getDescription() const override {
+    String getName() const override { return "Compressor"; }
+    String getDescription() const override {
         return "Dynamic range compressor with soft-knee and auto make-up gain";
     }
 
     std::vector<AudioEffectParameter> getUiParameters() const override;
-    void setParameter(const std::string& name, float value) override;
-    float getParameter(const std::string& name) const override;
+    void setParameter(const String& name, float value) override;
+    float getParameter(const String& name) const override;
 
 private:
     float threshold_   = -20.0f;

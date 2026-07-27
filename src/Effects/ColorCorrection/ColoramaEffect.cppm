@@ -20,6 +20,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 import Core.Parallel;
 
 namespace Artifact {
@@ -115,8 +116,8 @@ ColoramaEffect::ColoramaEffect() {
     setEffectID(UniString("effect.colorcorrection.colorama"));
     setDisplayName(UniString("Colorama"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<ColoramaEffectCPUImpl>());
-    setGPUImpl(std::make_shared<ColoramaEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<ColoramaEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<ColoramaEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     applyPreset(preset_);
     syncImpls();

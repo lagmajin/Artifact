@@ -23,6 +23,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -311,8 +312,8 @@ void main(uint3 dtid : SV_DispatchThreadID) {
 KaleidoscopeEffect::KaleidoscopeEffect() {
     setDisplayName(UniString("Kaleidoscope"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<KaleidoscopeEffectCPUImpl>());
-    setGPUImpl(std::make_shared<KaleidoscopeEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<KaleidoscopeEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<KaleidoscopeEffectGPUImpl>());
 }
 
 KaleidoscopeEffect::~KaleidoscopeEffect() = default;

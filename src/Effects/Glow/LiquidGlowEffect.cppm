@@ -15,6 +15,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -143,7 +144,7 @@ LiquidGlowEffect::LiquidGlowEffect()
     setEffectID(UniString("liquid_glow"));
     setDisplayName(UniString("Liquid Glow"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<LiquidGlowEffectCPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<LiquidGlowEffectCPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     syncImpls();
 }
@@ -188,7 +189,7 @@ void LiquidGlowEffect::setPhase(float value)
 
 void LiquidGlowEffect::syncImpls()
 {
-    if (auto impl = std::dynamic_pointer_cast<LiquidGlowEffectCPUImpl>(cpuImpl())) {
+    if (auto impl = ArtifactCore::dynamicPointerCast<LiquidGlowEffectCPUImpl>(cpuImpl())) {
         impl->threshold = threshold_;
         impl->radius = radius_;
         impl->intensity = intensity_;

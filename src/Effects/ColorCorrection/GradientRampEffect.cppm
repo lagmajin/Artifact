@@ -21,6 +21,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -126,8 +127,8 @@ GradientRampEffect::GradientRampEffect() {
     setEffectID(UniString("effect.colorcorrection.gradientramp"));
     setDisplayName(UniString("Gradient Ramp"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<GradientRampEffectCPUImpl>());
-    setGPUImpl(std::make_shared<GradientRampEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<GradientRampEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<GradientRampEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     applyPreset(preset_);
     syncImpls();

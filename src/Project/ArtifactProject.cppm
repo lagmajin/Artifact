@@ -40,6 +40,7 @@ import Artifact.Project.CreationDefaults;
 import Property.SerializationBridge;
 import Application.AppSettings;
 import Asset.Manager;
+import Memory.SharedPtr;
 
 import Artifact.Project.Items;
 
@@ -312,7 +313,7 @@ CreateCompositionResult ArtifactProject::Impl::createComposition(const ArtifactC
  }
 
  // create a shared_ptr for the new composition and insert into the multi-index
- auto newCompPtr = std::make_shared<ArtifactAbstractComposition>(id, settings);
+ auto newCompPtr = ArtifactCore::makeShared<ArtifactAbstractComposition>(id, settings);
  newCompPtr->setColorPipelineVersion(colorPipelineVersion_);
  container_.add(newCompPtr, id, std::type_index(typeid(ArtifactAbstractComposition)));
 
@@ -1610,7 +1611,7 @@ void ArtifactProject::setExtensionData(const QJsonObject& data)
     if (baseName.isEmpty()) {
       baseName = QStringLiteral("Layer");
     }
-    if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layerToDuplicate)) {
+    if (auto svgLayer = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(layerToDuplicate)) {
       ArtifactSvgInitParams svgParams(baseName + QStringLiteral(" Copy"));
       svgParams.setSvgPath(svgLayer->sourcePath());
       result = createLayerAndAddToComposition(compositionId, svgParams);
@@ -1672,7 +1673,7 @@ void ArtifactProject::setExtensionData(const QJsonObject& data)
         layerName = QStringLiteral("Layer");
       }
       auto layerCreate = [&]() -> ArtifactLayerResult {
-        if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(sourceLayer)) {
+        if (auto svgLayer = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(sourceLayer)) {
           ArtifactSvgInitParams layerParams(layerName);
           layerParams.setSvgPath(svgLayer->sourcePath());
           return createLayerAndAddToComposition(newCompResult.id, layerParams);

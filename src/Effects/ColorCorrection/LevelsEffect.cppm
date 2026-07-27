@@ -17,6 +17,7 @@ module LevelsEffect;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 import Core.Parallel;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
@@ -342,8 +343,8 @@ LevelsEffect::LevelsEffect() {
     setEffectID(UniString("effect.colorcorrection.levels"));
     setDisplayName(UniString("Levels"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<LevelsEffectCPUImpl>());
-    setGPUImpl(std::make_shared<LevelsEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<LevelsEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<LevelsEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     applyPreset(preset_);
     syncImpls();

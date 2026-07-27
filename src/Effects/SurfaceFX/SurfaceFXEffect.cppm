@@ -11,6 +11,7 @@ module Artifact.Effect.SurfaceFX;
 import Artifact.Effect.ImplBase;
 import Core.Parallel;
 import Image.ImageF32x4RGBAWithCache;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -144,7 +145,7 @@ SurfaceFXEffect::SurfaceFXEffect() {
     setEffectID(UniString(QStringLiteral("surfacefx")));
     setDisplayName(UniString(QStringLiteral("SurfaceFX")));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<SurfaceFXCPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<SurfaceFXCPUImpl>());
     setComputeMode(ComputeMode::CPU);
     syncImpl();
 }

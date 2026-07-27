@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <memory>
 #include <QString>
 #include <QSize>
@@ -34,6 +34,8 @@
 #include <regex>
 #include <random>
 export module Artifact.Composition.FindQuery;
+
+import Memory.SharedPtr;
 
 
 
@@ -110,10 +112,10 @@ export namespace Artifact {
    bool enableFrameRateFilter = false;
    bool enableDurationFilter = false;
   };
-  std::shared_ptr<Data> data_;
+  SharedPtr<Data> data_;
 
  public:
-  ArtifactFindCompositionQuery() : data_(std::make_shared<Data>()) {}
+  ArtifactFindCompositionQuery() : data_(makeShared<Data>()) {}
   ~ArtifactFindCompositionQuery() = default;
   ArtifactFindCompositionQuery(const ArtifactFindCompositionQuery&) = default;
   ArtifactFindCompositionQuery(ArtifactFindCompositionQuery&&) noexcept = default;

@@ -44,6 +44,8 @@ import Artifact.Layer.Result;
 import Artifact.Layer.Factory;
 import Core.Diagnostics.DiagnosticEngine;
 import Artifact.Project.CreationDefaults;
+import Memory.SharedPtr;
+import Memory.SharedPtr;
 
 
 namespace Artifact {
@@ -64,7 +66,7 @@ namespace Artifact {
   };
 
   auto projectValidationEngine() -> ArtifactCore::DiagnosticEngine&;
-  void appendProjectValidationDiagnostics(const std::shared_ptr<ArtifactProject>& projectPtr,
+  void appendProjectValidationDiagnostics(const ArtifactProjectPtr& projectPtr,
                                           QStringList& warnings,
                                           QStringList& errors);
 
@@ -75,7 +77,7 @@ namespace Artifact {
 
   template <typename Callback>
   void forEachProjectComposition(
-      const std::shared_ptr<ArtifactProject>& projectPtr, Callback&& callback)
+      const ArtifactProjectPtr& projectPtr, Callback&& callback)
   {
     if (!projectPtr) return;
     for (auto* root : projectPtr->projectItems()) {
@@ -98,7 +100,7 @@ namespace Artifact {
   }
 
   bool saveComponentBakeSidecar(
-      const std::shared_ptr<ArtifactProject>& projectPtr,
+      const ArtifactProjectPtr& projectPtr,
       const QString& projectPath)
   {
     QJsonArray compositions;
@@ -132,7 +134,7 @@ namespace Artifact {
   }
 
   int loadComponentBakeSidecar(
-      const std::shared_ptr<ArtifactProject>& projectPtr,
+      const ArtifactProjectPtr& projectPtr,
       const QString& projectPath)
   {
     QFile file(componentBakeSidecarPath(projectPath));
@@ -236,7 +238,7 @@ namespace Artifact {
   }
 
   ArtifactCompositionInitParams defaultCompositionParamsFromSettings(
-      const std::shared_ptr<ArtifactProject>& project = {})
+      const ArtifactProjectPtr& project = {})
   {
     ArtifactCompositionInitParams params;
     if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
@@ -284,7 +286,7 @@ public:
   Impl();
   ~Impl();
   bool isCreated_ = false;
-  std::shared_ptr<ArtifactProject> currentProjectPtr_;
+  ArtifactProjectPtr currentProjectPtr_;
   bool suppressDefaultCreate_ = false;
   bool creatingComposition_ = false;
   QString projectDisplayName_;
@@ -331,7 +333,7 @@ void ArtifactProjectManager::Impl::createProject(const QString& name, bool /*for
  ensureProjectFolders(projectRootPath_);
 
  if (!currentProjectPtr_) {
-  currentProjectPtr_ = std::make_shared<ArtifactProject>(displayName);
+  currentProjectPtr_ = ArtifactCore::makeShared<ArtifactProject>(displayName);
  } else {
   currentProjectPtr_->setProjectName(displayName);
  }
@@ -709,7 +711,7 @@ namespace {
     return engine;
   }
 
-  void appendProjectValidationDiagnostics(const std::shared_ptr<ArtifactProject>& projectPtr,
+  void appendProjectValidationDiagnostics(const ArtifactProjectPtr& projectPtr,
                                           QStringList& warnings,
                                           QStringList& errors)
   {
@@ -750,7 +752,7 @@ namespace {
     }
   }
 
-  SaveValidationResult validateBeforeSave(const std::shared_ptr<ArtifactProject>& projectPtr)
+  SaveValidationResult validateBeforeSave(const ArtifactProjectPtr& projectPtr)
   {
     SaveValidationResult result;
     if (!projectPtr || projectPtr->isNull()) {
@@ -1103,7 +1105,7 @@ void ArtifactProjectManager::setCurrentProjectRootPath(const QString& path)
   return impl_->isCreated_ || (impl_->currentProjectPtr_ != nullptr);
  }
 
- std::shared_ptr<ArtifactProject> ArtifactProjectManager::getCurrentProjectSharedPtr()
+ ArtifactProjectPtr ArtifactProjectManager::getCurrentProjectSharedPtr()
  {
 
   return impl_->currentProjectPtr_;

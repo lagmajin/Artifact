@@ -2,7 +2,6 @@ module;
 #include <utility>
 
 #include <functional>
-#include <optional>
 #include <vector>
 
 #include <QWidget>
@@ -33,6 +32,7 @@ import Property.Abstract;
 import Artifact.Layer.Text;
 import Artifact.Widgets.FontPicker;
 import Event.Bus;
+import Utils.Optional;
 
 export namespace Artifact {
 namespace detail {
@@ -124,7 +124,7 @@ bool isMultilineTextProperty(const ArtifactCore::AbstractProperty& property);
 bool shouldShowNumericSlider(const ArtifactCore::AbstractProperty& property);
 int intToSliderPosition(int value, int min, int max);
 int sliderPositionToInt(int pos, int min, int max);
-std::optional<std::vector<std::pair<int, QString>>>
+ArtifactCore::Optional<std::vector<std::pair<int, QString>>>
 enumOptionsForProperty(const ArtifactCore::AbstractProperty& property);
 bool artifactShouldShowPropertyResetButtonsImpl();
 void artifactSetShowPropertyResetButtonsImpl(bool show);

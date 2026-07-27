@@ -23,6 +23,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -191,8 +192,8 @@ uint hash(uint v){v^=v>>16;v*=0x7feb352du;v^=v>>15;v*=0x846ca68bu;return v^(v>>1
 AddNoiseEffect::AddNoiseEffect() {
     setDisplayName(UniString("Add Noise"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<AddNoiseEffectCPUImpl>());
-    auto gpu=std::make_shared<AddNoiseEffectGPUImpl>();gpu->amount_=amount_;gpu->colorNoise_=colorNoise_;gpu->monochrome_=monochrome_;gpu->seed_=seed_;setGPUImpl(gpu);setComputeMode(ComputeMode::AUTO);
+    setCPUImpl(ArtifactCore::makeShared<AddNoiseEffectCPUImpl>());
+    auto gpu=ArtifactCore::makeShared<AddNoiseEffectGPUImpl>();gpu->amount_=amount_;gpu->colorNoise_=colorNoise_;gpu->monochrome_=monochrome_;gpu->seed_=seed_;setGPUImpl(gpu);setComputeMode(ComputeMode::AUTO);
 }
 AddNoiseEffect::~AddNoiseEffect() = default;
 

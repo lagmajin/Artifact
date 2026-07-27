@@ -17,6 +17,7 @@ import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import Audio.Bus;
 import Audio.Mixer;
+import Memory.SharedPtr;
 
 import std;
 
@@ -42,10 +43,10 @@ float readLayerVolume(const ArtifactAbstractLayerPtr& layer)
     if (!layer) {
         return 1.0f;
     }
-    if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+    if (auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
         return audioLayer->volume();
     }
-    if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
         return static_cast<float>(videoLayer->audioVolume());
     }
     return 1.0f;
@@ -56,10 +57,10 @@ float readLayerPan(const ArtifactAbstractLayerPtr& layer)
     if (!layer) {
         return 0.0f;
     }
-    if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+    if (auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
         return audioLayer->pan();
     }
-    if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
         return static_cast<float>(videoLayer->audioPan());
     }
     return 0.0f;
@@ -70,10 +71,10 @@ bool readLayerMuted(const ArtifactAbstractLayerPtr& layer)
     if (!layer) {
         return false;
     }
-    if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+    if (auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
         return audioLayer->isMuted();
     }
-    if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
         return videoLayer->isAudioMuted();
     }
     return false;
@@ -84,11 +85,11 @@ void applyLayerVolume(const ArtifactAbstractLayerPtr& layer, const float volume)
     if (!layer) {
         return;
     }
-    if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+    if (auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
         audioLayer->setVolume(volume);
         return;
     }
-    if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
         videoLayer->setAudioVolume(volume);
         layer->changed();
     }
@@ -99,11 +100,11 @@ void applyLayerPan(const ArtifactAbstractLayerPtr& layer, const float pan)
     if (!layer) {
         return;
     }
-    if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+    if (auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
         audioLayer->setPan(pan);
         return;
     }
-    if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
         videoLayer->setAudioPan(pan);
         layer->changed();
     }
@@ -114,13 +115,13 @@ void applyLayerMuted(const ArtifactAbstractLayerPtr& layer, const bool muted)
     if (!layer) {
         return;
     }
-    if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+    if (auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
         if (audioLayer->isMuted() != muted) {
             audioLayer->mute();
         }
         return;
     }
-    if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
         videoLayer->setAudioMuted(muted);
         layer->changed();
     }
@@ -137,8 +138,8 @@ void applyLayerSolo(const ArtifactAbstractLayerPtr& layer, const bool solo)
 
 bool supportsMixerLayer(const ArtifactAbstractLayerPtr& layer)
 {
-    return static_cast<bool>(std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) ||
-        static_cast<bool>(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer));
+    return static_cast<bool>(ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) ||
+        static_cast<bool>(ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer));
 }
 
 float volumeToMeterDb(const float volume, const bool muted)
@@ -171,7 +172,7 @@ public:
     float rightLevel_ = -60.0f;
     float peakLeft_ = -60.0f;
     float peakRight_ = -60.0f;
-    std::shared_ptr<AudioBus> coreBus_;
+    ArtifactCore::SharedPtr<AudioBus> coreBus_;
 };
 
 AudioMixerChannelStrip::AudioMixerChannelStrip(QObject* parent)
@@ -333,12 +334,12 @@ void AudioMixerChannelStrip::resetPeak()
     impl_->peakRight_ = -60.0f;
 }
 
-void AudioMixerChannelStrip::setCoreBus(std::shared_ptr<ArtifactCore::AudioBus> coreBus)
+void AudioMixerChannelStrip::setCoreBus(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> coreBus)
 {
     impl_->coreBus_ = std::move(coreBus);
 }
 
-std::shared_ptr<ArtifactCore::AudioBus> AudioMixerChannelStrip::coreBus() const
+ArtifactCore::SharedPtr<ArtifactCore::AudioBus> AudioMixerChannelStrip::coreBus() const
 {
     return impl_->coreBus_;
 }
@@ -350,7 +351,7 @@ public:
     bool muted_ = false;
     float leftLevel_ = -60.0f;
         float rightLevel_ = -60.0f;
-    std::shared_ptr<ArtifactCore::AudioBus> coreBus_;
+    ArtifactCore::SharedPtr<ArtifactCore::AudioBus> coreBus_;
 };
 
 AudioMixerMasterBus::AudioMixerMasterBus(QObject* parent)
@@ -416,7 +417,7 @@ void AudioMixerMasterBus::updateLevels(float left, float right)
     Q_EMIT levelChanged(left, right);
 }
 
-void AudioMixerMasterBus::connectToCoreBus(std::shared_ptr<ArtifactCore::AudioBus> coreBus)
+void AudioMixerMasterBus::connectToCoreBus(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> coreBus)
 {
     impl_->coreBus_ = coreBus;
     if (coreBus) {
@@ -424,7 +425,7 @@ void AudioMixerMasterBus::connectToCoreBus(std::shared_ptr<ArtifactCore::AudioBu
     }
 }
 
-std::shared_ptr<ArtifactCore::AudioBus> AudioMixerMasterBus::coreBus() const
+ArtifactCore::SharedPtr<ArtifactCore::AudioBus> AudioMixerMasterBus::coreBus() const
 {
     return impl_->coreBus_;
 }
@@ -434,7 +435,7 @@ class AudioMixer::Impl
 public:
     std::map<LayerID, std::unique_ptr<AudioMixerChannelStrip, QObjectDeleteLaterDeleter>> channelStrips_;
     std::unique_ptr<AudioMixerMasterBus, QObjectDeleteLaterDeleter> masterBus_;
-    std::shared_ptr<ArtifactCore::AudioMixer> coreMixer_;
+    ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> coreMixer_;
     ArtifactCompositionPtr composition_;
     std::map<LayerID, bool> manualMuted_;
     std::map<LayerID, bool> soloMuted_;
@@ -597,7 +598,7 @@ void AudioMixer::clearChannelStrips()
     impl_->soloMuted_.clear();
 }
 
-void AudioMixer::connectToCoreMixer(std::shared_ptr<ArtifactCore::AudioMixer> coreMixer)
+void AudioMixer::connectToCoreMixer(ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> coreMixer)
 {
     impl_->coreMixer_ = coreMixer;
     if (impl_->composition_) {
@@ -605,7 +606,7 @@ void AudioMixer::connectToCoreMixer(std::shared_ptr<ArtifactCore::AudioMixer> co
     }
 }
 
-std::shared_ptr<ArtifactCore::AudioMixer> AudioMixer::coreMixer() const
+ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> AudioMixer::coreMixer() const
 {
     return impl_->coreMixer_;
 }

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -48,16 +48,16 @@ public:
     static ArtifactAudioEffectManager& instance();
 
     // エフェクトファクトリーの登録
-    void registerEffectFactory(const std::string& effectId, AudioEffectFactory factory);
+    void registerEffectFactory(const String& effectId, AudioEffectFactory factory);
     
     // エフェクトインスタンスの作成
-    std::unique_ptr<ArtifactAbstractAudioEffect> createEffect(const std::string& effectId);
+    std::unique_ptr<ArtifactAbstractAudioEffect> createEffect(const String& effectId);
     
     // 登録済みエフェクトの一覧取得
-    std::vector<std::string> getAvailableEffects() const;
+    std::vector<String> getAvailableEffects() const;
     
     // エフェクトの存在確認
-    bool hasEffect(const std::string& effectId) const;
+    bool hasEffect(const String& effectId) const;
 
 private:
     ArtifactAudioEffectManager() = default;

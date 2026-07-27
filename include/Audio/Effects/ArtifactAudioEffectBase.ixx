@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <memory>
 #include <vector>
 #include <QVector>
@@ -42,6 +42,8 @@ import Audio.Effect;
 
 export namespace Artifact {
 
+using ArtifactCore::String;
+
 // エフェクトパラメータの基本型
 enum class AudioEffectParameterType {
     Float,
@@ -52,13 +54,13 @@ enum class AudioEffectParameterType {
 
 // エフェクトパラメータ記述子
 struct AudioEffectParameter {
-    std::string name;
-    std::string displayName;
+    String name;
+    String displayName;
     AudioEffectParameterType type;
     float minValue = 0.0f;
     float maxValue = 1.0f;
     float defaultValue = 0.0f;
-    std::vector<std::string> enumValues;
+    std::vector<String> enumValues;
 };
 
 // 抽象オーディオエフェクト基底クラス
@@ -70,13 +72,13 @@ public:
     virtual void process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain = nullptr) override = 0;
 
     // エフェクト名と説明
-    virtual std::string getName() const override = 0;
-    virtual std::string getDescription() const = 0;
+    virtual String getName() const override = 0;
+    virtual String getDescription() const = 0;
 
     // パラメータ管理（UI向けの拡張表現）
     virtual std::vector<AudioEffectParameter> getUiParameters() const = 0;
-    virtual void setParameter(const std::string& name, float value) = 0;
-    virtual float getParameter(const std::string& name) const = 0;
+    virtual void setParameter(const String& name, float value) = 0;
+    virtual float getParameter(const String& name) const = 0;
 
     // エフェクトの有効/無効
     virtual void setEnabled(bool enabled) { enabled_ = enabled; }

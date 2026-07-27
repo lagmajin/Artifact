@@ -24,6 +24,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -111,8 +112,8 @@ private:
 RadialShadowEffect::RadialShadowEffect() {
     setDisplayName(UniString("Radial Shadow"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<RadialShadowEffectCPUImpl>());
-    setGPUImpl(std::make_shared<RadialShadowEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<RadialShadowEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<RadialShadowEffectGPUImpl>());
 }
 RadialShadowEffect::~RadialShadowEffect() = default;
 

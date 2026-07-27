@@ -14,6 +14,7 @@ export module Artifact.Layer.Clone;
 import Artifact.Layers;
 import Artifact.Effect.Clone.Core;
 import Artifact.Effect.Abstract;
+import Memory.SharedPtr;
 import Utils.String.UniString;
 import Utils.Id;
 
@@ -105,11 +106,11 @@ public:
 
     std::vector<CloneData> generateCloneData() const;
 
-    void addEffector(std::shared_ptr<AbstractCloneEffector> effector);
+    void addEffector(SharedPtr<AbstractCloneEffector> effector);
     void removeEffector(int index);
     void clearEffectors();
     int effectorCount() const;
-    std::shared_ptr<AbstractCloneEffector> effectorAt(int index) const;
+    SharedPtr<AbstractCloneEffector> effectorAt(int index) const;
 
     QSize sourceSize() const;
     QRectF localBounds() const override;

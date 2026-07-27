@@ -97,6 +97,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Input.Operator;
 import Widgets.Utils.CSS;
+import Memory.SharedPtr;
 
 namespace Artifact
 {
@@ -265,20 +266,20 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
   if (layer->isConstructionLayer()) return TimelineLayerIconKind::Construction;
   if (layer->is3D()) return TimelineLayerIconKind::Model3D;
   if (dynamic_cast<ArtifactCompositionLayer*>(layer.get())) return TimelineLayerIconKind::Precomp;
-  if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) return TimelineLayerIconKind::Text;
-  if (std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) return TimelineLayerIconKind::Shape;
-  if (std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) return TimelineLayerIconKind::Svg;
-  if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) return TimelineLayerIconKind::Image;
-  if (std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) return TimelineLayerIconKind::Audio;
-  if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+  if (ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) return TimelineLayerIconKind::Text;
+  if (ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer)) return TimelineLayerIconKind::Shape;
+  if (ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(layer)) return TimelineLayerIconKind::Svg;
+  if (ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) return TimelineLayerIconKind::Image;
+  if (ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) return TimelineLayerIconKind::Audio;
+  if (ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
     if (layer->hasAudio() && !layer->hasVideo()) return TimelineLayerIconKind::Audio;
     return TimelineLayerIconKind::Video;
   }
-  if (std::dynamic_pointer_cast<ArtifactCameraLayer>(layer)) return TimelineLayerIconKind::Camera;
-  if (std::dynamic_pointer_cast<ArtifactLightLayer>(layer)) return TimelineLayerIconKind::Light;
-  if (std::dynamic_pointer_cast<ArtifactParticleLayer>(layer)) return TimelineLayerIconKind::Particle;
-  if (std::dynamic_pointer_cast<ArtifactFormParticleLayer>(layer)) return TimelineLayerIconKind::Particle;
-  if (std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) return TimelineLayerIconKind::Solid;
+  if (ArtifactCore::dynamicPointerCast<ArtifactCameraLayer>(layer)) return TimelineLayerIconKind::Camera;
+  if (ArtifactCore::dynamicPointerCast<ArtifactLightLayer>(layer)) return TimelineLayerIconKind::Light;
+  if (ArtifactCore::dynamicPointerCast<ArtifactParticleLayer>(layer)) return TimelineLayerIconKind::Particle;
+  if (ArtifactCore::dynamicPointerCast<ArtifactFormParticleLayer>(layer)) return TimelineLayerIconKind::Particle;
+  if (ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(layer)) return TimelineLayerIconKind::Solid;
   if (layer->isNullLayer()) return TimelineLayerIconKind::Null;
   if (layer->hasAudio() && !layer->hasVideo()) return TimelineLayerIconKind::Audio;
   return TimelineLayerIconKind::Solid;
@@ -658,7 +659,7 @@ namespace {
    QWidget* target_ = nullptr;
   };
 
-  std::shared_ptr<ArtifactAbstractComposition> safeCompositionLookup(const CompositionID& id)
+  ArtifactCompositionPtr safeCompositionLookup(const CompositionID& id)
   {
     auto* service = ArtifactProjectService::instance();
     if (!service) return nullptr;
@@ -1187,12 +1188,12 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
     if (!layer) {
       return;
     }
-    if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
       videoLayer->setAudioMuted(!videoLayer->isAudioMuted());
       if (panel) panel->updateLayout();
       return;
     }
-    if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+    if (auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
       audioLayer->mute();
       if (panel) panel->updateLayout();
     }
@@ -1391,7 +1392,7 @@ bool layerMatchesDisplayMode(const ArtifactAbstractLayerPtr& layer,
  }
 }
 
-bool propertyMatchesDisplayMode(const std::shared_ptr<ArtifactCore::AbstractProperty>& property,
+bool propertyMatchesDisplayMode(const ArtifactCore::AbstractPropertyPtr& property,
                                 const TimelineLayerDisplayMode mode)
 {
  if (!property) {
@@ -3774,7 +3775,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           "Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;"
           "All Files (*.*)");
       const QString currentPath = [&]() -> QString {
-        if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+        if (auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
           return imageLayer->sourcePath();
         }
         return {};
@@ -3794,7 +3795,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     };
 
     auto videoSourcePath = [layer]() -> QString {
-      if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+      if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
         return videoLayer->sourcePath();
       }
       return {};
@@ -3982,7 +3983,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (!layer) {
         return;
       }
-      auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+      auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
       if (!videoLayer || videoLayer->proxyQuality() == quality) {
         return;
       }
@@ -4000,7 +4001,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (!layer) {
         return;
       }
-      auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+      auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
       if (!videoLayer) {
         return;
       }
@@ -4044,7 +4045,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (!layer) {
         return;
       }
-      auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+      auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
       if (!videoLayer) {
         return;
       }
@@ -4065,7 +4066,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (!layer) {
         return;
       }
-      auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+      auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
       if (!videoLayer) {
         return;
       }
@@ -4248,13 +4249,13 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
       });
     }
-    const bool isImageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr;
+    const bool isImageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer) != nullptr;
     if (isImageLayer) {
       allMenu->addAction(tt("layer_panel.replace_image", "Replace Image..."), [triggerReplaceLayerSource]() {
         triggerReplaceLayerSource();
       });
     }
-    const bool isVideoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) != nullptr;
+    const bool isVideoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) != nullptr;
     if (isVideoLayer) {
       QMenu* videoMenu = allMenu->addMenu(QStringLiteral("ビデオ"));
       videoMenu->setIcon(QIcon(resolveIconPath("Studio/videocam.svg")));
@@ -4286,7 +4287,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         triggerRevealVideoSource();
       });
       QObject::connect(muteAudioAct, &QAction::triggered, videoMenu, [this, layer](bool) {
-        auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+        auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
         if (!videoLayer) {
           return;
         }
@@ -4297,7 +4298,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
       });
       QObject::connect(toggleVideoAct, &QAction::triggered, videoMenu, [this, layer](bool) {
-        auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+        auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
         if (!videoLayer) {
           return;
         }
@@ -4341,7 +4342,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                        [triggerRevealProxy](bool) { triggerRevealProxy(); });
       QObject::connect(clearProxyAct, &QAction::triggered, proxyMenu,
                        [triggerClearProxy](bool) { triggerClearProxy(); });
-      const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+      const auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
       const bool hasProxy = videoLayer && !videoLayer->proxyPath().trimmed().isEmpty();
       const ProxyQuality currentProxyQuality = videoLayer ? videoLayer->proxyQuality() : ProxyQuality::None;
       proxyNoneAct->setCheckable(true);
@@ -4685,9 +4686,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         QVector<LayerID> toRemove;
         for (const auto& l : comp->allLayer()) {
           if (!l) continue;
-          if (auto video = std::dynamic_pointer_cast<ArtifactVideoLayer>(l)) {
+          if (auto video = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(l)) {
             if (video->sourcePath().trimmed().isEmpty()) toRemove.push_back(l->id());
-          } else if (auto img = std::dynamic_pointer_cast<ArtifactImageLayer>(l)) {
+          } else if (auto img = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(l)) {
             if (img->sourcePath().trimmed().isEmpty()) toRemove.push_back(l->id());
           }
         }

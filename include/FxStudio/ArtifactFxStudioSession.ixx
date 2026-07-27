@@ -1,8 +1,6 @@
 module;
 
 #include <cstdint>
-#include <optional>
-#include <string_view>
 
 export module Artifact.FxStudio.Session;
 
@@ -10,6 +8,8 @@ import Artifact.FxStudio.EventTrack;
 import Artifact.FxStudio.PresetCatalog;
 import Artifact.FxStudio.Sequence;
 import Artifact.FxStudio.ViewportModel;
+import Utils.Optional;
+import Utils.StringView;
 
 export namespace Artifact::FxStudio {
 
@@ -21,11 +21,11 @@ public:
   ViewportModel& viewport() noexcept;
   const ViewportModel& viewport() const noexcept;
 
-  std::optional<EventId> selectedEventId() const noexcept;
+  ArtifactCore::Optional<EventId> selectedEventId() const noexcept;
   Event* selectedEvent() noexcept;
   const Event* selectedEvent() const noexcept;
 
-  std::optional<EventId> insertPreset(std::string_view presetId,
+  ArtifactCore::Optional<EventId> insertPreset(ArtifactCore::StringView presetId,
                                       std::int64_t startFrame);
   bool selectEvent(EventId id) noexcept;
   void clearSelection() noexcept;
@@ -42,7 +42,7 @@ private:
 
   EventTrack eventTrack_;
   ViewportModel viewport_;
-  std::optional<EventId> selectedEventId_;
+  ArtifactCore::Optional<EventId> selectedEventId_;
   EventId nextEventId_ = 1;
 };
 

@@ -83,8 +83,8 @@ export namespace Artifact {
   bool isProjectCreated() const;
   bool isProjectClosed() const;
   bool closeCurrentProject();
-  std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr();
-  std::weak_ptr<ArtifactProject> getCurrentProjectWeakPtr();
+  ArtifactProjectPtr getCurrentProjectSharedPtr();
+  ArtifactProjectWeakPtr getCurrentProjectWeakPtr();
 
   /* Composition management */
   void createComposition();

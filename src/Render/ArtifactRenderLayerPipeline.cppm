@@ -26,6 +26,7 @@ import Graphics.GPUcomputeContext;
 import Graphics.Compute;
 
 import Artifact.Render.Config;
+import Memory.SharedPtr;
 
 namespace Artifact
 {
@@ -318,8 +319,8 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   TextureBundle materialId_;
   TextureBundle albedo_;
   TextureBundle screenSpaceGI_;
-  std::shared_ptr<GpuContext> screenSpaceGIContext_;
-  std::shared_ptr<GpuContext> blendContext_;
+  ArtifactCore::SharedPtr<GpuContext> screenSpaceGIContext_;
+  ArtifactCore::SharedPtr<GpuContext> blendContext_;
   std::unique_ptr<LayerBlendPipeline> blendPipeline_;
   std::unique_ptr<ArtifactCore::ComputeExecutor> screenSpaceGIExecutor_;
   RefCntAutoPtr<IBuffer> screenSpaceGIParams_;
@@ -449,7 +450,7 @@ bool RenderPipeline::initialize(IRenderDevice* device,
    return false;
   }
   if (!impl_->blendPipeline_) {
-   impl_->blendContext_ = std::make_shared<GpuContext>(impl_->device_, ctx);
+   impl_->blendContext_ = ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
    impl_->blendPipeline_ = std::make_unique<LayerBlendPipeline>(impl_->blendContext_);
    if (!impl_->blendPipeline_->initialize()) {
     impl_->blendPipeline_.reset();
@@ -633,7 +634,7 @@ bool RenderPipeline::dispatchScreenSpaceGlobalIllumination(
 
  if (!impl_->screenSpaceGIExecutor_) {
   impl_->screenSpaceGIContext_ =
-      std::make_shared<GpuContext>(impl_->device_, ctx);
+      ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
   impl_->screenSpaceGIExecutor_ =
       std::make_unique<ArtifactCore::ComputeExecutor>(
           *impl_->screenSpaceGIContext_);

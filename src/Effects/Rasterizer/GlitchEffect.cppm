@@ -18,6 +18,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -131,5 +132,5 @@ std::vector<AbstractProperty> GlitchEffect::getProperties()const{
     return props;
 }
 void GlitchEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="intensity")setIntensity(v.toFloat());else if(k=="colorShift")setColorShift(v.toFloat());else if(k=="scanlines")setScanlines(v.toFloat());else if(k=="seed")setSeed(v.toInt());}
-void GlitchEffect::syncImpls(){auto c=std::make_shared<GlitchCPUImpl>();c->intensity_=intensity_;c->colorShift_=colorShift_;c->scanlines_=scanlines_;c->seed_=seed_;setCPUImpl(c);}
+void GlitchEffect::syncImpls(){auto c=ArtifactCore::makeShared<GlitchCPUImpl>();c->intensity_=intensity_;c->colorShift_=colorShift_;c->scanlines_=scanlines_;c->seed_=seed_;setCPUImpl(c);}
 } // namespace Artifact

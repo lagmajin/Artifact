@@ -45,6 +45,7 @@ import Utils.Path;
 import Math.Interpolate;
 import UI.ShortcutBindings;
 import Undo.UndoManager;
+import Memory.SharedPtr;
 
 W_OBJECT_IMPL(Artifact::ArtifactAnimationMenu)
 
@@ -253,7 +254,7 @@ bool configureActiveAudioReactiveBinding(QWidget* root)
   : QString{};
  const auto property = layer && !propertyPath.isEmpty()
   ? layer->getProperty(propertyPath)
-  : std::shared_ptr<ArtifactCore::AbstractProperty>{};
+  : ArtifactCore::SharedPtr<ArtifactCore::AbstractProperty>{};
  if (!composition || !layer || !property || !property->isAnimatable() ||
      !property->getValue().canConvert<double>()) {
   QMessageBox::information(
@@ -448,7 +449,7 @@ bool bakeActiveAudioReactiveBinding(QWidget* root)
   : QString{};
  const auto property = layer && !propertyPath.isEmpty()
   ? layer->getProperty(propertyPath)
-  : std::shared_ptr<ArtifactCore::AbstractProperty>{};
+  : ArtifactCore::SharedPtr<ArtifactCore::AbstractProperty>{};
  if (!composition || !layer || !property || !property->isAnimatable()) {
   return false;
  }

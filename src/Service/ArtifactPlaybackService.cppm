@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -2470,14 +2470,14 @@ ArtifactInOutPoints *ArtifactPlaybackService::inOutPoints() const {
                                      : nullptr;
 }
 
-std::optional<FramePosition> ArtifactPlaybackService::inPoint() const {
+ArtifactCore::Optional<FramePosition> ArtifactPlaybackService::inPoint() const {
   if (const auto *points = inOutPoints()) {
     return points->inPoint();
   }
   return std::nullopt;
 }
 
-std::optional<FramePosition> ArtifactPlaybackService::outPoint() const {
+ArtifactCore::Optional<FramePosition> ArtifactPlaybackService::outPoint() const {
   if (const auto *points = inOutPoints()) {
     return points->outPoint();
   }

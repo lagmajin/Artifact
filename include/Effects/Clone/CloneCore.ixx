@@ -41,6 +41,7 @@ export module Artifact.Effect.Clone.Core;
 
 
 import Artifact.Effect.Abstract;
+import Memory.SharedPtr;
 import Utils.String.UniString;
 
 export namespace Artifact {
@@ -165,7 +166,7 @@ export namespace Artifact {
         EffectorBlendMode blendMode = EffectorBlendMode::Add;
         float strength = 1.0f;
 
-        void addField(std::shared_ptr<AbstractCloneField> field) {
+        void addField(SharedPtr<AbstractCloneField> field) {
             fields_.push_back(field);
         }
 
@@ -182,7 +183,7 @@ export namespace Artifact {
         }
 
     private:
-        std::vector<std::shared_ptr<AbstractCloneField>> fields_;
+        std::vector<SharedPtr<AbstractCloneField>> fields_;
     };
 
 }

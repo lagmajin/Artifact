@@ -66,9 +66,9 @@ void applyPropertySectionBox(QGroupBox* box);
 void applyPresentationToneLabel(QLabel* label, LayerPresentationBadgeTone tone, bool emphasized = true);
 void applyPropertyPanelPalette(QWidget* widget, bool elevated = false);
 void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr& layer);
-std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+std::vector<ArtifactCore::AbstractPropertyPtr>
 prioritizedSummaryProperties(
-    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>& properties,
+    const std::vector<ArtifactCore::AbstractPropertyPtr>& properties,
     const std::unordered_set<std::string>& preferredKeys,
     std::size_t maxCount);
 }
@@ -89,7 +89,7 @@ public:
 
     void setLayer(Artifact::ArtifactAbstractLayerPtr layer);
     void setCompositionEffects(
-        const std::vector<std::shared_ptr<Artifact::ArtifactAbstractEffect>>& effects);
+        const std::vector<Artifact::ArtifactAbstractEffectPtr>& effects);
     void setLayers(const QSet<Artifact::ArtifactAbstractLayerPtr>& layers);
     int targetLayersCount() const;
     void setFocusedEffectId(const QString& effectId);

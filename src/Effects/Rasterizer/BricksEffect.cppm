@@ -15,6 +15,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -70,5 +71,5 @@ std::vector<AbstractProperty> BricksEffect::getProperties()const{
     return props;
 }
 void BricksEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="brickWidth")setBrickWidth(v.toFloat());else if(k=="brickHeight")setBrickHeight(v.toFloat());else if(k=="mortarWidth")setMortarWidth(v.toFloat());else if(k=="offset")setOffset(v.toFloat());}
-void BricksEffect::syncImpls(){auto c=std::make_shared<BricksCPUImpl>();c->bw_=bw_;c->bh_=bh_;c->mortar_=mortar_;c->offset_=offset_;setCPUImpl(c);}
+void BricksEffect::syncImpls(){auto c=ArtifactCore::makeShared<BricksCPUImpl>();c->bw_=bw_;c->bh_=bh_;c->mortar_=mortar_;c->offset_=offset_;setCPUImpl(c);}
 } // namespace Artifact

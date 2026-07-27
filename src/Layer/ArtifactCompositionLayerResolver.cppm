@@ -6,10 +6,11 @@ module Artifact.Layer.Composition.Resolver;
 
 import Artifact.Composition.Abstract;
 import Artifact.Service.Project;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
-std::shared_ptr<ArtifactAbstractComposition> resolveArtifactCompositionLayerSource(const QString& compositionId) {
+SharedPtr<ArtifactAbstractComposition> resolveArtifactCompositionLayerSource(const QString& compositionId) {
   auto *service = ArtifactProjectService::instance();
   if (!service) {
     return nullptr;

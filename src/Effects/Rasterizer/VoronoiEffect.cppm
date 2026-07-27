@@ -15,6 +15,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -98,5 +99,5 @@ std::vector<AbstractProperty> VoronoiEffect::getProperties()const{
     return props;
 }
 void VoronoiEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="scale")setScale(v.toFloat());else if(k=="jitter")setJitter(v.toFloat());else if(k=="mode")setMode(v.toInt());else if(k=="seed")setSeed(v.toInt());}
-void VoronoiEffect::syncImpls(){auto c=std::make_shared<VoronoiCPUImpl>();c->scale_=scale_;c->jitter_=jitter_;c->mode_=mode_;c->seed_=seed_;setCPUImpl(c);}
+void VoronoiEffect::syncImpls(){auto c=ArtifactCore::makeShared<VoronoiCPUImpl>();c->scale_=scale_;c->jitter_=jitter_;c->mode_=mode_;c->seed_=seed_;setCPUImpl(c);}
 } // namespace Artifact

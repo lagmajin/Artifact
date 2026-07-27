@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <optional>
 #include <vector>
 
@@ -43,6 +43,7 @@ export module Artifact.Composition.InOutPoints;
 import std;
 import Frame.Position;
 import Frame.Range;
+import Utils.Optional;
 
 W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
 
@@ -158,7 +159,7 @@ public:
      * @brief Get in point position
      * @return In point frame, or std::nullopt if not set
      */
-    std::optional<FramePosition> inPoint() const;
+    Optional<FramePosition> inPoint() const;
     
     /**
      * @brief Check if in point is set
@@ -187,7 +188,7 @@ public:
      * @brief Get out point position
      * @return Out point frame, or std::nullopt if not set
      */
-    std::optional<FramePosition> outPoint() const;
+    Optional<FramePosition> outPoint() const;
     
     /**
      * @brief Check if out point is set
@@ -297,28 +298,28 @@ public:
      * @param current Current frame position
      * @return Next marker position or std::nullopt
      */
-    std::optional<FramePosition> nextMarker(const FramePosition& current) const;
+    Optional<FramePosition> nextMarker(const FramePosition& current) const;
     
     /**
      * @brief Go to previous marker
      * @param current Current frame position
      * @return Previous marker position or std::nullopt
      */
-    std::optional<FramePosition> previousMarker(const FramePosition& current) const;
+    Optional<FramePosition> previousMarker(const FramePosition& current) const;
     
     /**
      * @brief Go to next chapter marker
      * @param current Current frame position
      * @return Next chapter position or std::nullopt
      */
-    std::optional<FramePosition> nextChapter(const FramePosition& current) const;
+    Optional<FramePosition> nextChapter(const FramePosition& current) const;
     
     /**
      * @brief Go to previous chapter marker
      * @param current Current frame position
      * @return Previous chapter position or std::nullopt
      */
-    std::optional<FramePosition> previousChapter(const FramePosition& current) const;
+    Optional<FramePosition> previousChapter(const FramePosition& current) const;
     
     // ==================== Import/Export ====================
     
@@ -349,5 +350,5 @@ public: // signals
 } // namespace Artifact
 
 W_REGISTER_ARGTYPE(Artifact::MarkerType)
-W_REGISTER_ARGTYPE(std::optional<ArtifactCore::FramePosition>)
+W_REGISTER_ARGTYPE(ArtifactCore::Optional<ArtifactCore::FramePosition>)
 W_REGISTER_ARGTYPE(Artifact::ArtifactMarker*)

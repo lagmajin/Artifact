@@ -24,6 +24,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -80,7 +81,7 @@ RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer HexGridParams:register(
 )";
 };
 
-HexGridEffect::HexGridEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();setGPUImpl(std::make_shared<HexGridGPUImpl>());}
+    HexGridEffect::HexGridEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();setGPUImpl(ArtifactCore::makeShared<HexGridGPUImpl>());}
 HexGridEffect::~HexGridEffect()=default;
 float HexGridEffect::cellSize()const{return cellSize_;}void HexGridEffect::setCellSize(float v){cellSize_=std::max(v,4.0f);syncImpls();}
 float HexGridEffect::lineWidth()const{return lineWidth_;}void HexGridEffect::setLineWidth(float v){lineWidth_=std::max(v,0.5f);syncImpls();}
@@ -107,5 +108,5 @@ std::vector<AbstractProperty> HexGridEffect::getProperties()const{
     return props;
 }
 void HexGridEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="cellSize")setCellSize(v.toFloat());else if(k=="lineWidth")setLineWidth(v.toFloat());else if(k=="angle")setAngle(v.toFloat());}
-void HexGridEffect::syncImpls(){auto c=std::make_shared<HexGridCPUImpl>();c->cellSize_=cellSize_;c->lineWidth_=lineWidth_;c->angle_=angle_;setCPUImpl(c);if(auto* g=dynamic_cast<HexGridGPUImpl*>(gpuImpl().get())){g->cellSize_=cellSize_;g->lineWidth_=lineWidth_;g->angle_=angle_;}}
+void HexGridEffect::syncImpls(){auto c=ArtifactCore::makeShared<HexGridCPUImpl>();c->cellSize_=cellSize_;c->lineWidth_=lineWidth_;c->angle_=angle_;setCPUImpl(c);if(auto* g=dynamic_cast<HexGridGPUImpl*>(gpuImpl().get())){g->cellSize_=cellSize_;g->lineWidth_=lineWidth_;g->angle_=angle_;}}
 } // namespace Artifact

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +35,8 @@
 #include <QVector3D>
 
 export module Generator.Clone;
+
+import Memory.SharedPtr;
 
 
 
@@ -112,8 +114,8 @@ export class SimpleSpline;
   float rotationStep() const;
 
   // Spline
-  void setSpline(std::shared_ptr<SimpleSpline> spline);
-  std::shared_ptr<SimpleSpline> spline() const;
+  void setSpline(ArtifactCore::SharedPtr<SimpleSpline> spline);
+  ArtifactCore::SharedPtr<SimpleSpline> spline() const;
 
   // 変換行列生成
   virtual QVector<QMatrix4x4> generateTransforms() const;

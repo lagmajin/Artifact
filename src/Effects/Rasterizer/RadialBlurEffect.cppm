@@ -16,6 +16,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -97,5 +98,5 @@ std::vector<AbstractProperty> RadialBlurEffect::getProperties()const{
     return props;
 }
 void RadialBlurEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="amount")setAmount(v.toFloat());else if(k=="quality")setQuality(v.toInt());else if(k=="centerX")setCenterX(v.toFloat());else if(k=="centerY")setCenterY(v.toFloat());else if(k=="mode")setMode(v.toFloat());}
-void RadialBlurEffect::syncImpls(){auto c=std::make_shared<RadialBlurCPUImpl>();c->amount_=amount_;c->quality_=quality_;c->cx_=cx_;c->cy_=cy_;c->mode_=mode_;setCPUImpl(c);}
+void RadialBlurEffect::syncImpls(){auto c=ArtifactCore::makeShared<RadialBlurCPUImpl>();c->amount_=amount_;c->quality_=quality_;c->cx_=cx_;c->cy_=cy_;c->mode_=mode_;setCPUImpl(c);}
 } // namespace Artifact

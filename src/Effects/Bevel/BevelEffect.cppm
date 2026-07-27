@@ -24,6 +24,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -172,8 +173,8 @@ public:
 BevelEffect::BevelEffect() {
     setDisplayName(UniString("Bevel"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<BevelEffectCPUImpl>());
-    setGPUImpl(std::make_shared<BevelEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<BevelEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<BevelEffectGPUImpl>());
 }
 BevelEffect::~BevelEffect() = default;
 

@@ -76,6 +76,7 @@ import Core.Light;
 import Core.Parallel;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Color.TransferFunction;
+import Memory.SharedPtr;
 
 namespace Artifact
 {
@@ -493,7 +494,7 @@ namespace {
   struct AsyncReadbackSlot {
    RefCntAutoPtr<ITexture> staging;
    RefCntAutoPtr<IFence>   fence;
-   std::shared_ptr<std::atomic_bool> busy = std::make_shared<std::atomic_bool>(false);
+   ArtifactCore::SharedPtr<std::atomic_bool> busy = ArtifactCore::makeShared<std::atomic_bool>(false);
    Uint32 width = 0;
    Uint32 height = 0;
    TEXTURE_FORMAT format = TEX_FORMAT_UNKNOWN;
@@ -1438,8 +1439,9 @@ namespace {
   m_initialized = true;
 
   // Log startup profile summary
-  qInfo().noquote() << QString::fromStdString(
-      StartupProfiler::instance().generateReport());
+  const auto startupReport = StartupProfiler::instance().generateReport();
+  qInfo().noquote() << QString::fromUtf8(
+      startupReport.data(), static_cast<int>(startupReport.length()));
  }
 
  void ArtifactIRenderer::Impl::initializeHeadless(int width, int height)
@@ -2111,7 +2113,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
 
   RefCntAutoPtr<ITexture> stagingTex;
   RefCntAutoPtr<IFence> fence;
-  std::shared_ptr<std::atomic_bool> busyFlag;
+  ArtifactCore::SharedPtr<std::atomic_bool> busyFlag;
   bool cachedSlot = false;
 
   auto createAsyncResources = [&](RefCntAutoPtr<ITexture>& outStaging,
@@ -2157,7 +2159,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
           slot.height = 0;
           slot.format = TEX_FORMAT_UNKNOWN;
           if (!slot.busy) {
-            slot.busy = std::make_shared<std::atomic_bool>(false);
+            slot.busy = ArtifactCore::makeShared<std::atomic_bool>(false);
           }
           slot.busy->store(false);
         }
@@ -2175,7 +2177,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
         continue;
       }
       if (!slot.busy) {
-        slot.busy = std::make_shared<std::atomic_bool>(false);
+        slot.busy = ArtifactCore::makeShared<std::atomic_bool>(false);
       }
       if (!slot.staging || !slot.fence ||
           slot.width != srcWidth ||
@@ -4004,7 +4006,7 @@ void ArtifactIRenderer::drawMesh(const QString& cacheKey, const ArtifactCore::Me
  if (!device || !ctx) {
   return {};
  }
- auto context = std::make_shared<ArtifactCore::GpuContext>(device, ctx);
+ auto context = ArtifactCore::makeShared<ArtifactCore::GpuContext>(device, ctx);
  return std::make_unique<ArtifactCore::LayerBlendPipeline>(std::move(context));
 }
 bool ArtifactIRenderer::blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,

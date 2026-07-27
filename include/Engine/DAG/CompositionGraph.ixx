@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -32,6 +32,8 @@
 #include <QString>
 export module Artifact.Engine.DAG.CompositionGraph;
 
+import Memory.SharedPtr;
+
 
 
 
@@ -60,7 +62,7 @@ export namespace Artifact {
         UniString name_;
 
         // 登録されているレイヤーのローカルグラフ
-        std::unordered_map<std::string, std::shared_ptr<EffectGraph>> layerGraphs_;
+        std::unordered_map<std::string, SharedPtr<EffectGraph>> layerGraphs_;
 
         // レイヤー間の接続
         std::vector<Connection> interLayerConnections_;
@@ -73,7 +75,7 @@ export namespace Artifact {
         UniString name() const { return name_; }
 
         // レイヤーごとのローカルグラフを登録
-        void registerLayerGraph(const LayerID& layerId, std::shared_ptr<EffectGraph> graph) {
+        void registerLayerGraph(const LayerID& layerId, SharedPtr<EffectGraph> graph) {
             layerGraphs_[layerId.toString().toStdString()] = graph;
         }
 
@@ -91,7 +93,7 @@ export namespace Artifact {
             );
         }
 
-        std::shared_ptr<EffectGraph> getLayerGraph(const LayerID& layerId) const {
+        SharedPtr<EffectGraph> getLayerGraph(const LayerID& layerId) const {
             auto it = layerGraphs_.find(layerId.toString().toStdString());
             if (it != layerGraphs_.end()) return it->second;
             return nullptr;

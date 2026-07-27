@@ -61,6 +61,7 @@ import Core.Diagnostics.SessionLedger;
 import MediaSource;
 import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Service.ActiveContext;
+import Memory.SharedPtr;
 import Artifact.Service.Playback;
 import Artifact.Audio.ScrubController;
 import Asset.Manager;
@@ -93,7 +94,7 @@ QString slugifyEffectId(const QString &text) {
 }
 
 QString uniqueEffectIdForLayer(
-    const std::vector<std::shared_ptr<ArtifactAbstractEffect>> &effects,
+    const std::vector<SharedPtr<ArtifactAbstractEffect>> &effects,
     const QString &displayName, const QString &preferredId) {
   QString baseId = preferredId.trimmed();
   if (baseId.isEmpty()) {
@@ -106,7 +107,7 @@ QString uniqueEffectIdForLayer(
   auto idExists = [&effects](const QString &candidate) {
     return std::any_of(
         effects.begin(), effects.end(),
-        [&candidate](const std::shared_ptr<ArtifactAbstractEffect> &effect) {
+        [&candidate](const SharedPtr<ArtifactAbstractEffect> &effect) {
           return effect && effect->effectID().toQString() == candidate;
         });
   };
@@ -209,12 +210,12 @@ QVector<SequenceImportGroup> detectSequenceImportGroups(
       continue;
     }
 
-    std::vector<std::string> filenames;
+    std::vector<ArtifactCore::String> filenames;
     filenames.reserve(static_cast<size_t>(paths.size()));
     QHash<QString, QString> pathByFileName;
     for (const QString &path : paths) {
       const QString fileName = QFileInfo(path).fileName();
-      filenames.push_back(fileName.toStdString());
+      filenames.emplace_back(fileName.toStdString());
       pathByFileName.insert(fileName, path);
     }
 
@@ -222,8 +223,9 @@ QVector<SequenceImportGroup> detectSequenceImportGroups(
     for (const auto &sequence : detection.sequences) {
       QStringList sequencePaths;
       sequencePaths.reserve(static_cast<int>(sequence.filenames.size()));
-      for (const std::string &filename : sequence.filenames) {
-        const QString key = QString::fromStdString(filename);
+      for (const ArtifactCore::String &filename : sequence.filenames) {
+        const QString key = QString::fromUtf8(
+            filename.data(), static_cast<int>(filename.length()));
         const auto pathIt = pathByFileName.constFind(key);
         if (pathIt == pathByFileName.constEnd()) {
           continue;
@@ -422,7 +424,7 @@ QString projectHealthSummaryFromDiagnostics(const std::vector<ArtifactCore::Proj
 }
 
 void appendAppValidationDiagnostics(
-    const std::shared_ptr<ArtifactProject>& project,
+    const ArtifactProjectPtr& project,
     std::vector<ArtifactCore::ProjectDiagnostic>& diagnostics)
 {
   if (!project) {
@@ -488,7 +490,7 @@ void appendUniqueDiagnostic(
   }
 }
 
-void updateLastUsedCreationDefaults(const std::shared_ptr<ArtifactProject>& project,
+void updateLastUsedCreationDefaults(const ArtifactProjectPtr& project,
                                     const ArtifactCompositionInitParams& params)
 {
   if (!project) {
@@ -501,7 +503,7 @@ void updateLastUsedCreationDefaults(const std::shared_ptr<ArtifactProject>& proj
   project->setCreationDefaultsState(state);
 }
 
-void updateLastUsedCreationDefaults(const std::shared_ptr<ArtifactProject>& project,
+void updateLastUsedCreationDefaults(const ArtifactProjectPtr& project,
                                     const ArtifactLayerInitParams& params)
 {
   if (!project) {
@@ -548,7 +550,7 @@ bool wouldCreatePrecomposeCycle(
 
   for (const auto &layer : layers) {
     auto compLayer =
-        std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer);
+        ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(layer);
     if (!compLayer) {
       continue;
     }
@@ -584,7 +586,7 @@ bool wouldCreatePrecomposeCycle(
 
     for (const auto &layer : current->allLayer()) {
       auto compLayer =
-          std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer);
+          ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(layer);
       if (!compLayer) {
         continue;
       }
@@ -605,7 +607,7 @@ bool wouldCreatePrecomposeCycle(
 bool restorePrecomposeSnapshot(
     ArtifactProjectService* service,
     const CompositionID& parentCompositionId,
-    const std::shared_ptr<ArtifactCompositionLayer>& precompLayer,
+    const ArtifactCore::SharedPtr<ArtifactCompositionLayer>& precompLayer,
     const ArtifactCompositionPtr& childComposition,
     const QVector<LayerID>& movedLayerIds,
     const int insertionIndex,
@@ -769,9 +771,9 @@ public:
     childCompId_ = outcome.childCompId;
     const auto parent = svc->findComposition(parentCompositionId_).ptr.lock();
     precompLayer_ = parent
-        ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(
+        ? ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(
               parent->layerById(precompLayerId_))
-        : std::shared_ptr<ArtifactCompositionLayer>{};
+        : ArtifactCore::SharedPtr<ArtifactCompositionLayer>{};
     childComposition_ = svc->findComposition(childCompId_).ptr.lock();
     if (childComposition_) {
       layerIds_.clear();
@@ -829,7 +831,7 @@ private:
   CompositionID parentCompositionId_;
   LayerID precompLayerId_;
   CompositionID childCompId_;
-  std::shared_ptr<ArtifactCompositionLayer> precompLayer_;
+  ArtifactCore::SharedPtr<ArtifactCompositionLayer> precompLayer_;
   ArtifactCompositionPtr childComposition_;
   int insertionIndex_ = 0;
   bool firstRedo_ = true;
@@ -853,7 +855,7 @@ public:
     }
     auto layer = comp ? comp->layerById(precompLayerId_) : ArtifactAbstractLayerPtr{};
     auto compLayer =
-        layer ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer)
+        layer ? ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(layer)
               : nullptr;
     if (compLayer) {
       precompLayer_ = compLayer;
@@ -918,7 +920,7 @@ private:
   CompositionID parentCompositionId_;
   QVector<LayerID> movedLayerIds_;
   UniString childName_;
-  std::shared_ptr<ArtifactCompositionLayer> precompLayer_;
+  ArtifactCore::SharedPtr<ArtifactCompositionLayer> precompLayer_;
   ArtifactCompositionPtr childComposition_;
   int insertionIndex_ = 0;
 };
@@ -926,7 +928,7 @@ private:
 class AddEffectUndoCommand : public UndoCommand {
 public:
   AddEffectUndoCommand(const LayerID &layerId,
-                       std::shared_ptr<ArtifactAbstractEffect> effect)
+                       SharedPtr<ArtifactAbstractEffect> effect)
       : layerId_(layerId), effect_(std::move(effect)) {}
 
   void redo() override {
@@ -963,14 +965,14 @@ public:
 
 private:
   LayerID layerId_;
-  std::shared_ptr<ArtifactAbstractEffect> effect_;
+  SharedPtr<ArtifactAbstractEffect> effect_;
   QString effectId_;
 };
 
 class RemoveEffectUndoCommand : public UndoCommand {
 public:
   RemoveEffectUndoCommand(const LayerID &layerId,
-                          std::shared_ptr<ArtifactAbstractEffect> effect)
+                          SharedPtr<ArtifactAbstractEffect> effect)
       : layerId_(layerId), effect_(std::move(effect)) {}
 
   void redo() override {
@@ -1028,7 +1030,7 @@ public:
 
 private:
   LayerID layerId_;
-  std::shared_ptr<ArtifactAbstractEffect> effect_;
+  SharedPtr<ArtifactAbstractEffect> effect_;
   int effectIndex_ = -1;
 };
 
@@ -1134,7 +1136,7 @@ public:
     if (!groupLayer) return;
     // Capture children if first undo
     if (childIds_.isEmpty()) {
-      if (auto g = std::dynamic_pointer_cast<ArtifactGroupLayer>(groupLayer)) {
+      if (auto g = ArtifactCore::dynamicPointerCast<ArtifactGroupLayer>(groupLayer)) {
         for (const auto &child : g->children()) {
           if (child) childIds_.push_back(child->id());
         }
@@ -1190,7 +1192,7 @@ public:
     auto comp = svc->currentComposition().lock();
     if (!comp) return;
     auto groupLayer = comp->layerById(groupLayerId_);
-    auto g = std::dynamic_pointer_cast<ArtifactGroupLayer>(groupLayer);
+    auto g = ArtifactCore::dynamicPointerCast<ArtifactGroupLayer>(groupLayer);
     if (!g) return;
     // Capture children and group index
     if (childIds_.isEmpty()) {
@@ -2252,7 +2254,7 @@ bool ArtifactProjectService::ungroupSelectedGroupInCurrentComposition()
         return false;
     }
 
-    auto groupLayer = std::dynamic_pointer_cast<ArtifactGroupLayer>(selectedLayer);
+    auto groupLayer = ArtifactCore::dynamicPointerCast<ArtifactGroupLayer>(selectedLayer);
     if (!groupLayer) {
         return false;
     }
@@ -2356,7 +2358,7 @@ bool ArtifactProjectService::groupSelectedLayersInCurrentComposition(
     anyReparented |= setLayerParentInCurrentComposition(layerId, groupId);
   }
 
-  if (auto groupLayer = std::dynamic_pointer_cast<ArtifactGroupLayer>(newGroup)) {
+  if (auto groupLayer = ArtifactCore::dynamicPointerCast<ArtifactGroupLayer>(newGroup)) {
     groupLayer->setCollapsed(false);
   }
   selectLayer(groupId);
@@ -2492,19 +2494,19 @@ bool ArtifactProjectService::replaceLayerSourceInCurrentComposition(
 
   QString oldSourcePath;
   QString propertyPath;
-  if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+  if (auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
     oldSourcePath = imageLayer->sourcePath();
     propertyPath = QStringLiteral("image.sourcePath");
   } else if (auto svgLayer =
-                 std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+               ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(layer)) {
     oldSourcePath = svgLayer->sourcePath();
     propertyPath = QStringLiteral("svg.sourcePath");
   } else if (auto audioLayer =
-                 std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+               ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
     oldSourcePath = audioLayer->sourcePath();
     propertyPath = QStringLiteral("audio.sourcePath");
   } else if (auto videoLayer =
-                 std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+               ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
     oldSourcePath = videoLayer->sourcePath();
     propertyPath = QStringLiteral("video.sourcePath");
   }
@@ -2541,7 +2543,7 @@ bool ArtifactProjectService::localizeLayerSourceInCurrentComposition(
         typedLayer->isSourceIdentityLocalized()) {
       return false;
     }
-    std::weak_ptr<LayerT> weakLayer = typedLayer;
+    ArtifactCore::WeakPtr<LayerT> weakLayer = typedLayer;
     localize = [weakLayer]() {
       if (auto locked = weakLayer.lock()) locked->localizeSourceIdentity();
     };
@@ -2556,9 +2558,9 @@ bool ArtifactProjectService::localizeLayerSourceInCurrentComposition(
   };
 
   const bool supported =
-      bindLayer(std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) ||
-      bindLayer(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) ||
-      bindLayer(std::dynamic_pointer_cast<ArtifactAudioLayer>(layer));
+      bindLayer(ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) ||
+      bindLayer(ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) ||
+      bindLayer(ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer));
   if (!supported) return false;
 
   if (auto* undoManager = UndoManager::instance()) {
@@ -2583,7 +2585,7 @@ bool ArtifactProjectService::relinkSharedLayerSourceInCurrentComposition(
   auto bindLayer = [&](auto typedLayer) {
     using LayerT = typename decltype(typedLayer)::element_type;
     if (!typedLayer || !typedLayer->isSourceIdentityLocalized()) return false;
-    std::weak_ptr<LayerT> weakLayer = typedLayer;
+    ArtifactCore::WeakPtr<LayerT> weakLayer = typedLayer;
     localize = [weakLayer]() {
       if (auto locked = weakLayer.lock()) locked->localizeSourceIdentity();
     };
@@ -2598,9 +2600,9 @@ bool ArtifactProjectService::relinkSharedLayerSourceInCurrentComposition(
   };
 
   const bool supported =
-      bindLayer(std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) ||
-      bindLayer(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) ||
-      bindLayer(std::dynamic_pointer_cast<ArtifactAudioLayer>(layer));
+      bindLayer(ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) ||
+      bindLayer(ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) ||
+      bindLayer(ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer));
   if (!supported) return false;
 
   if (auto* undoManager = UndoManager::instance()) {
@@ -2882,7 +2884,7 @@ bool ArtifactProjectService::precomposeLayersInCurrentComposition(
   childParams.setWorkArea(RationalTime(0, fpsScale),
                           RationalTime(childDurationFrames, fpsScale));
 
-  auto childComp = std::make_shared<ArtifactAbstractComposition>(
+  auto childComp = ArtifactCore::makeShared<ArtifactAbstractComposition>(
       CompositionID(), childParams);
   if (!childComp) {
     return false;
@@ -2951,7 +2953,7 @@ bool ArtifactProjectService::precomposeLayersInCurrentComposition(
   }
 
   auto precompLayer =
-      std::dynamic_pointer_cast<ArtifactCompositionLayer>(precompLayerResult.layer);
+      ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(precompLayerResult.layer);
   if (!precompLayer) {
     return false;
   }
@@ -3029,7 +3031,7 @@ bool ArtifactProjectService::unprecomposeLayerInCurrentComposition(
   }
 
   auto layer = comp->layerById(layerId);
-  auto compLayer = layer ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer)
+  auto compLayer = layer ? ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(layer)
                          : nullptr;
   if (!compLayer) {
     return false;
@@ -3225,7 +3227,7 @@ void ArtifactProjectService::propagateParentFrameRangeToChildren(
   QSet<CompositionID> visited;
   for (const auto& layer : parentComp->allLayer()) {
     const auto compLayer =
-        std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer);
+        ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(layer);
     if (!compLayer) {
       continue;
     }
@@ -3275,7 +3277,7 @@ void ArtifactProjectService::propagateChildFrameRangeToParents(
       continue;
     }
     const auto layer = parentComp->layerById(ref.precompLayerId);
-    const auto compLayer = std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer);
+    const auto compLayer = ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(layer);
     if (!compLayer) {
       continue;
     }
@@ -3481,7 +3483,7 @@ ArtifactProjectService::layerNameInCurrentComposition(const LayerID &layerId) {
 }
 
 bool ArtifactProjectService::addEffectToLayerInCurrentComposition(
-    const LayerID &layerId, std::shared_ptr<ArtifactAbstractEffect> effect) {
+    const LayerID &layerId, SharedPtr<ArtifactAbstractEffect> effect) {
   auto comp = currentComposition().lock();
   if (!comp || layerId.isNil() || !effect) {
     return false;
@@ -3623,7 +3625,7 @@ bool ArtifactProjectService::moveEffectInLayerInCurrentComposition(
 
 bool ArtifactProjectService::addEffectToLayerWithUndo(
     const LayerID &layerId,
-    std::shared_ptr<ArtifactAbstractEffect> effect) {
+    SharedPtr<ArtifactAbstractEffect> effect) {
   auto *mgr = UndoManager::instance();
   if (!mgr) {
     return addEffectToLayerInCurrentComposition(layerId, std::move(effect));
@@ -3635,7 +3637,7 @@ bool ArtifactProjectService::addEffectToLayerWithUndo(
 
 bool ArtifactProjectService::removeEffectFromLayerWithUndo(
     const LayerID &layerId, const QString &effectId,
-    std::shared_ptr<ArtifactAbstractEffect> effect) {
+    SharedPtr<ArtifactAbstractEffect> effect) {
   auto *mgr = UndoManager::instance();
   if (!mgr) {
     return removeEffectFromLayerInCurrentComposition(layerId, effectId);
@@ -3670,7 +3672,7 @@ bool ArtifactProjectService::moveEffectWithUndo(
 }
 
 bool ArtifactProjectService::addEffectToCurrentComposition(
-    std::shared_ptr<ArtifactAbstractEffect> effect) {
+    SharedPtr<ArtifactAbstractEffect> effect) {
   auto comp = currentComposition().lock();
   if (!comp || !effect) {
     return false;
@@ -3981,7 +3983,7 @@ ArtifactCompositionWeakPtr ArtifactProjectService::currentComposition() {
   return impl_->currentComposition();
 }
 
-std::shared_ptr<ArtifactProject>
+ArtifactProjectPtr
 ArtifactProjectService::getCurrentProjectSharedPtr() const {
   return impl_->projectManager().getCurrentProjectSharedPtr();
 }

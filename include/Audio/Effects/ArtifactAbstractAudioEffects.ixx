@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +37,8 @@ export module ArtifactAbstractAudioEffects;
 
 export namespace Artifact {
 
+using ArtifactCore::String;
+
 // I[fBIGtFNg̒ۃx[XNX
 class ArtifactAbstractAudioEffects {
 public:
@@ -44,15 +46,15 @@ public:
     virtual ~ArtifactAbstractAudioEffects() = default;
 
     // GtFNg
-    virtual std::string name() const = 0;
+    virtual String name() const = 0;
 
     // L/
     virtual void setEnabled(bool enabled) { enabled_ = enabled; }
     virtual bool isEnabled() const { return enabled_; }
 
     // p[^i: key-valuej
-    virtual void setParameter(const std::string& key, float value) = 0;
-    virtual float getParameter(const std::string& key) const = 0;
+    virtual void setParameter(const String& key, float value) = 0;
+    virtual float getParameter(const String& key) const = 0;
 
     // I[fBIiin-placej
     // buffer: floatz, samples: Tv, channels: `l

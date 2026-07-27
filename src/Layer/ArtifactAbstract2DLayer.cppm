@@ -45,6 +45,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Animation.Transform2D;
 import ArtifactCore.Rig2D;
+import Memory.SharedPtr;
 import Time.Rational;
 import Utils.Id;
 
@@ -201,53 +202,53 @@ class ArtifactAbstract2DLayer::Impl {
   return impl_->rig2D().addAngle(name, defaultValue, minValue, maxValue);
  }
 
- std::shared_ptr<ArtifactCore::ParentConstraint2D> ArtifactAbstract2DLayer::addRigParentConstraint(
+ ArtifactCore::SharedPtr<ArtifactCore::ParentConstraint2D> ArtifactAbstract2DLayer::addRigParentConstraint(
      const QString& name,
      const ArtifactCore::Id& targetBoneId,
      const ArtifactCore::Id& parentBoneId)
  {
-  auto constraint = std::make_shared<ArtifactCore::ParentConstraint2D>(name, targetBoneId, parentBoneId);
-  return std::static_pointer_cast<ArtifactCore::ParentConstraint2D>(impl_->rig2D().addConstraint(constraint));
+  auto constraint = ArtifactCore::makeShared<ArtifactCore::ParentConstraint2D>(name, targetBoneId, parentBoneId);
+  return ArtifactCore::staticPointerCast<ArtifactCore::ParentConstraint2D>(impl_->rig2D().addConstraint(constraint));
  }
 
- std::shared_ptr<ArtifactCore::MapRangeConstraint2D> ArtifactAbstract2DLayer::addRigMapRangeConstraint(
+ ArtifactCore::SharedPtr<ArtifactCore::MapRangeConstraint2D> ArtifactAbstract2DLayer::addRigMapRangeConstraint(
      const QString& name,
      const ArtifactCore::Id& controlId,
      const ArtifactCore::Id& targetBoneId)
  {
-  auto constraint = std::make_shared<ArtifactCore::MapRangeConstraint2D>(name, controlId, targetBoneId);
-  return std::static_pointer_cast<ArtifactCore::MapRangeConstraint2D>(impl_->rig2D().addConstraint(constraint));
+  auto constraint = ArtifactCore::makeShared<ArtifactCore::MapRangeConstraint2D>(name, controlId, targetBoneId);
+  return ArtifactCore::staticPointerCast<ArtifactCore::MapRangeConstraint2D>(impl_->rig2D().addConstraint(constraint));
  }
 
- std::shared_ptr<ArtifactCore::AimConstraint2D> ArtifactAbstract2DLayer::addRigAimConstraint(
+ ArtifactCore::SharedPtr<ArtifactCore::AimConstraint2D> ArtifactAbstract2DLayer::addRigAimConstraint(
      const QString& name,
      const ArtifactCore::Id& sourceBoneId,
      const ArtifactCore::Id& targetBoneId)
  {
-  auto constraint = std::make_shared<ArtifactCore::AimConstraint2D>(name, sourceBoneId, targetBoneId);
-  return std::static_pointer_cast<ArtifactCore::AimConstraint2D>(impl_->rig2D().addConstraint(constraint));
+  auto constraint = ArtifactCore::makeShared<ArtifactCore::AimConstraint2D>(name, sourceBoneId, targetBoneId);
+  return ArtifactCore::staticPointerCast<ArtifactCore::AimConstraint2D>(impl_->rig2D().addConstraint(constraint));
  }
 
- std::shared_ptr<ArtifactCore::TwoBoneIKConstraint2D> ArtifactAbstract2DLayer::addRigTwoBoneIKConstraint(
+ ArtifactCore::SharedPtr<ArtifactCore::TwoBoneIKConstraint2D> ArtifactAbstract2DLayer::addRigTwoBoneIKConstraint(
      const QString& name,
      const ArtifactCore::Id& upperBoneId,
      const ArtifactCore::Id& lowerBoneId,
      const ArtifactCore::Id& effectorBoneId,
      const ArtifactCore::Id& targetBoneId)
  {
-  auto constraint = std::make_shared<ArtifactCore::TwoBoneIKConstraint2D>(
+  auto constraint = ArtifactCore::makeShared<ArtifactCore::TwoBoneIKConstraint2D>(
       name, upperBoneId, lowerBoneId, effectorBoneId, targetBoneId);
-  return std::static_pointer_cast<ArtifactCore::TwoBoneIKConstraint2D>(impl_->rig2D().addConstraint(constraint));
+  return ArtifactCore::staticPointerCast<ArtifactCore::TwoBoneIKConstraint2D>(impl_->rig2D().addConstraint(constraint));
  }
 
- std::shared_ptr<ArtifactCore::RigPropertyBinding2D> ArtifactAbstract2DLayer::addRigPropertyBinding(
+ ArtifactCore::SharedPtr<ArtifactCore::RigPropertyBinding2D> ArtifactAbstract2DLayer::addRigPropertyBinding(
      const QString& name,
      const ArtifactCore::Id& controlId,
      const QString& targetPropertyPath)
  {
-  auto binding = std::make_shared<ArtifactCore::RigPropertyBinding2D>(
+  auto binding = ArtifactCore::makeShared<ArtifactCore::RigPropertyBinding2D>(
       name, controlId, ArtifactCore::LayerID(id()), targetPropertyPath);
-  return std::static_pointer_cast<ArtifactCore::RigPropertyBinding2D>(impl_->rig2D().addPropertyBinding(binding));
+  return ArtifactCore::staticPointerCast<ArtifactCore::RigPropertyBinding2D>(impl_->rig2D().addPropertyBinding(binding));
  }
 
  void ArtifactAbstract2DLayer::clearRigBones()

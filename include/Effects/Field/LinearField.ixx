@@ -39,6 +39,7 @@ import Artifact.Effect.Field;
 import Utils.String.UniString;
 import Property.Group;
 import Property.Abstract;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -84,7 +85,7 @@ export namespace Artifact {
         LinearField()
             : ArtifactAbstractField(FieldType::Linear, UniString("Linear Field"))
         {
-            auto smoothProp = std::make_shared<AbstractProperty>();
+            auto smoothProp = ArtifactCore::makeShared<AbstractProperty>();
             smoothProp->setName("Smooth Interpolation");
             smoothProp->setType(PropertyType::Boolean);
             smoothProp->setValue(useSmoothstep_);

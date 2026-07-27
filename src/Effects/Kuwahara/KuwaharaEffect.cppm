@@ -23,6 +23,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -314,8 +315,8 @@ void main(uint3 dtid : SV_DispatchThreadID) {
 KuwaharaEffect::KuwaharaEffect() {
     setDisplayName(UniString("Kuwahara"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<KuwaharaEffectCPUImpl>());
-    setGPUImpl(std::make_shared<KuwaharaEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<KuwaharaEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<KuwaharaEffectGPUImpl>());
 }
 
 KuwaharaEffect::~KuwaharaEffect() = default;

@@ -45,6 +45,7 @@ module Artifact.Render.FrameCache;
 
 
 import Frame.Position;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -83,7 +84,7 @@ public:
     };
 
     // Cache storage
-    std::unordered_map<FramePosition, std::shared_ptr<FrameCacheEntry>, FramePositionHash> entries_;
+    std::unordered_map<FramePosition, ArtifactCore::SharedPtr<FrameCacheEntry>, FramePositionHash> entries_;
     
     // Access tracking for LRU
     std::unordered_map<FramePosition, uint64_t, FramePositionHash> accessTimes_;
@@ -160,7 +161,7 @@ public:
         maybeRebuildCandidates();
     }
     
-    std::shared_ptr<FrameCacheEntry> evictOne() {
+    ArtifactCore::SharedPtr<FrameCacheEntry> evictOne() {
         if (entries_.empty()) return nullptr;
         
         FramePosition toEvict;
@@ -299,7 +300,7 @@ bool FrameCache::contains(const FramePosition& frame) const {
            it->second->generation == impl_->generation_;
 }
 
-std::shared_ptr<FrameCacheEntry> FrameCache::get(const FramePosition& frame) {
+ArtifactCore::SharedPtr<FrameCacheEntry> FrameCache::get(const FramePosition& frame) {
     QMutexLocker locker(&impl_->mutex_);
     
     auto it = impl_->entries_.find(frame);
@@ -325,7 +326,7 @@ std::shared_ptr<FrameCacheEntry> FrameCache::get(const FramePosition& frame) {
     return nullptr;
 }
 
-void FrameCache::put(std::shared_ptr<FrameCacheEntry> entry) {
+void FrameCache::put(ArtifactCore::SharedPtr<FrameCacheEntry> entry) {
     if (!entry) return;
 
     QMutexLocker locker(&impl_->mutex_);

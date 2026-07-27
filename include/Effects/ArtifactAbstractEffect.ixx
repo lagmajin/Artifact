@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -42,6 +42,7 @@ import Artifact.Effect.Context;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Artifact.Effect.ImplBase;
+import Memory.SharedPtr;
 import Property.Abstract;
 import Artifact.Render.ROI;
 
@@ -112,8 +113,8 @@ public:
     bool hasMask() const;
     void setMaskEnabled(bool enabled);
     bool maskEnabled() const;
-    void setMaskImage(const std::shared_ptr<ImageF32x4_RGBA>& maskImage);
-    std::shared_ptr<ImageF32x4_RGBA> maskImage() const;
+    void setMaskImage(const SharedPtr<ImageF32x4_RGBA>& maskImage);
+    SharedPtr<ImageF32x4_RGBA> maskImage() const;
     void setMaskLayerId(const QString& layerId);
     QString maskLayerId() const;
     void setMaskName(const QString& name);
@@ -124,11 +125,11 @@ public:
     float maskOpacity() const;
 
     // Additional effect-level mask images. These combine with the primary mask.
-    void addEffectMaskImage(const std::shared_ptr<ImageF32x4_RGBA>& maskImage);
+    void addEffectMaskImage(const SharedPtr<ImageF32x4_RGBA>& maskImage);
     void removeEffectMaskImage(int index);
     void clearEffectMaskImages();
     int effectMaskImageCount() const;
-    std::shared_ptr<ImageF32x4_RGBA> effectMaskImage(int index) const;
+    SharedPtr<ImageF32x4_RGBA> effectMaskImage(int index) const;
 
     // identification
     UniString effectID() const;
@@ -148,10 +149,10 @@ public:
     void setContext(const EffectContext& context);
 
     // implementation management
-    void setCPUImpl(std::shared_ptr<ArtifactEffectImplBase> impl);
-    void setGPUImpl(std::shared_ptr<ArtifactEffectImplBase> impl);
-    std::shared_ptr<ArtifactEffectImplBase> cpuImpl() const;
-    std::shared_ptr<ArtifactEffectImplBase> gpuImpl() const;
+    void setCPUImpl(SharedPtr<ArtifactEffectImplBase> impl);
+    void setGPUImpl(SharedPtr<ArtifactEffectImplBase> impl);
+    SharedPtr<ArtifactEffectImplBase> cpuImpl() const;
+    SharedPtr<ArtifactEffectImplBase> gpuImpl() const;
 
     // Property interface (use ArtifactCore::AbstractProperty)
     virtual std::vector<ArtifactCore::AbstractProperty> getProperties() const;
@@ -160,14 +161,14 @@ public:
     // Stable property objects used by editors and animation. getProperties()
     // remains the effect-specific value description API; these objects retain
     // keyframes and expressions across inspector rebuilds.
-    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> editableProperties();
-    std::shared_ptr<ArtifactCore::AbstractProperty> editableProperty(const QString& name);
+    std::vector<SharedPtr<ArtifactCore::AbstractProperty>> editableProperties();
+    SharedPtr<ArtifactCore::AbstractProperty> editableProperty(const QString& name);
 
     // ROI hint for partial evaluation
     virtual EffectROIHint roiHint() const { return EffectROIHint{}; }
 };
 
-typedef std::shared_ptr<ArtifactAbstractEffect> ArtifactAbstractEffectPtr;
-typedef std::weak_ptr<ArtifactAbstractEffect> ArtifactAbstractEffectWeakPtr;
+typedef SharedPtr<ArtifactAbstractEffect> ArtifactAbstractEffectPtr;
+typedef WeakPtr<ArtifactAbstractEffect> ArtifactAbstractEffectWeakPtr;
 
 };

@@ -36,6 +36,7 @@ module;
 
 
 module Artifact.Widgets.ColorSciencePanel;
+import Memory.SharedPtr;
 import Color.ScienceManager;
 import Color.LUT;
 import Artifact.Color.Palette;
@@ -66,7 +67,7 @@ public:
   };
 
   ArtifactColorScienceManager *manager_ = nullptr;
-  std::shared_ptr<ArtifactCore::Color::ColorPaletteManager> paletteManager_;
+  ArtifactCore::SharedPtr<ArtifactCore::Color::ColorPaletteManager> paletteManager_;
 
   // UI elements
   QComboBox *inputSpaceCombo_ = nullptr;
@@ -160,7 +161,7 @@ static ArtifactCompositionEditor *findActiveCompositionEditor(QWidget *origin) {
 ArtifactColorSciencePanel::ArtifactColorSciencePanel(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
   impl_->manager_ = new ArtifactColorScienceManager();
-  impl_->paletteManager_ = std::make_shared<ArtifactCore::Color::ColorPaletteManager>();
+  impl_->paletteManager_ = ArtifactCore::makeShared<ArtifactCore::Color::ColorPaletteManager>();
   impl_->setupUI(this);
   impl_->connectSignals();
   impl_->updateUI();
@@ -467,7 +468,7 @@ QColor ArtifactColorSciencePanel::Impl::nearestPaletteColor(const QColor &input)
   return best;
 }
 
-static void seedDefaultConstraintPalette(const std::shared_ptr<ArtifactCore::Color::ColorPaletteManager>& manager)
+static void seedDefaultConstraintPalette(const ArtifactCore::SharedPtr<ArtifactCore::Color::ColorPaletteManager>& manager)
 {
   if (!manager || !manager->paletteNames().isEmpty()) {
     return;

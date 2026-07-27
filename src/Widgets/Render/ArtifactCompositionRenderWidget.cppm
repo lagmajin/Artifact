@@ -119,7 +119,7 @@ LayerDragMode hitTestLayerDragMode(const ArtifactAbstractLayerPtr& layer,
  }
 
 LayerHitTestResult hitTestTopVisibleLayer(
-    const std::shared_ptr<ArtifactAbstractComposition>& comp,
+    const ArtifactCompositionPtr& comp,
     ArtifactIRenderer* renderer, const QPointF& viewportPos)
 {
   if (!comp || !renderer) {
@@ -201,7 +201,7 @@ const QCursor& hudCursorForLayerDragMode(LayerDragMode mode, bool dragging)
 }
 
 int compositionPreviewIntervalMs(
-    const std::shared_ptr<ArtifactAbstractComposition>& comp)
+    const ArtifactCompositionPtr& comp)
 {
   const double fps = comp ? comp->frameRate().framerate() : 0.0;
   if (fps <= 0.0) {

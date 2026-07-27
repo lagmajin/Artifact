@@ -49,6 +49,7 @@ module;
 #include <opencv2/opencv.hpp>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 module Artifact.Preview.Pipeline;
+import Memory.SharedPtr;
 
 
 
@@ -127,7 +128,7 @@ namespace Artifact
     return;
    }
 
-   const auto cloneLayer = std::dynamic_pointer_cast<ArtifactCloneLayer>(layer);
+   const auto cloneLayer = ArtifactCore::dynamicPointerCast<ArtifactCloneLayer>(layer);
    if (!cloneLayer) {
     return;
    }

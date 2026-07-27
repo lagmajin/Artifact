@@ -1,7 +1,6 @@
 module;
 
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -9,6 +8,8 @@ export module Artifact.FxStudio.ViewportModel;
 
 import Artifact.FxStudio.EventTrack;
 import Artifact.FxStudio.Sequence;
+import Utils.Optional;
+import Core.ArtifactString;
 
 export namespace Artifact::FxStudio {
 
@@ -32,8 +33,8 @@ enum class PreviewBackground : std::uint8_t {
 };
 
 struct ViewportInputPair {
-  std::string inputA;
-  std::string inputB;
+  ArtifactCore::String inputA;
+  ArtifactCore::String inputB;
 };
 
 class ViewportModel {
@@ -59,8 +60,8 @@ public:
   bool useEventLoop(const EventTrack& track, EventId eventId) noexcept;
   std::int64_t resolvePlaybackFrame(std::int64_t requestedFrame) const noexcept;
 
-  std::optional<CueKind> soloCue() const noexcept;
-  void setSoloCue(std::optional<CueKind> cue) noexcept;
+  ArtifactCore::Optional<CueKind> soloCue() const noexcept;
+  void setSoloCue(ArtifactCore::Optional<CueKind> cue) noexcept;
   bool isCueBypassed(CueKind cue) const noexcept;
   void setCueBypassed(CueKind cue, bool bypassed);
 
@@ -76,7 +77,7 @@ private:
   bool loopEnabled_ = true;
   std::int64_t loopFirstFrame_ = 0;
   std::int64_t loopLastFrame_ = 0;
-  std::optional<CueKind> soloCue_;
+  ArtifactCore::Optional<CueKind> soloCue_;
   std::vector<CueKind> bypassedCues_;
 };
 

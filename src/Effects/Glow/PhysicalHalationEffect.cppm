@@ -14,6 +14,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Particle;
 import Property.Abstract;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -38,7 +39,7 @@ public:
 PhysicalHalationEffect::PhysicalHalationEffect() {
     setDisplayName(UniString("Physical Halation"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<PhysicalHalationCPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<PhysicalHalationCPUImpl>());
     syncImpl();
 }
 

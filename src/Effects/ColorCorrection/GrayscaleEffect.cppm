@@ -21,6 +21,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -163,8 +164,8 @@ GrayscaleEffect::GrayscaleEffect() {
     setEffectID(UniString("effect.colorcorrection.grayscale"));
     setDisplayName(UniString("Grayscale"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<GrayscaleEffectCPUImpl>());
-    setGPUImpl(std::make_shared<GrayscaleEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<GrayscaleEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<GrayscaleEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 

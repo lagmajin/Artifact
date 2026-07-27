@@ -13,6 +13,8 @@ module;
 
 export module Artifact.Layer.Modifier;
 
+import Memory.SharedPtr;
+
 export namespace Artifact {
 
 enum class LayerModifierKind {
@@ -90,12 +92,12 @@ private:
 
 class LayerModifierStack {
 public:
-    void add(std::shared_ptr<ArtifactLayerModifier> modifier);
+    void add(SharedPtr<ArtifactLayerModifier> modifier);
     void remove(const QString& modifierId);
     void clear();
 
-    std::vector<std::shared_ptr<ArtifactLayerModifier>> modifiers() const;
-    std::shared_ptr<ArtifactLayerModifier> modifier(const QString& modifierId) const;
+    std::vector<SharedPtr<ArtifactLayerModifier>> modifiers() const;
+    SharedPtr<ArtifactLayerModifier> modifier(const QString& modifierId) const;
     int count() const;
     bool isEmpty() const;
 
@@ -105,11 +107,11 @@ public:
         double frameTime) const;
 
 private:
-    std::vector<std::shared_ptr<ArtifactLayerModifier>> modifiers_;
+    std::vector<SharedPtr<ArtifactLayerModifier>> modifiers_;
 };
 
 export QJsonObject serializeLayerModifier(const ArtifactLayerModifier& modifier);
-export std::shared_ptr<ArtifactLayerModifier> deserializeLayerModifier(const QJsonObject& obj);
+export SharedPtr<ArtifactLayerModifier> deserializeLayerModifier(const QJsonObject& obj);
 
 inline ArtifactLayerModifier::ArtifactLayerModifier() = default;
 inline ArtifactLayerModifier::~ArtifactLayerModifier() = default;
@@ -147,7 +149,7 @@ inline QTransform TransformLayerModifier::applyToTransform(
     return baseTransform * delta;
 }
 
-inline void LayerModifierStack::add(std::shared_ptr<ArtifactLayerModifier> modifier) {
+inline void LayerModifierStack::add(SharedPtr<ArtifactLayerModifier> modifier) {
     if (!modifier) {
         return;
     }
@@ -156,7 +158,7 @@ inline void LayerModifierStack::add(std::shared_ptr<ArtifactLayerModifier> modif
     if (!currentId.isEmpty()) {
         auto existing = std::find_if(
             modifiers_.begin(), modifiers_.end(),
-            [&currentId](const std::shared_ptr<ArtifactLayerModifier>& candidate) {
+            [&currentId](const SharedPtr<ArtifactLayerModifier>& candidate) {
                 return candidate && candidate->modifierId() == currentId;
             });
         if (existing != modifiers_.end()) {
@@ -175,7 +177,7 @@ inline void LayerModifierStack::remove(const QString& modifierId) {
 
     modifiers_.erase(
         std::remove_if(modifiers_.begin(), modifiers_.end(),
-            [&normalized](const std::shared_ptr<ArtifactLayerModifier>& candidate) {
+            [&normalized](const SharedPtr<ArtifactLayerModifier>& candidate) {
                 return candidate && candidate->modifierId() == normalized;
             }),
         modifiers_.end());
@@ -185,11 +187,11 @@ inline void LayerModifierStack::clear() {
     modifiers_.clear();
 }
 
-inline std::vector<std::shared_ptr<ArtifactLayerModifier>> LayerModifierStack::modifiers() const {
+inline std::vector<SharedPtr<ArtifactLayerModifier>> LayerModifierStack::modifiers() const {
     return modifiers_;
 }
 
-inline std::shared_ptr<ArtifactLayerModifier> LayerModifierStack::modifier(const QString& modifierId) const {
+inline SharedPtr<ArtifactLayerModifier> LayerModifierStack::modifier(const QString& modifierId) const {
     const QString normalized = modifierId.trimmed();
     if (normalized.isEmpty()) {
         return nullptr;
@@ -275,7 +277,7 @@ inline QJsonObject serializeLayerModifier(const ArtifactLayerModifier& modifier)
     return obj;
 }
 
-inline std::shared_ptr<ArtifactLayerModifier> deserializeLayerModifier(const QJsonObject& obj) {
+inline SharedPtr<ArtifactLayerModifier> deserializeLayerModifier(const QJsonObject& obj) {
     const QString kindText = obj.value(QStringLiteral("kind")).toString();
     auto kindFromString = [](const QString& kind) {
         const QString normalized = kind.trimmed().toLower();
@@ -302,7 +304,7 @@ inline std::shared_ptr<ArtifactLayerModifier> deserializeLayerModifier(const QJs
         return nullptr;
     }
 
-    auto transformModifier = std::make_shared<TransformLayerModifier>();
+    auto transformModifier = makeShared<TransformLayerModifier>();
     auto& modifier = *transformModifier;
 
     if (obj.contains(QStringLiteral("id"))) {

@@ -39,6 +39,7 @@ import Procedural3DGenerators;
 import Size;
 import Time.Rational;
 import Utils.Id;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -801,7 +802,7 @@ QJsonObject ArtifactProcedural3DLayer::toJson() const
 
 ArtifactAbstractLayerPtr ArtifactProcedural3DLayer::fromJson(const QJsonObject& object)
 {
-    auto layer = std::make_shared<ArtifactProcedural3DLayer>();
+    auto layer = ArtifactCore::makeShared<ArtifactProcedural3DLayer>();
     layer->fromJsonProperties(object);
     return layer;
 }
@@ -1025,14 +1026,14 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
     return ArtifactAbstractLayer::setLayerPropertyValue(path, value);
 }
 
-std::shared_ptr<ArtifactProcedural3DLayer> createTerrainLayer()
+ArtifactCore::SharedPtr<ArtifactProcedural3DLayer> createTerrainLayer()
 {
-    return std::make_shared<ArtifactProcedural3DLayer>(Procedural3DLayerKind::Terrain);
+    return ArtifactCore::makeShared<ArtifactProcedural3DLayer>(Procedural3DLayerKind::Terrain);
 }
 
-std::shared_ptr<ArtifactProcedural3DLayer> createPathTubeLayer()
+ArtifactCore::SharedPtr<ArtifactProcedural3DLayer> createPathTubeLayer()
 {
-    return std::make_shared<ArtifactProcedural3DLayer>(Procedural3DLayerKind::PathTube);
+    return ArtifactCore::makeShared<ArtifactProcedural3DLayer>(Procedural3DLayerKind::PathTube);
 }
 
 } // namespace Artifact

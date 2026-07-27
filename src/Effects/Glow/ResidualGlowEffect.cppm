@@ -14,6 +14,7 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -101,7 +102,7 @@ ResidualGlowEffect::ResidualGlowEffect()
     setEffectID(UniString("residual_glow"));
     setDisplayName(UniString("Residual Glow"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<ResidualGlowEffectCPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<ResidualGlowEffectCPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     syncImpls();
 }
@@ -140,7 +141,7 @@ void ResidualGlowEffect::setHistoryMix(float value)
 
 void ResidualGlowEffect::syncImpls()
 {
-    if (auto impl = std::dynamic_pointer_cast<ResidualGlowEffectCPUImpl>(cpuImpl())) {
+    if (auto impl = ArtifactCore::dynamicPointerCast<ResidualGlowEffectCPUImpl>(cpuImpl())) {
         impl->threshold = threshold_;
         impl->radius = radius_;
         impl->intensity = intensity_;

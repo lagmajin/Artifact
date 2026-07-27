@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -83,7 +83,7 @@ std::vector<AudioEffectParameter> CompressorEffect::getUiParameters() const {
     };
 }
 
-void CompressorEffect::setParameter(const std::string& name, float value) {
+void CompressorEffect::setParameter(const String& name, float value) {
     if      (name == "threshold") threshold_  = value;
     else if (name == "ratio")     ratio_      = value;
     else if (name == "attack")    attackMs_   = value;
@@ -92,7 +92,7 @@ void CompressorEffect::setParameter(const std::string& name, float value) {
     else if (name == "makeup")  { makeupGain_ = value; autoMakeup_ = (value == 0.0f); }
 }
 
-float CompressorEffect::getParameter(const std::string& name) const {
+float CompressorEffect::getParameter(const String& name) const {
     if      (name == "threshold") return threshold_;
     else if (name == "ratio")     return ratio_;
     else if (name == "attack")    return attackMs_;

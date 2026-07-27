@@ -23,6 +23,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -101,8 +102,8 @@ Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTextur
 LinearWipeEffect::LinearWipeEffect() {
     setDisplayName(UniString("Linear Wipe"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<LinearWipeEffectCPUImpl>());
-    auto gpu=std::make_shared<LinearWipeEffectGPUImpl>();gpu->angle_=angle_;gpu->softness_=softness_;gpu->feather_=feather_;setGPUImpl(gpu);setComputeMode(ComputeMode::AUTO);
+    setCPUImpl(ArtifactCore::makeShared<LinearWipeEffectCPUImpl>());
+    auto gpu=ArtifactCore::makeShared<LinearWipeEffectGPUImpl>();gpu->angle_=angle_;gpu->softness_=softness_;gpu->feather_=feather_;setGPUImpl(gpu);setComputeMode(ComputeMode::AUTO);
 }
 LinearWipeEffect::~LinearWipeEffect() = default;
 

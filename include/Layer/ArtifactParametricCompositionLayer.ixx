@@ -12,6 +12,7 @@ module;
 export module Artifact.Layer.ParametricComposition;
 
 import Artifact.Layer.Abstract;
+import Memory.SharedPtr;
 import Composition.ParametricComposition;
 
 export namespace Artifact {
@@ -24,8 +25,8 @@ public:
     // Parametric composition instance access
     ParametricCompositionInstance& parametricInstance();
     const ParametricCompositionInstance& parametricInstance() const;
-    void setDefinition(std::shared_ptr<const ParametricCompositionDefinition> definition);
-    std::shared_ptr<const ParametricCompositionDefinition> definition() const;
+    void setDefinition(SharedPtr<const ParametricCompositionDefinition> definition);
+    SharedPtr<const ParametricCompositionDefinition> definition() const;
 
     // Convenience: add binding for a slot
     void bindSlot(const QString& slotId, const ParametricCompositionInputBinding& binding);

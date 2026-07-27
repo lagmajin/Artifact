@@ -46,6 +46,7 @@ export module Artifact.Render.FrameCache;
 
 
 import Frame.Position;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -147,9 +148,9 @@ public:
     // Cache operations
     bool contains(const FramePosition& frame) const;
     
-    std::shared_ptr<FrameCacheEntry> get(const FramePosition& frame);
+    ArtifactCore::SharedPtr<FrameCacheEntry> get(const FramePosition& frame);
     
-    void put(std::shared_ptr<FrameCacheEntry> entry);
+    void put(ArtifactCore::SharedPtr<FrameCacheEntry> entry);
     
     void invalidate(const FramePosition& frame);
     void invalidateRange(const FrameRange& range);

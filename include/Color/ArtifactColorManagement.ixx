@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <wobjectdefs.h>
 
@@ -37,6 +37,8 @@
 #include <QVector>
 #include <QMatrix4x4>
 export module Artifact.Color.Management;
+
+import Memory.SharedPtr;
 
 
 
@@ -172,8 +174,8 @@ public:
     ColorLUTEffect();
     ~ColorLUTEffect();
 
-    void setLUT(std::shared_ptr<LUTData> lut);
-    std::shared_ptr<LUTData> lut() const;
+    void setLUT(ArtifactCore::SharedPtr<LUTData> lut);
+    ArtifactCore::SharedPtr<LUTData> lut() const;
 
     void setIntensity(float intensity);  // 0.0 - 1.0
     float intensity() const;

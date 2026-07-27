@@ -45,6 +45,7 @@ import Artifact.Project.CreationDefaults;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Asset.Manager;
+import Memory.SharedPtr;
 
 namespace Artifact
 {
@@ -223,7 +224,7 @@ namespace Artifact
    return result;
   }
   const int colorPipelineVersion = static_cast<int>(rawColorPipelineVersion);
-  auto projectPtr = std::make_shared<ArtifactProject>();
+  auto projectPtr = ArtifactCore::makeShared<ArtifactProject>();
   projectPtr->setColorPipelineVersion(colorPipelineVersion, false);
 
   // プロジェクト基本情報の読み込み
@@ -311,7 +312,7 @@ namespace Artifact
      ? compObj["name"].toString()
      : QStringLiteral("Composition");
 
-    auto compPtr = std::make_shared<ArtifactAbstractComposition>(compId, params);
+    auto compPtr = ArtifactCore::makeShared<ArtifactAbstractComposition>(compId, params);
     int layersInComp = 0;
 
     // レイヤーの読み込み

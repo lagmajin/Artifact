@@ -11,6 +11,7 @@ export module Artifact.Effect.AutoMosaic;
 import std;
 import Artifact.Effect.Abstract;
 import ArtifactCore.ImageProcessing.FaceDetection;
+import Memory.SharedPtr;
 import Utils.String.UniString;
 import Property.Abstract;
 
@@ -36,7 +37,7 @@ private:
     QVector<QRect> customRegions_;  // 手動で指定した領域
 
     // 内部検出エンジン
-    std::shared_ptr<FaceDetectionEngine> faceDetector_;
+    SharedPtr<FaceDetectionEngine> faceDetector_;
     FaceDetectionSettings detectionSettings_;
 
 public:
@@ -68,8 +69,8 @@ public:
     void clearCustomRegions() { customRegions_.clear(); }
 
     // 顔検出エンジン
-    void setFaceDetector(std::shared_ptr<FaceDetectionEngine> detector) { faceDetector_ = detector; }
-    std::shared_ptr<FaceDetectionEngine> faceDetector() const { return faceDetector_; }
+    void setFaceDetector(SharedPtr<FaceDetectionEngine> detector) { faceDetector_ = detector; }
+    SharedPtr<FaceDetectionEngine> faceDetector() const { return faceDetector_; }
 
     const FaceDetectionSettings& detectionSettings() const { return detectionSettings_; }
     void setDetectionSettings(const FaceDetectionSettings& settings) { detectionSettings_ = settings; }

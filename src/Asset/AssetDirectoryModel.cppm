@@ -53,6 +53,7 @@ module;
 module AssetDirectoryModel;
 
 import Undo.UndoManager;
+import File.TypeDetector;
 
 
 
@@ -89,8 +90,8 @@ namespace Artifact {
   void calculateIntelligence(TreeItem* node);
 
   static bool isImageFile(const QString& fileName) {
-    const QString ext = QFileInfo(fileName).suffix().toLower();
-    return ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "tif" || ext == "tiff" || ext == "bmp" || ext == "gif" || ext == "exr" || ext == "hdr" || ext == "tga" || ext == "webp" || ext == "ico" || ext == "dds" || ext == "ktx" || ext == "psd" || ext == "psb";
+    return ArtifactCore::FileTypeDetector().detectByExtension(fileName) ==
+           ArtifactCore::FileType::Image;
   }
   static bool isVideoFile(const QString& fileName) {
     const QString ext = QFileInfo(fileName).suffix().toLower();

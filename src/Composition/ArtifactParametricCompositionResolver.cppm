@@ -1,6 +1,5 @@
 module;
 
-#include <optional>
 #include <memory>
 
 #include <QImage>
@@ -24,11 +23,11 @@ ArtifactCore::ParametricCompositionInputResolver buildParametricCompositionInput
 
     resolver.resolve =
         [](const ParametricCompositionInputBinding& binding,
-           const ParametricCompositionRenderContext& context) -> std::optional<ImageF32x4_RGBA>
+           const ParametricCompositionRenderContext& context) -> ArtifactCore::Optional<ImageF32x4_RGBA>
     {
         // Bool slots have no image data - skip
         if (binding.kind == ParametricCompositionSlotKind::Bool) {
-            return std::nullopt;
+            return {};
         }
 
         // Image/Matte: use embedded data directly
@@ -36,24 +35,24 @@ ArtifactCore::ParametricCompositionInputResolver buildParametricCompositionInput
             if (!binding.image.isEmpty()) {
                 return binding.image;
             }
-            return std::nullopt;
+            return {};
         }
         if (binding.kind == ParametricCompositionSlotKind::Matte) {
             if (!binding.matte.isEmpty()) {
                 return binding.matte;
             }
-            return std::nullopt;
+            return {};
         }
 
         // SourceLayer: look up the layer and render it
         if (binding.kind == ParametricCompositionSlotKind::SourceLayer) {
             if (binding.sourceLayerId.isNil()) {
-                return std::nullopt;
+                return {};
             }
 
             auto* svc = ArtifactProjectService::instance();
             if (!svc) {
-                return std::nullopt;
+                return {};
             }
 
             // Find the composition that owns this layer
@@ -61,7 +60,7 @@ ArtifactCore::ParametricCompositionInputResolver buildParametricCompositionInput
             // Alternatively, the binding could store the composition context
             auto project = svc->getCurrentProjectSharedPtr();
             if (!project) {
-                return std::nullopt;
+                return {};
             }
 
             // Try to find the layer in any composition
@@ -115,7 +114,7 @@ ArtifactCore::ParametricCompositionInputResolver buildParametricCompositionInput
         }
 
         // Text, RGBA, Alpha, MotionPath, Control, Event: not yet supported by default resolver
-        return std::nullopt;
+        return {};
     };
 
     return resolver;

@@ -34,6 +34,7 @@ module;
 
 module Artifact.Menu.Layer;
 import std;
+import Memory.SharedPtr;
 
 import Event.Bus;
 import Artifact.Event.Types;
@@ -416,7 +417,7 @@ private:
 
 class AddLayerMaskCommand final : public UndoCommand {
 public:
-    AddLayerMaskCommand(std::shared_ptr<ArtifactAbstractLayer> layer,
+    AddLayerMaskCommand(ArtifactCore::SharedPtr<ArtifactAbstractLayer> layer,
                         LayerMask mask, int index)
         : layer_(std::move(layer)), mask_(std::move(mask)), index_(index) {}
 
@@ -441,7 +442,7 @@ public:
     }
 
 private:
-    std::shared_ptr<ArtifactAbstractLayer> layer_;
+    ArtifactCore::SharedPtr<ArtifactAbstractLayer> layer_;
     LayerMask mask_;
     int index_ = 0;
 };
@@ -641,8 +642,8 @@ class SetParametricDefinitionCommand final : public UndoCommand {
 public:
     SetParametricDefinitionCommand(
         ArtifactAbstractLayerWeak layer,
-        std::shared_ptr<const ParametricCompositionDefinition> before,
-        std::shared_ptr<const ParametricCompositionDefinition> after,
+        ArtifactCore::SharedPtr<const ParametricCompositionDefinition> before,
+        ArtifactCore::SharedPtr<const ParametricCompositionDefinition> after,
         QString label)
         : layer_(std::move(layer)),
           before_(std::move(before)),
@@ -667,9 +668,9 @@ public:
     }
 
 private:
-    void apply(const std::shared_ptr<const ParametricCompositionDefinition>& definition)
+    void apply(const ArtifactCore::SharedPtr<const ParametricCompositionDefinition>& definition)
     {
-        const auto layer = std::dynamic_pointer_cast<ArtifactParametricCompositionLayer>(
+        const auto layer = ArtifactCore::dynamicPointerCast<ArtifactParametricCompositionLayer>(
             layer_.lock());
         if (!layer) {
             return;
@@ -681,8 +682,8 @@ private:
     }
 
     ArtifactAbstractLayerWeak layer_;
-    std::shared_ptr<const ParametricCompositionDefinition> before_;
-    std::shared_ptr<const ParametricCompositionDefinition> after_;
+    ArtifactCore::SharedPtr<const ParametricCompositionDefinition> before_;
+    ArtifactCore::SharedPtr<const ParametricCompositionDefinition> after_;
     QString label_;
 };
 
@@ -841,7 +842,7 @@ reorderedTransformFieldsForMove(const ArtifactCompositionPtr& composition,
     return QPair<QVector<CompositionTransformField>, int>{std::move(fields), targetIndex};
 }
 
-std::shared_ptr<ArtifactParametricCompositionLayer> currentSelectedParametricLayer()
+ArtifactCore::SharedPtr<ArtifactParametricCompositionLayer> currentSelectedParametricLayer()
 {
     auto* service = ArtifactProjectService::instance();
     if (!service) {
@@ -855,7 +856,7 @@ std::shared_ptr<ArtifactParametricCompositionLayer> currentSelectedParametricLay
     if (!selection) {
         return {};
     }
-    return std::dynamic_pointer_cast<ArtifactParametricCompositionLayer>(
+    return ArtifactCore::dynamicPointerCast<ArtifactParametricCompositionLayer>(
         selection->currentLayer());
 }
 
@@ -1786,7 +1787,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             const auto created = ArtifactLayerSelectionManager::instance()
                                      ? ArtifactLayerSelectionManager::instance()->currentLayer()
                                      : ArtifactAbstractLayerPtr{};
-            const auto particleLayer = std::dynamic_pointer_cast<ArtifactParticleLayer>(created);
+            const auto particleLayer = ArtifactCore::dynamicPointerCast<ArtifactParticleLayer>(created);
             if (!particleLayer) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
                                      "Particle レイヤーの生成に失敗しました。");
@@ -2088,7 +2089,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     if (hasLayer && service) {
         if (auto comp = service->currentComposition().lock()) {
             isTextLayerSelected = static_cast<bool>(
-                std::dynamic_pointer_cast<ArtifactTextLayer>(
+                ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(
                     comp->layerById(selectedLayerId_)));
         }
     }
@@ -2136,9 +2137,9 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
                     continue;
                 }
                 hasAudio = hasAudio ||
-                           static_cast<bool>(std::dynamic_pointer_cast<ArtifactAudioLayer>(layer));
+                           static_cast<bool>(ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer));
                 hasSwitch = hasSwitch ||
-                            static_cast<bool>(std::dynamic_pointer_cast<ArtifactSwitchLayer>(layer));
+                            static_cast<bool>(ArtifactCore::dynamicPointerCast<ArtifactSwitchLayer>(layer));
             }
         }
         canApplyLipSync = hasAudio && hasSwitch;
@@ -2149,7 +2150,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     if (hasLayer) {
         if (auto *svc = ArtifactProjectService::instance()) {
             auto comp = svc->currentComposition().lock();
-            auto compLayer = comp ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(
+            auto compLayer = comp ? ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(
                                         comp->layerById(selectedLayerId_))
                                   : nullptr;
             isPrecomposeLayer = compLayer && !compLayer->sourceCompositionId().isNil();
@@ -2172,7 +2173,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     const bool hasParametricLayer = static_cast<bool>(parametricLayer);
     const auto parametricDefinition =
         hasParametricLayer ? parametricLayer->definition()
-                           : std::shared_ptr<const ParametricCompositionDefinition>{};
+                           : ArtifactCore::SharedPtr<const ParametricCompositionDefinition>{};
     addParametricParameterAction->setEnabled(hasParametricLayer);
     publishParametricParameterAction->setEnabled(
         parametricDefinition && !parametricDefinition->parameters().isEmpty());
@@ -2193,7 +2194,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
         if (auto comp = service->currentComposition().lock()) {
             if (auto layer = comp->layerById(selectedLayerId_)) {
                 isVideoSelected = layer->hasVideo();
-                if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+                if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
                     proxyQuality = videoLayer->proxyQuality();
                     hasProxy = videoLayer->hasProxy();
                 }
@@ -2299,7 +2300,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
                 if (!layer || !isSelected(layer->id())) {
                     continue;
                 }
-                auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+                auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
                 if (!videoLayer) {
                     continue;
                 }
@@ -2534,7 +2535,7 @@ void ArtifactLayerMenu::Impl::handleCreateFormParticle()
     const auto created = ArtifactLayerSelectionManager::instance()
         ? ArtifactLayerSelectionManager::instance()->currentLayer()
         : ArtifactAbstractLayerPtr{};
-    if (const auto formLayer = std::dynamic_pointer_cast<ArtifactFormParticleLayer>(created)) {
+    if (const auto formLayer = ArtifactCore::dynamicPointerCast<ArtifactFormParticleLayer>(created)) {
         formLayer->loadPreset(QStringLiteral("dotGrid"));
     }
 }
@@ -2559,7 +2560,7 @@ void ArtifactLayerMenu::Impl::handleCreateProcedural3D(Procedural3DLayerKind kin
     const auto created = ArtifactLayerSelectionManager::instance()
         ? ArtifactLayerSelectionManager::instance()->currentLayer()
         : ArtifactAbstractLayerPtr{};
-    if (const auto layer = std::dynamic_pointer_cast<ArtifactProcedural3DLayer>(created)) {
+    if (const auto layer = ArtifactCore::dynamicPointerCast<ArtifactProcedural3DLayer>(created)) {
         layer->loadPreset(kind == Procedural3DLayerKind::Terrain
                               ? QStringLiteral("lowPolyTerrain")
                               : QStringLiteral("neonPathTube"));
@@ -2595,7 +2596,7 @@ void ArtifactLayerMenu::Impl::handleCreateCamera()
     auto* app = ArtifactApplicationManager::instance();
     auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
     const auto camera = selectionManager
-        ? std::dynamic_pointer_cast<ArtifactCameraLayer>(selectionManager->currentLayer())
+        ? ArtifactCore::dynamicPointerCast<ArtifactCameraLayer>(selectionManager->currentLayer())
         : nullptr;
     if (!camera) {
         return;
@@ -2920,7 +2921,7 @@ void ArtifactLayerMenu::Impl::handleCreateShape(ShapeType type, const QString& n
     if (auto* app = ArtifactApplicationManager::instance()) {
         if (auto* selectionManager = app->layerSelectionManager()) {
             if (auto current = selectionManager->currentLayer()) {
-                if (auto shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(current)) {
+                if (auto shapeLayer = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(current)) {
                     shapeLayer->setShapeType(type);
                 }
             }
@@ -3055,7 +3056,7 @@ void ArtifactLayerMenu::Impl::handleSetProxyQuality(ProxyQuality quality)
         return;
     }
     auto layer = comp->layerById(selectedLayerId_);
-    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    auto videoLayer = layer ? ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) : nullptr;
     if (!videoLayer || videoLayer->proxyQuality() == quality) {
         return;
     }
@@ -3078,7 +3079,7 @@ void ArtifactLayerMenu::Impl::handleGenerateProxy()
         return;
     }
     auto layer = comp->layerById(selectedLayerId_);
-    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    auto videoLayer = layer ? ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) : nullptr;
     if (!videoLayer) {
         return;
     }
@@ -3126,7 +3127,7 @@ void ArtifactLayerMenu::Impl::handleRevealProxy()
         return;
     }
     auto layer = comp->layerById(selectedLayerId_);
-    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    auto videoLayer = layer ? ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) : nullptr;
     if (!videoLayer) {
         return;
     }
@@ -3152,7 +3153,7 @@ void ArtifactLayerMenu::Impl::handleClearProxy()
         return;
     }
     auto layer = comp->layerById(selectedLayerId_);
-    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    auto videoLayer = layer ? ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) : nullptr;
     if (!videoLayer) {
         return;
     }
@@ -3209,7 +3210,7 @@ QStringList ArtifactLayerMenu::Impl::selectedVideoSourcePathsInCurrentCompositio
         if (!layer || !isSelected(layer->id())) {
             continue;
         }
-        auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+        auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
         if (!videoLayer) {
             continue;
         }
@@ -3347,7 +3348,7 @@ void ArtifactLayerMenu::Impl::handleCreateMaskFromText()
         return;
     }
 
-    auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(
+    auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(
         comp->layerById(selectedLayerId_));
     if (!textLayer) {
         return;
@@ -3473,18 +3474,18 @@ void ArtifactLayerMenu::Impl::handleApplyLipSyncToSwitchLayer()
         if (!layer) {
             continue;
         }
-        if (!audioLayer && std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+        if (!audioLayer && ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
             audioLayer = layer;
             continue;
         }
-        if (!switchLayer && std::dynamic_pointer_cast<ArtifactSwitchLayer>(layer)) {
+        if (!switchLayer && ArtifactCore::dynamicPointerCast<ArtifactSwitchLayer>(layer)) {
             switchLayer = layer;
             continue;
         }
     }
 
-    const auto audio = std::dynamic_pointer_cast<ArtifactAudioLayer>(audioLayer);
-    auto switchTargetPtr = std::dynamic_pointer_cast<ArtifactSwitchLayer>(switchLayer);
+    const auto audio = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(audioLayer);
+    auto switchTargetPtr = ArtifactCore::dynamicPointerCast<ArtifactSwitchLayer>(switchLayer);
     if (!audio || !switchTargetPtr) {
         QMessageBox::warning(menu_->window(), QStringLiteral("Lip Sync"),
                              QStringLiteral("音声レイヤーと Switch Layer の両方を選択してください。"));
@@ -3565,7 +3566,7 @@ void ArtifactLayerMenu::Impl::handleUnprecompose()
     }
 
     auto comp = service->currentComposition().lock();
-    auto compLayer = comp ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(
+    auto compLayer = comp ? ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(
                                 comp->layerById(selectedLayerId_))
                           : nullptr;
     if (!compLayer || compLayer->sourceCompositionId().isNil()) {
@@ -3703,7 +3704,7 @@ void ArtifactLayerMenu::Impl::handleCreateMotionTracker()
     }
 
     auto layer = comp->layerById(selectedLayerId_);
-    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    auto videoLayer = layer ? ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) : nullptr;
     if (!videoLayer || !videoLayer->hasVideo()) {
         QMessageBox::warning(menu_->window(), "Motion Tracker", "動画レイヤーを選択してください。");
         return;
@@ -4586,7 +4587,7 @@ void ArtifactLayerMenu::Impl::handleAddParametricParameter()
     }
 
     const auto before = layer->definition();
-    auto after = std::make_shared<ParametricCompositionDefinition>(
+    auto after = ArtifactCore::makeShared<ParametricCompositionDefinition>(
         before ? *before
                : makeDefaultParametricCompositionDefinition(
                      QStringLiteral("parametric.layer"),
@@ -4656,7 +4657,7 @@ void ArtifactLayerMenu::Impl::handlePublishParametricParameter()
     if (!before) {
         return;
     }
-    auto after = std::make_shared<ParametricCompositionDefinition>(*before);
+    auto after = ArtifactCore::makeShared<ParametricCompositionDefinition>(*before);
     ParametricCompositionPublishedControl control;
     control.sourceParameterKey = parameterKey;
     control.controlId = parameterKey;
@@ -4726,7 +4727,7 @@ void ArtifactLayerMenu::Impl::handleEditParametricControl()
     if (!before) {
         return;
     }
-    auto after = std::make_shared<ParametricCompositionDefinition>(*before);
+    auto after = ArtifactCore::makeShared<ParametricCompositionDefinition>(*before);
     auto selectedControl = controls.at(selectedIndex);
 
     const QString newDisplayName = QInputDialog::getText(
@@ -4811,7 +4812,7 @@ void ArtifactLayerMenu::Impl::handleUnpublishParametricControl()
     if (!before) {
         return;
     }
-    auto after = std::make_shared<ParametricCompositionDefinition>(*before);
+    auto after = ArtifactCore::makeShared<ParametricCompositionDefinition>(*before);
     if (!after->removePublishedControl(controlId)) {
         QMessageBox::warning(
             menu_->window(), QStringLiteral("Published Control"),

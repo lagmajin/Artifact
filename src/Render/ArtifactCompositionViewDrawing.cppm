@@ -45,6 +45,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;
 import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
+import Memory.SharedPtr;
 import Layer.Matte;
 import Image.ImageF32x4_RGBA;
 import Graphics.SurfaceColorContract;
@@ -61,7 +62,7 @@ export struct LayerSurfaceCacheEntry
   QString ownerId;
   QString cacheSignature;
   QImage processedSurface;
-  std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
+  ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
   GPUTextureCacheHandle gpuTextureHandle;
   int64_t frameNumber = std::numeric_limits<int64_t>::min();
 };
@@ -71,7 +72,7 @@ export struct StaticLayerGpuCacheEntry
   QString ownerId;
   QString cacheSignature;
   QImage processedSurface;
-  std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
+  ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
   GPUTextureCacheHandle gpuTextureHandle;
   int64_t lastFrameNumber = std::numeric_limits<int64_t>::min();
   size_t byteSize = 0;
@@ -1230,7 +1231,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     }
     LayerSurfaceCacheEntry* cacheEntry = nullptr;
     StaticLayerGpuCacheEntry* staticCacheEntry = nullptr;
-    std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> directProcessedBuffer;
+    ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> directProcessedBuffer;
 
     if (layerUsesStaticLayerGpuCacheForCompositionView(layer) &&
         !cacheSignature.isEmpty()) {
@@ -1264,11 +1265,11 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           surface = cacheEntry->processedSurface;
         }
       } else {
-        std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
+        ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
         if (allowSurfaceCache) {
           ArtifactCore::ImageF32x4_RGBA processed;
           if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
-            processedBuffer = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
+            processedBuffer = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(processed);
           }
         }
         directProcessedBuffer = processedBuffer;
@@ -1295,7 +1296,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       if (!processedSurface.isNull() &&
           buildRasterizedSurfaceBuffer(layer, processedSurface, &processed)) {
         directProcessedBuffer =
-            std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
+            ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(processed);
       } else if (!processedSurface.isNull()) {
         surface = processedSurface;
       }
@@ -1313,7 +1314,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         if (!entry.processedBuffer && allowSurfaceCache) {
           ArtifactCore::ImageF32x4_RGBA processed;
           if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
-            entry.processedBuffer = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
+            entry.processedBuffer = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(processed);
           }
         }
         entry.processedSurface = entry.processedBuffer ? QImage{} : surface;
@@ -1383,7 +1384,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
 
         if (usesGpuTextureCache) {
           GPUTextureCacheHandle* textureHandle = nullptr;
-          const std::shared_ptr<ArtifactCore::ImageF32x4_RGBA>* processedBuffer = nullptr;
+          const ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>* processedBuffer = nullptr;
           const QImage* processedSurface = nullptr;
           if (staticCacheEntry) {
             textureHandle = &staticCacheEntry->gpuTextureHandle;

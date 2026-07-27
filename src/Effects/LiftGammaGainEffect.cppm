@@ -25,6 +25,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -115,8 +116,8 @@ LiftGammaGainEffect::LiftGammaGainEffect() {
     setDisplayName(ArtifactCore::UniString("Lift / Gamma / Gain"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
 
-    setCPUImpl(std::make_shared<LiftGammaGainCPUImpl>());
-    setGPUImpl(std::make_shared<LiftGammaGainGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<LiftGammaGainCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<LiftGammaGainGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 

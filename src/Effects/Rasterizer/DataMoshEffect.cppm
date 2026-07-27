@@ -18,6 +18,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -139,7 +140,7 @@ void DataMoshEffect::setPropertyValue(const UniString& n,const QVariant& v){
     else if(k=="blend")setBlend(v.toFloat());
 }
 void DataMoshEffect::syncImpls(){
-    auto c=std::make_shared<DataMoshCPUImpl>();
+    auto c=ArtifactCore::makeShared<DataMoshCPUImpl>();
     c->intensity_=intensity_;c->holdFrames_=holdFrames_;c->blockSize_=blockSize_;c->blend_=blend_;setCPUImpl(c);
 }
 } // namespace Artifact

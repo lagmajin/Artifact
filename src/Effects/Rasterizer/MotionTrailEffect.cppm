@@ -17,6 +17,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -141,7 +142,7 @@ void MotionTrailEffect::setPropertyValue(const UniString& n,const QVariant& v){
     else if(k=="blendMode")setBlendMode(v.toFloat());
 }
 void MotionTrailEffect::syncImpls(){
-    auto c=std::make_shared<MotionTrailCPUImpl>();
+    auto c=ArtifactCore::makeShared<MotionTrailCPUImpl>();
     c->trailLength_=trailLength_;c->decay_=decay_;c->velocityScale_=velocityScale_;c->blendMode_=blendMode_;
     setCPUImpl(c);
 }

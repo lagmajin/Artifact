@@ -56,6 +56,7 @@ import Color.Float;
 import MeshImporter;
 import Mesh;
 import ArtifactDiligentEngineRenderWindow;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -85,7 +86,7 @@ public:
     QPointF lastMousePos_;
     NavMode navMode_ = NavMode::None;
 
-    std::shared_ptr<ArtifactCore::Mesh> currentMesh = nullptr;
+    SharedPtr<ArtifactCore::Mesh> currentMesh = nullptr;
     bool modelLoaded = false;
     DisplayMode mode = DisplayMode::Solid;
     ArtifactCore::MeshImporter::Backend lastBackend = ArtifactCore::MeshImporter::Backend::None;

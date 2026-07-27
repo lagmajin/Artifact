@@ -54,6 +54,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -140,12 +141,12 @@ void SpherizeEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF3
 
 class SpherizeEffect::Impl {
 public:
-    std::shared_ptr<SpherizeEffectCPUImpl> cpuImpl_;
-    std::shared_ptr<SpherizeEffectGPUImpl> gpuImpl_;
+    ArtifactCore::SharedPtr<SpherizeEffectCPUImpl> cpuImpl_;
+    ArtifactCore::SharedPtr<SpherizeEffectGPUImpl> gpuImpl_;
 
     Impl() {
-        cpuImpl_ = std::make_shared<SpherizeEffectCPUImpl>();
-        gpuImpl_ = std::make_shared<SpherizeEffectGPUImpl>();
+        cpuImpl_ = ArtifactCore::makeShared<SpherizeEffectCPUImpl>();
+        gpuImpl_ = ArtifactCore::makeShared<SpherizeEffectGPUImpl>();
     }
 };
 

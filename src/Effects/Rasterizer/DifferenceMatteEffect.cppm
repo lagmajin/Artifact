@@ -16,6 +16,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -98,6 +99,6 @@ void DifferenceMatteEffect::setPropertyValue(const UniString& n,const QVariant& 
     else if(k=="threshold")setThreshold(v.toFloat());
 }
 void DifferenceMatteEffect::syncImpls(){
-    auto c=std::make_shared<DifferenceMatteCPUImpl>();c->refOffset_=refOffset_;c->threshold_=threshold_;setCPUImpl(c);
+    auto c=ArtifactCore::makeShared<DifferenceMatteCPUImpl>();c->refOffset_=refOffset_;c->threshold_=threshold_;setCPUImpl(c);
 }
 } // namespace Artifact

@@ -20,6 +20,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 import Core.Parallel;
 
 namespace Artifact {
@@ -290,8 +291,8 @@ FillEffect::FillEffect() {
     setEffectID(UniString("effect.colorcorrection.fill"));
     setDisplayName(UniString("Fill"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<FillEffectCPUImpl>());
-    setGPUImpl(std::make_shared<FillEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<FillEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<FillEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     applyPreset(preset_);
     syncImpls();

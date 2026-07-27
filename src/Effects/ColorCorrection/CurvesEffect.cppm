@@ -26,6 +26,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 import Core.Parallel;
 
 namespace Artifact {
@@ -330,8 +331,8 @@ CurvesEffect::CurvesEffect() {
     setEffectID(UniString("effect.colorcorrection.curves"));
     setDisplayName(UniString("Curves"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<CurvesEffectCPUImpl>());
-    setGPUImpl(std::make_shared<CurvesEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<CurvesEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<CurvesEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     syncImpls();
 }

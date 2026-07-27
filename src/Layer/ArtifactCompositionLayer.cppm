@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QSize>
 #include <QVariant>
@@ -52,6 +52,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Service.Project;
 import Composition.Settings;
 import Property.ExposedPropertyRegistry;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -242,7 +243,7 @@ bool ArtifactCompositionLayer::beginExposedPropertyOverrideScope() {
     const auto target = source->layerById(targetLayerId);
     const auto property = target
         ? target->getProperty(binding.internalPath)
-        : std::shared_ptr<ArtifactCore::AbstractProperty>{};
+        : SharedPtr<ArtifactCore::AbstractProperty>{};
     if (!target || !property) {
       continue;
     }
@@ -353,7 +354,7 @@ void ArtifactCompositionLayer::fromJsonProperties(const QJsonObject &obj) {
       !impl_->exposedPropertyOverrides_.isEmpty();
 }
 
-std::shared_ptr<ArtifactAbstractComposition>
+SharedPtr<ArtifactAbstractComposition>
 ArtifactCompositionLayer::sourceComposition() const {
   auto *service = ArtifactProjectService::instance();
   if (!service) {

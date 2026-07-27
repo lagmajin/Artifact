@@ -43,6 +43,7 @@ export module Artifact.Layers.Abstract._2D;
 
 import Artifact.Layer.Abstract;
 import ArtifactCore.Rig2D;
+import Memory.SharedPtr;
 import Utils.Id;
 
 
@@ -77,25 +78,25 @@ export namespace Artifact
   bool removeRigBone(const ArtifactCore::Id& boneId);
   bool setRigBoneLocalTransform(const ArtifactCore::Id& boneId,
                                 const ArtifactCore::BoneTransform& transform);
-  std::shared_ptr<ArtifactCore::ParentConstraint2D> addRigParentConstraint(
+  ArtifactCore::SharedPtr<ArtifactCore::ParentConstraint2D> addRigParentConstraint(
       const QString& name,
       const ArtifactCore::Id& targetBoneId,
       const ArtifactCore::Id& parentBoneId);
-  std::shared_ptr<ArtifactCore::MapRangeConstraint2D> addRigMapRangeConstraint(
+  ArtifactCore::SharedPtr<ArtifactCore::MapRangeConstraint2D> addRigMapRangeConstraint(
       const QString& name,
       const ArtifactCore::Id& controlId,
       const ArtifactCore::Id& targetBoneId);
-  std::shared_ptr<ArtifactCore::AimConstraint2D> addRigAimConstraint(
+  ArtifactCore::SharedPtr<ArtifactCore::AimConstraint2D> addRigAimConstraint(
       const QString& name,
       const ArtifactCore::Id& sourceBoneId,
       const ArtifactCore::Id& targetBoneId);
-  std::shared_ptr<ArtifactCore::TwoBoneIKConstraint2D> addRigTwoBoneIKConstraint(
+  ArtifactCore::SharedPtr<ArtifactCore::TwoBoneIKConstraint2D> addRigTwoBoneIKConstraint(
       const QString& name,
       const ArtifactCore::Id& upperBoneId,
       const ArtifactCore::Id& lowerBoneId,
       const ArtifactCore::Id& effectorBoneId,
       const ArtifactCore::Id& targetBoneId);
-  std::shared_ptr<ArtifactCore::RigPropertyBinding2D> addRigPropertyBinding(
+  ArtifactCore::SharedPtr<ArtifactCore::RigPropertyBinding2D> addRigPropertyBinding(
       const QString& name,
       const ArtifactCore::Id& controlId,
       const QString& targetPropertyPath);

@@ -18,6 +18,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -112,7 +113,7 @@ void SlitScanEffect::setPropertyValue(const UniString& n,const QVariant& v){
     else if(k=="position")setPosition(v.toFloat());
 }
 void SlitScanEffect::syncImpls(){
-    auto c=std::make_shared<SlitScanCPUImpl>();
+    auto c=ArtifactCore::makeShared<SlitScanCPUImpl>();
     c->direction_=direction_;c->speed_=speed_;c->persistence_=persistence_;c->position_=position_;setCPUImpl(c);
 }
 } // namespace Artifact

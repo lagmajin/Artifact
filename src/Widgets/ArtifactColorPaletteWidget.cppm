@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -75,7 +75,7 @@ static QColor toQColor(const ArtifactCore::FloatColor& color)
 // Custom delegate to draw colored palettes in the list
 class PaletteItemDelegate : public QStyledItemDelegate {
 public:
-    PaletteItemDelegate(std::shared_ptr<ArtifactCore::Color::ColorPaletteManager> manager, QObject* parent = nullptr)
+    PaletteItemDelegate(ArtifactCore::SharedPtr<ArtifactCore::Color::ColorPaletteManager> manager, QObject* parent = nullptr)
         : QStyledItemDelegate(parent), manager_(manager) {}
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
@@ -107,13 +107,13 @@ public:
         painter->restore();
     }
 private:
-    std::shared_ptr<ArtifactCore::Color::ColorPaletteManager> manager_;
+    ArtifactCore::SharedPtr<ArtifactCore::Color::ColorPaletteManager> manager_;
 };
 
 
 class ArtifactColorPaletteWidget::Impl {
 public:
-    std::shared_ptr<ArtifactCore::Color::ColorPaletteManager> manager;
+    ArtifactCore::SharedPtr<ArtifactCore::Color::ColorPaletteManager> manager;
     
     QListWidget* listWidget = nullptr;
     QPushButton* btnGenerate = nullptr;
@@ -128,7 +128,7 @@ ArtifactColorPaletteWidget::ArtifactColorPaletteWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl()) 
 {
     // Default manager fallback if none is provided
-    impl_->manager = std::make_shared<ArtifactCore::Color::ColorPaletteManager>();
+    impl_->manager = ArtifactCore::makeShared<ArtifactCore::Color::ColorPaletteManager>();
 
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
 
@@ -181,7 +181,7 @@ ArtifactColorPaletteWidget::~ArtifactColorPaletteWidget() {
     delete impl_;
 }
 
-void ArtifactColorPaletteWidget::setPaletteManager(std::shared_ptr<ArtifactCore::Color::ColorPaletteManager> manager) {
+void ArtifactColorPaletteWidget::setPaletteManager(ArtifactCore::SharedPtr<ArtifactCore::Color::ColorPaletteManager> manager) {
     if (manager) {
         impl_->manager = manager;
         // Delegate also needs the new manager reference, we simply recreate it

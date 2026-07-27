@@ -22,6 +22,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -216,15 +217,15 @@ private:
 DirectionalGlowEffect::DirectionalGlowEffect() {
     setDisplayName(UniString("Directional Glow / Streaks"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<DirectionalGlowCPUImpl>());
-    setGPUImpl(std::make_shared<DirectionalGlowGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<DirectionalGlowCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<DirectionalGlowGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 
 DirectionalGlowEffect::~DirectionalGlowEffect() = default;
 
 void DirectionalGlowEffect::syncImpls() {
-    if (auto cpu = std::dynamic_pointer_cast<DirectionalGlowCPUImpl>(cpuImpl())) {
+    if (auto cpu = ArtifactCore::dynamicPointerCast<DirectionalGlowCPUImpl>(cpuImpl())) {
         cpu->threshold_ = threshold_;
         cpu->intensity_ = intensity_;
         cpu->length1_ = length1_;
@@ -235,7 +236,7 @@ void DirectionalGlowEffect::syncImpls() {
         cpu->customAngles_ = customAngles_;
         cpu->angleOffset_ = angleOffset_;
     }
-    if (auto gpu = std::dynamic_pointer_cast<DirectionalGlowGPUImpl>(gpuImpl())) {
+    if (auto gpu = ArtifactCore::dynamicPointerCast<DirectionalGlowGPUImpl>(gpuImpl())) {
         gpu->threshold_ = threshold_;
         gpu->intensity_ = intensity_;
         gpu->length1_ = length1_;

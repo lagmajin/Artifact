@@ -51,6 +51,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Translation.Manager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -411,12 +412,12 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
 
 class GaussianBlur::Impl {
 public:
-    std::shared_ptr<GaussianBlurCPUImpl> cpuImpl_;
-    std::shared_ptr<GaussianBlurGPUImpl> gpuImpl_;
+    ArtifactCore::SharedPtr<GaussianBlurCPUImpl> cpuImpl_;
+    ArtifactCore::SharedPtr<GaussianBlurGPUImpl> gpuImpl_;
 
     Impl() {
-        cpuImpl_ = std::make_shared<GaussianBlurCPUImpl>();
-        gpuImpl_ = std::make_shared<GaussianBlurGPUImpl>();
+        cpuImpl_ = ArtifactCore::makeShared<GaussianBlurCPUImpl>();
+        gpuImpl_ = ArtifactCore::makeShared<GaussianBlurGPUImpl>();
     }
 };
 

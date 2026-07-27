@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <functional>
 #include <memory>
@@ -19,6 +19,7 @@ import ArtifactCore.Plugin.Registry;
 import ArtifactCore.Plugin.Layer.Interface;
 import Artifact.Plugin.Loader;   // ArtifactPluginLoader
 import Artifact.Plugin.Layer.Adapter;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -26,10 +27,10 @@ using namespace ArtifactCore;
 struct PluginLayerFactory::Impl {
     std::vector<LayerPluginInfo> plugins;
 
-    void registerFromDll(const std::string& pluginId,
+    void registerFromDll(const ArtifactCore::String& pluginId,
                          ArtifactPluginInstance instance,
                          ArtifactLayerPluginVTable vtable) {
-        auto adapter = std::make_shared<LayerPluginAdapter>(pluginId, vtable, instance);
+        auto adapter = ArtifactCore::makeShared<LayerPluginAdapter>(ArtifactCore::toStdString(pluginId), vtable, instance);
         if (adapter->initialize()) {
             LayerPluginInfo info;
             info.id = pluginId;
@@ -65,8 +66,9 @@ void PluginLayerFactory::scanAndRegister() {
 
         if (!fnCreate || !fnVTable) return;
 
-        auto instance = fnCreate(desc.id.c_str());
-        auto vtable = fnVTable(desc.id.c_str());
+        const std::string descriptorId = ArtifactCore::toStdString(desc.id);
+        auto instance = fnCreate(descriptorId.c_str());
+        auto vtable = fnVTable(descriptorId.c_str());
         if (instance && vtable) {
             registerFromDll(desc.id, instance, *vtable);
         }
@@ -79,7 +81,7 @@ void PluginLayerFactory::scanAndRegister() {
     loader.discoverAndLoad(paths, PluginLoadMode::DllInProcess);
 }
 
-void PluginLayerFactory::registerFromDll(const std::string& pluginId,
+void PluginLayerFactory::registerFromDll(const ArtifactCore::String& pluginId,
                                           ArtifactPluginInstance instance,
                                           ArtifactLayerPluginVTable vtable) {
     if (!impl_) impl_ = std::make_unique<Impl>();
@@ -95,7 +97,7 @@ std::vector<LayerPluginInfo> PluginLayerFactory::availablePlugins() const {
     return impl_->plugins;
 }
 
-std::shared_ptr<ArtifactCore::ILayerPlugin> PluginLayerFactory::pluginById(const std::string& id) const {
+ArtifactCore::SharedPtr<ArtifactCore::ILayerPlugin> PluginLayerFactory::pluginById(const ArtifactCore::String& id) const {
     if (!impl_) return nullptr;
     for (const auto& p : impl_->plugins) {
         if (p.id == id) return p.plugin;

@@ -39,6 +39,7 @@ import Artifact.Effect.Field;
 import Utils.String.UniString;
 import Property.Group;
 import Property.Abstract;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -62,25 +63,25 @@ export namespace Artifact {
         BoxField()
             : ArtifactAbstractField(FieldType::Box, UniString("Box Field"))
         {
-            auto widthProp = std::make_shared<AbstractProperty>();
+            auto widthProp = ArtifactCore::makeShared<AbstractProperty>();
             widthProp->setName("Width");
             widthProp->setType(PropertyType::Float);
             widthProp->setValue(halfExtent_[0] * 2.0f);
             properties_->addProperty(widthProp);
 
-            auto heightProp = std::make_shared<AbstractProperty>();
+            auto heightProp = ArtifactCore::makeShared<AbstractProperty>();
             heightProp->setName("Height");
             heightProp->setType(PropertyType::Float);
             heightProp->setValue(halfExtent_[1] * 2.0f);
             properties_->addProperty(heightProp);
 
-            auto depthProp = std::make_shared<AbstractProperty>();
+            auto depthProp = ArtifactCore::makeShared<AbstractProperty>();
             depthProp->setName("Depth");
             depthProp->setType(PropertyType::Float);
             depthProp->setValue(halfExtent_[2] * 2.0f);
             properties_->addProperty(depthProp);
 
-            auto falloffProp = std::make_shared<AbstractProperty>();
+            auto falloffProp = ArtifactCore::makeShared<AbstractProperty>();
             falloffProp->setName("Falloff Width");
             falloffProp->setType(PropertyType::Float);
             falloffProp->setValue(falloffWidth_);

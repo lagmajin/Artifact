@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <vector>
 #include <string>
 #include <memory>
@@ -17,14 +17,14 @@ public:
     ~DistortionEffect() override = default;
 
     void process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain = nullptr) override;
-    std::string getName() const override { return "Distortion"; }
-    std::string getDescription() const override {
+    String getName() const override { return "Distortion"; }
+    String getDescription() const override {
         return "Multi-mode distortion with soft clip, tube, foldback, and bitcrush";
     }
 
     std::vector<AudioEffectParameter> getUiParameters() const override;
-    void setParameter(const std::string& name, float value) override;
-    float getParameter(const std::string& name) const override;
+    void setParameter(const String& name, float value) override;
+    float getParameter(const String& name) const override;
 
     enum class Mode {
         SoftClip = 0,

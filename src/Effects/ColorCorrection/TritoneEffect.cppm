@@ -22,6 +22,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -131,8 +132,8 @@ TritoneEffect::TritoneEffect() {
     setEffectID(UniString("effect.colorcorrection.tritone"));
     setDisplayName(UniString("Tritone"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<TritoneEffectCPUImpl>());
-    setGPUImpl(std::make_shared<TritoneEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<TritoneEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<TritoneEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
     applyPreset(preset_);
     syncImpls();

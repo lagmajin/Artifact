@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <vector>
 #include <string>
 #include <memory>
@@ -17,12 +17,12 @@ public:
     ~EqualizerEffect() override = default;
 
     void process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain = nullptr) override;
-    std::string getName() const override { return "Equalizer"; }
-    std::string getDescription() const override { return "Multi-band equalizer effect"; }
+    String getName() const override { return "Equalizer"; }
+    String getDescription() const override { return "Multi-band equalizer effect"; }
 
     std::vector<AudioEffectParameter> getUiParameters() const override;
-    void setParameter(const std::string& name, float value) override;
-    float getParameter(const std::string& name) const override;
+    void setParameter(const String& name, float value) override;
+    float getParameter(const String& name) const override;
 
 private:
     struct Band {

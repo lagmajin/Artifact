@@ -30,6 +30,7 @@ module;
 export module Artifact.AI.WorkspaceAutomation;
 
 import std;
+import Memory.SharedPtr;
 import Core.AI.Describable;
 import Core.AI.CommandIR;
 import Artifact.Application.Manager;
@@ -951,11 +952,11 @@ private:
         return ArtifactProjectManager::getInstance();
     }
 
-    static std::shared_ptr<ArtifactProject> currentProject()
+    static ArtifactProjectPtr currentProject()
     {
         auto* app = ArtifactApplicationManager::instance();
         auto* service = app ? app->projectService() : nullptr;
-        return service ? service->getCurrentProjectSharedPtr() : std::shared_ptr<ArtifactProject>{};
+        return service ? service->getCurrentProjectSharedPtr() : ArtifactProjectPtr{};
     }
 
     static ArtifactCompositionPtr currentComposition()
@@ -2967,7 +2968,7 @@ private:
             };
         }
 
-        auto groupLayer = std::make_shared<ArtifactGroupLayer>();
+        auto groupLayer = ArtifactCore::makeShared<ArtifactGroupLayer>();
         groupLayer->setLayerName(name.isEmpty() ? QStringLiteral("Layer Group") : name);
 
         // Add group layer to composition at top
@@ -3136,7 +3137,7 @@ private:
             };
         }
 
-        std::shared_ptr<ArtifactAbstractComposition> comp;
+        ArtifactCompositionPtr comp;
         if (compositionId.isEmpty() || compositionId == QStringLiteral("current")) {
             comp = service->currentComposition().lock();
         } else {
@@ -3159,7 +3160,7 @@ private:
         }
         FloatColor color(qColor.redF(), qColor.greenF(), qColor.blueF(), qColor.alphaF());
 
-        auto solidLayer = std::make_shared<ArtifactSolid2DLayer>();
+        auto solidLayer = ArtifactCore::makeShared<ArtifactSolid2DLayer>();
         solidLayer->setLayerName(name.isEmpty() ? QStringLiteral("Solid Layer") : name);
         solidLayer->setColor(color);
         

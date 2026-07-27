@@ -59,6 +59,7 @@ import Audio.Bus;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import ArtifactCore.Control.External;
+import Memory.SharedPtr;
 import Physics.System;
 import Physics.Mpm2D;
 
@@ -419,7 +420,7 @@ QString slugifyEffectId(const QString& text)
 }
 
 QString uniqueEffectIdForComposition(
-    const std::vector<std::shared_ptr<ArtifactAbstractEffect>>& effects,
+    const std::vector<SharedPtr<ArtifactAbstractEffect>>& effects,
     const QString& displayName,
     const QString& preferredId)
 {
@@ -431,7 +432,7 @@ QString uniqueEffectIdForComposition(
   const auto idExists = [&effects](const QString& candidate) {
     return std::any_of(
         effects.begin(), effects.end(),
-        [&candidate](const std::shared_ptr<ArtifactAbstractEffect>& effect) {
+        [&candidate](const SharedPtr<ArtifactAbstractEffect>& effect) {
           return effect && effect->effectID().toQString() == candidate;
         });
   };
@@ -735,7 +736,7 @@ QString collisionPairKey(const ArtifactAbstractLayerPtr& a,
                     : QStringLiteral("%1|%2").arg(idB, idA);
 }
 
-QJsonObject serializeEffect(const std::shared_ptr<ArtifactAbstractEffect>& effect)
+QJsonObject serializeEffect(const SharedPtr<ArtifactAbstractEffect>& effect)
 {
   QJsonObject eobj;
   if (!effect) {
@@ -745,7 +746,7 @@ QJsonObject serializeEffect(const std::shared_ptr<ArtifactAbstractEffect>& effec
   eobj["displayName"] = effect->displayName().toQString();
   eobj["enabled"] = effect->isEnabled();
   eobj["pipelineStage"] = static_cast<int>(effect->pipelineStage());
-  if (const auto surfaceFx = std::dynamic_pointer_cast<const SurfaceFXEffect>(effect)) {
+  if (const auto surfaceFx = dynamicPointerCast<const SurfaceFXEffect>(effect)) {
     eobj["surfaceFX"] = surfaceFx->data().toJson();
   }
 
@@ -781,14 +782,14 @@ QJsonObject serializeEffect(const std::shared_ptr<ArtifactAbstractEffect>& effec
   return eobj;
 }
 
-std::shared_ptr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
+SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
 {
-  std::shared_ptr<ArtifactAbstractEffect> effect;
+  SharedPtr<ArtifactAbstractEffect> effect;
   const QString effectId = eobj.value(QStringLiteral("id")).toString();
   if (effectId == QStringLiteral("surfacefx")) {
-    effect = std::make_shared<SurfaceFXEffect>();
+    effect = makeShared<SurfaceFXEffect>();
   } else {
-    effect = std::make_shared<ArtifactAbstractEffect>();
+    effect = makeShared<ArtifactAbstractEffect>();
   }
   effect->setEffectID(UniString::fromQString(eobj.value(QStringLiteral("id")).toString()));
   effect->setDisplayName(UniString::fromQString(
@@ -828,7 +829,7 @@ std::shared_ptr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eob
     }
     effect->setPropertyValue(UniString::fromQString(name), propertyValue);
   }
-  if (const auto surfaceFx = std::dynamic_pointer_cast<SurfaceFXEffect>(effect);
+  if (const auto surfaceFx = ArtifactCore::dynamicPointerCast<SurfaceFXEffect>(effect);
       surfaceFx && eobj.value(QStringLiteral("surfaceFX")).isObject()) {
     surfaceFx->data() = ArtifactCore::SurfaceFXData::fromJson(
         eobj.value(QStringLiteral("surfaceFX")).toObject());
@@ -1024,13 +1025,13 @@ class ArtifactAbstractComposition::Impl {
   bool looping_ = false;
   float playbackSpeed_ = 1.0f;
   AudioLimiter limiter_;
-  std::shared_ptr<AudioMixer> audioMixer_;
+  ArtifactCore::SharedPtr<AudioMixer> audioMixer_;
   CompositionID id_;
   QString compositionNote_;
   int colorPipelineVersion_ =
       ArtifactAbstractComposition::CanonicalColorPipelineVersion;
   FloatColor backgroundColor_ = { 0.47f, 0.47f, 0.47f, 1.0f };
-  std::vector<std::shared_ptr<ArtifactAbstractEffect>> effects_;
+  std::vector<SharedPtr<ArtifactAbstractEffect>> effects_;
   mutable QImage thumbnailCache_;
   mutable QSize thumbnailCacheSize_;
   mutable bool thumbnailCacheValid_ = false;
@@ -1074,11 +1075,11 @@ class ArtifactAbstractComposition::Impl {
    void moveLayerToIndex(const LayerID& id, int newIndex);
    void bringToFront(const LayerID& id);
    void sendToBack(const LayerID& id);
-   void addEffect(std::shared_ptr<ArtifactAbstractEffect> effect);
+   void addEffect(SharedPtr<ArtifactAbstractEffect> effect);
    void removeEffect(const UniString& effectID);
    void clearEffects();
-   std::vector<std::shared_ptr<ArtifactAbstractEffect>> getEffects() const;
-   std::shared_ptr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
+   std::vector<SharedPtr<ArtifactAbstractEffect>> getEffects() const;
+   SharedPtr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
    int effectCount() const;
 
     bool isPlaying_ = false;
@@ -2409,7 +2410,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
   impl_->colorPipelineVersion_ = version;
  }
 
- void ArtifactAbstractComposition::Impl::addEffect(std::shared_ptr<ArtifactAbstractEffect> effect)
+ void ArtifactAbstractComposition::Impl::addEffect(SharedPtr<ArtifactAbstractEffect> effect)
  {
   if (!effect) {
    return;
@@ -2425,7 +2426,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
  {
   const auto it = std::remove_if(
       effects_.begin(), effects_.end(),
-      [&effectID](const std::shared_ptr<ArtifactAbstractEffect>& effect) {
+      [&effectID](const SharedPtr<ArtifactAbstractEffect>& effect) {
        return effect && effect->effectID() == effectID;
       });
   if (it != effects_.end()) {
@@ -2440,14 +2441,14 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
   invalidateThumbnailCache();
  }
 
- std::vector<std::shared_ptr<ArtifactAbstractEffect>>
- ArtifactAbstractComposition::Impl::getEffects() const
+ std::vector<SharedPtr<ArtifactAbstractEffect>>
+ArtifactAbstractComposition::Impl::getEffects() const
  {
   return effects_;
  }
 
- std::shared_ptr<ArtifactAbstractEffect>
- ArtifactAbstractComposition::Impl::getEffect(const UniString& effectID) const
+ SharedPtr<ArtifactAbstractEffect>
+ArtifactAbstractComposition::Impl::getEffect(const UniString& effectID) const
  {
   for (const auto& effect : effects_) {
    if (effect && effect->effectID() == effectID) {
@@ -2462,7 +2463,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
   return static_cast<int>(effects_.size());
  }
 
- void ArtifactAbstractComposition::addEffect(std::shared_ptr<ArtifactAbstractEffect> effect)
+ void ArtifactAbstractComposition::addEffect(SharedPtr<ArtifactAbstractEffect> effect)
  {
   impl_->addEffect(std::move(effect));
   changed();
@@ -2480,14 +2481,14 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
   changed();
  }
 
- std::vector<std::shared_ptr<ArtifactAbstractEffect>>
- ArtifactAbstractComposition::getEffects() const
+ std::vector<SharedPtr<ArtifactAbstractEffect>>
+ArtifactAbstractComposition::getEffects() const
  {
   return impl_->getEffects();
  }
 
- std::shared_ptr<ArtifactAbstractEffect>
- ArtifactAbstractComposition::getEffect(const UniString& effectID) const
+ SharedPtr<ArtifactAbstractEffect>
+ArtifactAbstractComposition::getEffect(const UniString& effectID) const
  {
   return impl_->getEffect(effectID);
  }
@@ -2760,19 +2761,19 @@ bool ArtifactAbstractComposition::hasLayerComponentSimulationSnapshot(
        impl_->componentSimulation_.snapshots.contains(frame));
 }
 
-std::optional<std::int64_t>
+ArtifactCore::Optional<std::int64_t>
 ArtifactAbstractComposition::layerComponentSimulationSnapshotAtOrBefore(
     std::int64_t frame) const
 {
   if (!impl_->componentSimulation_.valid) {
-    return std::nullopt;
+    return {};
   }
   if (impl_->componentSimulation_.frame <= frame) {
     return impl_->componentSimulation_.frame;
   }
   auto it = impl_->componentSimulation_.snapshots.upperBound(frame);
   if (it == impl_->componentSimulation_.snapshots.begin()) {
-    return std::nullopt;
+    return {};
   }
   --it;
   return it.key();
@@ -2903,7 +2904,7 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
             }
         }
         struct PendingAudioInput {
-            std::shared_ptr<AudioBus> bus;
+            ArtifactCore::SharedPtr<AudioBus> bus;
             AudioSegment segment;
             float gain = 1.0f;
         };
@@ -2919,9 +2920,9 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                 AudioSegment layerSegment;
                 if (layer->getAudio(layerSegment, start, frameCount, sampleRate)) {
                     float layerVol = 1.0f;
-                    if (auto al = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+                    if (auto al = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
                         layerVol = al->volume();
-                    } else if (auto vl = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+                    } else if (auto vl = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
                         layerVol = static_cast<float>(vl->audioVolume());
                     }
                     bus->setVolume(20.0f * std::log10(std::max(0.001f, layerVol)));
@@ -3025,12 +3026,12 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
 void ArtifactAbstractComposition::ensureAudioMixer()
 {
     if (!impl_->audioMixer_) {
-        impl_->audioMixer_ = std::make_shared<AudioMixer>();
+        impl_->audioMixer_ = ArtifactCore::makeShared<AudioMixer>();
         qDebug() << "[Composition] AudioMixer enabled for" << settings().compositionName().toQString();
     }
 }
 
-std::shared_ptr<AudioMixer> ArtifactAbstractComposition::getAudioMixer() const
+ArtifactCore::SharedPtr<AudioMixer> ArtifactAbstractComposition::getAudioMixer() const
 {
     return impl_->audioMixer_;
 }
@@ -3264,7 +3265,7 @@ void ArtifactAbstractComposition::stop()
     // presented after Stop.
     for (const auto& layer : impl_->layerMultiIndex_) {
         if (const auto videoLayer =
-                std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+                ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
             videoLayer->stop();
         }
     }

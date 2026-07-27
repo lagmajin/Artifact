@@ -18,6 +18,7 @@ import Time.Rational;
 import Time.TimeRemap;
 import Frame.Rate;
 import Utils.Id;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -42,17 +43,17 @@ struct FootageInterpretService::Impl {
                         bool foundInThisComp = false;
                         for (const auto& layer : comp->allLayer()) {
                             if (!layer) continue;
-                            if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+                            if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
                                 if (videoLayer->sourcePath() == footage->filePath) {
                                     outLayers.push_back(layer);
                                     foundInThisComp = true;
                                 }
-                            } else if (auto imgLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+                            } else if (auto imgLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
                                 if (imgLayer->sourcePath() == footage->filePath) {
                                     outLayers.push_back(layer);
                                     foundInThisComp = true;
                                 }
-                            } else if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+                            } else if (auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
                                 if (audioLayer->sourcePath() == footage->filePath) {
                                     outLayers.push_back(layer);
                                     foundInThisComp = true;

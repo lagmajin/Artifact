@@ -24,6 +24,7 @@ import Graphics.GPUcomputeContext;
 import Graphics.SurfaceColorContract;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -524,8 +525,8 @@ private:
 BlurEffect::BlurEffect() {
     setDisplayName(UniString("Blur"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<BlurEffectCPUImpl>());
-    setGPUImpl(std::make_shared<BlurEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<BlurEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<BlurEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 

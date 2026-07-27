@@ -27,6 +27,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -186,6 +187,6 @@ std::vector<AbstractProperty> TemporalSmearEffect::getProperties()const{
 void TemporalSmearEffect::setPropertyValue(const UniString& n,const QVariant& v){
     const QString k=n.toQString();if(k=="smearAmount")setSmearAmount(v.toFloat());else if(k=="sampleCount")setSampleCount(v.toInt());else if(k=="sampleJitter")setSampleJitter(v.toFloat());else if(k=="velocityScale")setVelocityScale(v.toFloat());}
 void TemporalSmearEffect::syncImpls(){
-    auto c=std::make_shared<TemporalSmearCPUImpl>();c->smearAmount_=smearAmount_;c->sampleCount_=sampleCount_;c->sampleJitter_=sampleJitter_;c->velocityScale_=velocityScale_;setCPUImpl(c);
-    auto g=std::make_shared<TemporalSmearGPUImpl>();g->cpu.smearAmount_=smearAmount_;g->cpu.sampleCount_=sampleCount_;g->cpu.sampleJitter_=sampleJitter_;g->cpu.velocityScale_=velocityScale_;setGPUImpl(g);}
+    auto c=ArtifactCore::makeShared<TemporalSmearCPUImpl>();c->smearAmount_=smearAmount_;c->sampleCount_=sampleCount_;c->sampleJitter_=sampleJitter_;c->velocityScale_=velocityScale_;setCPUImpl(c);
+    auto g=ArtifactCore::makeShared<TemporalSmearGPUImpl>();g->cpu.smearAmount_=smearAmount_;g->cpu.sampleCount_=sampleCount_;g->cpu.sampleJitter_=sampleJitter_;g->cpu.velocityScale_=velocityScale_;setGPUImpl(g);}
 } // namespace Artifact

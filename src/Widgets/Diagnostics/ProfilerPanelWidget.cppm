@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -170,9 +170,10 @@ void ProfilerPanelWidget::setHistoryFrames(int n) {
 int ProfilerPanelWidget::historyFrames() const { return impl_->histN; }
 
 void ProfilerPanelWidget::copyReportToClipboard() {
-    const std::string report =
+    const auto report =
         ArtifactCore::Profiler::instance().generateDiagnosticReport(impl_->histN);
-    QGuiApplication::clipboard()->setText(QString::fromStdString(report));
+    QGuiApplication::clipboard()->setText(QString::fromUtf8(
+        report.data(), static_cast<int>(report.length())));
 }
 
 void ProfilerPanelWidget::mousePressEvent(QMouseEvent* event) {
@@ -369,7 +370,7 @@ void ProfilerPanelWidget::paintEvent(QPaintEvent*) {
             p.setFont(fontMono);
 
             const std::string indent(static_cast<std::size_t>(s.depth * 2), ' ');
-            const QString name = QString::fromStdString(indent + s.name).left(20);
+            const QString name = QString::fromStdString(indent + ArtifactCore::toStdString(s.name)).left(20);
             p.drawText(Impl::kColName + 8, curY + fm.ascent(), name);
 
             p.drawText(Impl::kColLast, curY + fm.ascent(),
@@ -421,7 +422,7 @@ void ProfilerPanelWidget::paintEvent(QPaintEvent*) {
 
         const auto timerNames = prof.knownTimerNames();
         // Sort by avg descending
-        struct TS { std::string name; ArtifactCore::ScopeStats st; };
+        struct TS { ArtifactCore::String name; ArtifactCore::ScopeStats st; };
         std::vector<TS> timers;
         for (const auto& n : timerNames)
             timers.push_back({n, prof.timerStats(n, histN)});
@@ -438,7 +439,7 @@ void ProfilerPanelWidget::paintEvent(QPaintEvent*) {
             p.setPen(warn ? kTextW : kTextN);
             p.setFont(fontMono);
             p.drawText(Impl::kColName, curY + fm.ascent(),
-                       QString::fromStdString(name).left(24));
+                       QString::fromUtf8(name.data(), static_cast<int>(name.length())).left(24));
             p.setPen(warn ? kTextW : kTextN);
             p.drawText(Impl::kColAvg, curY + fm.ascent(),
                        QString::asprintf("%5.1f", st.avgMs));

@@ -17,6 +17,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -120,6 +121,6 @@ void TimeBlurEffect::setPropertyValue(const UniString& n,const QVariant& v){
     if(k=="sigma")setSigma(v.toFloat());else if(k=="lookback")setLookback(v.toInt());else if(k=="direction")setDirection(v.toFloat());
 }
 void TimeBlurEffect::syncImpls(){
-    auto c=std::make_shared<TimeBlurCPUImpl>();c->sigma_=sigma_;c->lookback_=lookback_;c->direction_=direction_;setCPUImpl(c);
+    auto c=ArtifactCore::makeShared<TimeBlurCPUImpl>();c->sigma_=sigma_;c->lookback_=lookback_;c->direction_=direction_;setCPUImpl(c);
 }
 } // namespace Artifact

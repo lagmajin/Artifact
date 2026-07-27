@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <cmath>
 #include <vector>
 #include <string>
@@ -27,12 +27,12 @@ public:
     ~ReverbEffect() override = default;
 
     void process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain = nullptr) override;
-    std::string getName() const override { return "Reverb"; }
-    std::string getDescription() const override;
+    String getName() const override { return "Reverb"; }
+    String getDescription() const override;
 
     std::vector<AudioEffectParameter> getUiParameters() const override;
-    void setParameter(const std::string& name, float value) override;
-    float getParameter(const std::string& name) const override;
+    void setParameter(const String& name, float value) override;
+    float getParameter(const String& name) const override;
     void setSampleRate(int sampleRate) override;
 
 private:

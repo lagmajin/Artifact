@@ -20,6 +20,7 @@ import Graphics.GPUcomputeContext;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Property.Group;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -237,9 +238,9 @@ void ArtifactSandSim2DLayer::fromJsonProperties(const QJsonObject& obj)
     }
 }
 
-std::shared_ptr<ArtifactSandSim2DLayer> ArtifactSandSim2DLayer::fromJson(const QJsonObject& obj)
+SharedPtr<ArtifactSandSim2DLayer> ArtifactSandSim2DLayer::fromJson(const QJsonObject& obj)
 {
-    auto layer = std::make_shared<ArtifactSandSim2DLayer>();
+    auto layer = ArtifactCore::makeShared<ArtifactSandSim2DLayer>();
     layer->fromJsonProperties(obj);
     return layer;
 }

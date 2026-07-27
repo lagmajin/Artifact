@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -31,6 +31,8 @@
 #include <random>
 #include <opencv2/opencv.hpp>
 export module Image.ImageF32xN;
+
+import Memory.SharedPtr;
 
 export namespace ArtifactCore {
 
@@ -150,6 +152,6 @@ public:
     }
 };
 
-using ImageF32xNPtr = std::shared_ptr<ImageF32xN>;
+using ImageF32xNPtr = ArtifactCore::SharedPtr<ImageF32xN>;
 
 }

@@ -18,6 +18,7 @@ import Artifact.Effect.Abstract;
 import Property.Abstract;
 import Utils.String.UniString;
 import Artifact.Effect.Ofx.Host;
+import Memory.SharedPtr;
 
 namespace Artifact {
 namespace Ofx {
@@ -228,7 +229,7 @@ private:
   double mix_ = 1.0;
   bool bypass_ = false;
   OfxPluginDescriptor descriptor_;
-  std::shared_ptr<ImageEffectState> renderState_;
+  SharedPtr<ImageEffectState> renderState_;
 };
 
 export std::unique_ptr<ArtifactAbstractEffect>

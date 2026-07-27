@@ -1,4 +1,4 @@
-﻿
+
 module;
 
 #define _CRT_SECURE_NO_WARNINGS
@@ -77,6 +77,7 @@ module;
 module Artifact.AppMain;
 
 import std;
+import Memory.SharedPtr;
 import Core.AI.Context;
 import Core.AI.McpBridge;
 
@@ -151,91 +152,6 @@ import Core.Diagnostics.SessionLedger;
 import Core.Diagnostics.Trace;
 import Frame.Debug;
 
-namespace {
-
-class ArtifactDebugAgent final : public QObject {
-public:
-  explicit ArtifactDebugAgent(QObject* parent = nullptr)
-      : QObject(parent) {
-    timerId_ = startTimer(100, Qt::PreciseTimer);
-  }
-
-protected:
-  void timerEvent(QTimerEvent* event) override {
-    if (event && event->timerId() == timerId_) {
-      sample();
-      return;
-    }
-    QObject::timerEvent(event);
-  }
-
-private:
-  int timerId_ = 0;
-  qint64 tickCount_ = 0;
-  qint64 lastFrame_ = std::numeric_limits<qint64>::min();
-
-  static QString stateFilePath() {
-    const QString configured = qEnvironmentVariable("ARTIFACT_DEBUG_MCP_STATE_FILE").trimmed();
-    if (!configured.isEmpty()) return configured;
-    const QString root = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-        + QStringLiteral("/ArtifactStudio");
-    QDir().mkpath(root);
-    return root + QStringLiteral("/debug-mcp-state.json");
-  }
-
-  static QString bridgeFilePath() {
-    const QString configured = qEnvironmentVariable("ARTIFACT_DEBUG_BRIDGE_FILE").trimmed();
-    if (!configured.isEmpty()) return configured;
-    const QString root = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-        + QStringLiteral("/ArtifactStudio");
-    QDir().mkpath(root);
-    return root + QStringLiteral("/debug-bridge.json");
-  }
-
-  static QJsonObject readState() {
-    QFile file(stateFilePath());
-    if (!file.open(QIODevice::ReadOnly)) return {};
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    return doc.isObject() ? doc.object() : QJsonObject{};
-  }
-
-  void sample() {
-    auto* playback = Artifact::ArtifactPlaybackService::instance();
-    if (!playback) return;
-
-    const qint64 frame = playback->currentFrame().framePosition();
-    const QString playbackState = playback->isPlaying()
-        ? QStringLiteral("Playing") : QStringLiteral("Paused");
-    QJsonObject snapshot;
-    snapshot.insert(QStringLiteral("timestampMs"), QDateTime::currentMSecsSinceEpoch());
-    snapshot.insert(QStringLiteral("playback"), QJsonObject{
-      {QStringLiteral("state"), playbackState},
-      {QStringLiteral("frame"), frame},
-      {QStringLiteral("previousFrame"), lastFrame_ == std::numeric_limits<qint64>::min()
-          ? frame : lastFrame_}
-    });
-    snapshot.insert(QStringLiteral("agent"), QJsonObject{
-      {QStringLiteral("mode"), QStringLiteral("resident")},
-      {QStringLiteral("checkpoint"), QStringLiteral("playback-tick")},
-      {QStringLiteral("tick"), ++tickCount_}
-    });
-
-    QSaveFile bridge(bridgeFilePath());
-    if (bridge.open(QIODevice::WriteOnly)) {
-      bridge.write(QJsonDocument(snapshot).toJson(QJsonDocument::Compact));
-      bridge.commit();
-    }
-
-    const QJsonObject state = readState();
-    const QJsonObject session = state.value(QStringLiteral("session")).toObject();
-    if (session.value(QStringLiteral("paused")).toBool(false) && playback->isPlaying()) {
-      playback->pause();
-    }
-    lastFrame_ = frame;
-  }
-};
-
-}
 import Artifact.Widgets.RenderCenterWindow;
 import Artifact.Render.Scheduler;
 import Artifact.Contents.Viewer;
@@ -950,6 +866,8 @@ QJsonObject debugMcpDefaultStateJson() {
 
   root.insert(QStringLiteral("nextConditionId"), 1);
   root.insert(QStringLiteral("breakConditions"), QJsonArray{});
+  root.insert(QStringLiteral("nextWatchId"), 1);
+  root.insert(QStringLiteral("watchDescriptors"), QJsonArray{});
   root.insert(QStringLiteral("lastBreakHit"), QJsonValue::Null);
   root.insert(QStringLiteral("history"), QJsonArray{});
 
@@ -997,11 +915,17 @@ QJsonObject debugMcpNormalizeStateJson(QJsonObject state) {
   if (!state.value(QStringLiteral("breakConditions")).isArray()) {
     state.insert(QStringLiteral("breakConditions"), defaults.value(QStringLiteral("breakConditions")));
   }
+  if (!state.value(QStringLiteral("watchDescriptors")).isArray()) {
+    state.insert(QStringLiteral("watchDescriptors"), defaults.value(QStringLiteral("watchDescriptors")));
+  }
   if (!state.value(QStringLiteral("history")).isArray()) {
     state.insert(QStringLiteral("history"), defaults.value(QStringLiteral("history")));
   }
   if (!state.contains(QStringLiteral("nextConditionId"))) {
     state.insert(QStringLiteral("nextConditionId"), defaults.value(QStringLiteral("nextConditionId")));
+  }
+  if (!state.contains(QStringLiteral("nextWatchId"))) {
+    state.insert(QStringLiteral("nextWatchId"), defaults.value(QStringLiteral("nextWatchId")));
   }
   if (!state.contains(QStringLiteral("lastBreakHit"))) {
     state.insert(QStringLiteral("lastBreakHit"), defaults.value(QStringLiteral("lastBreakHit")));
@@ -1117,6 +1041,66 @@ QString debugMcpSnapshotPropertiesText(const QJsonObject& snapshot) {
     parts.push_back(QStringLiteral("%1=%2").arg(path, value));
   }
   return parts.join(QStringLiteral("\n"));
+}
+
+QJsonValue debugMcpWatchValue(const QJsonObject& snapshot, const QString& path, bool* found) {
+  if (found) {
+    *found = false;
+  }
+  if (path.startsWith(QStringLiteral("property:"))) {
+    const QString propertyPath = path.mid(QStringLiteral("property:").size());
+    for (const QJsonValue& entryValue : snapshot.value(QStringLiteral("properties")).toArray()) {
+      const QJsonObject entry = entryValue.toObject();
+      if (entry.value(QStringLiteral("path")).toString() == propertyPath) {
+        if (found) {
+          *found = true;
+        }
+        return entry.value(QStringLiteral("value"));
+      }
+    }
+    return QJsonValue(QJsonValue::Null);
+  }
+
+  QJsonValue value(snapshot);
+  const QStringList segments = path.split('.', Qt::SkipEmptyParts);
+  for (const QString& segment : segments) {
+    if (!value.isObject()) {
+      return QJsonValue(QJsonValue::Null);
+    }
+    const QJsonObject object = value.toObject();
+    if (!object.contains(segment)) {
+      return QJsonValue(QJsonValue::Null);
+    }
+    value = object.value(segment);
+  }
+  if (found) {
+    *found = !segments.isEmpty();
+  }
+  return value;
+}
+
+QJsonArray debugMcpWatchValues(const QJsonObject& state, const QJsonObject& snapshot) {
+  QJsonArray values;
+  const QJsonArray descriptors = state.value(QStringLiteral("watchDescriptors")).toArray();
+  for (const QJsonValue& descriptorValue : descriptors) {
+    const QJsonObject descriptor = descriptorValue.toObject();
+    if (!descriptor.value(QStringLiteral("enabled")).toBool(true)) {
+      continue;
+    }
+    const QString path = descriptor.value(QStringLiteral("path")).toString().trimmed();
+    if (path.isEmpty()) {
+      continue;
+    }
+    bool found = false;
+    QJsonObject value;
+    value.insert(QStringLiteral("id"), descriptor.value(QStringLiteral("id")));
+    value.insert(QStringLiteral("path"), path);
+    value.insert(QStringLiteral("label"), descriptor.value(QStringLiteral("label")));
+    value.insert(QStringLiteral("value"), debugMcpWatchValue(snapshot, path, &found));
+    value.insert(QStringLiteral("found"), found);
+    values.append(value);
+  }
+  return values;
 }
 
 QString debugMcpSnapshotSignature(const QJsonObject& snapshot) {
@@ -1279,7 +1263,8 @@ void debugMcpAppendHistoryEntry(QJsonObject& state, QJsonObject entry) {
 }
 
 bool debugMcpRecordBreakHit(QJsonObject& state, const QJsonObject& snapshot,
-                            const QJsonObject& condition) {
+                            const QJsonObject& condition,
+                            const QJsonArray& beforeSnapshots) {
   const int conditionId = condition.value(QStringLiteral("id")).toInt(-1);
   if (conditionId < 0) {
     return false;
@@ -1313,6 +1298,9 @@ bool debugMcpRecordBreakHit(QJsonObject& state, const QJsonObject& snapshot,
                       QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
   lastBreakHit.insert(QStringLiteral("signature"), signature);
   lastBreakHit.insert(QStringLiteral("snapshot"), snapshot);
+  lastBreakHit.insert(QStringLiteral("watches"), debugMcpWatchValues(state, snapshot));
+  lastBreakHit.insert(QStringLiteral("beforeSnapshots"), trimJsonArray(beforeSnapshots, 8));
+  lastBreakHit.insert(QStringLiteral("afterSnapshots"), QJsonArray{});
   state.insert(QStringLiteral("lastBreakHit"), lastBreakHit);
 
   QJsonObject historyEntry;
@@ -1395,6 +1383,21 @@ private:
     }
 
     const QJsonObject snapshot = buildDebugBridgeSnapshotJson();
+    if (afterSamplesRemaining_ > 0 &&
+        !state.value(QStringLiteral("session")).toObject()
+             .value(QStringLiteral("paused")).toBool(false)) {
+      QJsonObject lastBreakHit = state.value(QStringLiteral("lastBreakHit")).toObject();
+      if (lastBreakHit.value(QStringLiteral("conditionId")).toInt(-1) == pendingBreakConditionId_) {
+        QJsonArray afterSnapshots = lastBreakHit.value(QStringLiteral("afterSnapshots")).toArray();
+        afterSnapshots.append(snapshot);
+        lastBreakHit.insert(QStringLiteral("afterSnapshots"), trimJsonArray(afterSnapshots, 8));
+        state.insert(QStringLiteral("lastBreakHit"), lastBreakHit);
+        --afterSamplesRemaining_;
+        debugMcpWriteStateJson(state);
+        return;
+      }
+      afterSamplesRemaining_ = 0;
+    }
     if (state.value(QStringLiteral("session")).toObject()
             .value(QStringLiteral("paused")).toBool(false)) {
       if (stateChanged) {
@@ -1408,16 +1411,21 @@ private:
       if (!debugMcpMatchesCondition(condition, snapshot)) {
         continue;
       }
-      if (debugMcpRecordBreakHit(state, snapshot, condition)) {
+      if (debugMcpRecordBreakHit(state, snapshot, condition, recentSnapshots_)) {
         if (playbackService_->state() == PlaybackState::Playing) {
           playbackService_->pause();
         }
+        pendingBreakConditionId_ = condition.value(QStringLiteral("id")).toInt(-1);
+        afterSamplesRemaining_ = 8;
         debugMcpWriteStateJson(state);
       } else if (stateChanged) {
         debugMcpWriteStateJson(state);
       }
       return;
     }
+
+    recentSnapshots_.append(snapshot);
+    recentSnapshots_ = trimJsonArray(recentSnapshots_, 8);
 
     if (stateChanged) {
       debugMcpWriteStateJson(state);
@@ -1426,6 +1434,9 @@ private:
 
   int timerId_ = 0;
   ArtifactPlaybackService* playbackService_ = nullptr;
+  QJsonArray recentSnapshots_;
+  int pendingBreakConditionId_ = -1;
+  int afterSamplesRemaining_ = 0;
 };
 
 class DebugBridgeFileWriter final : public QObject {
@@ -1454,7 +1465,9 @@ protected:
 private:
   void writeSnapshot(const bool force)
   {
-    const QJsonObject snapshot = buildDebugBridgeSnapshotJson();
+    QJsonObject snapshot = buildDebugBridgeSnapshotJson();
+    snapshot.insert(QStringLiteral("watches"),
+                    debugMcpWatchValues(debugMcpReadStateJson(), snapshot));
     const QByteArray payload = QJsonDocument(snapshot).toJson(QJsonDocument::Compact);
     if (!force && payload == lastPayload_) {
       return;
@@ -2070,8 +2083,8 @@ int main(int argc, char *argv[]) {
         const char* stateNames[] = {"Discovered", "Validated", "Registered", "Active", "Inactive", "Failed", "Unloaded"};
         const char* st = (static_cast<int>(p.state) >= 0 && static_cast<int>(p.state) <= 6)
             ? stateNames[static_cast<int>(p.state)] : "Unknown";
-        printf("  %-40s %-12s %-10s v%s\n", p.id.c_str(), cat, st, p.version.c_str());
-        printf("    %s\n", p.displayName.c_str());
+        printf("  %-40s %-12s %-10s v%s\n", ArtifactCore::toStdString(p.id).c_str(), cat, st, ArtifactCore::toStdString(p.version).c_str());
+        printf("    %s\n", ArtifactCore::toStdString(p.displayName).c_str());
       }
     }
     printf("\nTotal: %zu plugin(s)\n", plugins.size());
@@ -2089,13 +2102,13 @@ int main(int argc, char *argv[]) {
         const char* categoryNames[] = {"Effect", "Layer", "Tool", "ImportExport"};
         const char* cat = (static_cast<int>(p.category) >= 0 && static_cast<int>(p.category) <= 3)
             ? categoryNames[static_cast<int>(p.category)] : "Unknown";
-        printf("Plugin: %s\n", p.id.c_str());
-        printf("  Display Name: %s\n", p.displayName.c_str());
-        printf("  Version:      %s\n", p.version.c_str());
-        printf("  Author:       %s\n", p.author.c_str());
+        printf("Plugin: %s\n", ArtifactCore::toStdString(p.id).c_str());
+        printf("  Display Name: %s\n", ArtifactCore::toStdString(p.displayName).c_str());
+        printf("  Version:      %s\n", ArtifactCore::toStdString(p.version).c_str());
+        printf("  Author:       %s\n", ArtifactCore::toStdString(p.author).c_str());
         printf("  Category:     %s\n", cat);
-        printf("  Path:         %s\n", p.pluginPath.c_str());
-        printf("  Description:  %s\n", p.description.c_str());
+        printf("  Path:         %s\n", ArtifactCore::toStdString(p.pluginPath).c_str());
+        printf("  Description:  %s\n", ArtifactCore::toStdString(p.description).c_str());
       } else {
         printf("Plugin not found: %s\n", pluginId.toLocal8Bit().constData());
         return 1;
@@ -2158,7 +2171,6 @@ int main(int argc, char *argv[]) {
 
   QApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
   QApplication a(argc, argv);
-  ArtifactDebugAgent debugAgent(&a);
   DialogLatencyEventFilter dialogLatencyFilter;
   a.installEventFilter(&dialogLatencyFilter);
   configureQtPaths();
@@ -2472,7 +2484,7 @@ int main(int argc, char *argv[]) {
   QPointer<ArtifactDebugConsoleWidget> debugConsoleWidget;
   QPointer<FrameDebugViewWidget> frameDebugWidget;
   QPointer<DebugRenderHarnessWidget> debugHarnessWidget;
-  std::shared_ptr<ArtifactCore::PreciseTicker> frameDebugTimer;
+  ArtifactCore::SharedPtr<ArtifactCore::PreciseTicker> frameDebugTimer;
   const QString recoveryDir =
       QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
           .filePath("Recovery");
@@ -2593,7 +2605,7 @@ int main(int argc, char *argv[]) {
           return widget;
         },
         QRect(180, 180, 1100, 660));
-    auto playbackDebugReporter = std::make_shared<PlaybackDebugAutoReporter>();
+    auto playbackDebugReporter = ArtifactCore::makeShared<PlaybackDebugAutoReporter>();
     auto refreshFrameDebugWidgets = [compositionEditor, playbackService,
                                      playbackDebugReporter, &debugConsoleWidget,
                                      &frameDebugWidget, &debugHarnessWidget]() mutable {
@@ -2628,7 +2640,7 @@ int main(int argc, char *argv[]) {
         debugHarnessWidget->setFrameDebugSnapshot(snapshot);
       }
     };
-    frameDebugTimer = std::make_shared<ArtifactCore::PreciseTicker>();
+    frameDebugTimer = ArtifactCore::makeShared<ArtifactCore::PreciseTicker>();
     frameDebugTimer->setInterval(std::chrono::milliseconds(750));
     frameDebugTimer->setCallback([mw, refreshFrameDebugWidgets]() {
       QMetaObject::invokeMethod(
@@ -2858,7 +2870,7 @@ int main(int argc, char *argv[]) {
     static ArtifactCore::EventBus appEventBus = ArtifactCore::globalEventBus();
     static std::vector<ArtifactCore::EventBus::Subscription>
         appEventSubscriptions;
-    auto selectionSyncGuard = std::make_shared<bool>(false);
+    auto selectionSyncGuard = ArtifactCore::makeShared<bool>(false);
     appEventSubscriptions.push_back(
         appEventBus.subscribe<CurrentCompositionChangedEvent>(
             [projectManagerWidget](
@@ -3094,7 +3106,7 @@ int main(int argc, char *argv[]) {
         };
 
         auto retainedPropertyLayerId =
-            std::make_shared<LayerID>(LayerID::Nil());
+            ArtifactCore::makeShared<LayerID>(LayerID::Nil());
         const auto selectionReasonToString =
             [](LayerSelectionChangeReason reason) -> QString {
           return layerSelectionChangeReasonToString(reason);
@@ -3591,11 +3603,11 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    auto latestFrame = std::make_shared<std::atomic<long long>>(0);
-    auto hasFrameUpdate = std::make_shared<std::atomic_bool>(false);
-    auto frameCounter = std::make_shared<std::atomic<int>>(0);
+    auto latestFrame = ArtifactCore::makeShared<std::atomic<long long>>(0);
+    auto hasFrameUpdate = ArtifactCore::makeShared<std::atomic_bool>(false);
+    auto frameCounter = ArtifactCore::makeShared<std::atomic<int>>(0);
 
-    auto uiTimer = std::make_shared<ArtifactCore::PreciseTicker>();
+    auto uiTimer = ArtifactCore::makeShared<ArtifactCore::PreciseTicker>();
     uiTimer->setInterval(std::chrono::milliseconds(33)); // ~30Hz UI update
     uiTimer->setCallback([status, latestFrame, hasFrameUpdate]() {
       QMetaObject::invokeMethod(
@@ -3609,10 +3621,10 @@ int main(int argc, char *argv[]) {
     });
     uiTimer->start();
 
-    auto statsTimer = std::make_shared<ArtifactCore::PreciseTicker>();
+    auto statsTimer = ArtifactCore::makeShared<ArtifactCore::PreciseTicker>();
     statsTimer->setInterval(std::chrono::milliseconds(500));
-    auto fpsElapsed = std::make_shared<QElapsedTimer>();
-    auto smoothedFps = std::make_shared<double>(0.0);
+    auto fpsElapsed = ArtifactCore::makeShared<QElapsedTimer>();
+    auto smoothedFps = ArtifactCore::makeShared<double>(0.0);
     fpsElapsed->start();
     statsTimer->setCallback([status, fpsElapsed, frameCounter, smoothedFps]() {
       QMetaObject::invokeMethod(

@@ -23,6 +23,7 @@ import Artifact.Widgets.RelativeSpinBox;
 import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import FloatColorPickerDialog;
 import Utils.Path;
+import Memory.SharedPtr;
 
 namespace Artifact {
 void installSliderJumpBehavior(QWidget *pickerRoot);
@@ -104,7 +105,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent,
     const bool showSlider)
     : ArtifactAbstractPropertyEditor(parent) {
-  auto initializing = std::make_shared<bool>(true);
+  auto initializing = ArtifactCore::makeShared<bool>(true);
   const bool displayAsPercent = isScalePercentProperty(property);
   setObjectName(QStringLiteral("propertyFloatEditor"));
   spinBox_ = new ArtifactRelativeDoubleSpinBox(this);
@@ -113,7 +114,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     slider_ = new detail::PropertySliderWidget(this);
     applyPropertyFieldPalette(slider_);
   }
-  auto previewThrottle = std::make_shared<QElapsedTimer>();
+  auto previewThrottle = ArtifactCore::makeShared<QElapsedTimer>();
   previewThrottle->start();
 
   auto *layout = new QHBoxLayout(this);
@@ -397,14 +398,14 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent,
     const bool showSlider)
     : ArtifactAbstractPropertyEditor(parent) {
-  auto initializing = std::make_shared<bool>(true);
+  auto initializing = ArtifactCore::makeShared<bool>(true);
   setObjectName(QStringLiteral("propertyIntEditor"));
   spinBox_ = new ArtifactRelativeSpinBox(this);
   if (showSlider) {
     slider_ = new detail::PropertySliderWidget(this);
     applyPropertyFieldPalette(slider_);
   }
-  auto previewThrottle = std::make_shared<QElapsedTimer>();
+  auto previewThrottle = ArtifactCore::makeShared<QElapsedTimer>();
   previewThrottle->start();
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);

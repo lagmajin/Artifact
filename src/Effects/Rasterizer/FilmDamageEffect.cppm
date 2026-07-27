@@ -17,6 +17,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -122,7 +123,7 @@ public:
 FilmDamageEffect::FilmDamageEffect() {
     setDisplayName(UniString("Film Damage"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<FilmDamageCPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<FilmDamageCPUImpl>());
     syncImpl();
 }
 

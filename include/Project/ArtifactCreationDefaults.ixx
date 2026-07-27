@@ -4,13 +4,13 @@ module;
 #include <QString>
 #include <QStringList>
 #include <QVariant>
-#include <optional>
 
 export module Artifact.Project.CreationDefaults;
 
 import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
 import Utils.String.UniString;
+import Utils.Optional;
 
 export namespace Artifact {
 
@@ -36,7 +36,7 @@ struct CreationCompositionDefaults {
 };
 
 struct CreationLayerDefaults {
-    std::optional<ArtifactLayerInitParams> layer;
+    ArtifactCore::Optional<ArtifactLayerInitParams> layer;
     QString sourcePath;
 
     QJsonObject toJson() const;

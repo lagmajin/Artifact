@@ -54,6 +54,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -143,12 +144,12 @@ void WaveEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
 
 class WaveEffect::Impl {
 public:
-    std::shared_ptr<WaveEffectCPUImpl> cpuImpl_;
-    std::shared_ptr<WaveEffectGPUImpl> gpuImpl_;
+    ArtifactCore::SharedPtr<WaveEffectCPUImpl> cpuImpl_;
+    ArtifactCore::SharedPtr<WaveEffectGPUImpl> gpuImpl_;
 
     Impl() {
-        cpuImpl_ = std::make_shared<WaveEffectCPUImpl>();
-        gpuImpl_ = std::make_shared<WaveEffectGPUImpl>();
+        cpuImpl_ = ArtifactCore::makeShared<WaveEffectCPUImpl>();
+        gpuImpl_ = ArtifactCore::makeShared<WaveEffectGPUImpl>();
     }
 };
 

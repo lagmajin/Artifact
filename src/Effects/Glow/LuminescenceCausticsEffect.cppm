@@ -15,6 +15,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -84,7 +85,7 @@ public:
 LuminescenceCausticsEffect::LuminescenceCausticsEffect() {
     setDisplayName(UniString("Luminescence Caustics"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<LuminescenceCausticsCPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<LuminescenceCausticsCPUImpl>());
     syncImpl();
 }
 

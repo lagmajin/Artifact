@@ -16,6 +16,7 @@ export module Artifact.Composition.Abstract;
 import std;
 import Memory.SharedPtr;
 import Utils;
+import Utils.Optional;
 import Utils.String.UniString;
 import Asset.File;
 
@@ -33,6 +34,7 @@ import Composition.Settings;
 import Audio.Analyze;
 import Audio.Segment;
 import Audio.Mixer;
+import Memory.SharedPtr;
 import Property.Abstract;
 import Artifact.Layer.Abstract;
 
@@ -220,11 +222,11 @@ export namespace Artifact {
   void setBackGroundColor(const FloatColor& color);
    FloatColor backgroundColor() const;
 
-  void addEffect(std::shared_ptr<ArtifactAbstractEffect> effect);
+  void addEffect(SharedPtr<ArtifactAbstractEffect> effect);
   void removeEffect(const UniString& effectID);
   void clearEffects();
-  std::vector<std::shared_ptr<ArtifactAbstractEffect>> getEffects() const;
-  std::shared_ptr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
+  std::vector<SharedPtr<ArtifactAbstractEffect>> getEffects() const;
+  SharedPtr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
   int effectCount() const;
 
   void changed();
@@ -312,7 +314,7 @@ export namespace Artifact {
   QJsonObject exportLayerComponentSimulationBake() const;
   bool importLayerComponentSimulationBake(const QJsonObject& bake);
   bool hasLayerComponentSimulationSnapshot(std::int64_t frame) const;
-  std::optional<std::int64_t> layerComponentSimulationSnapshotAtOrBefore(
+  ArtifactCore::Optional<std::int64_t> layerComponentSimulationSnapshotAtOrBefore(
       std::int64_t frame) const;
   bool bakeLayerComponentSimulation(
       const FrameRange& range,
@@ -333,7 +335,7 @@ export namespace Artifact {
    *        Must be called before getAudio() to take effect.
    */
   void ensureAudioMixer();
-  std::shared_ptr<AudioMixer> getAudioMixer() const;
+  ArtifactCore::SharedPtr<AudioMixer> getAudioMixer() const;
 
 
   QJsonDocument toJson() const;

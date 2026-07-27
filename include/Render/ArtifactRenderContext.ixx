@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <memory>
 #include <vector>
@@ -9,6 +9,8 @@
 #include <QSizeF>
 #include <QColor>
 export module Artifact.Render.Context;
+
+import Memory.SharedPtr;
 
 
 import Artifact.Render.ROI;
@@ -391,7 +393,7 @@ struct RenderContextSnapshot {
 /**
  * @brief レンダリングコンテキストポインタ
  */
-using RenderContextPtr = std::shared_ptr<RenderContext>;
+using RenderContextPtr = ArtifactCore::SharedPtr<RenderContext>;
 
 inline RenderContextSnapshot createRenderContextSnapshot(const RenderContext& ctx,
                                                          RenderPurpose purpose = RenderPurpose::EditorPreview,
@@ -433,7 +435,7 @@ inline RenderContextSnapshot createRenderContextSnapshot(const RenderContext& ct
 
 inline RenderContextPtr restoreRenderContext(const RenderContextSnapshot& snapshot)
 {
-    auto ctx = std::make_shared<RenderContext>();
+    auto ctx = makeShared<RenderContext>();
     ctx->setMode(snapshot.mode);
     ctx->currentFrame = snapshot.currentFrame;
     ctx->frameRate = snapshot.frameRate;
@@ -523,7 +525,7 @@ private:
  */
 inline RenderContextPtr createRenderContext(RenderMode mode = RenderMode::Preview)
 {
-    auto ctx = std::make_shared<RenderContext>();
+    auto ctx = makeShared<RenderContext>();
     ctx->setMode(mode);
     ctx->setInteractive(mode != RenderMode::Final);
     ctx->setResolutionScale(ctx->modeSettings.resolutionScale);

@@ -76,6 +76,7 @@ import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.AI.ArtifactAICloudWidget;
 import Artifact.Workspace.Modes;
 import Application.AppSettings;
+import Memory.SharedPtr;
 import Settings.Accessibility;
 import Undo.UndoManager;
 #ifdef ARTIFACT_FEATURE_COMMAND_PALETTE
@@ -738,7 +739,7 @@ public:
     auto *selection = app ? app->layerSelectionManager() : nullptr;
     const auto current =
         selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
-    const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(current);
+    const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(current);
     if (!textLayer) {
       toolOptionsBar->clearTextOptions();
       return;
@@ -776,7 +777,7 @@ public:
     const auto current =
         selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
     const auto shapeLayer =
-        std::dynamic_pointer_cast<ArtifactShapeLayer>(current);
+        ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(current);
     if (!shapeLayer) {
       toolOptionsBar->clearShapeOptions();
       return;
@@ -939,7 +940,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
 
         if (toolName == QStringLiteral("テキスト")) {
           const auto textLayer =
-              std::dynamic_pointer_cast<ArtifactTextLayer>(current);
+              ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(current);
           if (!textLayer) {
             return;
           }
@@ -1028,7 +1029,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
         }
 
         const auto shapeLayer =
-            std::dynamic_pointer_cast<ArtifactShapeLayer>(current);
+            ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(current);
         if (!shapeLayer) {
           return;
         }

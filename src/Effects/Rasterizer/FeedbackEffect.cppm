@@ -17,6 +17,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -126,7 +127,7 @@ void FeedbackEffect::setPropertyValue(const UniString& n, const QVariant& v) {
     else if (k == "rotation") setRotation(v.toFloat());
 }
 void FeedbackEffect::syncImpls() {
-    auto c = std::make_shared<FeedbackCPUImpl>();
+    auto c = ArtifactCore::makeShared<FeedbackCPUImpl>();
     c->amount_ = amount_; c->decay_ = decay_;
     c->cx_ = cx_; c->cy_ = cy_;
     c->zoom_ = zoom_; c->rotation_ = rotation_;

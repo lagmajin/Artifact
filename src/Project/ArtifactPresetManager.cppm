@@ -56,7 +56,7 @@ namespace Artifact {
 
 namespace {
 
-QJsonObject imageToJson(const std::shared_ptr<ImageF32x4_RGBA>& image)
+QJsonObject imageToJson(const ArtifactCore::SharedPtr<ImageF32x4_RGBA>& image)
 {
     QJsonObject obj;
     if (!image || image->width() <= 0 || image->height() <= 0) {
@@ -77,7 +77,7 @@ QJsonObject imageToJson(const std::shared_ptr<ImageF32x4_RGBA>& image)
     return obj;
 }
 
-std::shared_ptr<ImageF32x4_RGBA> imageFromJson(const QJsonObject& obj)
+ArtifactCore::SharedPtr<ImageF32x4_RGBA> imageFromJson(const QJsonObject& obj)
 {
     const int width = obj.value(QStringLiteral("width")).toInt(0);
     const int height = obj.value(QStringLiteral("height")).toInt(0);
@@ -85,7 +85,7 @@ std::shared_ptr<ImageF32x4_RGBA> imageFromJson(const QJsonObject& obj)
         return {};
     }
 
-    auto image = std::make_shared<ImageF32x4_RGBA>();
+    auto image = ArtifactCore::makeShared<ImageF32x4_RGBA>();
     image->resize(width, height);
     image->fillAlpha(0.0f);
 

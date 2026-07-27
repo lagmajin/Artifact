@@ -16,6 +16,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -84,6 +85,6 @@ void StrobeEffect::setPropertyValue(const UniString& n,const QVariant& v){
     else if(k=="mixAmount")setMixAmount(v.toFloat());
 }
 void StrobeEffect::syncImpls(){
-    auto c=std::make_shared<StrobeCPUImpl>();c->frequency_=frequency_;c->mixAmount_=mixAmount_;setCPUImpl(c);
+    auto c=ArtifactCore::makeShared<StrobeCPUImpl>();c->frequency_=frequency_;c->mixAmount_=mixAmount_;setCPUImpl(c);
 }
 } // namespace Artifact

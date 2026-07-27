@@ -23,6 +23,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -358,8 +359,8 @@ void main(uint3 dtid : SV_DispatchThreadID) {
 DitheringEffect::DitheringEffect() {
     setDisplayName(UniString("Dithering"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<DitheringEffectCPUImpl>());
-    setGPUImpl(std::make_shared<DitheringEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<DitheringEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<DitheringEffectGPUImpl>());
 }
 
 DitheringEffect::~DitheringEffect() = default;

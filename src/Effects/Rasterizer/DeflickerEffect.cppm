@@ -17,6 +17,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -124,6 +125,6 @@ void DeflickerEffect::setPropertyValue(const UniString& n,const QVariant& v){
     if(k=="windowSize")setWindowSize(v.toInt());else if(k=="strength")setStrength(v.toFloat());else if(k=="lumaWeight")setLumaWeight(v.toFloat());
 }
 void DeflickerEffect::syncImpls(){
-    auto c=std::make_shared<DeflickerCPUImpl>();c->windowSize_=windowSize_;c->strength_=strength_;c->lumaWeight_=lumaWeight_;setCPUImpl(c);
+    auto c=ArtifactCore::makeShared<DeflickerCPUImpl>();c->windowSize_=windowSize_;c->strength_=strength_;c->lumaWeight_=lumaWeight_;setCPUImpl(c);
 }
 } // namespace Artifact

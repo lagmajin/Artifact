@@ -17,6 +17,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -131,7 +132,7 @@ void TrailFadeEffect::setPropertyValue(const UniString& n,const QVariant& v){
     else if(k=="velocityScale")setVelocityScale(v.toFloat());
 }
 void TrailFadeEffect::syncImpls(){
-    auto c=std::make_shared<TrailFadeCPUImpl>();
+    auto c=ArtifactCore::makeShared<TrailFadeCPUImpl>();
     c->trailLen_=trailLen_;c->fadePower_=fadePower_;c->vScale_=vScale_;setCPUImpl(c);
 }
 } // namespace Artifact

@@ -31,6 +31,7 @@
 #include <regex>
 #include <random>
 export module Artifact.Test.ProjectManager;
+import Memory.SharedPtr;
 
 
 
@@ -41,7 +42,7 @@ export namespace Artifact
 {
  class ArtifactTestProjectManager;
 	
- typedef std::shared_ptr<ArtifactTestProjectManager> ArtifactTestProjectManagerPtr;
+ typedef ArtifactCore::SharedPtr<ArtifactTestProjectManager> ArtifactTestProjectManagerPtr;
 	
  class ArtifactTestProjectManager
  {

@@ -24,6 +24,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -131,7 +132,7 @@ cbuffer VignetteParams:register(b0){float g_Amount;float g_Radius;float g_Feathe
 )";
 };
 
-VignetteEffect::VignetteEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();setGPUImpl(std::make_shared<VignetteGPUImpl>());setComputeMode(ComputeMode::AUTO);}
+    VignetteEffect::VignetteEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();setGPUImpl(ArtifactCore::makeShared<VignetteGPUImpl>());setComputeMode(ComputeMode::AUTO);}
 VignetteEffect::~VignetteEffect()=default;
 float VignetteEffect::amount()const{return amount_;}void VignetteEffect::setAmount(float v){amount_=std::clamp(v,0.0f,1.0f);syncImpls();}
 float VignetteEffect::radius()const{return radius_;}void VignetteEffect::setRadius(float v){radius_=std::clamp(v,0.0f,2.0f);syncImpls();}
@@ -163,7 +164,7 @@ std::vector<AbstractProperty> VignetteEffect::getProperties()const{
 }
 void VignetteEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="amount")setAmount(v.toFloat());else if(k=="radius")setRadius(v.toFloat());else if(k=="feather")setFeather(v.toFloat());else if(k=="centerX")setCenterX(v.toFloat());else if(k=="centerY")setCenterY(v.toFloat());}
 void VignetteEffect::syncImpls(){
-    auto c=std::make_shared<VignetteCPUImpl>();c->amount_=amount_;c->radius_=radius_;c->feather_=feather_;c->cx_=cx_;c->cy_=cy_;setCPUImpl(c);
+    auto c=ArtifactCore::makeShared<VignetteCPUImpl>();c->amount_=amount_;c->radius_=radius_;c->feather_=feather_;c->cx_=cx_;c->cy_=cy_;setCPUImpl(c);
     if(auto* g=dynamic_cast<VignetteGPUImpl*>(gpuImpl().get())){g->amount_=amount_;g->radius_=radius_;g->feather_=feather_;g->cx_=cx_;g->cy_=cy_;}
 }
 } // namespace Artifact

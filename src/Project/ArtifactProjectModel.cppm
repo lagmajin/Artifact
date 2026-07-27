@@ -478,7 +478,7 @@ ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstra
   }
 }
 
-void ArtifactProjectModel::setProject(const std::shared_ptr<ArtifactProject>& project)
+void ArtifactProjectModel::setProject(const ArtifactProjectPtr& project)
 {
   if (!impl_) return;
   // disconnect previous connection

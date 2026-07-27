@@ -37,6 +37,7 @@ export module Artifact.Project.Model;
 import Artifact.Project;
 import Utils.Id;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 
 export namespace Artifact
@@ -64,7 +65,7 @@ export namespace Artifact
  public:
   ArtifactProjectModel(QObject*parent=nullptr);
   ~ArtifactProjectModel();
-  void setProject(const std::shared_ptr<ArtifactProject>& project);
+  void setProject(const ArtifactCore::SharedPtr<ArtifactProject>& project);
   void onCompositionCreated(const ArtifactCore::CompositionID& id);
  };
 

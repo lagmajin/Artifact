@@ -13,6 +13,7 @@ module Artifact.Service.Effect;
 
 import Utils.String.UniString;
 import Utils.Id;
+import Memory.SharedPtr;
 import Artifact.Effect.Abstract;
 import Artifact.Effects.Manager;
 import Artifact.Effect.Ofx.Host;
@@ -809,7 +810,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(effectId.toString());
   }
 
-  auto effectPtr = std::shared_ptr<ArtifactAbstractEffect>(effect.release());
+  auto effectPtr = makeShared(effect.release(), [](ArtifactAbstractEffect* p) { delete p; });
   // Layer effect racks currently display and evaluate Rasterizer effects.
   // Callers such as the Effect menu use this service directly, bypassing the
   // Inspector's normalization; without this, insertion succeeds but the
@@ -828,7 +829,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   auto* ps = ArtifactProjectService::instance();
   if (!ps) return EffectServiceResult::fail("Project service not available");
 
-  std::shared_ptr<ArtifactAbstractEffect> capturedEffect;
+  SharedPtr<ArtifactAbstractEffect> capturedEffect;
   if (auto comp = ps->currentComposition().lock()) {
    if (auto layer = comp->layerById(layerId)) {
     for (const auto& e : layer->getEffects()) {
@@ -902,7 +903,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   }
   QString sourceDisplayName = effectId;
   bool sourceEnabled = true;
-  std::shared_ptr<ArtifactAbstractEffect> sourceEffect;
+  SharedPtr<ArtifactAbstractEffect> sourceEffect;
   for (const auto &effect : layer->getEffects()) {
    if (!effect || effect->effectID().toQString() != effectId) {
     continue;
@@ -932,7 +933,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   const auto existingEffects = layer->getEffects();
   const auto idExists = [&existingEffects](const QString& candidate) {
    return std::any_of(existingEffects.begin(), existingEffects.end(),
-    [&candidate](const std::shared_ptr<ArtifactAbstractEffect>& effect) {
+    [&candidate](const SharedPtr<ArtifactAbstractEffect>& effect) {
      return effect && effect->effectID().toQString() == candidate;
     });
   };
@@ -953,7 +954,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
    }
   }
 
-  auto copyPtr = std::shared_ptr<ArtifactAbstractEffect>(effectCopy.release());
+  auto copyPtr = makeShared(effectCopy.release(), [](ArtifactAbstractEffect* p) { delete p; });
   if (ps->addEffectToLayerInCurrentComposition(layerId, copyPtr)) {
    const QString newEffectId = copyPtr ? copyPtr->effectID().toQString() : copyId;
    Q_EMIT effectAdded(layerId, newEffectId);
@@ -974,7 +975,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(effectId.toString());
   }
 
-  auto effectPtr = std::shared_ptr<ArtifactAbstractEffect>(effect.release());
+  auto effectPtr = makeShared(effect.release(), [](ArtifactAbstractEffect* p) { delete p; });
   if (ps->addEffectToCurrentComposition(effectPtr)) {
    const QString actualEffectId = effectPtr ? effectPtr->effectID().toQString() : effectId.toString();
    return EffectServiceResult::ok(actualEffectId);

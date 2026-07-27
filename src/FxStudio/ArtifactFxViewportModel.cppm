@@ -2,7 +2,6 @@ module;
 
 #include <algorithm>
 #include <cstdint>
-#include <optional>
 #include <utility>
 #include <vector>
 
@@ -90,11 +89,11 @@ std::int64_t ViewportModel::resolvePlaybackFrame(const std::int64_t requestedFra
   return loopFirstFrame_ + wrapped;
 }
 
-std::optional<CueKind> ViewportModel::soloCue() const noexcept {
+ArtifactCore::Optional<CueKind> ViewportModel::soloCue() const noexcept {
   return soloCue_;
 }
 
-void ViewportModel::setSoloCue(const std::optional<CueKind> cue) noexcept {
+void ViewportModel::setSoloCue(const ArtifactCore::Optional<CueKind> cue) noexcept {
   soloCue_ = cue;
 }
 

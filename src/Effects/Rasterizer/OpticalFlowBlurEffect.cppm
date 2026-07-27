@@ -27,6 +27,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -259,10 +260,10 @@ RWTexture2D<float4> OutTex:register(u0);
 
 
 void OpticalFlowBlurEffect::syncImpls(){
-    auto c=std::make_shared<OpticalFlowBlurCPUImpl>();
+    auto c=ArtifactCore::makeShared<OpticalFlowBlurCPUImpl>();
     c->blurAmount_=blurAmount_;c->sampleCount_=sampleCount_;c->flowSmoothness_=flowSmoothness_;c->velocityScale_=velocityScale_;
     setCPUImpl(c);
-    auto g=std::make_shared<OpticalFlowBlurGPUImpl>();
+    auto g=ArtifactCore::makeShared<OpticalFlowBlurGPUImpl>();
     g->cpu.blurAmount_=blurAmount_;g->cpu.sampleCount_=sampleCount_;g->cpu.flowSmoothness_=flowSmoothness_;g->cpu.velocityScale_=velocityScale_;
     setGPUImpl(g);
 }

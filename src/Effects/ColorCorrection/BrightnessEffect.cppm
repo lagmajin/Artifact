@@ -23,6 +23,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -338,21 +339,21 @@ BrightnessEffect::BrightnessEffect() {
     setEffectID(UniString("effect.colorcorrection.brightness"));
     setDisplayName(UniString("Brightness / Contrast"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<BrightnessEffectCPUImpl>());
-    setGPUImpl(std::make_shared<BrightnessEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<BrightnessEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<BrightnessEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 
 BrightnessEffect::~BrightnessEffect() = default;
 
 void BrightnessEffect::syncImpls() {
-    if (auto cpu = std::dynamic_pointer_cast<BrightnessEffectCPUImpl>(cpuImpl())) {
+    if (auto cpu = ArtifactCore::dynamicPointerCast<BrightnessEffectCPUImpl>(cpuImpl())) {
         cpu->brightness_ = brightness_;
         cpu->contrast_ = contrast_;
         cpu->highlights_ = highlights_;
         cpu->shadows_ = shadows_;
     }
-    if (auto gpu = std::dynamic_pointer_cast<BrightnessEffectGPUImpl>(gpuImpl())) {
+    if (auto gpu = ArtifactCore::dynamicPointerCast<BrightnessEffectGPUImpl>(gpuImpl())) {
         gpu->brightness_ = brightness_;
         gpu->contrast_ = contrast_;
         gpu->highlights_ = highlights_;

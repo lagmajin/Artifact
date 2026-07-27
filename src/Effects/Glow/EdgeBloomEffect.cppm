@@ -22,6 +22,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -162,22 +163,22 @@ EdgeBloomEffect::EdgeBloomEffect() {
     setEffectID(UniString("edge_bloom"));
     setDisplayName(UniString("Edge Bloom"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<EdgeBloomEffectCPUImpl>());
-    setGPUImpl(std::make_shared<EdgeBloomEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<EdgeBloomEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<EdgeBloomEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 
 EdgeBloomEffect::~EdgeBloomEffect() = default;
 
 void EdgeBloomEffect::syncImpls() {
-    if (auto cpu = std::dynamic_pointer_cast<EdgeBloomEffectCPUImpl>(cpuImpl())) {
+    if (auto cpu = ArtifactCore::dynamicPointerCast<EdgeBloomEffectCPUImpl>(cpuImpl())) {
         cpu->threshold_ = threshold_;
         cpu->radius_ = radius_;
         cpu->amount_ = amount_;
         cpu->edgeBoost_ = edgeBoost_;
         cpu->tintMix_ = tintMix_;
     }
-    if (auto gpu = std::dynamic_pointer_cast<EdgeBloomEffectGPUImpl>(gpuImpl())) {
+    if (auto gpu = ArtifactCore::dynamicPointerCast<EdgeBloomEffectGPUImpl>(gpuImpl())) {
         gpu->threshold_ = threshold_;
         gpu->radius_ = radius_;
         gpu->amount_ = amount_;

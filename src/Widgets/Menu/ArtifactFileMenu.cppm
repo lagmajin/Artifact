@@ -534,19 +534,19 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
         layer->goToFrame(static_cast<int64_t>(comp->framePosition().framePosition()));
 
         // レイヤーサーフェスを取得して描画
-        if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+        if (auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
             QImage img = imageLayer->toQImage();
             if (!img.isNull()) {
                 const auto size = layer->sourceSize();
                 painter.drawImage(QRectF(0, 0, size.width, size.height), img);
             }
-        } else if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+        } else if (auto svgLayer = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(layer)) {
             QImage img = svgLayer->toQImage();
             if (!img.isNull()) {
                 const auto size = layer->sourceSize();
                 painter.drawImage(QRectF(0, 0, size.width, size.height), img);
             }
-        } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+        } else if (auto solidLayer = ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer)) {
             QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
             const FloatColor solidColor = solidLayer->color();
             img.fill(QColor(
@@ -606,7 +606,7 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
     progress->show();
 
     // バックグラウンドでレンダリング実行
-    auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
+    auto cancelFlag = ArtifactCore::makeShared<std::atomic<bool>>(false);
     QObject::connect(progress, &QProgressDialog::canceled, [cancelFlag]() {
         *cancelFlag = true;
     });
@@ -645,19 +645,19 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
             for (const auto& layer : layers) {
                 if (!layer || !layer->isVisible()) continue;
 
-                if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+                if (auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
                     QImage img = imageLayer->toQImage();
                     if (!img.isNull()) {
                         const auto size = layer->sourceSize();
                         painter.drawImage(QRectF(0, 0, size.width, size.height), img);
                     }
-                } else if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+                } else if (auto svgLayer = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(layer)) {
                     QImage img = svgLayer->toQImage();
                     if (!img.isNull()) {
                         const auto size = layer->sourceSize();
                         painter.drawImage(QRectF(0, 0, size.width, size.height), img);
                     }
-                } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+                } else if (auto solidLayer = ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer)) {
                     QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
                     const FloatColor solidColor = solidLayer->color();
                     img.fill(QColor(

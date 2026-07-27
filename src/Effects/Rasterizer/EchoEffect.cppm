@@ -18,6 +18,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact
 {
@@ -217,7 +218,7 @@ void EchoEffect::setPropertyValue(const UniString& name, const QVariant& value)
 
 void EchoEffect::syncImpls()
 {
-    auto cpu = std::make_shared<EchoCPUImpl>();
+    auto cpu = ArtifactCore::makeShared<EchoCPUImpl>();
     cpu->echoCount_     = echoCount_;
     cpu->decay_         = decay_;
     cpu->blendOperator_ = blendOperator_;

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QWidget>
 #include <QTimer>
 #include <QPainter>
@@ -141,9 +141,10 @@ public:
 
     void copyReportToClipboard()
     {
-        const std::string report =
+        const auto report =
             ArtifactCore::Profiler::instance().generateDiagnosticReport(48);
-        QGuiApplication::clipboard()->setText(QString::fromStdString(report));
+        QGuiApplication::clipboard()->setText(QString::fromUtf8(
+            report.data(), static_cast<int>(report.length())));
     }
 
 protected:

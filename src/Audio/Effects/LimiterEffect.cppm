@@ -93,13 +93,13 @@ std::vector<AudioEffectParameter> LimiterEffect::getUiParameters() const {
     };
 }
 
-void LimiterEffect::setParameter(const std::string& name, float value) {
+void LimiterEffect::setParameter(const String& name, float value) {
     if      (name == "ceiling")    ceiling_   = value;
     else if (name == "release")    releaseMs_ = value;
     else if (name == "input_gain") inputGain_ = value;
 }
 
-float LimiterEffect::getParameter(const std::string& name) const {
+float LimiterEffect::getParameter(const String& name) const {
     if      (name == "ceiling")    return ceiling_;
     else if (name == "release")    return releaseMs_;
     else if (name == "input_gain") return inputGain_;

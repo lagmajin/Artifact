@@ -9,6 +9,7 @@ export module Artifact.Layer.Light;
 import Artifact.Layer.Abstract;
 import Property.Group;
 import Color.Float;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -90,6 +91,6 @@ export namespace Artifact {
   Impl* lightImpl_;
  };
 
- using ArtifactLightLayerPtr = std::shared_ptr<ArtifactLightLayer>;
+ using ArtifactLightLayerPtr = SharedPtr<ArtifactLightLayer>;
 
 } // namespace Artifact

@@ -50,6 +50,7 @@ import FloatRGBA;
 import Utils.String.UniString;
 import Property.Abstract;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 // Global includes for Qt types used in this implementation
 
@@ -178,7 +179,7 @@ void ChromaKeyEffect::setPropertyValue(const ArtifactCore::UniString& name, cons
 }
 
 ChromaKeyEffect::ChromaKeyEffect() : ArtifactAbstractEffect() {
-    typedCpuImpl_ = std::make_shared<ChromaKeyEffectCPUImpl>();
+    typedCpuImpl_ = ArtifactCore::makeShared<ChromaKeyEffectCPUImpl>();
     setCPUImpl(typedCpuImpl_);
     setDisplayName("Chroma Key");
     setEffectID("Effect.Keying.ChromaKey");

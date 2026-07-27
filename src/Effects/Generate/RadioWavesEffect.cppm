@@ -19,6 +19,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -128,7 +129,7 @@ RadioWavesEffect::RadioWavesEffect()
     setDisplayName(UniString("Radio Waves"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
 
-    auto cpu = std::make_shared<RadioWavesCPUImpl>();
+    auto cpu = ArtifactCore::makeShared<RadioWavesCPUImpl>();
     setCPUImpl(cpu);
 }
 

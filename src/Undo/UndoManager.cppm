@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <vector>
 #include <stack>
 #include <memory>
@@ -70,7 +70,7 @@ public:
 };
 
 // --- SetPropertyCommand ---
-SetPropertyCommand::SetPropertyCommand(std::shared_ptr<ArtifactAbstractEffect> target, const UniString& propName, const QVariant& oldValue, const QVariant& newValue)
+SetPropertyCommand::SetPropertyCommand(ArtifactAbstractEffectPtr target, const UniString& propName, const QVariant& oldValue, const QVariant& newValue)
     : target_(target), name_(propName), oldValue_(oldValue), newValue_(newValue) {}
 
 void SetPropertyCommand::undo() {
@@ -336,8 +336,8 @@ void applyTextLayerTextSnapshot(const ArtifactAbstractLayerPtr& layer,
 }
 
 void applyEffectMaskImageSnapshot(
-    const std::shared_ptr<ArtifactAbstractEffect>& effect,
-    const std::vector<std::shared_ptr<ImageF32x4_RGBA>>& masks) {
+    const ArtifactAbstractEffectPtr& effect,
+    const std::vector<SharedPtr<ImageF32x4_RGBA>>& masks) {
     if (!effect) {
         return;
     }
@@ -464,9 +464,9 @@ QString SetTextLayerTextCommand::label() const {
 
 // --- SetEffectMaskImagesCommand ---
 SetEffectMaskImagesCommand::SetEffectMaskImagesCommand(
-    std::shared_ptr<ArtifactAbstractEffect> effect,
-    std::vector<std::shared_ptr<ImageF32x4_RGBA>> beforeMasks,
-    std::vector<std::shared_ptr<ImageF32x4_RGBA>> afterMasks,
+    ArtifactAbstractEffectPtr effect,
+    std::vector<SharedPtr<ImageF32x4_RGBA>> beforeMasks,
+    std::vector<SharedPtr<ImageF32x4_RGBA>> afterMasks,
     QString label)
     : effect_(effect),
       beforeMasks_(std::move(beforeMasks)),
@@ -914,7 +914,7 @@ QString ChangeActiveVariantCommand::label() const {
 }
 
 // --- CreateVariantCommand ---
-CreateVariantCommand::CreateVariantCommand(ArtifactAbstractLayerPtr layer, const std::string& name)
+CreateVariantCommand::CreateVariantCommand(ArtifactAbstractLayerPtr layer, const ArtifactCore::String& name)
     : layer_(layer), name_(name), index_(0) {}
 
 void CreateVariantCommand::undo() {

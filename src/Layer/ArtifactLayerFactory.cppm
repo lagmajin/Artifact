@@ -7,6 +7,7 @@ module;
 
 module Artifact.Layer.Factory;
 import std;
+import Memory.SharedPtr;
 
 import Utils.String.UniString;
 import Artifact.Layer.Abstract;
@@ -42,7 +43,7 @@ import Artifact.Layer.EnvironmentMapInitParams;
 
 namespace Artifact {
 
-std::shared_ptr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json);
+ArtifactAbstractLayerPtr createArtifactLayerFromJson(const QJsonObject& json);
 
  class ArtifactLayerFactory::Impl {
  private:
@@ -166,7 +167,7 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
   }
    break;
   case LayerType::Precomp:
-   ptr = std::make_shared<ArtifactCompositionLayer>();
+   ptr = ArtifactCore::makeShared<ArtifactCompositionLayer>();
    break;
   case LayerType::Camera:
    ptr = ArtifactAbstractLayerPtr(new ArtifactCameraLayer());
@@ -256,7 +257,7 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
       return createArtifactLayerFromJson(json);
   }
 
- std::shared_ptr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json) {
+ ArtifactAbstractLayerPtr createArtifactLayerFromJson(const QJsonObject& json) {
       if (!json.contains("type") &&
           !json.value("isConstruction").toBool(false) &&
           !json.value("isCompositionBackground").toBool(false)) return nullptr;

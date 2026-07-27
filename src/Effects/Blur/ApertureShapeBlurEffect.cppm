@@ -16,6 +16,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -151,7 +152,7 @@ public:
 ApertureShapeBlurEffect::ApertureShapeBlurEffect() {
     setDisplayName(UniString("Aperture Shape Blur"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<ApertureShapeBlurCPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<ApertureShapeBlurCPUImpl>());
     syncImpl();
 }
 

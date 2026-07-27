@@ -38,6 +38,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import FloatRGBA;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -71,7 +72,7 @@ public:
 
 class ChromaKeyEffect : public ArtifactAbstractEffect {
 private:
-    std::shared_ptr<ChromaKeyEffectCPUImpl> typedCpuImpl_;
+    SharedPtr<ChromaKeyEffectCPUImpl> typedCpuImpl_;
 
 public:
     ChromaKeyEffect();

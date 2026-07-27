@@ -2,7 +2,6 @@ module;
 
 #include <algorithm>
 #include <cstdint>
-#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -26,7 +25,7 @@ const ViewportModel& Session::viewport() const noexcept {
   return viewport_;
 }
 
-std::optional<EventId> Session::selectedEventId() const noexcept {
+ArtifactCore::Optional<EventId> Session::selectedEventId() const noexcept {
   return selectedEventId_;
 }
 
@@ -38,11 +37,11 @@ const Event* Session::selectedEvent() const noexcept {
   return selectedEventId_.has_value() ? eventTrack_.find(*selectedEventId_) : nullptr;
 }
 
-std::optional<EventId> Session::insertPreset(const std::string_view presetId,
+ArtifactCore::Optional<EventId> Session::insertPreset(const ArtifactCore::StringView presetId,
                                              const std::int64_t startFrame) {
-  std::optional<Sequence> sequence = PresetCatalog::create(presetId);
+  ArtifactCore::Optional<Sequence> sequence = PresetCatalog::create(presetId);
   if (!sequence.has_value()) {
-    return std::nullopt;
+    return {};
   }
 
   Event event;
@@ -51,7 +50,7 @@ std::optional<EventId> Session::insertPreset(const std::string_view presetId,
   event.startFrame = startFrame;
   event.sequence = std::move(*sequence);
   if (!eventTrack_.add(std::move(event))) {
-    return std::nullopt;
+    return {};
   }
 
   selectEvent(insertedId);

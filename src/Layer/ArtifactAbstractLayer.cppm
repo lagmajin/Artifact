@@ -34,6 +34,7 @@ module;
 
 module Artifact.Layer.Abstract;
 
+import Memory.SharedPtr;
 import Utils;
 import Layer.State;
 import Animation.Transform2D;
@@ -302,7 +303,7 @@ QString slugifyEffectId(const QString &text) {
 }
 
 QString uniqueEffectIdForLayer(
-    const std::vector<std::shared_ptr<ArtifactAbstractEffect>> &effects,
+    const std::vector<SharedPtr<ArtifactAbstractEffect>> &effects,
     const QString &displayName, const QString &preferredId) {
   QString baseId = preferredId.trimmed();
   if (baseId.isEmpty()) {
@@ -315,7 +316,7 @@ QString uniqueEffectIdForLayer(
   auto idExists = [&effects](const QString &candidate) {
     return std::any_of(
         effects.begin(), effects.end(),
-        [&candidate](const std::shared_ptr<ArtifactAbstractEffect> &effect) {
+        [&candidate](const SharedPtr<ArtifactAbstractEffect> &effect) {
           return effect && effect->effectID().toQString() == candidate;
         });
   };
@@ -333,7 +334,7 @@ QString uniqueEffectIdForLayer(
 }
 
 QString uniqueModifierIdForLayer(
-    const std::vector<std::shared_ptr<ArtifactLayerModifier>> &modifiers,
+    const std::vector<SharedPtr<ArtifactLayerModifier>> &modifiers,
     const QString &displayName, const QString &preferredId) {
   QString baseId = preferredId.trimmed();
   if (baseId.isEmpty()) {
@@ -346,7 +347,7 @@ QString uniqueModifierIdForLayer(
   auto idExists = [&modifiers](const QString &candidate) {
     return std::any_of(
         modifiers.begin(), modifiers.end(),
-        [&candidate](const std::shared_ptr<ArtifactLayerModifier> &modifier) {
+        [&candidate](const SharedPtr<ArtifactLayerModifier> &modifier) {
           return modifier && modifier->modifierId() == candidate;
         });
   };
@@ -847,7 +848,7 @@ public:
     mutable int64_t lastCollisionImpactFrame_ =
         std::numeric_limits<int64_t>::min();
     LayerComponentHost componentHost_;
-    std::optional<LayerEvaluationState> authoritativeComponentState_;
+    ArtifactCore::Optional<LayerEvaluationState> authoritativeComponentState_;
     int64_t authoritativeComponentFrame_ =
         std::numeric_limits<int64_t>::min();
     LayerEvaluationState componentEvaluationState_;
@@ -916,14 +917,14 @@ public:
   mutable QRectF cachedBoundingBox_;
 
   // エフェクトコンテナ
-  std::vector<std::shared_ptr<ArtifactAbstractEffect>> effects_;
+  std::vector<SharedPtr<ArtifactAbstractEffect>> effects_;
 
   // レイヤーモディファイアコンテナ
   LayerModifierStack modifiers_;
 
   // マスクコンテナ
   std::vector<LayerMask> masks_;
-  mutable QHash<QString, std::shared_ptr<AbstractProperty>> propertyCache_;
+  mutable QHash<QString, SharedPtr<AbstractProperty>> propertyCache_;
   mutable std::mutex propertyCacheMutex_;
 
   // Time remap
@@ -951,20 +952,20 @@ public:
   Size_2D sourceSize_;
 
   // エフェクト管理メソッド
-  void addEffect(std::shared_ptr<ArtifactAbstractEffect> effect);
+  void addEffect(SharedPtr<ArtifactAbstractEffect> effect);
   void removeEffect(const UniString &effectID);
   void clearEffects();
-  std::vector<std::shared_ptr<ArtifactAbstractEffect>> getEffects() const;
-  std::shared_ptr<ArtifactAbstractEffect>
+  std::vector<SharedPtr<ArtifactAbstractEffect>> getEffects() const;
+  SharedPtr<ArtifactAbstractEffect>
   getEffect(const UniString &effectID) const;
   int effectCount() const;
 
   // モディファイア管理メソッド
-  void addModifier(std::shared_ptr<ArtifactLayerModifier> modifier);
+  void addModifier(SharedPtr<ArtifactLayerModifier> modifier);
   void removeModifier(const QString& modifierId);
   void clearModifiers();
-  std::vector<std::shared_ptr<ArtifactLayerModifier>> getModifiers() const;
-  std::shared_ptr<ArtifactLayerModifier> getModifier(const QString& modifierId) const;
+  std::vector<SharedPtr<ArtifactLayerModifier>> getModifiers() const;
+  SharedPtr<ArtifactLayerModifier> getModifier(const QString& modifierId) const;
   int modifierCount() const;
   bool hasModifiers() const;
 
@@ -1445,7 +1446,7 @@ LayerVariant* ArtifactAbstractLayer::getActiveVariant() const {
     return nullptr;
 }
 
-LayerVariant* ArtifactAbstractLayer::createVariantFromCurrent(const std::string& newName) {
+LayerVariant* ArtifactAbstractLayer::createVariantFromCurrent(const ArtifactCore::String& newName) {
     auto newVariant = std::make_unique<LayerVariant>(this, newName);
     
     if (impl_->activeVariantIndex_ < impl_->variants_.size()) {
@@ -3116,7 +3117,7 @@ void ArtifactAbstractLayer::syncRigidBodyPhysicsToBounds() {
   const float restitution = std::clamp(
       impl_->physicsComponent_.settings().restitution, 0.0f, 1.0f);
   auto bodies = world->getBodies();
-  std::shared_ptr<ArtifactCore::RigidBody2D> body;
+  ArtifactCore::SharedPtr<ArtifactCore::RigidBody2D> body;
   if (!bodies.empty()) {
     body = bodies.front();
     if (body && ((impl_->rigidBodyColliderShape_ >= 0 &&
@@ -3702,7 +3703,7 @@ QRectF ArtifactAbstractLayer::visualLocalBounds() const {
   }
 
   for (const auto &effect : getEffects()) {
-    const auto cloner = std::dynamic_pointer_cast<ClonerGenerator>(effect);
+    const auto cloner = ArtifactCore::dynamicPointerCast<ClonerGenerator>(effect);
     if (!cloner || !cloner->isEnabled()) {
       continue;
     }
@@ -5147,7 +5148,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
 }
 
 void ArtifactAbstractLayer::Impl::addEffect(
-    std::shared_ptr<ArtifactAbstractEffect> effect) {
+    SharedPtr<ArtifactAbstractEffect> effect) {
   if (!effect)
     return;
   const QString currentId = effect->effectID().toQString().trimmed();
@@ -5165,7 +5166,7 @@ void ArtifactAbstractLayer::Impl::addEffect(
 void ArtifactAbstractLayer::Impl::removeEffect(const UniString &effectID) {
   auto it = std::remove_if(
       effects_.begin(), effects_.end(),
-      [&effectID](const std::shared_ptr<ArtifactAbstractEffect> &e) {
+      [&effectID](const SharedPtr<ArtifactAbstractEffect> &e) {
         return e && e->effectID() == effectID;
       });
   if (it != effects_.end()) {
@@ -5180,12 +5181,12 @@ void ArtifactAbstractLayer::Impl::clearEffects() {
   qDebug() << "[ArtifactAbstractLayer] All effects cleared";
 }
 
-std::vector<std::shared_ptr<ArtifactAbstractEffect>>
+std::vector<SharedPtr<ArtifactAbstractEffect>>
 ArtifactAbstractLayer::Impl::getEffects() const {
   return effects_;
 }
 
-std::shared_ptr<ArtifactAbstractEffect>
+SharedPtr<ArtifactAbstractEffect>
 ArtifactAbstractLayer::Impl::getEffect(const UniString &effectID) const {
   for (const auto &effect : effects_) {
     if (effect && effect->effectID() == effectID) {
@@ -5200,7 +5201,7 @@ int ArtifactAbstractLayer::Impl::effectCount() const {
 }
 
 void ArtifactAbstractLayer::Impl::addModifier(
-    std::shared_ptr<ArtifactLayerModifier> modifier) {
+    SharedPtr<ArtifactLayerModifier> modifier) {
   if (!modifier) {
     return;
   }
@@ -5222,12 +5223,12 @@ void ArtifactAbstractLayer::Impl::clearModifiers() {
   modifiers_.clear();
 }
 
-std::vector<std::shared_ptr<ArtifactLayerModifier>>
+std::vector<SharedPtr<ArtifactLayerModifier>>
 ArtifactAbstractLayer::Impl::getModifiers() const {
   return modifiers_.modifiers();
 }
 
-std::shared_ptr<ArtifactLayerModifier>
+SharedPtr<ArtifactLayerModifier>
 ArtifactAbstractLayer::Impl::getModifier(const QString& modifierId) const {
   return modifiers_.modifier(modifierId);
 }
@@ -5241,7 +5242,7 @@ bool ArtifactAbstractLayer::Impl::hasModifiers() const {
 }
 
 void ArtifactAbstractLayer::addEffect(
-    std::shared_ptr<ArtifactAbstractEffect> effect) {
+    SharedPtr<ArtifactAbstractEffect> effect) {
   impl_->addEffect(effect);
 }
 
@@ -5251,12 +5252,12 @@ void ArtifactAbstractLayer::removeEffect(const UniString &effectID) {
 
 void ArtifactAbstractLayer::clearEffects() { impl_->clearEffects(); }
 
-std::vector<std::shared_ptr<ArtifactAbstractEffect>>
+std::vector<SharedPtr<ArtifactAbstractEffect>>
 ArtifactAbstractLayer::getEffects() const {
   return impl_->getEffects();
 }
 
-std::shared_ptr<ArtifactAbstractEffect>
+SharedPtr<ArtifactAbstractEffect>
 ArtifactAbstractLayer::getEffect(const UniString &effectID) const {
   return impl_->getEffect(effectID);
 }
@@ -5264,7 +5265,7 @@ ArtifactAbstractLayer::getEffect(const UniString &effectID) const {
 int ArtifactAbstractLayer::effectCount() const { return impl_->effectCount(); }
 
 void ArtifactAbstractLayer::addModifier(
-    std::shared_ptr<ArtifactLayerModifier> modifier) {
+    SharedPtr<ArtifactLayerModifier> modifier) {
   impl_->addModifier(std::move(modifier));
   notifyLayerMutation(this, LayerDirtyFlag::Transform,
                       LayerDirtyReason::PropertyChanged);
@@ -5282,12 +5283,12 @@ void ArtifactAbstractLayer::clearModifiers() {
                       LayerDirtyReason::PropertyChanged);
 }
 
-std::vector<std::shared_ptr<ArtifactLayerModifier>>
+std::vector<SharedPtr<ArtifactLayerModifier>>
 ArtifactAbstractLayer::getModifiers() const {
   return impl_->getModifiers();
 }
 
-std::shared_ptr<ArtifactLayerModifier>
+SharedPtr<ArtifactLayerModifier>
 ArtifactAbstractLayer::getModifier(const QString& modifierId) const {
   return impl_->getModifier(modifierId);
 }
@@ -5568,11 +5569,11 @@ void ArtifactAbstractLayer::setAuthoritativeComponentEvaluationState(
   impl_->authoritativeComponentFrame_ = frame;
 }
 
-std::optional<LayerEvaluationState>
+ArtifactCore::Optional<LayerEvaluationState>
 ArtifactAbstractLayer::authoritativeComponentEvaluationState() const {
   if (!impl_->authoritativeComponentState_ ||
       impl_->authoritativeComponentFrame_ != impl_->currentFrame_) {
-    return std::nullopt;
+    return {};
   }
   return impl_->authoritativeComponentState_;
 }
@@ -5585,7 +5586,7 @@ void ArtifactAbstractLayer::clearAuthoritativeComponentEvaluationState() {
 
 LayerComponentRuntimeSnapshot
 ArtifactAbstractLayer::captureComponentRuntimeSnapshot() const {
-  auto snapshot = std::make_shared<LayerComponentRuntimeSnapshotData>();
+  auto snapshot = makeShared<LayerComponentRuntimeSnapshotData>();
   snapshot->fractureState = impl_->fractureState_;
   snapshot->componentParticles = impl_->componentParticles_;
   snapshot->fractureMotionLastFrame = impl_->fractureMotionLastFrame_;
@@ -5605,7 +5606,7 @@ bool ArtifactAbstractLayer::restoreComponentRuntimeSnapshot(
   if (!snapshot.isValid()) {
     return false;
   }
-  const auto data = std::static_pointer_cast<
+  const auto data = staticPointerCast<
       const LayerComponentRuntimeSnapshotData>(snapshot.storage);
   if (!data) {
     return false;
@@ -5623,7 +5624,7 @@ QJsonObject ArtifactAbstractLayer::serializeComponentRuntimeSnapshot(
   if (!snapshot.isValid()) {
     return {};
   }
-  const auto data = std::static_pointer_cast<
+  const auto data = staticPointerCast<
       const LayerComponentRuntimeSnapshotData>(snapshot.storage);
   if (!data) {
     return {};
@@ -5702,7 +5703,7 @@ ArtifactAbstractLayer::deserializeComponentRuntimeSnapshot(
     return {};
   }
 
-  auto data = std::make_shared<LayerComponentRuntimeSnapshotData>();
+  auto data = makeShared<LayerComponentRuntimeSnapshotData>();
   const QJsonObject fracture =
       object.value(QStringLiteral("fracture")).toObject();
   const int kind = fracture.value(QStringLiteral("kind")).toInt();
@@ -7675,7 +7676,7 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   return groups;
 }
 
-std::shared_ptr<ArtifactCore::AbstractProperty>
+SharedPtr<ArtifactCore::AbstractProperty>
 ArtifactAbstractLayer::getProperty(const QString &name) const {
   std::lock_guard<std::mutex> lock(impl_->propertyCacheMutex_);
   auto &cache = impl_->propertyCache_;
@@ -7686,7 +7687,7 @@ ArtifactAbstractLayer::getProperty(const QString &name) const {
   return nullptr;
 }
 
-std::shared_ptr<ArtifactCore::AbstractProperty>
+SharedPtr<ArtifactCore::AbstractProperty>
 ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
                                                PropertyType type,
                                                const QVariant &value,
@@ -7695,7 +7696,7 @@ ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
   auto &cache = impl_->propertyCache_;
   auto it = cache.find(propertyPath);
   if (it == cache.end() || !it.value()) {
-    it = cache.insert(propertyPath, std::make_shared<AbstractProperty>());
+    it = cache.insert(propertyPath, makeShared<AbstractProperty>());
   }
   auto property = it.value();
   const bool hasAnimatedValue =

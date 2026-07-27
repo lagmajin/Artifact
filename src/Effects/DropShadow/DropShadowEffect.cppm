@@ -25,6 +25,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -184,8 +185,8 @@ DropShadowEffect::DropShadowEffect()
     setDisplayName(UniString("Drop Shadow (Rasterizer)"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
 
-    auto cpu = std::make_shared<DropShadowCPUImpl>();
-    auto gpu = std::make_shared<DropShadowGPUImpl>();
+    auto cpu = ArtifactCore::makeShared<DropShadowCPUImpl>();
+    auto gpu = ArtifactCore::makeShared<DropShadowGPUImpl>();
     setCPUImpl(cpu);
     setGPUImpl(gpu);
 }

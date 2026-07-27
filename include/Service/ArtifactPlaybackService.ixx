@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <functional>
 
 #include <QObject>
@@ -20,7 +20,6 @@
 #include <map>
 #include <memory>
 #include <numeric>
-#include <optional>
 #include <queue>
 #include <random>
 #include <regex>
@@ -50,6 +49,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Playback.Engine;
 import Artifact.Composition.InOutPoints;
 import Artifact.Event.Types;
+import Utils.Optional;
 
 export namespace Artifact {
 
@@ -200,8 +200,8 @@ public:
   // In/Out Points
   void setInOutPoints(ArtifactInOutPoints *inOutPoints);
   ArtifactInOutPoints *inOutPoints() const;
-  std::optional<FramePosition> inPoint() const;
-  std::optional<FramePosition> outPoint() const;
+  ArtifactCore::Optional<FramePosition> inPoint() const;
+  ArtifactCore::Optional<FramePosition> outPoint() const;
   bool hasInPoint() const;
   bool hasOutPoint() const;
   void setInPointAtCurrentFrame();

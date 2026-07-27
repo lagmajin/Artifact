@@ -50,6 +50,7 @@ import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -292,12 +293,12 @@ void LiquifyEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32
 
 class LiquifyEffect::Impl {
 public:
-    std::shared_ptr<LiquifyEffectCPUImpl> cpuImpl_;
-    std::shared_ptr<LiquifyEffectGPUImpl> gpuImpl_;
+    ArtifactCore::SharedPtr<LiquifyEffectCPUImpl> cpuImpl_;
+    ArtifactCore::SharedPtr<LiquifyEffectGPUImpl> gpuImpl_;
 
     Impl() {
-        cpuImpl_ = std::make_shared<LiquifyEffectCPUImpl>();
-        gpuImpl_ = std::make_shared<LiquifyEffectGPUImpl>();
+        cpuImpl_ = ArtifactCore::makeShared<LiquifyEffectCPUImpl>();
+        gpuImpl_ = ArtifactCore::makeShared<LiquifyEffectGPUImpl>();
     }
 };
 

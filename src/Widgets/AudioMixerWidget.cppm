@@ -34,6 +34,7 @@ import Artifact.VST.Effect;
 import Artifact.VST.Host;
 import Artifact.Audio.Effects.Manager;
 import Artifact.Audio.Effects.Base;
+import Memory.SharedPtr;
 
 namespace Artifact {
 W_OBJECT_IMPL(AudioEffectSlotWidget)
@@ -44,7 +45,7 @@ W_OBJECT_IMPL(AudioMixerWidget)
 // AudioEffectSlotWidget
 // ============================================================================
 
-AudioEffectSlotWidget::AudioEffectSlotWidget(std::shared_ptr<ArtifactCore::AudioBus> bus, int slotIndex, QWidget* parent)
+AudioEffectSlotWidget::AudioEffectSlotWidget(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus, int slotIndex, QWidget* parent)
     : QWidget(parent), bus_(bus), slotIndex_(slotIndex) {
     
     setFixedHeight(24);
@@ -77,7 +78,7 @@ void AudioEffectSlotWidget::paintEvent(QPaintEvent* event) {
 
 // Helper: build parameter editor dialog
 static QDialog* createParameterEditor(const std::string& effectName,
-    std::shared_ptr<ArtifactCore::AudioEffect> effect, QWidget* parent) {
+    ArtifactCore::SharedPtr<ArtifactCore::AudioEffect> effect, QWidget* parent) {
 
     auto* dlg = new QDialog(parent);
     dlg->setWindowTitle(QString::fromStdString(effectName) + " Parameters");
@@ -92,7 +93,7 @@ static QDialog* createParameterEditor(const std::string& effectName,
         auto newParams = absEffect->getUiParameters();
         for (const auto& p : newParams) {
             std::string pName = p.name;
-            std::string pDisplay = p.displayName;
+            std::string pDisplay = ArtifactCore::toStdString(p.displayName);
             if (p.type == Artifact::AudioEffectParameterType::Bool) {
                 auto* cb = new QComboBox();
                 cb->addItem("Off");
@@ -117,8 +118,8 @@ static QDialog* createParameterEditor(const std::string& effectName,
         // Fall back to legacy EffectParameter interface
         auto legacyParams = effect->getParameters();
         for (const auto& p : legacyParams) {
-            std::string pId = p.id;
-            std::string pDisplay = p.displayName;
+            std::string pId = ArtifactCore::toStdString(p.id);
+            std::string pDisplay = ArtifactCore::toStdString(p.displayName);
             auto* spin = new QDoubleSpinBox();
             spin->setRange(p.minValue, p.maxValue);
             spin->setDecimals(1);
@@ -162,7 +163,7 @@ void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
                 nativeMenu->addAction(displayName, [this, idCopy = id]() {
                     auto effect = Artifact::ArtifactAudioEffectManager::instance().createEffect(idCopy);
                     if (effect) {
-                        std::shared_ptr<ArtifactCore::AudioEffect> shared = std::move(effect);
+                        ArtifactCore::SharedPtr<ArtifactCore::AudioEffect> shared = std::move(effect);
                         bus_->addEffect(shared);
                         update();
                     }
@@ -171,7 +172,7 @@ void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
         }
 
         menu.addAction("Insert VST Effect...", [this]() {
-            auto vst = std::make_shared<Artifact::VSTEffect>();
+            auto vst = ArtifactCore::makeShared<Artifact::VSTEffect>();
             bus_->addEffect(vst);
             update();
         });
@@ -202,7 +203,7 @@ void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
             });
         }
 
-        if (auto vst = std::dynamic_pointer_cast<Artifact::VSTEffect>(effect)) {
+        if (auto vst = ArtifactCore::dynamicPointerCast<Artifact::VSTEffect>(effect)) {
             menu.addAction("Open Editor", [this, vst]() {
                 vst->openEditor(nullptr);
             });
@@ -216,7 +217,7 @@ void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
 // AudioChannelStripWidget
 // ============================================================================
 
-AudioChannelStripWidget::AudioChannelStripWidget(std::shared_ptr<ArtifactCore::AudioBus> bus, QWidget* parent)
+AudioChannelStripWidget::AudioChannelStripWidget(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus, QWidget* parent)
     : QWidget(parent), bus_(bus) {
     
     analyzer_ = std::make_unique<ArtifactCore::AudioAnalyzer>(1024);

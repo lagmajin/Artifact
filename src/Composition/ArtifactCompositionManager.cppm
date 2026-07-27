@@ -12,6 +12,7 @@ import Artifact.Composition.InitParams;
 import Artifact.Event.Types;
 import Event.Bus;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -76,7 +77,7 @@ CreateCompositionResult ArtifactCompositionManager::createNewComposition(
  CreateCompositionResult result;
  try {
    const ArtifactCore::CompositionID id;
-  auto comp = std::make_shared<ArtifactComposition2D>(id, params);
+  auto comp = ArtifactCore::makeShared<ArtifactComposition2D>(id, params);
   if (!comp) {
     result.message = UniString::fromQString(QString::fromUtf8("Failed to allocate composition"));
    return result;

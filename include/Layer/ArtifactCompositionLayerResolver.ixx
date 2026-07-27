@@ -5,9 +5,10 @@ module;
 export module Artifact.Layer.Composition.Resolver;
 
 import Artifact.Composition.Abstract;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
-std::shared_ptr<ArtifactAbstractComposition> resolveArtifactCompositionLayerSource(const QString& compositionId);
+SharedPtr<ArtifactAbstractComposition> resolveArtifactCompositionLayerSource(const QString& compositionId);
 
 } // namespace Artifact

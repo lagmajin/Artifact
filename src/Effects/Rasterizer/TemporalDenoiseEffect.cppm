@@ -17,6 +17,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -145,7 +146,7 @@ void TemporalDenoiseEffect::setPropertyValue(const UniString& n, const QVariant&
     else if (k == "varianceThreshold") setVarianceThreshold(v.toFloat());
 }
 void TemporalDenoiseEffect::syncImpls() {
-    auto c = std::make_shared<TemporalDenoiseCPUImpl>();
+    auto c = ArtifactCore::makeShared<TemporalDenoiseCPUImpl>();
     c->strength_ = strength_; c->frameCount_ = frameCount_; c->varianceThreshold_ = varianceThreshold_;
     setCPUImpl(c);
 }

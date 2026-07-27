@@ -17,6 +17,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -137,7 +138,7 @@ void LightTrailsEffect::setPropertyValue(const UniString& n,const QVariant& v){
     else if(k=="velocityScale")setVelocityScale(v.toFloat());
 }
 void LightTrailsEffect::syncImpls(){
-    auto c=std::make_shared<LightTrailsCPUImpl>();
+    auto c=ArtifactCore::makeShared<LightTrailsCPUImpl>();
     c->trailLen_=trailLen_;c->decay_=decay_;c->lumaThresh_=lumaThresh_;c->vScale_=vScale_;
     setCPUImpl(c);
 }

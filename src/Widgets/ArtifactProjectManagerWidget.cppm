@@ -143,6 +143,7 @@ import Artifact.Project.Cleanup;
 import Input.Operator;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Video;
+import Memory.SharedPtr;
 import Asset.Manager;
 import Artifact.Layer.Composition;
 import Artifact.Layer.Search.Query;
@@ -1079,7 +1080,7 @@ void syncProxyPathToProject(const QString& sourceFilePath, const QString& proxyP
             }
             const auto layers = comp->allLayer();
             for (const auto& layer : layers) {
-                auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+                auto videoLayer = layer ? ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) : nullptr;
                 if (!videoLayer) {
                     continue;
                 }
@@ -6101,7 +6102,7 @@ public:
         }
         const auto layers = currentComp->allLayer();
         for (const auto& layer : layers) {
-            auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+            auto videoLayer = layer ? ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) : nullptr;
             if (!videoLayer) {
                 continue;
             }
@@ -6414,8 +6415,8 @@ public:
 
     void update() {
         auto* svc = ArtifactProjectService::instance();
-        std::shared_ptr<ArtifactProject> shared = svc ? svc->getCurrentProjectSharedPtr()
-                                                       : nullptr;
+        ArtifactProjectPtr shared = svc ? svc->getCurrentProjectSharedPtr()
+                                        : ArtifactProjectPtr{};
         if (!projectModel_) projectModel_ = new ArtifactProjectModel();
         projectModel_->setProject(shared);
 
@@ -6655,7 +6656,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
                     auto comp = found.ptr.lock();
                     if (!found.success || !comp) return;
                     for (const auto& layer : comp->allLayer()) {
-                        auto vl = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+                        auto vl = layer ? ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) : nullptr;
                         if (!vl) continue;
                         if (checked) {
                             const QString proxyPath = proxyFilePathForFootage(vl->sourcePath().trimmed());

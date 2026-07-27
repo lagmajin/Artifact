@@ -67,6 +67,8 @@
 #include <random>
 module Artifact.Render.Queue.Service;
 
+import Memory.SharedPtr;
+
 
 
 
@@ -117,6 +119,7 @@ import Render.Farm.Types;
 import Render.Farm.Progress;
 import Render.Farm.Log;
 import Application.AppSettings;
+import Memory.SharedPtr;
 
 namespace Artifact
 {
@@ -927,7 +930,7 @@ namespace Artifact
             const auto green = image.getChannel(ArtifactCore::ChannelType::Green);
             const auto blue = image.getChannel(ArtifactCore::ChannelType::Blue);
             const auto fallbackTypes = image.channelTypes();
-            std::shared_ptr<const ArtifactCore::VideoChannel> fallback;
+            ArtifactCore::SharedPtr<const ArtifactCore::VideoChannel> fallback;
             if (!fallbackTypes.empty()) {
                 fallback = image.getChannel(fallbackTypes.front());
             }
@@ -2844,9 +2847,9 @@ namespace Artifact
                         continue;
                     }
                     QJsonObject layerObject = layer->toJson();
-                    if (const auto camera = std::dynamic_pointer_cast<ArtifactCameraLayer>(layer)) {
+                    if (const auto camera = ArtifactCore::dynamicPointerCast<ArtifactCameraLayer>(layer)) {
                         layerObject.insert(QStringLiteral("type"), static_cast<int>(LayerType::Camera));
-                    } else if (const auto light = std::dynamic_pointer_cast<ArtifactLightLayer>(layer)) {
+                    } else if (const auto light = ArtifactCore::dynamicPointerCast<ArtifactLightLayer>(layer)) {
                         const auto lightColor = light->color();
                         layerObject.insert(QStringLiteral("type"), static_cast<int>(LayerType::Light));
                         layerObject.insert(QStringLiteral("light.type"), static_cast<int>(light->lightType()));
@@ -2877,7 +2880,7 @@ namespace Artifact
                 QJsonArray nestedCompositions;
                 const auto layers = composition->allLayerRef();
                 for (const auto& layer : layers) {
-                    const auto precompLayer = std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer);
+                    const auto precompLayer = ArtifactCore::dynamicPointerCast<ArtifactCompositionLayer>(layer);
                     if (!precompLayer) {
                         continue;
                     }
@@ -3316,8 +3319,8 @@ namespace Artifact
                 return fallback;
             }
             // Solid2D / SolidImage は sourceSize() が 0 を返すため localBounds() から取得
-            if (std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) ||
-                std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+            if (ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(layer) ||
+                ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer)) {
                 const auto bounds = layer->localBounds();
                 if (bounds.isValid() && bounds.width() > 0 && bounds.height() > 0) {
                     return QSize(
@@ -3331,7 +3334,7 @@ namespace Artifact
             return QSize(std::max(16, w), std::max(16, h));
         }
 
-        QImage renderTextLayerSurface(const std::shared_ptr<ArtifactTextLayer>& textLayer, const QSize& size) const
+        QImage renderTextLayerSurface(const ArtifactCore::SharedPtr<ArtifactTextLayer>& textLayer, const QSize& size) const
         {
             if (!textLayer) {
                 return {};
@@ -3340,7 +3343,7 @@ namespace Artifact
             return textLayer->toQImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
         }
 
-        QImage renderVideoLayerSurface(const std::shared_ptr<ArtifactVideoLayer>& videoLayer, const QSize& size) const
+        QImage renderVideoLayerSurface(const ArtifactCore::SharedPtr<ArtifactVideoLayer>& videoLayer, const QSize& size) const
         {
             if (!videoLayer) {
                 return {};
@@ -3365,41 +3368,41 @@ namespace Artifact
             }
 
             const QSize layerSize = safeLayerSize(layer);
-            if (const auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+            if (const auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
                 const QImage image = imageLayer->toQImage();
                 if (!image.isNull()) {
                     return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
                 }
             }
 
-            if (const auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+            if (const auto svgLayer = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(layer)) {
                 const QImage image = svgLayer->toQImage();
                 if (!image.isNull()) {
                     return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
                 }
             }
 
-            if (const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+            if (const auto solidLayer = ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer)) {
                 QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
                 image.fill(toQColor(solidLayer->color()));
                 return image;
             }
 
-            if (const auto solid2DLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+            if (const auto solid2DLayer = ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(layer)) {
                 QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
                 image.fill(toQColor(solid2DLayer->color()));
                 return image;
             }
 
-            if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+            if (const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
                 return renderTextLayerSurface(textLayer, layerSize);
             }
 
-            if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+            if (const auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
                 return renderVideoLayerSurface(videoLayer, layerSize);
             }
 
-            if (const auto shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+            if (const auto shapeLayer = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer)) {
                 const QImage image = shapeLayer->toQImage();
                 if (!image.isNull()) {
                     return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
@@ -5123,7 +5126,7 @@ namespace Artifact
         impl_->workerThread_ = std::thread([this]() {
             try {
                 const int count = impl_->queueManager.jobCount();
-                auto anyFailure = std::make_shared<std::atomic_bool>(false);
+                auto anyFailure = ArtifactCore::makeShared<std::atomic_bool>(false);
                 for (int i = 0; i < count; ++i) {
                 if (impl_->shutdownRequested_.load(std::memory_order_acquire)) break;
 

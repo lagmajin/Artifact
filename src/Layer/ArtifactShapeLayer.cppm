@@ -35,6 +35,7 @@ import Shape.Repeater;
 import Shape.AeOperators;
 import Shape.Types;
 import Shape.Path;
+import Memory.SharedPtr;
 import Physics.System;
 import Physics.SoftBody;
 import Physics.Mpm2D;
@@ -334,63 +335,6 @@ static std::vector<QPainterPath> buildProcessedPainterPaths(
   painterPaths.push_back(path.toPainterPath());
  }
  return painterPaths;
-}
-
-static std::vector<std::array<QPointF, 3>> triangulateSimplePolygon(
-    const std::vector<QPointF>& polygon) {
- std::vector<std::array<QPointF, 3>> triangles;
- if (polygon.size() < 3) return triangles;
-
- auto cross = [](const QPointF& a, const QPointF& b, const QPointF& c) {
-  return (b.x() - a.x()) * (c.y() - a.y()) -
-         (b.y() - a.y()) * (c.x() - a.x());
- };
- double signedArea = 0.0;
- for (size_t i = 0; i < polygon.size(); ++i) {
-  const auto& a = polygon[i];
-  const auto& b = polygon[(i + 1) % polygon.size()];
-  signedArea += a.x() * b.y() - b.x() * a.y();
- }
- if (std::abs(signedArea) <= 1e-9) return triangles;
-
- std::vector<size_t> indices(polygon.size());
- std::iota(indices.begin(), indices.end(), 0);
- const bool ccw = signedArea > 0.0;
- const auto inside = [&](const QPointF& point, const QPointF& a,
-                         const QPointF& b, const QPointF& c) {
-  const double c0 = cross(a, b, point);
-  const double c1 = cross(b, c, point);
-  const double c2 = cross(c, a, point);
-  if (ccw) return c0 >= -1e-9 && c1 >= -1e-9 && c2 >= -1e-9;
-  return c0 <= 1e-9 && c1 <= 1e-9 && c2 <= 1e-9;
- };
-
- size_t guard = 0;
- while (indices.size() > 2 && guard++ < polygon.size() * polygon.size()) {
-  bool clipped = false;
-  for (size_t i = 0; i < indices.size(); ++i) {
-   const size_t prev = indices[(i + indices.size() - 1) % indices.size()];
-   const size_t curr = indices[i];
-   const size_t next = indices[(i + 1) % indices.size()];
-   const double turn = cross(polygon[prev], polygon[curr], polygon[next]);
-   if ((ccw && turn <= 1e-9) || (!ccw && turn >= -1e-9)) continue;
-   bool containsVertex = false;
-   for (const size_t candidate : indices) {
-    if (candidate == prev || candidate == curr || candidate == next) continue;
-    if (inside(polygon[candidate], polygon[prev], polygon[curr], polygon[next])) {
-     containsVertex = true;
-     break;
-    }
-   }
-   if (containsVertex) continue;
-   triangles.push_back({polygon[prev], polygon[curr], polygon[next]});
-   indices.erase(indices.begin() + static_cast<std::ptrdiff_t>(i));
-   clipped = true;
-   break;
-  }
-  if (!clipped) return {};
- }
- return triangles;
 }
 
 static std::vector<ArtifactCore::ShapePath> buildProcessedShapePaths(
@@ -1511,44 +1455,48 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
      const double renderScale = std::max({1.0, scaleX, scaleY});
      const auto subpaths = path.flattenSubpaths(0.25 / renderScale);
      if (subpaths.empty()) return;
-     const auto& segments = subpaths.front();
-     std::vector<QPointF> mapped;
-     mapped.reserve(segments.size() + 1);
-     for (const auto& segment : segments) {
-      mapped.push_back(mapPoint(transform, segment.p0));
-     }
-     if (!segments.empty() && !impl->customPathClosed_) {
-      mapped.push_back(mapPoint(transform, segments.back().p1));
-     }
 
-     if (impl->fillEnabled_ && impl->customPathClosed_ && mapped.size() >= 3) {
-      const auto triangles = triangulateSimplePolygon(mapped);
+     if (impl->fillEnabled_ && impl->customPathClosed_) {
+      // Fill-rule and hole aware triangulation runs in local coordinates;
+      // affine mapping keeps the triangles valid in composition space.
+      const auto triangles = path.triangulate(0.25 / renderScale);
       if (!triangles.empty()) {
        for (const auto& triangle : triangles) {
+        const QPointF t0 = mapPoint(transform, triangle.p0);
+        const QPointF t1 = mapPoint(transform, triangle.p1);
+        const QPointF t2 = mapPoint(transform, triangle.p2);
         renderer->drawSolidTriangleLocal(
-            {static_cast<float>(triangle[0].x()), static_cast<float>(triangle[0].y())},
-            {static_cast<float>(triangle[1].x()), static_cast<float>(triangle[1].y())},
-            {static_cast<float>(triangle[2].x()), static_cast<float>(triangle[2].y())},
+            {static_cast<float>(t0.x()), static_cast<float>(t0.y())},
+            {static_cast<float>(t1.x()), static_cast<float>(t1.y())},
+            {static_cast<float>(t2.x()), static_cast<float>(t2.y())},
             fill);
        }
-      } else {
+      } else if (subpaths.size() == 1) {
+       // Single-contour fallback keeps the previous polygon behavior.
+       // Multi-contour failures skip the fill instead of drawing each
+       // contour as an unrelated polygon (holes would be lost).
        std::vector<Detail::float2> polygon;
-       polygon.reserve(mapped.size());
-       for (const auto& point : mapped) {
-        polygon.push_back({static_cast<float>(point.x()),
-                           static_cast<float>(point.y())});
+       polygon.reserve(subpaths.front().size());
+       for (const auto& segment : subpaths.front()) {
+        const QPointF mappedPoint = mapPoint(transform, segment.p0);
+        polygon.push_back({static_cast<float>(mappedPoint.x()),
+                           static_cast<float>(mappedPoint.y())});
        }
-       renderer->drawSolidPolygonLocal(polygon, fill);
+       if (polygon.size() >= 3) {
+        renderer->drawSolidPolygonLocal(polygon, fill);
+       }
       }
      }
      if (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f) {
-      for (const auto& segment : segments) {
-       const QPointF p0 = mapPoint(transform, segment.p0);
-       const QPointF p1 = mapPoint(transform, segment.p1);
-       renderer->drawThickLineLocal(
-           {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
-           {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
-           std::max(1.0f, impl->strokeWidth_), stroke);
+      for (const auto& segments : subpaths) {
+       for (const auto& segment : segments) {
+        const QPointF p0 = mapPoint(transform, segment.p0);
+        const QPointF p1 = mapPoint(transform, segment.p1);
+        renderer->drawThickLineLocal(
+            {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+            {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
+            std::max(1.0f, impl->strokeWidth_), stroke);
+       }
       }
      }
      return;
@@ -2300,8 +2248,8 @@ QJsonObject ArtifactShapeLayer::toJson() const {
   return obj;
 }
 
-std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &obj) {
-  auto layer = std::make_shared<ArtifactShapeLayer>();
+SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &obj) {
+  auto layer = ArtifactCore::makeShared<ArtifactShapeLayer>();
   layer->ArtifactAbstract2DLayer::fromJsonProperties(obj);
   layer->setShapeType(static_cast<Artifact::ShapeType>(obj["shapeType"].toInt()));
   layer->setSize(obj["shapeWidth"].toInt(200), obj["shapeHeight"].toInt(200));

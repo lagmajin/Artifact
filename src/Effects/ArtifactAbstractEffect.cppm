@@ -48,6 +48,7 @@ import Artifact.Effect.Context;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Artifact.Effect.ImplBase;
+import Memory.SharedPtr;
 import Property.Abstract;
 import Time.Rational;
 import Core.Parallel;
@@ -63,17 +64,17 @@ public:
     UniString id;
     UniString name;
     EffectPipelineStage pipelineStage = EffectPipelineStage::Rasterizer; // Default to Rasterizer for retrocompatibility
-    std::shared_ptr<ArtifactEffectImplBase> cpuImpl_;
-    std::shared_ptr<ArtifactEffectImplBase> gpuImpl_;
+    SharedPtr<ArtifactEffectImplBase> cpuImpl_;
+    SharedPtr<ArtifactEffectImplBase> gpuImpl_;
     EffectContext context_;
     bool maskEnabled = false;
-    std::shared_ptr<ImageF32x4_RGBA> maskImage;
-    std::vector<std::shared_ptr<ImageF32x4_RGBA>> effectMaskImages;
+    SharedPtr<ImageF32x4_RGBA> maskImage;
+    std::vector<SharedPtr<ImageF32x4_RGBA>> effectMaskImages;
     QString maskLayerId;
     QString maskName;
     bool maskInverted = false;
     float maskOpacity = 1.0f;
-    std::vector<std::shared_ptr<AbstractProperty>> editableProperties_;
+    std::vector<SharedPtr<AbstractProperty>> editableProperties_;
 };
 
 namespace {
@@ -167,11 +168,11 @@ void ArtifactAbstractEffect::setMaskEnabled(bool enabled) { impl_->maskEnabled =
 
 bool ArtifactAbstractEffect::maskEnabled() const { return impl_->maskEnabled; }
 
-void ArtifactAbstractEffect::setMaskImage(const std::shared_ptr<ImageF32x4_RGBA>& maskImage) {
+void ArtifactAbstractEffect::setMaskImage(const SharedPtr<ImageF32x4_RGBA>& maskImage) {
     impl_->maskImage = maskImage;
 }
 
-std::shared_ptr<ImageF32x4_RGBA> ArtifactAbstractEffect::maskImage() const {
+SharedPtr<ImageF32x4_RGBA> ArtifactAbstractEffect::maskImage() const {
     return impl_->maskImage;
 }
 
@@ -193,7 +194,7 @@ void ArtifactAbstractEffect::setMaskOpacity(float opacity) {
 
 float ArtifactAbstractEffect::maskOpacity() const { return impl_->maskOpacity; }
 
-void ArtifactAbstractEffect::addEffectMaskImage(const std::shared_ptr<ImageF32x4_RGBA>& maskImage) {
+void ArtifactAbstractEffect::addEffectMaskImage(const SharedPtr<ImageF32x4_RGBA>& maskImage) {
     if (maskImage) {
         impl_->effectMaskImages.push_back(maskImage);
     }
@@ -214,7 +215,7 @@ int ArtifactAbstractEffect::effectMaskImageCount() const {
     return static_cast<int>(impl_->effectMaskImages.size());
 }
 
-std::shared_ptr<ImageF32x4_RGBA> ArtifactAbstractEffect::effectMaskImage(int index) const {
+SharedPtr<ImageF32x4_RGBA> ArtifactAbstractEffect::effectMaskImage(int index) const {
     if (index < 0 || index >= static_cast<int>(impl_->effectMaskImages.size())) {
         return {};
     }
@@ -383,10 +384,10 @@ void ArtifactAbstractEffect::setContext(const EffectContext& context) {
     }
 }
 
-std::vector<std::shared_ptr<AbstractProperty>>
+std::vector<SharedPtr<AbstractProperty>>
 ArtifactAbstractEffect::editableProperties() {
     const auto currentProperties = getProperties();
-    std::vector<std::shared_ptr<AbstractProperty>> result;
+    std::vector<SharedPtr<AbstractProperty>> result;
     result.reserve(currentProperties.size());
 
     for (const auto& current : currentProperties) {
@@ -398,7 +399,7 @@ ArtifactAbstractEffect::editableProperties() {
             });
 
         if (existing == impl_->editableProperties_.end()) {
-            auto property = std::make_shared<AbstractProperty>(current);
+            auto property = makeShared<AbstractProperty>(current);
             if (supportsEffectPropertyAnimation(*property)) {
                 property->setAnimatable(true);
             }
@@ -421,7 +422,7 @@ ArtifactAbstractEffect::editableProperties() {
     return result;
 }
 
-std::shared_ptr<AbstractProperty>
+SharedPtr<AbstractProperty>
 ArtifactAbstractEffect::editableProperty(const QString& name) {
     const auto properties = editableProperties();
     const auto found = std::find_if(
@@ -429,7 +430,7 @@ ArtifactAbstractEffect::editableProperty(const QString& name) {
             return property && property->getName().compare(
                 name, Qt::CaseInsensitive) == 0;
         });
-    return found != properties.end() ? *found : std::shared_ptr<AbstractProperty>{};
+    return found != properties.end() ? *found : SharedPtr<AbstractProperty>{};
 }
 
 void ArtifactAbstractEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
@@ -458,7 +459,7 @@ if (!impl_->enabled) {
     }
 }
 
-void ArtifactAbstractEffect::setCPUImpl(std::shared_ptr<ArtifactEffectImplBase> impl) {
+void ArtifactAbstractEffect::setCPUImpl(SharedPtr<ArtifactEffectImplBase> impl) {
     if (impl_->cpuImpl_) {
         impl_->cpuImpl_->release();
     }
@@ -469,7 +470,7 @@ void ArtifactAbstractEffect::setCPUImpl(std::shared_ptr<ArtifactEffectImplBase> 
     }
 }
 
-void ArtifactAbstractEffect::setGPUImpl(std::shared_ptr<ArtifactEffectImplBase> impl) {
+void ArtifactAbstractEffect::setGPUImpl(SharedPtr<ArtifactEffectImplBase> impl) {
     if (impl_->gpuImpl_) {
         impl_->gpuImpl_->release();
     }
@@ -480,11 +481,11 @@ void ArtifactAbstractEffect::setGPUImpl(std::shared_ptr<ArtifactEffectImplBase> 
     }
 }
 
-std::shared_ptr<ArtifactEffectImplBase> ArtifactAbstractEffect::cpuImpl() const {
+SharedPtr<ArtifactEffectImplBase> ArtifactAbstractEffect::cpuImpl() const {
     return impl_->cpuImpl_;
 }
 
-std::shared_ptr<ArtifactEffectImplBase> ArtifactAbstractEffect::gpuImpl() const {
+SharedPtr<ArtifactEffectImplBase> ArtifactAbstractEffect::gpuImpl() const {
     return impl_->gpuImpl_;
 }
 

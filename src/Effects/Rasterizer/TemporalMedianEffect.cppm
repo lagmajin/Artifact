@@ -17,6 +17,7 @@ import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
+import Memory.SharedPtr;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -123,6 +124,6 @@ void TemporalMedianEffect::setPropertyValue(const UniString& n,const QVariant& v
     if(k=="frameCount")setFrameCount(v.toInt());else if(k=="blend")setBlend(v.toFloat());else if(k=="channel")setChannel(v.toInt());
 }
 void TemporalMedianEffect::syncImpls(){
-    auto c=std::make_shared<TemporalMedianCPUImpl>();c->frameCount_=frameCount_;c->blend_=blend_;c->channel_=channel_;setCPUImpl(c);
+    auto c=ArtifactCore::makeShared<TemporalMedianCPUImpl>();c->frameCount_=frameCount_;c->blend_=blend_;c->channel_=channel_;setCPUImpl(c);
 }
 } // namespace Artifact

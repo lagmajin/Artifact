@@ -21,6 +21,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -115,8 +116,8 @@ float4 sampleTex(Texture2D<float4> tex, int2 p, uint w, uint h){ p.x=clamp(p.x,0
 SharpenEffect::SharpenEffect() {
     setDisplayName(UniString("Sharpen"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-    setCPUImpl(std::make_shared<SharpenEffectCPUImpl>());
-    setGPUImpl(std::make_shared<SharpenEffectGPUImpl>());
+    setCPUImpl(ArtifactCore::makeShared<SharpenEffectCPUImpl>());
+    setGPUImpl(ArtifactCore::makeShared<SharpenEffectGPUImpl>());
 }
 
 SharpenEffect::~SharpenEffect() = default;

@@ -6,6 +6,7 @@ module;
 export module Artifact.Layer.SandSim2D;
 
 import Artifact.Layer.Abstract;
+import Memory.SharedPtr;
 import Artifact.Render.IRenderer;
 import Physics.SandSim2D;
 import Image.ImageF32x4_RGBA;
@@ -33,7 +34,7 @@ public:
     QImage toQImage() const;
     QJsonObject toJson() const override;
     void fromJsonProperties(const QJsonObject& obj) override;
-    static std::shared_ptr<ArtifactSandSim2DLayer> fromJson(const QJsonObject& obj);
+    static SharedPtr<ArtifactSandSim2DLayer> fromJson(const QJsonObject& obj);
 
     bool isAdjustmentLayer() const override;
     bool isNullLayer() const override;

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <memory>
 #include <chrono>
 #include <cstdint>
@@ -44,6 +44,7 @@ export module Artifact.Layer.Video;
 
 import Artifact.Layer.Abstract;
 import Image.ImageF32x4_RGBA;
+import Memory.SharedPtr;
 import Video.VideoFrame;
 import Proxy.Service;
 
@@ -278,7 +279,7 @@ public:
     QJsonObject toJson() const;
     
     /// Import from JSON for project load
-    static std::shared_ptr<ArtifactVideoLayer> fromJson(const QJsonObject& obj);
+    static ArtifactCore::SharedPtr<ArtifactVideoLayer> fromJson(const QJsonObject& obj);
 
     // === Overrides ===
     

@@ -24,6 +24,7 @@ export module ArtifactDiligentEngineRenderWindow;
 
 
 import Mesh;
+import Memory.SharedPtr;
 
 namespace Diligent {};
 
@@ -46,7 +47,7 @@ namespace Artifact
   private:
    class Impl;
    Impl* impl_;
-   std::shared_ptr<ArtifactCore::Mesh> mesh_;
+   ArtifactCore::SharedPtr<ArtifactCore::Mesh> mesh_;
 
    RefCntAutoPtr<IRenderDevice> pDevice;
    RefCntAutoPtr<IDeviceContext> pImmediateContext;
@@ -124,7 +125,7 @@ namespace Artifact
   float previewYaw() const;
   float previewPitch() const;
   QVector3D previewTarget() const;
-  void setMesh(std::shared_ptr<ArtifactCore::Mesh> mesh);
+  void setMesh(ArtifactCore::SharedPtr<ArtifactCore::Mesh> mesh);
   void clearMesh();
   void requestRender();
   bool m_initialized = false;

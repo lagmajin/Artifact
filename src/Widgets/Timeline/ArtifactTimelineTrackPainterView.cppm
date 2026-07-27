@@ -41,6 +41,7 @@ module;
 
 
 module Artifact.Timeline.TrackPainterView;
+import Memory.SharedPtr;
 
 import std;
 import Application.AppSettings;
@@ -189,7 +190,7 @@ QMessageBox::StandardButton centeredQuestion(QWidget* parent,
   return static_cast<QMessageBox::StandardButton>(box.exec());
 }
 
-std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr &layer, const QString &propertyPath);
 
 struct TimelineThemeColors {
@@ -1775,7 +1776,7 @@ bool sameKeyframeMarkerVisual(
          lhs.value == rhs.value;
 }
 
-std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr &layer, const QString &propertyPath) {
   if (!layer || propertyPath.trimmed().isEmpty()) {
     return {};
@@ -1965,7 +1966,7 @@ bool approximatelyEqualValue(const QVariant &lhs, const QVariant &rhs,
 }
 
 bool cleanNearDuplicateKeyframesForProperty(
-    const std::shared_ptr<ArtifactCore::AbstractProperty> &property,
+    const ArtifactCore::AbstractPropertyPtr &property,
     int *outRemovedCount) {
   if (!property) {
     return false;
@@ -4068,7 +4069,7 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
       std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
   const RationalTime nowTime(frame, static_cast<int64_t>(std::llround(fps)));
 
-  std::shared_ptr<ArtifactCore::AbstractProperty> property;
+  ArtifactCore::AbstractPropertyPtr property;
   for (const auto &group : layer->getLayerPropertyGroups()) {
     for (const auto &candidate : group.sortedProperties()) {
       if (!candidate) {
@@ -9824,7 +9825,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     }
 
     const auto textLayer =
-        std::dynamic_pointer_cast<ArtifactTextLayer>(editLayer);
+        ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(editLayer);
     if (!textLayer) {
       event->accept();
       return;

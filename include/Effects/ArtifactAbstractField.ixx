@@ -38,6 +38,7 @@ export module Artifact.Effect.Field;
 import Utils;
 import Utils.String.UniString;
 import Property.Group;
+import Memory.SharedPtr;
 
 export namespace Artifact {
     using namespace ArtifactCore;
@@ -55,7 +56,7 @@ export namespace Artifact {
     protected:
         FieldType type_;
         UniString name_;
-        std::shared_ptr<PropertyGroup> properties_;
+        SharedPtr<PropertyGroup> properties_;
 
     public:
         ArtifactAbstractField(FieldType type, const UniString& name);
@@ -65,7 +66,7 @@ export namespace Artifact {
         UniString name() const { return name_; }
         void setName(const UniString& name) { name_ = name; }
 
-        std::shared_ptr<PropertyGroup> properties() const { return properties_; }
+        SharedPtr<PropertyGroup> properties() const { return properties_; }
 
         // Core evaluation: Returns influence [0.0 - 1.0] for a given 3D point in world space.
         // Used by Geometry Transforms or CPU-based evaluations.
@@ -76,5 +77,5 @@ export namespace Artifact {
         virtual void generateGPUData(/* Output formatting params here */) const = 0;
     };
 
-    typedef std::shared_ptr<ArtifactAbstractField> ArtifactAbstractFieldPtr;
+    typedef SharedPtr<ArtifactAbstractField> ArtifactAbstractFieldPtr;
 }

@@ -111,7 +111,7 @@ ArtifactCore::BlendMode blendModeFromIndex(int index)
 }
 
 QImage renderLayerToImage(
-    const std::shared_ptr<ArtifactAbstractLayer>& layer,
+    const ArtifactAbstractLayerPtr& layer,
     const ArtifactCompositionPtr& composition,
     const QSize& canvasSize)
 {
@@ -122,7 +122,7 @@ QImage renderLayerToImage(
     }
 
     // ソリッドレイヤーの場合
-    if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+    if (auto solidLayer = ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer)) {
         QImage result(canvasSize, QImage::Format_ARGB32_Premultiplied);
         result.fill(Qt::transparent);
         
@@ -199,7 +199,7 @@ public:
         QDoubleSpinBox* opacitySpin = nullptr;
         QComboBox* blendCombo = nullptr;
         LayerID layerId;
-        std::shared_ptr<ArtifactAbstractLayer> layerPtr;
+        ArtifactAbstractLayerPtr layerPtr;
     };
     
     std::vector<LayerControl> layerControls;
@@ -291,7 +291,7 @@ public:
             layout->addRow(control.visibleCheck);
             
             // Opacity (SolidImageLayer の場合)
-            if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+            if (auto solidLayer = ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer)) {
                 control.opacitySpin = new QDoubleSpinBox();
                 control.opacitySpin->setRange(0.0, 1.0);
                 control.opacitySpin->setSingleStep(0.05);
@@ -430,7 +430,7 @@ public:
             
             // Opacity を適用（SolidImageLayer の場合）
             if (control.opacitySpin) {
-                if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+                if (auto solidLayer = ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer)) {
                     auto color = solidLayer->color();
                     color.setAlpha(static_cast<float>(control.opacitySpin->value()));
                     solidLayer->setColor(color);

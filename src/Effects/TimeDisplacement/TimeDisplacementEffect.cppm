@@ -21,6 +21,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 namespace Artifact {
 
@@ -202,7 +203,7 @@ TimeDisplacementEffect::TimeDisplacementEffect() {
     setDisplayName(UniString("Time Displacement"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
 
-    auto cpu = std::make_shared<TimeDisplacementCPUImpl>();
+    auto cpu = ArtifactCore::makeShared<TimeDisplacementCPUImpl>();
     setCPUImpl(cpu);
     syncImpls();
 }
