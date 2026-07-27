@@ -4271,6 +4271,10 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
       if (!QFileInfo::exists(candidate)) {
         return false;
       }
+      QImageReader candidateReader(candidate);
+      if (!candidateReader.canRead()) {
+        return false;
+      }
       resolvedSequencePaths.append(QFileInfo(candidate).absoluteFilePath());
     }
   }
