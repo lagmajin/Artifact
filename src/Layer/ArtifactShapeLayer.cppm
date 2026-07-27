@@ -1,5 +1,7 @@
 module;
 #include <cstddef>
+#include <array>
+#include <numeric>
 #include <utility>
 #include <algorithm>
 #include <QPainter>
