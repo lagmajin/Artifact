@@ -1299,6 +1299,13 @@ QRectF ArtifactShapeLayer::localBounds() const
     const QRectF pathBounds = path.boundingRect();
     bounds = bounds.isNull() ? pathBounds : bounds.united(pathBounds);
    }
+  } else if (impl_->customPathVertices_.size() >= 3) {
+   const QPainterPath path = buildLayerPath(
+       impl_->shapeType_, impl_->width_, impl_->height_, impl_->cornerRadius_,
+       impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_,
+       impl_->customPolygonPoints_, impl_->customPolygonClosed_,
+       impl_->customPathVertices_, impl_->customPathClosed_);
+   bounds = path.boundingRect();
   } else if (impl_->customPathVertices_.size() >= 2) {
    std::vector<QPointF> pts;
    pts.reserve(impl_->customPathVertices_.size());
