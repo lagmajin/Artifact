@@ -2479,6 +2479,17 @@ TransformGizmo::HandleType TransformGizmo::handleAtViewportPos(const QPointF& vi
 bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* renderer) {
  if (!layer_ || !renderer) return false;
 
+ return beginHandleDrag(hitTest(viewportPos, renderer), viewportPos, renderer);
+}
+
+bool TransformGizmo::beginHandleDrag(HandleType handle,
+                                     const QPointF& viewportPos,
+                                     ArtifactIRenderer* renderer) {
+ if (!layer_ || !renderer || handle == HandleType::None ||
+     !allowsHandle(handle)) {
+  return false;
+ }
+
  const auto targets = [&]() -> std::vector<ArtifactAbstractLayerPtr> {
   if (!targetLayers_.empty()) {
    return targetLayers_;
@@ -2487,7 +2498,7 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
                 : std::vector<ArtifactAbstractLayerPtr>{};
  }();
 
- activeHandle_ = hitTest(viewportPos, renderer);
+ activeHandle_ = handle;
  if (activeHandle_ != HandleType::None) {
   isDragging_ = true;
   auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});

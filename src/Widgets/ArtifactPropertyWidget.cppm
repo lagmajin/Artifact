@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QColor>
 #include <QApplication>
@@ -21,6 +21,7 @@
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QDir>
+#include <QFocusFrame>
 #include <QMultiHash>
 #include <QPalette>
 #include <QPushButton>
@@ -1665,6 +1666,15 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         updateScaleSupplementaryText(row, layer, property, value);
       };
 
+  const auto commitChannelValue =
+      [this](const QString &name, const QVariant &value) {
+        for (const auto &target : targetLayers) {
+          if (!target) continue;
+          target->setLayerPropertyValue(name, value);
+        }
+      };
+  const auto previewChannelValue = commitChannelValue;
+
   // Keep a compact Channel Box surface at the top of the Inspector.  It
   // reuses the normal property-editor rows so keying, Auto-Key, undo, and
   // scrub behavior stay on the established property path.
@@ -1684,7 +1694,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
     if (!channelProperties.empty()) {
       auto *channelBox = new QGroupBox(QStringLiteral("Channel Box"),
-                                       impl_->containerWidget);
+                                       containerWidget);
       auto *channelLayout = new QVBoxLayout(channelBox);
       channelLayout->setContentsMargins(10, 8, 10, 8);
       channelLayout->setSpacing(4);
@@ -1692,8 +1702,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       const QString lockSettingsKey =
           QStringLiteral("UI/ChannelBox/Locked/") +
           layer->id().toString();
-      const QSet<QString> persistedLocks = QSet<QString>::fromList(
-          QSettings().value(lockSettingsKey).toStringList());
+      QSet<QString> persistedLocks;
+      for (const auto &path : QSettings().value(lockSettingsKey).toStringList()) {
+        persistedLocks.insert(path);
+      }
       for (const auto &path : persistedLocks) {
         if (channelPaths.contains(path)) {
           channelLockedPaths.insert(path);
@@ -1721,7 +1733,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       lockButton->setText(allChannelsLocked ? QStringLiteral("Unlock Channels")
                                              : QStringLiteral("Lock Channels"));
       QObject::connect(lockButton, &QPushButton::clicked, channelBox,
-                       [this, channelPaths, lockButton, lockSettingsKey]() {
+                       [this, lockButton, lockSettingsKey]() {
                          const bool shouldUnlock = std::all_of(
                              channelPaths.cbegin(), channelPaths.cend(),
                              [this](const QString &path) {
@@ -1750,7 +1762,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       std::vector<ArtifactPropertyEditorRowWidget *> channelRows;
       addRowsFromProperties(
           channelBox, channelLayout, channelProperties, filterText,
-          commitLayerValue, previewLayerValue, currentLayerTime,
+          commitChannelValue, previewChannelValue, currentLayerTime,
           notifyLayerKeyframeChanged, layer, nullptr,
           QStringLiteral("channelBox"), &propertyEditors, &channelRows,
           decorateLayerRow, updateLayerRowValue);
@@ -1927,7 +1939,6 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         for (const auto &tl : this->targetLayers) {
           if (!tl) { continue; }
           tl->setLayerPropertyValue(name, value);
-          notifyLayerPropertyAnimationChanged(tl);
         }
         if (name.startsWith(QStringLiteral("component.cloner."), Qt::CaseInsensitive) ||
             name.compare(QStringLiteral("component.layout.enabled"), Qt::CaseInsensitive) == 0 ||
@@ -1958,7 +1969,6 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         for (const auto &tl : targetLayers) {
           if (!tl) { continue; }
           tl->setLayerPropertyValue(name, value);
-          notifyLayerPropertyAnimationChanged(tl);
         }
         if (name.startsWith(QStringLiteral("component.cloner."), Qt::CaseInsensitive) ||
             name.compare(QStringLiteral("component.layout.enabled"), Qt::CaseInsensitive) == 0 ||

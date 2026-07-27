@@ -2570,10 +2570,18 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
     }
 
     ArtifactCore::ImageF32x4_RGBA frameBuffer = cachedFrameImageBuffer(timelineFrame);
+    const bool exactTimelineFrameReady = !frameBuffer.isEmpty();
     if (frameBuffer.isEmpty()) {
         frameBuffer = currentFrameImageBuffer();
     }
     if (frameBuffer.isEmpty()) return;
+
+    // Realtime playback is wall-clock driven: never block the render thread
+    // waiting for H.264/HEVC decode. Present the last good frame and record the
+    // repeat so diagnostics can distinguish decoder pressure from GPU/render
+    // pressure. Explicit/offline callers remain on the separate
+    // decodeFrameToImageBuffer() path.
+    markFrameRenderQueued(timelineFrame, !exactTimelineFrameReady);
 
     auto size = sourceSize();
     if (size.width <= 0 || size.height <= 0) {

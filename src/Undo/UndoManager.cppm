@@ -37,6 +37,7 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QFile>
 #include <wobjectimpl.h>
 
 module Undo.UndoManager;

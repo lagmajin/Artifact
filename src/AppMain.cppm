@@ -69,6 +69,7 @@ module;
 #include <QJsonValue>
 #include <QSaveFile>
 #include <QScopeGuard>
+#include <QSet>
 #include <QVariant>
 #include <Diagnostics/WidgetCreationDiagnostics.hpp>
 #include <opencv2/opencv.hpp>
@@ -366,6 +367,7 @@ class PlaybackDebugAutoReporter final {
 
   void begin(const ArtifactCore::FrameDebugSnapshot& snapshot) {
     reasons_.clear();
+    warnedReasons_.clear();
     pendingDecodeSamples_ = 0;
     sampleCount_ = 0;
     startedAt_ = QDateTime::currentDateTimeUtc();
@@ -378,8 +380,27 @@ class PlaybackDebugAutoReporter final {
     }
   }
 
+  void addWarningReason(const QString& reason, const QString& detail) {
+    addReason(reason);
+    if (reason.isEmpty() || warnedReasons_.contains(reason)) {
+      return;
+    }
+    warnedReasons_.insert(reason);
+    qWarning().noquote()
+        << QStringLiteral("[RenderPathAutoWarning] reason=%1 %2")
+               .arg(reason, detail);
+  }
+
   void sample(const ArtifactCore::FrameDebugSnapshot& snapshot) {
     ++sampleCount_;
+    if (snapshot.renderBackend.compare(QStringLiteral("cpu"),
+                                       Qt::CaseInsensitive) == 0) {
+      addWarningReason(
+          QStringLiteral("cpu-render-backend"),
+          QStringLiteral("frame=%1 backend=%2")
+              .arg(snapshot.frame.framePosition())
+              .arg(snapshot.renderBackend));
+    }
     if (snapshot.failed) {
       addReason(QStringLiteral("render-failed: %1").arg(snapshot.failureReason));
     }
@@ -393,6 +414,33 @@ class PlaybackDebugAutoReporter final {
     bool decodePending = false;
     for (const auto& resource : snapshot.resources) {
       const QString note = resource.note;
+      if (resource.label == QStringLiteral("Render Path")) {
+        const double cpuRasterLayers =
+            debugFieldNumber(note, QStringLiteral("cpuRasterLayers"));
+        if (note.contains(QStringLiteral("path=fallback"))) {
+          addWarningReason(
+              QStringLiteral("composition-render-fallback"),
+              QStringLiteral("frame=%1 %2")
+                  .arg(snapshot.frame.framePosition())
+                  .arg(note));
+        }
+        if (cpuRasterLayers > 0.0) {
+          addWarningReason(
+              QStringLiteral("cpu-raster-layer-active"),
+              QStringLiteral("frame=%1 cpuRasterLayers=%2 %3")
+                  .arg(snapshot.frame.framePosition())
+                  .arg(cpuRasterLayers, 0, 'f', 0)
+                  .arg(note));
+        }
+      }
+      if (note.contains(QStringLiteral("gpu->cpu"), Qt::CaseInsensitive) ||
+          note.contains(QStringLiteral("gpu-to-cpu"), Qt::CaseInsensitive)) {
+        addWarningReason(
+            QStringLiteral("gpu-readback-active"),
+            QStringLiteral("frame=%1 resource=%2 note=%3")
+                .arg(snapshot.frame.framePosition())
+                .arg(resource.label, note));
+      }
       if (resource.type == QStringLiteral("video") ||
           resource.label == QStringLiteral("Video Decode")) {
         decodePending = decodePending ||
@@ -491,6 +539,7 @@ class PlaybackDebugAutoReporter final {
   int startFrame_ = 0;
   QDateTime startedAt_;
   QStringList reasons_;
+  QSet<QString> warnedReasons_;
 };
 
 bool isArtifactProjectLaunchPath(const QString& filePath)

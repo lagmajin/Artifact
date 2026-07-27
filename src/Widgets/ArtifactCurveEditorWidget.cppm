@@ -285,8 +285,10 @@ public:
    const QSignalBlocker blocker(selectedValueEditor_);
    selectedValueEditor_->setValue(static_cast<double>(key.value));
   }
-  selectedFrameEditor_->setGeometry(width() - 230, 4, 105, 24);
-  selectedValueEditor_->setGeometry(width() - 120, 4, 115, 24);
+  // This implementation object is not a QWidget. Use the owning widget's
+  // dimensions when positioning the inline editors.
+  selectedFrameEditor_->setGeometry(owner_->width() - 230, 4, 105, 24);
+  selectedValueEditor_->setGeometry(owner_->width() - 120, 4, 115, 24);
   selectedFrameEditor_->show();
   selectedValueEditor_->show();
  }

@@ -19,7 +19,7 @@ import Artifact.Layer.InitParams;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.PlaybackController;
 import Frame.Position;
-import Frame.FrameRate;
+import Frame.Rate;
 import Property.Abstract;
 import Animation.Value;
 

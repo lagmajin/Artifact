@@ -81,6 +81,8 @@ export namespace Artifact {
   HandleType handleAtViewportPos(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;
 
   bool handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* renderer);
+  bool beginHandleDrag(HandleType handle, const QPointF& viewportPos,
+                       ArtifactIRenderer* renderer);
   bool handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* renderer);
   void handleMouseRelease();
 

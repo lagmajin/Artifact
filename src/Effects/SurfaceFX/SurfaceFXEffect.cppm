@@ -4,6 +4,7 @@ module;
 #include <cstdint>
 #include <memory>
 #include <opencv2/opencv.hpp>
+#include <QString>
 
 module Artifact.Effect.SurfaceFX;
 

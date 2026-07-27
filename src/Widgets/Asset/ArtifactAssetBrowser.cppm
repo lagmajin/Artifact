@@ -111,6 +111,7 @@ module Widgets.AssetBrowser;
 
 import Widgets.Utils.CSS;
 import Artifact.Service.Project;
+import Artifact.Project;
 import Artifact.Application.Manager;
 import Artifact.Service.FootageInterpret;
 import Widgets.Dialog.InterpretFootage;
@@ -4011,7 +4012,8 @@ if (!item.isFolder) {
       std::function<void(ProjectItem*)> visit = [&](ProjectItem *item) {
         if (!item) return;
         if (item->type() == eProjectItemType::Composition) {
-          const auto composition = project->findComposition(item->compositionId).ptr.lock();
+          const auto *compositionItem = static_cast<const CompositionItem *>(item);
+          const auto composition = project->findComposition(compositionItem->compositionId).ptr.lock();
           if (composition) {
             for (const auto &layer : composition->allLayerRef()) {
               if (!layer) continue;

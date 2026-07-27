@@ -297,8 +297,9 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
   }
 
   if (normals && normals->data().size() == vertexPositions.size()) {
-    const int normalStride = std::max(
-        1, (vertexPositions.size() + kMaxOverlayPolygons - 1) / kMaxOverlayPolygons);
+    const int normalStride = std::max<int>(
+        1, static_cast<int>((vertexPositions.size() + kMaxOverlayPolygons - 1) /
+                            kMaxOverlayPolygons));
     for (int i = 0; i < vertexPositions.size(); i += normalStride) {
       QVector3D normal = normals->data()[i];
       if (normal.lengthSquared() < 1.0e-8f) {

@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <QThread>
 #include <QElapsedTimer>
+#include <QMetaObject>
 #include <QMutexLocker>
 #include <QWaitCondition>
 #include <QImage>
@@ -98,6 +99,7 @@ public:
     
     std::chrono::microseconds frameBudget_{0};
     int64_t droppedFrameCount_{0};
+    int64_t lastDropWarningTotal_{0};
     std::chrono::time_point<std::chrono::steady_clock> lastFrameTime_;
     
     // コンポジション
@@ -135,6 +137,10 @@ public:
         
         PlaybackState oldState = state_.load();
         state_ = PlaybackState::Playing;
+        // The current frame has already been presented by seek/stop. Rebase
+        // drop detection here so a new playback session never reports the
+        // previous session's end-to-start jump as a decoder/render drop.
+        lastEmittedFrame_.store(currentFrame_.load());
         qDebug() << "[PlaybackEngine] state transition:" << (int)oldState << "->" << (int)PlaybackState::Playing;
 
         if (!workerThread_->isRunning()) {
@@ -196,6 +202,32 @@ public:
         QMetaObject::invokeMethod(owner_, [this, speed]() {
             Q_EMIT owner_->playbackSpeedChanged(speed);
         }, Qt::QueuedConnection);
+    }
+
+    void reportDroppedFrames(int64_t count, int64_t fromFrame,
+                             int64_t toFrame) {
+        if (count <= 0) {
+            return;
+        }
+
+        droppedFrameCount_ += count;
+        const int64_t total = droppedFrameCount_;
+        QMetaObject::invokeMethod(owner_, [this, count]() {
+            Q_EMIT owner_->droppedFrameDetected(count);
+        }, Qt::QueuedConnection);
+
+        // qWarning is collected by the automatic log sink. Keep it useful for
+        // post-run AI diagnosis without producing one line per playback tick.
+        if (lastDropWarningTotal_ == 0 ||
+            total - lastDropWarningTotal_ >= 30) {
+            lastDropWarningTotal_ = total;
+            qWarning() << "[PlaybackEngine][RealtimePolicy] timeline frames dropped"
+                       << "count=" << count
+                       << "total=" << total
+                       << "from=" << fromFrame
+                       << "to=" << toFrame
+                       << "policy=wall-clock/latest-frame/hold-last-good";
+        }
     }
     
     /// メイン再生ループ（ワーカースレッドで実行）
@@ -260,6 +292,7 @@ public:
             FramePosition startPos = effectiveStartFrame();
             FramePosition endPos = effectiveEndFrame();
             int64_t totalFramesInRange = endPos.framePosition() - startPos.framePosition() + 1;
+            bool crossedPlaybackBoundary = false;
             
             if (totalFramesInRange > 0) {
                 if (targetFrame > endPos.framePosition()) {
@@ -272,12 +305,14 @@ public:
                         playbackStartFrame_ = endPos.framePosition();
                         targetFrame = endPos.framePosition();
                         audioSeekPending_ = true;
+                        crossedPlaybackBoundary = true;
                     } else if (looping_) {
                         // ループ時はベース時間をリセットして、最初から回す
                         playbackStartTime_ = now;
                         playbackStartFrame_ = startPos.framePosition();
                         targetFrame = startPos.framePosition();
                         audioSeekPending_ = true;
+                        crossedPlaybackBoundary = true;
                     } else {
                         state_ = PlaybackState::Stopped;
                         QMetaObject::invokeMethod(owner_, [this]() {
@@ -294,10 +329,12 @@ public:
                         playbackStartFrame_ = startPos.framePosition();
                         targetFrame = startPos.framePosition();
                         audioSeekPending_ = true;
+                        crossedPlaybackBoundary = true;
                     } else if (looping_) {
                         playbackStartTime_ = now;
                         playbackStartFrame_ = endPos.framePosition();
                         targetFrame = endPos.framePosition();
+                        crossedPlaybackBoundary = true;
                     } else {
                         targetFrame = startPos.framePosition();
                     }
@@ -307,6 +344,23 @@ public:
             // フレームが更新された場合のみ描画と通知を行う
             bool emittedFrame = false;
             if (targetFrame != lastEmittedFrame_) {
+                const int64_t previousFrame = lastEmittedFrame_.load();
+                const bool normalRealtimeRate =
+                    std::abs(appliedPlaybackSpeed_) > 0.0001f &&
+                    std::abs(appliedPlaybackSpeed_) <= 1.0001f;
+                if (!crossedPlaybackBoundary && skipStep == 1 &&
+                    normalRealtimeRate &&
+                    previousFrame >= startPos.framePosition() &&
+                    previousFrame <= endPos.framePosition()) {
+                    const int64_t signedAdvance =
+                        appliedPlaybackSpeed_ >= 0.0f
+                            ? targetFrame - previousFrame
+                            : previousFrame - targetFrame;
+                    if (signedAdvance > 1) {
+                        reportDroppedFrames(signedAdvance - 1, previousFrame,
+                                            targetFrame);
+                    }
+                }
                 currentFrame_ = targetFrame;
                 updateFrame(targetFrame);
                 lastEmittedFrame_ = targetFrame;

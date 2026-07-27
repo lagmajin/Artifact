@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QHBoxLayout>
@@ -47,7 +47,10 @@ using namespace detail;
 
 namespace {
 
-constexpr qint64 kSliderPreviewIntervalMs = 50;
+// Keep interactive edits visually continuous. Expensive render work is
+// coalesced by the composition render controller, so the editor only needs to
+// cap input-side traffic to roughly one update per display frame.
+constexpr qint64 kSliderPreviewIntervalMs = 16;
 
 bool isScalePercentProperty(const ArtifactCore::AbstractProperty &property) {
   const QString name = property.getName();

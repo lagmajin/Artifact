@@ -337,7 +337,8 @@ void FontUsageCollector::onProperty(const ArtifactCore::MetadataNode& node) {
 
         const QFont font(value);
         const QRawFont rawFont = QRawFont::fromFont(font, QFontDatabase::Any);
-        const QString resolvedPath = rawFont.isValid() ? rawFont.fileName() : QString();
+        // Qt6's QRawFont does not expose the backing font file path.
+        const QString resolvedPath;
         if (!resolvedPath.trimmed().isEmpty() && !files_.contains(resolvedPath)) {
             files_.push_back(resolvedPath);
         }
@@ -404,7 +405,7 @@ ArtifactCore::MetadataReport FontUsageCollector::report() const {
     }
     for (const auto& family : families_) {
         const QRawFont rawFont = QRawFont::fromFont(QFont(family), QFontDatabase::Any);
-        if (!rawFont.isValid() || rawFont.fileName().trimmed().isEmpty()) ++unresolvedCount;
+        if (!rawFont.isValid()) ++unresolvedCount;
     }
     report.addCount(QStringLiteral("font.license.attested.count"), attestedCount);
     report.addCount(QStringLiteral("font.license.unattested.count"),
@@ -421,7 +422,8 @@ QJsonObject FontUsageCollector::manifestJson() const {
         font.insert(QStringLiteral("family"), family);
         const QRawFont rawFont = QRawFont::fromFont(
             QFont(family), QFontDatabase::Any);
-        const QString filePath = rawFont.isValid() ? rawFont.fileName() : QString();
+        // Qt6's QRawFont does not expose the backing font file path.
+        const QString filePath;
         font.insert(QStringLiteral("filePath"), filePath);
         font.insert(QStringLiteral("resolved"), !filePath.trimmed().isEmpty());
         font.insert(QStringLiteral("resolvedFamily"),
@@ -488,7 +490,8 @@ QString FontUsageCollector::manifestCsv() const {
             const QString style = rawFont.isValid() ? rawFont.styleName() : QString();
             license = licenseRegistry_->entry(family, style);
         }
-        const QString filePath = rawFont.isValid() ? rawFont.fileName() : QString();
+        // Qt6's QRawFont does not expose the backing font file path.
+        const QString filePath;
         lines << QStringLiteral("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10")
                      .arg(escape(family))
                      .arg(escape(filePath))

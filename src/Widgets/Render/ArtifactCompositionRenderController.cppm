@@ -43,6 +43,8 @@ module;
 
 #include <QPointer>
 
+#include <QRect>
+
 #include <QRectF>
 
 #include <QSizeF>
@@ -3042,6 +3044,18 @@ int compositionPreviewIntervalMs(const ArtifactCompositionPtr &comp) {
 
 }
 
+int compositionRenderDispatchIntervalMs(const ArtifactCompositionPtr &comp) {
+
+  const auto *playback = ArtifactPlaybackService::instance();
+
+  return playback && playback->isPlaying()
+
+             ? 1
+
+             : compositionPreviewIntervalMs(comp);
+
+}
+
 
 
 bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
@@ -5518,6 +5532,75 @@ FloatColor motionPathInterpolationColor(int interpolation, bool isCurrent) {
 }
 
 
+
+TransformGizmo::HandleType hitTestProjectedFrameCorner(
+    const ArtifactAbstractLayerPtr &layer, const QPointF &viewportPos,
+    const QMatrix4x4 &view, const QMatrix4x4 &projection,
+    const QRect &viewport, float hitDiameter) {
+
+  if (!layer || !layer->is3D() || viewport.width() <= 0 ||
+      viewport.height() <= 0) {
+    return TransformGizmo::HandleType::None;
+  }
+
+  const QRectF localBounds = layer->localBounds();
+  if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+      localBounds.height() <= 0.0) {
+    return TransformGizmo::HandleType::None;
+  }
+
+  // Keep this in lockstep with drawSelectionFrameOverlay(): the visible
+  // projected frame is slightly outside the source bounds and its four corner
+  // quads are centered on these adjusted points.
+  const qreal frameOutset = std::clamp(
+      std::min(localBounds.width(), localBounds.height()) * 0.015, 6.0, 18.0);
+  const QRectF frameBounds = localBounds.adjusted(
+      -frameOutset, -frameOutset, frameOutset, frameOutset);
+  const QMatrix4x4 world = layer->getGlobalTransform4x4();
+  const std::array<std::pair<QPointF, TransformGizmo::HandleType>, 4>
+      corners{{
+          {frameBounds.topLeft(), TransformGizmo::HandleType::Scale_TL},
+          {frameBounds.topRight(), TransformGizmo::HandleType::Scale_TR},
+          {frameBounds.bottomLeft(), TransformGizmo::HandleType::Scale_BL},
+          {frameBounds.bottomRight(), TransformGizmo::HandleType::Scale_BR},
+      }};
+
+  const float safeHitDiameter = std::max(18.0f, hitDiameter);
+  for (const auto &[corner, handle] : corners) {
+    const QVector3D worldPoint = world.map(
+        QVector3D(static_cast<float>(corner.x()),
+                  static_cast<float>(corner.y()), 0.0f));
+    const QVector3D projected =
+        worldPoint.project(view, projection, viewport);
+    if (!std::isfinite(projected.x()) || !std::isfinite(projected.y()) ||
+        projected.z() < 0.0f || projected.z() > 1.0f) {
+      continue;
+    }
+    const QRectF hitRect(projected.x() - safeHitDiameter * 0.5f,
+                         projected.y() - safeHitDiameter * 0.5f,
+                         safeHitDiameter, safeHitDiameter);
+    if (hitRect.contains(viewportPos)) {
+      return handle;
+    }
+  }
+
+  return TransformGizmo::HandleType::None;
+}
+
+Qt::CursorShape cursorForProjectedFrameCorner(
+    TransformGizmo::HandleType handle) {
+
+  switch (handle) {
+  case TransformGizmo::HandleType::Scale_TL:
+  case TransformGizmo::HandleType::Scale_BR:
+    return Qt::SizeFDiagCursor;
+  case TransformGizmo::HandleType::Scale_TR:
+  case TransformGizmo::HandleType::Scale_BL:
+    return Qt::SizeBDiagCursor;
+  default:
+    return Qt::ArrowCursor;
+  }
+}
 
 LayerDragMode hitTestLayerDragMode(const ArtifactAbstractLayerPtr &layer,
 
@@ -12222,9 +12305,27 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
                            }));
 
+                  // Transform, opacity, blend and visibility edits only change
+                  // composition placement/state. Reuse the rendered layer
+                  // surface and re-composite it instead of regenerating source
+                  // pixels for every interactive property update.
+                  const bool lightweightCompositeChange =
+
+                      !layer->isDirty(LayerDirtyFlag::Effect) &&
+
+                      !layer->isDirty(LayerDirtyFlag::Mask) &&
+
+                      !layer->isDirty(LayerDirtyFlag::Source) &&
+
+                      (layer->isDirty(LayerDirtyFlag::Transform) ||
+
+                       layer->isDirty(LayerDirtyFlag::Property) ||
+
+                       layer->isDirty(LayerDirtyFlag::Visibility));
+
                   const bool skipCacheInvalidation =
 
-                      directDragTarget ||
+                      lightweightCompositeChange || directDragTarget ||
 
                       (impl_->gizmoDragActive_ &&
 
@@ -12494,7 +12595,7 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
   impl_->renderTickDriver_->setInterval(std::chrono::milliseconds(
 
-      compositionPreviewIntervalMs(impl_->previewPipeline_.composition())));
+      compositionRenderDispatchIntervalMs(impl_->previewPipeline_.composition())));
 
   impl_->renderTickDriver_->setCallback([this]() {
 
@@ -12647,6 +12748,45 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
               impl_->invalidateOverlayComposite();
 
             }
+
+            markRenderDirty();
+
+          }));
+
+  // PlaybackEngine is the authoritative frame clock. While it is running,
+  // use the render ticker only as a short UI-thread dispatch/coalescing step
+  // instead of introducing a second composition-FPS clock with an arbitrary
+  // phase offset. When playback stops, restore the composition-rate interval
+  // used for ordinary dirty and viewport-interaction rendering.
+  impl_->eventBusSubscriptions_.push_back(
+
+      impl_->eventBus_.subscribe<PlaybackStateChangedEvent>(
+
+          [this](const PlaybackStateChangedEvent &event) {
+
+            if (!impl_ || !impl_->renderTickDriver_) {
+
+              return;
+
+            }
+
+            const bool playing =
+
+                event.state == ::Artifact::PlaybackState::Playing;
+
+            const int intervalMs =
+
+                playing
+
+                    ? 1
+
+                    : compositionPreviewIntervalMs(
+
+                          impl_->previewPipeline_.composition());
+
+            impl_->renderTickDriver_->setInterval(
+
+                std::chrono::milliseconds(intervalMs));
 
             markRenderDirty();
 
@@ -13184,7 +13324,7 @@ void CompositionRenderController::setComposition(
 
       impl_->renderTickDriver_->setInterval(std::chrono::milliseconds(
 
-          compositionPreviewIntervalMs(impl_->previewPipeline_.composition())));
+          compositionRenderDispatchIntervalMs(impl_->previewPipeline_.composition())));
 
     }
 
@@ -13262,7 +13402,7 @@ void CompositionRenderController::setComposition(
 
       impl_->renderTickDriver_->setInterval(
 
-          std::chrono::milliseconds(compositionPreviewIntervalMs(composition)));
+          std::chrono::milliseconds(compositionRenderDispatchIntervalMs(composition)));
 
     }
 
@@ -13278,7 +13418,7 @@ void CompositionRenderController::setComposition(
 
       impl_->renderTickDriver_->setInterval(
 
-          std::chrono::milliseconds(compositionPreviewIntervalMs(nullptr)));
+          std::chrono::milliseconds(compositionRenderDispatchIntervalMs(nullptr)));
 
     }
 
@@ -18011,6 +18151,42 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
 
 
 
+  // The camera-projected frame is drawn outside the ordinary 2D transform
+  // space. Test those visible corner handles in viewport space before the axis
+  // gizmo, then reuse the established TransformGizmo resize transaction.
+  if (event->button() == Qt::LeftButton && selectedLayer &&
+      selectedLayer->is3D() && impl_->gizmo_ &&
+      activeTool != ToolType::Pen) {
+
+    const QMatrix4x4 &frameView = impl_->gizmo3DCameraMatricesValid_
+                                      ? impl_->gizmo3DViewMatrix_
+                                      : impl_->renderer_->getViewMatrix();
+    const QMatrix4x4 &frameProjection =
+        impl_->gizmo3DCameraMatricesValid_
+            ? impl_->gizmo3DProjectionMatrix_
+            : impl_->renderer_->getProjectionMatrix();
+    const QRect frameViewport(
+        0, 0, std::max(1, static_cast<int>(impl_->hostWidth_)),
+        std::max(1, static_cast<int>(impl_->hostHeight_)));
+    const auto frameHandle = hitTestProjectedFrameCorner(
+        selectedLayer, viewportPos, frameView, frameProjection, frameViewport,
+        24.0f * std::max(1.0f, impl_->devicePixelRatio_));
+
+    if (impl_->gizmo_->beginHandleDrag(
+            frameHandle, viewportPos, impl_->renderer_.get())) {
+
+      impl_->gizmoDragActive_ = true;
+      notifyViewportInteractionActivity();
+      impl_->gizmoDragRenderTimer_.restart();
+      impl_->invalidateOverlayComposite();
+      markRenderDirty();
+      event->accept();
+      return;
+
+    }
+
+  }
+
   // 3D Gizmo hit test (GIZ-2) — only for 3D layers
 
   if (selectedLayer && impl_->gizmo3D_ && selectedLayer->is3D() &&
@@ -20740,6 +20916,30 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
   // viewportPos is in logical pixels; convert to physical for gizmo hit testing
 
   const QPointF physPos = viewportPos * impl_->devicePixelRatio_;
+
+  if (selectedLayer && selectedLayer->is3D() && impl_->gizmo_ &&
+      !layerUsesTextGizmo(selectedLayer) &&
+      (impl_->gizmoMode_ == TransformGizmo::Mode::All ||
+       impl_->gizmoMode_ == TransformGizmo::Mode::Scale)) {
+
+    const QMatrix4x4 &frameView = impl_->gizmo3DCameraMatricesValid_
+                                      ? impl_->gizmo3DViewMatrix_
+                                      : impl_->renderer_->getViewMatrix();
+    const QMatrix4x4 &frameProjection =
+        impl_->gizmo3DCameraMatricesValid_
+            ? impl_->gizmo3DProjectionMatrix_
+            : impl_->renderer_->getProjectionMatrix();
+    const QRect frameViewport(
+        0, 0, std::max(1, static_cast<int>(impl_->hostWidth_)),
+        std::max(1, static_cast<int>(impl_->hostHeight_)));
+    const auto frameHandle = hitTestProjectedFrameCorner(
+        selectedLayer, physPos, frameView, frameProjection, frameViewport,
+        24.0f * std::max(1.0f, impl_->devicePixelRatio_));
+    if (frameHandle != TransformGizmo::HandleType::None) {
+      return cursorForProjectedFrameCorner(frameHandle);
+    }
+
+  }
 
   if (impl_->textGizmo_ && layerUsesTextGizmo(selectedLayer)) {
 
