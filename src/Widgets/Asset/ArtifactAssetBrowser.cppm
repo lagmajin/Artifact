@@ -4306,13 +4306,24 @@ if (!item.isFolder) {
     const int leadingFrameCount = totalFrameCount <= kFrameMenuSideCount * 2
         ? totalFrameCount
         : kFrameMenuSideCount;
-    const auto addFramePreviewAction = [framesMenu](const QString& framePath) {
+    QSize expectedFrameSize;
+    for (const QString& candidatePath : item.sequencePaths) {
+      QImageReader candidateReader(candidatePath);
+      if (candidateReader.canRead() && candidateReader.size().isValid()) {
+        expectedFrameSize = candidateReader.size();
+        break;
+      }
+    }
+    const auto addFramePreviewAction = [framesMenu, expectedFrameSize](const QString& framePath) {
       QImageReader reader(framePath);
       const bool readable = reader.canRead();
-      const QString label = readable
-          ? QFileInfo(framePath).fileName()
-          : QStringLiteral("%1 (Unreadable)")
-                .arg(QFileInfo(framePath).fileName());
+      QString label = QFileInfo(framePath).fileName();
+      if (!readable) {
+        label += QStringLiteral(" (Unreadable)");
+      } else if (expectedFrameSize.isValid() && reader.size().isValid() &&
+                 reader.size() != expectedFrameSize) {
+        label += QStringLiteral(" (Size Mismatch)");
+      }
       QAction *frameAction = framesMenu->addAction(label);
       frameAction->setEnabled(readable);
       if (readable) {
