@@ -3816,6 +3816,24 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    info += QString("Status: %1<br>").arg(impl_->isMissingAssetPath(filePath) ? QStringLiteral("Missing") : QStringLiteral("OK"));
    info += QString("Thumbnail: %1<br>").arg(impl_->thumbnailDebugStatus(filePath).toHtmlEscaped());
 
+   // A sequence row is represented by its first frame path. Surface the
+   // logical sequence metadata here so selection does not look like a single
+   // still image in the inspector.
+   if (impl_->assetModel_) {
+    for (int row = 0; row < impl_->assetModel_->rowCount(); ++row) {
+     const AssetMenuItem sequenceItem = impl_->assetModel_->itemAt(row);
+     if (!sequenceItem.isSequence ||
+         (!sequenceItem.sequencePaths.contains(filePath) &&
+          sequenceItem.path.toQString() != filePath)) {
+      continue;
+     }
+     info += QString("Sequence Frames: %1<br>").arg(sequenceItem.sequenceFrameCount);
+     info += QString("Frame Start: %1<br>").arg(sequenceItem.sequenceStartFrame);
+     info += QString("Padding: %1 digits<br>").arg(sequenceItem.sequencePadding);
+     break;
+    }
+   }
+
    // Get detailed information based on file type
    const QString fileName = fileInfo.fileName();
 
