@@ -334,6 +334,63 @@ static std::vector<QPainterPath> buildProcessedPainterPaths(
  return painterPaths;
 }
 
+static std::vector<std::array<QPointF, 3>> triangulateSimplePolygon(
+    const std::vector<QPointF>& polygon) {
+ std::vector<std::array<QPointF, 3>> triangles;
+ if (polygon.size() < 3) return triangles;
+
+ auto cross = [](const QPointF& a, const QPointF& b, const QPointF& c) {
+  return (b.x() - a.x()) * (c.y() - a.y()) -
+         (b.y() - a.y()) * (c.x() - a.x());
+ };
+ double signedArea = 0.0;
+ for (size_t i = 0; i < polygon.size(); ++i) {
+  const auto& a = polygon[i];
+  const auto& b = polygon[(i + 1) % polygon.size()];
+  signedArea += a.x() * b.y() - b.x() * a.y();
+ }
+ if (std::abs(signedArea) <= 1e-9) return triangles;
+
+ std::vector<size_t> indices(polygon.size());
+ std::iota(indices.begin(), indices.end(), 0);
+ const bool ccw = signedArea > 0.0;
+ const auto inside = [&](const QPointF& point, const QPointF& a,
+                         const QPointF& b, const QPointF& c) {
+  const double c0 = cross(a, b, point);
+  const double c1 = cross(b, c, point);
+  const double c2 = cross(c, a, point);
+  if (ccw) return c0 >= -1e-9 && c1 >= -1e-9 && c2 >= -1e-9;
+  return c0 <= 1e-9 && c1 <= 1e-9 && c2 <= 1e-9;
+ };
+
+ size_t guard = 0;
+ while (indices.size() > 2 && guard++ < polygon.size() * polygon.size()) {
+  bool clipped = false;
+  for (size_t i = 0; i < indices.size(); ++i) {
+   const size_t prev = indices[(i + indices.size() - 1) % indices.size()];
+   const size_t curr = indices[i];
+   const size_t next = indices[(i + 1) % indices.size()];
+   const double turn = cross(polygon[prev], polygon[curr], polygon[next]);
+   if ((ccw && turn <= 1e-9) || (!ccw && turn >= -1e-9)) continue;
+   bool containsVertex = false;
+   for (const size_t candidate : indices) {
+    if (candidate == prev || candidate == curr || candidate == next) continue;
+    if (inside(polygon[candidate], polygon[prev], polygon[curr], polygon[next])) {
+     containsVertex = true;
+     break;
+    }
+   }
+   if (containsVertex) continue;
+   triangles.push_back({polygon[prev], polygon[curr], polygon[next]});
+   indices.erase(indices.begin() + static_cast<std::ptrdiff_t>(i));
+   clipped = true;
+   break;
+  }
+  if (!clipped) return {};
+ }
+ return triangles;
+}
+
 static std::vector<ArtifactCore::ShapePath> buildProcessedShapePaths(
     Artifact::ShapeType shapeType,
     int width,
@@ -1463,13 +1520,24 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
      }
 
      if (impl->fillEnabled_ && impl->customPathClosed_ && mapped.size() >= 3) {
-      std::vector<Detail::float2> polygon;
-      polygon.reserve(mapped.size());
-      for (const auto& point : mapped) {
-       polygon.push_back({static_cast<float>(point.x()),
-                          static_cast<float>(point.y())});
+      const auto triangles = triangulateSimplePolygon(mapped);
+      if (!triangles.empty()) {
+       for (const auto& triangle : triangles) {
+        renderer->drawSolidTriangleLocal(
+            {static_cast<float>(triangle[0].x()), static_cast<float>(triangle[0].y())},
+            {static_cast<float>(triangle[1].x()), static_cast<float>(triangle[1].y())},
+            {static_cast<float>(triangle[2].x()), static_cast<float>(triangle[2].y())},
+            fill);
+       }
+      } else {
+       std::vector<Detail::float2> polygon;
+       polygon.reserve(mapped.size());
+       for (const auto& point : mapped) {
+        polygon.push_back({static_cast<float>(point.x()),
+                           static_cast<float>(point.y())});
+       }
+       renderer->drawSolidPolygonLocal(polygon, fill);
       }
-      renderer->drawSolidPolygonLocal(polygon, fill);
      }
      if (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f) {
       for (const auto& segment : segments) {
