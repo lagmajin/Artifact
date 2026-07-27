@@ -3899,6 +3899,8 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
      info += QString("Sequence Frames: %1<br>").arg(sequenceItem.sequenceFrameCount);
      info += QString("Frame Start: %1<br>").arg(sequenceItem.sequenceStartFrame);
      info += QString("Padding: %1 digits<br>").arg(sequenceItem.sequencePadding);
+     info += QString("Sequence Status: %1<br>")
+                 .arg(sequenceItem.type.toQString().toHtmlEscaped());
      if (filePath != sequenceItem.path.toQString()) {
       const QFileInfo selectedFrameInfo(filePath);
       const QRegularExpressionMatch selectedMatch =
