@@ -1186,8 +1186,11 @@ QString Artifact3DLayer::materialSignature() const
 
 void Artifact3DLayer::setAffectedByLights(bool enabled)
 {
+  if (impl_->affectedByLights_ == enabled) {
+    return;
+  }
   impl_->affectedByLights_ = enabled;
-  changed();
+  Q_EMIT changed();
 }
 
 } // namespace Artifact
