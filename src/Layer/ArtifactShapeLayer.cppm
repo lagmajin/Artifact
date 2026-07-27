@@ -961,9 +961,18 @@ Artifact::ShapeType ArtifactShapeLayer::shapeType() const { return impl_->shapeT
 // ============================================================
 
 void ArtifactShapeLayer::setSize(int w, int h) {
-  impl_->width_ = w;
-  impl_->height_ = h;
-  setSourceSize(Size_2D(w, h));
+  // Keep the software cache and the GPU fallback on a valid image extent.
+  // Property editors can temporarily submit zero/negative values while an
+  // edit is being committed; allowing those through makes QImage construction
+  // fail and leaves the previous cached shape visible.
+  const int clampedWidth = std::max(1, w);
+  const int clampedHeight = std::max(1, h);
+  if (impl_->width_ == clampedWidth && impl_->height_ == clampedHeight) {
+   return;
+  }
+  impl_->width_ = clampedWidth;
+  impl_->height_ = clampedHeight;
+  setSourceSize(Size_2D(clampedWidth, clampedHeight));
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
