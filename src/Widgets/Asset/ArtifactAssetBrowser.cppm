@@ -1763,9 +1763,17 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
   for (const QModelIndex& index : selectedIndexes) {
    const AssetMenuItem item = assetModel_->itemAt(index.row());
    if (!item.isFolder) {
-    const QString path = item.path.toQString();
-    if (!path.isEmpty()) {
-     paths.append(path);
+    if (item.isSequence && !item.sequencePaths.isEmpty()) {
+     for (const QString& sequencePath : item.sequencePaths) {
+      if (!sequencePath.isEmpty()) {
+       paths.append(sequencePath);
+      }
+     }
+    } else {
+     const QString path = item.path.toQString();
+     if (!path.isEmpty()) {
+      paths.append(path);
+     }
     }
    }
   }
@@ -3905,7 +3913,13 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   });
 
   const QStringList selectedAssetPaths = impl_->selectedAssetPaths();
-  const QStringList importTargets = selectedAssetPaths.isEmpty() ? QStringList{filePath} : selectedAssetPaths;
+  const QStringList clickedSequenceTargets =
+      item.isSequence && !item.sequencePaths.isEmpty()
+          ? item.sequencePaths
+          : QStringList{filePath};
+  const QStringList importTargets = selectedAssetPaths.isEmpty()
+      ? clickedSequenceTargets
+      : selectedAssetPaths;
 
   // Add to Project action
   const QString addActionLabel = importTargets.size() > 1
