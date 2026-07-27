@@ -22,6 +22,7 @@ import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -55,7 +56,7 @@ public:
         const float segAngle = 2.0f * kPI / std::max(2, segments_);
         const float rotRad = rotation_ * kPI / 180.0f;
 
-        for (int y = 0; y < h; ++y) {
+        ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
             for (int x = 0; x < w; ++x) {
                 float dx = float(x) - cx;
                 float dy = float(y) - cy;
@@ -98,7 +99,7 @@ public:
                     dstPixels[dstIdx + 3] = pixels[srcIdx + 3];
                 }
             }
-        }
+        });
     }
 };
 

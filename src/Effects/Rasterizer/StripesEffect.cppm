@@ -38,7 +38,7 @@ public:
         float rad=angle_*std::numbers::pi_v<float>/180.0f;
         float cs=std::cos(rad),sn=std::sin(rad);
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
-        Parallel::For(0,H,[&](int y){float* o=d+(size_t)y*W*4;
+Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){float* p=o+(size_t)x*4;
                 float proj=((float)x*cs+(float)y*sn)*f/(float)std::max(W,H)+offset_;
                 float v=std::abs(std::fmod(proj,1.0f));

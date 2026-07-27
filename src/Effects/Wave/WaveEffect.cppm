@@ -78,9 +78,8 @@ void WaveEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     int orient = orientation_;
     
     // ピクセルごとの処理 — 行単位で並列化
-    std::vector<cv::Vec4f> rowResults(width * height);
-
-    ArtifactCore::Parallel::For(0, height, [&](int y) {
+    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        cv::Vec4f* dstRow = dstMat.ptr<cv::Vec4f>(y);
         for (int x = 0; x < width; x++) {
             float offset = 0.0f;
 
@@ -113,15 +112,8 @@ void WaveEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
             srcY = std::max(0, std::min(height - 1, srcY));
 
             // ピクセルをコピー
-            cv::Vec4f pixel = srcMat.at<cv::Vec4f>(srcY, srcX);
-            rowResults[y * width + x] = pixel;
-        }
-    });
-
-    // 結果をdstMatにコピー
-    ArtifactCore::Parallel::For(0, height, [&](int y) {
-        for (int x = 0; x < width; x++) {
-            dstMat.at<cv::Vec4f>(y, x) = rowResults[y * width + x];
+            const cv::Vec4f pixel = srcMat.ptr<cv::Vec4f>(srcY)[srcX];
+            dstRow[x] = pixel;
         }
     });
     

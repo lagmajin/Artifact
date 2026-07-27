@@ -16,6 +16,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -31,7 +32,6 @@ public:
         if(!sd||si.width()<=0||!context_.sampler){dst=src;return;}
         const int W=si.width(),H=si.height(),lb=std::clamp(lookback_,1,32);
         const float sg=std::max(sigma_,0.5f),dir=std::clamp(direction_,0.0f,1.0f);
-        const size_t n=(size_t)W*H;
 
         // Gaussian-weighted accumulation across frames
         struct Rf{ImageF32x4_RGBA img; float w;};
@@ -62,12 +62,15 @@ public:
         if(refs.empty())return;
         float inv=1.0f/totalW;
 
-        for(size_t i=0;i<n;++i){
+        Parallel::For(0,H,W*H,[&](int y){
+            for(int x=0;x<W;++x){
+            const size_t i=(size_t)y*W+x;
             float acc[4]={d[i*4],d[i*4+1],d[i*4+2],d[i*4+3]};
-            for(auto& rf:refs){const float* rp=rf.img.rgba32fData()+i*4;
+            for(const auto& rf:refs){const float* rp=rf.img.rgba32fData()+i*4;
                 acc[0]+=rp[0]*rf.w;acc[1]+=rp[1]*rf.w;acc[2]+=rp[2]*rf.w;acc[3]+=rp[3]*rf.w;}
             d[i*4]=acc[0]*inv;d[i*4+1]=acc[1]*inv;d[i*4+2]=acc[2]*inv;d[i*4+3]=acc[3]*inv;
-        }
+            }
+        });
     }
 };
 

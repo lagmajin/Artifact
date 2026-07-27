@@ -32,7 +32,7 @@ public:
         float cx=cx_*(float)W,cy=cy_*(float)H;
 
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
-        Parallel::For(0,H,[&](int y){float* o=d+(size_t)y*W*4;
+Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){float* p=o+(size_t)x*4;
                 float dx=(float)x-cx,dy=(float)y-cy;
                 float r0=p[0],g0=p[1],b0=p[2],a0=p[3],tw=1.0f;

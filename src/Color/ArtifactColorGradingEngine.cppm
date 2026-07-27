@@ -15,6 +15,8 @@ import Color.Float;
 
 module Color.GradingEngine;
 
+import Core.Parallel;
+
 namespace Artifact {
 
 using namespace ArtifactCore;
@@ -181,9 +183,12 @@ ArtifactColorGradingEngine::applyGrading(const FloatColor &input) const {
 
 void ArtifactColorGradingEngine::applyGradingToBuffer(
     std::vector<FloatColor> &buffer) const {
-  for (auto &color : buffer) {
+  ArtifactCore::Parallel::For(0, static_cast<int>(buffer.size()),
+                              static_cast<int>(buffer.size()),
+                              [&](int index) {
+    auto &color = buffer[static_cast<size_t>(index)];
     color = applyGrading(color);
-  }
+  });
 }
 
 FloatColor ArtifactColorGradingEngine::applyLiftGammaGain(

@@ -24,6 +24,7 @@ import Time.Rational;
 import MeshImporter;
 import Utils.String.UniString;
 import Material.Material;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -41,9 +42,10 @@ void centerMeshPositions(Mesh &mesh) {
   if (!positions) {
     return;
   }
-  for (auto &pos : positions->data()) {
-    pos -= center;
-  }
+  auto &positionData = positions->data();
+  ArtifactCore::Parallel::For(0, static_cast<int>(positionData.size()), static_cast<int>(positionData.size()), [&](int index) {
+    positionData[index] -= center;
+  });
   mesh.updateBounds();
 }
 
@@ -758,10 +760,10 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
 
   // Transform vertices
   QVector<QVector3D> transformedVertices;
-  transformedVertices.reserve(positions->data().size());
-  for (const auto &pos : positions->data()) {
-    transformedVertices.append(modelMatrix.map(pos));
-  }
+  transformedVertices.resize(positions->data().size());
+  ArtifactCore::Parallel::For(0, static_cast<int>(positions->data().size()), static_cast<int>(positions->data().size()), [&](int index) {
+    transformedVertices[index] = modelMatrix.map(positions->data()[index]);
+  });
 
   const FloatColor wireframeColor{1.0f, 1.0f, 1.0f, opacity()};
   const float thickness = 2.0f;

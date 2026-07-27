@@ -60,21 +60,23 @@ public:
         };
 
         if (monochrome_) {
-            Parallel::For(0, mat.rows, [&](int y) {
+            Parallel::For(0, mat.rows, mat.rows * mat.cols, [&](int y) {
+                cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
                 for (int x = 0; x < mat.cols; ++x) {
                     const float n = noiseAt(
                         static_cast<uint32_t>(x), static_cast<uint32_t>(y), 1u) *
                         amount_;
-                    cv::Vec4f& p = mat.at<cv::Vec4f>(y, x);
+                    cv::Vec4f& p = row[x];
                     p[0] = std::clamp(p[0] + n, 0.0f, 1.0f);
                     p[1] = std::clamp(p[1] + n, 0.0f, 1.0f);
                     p[2] = std::clamp(p[2] + n, 0.0f, 1.0f);
                 }
             });
         } else if (colorNoise_) {
-            Parallel::For(0, mat.rows, [&](int y) {
+            Parallel::For(0, mat.rows, mat.rows * mat.cols, [&](int y) {
+                cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
                 for (int x = 0; x < mat.cols; ++x) {
-                    cv::Vec4f& p = mat.at<cv::Vec4f>(y, x);
+                    cv::Vec4f& p = row[x];
                     const auto ux = static_cast<uint32_t>(x);
                     const auto uy = static_cast<uint32_t>(y);
                     p[0] = std::clamp(p[0] + noiseAt(ux, uy, 1u) * amount_, 0.0f, 1.0f);
@@ -84,17 +86,18 @@ public:
             });
         } else {
             // luminance-only noise
-            Parallel::For(0, mat.rows, [&](int y) {
+            Parallel::For(0, mat.rows, mat.rows * mat.cols, [&](int y) {
+                cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
                 for (int x = 0; x < mat.cols; ++x) {
-                    float luma = mat.at<cv::Vec4f>(y, x)[0] * 0.299f
-                               + mat.at<cv::Vec4f>(y, x)[1] * 0.587f
-                               + mat.at<cv::Vec4f>(y, x)[2] * 0.114f;
+                    float luma = row[x][0] * 0.299f
+                               + row[x][1] * 0.587f
+                               + row[x][2] * 0.114f;
                     const float n = noiseAt(
                         static_cast<uint32_t>(x), static_cast<uint32_t>(y), 1u) *
                         amount_;
                     float newLuma = std::clamp(luma + n, 0.0f, 1.0f);
                     float diff = newLuma - luma;
-                    cv::Vec4f& p = mat.at<cv::Vec4f>(y, x);
+                    cv::Vec4f& p = row[x];
                     p[0] = std::clamp(p[0] + diff, 0.0f, 1.0f);
                     p[1] = std::clamp(p[1] + diff, 0.0f, 1.0f);
                     p[2] = std::clamp(p[2] + diff, 0.0f, 1.0f);

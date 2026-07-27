@@ -38,7 +38,7 @@ public:
         const int rw=ref.width(),rh=ref.height();
         const float th=std::clamp(threshold_,0.0f,1.0f);
 
-        Parallel::For(0,H,[&](int y){float* o=d+(size_t)y*W*4;
+Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
             int ry=std::min(y,rh-1);
             for(int x=0;x<W;++x){int rx=std::min(x,rw-1);
                 const float* rp=rd+((size_t)ry*rw+rx)*4;

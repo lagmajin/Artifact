@@ -9,6 +9,7 @@ module;
 module Artifact.Effect.SurfaceFX;
 
 import Artifact.Effect.ImplBase;
+import Core.Parallel;
 import Image.ImageF32x4RGBAWithCache;
 
 namespace Artifact {
@@ -101,7 +102,9 @@ public:
         }
 
         cv::Mat output = input.clone();
-        for (int y = std::max(0, static_cast<int>(top)); y < std::min(height, static_cast<int>(bottom)); ++y) {
+        const int yBegin = std::max(0, static_cast<int>(top));
+        const int yEnd = std::min(height, static_cast<int>(bottom));
+        Parallel::For(yBegin, yEnd, (yEnd - yBegin) * width, [&](int y) {
             const auto* sourceRow = input.ptr<cv::Vec4f>(y);
             const auto* overlayRow = overlay.ptr<cv::Vec4f>(y);
             const auto* dropletMaskRow = dropletMask.ptr<float>(y);
@@ -129,7 +132,7 @@ public:
                     outputRow[x][c] = refractedSource[0][c] * (1.0f - a) + overlayRow[x][c] * a;
                 outputRow[x][3] = sourceRow[x][3];
             }
-        }
+        });
         dst = src;
         dst.image().setFromCVMat(output, image.colorDescriptor());
     }

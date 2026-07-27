@@ -13,6 +13,7 @@ module Artifact.Color.OCIOManager;
 import Color.OCIOConfig;
 import Color.ScienceManager;
 import Color.ColorSpace;
+import Core.Parallel;
 import Image.ImageF32x4_RGBA;
 
 namespace Artifact {
@@ -298,24 +299,25 @@ void ArtifactOCIOManager::applyViewTransformToImage(ArtifactCore::ImageF32x4_RGB
 
     const int w = image.width();
     const int h = image.height();
-    for (int y = 0; y < h; ++y) {
+    float* data = image.rgba32fData();
+ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        float* row = data + static_cast<size_t>(y) * static_cast<size_t>(w) * 4u;
         for (int x = 0; x < w; ++x) {
-            auto pixel = image.getPixel(x, y);
-            const float r = pixel.r();
-            const float g = pixel.g();
-            const float b = pixel.b();
-            const float a = pixel.a();
+            float* pixel = row + static_cast<size_t>(x) * 4u;
+            const float r = pixel[0];
+            const float g = pixel[1];
+            const float b = pixel[2];
+            const float a = pixel[3];
 
             float outR = matrix[0] * r + matrix[1] * g + matrix[2] * b + matrix[3] * a;
             float outG = matrix[4] * r + matrix[5] * g + matrix[6] * b + matrix[7] * a;
             float outB = matrix[8] * r + matrix[9] * g + matrix[10] * b + matrix[11] * a;
 
-            pixel.setRed(std::clamp(outR, 0.0f, 1.0f));
-            pixel.setGreen(std::clamp(outG, 0.0f, 1.0f));
-            pixel.setBlue(std::clamp(outB, 0.0f, 1.0f));
-            image.setPixel(x, y, pixel);
+            pixel[0] = std::clamp(outR, 0.0f, 1.0f);
+            pixel[1] = std::clamp(outG, 0.0f, 1.0f);
+            pixel[2] = std::clamp(outB, 0.0f, 1.0f);
         }
-    }
+    });
 }
 
 QJsonObject ArtifactOCIOManager::toJson() const

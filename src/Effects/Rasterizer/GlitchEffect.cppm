@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <random>
+#include <vector>
 #include <QString>
 #include <QVariant>
 
@@ -12,6 +13,7 @@ module Artifact.Effect.Rasterizer.Glitch;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;
 import Artifact.Effect.ImplBase;
+import Core.Parallel;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
@@ -36,13 +38,27 @@ public:
         rng_.seed((unsigned)(42+context_.compositionFrame+seed_));
         std::uniform_real_distribution<float> d01(0,1);
 
-        // Scanline corruption
-        if(sl>0.001f){for(int y=0;y<H;++y){if(d01(rng_)<sl*0.3f){
-            int sx=std::clamp((int)(d01(rng_)*W),0,W-1),sw=std::clamp((int)(d01(rng_)*W*0.5f),1,W/4);
-            float* o=d+(size_t)y*W*4;
-            for(int i=0;i<sw;++i){int x=std::clamp(sx+i,0,W-1);float* p=o+(size_t)x*4;
-                p[0]=d01(rng_);p[1]=d01(rng_);p[2]=d01(rng_);}
-        }}}
+        // Generate scanline commands serially to preserve the historical RNG sequence.
+        struct ScanlinePatch { int start = 0; std::vector<float> rgb; };
+        if(sl>0.001f){
+            std::vector<ScanlinePatch> scanlinePatches(static_cast<size_t>(H));
+            for(int y=0;y<H;++y){if(d01(rng_)<sl*0.3f){
+                auto& patch = scanlinePatches[static_cast<size_t>(y)];
+                patch.start=std::clamp((int)(d01(rng_)*W),0,W-1);
+                const int sw=std::clamp((int)(d01(rng_)*W*0.5f),1,W/4);
+                patch.rgb.resize(static_cast<size_t>(sw) * 3u);
+                for(float& value : patch.rgb) value=d01(rng_);
+            }}
+            Parallel::For(0, H, W * H, [&](int y) {
+                const auto& patch = scanlinePatches[static_cast<size_t>(y)];
+                float* row = d + static_cast<size_t>(y) * W * 4u;
+                for(size_t i=0; i<patch.rgb.size(); i+=3u){
+                    const int x=std::clamp(patch.start + static_cast<int>(i/3u),0,W-1);
+                    float* p=row + static_cast<size_t>(x)*4u;
+                    p[0]=patch.rgb[i+0];p[1]=patch.rgb[i+1];p[2]=patch.rgb[i+2];
+                }
+            });
+        }
 
         // Block displacement
         int BS=16;for(int by=0;by<(H+BS-1)/BS;++by)for(int bx=0;bx<(W+BS-1)/BS;++bx){
@@ -55,12 +71,22 @@ public:
             }
         }
 
-        // Color channel shift
-        if(cs>0.001f){for(int y=0;y<H;++y){float* o=d+(size_t)y*W*4;
-            for(int x=1;x<W-1;++x){if(d01(rng_)<cs*0.5f){float* p=o+(size_t)x*4;
-                float tmp=p[0];p[0]=p[2];p[2]=tmp;
-            }}
-        }}
+        // Generate the per-pixel decisions serially, then apply them by row.
+        if(cs>0.001f){
+            std::vector<std::uint8_t> channelShift(static_cast<size_t>(W) * H, 0u);
+            for(int y=0;y<H;++y){
+            for(int x=1;x<W-1;++x){
+                channelShift[static_cast<size_t>(y)*W+x]=d01(rng_)<cs*0.5f?1u:0u;
+            }
+            }
+            Parallel::For(0, H, W * H, [&](int y) {
+                float* row=d+static_cast<size_t>(y)*W*4u;
+                for(int x=1;x<W-1;++x){if(channelShift[static_cast<size_t>(y)*W+x]){
+                    float* p=row+static_cast<size_t>(x)*4u;
+                    float tmp=p[0];p[0]=p[2];p[2]=tmp;
+                }}
+            });
+        }
     }
 };
 

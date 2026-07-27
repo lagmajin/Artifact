@@ -129,12 +129,14 @@ void ArtifactGlitchEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     int h = src.height();
     auto srcImage = src.image();
     auto dstImage = srcImage.DeepCopy();
+    const float* srcPixels = srcImage.rgba32fData();
+    float* dstPixels = dstImage.rgba32fData();
 
     ArtifactCore::RandomStream rng(0x474C49544348ull);
     
     // Each row owns a disjoint destination range.  Keep the per-row RNG fork so
     // CPU and future GPU/reference comparisons remain deterministic.
-    ArtifactCore::Parallel::For(0, h, [&](int y) {
+    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
         auto rowRng = rng.fork(static_cast<uint64_t>(y));
         float rowOffset = 0.0f;
         if (y % 15 < 4) {
@@ -144,15 +146,19 @@ void ArtifactGlitchEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4R
         
         for (int x = 0; x < w; ++x) {
             int sx = std::clamp(x + (int)rowOffset, 0, w - 1);
-            auto c = srcImage.getPixel(sx, y);
+            const float* c = srcPixels + (static_cast<size_t>(y) * w + sx) * 4u;
             
             int rsx = std::clamp(sx + (int)shiftX, 0, w - 1);
-            auto cr = srcImage.getPixel(rsx, y);
+            const float* cr = srcPixels + (static_cast<size_t>(y) * w + rsx) * 4u;
             
             int bsx = std::clamp(sx - (int)shiftX, 0, w - 1);
-            auto cb = srcImage.getPixel(bsx, y);
+            const float* cb = srcPixels + (static_cast<size_t>(y) * w + bsx) * 4u;
             
-            dstImage.setPixel(x, y, {cr.r(), c.g(), cb.b(), c.a()});
+            float* dst = dstPixels + (static_cast<size_t>(y) * w + x) * 4u;
+            dst[0] = cr[0];
+            dst[1] = c[1];
+            dst[2] = cb[2];
+            dst[3] = c[3];
         }
     });
     dst = ImageF32x4RGBAWithCache(dstImage);
@@ -172,20 +178,23 @@ void ArtifactHalftoneEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x
     int h = src.height();
     auto srcImage = src.image();
     auto dstImage = srcImage.DeepCopy();
+    const float* srcPixels = srcImage.rgba32fData();
+    float* dstPixels = dstImage.rgba32fData();
     
     int dotSize = 8;
     
     const int tileRows = (h + dotSize - 1) / dotSize;
     // A tile row never overlaps another tile row in dstImage.
-    ArtifactCore::Parallel::For(0, tileRows, [&](int tileRow) {
+    ArtifactCore::Parallel::For(0, tileRows, w * h, [&](int tileRow) {
         const int y = tileRow * dotSize;
         for (int x = 0; x < w; x += dotSize) {
             float lum = 0;
             int count = 0;
             for (int dy = 0; dy < dotSize && y + dy < h; ++dy) {
                 for (int dx = 0; dx < dotSize && x + dx < w; ++dx) {
-                    auto c = srcImage.getPixel(x + dx, y + dy);
-                    lum += (c.r() + c.g() + c.b()) / 3.0f;
+                    const float* c = srcPixels +
+                        (static_cast<size_t>(y + dy) * w + x + dx) * 4u;
+                    lum += (c[0] + c[1] + c[2]) / 3.0f;
                     count++;
                 }
             }
@@ -198,11 +207,13 @@ void ArtifactHalftoneEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x
             for (int dy = 0; dy < dotSize && y + dy < h; ++dy) {
                 for (int dx = 0; dx < dotSize && x + dx < w; ++dx) {
                     float dist = std::sqrt((x + dx - cx)*(x + dx - cx) + (y + dy - cy)*(y + dy - cy));
-                    if (dist < radius) {
-                        dstImage.setPixel(x + dx, y + dy, {0, 0, 0, 1});
-                    } else {
-                        dstImage.setPixel(x + dx, y + dy, {1, 1, 1, 1});
-                    }
+                    float* dst = dstPixels +
+                        (static_cast<size_t>(y + dy) * w + x + dx) * 4u;
+                    const float value = dist < radius ? 0.0f : 1.0f;
+                    dst[0] = value;
+                    dst[1] = value;
+                    dst[2] = value;
+                    dst[3] = 1.0f;
                 }
             }
         }
@@ -224,23 +235,26 @@ void ArtifactOldTVEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RG
     int h = src.height();
     auto srcImage = src.image();
     auto dstImage = srcImage.DeepCopy();
+    const float* srcPixels = srcImage.rgba32fData();
+    float* dstPixels = dstImage.rgba32fData();
     
     ArtifactCore::RandomStream rng(42);
     
     // rowRng is forked from y, so scheduling does not affect the Old TV noise.
-    ArtifactCore::Parallel::For(0, h, [&](int y) {
+    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
         auto rowRng = rng.fork(static_cast<uint64_t>(y));
         float scanline = (y % 4 == 0) ? 0.7f : 1.0f;
         float jitter = (rowRng.chance(0.08f)) ? rowRng.range(-5.0f, 5.0f) : 0.0f;
         
         for (int x = 0; x < w; ++x) {
             int sx = std::clamp(x + (int)jitter, 0, w - 1);
-            auto c = srcImage.getPixel(sx, y);
+            const float* c = srcPixels + (static_cast<size_t>(y) * w + sx) * 4u;
             float noise = rowRng.range(-0.1f, 0.1f) * 0.05f;
-            float r = std::clamp(c.r() * scanline + noise, 0.0f, 1.0f);
-            float g = std::clamp(c.g() * scanline + noise, 0.0f, 1.0f);
-            float b = std::clamp(c.b() * scanline + noise, 0.0f, 1.0f);
-            dstImage.setPixel(x, y, {r, g, b, c.a()});
+            float* dst = dstPixels + (static_cast<size_t>(y) * w + x) * 4u;
+            dst[0] = std::clamp(c[0] * scanline + noise, 0.0f, 1.0f);
+            dst[1] = std::clamp(c[1] * scanline + noise, 0.0f, 1.0f);
+            dst[2] = std::clamp(c[2] * scanline + noise, 0.0f, 1.0f);
+            dst[3] = c[3];
         }
     });
     dst = ImageF32x4RGBAWithCache(dstImage);

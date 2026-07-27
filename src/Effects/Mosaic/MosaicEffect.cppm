@@ -36,8 +36,9 @@ public:
         cv::Vec4f sum(0, 0, 0, 0);
         int count = 0;
         for (int y = y0; y < y1 && y < mat.rows; ++y) {
+            const cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = x0; x < x1 && x < mat.cols; ++x) {
-                sum += mat.at<cv::Vec4f>(y, x);
+                sum += row[x];
                 ++count;
             }
         }
@@ -47,8 +48,9 @@ public:
 
     void fillRect(cv::Mat& mat, int x0, int y0, int x1, int y1, const cv::Vec4f& color) {
         for (int y = y0; y < y1 && y < mat.rows; ++y) {
+            cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = x0; x < x1 && x < mat.cols; ++x) {
-                mat.at<cv::Vec4f>(y, x) = color;
+                row[x] = color;
             }
         }
     }
@@ -69,7 +71,7 @@ public:
         // cache: key=cell origin, value=average color
         // lazy recompute each cell (cheap for small images)
         const int tileRows = (h + cell - 1) / cell;
-        ArtifactCore::Parallel::For(0, tileRows, [&](int tileRow) {
+        ArtifactCore::Parallel::For(0, tileRows, w * h, [&](int tileRow) {
             const int by = tileRow * cell;
             for (int bx = 0; bx < w; bx += cell) {
                 const int x1 = std::min(bx + cell, w);
@@ -83,11 +85,12 @@ public:
                     int count = 0;
                     // diamond loop
                     for (int y = by; y < y1; ++y) {
+                        const cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
                         for (int x = bx; x < x1; ++x) {
                             const int adx = std::abs(x - cx);
                             const int ady = std::abs(y - cy);
                             if (adx + ady <= radius) {
-                                sum += mat.at<cv::Vec4f>(y, x);
+                                sum += row[x];
                                 ++count;
                             }
                         }
@@ -95,11 +98,12 @@ public:
                     if (count > 0) sum /= static_cast<float>(count);
                     // fill diamond shape with averaged color
                     for (int y = by; y < y1; ++y) {
+                        cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
                         for (int x = bx; x < x1; ++x) {
                             const int adx = std::abs(x - cx);
                             const int ady = std::abs(y - cy);
                             if (adx + ady <= radius) {
-                                mat.at<cv::Vec4f>(y, x) = sum;
+                                row[x] = sum;
                             }
                         }
                     }

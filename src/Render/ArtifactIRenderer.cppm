@@ -73,6 +73,7 @@ import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentImmediateSubmitter;
 import Artifact.Render.RenderCommandBuffer;
 import Core.Light;
+import Core.Parallel;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Color.TransferFunction;
 
@@ -83,6 +84,55 @@ namespace Artifact
  using float2 = Diligent::float2;
 
 namespace {
+  QImage extractRgbaChannelToGray(const QImage& image, int channelOffset)
+  {
+    if (image.isNull() || channelOffset < 0 || channelOffset >= 4) {
+      return {};
+    }
+
+    const QImage rgba = (image.format() == QImage::Format_RGBA8888)
+                            ? image
+                            : image.convertToFormat(QImage::Format_RGBA8888);
+    QImage channelImage(rgba.width(), rgba.height(), QImage::Format_Grayscale8);
+    const auto* sourceBits = rgba.constBits();
+    const int sourceStride = rgba.bytesPerLine();
+    auto* outputBits = channelImage.bits();
+    const int outputStride = channelImage.bytesPerLine();
+    ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+      const auto* sourceRow = sourceBits + y * sourceStride;
+      auto* outputRow = outputBits + y * outputStride;
+      for (int x = 0; x < rgba.width(); ++x) {
+        outputRow[x] = sourceRow[x * 4 + channelOffset];
+      }
+    });
+    return channelImage;
+  }
+
+  QImage extractRgbaMaxRgbToGray(const QImage& image)
+  {
+    if (image.isNull()) {
+      return {};
+    }
+
+    const QImage rgba = (image.format() == QImage::Format_RGBA8888)
+                            ? image
+                            : image.convertToFormat(QImage::Format_RGBA8888);
+    QImage channelImage(rgba.width(), rgba.height(), QImage::Format_Grayscale8);
+    const auto* sourceBits = rgba.constBits();
+    const int sourceStride = rgba.bytesPerLine();
+    auto* outputBits = channelImage.bits();
+    const int outputStride = channelImage.bytesPerLine();
+    ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+      const auto* sourceRow = sourceBits + y * sourceStride;
+      auto* outputRow = outputBits + y * outputStride;
+      for (int x = 0; x < rgba.width(); ++x) {
+        outputRow[x] = std::max({sourceRow[x * 4 + 0], sourceRow[x * 4 + 1],
+                                 sourceRow[x * 4 + 2]});
+      }
+    });
+    return channelImage;
+  }
+
   class ScopedGpuDebugGroup {
   public:
    ScopedGpuDebugGroup(IDeviceContext* context, const char* name)
@@ -1617,26 +1667,32 @@ namespace {
    return {};
   }
   if (!useFloatReadback) {
-   const auto* srcRow = static_cast<const uint8_t*>(mapped.pData);
-   for (Uint32 row = 0; row < srcHeight; ++row) {
-    std::memcpy(result.scanLine(static_cast<int>(row)), srcRow, copyRowBytes);
-    srcRow += mapped.Stride;
-   }
+   const auto* sourceBits = static_cast<const uint8_t*>(mapped.pData);
+   auto* resultBits = result.bits();
+   const int resultStride = result.bytesPerLine();
+   ArtifactCore::Parallel::For(0, static_cast<int>(srcHeight), static_cast<int>(srcWidth * srcHeight), [&](int row) {
+    std::memcpy(resultBits + row * resultStride,
+                sourceBits + static_cast<size_t>(row) * mapped.Stride,
+                copyRowBytes);
+   });
   } else if (useFloat16Readback) {
-   const auto* srcRow = static_cast<const uint16_t*>(mapped.pData);
-   std::size_t nonFiniteCount = 0;
-   for (Uint32 row = 0; row < srcHeight; ++row) {
-    auto* dst = result.scanLine(static_cast<int>(row));
-    const auto* srcHalf = srcRow;
+   const auto* sourceBits = static_cast<const uint8_t*>(mapped.pData);
+   auto* resultBits = result.bits();
+   const int resultStride = result.bytesPerLine();
+   std::atomic<std::size_t> nonFiniteCount = 0;
+   const auto sanitize = [&nonFiniteCount](const float value) {
+    if (!std::isfinite(value)) {
+     nonFiniteCount.fetch_add(1, std::memory_order_relaxed);
+     return 0.0f;
+    }
+    return std::clamp(value, 0.0f, 1.0f);
+   };
+   ArtifactCore::Parallel::For(0, static_cast<int>(srcHeight), static_cast<int>(srcWidth * srcHeight), [&](int row) {
+    auto* dst = resultBits + row * resultStride;
+    const auto* srcHalf = reinterpret_cast<const uint16_t*>(
+        sourceBits + static_cast<size_t>(row) * mapped.Stride);
     for (Uint32 x = 0; x < srcWidth; ++x) {
      // Half-float -> 8-bit sRGB for the HDR swap chain path.
-     const auto sanitize = [&nonFiniteCount](const float value) {
-       if (!std::isfinite(value)) {
-         ++nonFiniteCount;
-         return 0.0f;
-       }
-       return std::clamp(value, 0.0f, 1.0f);
-     };
      const float r = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + 0]));
      const float g = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + 1]));
      const float b = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + 2]));
@@ -1646,27 +1702,29 @@ namespace {
      dst[x * 4 + 2] = linearToSrgb8(b);
      dst[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
     }
-    srcRow = reinterpret_cast<const uint16_t*>(
-        reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
-   }
-   if (nonFiniteCount > 0) {
+   });
+   if (nonFiniteCount.load(std::memory_order_relaxed) > 0) {
     qWarning() << "[ArtifactIRenderer] RGBA16F readback contained"
-               << nonFiniteCount << "non-finite channel values";
+               << nonFiniteCount.load(std::memory_order_relaxed)
+               << "non-finite channel values";
    }
   } else {
-   const auto* srcRow = static_cast<const float*>(mapped.pData);
-   std::size_t nonFiniteCount = 0;
-   for (Uint32 row = 0; row < srcHeight; ++row) {
-    auto* dst = result.scanLine(static_cast<int>(row));
-    const auto* srcFloat = srcRow;
+   const auto* sourceBits = static_cast<const uint8_t*>(mapped.pData);
+   auto* resultBits = result.bits();
+   const int resultStride = result.bytesPerLine();
+   std::atomic<std::size_t> nonFiniteCount = 0;
+   const auto sanitize = [&nonFiniteCount](const float value) {
+    if (!std::isfinite(value)) {
+     nonFiniteCount.fetch_add(1, std::memory_order_relaxed);
+     return 0.0f;
+    }
+    return std::clamp(value, 0.0f, 1.0f);
+   };
+   ArtifactCore::Parallel::For(0, static_cast<int>(srcHeight), static_cast<int>(srcWidth * srcHeight), [&](int row) {
+    auto* dst = resultBits + row * resultStride;
+    const auto* srcFloat = reinterpret_cast<const float*>(
+        sourceBits + static_cast<size_t>(row) * mapped.Stride);
     for (Uint32 x = 0; x < srcWidth; ++x) {
-     const auto sanitize = [&nonFiniteCount](const float value) {
-       if (!std::isfinite(value)) {
-         ++nonFiniteCount;
-         return 0.0f;
-       }
-       return std::clamp(value, 0.0f, 1.0f);
-     };
      const float r = sanitize(srcFloat[x * 4 + 0]);
      const float g = sanitize(srcFloat[x * 4 + 1]);
      const float b = sanitize(srcFloat[x * 4 + 2]);
@@ -1676,12 +1734,11 @@ namespace {
      dst[x * 4 + 2] = linearToSrgb8(b);
      dst[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
     }
-    srcRow = reinterpret_cast<const float*>(
-        reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
-   }
-   if (nonFiniteCount > 0) {
+   });
+   if (nonFiniteCount.load(std::memory_order_relaxed) > 0) {
     qWarning() << "[ArtifactIRenderer] RGBA32F readback contained"
-               << nonFiniteCount << "non-finite channel values";
+               << nonFiniteCount.load(std::memory_order_relaxed)
+               << "non-finite channel values";
    }
   }
   ctx->UnmapTextureSubresource(slot.staging, 0, 0);
@@ -1699,15 +1756,17 @@ QImage ArtifactIRenderer::Impl::readbackDepthToImage() const
   }
 
   QImage result(srcWidth, srcHeight, QImage::Format_Grayscale8);
-  for (int y = 0; y < srcHeight; ++y) {
-   auto* dst = result.scanLine(y);
+  auto* resultBits = result.bits();
+  const int resultStride = result.bytesPerLine();
+  ArtifactCore::Parallel::For(0, srcHeight, srcWidth * srcHeight, [&](int y) {
+   auto* dst = resultBits + y * resultStride;
    const auto* src = depthValues.data() +
                      static_cast<size_t>(y) * static_cast<size_t>(srcWidth);
    for (int x = 0; x < srcWidth; ++x) {
     const float depth = std::clamp(src[x], 0.0f, 1.0f);
     dst[x] = static_cast<uint8_t>((1.0f - depth) * 255.0f + 0.5f);
    }
-  }
+  });
   return result;
 }
 
@@ -1812,7 +1871,7 @@ bool ArtifactIRenderer::Impl::readbackTextureViewToFloatBuffer(
   }
 
   outRgba.resize(static_cast<size_t>(srcWidth) * srcHeight * 4u);
-  for (Uint32 y = 0; y < srcHeight; ++y) {
+   ArtifactCore::Parallel::For(0, static_cast<int>(srcHeight), static_cast<int>(srcWidth * srcHeight), [&](int y) {
     const auto* row = static_cast<const uint8_t*>(mapped.pData) +
                       static_cast<size_t>(y) * mapped.Stride;
     float* dst = outRgba.data() + static_cast<size_t>(y) * srcWidth * 4u;
@@ -1832,7 +1891,7 @@ bool ArtifactIRenderer::Impl::readbackTextureViewToFloatBuffer(
         dst[x] = std::isfinite(src[x]) ? src[x] : 0.0f;
       }
     }
-  }
+  });
   ctx->UnmapTextureSubresource(slot.staging, 0, 0);
   outWidth = static_cast<int>(srcWidth);
   outHeight = static_cast<int>(srcHeight);
@@ -1943,14 +2002,14 @@ bool ArtifactIRenderer::Impl::readbackDepthToFloatBuffer(
   }
 
   outDepth.resize(static_cast<size_t>(srcWidth) * static_cast<size_t>(srcHeight));
-  const auto* srcRow = static_cast<const float*>(mapped.pData);
-  for (Uint32 row = 0; row < srcHeight; ++row) {
+  const auto* sourceBits = static_cast<const uint8_t*>(mapped.pData);
+  const size_t rowBytes = static_cast<size_t>(srcWidth) * sizeof(float);
+   ArtifactCore::Parallel::For(0, static_cast<int>(srcHeight), static_cast<int>(srcWidth * srcHeight), [&](int row) {
    auto* dst = outDepth.data() +
                static_cast<size_t>(row) * static_cast<size_t>(srcWidth);
-   std::memcpy(dst, srcRow, static_cast<size_t>(srcWidth) * sizeof(float));
-   srcRow = reinterpret_cast<const float*>(
-       reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
-  }
+   std::memcpy(dst, sourceBits + static_cast<size_t>(row) * mapped.Stride,
+               rowBytes);
+  });
 
   ctx->UnmapTextureSubresource(stagingTex, 0, 0);
   outWidth = static_cast<int>(srcWidth);
@@ -1984,18 +2043,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     if (offset < 0 || colorImage.isNull()) {
       return {};
     }
-    const QImage rgba = (colorImage.format() == QImage::Format_RGBA8888)
-                            ? colorImage
-                            : colorImage.convertToFormat(QImage::Format_RGBA8888);
-    QImage channelImage(rgba.width(), rgba.height(), QImage::Format_Grayscale8);
-    for (int y = 0; y < rgba.height(); ++y) {
-      const auto* src = rgba.constScanLine(y);
-      auto* dst = channelImage.scanLine(y);
-      for (int x = 0; x < rgba.width(); ++x) {
-        dst[x] = src[x * 4 + offset];
-      }
-    }
-    return channelImage;
+    return extractRgbaChannelToGray(colorImage, offset);
    }
    return colorImage;
   }
@@ -2013,18 +2061,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
    if (auxColor.isNull()) {
     return {};
    }
-   const QImage rgba = (auxColor.format() == QImage::Format_RGBA8888)
-                           ? auxColor
-                           : auxColor.convertToFormat(QImage::Format_RGBA8888);
-   QImage channelImage(rgba.width(), rgba.height(), QImage::Format_Grayscale8);
-   for (int y = 0; y < rgba.height(); ++y) {
-    const auto* src = rgba.constScanLine(y);
-    auto* dst = channelImage.scanLine(y);
-    for (int x = 0; x < rgba.width(); ++x) {
-     dst[x] = std::max({src[x * 4 + 0], src[x * 4 + 1], src[x * 4 + 2]});
-    }
-   }
-   return channelImage;
+   return extractRgbaMaxRgbToGray(auxColor);
   }
 
   const int offset = rgbaOffsetForChannel(channel);
@@ -2037,19 +2074,8 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
    return {};
   }
 
-  const QImage rgba = (color.format() == QImage::Format_RGBA8888)
-                          ? color
-                          : color.convertToFormat(QImage::Format_RGBA8888);
-  QImage channelImage(rgba.width(), rgba.height(), QImage::Format_Grayscale8);
-  for (int y = 0; y < rgba.height(); ++y) {
-   const auto* src = rgba.constScanLine(y);
-   auto* dst = channelImage.scanLine(y);
-   for (int x = 0; x < rgba.width(); ++x) {
-    dst[x] = src[x * 4 + offset];
-   }
-  }
-  return channelImage;
- }
+  return extractRgbaChannelToGray(color, offset);
+}
 
  void ArtifactIRenderer::Impl::readbackToImageAsync(ReadbackCallback callback) const
  {
@@ -2230,6 +2256,8 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
 
     // Convert to QImage
     QImage result(static_cast<int>(w), static_cast<int>(h), QImage::Format_RGBA8888);
+    uint8_t* resultBits = result.bits();
+    const size_t resultStride = static_cast<size_t>(result.bytesPerLine());
     const size_t copyRowBytes = static_cast<size_t>(w) * 4u;
     const size_t sourceRowBytes =
         floatReadback ? static_cast<size_t>(w) * 8u : copyRowBytes;
@@ -2243,28 +2271,29 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
 
     if (!floatReadback) {
       const auto* srcRow = static_cast<const uint8_t*>(mapped.pData);
-      for (Uint32 row = 0; row < h; ++row) {
-        std::memcpy(result.scanLine(static_cast<int>(row)), srcRow, copyRowBytes);
-        srcRow += mapped.Stride;
-      }
+      ArtifactCore::Parallel::For(0, static_cast<int>(h), static_cast<int>(w * h), [&](int row) {
+        const auto* source = static_cast<const uint8_t*>(mapped.pData) +
+                             static_cast<size_t>(row) * mapped.Stride;
+        std::memcpy(resultBits + static_cast<size_t>(row) * resultStride,
+                    source, copyRowBytes);
+      });
     } else {
-      const auto* srcRow = static_cast<const uint16_t*>(mapped.pData);
-      for (Uint32 row = 0; row < h; ++row) {
-        auto* dst = result.scanLine(static_cast<int>(row));
-        const auto* srcHalf = srcRow;
+      ArtifactCore::Parallel::For(0, static_cast<int>(h), static_cast<int>(w * h), [&](int row) {
+        const auto* srcRow = reinterpret_cast<const uint16_t*>(
+            static_cast<const uint8_t*>(mapped.pData) +
+            static_cast<size_t>(row) * mapped.Stride);
+        auto* dst = resultBits + static_cast<size_t>(row) * resultStride;
         for (Uint32 x = 0; x < w; ++x) {
-          const float r = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 0]), 0.0f, 1.0f);
-          const float g = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 1]), 0.0f, 1.0f);
-          const float b = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 2]), 0.0f, 1.0f);
-          const float a = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 3]), 0.0f, 1.0f);
+          const float r = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + 0]), 0.0f, 1.0f);
+          const float g = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + 1]), 0.0f, 1.0f);
+          const float b = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + 2]), 0.0f, 1.0f);
+          const float a = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + 3]), 0.0f, 1.0f);
           dst[x * 4 + 0] = linearToSrgb8(r);
           dst[x * 4 + 1] = linearToSrgb8(g);
           dst[x * 4 + 2] = linearToSrgb8(b);
           dst[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
         }
-        srcRow = reinterpret_cast<const uint16_t*>(
-            reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
-      }
+      });
     }
 
     ctx->UnmapTextureSubresource(stagingTex, 0, 0);
@@ -2989,11 +3018,14 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
     if (!floatImage.hasChannel(coreChannel)) floatImage.addChannel(coreChannel);
     auto destination = floatImage.getChannel(coreChannel);
     if (!destination) return;
+    float* destinationData = destination->data();
+    if (!destinationData) return;
     const size_t pixels = static_cast<size_t>(width) * height;
-    for (size_t pixel = 0; pixel < pixels; ++pixel) {
-      destination->data()[pixel] =
+    ArtifactCore::Parallel::For(0, static_cast<int>(pixels), static_cast<int>(pixels), [&](int index) {
+      const size_t pixel = static_cast<size_t>(index);
+      destinationData[pixel] =
           source.rgba[pixel * 4u + static_cast<size_t>(component)] * scale + bias;
-    }
+    });
   };
 
   writeComponent(ChannelType::Red, beauty, 0);
@@ -3127,13 +3159,17 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
    if (!outChannel) {
     return;
    }
-   for (int y = 0; y < rgba.height(); ++y) {
-    const auto* src = rgba.constScanLine(y);
-    auto* dst = outChannel->data() + static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
+   const auto* sourceBits = rgba.constBits();
+   const int sourceStride = rgba.bytesPerLine();
+   float* destination = outChannel->data();
+   ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+    const auto* src = sourceBits + y * sourceStride;
+    auto* dst = destination + static_cast<size_t>(y) *
+                              static_cast<size_t>(rgba.width());
     for (int x = 0; x < rgba.width(); ++x) {
      dst[x] = static_cast<float>(src[x * 4 + offset]) / 255.0f;
     }
-   }
+   });
   };
 
   writeRgbaChannel(ChannelType::Red, 0);
@@ -3161,14 +3197,17 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
     emissionChannel = image.getChannel(ArtifactCore::ChannelType::Emission);
    }
    if (emissionChannel) {
-    for (int y = 0; y < emission.height(); ++y) {
-     const auto* src = emission.constScanLine(y);
-     auto* dst = emissionChannel->data() +
+    const auto* sourceBits = emission.constBits();
+    const int sourceStride = emission.bytesPerLine();
+    float* destination = emissionChannel->data();
+    ArtifactCore::Parallel::For(0, emission.height(), emission.width() * emission.height(), [&](int y) {
+     const auto* src = sourceBits + y * sourceStride;
+     auto* dst = destination +
                  static_cast<size_t>(y) * static_cast<size_t>(emission.width());
      for (int x = 0; x < emission.width(); ++x) {
       dst[x] = static_cast<float>(src[x]) / 255.0f;
      }
-    }
+    });
    }
   }
 
@@ -3189,14 +3228,17 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
     if (!outChannel) {
       return;
     }
-    for (int y = 0; y < rgba.height(); ++y) {
-      const auto* src = rgba.constScanLine(y);
-      auto* dst = outChannel->data() +
+    const auto* sourceBits = rgba.constBits();
+    const int sourceStride = rgba.bytesPerLine();
+    float* destination = outChannel->data();
+    ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+      const auto* src = sourceBits + y * sourceStride;
+      auto* dst = destination +
                   static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
       for (int x = 0; x < rgba.width(); ++x) {
         dst[x] = static_cast<float>(src[x * 4 + offset]) / 255.0f;
       }
-    }
+    });
    };
    writeAlbedoChannel(ChannelType::AlbedoR, 0);
    writeAlbedoChannel(ChannelType::AlbedoG, 1);
@@ -3220,16 +3262,19 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
     if (!outChannel) {
       return;
     }
-    for (int y = 0; y < rgba.height(); ++y) {
-      const auto* src = rgba.constScanLine(y);
-      auto* dst = outChannel->data() +
+    const auto* sourceBits = rgba.constBits();
+    const int sourceStride = rgba.bytesPerLine();
+    float* destination = outChannel->data();
+    ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+      const auto* src = sourceBits + y * sourceStride;
+      auto* dst = destination +
                   static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
       for (int x = 0; x < rgba.width(); ++x) {
         const float encoded =
             static_cast<float>(src[x * 4 + offset]) / 255.0f;
         dst[x] = encoded * 2.0f - 1.0f;
       }
-    }
+    });
    };
    writeNormalChannel(ChannelType::NormalX, 0);
    writeNormalChannel(ChannelType::NormalY, 1);
@@ -3253,16 +3298,19 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
     if (!outChannel) {
       return;
     }
-    for (int y = 0; y < rgba.height(); ++y) {
-      const auto* src = rgba.constScanLine(y);
-      auto* dst = outChannel->data() +
+    const auto* sourceBits = rgba.constBits();
+    const int sourceStride = rgba.bytesPerLine();
+    float* destination = outChannel->data();
+    ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+      const auto* src = sourceBits + y * sourceStride;
+      auto* dst = destination +
                   static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
       for (int x = 0; x < rgba.width(); ++x) {
         const float encoded =
             static_cast<float>(src[x * 4 + offset]) / 255.0f;
         dst[x] = (encoded - 0.5f) * 2.0f;
       }
-    }
+    });
    };
    writeVelocityChannel(ChannelType::VelocityX, 0);
    writeVelocityChannel(ChannelType::VelocityY, 1);
@@ -3281,14 +3329,17 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
    if (!dstChannel) {
     return;
    }
-   for (int y = 0; y < srcImage.height(); ++y) {
-    const auto* src = srcImage.constScanLine(y);
-    auto* dst = dstChannel->data() +
+   const auto* sourceBits = srcImage.constBits();
+   const int sourceStride = srcImage.bytesPerLine();
+   float* destination = dstChannel->data();
+   ArtifactCore::Parallel::For(0, srcImage.height(), srcImage.width() * srcImage.height(), [&](int y) {
+    const auto* src = sourceBits + y * sourceStride;
+    auto* dst = destination +
                 static_cast<size_t>(y) * static_cast<size_t>(srcImage.width());
     for (int x = 0; x < srcImage.width(); ++x) {
       dst[x] = static_cast<float>(src[x]) / 255.0f;
     }
-   }
+   });
   };
 
   if (needObjectId) {

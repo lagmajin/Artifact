@@ -99,6 +99,9 @@ module;
 
 #include <vector>
 
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
+
 #include <wobjectimpl.h>
 
 
@@ -5944,10 +5947,12 @@ static void applyLayerMatteToSurface(
 
 
 
-        for (int y = 0; y < h && y < srcH; ++y) {
-
-            const QRgb *srcLine = reinterpret_cast<const QRgb *>(srcImage.constScanLine(y));
-
+        const auto *sourceBits = srcImage.constBits();
+        const int sourceStride = srcImage.bytesPerLine();
+        const auto buildAlphaRows = [&](const tbb::blocked_range<int>& rows) {
+          for (int y = rows.begin(); y != rows.end() && y < srcH; ++y) {
+            const QRgb *srcLine = reinterpret_cast<const QRgb *>(
+                sourceBits + y * sourceStride);
             for (int x = 0; x < w && x < srcW; ++x) {
 
                 QRgb px = srcLine[x];
@@ -5967,7 +5972,12 @@ static void applyLayerMatteToSurface(
                 }
 
             }
-
+          }
+        };
+        if (static_cast<size_t>(w) * static_cast<size_t>(h) >= 256u * 1024u) {
+          tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), buildAlphaRows);
+        } else {
+          buildAlphaRows(tbb::blocked_range<int>(0, h));
         }
 
 
@@ -5975,9 +5985,17 @@ static void applyLayerMatteToSurface(
         // Invert if needed
 
         if (ref.invert) {
-
-            for (auto &v : alpha) v = 1.0f - v;
-
+            const auto invertAlpha = [&](const tbb::blocked_range<size_t>& range) {
+                for (size_t i = range.begin(); i != range.end(); ++i) {
+                    alpha[i] = 1.0f - alpha[i];
+                }
+            };
+            if (alpha.size() >= 256u * 1024u) {
+                tbb::parallel_for(tbb::blocked_range<size_t>(0, alpha.size(), 4096),
+                                  invertAlpha);
+            } else {
+                invertAlpha(tbb::blocked_range<size_t>(0, alpha.size()));
+            }
         }
 
 
@@ -6018,10 +6036,11 @@ static void applyLayerMatteToSurface(
 
     surface = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
 
-    for (int y = 0; y < h; ++y) {
-
-        QRgb *line = reinterpret_cast<QRgb *>(surface.scanLine(y));
-
+    auto *surfaceBits = surface.bits();
+    const int surfaceStride = surface.bytesPerLine();
+    const auto applyResultRows = [&](const tbb::blocked_range<int>& rows) {
+      for (int y = rows.begin(); y != rows.end(); ++y) {
+        QRgb *line = reinterpret_cast<QRgb *>(surfaceBits + y * surfaceStride);
         for (int x = 0; x < w; ++x) {
 
             float maskAlpha = result.sampleAlpha(x, y);
@@ -6049,7 +6068,12 @@ static void applyLayerMatteToSurface(
                             std::clamp(newAlpha, 0, 255));
 
         }
-
+      }
+    };
+    if (static_cast<size_t>(w) * static_cast<size_t>(h) >= 256u * 1024u) {
+      tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), applyResultRows);
+    } else {
+      applyResultRows(tbb::blocked_range<int>(0, h));
     }
 
 }
@@ -6092,19 +6116,37 @@ static void applyLayerMatteToSurface(
     std::vector<float> matteValues(static_cast<size_t>(w) * h, 0.0f);
     const bool useLuma =
         ref.type == MatteType::Luma || ref.type == MatteType::InverseLuma;
-    for (int y = 0; y < h; ++y) {
-      const auto* row = reinterpret_cast<const QRgb*>(source.constScanLine(y));
-      for (int x = 0; x < w; ++x) {
+    const auto* sourceBits = source.constBits();
+    const int sourceStride = source.bytesPerLine();
+    const auto buildMatteRows = [&](const tbb::blocked_range<int>& rows) {
+      for (int y = rows.begin(); y != rows.end(); ++y) {
+        const auto* row = reinterpret_cast<const QRgb*>(
+            sourceBits + y * sourceStride);
+        for (int x = 0; x < w; ++x) {
         const QRgb pixel = row[x];
         matteValues[static_cast<size_t>(y) * w + x] = useLuma
             ? (0.299f * qRed(pixel) + 0.587f * qGreen(pixel) +
                0.114f * qBlue(pixel)) / 255.0f
             : qAlpha(pixel) / 255.0f;
+        }
       }
+    };
+    if (static_cast<size_t>(w) * static_cast<size_t>(h) >= 256u * 1024u) {
+      tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), buildMatteRows);
+    } else {
+      buildMatteRows(tbb::blocked_range<int>(0, h));
     }
     if (ref.invert) {
-      for (auto& value : matteValues) {
-        value = 1.0f - value;
+      const auto invertMatte = [&](const tbb::blocked_range<size_t>& range) {
+        for (size_t i = range.begin(); i != range.end(); ++i) {
+          matteValues[i] = 1.0f - matteValues[i];
+        }
+      };
+      if (matteValues.size() >= 256u * 1024u) {
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, matteValues.size(), 4096),
+                          invertMatte);
+      } else {
+        invertMatte(tbb::blocked_range<size_t>(0, matteValues.size()));
       }
     }
     sources.push_back(std::move(matteValues));
@@ -6125,27 +6167,41 @@ static void applyLayerMatteToSurface(
   }
 
   if (float* pixels = surface.rgba32fData()) {
-    float* pixel = pixels;
-    for (int y = 0; y < h; ++y) {
-      for (int x = 0; x < w; ++x, pixel += 4) {
+    const auto applyF32Rows = [&](const tbb::blocked_range<int>& rows) {
+      for (int y = rows.begin(); y != rows.end(); ++y) {
+        float* pixel = pixels + static_cast<size_t>(y) * w * 4;
+        for (int x = 0; x < w; ++x, pixel += 4) {
         const float factor = mask.sampleAlpha(x, y);
         pixel[0] *= factor;
         pixel[1] *= factor;
         pixel[2] *= factor;
         pixel[3] *= factor;
+        }
       }
+    };
+    if (static_cast<size_t>(w) * static_cast<size_t>(h) >= 256u * 1024u) {
+      tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), applyF32Rows);
+    } else {
+      applyF32Rows(tbb::blocked_range<int>(0, h));
     }
     return;
   }
 
-  for (int y = 0; y < h; ++y) {
-    for (int x = 0; x < w; ++x) {
-      const float factor = mask.sampleAlpha(x, y);
-      const ArtifactCore::FloatRGBA pixel = surface.getPixel(x, y);
-      surface.setPixel(x, y, ArtifactCore::FloatRGBA(
-                                 pixel.r() * factor, pixel.g() * factor,
-                                 pixel.b() * factor, pixel.a() * factor));
+  const auto applyFallbackRows = [&](const tbb::blocked_range<int>& rows) {
+    for (int y = rows.begin(); y != rows.end(); ++y) {
+      for (int x = 0; x < w; ++x) {
+        const float factor = mask.sampleAlpha(x, y);
+        const ArtifactCore::FloatRGBA pixel = surface.getPixel(x, y);
+        surface.setPixel(x, y, ArtifactCore::FloatRGBA(
+                                   pixel.r() * factor, pixel.g() * factor,
+                                   pixel.b() * factor, pixel.a() * factor));
+      }
     }
+  };
+  if (static_cast<size_t>(w) * static_cast<size_t>(h) >= 256u * 1024u) {
+    tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), applyFallbackRows);
+  } else {
+    applyFallbackRows(tbb::blocked_range<int>(0, h));
   }
 }
 
@@ -27112,17 +27168,25 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
       return QImage{};
     }
     QImage out(rImage.size(), QImage::Format_RGBA8888);
-    for (int y = 0; y < out.height(); ++y) {
-      const auto *rSrc = rImage.constScanLine(y);
-      const auto *gSrc = gImage.constScanLine(y);
-      const auto *bSrc = bImage.constScanLine(y);
-      auto *dst = out.scanLine(y);
-      for (int x = 0; x < out.width(); ++x) {
-        dst[x * 4 + 0] = rSrc[x];
-        dst[x * 4 + 1] = gSrc[x];
-        dst[x * 4 + 2] = bSrc[x];
-        dst[x * 4 + 3] = 255;
+    const int height = out.height();
+    const auto composeRows = [&](const tbb::blocked_range<int> &range) {
+      for (int y = range.begin(); y != range.end(); ++y) {
+        const auto *rSrc = rImage.constScanLine(y);
+        const auto *gSrc = gImage.constScanLine(y);
+        const auto *bSrc = bImage.constScanLine(y);
+        auto *dst = out.scanLine(y);
+        for (int x = 0; x < out.width(); ++x) {
+          dst[x * 4 + 0] = rSrc[x];
+          dst[x * 4 + 1] = gSrc[x];
+          dst[x * 4 + 2] = bSrc[x];
+          dst[x * 4 + 3] = 255;
+        }
       }
+    };
+    if (static_cast<std::size_t>(out.width()) * height >= 256u * 1024u) {
+      tbb::parallel_for(tbb::blocked_range<int>(0, height, 16), composeRows);
+    } else {
+      composeRows(tbb::blocked_range<int>(0, height));
     }
 
     Q_UNUSED(fallbackBlue);
@@ -27141,25 +27205,33 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
                              ? alphaImage
                              : alphaImage.convertToFormat(QImage::Format_Grayscale8);
     QImage out(rgbImage.width() * 2, rgbImage.height(), QImage::Format_RGBA8888);
-    for (int y = 0; y < out.height(); ++y) {
-      const auto *rgbSrc = rgba.constScanLine(y);
-      const auto *alphaSrc = alpha.constScanLine(y);
-      auto *dst = out.scanLine(y);
-      for (int x = 0; x < rgbImage.width(); ++x) {
-        const int dstX = x * 4;
-        dst[dstX + 0] = rgbSrc[x * 4 + 0];
-        dst[dstX + 1] = rgbSrc[x * 4 + 1];
-        dst[dstX + 2] = rgbSrc[x * 4 + 2];
-        dst[dstX + 3] = rgbSrc[x * 4 + 3];
+    const int height = out.height();
+    const auto composeRows = [&](const tbb::blocked_range<int> &range) {
+      for (int y = range.begin(); y != range.end(); ++y) {
+        const auto *rgbSrc = rgba.constScanLine(y);
+        const auto *alphaSrc = alpha.constScanLine(y);
+        auto *dst = out.scanLine(y);
+        for (int x = 0; x < rgbImage.width(); ++x) {
+          const int dstX = x * 4;
+          dst[dstX + 0] = rgbSrc[x * 4 + 0];
+          dst[dstX + 1] = rgbSrc[x * 4 + 1];
+          dst[dstX + 2] = rgbSrc[x * 4 + 2];
+          dst[dstX + 3] = rgbSrc[x * 4 + 3];
+        }
+        for (int x = 0; x < alpha.width(); ++x) {
+          const int v = alphaSrc[x];
+          const int dstX = (x + rgbImage.width()) * 4;
+          dst[dstX + 0] = static_cast<uchar>(v);
+          dst[dstX + 1] = static_cast<uchar>(v);
+          dst[dstX + 2] = static_cast<uchar>(v);
+          dst[dstX + 3] = 255;
+        }
       }
-      for (int x = 0; x < alpha.width(); ++x) {
-        const int v = alphaSrc[x];
-        const int dstX = (x + rgbImage.width()) * 4;
-        dst[dstX + 0] = static_cast<uchar>(v);
-        dst[dstX + 1] = static_cast<uchar>(v);
-        dst[dstX + 2] = static_cast<uchar>(v);
-        dst[dstX + 3] = 255;
-      }
+    };
+    if (static_cast<std::size_t>(out.width()) * height >= 256u * 1024u) {
+      tbb::parallel_for(tbb::blocked_range<int>(0, height, 16), composeRows);
+    } else {
+      composeRows(tbb::blocked_range<int>(0, height));
     }
     return out;
   };
@@ -27169,16 +27241,24 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
       return QImage{};
     }
     QImage out(xImage.size(), QImage::Format_RGBA8888);
-    for (int y = 0; y < out.height(); ++y) {
-      const auto *xSrc = xImage.constScanLine(y);
-      const auto *ySrc = yImage.constScanLine(y);
-      auto *dst = out.scanLine(y);
-      for (int x = 0; x < out.width(); ++x) {
-        dst[x * 4 + 0] = xSrc[x];
-        dst[x * 4 + 1] = ySrc[x];
-        dst[x * 4 + 2] = 127;
-        dst[x * 4 + 3] = 255;
+    const int height = out.height();
+    const auto composeRows = [&](const tbb::blocked_range<int> &range) {
+      for (int y = range.begin(); y != range.end(); ++y) {
+        const auto *xSrc = xImage.constScanLine(y);
+        const auto *ySrc = yImage.constScanLine(y);
+        auto *dst = out.scanLine(y);
+        for (int x = 0; x < out.width(); ++x) {
+          dst[x * 4 + 0] = xSrc[x];
+          dst[x * 4 + 1] = ySrc[x];
+          dst[x * 4 + 2] = 127;
+          dst[x * 4 + 3] = 255;
+        }
       }
+    };
+    if (static_cast<std::size_t>(out.width()) * height >= 256u * 1024u) {
+      tbb::parallel_for(tbb::blocked_range<int>(0, height, 16), composeRows);
+    } else {
+      composeRows(tbb::blocked_range<int>(0, height));
     }
     return out;
   };
@@ -27191,19 +27271,27 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
                             ? grayImage
                             : grayImage.convertToFormat(QImage::Format_Grayscale8);
     QImage out(gray.size(), QImage::Format_RGBA8888);
-    for (int y = 0; y < out.height(); ++y) {
-      const auto *src = gray.constScanLine(y);
-      auto *dst = out.scanLine(y);
-      for (int x = 0; x < out.width(); ++x) {
-        const int v = invert ? (255 - src[x]) : src[x];
-        const int r = std::clamp(64 + v * 3 / 2, 0, 255);
-        const int g = std::clamp((255 - std::abs(v - 128) * 2), 0, 255);
-        const int b = std::clamp(255 - v / 2, 0, 255);
-        dst[x * 4 + 0] = static_cast<uchar>(r);
-        dst[x * 4 + 1] = static_cast<uchar>(g);
-        dst[x * 4 + 2] = static_cast<uchar>(b);
-        dst[x * 4 + 3] = 255;
+    const int height = out.height();
+    const auto colorizeRows = [&](const tbb::blocked_range<int> &range) {
+      for (int y = range.begin(); y != range.end(); ++y) {
+        const auto *src = gray.constScanLine(y);
+        auto *dst = out.scanLine(y);
+        for (int x = 0; x < out.width(); ++x) {
+          const int v = invert ? (255 - src[x]) : src[x];
+          const int r = std::clamp(64 + v * 3 / 2, 0, 255);
+          const int g = std::clamp((255 - std::abs(v - 128) * 2), 0, 255);
+          const int b = std::clamp(255 - v / 2, 0, 255);
+          dst[x * 4 + 0] = static_cast<uchar>(r);
+          dst[x * 4 + 1] = static_cast<uchar>(g);
+          dst[x * 4 + 2] = static_cast<uchar>(b);
+          dst[x * 4 + 3] = 255;
+        }
       }
+    };
+    if (static_cast<std::size_t>(out.width()) * height >= 256u * 1024u) {
+      tbb::parallel_for(tbb::blocked_range<int>(0, height, 16), colorizeRows);
+    } else {
+      colorizeRows(tbb::blocked_range<int>(0, height));
     }
     return out;
   };

@@ -32,7 +32,7 @@ public:
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
         float so=(float)seed_*123.456f;
 
-        Parallel::For(0,H,[&](int y){float* o=d+(size_t)y*W*4;
+Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){float* p=o+(size_t)x*4;
                 float fx=(float)x/sc,fy=(float)y/sc;
                 int cx=(int)std::floor(fx),cy=(int)std::floor(fy);

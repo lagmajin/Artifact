@@ -14,6 +14,7 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -55,7 +56,7 @@ public:
         cv::Mat v = (seed > 0.45f);
         v.convertTo(v, CV_32F, 0.8 / 255.0);
         const float phase = evolution * 0.0174532925f;
-        for (int y = 0; y < gridHeight; ++y) {
+        ArtifactCore::Parallel::For(0, gridHeight, gridWidth * gridHeight, [&](int y) {
             float* row = v.ptr<float>(y);
             for (int x = 0; x < gridWidth; ++x) {
                 const float organicSeed = 0.08f *
@@ -63,7 +64,7 @@ public:
                      std::cos(y * 0.137f - phase));
                 row[x] = std::clamp(row[x] + organicSeed, 0.0f, 1.0f);
             }
-        }
+        });
 
         cv::Mat lapU, lapV, uvv, nextU, nextV;
         for (int i = 0; i < iterations; ++i) {
@@ -82,7 +83,7 @@ public:
                    cv::INTER_CUBIC);
         cv::GaussianBlur(pattern, pattern, cv::Size(), 0.8, 0.8);
         cv::Mat output = blurred.clone();
-        for (int y = 0; y < height; ++y) {
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
             const auto* sourceRow = input.ptr<cv::Vec4f>(y);
             const auto* blurRow = blurred.ptr<cv::Vec4f>(y);
             const float* patternRow = pattern.ptr<float>(y);
@@ -96,7 +97,7 @@ public:
                 }
                 outputRow[x][3] = sourceRow[x][3];
             }
-        }
+        });
         dst = src;
         dst.image().setFromCVMat(output, src.image().colorDescriptor());
     }

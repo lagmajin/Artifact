@@ -6,6 +6,7 @@ module;
 import std;
 
 import Color.Float;
+import Core.Parallel;
 
 module Render.HDRMonitor;
 
@@ -45,15 +46,15 @@ ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
   }
 
   // Pre-calculate luminance values
-  impl_->luminanceCache_.clear();
-  impl_->luminanceCache_.reserve(frameData.size());
-
-  for (const auto &color : frameData) {
+  impl_->luminanceCache_.resize(frameData.size());
+  ArtifactCore::Parallel::For(0, static_cast<int>(frameData.size()),
+                              static_cast<int>(frameData.size()),
+                              [&](int index) {
+    const auto &color = frameData[static_cast<size_t>(index)];
     // Rec. 709 luminance calculation
-    float luminance =
+    impl_->luminanceCache_[static_cast<size_t>(index)] =
         0.2126f * color.r() + 0.7152f * color.g() + 0.0722f * color.b();
-    impl_->luminanceCache_.push_back(luminance);
-  }
+  });
 
   // Calculate statistics
   if (!impl_->luminanceCache_.empty()) {
@@ -103,7 +104,7 @@ ArtifactHDRMonitor::generateFalseColorOverlay(const HDRAnalysisResult &result,
     return overlay;
 
   // Create false color mapping
-  for (int y = 0; y < height; ++y) {
+ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
     for (int x = 0; x < width; ++x) {
       int index = y * width + x;
       if (index >= static_cast<int>(impl_->luminanceCache_.size()))
@@ -114,7 +115,7 @@ ArtifactHDRMonitor::generateFalseColorOverlay(const HDRAnalysisResult &result,
       overlay[index] = FloatColor(falseColor.r(), falseColor.g(),
                                   falseColor.b(), 0.7f); // Semi-transparent
     }
-  }
+  });
 
   return overlay;
 }

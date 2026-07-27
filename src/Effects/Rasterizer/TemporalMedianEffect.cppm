@@ -16,6 +16,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
+import Core.Parallel;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -29,7 +30,6 @@ public:
         if(!sd||si.width()<=0||!context_.sampler){dst=src;return;}
         const int W=si.width(),H=si.height(),fc=std::clamp(frameCount_,3,16);
         const float bl=std::clamp(blend_,0.0f,1.0f);
-        const size_t n=(size_t)W*H;
 
         // Collect past frames
         struct Rf{ImageF32x4_RGBA img;};
@@ -44,7 +44,9 @@ public:
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
         int rfCount=(int)refs.size();
 
-        for(size_t px=0;px<n;++px){
+        Parallel::For(0,H,W*H,[&](int y){
+            for(int x=0;x<W;++x){
+            const size_t px=(size_t)y*W+x;
             // Gather per-channel values
             float vals[4][16]; int vi=0;
             for(auto& rf:refs){
@@ -70,7 +72,8 @@ public:
                 float ratio=ml/std::max(sl,0.001f);
                 p[0]=std::clamp(p[0]*ratio,0.0f,1.0f);p[1]=std::clamp(p[1]*ratio,0.0f,1.0f);p[2]=std::clamp(p[2]*ratio,0.0f,1.0f);
             }
-        }
+            }
+        });
     }
 };
 

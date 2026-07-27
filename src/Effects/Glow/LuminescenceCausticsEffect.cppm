@@ -49,7 +49,7 @@ public:
         cv::Mat output = input.clone();
         const float phase = evolution * 0.0174532925f;
         const float invScale = 1.0f / std::max(scale, 1.0f);
-        ArtifactCore::Parallel::For(0, height, [&](int y) {
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
             const auto* sourceRow = input.ptr<cv::Vec4f>(y);
             const float* grayRow = gray.ptr<float>(y);
             const float* edgeRow = edge.ptr<float>(y);

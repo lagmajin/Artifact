@@ -76,21 +76,22 @@ public:
             float bayerScale = 1.0f / static_cast<float>(bayerN * bayerN);
             float bayerOffset = 0.5f / static_cast<float>(bayerN * bayerN);
 
-            ArtifactCore::Parallel::For(0, h, [&](int y) {
+            ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+                float* row = dstPixels + static_cast<size_t>(y) * static_cast<size_t>(w) * 4u;
                 for (int x = 0; x < w; ++x) {
-                    int idx = (y * w + x) * 4;
+                    float* pixel = row + static_cast<size_t>(x) * 4u;
                     int bx = int((x * patternScale_) / std::max(1.0f, w * 0.01f) * bayerSize) % bayerSize;
                     int by = int((y * patternScale_) / std::max(1.0f, h * 0.01f) * bayerSize) % bayerSize;
                     int bi = (bayerSize > 2) ? (by * bayerSize + bx) : ((by & 1) * 2 + (bx & 1));
                     if (bi >= bayerN * bayerN) bi %= (bayerN * bayerN);
                     float threshold = bayerMat[bi % (bayerN * bayerN)] * bayerScale + bayerOffset;
                     threshold = (threshold - 0.5f) * (1.0f - amount_) * 2.0f + 0.5f;
-                    float quantized = std::floor(dstPixels[idx] * levelsPerChannel + threshold) / levelsPerChannel;
-                    dstPixels[idx + 0] = std::clamp(quantized, 0.0f, 1.0f);
-                    quantized = std::floor(dstPixels[idx + 1] * levelsPerChannel + threshold) / levelsPerChannel;
-                    dstPixels[idx + 1] = std::clamp(quantized, 0.0f, 1.0f);
-                    quantized = std::floor(dstPixels[idx + 2] * levelsPerChannel + threshold) / levelsPerChannel;
-                    dstPixels[idx + 2] = std::clamp(quantized, 0.0f, 1.0f);
+                    float quantized = std::floor(pixel[0] * levelsPerChannel + threshold) / levelsPerChannel;
+                    pixel[0] = std::clamp(quantized, 0.0f, 1.0f);
+                    quantized = std::floor(pixel[1] * levelsPerChannel + threshold) / levelsPerChannel;
+                    pixel[1] = std::clamp(quantized, 0.0f, 1.0f);
+                    quantized = std::floor(pixel[2] * levelsPerChannel + threshold) / levelsPerChannel;
+                    pixel[2] = std::clamp(quantized, 0.0f, 1.0f);
                 }
             });
         } else {
@@ -107,18 +108,21 @@ public:
             }
 
             for (int y = 0; y < h; ++y) {
+                float* dstRow = dstPixels + static_cast<size_t>(y) * static_cast<size_t>(w) * 4u;
+                float* errorRow = error.data() + static_cast<size_t>(y) * static_cast<size_t>(w) * 3u;
                 for (int x = 0; x < w; ++x) {
-                    int idx = (y * w + x) * 4;
-                    float r = dstPixels[idx + 0] + error[(y * w + x) * 3 + 0];
-                    float g = dstPixels[idx + 1] + error[(y * w + x) * 3 + 1];
-                    float b = dstPixels[idx + 2] + error[(y * w + x) * 3 + 2];
+                    float* pixel = dstRow + static_cast<size_t>(x) * 4u;
+                    float* errorPixel = errorRow + static_cast<size_t>(x) * 3u;
+                    float r = pixel[0] + errorPixel[0];
+                    float g = pixel[1] + errorPixel[1];
+                    float b = pixel[2] + errorPixel[2];
                     float oldR = r, oldG = g, oldB = b;
                     r = std::round(r * levelsPerChannel) / levelsPerChannel;
                     g = std::round(g * levelsPerChannel) / levelsPerChannel;
                     b = std::round(b * levelsPerChannel) / levelsPerChannel;
-                    dstPixels[idx + 0] = std::clamp(r, 0.0f, 1.0f);
-                    dstPixels[idx + 1] = std::clamp(g, 0.0f, 1.0f);
-                    dstPixels[idx + 2] = std::clamp(b, 0.0f, 1.0f);
+                    pixel[0] = std::clamp(r, 0.0f, 1.0f);
+                    pixel[1] = std::clamp(g, 0.0f, 1.0f);
+                    pixel[2] = std::clamp(b, 0.0f, 1.0f);
                     float er = (oldR - r) * amount_;
                     float eg = (oldG - g) * amount_;
                     float eb = (oldB - b) * amount_;

@@ -46,6 +46,7 @@ module Generator.Effector;
 
 
 import Utils.String.UniString;
+import Core.Parallel;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 
@@ -280,23 +281,24 @@ namespace Artifact
     cv::Vec4f cEnd(endColor_.redF(), endColor_.greenF(), endColor_.blueF(), endColor_.alphaF());
 
     if (gradientType_ == Linear) {
-        for (int y = 0; y < height; ++y) {
+Parallel::For(0, height, width * height, [&](int y) {
             float t = static_cast<float>(y) / std::max(1, height - 1);
             cv::Vec4f color = cStart * (1.0f - t) + cEnd * t;
             mat.row(y).setTo(color);
-        }
+        });
     } else {
         // Radial (簡易実装: 中心から円形に)
         float cx = width / 2.0f;
         float cy = height / 2.0f;
         float maxDist = std::sqrt(cx*cx + cy*cy);
-        for (int y = 0; y < height; ++y) {
+Parallel::For(0, height, width * height, [&](int y) {
+            cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < width; ++x) {
                 float dist = std::sqrt((x-cx)*(x-cx) + (y-cy)*(y-cy));
                 float t = std::min(1.0f, dist / maxDist);
-                mat.at<cv::Vec4f>(y, x) = cStart * (1.0f - t) + cEnd * t;
+                row[x] = cStart * (1.0f - t) + cEnd * t;
             }
-        }
+        });
     }
 
     dst.image().setFromRGBA32F(mat.ptr<float>(), width, height);

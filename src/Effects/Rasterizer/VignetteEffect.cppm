@@ -39,7 +39,7 @@ public:
         float a=std::clamp(amount_,0.0f,1.0f),r=std::clamp(radius_,0.0f,2.0f),f=std::clamp(feather_,0.01f,2.0f);
         float cx=cx_*(float)W,cy=cy_*(float)H,maxD=std::sqrt(cx*cx+cy*cy)*r;
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
-        Parallel::For(0,H,[&](int y){float* o=d+(size_t)y*W*4;
+Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){float* p=o+(size_t)x*4;
                 float dx=(float)x-cx,dy=(float)y-cy,dist=std::sqrt(dx*dx+dy*dy);
                 float mask=1.0f-std::clamp((dist-maxD*f)/(maxD*(1.0f-f)+0.001f),0.0f,1.0f)*a;

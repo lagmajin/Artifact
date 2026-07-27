@@ -46,6 +46,7 @@
 module Artifact.Effect.Film;
 
 import Math.Random;
+import Core.Parallel;
 
 
 
@@ -504,24 +505,29 @@ public:
         const auto& g = currentPreset_->grain();
         if (g.intensity <= 0.0f) return;
         
-        auto localRng = streamFor(time * g.speed, 0x47524F554Eull);
-        
-        for (int i = 0; i < width * height * 4; i += 4) {
-            float noise = localRng.range(-g.intensity, g.intensity);
+        const uint64_t baseSeed = streamFor(time * g.speed, 0x47524F554Eull).state();
+
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+            ArtifactCore::RandomStream rowRng(
+                ArtifactCore::RandomStream::mix(baseSeed ^ static_cast<uint64_t>(y)));
+            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
+            for (int x = 0; x < width; ++x) {
+                const int i = x * 4;
+                float noise = rowRng.range(-g.intensity, g.intensity);
             
-            if (g.colorGrain) {
-                // RGB noise
-                pixels[i] += noise * localRng.range(-g.intensity, g.intensity);
-                pixels[i + 1] += noise * localRng.range(-g.intensity, g.intensity);
-                pixels[i + 2] += noise * localRng.range(-g.intensity, g.intensity);
-            } else {
-                // Monochrome noise
-                float mono = noise;
-                pixels[i] += mono;
-                pixels[i + 1] += mono;
-                pixels[i + 2] += mono;
+                if (g.colorGrain) {
+                    // RGB noise
+                    row[i] += noise * rowRng.range(-g.intensity, g.intensity);
+                    row[i + 1] += noise * rowRng.range(-g.intensity, g.intensity);
+                    row[i + 2] += noise * rowRng.range(-g.intensity, g.intensity);
+                } else {
+                    // Monochrome noise
+                    row[i] += noise;
+                    row[i + 1] += noise;
+                    row[i + 2] += noise;
+                }
             }
-        }
+        });
     }
     
     // Apply vignette
@@ -535,7 +541,8 @@ public:
         float cy = v.center.y() * height;
         float maxDist = std::sqrt(width * width + height * height) * v.size;
         
-        for (int y = 0; y < height; ++y) {
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
             for (int x = 0; x < width; ++x) {
                 float dx = (x - cx) / maxDist;
                 float dy = (y - cy) / (maxDist * v.roundness);
@@ -547,12 +554,12 @@ public:
                 
                 float factor = 1.0f - (v.intensity * (1.0f - vignette));
                 
-                int idx = (y * width + x) * 4;
-                pixels[idx] *= factor;
-                pixels[idx + 1] *= factor;
-                pixels[idx + 2] *= factor;
+                const int idx = x * 4;
+                row[idx] *= factor;
+                row[idx + 1] *= factor;
+                row[idx + 2] *= factor;
             }
-        }
+        });
     }
     
     // Apply color fade/desaturation
@@ -562,10 +569,13 @@ public:
         const auto& cf = currentPreset_->colorFade();
         if (cf.fadeAmount <= 0.0f && cf.contrast == 1.0f && cf.brightness == 0.0f) return;
         
-        for (int i = 0; i < width * height * 4; i += 4) {
-            float r = pixels[i];
-            float g = pixels[i + 1];
-            float b = pixels[i + 2];
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
+            for (int x = 0; x < width; ++x) {
+                const int i = x * 4;
+                float r = row[i];
+                float g = row[i + 1];
+                float b = row[i + 2];
             
             // Desaturation
             float luma = r * 0.299f + g * 0.587f + b * 0.114f;
@@ -589,10 +599,11 @@ public:
                 b -= cf.warmth * 0.1f;
             }
             
-            pixels[i] = std::clamp(r, 0.0f, 1.0f);
-            pixels[i + 1] = std::clamp(g, 0.0f, 1.0f);
-            pixels[i + 2] = std::clamp(b, 0.0f, 1.0f);
-        }
+                row[i] = std::clamp(r, 0.0f, 1.0f);
+                row[i + 1] = std::clamp(g, 0.0f, 1.0f);
+                row[i + 2] = std::clamp(b, 0.0f, 1.0f);
+            }
+        });
     }
     
     // Apply flicker
@@ -616,15 +627,21 @@ public:
         
         if (!f.additive) {
             // Multiplicative (darker flickers)
-            for (int i = 0; i < width * height * 4; ++i) {
-                pixels[i] *= flicker;
-            }
+            ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+                float* row = pixels + (y * width * 4);
+                for (int i = 0; i < width * 4; ++i) {
+                    row[i] *= flicker;
+                }
+            });
         } else {
             // Additive
             float add = (flicker - 1.0f) * 0.5f;
-            for (int i = 0; i < width * height * 4; ++i) {
-                pixels[i] += add;
-            }
+            ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+                float* row = pixels + (y * width * 4);
+                for (int i = 0; i < width * 4; ++i) {
+                    row[i] += add;
+                }
+            });
         }
     }
 };

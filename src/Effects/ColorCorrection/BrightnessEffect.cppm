@@ -44,7 +44,7 @@ public:
         const int height = dst.image().height();
         const float contrastFactor = (contrast_ != 1.0f) ? (1.0f + contrast_) / (1.0f - contrast_) : 100.0f;
 
-        ArtifactCore::Parallel::For(0, height, [&](int y) {
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
             for (int x = 0; x < width; ++x) {
                 float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
                 for (int c = 0; c < 3; ++c) {

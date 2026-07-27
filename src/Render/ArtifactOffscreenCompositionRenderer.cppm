@@ -16,6 +16,7 @@ import Artifact.Layer.Abstract;
 import Color.Float;
 import Core.Point2D;
 import Image.ImageF32x4_RGBA;
+import Core.Parallel;
 import Frame.Position;
 import std;
 import IO.ImageExporter;
@@ -153,16 +154,21 @@ namespace Artifact
 
         ArtifactCore::ImageF32x4_RGBA image;
         image.resize(width_, height_);
+        float* imagePixels = image.rgba32fData();
         
         // ピクセルデータのコピー (RGBA8 -> FloatRGBA)
         const uint8_t* pSrc = static_cast<const uint8_t*>(MappedData.pData);
-        for (Uint32 y = 0; y < height_; ++y) {
+        ArtifactCore::Parallel::For(0, static_cast<int>(height_), static_cast<int>(width_ * height_), [&](int y) {
             for (Uint32 x = 0; x < width_; ++x) {
                 const uint8_t* pPixel = pSrc + y * MappedData.Stride + x * 4;
-                ArtifactCore::FloatRGBA col(pPixel[0]/255.0f, pPixel[1]/255.0f, pPixel[2]/255.0f, pPixel[3]/255.0f);
-                image.setPixel(x, y, col);
+                float* destination = imagePixels +
+                    (static_cast<size_t>(y) * width_ + x) * 4u;
+                destination[0] = pPixel[0] / 255.0f;
+                destination[1] = pPixel[1] / 255.0f;
+                destination[2] = pPixel[2] / 255.0f;
+                destination[3] = pPixel[3] / 255.0f;
             }
-        }
+        });
 
         pContext_->UnmapTextureSubresource(pStagingTex, 0, 0);
         return image;
@@ -188,16 +194,18 @@ namespace Artifact
     {
         ArtifactCore::ImageF32x4_RGBA img = captureImage();
         QImage qimg(width_, height_, QImage::Format_RGBA8888);
-        for (Uint32 y = 0; y < height_; ++y) {
+        const float* imagePixels = img.rgba32fData();
+        ArtifactCore::Parallel::For(0, static_cast<int>(height_), static_cast<int>(width_ * height_), [&](int y) {
             QRgb* scan = reinterpret_cast<QRgb*>(qimg.scanLine(y));
             for (Uint32 x = 0; x < width_; ++x) {
-                auto col = img.getPixel(x, y);
-                scan[x] = qRgba(static_cast<int>(col.r() * 255),
-                                static_cast<int>(col.g() * 255),
-                                static_cast<int>(col.b() * 255),
-                                static_cast<int>(col.a() * 255));
+                const float* col = imagePixels +
+                    (static_cast<size_t>(y) * width_ + x) * 4u;
+                scan[x] = qRgba(static_cast<int>(col[0] * 255),
+                                static_cast<int>(col[1] * 255),
+                                static_cast<int>(col[2] * 255),
+                                static_cast<int>(col[3] * 255));
             }
-        }
+        });
         ArtifactCore::ImageExporter exporter;
         auto result = exporter.write(qimg, path, options);
         return result.success;

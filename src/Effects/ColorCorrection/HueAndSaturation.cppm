@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <cmath>
 #include <memory>
+#include <vector>
 #include <QList>
 #include <opencv2/opencv.hpp>
 #include <cstring>
@@ -53,9 +54,10 @@ public:
         cv::Mat hsv;
         cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
 
-        ArtifactCore::Parallel::For(0, hsv.rows, [&](int y) {
+        ArtifactCore::Parallel::For(0, hsv.rows, hsv.rows * hsv.cols, [&](int y) {
+            cv::Vec3f* row = hsv.ptr<cv::Vec3f>(y);
             for (int x = 0; x < hsv.cols; ++x) {
-                cv::Vec3f& pixel = hsv.at<cv::Vec3f>(y, x);
+                cv::Vec3f& pixel = row[x];
                 if (colorize_) {
                     pixel[0] = std::fmod(hueShift_ + 360.0f, 360.0f);
                     pixel[1] = std::clamp(saturationScale_, 0.0f, 2.0f);

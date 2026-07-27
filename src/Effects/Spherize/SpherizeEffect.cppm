@@ -78,9 +78,9 @@ void SpherizeEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF3
     float maxRadius = std::min(width, height) * radius;
     
     // ピクセルごとの処理 — 行単位で並列化
-    std::vector<cv::Vec4f> rowResults(width * height);
-
-    ArtifactCore::Parallel::For(0, height, [&](int y) {
+    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        const cv::Vec4f* srcRow = srcMat.ptr<cv::Vec4f>(y);
+        cv::Vec4f* dstRow = dstMat.ptr<cv::Vec4f>(y);
         for (int x = 0; x < width; x++) {
             // 中心からの距離と角度を計算
             float dx = static_cast<float>(x) - cx;
@@ -92,8 +92,7 @@ void SpherizeEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF3
             float normalizedDist = dist / maxRadius;
             if (normalizedDist > 1.0f) {
                 // 半径外は歪みなし
-                cv::Vec4f pixel = srcMat.at<cv::Vec4f>(y, x);
-                rowResults[y * width + x] = pixel;
+                dstRow[x] = srcRow[x];
                 continue;
             }
 
@@ -112,15 +111,7 @@ void SpherizeEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF3
             srcY = std::max(0, std::min(height - 1, srcY));
 
             // ピクセルをコピー
-            cv::Vec4f pixel = srcMat.at<cv::Vec4f>(srcY, srcX);
-            rowResults[y * width + x] = pixel;
-        }
-    });
-
-    // 結果をdstMatにコピー
-    ArtifactCore::Parallel::For(0, height, [&](int y) {
-        for (int x = 0; x < width; x++) {
-            dstMat.at<cv::Vec4f>(y, x) = rowResults[y * width + x];
+            dstRow[x] = srcMat.ptr<cv::Vec4f>(srcY)[srcX];
         }
     });
     

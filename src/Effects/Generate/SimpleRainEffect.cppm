@@ -92,7 +92,7 @@ public:
         }
 
         cv::Mat output = input.clone();
-        ArtifactCore::Parallel::For(0, height, [&](int y) {
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
             const auto* sourceRow = input.ptr<cv::Vec4f>(y);
             const auto* rainRow = rain.ptr<cv::Vec4f>(y);
             auto* outputRow = output.ptr<cv::Vec4f>(y);

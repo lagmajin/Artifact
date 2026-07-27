@@ -284,19 +284,37 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
     const ImageF32x4_RGBA srcCopy = src.image().DeepCopy();
     const int width = dstImage.width();
     const int height = dstImage.height();
+    const float* sourcePixels = srcCopy.rgba32fData();
+    float* effectPixels = dstImage.rgba32fData();
+
+    const bool hasValidPrimaryMask = hasPrimaryMask &&
+        impl_->maskImage->width() == width &&
+        impl_->maskImage->height() == height;
+    const float* primaryMaskPixels = hasValidPrimaryMask
+        ? impl_->maskImage->rgba32fData()
+        : nullptr;
+    std::vector<const float*> secondaryMaskPixels;
+    secondaryMaskPixels.reserve(impl_->effectMaskImages.size());
+    for (const auto& extraMask : impl_->effectMaskImages) {
+        if (extraMask && extraMask->width() == width && extraMask->height() == height) {
+            secondaryMaskPixels.push_back(extraMask->rgba32fData());
+        }
+    }
 
     // Mask evaluation only reads shared mask images and writes one destination
     // row at a time, so rows can be processed independently.
-    Parallel::For(0, height, [&](int y) {
+    Parallel::For(0, height, width * height, [&](int y) {
+        const size_t rowOffset = static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
+        const float* sourceRow = sourcePixels + rowOffset;
+        float* effectRow = effectPixels + rowOffset;
         for (int x = 0; x < width; ++x) {
             float combinedMaskAlpha = 1.0f;
             bool hasValidMask = false;
 
-            if (hasPrimaryMask &&
-                impl_->maskImage->width() == width &&
-                impl_->maskImage->height() == height) {
-                const FloatRGBA maskPixel = impl_->maskImage->getPixel(x, y);
-                float maskAlpha = maskPixel.a();
+            const size_t pixelOffset = static_cast<size_t>(x) * 4u;
+
+            if (hasValidPrimaryMask) {
+                float maskAlpha = primaryMaskPixels[rowOffset + pixelOffset + 3];
                 if (impl_->maskInverted) {
                     maskAlpha = 1.0f - maskAlpha;
                 }
@@ -304,11 +322,8 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
                 hasValidMask = true;
             }
 
-            for (const auto& extraMask : impl_->effectMaskImages) {
-                if (!extraMask || extraMask->width() != width || extraMask->height() != height) {
-                    continue;
-                }
-                combinedMaskAlpha *= std::clamp(extraMask->getPixel(x, y).a(), 0.0f, 1.0f);
+            for (const float* extraMaskPixels : secondaryMaskPixels) {
+                combinedMaskAlpha *= std::clamp(extraMaskPixels[rowOffset + pixelOffset + 3], 0.0f, 1.0f);
                 hasValidMask = true;
             }
 
@@ -317,23 +332,29 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
             }
 
             if (combinedMaskAlpha <= 0.0f) {
-                dstImage.setPixel(x, y, srcCopy.getPixel(x, y));
+                effectRow[pixelOffset + 0] = sourceRow[pixelOffset + 0];
+                effectRow[pixelOffset + 1] = sourceRow[pixelOffset + 1];
+                effectRow[pixelOffset + 2] = sourceRow[pixelOffset + 2];
+                effectRow[pixelOffset + 3] = sourceRow[pixelOffset + 3];
                 continue;
             }
             if (combinedMaskAlpha >= 1.0f) {
                 continue;
             }
 
-            const FloatRGBA basePixel = srcCopy.getPixel(x, y);
-            const FloatRGBA effectPixel = dstImage.getPixel(x, y);
             const float inv = 1.0f - combinedMaskAlpha;
-            dstImage.setPixel(
-                x, y,
-                FloatRGBA(
-                    basePixel.r() * inv + effectPixel.r() * combinedMaskAlpha,
-                    basePixel.g() * inv + effectPixel.g() * combinedMaskAlpha,
-                    basePixel.b() * inv + effectPixel.b() * combinedMaskAlpha,
-                    basePixel.a() * inv + effectPixel.a() * combinedMaskAlpha));
+            effectRow[pixelOffset + 0] =
+                sourceRow[pixelOffset + 0] * inv +
+                effectRow[pixelOffset + 0] * combinedMaskAlpha;
+            effectRow[pixelOffset + 1] =
+                sourceRow[pixelOffset + 1] * inv +
+                effectRow[pixelOffset + 1] * combinedMaskAlpha;
+            effectRow[pixelOffset + 2] =
+                sourceRow[pixelOffset + 2] * inv +
+                effectRow[pixelOffset + 2] * combinedMaskAlpha;
+            effectRow[pixelOffset + 3] =
+                sourceRow[pixelOffset + 3] * inv +
+                effectRow[pixelOffset + 3] * combinedMaskAlpha;
         }
     });
 }

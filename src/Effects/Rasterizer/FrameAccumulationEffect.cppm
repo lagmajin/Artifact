@@ -57,13 +57,13 @@ public:
         }
 
         // Apply persistence decay to accumulation buffer.
-        ArtifactCore::Parallel::For(0,H,[&](int y){
+ArtifactCore::Parallel::For(0,H,W*H,[&](int y){
             const size_t begin=static_cast<size_t>(y)*W*4;
             for(int i=0;i<W*4;++i)accum_[begin+i]*=p;
         });
 
         // Add current frame contribution.
-        ArtifactCore::Parallel::For(0,H,[&](int y){
+ArtifactCore::Parallel::For(0,H,W*H,[&](int y){
             const size_t begin=static_cast<size_t>(y)*W*4;
             for(int i=0;i<W*4;++i)accum_[begin+i]=std::clamp(accum_[begin+i]+sd[begin+i]*(1.0f-p),0.0f,1.0f);
         });
@@ -71,7 +71,7 @@ public:
         // Blend: accum ↔ current.
         dst = src.DeepCopy();
         float* d = dst.image().rgba32fData();
-        ArtifactCore::Parallel::For(0,H,[&](int y){
+ArtifactCore::Parallel::For(0,H,W*H,[&](int y){
             const size_t begin=static_cast<size_t>(y)*W*4;
             for(int i=0;i<W*4;++i)d[begin+i]=accum_[begin+i]*(1.0f-b)+sd[begin+i]*b;
         });

@@ -48,12 +48,23 @@
 module Artifact.Effect.Transition;
 
 import Math.Random;
+import Core.Parallel;
 
 
 
 
 
 namespace Artifact {
+
+namespace {
+
+bool isPackedRgb32(const QImage& image)
+{
+    return image.format() == QImage::Format_RGB32 ||
+           image.format() == QImage::Format_ARGB32;
+}
+
+}
 
 // ==================== AbstractTransition ====================
 
@@ -112,26 +123,36 @@ void CrossDissolveTransition::process(const QImage& fromFrame,
 {
     float t = applyEasing(progress);
     
-    if (output.size() != fromFrame.size()) {
+    if (output.size() != fromFrame.size() || output.format() != QImage::Format_RGB32) {
         output = QImage(fromFrame.size(), QImage::Format_RGB32);
     }
+
+    const QImage fromPixels = isPackedRgb32(fromFrame)
+        ? fromFrame
+        : fromFrame.convertToFormat(QImage::Format_ARGB32);
+    const QImage toPixels = isPackedRgb32(toFrame)
+        ? toFrame
+        : toFrame.convertToFormat(QImage::Format_ARGB32);
     
     int w = output.width();
     int h = output.height();
     
-    for (int y = 0; y < h; y++) {
+    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        const auto* fromRow = reinterpret_cast<const QRgb*>(fromPixels.constScanLine(y));
+        const auto* toRow = reinterpret_cast<const QRgb*>(toPixels.constScanLine(y));
+        auto* outputRow = reinterpret_cast<QRgb*>(output.scanLine(y));
         for (int x = 0; x < w; x++) {
-            QRgb fromPixel = fromFrame.pixel(x, y);
-            QRgb toPixel = toFrame.pixel(x, y);
+            QRgb fromPixel = fromRow[x];
+            QRgb toPixel = toRow[x];
             
             int r = static_cast<int>(qRed(fromPixel) * (1 - t) + qRed(toPixel) * t);
             int g = static_cast<int>(qGreen(fromPixel) * (1 - t) + qGreen(toPixel) * t);
             int b = static_cast<int>(qBlue(fromPixel) * (1 - t) + qBlue(toPixel) * t);
             int a = static_cast<int>(qAlpha(fromPixel) * (1 - t) + qAlpha(toPixel) * t);
             
-            output.setPixel(x, y, qRgba(r, g, b, a));
+            outputRow[x] = qRgba(r, g, b, a);
         }
-    }
+    });
 }
 
 // ==================== WipeTransition ====================
@@ -216,31 +237,41 @@ void WipeTransition::process(const QImage& fromFrame,
 {
     float t = applyEasing(progress);
     
-    if (output.size() != fromFrame.size()) {
+    if (output.size() != fromFrame.size() || output.format() != QImage::Format_RGB32) {
         output = QImage(fromFrame.size(), QImage::Format_RGB32);
     }
+
+    const QImage fromPixels = isPackedRgb32(fromFrame)
+        ? fromFrame
+        : fromFrame.convertToFormat(QImage::Format_ARGB32);
+    const QImage toPixels = isPackedRgb32(toFrame)
+        ? toFrame
+        : toFrame.convertToFormat(QImage::Format_ARGB32);
     
     int w = output.width();
     int h = output.height();
     
-    for (int y = 0; y < h; y++) {
+    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        const auto* fromRow = reinterpret_cast<const QRgb*>(fromPixels.constScanLine(y));
+        const auto* toRow = reinterpret_cast<const QRgb*>(toPixels.constScanLine(y));
+        auto* outputRow = reinterpret_cast<QRgb*>(output.scanLine(y));
         for (int x = 0; x < w; x++) {
             float nx = static_cast<float>(x) / w;
             float ny = static_cast<float>(y) / h;
             
             float mask = calculateWipeMask(nx, ny, t);
             
-            QRgb fromPixel = fromFrame.pixel(x, y);
-            QRgb toPixel = toFrame.pixel(x, y);
+            QRgb fromPixel = fromRow[x];
+            QRgb toPixel = toRow[x];
             
             int r = static_cast<int>(qRed(fromPixel) * (1 - mask) + qRed(toPixel) * mask);
             int g = static_cast<int>(qGreen(fromPixel) * (1 - mask) + qGreen(toPixel) * mask);
             int b = static_cast<int>(qBlue(fromPixel) * (1 - mask) + qBlue(toPixel) * mask);
             int a = static_cast<int>(qAlpha(fromPixel) * (1 - mask) + qAlpha(toPixel) * mask);
             
-            output.setPixel(x, y, qRgba(r, g, b, a));
+            outputRow[x] = qRgba(r, g, b, a);
         }
-    }
+    });
 }
 
 // ==================== SlideTransition ====================
@@ -261,9 +292,16 @@ void SlideTransition::process(const QImage& fromFrame,
 {
     float t = applyEasing(progress);
     
-    if (output.size() != fromFrame.size()) {
+    if (output.size() != fromFrame.size() || output.format() != QImage::Format_RGB32) {
         output = QImage(fromFrame.size(), QImage::Format_RGB32);
     }
+
+    const QImage fromPixels = isPackedRgb32(fromFrame)
+        ? fromFrame
+        : fromFrame.convertToFormat(QImage::Format_ARGB32);
+    const QImage toPixels = isPackedRgb32(toFrame)
+        ? toFrame
+        : toFrame.convertToFormat(QImage::Format_ARGB32);
     
     int w = output.width();
     int h = output.height();
@@ -483,7 +521,12 @@ void GlitchTransition::process(const QImage& fromFrame,
     // Glitch intensity peaks at middle of transition
     float intensity = glitchParams_.intensity * (1.0f - std::abs(2.0f * t - 1.0f));
     
-    output = fromFrame.copy();
+    output = isPackedRgb32(fromFrame)
+        ? fromFrame.copy()
+        : fromFrame.convertToFormat(QImage::Format_ARGB32);
+    const QImage toPixels = isPackedRgb32(toFrame)
+        ? toFrame
+        : toFrame.convertToFormat(QImage::Format_ARGB32);
     
     QPainter painter(&output);
     
@@ -534,51 +577,60 @@ void GlitchTransition::process(const QImage& fromFrame,
         
         QImage result(output.size(), output.format());
         
-        for (int y = 0; y < h; y++) {
+        ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+            const auto* inputRow = reinterpret_cast<const QRgb*>(output.constScanLine(y));
+            auto* resultRow = reinterpret_cast<QRgb*>(result.scanLine(y));
             for (int x = 0; x < w; x++) {
                 int rx = std::clamp(x + static_cast<int>(separation), 0, w - 1);
                 int bx = std::clamp(x - static_cast<int>(separation), 0, w - 1);
                 
-                QRgb rPixel = output.pixel(rx, y);
-                QRgb gPixel = output.pixel(x, y);
-                QRgb bPixel = output.pixel(bx, y);
+                QRgb rPixel = inputRow[rx];
+                QRgb gPixel = inputRow[x];
+                QRgb bPixel = inputRow[bx];
                 
-                result.setPixel(x, y, qRgb(qRed(rPixel), qGreen(gPixel), qBlue(bPixel)));
+                resultRow[x] = qRgb(qRed(rPixel), qGreen(gPixel), qBlue(bPixel));
             }
-        }
+        });
         
         output = result;
     }
     
     // Noise
     if (glitchParams_.noiseAmount > 0) {
-        for (int y = 0; y < h; y++) {
+        const uint64_t noiseSeed = rng.state();
+        ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+            ArtifactCore::RandomStream rowRng(
+                ArtifactCore::RandomStream::mix(noiseSeed ^ static_cast<uint64_t>(y)));
+            auto* outputRow = reinterpret_cast<QRgb*>(output.scanLine(y));
             for (int x = 0; x < w; x++) {
-                if (rng.unitFloat() < glitchParams_.noiseAmount * intensity) {
-                    int noise = rng.rangeInclusive(-50, 50);
-                    QRgb pixel = output.pixel(x, y);
+                if (rowRng.unitFloat() < glitchParams_.noiseAmount * intensity) {
+                    int noise = rowRng.rangeInclusive(-50, 50);
+                    QRgb pixel = outputRow[x];
                     int r = std::clamp(qRed(pixel) + noise, 0, 255);
                     int g = std::clamp(qGreen(pixel) + noise, 0, 255);
                     int b = std::clamp(qBlue(pixel) + noise, 0, 255);
-                    output.setPixel(x, y, qRgb(r, g, b));
+                    outputRow[x] = qRgb(r, g, b);
                 }
             }
-        }
+        });
     }
     
     // Blend with to frame based on progress
-    for (int y = 0; y < h; y++) {
+    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        const auto* fromRow = reinterpret_cast<const QRgb*>(output.constScanLine(y));
+        const auto* toRow = reinterpret_cast<const QRgb*>(toPixels.constScanLine(y));
+        auto* outputRow = reinterpret_cast<QRgb*>(output.scanLine(y));
         for (int x = 0; x < w; x++) {
-            QRgb fromPixel = output.pixel(x, y);
-            QRgb toPixel = toFrame.pixel(x, y);
+            QRgb fromPixel = fromRow[x];
+            QRgb toPixel = toRow[x];
             
             int r = static_cast<int>(qRed(fromPixel) * (1 - t) + qRed(toPixel) * t);
             int g = static_cast<int>(qGreen(fromPixel) * (1 - t) + qGreen(toPixel) * t);
             int b = static_cast<int>(qBlue(fromPixel) * (1 - t) + qBlue(toPixel) * t);
             
-            output.setPixel(x, y, qRgb(r, g, b));
+            outputRow[x] = qRgb(r, g, b);
         }
-    }
+    });
 }
 
 // ==================== PageCurlTransition ====================
@@ -687,7 +739,9 @@ void RippleTransition::process(const QImage& fromFrame,
     float cy = rippleParams_.center.y() * h;
     float time = progress * rippleParams_.speed * 10.0f;
     
-    for (int y = 0; y < h; y++) {
+    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        const auto* toRow = reinterpret_cast<const QRgb*>(toPixels.constScanLine(y));
+        auto* outputRow = reinterpret_cast<QRgb*>(output.scanLine(y));
         for (int x = 0; x < w; x++) {
             // Calculate distance from center
             float dx = x - cx;
@@ -707,8 +761,8 @@ void RippleTransition::process(const QImage& fromFrame,
             int sy = std::clamp(static_cast<int>(offsetY), 0, h - 1);
             
             // Sample from both frames and blend
-            QRgb fromPixel = fromFrame.pixel(sx, sy);
-            QRgb toPixel = toFrame.pixel(x, y);
+            QRgb fromPixel = reinterpret_cast<const QRgb*>(fromPixels.constScanLine(sy))[sx];
+            QRgb toPixel = toRow[x];
             
             // Ripple intensity affects blend
             float rippleIntensity = std::abs(wave) / rippleParams_.amplitude;
@@ -719,9 +773,9 @@ void RippleTransition::process(const QImage& fromFrame,
             int g = static_cast<int>(qGreen(fromPixel) * (1 - blend) + qGreen(toPixel) * blend);
             int b = static_cast<int>(qBlue(fromPixel) * (1 - blend) + qBlue(toPixel) * blend);
             
-            output.setPixel(x, y, qRgb(r, g, b));
+            outputRow[x] = qRgb(r, g, b);
         }
-    }
+    });
 }
 
 // ==================== TransitionFactory ====================

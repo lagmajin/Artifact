@@ -54,7 +54,8 @@ public:
         const float cy = centerY_ * h;
 
         cv::Mat colorMat(h, w, CV_32FC4);
-        ArtifactCore::Parallel::For(0, h, [&](int y) {
+        ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+            cv::Vec4f* row = colorMat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < w; ++x) {
                 float dx = x - cx;
                 float dy = y - cy;
@@ -62,7 +63,7 @@ public:
                 float shadow = dist / std::max(1.0f, distance_ + softness_);
                 float alpha = 1.0f - std::clamp(shadow, 0.0f, 1.0f);
                 alpha *= opacity_;
-                colorMat.at<cv::Vec4f>(y, x) = cv::Vec4f(
+                row[x] = cv::Vec4f(
                     color_.blueF(),
                     color_.greenF(),
                     color_.redF(),

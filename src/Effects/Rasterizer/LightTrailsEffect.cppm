@@ -40,7 +40,7 @@ public:
         std::vector<float> vx(vw*vh,0),vy(vw*vh,0);
         const float lt=std::clamp(lumaThresh_,0.0f,1.0f);
 
-        ArtifactCore::Parallel::For(0,vh,[&](int by){for(int bx=0;bx<vw;++bx){
+        ArtifactCore::Parallel::For(0,vh,W*H,[&](int by){for(int bx=0;bx<vw;++bx){
             int sx=bx*BS,sy=by*BS,ex=std::min(sx+BS,W),ey=std::min(sy+BS,H);
             float best=1e12f,bdx=0,bdy=0;
             for(int dy=-16;dy<=16;dy+=4)for(int dx=-16;dx<=16;dx+=4){
@@ -59,7 +59,7 @@ public:
         }});
 
         const float r=0.299f,g=0.587f,b=0.114f;
-        ArtifactCore::Parallel::For(0,H,[&](int y){int bvY=y/BS;float* o=d+(size_t)y*W*4;
+ArtifactCore::Parallel::For(0,H,W*H,[&](int y){int bvY=y/BS;float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){int bvX=x/BS;
                 float mx=vx[std::min(bvY,vh-1)*vw+std::min(bvX,vw-1)];
                 float my=vy[std::min(bvY,vh-1)*vw+std::min(bvX,vw-1)];

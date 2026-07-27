@@ -52,7 +52,7 @@ public:
         const float cs = std::cos(rad), sn = std::sin(rad);
         const float hw = W * 0.5f, hh = H * 0.5f;
 
-        ArtifactCore::Parallel::For(0, H, [&](int y) {
+ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
             float* o = d + (size_t)y * W * 4;
             for (int x = 0; x < W; ++x) {
                 float fx = (x - hw - cx_) / z;

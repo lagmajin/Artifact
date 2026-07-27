@@ -45,7 +45,7 @@ public:
         const int pw = prev.width(), ph = prev.height();
         const float a = 1.0f - b;
 
-        ArtifactCore::Parallel::For(0, H, [&](int y) {
+ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
             float* o = d + (size_t)y * W * 4;
             const float* pp = pd + (size_t)std::min(y, ph - 1) * pw * 4;
             for (int x = 0; x < W; ++x) {

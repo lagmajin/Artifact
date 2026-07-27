@@ -50,7 +50,8 @@ public:
         const float ca = std::cos(rad);
         const float sa = std::sin(rad);
 
-        Parallel::For(0, h, [&](int y) {
+        Parallel::For(0, h, w * h, [&](int y) {
+            cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < w; ++x) {
                 float proj = x * ca + y * sa;
                 // Normalize to 0..1 across image extent
@@ -66,9 +67,9 @@ public:
                     else alpha = std::clamp(alpha / std::max(1e-5f, feather_), 0.0f, 1.0f);
                 }
 
-                cv::Vec4f p = mat.at<cv::Vec4f>(y, x);
+                cv::Vec4f p = row[x];
                 p[3] *= alpha;
-                mat.at<cv::Vec4f>(y, x) = p;
+                row[x] = p;
             }
         });
     }

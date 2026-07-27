@@ -39,6 +39,7 @@
 
 module Artifact.Effect.MotionBlur;
 
+import Core.Parallel;
 
 
 
@@ -70,8 +71,10 @@ public:
         std::vector<float> temp(width * height * 4);
         
         int samples = std::min(settings.samples, 64);
-        
-        for (int y = 0; y < height; ++y) {
+        const size_t rowStride = static_cast<size_t>(width) * 4u;
+
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+            float* tempRow = temp.data() + static_cast<size_t>(y) * rowStride;
             for (int x = 0; x < width; ++x) {
                 float r = 0, g = 0, b = 0, a = 0;
                 float totalWeight = 0;
@@ -99,24 +102,24 @@ public:
                     int ix = static_cast<int>(sx);
                     int iy = static_cast<int>(sy);
                     
-                    int idx = (iy * width + ix) * 4;
-                    
-                    r += pixels[idx] * weight;
-                    g += pixels[idx + 1] * weight;
-                    b += pixels[idx + 2] * weight;
-                    a += pixels[idx + 3] * weight;
+                    const float* samplePixel = pixels + static_cast<size_t>(iy) * rowStride + static_cast<size_t>(ix) * 4u;
+
+                    r += samplePixel[0] * weight;
+                    g += samplePixel[1] * weight;
+                    b += samplePixel[2] * weight;
+                    a += samplePixel[3] * weight;
                     totalWeight += weight;
                 }
                 
                 if (totalWeight > 0) {
-                    int outIdx = (y * width + x) * 4;
-                    temp[outIdx] = r / totalWeight;
-                    temp[outIdx + 1] = g / totalWeight;
-                    temp[outIdx + 2] = b / totalWeight;
-                    temp[outIdx + 3] = a / totalWeight;
+                    float* outPixel = tempRow + static_cast<size_t>(x) * 4u;
+                    outPixel[0] = r / totalWeight;
+                    outPixel[1] = g / totalWeight;
+                    outPixel[2] = b / totalWeight;
+                    outPixel[3] = a / totalWeight;
                 }
             }
-        }
+        });
         
         // Copy back
         std::copy(temp.begin(), temp.end(), pixels);
@@ -135,8 +138,10 @@ public:
         std::vector<float> temp(width * height * 4);
         
         int samples = std::min(settings.samples, 64);
-        
-        for (int y = 0; y < height; ++y) {
+        const size_t rowStride = static_cast<size_t>(width) * 4u;
+
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+            float* tempRow = temp.data() + static_cast<size_t>(y) * rowStride;
             for (int x = 0; x < width; ++x) {
                 float r = 0, g = 0, b = 0, a = 0;
                 float totalWeight = 0;
@@ -163,24 +168,24 @@ public:
                     int ix = static_cast<int>(sx);
                     int iy = static_cast<int>(sy);
                     
-                    int idx = (iy * width + ix) * 4;
-                    
-                    r += pixels[idx] * weight;
-                    g += pixels[idx + 1] * weight;
-                    b += pixels[idx + 2] * weight;
-                    a += pixels[idx + 3] * weight;
+                    const float* samplePixel = pixels + static_cast<size_t>(iy) * rowStride + static_cast<size_t>(ix) * 4u;
+
+                    r += samplePixel[0] * weight;
+                    g += samplePixel[1] * weight;
+                    b += samplePixel[2] * weight;
+                    a += samplePixel[3] * weight;
                     totalWeight += weight;
                 }
                 
                 if (totalWeight > 0) {
-                    int outIdx = (y * width + x) * 4;
-                    temp[outIdx] = r / totalWeight;
-                    temp[outIdx + 1] = g / totalWeight;
-                    temp[outIdx + 2] = b / totalWeight;
-                    temp[outIdx + 3] = a / totalWeight;
+                    float* outPixel = tempRow + static_cast<size_t>(x) * 4u;
+                    outPixel[0] = r / totalWeight;
+                    outPixel[1] = g / totalWeight;
+                    outPixel[2] = b / totalWeight;
+                    outPixel[3] = a / totalWeight;
                 }
             }
-        }
+        });
         
         std::copy(temp.begin(), temp.end(), pixels);
     }
@@ -196,16 +201,19 @@ public:
         std::vector<float> temp(width * height * 4);
         
         int samples = std::min(settings.samples, 32);
-        
-        for (int y = 0; y < height; ++y) {
+        const size_t rowStride = static_cast<size_t>(width) * 4u;
+
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+            const float* motionRow = motionVectors + static_cast<size_t>(y) * static_cast<size_t>(width) * 2u;
+            float* tempRow = temp.data() + static_cast<size_t>(y) * rowStride;
             for (int x = 0; x < width; ++x) {
                 float r = 0, g = 0, b = 0, a = 0;
                 float totalWeight = 0;
                 
                 // Get motion vector at this pixel
-                int mvIdx = (y * width + x) * 2; // RG channels
-                float mvX = motionVectors[mvIdx] * settings.velocityScale * settings.intensity * 50.0f;
-                float mvY = motionVectors[mvIdx + 1] * settings.velocityScale * settings.intensity * 50.0f;
+                const int mvIdx = x * 2; // RG channels
+                float mvX = motionRow[mvIdx] * settings.velocityScale * settings.intensity * 50.0f;
+                float mvY = motionRow[mvIdx + 1] * settings.velocityScale * settings.intensity * 50.0f;
                 
                 for (int s = 0; s < samples; ++s) {
                     float t = (float)s / (samples - 1) - 0.5f;
@@ -231,24 +239,24 @@ public:
                     int ix = static_cast<int>(sx);
                     int iy = static_cast<int>(sy);
                     
-                    int idx = (iy * width + ix) * 4;
-                    
-                    r += pixels[idx] * weight;
-                    g += pixels[idx + 1] * weight;
-                    b += pixels[idx + 2] * weight;
-                    a += pixels[idx + 3] * weight;
+                    const float* samplePixel = pixels + static_cast<size_t>(iy) * rowStride + static_cast<size_t>(ix) * 4u;
+
+                    r += samplePixel[0] * weight;
+                    g += samplePixel[1] * weight;
+                    b += samplePixel[2] * weight;
+                    a += samplePixel[3] * weight;
                     totalWeight += weight;
                 }
                 
                 if (totalWeight > 0) {
-                    int outIdx = (y * width + x) * 4;
-                    temp[outIdx] = r / totalWeight;
-                    temp[outIdx + 1] = g / totalWeight;
-                    temp[outIdx + 2] = b / totalWeight;
-                    temp[outIdx + 3] = a / totalWeight;
+                    float* outPixel = tempRow + static_cast<size_t>(x) * 4u;
+                    outPixel[0] = r / totalWeight;
+                    outPixel[1] = g / totalWeight;
+                    outPixel[2] = b / totalWeight;
+                    outPixel[3] = a / totalWeight;
                 }
             }
-        }
+        });
         
         std::copy(temp.begin(), temp.end(), pixels);
     }
@@ -461,7 +469,7 @@ public:
         int blocksX = width / blockSize;
         int blocksY = height / blockSize;
         
-        for (int by = 0; by < blocksY; ++by) {
+        ArtifactCore::Parallel::For(0, blocksY, width * height, [&](int by) {
             for (int bx = 0; bx < blocksX; ++bx) {
                 int blockX = bx * blockSize;
                 int blockY = by * blockSize;
@@ -527,7 +535,7 @@ public:
                     }
                 }
             }
-        }
+        });
     }
 };
 

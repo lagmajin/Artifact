@@ -39,7 +39,7 @@ public:
 
         const int width = dst.image().width();
         const int height = dst.image().height();
-        Parallel::For(0, height, [&](int y) {
+        Parallel::For(0, height, width * height, [&](int y) {
             auto processor = processor_;
             processor.process(pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u, width, 1);
         });
@@ -65,7 +65,7 @@ public:
 
         const int width = dst.image().width();
         const int height = dst.image().height();
-        Parallel::For(0, height, [&](int y) {
+        Parallel::For(0, height, width * height, [&](int y) {
             auto processor = processor_;
             processor.process(pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u, width, 1);
         });

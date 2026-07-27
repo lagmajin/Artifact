@@ -72,7 +72,7 @@ public:
         const float tintM = 1.0f - tint_ * 0.5f;
         const float brightMul = std::pow(2.0f, brightness_);
 
-        Parallel::For(0, height, [&](int y) {
+        Parallel::For(0, height, width * height, [&](int y) {
             for (int x = 0; x < width; ++x) {
                 float* p = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
                 p[2] = std::clamp(p[2] * corrR * tintM * brightMul, 0.0f, 1.0f);

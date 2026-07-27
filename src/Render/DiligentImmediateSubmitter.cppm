@@ -453,6 +453,21 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
         initData.DataSize = desc.Size;
         device->CreateBuffer(desc, &initData, &m_batch_solid_rect_ib_);
     }
+    m_batch_solid_rect_indirect_supported_ =
+        (device->GetAdapterInfo().DrawCommand.CapFlags &
+         DRAW_COMMAND_CAP_FLAG_DRAW_INDIRECT) != 0;
+    if (m_batch_solid_rect_indirect_supported_) {
+        BufferDesc desc;
+        desc.Name = "DIS BatchSolidRect Indirect Args";
+        desc.Usage = USAGE_DEFAULT;
+        desc.BindFlags = BIND_INDIRECT_DRAW_ARGS;
+        desc.CPUAccessFlags = CPU_ACCESS_NONE;
+        desc.Size = sizeof(Uint32) * 5;
+        device->CreateBuffer(
+            desc, nullptr, &m_batch_solid_rect_indirect_args_);
+        m_batch_solid_rect_indirect_supported_ =
+            m_batch_solid_rect_indirect_args_ != nullptr;
+    }
     m_batch_solid_rect_cpu_.resize(k_batch_solid_rect_max * 4);
 }
 
@@ -584,6 +599,8 @@ void DiligentImmediateSubmitter::destroy()
     m_deferredCtx_                          = nullptr;
     m_batch_solid_rect_vb_                  = nullptr;
     m_batch_solid_rect_ib_                  = nullptr;
+    m_batch_solid_rect_indirect_args_       = nullptr;
+    m_batch_solid_rect_indirect_supported_  = false;
     m_draw_batch_solid_rect_pso_and_srb     = {};
     m_batch_solid_rect_cpu_.clear();
     m_batchSolidRectCount_                  = 0;
@@ -669,9 +686,28 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
         recordCtx->SetIndexBuffer(m_batch_solid_rect_ib_, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         recordShaderResourceCommit(m_frameCostStats_);
         recordCtx->CommitShaderResources(m_draw_batch_solid_rect_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        DrawIndexedAttribs da(Uint32(m_batchSolidRectCount_) * 6, VT_UINT32, DRAW_FLAG_NONE);
         recordDrawCall(m_frameCostStats_, true);
-        recordCtx->DrawIndexed(da);
+        if (m_batch_solid_rect_indirect_supported_ &&
+            m_batch_solid_rect_indirect_args_ &&
+            m_batchSolidRectCount_ >= 64) {
+            const Uint32 args[5] = {
+                Uint32(m_batchSolidRectCount_) * 6u, 1u, 0u, 0u, 0u
+            };
+            recordCtx->UpdateBuffer(
+                m_batch_solid_rect_indirect_args_, 0, sizeof(args), args,
+                RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            if (m_frameCostStats_) {
+                ++m_frameCostStats_->bufferUpdates;
+            }
+            DrawIndexedIndirectAttribs da{
+                VT_UINT32, m_batch_solid_rect_indirect_args_, DRAW_FLAG_NONE,
+                1, 0, sizeof(args), RESOURCE_STATE_TRANSITION_MODE_TRANSITION};
+            recordCtx->DrawIndexedIndirect(da);
+        } else {
+            DrawIndexedAttribs da(
+                Uint32(m_batchSolidRectCount_) * 6, VT_UINT32, DRAW_FLAG_NONE);
+            recordCtx->DrawIndexed(da);
+        }
         m_batchSolidRectCount_ = 0;
     };
 
@@ -701,10 +737,39 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                 } else {
                     submitSolidRect(p, recordCtx, pRTV);
                 }
+            } else if constexpr (std::is_same_v<T, SolidRectXformPkt>) {
+                if (batchReady) {
+                    if (m_batchSolidRectCount_ >=
+                        static_cast<int>(k_batch_solid_rect_max)) {
+                        flushSolidRectBatch();
+                    }
+                    auto* v =
+                        &m_batch_solid_rect_cpu_[m_batchSolidRectCount_ * 4];
+                    for (int i = 0; i < 4; ++i) {
+                        const float u = float(i & 1);
+                        const float vv = float(i >> 1);
+                        const float clipX =
+                            p.mat.row0.x * u + p.mat.row0.y * vv +
+                            p.mat.row0.w;
+                        const float clipY =
+                            p.mat.row1.x * u + p.mat.row1.y * vv +
+                            p.mat.row1.w;
+                        const float clipW =
+                            p.mat.row3.x * u + p.mat.row3.y * vv +
+                            p.mat.row3.w;
+                        const float inverseW =
+                            std::abs(clipW) > 0.000001f ? 1.0f / clipW : 1.0f;
+                        v[i].pos = {clipX * inverseW, clipY * inverseW};
+                        v[i].color = p.color;
+                        v[i].uv = {u, vv};
+                    }
+                    ++m_batchSolidRectCount_;
+                } else {
+                    submitSolidRectXform(p, recordCtx, pRTV);
+                }
             } else {
                 flushSolidRectBatch(); // flush before switching to a different draw type
-                if constexpr      (std::is_same_v<T, SolidRectXformPkt>)  submitSolidRectXform(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, GradientRectPkt>)    submitGradientRect(p, recordCtx, pRTV);
+                if constexpr      (std::is_same_v<T, GradientRectPkt>)    submitGradientRect(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, LinePkt>)            submitLine(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, QuadPkt>)            submitQuad(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, DotLinePkt>)         submitDotLine(p, recordCtx, pRTV);

@@ -106,10 +106,10 @@ cv::Vec4f sampleBilinearCV(const cv::Mat& src, float sx, float sy) {
     float fx = sx - x0;
     float fy = sy - y0;
 
-    auto c00 = src.at<cv::Vec4f>(y0, x0);
-    auto c10 = src.at<cv::Vec4f>(y1, x0);
-    auto c01 = src.at<cv::Vec4f>(y0, x1);
-    auto c11 = src.at<cv::Vec4f>(y1, x1);
+    const cv::Vec4f c00 = src.ptr<cv::Vec4f>(y0)[x0];
+    const cv::Vec4f c10 = src.ptr<cv::Vec4f>(y1)[x0];
+    const cv::Vec4f c01 = src.ptr<cv::Vec4f>(y0)[x1];
+    const cv::Vec4f c11 = src.ptr<cv::Vec4f>(y1)[x1];
 
     cv::Vec4f result;
     for (int i = 0; i < 4; ++i) {
@@ -240,7 +240,8 @@ void LiquifyEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32
 
     cv::Mat dstMat(height, width, CV_32FC4);
 
-    ArtifactCore::Parallel::For(0, height, [&](int y) {
+    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        cv::Vec4f* dstRow = dstMat.ptr<cv::Vec4f>(y);
         for (int x = 0; x < width; ++x) {
             float sx, sy;
             liquifyDisplacement(static_cast<float>(x), static_cast<float>(y),
@@ -255,9 +256,9 @@ void LiquifyEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32
             if (sx >= 0 && sx < width && sy >= 0 && sy < height) {
                 pixel = sampleBilinearCV(srcMat, sx, sy);
             } else {
-                pixel = srcMat.at<cv::Vec4f>(iy, ix);
+                pixel = srcMat.ptr<cv::Vec4f>(iy)[ix];
             }
-            dstMat.at<cv::Vec4f>(y, x) = pixel;
+            dstRow[x] = pixel;
         }
     });
 

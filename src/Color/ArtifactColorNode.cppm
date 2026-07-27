@@ -47,6 +47,7 @@ module Artifact.Color.Node;
 
 
 import Color.ColorSpace;
+import Core.Parallel;
 
 
 
@@ -1140,25 +1141,27 @@ void BlurNode::process(float* pixels, int width, int height) {
         auto kernelH = buildKernel(radiusX_);
         int kSize = static_cast<int>(kernelH.size()) / 2;
 
-        for (int y = 0; y < height; ++y) {
+Parallel::For(0, height, width * height, [&](int y) {
+            const float* sourceRow = pixels + static_cast<std::size_t>(y) * static_cast<std::size_t>(width) * 4u;
+            float* tempRow = temp.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(width) * 4u;
             for (int x = 0; x < width; ++x) {
                 float sumR = 0, sumG = 0, sumB = 0, sumA = 0;
                 for (int k = -kSize; k <= kSize; ++k) {
                     int sx = std::clamp(x + k, 0, width - 1);
-                    int srcIdx = (y * width + sx) * 4;
+                    const float* sourcePixel = sourceRow + static_cast<std::size_t>(sx) * 4u;
                     float w = kernelH[k + kSize];
-                    sumR += pixels[srcIdx + 0] * w;
-                    sumG += pixels[srcIdx + 1] * w;
-                    sumB += pixels[srcIdx + 2] * w;
-                    sumA += pixels[srcIdx + 3] * w;
+                    sumR += sourcePixel[0] * w;
+                    sumG += sourcePixel[1] * w;
+                    sumB += sourcePixel[2] * w;
+                    sumA += sourcePixel[3] * w;
                 }
-                int dstIdx = (y * width + x) * 4;
-                temp[dstIdx + 0] = sumR;
-                temp[dstIdx + 1] = sumG;
-                temp[dstIdx + 2] = sumB;
-                temp[dstIdx + 3] = sumA;
+                float* destinationPixel = tempRow + static_cast<std::size_t>(x) * 4u;
+                destinationPixel[0] = sumR;
+                destinationPixel[1] = sumG;
+                destinationPixel[2] = sumB;
+                destinationPixel[3] = sumA;
             }
-        }
+        });
     } else {
         std::copy(pixels, pixels + total * 4, temp.begin());
     }
@@ -1168,25 +1171,28 @@ void BlurNode::process(float* pixels, int width, int height) {
         auto kernelV = buildKernel(radiusY_);
         int kSize = static_cast<int>(kernelV.size()) / 2;
 
-        for (int y = 0; y < height; ++y) {
+Parallel::For(0, height, width * height, [&](int y) {
+            float* destinationRow = pixels + static_cast<std::size_t>(y) * static_cast<std::size_t>(width) * 4u;
             for (int x = 0; x < width; ++x) {
                 float sumR = 0, sumG = 0, sumB = 0, sumA = 0;
                 for (int k = -kSize; k <= kSize; ++k) {
                     int sy = std::clamp(y + k, 0, height - 1);
-                    int srcIdx = (sy * width + x) * 4;
+                    const float* sourcePixel = temp.data() +
+                        (static_cast<std::size_t>(sy) * static_cast<std::size_t>(width) +
+                         static_cast<std::size_t>(x)) * 4u;
                     float w = kernelV[k + kSize];
-                    sumR += temp[srcIdx + 0] * w;
-                    sumG += temp[srcIdx + 1] * w;
-                    sumB += temp[srcIdx + 2] * w;
-                    sumA += temp[srcIdx + 3] * w;
+                    sumR += sourcePixel[0] * w;
+                    sumG += sourcePixel[1] * w;
+                    sumB += sourcePixel[2] * w;
+                    sumA += sourcePixel[3] * w;
                 }
-                int dstIdx = (y * width + x) * 4;
-                pixels[dstIdx + 0] = sumR;
-                pixels[dstIdx + 1] = sumG;
-                pixels[dstIdx + 2] = sumB;
-                pixels[dstIdx + 3] = sumA;
+                float* destinationPixel = destinationRow + static_cast<std::size_t>(x) * 4u;
+                destinationPixel[0] = sumR;
+                destinationPixel[1] = sumG;
+                destinationPixel[2] = sumB;
+                destinationPixel[3] = sumA;
             }
-        }
+        });
     } else {
         std::copy(temp.begin(), temp.end(), pixels);
     }
