@@ -4138,7 +4138,9 @@ if (!item.isFolder) {
               ? QStringLiteral(
                     "The image sequence could not be relinked.\n\n"
                     "Choose a representative frame whose directory contains "
-                    "every expected frame with matching numbering and padding.")
+                    "every expected frame with matching numbering and padding.\n\n"
+                    "Current status: %1")
+                    .arg(item.type.toQString())
               : QStringLiteral("The selected footage could not be relinked."));
     }
   });
