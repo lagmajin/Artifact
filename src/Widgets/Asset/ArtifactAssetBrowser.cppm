@@ -4058,6 +4058,10 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
     }
     filesDropped(imported);
     impl_->applyFilters();
+   } else {
+    QMessageBox::warning(
+        this, QStringLiteral("Import Failed"),
+        QStringLiteral("No requested files could be imported."));
    }
   });
 
