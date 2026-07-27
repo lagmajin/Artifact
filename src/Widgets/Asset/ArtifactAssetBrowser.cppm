@@ -3281,16 +3281,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   // Connect file item selection to update details
   connect(fileView->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this]() {
    QModelIndexList selectedIndexes = impl_->fileView_->selectionModel()->selectedIndexes();
-   QStringList selectedFiles;
-   selectedFiles.reserve(selectedIndexes.size());
+   QStringList selectedFiles = impl_->selectedAssetPaths();
    if (!selectedIndexes.isEmpty()) {
-    for (const QModelIndex& index : selectedIndexes) {
-     const AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
-     const QString filePath = item.path.toQString();
-     if (!filePath.isEmpty()) {
-      selectedFiles.append(filePath);
-     }
-    }
     if (!selectedFiles.isEmpty()) {
      updateFileInfo(selectedFiles.first());
     }
