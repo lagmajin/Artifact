@@ -2587,7 +2587,10 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     bool ok = false;
     int frameNum = frameStr.toInt(&ok);
     if (!ok) continue;
-    QString key = m.captured(1) + m.captured(2) + m.captured(4);
+    // Padding is part of the sequence identity. Mixing `001` and `0002`
+    // would produce an invalid display pattern and an ambiguous import.
+    QString key = m.captured(1) + m.captured(2) + m.captured(4) +
+                  QStringLiteral("|pad=") + QString::number(frameStr.length());
     seqMap[key].append({entry, frameNum, static_cast<int>(frameStr.length()), fullPath});
    }
 
