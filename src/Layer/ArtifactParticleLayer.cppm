@@ -61,6 +61,7 @@ import Utils.Id;
 import Utils.String.UniString;
 import Property.Abstract;
 import Property.Group;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -85,7 +86,7 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
 {
     ArtifactCore::ParticleRenderData transformed;
     transformed.frameNumber = source.frameNumber;
-    transformed.particles.reserve(source.particles.size());
+    transformed.particles.resize(source.particles.size());
 
     const float scaleX = std::hypot(transform.m11(), transform.m21());
     const float scaleY = std::hypot(transform.m12(), transform.m22());
@@ -104,9 +105,11 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
             << "opacity=" << opacity
             << "sourceCount=" << source.particles.size();
 
-    bool loggedFirstParticle = false;
-    for (const auto& src : source.particles) {
-        ArtifactCore::ParticleVertex v;
+    ArtifactCore::Parallel::For(0, static_cast<int>(source.particles.size()),
+                                static_cast<int>(source.particles.size()),
+                                [&](int index) {
+        const auto& src = source.particles[static_cast<size_t>(index)];
+        auto& v = transformed.particles[static_cast<size_t>(index)];
         v.px = src.px;
         v.py = src.py;
         v.pz = src.pz;
@@ -134,16 +137,18 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
             const float speed = std::hypot(src.vx, src.vy);
             v.stretch = std::clamp(1.0f + speed * 0.004f, 1.0f, 6.0f);
         }
-        if (!loggedFirstParticle) {
-            qInfo() << "[ParticleLayer] particle0"
-                    << "src=(" << src.px << "," << src.py << ")"
-                    << "mapped=(" << mapped.x() << "," << mapped.y() << ")"
-                    << "size=" << src.size << "->" << v.size
-                    << "alpha=" << src.a << "->" << v.a
-                    << "stretch=" << src.stretch << "->" << v.stretch;
-            loggedFirstParticle = true;
-        }
-        transformed.particles.push_back(v);
+    });
+
+    if (!source.particles.empty()) {
+        const auto& src = source.particles.front();
+        const auto& v = transformed.particles.front();
+        const QPointF mapped = transform.map(QPointF(src.px, src.py));
+        qInfo() << "[ParticleLayer] particle0"
+                << "src=(" << src.px << "," << src.py << ")"
+                << "mapped=(" << mapped.x() << "," << mapped.y() << ")"
+                << "size=" << src.size << "->" << v.size
+                << "alpha=" << src.a << "->" << v.a
+                << "stretch=" << src.stretch << "->" << v.stretch;
     }
 
     return transformed;
@@ -151,13 +156,16 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
 
 void boostDebugParticleRenderData(ArtifactCore::ParticleRenderData& data)
 {
-    for (auto& particle : data.particles) {
+    ArtifactCore::Parallel::For(0, static_cast<int>(data.particles.size()),
+                                static_cast<int>(data.particles.size()),
+                                [&](int index) {
+        auto& particle = data.particles[static_cast<size_t>(index)];
         particle.size = std::max(18.0f, particle.size * 4.0f);
         particle.a = 1.0f;
         particle.r = std::clamp(particle.r * 1.15f + 0.20f, 0.0f, 1.0f);
         particle.g = std::clamp(particle.g * 1.15f + 0.20f, 0.0f, 1.0f);
         particle.b = std::clamp(particle.b * 1.15f + 0.20f, 0.0f, 1.0f);
-    }
+    });
 }
 
 QVector3D defaultEmitterPositionForPreset(const QString& presetName,

@@ -62,7 +62,7 @@ public:
         // ── 1. アルファチャンネル抽出 ──────────────────────────────────────
         cv::Mat srcAlpha(H, W, CV_32FC1);
         {
-            ArtifactCore::Parallel::For(0, H, [&](int y) {
+    ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
                 float* row = srcAlpha.ptr<float>(y);
                 const float* p = srcData + static_cast<size_t>(y) * W * 4;
                 for (int x = 0; x < W; ++x, p += 4) {
@@ -107,7 +107,7 @@ public:
         const float opac = std::clamp(opacity_ / 100.0f, 0.0f, 1.0f);
 
         cv::Mat satinLayer(H, W, CV_32FC4);
-        ArtifactCore::Parallel::For(0, H, [&](int y) {
+    ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
             const float* aRow = satinAlpha.ptr<float>(y);
             cv::Vec4f*   lRow = satinLayer.ptr<cv::Vec4f>(y);
             for (int x = 0; x < W; ++x) {
@@ -124,7 +124,7 @@ public:
         cv::Mat srcMat(H, W, CV_32FC4,
                        const_cast<float*>(srcData));
 
-        ArtifactCore::Parallel::For(0, H, [&](int y) {
+    ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
             const cv::Vec4f* sa  = satinLayer.ptr<cv::Vec4f>(y);
             const cv::Vec4f* fg  = srcMat.ptr<cv::Vec4f>(y);
             cv::Vec4f*       out = dstMat.ptr<cv::Vec4f>(y);

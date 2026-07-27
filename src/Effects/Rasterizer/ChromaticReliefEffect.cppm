@@ -50,7 +50,7 @@ public:
         const int offsetX = static_cast<int>(std::round(dirX * chromaticOffset));
         const int offsetY = static_cast<int>(std::round(dirY * chromaticOffset));
         cv::Mat output = input.clone();
-        ArtifactCore::Parallel::For(0, height, [&](int y) {
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
             const auto* sourceRow = input.ptr<cv::Vec4f>(y);
             const float* gxRow = gx.ptr<float>(y);
             const float* gyRow = gy.ptr<float>(y);
@@ -64,9 +64,9 @@ public:
                     0.5f + (gxRow[x] * dirX + gyRow[x] * dirY) * reliefAmount,
                     0.0f, 1.5f);
                 cv::Vec4f styled = sourceRow[x];
-                styled[0] = input.at<cv::Vec4f>(redY, redX)[0] * (0.65f + relief * 0.7f);
+                styled[0] = input.ptr<cv::Vec4f>(redY)[redX][0] * (0.65f + relief * 0.7f);
                 styled[1] = sourceRow[x][1] * (0.72f + relief * 0.56f);
-                styled[2] = input.at<cv::Vec4f>(blueY, blueX)[2] * (0.8f + (1.0f - relief) * 0.45f);
+                styled[2] = input.ptr<cv::Vec4f>(blueY)[blueX][2] * (0.8f + (1.0f - relief) * 0.45f);
                 for (int c = 0; c < 3; ++c)
                     outputRow[x][c] = sourceRow[x][c] * (1.0f - mix) + styled[c] * mix;
                 outputRow[x][3] = sourceRow[x][3];

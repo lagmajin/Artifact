@@ -91,10 +91,11 @@ cv::Mat fftConvolve(const cv::Mat& channel, const cv::Mat& psf) {
     const int halfY = psf.rows / 2;
     for (int y = 0; y < psf.rows; ++y) {
         const float* srcRow = psf.ptr<float>(y);
+        const int dstY = (y - halfY + channel.rows) % channel.rows;
+        float* dstRow = paddedKernel.ptr<float>(dstY);
         for (int x = 0; x < psf.cols; ++x) {
             const int dstX = (x - halfX + channel.cols) % channel.cols;
-            const int dstY = (y - halfY + channel.rows) % channel.rows;
-            paddedKernel.at<float>(dstY, dstX) = srcRow[x];
+            dstRow[dstX] = srcRow[x];
         }
     }
     cv::Mat imageSpectrum, kernelSpectrum, product, result;

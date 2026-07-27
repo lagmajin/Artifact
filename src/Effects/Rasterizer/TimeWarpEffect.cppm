@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
+#include <vector>
 #include <QString>
 #include <QVariant>
 
@@ -11,6 +13,7 @@ module Artifact.Effect.Rasterizer.TimeWarp;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;
 import Artifact.Effect.ImplBase;
+import Core.Parallel;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
@@ -36,7 +39,8 @@ public:
         const int kSize=std::max(1,(int)(sm*16.0f));
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
 
-        for(int y=0;y<H;++y){float* o=d+(size_t)y*W*4;
+        std::vector<std::int64_t> frameOffsets(static_cast<size_t>(W) * H, 0);
+        Parallel::For(0, H, W * H, [&](int y) {
             for(int x=0;x<W;++x){
                 // Blur the driving channel for smooth temporal mapping
                 float avg=0;int cnt=0;
@@ -49,21 +53,40 @@ public:
                 }
                 if(cnt>0)avg/=(float)cnt;
                 float off=(avg-0.5f)*2.0f*mo;
-                auto frameOff=(std::int64_t)std::llround(off);
+                frameOffsets[static_cast<size_t>(y) * W + x] =
+                    static_cast<std::int64_t>(std::llround(off));
+            }
+        });
 
+        // The sampler is intentionally called serially once per unique offset.
+        std::unordered_map<std::int64_t, ImageF32x4_RGBA> sampledFrames;
+        sampledFrames.reserve(std::min<std::size_t>(frameOffsets.size(), 256u));
+        for(const std::int64_t frameOff : frameOffsets){
+            if(sampledFrames.find(frameOff)!=sampledFrames.end()) continue;
                 ImageF32x4RGBAWithCache tf;
                 bool ok=context_.sampler->sampleCurrentLayerFrameRelative(frameOff,tf)
                        &&tf.width()>0&&tf.image().rgba32fData();
                 if(ok){
-                    const float* td=tf.image().rgba32fData();
-                    int tw=tf.width(),th=tf.height();
-                    int tx=std::clamp(x,0,tw-1),ty=std::clamp(y,0,th-1);
-                    const float* tp=td+((size_t)ty*tw+tx)*4;
-                    float* p=o+(size_t)x*4;
-                    p[0]=tp[0];p[1]=tp[1];p[2]=tp[2];p[3]=tp[3];
+                    sampledFrames.emplace(frameOff, tf.image());
+                } else {
+                    sampledFrames.emplace(frameOff, ImageF32x4_RGBA{});
                 }
             }
-        }
+
+        Parallel::For(0, H, W * H, [&](int y) {
+            float* o=d+(size_t)y*W*4;
+            for(int x=0;x<W;++x){
+                const auto it=sampledFrames.find(frameOffsets[static_cast<size_t>(y) * W + x]);
+                if(it==sampledFrames.end()||it->second.isEmpty()) continue;
+                const auto& tf=it->second;
+                const float* td=tf.rgba32fData();
+                int tw=tf.width(),th=tf.height();
+                int tx=std::clamp(x,0,tw-1),ty=std::clamp(y,0,th-1);
+                const float* tp=td+((size_t)ty*tw+tx)*4;
+                float* p=o+(size_t)x*4;
+                p[0]=tp[0];p[1]=tp[1];p[2]=tp[2];p[3]=tp[3];
+            }
+        });
     }
 };
 

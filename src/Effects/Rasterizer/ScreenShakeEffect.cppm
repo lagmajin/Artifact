@@ -74,13 +74,19 @@ public:
         const int W = si.width(), H = si.height();
         ImageF32x4_RGBA tmp;
         tmp.resize(W, H);
-        ArtifactCore::Parallel::For(0, H, [&](int y) {
+ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
+            float* dstRow = tmp.rgba32fData() + static_cast<size_t>(y) * static_cast<size_t>(W) * 4u;
             for (int x = 0; x < W; ++x) {
                 const float sx = (wrap_ == 2) ? mirrorCoord(static_cast<float>(x) + dx, W)
                                               : clampCoord(static_cast<float>(x) + dx, W);
                 const float sy = (wrap_ == 2) ? mirrorCoord(static_cast<float>(y) + dy, H)
                                               : clampCoord(static_cast<float>(y) + dy, H);
-                tmp.setPixel(x, y, sampleBilinear(si, sx, sy));
+                const FloatRGBA sampled = sampleBilinear(si, sx, sy);
+                const size_t offset = static_cast<size_t>(x) * 4u;
+                dstRow[offset + 0u] = sampled.r();
+                dstRow[offset + 1u] = sampled.g();
+                dstRow[offset + 2u] = sampled.b();
+                dstRow[offset + 3u] = sampled.a();
             }
         });
         dst.image().setFromRGBA32F(

@@ -46,7 +46,7 @@ public:
 
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
         float inv=1.0f/totalW;
-        ArtifactCore::Parallel::For(0,H,[&](int y){
+ArtifactCore::Parallel::For(0,H,W*H,[&](int y){
             for(int x=0;x<W;++x){const size_t i=(static_cast<size_t>(y)*W+x);float acc[4]={d[i*4],d[i*4+1],d[i*4+2],d[i*4+3]};
                 for(const auto& rf:refs){const float* rp=rf.img.rgba32fData()+i*4;
                     acc[0]+=rp[0]*rf.weight;acc[1]+=rp[1]*rf.weight;acc[2]+=rp[2]*rf.weight;acc[3]+=rp[3]*rf.weight;

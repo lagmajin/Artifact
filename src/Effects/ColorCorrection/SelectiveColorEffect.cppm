@@ -37,9 +37,10 @@ public:
         }
         const int width = dst.image().width();
         const int height = dst.image().height();
-        ArtifactCore::Parallel::For(0, height, [&](int y) {
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
             for (int x = 0; x < width; ++x) {
-                float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
+                float* pixel = row + static_cast<size_t>(x) * 4u;
                 processor_.applyPixel(pixel[0], pixel[1], pixel[2]);
             }
         });
@@ -65,9 +66,10 @@ public:
         }
         const int width = dst.image().width();
         const int height = dst.image().height();
-        ArtifactCore::Parallel::For(0, height, [&](int y) {
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
             for (int x = 0; x < width; ++x) {
-                float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
+                float* pixel = row + static_cast<size_t>(x) * 4u;
                 processor_.applyPixel(pixel[0], pixel[1], pixel[2]);
             }
         });

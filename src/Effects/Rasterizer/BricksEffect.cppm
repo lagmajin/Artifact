@@ -27,7 +27,7 @@ public:
         const auto& si=src.image(); int W=si.width(),H=si.height();
         float w=std::max(bw_,8.0f),h=std::max(bh_,4.0f),mw=std::max(mortar_,0.0f),off=std::clamp(offset_,0.0f,1.0f);
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
-        Parallel::For(0,H,[&](int y){float* o=d+(size_t)y*W*4;
+Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
             int row=(int)std::floor((float)y/h);
             float rowOff=(row%2==1)?off*w:0.0f;
             for(int x=0;x<W;++x){float* p=o+(size_t)x*4;

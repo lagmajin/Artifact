@@ -37,7 +37,8 @@ static cv::Mat directionalBlur1D(const cv::Mat& src, float angleDeg, float lengt
 
     cv::Mat result = cv::Mat::zeros(src.size(), src.type());
 
-    ArtifactCore::Parallel::For(0, src.rows, [&](int y) {
+    ArtifactCore::Parallel::For(0, src.rows, src.rows * src.cols, [&](int y) {
+        cv::Vec4f* resultRow = result.ptr<cv::Vec4f>(y);
         for (int x = 0; x < src.cols; ++x) {
             cv::Vec4f sum(0, 0, 0, 0);
             float totalWeight = 0.0f;
@@ -55,10 +56,10 @@ static cv::Mat directionalBlur1D(const cv::Mat& src, float angleDeg, float lengt
                 const int ix2 = std::min(ix + 1, src.cols - 1);
                 const int iy2 = std::min(iy + 1, src.rows - 1);
 
-                const cv::Vec4f p00 = src.at<cv::Vec4f>(iy, ix);
-                const cv::Vec4f p10 = src.at<cv::Vec4f>(iy, ix2);
-                const cv::Vec4f p01 = src.at<cv::Vec4f>(iy2, ix);
-                const cv::Vec4f p11 = src.at<cv::Vec4f>(iy2, ix2);
+                const cv::Vec4f p00 = src.ptr<cv::Vec4f>(iy)[ix];
+                const cv::Vec4f p10 = src.ptr<cv::Vec4f>(iy)[ix2];
+                const cv::Vec4f p01 = src.ptr<cv::Vec4f>(iy2)[ix];
+                const cv::Vec4f p11 = src.ptr<cv::Vec4f>(iy2)[ix2];
 
                 const cv::Vec4f sample = p00 * (1.0f - fx) * (1.0f - fy) +
                                          p10 * fx * (1.0f - fy) +
@@ -70,7 +71,7 @@ static cv::Mat directionalBlur1D(const cv::Mat& src, float angleDeg, float lengt
                 totalWeight += weight;
             }
 
-            result.at<cv::Vec4f>(y, x) = totalWeight > 0.0f ? sum / totalWeight : cv::Vec4f(0, 0, 0, 0);
+            resultRow[x] = totalWeight > 0.0f ? sum / totalWeight : cv::Vec4f(0, 0, 0, 0);
         }
     });
 
@@ -122,13 +123,15 @@ public:
         cv::Mat mat(srcImage.height(), srcImage.width(), CV_32FC4, const_cast<float*>(srcData));
 
         cv::Mat bright = cv::Mat::zeros(mat.size(), CV_32FC4);
-        ArtifactCore::Parallel::For(0, mat.rows, [&](int y) {
+        ArtifactCore::Parallel::For(0, mat.rows, mat.rows * mat.cols, [&](int y) {
+            const cv::Vec4f* matRow = mat.ptr<cv::Vec4f>(y);
+            cv::Vec4f* brightRow = bright.ptr<cv::Vec4f>(y);
             for (int x = 0; x < mat.cols; ++x) {
-                const cv::Vec4f p = mat.at<cv::Vec4f>(y, x);
+                const cv::Vec4f p = matRow[x];
                 const float lum = 0.299f * p[2] + 0.587f * p[1] + 0.114f * p[0];
                 if (lum > threshold_) {
                     const float scale = (lum - threshold_) / (1.0f - threshold_);
-                    bright.at<cv::Vec4f>(y, x) = p * scale;
+                    brightRow[x] = p * scale;
                 }
             }
         });
@@ -149,10 +152,12 @@ public:
         }
 
         cv::Mat result = mat.clone();
-        ArtifactCore::Parallel::For(0, mat.rows, [&](int y) {
+        ArtifactCore::Parallel::For(0, mat.rows, mat.rows * mat.cols, [&](int y) {
+            const cv::Vec4f* streakRow = streaks.ptr<cv::Vec4f>(y);
+            cv::Vec4f* resultRow = result.ptr<cv::Vec4f>(y);
             for (int x = 0; x < mat.cols; ++x) {
-                cv::Vec4f& dstP = result.at<cv::Vec4f>(y, x);
-                const cv::Vec4f streakP = streaks.at<cv::Vec4f>(y, x) * intensity_;
+                cv::Vec4f& dstP = resultRow[x];
+                const cv::Vec4f streakP = streakRow[x] * intensity_;
                 dstP += streakP;
                 dstP[0] = std::clamp(dstP[0], 0.0f, 1.0f);
                 dstP[1] = std::clamp(dstP[1], 0.0f, 1.0f);

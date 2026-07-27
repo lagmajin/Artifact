@@ -967,7 +967,7 @@ void ParticleEmitter::simulateStep(float deltaTime)
     constexpr int kParallelThreshold = 2048;
     if (aliveCount >= kParallelThreshold) {
         const std::size_t size = particles_.size();
-        tbb::parallel_for(tbb::blocked_range<std::size_t>(0, size),
+        tbb::parallel_for(tbb::blocked_range<std::size_t>(0, size, 256),
             [this, deltaTime](const tbb::blocked_range<std::size_t>& range) {
                 for (std::size_t i = range.begin(); i < range.end(); ++i) {
                     Particle& p = particles_[i];

@@ -43,10 +43,10 @@ cv::Vec4f sampleRGBA(const cv::Mat &mat, float x, float y) {
     const float tx = fx - static_cast<float>(x0);
     const float ty = fy - static_cast<float>(y0);
 
-    const cv::Vec4f p00 = mat.at<cv::Vec4f>(y0, x0);
-    const cv::Vec4f p10 = mat.at<cv::Vec4f>(y0, x1);
-    const cv::Vec4f p01 = mat.at<cv::Vec4f>(y1, x0);
-    const cv::Vec4f p11 = mat.at<cv::Vec4f>(y1, x1);
+    const cv::Vec4f p00 = mat.ptr<cv::Vec4f>(y0)[x0];
+    const cv::Vec4f p10 = mat.ptr<cv::Vec4f>(y0)[x1];
+    const cv::Vec4f p01 = mat.ptr<cv::Vec4f>(y1)[x0];
+    const cv::Vec4f p11 = mat.ptr<cv::Vec4f>(y1)[x1];
 
     const cv::Vec4f top = p00 * (1.0f - tx) + p10 * tx;
     const cv::Vec4f bottom = p01 * (1.0f - tx) + p11 * tx;
@@ -117,7 +117,8 @@ public:
         const float shiftY = dirY * shift;
 
         cv::Mat result = srcMat.clone();
-        ArtifactCore::Parallel::For(0, srcMat.rows, [&](int y) {
+        ArtifactCore::Parallel::For(0, srcMat.rows, srcMat.rows * srcMat.cols, [&](int y) {
+            cv::Vec4f* resultRow = result.ptr<cv::Vec4f>(y);
             for (int x = 0; x < srcMat.cols; ++x) {
                 const float fx = static_cast<float>(x);
                 const float fy = static_cast<float>(y);
@@ -125,7 +126,7 @@ public:
                 const cv::Vec4f gSample = sampleRGBA(bloom4, fx, fy);
                 const cv::Vec4f bSample = sampleRGBA(bloom4, fx - shiftX, fy - shiftY);
 
-                cv::Vec4f &dstPx = result.at<cv::Vec4f>(y, x);
+                cv::Vec4f &dstPx = resultRow[x];
                 const cv::Vec3f spectral(
                     bSample[0] * (1.0f - tintMix_) + gSample[0] * tintMix_,
                     gSample[1],

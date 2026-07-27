@@ -41,7 +41,7 @@ static void applyLiftGammaGainCore(const ImageF32x4RGBAWithCache& src,
 
     const int width = dst.image().width();
     const int height = dst.image().height();
-    ArtifactCore::Parallel::For(0, height, [&](int y) {
+    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
         for (int x = 0; x < width; ++x) {
             float* p = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
             float& b = p[0];

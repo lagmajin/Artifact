@@ -66,15 +66,17 @@ public:
 
             cv::Mat mapX(h, w, CV_32FC1);
             cv::Mat mapY(h, w, CV_32FC1);
-            ArtifactCore::Parallel::For(0, h, [&](int y) {
+            ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+                float* mapXRow = mapX.ptr<float>(y);
+                float* mapYRow = mapY.ptr<float>(y);
                 for (int x = 0; x < w; ++x) {
-                    mapX.at<float>(y, x) = std::clamp(x - dx * (1.0f - std::abs(y - cy) / (h * 0.5f + 1e-4f)), 0.0f, w - 1.0f); // sticky fallback
-                    mapY.at<float>(y, x) = std::clamp(y - dy, 0.0f, h - 1.0f); // intentionally offset only; actual remap done per frame below
+                    mapXRow[x] = std::clamp(x - dx * (1.0f - std::abs(y - cy) / (h * 0.5f + 1e-4f)), 0.0f, w - 1.0f); // sticky fallback
+                    mapYRow[x] = std::clamp(y - dy, 0.0f, h - 1.0f); // intentionally offset only; actual remap done per frame below
                 }
             });
 
             cv::Mat sample(h, w, CV_32FC4);
-            ArtifactCore::Parallel::For(0, h, [&](int y) {
+            ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
                 const float* xRow = mapX.ptr<float>(y);
                 const float* yRow = mapY.ptr<float>(y);
                 cv::Vec4f* outRow = sample.ptr<cv::Vec4f>(y);
@@ -87,10 +89,10 @@ public:
                     const int y1 = std::min(y0 + 1, h - 1);
                     const float tx = sx - x0;
                     const float ty = sy - y0;
-                    const cv::Vec4f& p00 = dstMat.at<cv::Vec4f>(y0, x0);
-                    const cv::Vec4f& p10 = dstMat.at<cv::Vec4f>(y0, x1);
-                    const cv::Vec4f& p01 = dstMat.at<cv::Vec4f>(y1, x0);
-                    const cv::Vec4f& p11 = dstMat.at<cv::Vec4f>(y1, x1);
+                    const cv::Vec4f& p00 = dstMat.ptr<cv::Vec4f>(y0)[x0];
+                    const cv::Vec4f& p10 = dstMat.ptr<cv::Vec4f>(y0)[x1];
+                    const cv::Vec4f& p01 = dstMat.ptr<cv::Vec4f>(y1)[x0];
+                    const cv::Vec4f& p11 = dstMat.ptr<cv::Vec4f>(y1)[x1];
                     for (int c = 0; c < 4; ++c) {
                         const float top = p00[c] + (p10[c] - p00[c]) * tx;
                         const float bottom = p01[c] + (p11[c] - p01[c]) * tx;

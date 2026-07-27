@@ -52,10 +52,10 @@ cv::Vec4f sampleBilinear(const cv::Mat& mat, float fx, float fy) {
     const float tx = fx - std::floor(fx);
     const float ty = fy - std::floor(fy);
 
-    const cv::Vec4f& p00 = mat.at<cv::Vec4f>(y0, x0);
-    const cv::Vec4f& p10 = mat.at<cv::Vec4f>(y0, x1);
-    const cv::Vec4f& p01 = mat.at<cv::Vec4f>(y1, x0);
-    const cv::Vec4f& p11 = mat.at<cv::Vec4f>(y1, x1);
+    const cv::Vec4f& p00 = mat.ptr<cv::Vec4f>(y0)[x0];
+    const cv::Vec4f& p10 = mat.ptr<cv::Vec4f>(y0)[x1];
+    const cv::Vec4f& p01 = mat.ptr<cv::Vec4f>(y1)[x0];
+    const cv::Vec4f& p11 = mat.ptr<cv::Vec4f>(y1)[x1];
 
     return (p00 * (1.f - tx) + p10 * tx) * (1.f - ty)
          + (p01 * (1.f - tx) + p11 * tx) * ty;
@@ -107,7 +107,7 @@ public:
         float* dstData = dst.image().rgba32fData();
         cv::Mat dstMat(H, W, CV_32FC4, dstData);
 
-        ArtifactCore::Parallel::For(0, H, [&](int y) {
+ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
             const float* mapRow = srcMat.ptr<float>(y);
             cv::Vec4f*   outRow = dstMat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < W; ++x) {

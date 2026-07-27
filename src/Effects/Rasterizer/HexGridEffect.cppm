@@ -39,7 +39,7 @@ public:
         float cr=std::cos(rad),sr=std::sin(rad);
         float hw=cs,hh=cs*0.8660254f; // sqrt(3)/2
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
-        Parallel::For(0,H,[&](int y){float* o=d+(size_t)y*W*4;
+Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){float* p=o+(size_t)x*4;
                 float rx=(float)x*cr-(float)y*sr,ry=(float)x*sr+(float)y*cr;
                 // Convert to hex coordinates

@@ -12,6 +12,7 @@ module Artifact.Effect.Rasterizer.TemporalDenoise;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;
 import Artifact.Effect.ImplBase;
+import Core.Parallel;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
@@ -37,8 +38,6 @@ public:
         if (s <= 0.0f || !context_.sampler) { dst = src.DeepCopy(); return; }
 
         const int W = si.width(), H = si.height();
-        const size_t n = (size_t)W * H;
-
         // Collect reference frames.
         struct RefFrame { ImageF32x4_RGBA img; };
         std::vector<RefFrame> refs;
@@ -56,37 +55,41 @@ public:
         dst = src.DeepCopy();
         float* d = dst.image().rgba32fData();
 
-        for (size_t px = 0; px < n; ++px) {
-            // Compute per-channel variance across reference frames.
-            float sumR = 0, sumG = 0, sumB = 0, sumA = 0;
-            float sumR2 = 0, sumG2 = 0, sumB2 = 0;
-            int rfCount = (int)refs.size();
+Parallel::For(0, H, W * H, [&](int y) {
+            const size_t rowBase = static_cast<size_t>(y) * static_cast<size_t>(W);
+            for (int x = 0; x < W; ++x) {
+                const size_t px = rowBase + static_cast<size_t>(x);
+                // Compute per-channel variance across reference frames.
+                float sumR = 0, sumG = 0, sumB = 0, sumA = 0;
+                float sumR2 = 0, sumG2 = 0, sumB2 = 0;
+                int rfCount = (int)refs.size();
 
-            for (const auto& rf : refs) {
-                const float* rp = rf.img.rgba32fData() + px * 4;
-                sumR += rp[0]; sumG += rp[1]; sumB += rp[2]; sumA += rp[3];
-                sumR2 += rp[0] * rp[0];
-                sumG2 += rp[1] * rp[1];
-                sumB2 += rp[2] * rp[2];
+                for (const auto& rf : refs) {
+                    const float* rp = rf.img.rgba32fData() + px * 4;
+                    sumR += rp[0]; sumG += rp[1]; sumB += rp[2]; sumA += rp[3];
+                    sumR2 += rp[0] * rp[0];
+                    sumG2 += rp[1] * rp[1];
+                    sumB2 += rp[2] * rp[2];
+                }
+                float invN = 1.0f / (float)rfCount;
+                float meanR = sumR * invN, meanG = sumG * invN, meanB = sumB * invN;
+                float varR = sumR2 * invN - meanR * meanR;
+                float varG = sumG2 * invN - meanG * meanG;
+                float varB = sumB2 * invN - meanB * meanB;
+                float maxVar = std::max({ varR, varG, varB });
+
+                // Variance-based blend factor: low variance → strong blend.
+                float vf = 1.0f - std::min(maxVar / std::max(vt * vt, 1e-8f), 1.0f);
+                float w = s * vf;
+                float iw = 1.0f - w;
+
+                float* p = d + px * 4;
+                p[0] = p[0] * iw + meanR * w;
+                p[1] = p[1] * iw + meanG * w;
+                p[2] = p[2] * iw + meanB * w;
+                p[3] = p[3] * iw + sumA * invN * w;
             }
-            float invN = 1.0f / (float)rfCount;
-            float meanR = sumR * invN, meanG = sumG * invN, meanB = sumB * invN;
-            float varR = sumR2 * invN - meanR * meanR;
-            float varG = sumG2 * invN - meanG * meanG;
-            float varB = sumB2 * invN - meanB * meanB;
-            float maxVar = std::max({ varR, varG, varB });
-
-            // Variance-based blend factor: low variance → strong blend.
-            float vf = 1.0f - std::min(maxVar / std::max(vt * vt, 1e-8f), 1.0f);
-            float w = s * vf;
-            float iw = 1.0f - w;
-
-            float* p = d + px * 4;
-            p[0] = p[0] * iw + meanR * w;
-            p[1] = p[1] * iw + meanG * w;
-            p[2] = p[2] * iw + meanB * w;
-            p[3] = p[3] * iw + sumA * invN * w;
-        }
+        });
     }
 };
 

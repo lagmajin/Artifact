@@ -104,6 +104,7 @@ import Artifact.Widgets.ModelViewer;
 import Utils.Path;
 import Utils.String.UniString;
 import ArtifactCore.Utils.PerformanceProfiler;
+import Core.Parallel;
 import UI.ShortcutBindings;
 
 namespace Artifact
@@ -423,7 +424,7 @@ namespace Artifact
     }
 
     QImage diffImage(targetRect.size(), QImage::Format_RGBA8888);
-    for (int y = 0; y < diffImage.height(); ++y) {
+    ArtifactCore::Parallel::For(0, diffImage.height(), diffImage.width() * diffImage.height(), [&](int y) {
      const QRgb* leftScan = reinterpret_cast<const QRgb*>(leftImage.constScanLine(y));
      const QRgb* rightScan = reinterpret_cast<const QRgb*>(rightImage.constScanLine(y));
      QRgb* diffScan = reinterpret_cast<QRgb*>(diffImage.scanLine(y));
@@ -435,7 +436,7 @@ namespace Artifact
                           std::abs(leftColor.blue() - rightColor.blue()),
                           255);
      }
-    }
+    });
 
     painter.drawImage(targetRect, diffImage);
    }

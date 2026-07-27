@@ -71,7 +71,7 @@ public:
         // 各ウェーブは lifespan_ 秒間生存し、frequency_ [波/秒] で発生する
         const int waveCount = static_cast<int>(std::ceil(currentTime_ * frequency_)) + 1;
 
-        ArtifactCore::Parallel::For(0, H, [&](int y) {
+ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
             float* row = dstData + y * W * 4;
             const float dy = static_cast<float>(y) - cy;
             for (int x = 0; x < W; ++x) {

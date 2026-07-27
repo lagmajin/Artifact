@@ -16,6 +16,7 @@ module Artifact.Effect.Distort.TimeDisplacement;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;
 import Artifact.Effect.ImplBase;
+import Core.Parallel;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
@@ -46,7 +47,7 @@ inline cv::Vec4f pixelAtClamped(const cv::Mat& mat, int x, int y) {
 
     const int clampedX = std::clamp(x, 0, mat.cols - 1);
     const int clampedY = std::clamp(y, 0, mat.rows - 1);
-    return mat.at<cv::Vec4f>(clampedY, clampedX);
+    return mat.ptr<cv::Vec4f>(clampedY)[clampedX];
 }
 
 inline cv::Vec4f lerpPixel(const cv::Vec4f& a, const cv::Vec4f& b, const float t) {
@@ -104,7 +105,44 @@ public:
             return &it->second;
         };
 
-        for (int y = 0; y < height; ++y) {
+        // Resolve every frame offset before entering the parallel pixel pass.
+        // The sampler/cache may mutate while loading a frame, so that part must
+        // remain serial; lookups are read-only once this list is complete.
+        const std::size_t offsetsPerPixel = frameBlend_ ? 2u : 1u;
+        std::vector<std::int64_t> requiredOffsets(
+            static_cast<std::size_t>(width) * height * offsetsPerPixel);
+        Parallel::For(0, height, width * height, [&](int y) {
+            const float* mapRow = mapMat.ptr<float>(y);
+            for (int x = 0; x < width; ++x) {
+                const float normalizedOffset =
+                    (sampleChannel(mapRow + x * 4, sourceChannel_) - 0.5f) * 2.0f;
+                const float frameOffsetFloat = normalizedOffset * maxOffsetFrames_;
+                const std::size_t baseIndex =
+                    (static_cast<std::size_t>(y) * width + x) * offsetsPerPixel;
+                if (!frameBlend_) {
+                    requiredOffsets[baseIndex] =
+                        static_cast<std::int64_t>(std::llround(frameOffsetFloat));
+                } else {
+                    const float floorOffset = std::floor(frameOffsetFloat);
+                    requiredOffsets[baseIndex] = static_cast<std::int64_t>(floorOffset);
+                    requiredOffsets[baseIndex + 1u] =
+                        static_cast<std::int64_t>(std::ceil(frameOffsetFloat));
+                }
+            }
+        });
+        std::sort(requiredOffsets.begin(), requiredOffsets.end());
+        requiredOffsets.erase(std::unique(requiredOffsets.begin(), requiredOffsets.end()),
+                              requiredOffsets.end());
+        for (const auto frameOffset : requiredOffsets) {
+            fetchFrame(frameOffset);
+        }
+        const auto lookupFrame = [&](std::int64_t frameOffset)
+            -> const ImageF32x4RGBAWithCache* {
+            const auto it = sampledFrames.find(frameOffset);
+            return it != sampledFrames.end() ? &it->second : nullptr;
+        };
+
+        Parallel::For(0, height, width * height, [&](int y) {
             const float* mapRow = mapMat.ptr<float>(y);
             cv::Vec4f* outRow = dstMat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < width; ++x) {
@@ -116,7 +154,7 @@ public:
                 if (!frameBlend_) {
                     const auto frameOffset =
                         static_cast<std::int64_t>(std::llround(frameOffsetFloat));
-                    if (const auto* sampled = fetchFrame(frameOffset)) {
+                    if (const auto* sampled = lookupFrame(frameOffset)) {
                         const auto& sampledImage = sampled->image();
                         const cv::Mat sampledMat(sampledImage.height(), sampledImage.width(),
                                                  CV_32FC4,
@@ -132,8 +170,8 @@ public:
                 const auto upperOffset = static_cast<std::int64_t>(ceilOffset);
                 const float mix = std::clamp(frameOffsetFloat - floorOffset, 0.0f, 1.0f);
 
-                const auto* lower = fetchFrame(lowerOffset);
-                const auto* upper = fetchFrame(upperOffset);
+                const auto* lower = lookupFrame(lowerOffset);
+                const auto* upper = lookupFrame(upperOffset);
                 if (lower && upper) {
                     const auto& lowerImage = lower->image();
                     const auto& upperImage = upper->image();
@@ -156,7 +194,7 @@ public:
                     outRow[x] = pixelAtClamped(upperMat, x, y);
                 }
             }
-        }
+        });
     }
 };
 

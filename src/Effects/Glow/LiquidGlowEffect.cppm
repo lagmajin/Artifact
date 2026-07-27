@@ -72,7 +72,7 @@ public:
         cv::Mat mapX(source.height(), source.width(), CV_32FC1);
         cv::Mat mapY(source.height(), source.width(), CV_32FC1);
         const float scale = std::max(4.0f, flowScale);
-        ArtifactCore::Parallel::For(0, source.height(), [&](int y) {
+        ArtifactCore::Parallel::For(0, source.height(), source.width() * source.height(), [&](int y) {
             float* xRow = mapX.ptr<float>(y);
             float* yRow = mapY.ptr<float>(y);
             for (int x = 0; x < source.width(); ++x) {
@@ -98,10 +98,10 @@ public:
             }
             return v;
         };
-        ArtifactCore::Parallel::For(0, glow.rows, [&](int y) {
+        const cv::Vec3f* glowData = glow.ptr<cv::Vec3f>(0);
+        ArtifactCore::Parallel::For(0, glow.rows, glow.rows * glow.cols, [&](int y) {
             const float* xRow = mapX.ptr<float>(y);
             const float* yRow = mapY.ptr<float>(y);
-            const cv::Vec3f* source = glow.ptr<cv::Vec3f>(0);
             cv::Vec3f* output = flowedGlow.ptr<cv::Vec3f>(y);
             for (int x = 0; x < glow.cols; ++x) {
                 const float sx = xRow[x];
@@ -112,10 +112,10 @@ public:
                 const int y1 = y0 + 1;
                 const float tx = sx - static_cast<float>(x0);
                 const float ty = sy - static_cast<float>(y0);
-                const cv::Vec3f& p00 = source[reflect101(y0, glow.rows) * glow.cols + reflect101(x0, glow.cols)];
-                const cv::Vec3f& p10 = source[reflect101(y0, glow.rows) * glow.cols + reflect101(x1, glow.cols)];
-                const cv::Vec3f& p01 = source[reflect101(y1, glow.rows) * glow.cols + reflect101(x0, glow.cols)];
-                const cv::Vec3f& p11 = source[reflect101(y1, glow.rows) * glow.cols + reflect101(x1, glow.cols)];
+                const cv::Vec3f& p00 = glowData[reflect101(y0, glow.rows) * glow.cols + reflect101(x0, glow.cols)];
+                const cv::Vec3f& p10 = glowData[reflect101(y0, glow.rows) * glow.cols + reflect101(x1, glow.cols)];
+                const cv::Vec3f& p01 = glowData[reflect101(y1, glow.rows) * glow.cols + reflect101(x0, glow.cols)];
+                const cv::Vec3f& p11 = glowData[reflect101(y1, glow.rows) * glow.cols + reflect101(x1, glow.cols)];
                 output[x] = p00 * ((1.0f - tx) * (1.0f - ty)) +
                             p10 * (tx * (1.0f - ty)) +
                             p01 * ((1.0f - tx) * ty) + p11 * (tx * ty);

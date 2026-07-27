@@ -934,28 +934,49 @@ namespace Artifact
             if ((!red || !green || !blue) && !fallback) return {};
 
             QImage preview(previewSize, QImage::Format_RGBA8888);
-            for (int y = 0; y < preview.height(); ++y) {
-                auto* dst = preview.scanLine(y);
-                const int sourceY = std::clamp(
-                    y * image.height() / preview.height(), 0, image.height() - 1);
-                for (int x = 0; x < preview.width(); ++x) {
-                    const int sourceX = std::clamp(
-                        x * image.width() / preview.width(), 0, image.width() - 1);
-                    const size_t pixel = static_cast<size_t>(sourceY) * image.width() + sourceX;
-                    const auto sample = [pixel](const auto& channel) {
-                        return channel && channel->data() && channel->size() > pixel
-                            ? channel->data()[pixel] : 0.0f;
-                    };
-                    const float gray = sample(fallback);
-                    const auto toByte = [](float value) {
-                        return static_cast<uint8_t>(
-                            std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
-                    };
-                    dst[x * 4 + 0] = toByte(red ? sample(red) : gray);
-                    dst[x * 4 + 1] = toByte(green ? sample(green) : gray);
-                    dst[x * 4 + 2] = toByte(blue ? sample(blue) : gray);
-                    dst[x * 4 + 3] = 255;
+            const auto channelData = [](const auto& channel) -> const float* {
+                return channel && channel->data() ? channel->data() : nullptr;
+            };
+            const float* redData = channelData(red);
+            const float* greenData = channelData(green);
+            const float* blueData = channelData(blue);
+            const float* fallbackData = channelData(fallback);
+            const size_t redSize = red ? red->size() : 0u;
+            const size_t greenSize = green ? green->size() : 0u;
+            const size_t blueSize = blue ? blue->size() : 0u;
+            const size_t fallbackSize = fallback ? fallback->size() : 0u;
+            const int previewHeight = preview.height();
+            const auto buildPreviewRows = [&](const tbb::blocked_range<int>& rows) {
+                for (int y = rows.begin(); y != rows.end(); ++y) {
+                    auto* dst = preview.scanLine(y);
+                    const int sourceY = std::clamp(
+                        y * image.height() / previewHeight, 0, image.height() - 1);
+                    for (int x = 0; x < preview.width(); ++x) {
+                        const int sourceX = std::clamp(
+                            x * image.width() / preview.width(), 0, image.width() - 1);
+                        const size_t pixel = static_cast<size_t>(sourceY) * image.width() + sourceX;
+                        const auto sample = [pixel](const float* data, size_t size) {
+                            return data && size > pixel ? data[pixel] : 0.0f;
+                        };
+                        const float gray = sample(fallbackData, fallbackSize);
+                        const auto toByte = [](float value) {
+                            return static_cast<uint8_t>(
+                                std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+                        };
+                        dst[x * 4 + 0] = toByte(red ? sample(redData, redSize) : gray);
+                        dst[x * 4 + 1] = toByte(green ? sample(greenData, greenSize) : gray);
+                        dst[x * 4 + 2] = toByte(blue ? sample(blueData, blueSize) : gray);
+                        dst[x * 4 + 3] = 255;
+                    }
                 }
+            };
+            if (static_cast<std::size_t>(preview.width()) * previewHeight >=
+                256u * 1024u) {
+                tbb::parallel_for(
+                    tbb::blocked_range<int>(0, previewHeight, 16),
+                    buildPreviewRows);
+            } else {
+                buildPreviewRows(tbb::blocked_range<int>(0, previewHeight));
             }
             return preview;
         }

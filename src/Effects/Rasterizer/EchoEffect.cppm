@@ -87,7 +87,7 @@ public:
 
         const float invTotal = 1.0f / std::max(totalWeight, 0.0001f);
 
-        ArtifactCore::Parallel::For(0, height, [&](int y)
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y)
         {
             float* outRow = dstData + static_cast<size_t>(y) * width * 4;
             for (int x = 0; x < width; ++x)

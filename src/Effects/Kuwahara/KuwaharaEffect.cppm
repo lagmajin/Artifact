@@ -39,9 +39,10 @@ public:
         cv::Vec4f sum(0, 0, 0, 0);
         for (int y = cy + dy; y != cy + dy + r; dy > 0 ? ++y : --y) {
             if (y < 0 || y >= mat.rows) continue;
+            const cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = cx + dx; x != cx + dx + r; dx > 0 ? ++x : --x) {
                 if (x < 0 || x >= mat.cols) continue;
-                sum += mat.at<cv::Vec4f>(y, x);
+                sum += row[x];
                 ++count;
             }
         }
@@ -54,9 +55,10 @@ public:
         int count = 0;
         for (int y = cy + dy; y != cy + dy + r; dy > 0 ? ++y : --y) {
             if (y < 0 || y >= mat.rows) continue;
+            const cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = cx + dx; x != cx + dx + r; dx > 0 ? ++x : --x) {
                 if (x < 0 || x >= mat.cols) continue;
-                cv::Vec4f diff = mat.at<cv::Vec4f>(y, x) - mean;
+                cv::Vec4f diff = row[x] - mean;
                 var += diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2];
                 ++count;
             }
@@ -76,7 +78,7 @@ public:
         if (!dstPixels) return;
         cv::Mat mat(h, w, CV_32FC4, const_cast<float*>(pixels));
         int r = std::max(1, static_cast<int>(radius_));
-        ArtifactCore::Parallel::For(0, h, [&](int y) {
+        ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
             for (int x = 0; x < w; ++x) {
                 cv::Vec4f m0 = quadrantMean(mat, x, y, 0, -r, r);
                 cv::Vec4f m1 = quadrantMean(mat, x, y, 0, 0, r);

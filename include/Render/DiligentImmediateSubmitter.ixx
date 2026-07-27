@@ -97,6 +97,8 @@ private:
     int m_batchSolidRectCount_ = 0;
     RefCntAutoPtr<IBuffer> m_batch_solid_rect_vb_;
     RefCntAutoPtr<IBuffer> m_batch_solid_rect_ib_;
+    RefCntAutoPtr<IBuffer> m_batch_solid_rect_indirect_args_;
+    bool m_batch_solid_rect_indirect_supported_ = false;
 
     // H1: Cached SRB variable pointers for per-draw texture SRV updates
     // These point into per-PSO SRBs; nulled in destroy(), repopulated in setPSOs()

@@ -75,16 +75,20 @@ public:
         cv::Mat result = color.clone();
         cv::Mat hc(highlight.size(), CV_32FC3);
         cv::Mat sc(shadow.size(), CV_32FC3);
-        ArtifactCore::Parallel::For(0, hc.rows, [&](int y) {
+          ArtifactCore::Parallel::For(0, hc.rows, hc.rows * hc.cols, [&](int y) {
+            const float* highlightRow = highlight.ptr<float>(y);
+            const float* shadowRow = shadow.ptr<float>(y);
+            cv::Vec3f* highlightOutRow = hc.ptr<cv::Vec3f>(y);
+            cv::Vec3f* shadowOutRow = sc.ptr<cv::Vec3f>(y);
             for (int x = 0; x < hc.cols; ++x) {
-                float h = std::clamp(highlight.at<float>(y, x) * strength_, 0.0f, 1.0f);
-                float s = std::clamp(shadow.at<float>(y, x) * strength_, 0.0f, 1.0f);
-                hc.at<cv::Vec3f>(y, x) = cv::Vec3f(
+                const float h = std::clamp(highlightRow[x] * strength_, 0.0f, 1.0f);
+                const float s = std::clamp(shadowRow[x] * strength_, 0.0f, 1.0f);
+                highlightOutRow[x] = cv::Vec3f(
                     highlightColor_.blueF(),
                     highlightColor_.greenF(),
                     highlightColor_.redF()
                 ) * h;
-                sc.at<cv::Vec3f>(y, x) = cv::Vec3f(
+                shadowOutRow[x] = cv::Vec3f(
                     shadowColor_.blueF(),
                     shadowColor_.greenF(),
                     shadowColor_.redF()

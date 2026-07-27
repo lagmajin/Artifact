@@ -77,7 +77,7 @@ public:
         const int channel = std::clamp(channel_, 0, 4);
         const float strength = std::clamp(strength_, 0.0f, 1.0f);
 
-        Parallel::For(0, height, [&](int y) {
+        Parallel::For(0, height, width * height, [&](int y) {
             for (int x = 0; x < width; ++x) {
                 float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
                 auto invertChannel = [strength](float v) {

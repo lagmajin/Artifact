@@ -25,6 +25,7 @@ import Utils.String.UniString;
 import Artifact.Render.IRenderer;
 import Property.Abstract;
 import Utils.Id;
+import Core.Parallel;
 
 // Mesh instancing (Phase 2) - convert CloneData to InstanceData
 import Graphics;
@@ -348,7 +349,10 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
         }
     }
 
-    for (auto& clone : clones) {
+    ArtifactCore::Parallel::For(0, static_cast<int>(clones.size()),
+                                static_cast<int>(clones.size()),
+                                [&](int index) {
+        auto& clone = clones[static_cast<size_t>(index)];
         QMatrix4x4 transform;
         transform.setToIdentity();
         const auto applyStage = [&transform](const ArtifactCloneLayerSettings::TransformStage& stage) {
@@ -363,7 +367,7 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
         applyStage(impl_->settings_.transform2);
         applyStage(impl_->settings_.transform3);
         clone.transform = transform * clone.transform;
-    }
+    });
 
     return clones;
 }

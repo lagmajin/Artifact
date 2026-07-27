@@ -121,7 +121,7 @@ static float linearToSrgb(const float value)
 static void convertBlurColorSpace(cv::Mat& image, const bool toLinear,
                                   const bool premultiplied)
 {
-    ArtifactCore::Parallel::For(0, image.rows, [&](int y) {
+    ArtifactCore::Parallel::For(0, image.rows, image.rows * image.cols, [&](int y) {
         auto* row = image.ptr<cv::Vec4f>(y);
         for (int x = 0; x < image.cols; ++x) {
             auto& pixel = row[x];

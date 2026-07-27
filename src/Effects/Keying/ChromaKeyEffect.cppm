@@ -88,7 +88,7 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
     
     if(smooth < 0.001f) smooth = 0.001f;
 
-    ArtifactCore::Parallel::For(0, rows, [&](int y) {
+    ArtifactCore::Parallel::For(0, rows, rows * cols, [&](int y) {
         cv::Vec4f* ptr = dstMat.ptr<cv::Vec4f>(y);
         for(int x=0; x<cols; ++x) {
             float r = ptr[x][0];

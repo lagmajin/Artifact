@@ -44,6 +44,7 @@ module Artifact.Effect.Stabilizer;
 
 import Frame.Position;
 import Video.Stabilizer;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -77,6 +78,10 @@ QImage StabilizerEffect::processFrame(const QImage& frame, int frameIndex)
     
     // Simple transformation implementation (would use OpenCV or similar for production)
     QImage result(outputSize, QImage::Format_RGB32);
+    const QImage source = (frame.format() == QImage::Format_RGB32 ||
+                           frame.format() == QImage::Format_ARGB32)
+        ? frame
+        : frame.convertToFormat(QImage::Format_ARGB32);
     int w = outputSize.width();
     int h = outputSize.height();
     
@@ -84,7 +89,8 @@ QImage StabilizerEffect::processFrame(const QImage& frame, int frameIndex)
     double cosRot = std::cos(inverse.rotation);
     double sinRot = std::sin(inverse.rotation);
     
-    for (int y = 0; y < h; y++) {
+    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        auto* resultRow = reinterpret_cast<QRgb*>(result.scanLine(y));
         for (int x = 0; x < w; x++) {
             double srcX = x - outputSize.width() / 2.0;
             double srcY = y - outputSize.height() / 2.0;
@@ -98,40 +104,42 @@ QImage StabilizerEffect::processFrame(const QImage& frame, int frameIndex)
             dstX += frame.width() / 2.0 - inverse.x;
             dstY += frame.height() / 2.0 - inverse.y;
             
-            if (dstX >= 0 && dstX < frame.width() && dstY >= 0 && dstY < frame.height()) {
+            if (dstX >= 0 && dstX < source.width() && dstY >= 0 && dstY < source.height()) {
                 int sx = static_cast<int>(std::floor(dstX));
                 int sy = static_cast<int>(std::floor(dstY));
                 
-                if (sx >= 0 && sx < frame.width() - 1 && sy >= 0 && sy < frame.height() - 1) {
+                if (sx >= 0 && sx < source.width() - 1 && sy >= 0 && sy < source.height() - 1) {
                     // Simple bilinear interpolation
                     double fracX = dstX - sx;
                     double fracY = dstY - sy;
                     
-                    QRgb c00 = frame.pixel(sx, sy);
-                    QRgb c01 = frame.pixel(sx + 1, sy);
-                    QRgb c10 = frame.pixel(sx, sy + 1);
-                    QRgb c11 = frame.pixel(sx + 1, sy + 1);
+                    const auto* row0 = reinterpret_cast<const QRgb*>(source.constScanLine(sy));
+                    const auto* row1 = reinterpret_cast<const QRgb*>(source.constScanLine(sy + 1));
+                    QRgb c00 = row0[sx];
+                    QRgb c01 = row0[sx + 1];
+                    QRgb c10 = row1[sx];
+                    QRgb c11 = row1[sx + 1];
                     
                     QRgb c0 = interpolatePixel(c00, c01, fracX);
                     QRgb c1 = interpolatePixel(c10, c11, fracX);
                     QRgb c = interpolatePixel(c0, c1, fracY);
                     
-                    result.setPixel(x, y, c);
+                    resultRow[x] = c;
                 } else {
-                    result.setPixel(x, y, frame.pixel(sx, sy));
+                    resultRow[x] = reinterpret_cast<const QRgb*>(source.constScanLine(sy))[sx];
                 }
             } else {
                 // Border handling
                 QRgb borderColor = qRgb(0, 0, 0);
                 if (params_.borderFill > 0.0) {
-                    int bx = static_cast<int>(std::clamp(dstX, 0.0, static_cast<double>(frame.width() - 1)));
-                    int by = static_cast<int>(std::clamp(dstY, 0.0, static_cast<double>(frame.height() - 1)));
-                    borderColor = frame.pixel(bx, by);
+                    int bx = static_cast<int>(std::clamp(dstX, 0.0, static_cast<double>(source.width() - 1)));
+                    int by = static_cast<int>(std::clamp(dstY, 0.0, static_cast<double>(source.height() - 1)));
+                    borderColor = reinterpret_cast<const QRgb*>(source.constScanLine(by))[bx];
                 }
-                result.setPixel(x, y, borderColor);
+                resultRow[x] = borderColor;
             }
         }
-    }
+    });
     
     return result;
 }

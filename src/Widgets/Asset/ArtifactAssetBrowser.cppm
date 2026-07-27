@@ -2767,7 +2767,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
    // Standalone files — parallelized with TBB
    std::vector<AssetMenuItem> standaloneItems(entries.size());
-   tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(entries.size())),
+   const auto processStandaloneRange =
     [&](const tbb::blocked_range<int>& range) {
      for (int i = range.begin(); i < range.end(); ++i) {
       const QString& entry = entries.at(i);
@@ -2807,7 +2807,13 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
       item.icon = generateThumbnail(fullPath);
       standaloneItems[static_cast<size_t>(i)] = std::move(item);
      }
-    });
+    };
+   if (entries.size() >= 256u) {
+    tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(entries.size()), 16),
+                      processStandaloneRange);
+   } else {
+    processStandaloneRange(tbb::blocked_range<int>(0, static_cast<int>(entries.size())));
+   }
 
    for (auto& item : standaloneItems) {
     if (!item.name.toQString().isEmpty()) {

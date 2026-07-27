@@ -68,8 +68,10 @@ void LensDistortionEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, I
     if (invertDistortion_) k = -k;
     float zm = zoom_;
 
-    std::vector<FloatRGBA> rowResults(static_cast<size_t>(width) * height);
-    ArtifactCore::Parallel::For(0, height, [&](int y) {
+    ImageF32x4_RGBA dstImage;
+    dstImage.resize(width, height);
+    float* destinationPixels = dstImage.rgba32fData();
+    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
         for (int x = 0; x < width; x++) {
             float dx = static_cast<float>(x) - cx;
             float dy = static_cast<float>(y) - cy;
@@ -90,18 +92,13 @@ void LensDistortionEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, I
 
             FloatRGBA pixel = sampleBilinear(srcImage, srcX, srcY);
             size_t idx = static_cast<size_t>(y) * width + x;
-            rowResults[idx] = pixel;
+            float* destination = destinationPixels + idx * 4u;
+            destination[0] = pixel.r();
+            destination[1] = pixel.g();
+            destination[2] = pixel.b();
+            destination[3] = pixel.a();
         }
     });
-
-    ImageF32x4_RGBA dstImage;
-    dstImage.resize(width, height);
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            size_t srcIdx = static_cast<size_t>(y) * width + x;
-            dstImage.setPixel(x, y, rowResults[srcIdx]);
-        }
-    }
 
     dst = ImageF32x4RGBAWithCache(dstImage);
 }

@@ -85,7 +85,7 @@ public:
         const float burnCenterY = unit(rng);
         const float burnRadius = 0.18f + filmBurn * 0.8f;
         cv::Mat output = working.clone();
-        ArtifactCore::Parallel::For(0, height, [&](int y) {
+        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
             std::mt19937 rowRng(static_cast<std::uint32_t>(seed) ^
                                 (static_cast<std::uint32_t>(frameKey) * 0x9e3779b9u) ^
                                 (static_cast<std::uint32_t>(y) * 0x85ebca6bu));

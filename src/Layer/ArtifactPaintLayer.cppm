@@ -155,6 +155,7 @@ void ArtifactPaintLayer::applyStrokeAtFrame(const BrushStroke& stroke, const Fra
     auto& img = buf.image();
     int w = img.width(), h = img.height();
     if (w <= 0 || h <= 0) return;
+    float* pixels = img.rgba32fData();
 
     float r2 = stroke.radius * stroke.radius;
     FloatRGBA color = stroke.eraser ? FloatRGBA{0,0,0,0} : stroke.color;
@@ -174,17 +175,16 @@ void ArtifactPaintLayer::applyStrokeAtFrame(const BrushStroke& stroke, const Fra
                 if (dx * dx + dy * dy <= r2) {
                     float falloff = 1.0f - std::sqrt(dx*dx + dy*dy) / stroke.radius;
                     float alpha = color.a() * stroke.opacity * std::max(0.0f, falloff);
+                    float* pixel = pixels +
+                        (static_cast<size_t>(y) * w + x) * 4u;
                     if (stroke.eraser) {
-                        FloatRGBA px = img.getPixel(x, y);
-                        px.setAlpha(px.a() * (1.0f - alpha));
-                        img.setPixel(x, y, px);
+                        pixel[3] *= 1.0f - alpha;
                     } else {
-                        FloatRGBA px = img.getPixel(x, y);
-                        px.setRed(px.r() * (1.0f - alpha) + color.r() * alpha);
-                        px.setGreen(px.g() * (1.0f - alpha) + color.g() * alpha);
-                        px.setBlue(px.b() * (1.0f - alpha) + color.b() * alpha);
-                        px.setAlpha(px.a() * (1.0f - alpha) + alpha);
-                        img.setPixel(x, y, px);
+                        const float invAlpha = 1.0f - alpha;
+                        pixel[0] = pixel[0] * invAlpha + color.r() * alpha;
+                        pixel[1] = pixel[1] * invAlpha + color.g() * alpha;
+                        pixel[2] = pixel[2] * invAlpha + color.b() * alpha;
+                        pixel[3] = pixel[3] * invAlpha + alpha;
                     }
                 }
             }

@@ -40,7 +40,7 @@ public:
             const auto& si=src.image();int W=si.width(),H=si.height();
             int rw=ref_.width(),rh=ref_.height();
             float m=std::clamp(mixAmount_,0.0f,1.0f);
-            Parallel::For(0,H,[&](int y){float* o=d+(size_t)y*W*4;int ry=std::min(y,rh-1);
+Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;int ry=std::min(y,rh-1);
                 for(int x=0;x<W;++x){int rx=std::min(x,rw-1);
                     const float*rp=rd+((size_t)ry*rw+rx)*4;float*p=o+(size_t)x*4;
                     p[0]=p[0]*(1-m)+rp[0]*m;p[1]=p[1]*(1-m)+rp[1]*m;

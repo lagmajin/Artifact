@@ -12,6 +12,9 @@ module;
 #include <QString>
 #include <QUuid>
 
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -192,10 +195,13 @@ export QImage makeVersionedSolidGradientImage(
     return std::clamp(value, 0.0f, 1.0f);
   };
 
-  for (int y = 0; y < size.height(); ++y) {
-    auto* row = reinterpret_cast<QRgb*>(image.scanLine(y));
-    const float v = (static_cast<float>(y) + 0.5f) / height;
-    for (int x = 0; x < size.width(); ++x) {
+  auto* imageBits = image.bits();
+  const int imageStride = image.bytesPerLine();
+  const auto renderGradientRows = [&](const tbb::blocked_range<int>& rows) {
+    for (int y = rows.begin(); y != rows.end(); ++y) {
+      auto* row = reinterpret_cast<QRgb*>(imageBits + y * imageStride);
+      const float v = (static_cast<float>(y) + 0.5f) / height;
+      for (int x = 0; x < size.width(); ++x) {
       const float u = (static_cast<float>(x) + 0.5f) / width;
       const float localX = (u - centerX) * aspect;
       const float localY = v - centerY;
@@ -246,8 +252,18 @@ export QImage makeVersionedSolidGradientImage(
       const int green = static_cast<int>(encoded[1] * 255.0f + 0.5f);
       const int blue = static_cast<int>(encoded[2] * 255.0f + 0.5f);
       const int alphaByte = static_cast<int>(alpha * 255.0f + 0.5f);
-      row[x] = qRgba(red, green, blue, alphaByte);
+        row[x] = qRgba(red, green, blue, alphaByte);
+      }
     }
+  };
+
+  const std::size_t pixelCount = static_cast<std::size_t>(size.width()) *
+                                 static_cast<std::size_t>(size.height());
+  if (pixelCount >= 256u * 1024u) {
+    tbb::parallel_for(tbb::blocked_range<int>(0, size.height(), 16),
+                      renderGradientRows);
+  } else {
+    renderGradientRows(tbb::blocked_range<int>(0, size.height()));
   }
   return image;
 }
@@ -896,61 +912,91 @@ QImage applyMatteStackToSurface(const QImage& surface,
       continue;
     }
 
+    const QImage sourceImage =
+        srcImg.convertToFormat(QImage::Format_ARGB32_Premultiplied);
     std::vector<float> matteMask(pixelCount, 0.0f);
-    for (int y = 0; y < h; ++y) {
-      for (int x = 0; x < w; ++x) {
+    const auto* sourceBits = sourceImage.constBits();
+    const int sourceStride = sourceImage.bytesPerLine();
+    const bool useLuminance =
+        ArtifactCore::MatteModeUtils::isLuminance(node.mode());
+    const bool invertMask = ArtifactCore::MatteModeUtils::isInverted(node.mode());
+    const auto buildMatteRows = [&](const tbb::blocked_range<int>& rows) {
+      for (int y = rows.begin(); y != rows.end(); ++y) {
+        for (int x = 0; x < w; ++x) {
         const int sx = std::min(x * srcW / w, srcW - 1);
         const int sy = std::min(y * srcH / h, srcH - 1);
-        const QRgb pixel = srcImg.pixel(sx, sy);
+        const QRgb pixel = reinterpret_cast<const QRgb*>(
+            sourceBits + sy * sourceStride)[sx];
 
         float v = 0.0f;
-        if (ArtifactCore::MatteModeUtils::isLuminance(node.mode())) {
+        if (useLuminance) {
           v = (qRed(pixel) * 0.299f + qGreen(pixel) * 0.587f + qBlue(pixel) * 0.114f) / 255.0f;
         } else {
           v = qAlpha(pixel) / 255.0f;
         }
 
-        if (ArtifactCore::MatteModeUtils::isInverted(node.mode())) {
+        if (invertMask) {
           v = 1.0f - v;
         }
         matteMask[static_cast<size_t>(y) * w + x] = std::clamp(v, 0.0f, 1.0f);
+        }
       }
+    };
+    if (pixelCount >= 256u * 1024u) {
+      tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), buildMatteRows);
+    } else {
+      buildMatteRows(tbb::blocked_range<int>(0, h));
     }
 
-    switch (matteStack.stackMode()) {
-    case ArtifactCore::MatteStackMode::Add:
-      for (size_t i = 0; i < pixelCount; ++i) {
-        combinedMask[i] = std::min(1.0f, combinedMask[i] + matteMask[i]);
+    const ArtifactCore::MatteStackMode stackMode = matteStack.stackMode();
+    const auto combineMatteRows = [&](const tbb::blocked_range<size_t>& range) {
+      for (size_t i = range.begin(); i != range.end(); ++i) {
+        switch (stackMode) {
+        case ArtifactCore::MatteStackMode::Add:
+          combinedMask[i] = std::min(1.0f, combinedMask[i] + matteMask[i]);
+          break;
+        case ArtifactCore::MatteStackMode::Common:
+          combinedMask[i] = std::min(combinedMask[i], matteMask[i]);
+          break;
+        case ArtifactCore::MatteStackMode::Subtract:
+          combinedMask[i] = std::max(0.0f, combinedMask[i] - matteMask[i]);
+          break;
+        }
       }
-      break;
-    case ArtifactCore::MatteStackMode::Common:
-      for (size_t i = 0; i < pixelCount; ++i) {
-        combinedMask[i] = std::min(combinedMask[i], matteMask[i]);
-      }
-      break;
-    case ArtifactCore::MatteStackMode::Subtract:
-      for (size_t i = 0; i < pixelCount; ++i) {
-        combinedMask[i] = std::max(0.0f, combinedMask[i] - matteMask[i]);
-      }
-      break;
+    };
+    if (pixelCount >= 256u * 1024u) {
+      tbb::parallel_for(tbb::blocked_range<size_t>(0, pixelCount, 4096),
+                        combineMatteRows);
+    } else {
+      combineMatteRows(tbb::blocked_range<size_t>(0, pixelCount));
     }
   }
 
   QImage result = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-  for (int y = 0; y < h; ++y) {
-    for (int x = 0; x < w; ++x) {
+  auto* resultBits = result.bits();
+  const int resultStride = result.bytesPerLine();
+  const auto applyMatteRows = [&](const tbb::blocked_range<int>& rows) {
+    for (int y = rows.begin(); y != rows.end(); ++y) {
+      auto* resultRow = reinterpret_cast<QRgb*>(resultBits + y * resultStride);
+      for (int x = 0; x < w; ++x) {
       const size_t idx = static_cast<size_t>(y) * w + x;
-      QRgb pixel = result.pixel(x, y);
+      QRgb pixel = resultRow[x];
       const float mask = combinedMask[idx];
       int a = static_cast<int>(qAlpha(pixel) * mask);
       const int r = static_cast<int>(qRed(pixel) * mask);
       const int g = static_cast<int>(qGreen(pixel) * mask);
       const int b = static_cast<int>(qBlue(pixel) * mask);
-      result.setPixel(x, y, qRgba(std::clamp(r, 0, 255),
-                                  std::clamp(g, 0, 255),
-                                  std::clamp(b, 0, 255),
-                                  std::clamp(a, 0, 255)));
+      resultRow[x] = qRgba(std::clamp(r, 0, 255),
+                           std::clamp(g, 0, 255),
+                           std::clamp(b, 0, 255),
+                           std::clamp(a, 0, 255));
+      }
     }
+  };
+  if (pixelCount >= 256u * 1024u) {
+    tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), applyMatteRows);
+  } else {
+    applyMatteRows(tbb::blocked_range<int>(0, h));
   }
   return result;
 }
@@ -1299,18 +1345,31 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           surface = directProcessedBuffer->toQImage();
         }
         QImage lit = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-        for (int y = 0; y < lit.height(); ++y) {
-          QRgb* row = reinterpret_cast<QRgb*>(lit.scanLine(y));
-          for (int x = 0; x < lit.width(); ++x) {
+        auto* litBits = lit.bits();
+        const int litStride = lit.bytesPerLine();
+        const auto applyLightRows = [&](const tbb::blocked_range<int>& rows) {
+          for (int y = rows.begin(); y != rows.end(); ++y) {
+            auto* row = reinterpret_cast<QRgb*>(litBits + y * litStride);
+            for (int x = 0; x < lit.width(); ++x) {
             const int r = qRed(row[x]);
             const int g = qGreen(row[x]);
             const int b = qBlue(row[x]);
             const int a = qAlpha(row[x]);
-            row[x] = qRgba(std::clamp(static_cast<int>(r + (255 - r) * lift), 0, 255),
-                           std::clamp(static_cast<int>(g + (255 - g) * lift), 0, 255),
-                           std::clamp(static_cast<int>(b + (255 - b) * lift), 0, 255),
-                           a);
+              row[x] = qRgba(std::clamp(static_cast<int>(r + (255 - r) * lift), 0, 255),
+                             std::clamp(static_cast<int>(g + (255 - g) * lift), 0, 255),
+                             std::clamp(static_cast<int>(b + (255 - b) * lift), 0, 255),
+                             a);
+            }
           }
+        };
+        const std::size_t lightPixelCount =
+            static_cast<std::size_t>(lit.width()) *
+            static_cast<std::size_t>(lit.height());
+        if (lightPixelCount >= 256u * 1024u) {
+          tbb::parallel_for(tbb::blocked_range<int>(0, lit.height(), 16),
+                            applyLightRows);
+        } else {
+          applyLightRows(tbb::blocked_range<int>(0, lit.height()));
         }
         surface = std::move(lit);
         directProcessedBuffer.reset();
