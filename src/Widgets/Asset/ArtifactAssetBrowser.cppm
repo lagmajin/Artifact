@@ -3169,7 +3169,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     }
    });
 
-  // Connect file double-click to add to project or navigate into folder
+  // Connect file double-click to preview/select or navigate into a folder.
+  // Import remains an explicit context-menu action so a sequence is never
+  // accidentally registered as only its representative frame.
   connect(fileView, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
    if (!index.isValid()) return;
    AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
@@ -3182,11 +3184,6 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     navigateToFolder(filePath);
     return;
    }
-
-   // Otherwise, add file to project
-   auto* svc = ArtifactProjectService::instance();
-   if (!svc) return;
-   svc->importAssetsFromPaths(QStringList() << filePath);
   });
 
   // Connect right-click context menu
