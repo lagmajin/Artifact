@@ -38,6 +38,10 @@
 現行実装では、静止レイヤー用キャッシュに最大エントリ数と総バイト上限を設け、
 `lastFrameNumber` が古いエントリから bounded eviction する。
 
+さらに hit / miss / エントリ数 / 総バイト数の診断 API と、GPU テクスチャ管理側まで
+invalidate する明示的な clear API を備える。画像・SVG は source revision を cache key
+へ含め、同一パス差し替え時の stale surface 再利用を避ける。
+
 まではあるが、static layer を跨いだ `GPU texture` の明示的な cache policy はない。
 
 そのため、見た目が変わらない静止レイヤーでも、
