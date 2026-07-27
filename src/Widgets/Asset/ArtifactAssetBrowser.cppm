@@ -2741,8 +2741,24 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
       frameItem.name = UniString::fromQString(
           QStringLiteral("  └ %1").arg(sf.name));
       frameItem.path = UniString::fromQString(sf.fullPath);
-      frameItem.type = UniString::fromQString(
-          QStringLiteral("Sequence Frame • %1").arg(sf.frame));
+      QStringList frameMarkers;
+      QImageReader frameReader(sf.fullPath);
+      if (!frameReader.canRead()) {
+       frameMarkers.append(QStringLiteral("Unreadable"));
+      } else if (sequenceFrameSize.isValid() &&
+                 frameReader.size().isValid() &&
+                 frameReader.size() != sequenceFrameSize) {
+       frameMarkers.append(QStringLiteral("Size Mismatch"));
+      }
+      if (isMissingAssetPath(sf.fullPath)) {
+       frameMarkers.append(QStringLiteral("Missing"));
+      }
+      QString frameType = QStringLiteral("Sequence Frame • %1").arg(sf.frame);
+      if (!frameMarkers.isEmpty()) {
+       frameType = QStringLiteral("%1 • %2")
+           .arg(frameMarkers.join(QStringLiteral(" • ")), frameType);
+      }
+      frameItem.type = UniString::fromQString(frameType);
       frameItem.isSequenceFrame = true;
       frameItem.sequenceParentPath = item.path.toQString();
       frameItem.sequenceFrameNumber = sf.frame;
@@ -3898,6 +3914,16 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
      info += QString("Sequence Frames: %1<br>").arg(sequenceItem.sequenceFrameCount);
      info += QString("Frame Start: %1<br>").arg(sequenceItem.sequenceStartFrame);
      info += QString("Padding: %1 digits<br>").arg(sequenceItem.sequencePadding);
+     if (filePath != sequenceItem.path.toQString()) {
+      const QFileInfo selectedFrameInfo(filePath);
+      const QRegularExpressionMatch selectedMatch =
+          QRegularExpression(QStringLiteral(R"(\d{3,})"))
+              .match(selectedFrameInfo.fileName());
+      if (selectedMatch.hasMatch()) {
+       info += QString("Selected Frame: %1<br>")
+                   .arg(selectedMatch.captured(0).toInt());
+      }
+     }
      break;
     }
    }
