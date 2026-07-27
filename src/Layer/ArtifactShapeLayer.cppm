@@ -1414,7 +1414,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
   const QMatrix4x4 baseTransform = getGlobalTransform4x4();
   const float contentFieldWeight = compositionFieldContentWeight(this);
  auto* impl = impl_;
- // When bezier path or non-default stroke styles are active, render via QImage cache
+ // Non-solid fills, non-default stroke styles, and operators still use the
+ // compatibility cache. Simple custom Bézier paths use ShapePath::flatten().
  if (impl->useCachePipeline()) {
   impl->rebuildCache();
    const float layerOpacity = opacity() * contentFieldWeight;
