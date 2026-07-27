@@ -1,5 +1,7 @@
 module;
 #include <cstddef>
+#include <array>
+#include <numeric>
 #include <utility>
 #include <algorithm>
 #include <QPainter>
@@ -50,6 +52,26 @@ static ArtifactCore::ShapePath buildShapePath(Artifact::ShapeType shapeType,
                                 int starPoints,
                                 float starInnerRadius,
                                 int polygonSides);
+
+static ArtifactCore::ShapePath buildCustomShapePath(
+    const std::vector<Artifact::CustomPathVertex>& vertices,
+    bool closed) {
+ ArtifactCore::ShapePath path;
+ if (vertices.empty()) return path;
+ path.moveTo(vertices.front().pos);
+ for (size_t i = 0; i + 1 < vertices.size(); ++i) {
+  const auto& v0 = vertices[i];
+  const auto& v1 = vertices[i + 1];
+  path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
+ }
+ if (closed && vertices.size() >= 2) {
+  const auto& v0 = vertices.back();
+  const auto& v1 = vertices.front();
+  path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
+  path.close();
+ }
+ return path;
+}
 
 QPointF mapPoint(const QMatrix4x4& transform, const QPointF& point) {
  QVector4D v = transform * QVector4D(static_cast<float>(point.x()),
@@ -227,23 +249,8 @@ QPainterPath buildLayerPath(const Artifact::ShapeType shapeType,
                             const bool customPolygonClosed,
                             const std::vector<Artifact::CustomPathVertex>& customPathVertices,
                             const bool customPathClosed) {
- QPainterPath path;
  if (customPathVertices.size() >= 3) {
-  path.moveTo(customPathVertices.front().pos);
-  const size_t count = customPathVertices.size();
-  for (size_t i = 0; i < count; ++i) {
-   const size_t next = (i + 1) % count;
-   if (!customPathClosed && next == 0) {
-    break;
-   }
-   const auto& v0 = customPathVertices[i];
-   const auto& v1 = customPathVertices[next];
-   path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
-  }
-  if (customPathClosed) {
-   path.closeSubpath();
-  }
-  return path;
+  return buildCustomShapePath(customPathVertices, customPathClosed).toPainterPath();
  }
 
  if (customPolygonPoints.size() >= 3) {
@@ -327,6 +334,86 @@ static std::vector<QPainterPath> buildProcessedPainterPaths(
   painterPaths.push_back(path.toPainterPath());
  }
  return painterPaths;
+}
+
+static std::vector<std::array<QPointF, 3>> triangulateSimplePolygon(
+    const std::vector<QPointF>& polygon) {
+ std::vector<std::array<QPointF, 3>> triangles;
+ if (polygon.size() < 3) return triangles;
+
+ auto cross = [](const QPointF& a, const QPointF& b, const QPointF& c) {
+  return (b.x() - a.x()) * (c.y() - a.y()) -
+         (b.y() - a.y()) * (c.x() - a.x());
+ };
+ double signedArea = 0.0;
+ for (size_t i = 0; i < polygon.size(); ++i) {
+  const auto& a = polygon[i];
+  const auto& b = polygon[(i + 1) % polygon.size()];
+  signedArea += a.x() * b.y() - b.x() * a.y();
+ }
+ if (std::abs(signedArea) <= 1e-9) return triangles;
+
+ std::vector<size_t> indices(polygon.size());
+ std::iota(indices.begin(), indices.end(), 0);
+ const bool ccw = signedArea > 0.0;
+ const auto inside = [&](const QPointF& point, const QPointF& a,
+                         const QPointF& b, const QPointF& c) {
+  const double c0 = cross(a, b, point);
+  const double c1 = cross(b, c, point);
+  const double c2 = cross(c, a, point);
+  if (ccw) return c0 >= -1e-9 && c1 >= -1e-9 && c2 >= -1e-9;
+  return c0 <= 1e-9 && c1 <= 1e-9 && c2 <= 1e-9;
+ };
+
+ size_t guard = 0;
+ while (indices.size() > 2 && guard++ < polygon.size() * polygon.size()) {
+  bool clipped = false;
+  for (size_t i = 0; i < indices.size(); ++i) {
+   const size_t prev = indices[(i + indices.size() - 1) % indices.size()];
+   const size_t curr = indices[i];
+   const size_t next = indices[(i + 1) % indices.size()];
+   const double turn = cross(polygon[prev], polygon[curr], polygon[next]);
+   if ((ccw && turn <= 1e-9) || (!ccw && turn >= -1e-9)) continue;
+   bool containsVertex = false;
+   for (const size_t candidate : indices) {
+    if (candidate == prev || candidate == curr || candidate == next) continue;
+    if (inside(polygon[candidate], polygon[prev], polygon[curr], polygon[next])) {
+     containsVertex = true;
+     break;
+    }
+   }
+   if (containsVertex) continue;
+   triangles.push_back({polygon[prev], polygon[curr], polygon[next]});
+   indices.erase(indices.begin() + static_cast<std::ptrdiff_t>(i));
+   clipped = true;
+   break;
+  }
+  if (!clipped) return {};
+ }
+ return triangles;
+}
+
+static std::vector<ArtifactCore::ShapePath> buildProcessedShapePaths(
+    Artifact::ShapeType shapeType,
+    int width,
+    int height,
+    float cornerRadius,
+    int starPoints,
+    float starInnerRadius,
+    int polygonSides,
+    const std::vector<QPointF>& customPolygonPoints,
+    bool customPolygonClosed,
+    const std::vector<Artifact::CustomPathVertex>& customPathVertices,
+    bool customPathClosed,
+    const std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>>& operators)
+{
+ const QPainterPath basePainterPath = buildLayerPath(
+     shapeType, width, height, cornerRadius, starPoints, starInnerRadius,
+     polygonSides, customPolygonPoints, customPolygonClosed,
+     customPathVertices, customPathClosed);
+ const ArtifactCore::ShapePath basePath =
+     ArtifactCore::ShapePath::fromPainterPath(basePainterPath);
+ return applyShapeOperators(basePath, operators);
 }
 
 std::vector<QPointF> polygonToPoints(const QPolygonF& polygon) {
@@ -758,8 +845,7 @@ public:
  std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> shapeOperators_;
 
   bool useCachePipeline() const {
-   return customPathVertices_.size() >= 3 ||
-          fillType_ != ArtifactSolidFillType::Solid ||
+   return fillType_ != ArtifactSolidFillType::Solid ||
           strokeCap_ != StrokeCap::Flat ||
           strokeJoin_ != StrokeJoin::Miter ||
           strokeAlign_ != StrokeAlign::Center ||
@@ -805,13 +891,21 @@ public:
       const float cy = static_cast<float>(h) * fillGradientCenterY_;
       const float radius = static_cast<float>(std::max(w, h)) * fillGradientRadius_;
       QGradient* grad = nullptr;
-      if (fillType_ == ArtifactSolidFillType::LinearGradient) {
+      if (fillType_ == ArtifactSolidFillType::LinearGradient ||
+          fillType_ == ArtifactSolidFillType::RepeatingGradient ||
+          fillType_ == ArtifactSolidFillType::MirroredGradient) {
        const float rad = fillGradientAngleDegrees_ * static_cast<float>(M_PI) / 180.0f;
        const float dx = std::cos(rad) * static_cast<float>(w) * 0.5f;
        const float dy = std::sin(rad) * static_cast<float>(h) * 0.5f;
        const QPointF start(static_cast<qreal>(cx - dx), static_cast<qreal>(cy - dy));
        const QPointF end(static_cast<qreal>(cx + dx), static_cast<qreal>(cy + dy));
-       grad = new QLinearGradient(start, end);
+       auto* linear = new QLinearGradient(start, end);
+       if (fillType_ == ArtifactSolidFillType::RepeatingGradient) {
+        linear->setSpread(QGradient::RepeatSpread);
+       } else if (fillType_ == ArtifactSolidFillType::MirroredGradient) {
+        linear->setSpread(QGradient::ReflectSpread);
+       }
+       grad = linear;
       } else if (fillType_ == ArtifactSolidFillType::RadialGradient) {
        auto* rg = new QRadialGradient(QPointF(cx, cy), radius);
        grad = rg;
@@ -949,6 +1043,10 @@ void ArtifactShapeLayer::setShapeType(Artifact::ShapeType type) {
    impl_->customPolygonPoints_.clear();
    impl_->customPolygonClosed_ = true;
   }
+  // Selecting a primitive must leave custom path editing mode; otherwise the
+  // renderer continues to prefer the old Bézier path over the new type.
+  impl_->customPathVertices_.clear();
+  impl_->customPathClosed_ = true;
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
@@ -961,9 +1059,18 @@ Artifact::ShapeType ArtifactShapeLayer::shapeType() const { return impl_->shapeT
 // ============================================================
 
 void ArtifactShapeLayer::setSize(int w, int h) {
-  impl_->width_ = w;
-  impl_->height_ = h;
-  setSourceSize(Size_2D(w, h));
+  // Keep the software cache and the GPU fallback on a valid image extent.
+  // Property editors can temporarily submit zero/negative values while an
+  // edit is being committed; allowing those through makes QImage construction
+  // fail and leaves the previous cached shape visible.
+  const int clampedWidth = std::max(1, w);
+  const int clampedHeight = std::max(1, h);
+  if (impl_->width_ == clampedWidth && impl_->height_ == clampedHeight) {
+   return;
+  }
+  impl_->width_ = clampedWidth;
+  impl_->height_ = clampedHeight;
+  setSourceSize(Size_2D(clampedWidth, clampedHeight));
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
@@ -978,7 +1085,19 @@ int ArtifactShapeLayer::shapeHeight() const { return impl_->height_; }
 
 void ArtifactShapeLayer::setFillColor(const FloatColor& c) { impl_->fillColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::fillColor() const { return impl_->fillColor_; }
-void ArtifactShapeLayer::setFillType(ArtifactSolidFillType t) { impl_->fillType_ = t; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setFillType(ArtifactSolidFillType t) {
+ int raw = std::clamp(static_cast<int>(t),
+                      static_cast<int>(ArtifactSolidFillType::Solid),
+                      static_cast<int>(ArtifactSolidFillType::MirroredGradient));
+ const auto normalized = static_cast<ArtifactSolidFillType>(raw);
+ if (impl_->fillType_ == normalized) {
+  return;
+ }
+ impl_->fillType_ = normalized;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 ArtifactSolidFillType ArtifactShapeLayer::fillType() const { return impl_->fillType_; }
 void ArtifactShapeLayer::setFillGradientStartColor(const FloatColor& c) { impl_->fillGradientStartColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::fillGradientStartColor() const { return impl_->fillGradientStartColor_; }
@@ -1003,7 +1122,13 @@ void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) {
  Q_EMIT changed();
 }
 FloatColor ArtifactShapeLayer::strokeColor() const { return impl_->strokeColor_; }
-void ArtifactShapeLayer::setStrokeWidth(float w) { impl_->strokeWidth_ = w; impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeWidth(float w) {
+ impl_->strokeWidth_ = std::max(0.0f, w);
+ impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 float ArtifactShapeLayer::strokeWidth() const { return impl_->strokeWidth_; }
 void ArtifactShapeLayer::setFillEnabled(bool e) { impl_->fillEnabled_ = e; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 bool ArtifactShapeLayer::fillEnabled() const { return impl_->fillEnabled_; }
@@ -1121,11 +1246,38 @@ std::vector<QPointF> ArtifactShapeLayer::customPolygonPoints() const { return im
 bool ArtifactShapeLayer::customPolygonClosed() const { return impl_->customPolygonClosed_; }
 
 // Phase 3: Stroke style setters/getters
-void ArtifactShapeLayer::setStrokeCap(StrokeCap cap) { impl_->strokeCap_ = cap; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeCap(StrokeCap cap) {
+ const auto normalized = static_cast<StrokeCap>(std::clamp(
+     static_cast<int>(cap), static_cast<int>(StrokeCap::Flat),
+     static_cast<int>(StrokeCap::Square)));
+ if (impl_->strokeCap_ == normalized) return;
+ impl_->strokeCap_ = normalized;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 StrokeCap ArtifactShapeLayer::strokeCap() const { return impl_->strokeCap_; }
-void ArtifactShapeLayer::setStrokeJoin(StrokeJoin join) { impl_->strokeJoin_ = join; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeJoin(StrokeJoin join) {
+ const auto normalized = static_cast<StrokeJoin>(std::clamp(
+     static_cast<int>(join), static_cast<int>(StrokeJoin::Miter),
+     static_cast<int>(StrokeJoin::Bevel)));
+ if (impl_->strokeJoin_ == normalized) return;
+ impl_->strokeJoin_ = normalized;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 StrokeJoin ArtifactShapeLayer::strokeJoin() const { return impl_->strokeJoin_; }
-void ArtifactShapeLayer::setStrokeAlign(StrokeAlign align) { impl_->strokeAlign_ = align; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeAlign(StrokeAlign align) {
+ const auto normalized = static_cast<StrokeAlign>(std::clamp(
+     static_cast<int>(align), static_cast<int>(StrokeAlign::Center),
+     static_cast<int>(StrokeAlign::Outside)));
+ if (impl_->strokeAlign_ == normalized) return;
+ impl_->strokeAlign_ = normalized;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 StrokeAlign ArtifactShapeLayer::strokeAlign() const { return impl_->strokeAlign_; }
 void ArtifactShapeLayer::setDashPattern(const std::vector<float>& pattern) { impl_->dashPattern_ = pattern; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 std::vector<float> ArtifactShapeLayer::dashPattern() const { return impl_->dashPattern_; }
@@ -1144,6 +1296,7 @@ void ArtifactShapeLayer::setCustomPathVertices(const std::vector<CustomPathVerte
 void ArtifactShapeLayer::clearCustomPath() {
   if (impl_->customPathVertices_.empty()) return;
   impl_->customPathVertices_.clear();
+  impl_->customPathClosed_ = true;
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
@@ -1254,16 +1407,19 @@ QRectF ArtifactShapeLayer::localBounds() const
 
   QRectF bounds;
   if (!impl_->shapeOperators_.empty()) {
-   const auto processedPaths = buildProcessedPainterPaths(impl_->shapeType_, impl_->width_, impl_->height_,
-                                                         impl_->cornerRadius_, impl_->starPoints_,
-                                                         impl_->starInnerRadius_, impl_->polygonSides_,
-                                                         impl_->customPolygonPoints_, impl_->customPolygonClosed_,
-                                                         impl_->customPathVertices_, impl_->customPathClosed_,
-                                                         impl_->shapeOperators_);
+   const auto processedPaths = buildProcessedShapePaths(
+       impl_->shapeType_, impl_->width_, impl_->height_, impl_->cornerRadius_,
+       impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_,
+       impl_->customPolygonPoints_, impl_->customPolygonClosed_,
+       impl_->customPathVertices_, impl_->customPathClosed_,
+       impl_->shapeOperators_);
    for (const auto& path : processedPaths) {
     const QRectF pathBounds = path.boundingRect();
     bounds = bounds.isNull() ? pathBounds : bounds.united(pathBounds);
    }
+  } else if (impl_->customPathVertices_.size() >= 3) {
+   bounds = buildCustomShapePath(impl_->customPathVertices_,
+                                 impl_->customPathClosed_).boundingRect();
   } else if (impl_->customPathVertices_.size() >= 2) {
    std::vector<QPointF> pts;
    pts.reserve(impl_->customPathVertices_.size());
@@ -1272,11 +1428,10 @@ QRectF ArtifactShapeLayer::localBounds() const
   } else if (impl_->customPolygonPoints_.size() >= 2) {
    bounds = boundsOfPoints(impl_->customPolygonPoints_);
   } else {
-   const QPainterPath path = buildShapePath(impl_->shapeType_, impl_->width_, impl_->height_,
-                                           impl_->cornerRadius_, impl_->starPoints_,
-                                           impl_->starInnerRadius_, impl_->polygonSides_)
-                                .toPainterPath();
-   bounds = path.boundingRect();
+   bounds = buildShapePath(impl_->shapeType_, impl_->width_, impl_->height_,
+                           impl_->cornerRadius_, impl_->starPoints_,
+                           impl_->starInnerRadius_, impl_->polygonSides_)
+                .boundingRect();
   }
 
   if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
@@ -1303,7 +1458,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
   const QMatrix4x4 baseTransform = getGlobalTransform4x4();
   const float contentFieldWeight = compositionFieldContentWeight(this);
  auto* impl = impl_;
- // When bezier path or non-default stroke styles are active, render via QImage cache
+ // Non-solid fills, non-default stroke styles, and operators still use the
+ // compatibility cache. Simple custom Bézier paths use ShapePath::flatten().
  if (impl->useCachePipeline()) {
   impl->rebuildCache();
    const float layerOpacity = opacity() * contentFieldWeight;
@@ -1341,6 +1497,60 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
         drawSoftBodyGrid(this, renderer, transform, fill, stroke,
                          std::max(1.0f, impl->strokeWidth_),
                          impl->strokeEnabled_)) {
+     return;
+    }
+
+    if (impl->customPathVertices_.size() >= 3) {
+     const ShapePath path = buildCustomShapePath(
+         impl->customPathVertices_, impl->customPathClosed_);
+
+     const double scaleX = std::hypot(static_cast<double>(transform(0, 0)),
+                                      static_cast<double>(transform(1, 0)));
+     const double scaleY = std::hypot(static_cast<double>(transform(0, 1)),
+                                      static_cast<double>(transform(1, 1)));
+     const double renderScale = std::max({1.0, scaleX, scaleY});
+     const auto subpaths = path.flattenSubpaths(0.25 / renderScale);
+     if (subpaths.empty()) return;
+     const auto& segments = subpaths.front();
+     std::vector<QPointF> mapped;
+     mapped.reserve(segments.size() + 1);
+     for (const auto& segment : segments) {
+      mapped.push_back(mapPoint(transform, segment.p0));
+     }
+     if (!segments.empty() && !impl->customPathClosed_) {
+      mapped.push_back(mapPoint(transform, segments.back().p1));
+     }
+
+     if (impl->fillEnabled_ && impl->customPathClosed_ && mapped.size() >= 3) {
+      const auto triangles = triangulateSimplePolygon(mapped);
+      if (!triangles.empty()) {
+       for (const auto& triangle : triangles) {
+        renderer->drawSolidTriangleLocal(
+            {static_cast<float>(triangle[0].x()), static_cast<float>(triangle[0].y())},
+            {static_cast<float>(triangle[1].x()), static_cast<float>(triangle[1].y())},
+            {static_cast<float>(triangle[2].x()), static_cast<float>(triangle[2].y())},
+            fill);
+       }
+      } else {
+       std::vector<Detail::float2> polygon;
+       polygon.reserve(mapped.size());
+       for (const auto& point : mapped) {
+        polygon.push_back({static_cast<float>(point.x()),
+                           static_cast<float>(point.y())});
+       }
+       renderer->drawSolidPolygonLocal(polygon, fill);
+      }
+     }
+     if (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f) {
+      for (const auto& segment : segments) {
+       const QPointF p0 = mapPoint(transform, segment.p0);
+       const QPointF p1 = mapPoint(transform, segment.p1);
+       renderer->drawThickLineLocal(
+           {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+           {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
+           std::max(1.0f, impl->strokeWidth_), stroke);
+      }
+     }
      return;
     }
 
@@ -2165,7 +2375,7 @@ std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObje
   }
   // Phase 5: bezier path (takes priority over customPolygon)
   const QJsonArray customPathArr = obj["customPath"].toArray();
-  if (!customPathArr.isEmpty()) {
+  if (customPathArr.size() >= 3) {
     layer->impl_->customPathClosed_ = obj["customPathClosed"].toBool(true);
     layer->impl_->customPathVertices_.clear();
     layer->impl_->customPathVertices_.reserve(customPathArr.size());

@@ -138,6 +138,20 @@ namespace Artifact
    return item.isFolder ? impl_->folderIcon_ : impl_->fileIcon_;
   case Qt::ToolTipRole: {
    QStringList lines;
+   if (item.isSequenceFrame) {
+    lines << QStringLiteral("Sequence Frame: %1").arg(item.sequenceFrameNumber);
+    lines << QStringLiteral("Parent Sequence: %1 frames")
+                 .arg(item.sequenceFrameCount);
+    lines << item.sequenceParentPath;
+    lines << QStringLiteral("Select or drag to use the parent sequence");
+   } else if (item.isSequence) {
+    lines << QStringLiteral("Image Sequence: %1 frames")
+                 .arg(item.sequenceFrameCount);
+    lines << QStringLiteral("Start frame: %1 | Padding: %2 digits")
+                 .arg(item.sequenceStartFrame)
+                 .arg(item.sequencePadding);
+    lines << QStringLiteral("Drag or import applies the full sequence");
+   }
    if (!item.type.toQString().isEmpty()) {
     lines << item.type.toQString();
    }
@@ -174,7 +188,7 @@ QMimeData* AssetMenuModel::mimeData(const QModelIndexList& indexes) const
  for (const QModelIndex& index : indexes) {
   if (index.isValid() && index.row() >= 0 && index.row() < impl_->items_.size()) {
     const auto& item = impl_->items_.at(index.row());
-    const QStringList paths = item.isSequence && !item.sequencePaths.isEmpty()
+    const QStringList paths = (item.isSequence || item.isSequenceFrame) && !item.sequencePaths.isEmpty()
         ? item.sequencePaths
         : QStringList{item.path.toQString()};
     for (const QString& path : paths) {

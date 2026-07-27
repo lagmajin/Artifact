@@ -120,25 +120,14 @@ Artifact3DLayer::Artifact3DLayer(FixedGeometry3D geometry) : impl_(new Impl()) {
 Artifact3DLayer::~Artifact3DLayer() { delete impl_; }
 
 void Artifact3DLayer::loadFromFile() {
-  impl_->sourcePath_.clear();
-  impl_->fixedGeometry_ = FixedGeometry3D::Auto;
-  // Try loading via MeshImporter (ufbx for FBX, tinyobj for OBJ)
-  ArtifactCore::MeshImporter importer;
-  auto mesh = importer.importMeshFromFile(UniString("")); // Will be set by user
-
-  if (mesh && mesh->vertexCount() > 0) {
-    impl_->mesh_ = *mesh;
-    centerMeshPositions(impl_->mesh_);
-    impl_->meshLoaded_ = true;
-    updateSourceSizeFromMesh();
+  const QString reloadPath = impl_->sourcePath_;
+  if (reloadPath.isEmpty()) {
+    qWarning() << "[Artifact3DLayer] Cannot reload model without a source path";
     return;
   }
-
-  // Fallback: create a simple cube mesh programmatically
-  if (!impl_->meshLoaded_) {
-    createCubeMesh();
-    impl_->meshLoaded_ = true;
-  }
+  // Keep reload behavior identical to explicit loading, including imported
+  // material textures and source metadata.
+  loadFromFile(reloadPath);
 }
 
 void Artifact3DLayer::loadFromFile(const QString &filePath) {
@@ -211,29 +200,40 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
       }
     }
     impl_->renderMode_ = RenderMode::Solid;
-    impl_->sourcePath_ = filePath;
-    setLayerName(QFileInfo(filePath).baseName());
+    const QFileInfo sourceInfo(filePath);
+    const QString normalizedSourcePath = sourceInfo.canonicalFilePath().isEmpty()
+        ? sourceInfo.absoluteFilePath()
+        : sourceInfo.canonicalFilePath();
+    impl_->sourcePath_ = normalizedSourcePath;
+    setLayerName(sourceInfo.baseName());
+    Q_EMIT changed();
     return;
   }
 
   // Fallback to cube on failure
   qWarning() << "Failed to load mesh from:" << filePath
              << "- using default cube";
-  if (!impl_->meshLoaded_) {
-    createCubeMesh();
-    impl_->meshLoaded_ = true;
-    updateSourceSizeFromMesh();
-  }
+  impl_->fixedGeometry_ = FixedGeometry3D::Cube;
+  impl_->sourcePath_.clear();
+  createCubeMesh();
+  impl_->meshLoaded_ = true;
+  updateSourceSizeFromMesh();
+  impl_->renderMode_ = RenderMode::Solid;
+  Q_EMIT changed();
 }
 
 void Artifact3DLayer::setFixedGeometry(FixedGeometry3D geometry)
 {
+  if (impl_->fixedGeometry_ == geometry && impl_->meshLoaded_) {
+    return;
+  }
   impl_->fixedGeometry_ = geometry;
   impl_->sourcePath_.clear();
   createFixedGeometryMesh(geometry);
   impl_->meshLoaded_ = true;
   updateSourceSizeFromMesh();
   impl_->renderMode_ = RenderMode::Solid;
+  Q_EMIT changed();
 }
 
 FixedGeometry3D Artifact3DLayer::fixedGeometry() const
@@ -683,7 +683,14 @@ void Artifact3DLayer::updateSourceSizeFromMesh() {
 RenderMode Artifact3DLayer::renderMode() const { return impl_->renderMode_; }
 
 void Artifact3DLayer::setRenderMode(RenderMode mode) {
+  const int raw = static_cast<int>(mode);
+  if (raw < static_cast<int>(RenderMode::Wireframe) ||
+      raw > static_cast<int>(RenderMode::Solid) ||
+      impl_->renderMode_ == mode) {
+    return;
+  }
   impl_->renderMode_ = mode;
+  Q_EMIT changed();
 }
 
 const ArtifactCore::Mesh& Artifact3DLayer::mesh() const
@@ -780,7 +787,9 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   };
 
   if (impl_->renderMode_ == RenderMode::Solid) {
-    const QString cacheKey = sourcePath().isEmpty() ? id().toString() : sourcePath();
+    const QString cacheKey = QStringLiteral("%1|layer=%2")
+        .arg(sourcePath().isEmpty() ? id().toString() : sourcePath(),
+             id().toString());
     const int solidShadingMode = impl_->useTextureInSolid_ ? 3 : 8;
     renderer->drawMesh(cacheKey, impl_->mesh_, impl_->material_, modelMatrix,
                        opacity(), solidShadingMode, &previousModelMatrix);
@@ -1019,7 +1028,6 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     if (geometryInt >= static_cast<int>(FixedGeometry3D::Auto) &&
         geometryInt <= static_cast<int>(FixedGeometry3D::Cone)) {
       setFixedGeometry(static_cast<FixedGeometry3D>(geometryInt));
-      Q_EMIT changed();
       return true;
     }
   } else if (propertyPath == QStringLiteral("geometry.width")) {
@@ -1067,7 +1075,6 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     if (modeInt >= static_cast<int>(RenderMode::Wireframe) &&
         modeInt <= static_cast<int>(RenderMode::Solid)) {
       setRenderMode(static_cast<RenderMode>(modeInt));
-      Q_EMIT changed();
       return true;
     }
   } else if (propertyPath == QStringLiteral("model.sourcePath") ||
@@ -1191,8 +1198,11 @@ QString Artifact3DLayer::materialSignature() const
 
 void Artifact3DLayer::setAffectedByLights(bool enabled)
 {
+  if (impl_->affectedByLights_ == enabled) {
+    return;
+  }
   impl_->affectedByLights_ = enabled;
-  changed();
+  Q_EMIT changed();
 }
 
 } // namespace Artifact

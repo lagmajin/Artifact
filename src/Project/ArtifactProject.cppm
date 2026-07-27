@@ -221,6 +221,27 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
       setDirty(true);
       return;
     }
+    if (sequencePaths.size() > 1 && existing->isSequence) {
+      for (const QString& candidatePath : sequencePaths) {
+        QFileInfo candidateInfo(candidatePath);
+        QString candidateCanonical = candidateInfo.canonicalFilePath();
+        if (candidateCanonical.isEmpty()) {
+          candidateCanonical = candidateInfo.absoluteFilePath();
+        }
+        for (const QString& existingPath : existing->sequencePaths) {
+          QFileInfo existingSequenceInfo(existingPath);
+          QString existingCanonical = existingSequenceInfo.canonicalFilePath();
+          if (existingCanonical.isEmpty()) {
+            existingCanonical = existingSequenceInfo.absoluteFilePath();
+          }
+          if (!candidateCanonical.isEmpty() &&
+              candidateCanonical.compare(existingCanonical, Qt::CaseInsensitive) == 0) {
+            setDirty(true);
+            return;
+          }
+        }
+      }
+    }
   }
 
   // Create a FootageItem and add it under the project root
@@ -231,6 +252,10 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
   footageUp->sequencePaths = sequencePaths;
   footageUp->frameRate = frameRate > 0.0 ? frameRate : 0.0;
   footageUp->isSequence = sequencePaths.size() > 1;
+  if (footageUp->isSequence) {
+    footageUp->filePath = sequencePaths.first();
+    footageUp->name.setQString(QFileInfo(footageUp->filePath).fileName());
+  }
 
   // attach to project root if exists
   ProjectItem* projectRoot = nullptr;
@@ -436,6 +461,9 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
         footageUp->sequencePaths = sequencePaths;
         if (sequencePaths.size() > 1) {
           footageUp->isSequence = true;
+          // Keep the logical footage identity aligned with the sequence
+          // after reload; relink and lookup both use filePath as the anchor.
+          footageUp->filePath = sequencePaths.first();
         }
       }
       return appendChild(std::move(footageUp));

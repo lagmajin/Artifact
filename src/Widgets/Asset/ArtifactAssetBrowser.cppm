@@ -1117,26 +1117,11 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
 
    QElapsedTimer dragTimer;
    dragTimer.start();
-   auto* mimeData = new QMimeData();
-   QList<QUrl> urls;
-   QSet<QString> seenPaths;
-   const int pathRole = static_cast<int>(AssetMenuRole::Path);
-   for (const QModelIndex& index : indexes) {
-    if (!index.isValid()) {
-     continue;
-    }
-    const QString path = index.data(pathRole).toString();
-    if (path.isEmpty() || seenPaths.contains(path)) {
-     continue;
-    }
-    seenPaths.insert(path);
-    urls.append(QUrl::fromLocalFile(path));
-   }
-   if (urls.isEmpty()) {
+   auto* mimeData = model()->mimeData(indexes);
+   if (!mimeData || mimeData->urls().isEmpty()) {
     delete mimeData;
     return;
    }
-   mimeData->setUrls(urls);
 
    auto* drag = new QDrag(this);
    drag->setMimeData(mimeData);
@@ -1463,6 +1448,7 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
    QLabel* fileInfoLabel_ = nullptr;  // File details display
    QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
     QString currentDirectoryPath_;
+    QSet<QString> expandedSequencePaths_;
     QString currentFileTypeFilter_ = "all";
     QString currentStatusFilter_ = "all";
     QString currentSearchFilter_;
@@ -1607,6 +1593,30 @@ ArtifactAssetBrowser::Impl::~Impl()
 
  void ArtifactAssetBrowser::Impl::handleDoubleClicked()
  {
+  if (!owner_ || !fileView_ || !assetModel_ || !fileView_->selectionModel()) {
+   return;
+  }
+
+  const QModelIndex index = fileView_->selectionModel()->currentIndex();
+  if (!index.isValid()) {
+   return;
+  }
+
+  const AssetMenuItem item = assetModel_->itemAt(index.row());
+  const QString path = item.path.toQString();
+  if (path.isEmpty()) {
+   return;
+  }
+
+  if (item.isFolder) {
+   owner_->navigateToFolder(path);
+   return;
+  }
+
+  // Browsing and importing are deliberately separate actions. Double-click
+  // only selects the source and refreshes the metadata/preview surface;
+  // import remains an explicit toolbar or context-menu action.
+  owner_->updateFileInfo(path);
  }
 
  void ArtifactAssetBrowser::Impl::defaultHandleMousePressEvent(QMouseEvent* event)
@@ -1748,9 +1758,28 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
   for (const QModelIndex& index : selectedIndexes) {
    const AssetMenuItem item = assetModel_->itemAt(index.row());
    if (!item.isFolder) {
-    const QString path = item.path.toQString();
-    if (!path.isEmpty()) {
-     paths.append(path);
+    if (item.isSequence && !item.sequencePaths.isEmpty()) {
+     for (const QString& sequencePath : item.sequencePaths) {
+      if (!sequencePath.isEmpty()) {
+       paths.append(sequencePath);
+      }
+     }
+    } else if (item.isSequenceFrame && !item.sequenceParentPath.isEmpty()) {
+     const QString parentPath = item.sequenceParentPath;
+     for (int row = 0; row < assetModel_->rowCount(); ++row) {
+      const AssetMenuItem parent = assetModel_->itemAt(row);
+      if (parent.isSequence && parent.path.toQString() == parentPath) {
+       for (const QString& sequencePath : parent.sequencePaths) {
+        if (!sequencePath.isEmpty()) paths.append(sequencePath);
+       }
+       break;
+      }
+     }
+    } else {
+     const QString path = item.path.toQString();
+     if (!path.isEmpty()) {
+      paths.append(path);
+     }
     }
    }
   }
@@ -2603,6 +2632,14 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   QDir dir(currentDirectoryPath_);
   if (!dir.exists()) return;
 
+  const QString currentDirectoryPrefix =
+      QDir::cleanPath(currentDirectoryPath_) + QDir::separator();
+  for (const QString& expandedPath : expandedSequencePaths_.values()) {
+   if (!expandedPath.startsWith(currentDirectoryPrefix, Qt::CaseInsensitive)) {
+    expandedSequencePaths_.remove(expandedPath);
+   }
+  }
+
   if (breadcrumb_) {
    breadcrumb_->setPath(currentDirectoryPath_);
   }
@@ -2623,7 +2660,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    }
 
    // --- Phase 2: pre-filter files and detect sequences ---
-   struct SeqFile { QString name; int frame; int pad; QString fullPath; };
+   struct SeqFile { QString name; qint64 frame; int pad; QString fullPath; };
    static const QRegularExpression kSeqRx(QStringLiteral(R"(^(.*?)([._-]?)(\d{3,})(\.[a-zA-Z0-9]+)$)"));
    QMap<QString, QList<SeqFile>> seqMap;
    QSet<QString> seqFiles;
@@ -2638,9 +2675,12 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     if (!m.hasMatch()) continue;
     QString frameStr = m.captured(3);
     bool ok = false;
-    int frameNum = frameStr.toInt(&ok);
+    const qint64 frameNum = frameStr.toLongLong(&ok);
     if (!ok) continue;
-    QString key = m.captured(1) + m.captured(2) + m.captured(4);
+    // Padding is part of the sequence identity. Mixing `001` and `0002`
+    // would produce an invalid display pattern and an ambiguous import.
+    QString key = m.captured(1) + m.captured(2) + m.captured(4) +
+                  QStringLiteral("|pad=") + QString::number(frameStr.length());
     seqMap[key].append({entry, frameNum, static_cast<int>(frameStr.length()), fullPath});
    }
 
@@ -2674,10 +2714,34 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     std::sort(seq.begin(), seq.end(), [](const SeqFile& a, const SeqFile& b) { return a.frame < b.frame; });
 
     AssetMenuItem item;
-    int firstFrame = seq.first().frame;
-    int lastFrame = seq.last().frame;
+    const qint64 firstFrame = seq.first().frame;
+    const qint64 lastFrame = seq.last().frame;
     int count = seq.size();
     int pad = seq.first().pad;
+    qint64 missingFrameCount = 0;
+    int unreadableFrameCount = 0;
+    bool hasSizeMismatch = false;
+    QSize sequenceFrameSize;
+    for (int frameIndex = 1; frameIndex < seq.size(); ++frameIndex) {
+     const qint64 gap = seq[frameIndex].frame - seq[frameIndex - 1].frame - 1;
+     if (gap > 0) missingFrameCount += gap;
+    }
+    for (const auto& sf : seq) {
+     QImageReader reader(sf.fullPath);
+     if (!reader.canRead()) {
+      ++unreadableFrameCount;
+      continue;
+     }
+     const QSize frameSize = reader.size();
+     if (!frameSize.isValid()) {
+      continue;
+     }
+     if (!sequenceFrameSize.isValid()) {
+      sequenceFrameSize = frameSize;
+     } else if (sequenceFrameSize != frameSize) {
+      hasSizeMismatch = true;
+     }
+    }
     QFileInfo fi(seq.first().name);
     QString ext = fi.suffix().toUpper();
 
@@ -2700,19 +2764,74 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     item.sequencePadding = pad;
     for (const auto& sf : seq) item.sequencePaths.append(sf.fullPath);
 
-    // Status markers (aggregated across all frames via the shared helper)
-    const AssetStatusSummary status = assetStatusForPaths(item.path.toQString(), item.sequencePaths);
+    // Status markers (aggregated across all frames via the shared helper,
+    // extended with frame-level diagnostics from the sequence scan)
+    AssetStatusSummary status = assetStatusForPaths(item.path.toQString(), item.sequencePaths);
+    status.missing = status.missing || missingFrameCount > 0 ||
+                     unreadableFrameCount > 0 || hasSizeMismatch;
     if (!matchesStatusFilter(status)) {
      continue;
     }
 
-    const QStringList markers = assetStatusMarkers(status);
+    QStringList markers = assetStatusMarkers(status);
+    QStringList frameDetailMarkers;
+    if (missingFrameCount > 0) {
+     frameDetailMarkers.append(QStringLiteral("Missing Frames: %1").arg(missingFrameCount));
+    }
+    if (unreadableFrameCount > 0) {
+     frameDetailMarkers.append(QStringLiteral("Unreadable: %1").arg(unreadableFrameCount));
+    }
+    if (hasSizeMismatch) {
+     frameDetailMarkers.append(QStringLiteral("Size Mismatch"));
+    }
+    if (!frameDetailMarkers.isEmpty()) {
+     const int insertAt = markers.indexOf(QStringLiteral("Missing")) + 1;
+     for (int i = 0; i < frameDetailMarkers.size(); ++i) {
+      markers.insert(insertAt + i, frameDetailMarkers.at(i));
+     }
+    }
     QString seqType = QStringLiteral("Sequence • %1").arg(ext);
     if (!markers.isEmpty()) seqType = QStringLiteral("%1 • %2").arg(markers.join(QStringLiteral(" • ")), seqType);
     item.type = UniString::fromQString(seqType);
 
     item.icon = generateThumbnail(seq.first().fullPath);
     items.append(item);
+    if (expandedSequencePaths_.contains(item.path.toQString())) {
+     int frameIndex = 0;
+     for (const auto& sf : seq) {
+      AssetMenuItem frameItem;
+      frameItem.name = UniString::fromQString(
+          QStringLiteral("  └ %1").arg(sf.name));
+      frameItem.path = UniString::fromQString(sf.fullPath);
+      QStringList frameMarkers;
+      QImageReader frameReader(sf.fullPath);
+      if (!frameReader.canRead()) {
+       frameMarkers.append(QStringLiteral("Unreadable"));
+      } else if (sequenceFrameSize.isValid() &&
+                 frameReader.size().isValid() &&
+                 frameReader.size() != sequenceFrameSize) {
+       frameMarkers.append(QStringLiteral("Size Mismatch"));
+      }
+      if (isMissingAssetPath(sf.fullPath)) {
+       frameMarkers.append(QStringLiteral("Missing"));
+      }
+      QString frameType = QStringLiteral("Sequence Frame • %1").arg(sf.frame);
+      if (!frameMarkers.isEmpty()) {
+       frameType = QStringLiteral("%1 • %2")
+           .arg(frameMarkers.join(QStringLiteral(" • ")), frameType);
+      }
+      frameItem.type = UniString::fromQString(frameType);
+      frameItem.isSequenceFrame = true;
+      frameItem.sequenceParentPath = item.path.toQString();
+      frameItem.sequenceFrameNumber = sf.frame;
+      frameItem.sequenceFrameCount = item.sequenceFrameCount;
+      frameItem.sequenceStartFrame = item.sequenceStartFrame;
+      frameItem.sequencePadding = item.sequencePadding;
+      frameItem.sequencePaths = item.sequencePaths;
+      frameItem.icon = (frameIndex++ == 0) ? item.icon : QIcon();
+      items.append(std::move(frameItem));
+     }
+    }
    }
 
    // Standalone files — parallelized with TBB
@@ -2785,6 +2904,16 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     // Folders always first
     if (a.isFolder && !b.isFolder) return true;
     if (!a.isFolder && b.isFolder) return false;
+
+    if (a.isSequenceFrame && !b.isSequenceFrame &&
+        a.sequenceParentPath == b.path.toQString()) return false;
+    if (!a.isSequenceFrame && b.isSequenceFrame &&
+        a.path.toQString() == b.sequenceParentPath) return true;
+    if (a.isSequenceFrame && b.isSequenceFrame &&
+        a.sequenceParentPath == b.sequenceParentPath &&
+        a.sequenceFrameNumber != b.sequenceFrameNumber) {
+     return a.sequenceFrameNumber < b.sequenceFrameNumber;
+    }
 
     if (currentSortBy_ == "name") {
      int result = a.name.toQString().compare(b.name.toQString(), Qt::CaseInsensitive);
@@ -3199,7 +3328,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     }
    });
 
-  // Connect file double-click to add to project or navigate into folder
+  // Connect file double-click to preview/select or navigate into a folder.
+  // Import remains an explicit context-menu action so a sequence is never
+  // accidentally registered as only its representative frame.
   connect(fileView, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
    if (!index.isValid()) return;
    AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
@@ -3212,11 +3343,6 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     navigateToFolder(filePath);
     return;
    }
-
-   // Otherwise, add file to project
-   auto* svc = ArtifactProjectService::instance();
-   if (!svc) return;
-   svc->importAssetsFromPaths(QStringList() << filePath);
   });
 
   // Connect right-click context menu
@@ -3225,16 +3351,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   // Connect file item selection to update details
   connect(fileView->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this]() {
    QModelIndexList selectedIndexes = impl_->fileView_->selectionModel()->selectedIndexes();
-   QStringList selectedFiles;
-   selectedFiles.reserve(selectedIndexes.size());
+   QStringList selectedFiles = impl_->selectedAssetPaths();
    if (!selectedIndexes.isEmpty()) {
-    for (const QModelIndex& index : selectedIndexes) {
-     const AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
-     const QString filePath = item.path.toQString();
-     if (!filePath.isEmpty()) {
-      selectedFiles.append(filePath);
-     }
-    }
     if (!selectedFiles.isEmpty()) {
      updateFileInfo(selectedFiles.first());
     }
@@ -3828,15 +3946,54 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
     info += QString("Type: %1<br>").arg(fileInfo.suffix().toUpper());
    }
    info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
-   if (isSequenceItem) {
-    info += QString("Sequence: %1 frames<br>").arg(assetItem.sequenceFrameCount);
-    info += QString("Start Frame: %1 (padding %2)<br>")
-        .arg(assetItem.sequenceStartFrame)
-        .arg(assetItem.sequencePadding);
-   }
    info += impl_->assetStatusInfoHtml(impl_->assetStatusForPaths(filePath, sequencePaths));
    info += QString("Source Uses: %1<br>").arg(impl_->sourceUseCountForPath(filePath, sequencePaths));
    info += QString("Thumbnail: %1<br>").arg(impl_->thumbnailDebugStatus(filePath).toHtmlEscaped());
+
+   // A sequence row is represented by its first frame path. Surface the
+   // logical sequence metadata here so selection does not look like a single
+   // still image in the inspector.
+   if (impl_->assetModel_) {
+    for (int row = 0; row < impl_->assetModel_->rowCount(); ++row) {
+     const AssetMenuItem sequenceItem = impl_->assetModel_->itemAt(row);
+     if (!sequenceItem.isSequence ||
+         (!sequenceItem.sequencePaths.contains(filePath) &&
+          sequenceItem.path.toQString() != filePath)) {
+      continue;
+     }
+     info += QString("Sequence Frames: %1<br>").arg(sequenceItem.sequenceFrameCount);
+     info += QString("Frame Start: %1<br>").arg(sequenceItem.sequenceStartFrame);
+     info += QString("Padding: %1 digits<br>").arg(sequenceItem.sequencePadding);
+     info += QString("Sequence Status: %1<br>")
+                 .arg(sequenceItem.type.toQString().toHtmlEscaped());
+     if (filePath != sequenceItem.path.toQString()) {
+       const QFileInfo selectedFrameInfo(filePath);
+      const QRegularExpressionMatch selectedMatch =
+          QRegularExpression(QStringLiteral(R"(\d{3,})"))
+              .match(selectedFrameInfo.fileName());
+      if (selectedMatch.hasMatch()) {
+       info += QString("Selected Frame: %1<br>")
+                   .arg(selectedMatch.captured(0).toLongLong());
+       }
+      }
+      QImageReader selectedReader(filePath);
+      QString frameStatus = selectedReader.canRead()
+          ? QStringLiteral("OK")
+          : QStringLiteral("Unreadable");
+      if (selectedReader.canRead() && !sequenceItem.sequencePaths.isEmpty()) {
+       QImageReader representativeReader(sequenceItem.sequencePaths.first());
+       const QSize representativeSize = representativeReader.size();
+       const QSize selectedSize = selectedReader.size();
+       if (representativeSize.isValid() && selectedSize.isValid() &&
+           representativeSize != selectedSize) {
+        frameStatus = QStringLiteral("Size Mismatch");
+       }
+      }
+      info += QString("Selected Frame Status: %1<br>")
+                  .arg(frameStatus.toHtmlEscaped());
+     break;
+    }
+   }
 
    // Get detailed information based on file type
    const QString fileName = fileInfo.fileName();
@@ -3939,6 +4096,8 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
 
   // Expand sequences to every frame so the import keeps the whole sequence
   // relationship (the service groups the frames back into one footage item).
+  // findAssetItemByPath also resolves clicked frame rows to their parent
+  // sequence, matching the frame-row import behavior.
   QStringList importTargets;
   int expandedSequenceFrames = 0;
   int expandedSequenceCount = 0;
@@ -3958,7 +4117,8 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   // Add to Project action (import operation names show the frame count)
   QString addActionLabel;
   if (expandedSequenceCount == 1 && selectedTargets.size() == 1) {
-   addActionLabel = QStringLiteral("Add Sequence to Project (%1 frames)").arg(expandedSequenceFrames);
+   addActionLabel = QStringLiteral("Add Image Sequence (%1 frames) to Project")
+       .arg(expandedSequenceFrames);
   } else if (selectedTargets.size() > 1) {
    addActionLabel = expandedSequenceCount > 0
     ? QStringLiteral("Add %1 Items to Project (%2 sequence frames)")
@@ -3973,6 +4133,14 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    if (!svc) return;
    const QStringList imported = svc->importAssetsFromPaths(importTargets.isEmpty() ? QStringList{filePath} : importTargets);
    if (!imported.isEmpty()) {
+    const int requestedCount = importTargets.isEmpty() ? 1 : importTargets.size();
+    if (imported.size() < requestedCount) {
+     QMessageBox::warning(
+         this, QStringLiteral("Import Incomplete"),
+         QStringLiteral("Imported %1 of %2 requested files.")
+             .arg(imported.size())
+             .arg(requestedCount));
+    }
     if (auto project = svc->getCurrentProjectSharedPtr()) {
      for (const QString& importedPath : imported) {
       UndoManager::instance()->push(
@@ -3983,6 +4151,10 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
     impl_->applyFilters();
     // Keep the info/preview pane in sync with the refreshed row status.
     updateFileInfo(filePath.isEmpty() ? imported.first() : filePath);
+   } else {
+    QMessageBox::warning(
+        this, QStringLiteral("Import Failed"),
+        QStringLiteral("No requested files could be imported."));
    }
   });
 
@@ -3990,6 +4162,22 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    addAction(frequentMenu, QStringLiteral("Preview in Contents Viewer"), [this, filePath]() {
     if (filePath.isEmpty()) return;
     itemDoubleClicked(filePath);
+   });
+  }
+
+  if (item.isSequence) {
+   const bool expanded = impl_->expandedSequencePaths_.contains(filePath);
+   addAction(frequentMenu,
+             expanded ? QStringLiteral("Collapse Sequence Frames")
+                      : QStringLiteral("Expand Sequence Frames"),
+             [this, filePath, expanded]() {
+    if (filePath.isEmpty()) return;
+    if (expanded) {
+     impl_->expandedSequencePaths_.remove(filePath);
+    } else {
+     impl_->expandedSequencePaths_.insert(filePath);
+    }
+    impl_->applyFilters();
    });
   }
 
@@ -4006,7 +4194,7 @@ if (item.isFolder) {
 
 // Relink action for footage items
 if (!item.isFolder) {
-  addAction(allMenu, QStringLiteral("Relink Selected Footage..."), [this, filePath]() {
+  addAction(allMenu, QStringLiteral("Relink Selected Footage..."), [this, filePath, item]() {
     if (filePath.isEmpty()) return;
     // Show file dialog to select new file path
     QString newPath = QFileDialog::getOpenFileName(nullptr, "Relink Footage", QDir::homePath(), "All Files (*.*)");
@@ -4021,6 +4209,17 @@ if (!item.isFolder) {
       impl_->applyFilters();
       // Keep the info/preview pane in sync with the refreshed row status.
       updateFileInfo(newPath);
+    } else {
+      QMessageBox::warning(
+          this, QStringLiteral("Relink Failed"),
+          item.isSequence
+              ? QStringLiteral(
+                    "The image sequence could not be relinked.\n\n"
+                    "Choose a representative frame whose directory contains "
+                    "every expected frame with matching numbering and padding.\n\n"
+                    "Current status: %1")
+                    .arg(item.type.toQString())
+              : QStringLiteral("The selected footage could not be relinked."));
     }
   });
 }
@@ -4208,8 +4407,68 @@ if (!item.isFolder) {
                             info);
   });
 
+  if (item.isSequence && !item.sequencePaths.isEmpty()) {
+    QMenu *framesMenu = frequentMenu->addMenu(
+        QStringLiteral("Preview Sequence Frame"));
+    constexpr int kFrameMenuSideCount = 50;
+    const int totalFrameCount = item.sequencePaths.size();
+    const int leadingFrameCount = totalFrameCount <= kFrameMenuSideCount * 2
+        ? totalFrameCount
+        : kFrameMenuSideCount;
+    QSize expectedFrameSize;
+    for (const QString& candidatePath : item.sequencePaths) {
+      QImageReader candidateReader(candidatePath);
+      if (candidateReader.canRead() && candidateReader.size().isValid()) {
+        expectedFrameSize = candidateReader.size();
+        break;
+      }
+    }
+    const auto addFramePreviewAction = [framesMenu, expectedFrameSize](const QString& framePath) {
+      QImageReader reader(framePath);
+      const bool readable = reader.canRead();
+      QString label = QFileInfo(framePath).fileName();
+      if (!readable) {
+        label += QStringLiteral(" (Unreadable)");
+      } else if (expectedFrameSize.isValid() && reader.size().isValid() &&
+                 reader.size() != expectedFrameSize) {
+        label += QStringLiteral(" (Size Mismatch)");
+      }
+      QAction *frameAction = framesMenu->addAction(label);
+      frameAction->setEnabled(readable);
+      if (readable) {
+        frameAction->setData(framePath);
+      }
+    };
+    for (int frameIndex = 0; frameIndex < leadingFrameCount; ++frameIndex) {
+      const QString framePath = item.sequencePaths.at(frameIndex);
+      addFramePreviewAction(framePath);
+    }
+    const int trailingStart = std::max(leadingFrameCount,
+                                       totalFrameCount - kFrameMenuSideCount);
+    if (trailingStart > leadingFrameCount) {
+      framesMenu->addSeparator();
+        for (int frameIndex = trailingStart; frameIndex < totalFrameCount;
+           ++frameIndex) {
+        const QString framePath = item.sequencePaths.at(frameIndex);
+        addFramePreviewAction(framePath);
+      }
+    }
+    if (trailingStart > leadingFrameCount) {
+      QAction *moreAction = framesMenu->addAction(
+          QStringLiteral("Middle frames omitted (%1)")
+              .arg(trailingStart - leadingFrameCount));
+      moreAction->setEnabled(false);
+    }
+  }
+
   // Show menu at cursor position
-  contextMenu.exec(impl_->fileView_->mapToGlobal(pos));
+  QAction *chosenAction = contextMenu.exec(impl_->fileView_->mapToGlobal(pos));
+  if (chosenAction && chosenAction->data().isValid()) {
+    const QString framePath = chosenAction->data().toString();
+    if (!framePath.isEmpty()) {
+      itemDoubleClicked(framePath);
+    }
+  }
  }
 
 // ─────────────────────────────────────────────

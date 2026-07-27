@@ -35,7 +35,9 @@
 #include <QList>
 #include <QIcon>
 #include <QDateTime>
+#include <QString>
 #include <QStringList>
+#include <QtGlobal>
 export module AssetMenuModel;
 
 import std;
@@ -52,8 +54,11 @@ export namespace Artifact
   UniString path;
   bool isFolder = false;
  bool isSequence = false;
+ bool isSequenceFrame = false;
+ QString sequenceParentPath;
+ qint64 sequenceFrameNumber = 0;
  int sequenceFrameCount = 0;
- int sequenceStartFrame = 0;
+ qint64 sequenceStartFrame = 0;
  int sequencePadding = 0;
  qint64 fileSizeBytes = 0;
  QDateTime lastModified;
@@ -67,6 +72,9 @@ export namespace Artifact
           path == other.path &&
           isFolder == other.isFolder &&
           isSequence == other.isSequence &&
+          isSequenceFrame == other.isSequenceFrame &&
+          sequenceParentPath == other.sequenceParentPath &&
+          sequenceFrameNumber == other.sequenceFrameNumber &&
           sequenceFrameCount == other.sequenceFrameCount &&
           sequenceStartFrame == other.sequenceStartFrame &&
           sequencePadding == other.sequencePadding &&

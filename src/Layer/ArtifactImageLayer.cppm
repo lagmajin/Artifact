@@ -9,6 +9,8 @@ module;
 #include <QImage>
 #include <QJsonObject>
 #include <QMatrix4x4>
+#include <QTransform>
+#include <QPolygonF>
 #include <QPainter>
 #include <QRect>
 #include <QRectF>
@@ -332,6 +334,11 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
     if (!headerOnly.read(0, 0, true, OIIO::TypeDesc::UINT8)) {
         qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
                    << "error=" << QString::fromStdString(headerOnly.geterror());
+        ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+        impl_->sourceAssetId_ = QUuid();
+        impl_->cachedSourceVersion_ = 0;
+        impl_->sourcePath_ = path;
+        impl_->prefetchDone_ = true;
         impl_->hasImage_ = true;
         impl_->cache_ = std::make_shared<QImage>(makeMissingImagePlaceholder(QSize(256, 256),
                                                                              QStringLiteral("Missing image")));
@@ -341,15 +348,21 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         setSourceSize(Size_2D(impl_->width_, impl_->height_));
         ArtifactCore::FallbackTracker::instance()->record(
             ArtifactCore::FallbackCategory::Image,
-            ArtifactCore::FallbackAction::Fallback,
+        ArtifactCore::FallbackAction::Fallback,
             path, "placeholder",
             QStringLiteral("Image missing, using placeholder"));
+        Q_EMIT changed();
         return false;
     }
     const OIIO::ImageSpec& spec = headerOnly.spec();
     if (spec.width <= 0 || spec.height <= 0) {
         qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
                    << "error=" << QString::fromStdString(headerOnly.geterror());
+        ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+        impl_->sourceAssetId_ = QUuid();
+        impl_->cachedSourceVersion_ = 0;
+        impl_->sourcePath_ = path;
+        impl_->prefetchDone_ = true;
         impl_->hasImage_ = true;
         impl_->cache_ = std::make_shared<QImage>(makeMissingImagePlaceholder(QSize(256, 256),
                                                                              QStringLiteral("Missing image")));
@@ -359,9 +372,10 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         setSourceSize(Size_2D(impl_->width_, impl_->height_));
         ArtifactCore::FallbackTracker::instance()->record(
             ArtifactCore::FallbackCategory::Image,
-            ArtifactCore::FallbackAction::Fallback,
+        ArtifactCore::FallbackAction::Fallback,
             path, "placeholder",
             QStringLiteral("Image missing, using placeholder"));
+        Q_EMIT changed();
         return false;
     }
 
@@ -392,6 +406,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
 
     qDebug() << "[ArtifactImageLayer] OIIO prefetch started:" << path
              << "sizeHint=" << QSize(spec.width, spec.height);
+    Q_EMIT changed();
     return true;
 }
 
@@ -667,6 +682,7 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
     if (propertyPath == QStringLiteral("sourceCrop.enabled")) {
         impl_->sourceCrop_.setEnabled(value.toBool());
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.cropX") ||
@@ -690,6 +706,7 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
         impl_->sourceCrop_.setCropRect(rect);
         impl_->sourceCrop_.clampToSource(QSizeF(size.width, size.height));
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.panX") ||
@@ -702,16 +719,19 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
         }
         impl_->sourceCrop_.setPan(pan);
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.zoom")) {
         impl_->sourceCrop_.setZoom(value.toDouble());
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.rotation")) {
         impl_->sourceCrop_.setRotation(value.toDouble());
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.anchorX") ||
@@ -724,11 +744,13 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
         }
         impl_->sourceCrop_.setAnchor(anchor);
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.preserveAspect")) {
         impl_->sourceCrop_.setPreserveAspect(value.toBool());
         setDirty(LayerDirtyFlag::Property);
+        Q_EMIT changed();
         return true;
     }
     
@@ -738,9 +760,7 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
 void ArtifactImageLayer::setFromCvMat(const cv::Mat& mat)
 {
     if (mat.empty()) {
-        impl_->hasImage_ = false;
-        impl_->cache_.reset();
-        impl_->cacheBuffer_.reset();
+        setFromQImage(QImage());
         return;
     }
 
@@ -965,10 +985,25 @@ bool ArtifactImageLayer::hasCurrentFrameBuffer() const
 
 void ArtifactImageLayer::setFromQImage(const QImage& image)
 {
+    // A QImage supplied by an editing tool is an in-memory result, not a new
+    // decode of the current file.  Drop the old source identity so a later
+    // source-version refresh cannot silently replace the edited pixels.
+    if (!impl_->sourceAssetId_.isNull()) {
+        ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+        impl_->sourceAssetId_ = QUuid();
+    }
+    impl_->sourcePath_.clear();
+    impl_->cachedSourceVersion_ = 0;
+
     if (image.isNull()) {
         impl_->hasImage_ = false;
-        impl_->cache_ = nullptr;
+        impl_->cache_.reset();
         impl_->cacheBuffer_.reset();
+        impl_->width_ = 0;
+        impl_->height_ = 0;
+        setSourceSize(Size_2D(0, 0));
+        setDirty(LayerDirtyFlag::Source);
+        Q_EMIT changed();
         return;
     }
 
@@ -980,11 +1015,18 @@ void ArtifactImageLayer::setFromQImage(const QImage& image)
 
     setSourceSize(Size_2D(image.width(), image.height()));
     impl_->sourceCrop_.clampToSource(QSizeF(image.width(), image.height()));
+    setDirty(LayerDirtyFlag::Source);
+    Q_EMIT changed();
 }
 
 void ArtifactImageLayer::setFitToLayer(bool fit)
 {
+    if (impl_->fitToLayer_ == fit) {
+        return;
+    }
     impl_->fitToLayer_ = fit;
+    setDirty(LayerDirtyFlag::Property);
+    Q_EMIT changed();
 }
 
 bool ArtifactImageLayer::fitToLayer() const
@@ -994,9 +1036,30 @@ bool ArtifactImageLayer::fitToLayer() const
 
 QRectF ArtifactImageLayer::localBounds() const
 {
-    const auto size = sourceSize();
+    auto size = sourceSize();
+    if (!impl_->fitToLayer_) {
+        size = Size_2D(impl_->width_, impl_->height_);
+    }
     if (size.width <= 0 || size.height <= 0) {
         return QRectF();
+    }
+
+    if (impl_->sourceCrop_.enabled()) {
+        const QRectF crop = impl_->sourceCrop_.effectiveCropRect(
+            QSizeF(size.width, size.height));
+        if (crop.isValid() && crop.width() > 0.0 && crop.height() > 0.0) {
+            if (std::abs(impl_->sourceCrop_.rotation()) <= 1e-6) {
+                return crop;
+            }
+            const QPointF anchor = impl_->sourceCrop_.anchor();
+            const QPointF pivot(crop.left() + crop.width() * anchor.x(),
+                                crop.top() + crop.height() * anchor.y());
+            QTransform transform;
+            transform.translate(pivot.x(), pivot.y());
+            transform.rotate(impl_->sourceCrop_.rotation());
+            transform.translate(-pivot.x(), -pivot.y());
+            return transform.map(QPolygonF(crop)).boundingRect();
+        }
     }
 
     if (!impl_->fitToLayer_ && impl_->width_ > 0 && impl_->height_ > 0) {

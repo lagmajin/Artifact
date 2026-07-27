@@ -89,6 +89,7 @@ public:
     int width_ = 0;
     int height_ = 0;
     QString sourcePath_;
+    std::uint64_t sourceVersion_ = 0;
     mutable std::shared_ptr<QImage> cache_;
     mutable std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> cacheBuffer_;
     mutable QFuture<QImage> prefetchFuture_;
@@ -121,6 +122,7 @@ bool ArtifactSvgLayer::loadFromPath(const QString& path)
     }
 
     impl_->sourcePath_ = trimmed;
+    ++impl_->sourceVersion_;
     impl_->cache_.reset();
     impl_->cacheBuffer_.reset();
     impl_->prefetchDone_ = false;
@@ -144,6 +146,11 @@ bool ArtifactSvgLayer::loadFromPath(const QString& path)
 QString ArtifactSvgLayer::sourcePath() const
 {
     return impl_->sourcePath_;
+}
+
+std::uint64_t ArtifactSvgLayer::sourceVersion() const
+{
+    return impl_->sourceVersion_;
 }
 
 bool ArtifactSvgLayer::isLoaded() const

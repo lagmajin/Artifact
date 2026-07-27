@@ -1,6 +1,7 @@
 ﻿module;
 
 #include <iostream>
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <map>
@@ -57,6 +58,7 @@ public:
   bool hasCurrentFrameBuffer() const;
   bool loadFromPath(const QString& path);
   QString sourcePath() const;
+  std::uint64_t sourceVersion() const;
   bool isLoaded() const;
 
   void setFitToLayer(bool fit);

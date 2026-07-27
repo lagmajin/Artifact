@@ -77,6 +77,18 @@ export struct StaticLayerGpuCacheEntry
   size_t byteSize = 0;
 };
 
+export struct StaticLayerGpuCacheDiagnostics
+{
+  quint64 hitCount = 0;
+  quint64 missCount = 0;
+  int entryCount = 0;
+  size_t totalBytes = 0;
+};
+
+export StaticLayerGpuCacheDiagnostics staticLayerGpuCacheDiagnostics();
+export void clearStaticLayerGpuCache();
+export void clearStaticLayerGpuCache(GPUTextureCacheManager* gpuTextureCacheManager);
+
 export bool layerHasCpuRasterizerWork(ArtifactAbstractLayer* layer);
 export bool layerUsesSurfaceUploadForCompositionView(ArtifactAbstractLayer* layer);
 export bool layerUsesGpuTextureCacheForCompositionView(ArtifactAbstractLayer* layer);
@@ -272,6 +284,44 @@ QHash<QString, StaticLayerGpuCacheEntry> &staticLayerGpuCache()
 {
   static QHash<QString, StaticLayerGpuCacheEntry> cache;
   return cache;
+}
+
+struct StaticLayerGpuCacheCounters {
+  quint64 hitCount = 0;
+  quint64 missCount = 0;
+};
+
+StaticLayerGpuCacheCounters& staticLayerGpuCacheCounters()
+{
+  static StaticLayerGpuCacheCounters counters;
+  return counters;
+}
+
+void trimStaticLayerGpuCache()
+{
+  constexpr int kMaxEntries = 128;
+  constexpr size_t kMaxBytes = 512ull * 1024ull * 1024ull;
+  auto& cache = staticLayerGpuCache();
+  size_t totalBytes = 0;
+  for (const auto& entry : cache) {
+    totalBytes += entry.byteSize;
+  }
+  while (cache.size() > kMaxEntries || totalBytes > kMaxBytes) {
+    auto oldest = cache.end();
+    for (auto it = cache.begin(); it != cache.end(); ++it) {
+      if (oldest == cache.end() ||
+          it->lastFrameNumber < oldest->lastFrameNumber) {
+        oldest = it;
+      }
+    }
+    if (oldest == cache.end()) {
+      break;
+    }
+    totalBytes = totalBytes > oldest->byteSize
+        ? totalBytes - oldest->byteSize
+        : 0;
+    cache.erase(oldest);
+  }
 }
 
 EffectContext makeLayerEffectContext(ArtifactAbstractLayer* layer,
@@ -526,8 +576,9 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
   }
 
   if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
-    key += QStringLiteral("|image|src=%1|fit=%2|size=%3x%4")
+    key += QStringLiteral("|image|src=%1|rev=%2|fit=%3|size=%4x%5")
                .arg(imageLayer->sourcePath())
+               .arg(imageLayer->sourceVersion())
                .arg(imageLayer->fitToLayer() ? 1 : 0)
                .arg(surface.width())
                .arg(surface.height());
@@ -535,8 +586,9 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
   }
 
   if (auto* svgLayer = dynamic_cast<ArtifactSvgLayer*>(layer)) {
-    key += QStringLiteral("|svg|src=%1|fit=%2|size=%3x%4")
+    key += QStringLiteral("|svg|src=%1|rev=%2|fit=%3|size=%4x%5")
                .arg(svgLayer->sourcePath())
+               .arg(svgLayer->sourceVersion())
                .arg(svgLayer->fitToLayer() ? 1 : 0)
                .arg(surface.width())
                .arg(surface.height());
@@ -951,6 +1003,40 @@ QImage applyMatteStackToSurface(const QImage& surface,
 
 } // namespace
 
+StaticLayerGpuCacheDiagnostics staticLayerGpuCacheDiagnostics()
+{
+  StaticLayerGpuCacheDiagnostics diagnostics;
+  const auto& cache = staticLayerGpuCache();
+  const auto& counters = staticLayerGpuCacheCounters();
+  diagnostics.hitCount = counters.hitCount;
+  diagnostics.missCount = counters.missCount;
+  diagnostics.entryCount = cache.size();
+  for (const auto& entry : cache) {
+    diagnostics.totalBytes += entry.byteSize;
+  }
+  return diagnostics;
+}
+
+void clearStaticLayerGpuCache()
+{
+  clearStaticLayerGpuCache(nullptr);
+}
+
+void clearStaticLayerGpuCache(GPUTextureCacheManager* gpuTextureCacheManager)
+{
+  if (gpuTextureCacheManager) {
+    for (const auto& entry : staticLayerGpuCache()) {
+      if (entry.gpuTextureHandle.isValid()) {
+        gpuTextureCacheManager->invalidate(
+            entry.gpuTextureHandle,
+            GPUTextureCacheInvalidationReason::ClearAll);
+      }
+    }
+  }
+  staticLayerGpuCache().clear();
+  staticLayerGpuCacheCounters() = {};
+}
+
 void applyRasterizerEffectsAndMasksToSurface(
     ArtifactAbstractLayer* targetLayer, QImage& surface, DetailLevel lod)
 {
@@ -1112,6 +1198,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       return false;
     }
 
+    trimStaticLayerGpuCache();
+
     const bool usesGpuTextureCache =
         layerCacheEnabled && gpuTextureCacheManager &&
         layerUsesGpuTextureCacheForCompositionView(layer);
@@ -1150,11 +1238,14 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       auto it = staticCache.find(ownerId);
       if (it != staticCache.end() && it->ownerId == ownerId &&
           it->cacheSignature == cacheSignature) {
+        ++staticLayerGpuCacheCounters().hitCount;
         staticCacheEntry = &(*it);
         directProcessedBuffer = staticCacheEntry->processedBuffer;
         if (!staticCacheEntry->processedSurface.isNull()) {
           surface = staticCacheEntry->processedSurface;
         }
+      } else {
+        ++staticLayerGpuCacheCounters().missCount;
       }
     }
 
@@ -1351,6 +1442,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                finalOpacity);
         }
       });
+    trimStaticLayerGpuCache();
     return true;
   };
 
