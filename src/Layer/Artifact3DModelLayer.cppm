@@ -206,11 +206,13 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
   // Fallback to cube on failure
   qWarning() << "Failed to load mesh from:" << filePath
              << "- using default cube";
-  if (!impl_->meshLoaded_) {
-    createCubeMesh();
-    impl_->meshLoaded_ = true;
-    updateSourceSizeFromMesh();
-  }
+  impl_->fixedGeometry_ = FixedGeometry3D::Cube;
+  impl_->sourcePath_.clear();
+  createCubeMesh();
+  impl_->meshLoaded_ = true;
+  updateSourceSizeFromMesh();
+  impl_->renderMode_ = RenderMode::Solid;
+  Q_EMIT changed();
 }
 
 void Artifact3DLayer::setFixedGeometry(FixedGeometry3D geometry)
