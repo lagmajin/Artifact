@@ -52,6 +52,9 @@ export namespace Artifact
   UniString path;
   bool isFolder = false;
  bool isSequence = false;
+ bool isSequenceFrame = false;
+ QString sequenceParentPath;
+ int sequenceFrameNumber = 0;
  int sequenceFrameCount = 0;
  int sequenceStartFrame = 0;
  int sequencePadding = 0;
@@ -67,6 +70,9 @@ export namespace Artifact
           path == other.path &&
           isFolder == other.isFolder &&
           isSequence == other.isSequence &&
+          isSequenceFrame == other.isSequenceFrame &&
+          sequenceParentPath == other.sequenceParentPath &&
+          sequenceFrameNumber == other.sequenceFrameNumber &&
           sequenceFrameCount == other.sequenceFrameCount &&
           sequenceStartFrame == other.sequenceStartFrame &&
           sequencePadding == other.sequencePadding &&

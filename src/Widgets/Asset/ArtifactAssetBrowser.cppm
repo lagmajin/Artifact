@@ -1463,6 +1463,7 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
    QLabel* fileInfoLabel_ = nullptr;  // File details display
    QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
     QString currentDirectoryPath_;
+    QSet<QString> expandedSequencePaths_;
     QString currentFileTypeFilter_ = "all";
     QString currentStatusFilter_ = "all";
     QString currentSearchFilter_;
@@ -1767,6 +1768,17 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
      for (const QString& sequencePath : item.sequencePaths) {
       if (!sequencePath.isEmpty()) {
        paths.append(sequencePath);
+      }
+     }
+    } else if (item.isSequenceFrame && !item.sequenceParentPath.isEmpty()) {
+     const QString parentPath = item.sequenceParentPath;
+     for (int row = 0; row < assetModel_->rowCount(); ++row) {
+      const AssetMenuItem parent = assetModel_->itemAt(row);
+      if (parent.isSequence && parent.path.toQString() == parentPath) {
+       for (const QString& sequencePath : parent.sequencePaths) {
+        if (!sequencePath.isEmpty()) paths.append(sequencePath);
+       }
+       break;
       }
      }
     } else {
@@ -2722,6 +2734,26 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
     item.icon = generateThumbnail(seq.first().fullPath);
     items.append(item);
+    if (expandedSequencePaths_.contains(item.path.toQString())) {
+     int frameIndex = 0;
+     for (const auto& sf : seq) {
+      AssetMenuItem frameItem;
+      frameItem.name = UniString::fromQString(
+          QStringLiteral("  └ %1").arg(sf.name));
+      frameItem.path = UniString::fromQString(sf.fullPath);
+      frameItem.type = UniString::fromQString(
+          QStringLiteral("Sequence Frame • %1").arg(sf.frame));
+      frameItem.isSequenceFrame = true;
+      frameItem.sequenceParentPath = item.path.toQString();
+      frameItem.sequenceFrameNumber = sf.frame;
+      frameItem.sequenceFrameCount = item.sequenceFrameCount;
+      frameItem.sequenceStartFrame = item.sequenceStartFrame;
+      frameItem.sequencePadding = item.sequencePadding;
+      frameItem.sequencePaths = item.sequencePaths;
+      frameItem.icon = (frameIndex++ == 0) ? item.icon : QIcon();
+      items.append(std::move(frameItem));
+     }
+    }
    }
 
    // Standalone files — parallelized with TBB
@@ -3957,10 +3989,21 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   });
 
   const QStringList selectedAssetPaths = impl_->selectedAssetPaths();
-  const QStringList clickedSequenceTargets =
-      item.isSequence && !item.sequencePaths.isEmpty()
-          ? item.sequencePaths
-          : QStringList{filePath};
+  QStringList clickedSequenceTargets;
+  if (item.isSequence && !item.sequencePaths.isEmpty()) {
+   clickedSequenceTargets = item.sequencePaths;
+  } else if (item.isSequenceFrame && !item.sequenceParentPath.isEmpty()) {
+   for (int row = 0; row < impl_->assetModel_->rowCount(); ++row) {
+    const AssetMenuItem parent = impl_->assetModel_->itemAt(row);
+    if (parent.isSequence && parent.path.toQString() == item.sequenceParentPath) {
+     clickedSequenceTargets = parent.sequencePaths;
+     break;
+    }
+   }
+  }
+  if (clickedSequenceTargets.isEmpty()) {
+   clickedSequenceTargets = QStringList{filePath};
+  }
   const QStringList importTargets = selectedAssetPaths.isEmpty()
       ? clickedSequenceTargets
       : selectedAssetPaths;
@@ -3993,6 +4036,22 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    addAction(frequentMenu, QStringLiteral("Preview in Contents Viewer"), [this, filePath]() {
     if (filePath.isEmpty()) return;
     itemDoubleClicked(filePath);
+   });
+  }
+
+  if (item.isSequence) {
+   const bool expanded = impl_->expandedSequencePaths_.contains(filePath);
+   addAction(frequentMenu,
+             expanded ? QStringLiteral("Collapse Sequence Frames")
+                      : QStringLiteral("Expand Sequence Frames"),
+             [this, filePath, expanded]() {
+    if (filePath.isEmpty()) return;
+    if (expanded) {
+     impl_->expandedSequencePaths_.remove(filePath);
+    } else {
+     impl_->expandedSequencePaths_.insert(filePath);
+    }
+    impl_->applyFilters();
    });
   }
 
