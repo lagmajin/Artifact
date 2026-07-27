@@ -9,6 +9,7 @@ module;
 #include <QImage>
 #include <QJsonObject>
 #include <QMatrix4x4>
+#include <QTransform>
 #include <QPainter>
 #include <QRect>
 #include <QRectF>
@@ -1040,7 +1041,17 @@ QRectF ArtifactImageLayer::localBounds() const
         const QRectF crop = impl_->sourceCrop_.effectiveCropRect(
             QSizeF(size.width, size.height));
         if (crop.isValid() && crop.width() > 0.0 && crop.height() > 0.0) {
-            return crop;
+            if (std::abs(impl_->sourceCrop_.rotation()) <= 1e-6) {
+                return crop;
+            }
+            const QPointF anchor = impl_->sourceCrop_.anchor();
+            const QPointF pivot(crop.left() + crop.width() * anchor.x(),
+                                crop.top() + crop.height() * anchor.y());
+            QTransform transform;
+            transform.translate(pivot.x(), pivot.y());
+            transform.rotate(impl_->sourceCrop_.rotation());
+            transform.translate(-pivot.x(), -pivot.y());
+            return transform.map(QPolygonF(crop)).boundingRect();
         }
     }
 
