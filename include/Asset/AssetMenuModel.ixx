@@ -37,6 +37,7 @@
 #include <QDateTime>
 #include <QString>
 #include <QStringList>
+#include <QtGlobal>
 export module AssetMenuModel;
 
 import std;
@@ -55,9 +56,9 @@ export namespace Artifact
  bool isSequence = false;
  bool isSequenceFrame = false;
  QString sequenceParentPath;
- int sequenceFrameNumber = 0;
+ qint64 sequenceFrameNumber = 0;
  int sequenceFrameCount = 0;
- int sequenceStartFrame = 0;
+ qint64 sequenceStartFrame = 0;
  int sequencePadding = 0;
  qint64 fileSizeBytes = 0;
  QDateTime lastModified;

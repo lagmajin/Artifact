@@ -2590,7 +2590,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    }
 
    // --- Phase 2: pre-filter files and detect sequences ---
-   struct SeqFile { QString name; int frame; int pad; QString fullPath; };
+   struct SeqFile { QString name; qint64 frame; int pad; QString fullPath; };
    static const QRegularExpression kSeqRx(QStringLiteral(R"(^(.*?)([._-]?)(\d{3,})(\.[a-zA-Z0-9]+)$)"));
    QMap<QString, QList<SeqFile>> seqMap;
    QSet<QString> seqFiles;
@@ -2605,7 +2605,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     if (!m.hasMatch()) continue;
     QString frameStr = m.captured(3);
     bool ok = false;
-    int frameNum = frameStr.toInt(&ok);
+    const qint64 frameNum = frameStr.toLongLong(&ok);
     if (!ok) continue;
     // Padding is part of the sequence identity. Mixing `001` and `0002`
     // would produce an invalid display pattern and an ambiguous import.
@@ -2644,16 +2644,16 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     std::sort(seq.begin(), seq.end(), [](const SeqFile& a, const SeqFile& b) { return a.frame < b.frame; });
 
     AssetMenuItem item;
-    int firstFrame = seq.first().frame;
-    int lastFrame = seq.last().frame;
+    const qint64 firstFrame = seq.first().frame;
+    const qint64 lastFrame = seq.last().frame;
     int count = seq.size();
     int pad = seq.first().pad;
-    int missingFrameCount = 0;
+    qint64 missingFrameCount = 0;
     int unreadableFrameCount = 0;
     bool hasSizeMismatch = false;
     QSize sequenceFrameSize;
     for (int frameIndex = 1; frameIndex < seq.size(); ++frameIndex) {
-     const int gap = seq[frameIndex].frame - seq[frameIndex - 1].frame - 1;
+     const qint64 gap = seq[frameIndex].frame - seq[frameIndex - 1].frame - 1;
      if (gap > 0) missingFrameCount += gap;
     }
     for (const auto& sf : seq) {
@@ -3921,7 +3921,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
               .match(selectedFrameInfo.fileName());
       if (selectedMatch.hasMatch()) {
        info += QString("Selected Frame: %1<br>")
-                   .arg(selectedMatch.captured(0).toInt());
+                   .arg(selectedMatch.captured(0).toLongLong());
       }
      }
      break;
