@@ -741,6 +741,11 @@ void ArtifactImageLayer::setFromCvMat(const cv::Mat& mat)
         impl_->hasImage_ = false;
         impl_->cache_.reset();
         impl_->cacheBuffer_.reset();
+        impl_->width_ = 0;
+        impl_->height_ = 0;
+        setSourceSize(Size_2D(0, 0));
+        setDirty(LayerDirtyFlag::Content);
+        Q_EMIT changed();
         return;
     }
 
@@ -967,8 +972,13 @@ void ArtifactImageLayer::setFromQImage(const QImage& image)
 {
     if (image.isNull()) {
         impl_->hasImage_ = false;
-        impl_->cache_ = nullptr;
+        impl_->cache_.reset();
         impl_->cacheBuffer_.reset();
+        impl_->width_ = 0;
+        impl_->height_ = 0;
+        setSourceSize(Size_2D(0, 0));
+        setDirty(LayerDirtyFlag::Content);
+        Q_EMIT changed();
         return;
     }
 
@@ -980,6 +990,8 @@ void ArtifactImageLayer::setFromQImage(const QImage& image)
 
     setSourceSize(Size_2D(image.width(), image.height()));
     impl_->sourceCrop_.clampToSource(QSizeF(image.width(), image.height()));
+    setDirty(LayerDirtyFlag::Content);
+    Q_EMIT changed();
 }
 
 void ArtifactImageLayer::setFitToLayer(bool fit)
