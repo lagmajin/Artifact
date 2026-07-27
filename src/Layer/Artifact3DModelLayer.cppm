@@ -215,12 +215,16 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
 
 void Artifact3DLayer::setFixedGeometry(FixedGeometry3D geometry)
 {
+  if (impl_->fixedGeometry_ == geometry && impl_->meshLoaded_) {
+    return;
+  }
   impl_->fixedGeometry_ = geometry;
   impl_->sourcePath_.clear();
   createFixedGeometryMesh(geometry);
   impl_->meshLoaded_ = true;
   updateSourceSizeFromMesh();
   impl_->renderMode_ = RenderMode::Solid;
+  Q_EMIT changed();
 }
 
 FixedGeometry3D Artifact3DLayer::fixedGeometry() const
@@ -1015,7 +1019,6 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     if (geometryInt >= static_cast<int>(FixedGeometry3D::Auto) &&
         geometryInt <= static_cast<int>(FixedGeometry3D::Cone)) {
       setFixedGeometry(static_cast<FixedGeometry3D>(geometryInt));
-      Q_EMIT changed();
       return true;
     }
   } else if (propertyPath == QStringLiteral("geometry.width")) {
