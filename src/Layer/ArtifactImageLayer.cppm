@@ -970,6 +970,16 @@ bool ArtifactImageLayer::hasCurrentFrameBuffer() const
 
 void ArtifactImageLayer::setFromQImage(const QImage& image)
 {
+    // A QImage supplied by an editing tool is an in-memory result, not a new
+    // decode of the current file.  Drop the old source identity so a later
+    // source-version refresh cannot silently replace the edited pixels.
+    if (!impl_->sourceAssetId_.isNull()) {
+        ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+        impl_->sourceAssetId_ = QUuid();
+    }
+    impl_->sourcePath_.clear();
+    impl_->cachedSourceVersion_ = 0;
+
     if (image.isNull()) {
         impl_->hasImage_ = false;
         impl_->cache_.reset();
