@@ -35,6 +35,7 @@
 #include <QList>
 #include <QIcon>
 #include <QDateTime>
+#include <QString>
 #include <QStringList>
 export module AssetMenuModel;
 
