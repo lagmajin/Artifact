@@ -138,6 +138,14 @@ namespace Artifact
    return item.isFolder ? impl_->folderIcon_ : impl_->fileIcon_;
   case Qt::ToolTipRole: {
    QStringList lines;
+   if (item.isSequence) {
+    lines << QStringLiteral("Image Sequence: %1 frames")
+                 .arg(item.sequenceFrameCount);
+    lines << QStringLiteral("Start frame: %1 | Padding: %2 digits")
+                 .arg(item.sequenceStartFrame)
+                 .arg(item.sequencePadding);
+    lines << QStringLiteral("Drag or import applies the full sequence");
+   }
    if (!item.type.toQString().isEmpty()) {
     lines << item.type.toQString();
    }
