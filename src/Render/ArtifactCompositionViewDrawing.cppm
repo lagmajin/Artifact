@@ -258,6 +258,33 @@ QHash<QString, StaticLayerGpuCacheEntry> &staticLayerGpuCache()
   return cache;
 }
 
+void trimStaticLayerGpuCache()
+{
+  constexpr int kMaxEntries = 128;
+  constexpr size_t kMaxBytes = 512ull * 1024ull * 1024ull;
+  auto& cache = staticLayerGpuCache();
+  size_t totalBytes = 0;
+  for (const auto& entry : cache) {
+    totalBytes += entry.byteSize;
+  }
+  while (cache.size() > kMaxEntries || totalBytes > kMaxBytes) {
+    auto oldest = cache.end();
+    for (auto it = cache.begin(); it != cache.end(); ++it) {
+      if (oldest == cache.end() ||
+          it->lastFrameNumber < oldest->lastFrameNumber) {
+        oldest = it;
+      }
+    }
+    if (oldest == cache.end()) {
+      break;
+    }
+    totalBytes = totalBytes > oldest->byteSize
+        ? totalBytes - oldest->byteSize
+        : 0;
+    cache.erase(oldest);
+  }
+}
+
 EffectContext makeLayerEffectContext(ArtifactAbstractLayer* layer,
                                      const QRectF& roi = QRectF())
 {
@@ -1065,6 +1092,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     if (surface.isNull()) {
       return false;
     }
+
+    trimStaticLayerGpuCache();
 
     const bool usesGpuTextureCache =
         layerCacheEnabled && gpuTextureCacheManager &&
