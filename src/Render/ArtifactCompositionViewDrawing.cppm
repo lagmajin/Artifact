@@ -84,6 +84,7 @@ export struct StaticLayerGpuCacheDiagnostics
 
 export StaticLayerGpuCacheDiagnostics staticLayerGpuCacheDiagnostics();
 export void clearStaticLayerGpuCache();
+export void clearStaticLayerGpuCache(GPUTextureCacheManager* gpuTextureCacheManager);
 
 export bool layerHasCpuRasterizerWork(ArtifactAbstractLayer* layer);
 export bool layerUsesSurfaceUploadForCompositionView(ArtifactAbstractLayer* layer);
@@ -972,6 +973,20 @@ StaticLayerGpuCacheDiagnostics staticLayerGpuCacheDiagnostics()
 
 void clearStaticLayerGpuCache()
 {
+  clearStaticLayerGpuCache(nullptr);
+}
+
+void clearStaticLayerGpuCache(GPUTextureCacheManager* gpuTextureCacheManager)
+{
+  if (gpuTextureCacheManager) {
+    for (const auto& entry : staticLayerGpuCache()) {
+      if (entry.gpuTextureHandle.isValid()) {
+        gpuTextureCacheManager->invalidate(
+            entry.gpuTextureHandle,
+            GPUTextureCacheInvalidationReason::ClearAll);
+      }
+    }
+  }
   staticLayerGpuCache().clear();
   staticLayerGpuCacheCounters() = {};
 }
