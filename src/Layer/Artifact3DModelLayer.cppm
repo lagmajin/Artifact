@@ -670,7 +670,14 @@ void Artifact3DLayer::updateSourceSizeFromMesh() {
 RenderMode Artifact3DLayer::renderMode() const { return impl_->renderMode_; }
 
 void Artifact3DLayer::setRenderMode(RenderMode mode) {
+  const int raw = static_cast<int>(mode);
+  if (raw < static_cast<int>(RenderMode::Wireframe) ||
+      raw > static_cast<int>(RenderMode::Solid) ||
+      impl_->renderMode_ == mode) {
+    return;
+  }
   impl_->renderMode_ = mode;
+  Q_EMIT changed();
 }
 
 const ArtifactCore::Mesh& Artifact3DLayer::mesh() const
@@ -1056,7 +1063,6 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     if (modeInt >= static_cast<int>(RenderMode::Wireframe) &&
         modeInt <= static_cast<int>(RenderMode::Solid)) {
       setRenderMode(static_cast<RenderMode>(modeInt));
-      Q_EMIT changed();
       return true;
     }
   } else if (propertyPath == QStringLiteral("model.sourcePath") ||
