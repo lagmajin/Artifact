@@ -140,6 +140,9 @@ namespace Artifact
    QStringList lines;
    if (item.isSequenceFrame) {
     lines << QStringLiteral("Sequence Frame: %1").arg(item.sequenceFrameNumber);
+    lines << QStringLiteral("Parent Sequence: %1 frames")
+                 .arg(item.sequenceFrameCount);
+    lines << item.sequenceParentPath;
     lines << QStringLiteral("Select or drag to use the parent sequence");
    } else if (item.isSequence) {
     lines << QStringLiteral("Image Sequence: %1 frames")
