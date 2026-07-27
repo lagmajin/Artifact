@@ -2625,6 +2625,11 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     int lastFrame = seq.last().frame;
     int count = seq.size();
     int pad = seq.first().pad;
+    int missingFrameCount = 0;
+    for (int frameIndex = 1; frameIndex < seq.size(); ++frameIndex) {
+     const int gap = seq[frameIndex].frame - seq[frameIndex - 1].frame - 1;
+     if (gap > 0) missingFrameCount += gap;
+    }
     QFileInfo fi(seq.first().name);
     QString ext = fi.suffix().toUpper();
 
@@ -2655,6 +2660,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
      if (isMissingAssetPath(sf.fullPath)) anyMissing = true;
      if (!isFavoriteAssetPath(sf.fullPath)) allFav = false;
     }
+    anyMissing = anyMissing || missingFrameCount > 0;
     // Apply status filter
     if (currentStatusFilter_ != "all") {
      bool matchFilter = false;
@@ -2668,6 +2674,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     QStringList markers;
     if (allFav) markers.append(QStringLiteral("Favorite"));
     if (anyMissing) markers.append(QStringLiteral("Missing"));
+    if (missingFrameCount > 0) {
+     markers.append(QStringLiteral("Missing Frames: %1").arg(missingFrameCount));
+    }
     if (allImported) markers.append(QStringLiteral("Imported"));
     if (allUnused) markers.append(QStringLiteral("Unused"));
     QString seqType = QStringLiteral("Sequence • %1").arg(ext);
