@@ -329,6 +329,29 @@ static std::vector<QPainterPath> buildProcessedPainterPaths(
  return painterPaths;
 }
 
+static std::vector<ArtifactCore::ShapePath> buildProcessedShapePaths(
+    Artifact::ShapeType shapeType,
+    int width,
+    int height,
+    float cornerRadius,
+    int starPoints,
+    float starInnerRadius,
+    int polygonSides,
+    const std::vector<QPointF>& customPolygonPoints,
+    bool customPolygonClosed,
+    const std::vector<Artifact::CustomPathVertex>& customPathVertices,
+    bool customPathClosed,
+    const std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>>& operators)
+{
+ const QPainterPath basePainterPath = buildLayerPath(
+     shapeType, width, height, cornerRadius, starPoints, starInnerRadius,
+     polygonSides, customPolygonPoints, customPolygonClosed,
+     customPathVertices, customPathClosed);
+ const ArtifactCore::ShapePath basePath =
+     ArtifactCore::ShapePath::fromPainterPath(basePainterPath);
+ return applyShapeOperators(basePath, operators);
+}
+
 std::vector<QPointF> polygonToPoints(const QPolygonF& polygon) {
  std::vector<QPointF> points;
  points.reserve(static_cast<size_t>(polygon.size()));
@@ -1321,12 +1344,12 @@ QRectF ArtifactShapeLayer::localBounds() const
 
   QRectF bounds;
   if (!impl_->shapeOperators_.empty()) {
-   const auto processedPaths = buildProcessedPainterPaths(impl_->shapeType_, impl_->width_, impl_->height_,
-                                                         impl_->cornerRadius_, impl_->starPoints_,
-                                                         impl_->starInnerRadius_, impl_->polygonSides_,
-                                                         impl_->customPolygonPoints_, impl_->customPolygonClosed_,
-                                                         impl_->customPathVertices_, impl_->customPathClosed_,
-                                                         impl_->shapeOperators_);
+   const auto processedPaths = buildProcessedShapePaths(
+       impl_->shapeType_, impl_->width_, impl_->height_, impl_->cornerRadius_,
+       impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_,
+       impl_->customPolygonPoints_, impl_->customPolygonClosed_,
+       impl_->customPathVertices_, impl_->customPathClosed_,
+       impl_->shapeOperators_);
    for (const auto& path : processedPaths) {
     const QRectF pathBounds = path.boundingRect();
     bounds = bounds.isNull() ? pathBounds : bounds.united(pathBounds);
