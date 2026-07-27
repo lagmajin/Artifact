@@ -569,8 +569,9 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
   }
 
   if (auto* svgLayer = dynamic_cast<ArtifactSvgLayer*>(layer)) {
-    key += QStringLiteral("|svg|src=%1|fit=%2|size=%3x%4")
+    key += QStringLiteral("|svg|src=%1|rev=%2|fit=%3|size=%4x%5")
                .arg(svgLayer->sourcePath())
+               .arg(svgLayer->sourceVersion())
                .arg(svgLayer->fitToLayer() ? 1 : 0)
                .arg(surface.width())
                .arg(surface.height());
