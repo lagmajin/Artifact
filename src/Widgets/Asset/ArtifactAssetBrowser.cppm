@@ -1505,6 +1505,20 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
   int sourceUseCountForPath(const QString& filePath,
                             const QStringList& sequencePaths = {}) const;
   bool isMissingAssetPath(const QString& filePath) const;
+  // Shared status aggregation used by row markers, the info/preview pane,
+  // status filtering, and post-import/relink refresh.
+  struct AssetStatusSummary {
+   bool favorite = false;
+   bool imported = false;
+   bool unused = false;
+   bool missing = false;
+  };
+  AssetStatusSummary assetStatusForPaths(const QString& filePath,
+                                         const QStringList& sequencePaths = {}) const;
+  QStringList assetStatusMarkers(const AssetStatusSummary& status) const;
+  QString assetStatusInfoHtml(const AssetStatusSummary& status) const;
+  bool matchesStatusFilter(const AssetStatusSummary& status) const;
+  bool findAssetItemByPath(const QString& filePath, AssetMenuItem* outItem) const;
   void toggleFavoritePath(const QString& filePath);
   QStringList selectedAssetPaths() const;
   void syncProjectAssetRoot();
@@ -1651,12 +1665,7 @@ ArtifactAssetBrowser::Impl::~Impl()
 
  bool ArtifactAssetBrowser::Impl::isImageFile(const QString& fileName) const
  {
-  if (fileType(fileName) == ArtifactCore::FileType::Image) {
-    return true;
-  }
-  const QString suffix = QFileInfo(fileName).suffix().toLower();
-  return suffix == QStringLiteral("jpe") ||
-         suffix == QStringLiteral("jfif");
+  return fileType(fileName) == ArtifactCore::FileType::Image;
  }
 
  bool ArtifactAssetBrowser::Impl::isVideoFile(const QString& fileName) const
@@ -1794,6 +1803,74 @@ bool ArtifactAssetBrowser::Impl::isMissingAssetPath(const QString& filePath) con
    return false;
   }
  return !QFileInfo::exists(filePath);
+}
+
+ArtifactAssetBrowser::Impl::AssetStatusSummary
+ArtifactAssetBrowser::Impl::assetStatusForPaths(const QString& filePath,
+                                                const QStringList& sequencePaths) const
+{
+  // Aggregation rule shared everywhere: favorite/imported/unused require
+  // every frame, missing triggers on any frame.
+  AssetStatusSummary status;
+  const QStringList paths = sequencePaths.isEmpty() ? QStringList{filePath} : sequencePaths;
+  status.favorite = true;
+  status.imported = true;
+  status.unused = true;
+  status.missing = false;
+  for (const QString& path : paths) {
+   if (!isFavoriteAssetPath(path)) status.favorite = false;
+   if (!isImportedAssetPath(path)) status.imported = false;
+   if (!isUnusedAssetPath(path)) status.unused = false;
+   if (isMissingAssetPath(path)) status.missing = true;
+  }
+  return status;
+}
+
+QStringList ArtifactAssetBrowser::Impl::assetStatusMarkers(const AssetStatusSummary& status) const
+{
+  QStringList markers;
+  if (status.favorite) markers.append(QStringLiteral("Favorite"));
+  if (status.missing) markers.append(QStringLiteral("Missing"));
+  if (status.imported) markers.append(QStringLiteral("Imported"));
+  if (status.unused) markers.append(QStringLiteral("Unused"));
+  return markers;
+}
+
+QString ArtifactAssetBrowser::Impl::assetStatusInfoHtml(const AssetStatusSummary& status) const
+{
+  QString info;
+  info += QStringLiteral("Favorite: %1<br>").arg(status.favorite ? QStringLiteral("Yes") : QStringLiteral("No"));
+  info += QStringLiteral("Project: %1<br>").arg(status.imported ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
+  info += QStringLiteral("Usage: %1<br>").arg(status.unused ? QStringLiteral("Unused") : QStringLiteral("In Use / N.A."));
+  info += QStringLiteral("Status: %1<br>").arg(status.missing ? QStringLiteral("Missing") : QStringLiteral("OK"));
+  return info;
+}
+
+bool ArtifactAssetBrowser::Impl::matchesStatusFilter(const AssetStatusSummary& status) const
+{
+  if (currentStatusFilter_ == QStringLiteral("all")) return true;
+  if (currentStatusFilter_ == QStringLiteral("imported")) return status.imported;
+  if (currentStatusFilter_ == QStringLiteral("favorite")) return status.favorite;
+  if (currentStatusFilter_ == QStringLiteral("missing")) return status.missing;
+  if (currentStatusFilter_ == QStringLiteral("unused")) return status.unused;
+  return true;
+}
+
+bool ArtifactAssetBrowser::Impl::findAssetItemByPath(const QString& filePath, AssetMenuItem* outItem) const
+{
+  if (!assetModel_ || filePath.isEmpty()) {
+   return false;
+  }
+  const int rows = assetModel_->rowCount();
+  for (int row = 0; row < rows; ++row) {
+   const AssetMenuItem item = assetModel_->itemAt(row);
+   if (item.path.toQString() == filePath ||
+       (item.isSequence && item.sequencePaths.contains(filePath))) {
+    if (outItem) *outItem = item;
+    return true;
+   }
+  }
+  return false;
 }
 
 void ArtifactAssetBrowser::Impl::toggleFavoritePath(const QString& filePath)
@@ -2623,29 +2700,13 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     item.sequencePadding = pad;
     for (const auto& sf : seq) item.sequencePaths.append(sf.fullPath);
 
-    // Status markers (aggregated across all frames)
-    bool allImported = true, allUnused = true, anyMissing = false, allFav = true;
-    for (const auto& sf : seq) {
-     if (!isImportedAssetPath(sf.fullPath)) allImported = false;
-     if (!isUnusedAssetPath(sf.fullPath)) allUnused = false;
-     if (isMissingAssetPath(sf.fullPath)) anyMissing = true;
-     if (!isFavoriteAssetPath(sf.fullPath)) allFav = false;
-    }
-    // Apply status filter
-    if (currentStatusFilter_ != "all") {
-     bool matchFilter = false;
-     if (currentStatusFilter_ == "imported") matchFilter = allImported;
-     else if (currentStatusFilter_ == "favorite") matchFilter = allFav;
-     else if (currentStatusFilter_ == "missing") matchFilter = anyMissing;
-     else if (currentStatusFilter_ == "unused") matchFilter = allUnused;
-     if (!matchFilter) continue;
+    // Status markers (aggregated across all frames via the shared helper)
+    const AssetStatusSummary status = assetStatusForPaths(item.path.toQString(), item.sequencePaths);
+    if (!matchesStatusFilter(status)) {
+     continue;
     }
 
-    QStringList markers;
-    if (allFav) markers.append(QStringLiteral("Favorite"));
-    if (anyMissing) markers.append(QStringLiteral("Missing"));
-    if (allImported) markers.append(QStringLiteral("Imported"));
-    if (allUnused) markers.append(QStringLiteral("Unused"));
+    const QStringList markers = assetStatusMarkers(status);
     QString seqType = QStringLiteral("Sequence • %1").arg(ext);
     if (!markers.isEmpty()) seqType = QStringLiteral("%1 • %2").arg(markers.join(QStringLiteral(" • ")), seqType);
     item.type = UniString::fromQString(seqType);
@@ -2666,29 +2727,16 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
        continue;
       }
 
-      // Check status filter
-      if (currentStatusFilter_ != "all") {
-       const bool imported = isImportedAssetPath(fullPath);
-       const bool unused = isUnusedAssetPath(fullPath);
-       const bool missing = isMissingAssetPath(fullPath);
-       const bool favorite = isFavoriteAssetPath(fullPath);
-       if (currentStatusFilter_ == "imported" && !imported) continue;
-       if (currentStatusFilter_ == "favorite" && !favorite) continue;
-       if (currentStatusFilter_ == "missing" && !missing) continue;
-       if (currentStatusFilter_ == "unused" && !unused) continue;
+      // Status markers via the shared helper (same rule and filter as sequences)
+      const AssetStatusSummary status = assetStatusForPaths(fullPath);
+      if (!matchesStatusFilter(status)) {
+       continue;
       }
 
       AssetMenuItem item;
       item.name = UniString::fromQString(entry);
       item.path = UniString::fromQString(fullPath);
-      QStringList markers;
-      if (isFavoriteAssetPath(fullPath)) markers.append(QStringLiteral("Favorite"));
-      const bool imported = isImportedAssetPath(fullPath);
-      const bool unused = isUnusedAssetPath(fullPath);
-      const bool missing = isMissingAssetPath(fullPath);
-      if (missing) markers.append(QStringLiteral("Missing"));
-      if (imported) markers.append(QStringLiteral("Imported"));
-      if (unused) markers.append(QStringLiteral("Unused"));
+      const QStringList markers = assetStatusMarkers(status);
       QString itemType = fileInfo.suffix().toUpper();
       if (!markers.isEmpty()) itemType = QStringLiteral("%1 • %2").arg(markers.join(QStringLiteral(" • ")), itemType);
       item.type = UniString::fromQString(itemType);
@@ -3725,8 +3773,17 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
 
   QFileInfo fileInfo(filePath);
 
+  // Resolve the browser item so sequences share the same aggregated status
+  // as the row markers (preview / import / relink all read this one summary).
+  AssetMenuItem assetItem;
+  const bool isSequenceItem = impl_->findAssetItemByPath(filePath, &assetItem) && assetItem.isSequence;
+  const QStringList sequencePaths = isSequenceItem ? assetItem.sequencePaths : QStringList{};
+
  if (!fileInfo.exists()) {
-   impl_->fileInfoLabel_->setText("File not found");
+   QString info = QString("<b>%1</b><br>").arg(fileInfo.fileName());
+   info += QStringLiteral("File not found<br>");
+   info += impl_->assetStatusInfoHtml(impl_->assetStatusForPaths(filePath, sequencePaths));
+   impl_->fileInfoLabel_->setText(info);
    if (impl_->filePreviewLabel_) {
     impl_->filePreviewLabel_->setPixmap(QPixmap());
     impl_->filePreviewLabel_->setText(QStringLiteral("Preview unavailable"));
@@ -3758,10 +3815,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   if (fileInfo.isDir()) {
     info += "Type: Folder<br>";
     info += QString("Entries: %1<br>").arg(QDir(filePath).entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot).size());
-    info += QString("Favorite: %1<br>").arg(impl_->isFavoriteAssetPath(filePath) ? QStringLiteral("Yes") : QStringLiteral("No"));
-    info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
-    info += QString("Usage: %1<br>").arg(impl_->isUnusedAssetPath(filePath) ? QStringLiteral("Unused") : QStringLiteral("In Use / N.A."));
-    info += QString("Status: %1<br>").arg(impl_->isMissingAssetPath(filePath) ? QStringLiteral("Missing") : QStringLiteral("OK"));
+    info += impl_->assetStatusInfoHtml(impl_->assetStatusForPaths(filePath));
     impl_->fileInfoLabel_->setText(info);
     return;
    }
@@ -3774,11 +3828,14 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
     info += QString("Type: %1<br>").arg(fileInfo.suffix().toUpper());
    }
    info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
-   info += QString("Favorite: %1<br>").arg(impl_->isFavoriteAssetPath(filePath) ? QStringLiteral("Yes") : QStringLiteral("No"));
-   info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
-   info += QString("Source Uses: %1<br>").arg(impl_->sourceUseCountForPath(filePath));
-   info += QString("Usage: %1<br>").arg(impl_->isUnusedAssetPath(filePath) ? QStringLiteral("Unused") : QStringLiteral("In Use"));
-   info += QString("Status: %1<br>").arg(impl_->isMissingAssetPath(filePath) ? QStringLiteral("Missing") : QStringLiteral("OK"));
+   if (isSequenceItem) {
+    info += QString("Sequence: %1 frames<br>").arg(assetItem.sequenceFrameCount);
+    info += QString("Start Frame: %1 (padding %2)<br>")
+        .arg(assetItem.sequenceStartFrame)
+        .arg(assetItem.sequencePadding);
+   }
+   info += impl_->assetStatusInfoHtml(impl_->assetStatusForPaths(filePath, sequencePaths));
+   info += QString("Source Uses: %1<br>").arg(impl_->sourceUseCountForPath(filePath, sequencePaths));
    info += QString("Thumbnail: %1<br>").arg(impl_->thumbnailDebugStatus(filePath).toHtmlEscaped());
 
    // Get detailed information based on file type
@@ -3878,12 +3935,38 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   });
 
   const QStringList selectedAssetPaths = impl_->selectedAssetPaths();
-  const QStringList importTargets = selectedAssetPaths.isEmpty() ? QStringList{filePath} : selectedAssetPaths;
+  const QStringList selectedTargets = selectedAssetPaths.isEmpty() ? QStringList{filePath} : selectedAssetPaths;
 
-  // Add to Project action
-  const QString addActionLabel = importTargets.size() > 1
-   ? QStringLiteral("Add %1 Items to Project").arg(importTargets.size())
-   : QStringLiteral("Add to Project");
+  // Expand sequences to every frame so the import keeps the whole sequence
+  // relationship (the service groups the frames back into one footage item).
+  QStringList importTargets;
+  int expandedSequenceFrames = 0;
+  int expandedSequenceCount = 0;
+  for (const QString& target : selectedTargets) {
+   AssetMenuItem targetItem;
+   if (impl_->findAssetItemByPath(target, &targetItem) &&
+       targetItem.isSequence && !targetItem.sequencePaths.isEmpty()) {
+    importTargets.append(targetItem.sequencePaths);
+    expandedSequenceFrames += targetItem.sequencePaths.size();
+    ++expandedSequenceCount;
+   } else {
+    importTargets.append(target);
+   }
+  }
+  importTargets.removeDuplicates();
+
+  // Add to Project action (import operation names show the frame count)
+  QString addActionLabel;
+  if (expandedSequenceCount == 1 && selectedTargets.size() == 1) {
+   addActionLabel = QStringLiteral("Add Sequence to Project (%1 frames)").arg(expandedSequenceFrames);
+  } else if (selectedTargets.size() > 1) {
+   addActionLabel = expandedSequenceCount > 0
+    ? QStringLiteral("Add %1 Items to Project (%2 sequence frames)")
+       .arg(selectedTargets.size()).arg(expandedSequenceFrames)
+    : QStringLiteral("Add %1 Items to Project").arg(selectedTargets.size());
+  } else {
+   addActionLabel = QStringLiteral("Add to Project");
+  }
   addAction(frequentMenu, addActionLabel, [this, importTargets, filePath]() {
    if (importTargets.isEmpty() && filePath.isEmpty()) return;
    auto* svc = ArtifactProjectService::instance();
@@ -3898,6 +3981,8 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
     }
     filesDropped(imported);
     impl_->applyFilters();
+    // Keep the info/preview pane in sync with the refreshed row status.
+    updateFileInfo(filePath.isEmpty() ? imported.first() : filePath);
    }
   });
 
@@ -3934,6 +4019,8 @@ if (!item.isFolder) {
       UndoManager::instance()->push(
           std::make_unique<RelinkAssetCommand>(filePath, newPath));
       impl_->applyFilters();
+      // Keep the info/preview pane in sync with the refreshed row status.
+      updateFileInfo(newPath);
     }
   });
 }
