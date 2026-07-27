@@ -436,6 +436,9 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
         footageUp->sequencePaths = sequencePaths;
         if (sequencePaths.size() > 1) {
           footageUp->isSequence = true;
+          // Keep the logical footage identity aligned with the sequence
+          // after reload; relink and lookup both use filePath as the anchor.
+          footageUp->filePath = sequencePaths.first();
         }
       }
       return appendChild(std::move(footageUp));
