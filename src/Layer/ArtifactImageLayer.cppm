@@ -1021,9 +1021,20 @@ bool ArtifactImageLayer::fitToLayer() const
 
 QRectF ArtifactImageLayer::localBounds() const
 {
-    const auto size = sourceSize();
+    auto size = sourceSize();
+    if (!impl_->fitToLayer_) {
+        size = Size_2D(impl_->width_, impl_->height_);
+    }
     if (size.width <= 0 || size.height <= 0) {
         return QRectF();
+    }
+
+    if (impl_->sourceCrop_.enabled()) {
+        const QRectF crop = impl_->sourceCrop_.effectiveCropRect(
+            QSizeF(size.width, size.height));
+        if (crop.isValid() && crop.width() > 0.0 && crop.height() > 0.0) {
+            return crop;
+        }
     }
 
     if (!impl_->fitToLayer_ && impl_->width_ > 0 && impl_->height_ > 0) {
