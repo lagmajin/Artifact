@@ -957,6 +957,10 @@ void ArtifactShapeLayer::setShapeType(Artifact::ShapeType type) {
    impl_->customPolygonPoints_.clear();
    impl_->customPolygonClosed_ = true;
   }
+  // Selecting a primitive must leave custom path editing mode; otherwise the
+  // renderer continues to prefer the old Bézier path over the new type.
+  impl_->customPathVertices_.clear();
+  impl_->customPathClosed_ = true;
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;
   impl_->shapeContentCacheDirty_ = true;
