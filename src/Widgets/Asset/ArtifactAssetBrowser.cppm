@@ -3902,15 +3902,30 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
      info += QString("Sequence Status: %1<br>")
                  .arg(sequenceItem.type.toQString().toHtmlEscaped());
      if (filePath != sequenceItem.path.toQString()) {
-      const QFileInfo selectedFrameInfo(filePath);
+       const QFileInfo selectedFrameInfo(filePath);
       const QRegularExpressionMatch selectedMatch =
           QRegularExpression(QStringLiteral(R"(\d{3,})"))
               .match(selectedFrameInfo.fileName());
       if (selectedMatch.hasMatch()) {
        info += QString("Selected Frame: %1<br>")
                    .arg(selectedMatch.captured(0).toLongLong());
+       }
       }
-     }
+      QImageReader selectedReader(filePath);
+      QString frameStatus = selectedReader.canRead()
+          ? QStringLiteral("OK")
+          : QStringLiteral("Unreadable");
+      if (selectedReader.canRead() && !sequenceItem.sequencePaths.isEmpty()) {
+       QImageReader representativeReader(sequenceItem.sequencePaths.first());
+       const QSize representativeSize = representativeReader.size();
+       const QSize selectedSize = selectedReader.size();
+       if (representativeSize.isValid() && selectedSize.isValid() &&
+           representativeSize != selectedSize) {
+        frameStatus = QStringLiteral("Size Mismatch");
+       }
+      }
+      info += QString("Selected Frame Status: %1<br>")
+                  .arg(frameStatus.toHtmlEscaped());
      break;
     }
    }
