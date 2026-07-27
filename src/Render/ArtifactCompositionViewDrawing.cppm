@@ -1368,6 +1368,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                finalOpacity);
         }
       });
+    trimStaticLayerGpuCache();
     return true;
   };
 
