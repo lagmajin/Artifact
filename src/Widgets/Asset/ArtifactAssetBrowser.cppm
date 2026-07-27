@@ -4009,7 +4009,7 @@ if (item.isFolder) {
 
 // Relink action for footage items
 if (!item.isFolder) {
-  addAction(allMenu, QStringLiteral("Relink Selected Footage..."), [this, filePath]() {
+  addAction(allMenu, QStringLiteral("Relink Selected Footage..."), [this, filePath, item]() {
     if (filePath.isEmpty()) return;
     // Show file dialog to select new file path
     QString newPath = QFileDialog::getOpenFileName(nullptr, "Relink Footage", QDir::homePath(), "All Files (*.*)");
@@ -4022,6 +4022,15 @@ if (!item.isFolder) {
       UndoManager::instance()->push(
           std::make_unique<RelinkAssetCommand>(filePath, newPath));
       impl_->applyFilters();
+    } else {
+      QMessageBox::warning(
+          this, QStringLiteral("Relink Failed"),
+          item.isSequence
+              ? QStringLiteral(
+                    "The image sequence could not be relinked.\n\n"
+                    "Choose a representative frame whose directory contains "
+                    "every expected frame with matching numbering and padding.")
+              : QStringLiteral("The selected footage could not be relinked."));
     }
   });
 }
