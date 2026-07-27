@@ -16,6 +16,7 @@ module;
 #include <QMessageBox>
 #include <QPointer>
 #include <QRectF>
+#include <QRegularExpression>
 #include <QSet>
 #include <QVector3D>
 #include <QtConcurrent>
@@ -4239,8 +4240,46 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
   if (!newFileInfo.exists()) {
     return false;
   }
-  // Update the file path
+
+  QStringList resolvedSequencePaths;
+  if (footage->isSequence && footage->sequencePaths.size() > 1) {
+    static const QRegularExpression framePattern(
+        QStringLiteral(R"(^(.*?)(\d+)(\.[^.]+)$)"));
+    const auto newMatch = framePattern.match(newFileInfo.fileName());
+    if (!newMatch.hasMatch()) {
+      return false;
+    }
+
+    const QString newPrefix = newMatch.captured(1);
+    const QString newSuffix = newMatch.captured(3);
+    const int padding = newMatch.captured(2).size();
+    resolvedSequencePaths.reserve(footage->sequencePaths.size());
+    for (const QString &oldPath : footage->sequencePaths) {
+      const auto oldMatch = framePattern.match(QFileInfo(oldPath).fileName());
+      if (!oldMatch.hasMatch()) {
+        return false;
+      }
+      bool frameOk = false;
+      const qint64 frame = oldMatch.captured(2).toLongLong(&frameOk);
+      if (!frameOk) {
+        return false;
+      }
+      const QString frameText = QString::number(frame).rightJustified(
+          padding, QLatin1Char('0'));
+      const QString candidate = newFileInfo.dir().absoluteFilePath(
+          newPrefix + frameText + newSuffix);
+      if (!QFileInfo::exists(candidate)) {
+        return false;
+      }
+      resolvedSequencePaths.append(QFileInfo(candidate).absoluteFilePath());
+    }
+  }
+
   footage->filePath = newFileInfo.absoluteFilePath();
+  if (!resolvedSequencePaths.isEmpty()) {
+    footage->filePath = resolvedSequencePaths.first();
+    footage->sequencePaths = resolvedSequencePaths;
+  }
   // Notify project changed
   auto shared = getCurrentProjectSharedPtr();
   if (shared) {
