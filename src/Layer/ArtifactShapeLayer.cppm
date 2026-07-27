@@ -1450,7 +1450,9 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
      const double scaleY = std::hypot(static_cast<double>(transform(0, 1)),
                                       static_cast<double>(transform(1, 1)));
      const double renderScale = std::max({1.0, scaleX, scaleY});
-     const auto segments = path.flatten(0.25 / renderScale);
+     const auto subpaths = path.flattenSubpaths(0.25 / renderScale);
+     if (subpaths.empty()) return;
+     const auto& segments = subpaths.front();
      std::vector<QPointF> mapped;
      mapped.reserve(segments.size() + 1);
      for (const auto& segment : segments) {
