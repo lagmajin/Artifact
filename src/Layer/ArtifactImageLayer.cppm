@@ -334,6 +334,11 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
     if (!headerOnly.read(0, 0, true, OIIO::TypeDesc::UINT8)) {
         qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
                    << "error=" << QString::fromStdString(headerOnly.geterror());
+        ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+        impl_->sourceAssetId_ = QUuid();
+        impl_->cachedSourceVersion_ = 0;
+        impl_->sourcePath_ = path;
+        impl_->prefetchDone_ = true;
         impl_->hasImage_ = true;
         impl_->cache_ = std::make_shared<QImage>(makeMissingImagePlaceholder(QSize(256, 256),
                                                                              QStringLiteral("Missing image")));
@@ -353,6 +358,11 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
     if (spec.width <= 0 || spec.height <= 0) {
         qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
                    << "error=" << QString::fromStdString(headerOnly.geterror());
+        ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+        impl_->sourceAssetId_ = QUuid();
+        impl_->cachedSourceVersion_ = 0;
+        impl_->sourcePath_ = path;
+        impl_->prefetchDone_ = true;
         impl_->hasImage_ = true;
         impl_->cache_ = std::make_shared<QImage>(makeMissingImagePlaceholder(QSize(256, 256),
                                                                              QStringLiteral("Missing image")));
