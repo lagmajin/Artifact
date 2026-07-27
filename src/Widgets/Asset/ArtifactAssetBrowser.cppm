@@ -3940,9 +3940,12 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
       : selectedAssetPaths;
 
   // Add to Project action
-  const QString addActionLabel = importTargets.size() > 1
-   ? QStringLiteral("Add %1 Items to Project").arg(importTargets.size())
-   : QStringLiteral("Add to Project");
+  const QString addActionLabel = item.isSequence
+   ? QStringLiteral("Add Image Sequence (%1 frames) to Project")
+         .arg(item.sequencePaths.size())
+   : (importTargets.size() > 1
+      ? QStringLiteral("Add %1 Items to Project").arg(importTargets.size())
+      : QStringLiteral("Add to Project"));
   addAction(frequentMenu, addActionLabel, [this, importTargets, filePath]() {
    if (importTargets.isEmpty() && filePath.isEmpty()) return;
    auto* svc = ArtifactProjectService::instance();
