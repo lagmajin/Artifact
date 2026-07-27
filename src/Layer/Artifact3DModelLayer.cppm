@@ -767,7 +767,9 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   };
 
   if (impl_->renderMode_ == RenderMode::Solid) {
-    const QString cacheKey = sourcePath().isEmpty() ? id().toString() : sourcePath();
+    const QString cacheKey = QStringLiteral("%1|layer=%2")
+        .arg(sourcePath().isEmpty() ? id().toString() : sourcePath(),
+             id().toString());
     const int solidShadingMode = impl_->useTextureInSolid_ ? 3 : 8;
     renderer->drawMesh(cacheKey, impl_->mesh_, impl_->material_, modelMatrix,
                        opacity(), solidShadingMode, &previousModelMatrix);
