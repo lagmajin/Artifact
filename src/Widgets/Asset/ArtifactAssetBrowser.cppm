@@ -1117,26 +1117,11 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
 
    QElapsedTimer dragTimer;
    dragTimer.start();
-   auto* mimeData = new QMimeData();
-   QList<QUrl> urls;
-   QSet<QString> seenPaths;
-   const int pathRole = static_cast<int>(AssetMenuRole::Path);
-   for (const QModelIndex& index : indexes) {
-    if (!index.isValid()) {
-     continue;
-    }
-    const QString path = index.data(pathRole).toString();
-    if (path.isEmpty() || seenPaths.contains(path)) {
-     continue;
-    }
-    seenPaths.insert(path);
-    urls.append(QUrl::fromLocalFile(path));
-   }
-   if (urls.isEmpty()) {
+   auto* mimeData = model()->mimeData(indexes);
+   if (!mimeData || mimeData->urls().isEmpty()) {
     delete mimeData;
     return;
    }
-   mimeData->setUrls(urls);
 
    auto* drag = new QDrag(this);
    drag->setMimeData(mimeData);
