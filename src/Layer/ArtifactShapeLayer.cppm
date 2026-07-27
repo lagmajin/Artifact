@@ -1156,11 +1156,38 @@ std::vector<QPointF> ArtifactShapeLayer::customPolygonPoints() const { return im
 bool ArtifactShapeLayer::customPolygonClosed() const { return impl_->customPolygonClosed_; }
 
 // Phase 3: Stroke style setters/getters
-void ArtifactShapeLayer::setStrokeCap(StrokeCap cap) { impl_->strokeCap_ = cap; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeCap(StrokeCap cap) {
+ const auto normalized = static_cast<StrokeCap>(std::clamp(
+     static_cast<int>(cap), static_cast<int>(StrokeCap::Flat),
+     static_cast<int>(StrokeCap::Square)));
+ if (impl_->strokeCap_ == normalized) return;
+ impl_->strokeCap_ = normalized;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 StrokeCap ArtifactShapeLayer::strokeCap() const { return impl_->strokeCap_; }
-void ArtifactShapeLayer::setStrokeJoin(StrokeJoin join) { impl_->strokeJoin_ = join; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeJoin(StrokeJoin join) {
+ const auto normalized = static_cast<StrokeJoin>(std::clamp(
+     static_cast<int>(join), static_cast<int>(StrokeJoin::Miter),
+     static_cast<int>(StrokeJoin::Bevel)));
+ if (impl_->strokeJoin_ == normalized) return;
+ impl_->strokeJoin_ = normalized;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 StrokeJoin ArtifactShapeLayer::strokeJoin() const { return impl_->strokeJoin_; }
-void ArtifactShapeLayer::setStrokeAlign(StrokeAlign align) { impl_->strokeAlign_ = align; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeAlign(StrokeAlign align) {
+ const auto normalized = static_cast<StrokeAlign>(std::clamp(
+     static_cast<int>(align), static_cast<int>(StrokeAlign::Center),
+     static_cast<int>(StrokeAlign::Outside)));
+ if (impl_->strokeAlign_ == normalized) return;
+ impl_->strokeAlign_ = normalized;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 StrokeAlign ArtifactShapeLayer::strokeAlign() const { return impl_->strokeAlign_; }
 void ArtifactShapeLayer::setDashPattern(const std::vector<float>& pattern) { impl_->dashPattern_ = pattern; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 std::vector<float> ArtifactShapeLayer::dashPattern() const { return impl_->dashPattern_; }
