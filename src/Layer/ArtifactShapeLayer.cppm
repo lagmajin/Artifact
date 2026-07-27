@@ -2207,7 +2207,7 @@ std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObje
   }
   // Phase 5: bezier path (takes priority over customPolygon)
   const QJsonArray customPathArr = obj["customPath"].toArray();
-  if (!customPathArr.isEmpty()) {
+  if (customPathArr.size() >= 3) {
     layer->impl_->customPathClosed_ = obj["customPathClosed"].toBool(true);
     layer->impl_->customPathVertices_.clear();
     layer->impl_->customPathVertices_.reserve(customPathArr.size());
