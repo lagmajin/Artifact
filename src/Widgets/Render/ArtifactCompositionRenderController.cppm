@@ -246,6 +246,7 @@ import Utils.Id;
 import Time.Rational;
 
 import Artifact.Render.Pipeline;
+import Artifact.Render.MotionBlurPass;
 
 import Graphics.LayerBlendPipeline;
 
@@ -7961,6 +7962,7 @@ class CompositionRenderController::Impl {
 public:
 
   std::unique_ptr<ArtifactIRenderer> renderer_;
+  std::unique_ptr<MotionBlurPass> motionBlurPass_;
 
   struct PrecompGpuOutputEntry {
     void* colorTargetView = nullptr;
@@ -23919,7 +23921,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           layerFloatUAV, accumSRV, tempUAV};
 
-      FunctionalRenderPass resolvePass(
+  FunctionalRenderPass resolvePass(
 
           FrameRenderPassKind::Post, QStringLiteral("Resolve"),
 
@@ -23932,6 +23934,42 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           },
 
           [&](RenderPassContext&, RenderPassResources& resources) {
+
+            if (resources.pipeline && resources.accumSRV &&
+                resources.pipeline->hasVelocityTarget() &&
+                renderer_ && renderer_->device() &&
+                renderer_->immediateContext()) {
+              if (!motionBlurPass_) {
+                motionBlurPass_ = std::make_unique<MotionBlurPass>();
+                motionBlurPass_->initialize(renderer_->device(),
+                                            renderer_->immediateContext());
+              }
+              const auto depthSRV = renderer_->offscreenTextureShaderResourceView(
+                  previewRenderSlot.depthTargetView);
+              MotionBlurSettings motionBlurSettings;
+              const auto appSettings =
+                  ArtifactCore::ArtifactAppSettings::instance();
+              motionBlurSettings.enabled =
+                  appSettings && appSettings->timelineMotionBlurActive();
+              motionBlurSettings.shutterAngle = 180.0f;
+              motionBlurSettings.shutterPhase = 0.0f;
+              motionBlurSettings.sampleCount =
+                  static_cast<unsigned>(request.previewDownsample > 1 ? 4 : 8);
+              if (motionBlurPass_->apply(renderer_->immediateContext(),
+                                         resources.accumSRV,
+                                         resources.pipeline->velocitySRV(),
+                                         depthSRV,
+                                         resources.pipeline->tempUAV(),
+                                         static_cast<unsigned>(rcw),
+                                         static_cast<unsigned>(rch),
+                                         motionBlurSettings)) {
+                resources.pipeline->swapAccumAndTemp();
+                resources.accumSRV = resources.pipeline->accumSRV();
+                resources.tempUAV = resources.pipeline->tempUAV();
+                accumSRV = resources.accumSRV;
+                tempUAV = resources.tempUAV;
+              }
+            }
 
             ramPreviewReadbackSRV = finalizeGpuRenderToViewport(
 
