@@ -2,6 +2,7 @@ module;
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -21,6 +22,7 @@ struct MotionBlurParams {
   unsigned sampleCount;
   unsigned width;
   unsigned height;
+  unsigned padding[2]{};
 };
 
 constexpr const char* kMotionBlurShader = R"(
