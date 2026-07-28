@@ -31,6 +31,7 @@
 #include <regex>
 #include <random>
 #include <QString>
+#include <QStringList>
 
 export module Artifact.Layer.InitParams;
 
@@ -144,12 +145,18 @@ export namespace Artifact {
  {
  private:
   QString imagePath_;
+  QStringList sequencePaths_;
+  double sequenceFrameRate_ = 0.0;
 
  public:
   ArtifactImageInitParams(const QString& name);
   ~ArtifactImageInitParams();
   QString imagePath() const { return imagePath_; }
   void setImagePath(const QString& path) { imagePath_ = path; }
+  QStringList sequencePaths() const { return sequencePaths_; }
+  void setSequencePaths(const QStringList& paths) { sequencePaths_ = paths; }
+  double sequenceFrameRate() const { return sequenceFrameRate_; }
+  void setSequenceFrameRate(double frameRate) { sequenceFrameRate_ = frameRate; }
  };
 
  class ArtifactSvgInitParams : public ArtifactLayerInitParams

@@ -3768,7 +3768,11 @@ public:
   void enqueueDroppedAssets(const QStringList &paths,
                             const QStringList &importedPaths) {
     ArtifactCore::FileTypeDetector detector;
-    for (const QString &path : paths) {
+    // インポート済みリストは連番シーケンスが代表パスへ集約済みのため、
+    // そちらを正として列挙する（元パス列挙だとシーケンスが再展開される）。
+    const QStringList &effectivePaths =
+        importedPaths.isEmpty() ? paths : importedPaths;
+    for (const QString &path : effectivePaths) {
       const QFileInfo fi(path);
       PendingDroppedAsset asset;
       asset.originalPath = path;

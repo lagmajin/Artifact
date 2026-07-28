@@ -1351,6 +1351,7 @@ public:
   bool defaultNewLayerHidden() const;
   void addAssetFromPath(const UniString &path);
   QStringList importAssetsFromPaths(const QStringList &sourcePaths);
+  QStringList registerImportedAssets(const QStringList &importedPaths);
   void importAssetsFromPathsAsync(const QStringList &sourcePaths,
                                   std::function<void(QStringList)> onFinished);
   void setPreviewQualityPreset(PreviewQualityPreset preset);
@@ -1578,6 +1579,57 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
     const ArtifactLayerInitParams &params, bool selectNewLayer,
     bool placeAtCurrentFrame, bool startHidden) {
   auto &manager = ArtifactProjectService::Impl::projectManager();
+
+  // 連番シーケンス素材として登録済みの画像パスは、レイヤー生成前に
+  // シーケンス情報を InitParams へ引き継ぐ。ここで一元的に注入することで
+  // 各ドロップ元（CompositionEditor / Timeline / LayerPanel）の変更を不要にする。
+  if (params.layerType() == LayerType::Image) {
+    if (auto *imageParams = dynamic_cast<ArtifactImageInitParams *>(
+            const_cast<ArtifactLayerInitParams *>(&params))) {
+      if (imageParams->sequencePaths().size() <= 1 &&
+          !imageParams->imagePath().isEmpty()) {
+        if (auto project = manager.getCurrentProjectSharedPtr()) {
+          const QString normalizedPath = QDir::cleanPath(
+              QFileInfo(imageParams->imagePath()).absoluteFilePath());
+          std::function<FootageItem *(ProjectItem *)> findSequenceFootage =
+              [&](ProjectItem *item) -> FootageItem * {
+            if (!item)
+              return nullptr;
+            if (item->type() == eProjectItemType::Footage) {
+              auto *footage = static_cast<FootageItem *>(item);
+              if (footage->isSequence && footage->sequencePaths.size() > 1) {
+                for (const QString &framePath : footage->sequencePaths) {
+                  if (QDir::cleanPath(
+                          QFileInfo(framePath).absoluteFilePath()) ==
+                      normalizedPath) {
+                    return footage;
+                  }
+                }
+              }
+            }
+            for (auto *child : item->children) {
+              if (auto *found = findSequenceFootage(child)) {
+                return found;
+              }
+            }
+            return nullptr;
+          };
+          FootageItem *sequenceFootage = nullptr;
+          const auto roots = project->projectItems();
+          for (auto *root : roots) {
+            if ((sequenceFootage = findSequenceFootage(root))) {
+              break;
+            }
+          }
+          if (sequenceFootage) {
+            imageParams->setSequencePaths(sequenceFootage->sequencePaths);
+            imageParams->setSequenceFrameRate(sequenceFootage->frameRate);
+          }
+        }
+      }
+    }
+  }
+
   LayerID selectedLayerId;
   if (auto *selectionManager = ArtifactLayerSelectionManager::instance()) {
     if (auto selectedLayer = selectionManager->currentLayer()) {
@@ -1819,6 +1871,64 @@ QStringList ArtifactProjectService::Impl::importAssetsFromPaths(
   return finalImported;
 }
 
+// 非同期インポート完了後（メインスレッド）に呼ばれ、連番シーケンス検出・
+// 素材登録・代表パスへの集約を行う。同期版 importAssetsFromPaths との
+// 違いは、ファイルコピーが既に完了しているためフレームレート入力の
+// キャンセル時は中止ではなく単体素材として登録する点。
+QStringList ArtifactProjectService::Impl::registerImportedAssets(
+    const QStringList &importedPaths) {
+  if (importedPaths.isEmpty()) {
+    return importedPaths;
+  }
+
+  auto &manager = ArtifactProjectService::Impl::projectManager();
+  auto project = manager.getCurrentProjectSharedPtr();
+  if (!project) {
+    return importedPaths;
+  }
+
+  QSet<QString> sequenceConsumed;
+  const QVector<SequenceImportGroup> sequenceGroups =
+      detectSequenceImportGroups(importedPaths, &sequenceConsumed);
+  double sequenceFrameRate = 0.0;
+  if (!sequenceGroups.isEmpty()) {
+    bool ok = false;
+    sequenceFrameRate = QInputDialog::getDouble(
+        QApplication::activeWindow(),
+        QStringLiteral("Image Sequence Frame Rate"),
+        QStringLiteral("Frame rate for imported image sequences:"),
+        24.0, 1.0, 240.0, 3, &ok);
+    if (!ok) {
+      // コピー済みのため中止せず、シーケンス扱いをやめて単体登録する
+      sequenceConsumed.clear();
+    }
+  }
+
+  QStringList finalImported;
+  finalImported.reserve(importedPaths.size());
+
+  if (!sequenceConsumed.isEmpty()) {
+    for (const SequenceImportGroup &group : sequenceGroups) {
+      project->addAssetFromPath(group.representativePath, group.sequencePaths,
+                                sequenceFrameRate);
+      finalImported.append(group.representativePath);
+    }
+  }
+
+  for (const QString &path : importedPaths) {
+    if (sequenceConsumed.contains(path)) {
+      continue;
+    }
+    project->addAssetFromPath(path);
+    finalImported.append(path);
+  }
+
+  if (!finalImported.isEmpty()) {
+    project->projectChanged();
+  }
+  return finalImported;
+}
+
 void ArtifactProjectService::Impl::importAssetsFromPathsAsync(
     const QStringList &sourcePaths,
     std::function<void(QStringList)> onFinished) {
@@ -1840,7 +1950,9 @@ void ArtifactProjectService::Impl::importAssetsFromPathsAsync(
   auto *watcher = new QFutureWatcher<QStringList>(service);
   QObject::connect(watcher, &QFutureWatcher<QStringList>::finished, service,
                    [this, watcher, onFinished = std::move(onFinished)]() mutable {
-                     const QStringList importedPaths = watcher->result();
+                     // 連番シーケンスの検出・登録・代表パス集約
+                     const QStringList importedPaths =
+                         registerImportedAssets(watcher->result());
                      watcher->deleteLater();
                      if (!importedPaths.isEmpty()) {
                        checkImportedAssetCompatibility(importedPaths);

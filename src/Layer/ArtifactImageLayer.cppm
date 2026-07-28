@@ -7,7 +7,10 @@ module;
 #include <QDebug>
 #include <QUuid>
 #include <QImage>
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
+#include <QStringList>
 #include <QMatrix4x4>
 #include <QTransform>
 #include <QPolygonF>
@@ -226,6 +229,8 @@ public:
     int height_ = 0;
     QString sourcePath_;
     QUuid sourceAssetId_;
+    QStringList sequencePaths_;
+    double sequenceFrameRate_ = 0.0;
     mutable std::uint64_t cachedSourceVersion_ = 0;
     SourceCrop sourceCrop_;
     mutable ArtifactCore::SharedPtr<QImage> cache_;
@@ -331,6 +336,11 @@ ArtifactImageLayer::~ArtifactImageLayer() {
 
 bool ArtifactImageLayer::loadFromPath(const QString& path)
 {
+    // 連番シーケンス外のパスを読み込んだ場合はシーケンス関係を解消する
+    if (!impl_->sequencePaths_.isEmpty() && !impl_->sequencePaths_.contains(path)) {
+        impl_->sequencePaths_.clear();
+        impl_->sequenceFrameRate_ = 0.0;
+    }
     const std::string utf8Path = path.toUtf8().toStdString();
     OIIO::ImageBuf headerOnly(utf8Path);
     if (!headerOnly.read(0, 0, true, OIIO::TypeDesc::UINT8)) {
@@ -417,6 +427,33 @@ QString ArtifactImageLayer::sourcePath() const
     return impl_->sourcePath_;
 }
 
+bool ArtifactImageLayer::setImageSequence(const QStringList& framePaths, double frameRate)
+{
+    if (framePaths.isEmpty()) {
+        return false;
+    }
+    impl_->sequencePaths_ = framePaths;
+    impl_->sequenceFrameRate_ = frameRate > 0.0 ? frameRate : 0.0;
+    // 代表フレーム（先頭）を読み込んで表示・サイズを確定させる。
+    // フレーム時刻に応じた再生は ImageSequenceSource 連携のフォローアップとする。
+    return loadFromPath(framePaths.first());
+}
+
+QStringList ArtifactImageLayer::sequenceFramePaths() const
+{
+    return impl_->sequencePaths_;
+}
+
+bool ArtifactImageLayer::isImageSequence() const
+{
+    return impl_->sequencePaths_.size() > 1;
+}
+
+double ArtifactImageLayer::sequenceFrameRate() const
+{
+    return impl_->sequenceFrameRate_;
+}
+
 QUuid ArtifactImageLayer::sourceAssetId() const
 {
     return impl_->sourceAssetId_;
@@ -491,6 +528,14 @@ QJsonObject ArtifactImageLayer::toJson() const
     obj["image.fitToLayer"] = impl_->fitToLayer_;
     obj["image.width"] = impl_->width_;
     obj["image.height"] = impl_->height_;
+    if (!impl_->sequencePaths_.isEmpty()) {
+        QJsonArray sequenceArray;
+        for (const QString& framePath : impl_->sequencePaths_) {
+            sequenceArray.append(framePath);
+        }
+        obj["image.sequencePaths"] = sequenceArray;
+        obj["image.sequenceFrameRate"] = impl_->sequenceFrameRate_;
+    }
     obj["sourceCrop.enabled"] = impl_->sourceCrop_.enabled();
     obj["sourceCrop.cropX"] = impl_->sourceCrop_.cropRect().x();
     obj["sourceCrop.cropY"] = impl_->sourceCrop_.cropRect().y();
@@ -510,6 +555,22 @@ QJsonObject ArtifactImageLayer::toJson() const
 void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
 {
     ArtifactAbstract2DLayer::fromJsonProperties(obj);
+    // シーケンス情報は sourcePath 読み込みより先に復元する
+    // （loadFromPath がシーケンス外パスでフィールドを解消するため）
+    impl_->sequencePaths_.clear();
+    impl_->sequenceFrameRate_ = 0.0;
+    if (obj.value(QStringLiteral("image.sequencePaths")).isArray()) {
+        const QJsonArray sequenceArray =
+            obj.value(QStringLiteral("image.sequencePaths")).toArray();
+        for (const QJsonValue& value : sequenceArray) {
+            const QString framePath = value.toString();
+            if (!framePath.isEmpty()) {
+                impl_->sequencePaths_.append(framePath);
+            }
+        }
+        impl_->sequenceFrameRate_ =
+            obj.value(QStringLiteral("image.sequenceFrameRate")).toDouble(0.0);
+    }
     const QString sourcePath = obj.value(QStringLiteral("image.sourcePath")).toString();
     if (!sourcePath.isEmpty() && sourcePath != impl_->sourcePath_) {
         loadFromPath(sourcePath);
@@ -996,6 +1057,8 @@ void ArtifactImageLayer::setFromQImage(const QImage& image)
     }
     impl_->sourcePath_.clear();
     impl_->cachedSourceVersion_ = 0;
+    impl_->sequencePaths_.clear();
+    impl_->sequenceFrameRate_ = 0.0;
 
     if (image.isNull()) {
         impl_->hasImage_ = false;

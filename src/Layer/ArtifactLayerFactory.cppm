@@ -4,6 +4,7 @@ module;
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 module Artifact.Layer.Factory;
 import std;
@@ -103,10 +104,16 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
    if (ptr) {
     // 画像パラメータからパスを取得して読み込み
     if (auto* imageParams = dynamic_cast<ArtifactImageInitParams*>(&params)) {
-     const QString path = imageParams->imagePath();
-     if (!path.isEmpty()) {
-      auto* imageLayer = static_cast<ArtifactImageLayer*>(ptr.get());
-      imageLayer->loadFromPath(path);
+     auto* imageLayer = static_cast<ArtifactImageLayer*>(ptr.get());
+     const QStringList sequencePaths = imageParams->sequencePaths();
+     if (sequencePaths.size() > 1) {
+      // 連番シーケンスは代表フレーム読み込み＋シーケンス関係の保持
+      imageLayer->setImageSequence(sequencePaths, imageParams->sequenceFrameRate());
+     } else {
+      const QString path = imageParams->imagePath();
+      if (!path.isEmpty()) {
+       imageLayer->loadFromPath(path);
+      }
      }
     }
    }

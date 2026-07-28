@@ -4,6 +4,7 @@
 #include <QImage>
 #include <QJsonObject>
 #include <QRectF>
+#include <QStringList>
 #include <QVariant>
 #include <QUuid>
 #include <wobjectimpl.h>
@@ -29,6 +30,10 @@ export namespace Artifact {
   const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
   bool hasCurrentFrameBuffer() const;
   bool loadFromPath(const QString& path);
+  bool setImageSequence(const QStringList& framePaths, double frameRate);
+  QStringList sequenceFramePaths() const;
+  bool isImageSequence() const;
+  double sequenceFrameRate() const;
   QString sourcePath() const;
   QUuid sourceAssetId() const;
   std::uint64_t sourceVersion() const;
