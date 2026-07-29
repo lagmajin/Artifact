@@ -137,6 +137,8 @@ GeneralSettingPage::Impl::~Impl() {}
 
 GeneralSettingPage::GeneralSettingPage(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("General application settings"));
+  setAccessibleDescription(QStringLiteral("Configure saving, startup, interface, and accessibility preferences"));
   auto *mainLayout = new QVBoxLayout(this);
 
   // Auto-Save Group
@@ -144,11 +146,15 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   auto *autoSaveLayout = new QVBoxLayout(autoSaveGroup);
 
   impl_->autoSaveCheckBox_ = new QCheckBox("Enable Auto-Save", this);
+  impl_->autoSaveCheckBox_->setAccessibleName(QStringLiteral("Enable auto-save"));
+  impl_->autoSaveCheckBox_->setAccessibleDescription(QStringLiteral("Automatically save the current project"));
   autoSaveLayout->addWidget(impl_->autoSaveCheckBox_);
 
   auto *intervalLayout = new QHBoxLayout();
   intervalLayout->addWidget(new QLabel("Save every:", this));
   impl_->autoSaveIntervalSpinBox_ = new QSpinBox(this);
+  impl_->autoSaveIntervalSpinBox_->setAccessibleName(QStringLiteral("Auto-save interval"));
+  impl_->autoSaveIntervalSpinBox_->setAccessibleDescription(QStringLiteral("Minutes between automatic saves"));
   impl_->autoSaveIntervalSpinBox_->setRange(1, 60);
   impl_->autoSaveIntervalSpinBox_->setSuffix(" minutes");
   intervalLayout->addWidget(impl_->autoSaveIntervalSpinBox_);
@@ -163,6 +169,8 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
 
   impl_->showStartupDialogCheckBox_ =
       new QCheckBox("Load last project on startup", this);
+  impl_->showStartupDialogCheckBox_->setAccessibleName(QStringLiteral("Load last project on startup"));
+  impl_->showStartupDialogCheckBox_->setAccessibleDescription(QStringLiteral("Restore the last project when the application starts"));
   startupLayout->addWidget(impl_->showStartupDialogCheckBox_);
 
   mainLayout->addWidget(startupGroup);
@@ -173,10 +181,14 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
 
   impl_->showPropertyResetButtonsCheckBox_ =
       new QCheckBox("Show reset buttons in property panels", this);
+  impl_->showPropertyResetButtonsCheckBox_->setAccessibleName(QStringLiteral("Show property reset buttons"));
+  impl_->showPropertyResetButtonsCheckBox_->setAccessibleDescription(QStringLiteral("Show reset controls in property panels"));
   uiLayout->addWidget(impl_->showPropertyResetButtonsCheckBox_);
 
   impl_->layerCacheEnabledCheckBox_ =
       new QCheckBox("Enable layer cache", this);
+  impl_->layerCacheEnabledCheckBox_->setAccessibleName(QStringLiteral("Enable layer cache"));
+  impl_->layerCacheEnabledCheckBox_->setAccessibleDescription(QStringLiteral("Use layer surface and texture caches"));
   impl_->layerCacheEnabledCheckBox_->setToolTip(
       QStringLiteral("Turn this off to bypass all layer surface and texture caches."));
   uiLayout->addWidget(impl_->layerCacheEnabledCheckBox_);
@@ -184,6 +196,8 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   auto *menuFontLayout = new QHBoxLayout();
   menuFontLayout->addWidget(new QLabel("Menu bar font scale:", this));
   impl_->menuBarFontScaleSpinBox_ = new QSpinBox(this);
+  impl_->menuBarFontScaleSpinBox_->setAccessibleName(QStringLiteral("Menu bar font scale"));
+  impl_->menuBarFontScaleSpinBox_->setAccessibleDescription(QStringLiteral("Scale menu bar text from 50 to 200 percent"));
   impl_->menuBarFontScaleSpinBox_->setRange(50, 200);
   impl_->menuBarFontScaleSpinBox_->setSuffix(" %");
   menuFontLayout->addWidget(impl_->menuBarFontScaleSpinBox_);
@@ -193,6 +207,8 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   auto *dockTabFontLayout = new QHBoxLayout();
   dockTabFontLayout->addWidget(new QLabel("Dock tab font size:", this));
   impl_->dockTabFontSizeSpinBox_ = new QSpinBox(this);
+  impl_->dockTabFontSizeSpinBox_->setAccessibleName(QStringLiteral("Dock tab font size"));
+  impl_->dockTabFontSizeSpinBox_->setAccessibleDescription(QStringLiteral("Set dock tab text size in points"));
   impl_->dockTabFontSizeSpinBox_->setRange(8, 30);
   impl_->dockTabFontSizeSpinBox_->setSuffix(" pt");
   dockTabFontLayout->addWidget(impl_->dockTabFontSizeSpinBox_);
@@ -202,6 +218,8 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   auto *themeLayout = new QHBoxLayout();
   themeLayout->addWidget(new QLabel("UI Theme:", this));
   impl_->themeCombo_ = new QComboBox(this);
+  impl_->themeCombo_->setAccessibleName(QStringLiteral("UI theme"));
+  impl_->themeCombo_->setAccessibleDescription(QStringLiteral("Choose the application color theme"));
   populateThemeCombo(impl_->themeCombo_);
   themeLayout->addWidget(impl_->themeCombo_);
   themeLayout->addStretch();
@@ -1600,6 +1618,8 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
 
   // Category list (left side)
   categoryList_ = new QListWidget(dialog);
+  categoryList_->setAccessibleName(QStringLiteral("Settings categories"));
+  categoryList_->setAccessibleDescription(QStringLiteral("Choose an application settings category"));
   categoryList_->setMaximumWidth(150);
   categoryList_->addItem("General");
   categoryList_->addItem("Import");
@@ -1615,6 +1635,7 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
 
   // Settings pages (right side)
   settingPages_ = new QStackedWidget(dialog);
+  settingPages_->setAccessibleName(QStringLiteral("Settings page"));
 
   // Add pages
   generalPage_ = new GeneralSettingPage(dialog);
@@ -1643,6 +1664,19 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   buttonBox_ = new QDialogButtonBox(
       QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply,
       dialog);
+  buttonBox_->setAccessibleName(QStringLiteral("Application settings actions"));
+  if (auto* ok = buttonBox_->button(QDialogButtonBox::Ok)) {
+    ok->setAccessibleName(QStringLiteral("Save and close settings"));
+    ok->setAccessibleDescription(QStringLiteral("Save changes and close the settings dialog"));
+  }
+  if (auto* cancel = buttonBox_->button(QDialogButtonBox::Cancel)) {
+    cancel->setAccessibleName(QStringLiteral("Cancel settings"));
+    cancel->setAccessibleDescription(QStringLiteral("Close without saving changes"));
+  }
+  if (auto* apply = buttonBox_->button(QDialogButtonBox::Apply)) {
+    apply->setAccessibleName(QStringLiteral("Apply settings"));
+    apply->setAccessibleDescription(QStringLiteral("Save settings and keep the dialog open"));
+  }
   mainLayout->addWidget(buttonBox_);
 
   // Connect signals
@@ -1665,6 +1699,8 @@ ApplicationSettingDialog::ApplicationSettingDialog(
     QWidget *parent /*= nullptr*/)
     : QDialog(parent), impl_(new Impl) {
   setWindowTitle("Application Settings");
+  setAccessibleName(QStringLiteral("Application Settings Dialog"));
+  setAccessibleDescription(QStringLiteral("Configure application, import, preview, composition, and accessibility settings"));
   setMinimumSize(700, 500);
 
   impl_->setupUI(this);
