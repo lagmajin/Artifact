@@ -250,6 +250,9 @@ EasingLabDialog::EasingLabDialog(QWidget* parent,
     : QDialog(parent), impl_(new Impl())
 {
     setWindowTitle(QStringLiteral("Easing Lab"));
+    setAccessibleName(QStringLiteral("Easing Lab"));
+    setAccessibleDescription(
+        QStringLiteral("Compare easing candidates and apply one to the selected keyframes"));
     resize(920, 620);
     impl_->applyCallback = std::move(applyCallback);
     impl_->initialInterpolation = initialInterpolation;
@@ -263,8 +266,14 @@ EasingLabDialog::EasingLabDialog(QWidget* parent,
     titleRow->addWidget(title);
     titleRow->addStretch();
     impl_->candidateCombo = new QComboBox(this);
+    impl_->candidateCombo->setAccessibleName(QStringLiteral("Easing candidate"));
+    impl_->candidateCombo->setAccessibleDescription(
+        QStringLiteral("Select the easing candidate to apply"));
     titleRow->addWidget(impl_->candidateCombo);
     impl_->applyButton = new QPushButton(QStringLiteral("Apply"), this);
+    impl_->applyButton->setAccessibleName(QStringLiteral("Apply easing"));
+    impl_->applyButton->setAccessibleDescription(
+        QStringLiteral("Apply the selected easing candidate"));
     impl_->applyButton->setEnabled(static_cast<bool>(impl_->applyCallback));
     titleRow->addWidget(impl_->applyButton);
     impl_->countLabel = new QLabel(this);
@@ -276,6 +285,9 @@ EasingLabDialog::EasingLabDialog(QWidget* parent,
     impl_->scrubSlider = new QSlider(Qt::Horizontal, this);
     impl_->scrubSlider->setRange(0, 1000);
     impl_->scrubSlider->setValue(550);
+    impl_->scrubSlider->setAccessibleName(QStringLiteral("Easing preview position"));
+    impl_->scrubSlider->setAccessibleDescription(
+        QStringLiteral("Scrub the easing preview position"));
     root->addWidget(impl_->scrubSlider);
 
     auto* scrollArea = new QScrollArea(this);
