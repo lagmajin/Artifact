@@ -3359,8 +3359,18 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   fileView->viewport()->setMouseTracking(true);
   fileView->viewport()->installEventFilter(this);
   fileView->setContentsMargins(8, 8, 8, 8);
-  applyAssetBrowserViewMode(fileView, QListView::IconMode,
-                            impl_->thumbnailSizePx());
+  QSettings viewSettings;
+  const QListView::ViewMode savedViewMode =
+      viewSettings.value(QStringLiteral("AssetBrowser/ViewMode"),
+                         static_cast<int>(QListView::IconMode)).toInt() ==
+              static_cast<int>(QListView::ListMode)
+          ? QListView::ListMode
+          : QListView::IconMode;
+  applyAssetBrowserViewMode(fileView, savedViewMode, impl_->thumbnailSizePx());
+  if (gridViewButton && listViewButton) {
+    gridViewButton->setChecked(savedViewMode == QListView::IconMode);
+    listViewButton->setChecked(savedViewMode == QListView::ListMode);
+  }
   {
    QPalette palette = fileView->palette();
    const auto& theme = ArtifactCore::currentDCCTheme();
@@ -3382,8 +3392,10 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     viewModeGroup->addButton(listViewButton, static_cast<int>(QListView::ListMode));
   }
   connect(viewModeGroup, &QButtonGroup::idClicked, this, [this, fileView](int id) {
-    applyAssetBrowserViewMode(fileView, static_cast<QListView::ViewMode>(id),
-                              impl_->thumbnailSizePx());
+    const auto mode = static_cast<QListView::ViewMode>(id);
+    applyAssetBrowserViewMode(fileView, mode, impl_->thumbnailSizePx());
+    QSettings settings;
+    settings.setValue(QStringLiteral("AssetBrowser/ViewMode"), static_cast<int>(mode));
   });
 
   // Connect search filter
