@@ -2425,7 +2425,24 @@ public:
              stateMatch = l->isSolo() == wantsTrue;
            }
          }
-         if (!stateQuery && queryKey == QStringLiteral("hasparent")) {
+         if (!stateQuery && queryKey == QStringLiteral("is")) {
+           stateQuery = true;
+           if (queryValue == QStringLiteral("visible")) {
+             stateMatch = l->isVisible();
+           } else if (queryValue == QStringLiteral("hidden")) {
+             stateMatch = !l->isVisible();
+           } else if (queryValue == QStringLiteral("locked")) {
+             stateMatch = l->isLocked();
+           } else if (queryValue == QStringLiteral("unlocked")) {
+             stateMatch = !l->isLocked();
+           } else if (queryValue == QStringLiteral("solo")) {
+             stateMatch = l->isSolo();
+           } else if (queryValue == QStringLiteral("nonsolo")) {
+             stateMatch = !l->isSolo();
+           } else {
+             stateMatch = false;
+           }
+         } else if (!stateQuery && queryKey == QStringLiteral("hasparent")) {
            stateQuery = true;
            const bool wantsParent = queryValue == QStringLiteral("true") ||
                                     queryValue == QStringLiteral("yes") ||
