@@ -119,6 +119,23 @@ export namespace Artifact {
 
                     // --- 後続ノードの依存カウンタを減らす ---
                     auto nodeKey = node->id().toString().toStdString();
+                    for (const auto& connection : conns) {
+                        if (!connection.enabled ||
+                            connection.sourceNodeId != node->id() ||
+                            !node->imageOutput()) {
+                            continue;
+                        }
+                        auto target = graph.findNode(
+                            NodeID(connection.targetNodeId.toString()));
+                        if (!target || connection.targetPortIndex < 0 ||
+                            connection.targetPortIndex >=
+                                static_cast<int>(target->inputPorts().size()) ||
+                            target->inputPorts()[connection.targetPortIndex].dataType() !=
+                                PortDataType::ImageBuffer) {
+                            continue;
+                        }
+                        target->setImageInput(*node->imageOutput());
+                    }
                     for (auto& depNode : dependents[nodeKey]) {
                         auto depKey = depNode->id().toString().toStdString();
                         // 依存カウンタが 0 になったら非同期キューに追加
