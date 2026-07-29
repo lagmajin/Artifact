@@ -162,11 +162,17 @@ export namespace Artifact {
                 markError();
                 return false;
             }
-            ImageF32x4RGBAWithCache output;
-            effect_->applyConfigured(*imageInput_, output);
-            imageOutput_ = std::move(output);
-            markCached();
-            return true;
+            try {
+                ImageF32x4RGBAWithCache output;
+                effect_->applyConfigured(*imageInput_, output);
+                imageOutput_ = std::move(output);
+                markCached();
+                return true;
+            } catch (...) {
+                imageOutput_.reset();
+                markError();
+                return false;
+            }
         }
 
         // ── ソート順 ──
