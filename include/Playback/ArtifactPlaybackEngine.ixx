@@ -71,6 +71,8 @@ struct ArtifactPlaybackAudioDiagnostics {
     std::size_t clockCorrectionCount = 0;
     std::size_t underflowCount = 0;
     std::size_t overflowCount = 0;
+    int sampleRate = 0;
+    int channelCount = 0;
 };
 
 /// 再生スレッドエンジン
