@@ -938,6 +938,8 @@ CompositionSettingPage::Impl::~Impl() {}
 
 CompositionSettingPage::CompositionSettingPage(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Composition view settings"));
+  setAccessibleDescription(QStringLiteral("Configure composition viewport interaction behavior"));
   auto *mainLayout = new QVBoxLayout(this);
 
   auto *group = new QGroupBox("Composition View", this);
@@ -945,6 +947,8 @@ CompositionSettingPage::CompositionSettingPage(QWidget *parent)
 
   impl_->showGizmoDuringDragCheckBox_ = new QCheckBox(
       "Show transform gizmo while dragging", this);
+  impl_->showGizmoDuringDragCheckBox_->setAccessibleName(QStringLiteral("Show transform gizmo while dragging"));
+  impl_->showGizmoDuringDragCheckBox_->setAccessibleDescription(QStringLiteral("Display the transform gizmo during drag operations in the composition view"));
   groupLayout->addWidget(impl_->showGizmoDuringDragCheckBox_);
 
   mainLayout->addWidget(group);
