@@ -1415,23 +1415,33 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   upButton->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
   upButton->setFixedSize(28, 28);
   upButton->setToolTip(QStringLiteral("Go to parent folder"));
+  upButton->setAccessibleName(QStringLiteral("Parent folder"));
+  upButton->setAccessibleDescription(QStringLiteral("Go to the parent folder"));
   auto refreshButton = new QToolButton(this);
   refreshButton->setObjectName(QStringLiteral("assetBrowserRefreshButton"));
   refreshButton->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
   refreshButton->setFixedSize(28, 28);
   refreshButton->setToolTip(QStringLiteral("Refresh current folder"));
+  refreshButton->setAccessibleName(QStringLiteral("Refresh folder"));
+  refreshButton->setAccessibleDescription(QStringLiteral("Refresh the current folder contents"));
   impl_->gridViewButton->setObjectName(QStringLiteral("assetBrowserGridViewButton"));
   impl_->gridViewButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogContentsView));
   impl_->gridViewButton->setFixedSize(30, 28);
   impl_->gridViewButton->setToolTip(QStringLiteral("Show assets in grid view"));
+  impl_->gridViewButton->setAccessibleName(QStringLiteral("Grid view"));
+  impl_->gridViewButton->setAccessibleDescription(QStringLiteral("Show assets as a grid"));
   impl_->gridViewButton->setCheckable(true);
   impl_->gridViewButton->setChecked(true);
   impl_->listViewButton->setObjectName(QStringLiteral("assetBrowserListViewButton"));
   impl_->listViewButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
   impl_->listViewButton->setFixedSize(30, 28);
   impl_->listViewButton->setToolTip(QStringLiteral("Show assets in list view"));
+  impl_->listViewButton->setAccessibleName(QStringLiteral("List view"));
+  impl_->listViewButton->setAccessibleDescription(QStringLiteral("Show assets as a list"));
   impl_->listViewButton->setCheckable(true);
   impl_->searchWidget->setPlaceholderText(QStringLiteral("Search assets"));
+  impl_->searchWidget->setAccessibleName(QStringLiteral("Asset search"));
+  impl_->searchWidget->setAccessibleDescription(QStringLiteral("Search assets in the current folder"));
   impl_->searchWidget->setClearButtonEnabled(true);
   impl_->searchWidget->setMinimumWidth(220);
   impl_->searchWidget->setMinimumHeight(30);
@@ -3215,23 +3225,33 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
   auto allButton = new QToolButton();
   allButton->setText("All");
+  allButton->setAccessibleName(QStringLiteral("All asset types"));
+  allButton->setAccessibleDescription(QStringLiteral("Show all asset types"));
   allButton->setCheckable(true);
   allButton->setChecked(true);
 
   auto imagesButton = new QToolButton();
   imagesButton->setText("Images");
+  imagesButton->setAccessibleName(QStringLiteral("Images"));
+  imagesButton->setAccessibleDescription(QStringLiteral("Show image assets"));
   imagesButton->setCheckable(true);
 
   auto videosButton = new QToolButton();
   videosButton->setText("Videos");
+  videosButton->setAccessibleName(QStringLiteral("Videos"));
+  videosButton->setAccessibleDescription(QStringLiteral("Show video assets"));
   videosButton->setCheckable(true);
 
   auto audioButton = new QToolButton();
   audioButton->setText("Audio");
+  audioButton->setAccessibleName(QStringLiteral("Audio"));
+  audioButton->setAccessibleDescription(QStringLiteral("Show audio assets"));
   audioButton->setCheckable(true);
 
   auto fontsButton = new QToolButton();
   fontsButton->setText("3D");
+  fontsButton->setAccessibleName(QStringLiteral("3D assets"));
+  fontsButton->setAccessibleDescription(QStringLiteral("Show 3D assets"));
   fontsButton->setCheckable(true);
 
   impl_->filterButtonGroup_->addButton(allButton, 0);
@@ -3249,23 +3269,33 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
    auto statusAllBtn = new QToolButton(this);
    statusAllBtn->setText("Status: All");
+   statusAllBtn->setAccessibleName(QStringLiteral("All asset statuses"));
+   statusAllBtn->setAccessibleDescription(QStringLiteral("Show assets with any status"));
    statusAllBtn->setCheckable(true);
    statusAllBtn->setChecked(true);
 
    auto importedBtn = new QToolButton(this);
    importedBtn->setText("Imported");
+   importedBtn->setAccessibleName(QStringLiteral("Imported assets"));
+   importedBtn->setAccessibleDescription(QStringLiteral("Show assets already imported into the project"));
    importedBtn->setCheckable(true);
 
    auto favoriteBtn = new QToolButton(this);
    favoriteBtn->setText("Favorite");
+   favoriteBtn->setAccessibleName(QStringLiteral("Favorite assets"));
+   favoriteBtn->setAccessibleDescription(QStringLiteral("Show favorite assets"));
    favoriteBtn->setCheckable(true);
 
    auto missingBtn = new QToolButton(this);
    missingBtn->setText("Missing");
+   missingBtn->setAccessibleName(QStringLiteral("Missing assets"));
+   missingBtn->setAccessibleDescription(QStringLiteral("Show assets whose source is missing"));
    missingBtn->setCheckable(true);
 
    auto unusedBtn = new QToolButton(this);
    unusedBtn->setText("Unused");
+   unusedBtn->setAccessibleName(QStringLiteral("Unused assets"));
+   unusedBtn->setAccessibleDescription(QStringLiteral("Show assets not used by the project"));
    unusedBtn->setCheckable(true);
 
    auto* statusGroup = new QButtonGroup(this);
