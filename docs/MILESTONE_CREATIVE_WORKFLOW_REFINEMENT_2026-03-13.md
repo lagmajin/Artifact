@@ -1,5 +1,7 @@
 # Milestone: Creative Workflow & Inspector Refinement
 
+> 状態: Partial（M-CW-1 Creative Effects Bridge は Inspector catalog / EffectService factory を確認済み。Inspector-Property 同期、Property 側管理、検索連携、D&D、runtime 検証は未完了）
+
 Date: 2026-03-13
 
 ## Goal
@@ -19,6 +21,7 @@ Date: 2026-03-13
 ## Milestones
 
 ### M-CW-1 Creative Effects Bridge
+- ✅ Halftone / Posterize / Pixelate / Mirror 系を含む catalog entry と EffectService factory の接続を確認した。
 - Expose the following effects from `ArtifactCore` to the "Add Effect" menu in the Inspector:
   - `Halftone`, `Pixelate`, `Posterize`, `Mirror`, `Kaleidoscope`, `Glitch`, `OldTV`, `Fisheye`.
 - Ensure these effects are correctly registered in the `EffectPipelineStage::Rasterizer` or a new `Creative` stage if appropriate.
