@@ -147,5 +147,6 @@ CPU 側 surface を守りつつ、静止レイヤーだけ GPU 上の中間結�
 - F32 buffer と QImage の両方を `GPUTextureCacheManager::acquireOrCreate()` へ接続し、selection／overlay更新時の再uploadを cache hit で回避する。
 - `GPUTextureCacheManager` は budget、最大エントリ数、LRU prune、owner／key／device 単位の invalidate、hit/miss/upload/eviction 統計を持つ。
 - Composition Render Controller は 512MB、256エントリの既定予算を設定し、layer state／device変更時に明示 clear/invalidate を行う。
+- 時系列で内容が変わる Image Sequence は static cache と source GPU texture sharing の対象から除外し、フレーム単位の描画経路を維持する。
 
 判定: **Phase 1〜4 実装済み。Phase 5 Static Scene Fast Path と runtime性能確認は pending。**

@@ -1068,6 +1068,14 @@ bool layerUsesStaticLayerGpuCacheForCompositionView(ArtifactAbstractLayer* layer
     return false;
   }
 
+  if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer);
+      imageLayer && imageLayer->isImageSequence()) {
+    // A sequence changes its source frame as the playhead advances.  Keep it
+    // on the frame-aware surface path instead of retaining a static texture
+    // across timeline frames.
+    return false;
+  }
+
   if (dynamic_cast<ArtifactVideoLayer*>(layer) != nullptr ||
       dynamic_cast<ArtifactParticleLayer*>(layer) != nullptr ||
       dynamic_cast<ArtifactFormParticleLayer*>(layer) != nullptr ||

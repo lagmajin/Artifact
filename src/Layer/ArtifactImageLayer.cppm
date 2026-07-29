@@ -504,7 +504,8 @@ std::uint64_t ArtifactImageLayer::sourceVersion() const
 
 bool ArtifactImageLayer::canShareSourceGpuTexture() const
 {
-    return !impl_->sourceAssetId_.isNull() &&
+    return !isImageSequence() &&
+           !impl_->sourceAssetId_.isNull() &&
            !impl_->sourceCrop_.enabled() &&
            !hasMasks() && getEffects().empty();
 }
