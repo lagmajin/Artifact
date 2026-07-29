@@ -114,6 +114,9 @@ ArtifactRenderQueuePresetSelector::ArtifactRenderQueuePresetSelector(
     QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
 
+  setAccessibleName(QStringLiteral("Render preset selector"));
+  setAccessibleDescription(QStringLiteral("Choose one or more output format presets"));
+
   auto *layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
 
@@ -122,6 +125,8 @@ ArtifactRenderQueuePresetSelector::ArtifactRenderQueuePresetSelector(
   categoryRow->addWidget(new QLabel(QStringLiteral("カテゴリ:"), this));
 
   impl_->categoryCombo = new QComboBox(this);
+  impl_->categoryCombo->setAccessibleName(QStringLiteral("Render format category"));
+  impl_->categoryCombo->setAccessibleDescription(QStringLiteral("Filter presets by output format category"));
   impl_->categoryCombo->addItem(
       QStringLiteral("ビデオ形式"),
       static_cast<int>(ArtifactRenderFormatCategory::Video));
@@ -137,12 +142,15 @@ ArtifactRenderQueuePresetSelector::ArtifactRenderQueuePresetSelector(
 
   // プリセット一覧
   impl_->presetListWidget = new QListWidget(this);
+  impl_->presetListWidget->setAccessibleName(QStringLiteral("Render presets"));
+  impl_->presetListWidget->setAccessibleDescription(QStringLiteral("Select the output format presets to use"));
   impl_->presetListWidget->setSelectionMode(QAbstractItemView::SingleSelection);
   impl_->presetListWidget->setMinimumSize(280, 200);
   layout->addWidget(impl_->presetListWidget, 1);
 
   // 説明
   impl_->descriptionLabel = new QLabel(this);
+  impl_->descriptionLabel->setAccessibleName(QStringLiteral("Preset description"));
   impl_->descriptionLabel->setFrameShape(QFrame::StyledPanel);
   impl_->descriptionLabel->setWordWrap(true);
   impl_->descriptionLabel->setMinimumHeight(60);
@@ -254,6 +262,9 @@ ArtifactRenderQueuePresetDialog::ArtifactRenderQueuePresetDialog(
     QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
 
+  setAccessibleName(QStringLiteral("Render preset dialog"));
+  setAccessibleDescription(QStringLiteral("Select output format presets for the render queue"));
+
   // ダイアログ風レイアウト
   auto *layout = new QVBoxLayout(this);
 
@@ -275,6 +286,10 @@ ArtifactRenderQueuePresetDialog::ArtifactRenderQueuePresetDialog(
   impl_->buttonRow = buttons.widget;
   impl_->okButton = buttons.okButton;
   impl_->cancelButton = buttons.cancelButton;
+  impl_->okButton->setAccessibleName(QStringLiteral("Apply render presets"));
+  impl_->okButton->setAccessibleDescription(QStringLiteral("Apply the selected output format presets"));
+  impl_->cancelButton->setAccessibleName(QStringLiteral("Cancel render presets"));
+  impl_->cancelButton->setAccessibleDescription(QStringLiteral("Close without applying presets"));
 
   connect(impl_->okButton, &QPushButton::clicked, this, [this]() {
     impl_->onConfirmed();
