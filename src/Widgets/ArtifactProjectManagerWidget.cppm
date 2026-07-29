@@ -134,6 +134,7 @@ import Utils.String.UniString;
 import Utils.Id;
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
+import Artifact.Service.FootageInterpret;
 import Artifact.Application.ProjectBundleIpc;
 import Artifact.Service.Playback;
 import Artifact.Project.Model;
@@ -4088,10 +4089,14 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
                 const QString firstPath = targetPaths.first();
                 double currentFrameRate = 24.0;
+                QString currentInputColorSpace;
+                QString currentInputTransferFunction;
                 if (auto* firstFootage = projectService->findFootageItemByPath(firstPath)) {
                     if (firstFootage->frameRate > 0.0) {
                         currentFrameRate = firstFootage->frameRate;
                     }
+                    currentInputColorSpace = firstFootage->inputColorSpace;
+                    currentInputTransferFunction = firstFootage->inputTransferFunction;
                 }
 
                 const auto impact = assessFootageFrameRateChange(projectService, firstPath);
@@ -4133,6 +4138,35 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 preserveRow->addWidget(preserveCombo, 1);
                 layout->addLayout(preserveRow);
 
+                auto* colorSpaceRow = new QHBoxLayout();
+                colorSpaceRow->addWidget(new QLabel(QStringLiteral("Input color space"), dialog));
+                auto* colorSpaceCombo = new QComboBox(dialog);
+                colorSpaceCombo->addItem(QStringLiteral("Auto"), QString());
+                colorSpaceCombo->addItem(QStringLiteral("Linear"), QStringLiteral("Linear"));
+                colorSpaceCombo->addItem(QStringLiteral("sRGB"), QStringLiteral("sRGB"));
+                colorSpaceCombo->addItem(QStringLiteral("ACEScc"), QStringLiteral("ACEScc"));
+                colorSpaceCombo->addItem(QStringLiteral("ACEScct"), QStringLiteral("ACEScct"));
+                colorSpaceCombo->addItem(QStringLiteral("Rec.2020"), QStringLiteral("Rec.2020"));
+                const int colorSpaceIndex = colorSpaceCombo->findData(currentInputColorSpace);
+                colorSpaceCombo->setCurrentIndex(colorSpaceIndex >= 0 ? colorSpaceIndex : 0);
+                colorSpaceRow->addWidget(colorSpaceCombo, 1);
+                layout->addLayout(colorSpaceRow);
+
+                auto* transferRow = new QHBoxLayout();
+                transferRow->addWidget(new QLabel(QStringLiteral("Input transfer"), dialog));
+                auto* transferCombo = new QComboBox(dialog);
+                transferCombo->addItem(QStringLiteral("Auto"), QString());
+                transferCombo->addItem(QStringLiteral("Linear"), QStringLiteral("Linear"));
+                transferCombo->addItem(QStringLiteral("sRGB"), QStringLiteral("sRGB"));
+                transferCombo->addItem(QStringLiteral("LogC"), QStringLiteral("LogC"));
+                transferCombo->addItem(QStringLiteral("S-Log3"), QStringLiteral("S-Log3"));
+                transferCombo->addItem(QStringLiteral("PQ"), QStringLiteral("PQ"));
+                transferCombo->addItem(QStringLiteral("HLG"), QStringLiteral("HLG"));
+                const int transferIndex = transferCombo->findData(currentInputTransferFunction);
+                transferCombo->setCurrentIndex(transferIndex >= 0 ? transferIndex : 0);
+                transferRow->addWidget(transferCombo, 1);
+                layout->addLayout(transferRow);
+
                 // Dynamic warning area
                 auto* warningLabel = new QLabel(dialog);
                 warningLabel->setWordWrap(true);
@@ -4173,6 +4207,8 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
                 const double frameRate = fpsSpin->value();
                 const QString preserveMode = preserveCombo->currentText();
+                const QString inputColorSpace = colorSpaceCombo->currentData().toString();
+                const QString inputTransferFunction = transferCombo->currentData().toString();
                 const int changedCount = static_cast<int>(targetPaths.size());
                 bool updatedAny = false;
 
@@ -4181,6 +4217,14 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     if (!footage) continue;
                     footage->frameRate = frameRate;
                     footage->isSequence = footage->isSequence || footage->sequencePaths.size() > 1;
+                    QString interpretationError;
+                    FootageInterpretService::instance().applyColorInterpretation(
+                        footage, inputColorSpace, inputTransferFunction,
+                        &interpretationError);
+                    if (!interpretationError.isEmpty()) {
+                        QMessageBox::warning(this, QStringLiteral("Interpret Footage"),
+                                             interpretationError);
+                    }
                     updatedAny = true;
                 }
 
