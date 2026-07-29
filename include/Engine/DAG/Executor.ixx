@@ -126,6 +126,15 @@ export namespace Artifact {
                         return;
                     }
 
+                    // An earlier evaluation failure must not feed stale or
+                    // partial buffers into downstream nodes. Independent DAG
+                    // branches continue to run, while this failed branch is
+                    // intentionally not released to its dependents.
+                    if (node->state() == EffectNode::NodeState::Error) {
+                        evaluationFailed.store(true, std::memory_order_release);
+                        return;
+                    }
+
                     // --- 後続ノードの依存カウンタを減らす ---
                     auto nodeKey = node->id().toString().toStdString();
                     for (const auto& connection : conns) {
