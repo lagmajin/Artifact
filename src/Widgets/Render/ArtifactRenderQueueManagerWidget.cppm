@@ -1522,8 +1522,10 @@ namespace Artifact
     connect(impl_->service, &ArtifactRenderQueueService::jobProgressChanged, this, [this](int index, int progress) {
         if (!impl_ || !impl_->service) return;
         if (index >= 0 && index < static_cast<int>(impl_->jobs.size())) {
+          const bool progressRolledBack =
+              progress < impl_->jobs[index].progress;
           if (impl_->progressStartedAtMsByJob.find(index) ==
-              impl_->progressStartedAtMsByJob.end()) {
+                  impl_->progressStartedAtMsByJob.end() || progressRolledBack) {
             impl_->progressStartedAtMsByJob[index] =
                 impl_->progressClock_.elapsed();
           }
