@@ -45,6 +45,24 @@ namespace Artifact
   }
   return QString();
  }
+
+ QString accessibleNameForItem(const ArtifactStatusBar::Item item)
+ {
+  switch (item)
+  {
+  case ArtifactStatusBar::Item::Zoom: return QStringLiteral("Zoom status");
+  case ArtifactStatusBar::Item::Coordinates: return QStringLiteral("Coordinates status");
+  case ArtifactStatusBar::Item::Frame: return QStringLiteral("Current frame status");
+  case ArtifactStatusBar::Item::FPS: return QStringLiteral("Frame rate status");
+  case ArtifactStatusBar::Item::Memory: return QStringLiteral("Memory status");
+  case ArtifactStatusBar::Item::Project: return QStringLiteral("Project status");
+  case ArtifactStatusBar::Item::Layer: return QStringLiteral("Layer status");
+  case ArtifactStatusBar::Item::Drops: return QStringLiteral("Dropped frames status");
+  case ArtifactStatusBar::Item::TimelineDebug: return QStringLiteral("Timeline debug status");
+  case ArtifactStatusBar::Item::Console: return QStringLiteral("Console status");
+  }
+  return QStringLiteral("Application status");
+ }
  }
 
  ArtifactStatusBar::ArtifactStatusBar(QWidget* parent)
@@ -72,6 +90,10 @@ namespace Artifact
 
   for (int i = 0; i < kItemCount; ++i) {
       labels_[i] = new QLabel(defaultTextForItem(static_cast<Item>(i)), this);
+      labels_[i]->setAccessibleName(
+          accessibleNameForItem(static_cast<Item>(i)));
+      labels_[i]->setAccessibleDescription(
+          QStringLiteral("Live application status information."));
       labels_[i]->setAlignment(Qt::AlignCenter);
       labels_[i]->setAutoFillBackground(false);
       QPalette labelPalette = labels_[i]->palette();
