@@ -2581,6 +2581,14 @@ public:
     return;
    }
    const auto presentation = describeLayerPresentation(node);
+   const QString groupSummary = node->isGroupLayer()
+                                    ? groupLayerSummaryText(node)
+                                    : presentation.timelineBadgeText;
+   const QString nodeStateText = summarizeLayerState(node);
+   const QString groupSummaryWithState =
+       groupSummary.isEmpty() || nodeStateText.isEmpty()
+           ? groupSummary
+           : groupSummary + QStringLiteral(" · ") + nodeStateText;
    visibleRows.push_back(VisibleRow{
     node,
     depth,
@@ -2590,10 +2598,9 @@ public:
     QString(),
     QString(),
     QString(),
-    node->isGroupLayer() ? groupLayerSummaryText(node)
-                         : presentation.timelineBadgeText,
+    groupSummaryWithState,
     presentation.badgeTone,
-    summarizeLayerState(node),
+    nodeStateText,
     summarizeLayerStateTone(node)
    });
    emitted.insert(nodeId);
