@@ -2142,6 +2142,7 @@ public:
   LayerID selectedMaskLayerId;
   int selectedMaskIndex = -1;
   QVector<VisibleRow> visibleRows;
+  QSet<QString> searchMatchedLayerIds;
   QHash<QString, bool> expandedByLayerId;
   QHash<QString, bool> expandedByGroupKey;
   QPointer<QComboBox> inlineParentEditor;
@@ -2378,9 +2379,10 @@ public:
    return count;
   }
 
-  void rebuildVisibleRows()
-  {
+ void rebuildVisibleRows()
+ {
    visibleRows.clear();
+   searchMatchedLayerIds.clear();
 
    auto comp = safeCompositionLookup(compositionId);
    if (!comp) {
@@ -2508,7 +2510,7 @@ public:
            stateMatch = serialized.contains(queryValue, Qt::CaseInsensitive);
          }
        }
-       bool nameMatch = stateQuery
+       const bool nameMatch = stateQuery
                           ? stateMatch
                           : l->layerName().contains(needle, Qt::CaseInsensitive);
        bool propMatch = false;
@@ -2533,7 +2535,11 @@ public:
            }
          }
        }
-       if (!nameMatch && !propMatch) continue;
+       const bool searchMatch = nameMatch || propMatch;
+       if (searchMatch) {
+         searchMatchedLayerIds.insert(l->id().toString());
+       }
+       if (!searchMatch && searchMatchMode == SearchMatchMode::FilterOnly) continue;
      }
      layers.push_back(l);
     }
@@ -6210,6 +6216,15 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     const bool isDisplayLeafRow = (row.kind == RowKind::Mask || row.kind == RowKind::Matte);
     const bool sel = isLayerSelectedInSelectionManager(l->id());
     const bool layerSelected = sel && row.kind == RowKind::Layer;
+    const bool dimNonMatchingSearchRow =
+        !impl_->filterText.trimmed().isEmpty() &&
+        impl_->searchMatchMode == SearchMatchMode::HighlightOnly &&
+        !impl_->searchMatchedLayerIds.contains(l->id().toString()) &&
+        !layerSelected;
+    p.save();
+    if (dimNonMatchingSearchRow) {
+      p.setOpacity(0.42);
+    }
     const bool selectionAnchor =
         layerSelected && !impl_->selectionAnchorLayerId.isNil() &&
         l->id() == impl_->selectionAnchorLayerId;
@@ -6726,6 +6741,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      p.drawText(chipRect.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, elidedChip);
      p.restore();
     }
+    p.restore();
    }
 
    if (!impl_->draggedLayerId.isNil() && impl_->dragInsertVisibleRow >= 0) {
