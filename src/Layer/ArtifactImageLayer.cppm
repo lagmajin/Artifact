@@ -1173,6 +1173,8 @@ void ArtifactImageLayer::setFromQImage(const QImage& image)
     impl_->cachedSourceVersion_ = 0;
     impl_->sequencePaths_.clear();
     impl_->sequenceFrameRate_ = 0.0;
+    impl_->sequenceSource_.reset();
+    impl_->sequenceCachedIndex_ = -1;
 
     if (image.isNull()) {
         impl_->hasImage_ = false;
