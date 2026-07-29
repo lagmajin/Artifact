@@ -37,7 +37,8 @@ Date: 2026-03-13
 
 - ✅ Added an Inspector Effects filter field and connected it to the existing `ArtifactPropertyWidget::setFilterText()` path.
 - ✅ The filter is retained when the effect property surface is created or resynchronized for layer/composition targets.
-- ⏳ Filtering the effect rack itself, component surfaces, and runtime verification remain incomplete.
+- ✅ The same filter now narrows the effect rack by effect ID, display name, or editable property name, and reports when no effect matches.
+- ⏳ Component surfaces and runtime verification remain incomplete.
 
 ### M-CW-2 Inspector-Property Sync
 - Implement a signal-slot connection such that selecting an effect in the `ArtifactInspectorWidget` rack automatically:

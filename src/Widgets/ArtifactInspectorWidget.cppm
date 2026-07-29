@@ -5478,6 +5478,9 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   }
 
   auto effects = currentEffectStack();
+  const QString rackFilter = effectPropertyFilterEdit
+                                 ? effectPropertyFilterEdit->text().trimmed()
+                                 : QString();
   setEffectRackEnabled(true);
   int effectCount = 0;
   int maskedEffectCount = 0;
@@ -5492,13 +5495,30 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
       }
       const int rackIdx = rackIndexFromStage(effect->pipelineStage());
       if (rackIdx >= 0) {
-        rackEffects[rackIdx].push_back(effect);
+        bool matches = rackFilter.isEmpty() ||
+                       effect->displayName().toQString().contains(
+                           rackFilter, Qt::CaseInsensitive) ||
+                       effect->effectID().toQString().contains(
+                           rackFilter, Qt::CaseInsensitive);
+        if (!matches) {
+          for (const auto &property : effect->editableProperties()) {
+            if (property && property->getName().contains(
+                                rackFilter, Qt::CaseInsensitive)) {
+              matches = true;
+              break;
+            }
+          }
+        }
+        if (matches) {
+          rackEffects[rackIdx].push_back(effect);
+        }
       }
     }
   }
 
   for (int i = 0; i < kEffectRackCount; ++i) {
-    const QString rackSignature = computeRackSignature(i, rackEffects[i]);
+    const QString rackSignature =
+        computeRackSignature(i, rackEffects[i]) + QStringLiteral("|filter=") + rackFilter;
     if (rackSignature == lastRackSignatures_[i]) {
       if (racks[i].groupBox) {
         racks[i].groupBox->setTitle(
@@ -5566,7 +5586,12 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
     }
   }
 
-  if (effectCount == 0) {
+  const int visibleEffectCount = std::accumulate(
+      rackEffects.begin(), rackEffects.end(), 0,
+      [](int count, const auto &rack) { return count + static_cast<int>(rack.size()); });
+  if (effectCount > 0 && !rackFilter.isEmpty() && visibleEffectCount == 0) {
+    setEffectsStateText("No effects match the current filter.", true);
+  } else if (effectCount == 0) {
     setEffectsStateText("No effects yet. Use + Add to create an effect.", true);
   } else if (focusedEffectId_.trimmed().isEmpty()) {
     setEffectsStateText("Select an effect to edit its parameters below.", true);
@@ -7317,6 +7342,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                      if (impl_->effectPropertyWidget) {
                        impl_->effectPropertyWidget->setFilterText(text);
                      }
+                     impl_->updateEffectsList();
                    });
 
   auto *effectsToolbarLayout = new QHBoxLayout();
