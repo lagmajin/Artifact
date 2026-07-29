@@ -1464,7 +1464,7 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
     painter.setFont(titleFont);
     painter.setPen(QColor(218, 224, 232, 210));
     const QRect titleRect(contentRect.left() + 28, y, contentRect.width() - 56, 24);
-    painter.drawText(titleRect, Qt::AlignCenter, QStringLiteral("Import or create an item to begin"));
+    painter.drawText(titleRect, Qt::AlignCenter, QStringLiteral("No project items to show"));
 
     QFont bodyFont = painter.font();
     bodyFont.setBold(false);
@@ -1472,7 +1472,8 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
     painter.setFont(bodyFont);
     painter.setPen(QColor(160, 170, 182, 185));
     const QRect bodyRect(contentRect.left() + 28, titleRect.bottom() + 4, contentRect.width() - 56, 22);
-    painter.drawText(bodyRect, Qt::AlignCenter, QStringLiteral("Import assets or create a composition to start."));
+    painter.drawText(bodyRect, Qt::AlignCenter,
+                     QStringLiteral("Adjust the search or filters, or import assets and create a composition."));
 }
 
 constexpr int kHeaderResizeHitRadius = 7;
