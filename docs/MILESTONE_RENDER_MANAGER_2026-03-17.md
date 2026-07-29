@@ -13,6 +13,14 @@
 
 `ArtifactRenderQueueService` と関連 UI を確認した結果、実コンポジションのフレーム描画、CPU/GPU レンダリング経路、音声書き出しと mux、プリフライト、進捗・一時停止・キャンセル、失敗フレーム検出と再レンダー、キューの JSON 永続化、リトライ／チェックポイント基盤まで実装されている。残課題は M-RENDER-6 の履歴・復旧 UI、一括編集、分散運用の仕上げと、実機での動画／連番／音声付き出力およびクラッシュ後再開の検証。
 
+### 2026-07-29 Implementation Loop
+
+- ✅ Render Queue の履歴を `FastSettingsStore` へ保存し、再生成時に復元する経路を確認。
+- ✅ 履歴の Clear / Export 操作と、履歴一覧の Accessible Name / Description を確認。
+- ✅ 失敗ジョブの Retry Failed 一括操作と、ジョブ単位の Retry Job 経路を確認。
+- ✅ Add All / Batch Template による一括キュー追加経路を確認。
+- ⏳ 一括ジョブ設定変更、クラッシュ後チェックポイント再開、実機での出力・復旧動作は未検証。
+
 ## M-RENDER-1 UI Overhaul & UX Refinement (完了)
 - **目標**: 現代的な DCC ツールに相応しい、使いやすく視認性の高い UI 構造を実現する。
 - **内容**:
