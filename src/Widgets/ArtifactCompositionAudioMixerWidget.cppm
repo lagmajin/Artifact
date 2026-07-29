@@ -43,10 +43,19 @@ import Artifact.Service.Effect;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Artifact.Service.Audio;
+import Settings.Accessibility;
 import Event.Bus;
 import std;
 
 namespace Artifact {
+
+static QPoint accessibilityMenuPosition(const QMenu &menu,
+                                        const QPoint &origin) {
+  int x = origin.x();
+  int y = origin.y();
+  Accessibility::adjustContextMenuPosition(x, y, menu.sizeHint().width());
+  return QPoint(x, y);
+}
 
 namespace {
 struct AudioFxChipInfo {
@@ -752,7 +761,7 @@ private:
     if (available.empty()) {
       QMenu menu(this);
       menu.addAction(QStringLiteral("No effects available"))->setEnabled(false);
-      menu.exec(globalPos);
+      menu.exec(accessibilityMenuPosition(menu, globalPos));
       return;
     }
 
@@ -800,7 +809,8 @@ private:
       }
     }
 
-    if (QAction *selected = menu.exec(globalPos)) {
+    if (QAction *selected =
+            menu.exec(accessibilityMenuPosition(menu, globalPos))) {
       const QString effectId = selected->data().toString().trimmed();
       if (effectId.isEmpty()) {
         return;
@@ -831,7 +841,8 @@ private:
     moveUpAction->setEnabled(index > 0);
     moveDownAction->setEnabled(index + 1 < static_cast<int>(effects_.size()));
 
-    QAction *selected = menu.exec(globalPos);
+    QAction *selected =
+        menu.exec(accessibilityMenuPosition(menu, globalPos));
     if (!selected) {
       return;
     }
@@ -896,7 +907,8 @@ private:
       action->setData(chip.id);
     }
 
-    if (QAction *selected = menu.exec(globalPos)) {
+    if (QAction *selected =
+            menu.exec(accessibilityMenuPosition(menu, globalPos))) {
       if (selected == enableAllAction || selected == disableAllAction) {
         const bool enabled = selected == enableAllAction;
         bool changed = false;
@@ -1769,7 +1781,8 @@ private:
               menu.addSeparator();
               browseEffectsAction = menu.addAction(QStringLiteral("Browse Effects"));
             }
-            QAction *selected = menu.exec(globalPos);
+            QAction *selected =
+                menu.exec(accessibilityMenuPosition(menu, globalPos));
             if (selected == addEffectAction) {
               fxRack_->openAddEffectMenu(globalPos);
               return true;
