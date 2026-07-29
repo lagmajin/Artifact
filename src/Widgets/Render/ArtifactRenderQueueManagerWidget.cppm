@@ -373,7 +373,8 @@ namespace Artifact
    QLabel* previewSummaryLabel = nullptr;
   QListWidget* historyListWidget = nullptr;
   QPushButton* clearHistoryButton = nullptr;
-   QPushButton* exportHistoryButton = nullptr;
+  QPushButton* exportHistoryButton = nullptr;
+  QPushButton* applySettingsToSelectionButton = nullptr;
    QLabel* previewLabel = nullptr;
   QComboBox* progressLogStepCombo = nullptr;
   RenderQueuePathEdit* outputPathEdit = nullptr;
@@ -706,6 +707,17 @@ namespace Artifact
     bool has = selectedSourceIndex() >= 0;
     if (removeButton) removeButton->setEnabled(has);
     if (duplicateButton) duplicateButton->setEnabled(has);
+    if (applySettingsToSelectionButton) {
+      int selectedCount = 0;
+      if (jobListWidget) {
+        for (int row = 0; row < jobListWidget->count(); ++row) {
+          if (auto *item = jobListWidget->item(row); item && item->isSelected()) {
+            ++selectedCount;
+          }
+        }
+      }
+      applySettingsToSelectionButton->setEnabled(has && selectedCount > 1);
+    }
     if (outputSettingsButton) outputSettingsButton->setEnabled(has);
     if (jobListWidget) {
       const auto& theme = ArtifactCore::currentDCCTheme();
@@ -1003,6 +1015,7 @@ namespace Artifact
   impl_->jobListWidget->setAcceptDrops(true);
   impl_->jobListWidget->setDropIndicatorShown(true);
   impl_->jobListWidget->setDragDropMode(QAbstractItemView::InternalMove);
+  impl_->jobListWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
   impl_->jobListWidget->reordered = [this](int visibleFrom, int visibleTo) {
     if (!impl_ || !impl_->service) return;
     if (visibleFrom < 0 || visibleFrom >= impl_->visibleToSource.size()
@@ -1050,6 +1063,15 @@ namespace Artifact
   impl_->duplicateButton->setToolTip(QStringLiteral("Duplicate selected job"));
   btnLayout->addWidget(batchTmplBtn);
   btnLayout->addWidget(impl_->duplicateButton);
+  impl_->applySettingsToSelectionButton =
+      new QPushButton(QStringLiteral("Apply Settings"));
+  impl_->applySettingsToSelectionButton->setAccessibleName(
+      QStringLiteral("Apply settings to selected render jobs"));
+  impl_->applySettingsToSelectionButton->setAccessibleDescription(
+      QStringLiteral("Copy the current job's output settings and render backends to all selected jobs."));
+  impl_->applySettingsToSelectionButton->setToolTip(
+      QStringLiteral("Copy current job settings to selected jobs"));
+  btnLayout->addWidget(impl_->applySettingsToSelectionButton);
   btnLayout->addStretch();
   impl_->clearButton = new RenderQueueActionButton(QStringLiteral("Clear Completed"));
   impl_->clearButton->setAccessibleName(QStringLiteral("Clear completed jobs"));
@@ -1588,6 +1610,53 @@ namespace Artifact
       if (index >= 0) {
         impl_->service->duplicateRenderQueueAt(index);
       }
+    }
+  });
+
+  connect(impl_->applySettingsToSelectionButton, &QPushButton::clicked,
+          this, [this]() {
+    if (!impl_ || !impl_->service || !impl_->jobListWidget) return;
+    const int sourceIndex = impl_->selectedSourceIndex();
+    if (sourceIndex < 0 || sourceIndex >= impl_->service->jobCount()) return;
+
+    QString outputFormat;
+    QString codec;
+    QString codecProfile;
+    int width = 0;
+    int height = 0;
+    double fps = 0.0;
+    int bitrateKbps = 0;
+    if (!impl_->service->jobOutputSettingsAt(
+            sourceIndex, &outputFormat, &codec, &codecProfile, &width,
+            &height, &fps, &bitrateKbps)) {
+      return;
+    }
+    const QString encoderBackend =
+        impl_->service->jobEncoderBackendAt(sourceIndex);
+    const QString renderBackend =
+        impl_->service->jobRenderBackendAt(sourceIndex);
+
+    int applied = 0;
+    for (int row = 0; row < impl_->jobListWidget->count(); ++row) {
+      auto *item = impl_->jobListWidget->item(row);
+      if (!item || !item->isSelected()) continue;
+      const int targetIndex = item->data(Qt::UserRole).toInt();
+      if (targetIndex < 0 || targetIndex >= impl_->service->jobCount() ||
+          targetIndex == sourceIndex) {
+        continue;
+      }
+      impl_->service->setJobOutputSettingsAt(
+          targetIndex, outputFormat, codec, codecProfile, width, height, fps,
+          bitrateKbps);
+      impl_->service->setJobEncoderBackendAt(targetIndex, encoderBackend);
+      impl_->service->setJobRenderBackendAt(targetIndex, renderBackend);
+      ++applied;
+    }
+    if (applied > 0) {
+      impl_->logUiEvent(QStringLiteral("Applied output settings to %1 jobs")
+                            .arg(applied));
+      impl_->syncJobsFromService();
+      impl_->syncDetailEditorsFromJob(sourceIndex);
     }
   });
 

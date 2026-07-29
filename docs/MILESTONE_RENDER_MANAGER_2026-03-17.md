@@ -19,7 +19,8 @@
 - ✅ 履歴の Clear / Export 操作と、履歴一覧の Accessible Name / Description を確認。
 - ✅ 失敗ジョブの Retry Failed 一括操作と、ジョブ単位の Retry Job 経路を確認。
 - ✅ Add All / Batch Template による一括キュー追加経路を確認。
-- ⏳ 一括ジョブ設定変更、クラッシュ後チェックポイント再開、実機での出力・復旧動作は未検証。
+- ✅ 複数選択したジョブへ、現在のジョブの出力設定・encoder backend・render backend を一括適用する UI を追加。
+- ⏳ クラッシュ後チェックポイント再開、実機での出力・復旧動作は未検証。
 
 ## M-RENDER-1 UI Overhaul & UX Refinement (完了)
 - **目標**: 現代的な DCC ツールに相応しい、使いやすく視認性の高い UI 構造を実現する。
