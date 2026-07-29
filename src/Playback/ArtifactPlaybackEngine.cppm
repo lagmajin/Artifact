@@ -1003,6 +1003,19 @@ bool ArtifactPlaybackEngine::audioMasterMuted() const {
     return impl_->audioMasterMuted_;
 }
 
+ArtifactPlaybackAudioDiagnostics ArtifactPlaybackEngine::audioDiagnostics() const {
+    ArtifactPlaybackAudioDiagnostics diagnostics;
+    if (impl_->audioRenderer_) {
+        diagnostics.deviceOpen = impl_->audioRenderer_->isDeviceOpen();
+        diagnostics.bufferedFrames = impl_->audioRenderer_->bufferedFrames();
+    }
+    diagnostics.targetBufferedFrames = impl_->audioTargetBufferedFrames_;
+    diagnostics.openRetryCount = impl_->audioOpenRetryCount_;
+    diagnostics.resyncClearCount = impl_->audioResyncClearCount_;
+    diagnostics.clockCorrectionCount = impl_->audioClockCorrectionCount_;
+    return diagnostics;
+}
+
 void ArtifactPlaybackEngine::setAudioOutputDeviceName(const QString& deviceName) {
     const QString normalizedName = deviceName.trimmed();
     if (impl_->audioOutputDeviceName_ == normalizedName) {

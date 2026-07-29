@@ -187,6 +187,7 @@ public:
   void setAudioClockProvider(const std::function<double()> &provider);
   void setAudioMasterVolume(float volume);
   void setAudioMasterMuted(bool muted);
+  ArtifactPlaybackAudioDiagnostics audioDiagnostics() const;
   void setAudioOutputDeviceName(const QString &deviceName);
   QString audioOutputDeviceName() const;
   // Use forward declaration to avoid importing AudioClockProvider header here

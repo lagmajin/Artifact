@@ -2365,6 +2365,11 @@ void ArtifactPlaybackService::setAudioOutputDeviceName(
   }
 }
 
+ArtifactPlaybackAudioDiagnostics ArtifactPlaybackService::audioDiagnostics() const {
+  return impl_ && impl_->engine_ ? impl_->engine_->audioDiagnostics()
+                                 : ArtifactPlaybackAudioDiagnostics{};
+}
+
 QString ArtifactPlaybackService::audioOutputDeviceName() const {
   return impl_ && impl_->engine_ ? impl_->engine_->audioOutputDeviceName()
                                  : QString();

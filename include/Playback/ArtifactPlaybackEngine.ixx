@@ -62,6 +62,15 @@ export namespace Artifact {
 
 using namespace ArtifactCore;
 
+struct ArtifactPlaybackAudioDiagnostics {
+    bool deviceOpen = false;
+    std::size_t bufferedFrames = 0;
+    std::size_t targetBufferedFrames = 0;
+    std::size_t openRetryCount = 0;
+    std::size_t resyncClearCount = 0;
+    std::size_t clockCorrectionCount = 0;
+};
+
 /// 再生スレッドエンジン
 /// 専用スレッドで高精度な再生制御を行う
 class ArtifactPlaybackEngine : public QObject {
@@ -133,6 +142,7 @@ public:
     float audioMasterVolume() const;
     void setAudioMasterMuted(bool muted);
     bool audioMasterMuted() const;
+    ArtifactPlaybackAudioDiagnostics audioDiagnostics() const;
     void setAudioOutputDeviceName(const QString& deviceName);
     QString audioOutputDeviceName() const;
 
