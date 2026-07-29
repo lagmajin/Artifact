@@ -85,6 +85,8 @@ export namespace Artifact {
 
         NodeState                       state_ = NodeState::Dirty;
         int                             sortOrder_ = -1;  // トポロジカルソート後の実行順
+        std::optional<ImageF32x4RGBAWithCache> imageInput_;
+        std::optional<ImageF32x4RGBAWithCache> imageOutput_;
 
     public:
         EffectNode() = default;
@@ -139,6 +141,33 @@ export namespace Artifact {
         void markDirty()   { state_ = NodeState::Dirty; }
         void markCached()  { state_ = NodeState::Cached; }
         void markError()   { state_ = NodeState::Error; }
+
+        void setImageInput(const ImageF32x4RGBAWithCache& image) {
+            imageInput_ = image;
+            markDirty();
+        }
+
+        bool hasImageInput() const { return imageInput_.has_value(); }
+
+        const ImageF32x4RGBAWithCache* imageInput() const {
+            return imageInput_ ? &*imageInput_ : nullptr;
+        }
+
+        const ImageF32x4RGBAWithCache* imageOutput() const {
+            return imageOutput_ ? &*imageOutput_ : nullptr;
+        }
+
+        bool evaluateImageEffect() {
+            if (!effect_ || !imageInput_) {
+                markError();
+                return false;
+            }
+            ImageF32x4RGBAWithCache output;
+            effect_->applyConfigured(*imageInput_, output);
+            imageOutput_ = std::move(output);
+            markCached();
+            return true;
+        }
 
         // ── ソート順 ──
         int  sortOrder()              const { return sortOrder_; }

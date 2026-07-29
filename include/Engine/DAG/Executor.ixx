@@ -108,6 +108,10 @@ export namespace Artifact {
                             node->markError();
                             return;
                         }
+                        if (node->hasImageInput()) {
+                            node->evaluateImageEffect();
+                            return;
+                        }
                         // TODO: 実際の Effect のバックエンド評価 (CPU/GPU)
                         // node->effect()->apply(...)
                         node->markCached(); // 計算完了したらキャッシュ済みに
