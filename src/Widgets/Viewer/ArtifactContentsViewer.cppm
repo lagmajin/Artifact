@@ -2499,8 +2499,10 @@ namespace Artifact
     recentSourceCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     recentSourceCombo->setEditable(false);
     recentSourceCombo->setMinimumWidth(200);
-    recentSourceCombo->setMaximumWidth(280);
+   recentSourceCombo->setMaximumWidth(280);
    recentSourceCombo->setToolTip(QStringLiteral("Select a recent source"));
+   recentSourceCombo->setAccessibleName(QStringLiteral("Recent source"));
+   recentSourceCombo->setAccessibleDescription(QStringLiteral("Select a recent source to inspect"));
     QPalette pal = recentSourceCombo->palette();
     pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
     pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
@@ -2536,6 +2538,8 @@ namespace Artifact
     viewerAssignmentCombo->setMinimumWidth(120);
     viewerAssignmentCombo->setMaximumWidth(140);
     viewerAssignmentCombo->setToolTip(QStringLiteral("Viewer assignment (Ctrl+1..4)"));
+    viewerAssignmentCombo->setAccessibleName(QStringLiteral("Viewer assignment"));
+    viewerAssignmentCombo->setAccessibleDescription(QStringLiteral("Select which viewer slot receives the source"));
     for (int i = 1; i <= 4; ++i) {
      viewerAssignmentCombo->addItem(QStringLiteral("Viewer %1").arg(i, 2, 10, QChar('0')), i);
     }
@@ -2581,6 +2585,8 @@ namespace Artifact
     auto* button = new QToolButton(parent);
     button->setText(text);
     button->setToolTip(tooltip);
+    button->setAccessibleName(text);
+    button->setAccessibleDescription(tooltip);
     button->setAutoRaise(true);
     button->setCursor(Qt::PointingHandCursor);
     button->setFixedHeight(22);
@@ -2624,6 +2630,8 @@ namespace Artifact
    seekSlider->setTracking(true);
    seekSlider->setVisible(false);
    seekSlider->setToolTip(QStringLiteral("Scrub media position"));
+   seekSlider->setAccessibleName(QStringLiteral("Media position"));
+   seekSlider->setAccessibleDescription(QStringLiteral("Scrub the current media position"));
 
     buttonRow->addWidget(sourceButton);
     buttonRow->addWidget(finalButton);
