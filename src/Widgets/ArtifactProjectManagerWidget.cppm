@@ -1928,8 +1928,9 @@ private:
         if (item && itemType == eProjectItemType::Footage) {
             const auto* footage = static_cast<const FootageItem*>(item);
             const QString path = footage->filePath;
+            const QString normalizedPath = QDir::cleanPath(path);
             searchBlob += QStringLiteral(" ") + path;
-            if (unusedOnly_ && !unusedAssetPaths_.contains(path)) {
+            if (unusedOnly_ && !unusedAssetPaths_.contains(normalizedPath)) {
                 return false;
             }
             if (missingOnly_) {
