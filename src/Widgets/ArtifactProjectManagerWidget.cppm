@@ -1862,6 +1862,7 @@ private:
         tagTerms_.clear();
         regexPattern_.clear();
         regexEnabled_ = false;
+        missingOnly_ = false;
 
         const QStringList tokens = rawExpression_.split(' ', Qt::SkipEmptyParts);
         for (const QString& token : tokens) {
@@ -1885,6 +1886,11 @@ private:
                 unusedOnly_ = true;
                 continue;
             }
+            if (token.compare("missing:true", Qt::CaseInsensitive) == 0 ||
+                token.compare("is:missing", Qt::CaseInsensitive) == 0) {
+                missingOnly_ = true;
+                continue;
+            }
             plainTerms_.append(token);
         }
     }
@@ -1906,12 +1912,25 @@ private:
         const QString name = sourceModel()->data(idx0, Qt::DisplayRole).toString();
         QString searchBlob = name;
         if (item && itemType == eProjectItemType::Footage) {
-            const QString path = static_cast<FootageItem*>(item)->filePath;
+            const auto* footage = static_cast<const FootageItem*>(item);
+            const QString path = footage->filePath;
             searchBlob += QStringLiteral(" ") + path;
             if (unusedOnly_ && !unusedAssetPaths_.contains(path)) {
                 return false;
             }
-        } else if (unusedOnly_) {
+            if (missingOnly_) {
+                bool missing = !QFileInfo(path).exists();
+                if (footage->isSequence) {
+                    for (const QString& sequencePath : footage->sequencePaths) {
+                        if (!QFileInfo(sequencePath).exists()) {
+                            missing = true;
+                            break;
+                        }
+                    }
+                }
+                if (!missing) return false;
+            }
+        } else if (unusedOnly_ || missingOnly_) {
             return false;
         }
 
@@ -1942,6 +1961,7 @@ private:
     QString rawExpression_;
     QString typeFilter_;
     bool unusedOnly_ = false;
+    bool missingOnly_ = false;
     bool regexEnabled_ = false;
     QString regexPattern_;
     QStringList plainTerms_;
