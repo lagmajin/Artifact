@@ -475,6 +475,7 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
       optionFrames[i]->setAccessibleName(QString::fromLatin1(frameA11y[i].first));
       optionFrames[i]->setAccessibleDescription(
           QString::fromLatin1(frameA11y[i].second));
+      optionFrames[i]->setMinimumHeight(Artifact::Accessibility::scaledSize(32));
     }
   }
 }
@@ -663,8 +664,8 @@ ArtifactToolOptionsBar::ArtifactToolOptionsBar(QWidget *parent)
     : QWidget(parent), impl_(new Impl(this)) {
   setAccessibleName(QStringLiteral("Tool Options"));
   setAccessibleDescription(QStringLiteral("Adjust options for the active editing tool"));
-  setMinimumHeight(32);
-  setMaximumHeight(40);
+  setMinimumHeight(Artifact::Accessibility::scaledSize(32));
+  setMaximumHeight(Artifact::Accessibility::scaledSize(40));
 
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
