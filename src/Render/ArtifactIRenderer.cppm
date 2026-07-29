@@ -1119,29 +1119,6 @@ namespace {
     primitiveRenderer_.drawCircle(x + w - inset, y + h - inset, radius, fillColor, 1.0f, true);
     primitiveRenderer_.drawCircle(x + inset, y + h - inset, radius, fillColor, 1.0f, true);
 
-    const int segments = std::max(4, static_cast<int>(std::ceil(radius * 0.75f)));
-    constexpr float kPi = 3.14159265358979323846f;
-    auto drawArc = [this, outlineThickness, &outlineColor, segments, kPi](float cx, float cy,
-                                                                          float startDeg,
-                                                                          float endDeg,
-                                                                          float r) {
-      const float degStep = (endDeg - startDeg) / static_cast<float>(segments);
-      Detail::float2 prev{
-          cx + std::cos(startDeg * kPi / 180.0f) * r,
-          cy + std::sin(startDeg * kPi / 180.0f) * r
-      };
-      for (int i = 1; i <= segments; ++i) {
-        const float deg = startDeg + degStep * static_cast<float>(i);
-        const Detail::float2 cur{
-            cx + std::cos(deg * kPi / 180.0f) * r,
-            cy + std::sin(deg * kPi / 180.0f) * r
-        };
-        primitiveRenderer_.drawThickLineLocal(toDiligentFloat2(prev), toDiligentFloat2(cur),
-                                               outlineThickness, outlineColor);
-        prev = cur;
-      }
-    };
-
     const float left = x;
     const float right = x + w;
     const float top = y;
@@ -1156,10 +1133,14 @@ namespace {
     primitiveRenderer_.drawThickLineLocal({cxR, bottom}, {cxL, bottom}, outlineThickness, outlineColor);
     primitiveRenderer_.drawThickLineLocal({left, cyB}, {left, cyT}, outlineThickness, outlineColor);
 
-    drawArc(cxR, cyT, -90.0f,   0.0f, radius);
-    drawArc(cxR, cyB,   0.0f,  90.0f, radius);
-    drawArc(cxL, cyB,  90.0f, 180.0f, radius);
-    drawArc(cxL, cyT, 180.0f, 270.0f, radius);
+    primitiveRenderer_.drawArcLocal({cxR, cyT}, radius, -90.0f, 0.0f,
+                                    outlineThickness, outlineColor);
+    primitiveRenderer_.drawArcLocal({cxR, cyB}, radius, 0.0f, 90.0f,
+                                    outlineThickness, outlineColor);
+    primitiveRenderer_.drawArcLocal({cxL, cyB}, radius, 90.0f, 180.0f,
+                                    outlineThickness, outlineColor);
+    primitiveRenderer_.drawArcLocal({cxL, cyT}, radius, 180.0f, 270.0f,
+                                    outlineThickness, outlineColor);
   }
   void drawRoundedPanel(float2 pos, float2 size, float radius,
                         const FloatColor& fillColor,
