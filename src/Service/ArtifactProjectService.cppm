@@ -2928,6 +2928,17 @@ bool ArtifactProjectService::setLayerParentInCurrentComposition(
     if (!parent || parent->id() == layerId) {
       return false;
     }
+    auto current = parentLayerId;
+    while (!current.isNil()) {
+      if (current == layerId) {
+        return false;
+      }
+      const auto ancestor = comp->layerById(current);
+      if (!ancestor) {
+        break;
+      }
+      current = ancestor->parentLayerId();
+    }
     layer->setParentById(parentLayerId);
   }
   notifyProjectMutation(impl_->projectManager());
