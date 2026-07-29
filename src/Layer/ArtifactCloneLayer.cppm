@@ -412,6 +412,35 @@ QImage ArtifactCloneLayer::toQImage() const {
     return QImage();
 }
 
+std::vector<ArtifactCore::PropertyGroup>
+ArtifactCloneLayer::getLayerPropertyGroups() const {
+    auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+    ArtifactCore::PropertyGroup cloneGroup(QStringLiteral("Clone"));
+
+    for (const auto& property : getProperties()) {
+        auto cloneProperty =
+            ArtifactCore::makeShared<ArtifactCore::AbstractProperty>(property);
+        const QString propertyName = property.getName();
+        cloneProperty->setName(QStringLiteral("clone.") + propertyName);
+        cloneProperty->setDisplayLabel(propertyName);
+        cloneGroup.addProperty(cloneProperty);
+    }
+
+    groups.push_back(std::move(cloneGroup));
+    return groups;
+}
+
+bool ArtifactCloneLayer::setLayerPropertyValue(const QString& propertyPath,
+                                               const QVariant& value) {
+    const auto prefix = QStringLiteral("clone.");
+    if (propertyPath.startsWith(prefix, Qt::CaseInsensitive)) {
+        setPropertyValue(ArtifactCore::UniString::fromQString(
+            propertyPath.mid(prefix.size())), value);
+        return true;
+    }
+    return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
+}
+
 std::vector<AbstractProperty> ArtifactCloneLayer::getProperties() const {
     std::vector<AbstractProperty> props;
 

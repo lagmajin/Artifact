@@ -115,6 +115,9 @@ public:
     QSize sourceSize() const;
     QRectF localBounds() const override;
     QImage toQImage() const;
+    std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+    bool setLayerPropertyValue(const QString& propertyPath,
+                               const QVariant& value) override;
     std::vector<AbstractProperty> getProperties() const;
     void setPropertyValue(const UniString& name, const QVariant& value);
 
