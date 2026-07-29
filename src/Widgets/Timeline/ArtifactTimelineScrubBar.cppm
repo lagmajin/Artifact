@@ -176,8 +176,9 @@ namespace Artifact
 
 void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
 {
-  int frameValue = frame.framePosition();
-  frameValue = qBound(0, frameValue, impl_->totalFrames_ - 1);
+  const int frameValue = impl_->totalFrames_ > 0
+      ? qBound(0, frame.framePosition(), impl_->totalFrames_ - 1)
+      : 0;
   const bool isFrameChanged = impl_->currentFrame_.framePosition() != frameValue;
 
   if (isFrameChanged) {
