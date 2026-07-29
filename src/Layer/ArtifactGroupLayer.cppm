@@ -404,6 +404,24 @@ void ArtifactGroupLayer::addChild(ArtifactAbstractLayerPtr layer) {
     // Prevent self-addition or cyclic
     if (layer->id() == this->id()) return;
 
+    if (auto* composition =
+            dynamic_cast<ArtifactAbstractComposition*>(compositionObject())) {
+        // Reject adding one of this group's ancestors as a child.  Without
+        // this guard, parent IDs can form a cycle even though the group
+        // vectors themselves look valid.
+        auto current = this->parentLayerId();
+        while (!current.isNil()) {
+            if (current == layer->id()) {
+                return;
+            }
+            const auto parent = composition->layerById(current);
+            if (!parent) {
+                break;
+            }
+            current = parent->parentLayerId();
+        }
+    }
+
     // Set parenting in the core system
     layer->setParentById(this->id());
     if (auto* composition =
