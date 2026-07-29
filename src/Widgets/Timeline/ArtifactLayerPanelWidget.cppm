@@ -3147,6 +3147,9 @@ void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
     if (!l) return;
 
     impl_->inlineNameEditor = new QLineEdit(this);
+    impl_->inlineNameEditor->setAccessibleName(QStringLiteral("Layer name"));
+    impl_->inlineNameEditor->setAccessibleDescription(
+        QStringLiteral("Edit the selected layer name and press Enter to commit."));
     impl_->inlineNameEditor->setText(l->layerName());
     impl_->inlineNameEditor->selectAll();
     applyLayerPanelLineEditPalette(impl_->inlineNameEditor);
@@ -3512,6 +3515,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (showInlineCombos && parentRect.contains(event->pos())) {
       impl_->clearInlineEditors();
       auto* combo = new QComboBox(this);
+      combo->setAccessibleName(QStringLiteral("Layer parent"));
+      combo->setAccessibleDescription(
+          QStringLiteral("Choose the selected layer's parent layer."));
       combo->setGeometry(parentRect);
       applyLayerPanelComboPalette(combo);
       combo->addItem(QStringLiteral("<None>"), QString());
@@ -3551,6 +3557,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (showInlineCombos && blendRect.contains(event->pos())) {
       impl_->clearInlineEditors();
       auto* combo = new QComboBox(this);
+      combo->setAccessibleName(QStringLiteral("Layer blend mode"));
+      combo->setAccessibleDescription(
+          QStringLiteral("Choose how the selected layer blends with layers below."));
       combo->setGeometry(blendRect);
       applyLayerPanelComboPalette(combo);
       const auto items = blendModeItems(impl_->blendModeFavorites);
