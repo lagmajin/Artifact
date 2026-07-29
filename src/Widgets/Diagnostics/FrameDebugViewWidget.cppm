@@ -357,12 +357,18 @@ public:
         }
 
         text_->setPlainText(lines.join(QStringLiteral("\n")));
+        text_->setAccessibleName(QStringLiteral("Frame debug snapshot"));
+        text_->setAccessibleDescription(
+            QStringLiteral("Read-only frame snapshot. Use App Debugger to compare bundles and inspect history."));
         text_->setToolTip(QStringLiteral("Read-only snapshot view. Use App Debugger to compare bundles and inspect history."));
     }
 };
 
 FrameDebugViewWidget::FrameDebugViewWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl(this)) {
+    setAccessibleName(QStringLiteral("Frame Debug View"));
+    setAccessibleDescription(
+        QStringLiteral("Inspect a read-only frame snapshot and renderer diagnostics"));
     impl_->setupUI();
 }
 
