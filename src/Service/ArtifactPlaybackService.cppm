@@ -195,10 +195,8 @@ public:
   std::deque<PreviewDiskWriteTask> previewDiskWriteQueue_;
   std::thread previewDiskWriterThread_;
   bool previewDiskWriterStop_ = false;
-  static constexpr qint64 kPreviewDiskCacheBudgetBytes =
+  static constexpr qint64 kDefaultPreviewDiskCacheBudgetBytes =
       512LL * 1024LL * 1024LL;
-  static constexpr qint64 kPreviewDiskCacheGlobalBudgetBytes =
-      2LL * 1024LL * 1024LL * 1024LL;
   static constexpr int kPreviewDiskManifestSchema = 1;
   size_t previewDiskWritesSinceGlobalBudgetCheck_ = 0;
   // A disk cache invalidation must also invalidate queued writes.  Without
@@ -218,6 +216,8 @@ public:
   std::atomic_bool compositionFrameSyncQueued_{false};
   QString previewDiskCacheRoot_;
   std::atomic_bool previewDiskCacheEnabled_{true};
+  std::atomic<qint64> previewDiskCacheBudgetBytes_{
+      kDefaultPreviewDiskCacheBudgetBytes};
   // The namespace last used for the active composition.  Keep this separate
   // from the namespace derived from current state so invalidation after an
   // edit can remove the old cache directory as well.
@@ -975,7 +975,7 @@ public:
     for (const QFileInfo &frame : frames) {
       totalBytes += frame.size();
     }
-    if (totalBytes <= kPreviewDiskCacheBudgetBytes) {
+    if (totalBytes <= previewDiskCacheBudgetBytes_.load()) {
       return evictedFrames;
     }
 
@@ -987,7 +987,7 @@ public:
       return a.fileName() < b.fileName();
     });
     for (const QFileInfo &frame : frames) {
-      if (totalBytes <= kPreviewDiskCacheBudgetBytes) {
+      if (totalBytes <= previewDiskCacheBudgetBytes_.load()) {
         break;
       }
       // Preserve the just-completed frame even when one image exceeds budget.
@@ -1028,7 +1028,9 @@ public:
       totalBytes += frame.size();
       frames.push_back(frame);
     }
-    if (totalBytes <= kPreviewDiskCacheGlobalBudgetBytes) {
+    const qint64 globalBudgetBytes =
+        previewDiskCacheBudgetBytes_.load() * 4;
+    if (totalBytes <= globalBudgetBytes) {
       return evictedCurrentFrames;
     }
 
@@ -1042,7 +1044,7 @@ public:
       return a.absoluteFilePath() < b.absoluteFilePath();
     });
     for (const QFileInfo &frame : frames) {
-      if (totalBytes <= kPreviewDiskCacheGlobalBudgetBytes) {
+      if (totalBytes <= globalBudgetBytes) {
         break;
       }
       if (frame.absoluteFilePath() == savedInfo.absoluteFilePath()) {
@@ -2640,6 +2642,14 @@ void ArtifactPlaybackService::setDiskPreviewCacheEnabled(bool enabled) {
 
 bool ArtifactPlaybackService::isDiskPreviewCacheEnabled() const {
   return impl_ && impl_->previewDiskCacheEnabled_.load();
+}
+
+void ArtifactPlaybackService::setDiskPreviewCacheBudgetMB(const int megabytes) {
+  if (!impl_) {
+    return;
+  }
+  const qint64 clampedMegabytes = std::clamp<qint64>(megabytes, 512, 32768);
+  impl_->previewDiskCacheBudgetBytes_.store(clampedMegabytes * 1024LL * 1024LL);
 }
 
 void ArtifactPlaybackService::setRamPreviewRadius(int frames) {

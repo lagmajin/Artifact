@@ -2469,6 +2469,7 @@ int main(int argc, char *argv[]) {
     playbackService->setRamPreviewEnabled(settings->previewEnableRamCache());
     playbackService->setDiskPreviewCacheEnabled(
         settings->previewEnableDiskCache());
+    playbackService->setDiskPreviewCacheBudgetMB(settings->previewCacheSizeMB());
     QObject::connect(
         settings, &ArtifactCore::ArtifactAppSettings::settingsChanged, mw,
         [playbackService, settings]() {
@@ -2477,6 +2478,8 @@ int main(int argc, char *argv[]) {
                 settings->previewEnableRamCache());
             playbackService->setDiskPreviewCacheEnabled(
                 settings->previewEnableDiskCache());
+            playbackService->setDiskPreviewCacheBudgetMB(
+                settings->previewCacheSizeMB());
           }
         });
   }

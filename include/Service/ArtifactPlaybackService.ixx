@@ -221,6 +221,7 @@ public:
   bool isRamPreviewEnabled() const;
   void setDiskPreviewCacheEnabled(bool enabled);
   bool isDiskPreviewCacheEnabled() const;
+  void setDiskPreviewCacheBudgetMB(int megabytes);
   void setRamPreviewRadius(int frames);
   int ramPreviewRadius() const;
   void setRamPreviewRange(const FrameRange &range);
