@@ -2011,12 +2011,17 @@ W_OBJECT_IMPL(AISettingPage)
 
 AISettingPage::AISettingPage(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("AI connection settings"));
+  setAccessibleDescription(QStringLiteral("Configure the isolated cloud AI connection settings"));
   auto *layout = new QVBoxLayout(this);
   impl_->label_ = new QLabel(
       QStringLiteral("Cloud AI connection settings are isolated here."), this);
+  impl_->label_->setAccessibleName(QStringLiteral("AI settings description"));
   impl_->label_->setWordWrap(true);
   layout->addWidget(impl_->label_);
   impl_->cloudSettings_ = new Artifact::ArtifactAICloudSettingsWidget(this);
+  impl_->cloudSettings_->setAccessibleName(QStringLiteral("Cloud AI connection settings"));
+  impl_->cloudSettings_->setAccessibleDescription(QStringLiteral("Configure cloud AI connection options"));
   layout->addWidget(impl_->cloudSettings_);
   layout->addStretch();
 }
