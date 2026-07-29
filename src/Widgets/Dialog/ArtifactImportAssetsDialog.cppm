@@ -34,6 +34,8 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
     : QDialog(parent)
 {
   setWindowTitle(QStringLiteral("Project/Assets に取り込み"));
+  setAccessibleName(QStringLiteral("Import Assets Dialog"));
+  setAccessibleDescription(QStringLiteral("Select asset groups to copy into the project Assets folder"));
   resize(560, 360);
 
   ArtifactCore::FileTypeDetector detector;
@@ -66,6 +68,7 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
       QStringLiteral("選択したアセットは現在のプロジェクトの Assets フォルダへコピーしてから取り込みます。"),
       this);
   description->setWordWrap(true);
+  description->setAccessibleName(QStringLiteral("Import destination description"));
   layout->addWidget(description);
 
   auto* tree = new QTreeWidget(this);
@@ -73,6 +76,8 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   tree->setRootIsDecorated(false);
   tree->setSelectionMode(QAbstractItemView::NoSelection);
   tree->setAlternatingRowColors(true);
+  tree->setAccessibleName(QStringLiteral("Asset import groups"));
+  tree->setAccessibleDescription(QStringLiteral("Checked groups will be copied into the project Assets folder"));
   layout->addWidget(tree);
 
   auto addGroup = [&](const ImportGroup& group) {
@@ -94,6 +99,11 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
   buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Project/Assets にコピーして取り込む"));
   buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("キャンセル"));
+  buttons->setAccessibleName(QStringLiteral("Asset import actions"));
+  buttons->button(QDialogButtonBox::Ok)->setAccessibleName(QStringLiteral("Import selected assets"));
+  buttons->button(QDialogButtonBox::Ok)->setAccessibleDescription(QStringLiteral("Copy checked asset groups into the project Assets folder"));
+  buttons->button(QDialogButtonBox::Cancel)->setAccessibleName(QStringLiteral("Cancel asset import"));
+  buttons->button(QDialogButtonBox::Cancel)->setAccessibleDescription(QStringLiteral("Close without importing assets"));
   layout->addWidget(buttons);
   QObject::connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
   QObject::connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
