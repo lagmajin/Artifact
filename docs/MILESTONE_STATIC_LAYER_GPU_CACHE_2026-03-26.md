@@ -138,3 +138,14 @@ CPU 側 surface を守りつつ、静止レイヤーだけ GPU 上の中間結�
 
 特に `pan / zoom / selection / gizmo` のたびに upload を繰り返さないことが重要で、
 その意味では `Composition Editor Cache` よりもさらに low-level な cache になる。
+
+## Static Audit Update (2026-07-29)
+
+現行実装を確認した結果、Phase 1〜4相当は実装済みとして扱う。
+
+- `ArtifactCompositionViewDrawing` が layer/source/effect/mask/resolution を含む cache signature を構築し、画像 source revision も GPU cache key に反映する。
+- F32 buffer と QImage の両方を `GPUTextureCacheManager::acquireOrCreate()` へ接続し、selection／overlay更新時の再uploadを cache hit で回避する。
+- `GPUTextureCacheManager` は budget、最大エントリ数、LRU prune、owner／key／device 単位の invalidate、hit/miss/upload/eviction 統計を持つ。
+- Composition Render Controller は 512MB、256エントリの既定予算を設定し、layer state／device変更時に明示 clear/invalidate を行う。
+
+判定: **Phase 1〜4 実装済み。Phase 5 Static Scene Fast Path と runtime性能確認は pending。**
