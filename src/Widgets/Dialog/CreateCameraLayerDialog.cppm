@@ -296,6 +296,8 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl())
 {
     setWindowTitle(u8"カメラ設定");
+    setAccessibleName(u8"カメラレイヤー作成ダイアログ");
+    setAccessibleDescription(u8"新しいカメラレイヤーの名前とレンズ設定を作成");
     setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_NoChildEventsForParent);
 
@@ -325,6 +327,8 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         titleLbl->setPalette(pal);
     }
     auto* closeBtn = new DialogCloseButton(header);
+    closeBtn->setAccessibleName(u8"閉じる");
+    closeBtn->setAccessibleDescription(u8"カメラ設定ダイアログを閉じる");
     hLay->addWidget(titleLbl);
     hLay->addStretch();
     hLay->addWidget(closeBtn);
@@ -385,6 +389,9 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
             lbl->setPalette(pal);
         }
         impl_->nameEdit = new QLineEdit(uniqueCameraLayerName(), row);
+        lbl->setBuddy(impl_->nameEdit);
+        impl_->nameEdit->setAccessibleName(u8"カメラレイヤー名");
+        impl_->nameEdit->setAccessibleDescription(u8"作成するカメラレイヤーの名前");
         rl->addWidget(lbl);
         rl->addWidget(impl_->nameEdit, 1);
         bLay->addWidget(row);
@@ -407,6 +414,9 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
             lbl->setPalette(pal);
         }
         impl_->presetCombo = new QComboBox(row);
+        lbl->setBuddy(impl_->presetCombo);
+        impl_->presetCombo->setAccessibleName(u8"レンズプリセット");
+        impl_->presetCombo->setAccessibleDescription(u8"カメラの焦点距離プリセット");
         for (const auto& p : kPresets) impl_->presetCombo->addItem(p.name);
         impl_->presetCombo->setCurrentIndex(5); // 35mm default
         rl->addWidget(lbl);
@@ -432,6 +442,9 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         impl_->focalLengthSpin->setDecimals(2);
         impl_->focalLengthSpin->setSingleStep(1.0);
         impl_->focalLengthSpin->setValue(35.0);
+        lbl->setBuddy(impl_->focalLengthSpin);
+        impl_->focalLengthSpin->setAccessibleName(u8"焦点距離");
+        impl_->focalLengthSpin->setAccessibleDescription(u8"カメラレンズの焦点距離");
         rl->addWidget(lbl);
         rl->addWidget(impl_->focalLengthSpin, 1);
         bLay->addWidget(row);
@@ -454,6 +467,9 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         impl_->fovSpin->setRange(0.5, 170.0);
         impl_->fovSpin->setDecimals(2);
         impl_->fovSpin->setValue(fovFromFocalLength(35.0));
+        lbl->setBuddy(impl_->fovSpin);
+        impl_->fovSpin->setAccessibleName(u8"視野角");
+        impl_->fovSpin->setAccessibleDescription(u8"カメラの視野角");
         rl->addWidget(lbl);
         rl->addWidget(impl_->fovSpin, 1);
         bLay->addWidget(row);
@@ -461,6 +477,8 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
 
     // ── Lens diagram ──────────────────────────────────────────────────────
     impl_->diagram = new LensDiagramWidget(body);
+    impl_->diagram->setAccessibleName(u8"レンズプレビュー");
+    impl_->diagram->setAccessibleDescription(u8"焦点距離と視野角のプレビュー");
     impl_->diagram->setFocalLength(35.0f);
     bLay->addSpacing(6);
     bLay->addWidget(impl_->diagram);
@@ -485,6 +503,9 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         impl_->apertureFCombo = new QComboBox(row);
         for (const auto& f : kFStops) impl_->apertureFCombo->addItem(f);
         impl_->apertureFCombo->setCurrentText("f/4");
+        lbl->setBuddy(impl_->apertureFCombo);
+        impl_->apertureFCombo->setAccessibleName(u8"絞り値");
+        impl_->apertureFCombo->setAccessibleDescription(u8"被写界深度の絞り値");
         rl->addWidget(lbl);
         rl->addWidget(impl_->apertureFCombo, 1);
         bLay->addWidget(row);
@@ -519,6 +540,12 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         impl_->blurAmountSpin->setRange(0.0, 100.0);
         impl_->blurAmountSpin->setDecimals(0);
         impl_->blurAmountSpin->setValue(100.0);
+        fdLbl->setBuddy(impl_->focusDistSpin);
+        blurLbl->setBuddy(impl_->blurAmountSpin);
+        impl_->focusDistSpin->setAccessibleName(u8"フォーカス距離");
+        impl_->focusDistSpin->setAccessibleDescription(u8"焦点を合わせる距離");
+        impl_->blurAmountSpin->setAccessibleName(u8"ブラー量");
+        impl_->blurAmountSpin->setAccessibleDescription(u8"被写界深度のぼかし量（パーセント）");
         auto* pctLbl = new QLabel("%", row);
         {
             QPalette pal = pctLbl->palette();
@@ -541,6 +568,8 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         rl->setContentsMargins(84, 2, 0, 8);
         impl_->dofCheck = new QCheckBox(u8"被写界深度を有効にする", row);
         impl_->dofCheck->setChecked(false);
+        impl_->dofCheck->setAccessibleName(u8"被写界深度を有効にする");
+        impl_->dofCheck->setAccessibleDescription(u8"カメラの被写界深度効果を有効化");
         rl->addWidget(impl_->dofCheck);
         bLay->addWidget(row);
     }
@@ -559,6 +588,10 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         ll->setContentsMargins(0, 0, 0, 0);
         impl_->motionBlurCheck  = new QCheckBox(u8"モーションブラー", leftCol);
         impl_->lockCameraCheck  = new QCheckBox(u8"カメラをロック", leftCol);
+        impl_->motionBlurCheck->setAccessibleName(u8"モーションブラー");
+        impl_->motionBlurCheck->setAccessibleDescription(u8"カメラのモーションブラーを有効化");
+        impl_->lockCameraCheck->setAccessibleName(u8"カメラをロック");
+        impl_->lockCameraCheck->setAccessibleDescription(u8"カメラ操作をロック");
         ll->addWidget(impl_->motionBlurCheck);
         ll->addWidget(impl_->lockCameraCheck);
 
@@ -577,6 +610,9 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         impl_->zoomSpin->setRange(1.0, 100000.0);
         impl_->zoomSpin->setDecimals(1);
         impl_->zoomSpin->setValue(1000.0);
+        zoomLbl->setBuddy(impl_->zoomSpin);
+        impl_->zoomSpin->setAccessibleName(u8"ズーム");
+        impl_->zoomSpin->setAccessibleDescription(u8"カメラのズーム距離（ピクセル）");
         auto* pxLbl = new QLabel("px", rightCol);
         {
             QPalette pal = pxLbl->palette();
@@ -603,6 +639,10 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
     const DialogButtonRow buttons = createWindowsDialogButtonRow(footer, QStringLiteral("OK"), QStringLiteral("キャンセル"));
     auto* okBtn = buttons.okButton;
     auto* cancelBtn = buttons.cancelButton;
+    okBtn->setAccessibleName(u8"作成");
+    okBtn->setAccessibleDescription(u8"設定したカメラレイヤーを作成");
+    cancelBtn->setAccessibleName(u8"キャンセル");
+    cancelBtn->setAccessibleDescription(u8"カメラレイヤーの作成をキャンセル");
     okBtn->setFixedSize(80, 28);
     cancelBtn->setFixedSize(80, 28);
     fLay->addStretch();
