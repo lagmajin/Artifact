@@ -20,8 +20,14 @@ ArtifactColorPropertyEditor::ArtifactColorPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyColorEditor"));
+  setAccessibleName(QStringLiteral("Color property editor"));
+  setAccessibleDescription(QStringLiteral("Choose the color for the selected property"));
   button_ = new QPushButton(QStringLiteral(" "), this);
+  button_->setAccessibleName(QStringLiteral("Choose property color"));
+  button_->setAccessibleDescription(QStringLiteral("Open the approved color picker for this property"));
   valueLabel_ = new QLabel(this);
+  valueLabel_->setAccessibleName(QStringLiteral("Property color value"));
+  valueLabel_->setAccessibleDescription(QStringLiteral("Current color value in hexadecimal format"));
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
