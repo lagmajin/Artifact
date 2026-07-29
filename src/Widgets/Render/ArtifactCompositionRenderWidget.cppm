@@ -523,7 +523,8 @@ int compositionPreviewIntervalMs(
   if (composition && impl_->renderer_) {
    auto size = composition->settings().compositionSize();
    impl_->renderer_->setCanvasSize((float)size.width(), (float)size.height());
-   impl_->renderer_->fitToViewport();
+   const float fitMargin = 0.05f * static_cast<float>(std::min(width(), height()));
+   impl_->renderer_->fitToViewport(fitMargin);
   }
   impl_->requestRender();
   ArtifactApplicationManager::instance()->activeContextService()->setActiveComposition(composition);
@@ -579,9 +580,10 @@ int compositionPreviewIntervalMs(
  }
 
  void ArtifactCompositionRenderWidget::zoomFit() {
-  if (impl_->renderer_) {
+ if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-   impl_->renderer_->fitToViewport(0.0f);
+   const float fitMargin = 0.05f * static_cast<float>(std::min(width(), height()));
+   impl_->renderer_->fitToViewport(fitMargin);
    impl_->requestRender();
   }
  }
