@@ -356,6 +356,8 @@ EventBusDebuggerWidget::EventBusDebuggerWidget(QWidget* parent)
 
         impl_->nameFilter   = new QLineEdit(tab1);
         impl_->nameFilter->setPlaceholderText("Filter event name…");
+        impl_->nameFilter->setAccessibleName(QStringLiteral("Event name filter"));
+        impl_->nameFilter->setAccessibleDescription(QStringLiteral("Filter the event log by event name"));
         impl_->nameFilter->setFixedHeight(24);
 
         impl_->dupesOnly    = new QCheckBox("Dupes only",  tab1);
@@ -363,10 +365,21 @@ EventBusDebuggerWidget::EventBusDebuggerWidget(QWidget* parent)
         impl_->burstOnly    = new QCheckBox("Burst only",  tab1);
         impl_->pauseCk      = new QCheckBox("Pause",      tab1);
         impl_->scrollLockCk = new QCheckBox("Lock scroll", tab1);
+        impl_->dupesOnly->setAccessibleDescription(QStringLiteral("Show only duplicate events"));
+        impl_->slowOnly->setAccessibleDescription(QStringLiteral("Show only slow events"));
+        impl_->burstOnly->setAccessibleDescription(QStringLiteral("Show only burst events"));
+        impl_->pauseCk->setAccessibleDescription(QStringLiteral("Pause event log updates"));
+        impl_->scrollLockCk->setAccessibleDescription(QStringLiteral("Lock automatic scrolling"));
 
         impl_->clearBtn   = new QPushButton("Clear",   tab1);
         impl_->copyBtn    = new QPushButton("Copy",    tab1);
         impl_->saveCsvBtn = new QPushButton("CSV…",   tab1);
+        impl_->clearBtn->setAccessibleName(QStringLiteral("Clear event log"));
+        impl_->copyBtn->setAccessibleName(QStringLiteral("Copy selected events"));
+        impl_->saveCsvBtn->setAccessibleName(QStringLiteral("Save event log as CSV"));
+        impl_->clearBtn->setAccessibleDescription(QStringLiteral("Clear all event log entries"));
+        impl_->copyBtn->setAccessibleDescription(QStringLiteral("Copy selected event log entries"));
+        impl_->saveCsvBtn->setAccessibleDescription(QStringLiteral("Save the event log as a CSV file"));
         impl_->clearBtn->setFixedWidth(50);
         impl_->copyBtn->setFixedWidth(50);
         impl_->saveCsvBtn->setFixedWidth(50);
