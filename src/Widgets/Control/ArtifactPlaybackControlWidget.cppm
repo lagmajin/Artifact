@@ -97,6 +97,9 @@ public:
     explicit PlaybackTimecodeFrame(QWidget* parent = nullptr)
         : QFrame(parent)
     {
+        setAccessibleName(QStringLiteral("Playback timecode"));
+        setAccessibleDescription(
+            QStringLiteral("Shows the current frame, duration, and In/Out range."));
         setFrameShape(QFrame::StyledPanel);
         setFrameShadow(QFrame::Plain);
         setLineWidth(1);
@@ -673,6 +676,9 @@ public:
         inLayout->setSpacing(2);
         inLayout->addWidget(inButton_);
         inTimecodeLabel_ = new QLabel(QStringLiteral("--:--:--:--"), owner_);
+        inTimecodeLabel_->setAccessibleName(QStringLiteral("In point timecode"));
+        inTimecodeLabel_->setAccessibleDescription(
+            QStringLiteral("Current In point frame timecode."));
         {
             QFont labelFont = inTimecodeLabel_->font();
             labelFont.setPointSize(7);
@@ -691,6 +697,9 @@ public:
         outLayout->setSpacing(2);
         outLayout->addWidget(outButton_);
         outTimecodeLabel_ = new QLabel(QStringLiteral("--:--:--:--"), owner_);
+        outTimecodeLabel_->setAccessibleName(QStringLiteral("Out point timecode"));
+        outTimecodeLabel_->setAccessibleDescription(
+            QStringLiteral("Current Out point frame timecode."));
         {
             QFont labelFont = outTimecodeLabel_->font();
             labelFont.setPointSize(7);
