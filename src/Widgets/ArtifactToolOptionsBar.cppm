@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <array>
 #include <utility>
 #include <QCheckBox>
 #include <QComboBox>
@@ -457,6 +458,24 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
     optionFrames[EraserTool] = frame;
     parentLayout->addWidget(frame);
     frame->setVisible(false);
+  }
+
+  const std::array<std::pair<const char *, const char *>, OptionCount> frameA11y = {{
+      {"Select tool options", "Configure selection and snapping options"},
+      {"Transform tool options", "Configure transform origin and numeric input"},
+      {"Pen tool options", "Configure pen curve and control point options"},
+      {"Shape tool options", "Configure shape geometry and stroke options"},
+      {"Text tool options", "Configure font, alignment, and text layout options"},
+      {"Brush tool options", "Configure brush size, opacity, and hardness"},
+      {"Clone tool options", "Configure copy stamp radius and alignment"},
+      {"Eraser tool options", "Configure eraser size and opacity"},
+  }};
+  for (int i = 0; i < OptionCount; ++i) {
+    if (optionFrames[i]) {
+      optionFrames[i]->setAccessibleName(QString::fromLatin1(frameA11y[i].first));
+      optionFrames[i]->setAccessibleDescription(
+          QString::fromLatin1(frameA11y[i].second));
+    }
   }
 }
 
