@@ -19,6 +19,7 @@ module Artifact.Layer.Clone;
 import Artifact.Layers;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Clone.Core;
+import Artifact.Effect.Clone.BasicEffectors;
 import Artifact.Effect.Abstract;
 import Memory.SharedPtr;
 import Color.Float;
@@ -121,6 +122,9 @@ public:
 };
 
 ArtifactCloneLayer::Impl::Impl() {
+    // Keep the default effector chain meaningful while preserving the
+    // zero-offset default behavior. The editor can toggle it via useEffector.
+    effectors_.push_back(ArtifactCore::makeShared<TransformCloneEffector>());
 }
 
 ArtifactCloneLayer::Impl::~Impl() {
