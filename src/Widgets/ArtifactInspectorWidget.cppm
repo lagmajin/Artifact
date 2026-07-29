@@ -119,6 +119,7 @@ import Widgets.Utils.CSS;
 import Widgets.CommonStyle;
 import Artifact.Widgets.Inspector.EffectTabSurface;
 import Artifact.Widgets.Inspector.ComponentTabSurface;
+import Settings.Accessibility;
 
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
@@ -188,6 +189,14 @@ import Artifact.Widgets.AppDialogs;
 namespace Artifact {
 
 using namespace ArtifactCore;
+
+static QPoint accessibilityMenuPosition(const QMenu &menu,
+                                        const QPoint &origin) {
+  int x = origin.x();
+  int y = origin.y();
+  Accessibility::adjustContextMenuPosition(x, y, menu.sizeHint().width());
+  return QPoint(x, y);
+}
 
 // using namespace ArtifactWidgets;
 
@@ -2082,7 +2091,8 @@ protected:
         }
       }
 
-      if (QAction *chosen = menu.exec(QCursor::pos())) {
+      if (QAction *chosen = menu.exec(
+              accessibilityMenuPosition(menu, QCursor::pos()))) {
         const QVariantMap data = chosen->data().toMap();
         const QString kind = data.value(QStringLiteral("kind")).toString();
         bool indexOk = false;
@@ -4281,7 +4291,7 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
     layer->addMask(mask);
     layer->changed();
   });
-  menu.exec(globalPos);
+  menu.exec(accessibilityMenuPosition(menu, globalPos));
 }
 
 void ArtifactInspectorWidget::Impl::showRackContextMenu(
@@ -4293,13 +4303,13 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
       updateLayerInfo();
       updateEffectsList();
     });
-    menu.exec(globalPos);
+    menu.exec(accessibilityMenuPosition(menu, globalPos));
     return;
   }
 
   const QString effectId = item->data(Qt::UserRole).toString();
   if (effectId.isEmpty()) {
-    menu.exec(globalPos);
+    menu.exec(accessibilityMenuPosition(menu, globalPos));
     return;
   }
 
@@ -4747,7 +4757,7 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
     }
   });
 
-  menu.exec(globalPos);
+  menu.exec(accessibilityMenuPosition(menu, globalPos));
 }
 
 bool ArtifactInspectorWidget::Impl::removeEffectById(const QString &effectId) {
@@ -6651,9 +6661,11 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     openScriptAction->setEnabled(impl_->openScriptButton->isEnabled());
     auto *lipSyncAction = menu.addAction(QStringLiteral("Apply Lip Sync"));
     lipSyncAction->setEnabled(impl_->applyLipSyncButton->isEnabled());
-    const auto selected = menu.exec(
+    const QPoint componentMenuOrigin =
         impl_->addComponentButton->mapToGlobal(
-            QPoint(0, impl_->addComponentButton->height())));
+            QPoint(0, impl_->addComponentButton->height()));
+    const auto selected = menu.exec(
+        accessibilityMenuPosition(menu, componentMenuOrigin));
     if (selected == physicsAction) {
       toggleComponent(QStringLiteral("physics.enabled"),
                       QStringLiteral("Physics"));
