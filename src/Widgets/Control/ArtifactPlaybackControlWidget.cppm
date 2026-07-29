@@ -646,18 +646,35 @@ public:
         timecodeFrame_->setTimecodeCallback([this](const QString& tc) {
           if (auto* svc = ArtifactPlaybackService::instance()) {
             const float fps = std::max(1.0f, svc->frameRate().framerate());
-            const QStringList parts = tc.split(':');
-            if (parts.size() == 4) {
-              bool ok = true;
-              const int hh = parts[0].toInt(&ok);
-              const int mm = ok ? parts[1].toInt(&ok) : 0;
-              const int ss = ok ? parts[2].toInt(&ok) : 0;
-              const int ff = ok ? parts[3].toInt(&ok) : 0;
-              if (ok) {
-                const qint64 totalSeconds = hh * 3600 + mm * 60 + ss;
-                const qint64 frame = totalSeconds * static_cast<qint64>(fps) + ff;
-                svc->goToFrame(FramePosition(frame));
+            const QString input = tc.trimmed();
+            bool ok = false;
+            qint64 frame = 0;
+            if (input.startsWith(QLatin1Char('F'), Qt::CaseInsensitive)) {
+              frame = input.mid(1).toLongLong(&ok);
+            } else if (!input.contains(QLatin1Char(':'))) {
+              frame = input.toLongLong(&ok);
+            } else {
+              const QStringList parts = input.split(QLatin1Char(':'));
+              if (parts.size() == 4) {
+                bool hoursOk = false;
+                bool minutesOk = false;
+                bool secondsOk = false;
+                bool framesOk = false;
+                const int hh = parts[0].toInt(&hoursOk);
+                const int mm = parts[1].toInt(&minutesOk);
+                const int ss = parts[2].toInt(&secondsOk);
+                const int ff = parts[3].toInt(&framesOk);
+                if (hoursOk && minutesOk && secondsOk && framesOk &&
+                    hh >= 0 && mm >= 0 && mm < 60 && ss >= 0 && ss < 60 &&
+                    ff >= 0 && ff < static_cast<int>(std::ceil(fps))) {
+                  const qint64 totalSeconds = hh * 3600LL + mm * 60LL + ss;
+                  frame = totalSeconds * static_cast<qint64>(fps) + ff;
+                  ok = true;
+                }
               }
+            }
+            if (ok) {
+              svc->goToFrame(FramePosition(frame));
             }
           }
         });
