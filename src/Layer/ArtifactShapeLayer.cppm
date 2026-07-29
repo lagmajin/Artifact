@@ -39,6 +39,7 @@ import Memory.SharedPtr;
 import Physics.System;
 import Physics.SoftBody;
 import Physics.Mpm2D;
+import Artifact.Render.IRenderer;
 
 namespace {
 
@@ -1551,21 +1552,26 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
       }
      }
      if (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f) {
-      if (!impl->dashPattern_.empty()) {
-       drawDashedNativeStroke(renderer, subpaths, transform,
-                              impl->dashPattern_,
-                              std::max(1.0f, impl->strokeWidth_), stroke);
-      } else {
-       for (const auto& segments : subpaths) {
-        for (const auto& segment : segments) {
-         const QPointF p0 = mapPoint(transform, segment.p0);
-         const QPointF p1 = mapPoint(transform, segment.p1);
-         renderer->drawThickLineLocal(
-             {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
-             {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
-             std::max(1.0f, impl->strokeWidth_), stroke);
-        }
+      PolylineStyle style;
+      style.thickness = std::max(1.0f, impl->strokeWidth_);
+      style.cap = static_cast<PolylineCap>(impl->strokeCap_);
+      style.join = static_cast<PolylineJoin>(impl->strokeJoin_);
+      style.closed = impl->customPathClosed_;
+      style.dashPattern = impl->dashPattern_;
+      for (const auto& segments : subpaths) {
+       std::vector<Detail::float2> points;
+       points.reserve(segments.size() + 1);
+       for (const auto& segment : segments) {
+        const QPointF point = mapPoint(transform, segment.p0);
+        points.push_back({static_cast<float>(point.x()),
+                          static_cast<float>(point.y())});
        }
+       if (!segments.empty()) {
+        const QPointF point = mapPoint(transform, segments.back().p1);
+        points.push_back({static_cast<float>(point.x()),
+                          static_cast<float>(point.y())});
+       }
+       renderer->drawStyledPolyline(points, style, stroke);
       }
      }
      return;
