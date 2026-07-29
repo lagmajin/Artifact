@@ -1,6 +1,6 @@
 # Milestone: Creative Workflow & Inspector Refinement
 
-> 状態: Partial（M-CW-1 Creative Effects Bridge は Inspector catalog / EffectService factory を確認済み。Inspector-Property 同期、Property 側管理、検索連携、D&D、runtime 検証は未完了）
+> 状態: Partial（M-CW-1〜5 の実装・静的確認済み。実ランタイム検証とコンポーネント面の統合は未完了）
 
 Date: 2026-03-13
 
@@ -31,7 +31,8 @@ Date: 2026-03-13
 
 - ✅ Layer and Composition effect groups in `ArtifactPropertyWidget` now expose `Enabled` and `Remove` controls.
 - ✅ Both operation families use `ArtifactEffectService`, preserving the existing undo-capable service path; removal also asks for confirmation.
-- ⏳ Inspector-Property focus synchronization, unified filtering, drag-and-drop ordering, and runtime verification remain incomplete.
+- ✅ Inspector-Property focus synchronization, unified filtering, drag-and-drop ordering, and Property 側管理を実装済み。
+- ⏳ 実ランタイム検証とコンポーネント面の統合は未完了。
 
 ### M-CW-4 Implementation Loop
 
@@ -47,21 +48,22 @@ Date: 2026-03-13
 - ⏳ Multi-selection drag semantics and runtime verification remain incomplete.
 
 ### M-CW-2 Inspector-Property Sync
-- Implement a signal-slot connection such that selecting an effect in the `ArtifactInspectorWidget` rack automatically:
+- ✅ Selecting an effect in the `ArtifactInspectorWidget` rack automatically:
   - Calls `ArtifactPropertyWidget::setFocusedEffectId()`.
   - Scrolls the `ArtifactPropertyWidget` to the corresponding effect group.
   - Highlights the focused effect group in the Property Editor.
 
 ### M-CW-3 Enhanced Effect Management in Properties
-- Add "Enable/Disable" (checkbox) and "Remove" (button) actions directly into the `QGroupBox` header or the first row of each effect in the `ArtifactPropertyWidget`.
+- ✅ "Enable/Disable" and "Remove" actions are directly available in each effect group of the `ArtifactPropertyWidget`.
 - This reduces the need to jump back and forth between the two panels for basic management tasks.
 
 ### M-CW-4 Unified Search & Filtering
-- Synchronize the search/filter text between the Inspector and the Property Editor.
+- ✅ Synchronize the search/filter text between the Inspector and the Property Editor.
 - When a user searches for "Blur" in the Inspector, both the effect stack should be filtered and the Property Editor should show only Blur-related properties.
 
 ### M-CW-5 Drag-and-Drop Reordering (Visual)
-- Replace or augment the "Up/Down" buttons in the Inspector racks with a drag-and-drop implementation for reordering effects.
+- ✅ Effect racks support single-selection drag-and-drop reordering through the existing service/Undo path.
+- ⏳ Multi-selection drag semantics and runtime verification remain incomplete.
 
 ## Recommended Order
 

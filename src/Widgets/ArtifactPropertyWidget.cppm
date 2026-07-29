@@ -846,9 +846,32 @@ int ArtifactPropertyWidget::targetLayersCount() const {
 }
 
 void ArtifactPropertyWidget::setFocusedEffectId(const QString &effectId) {
-  if (impl_->focusedEffectId == effectId)
+  const QString normalizedEffectId = effectId.trimmed();
+  if (impl_->focusedEffectId == normalizedEffectId)
     return;
-  impl_->focusedEffectId = effectId;
+  impl_->focusedEffectId = normalizedEffectId;
+  impl_->pendingScrollGroupName.clear();
+  if (!normalizedEffectId.isEmpty()) {
+    const auto matchesFocusedEffect = [&normalizedEffectId](
+        const ArtifactAbstractEffectPtr &effect) {
+      return effect &&
+             effect->effectID().toQString() == normalizedEffectId;
+    };
+    for (const auto &effect : impl_->compositionEffects) {
+      if (matchesFocusedEffect(effect)) {
+        impl_->pendingScrollGroupName = effect->displayName().toQString();
+        break;
+      }
+    }
+    if (impl_->pendingScrollGroupName.isEmpty() && impl_->currentLayer) {
+      for (const auto &effect : impl_->currentLayer->getEffects()) {
+        if (matchesFocusedEffect(effect)) {
+          impl_->pendingScrollGroupName = effect->displayName().toQString();
+          break;
+        }
+      }
+    }
+  }
   // Effect selection is an explicit context switch. Deferring it through the
   // general 80 ms debounce makes effect insertion and rack selection feel
   // sluggish even when no rendering work is involved.
