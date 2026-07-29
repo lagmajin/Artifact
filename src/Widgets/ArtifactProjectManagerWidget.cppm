@@ -1749,17 +1749,31 @@ public:
             ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>())
             : nullptr;
         if (item && item->type() == eProjectItemType::Footage) {
-            const QString path = QDir::cleanPath(static_cast<FootageItem*>(item)->filePath);
-            if (unusedAssetPaths_.contains(path)) {
-                if (role == Qt::DisplayRole && index.column() == 0) {
-                    const QString text = QSortFilterProxyModel::data(index, role).toString();
-                    return text.startsWith(QStringLiteral("[Unused] "))
-                        ? text
-                        : QStringLiteral("[Unused] %1").arg(text);
+            const auto* footage = static_cast<const FootageItem*>(item);
+            const QString path = QDir::cleanPath(footage->filePath);
+            const bool unused = unusedAssetPaths_.contains(path);
+            bool missing = !QFileInfo(path).exists();
+            if (footage->isSequence) {
+                for (const QString& sequencePath : footage->sequencePaths) {
+                    if (!QFileInfo(sequencePath).exists()) {
+                        missing = true;
+                        break;
+                    }
                 }
-                if (role == Qt::ForegroundRole) {
-                    return QColor(150, 150, 60);
+            }
+            if (role == Qt::DisplayRole && index.column() == 0 && (unused || missing)) {
+                QString text = QSortFilterProxyModel::data(index, role).toString();
+                if (missing && !text.startsWith(QStringLiteral("[Missing] "))) {
+                    text = QStringLiteral("[Missing] %1").arg(text);
                 }
+                if (unused && !text.contains(QStringLiteral("[Unused] "))) {
+                    text = QStringLiteral("[Unused] %1").arg(text);
+                }
+                return text;
+            }
+            if (role == Qt::ForegroundRole) {
+                if (missing) return QColor(220, 105, 105);
+                if (unused) return QColor(150, 150, 60);
             }
         }
         return QSortFilterProxyModel::data(index, role);
