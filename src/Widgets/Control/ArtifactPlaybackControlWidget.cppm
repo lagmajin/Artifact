@@ -83,6 +83,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Widgets.StyleSurface;
 import Widgets.Utils.CSS;
+import Settings.Accessibility;
 import Artifact.Application.Manager;
 import Artifact.Service.ActiveContext;
 import Artifact.Service.Playback;
@@ -606,7 +607,12 @@ public:
             QAction* pingpong = menu.addAction(QStringLiteral("Ping-Pong"));
             pingpong->setCheckable(true);
             pingpong->setChecked(isLooping_ && loopMode_ == 1);
-            QAction* chosen = menu.exec(QCursor::pos());
+            QPoint menuOrigin = QCursor::pos();
+            int menuX = menuOrigin.x();
+            int menuY = menuOrigin.y();
+            Accessibility::adjustContextMenuPosition(
+                menuX, menuY, menu.sizeHint().width());
+            QAction* chosen = menu.exec(QPoint(menuX, menuY));
             if (chosen == off) {
                 isLooping_ = false;
                 loopMode_ = 0;
