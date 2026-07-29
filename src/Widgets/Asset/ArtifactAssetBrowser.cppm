@@ -2135,8 +2135,16 @@ bool ArtifactAssetBrowser::Impl::hasCurrentThumbnail(const QString& filePath)
 
 void ArtifactAssetBrowser::Impl::cacheThumbnail(const QString& filePath, const QIcon& icon)
 {
+  constexpr int kMaxMemoryThumbnailEntries = 512;
   thumbnailCache_[filePath] = icon;
   thumbnailCacheModified_[filePath] = QFileInfo(filePath).lastModified();
+  while (thumbnailCache_.size() > kMaxMemoryThumbnailEntries) {
+    auto it = thumbnailCache_.constBegin();
+    if (it == thumbnailCache_.constEnd()) break;
+    const QString evictedPath = it.key();
+    thumbnailCache_.remove(evictedPath);
+    thumbnailCacheModified_.remove(evictedPath);
+  }
 }
 
  QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
