@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <wobjectimpl.h>
 #include <QGraphicsScene>
@@ -27,6 +27,7 @@ import Artifact.Event.Types;
 import Event.Bus;
 import Utils;
 import Utils.String.UniString;
+import Settings.Accessibility;
 
 namespace Artifact {
     using namespace ArtifactCore;
@@ -152,7 +153,11 @@ namespace Artifact {
                 });
             }
 
-            menu.exec(globalPos);
+            int menuX = globalPos.x();
+            int menuY = globalPos.y();
+            Accessibility::adjustContextMenuPosition(
+                menuX, menuY, menu.sizeHint().width());
+            menu.exec(QPoint(menuX, menuY));
         }
 
         void refresh() {
