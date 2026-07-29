@@ -1326,6 +1326,16 @@ QString summarizeLayerState(const ArtifactAbstractLayerPtr& layer)
  if (!layer) {
   return {};
  }
+ auto parent = layer->parentLayer();
+ while (parent) {
+  if (!parent->isVisible()) {
+   return QStringLiteral("Group hidden");
+  }
+  if (parent->isLocked()) {
+   return QStringLiteral("Group locked");
+  }
+  parent = parent->parentLayer();
+ }
  if (!layer->isVisible()) {
   return QStringLiteral("Hidden");
  }
