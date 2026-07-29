@@ -150,21 +150,29 @@ namespace Artifact {
   pSnapShotButton->setIconSize(QSize(20, 20));
   pSnapShotButton->setAutoRaise(true);
   pSnapShotButton->setToolTip("Take Snapshot");
+  pSnapShotButton->setAccessibleName(QStringLiteral("Take snapshot"));
+  pSnapShotButton->setAccessibleDescription(QStringLiteral("Capture a snapshot of the composition viewer"));
   pShutterButton = new QToolButton();
   pShutterButton->setIcon(loadIconWithFallback("MaterialVS/neutral/videocam.svg"));
   pShutterButton->setIconSize(QSize(20, 20));
   pShutterButton->setAutoRaise(true);
   pShutterButton->setToolTip("Render Current Frame");
+  pShutterButton->setAccessibleName(QStringLiteral("Render current frame"));
+  pShutterButton->setAccessibleDescription(QStringLiteral("Render the current composition frame"));
   pPlayPauseButton = new QToolButton();
   pPlayPauseButton->setIcon(loadIconWithFallback("MaterialVS/green/play_arrow.svg"));
   pPlayPauseButton->setIconSize(QSize(20, 20));
   pPlayPauseButton->setAutoRaise(true);
   pPlayPauseButton->setToolTip("Play/Pause");
+  pPlayPauseButton->setAccessibleName(QStringLiteral("Play or pause"));
+  pPlayPauseButton->setAccessibleDescription(QStringLiteral("Play or pause the composition preview"));
   pStopButton = new QToolButton();
   pStopButton->setIcon(loadIconWithFallback("MaterialVS/green/stop.svg"));
   pStopButton->setIconSize(QSize(20, 20));
   pStopButton->setAutoRaise(true);
   pStopButton->setToolTip("Stop");
+  pStopButton->setAccessibleName(QStringLiteral("Stop playback"));
+  pStopButton->setAccessibleDescription(QStringLiteral("Stop the composition preview"));
   fpsLabel = new QLabel("FPS: N/A");
   memLabel = new QLabel("Mem: N/A");
   ramPreviewLabel = new QLabel("RAM: N/A");
@@ -187,8 +195,10 @@ namespace Artifact {
   delete selectionLabel;
  }
 
- ArtifactCompositionViewerFooter::ArtifactCompositionViewerFooter(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
+ArtifactCompositionViewerFooter::ArtifactCompositionViewerFooter(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
+  setAccessibleName(QStringLiteral("Composition viewer controls"));
+  setAccessibleDescription(QStringLiteral("Choose preview resolution and control composition playback"));
   setMaximumHeight(24);
   auto layout = new QHBoxLayout(this);
   layout->setContentsMargins(6, 0, 6, 0);
@@ -202,6 +212,8 @@ namespace Artifact {
 
   auto resCombo = new QComboBox(this);
   resCombo->addItems({ "1920x1080", "1280x720", "800x600" });
+  resCombo->setAccessibleName(QStringLiteral("Preview resolution"));
+  resCombo->setAccessibleDescription(QStringLiteral("Choose the composition preview resolution"));
   layout->addWidget(resCombo);
 
   // Playback controls
