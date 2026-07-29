@@ -2358,6 +2358,18 @@ void ArtifactPlaybackService::setAudioMasterMuted(bool muted) {
   }
 }
 
+void ArtifactPlaybackService::setAudioOutputDeviceName(
+    const QString &deviceName) {
+  if (impl_ && impl_->engine_) {
+    impl_->engine_->setAudioOutputDeviceName(deviceName);
+  }
+}
+
+QString ArtifactPlaybackService::audioOutputDeviceName() const {
+  return impl_ && impl_->engine_ ? impl_->engine_->audioOutputDeviceName()
+                                 : QString();
+}
+
 void ArtifactPlaybackService::setCurrentComposition(
     ArtifactCompositionPtr composition) {
   if (impl_->currentComposition_ != composition) {

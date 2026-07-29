@@ -41,6 +41,7 @@
 #include <QMutex>
 #include <QWaitCondition>
 #include <QAtomicInt>
+#include <QString>
 export module Artifact.Playback.Engine;
 
  import Frame.Position;
@@ -132,6 +133,8 @@ public:
     float audioMasterVolume() const;
     void setAudioMasterMuted(bool muted);
     bool audioMasterMuted() const;
+    void setAudioOutputDeviceName(const QString& deviceName);
+    QString audioOutputDeviceName() const;
 
     // コンプポジション設定
     void setComposition(ArtifactCompositionPtr composition);

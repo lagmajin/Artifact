@@ -25,6 +25,8 @@ export namespace Artifact {
   bool hasCurrentMixer() const;
   QStringList busNames() const;
   QStringList availableOutputDeviceNames() const;
+  void setOutputDeviceName(const QString& deviceName);
+  QString outputDeviceName() const;
 
   void setMasterVolume(float volume);
   float masterVolume() const;

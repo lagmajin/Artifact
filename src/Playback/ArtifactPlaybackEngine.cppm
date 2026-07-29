@@ -75,6 +75,7 @@ public:
     
     // オーディオ
     std::unique_ptr<AudioRenderer> audioRenderer_;
+    QString audioOutputDeviceName_;
     int audioSampleRate_ = 48000;
     float audioMasterVolume_ = 1.0f;
     bool audioMasterMuted_ = false;
@@ -522,7 +523,7 @@ public:
                 audioRenderer_->setPreferredChannelCount(
                     sourceChannels >= 8 ? 8 : sourceChannels >= 6 ? 6 : 2);
             }
-            if (!audioRenderer_->openDevice("")) {
+            if (!audioRenderer_->openDevice(audioOutputDeviceName_)) {
                 return;
             }
             audioSampleRate_ = std::max(1, audioRenderer_->sampleRate());
@@ -1000,6 +1001,25 @@ void ArtifactPlaybackEngine::setAudioMasterMuted(bool muted) {
 
 bool ArtifactPlaybackEngine::audioMasterMuted() const {
     return impl_->audioMasterMuted_;
+}
+
+void ArtifactPlaybackEngine::setAudioOutputDeviceName(const QString& deviceName) {
+    const QString normalizedName = deviceName.trimmed();
+    if (impl_->audioOutputDeviceName_ == normalizedName) {
+        return;
+    }
+    impl_->audioOutputDeviceName_ = normalizedName;
+    if (impl_->audioRenderer_ && impl_->audioRenderer_->isDeviceOpen()) {
+        impl_->audioRenderer_->stop();
+        impl_->audioRenderer_->closeDevice();
+        impl_->audioRenderer_->clearBuffer();
+        impl_->audioTargetBufferedFrames_ = 0;
+        impl_->audioSeekPending_ = true;
+    }
+}
+
+QString ArtifactPlaybackEngine::audioOutputDeviceName() const {
+    return impl_->audioOutputDeviceName_;
 }
 
 void ArtifactPlaybackEngine::setComposition(ArtifactCompositionPtr composition) {
