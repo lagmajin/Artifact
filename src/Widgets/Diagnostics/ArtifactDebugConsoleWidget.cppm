@@ -239,6 +239,8 @@ public:
         toolbarLayout->addWidget(clearBtn_);
 
         clearOnPlayCheck_ = new QCheckBox("Clear on Play");
+        clearOnPlayCheck_->setAccessibleName(QStringLiteral("Clear logs on play"));
+        clearOnPlayCheck_->setAccessibleDescription(QStringLiteral("Clear debug console logs when playback starts"));
         clearOnPlayCheck_->setPalette([&]() {
             QPalette pal = clearOnPlayCheck_->palette();
             pal.setColor(QPalette::WindowText, muted);
@@ -423,6 +425,7 @@ public:
         summaryLayout->setContentsMargins(8, 0, 8, 4);
         summaryLayout->setSpacing(0);
         filterSummaryLabel_ = new QLabel();
+        filterSummaryLabel_->setAccessibleName(QStringLiteral("Debug console filter summary"));
         filterSummaryLabel_->setWordWrap(false);
         {
             QPalette pal = filterSummaryLabel_->palette();
@@ -433,6 +436,7 @@ public:
         layout->addLayout(summaryLayout);
 
         statusLabel_ = new QLabel(owner_);
+        statusLabel_->setAccessibleName(QStringLiteral("Debug console status"));
         statusLabel_->setPalette([&]() {
             QPalette pal = statusLabel_->palette();
             pal.setColor(QPalette::WindowText, muted);
@@ -443,6 +447,8 @@ public:
         auto* splitter = new QSplitter(Qt::Vertical, owner_);
 
         logList_ = new DebugConsoleLogListWidget();
+        logList_->setAccessibleName(QStringLiteral("Debug console log list"));
+        logList_->setAccessibleDescription(QStringLiteral("Select one or more debug log entries"));
         logList_->setAlternatingRowColors(true);
         logList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
         logList_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -459,6 +465,8 @@ public:
         splitter->addWidget(logList_);
 
         detailView_ = new QPlainTextEdit(owner_);
+        detailView_->setAccessibleName(QStringLiteral("Selected log details"));
+        detailView_->setAccessibleDescription(QStringLiteral("Read-only details for the selected debug log"));
         detailView_->setReadOnly(true);
         detailView_->setMinimumHeight(110);
         {
@@ -1350,6 +1358,8 @@ public:
 
 ArtifactDebugConsoleWidget::ArtifactDebugConsoleWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl(this)) {
+    setAccessibleName(QStringLiteral("Debug console"));
+    setAccessibleDescription(QStringLiteral("Inspect, filter, copy, and save application debug logs"));
     impl_->setupUI();
 }
 
