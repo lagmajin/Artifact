@@ -144,6 +144,14 @@ static QPoint accessibilityMenuPosition(const QMenu &menu,
 
 namespace {
 
+void discardStaleThumbnailWatcher(QFutureWatcher<QImage>* watcher)
+{
+ if (!watcher) return;
+ QObject::disconnect(watcher, nullptr, nullptr, nullptr);
+ watcher->cancel();
+ watcher->deleteLater();
+}
+
 int naturalAssetNameCompare(const QString& lhs, const QString& rhs) {
  int left = 0;
  int right = 0;
@@ -2103,7 +2111,9 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
     if (it.value().generation == currentGeneration) {
      return placeholder;
     }
+    auto* staleWatcher = it.value().watcher;
     pendingPreviewJobs_.erase(it);
+    discardStaleThumbnailWatcher(staleWatcher);
    }
    if (failedPreviewPaths_.contains(filePath)) {
     return placeholder;
@@ -2120,7 +2130,9 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
        if (it.value().generation == currentGeneration) {
         return placeholder;
        }
+       auto* staleWatcher = it.value().watcher;
        pendingPreviewJobs_.erase(it);
+       discardStaleThumbnailWatcher(staleWatcher);
       }
       if (failedPreviewPaths_.contains(filePath)) {
        return placeholder;
@@ -2155,7 +2167,9 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
    if (it.value().generation == currentGeneration) {
     return placeholder;
    }
+   auto* staleWatcher = it.value().watcher;
    pendingPreviewJobs_.erase(it);
+   discardStaleThumbnailWatcher(staleWatcher);
   }
   if (!failedPreviewPaths_.contains(filePath)) {
    thumbnailCache_[filePath] = placeholder;
@@ -2207,7 +2221,8 @@ void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QStr
       if (existing.generation == thumbnailGeneration_.load(std::memory_order_relaxed)) {
         return;
       }
-      pendingPreviewJobs_.remove(filePath);
+      const auto staleJob = pendingPreviewJobs_.take(filePath);
+      discardStaleThumbnailWatcher(staleJob.watcher);
     }
     previewFailureReasons_.remove(filePath);
   }
@@ -4553,7 +4568,9 @@ QIcon ArtifactAssetBrowser::Impl::generateAudioWaveformThumbnail(const QString& 
         if (it.value().generation == currentGeneration) {
             return defaultAudioIcon_;  // Return placeholder while generating
         }
+        auto* staleWatcher = it.value().watcher;
         pendingWaveJobs_.erase(it);
+        discardStaleThumbnailWatcher(staleWatcher);
     }
 
     // Check if this file previously failed
@@ -4580,7 +4597,8 @@ void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& aud
         if (existing.generation == thumbnailGeneration_.load(std::memory_order_relaxed)) {
             return;  // Already pending
         }
-        pendingWaveJobs_.remove(audioFilePath);
+        const auto staleJob = pendingWaveJobs_.take(audioFilePath);
+        discardStaleThumbnailWatcher(staleJob.watcher);
     }
 
     const quint64 jobGeneration = thumbnailGeneration_.load(std::memory_order_relaxed);
