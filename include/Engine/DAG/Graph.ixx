@@ -95,20 +95,33 @@ export namespace Artifact {
 
         /// ノードを ID で削除
         bool removeNode(const NodeID& id) {
+            const auto nodeIt = std::find_if(nodes_.begin(), nodes_.end(),
+                [&id](const EffectNodePtr& n) { return n->id() == id; });
+            if (nodeIt == nodes_.end()) return false;
+
+            // Remember surviving downstream nodes before removing the edges.
+            // They can no longer reuse output computed through this node.
+            std::vector<NodeID> affectedTargets;
+            for (const auto& c : connections_) {
+                if (c.enabled && c.sourceNodeId == id) {
+                    affectedTargets.push_back(c.targetNodeId);
+                }
+            }
+
             // 関連する接続も削除
             connections_.erase(
                 std::remove_if(connections_.begin(), connections_.end(),
                     [&id](const Connection& c) {
                         return c.sourceNodeId == id || c.targetNodeId == id;
-                    }),
+                }),
                 connections_.end()
             );
 
-            auto it = std::remove_if(nodes_.begin(), nodes_.end(),
-                [&id](const EffectNodePtr& n) { return n->id() == id; });
-            if (it == nodes_.end()) return false;
-            nodes_.erase(it, nodes_.end());
+            nodes_.erase(nodeIt);
             compiled_ = false;
+            for (const auto& targetId : affectedTargets) {
+                propagateDirty(targetId);
+            }
             return true;
         }
 
