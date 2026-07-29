@@ -1360,6 +1360,7 @@ bool ArtifactShapeLayer::removeShapeOperatorAt(int index)
  }
  impl_->shapeOperators_.erase(impl_->shapeOperators_.begin() + index);
  impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
  impl_->shapeContentCacheDirty_ = true;
  Q_EMIT changed();
  return true;
@@ -1376,6 +1377,7 @@ bool ArtifactShapeLayer::moveShapeOperator(int fromIndex, int toIndex)
  std::swap(impl_->shapeOperators_[static_cast<size_t>(fromIndex)],
            impl_->shapeOperators_[static_cast<size_t>(toIndex)]);
  impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
  impl_->shapeContentCacheDirty_ = true;
  Q_EMIT changed();
  return true;
@@ -2306,9 +2308,10 @@ if (propertyPath == "shape.type") {
        }
 
        if (handled) {
-         impl_->markDirty();
-         impl_->localBoundsCacheDirty_ = true;
-         Q_EMIT changed();
+       impl_->markDirty();
+        impl_->localBoundsCacheDirty_ = true;
+        impl_->shapeContentCacheDirty_ = true;
+        Q_EMIT changed();
          return true;
        }
      }
