@@ -2988,6 +2988,24 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     if (currentSortBy_ == "name") {
      int result = compareNaturalName();
      return sortAscending_ ? result < 0 : result > 0;
+    } else if (currentSortBy_ == "date_name") {
+     QFileInfo infoA(a.path.toQString());
+     QFileInfo infoB(b.path.toQString());
+     const QDateTime dateA = infoA.lastModified();
+     const QDateTime dateB = infoB.lastModified();
+     int result = dateA < dateB ? -1 : (dateA > dateB ? 1 : 0);
+     if (result == 0) result = compareNaturalName();
+     return sortAscending_ ? result < 0 : result > 0;
+    } else if (currentSortBy_ == "size_name") {
+     const qint64 sizeA = QFileInfo(a.path.toQString()).size();
+     const qint64 sizeB = QFileInfo(b.path.toQString()).size();
+     int result = sizeA < sizeB ? -1 : (sizeA > sizeB ? 1 : 0);
+     if (result == 0) result = compareNaturalName();
+     return sortAscending_ ? result < 0 : result > 0;
+    } else if (currentSortBy_ == "type_name") {
+     int result = a.type.toQString().compare(b.type.toQString(), Qt::CaseInsensitive);
+     if (result == 0) result = compareNaturalName();
+     return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "date") {
      QFileInfo infoA(a.path.toQString());
      QFileInfo infoB(b.path.toQString());
@@ -3135,6 +3153,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    sortByCombo->addItem("Sort: Date", "date");
    sortByCombo->addItem("Sort: Size", "size");
    sortByCombo->addItem("Sort: Type", "type");
+   sortByCombo->addItem("Sort: Type → Name", "type_name");
+   sortByCombo->addItem("Sort: Date → Name", "date_name");
+   sortByCombo->addItem("Sort: Size → Name", "size_name");
    sortByCombo->setCurrentIndex(1);
    sortByCombo->setMinimumWidth(112);
    sortByCombo->setMinimumHeight(28);
