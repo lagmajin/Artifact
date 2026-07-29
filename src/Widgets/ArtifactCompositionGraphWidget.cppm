@@ -83,6 +83,8 @@ namespace Artifact {
             // Search Bar Header
             searchBar = new QLineEdit();
             searchBar->setPlaceholderText("Search layers...");
+            searchBar->setMinimumHeight(
+                Artifact::Accessibility::scaledSize(24));
             searchBar->setAccessibleName(QStringLiteral("Graph layer search"));
             searchBar->setAccessibleDescription(
                 QStringLiteral("Filter the composition graph by layer name."));

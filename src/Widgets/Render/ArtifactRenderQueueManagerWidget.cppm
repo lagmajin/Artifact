@@ -874,6 +874,8 @@ namespace Artifact
   impl_->runningCountLabel->setAlignment(Qt::AlignCenter);
   impl_->searchEdit = new RenderQueueSearchEdit();
   impl_->searchEdit->setPlaceholderText("Search jobs...");
+  impl_->searchEdit->setMinimumHeight(
+      Artifact::Accessibility::scaledSize(24));
   impl_->searchEdit->setObjectName("renderQueueSearch");
   impl_->searchEdit->setMaximumWidth(440);
   impl_->searchEdit->changed = [this](const QString& text) {
