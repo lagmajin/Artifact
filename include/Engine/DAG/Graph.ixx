@@ -190,6 +190,10 @@ export namespace Artifact {
             if (it == connections_.end()) return false;
             connections_.erase(it, connections_.end());
             compiled_ = false;
+            // Removing a producer changes the effective input contract.  The
+            // target and every downstream node must be reevaluated instead of
+            // reusing output computed while the connection still existed.
+            propagateDirty(tgtId);
             return true;
         }
 
