@@ -925,6 +925,8 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
 	
  ArtifactRenderOutputSettingDialog::ArtifactRenderOutputSettingDialog(QWidget* parent /*= nullptr*/):QDialog(parent),impl_(new Impl())
  {
+  setAccessibleName(QStringLiteral("Render output settings"));
+  setAccessibleDescription(QStringLiteral("Configure render format, resolution, audio, channels, and sequence output"));
     setWindowTitle(QStringLiteral("レンダー出力の設定"));
     setMinimumWidth(920);
 
@@ -1186,6 +1188,36 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->framePaddingSpin->setRange(1, 10);
     impl_->framePaddingSpin->setValue(4);
     impl_->framePaddingSpin->setToolTip(QStringLiteral("画像シーケンスのフレーム番号の桁数（例: 4 → frame_0001.png）"));
+    impl_->outputPathEdit->setAccessibleName(QStringLiteral("Output path"));
+    impl_->outputPathEdit->setAccessibleDescription(QStringLiteral("Enter the output file or image sequence path"));
+    impl_->browseButton->setAccessibleName(QStringLiteral("Browse output path"));
+    impl_->browseButton->setAccessibleDescription(QStringLiteral("Choose the output path"));
+    impl_->presetCombo->setAccessibleName(QStringLiteral("Output preset"));
+    impl_->presetCombo->setAccessibleDescription(QStringLiteral("Choose an output format preset"));
+    impl_->formatCombo->setAccessibleName(QStringLiteral("Container format"));
+    impl_->formatCombo->setAccessibleDescription(QStringLiteral("Choose the output container or image sequence format"));
+    impl_->codecCombo->setAccessibleName(QStringLiteral("Video codec"));
+    impl_->codecCombo->setAccessibleDescription(QStringLiteral("Choose the video or image codec"));
+    impl_->backendCombo->setAccessibleName(QStringLiteral("Encoder backend"));
+    impl_->backendCombo->setAccessibleDescription(QStringLiteral("Choose the encoder backend"));
+    impl_->renderBackendCombo->setAccessibleName(QStringLiteral("Render backend"));
+    impl_->renderBackendCombo->setAccessibleDescription(QStringLiteral("Choose the render backend"));
+    impl_->resolutionCombo->setAccessibleName(QStringLiteral("Output resolution"));
+    impl_->resolutionCombo->setAccessibleDescription(QStringLiteral("Choose the output resolution"));
+    impl_->widthSpin->setAccessibleName(QStringLiteral("Output width"));
+    impl_->heightSpin->setAccessibleName(QStringLiteral("Output height"));
+    impl_->fpsSpin->setAccessibleName(QStringLiteral("Output frame rate"));
+    impl_->bitrateSpin->setAccessibleName(QStringLiteral("Video bitrate"));
+    impl_->includeAudioCheck->setAccessibleName(QStringLiteral("Include audio"));
+    impl_->includeAudioCheck->setAccessibleDescription(QStringLiteral("Include audio in the video output"));
+    impl_->audioCodecCombo->setAccessibleName(QStringLiteral("Audio codec"));
+    impl_->audioChannelCombo->setAccessibleName(QStringLiteral("Audio channels"));
+    impl_->audioSampleRateCombo->setAccessibleName(QStringLiteral("Audio sample rate"));
+    impl_->audioBitrateSpin->setAccessibleName(QStringLiteral("Audio bitrate"));
+    impl_->multiChannelCheck->setAccessibleName(QStringLiteral("Multi-channel AOV export"));
+    impl_->multiChannelCheck->setAccessibleDescription(QStringLiteral("Include selected auxiliary channels in the EXR output"));
+    impl_->framePaddingSpin->setAccessibleName(QStringLiteral("Frame padding"));
+    impl_->framePaddingSpin->setAccessibleDescription(QStringLiteral("Set the number of digits for image sequence frame numbers"));
     formLayout->addRow("Frame Padding:", impl_->framePaddingSpin);
 
     impl_->advancedGroup = new QGroupBox(QStringLiteral("その他の設定"), this);
@@ -1228,9 +1260,13 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->cancelButton = buttons.cancelButton;
     if (impl_->okButton) {
         impl_->okButton->setText(QStringLiteral("書き出し"));
+        impl_->okButton->setAccessibleName(QStringLiteral("Export render output"));
+        impl_->okButton->setAccessibleDescription(QStringLiteral("Apply these render output settings and export"));
     }
     if (impl_->cancelButton) {
         impl_->cancelButton->setText(QStringLiteral("キャンセル"));
+        impl_->cancelButton->setAccessibleName(QStringLiteral("Cancel render output settings"));
+        impl_->cancelButton->setAccessibleDescription(QStringLiteral("Close without applying output settings"));
     }
 
     mainLayout->addWidget(beginnerGuide);
