@@ -8,7 +8,10 @@ module Artifact.Widgets.PropertyEditor;
 namespace Artifact {
 
 ArtifactAbstractPropertyEditor::ArtifactAbstractPropertyEditor(QWidget *parent)
-    : QWidget(parent) {}
+    : QWidget(parent) {
+  setAccessibleName(QStringLiteral("Property editor"));
+  setAccessibleDescription(QStringLiteral("Edit the selected property value"));
+}
 
 ArtifactAbstractPropertyEditor::~ArtifactAbstractPropertyEditor() = default;
 
