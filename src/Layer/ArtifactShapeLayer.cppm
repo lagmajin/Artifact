@@ -1283,6 +1283,7 @@ void ArtifactShapeLayer::setStrokeAlign(StrokeAlign align) {
  if (impl_->strokeAlign_ == normalized) return;
  impl_->strokeAlign_ = normalized;
  impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
  impl_->shapeContentCacheDirty_ = true;
  Q_EMIT changed();
 }
