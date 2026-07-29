@@ -23,7 +23,11 @@ ArtifactEnumPropertyEditor::ArtifactEnumPropertyEditor(
     QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent), options_(std::move(options)) {
   setObjectName(QStringLiteral("propertyEnumEditor"));
+  setAccessibleName(QStringLiteral("Enum property editor"));
+  setAccessibleDescription(QStringLiteral("Choose a value for the selected enum property"));
   comboBox_ = new PropertyComboBox(this);
+  comboBox_->setAccessibleName(QStringLiteral("Enum property value"));
+  comboBox_->setAccessibleDescription(QStringLiteral("Select one of the available property values"));
   comboBox_->setMinimumHeight(26);
   comboBox_->setFrame(false);
   applyPropertyFieldPalette(comboBox_);
