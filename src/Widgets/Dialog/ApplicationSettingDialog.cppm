@@ -1166,6 +1166,8 @@ public:
 
 MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget *parent /*= nullptr*/)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Memory and performance settings"));
+  setAccessibleDescription(QStringLiteral("Monitor resource usage and configure worker thread performance"));
   impl_->initializeProcessorCount();
 
   auto *mainLayout = new QVBoxLayout(this);
@@ -1177,6 +1179,8 @@ MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget *parent /*= nullptr*/)
   auto *memLayout = new QHBoxLayout();
   memLayout->addWidget(new QLabel("System Memory Usage:", this));
   impl_->memoryUsageBar_ = new QProgressBar(this);
+  impl_->memoryUsageBar_->setAccessibleName(QStringLiteral("System memory usage"));
+  impl_->memoryUsageBar_->setAccessibleDescription(QStringLiteral("Current system memory usage percentage"));
   impl_->memoryUsageBar_->setRange(0, 100);
   impl_->memoryUsageBar_->setValue(0);
   impl_->memoryUsageBar_->setTextVisible(false);
@@ -1189,6 +1193,8 @@ MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget *parent /*= nullptr*/)
   auto *cpuLayout = new QHBoxLayout();
   cpuLayout->addWidget(new QLabel("CPU Usage:", this));
   impl_->cpuUsageBar_ = new QProgressBar(this);
+  impl_->cpuUsageBar_->setAccessibleName(QStringLiteral("CPU usage"));
+  impl_->cpuUsageBar_->setAccessibleDescription(QStringLiteral("Current processor usage percentage"));
   impl_->cpuUsageBar_->setRange(0, 100);
   impl_->cpuUsageBar_->setValue(0);
   impl_->cpuUsageBar_->setTextVisible(false);
@@ -1206,15 +1212,21 @@ MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget *parent /*= nullptr*/)
   auto *threadLayout = new QHBoxLayout();
   threadLayout->addWidget(new QLabel("Worker Threads:", this));
   impl_->workerThreadsSpinBox_ = new QSpinBox(this);
+  impl_->workerThreadsSpinBox_->setAccessibleName(QStringLiteral("Worker threads"));
+  impl_->workerThreadsSpinBox_->setAccessibleDescription(QStringLiteral("Number of worker threads used for rendering"));
   impl_->workerThreadsSpinBox_->setRange(1, qMax(1, impl_->processorCount_));
   impl_->workerThreadsSpinBox_->setValue(qMax(1, impl_->processorCount_ - 1));
   threadLayout->addWidget(impl_->workerThreadsSpinBox_);
   impl_->autoTuneButton_ = new QPushButton("Auto-tune", this);
+  impl_->autoTuneButton_->setAccessibleName(QStringLiteral("Auto-tune worker threads"));
+  impl_->autoTuneButton_->setAccessibleDescription(QStringLiteral("Set the recommended worker thread count"));
   threadLayout->addWidget(impl_->autoTuneButton_);
   threadLayout->addStretch();
   perfLayout->addLayout(threadLayout);
 
   impl_->clearCacheButton_ = new QPushButton("Clear Cache", this);
+  impl_->clearCacheButton_->setAccessibleName(QStringLiteral("Clear application cache"));
+  impl_->clearCacheButton_->setAccessibleDescription(QStringLiteral("Remove generated proxy and recovery cache files"));
   perfLayout->addWidget(impl_->clearCacheButton_);
 
   mainLayout->addWidget(perfGroup);
