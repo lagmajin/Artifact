@@ -2622,11 +2622,22 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    } else if (currentStatusFilter_ == QStringLiteral("unused")) {
     statusText = QStringLiteral("Unused");
    }
+   QString typeText = QStringLiteral("All");
+   if (currentFileTypeFilter_ == QStringLiteral("images")) typeText = QStringLiteral("Images");
+   else if (currentFileTypeFilter_ == QStringLiteral("videos")) typeText = QStringLiteral("Videos");
+   else if (currentFileTypeFilter_ == QStringLiteral("audio")) typeText = QStringLiteral("Audio");
+   else if (currentFileTypeFilter_ == QStringLiteral("3d")) typeText = QStringLiteral("3D");
+   const QString searchText = currentSearchFilter_.trimmed();
+   const QString searchPart = searchText.isEmpty()
+       ? QString()
+       : QStringLiteral("  •  Search: \"%1\"").arg(searchText);
    leftHubSummaryLabel_->setText(
-       QStringLiteral("Favorites: %1  •  Sources: %2  •  Status: %3")
+       QStringLiteral("Favorites: %1  •  Sources: %2  •  Type: %3  •  Status: %4%5")
            .arg(favoriteCount)
            .arg(sourceCount)
-           .arg(statusText));
+           .arg(typeText)
+           .arg(statusText)
+           .arg(searchPart));
    leftHubSummaryLabel_->setToolTip(QStringLiteral("Status follows the current asset filter."));
   }
   if (leftHubRecentLabel_) {
