@@ -272,6 +272,9 @@ namespace Artifact {
 
     ArtifactCompositionGraphWidget::ArtifactCompositionGraphWidget(QWidget* parent)
         : QWidget(parent), impl_(new Impl()) {
+        setAccessibleName(QStringLiteral("Composition Graph"));
+        setAccessibleDescription(
+            QStringLiteral("Explore composition and layer relationships."));
         impl_->setupUi(this);
 
         impl_->eventBusSubscriptions_.push_back(

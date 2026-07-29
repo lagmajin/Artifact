@@ -50,6 +50,9 @@ namespace Artifact
  ArtifactStatusBar::ArtifactStatusBar(QWidget* parent)
   : QStatusBar(parent)
  {
+  setAccessibleName(QStringLiteral("Status Bar"));
+  setAccessibleDescription(
+      QStringLiteral("Shows project, layer, playback, display, and diagnostic status."));
   const QColor backgroundColor = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
   const QColor surfaceColor = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
   const QColor textColor = QColor(ArtifactCore::currentDCCTheme().textColor);
