@@ -79,6 +79,14 @@ import Utils.Path;
 
 namespace Artifact {
 
+static QPoint accessibilityMenuPosition(const QMenu &menu,
+                                        const QPoint &origin) {
+  int x = origin.x();
+  int y = origin.y();
+  Accessibility::adjustContextMenuPosition(x, y, menu.sizeHint().width());
+  return QPoint(x, y);
+}
+
 // AE Easy Ease (F9) 互換: 選択キーフレームの前後キーフレームから velocity に基づき
 // ベジェ制御点を自動算出する。スカラー値のみ対応し、非スカラー値（カラー等）や
 // 隣接キーフレームがない場合は AE 標準の固定ハンドルへフォールバックする。
@@ -8958,7 +8966,8 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     deleteClipAct = menu.addAction(tt("timeline.delete_layer", "Delete Layer"));
   }
 
-  const QAction *chosen = menu.exec(event->globalPos());
+  const QAction *chosen = menu.exec(
+      accessibilityMenuPosition(menu, event->globalPos()));
   if (!chosen) {
     event->accept();
     return;
