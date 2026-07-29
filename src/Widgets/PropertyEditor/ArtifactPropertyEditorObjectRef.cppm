@@ -24,6 +24,8 @@ ArtifactObjectReferencePropertyEditor::ArtifactObjectReferencePropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   Q_UNUSED(property);
+  setAccessibleName(QStringLiteral("Object reference property editor"));
+  setAccessibleDescription(QStringLiteral("Choose or clear the object referenced by this property"));
 
   referenceWidget_ = new QWidget(this);
   auto *layout = new QHBoxLayout(referenceWidget_);
@@ -31,9 +33,16 @@ ArtifactObjectReferencePropertyEditor::ArtifactObjectReferencePropertyEditor(
   layout->setSpacing(6);
 
   auto *caption = new QLabel(QStringLiteral("Object Reference"), referenceWidget_);
+  caption->setAccessibleName(QStringLiteral("Object reference label"));
   valueLabel_ = new QLabel(referenceWidget_);
+  valueLabel_->setAccessibleName(QStringLiteral("Referenced object"));
+  valueLabel_->setAccessibleDescription(QStringLiteral("Current object reference"));
   pickButton_ = new PropertyCallbackButton(QStringLiteral("Pick"), referenceWidget_);
+  pickButton_->setAccessibleName(QStringLiteral("Pick object reference"));
+  pickButton_->setAccessibleDescription(QStringLiteral("Choose an object to reference"));
   clearButton_ = new PropertyCallbackButton(QStringLiteral("Clear"), referenceWidget_);
+  clearButton_->setAccessibleName(QStringLiteral("Clear object reference"));
+  clearButton_->setAccessibleDescription(QStringLiteral("Remove the current object reference"));
 
   layout->addWidget(caption, 0);
   layout->addWidget(valueLabel_, 1);
