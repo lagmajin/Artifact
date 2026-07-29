@@ -7663,7 +7663,7 @@ QSize ArtifactProjectManagerWidget::sizeHint() const { return QSize(250, 600); }
 ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("projectManagerToolBox"));
     setAutoFillBackground(true);
-    setFixedHeight(28);
+    setFixedHeight(Accessibility::scaledSize(28));
     auto layout = new QHBoxLayout(this);
     layout->setContentsMargins(8, 0, 8, 0);
     layout->setSpacing(5);
@@ -7672,7 +7672,8 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
         auto b = new QPushButton();
         const QString objectName = QStringLiteral("projectManagerToolbarButton_%1").arg(fallbackText);
         b->setObjectName(objectName.simplified().replace(' ', '_'));
-        b->setFixedSize(22, 22);
+        const int targetSize = Accessibility::scaledSize(22);
+        b->setFixedSize(targetSize, targetSize);
         b->setToolTip(tip);
         b->setAccessibleName(tip);
         b->setAccessibleDescription(
