@@ -2559,6 +2559,8 @@ void ArtifactProjectView::setSortingEnabled(const bool enabled)
 void ArtifactProjectView::sortByColumn(const int column, const Qt::SortOrder order)
 {
     if (impl_ && impl_->sortingEnabled && impl_->model) {
+        impl_->sortColumn = column;
+        impl_->sortOrder = order;
         impl_->model->sort(column, order);
         refreshVisibleContent();
     }
@@ -4855,7 +4857,17 @@ void ArtifactProjectView::mousePressEvent(QMouseEvent* event) {
             const int width = impl_->columnWidths[i];
             const QRect hr(x, 0, width, impl_->headerHeight);
             if (hr.contains(mousePos)) {
-                if (impl_->sortingEnabled) { impl_->sortOrder = (impl_->sortColumn == i && impl_->sortOrder == Qt::AscendingOrder) ? Qt::DescendingOrder : Qt::AscendingOrder; impl_->sortColumn = i; sortByColumn(i, impl_->sortOrder); }
+                if (impl_->sortingEnabled) {
+                    impl_->sortOrder = (impl_->sortColumn == i && impl_->sortOrder == Qt::AscendingOrder)
+                        ? Qt::DescendingOrder
+                        : Qt::AscendingOrder;
+                    impl_->sortColumn = i;
+                    sortByColumn(i, impl_->sortOrder);
+                    QSettings settings;
+                    settings.setValue(QStringLiteral("ProjectView/SortColumn"), i);
+                    settings.setValue(QStringLiteral("ProjectView/SortAscending"),
+                                      impl_->sortOrder == Qt::AscendingOrder);
+                }
                 return;
             }
             x += width;
@@ -6530,7 +6542,14 @@ public:
         if (projectView_) {
             projectView_->setModel(proxyModel_);
             projectView_->setSortingEnabled(true);
-            projectView_->sortByColumn(0, Qt::AscendingOrder);
+            QSettings projectViewSettings;
+            const int savedSortColumn = std::clamp(
+                projectViewSettings.value(QStringLiteral("ProjectView/SortColumn"), 0).toInt(), 0, 5);
+            const Qt::SortOrder savedSortOrder = projectViewSettings.value(
+                QStringLiteral("ProjectView/SortAscending"), true).toBool()
+                ? Qt::AscendingOrder
+                : Qt::DescendingOrder;
+            projectView_->sortByColumn(savedSortColumn, savedSortOrder);
             if (!headerLayoutInitialized_) {
                 projectView_->setColumnWidth(0, 260);
                 projectView_->setColumnWidth(1, 120);
