@@ -93,6 +93,7 @@ module;
 #include <QtConcurrent>
 #include <QFutureWatcher>
 #include <QCache>
+#include <QScrollBar>
 
 // Audio waveform includes
 #include <QAudioFormat>
@@ -1560,6 +1561,7 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
   void handleDoubleClicked();
   void defaultHandleMousePressEvent(QMouseEvent* event);
   void applyFilters();
+  void warmVisibleThumbnails();
   bool matchesFileTypeFilter(const QString& fileName) const;
   bool matchesSearchFilter(const QString& fileName) const;
   QIcon generateThumbnail(const QString& filePath);
@@ -2878,7 +2880,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     if (!markers.isEmpty()) itemType = QStringLiteral("%1 • Folder").arg(markers.join(QStringLiteral(" • ")));
     item.type = UniString::fromQString(itemType);
     item.isFolder = true;
-    item.icon = generateThumbnail(fullPath);
+    item.icon = fileTypeIconFor(entry);
     items.append(item);
    }
 
@@ -2969,7 +2971,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     if (!markers.isEmpty()) seqType = QStringLiteral("%1 • %2").arg(markers.join(QStringLiteral(" • ")), seqType);
     item.type = UniString::fromQString(seqType);
 
-    item.icon = generateThumbnail(seq.first().fullPath);
+      item.icon = fileTypeIconFor(seq.first().name);
     items.append(item);
     if (expandedSequencePaths_.contains(item.path.toQString())) {
      int frameIndex = 0;
@@ -3035,7 +3037,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
       if (!markers.isEmpty()) itemType = QStringLiteral("%1 • %2").arg(markers.join(QStringLiteral(" • ")), itemType);
       item.type = UniString::fromQString(itemType);
       item.isFolder = false;
-      item.icon = generateThumbnail(fullPath);
+      item.icon = fileTypeIconFor(entry);
       standaloneItems[static_cast<size_t>(i)] = std::move(item);
      }
     };
@@ -3147,8 +3149,41 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     } else {
      emptyMessage = QStringLiteral("No assets in this folder. Import or drop files here.");
     }
-    assetListView->setEmptyStateMessage(emptyMessage);
+   assetListView->setEmptyStateMessage(emptyMessage);
    }
+   QTimer::singleShot(0, owner_, [this]() { warmVisibleThumbnails(); });
+ }
+
+ void ArtifactAssetBrowser::Impl::warmVisibleThumbnails()
+ {
+  if (!fileView_ || !assetModel_ || !fileView_->model()) {
+   return;
+  }
+
+  const QRect viewportRect = fileView_->viewport()->rect();
+  if (viewportRect.isEmpty()) {
+   return;
+  }
+  const QModelIndex top = fileView_->indexAt(viewportRect.topLeft());
+  const QModelIndex bottom = fileView_->indexAt(viewportRect.bottomRight());
+  if (!top.isValid() || !bottom.isValid()) {
+   return;
+  }
+
+  const int first = std::max(0, std::min(top.row(), bottom.row()) - 2);
+  const int last = std::min(assetModel_->rowCount() - 1,
+                            std::max(top.row(), bottom.row()) + 2);
+  for (int row = first; row <= last; ++row) {
+   const AssetMenuItem item = assetModel_->itemAt(row);
+   if (item.isFolder || item.path.toQString().isEmpty()) {
+    continue;
+   }
+   const QString path = item.path.toQString();
+   if (isImageFile(QFileInfo(path).fileName()) ||
+       isVideoFile(QFileInfo(path).fileName())) {
+    (void)getFileIcon(QFileInfo(path).fileName(), path);
+   }
+  }
  }
 
  ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
@@ -3513,6 +3548,18 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   fileView->setMouseTracking(true);
   fileView->viewport()->setMouseTracking(true);
   fileView->viewport()->installEventFilter(this);
+  QObject::connect(fileView->verticalScrollBar(), &QScrollBar::valueChanged,
+                   this, [this](int) {
+                     if (impl_) {
+                       impl_->warmVisibleThumbnails();
+                     }
+                   });
+  QObject::connect(fileView->horizontalScrollBar(), &QScrollBar::valueChanged,
+                   this, [this](int) {
+                     if (impl_) {
+                       impl_->warmVisibleThumbnails();
+                     }
+                   });
   fileView->setContentsMargins(8, 8, 8, 8);
   QSettings viewSettings;
   const QListView::ViewMode savedViewMode =
