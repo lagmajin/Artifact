@@ -70,7 +70,13 @@ export namespace Artifact {
         virtual void waitAll() = 0;
 
         // グラフ全体の並列評価を開始する
-        void evaluateGraph(EffectGraph& graph) {
+        bool evaluateGraph(EffectGraph& graph) {
+            // Do not silently execute a stale or invalid graph.  compile()
+            // also rejects cycles and connections to missing nodes.
+            if (!graph.compile()) {
+                return false;
+            }
+
             auto& nodes = graph.nodes();
             auto& conns = graph.connections();
 
@@ -124,6 +130,7 @@ export namespace Artifact {
 
             // 4. キューが空になり、全スレッドの処理が終わるまでブロック
             waitAll();
+            return true;
         }
     };
 
