@@ -218,6 +218,16 @@ public:
 static QPushButton* makeToolBtn(const QString& text, QWidget* parent)
 {
     auto* btn = new QPushButton(text, parent);
+    const auto accessibleName = [&]() {
+        if (text == QStringLiteral("⠿")) return QStringLiteral("Reorder swatches");
+        if (text == QStringLiteral("•")) return QStringLiteral("Swatch options");
+        if (text == QStringLiteral("+")) return QStringLiteral("Add color category");
+        if (text == QStringLiteral("×")) return QStringLiteral("Remove color category");
+        if (text == QStringLiteral("↑")) return QStringLiteral("Move category up");
+        if (text == QStringLiteral("↓")) return QStringLiteral("Move category down");
+        return QStringLiteral("Color library action");
+    }();
+    btn->setAccessibleName(accessibleName);
     btn->setFixedSize(24, 24);
     btn->setFlat(true);
     return btn;
@@ -235,6 +245,8 @@ static QWidget* buildSection(Category& cat,
 
     // Header button
     cat.headerBtn = new QPushButton(cat.name + " ▼");
+    cat.headerBtn->setAccessibleName(cat.name + QStringLiteral(" category"));
+    cat.headerBtn->setAccessibleDescription(QStringLiteral("Expand or collapse this color category"));
     cat.headerBtn->setFlat(true);
     cat.headerBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     cat.headerBtn->setFixedHeight(26);
@@ -251,6 +263,8 @@ static QWidget* buildSection(Category& cat,
     int idx = 0;
     for (auto& entry : cat.entries) {
         auto* cell = new SwatchCell(entry, cat.contentWidget);
+        cell->setAccessibleName(entry.name);
+        cell->setAccessibleDescription(QStringLiteral("Select color swatch"));
         int capturedCat = catIdx;
         int capturedIdx = idx;
         cell->onSelected      = [=](const SwatchEntry& e){ onSelect(capturedCat, capturedIdx, e); };
@@ -263,6 +277,8 @@ static QWidget* buildSection(Category& cat,
 
     // [+] add button
     auto* addBtn = new QPushButton("+");
+    addBtn->setAccessibleName(cat.name + QStringLiteral(" にカラーを追加"));
+    addBtn->setAccessibleDescription(QStringLiteral("Add a color to this category"));
     addBtn->setFixedSize(32, 32);
     addBtn->setToolTip("カラーを追加");
     grid->addWidget(addBtn, row, col);
@@ -288,6 +304,8 @@ ColorSwatchDialog::ColorSwatchDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl())
 {
     setWindowTitle("カラースウォッチ");
+    setAccessibleName(QStringLiteral("Color Swatches Dialog"));
+    setAccessibleDescription(QStringLiteral("Choose a color from the available swatch categories"));
     setFixedSize(520, 560);
     setAutoFillBackground(true);
 
@@ -322,6 +340,8 @@ ColorSwatchDialog::ColorSwatchDialog(QWidget* parent)
 
     // ── Scroll area with sections ─────────────────────────────────────────
     auto* scrollArea  = new QScrollArea(this);
+    scrollArea->setAccessibleName(QStringLiteral("Color swatch categories"));
+    scrollArea->setAccessibleDescription(QStringLiteral("Browse and select a color swatch"));
     auto* scrollWidget = new QWidget();
     scrollWidget->setAutoFillBackground(true);
     auto* scrollLayout = new QVBoxLayout(scrollWidget);
@@ -381,6 +401,8 @@ ColorSwatchDialog::ColorSwatchDialog(QWidget* parent)
     infoLayout->setSpacing(10);
 
     impl_->previewSquare = new QFrame();
+    impl_->previewSquare->setAccessibleName(QStringLiteral("Selected color preview"));
+    impl_->previewSquare->setAccessibleDescription(QStringLiteral("Preview of the selected color"));
     impl_->previewSquare->setFixedSize(48, 48);
     impl_->previewSquare->setAutoFillBackground(true);
     infoLayout->addWidget(impl_->previewSquare);
@@ -410,11 +432,15 @@ ColorSwatchDialog::ColorSwatchDialog(QWidget* parent)
     btnRow->addStretch();
 
     auto* closeBtn = new QPushButton("閉じる");
+    closeBtn->setAccessibleName(QStringLiteral("Close color swatches"));
+    closeBtn->setAccessibleDescription(QStringLiteral("Close without applying a color"));
     closeBtn->setFixedSize(80, 28);
     connect(closeBtn, &QPushButton::clicked, this, &QDialog::reject);
     btnRow->addWidget(closeBtn);
 
     auto* applyBtn = new QPushButton("適用 ↗");
+    applyBtn->setAccessibleName(QStringLiteral("Apply selected color"));
+    applyBtn->setAccessibleDescription(QStringLiteral("Apply the selected color and close"));
     applyBtn->setFixedSize(80, 28);
     connect(applyBtn, &QPushButton::clicked, this, [this]() {
         Q_EMIT colorApplied(impl_->selectedColor);
