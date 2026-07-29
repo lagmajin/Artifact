@@ -3363,6 +3363,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
    // Sort by combo box
    auto* sortByCombo = new QComboBox();
+   sortByCombo->setAccessibleName(QStringLiteral("Asset sort order"));
+   sortByCombo->setAccessibleDescription(QStringLiteral("Choose how visible assets are sorted"));
    sortByCombo->addItem("Sort: Name", "name");
    sortByCombo->addItem("Sort: Date", "date");
    sortByCombo->addItem("Sort: Size", "size");
@@ -3387,6 +3389,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
    // Sort order toggle button
    auto* sortOrderBtn = new QToolButton();
+   sortOrderBtn->setAccessibleName(QStringLiteral("Toggle asset sort direction"));
+   sortOrderBtn->setAccessibleDescription(QStringLiteral("Switch between ascending and descending asset order"));
    sortOrderBtn->setText("\u2191"); // Up arrow
    sortOrderBtn->setCheckable(true);
    sortOrderBtn->setChecked(false);
@@ -3522,6 +3526,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   }
   leftHubLayout->addWidget(leftHubSection);
   auto* allFavoritesButton = new QToolButton(leftHubCard);
+  allFavoritesButton->setAccessibleName(QStringLiteral("All favorite assets"));
+  allFavoritesButton->setAccessibleDescription(QStringLiteral("Show all favorite assets"));
   allFavoritesButton->setText(QStringLiteral("All Favorites"));
   allFavoritesButton->setIcon(QIcon(QStringLiteral(":/icons/Studio/shape_star.svg")));
   allFavoritesButton->setIconSize(QSize(16, 16));
@@ -3732,6 +3738,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
   auto sizeLabel = new QLabel(QStringLiteral("%1px").arg(kAssetThumbnailDefaultPx));
   auto sizeSlider = impl_->thumbnailSizeSlider_ = new QSlider(Qt::Horizontal);
+  sizeSlider->setAccessibleName(QStringLiteral("Asset thumbnail size"));
+  sizeSlider->setAccessibleDescription(QStringLiteral("Adjust the size of asset thumbnails"));
   sizeSlider->setMinimum(kAssetThumbnailMinPx);
   sizeSlider->setMaximum(kAssetThumbnailMaxPx);
   sizeSlider->setValue(kAssetThumbnailDefaultPx);
@@ -3801,6 +3809,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   detailsLayout->addWidget(fileInfoTitle);
   detailsLayout->addWidget(fileInfoLabel, 1);
   auto* importButton = new QPushButton(QStringLiteral("Import"), detailsColumn);
+  importButton->setAccessibleName(QStringLiteral("Import selected asset"));
+  importButton->setAccessibleDescription(QStringLiteral("Import the selected asset into the project"));
   importButton->setMinimumWidth(92);
   importButton->setMinimumHeight(30);
   importButton->setIcon(style()->standardIcon(QStyle::SP_ArrowDown));
