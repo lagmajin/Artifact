@@ -2475,15 +2475,21 @@ public:
            const QString serialized = QString::fromUtf8(
                QJsonDocument(l->toJson()).toJson(QJsonDocument::Compact));
            stateMatch = serialized.contains(queryValue, Qt::CaseInsensitive);
+         } else if (!stateQuery && queryKey == QStringLiteral("tag")) {
+           stateQuery = true;
+           const QString serialized = QString::fromUtf8(
+               QJsonDocument(l->toJson()).toJson(QJsonDocument::Compact));
+           stateMatch = serialized.contains(queryValue, Qt::CaseInsensitive);
          }
        }
        bool nameMatch = stateQuery
                           ? stateMatch
                           : l->layerName().contains(needle, Qt::CaseInsensitive);
        bool propMatch = false;
-       const bool searchPropertyGroups = !stateQuery &&
+         const bool searchPropertyGroups = !stateQuery &&
                                          (searchInProperties_ ||
-                                          queryKey == QStringLiteral("fx"));
+                                          queryKey == QStringLiteral("fx") ||
+                                          queryKey == QStringLiteral("effect"));
        if (searchPropertyGroups && !nameMatch) {
          const auto groups = l->getLayerPropertyGroups();
          for (const auto& group : groups) {
@@ -2491,7 +2497,8 @@ public:
                    group.name())) {
             continue;
            }
-           const QString groupNeedle = queryKey == QStringLiteral("fx")
+           const QString groupNeedle = (queryKey == QStringLiteral("fx") ||
+                                        queryKey == QStringLiteral("effect"))
                                          ? queryValue
                                          : needle;
            if (group.name().contains(groupNeedle, Qt::CaseInsensitive)) {
