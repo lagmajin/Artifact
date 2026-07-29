@@ -27,6 +27,7 @@ import Event.Bus;
 import Artifact.Service.Application;
 import Application.AppSettings;
 import Artifact.Workspace.Modes;
+import Settings.Accessibility;
 
 namespace {
 
@@ -259,7 +260,12 @@ ArtifactToolBar::Impl::~Impl() {}
 
 ArtifactToolBar::ArtifactToolBar(QWidget *parent)
     : QToolBar(parent), impl_(new Impl(this)) {
-  setIconSize(QSize(32, 32));
+  setAccessibleName(QStringLiteral("Main tool bar"));
+  setAccessibleDescription(
+      QStringLiteral("Choose editing tools and viewport display controls"));
+  setIconSize(QSize(Artifact::Accessibility::scaledSize(32),
+                    Artifact::Accessibility::scaledSize(32)));
+  setMinimumHeight(Artifact::Accessibility::scaledSize(40));
   setToolButtonStyle(Qt::ToolButtonIconOnly);
   setMovable(false);
   setFloatable(false);
