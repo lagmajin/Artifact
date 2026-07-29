@@ -5869,9 +5869,15 @@ public:
                 ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>())
                 : nullptr;
             if (item && item->type() == eProjectItemType::Footage) {
-                const qint64 size = QFileInfo(static_cast<FootageItem*>(item)->filePath).size();
-                if (size > 0) {
-                    total += size;
+                const auto* footage = static_cast<const FootageItem*>(item);
+                const QStringList paths = footage->isSequence && !footage->sequencePaths.isEmpty()
+                    ? footage->sequencePaths
+                    : QStringList{footage->filePath};
+                for (const QString& path : paths) {
+                    const qint64 size = QFileInfo(path).size();
+                    if (size > 0) {
+                        total += size;
+                    }
                 }
             }
         }
