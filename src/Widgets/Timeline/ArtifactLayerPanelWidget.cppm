@@ -2500,9 +2500,24 @@ public:
            stateMatch = l->layerNote().contains(queryValue, Qt::CaseInsensitive);
          } else if (!stateQuery && queryKey == QStringLiteral("source")) {
            stateQuery = true;
+           QString sourcePath;
+           if (const auto* image = dynamic_cast<const ArtifactImageLayer*>(l.get())) {
+             sourcePath = image->sourcePath();
+           } else if (const auto* video = dynamic_cast<const ArtifactVideoLayer*>(l.get())) {
+             sourcePath = video->sourcePath();
+           } else if (const auto* audio = dynamic_cast<const ArtifactAudioLayer*>(l.get())) {
+             sourcePath = audio->sourcePath();
+           } else if (const auto* model = dynamic_cast<const Artifact3DLayer*>(l.get())) {
+             sourcePath = model->sourcePath();
+           }
+           const QFileInfo sourceInfo(sourcePath);
+           stateMatch = sourcePath.contains(queryValue, Qt::CaseInsensitive) ||
+                        sourceInfo.fileName().contains(queryValue, Qt::CaseInsensitive);
            const QString serialized = QString::fromUtf8(
                QJsonDocument(l->toJson()).toJson(QJsonDocument::Compact));
-           stateMatch = serialized.contains(queryValue, Qt::CaseInsensitive);
+           if (!stateMatch) {
+             stateMatch = serialized.contains(queryValue, Qt::CaseInsensitive);
+           }
          } else if (!stateQuery && queryKey == QStringLiteral("tag")) {
            stateQuery = true;
            const QString serialized = QString::fromUtf8(
