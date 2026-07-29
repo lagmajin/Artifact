@@ -4183,14 +4183,14 @@ public:
                                 QWidget *parent)
       : QWidget(parent), scrubBar_(scrubBar), trackView_(trackView) {
     Q_UNUSED(navigator);
-    // Keep the overlay interactive so the playhead triangle can be dragged.
-    // The hit test below forwards all non-playhead clicks to the underlying
-    // timeline instead of stealing normal track interaction.
-    setAttribute(Qt::WA_TransparentForMouseEvents, false);
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAutoFillBackground(false);
     setFocusPolicy(Qt::NoFocus);
+    if (trackView_) {
+      trackView_->installEventFilter(this);
+    }
   }
 
   void syncGeometryToPanel() {
@@ -4253,6 +4253,54 @@ public:
   }
 
 protected:
+  bool eventFilter(QObject *watched, QEvent *event) override {
+    if (watched != trackView_ || !event) {
+      return QWidget::eventFilter(watched, event);
+    }
+
+    auto *mouseEvent = dynamic_cast<QMouseEvent *>(event);
+    if (!mouseEvent) {
+      return QWidget::eventFilter(watched, event);
+    }
+
+    const QPointF localPoint = mapFrom(trackView_, mouseEvent->position().toPoint());
+    const int playheadX = currentPlayheadX();
+    constexpr int kHitRadius = 14;
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
+      if (mouseEvent->button() == Qt::LeftButton &&
+          std::abs(localPoint.x() - static_cast<double>(playheadX)) <=
+              kHitRadius) {
+        dragging_ = true;
+        trackView_->setCursor(Qt::SizeHorCursor);
+        return true;
+      }
+      break;
+    case QEvent::MouseMove:
+      if (dragging_ && (mouseEvent->buttons() & Qt::LeftButton)) {
+        const double ppf = std::max(0.001, trackView_->pixelsPerFrame());
+        const double frame = std::clamp(
+            (mouseEvent->position().x() + trackView_->horizontalOffset()) / ppf,
+            0.0, std::max(0.0, trackView_->durationFrames() - 1.0));
+        trackView_->setCurrentFrame(frame);
+        trackView_->seekRequested(frame);
+        updatePlayhead();
+        return true;
+      }
+      break;
+    case QEvent::MouseButtonRelease:
+      if (dragging_ && mouseEvent->button() == Qt::LeftButton) {
+        dragging_ = false;
+        trackView_->unsetCursor();
+        return true;
+      }
+      break;
+    default:
+      break;
+    }
+    return QWidget::eventFilter(watched, event);
+  }
+
   void mousePressEvent(QMouseEvent *event) override {
     if (!event || event->button() != Qt::LeftButton || !trackView_) {
       event ? event->ignore() : void();
