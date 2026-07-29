@@ -1728,6 +1728,9 @@ W_OBJECT_IMPL(ArtifactPlaybackControlWidget)
 ArtifactPlaybackControlWidget::ArtifactPlaybackControlWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl(this))
 {
+    setAccessibleName(QStringLiteral("Playback Control"));
+    setAccessibleDescription(
+        QStringLiteral("Control playback, frame navigation, loop range, and speed."));
     setWindowTitle("Playback Control");
     setMinimumHeight(145);
     setAutoFillBackground(true);
