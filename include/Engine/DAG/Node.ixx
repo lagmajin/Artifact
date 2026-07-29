@@ -144,6 +144,7 @@ export namespace Artifact {
 
         void setImageInput(const ImageF32x4RGBAWithCache& image) {
             imageInput_ = image;
+            imageOutput_.reset();
             markDirty();
         }
 
