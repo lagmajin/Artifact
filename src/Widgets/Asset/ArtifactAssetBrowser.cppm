@@ -2195,11 +2195,21 @@ void ArtifactAssetBrowser::Impl::clearThumbnailCache()
     failedPreviewPaths_.clear();
     failedWavePaths_.clear();
     previewFailureReasons_.clear();
+
+    for (auto it = pendingPreviewJobs_.begin(); it != pendingPreviewJobs_.end(); ++it) {
+      discardStaleThumbnailWatcher(it.value().watcher);
+    }
+    pendingPreviewJobs_.clear();
+
+    for (auto it = pendingWaveJobs_.begin(); it != pendingWaveJobs_.end(); ++it) {
+      discardStaleThumbnailWatcher(it.value().watcher);
+    }
+    pendingWaveJobs_.clear();
   }
   if (fileView_) {
     fileView_->update();
   }
- }
+}
 
 void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QString& filePath)
 {
