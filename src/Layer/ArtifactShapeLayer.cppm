@@ -1452,7 +1452,14 @@ QRectF ArtifactShapeLayer::localBounds() const
    bounds = QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
   }
 
-  const qreal pad = std::max<qreal>(0.5, static_cast<qreal>(impl_->strokeWidth_) * 0.5);
+  qreal strokePad = 0.0;
+  if (impl_->strokeEnabled_ && impl_->strokeWidth_ > 0.0f) {
+   const qreal strokeWidth = static_cast<qreal>(impl_->strokeWidth_);
+   strokePad = impl_->strokeAlign_ == StrokeAlign::Outside
+       ? strokeWidth
+       : (impl_->strokeAlign_ == StrokeAlign::Center ? strokeWidth * 0.5 : 0.0);
+  }
+  const qreal pad = std::max<qreal>(0.5, strokePad);
   impl_->cachedLocalBounds_ = bounds.adjusted(-pad, -pad, pad, pad);
   impl_->localBoundsCacheDirty_ = false;
   return impl_->cachedLocalBounds_;
