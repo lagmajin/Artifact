@@ -1003,6 +1003,9 @@ public:
         optionsRow->addWidget(keyingSetLabel);
 
         keyingSetCombo_ = new QComboBox(owner_);
+        keyingSetCombo_->setAccessibleName(QStringLiteral("Keying Set"));
+        keyingSetCombo_->setAccessibleDescription(
+            QStringLiteral("Choose which property set is used for automatic keyframes"));
         keyingSetCombo_->setFixedSize(132, 24);
         keyingSetCombo_->addItem(QStringLiteral("All Keyable"));
         keyingSetCombo_->addItem(QStringLiteral("Transform Only"));
@@ -1039,6 +1042,9 @@ public:
         keyingSetPathsEdit_->setPlaceholderText(QStringLiteral("Custom paths, comma-separated"));
         keyingSetPathsEdit_->setFixedSize(220, 24);
         keyingSetPathsEdit_->setToolTip(QStringLiteral("Only used when Keying Set is Custom"));
+        keyingSetPathsEdit_->setAccessibleName(QStringLiteral("Custom Keying Set paths"));
+        keyingSetPathsEdit_->setAccessibleDescription(
+            QStringLiteral("Enter comma-separated property paths for the custom Keying Set"));
         {
             QPalette pal = keyingSetPathsEdit_->palette();
             pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
@@ -1057,6 +1063,9 @@ public:
         optionsRow->addWidget(keyingSetPathsEdit_);
 
         mutePreviewCheckbox_ = new QCheckBox(QStringLiteral("Mute Preview"), owner_);
+        mutePreviewCheckbox_->setAccessibleName(QStringLiteral("Mute preview audio"));
+        mutePreviewCheckbox_->setAccessibleDescription(
+            QStringLiteral("Mute audio during playback preview"));
         {
             QFont font = mutePreviewCheckbox_->font();
             font.setPointSize(9);
