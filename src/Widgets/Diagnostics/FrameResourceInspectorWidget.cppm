@@ -70,6 +70,8 @@ public:
         layout->setSpacing(0);
 
         summary_ = new QLabel(owner_);
+        summary_->setAccessibleName(QStringLiteral("Frame resource summary"));
+        summary_->setAccessibleDescription(QStringLiteral("Summary of the current frame resources"));
         summary_->setTextFormat(Qt::PlainText);
         summary_->setWordWrap(false);
         summary_->setMinimumHeight(42);
@@ -77,6 +79,8 @@ public:
 
         auto* splitter = new QSplitter(Qt::Vertical, owner_);
         table_ = new ResourceTableWidget(this, splitter);
+        table_->setAccessibleName(QStringLiteral("Frame resources table"));
+        table_->setAccessibleDescription(QStringLiteral("Select a frame resource to inspect its details"));
         table_->setColumnCount(6);
         table_->setHorizontalHeaderLabels(QStringList{
             QStringLiteral("Label"),
@@ -93,6 +97,8 @@ public:
         table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 
         detail_ = new QPlainTextEdit(splitter);
+        detail_->setAccessibleName(QStringLiteral("Frame resource details"));
+        detail_->setAccessibleDescription(QStringLiteral("Read-only details for the selected frame resource"));
         detail_->setReadOnly(true);
         detail_->setLineWrapMode(QPlainTextEdit::NoWrap);
 
@@ -108,6 +114,8 @@ public:
         auto* previewLabel = new QLabel(QStringLiteral("Preview"), owner_);
         previewBar->addWidget(previewLabel);
         previewMode_ = new QComboBox(owner_);
+        previewMode_->setAccessibleName(QStringLiteral("Resource preview mode"));
+        previewMode_->setAccessibleDescription(QStringLiteral("Choose which resource preview to display"));
         previewMode_->addItem(QStringLiteral("After"));
         previewMode_->addItem(QStringLiteral("Before"));
         previewMode_->addItem(QStringLiteral("Diff"));
@@ -117,11 +125,14 @@ public:
         layout->addLayout(previewBar);
 
         previewInfo_ = new QLabel(owner_);
+        previewInfo_->setAccessibleName(QStringLiteral("Resource preview information"));
         previewInfo_->setTextFormat(Qt::PlainText);
         previewInfo_->setWordWrap(true);
         layout->addWidget(previewInfo_);
 
         previewImage_ = new QLabel(owner_);
+        previewImage_->setAccessibleName(QStringLiteral("Resource preview image"));
+        previewImage_->setAccessibleDescription(QStringLiteral("Preview of the selected frame resource"));
         previewImage_->setAlignment(Qt::AlignCenter);
         previewImage_->setMinimumHeight(220);
         previewImage_->setText(QStringLiteral("No preview available"));
@@ -519,6 +530,8 @@ void Artifact::FrameResourceInspectorWidget::Impl::updatePreviewForRow(int row)
 Artifact::FrameResourceInspectorWidget::FrameResourceInspectorWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl(this))
 {
+    setAccessibleName(QStringLiteral("Frame resource inspector"));
+    setAccessibleDescription(QStringLiteral("Inspect resources, details, and previews for the current frame"));
     impl_->setupUI();
 }
 
