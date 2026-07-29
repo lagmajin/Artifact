@@ -2438,7 +2438,9 @@ public:
            stateQuery = true;
            const QString typeName = l->toJson().value(QStringLiteral("layerType")).toString();
            stateMatch = typeName.contains(queryValue, Qt::CaseInsensitive);
-           }
+         } else if (!stateQuery && queryKey == QStringLiteral("note")) {
+           stateQuery = true;
+           stateMatch = l->layerNote().contains(queryValue, Qt::CaseInsensitive);
          }
        }
        bool nameMatch = stateQuery
