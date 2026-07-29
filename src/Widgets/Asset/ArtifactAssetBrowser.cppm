@@ -2955,7 +2955,11 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    // Sort items
    std::sort(items.begin(), items.end(), [this](const AssetMenuItem& a, const AssetMenuItem& b) {
     const auto compareNaturalName = [&a, &b]() {
-     return naturalAssetNameCompare(a.name.toQString(), b.name.toQString());
+     int result = naturalAssetNameCompare(a.name.toQString(), b.name.toQString());
+     if (result == 0) {
+      result = QString::compare(a.path.toQString(), b.path.toQString(), Qt::CaseInsensitive);
+     }
+     return result;
     };
     // Folders always first
     if (a.isFolder && !b.isFolder) return true;
