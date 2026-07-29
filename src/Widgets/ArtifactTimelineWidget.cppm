@@ -6651,6 +6651,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       });
   QObject::connect(
       scrubBar, &ArtifactTimelineScrubBar::frameChanged, this,
+      [applyTimelineSeek](const FramePosition& frame) {
+        applyTimelineSeek(static_cast<double>(frame.framePosition()));
+      });
+  QObject::connect(
+      scrubBar, &ArtifactTimelineScrubBar::frameChanged, this,
       [](const FramePosition& frame) {
         auto& ctrl = ArtifactAudioScrubController::instance();
         if (ctrl.isScrubbing()) {
