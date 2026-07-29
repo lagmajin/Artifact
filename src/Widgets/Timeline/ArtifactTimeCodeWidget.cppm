@@ -113,21 +113,30 @@ namespace Artifact
     ArtifactCore::RationalTime rt(static_cast<int64_t>(frame), static_cast<int64_t>(fps));
 
     // Compute hours/minutes/seconds/frames
-    int totalFrames = frame;
-    int ff = totalFrames % fps;
-    int totalSeconds = totalFrames / fps;
-    int s = totalSeconds % 60;
-    int m = (totalSeconds / 60) % 60;
-    int h = totalSeconds / 3600;
+    const bool negative = frame < 0;
+    const qint64 totalFrames = negative
+        ? -static_cast<qint64>(frame)
+        : static_cast<qint64>(frame);
+    const qint64 ff = totalFrames % fps;
+    const qint64 totalSeconds = totalFrames / fps;
+    const qint64 s = totalSeconds % 60;
+    const qint64 m = (totalSeconds / 60) % 60;
+    const qint64 h = totalSeconds / 3600;
+    const QString sign = negative ? QStringLiteral("-") : QString();
 
-    QString tc = QString("%1:%2:%3:%4")
+    QString tc = QString("%1%2:%3:%4:%5")
+        .arg(sign)
         .arg(h, 2, 10, QChar('0'))
         .arg(m, 2, 10, QChar('0'))
         .arg(s, 2, 10, QChar('0'))
         .arg(ff, 2, 10, QChar('0'));
 
     if (impl_->timecodeLabel_) impl_->timecodeLabel_->setText(tc);
-    if (impl_->frameNumberLabel_) impl_->frameNumberLabel_->setText(QString("%1 f").arg(totalFrames));
+    if (impl_->frameNumberLabel_) {
+        impl_->frameNumberLabel_->setText(QString("%1%2 f")
+            .arg(sign)
+            .arg(totalFrames));
+    }
 
     // Example use of RationalTime API (kept for future extension)
     Q_UNUSED(rt);
