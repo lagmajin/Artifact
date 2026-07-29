@@ -1062,6 +1062,8 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   visButton->setIcon(impl_->visibilityIcon);
   visButton->setIconSize(QSize(15, 15));
+  visButton->setAccessibleName(QStringLiteral("Layer visibility"));
+  visButton->setAccessibleDescription(QStringLiteral("Toggle visibility for the layer column"));
   visButton->setFocusPolicy(Qt::NoFocus);
   applyLayerPanelButtonPalette(visButton);
 
@@ -1069,6 +1071,8 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   lockButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->lockIcon.isNull()) lockButton->setIcon(impl_->lockIcon);
   lockButton->setIconSize(QSize(15, 15));
+  lockButton->setAccessibleName(QStringLiteral("Layer lock"));
+  lockButton->setAccessibleDescription(QStringLiteral("Toggle locking for the layer column"));
   lockButton->setFocusPolicy(Qt::NoFocus);
   applyLayerPanelButtonPalette(lockButton);
 
@@ -1076,6 +1080,8 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   soloButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
   soloButton->setIconSize(QSize(15, 15));
+  soloButton->setAccessibleName(QStringLiteral("Layer solo"));
+  soloButton->setAccessibleDescription(QStringLiteral("Toggle solo mode for the layer column"));
   soloButton->setFocusPolicy(Qt::NoFocus);
   applyLayerPanelButtonPalette(soloButton);
 
@@ -1083,6 +1089,8 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   audioButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->audioIcon.isNull()) audioButton->setIcon(impl_->audioIcon);
   audioButton->setIconSize(QSize(15, 15));
+  audioButton->setAccessibleName(QStringLiteral("Layer audio"));
+  audioButton->setAccessibleDescription(QStringLiteral("Toggle audio for the layer column"));
   audioButton->setFocusPolicy(Qt::NoFocus);
   applyLayerPanelButtonPalette(audioButton);
 
@@ -1091,6 +1099,8 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   shyButton->setCheckable(true);
   if (!impl_->shyIcon.isNull()) shyButton->setIcon(impl_->shyIcon);
   shyButton->setToolTip("Master Shy Switch");
+  shyButton->setAccessibleName(QStringLiteral("Master Shy"));
+  shyButton->setAccessibleDescription(QStringLiteral("Hide or reveal layers marked Shy"));
   applyLayerPanelButtonPalette(shyButton, true);
 
   auto layerNameButton = impl_->layerNameButton = new QPushButton("Layer Name");
@@ -1103,6 +1113,9 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   selectionMenuButton->setFlat(true);
   selectionMenuButton->setIcon(QIcon(resolveIconPath("Studio/layermenu_select_all.svg")));
   selectionMenuButton->setToolTip(QStringLiteral("選択中レイヤーの操作メニュー"));
+  selectionMenuButton->setAccessibleName(QStringLiteral("Selected layer menu"));
+  selectionMenuButton->setAccessibleDescription(
+      QStringLiteral("Open actions for the selected layers"));
   applyLayerPanelButtonPalette(selectionMenuButton);
   
   auto parentHeader = impl_->parentHeaderButton = new QPushButton("Parent");
