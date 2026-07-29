@@ -2465,6 +2465,17 @@ int main(int argc, char *argv[]) {
     launchOpenFilter->enqueueLaunchPath(filePath);
   }
   auto *playbackService = ArtifactPlaybackService::instance();
+  if (playbackService && settings) {
+    playbackService->setRamPreviewEnabled(settings->previewEnableRamCache());
+    QObject::connect(
+        settings, &ArtifactCore::ArtifactAppSettings::settingsChanged, mw,
+        [playbackService, settings]() {
+          if (playbackService && settings) {
+            playbackService->setRamPreviewEnabled(
+                settings->previewEnableRamCache());
+          }
+        });
+  }
   auto *playbackShortcuts = new Artifact::ArtifactPlaybackShortcuts(mw);
   if (playbackService && playbackService->controller()) {
     playbackShortcuts->setup(playbackService->controller(), nullptr);
