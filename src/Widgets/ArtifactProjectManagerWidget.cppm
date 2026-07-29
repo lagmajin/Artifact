@@ -583,7 +583,16 @@ QString projectItemTileBadgeText(ProjectItem* item)
     case eProjectItemType::Footage: {
         const auto* footage = static_cast<FootageItem*>(item);
         const QFileInfo info(footage ? footage->filePath : QString());
-        if (!info.exists()) {
+        bool missing = !info.exists();
+        if (footage && footage->isSequence) {
+            for (const QString& sequencePath : footage->sequencePaths) {
+                if (!QFileInfo(sequencePath).exists()) {
+                    missing = true;
+                    break;
+                }
+            }
+        }
+        if (missing) {
             return QStringLiteral("Missing");
         }
         return projectItemFootageKindLabel(info.filePath());
