@@ -9664,6 +9664,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->toolModeButton_->setMenu(toolMenu);
   impl_->toolModeButton_->setPopupMode(QToolButton::InstantPopup);
   impl_->toolModeButton_->setToolTip(QStringLiteral("Select current editing tool. Mask opens mask editing. Anchor opens pivot editing."));
+  impl_->toolModeButton_->setAccessibleName(QStringLiteral("Editing tool"));
+  impl_->toolModeButton_->setAccessibleDescription(QStringLiteral("Choose the current composition editing tool"));
   impl_->topToolbar_->addWidget(impl_->toolModeButton_);
 
   auto *gizmoMenu = new QMenu(this);
@@ -9721,6 +9723,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->gizmoModeButton_->setIcon(
       loadEditorMenuIcon(QStringLiteral("MaterialVS/neutral/transform.svg")));
   impl_->gizmoModeButton_->setToolTip(impl_->gizmoButtonTooltip());
+  impl_->gizmoModeButton_->setAccessibleName(QStringLiteral("Transform gizmo"));
+  impl_->gizmoModeButton_->setAccessibleDescription(QStringLiteral("Choose transform gizmo mode and visibility"));
   impl_->gizmoModeButton_->setPopupMode(QToolButton::InstantPopup);
   impl_->topToolbar_->addWidget(impl_->gizmoModeButton_);
 
@@ -9822,6 +9826,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->pivotModeButton_->setText(QStringLiteral("Pivot"));
   impl_->pivotModeButton_->setMenu(pivotMenu);
   impl_->pivotModeButton_->setPopupMode(QToolButton::InstantPopup);
+  impl_->pivotModeButton_->setAccessibleName(QStringLiteral("Pivot mode"));
+  impl_->pivotModeButton_->setAccessibleDescription(QStringLiteral("Choose the transform pivot position"));
   impl_->topToolbar_->addWidget(impl_->pivotModeButton_);
 
   impl_->immersiveAction_ =
@@ -9977,6 +9983,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       "Quarter",
       QVariant::fromValue(static_cast<int>(PreviewQualityPreset::Draft)));
   impl_->resolutionCombo_->setMinimumWidth(70);
+  impl_->resolutionCombo_->setAccessibleName(QStringLiteral("Preview quality"));
+  impl_->resolutionCombo_->setAccessibleDescription(QStringLiteral("Choose the composition preview resolution"));
   {
     QPalette pal = impl_->resolutionCombo_->palette();
     pal.setColor(QPalette::Base, QColor(theme.backgroundColor));
@@ -9990,6 +9998,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->fastPreviewBtn_->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/quality_preview.svg")));
   impl_->fastPreviewBtn_->setToolTip("Fast Preview (Lightning)");
+  impl_->fastPreviewBtn_->setAccessibleName(QStringLiteral("Fast Preview"));
+  impl_->fastPreviewBtn_->setAccessibleDescription(QStringLiteral("Choose a fast preview quality preset"));
   impl_->fastPreviewBtn_->setPopupMode(QToolButton::InstantPopup);
   {
     QPalette pal = impl_->fastPreviewBtn_->palette();
@@ -10033,6 +10043,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       loadIconWithFallback(QStringLiteral("Studio/viewmenu_panels.svg")));
   impl_->displayOptionsBtn_->setToolTip(
       "Choose background, grid, and guide options");
+  impl_->displayOptionsBtn_->setAccessibleName(QStringLiteral("Display options"));
+  impl_->displayOptionsBtn_->setAccessibleDescription(QStringLiteral("Choose background, grid, and guide options"));
   impl_->displayOptionsBtn_->setPopupMode(QToolButton::InstantPopup);
   {
     QPalette pal = impl_->displayOptionsBtn_->palette();
@@ -10505,6 +10517,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->shadingButton_ = new QToolButton(impl_->bottomBar_);
   impl_->shadingButton_->setText(impl_->viewportChannelDisplayLabel());
   impl_->shadingButton_->setToolTip(impl_->shadingButtonTooltip());
+  impl_->shadingButton_->setAccessibleName(QStringLiteral("Viewport shading"));
+  impl_->shadingButton_->setAccessibleDescription(QStringLiteral("Choose viewport channel and shading display"));
   impl_->shadingButton_->setPopupMode(QToolButton::InstantPopup);
   {
     QPalette pal = impl_->shadingButton_->palette();
