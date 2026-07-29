@@ -446,9 +446,11 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
                                  QColor color,
                                  const int topInset,
                                  const int bottomInset) {
+   const int frameLimit = std::min(static_cast<int>(bitmap.size()),
+                                   std::max(0, impl_->totalFrames_));
    bool hasAnyFrame = false;
-   for (const bool value : bitmap) {
-    if (value) {
+   for (int f = 0; f < frameLimit; ++f) {
+    if (bitmap[f]) {
      hasAnyFrame = true;
      break;
     }
@@ -461,7 +463,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    p.setBrush(color);
 
    int startF = -1;
-   for (int f = 0; f < static_cast<int>(bitmap.size()); ++f) {
+   for (int f = 0; f < frameLimit; ++f) {
     if (bitmap[f]) {
      if (startF == -1) {
       startF = f;
@@ -477,7 +479,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    }
    if (startF != -1) {
     const int x1 = impl_->resolveFrameToX(startF, w);
-    const int x2 = impl_->resolveFrameToX(static_cast<int>(bitmap.size()), w);
+    const int x2 = impl_->resolveFrameToX(frameLimit, w);
     p.drawRect(QRect(x1, railRect.top() + topInset,
                      std::max(1, x2 - x1),
                      std::max(1, railRect.height() - topInset - bottomInset)));
