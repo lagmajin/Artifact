@@ -2,7 +2,6 @@ module;
 #include <utility>
 #define NOMINMAX
 #include <windows.h>
-#include <tbb/tbb.h>
 #include <QWidget>
 #include <QMenu>
 #include <QCursor>
@@ -21,10 +20,16 @@ module;
 #include <QTimer>
 #include <QDebug>
 #include <QLoggingCategory>
+#include <QString>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
 #include <vector>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <algorithm>
+#include <thread>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.CompositionRenderWidget;
@@ -220,7 +225,7 @@ int compositionPreviewIntervalMs(
   std::atomic_bool needsRender_{ true };
   std::atomic_uint64_t renderGeneration_{ 0 };
   std::atomic_bool running_{ false };
-  tbb::task_group renderTask_;
+  std::thread renderTask_;
   std::mutex renderMutex_;
   std::condition_variable renderCv_;
   std::mutex renderCvMutex_;
@@ -295,8 +300,11 @@ int compositionPreviewIntervalMs(
 
   void startRenderLoop() {
    if (running_) return;
+   if (renderTask_.joinable()) {
+    renderTask_.join();
+   }
    running_ = true;
-   renderTask_.run([this]() {
+   renderTask_ = std::thread([this]() {
      while (running_.load(std::memory_order_acquire)) {
        const int frameIntervalMs =
            compositionPreviewIntervalMs(previewPipeline_.composition());
@@ -334,7 +342,9 @@ int compositionPreviewIntervalMs(
   void stopRenderLoop() {
    running_ = false;
    renderCv_.notify_all();
-   renderTask_.wait();
+   if (renderTask_.joinable()) {
+    renderTask_.join();
+   }
    if (renderer_) renderer_->flushAndWait();
   }
 

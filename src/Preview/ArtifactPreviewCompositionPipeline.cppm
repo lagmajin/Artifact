@@ -47,8 +47,9 @@ module;
 #include <QLoggingCategory>
 #include <QString>
 #include <opencv2/opencv.hpp>
-#include <Layer/ArtifactCloneEffectSupport.hpp>
 module Artifact.Preview.Pipeline;
+
+import Artifact.Layer.CloneEffectSupport;
 import Memory.SharedPtr;
 
 

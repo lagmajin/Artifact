@@ -63,9 +63,10 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
-#include <Layer/ArtifactCloneEffectSupport.hpp>
 #include <cstring>
 module Artifact.Layer.Video;
+
+import Artifact.Layer.CloneEffectSupport;
 
 
 

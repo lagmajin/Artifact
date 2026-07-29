@@ -10,12 +10,13 @@ module;
 #include <QPainter>
 #include <QRadialGradient>
 #include <QVariant>
-#include <Layer/ArtifactCloneEffectSupport.hpp>
 #include <Layer/ArtifactSolidGradientUtil.hpp>
 #include <algorithm>
 #include <cmath>
 
 module Artifact.Layer.Solid2D;
+
+import Artifact.Layer.CloneEffectSupport;
 
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;

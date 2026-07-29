@@ -101,8 +101,6 @@ import Memory.SharedPtr;
 
 #include <vector>
 
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
 
 #include <wobjectimpl.h>
 
@@ -5168,6 +5166,33 @@ buildCameraFrustumVisual(const ArtifactCameraLayer *camera,
 
 
 
+CompositionRenderController::CameraFrustumVisual
+buildDefaultCameraFrustumVisual(const QMatrix4x4 &view,
+                                const QMatrix4x4 &proj) {
+  CompositionRenderController::CameraFrustumVisual visual;
+  bool invertible = false;
+  const QMatrix4x4 invViewProj = (proj * view).inverted(&invertible);
+  if (!invertible) {
+    return visual;
+  }
+  visual.valid = true;
+  visual.cameraPosition = view.inverted().map(QVector3D(0.0f, 0.0f, 0.0f));
+  visual.viewMatrix = view;
+  visual.projectionMatrix = proj;
+  visual.guide = makeNukeStyleCameraGuidePrimitive();
+  visual.nearPlaneCorners = {
+      unprojectClipCorner(invViewProj, -1.0f, -1.0f, -1.0f),
+      unprojectClipCorner(invViewProj, 1.0f, -1.0f, -1.0f),
+      unprojectClipCorner(invViewProj, 1.0f, 1.0f, -1.0f),
+      unprojectClipCorner(invViewProj, -1.0f, 1.0f, -1.0f)};
+  visual.farPlaneCorners = {
+      unprojectClipCorner(invViewProj, -1.0f, -1.0f, 1.0f),
+      unprojectClipCorner(invViewProj, 1.0f, -1.0f, 1.0f),
+      unprojectClipCorner(invViewProj, 1.0f, 1.0f, 1.0f),
+      unprojectClipCorner(invViewProj, -1.0f, 1.0f, 1.0f)};
+  return visual;
+}
+
 void drawCameraFrustumOverlay(ArtifactIRenderer *renderer,
 
                               const CompositionRenderController::CameraFrustumVisual &visual,
@@ -5957,8 +5982,8 @@ static void applyLayerMatteToSurface(
 
         const auto *sourceBits = srcImage.constBits();
         const int sourceStride = srcImage.bytesPerLine();
-        const auto buildAlphaRows = [&](const tbb::blocked_range<int>& rows) {
-          for (int y = rows.begin(); y != rows.end() && y < srcH; ++y) {
+        const auto buildAlphaRows = [&](int yBegin, int yEnd) {
+          for (int y = yBegin; y < yEnd && y < srcH; ++y) {
             const QRgb *srcLine = reinterpret_cast<const QRgb *>(
                 sourceBits + y * sourceStride);
             for (int x = 0; x < w && x < srcW; ++x) {
@@ -5983,9 +6008,9 @@ static void applyLayerMatteToSurface(
           }
         };
         if (static_cast<size_t>(w) * static_cast<size_t>(h) >= 256u * 1024u) {
-          tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), buildAlphaRows);
+          buildAlphaRows(0, h);
         } else {
-          buildAlphaRows(tbb::blocked_range<int>(0, h));
+          buildAlphaRows(0, h);
         }
 
 
@@ -5993,16 +6018,15 @@ static void applyLayerMatteToSurface(
         // Invert if needed
 
         if (ref.invert) {
-            const auto invertAlpha = [&](const tbb::blocked_range<size_t>& range) {
-                for (size_t i = range.begin(); i != range.end(); ++i) {
+            const auto invertAlpha = [&](size_t begin, size_t end) {
+                for (size_t i = begin; i != end; ++i) {
                     alpha[i] = 1.0f - alpha[i];
                 }
             };
             if (alpha.size() >= 256u * 1024u) {
-                tbb::parallel_for(tbb::blocked_range<size_t>(0, alpha.size(), 4096),
-                                  invertAlpha);
+                invertAlpha(0, alpha.size());
             } else {
-                invertAlpha(tbb::blocked_range<size_t>(0, alpha.size()));
+                invertAlpha(0, alpha.size());
             }
         }
 
@@ -6046,8 +6070,8 @@ static void applyLayerMatteToSurface(
 
     auto *surfaceBits = surface.bits();
     const int surfaceStride = surface.bytesPerLine();
-    const auto applyResultRows = [&](const tbb::blocked_range<int>& rows) {
-      for (int y = rows.begin(); y != rows.end(); ++y) {
+    const auto applyResultRows = [&](int yBegin, int yEnd) {
+      for (int y = yBegin; y < yEnd; ++y) {
         QRgb *line = reinterpret_cast<QRgb *>(surfaceBits + y * surfaceStride);
         for (int x = 0; x < w; ++x) {
 
@@ -6079,9 +6103,9 @@ static void applyLayerMatteToSurface(
       }
     };
     if (static_cast<size_t>(w) * static_cast<size_t>(h) >= 256u * 1024u) {
-      tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), applyResultRows);
+      applyResultRows(0, h);
     } else {
-      applyResultRows(tbb::blocked_range<int>(0, h));
+      applyResultRows(0, h);
     }
 
 }
@@ -6126,8 +6150,8 @@ static void applyLayerMatteToSurface(
         ref.type == MatteType::Luma || ref.type == MatteType::InverseLuma;
     const auto* sourceBits = source.constBits();
     const int sourceStride = source.bytesPerLine();
-    const auto buildMatteRows = [&](const tbb::blocked_range<int>& rows) {
-      for (int y = rows.begin(); y != rows.end(); ++y) {
+    const auto buildMatteRows = [&](int yBegin, int yEnd) {
+      for (int y = yBegin; y < yEnd; ++y) {
         const auto* row = reinterpret_cast<const QRgb*>(
             sourceBits + y * sourceStride);
         for (int x = 0; x < w; ++x) {
@@ -6139,23 +6163,14 @@ static void applyLayerMatteToSurface(
         }
       }
     };
-    if (static_cast<size_t>(w) * static_cast<size_t>(h) >= 256u * 1024u) {
-      tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), buildMatteRows);
-    } else {
-      buildMatteRows(tbb::blocked_range<int>(0, h));
-    }
+    buildMatteRows(0, h);
     if (ref.invert) {
-      const auto invertMatte = [&](const tbb::blocked_range<size_t>& range) {
-        for (size_t i = range.begin(); i != range.end(); ++i) {
+      const auto invertMatte = [&](size_t begin, size_t end) {
+        for (size_t i = begin; i != end; ++i) {
           matteValues[i] = 1.0f - matteValues[i];
         }
       };
-      if (matteValues.size() >= 256u * 1024u) {
-        tbb::parallel_for(tbb::blocked_range<size_t>(0, matteValues.size(), 4096),
-                          invertMatte);
-      } else {
-        invertMatte(tbb::blocked_range<size_t>(0, matteValues.size()));
-      }
+      invertMatte(0, matteValues.size());
     }
     sources.push_back(std::move(matteValues));
   }
@@ -6175,8 +6190,8 @@ static void applyLayerMatteToSurface(
   }
 
   if (float* pixels = surface.rgba32fData()) {
-    const auto applyF32Rows = [&](const tbb::blocked_range<int>& rows) {
-      for (int y = rows.begin(); y != rows.end(); ++y) {
+    const auto applyF32Rows = [&](int yBegin, int yEnd) {
+      for (int y = yBegin; y < yEnd; ++y) {
         float* pixel = pixels + static_cast<size_t>(y) * w * 4;
         for (int x = 0; x < w; ++x, pixel += 4) {
         const float factor = mask.sampleAlpha(x, y);
@@ -6187,16 +6202,12 @@ static void applyLayerMatteToSurface(
         }
       }
     };
-    if (static_cast<size_t>(w) * static_cast<size_t>(h) >= 256u * 1024u) {
-      tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), applyF32Rows);
-    } else {
-      applyF32Rows(tbb::blocked_range<int>(0, h));
-    }
+    applyF32Rows(0, h);
     return;
   }
 
-  const auto applyFallbackRows = [&](const tbb::blocked_range<int>& rows) {
-    for (int y = rows.begin(); y != rows.end(); ++y) {
+  const auto applyFallbackRows = [&](int yBegin, int yEnd) {
+    for (int y = yBegin; y < yEnd; ++y) {
       for (int x = 0; x < w; ++x) {
         const float factor = mask.sampleAlpha(x, y);
         const ArtifactCore::FloatRGBA pixel = surface.getPixel(x, y);
@@ -6206,11 +6217,7 @@ static void applyLayerMatteToSurface(
       }
     }
   };
-  if (static_cast<size_t>(w) * static_cast<size_t>(h) >= 256u * 1024u) {
-    tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), applyFallbackRows);
-  } else {
-    applyFallbackRows(tbb::blocked_range<int>(0, h));
-  }
+  applyFallbackRows(0, h);
 }
 
 
@@ -27039,12 +27046,15 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
                               isDraggingField, isActiveField, inverseZoom);
     }
   }
-  if (showCameraFrustumOverlay_ && activeCamera) {
-    const auto cameraOverlayVisual = buildCameraFrustumVisual(activeCamera, comp);
+  if (showCameraFrustumOverlay_ && has3DCamera) {
+    const auto cameraOverlayVisual = activeCamera
+        ? buildCameraFrustumVisual(activeCamera, comp)
+        : buildDefaultCameraFrustumVisual(cameraViewMatrix, cameraProjMatrix);
 
     ::Artifact::drawCameraFrustumOverlay(renderer_.get(), cameraOverlayVisual,
 
-                                         activeCamera->id() == selectedLayerId_);
+                                         activeCamera &&
+                                             activeCamera->id() == selectedLayerId_);
 
   }
 
@@ -27235,8 +27245,8 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
     }
     QImage out(rImage.size(), QImage::Format_RGBA8888);
     const int height = out.height();
-    const auto composeRows = [&](const tbb::blocked_range<int> &range) {
-      for (int y = range.begin(); y != range.end(); ++y) {
+    const auto composeRows = [&](int yBegin, int yEnd) {
+      for (int y = yBegin; y < yEnd; ++y) {
         const auto *rSrc = rImage.constScanLine(y);
         const auto *gSrc = gImage.constScanLine(y);
         const auto *bSrc = bImage.constScanLine(y);
@@ -27249,11 +27259,7 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
         }
       }
     };
-    if (static_cast<std::size_t>(out.width()) * height >= 256u * 1024u) {
-      tbb::parallel_for(tbb::blocked_range<int>(0, height, 16), composeRows);
-    } else {
-      composeRows(tbb::blocked_range<int>(0, height));
-    }
+    composeRows(0, height);
 
     Q_UNUSED(fallbackBlue);
     return out;
@@ -27272,8 +27278,8 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
                              : alphaImage.convertToFormat(QImage::Format_Grayscale8);
     QImage out(rgbImage.width() * 2, rgbImage.height(), QImage::Format_RGBA8888);
     const int height = out.height();
-    const auto composeRows = [&](const tbb::blocked_range<int> &range) {
-      for (int y = range.begin(); y != range.end(); ++y) {
+    const auto composeRows = [&](int yBegin, int yEnd) {
+      for (int y = yBegin; y < yEnd; ++y) {
         const auto *rgbSrc = rgba.constScanLine(y);
         const auto *alphaSrc = alpha.constScanLine(y);
         auto *dst = out.scanLine(y);
@@ -27294,11 +27300,7 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
         }
       }
     };
-    if (static_cast<std::size_t>(out.width()) * height >= 256u * 1024u) {
-      tbb::parallel_for(tbb::blocked_range<int>(0, height, 16), composeRows);
-    } else {
-      composeRows(tbb::blocked_range<int>(0, height));
-    }
+    composeRows(0, height);
     return out;
   };
 
@@ -27308,8 +27310,8 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
     }
     QImage out(xImage.size(), QImage::Format_RGBA8888);
     const int height = out.height();
-    const auto composeRows = [&](const tbb::blocked_range<int> &range) {
-      for (int y = range.begin(); y != range.end(); ++y) {
+    const auto composeRows = [&](int yBegin, int yEnd) {
+      for (int y = yBegin; y < yEnd; ++y) {
         const auto *xSrc = xImage.constScanLine(y);
         const auto *ySrc = yImage.constScanLine(y);
         auto *dst = out.scanLine(y);
@@ -27321,11 +27323,7 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
         }
       }
     };
-    if (static_cast<std::size_t>(out.width()) * height >= 256u * 1024u) {
-      tbb::parallel_for(tbb::blocked_range<int>(0, height, 16), composeRows);
-    } else {
-      composeRows(tbb::blocked_range<int>(0, height));
-    }
+    composeRows(0, height);
     return out;
   };
 
@@ -27338,8 +27336,8 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
                             : grayImage.convertToFormat(QImage::Format_Grayscale8);
     QImage out(gray.size(), QImage::Format_RGBA8888);
     const int height = out.height();
-    const auto colorizeRows = [&](const tbb::blocked_range<int> &range) {
-      for (int y = range.begin(); y != range.end(); ++y) {
+    const auto colorizeRows = [&](int yBegin, int yEnd) {
+      for (int y = yBegin; y < yEnd; ++y) {
         const auto *src = gray.constScanLine(y);
         auto *dst = out.scanLine(y);
         for (int x = 0; x < out.width(); ++x) {
@@ -27354,11 +27352,7 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
         }
       }
     };
-    if (static_cast<std::size_t>(out.width()) * height >= 256u * 1024u) {
-      tbb::parallel_for(tbb::blocked_range<int>(0, height, 16), colorizeRows);
-    } else {
-      colorizeRows(tbb::blocked_range<int>(0, height));
-    }
+    colorizeRows(0, height);
     return out;
   };
 

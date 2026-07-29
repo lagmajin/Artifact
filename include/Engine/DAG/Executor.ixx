@@ -2,6 +2,7 @@
 #include <functional>
 #include <future>
 #include <atomic>
+#include <mutex>
 #include <QString>
 
 #include <iostream>
@@ -52,9 +53,8 @@ export namespace Artifact {
     //
     //   インディグリー（依存する入力数）をベースに、
     //   依存関係が解決（準備完了）したノードから順にタスクを
-    //   並列ワーカープール（TBBやスレッドプール）に投入する基盤。
-    //   Intel TBB の `tbb::flow::graph` や `task_group` での実装を
-    //   想定した抽象レイヤー。
+    //   並列ワーカープールやスレッドプールに投入する基盤。
+    //   特定のバックエンド実装に限定しない抽象レイヤー。
     // ─────────────────────────────────────────────────────────
 
     class DAGExecutor {
@@ -63,7 +63,7 @@ export namespace Artifact {
 
         virtual ~DAGExecutor() = default;
 
-        // TBB などのバックエンドにタスクを非同期投入する
+        // バックエンドにタスクを非同期投入する
         virtual void enqueueTask(TaskFunc task) = 0;
 
         // 全てのタスクが完了するまで待機
@@ -129,7 +129,7 @@ export namespace Artifact {
 
     // ─────────────────────────────────────────────────────────
     //  SimpleThreadPoolExecutor (スタブ実装)
-    //   実際にはここで TBB task_group や std::async を用いる
+    //   実際にはここでスレッドプールや std::async を用いる
     // ─────────────────────────────────────────────────────────
     class SimpleAsyncExecutor : public DAGExecutor {
     private:

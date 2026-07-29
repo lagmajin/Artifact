@@ -28,9 +28,10 @@ module;
 #include <OpenImageIO/imageio.h>
 #include <opencv2/opencv.hpp>
 #include <wobjectimpl.h>
-#include <Layer/ArtifactCloneEffectSupport.hpp>
 
 module Artifact.Layer.Image;
+
+import Artifact.Layer.CloneEffectSupport;
 
 import std;
 import Artifact.Layers.Abstract._2D;

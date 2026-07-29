@@ -2,7 +2,6 @@ module;
 #include <utility>
 #define NOMINMAX
 #define QT_NO_KEYWORDS
-#include <Layer/ArtifactCloneEffectSupport.hpp>
 #include <Layer/ArtifactSolidGradientUtil.hpp>
 #include <QColor>
 #include <QImage>
@@ -18,6 +17,8 @@ module;
 
 
 module Artifact.Layers.SolidImage;
+
+import Artifact.Layer.CloneEffectSupport;
 
 import std;
 import Artifact.Layers.Abstract._2D;

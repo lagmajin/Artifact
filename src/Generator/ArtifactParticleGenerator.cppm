@@ -18,8 +18,6 @@
 #undef emit
 #define ARTIFACT_RESTORE_QT_EMIT_MACRO
 #endif
-#include <tbb/parallel_for.h>
-#include <tbb/blocked_range.h>
 #ifdef ARTIFACT_RESTORE_QT_EMIT_MACRO
 #pragma pop_macro("emit")
 #undef ARTIFACT_RESTORE_QT_EMIT_MACRO
@@ -960,28 +958,10 @@ void ParticleEmitter::simulateStep(float deltaTime)
     }
 
     // Phase 1b: effectors + integration (particle-local)
-    const int aliveCount = static_cast<int>(
-        std::count_if(particles_.begin(), particles_.end(), [](const Particle& p) { return p.alive; })
-    );
-
-    constexpr int kParallelThreshold = 2048;
-    if (aliveCount >= kParallelThreshold) {
-        const std::size_t size = particles_.size();
-        tbb::parallel_for(tbb::blocked_range<std::size_t>(0, size, 256),
-            [this, deltaTime](const tbb::blocked_range<std::size_t>& range) {
-                for (std::size_t i = range.begin(); i < range.end(); ++i) {
-                    Particle& p = particles_[i];
-                    if (!p.alive) continue;
-                    applyEffectors(p, deltaTime);
-                    updateParticle(p, deltaTime);
-                }
-            });
-    } else {
-        for (auto& p : particles_) {
-            if (!p.alive) continue;
-            applyEffectors(p, deltaTime);
-            updateParticle(p, deltaTime);
-        }
+    for (auto& p : particles_) {
+        if (!p.alive) continue;
+        applyEffectors(p, deltaTime);
+        updateParticle(p, deltaTime);
     }
 
     // Phase 2: broad-phase collision (deterministic ordered grid)

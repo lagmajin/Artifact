@@ -6,10 +6,14 @@ module;
 #pragma push_macro("emit")
 #pragma push_macro("event")
 #undef emit
-#include <tbb/tbb.h>
 #pragma pop_macro("event")
 #pragma pop_macro("emit")
 
+#include <memory>
+#include <algorithm>
+#include <chrono>
+#include <thread>
+#include <vector>
 #include <clocale>
 #include <cstdio>
 #include <fcntl.h>
@@ -23,6 +27,7 @@ module;
 #include <QApplication>
 #include <QLocale>
 #include <QColor>
+#include <QString>
 #include <QCommandLineOption>
 #include <QDateTime>
 #include <QDebug>
@@ -74,6 +79,7 @@ module;
 #include <Diagnostics/WidgetCreationDiagnostics.hpp>
 #include <opencv2/opencv.hpp>
 #include <string>
+
 module Artifact.AppMain;
 
 import std;
@@ -104,6 +110,13 @@ import Artifact.AI.WorkspaceAutomation;
 import Artifact.TestRunner;
 
 import ImageProcessing.SpectralGlow;
+
+namespace {
+class StartupParallelismControl {
+public:
+  explicit StartupParallelismControl(unsigned int) {}
+};
+}
 
 import Codec.Thumbnail.FFmpeg;
 import AI.Client;
@@ -2029,8 +2042,7 @@ int main(int argc, char *argv[]) {
       std::max(1u, std::thread::hardware_concurrency() > 1
                        ? std::thread::hardware_concurrency() - 1
                        : 1u);
-  auto parallelismControl = std::make_unique<tbb::global_control>(
-      tbb::global_control::max_allowed_parallelism, 1u);
+  auto parallelismControl = std::make_unique<StartupParallelismControl>(1u);
 
   AddDllDirectory(L"C:\\Users\\lagma\\Desktop\\Artifact\\Artifact\\App");
   SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS |
@@ -3811,8 +3823,7 @@ int main(int argc, char *argv[]) {
 
   QTimer::singleShot(2000, mw, [startupParallelism, &parallelismControl]() {
     parallelismControl.reset();
-    parallelismControl = std::make_unique<tbb::global_control>(
-        tbb::global_control::max_allowed_parallelism, startupParallelism);
+    parallelismControl = std::make_unique<StartupParallelismControl>(startupParallelism);
     setRenderSchedulerStartupWarmupComplete(true);
     qDebug() << "[AppMain] startup parallelism restored to"
              << startupParallelism;

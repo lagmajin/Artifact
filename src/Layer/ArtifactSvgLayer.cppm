@@ -11,9 +11,10 @@ module;
 #include <QFuture>
 #include <QtConcurrent>
 #include <wobjectimpl.h>
-#include <Layer/ArtifactCloneEffectSupport.hpp>
 
 module Artifact.Layer.Svg;
+
+import Artifact.Layer.CloneEffectSupport;
 
 import std;
 import Core.Parallel;

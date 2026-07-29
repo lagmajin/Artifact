@@ -100,8 +100,6 @@ module;
 #undef emit
 #define ARTIFACT_RESTORE_QT_EMIT_MACRO
 #endif
-#include <tbb/parallel_for.h>
-#include <tbb/blocked_range.h>
 #ifdef ARTIFACT_RESTORE_QT_EMIT_MACRO
 #pragma pop_macro("emit")
 #undef ARTIFACT_RESTORE_QT_EMIT_MACRO
@@ -2834,11 +2832,11 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     }
    }
 
-   // Standalone files — parallelized with TBB
+   // Standalone files
    std::vector<AssetMenuItem> standaloneItems(entries.size());
    const auto processStandaloneRange =
-    [&](const tbb::blocked_range<int>& range) {
-     for (int i = range.begin(); i < range.end(); ++i) {
+    [&](int begin, int end) {
+     for (int i = begin; i < end; ++i) {
       const QString& entry = entries.at(i);
       const QString fullPath = dir.absoluteFilePath(entry);
       const QFileInfo fileInfo(fullPath);
@@ -2864,12 +2862,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
       standaloneItems[static_cast<size_t>(i)] = std::move(item);
      }
     };
-   if (entries.size() >= 256u) {
-    tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(entries.size()), 16),
-                      processStandaloneRange);
-   } else {
-    processStandaloneRange(tbb::blocked_range<int>(0, static_cast<int>(entries.size())));
-   }
+   processStandaloneRange(0, static_cast<int>(entries.size()));
 
    for (auto& item : standaloneItems) {
     if (!item.name.toQString().isEmpty()) {

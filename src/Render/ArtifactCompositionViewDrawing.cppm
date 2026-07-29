@@ -1,6 +1,5 @@
 module;
 #include <utility>
-#include <Layer/ArtifactCloneEffectSupport.hpp>
 
 #include <QColor>
 #include <QHash>
@@ -12,8 +11,6 @@ module;
 #include <QString>
 #include <QUuid>
 
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
 
 #include <algorithm>
 #include <cmath>
@@ -24,6 +21,8 @@ module;
 //#include <QImage>
 
 export module Artifact.Render.CompositionViewDrawing;
+
+import Artifact.Layer.CloneEffectSupport;
 
 import Artifact.Render.IRenderer;
 import Artifact.Render.Context;
@@ -198,74 +197,67 @@ export QImage makeVersionedSolidGradientImage(
 
   auto* imageBits = image.bits();
   const int imageStride = image.bytesPerLine();
-  const auto renderGradientRows = [&](const tbb::blocked_range<int>& rows) {
-    for (int y = rows.begin(); y != rows.end(); ++y) {
+  const auto renderGradientRows = [&](int yBegin, int yEnd) {
+    for (int y = yBegin; y < yEnd; ++y) {
       auto* row = reinterpret_cast<QRgb*>(imageBits + y * imageStride);
       const float v = (static_cast<float>(y) + 0.5f) / height;
       for (int x = 0; x < size.width(); ++x) {
-      const float u = (static_cast<float>(x) + 0.5f) / width;
-      const float localX = (u - centerX) * aspect;
-      const float localY = v - centerY;
-      float t = 0.0f;
-      if (fillType == 2) {
-        const float radius =
-            std::max(0.0001f,
-                     0.5f * std::sqrt(aspect * aspect + 1.0f) * safeScale);
-        t = std::sqrt(localX * localX + localY * localY) / radius;
-      } else if (fillType == 3) {
-        t = std::atan2(v - centerY, u - centerX) /
-                (2.0f * 3.14159265358979323846f) +
-            0.5f + angleDegrees / 360.0f;
-      } else {
-        const float halfSpan =
-            std::max(0.0001f,
-                     0.5f * std::sqrt(aspect * aspect + 1.0f) * safeScale);
-        t = (localX * directionX + localY * directionY) /
-                (2.0f * halfSpan) +
-            0.5f + offset;
-      }
-      t = spreadGradient(t);
-      if (reverse) {
-        t = 1.0f - t;
-      }
-
-      const float alpha = std::clamp(
-          startColor.a() + (endColor.a() - startColor.a()) * t, 0.0f, 1.0f);
-      float encoded[3]{};
-      for (int channel = 0; channel < 3; ++channel) {
-        if (linearColorInterpolation) {
-          const float linear = startLinear[channel] +
-                               (endLinear[channel] - startLinear[channel]) * t;
-          encoded[channel] =
-              ArtifactCore::ColorTransferFunction::linearToSRGB(linear);
+        const float u = (static_cast<float>(x) + 0.5f) / width;
+        const float localX = (u - centerX) * aspect;
+        const float localY = v - centerY;
+        float t = 0.0f;
+        if (fillType == 2) {
+          const float radius =
+              std::max(0.0001f,
+                       0.5f * std::sqrt(aspect * aspect + 1.0f) * safeScale);
+          t = std::sqrt(localX * localX + localY * localY) / radius;
+        } else if (fillType == 3) {
+          t = std::atan2(v - centerY, u - centerX) /
+                  (2.0f * 3.14159265358979323846f) +
+              0.5f + angleDegrees / 360.0f;
         } else {
-          const float start = channel == 0 ? startColor.r()
-                              : channel == 1 ? startColor.g()
-                                             : startColor.b();
-          const float end = channel == 0 ? endColor.r()
-                            : channel == 1 ? endColor.g()
-                                           : endColor.b();
-          encoded[channel] = start + (end - start) * t;
+          const float halfSpan =
+              std::max(0.0001f,
+                       0.5f * std::sqrt(aspect * aspect + 1.0f) * safeScale);
+          t = (localX * directionX + localY * directionY) /
+                  (2.0f * halfSpan) +
+              0.5f + offset;
         }
-        encoded[channel] = std::clamp(encoded[channel], 0.0f, 1.0f) * alpha;
-      }
-      const int red = static_cast<int>(encoded[0] * 255.0f + 0.5f);
-      const int green = static_cast<int>(encoded[1] * 255.0f + 0.5f);
-      const int blue = static_cast<int>(encoded[2] * 255.0f + 0.5f);
-      const int alphaByte = static_cast<int>(alpha * 255.0f + 0.5f);
+        t = spreadGradient(t);
+        if (reverse) {
+          t = 1.0f - t;
+        }
+
+        const float alpha = std::clamp(
+            startColor.a() + (endColor.a() - startColor.a()) * t, 0.0f, 1.0f);
+        float encoded[3]{};
+        for (int channel = 0; channel < 3; ++channel) {
+          if (linearColorInterpolation) {
+            const float linear = startLinear[channel] +
+                                 (endLinear[channel] - startLinear[channel]) * t;
+            encoded[channel] =
+                ArtifactCore::ColorTransferFunction::linearToSRGB(linear);
+          } else {
+            const float start = channel == 0 ? startColor.r()
+                                : channel == 1 ? startColor.g()
+                                               : startColor.b();
+            const float end = channel == 0 ? endColor.r()
+                              : channel == 1 ? endColor.g()
+                                             : endColor.b();
+            encoded[channel] = start + (end - start) * t;
+          }
+          encoded[channel] = std::clamp(encoded[channel], 0.0f, 1.0f) * alpha;
+        }
+        const int red = static_cast<int>(encoded[0] * 255.0f + 0.5f);
+        const int green = static_cast<int>(encoded[1] * 255.0f + 0.5f);
+        const int blue = static_cast<int>(encoded[2] * 255.0f + 0.5f);
+        const int alphaByte = static_cast<int>(alpha * 255.0f + 0.5f);
         row[x] = qRgba(red, green, blue, alphaByte);
       }
     }
   };
 
-  const std::size_t pixelCount = static_cast<std::size_t>(size.width()) *
-                                 static_cast<std::size_t>(size.height());
-  if (pixelCount >= 256u * 1024u) {
-    tbb::parallel_for(tbb::blocked_range<int>(0, size.height(), 16),
-                      renderGradientRows);
-  } else {
-    renderGradientRows(tbb::blocked_range<int>(0, size.height()));
-  }
+  renderGradientRows(0, size.height());
   return image;
 }
 
@@ -921,37 +913,32 @@ QImage applyMatteStackToSurface(const QImage& surface,
     const bool useLuminance =
         ArtifactCore::MatteModeUtils::isLuminance(node.mode());
     const bool invertMask = ArtifactCore::MatteModeUtils::isInverted(node.mode());
-    const auto buildMatteRows = [&](const tbb::blocked_range<int>& rows) {
-      for (int y = rows.begin(); y != rows.end(); ++y) {
+    const auto buildMatteRows = [&](int yBegin, int yEnd) {
+      for (int y = yBegin; y < yEnd; ++y) {
         for (int x = 0; x < w; ++x) {
-        const int sx = std::min(x * srcW / w, srcW - 1);
-        const int sy = std::min(y * srcH / h, srcH - 1);
-        const QRgb pixel = reinterpret_cast<const QRgb*>(
-            sourceBits + sy * sourceStride)[sx];
+          const int sx = std::min(x * srcW / w, srcW - 1);
+          const int sy = std::min(y * srcH / h, srcH - 1);
+          const QRgb pixel = reinterpret_cast<const QRgb*>(
+              sourceBits + sy * sourceStride)[sx];
 
-        float v = 0.0f;
-        if (useLuminance) {
-          v = (qRed(pixel) * 0.299f + qGreen(pixel) * 0.587f + qBlue(pixel) * 0.114f) / 255.0f;
-        } else {
-          v = qAlpha(pixel) / 255.0f;
-        }
+          float v = 0.0f;
+          if (useLuminance) {
+            v = (qRed(pixel) * 0.299f + qGreen(pixel) * 0.587f + qBlue(pixel) * 0.114f) / 255.0f;
+          } else {
+            v = qAlpha(pixel) / 255.0f;
+          }
 
-        if (invertMask) {
-          v = 1.0f - v;
-        }
-        matteMask[static_cast<size_t>(y) * w + x] = std::clamp(v, 0.0f, 1.0f);
+          if (invertMask) {
+            v = 1.0f - v;
+          }
+          matteMask[static_cast<size_t>(y) * w + x] = std::clamp(v, 0.0f, 1.0f);
         }
       }
     };
-    if (pixelCount >= 256u * 1024u) {
-      tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), buildMatteRows);
-    } else {
-      buildMatteRows(tbb::blocked_range<int>(0, h));
-    }
+    buildMatteRows(0, h);
 
     const ArtifactCore::MatteStackMode stackMode = matteStack.stackMode();
-    const auto combineMatteRows = [&](const tbb::blocked_range<size_t>& range) {
-      for (size_t i = range.begin(); i != range.end(); ++i) {
+    for (size_t i = 0; i < pixelCount; ++i) {
         switch (stackMode) {
         case ArtifactCore::MatteStackMode::Add:
           combinedMask[i] = std::min(1.0f, combinedMask[i] + matteMask[i]);
@@ -963,42 +950,31 @@ QImage applyMatteStackToSurface(const QImage& surface,
           combinedMask[i] = std::max(0.0f, combinedMask[i] - matteMask[i]);
           break;
         }
-      }
-    };
-    if (pixelCount >= 256u * 1024u) {
-      tbb::parallel_for(tbb::blocked_range<size_t>(0, pixelCount, 4096),
-                        combineMatteRows);
-    } else {
-      combineMatteRows(tbb::blocked_range<size_t>(0, pixelCount));
     }
   }
 
   QImage result = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
   auto* resultBits = result.bits();
   const int resultStride = result.bytesPerLine();
-  const auto applyMatteRows = [&](const tbb::blocked_range<int>& rows) {
-    for (int y = rows.begin(); y != rows.end(); ++y) {
+  const auto applyMatteRows = [&](int yBegin, int yEnd) {
+    for (int y = yBegin; y < yEnd; ++y) {
       auto* resultRow = reinterpret_cast<QRgb*>(resultBits + y * resultStride);
       for (int x = 0; x < w; ++x) {
-      const size_t idx = static_cast<size_t>(y) * w + x;
-      QRgb pixel = resultRow[x];
-      const float mask = combinedMask[idx];
-      int a = static_cast<int>(qAlpha(pixel) * mask);
-      const int r = static_cast<int>(qRed(pixel) * mask);
-      const int g = static_cast<int>(qGreen(pixel) * mask);
-      const int b = static_cast<int>(qBlue(pixel) * mask);
-      resultRow[x] = qRgba(std::clamp(r, 0, 255),
-                           std::clamp(g, 0, 255),
-                           std::clamp(b, 0, 255),
-                           std::clamp(a, 0, 255));
+        const size_t idx = static_cast<size_t>(y) * w + x;
+        QRgb pixel = resultRow[x];
+        const float mask = combinedMask[idx];
+        int a = static_cast<int>(qAlpha(pixel) * mask);
+        const int r = static_cast<int>(qRed(pixel) * mask);
+        const int g = static_cast<int>(qGreen(pixel) * mask);
+        const int b = static_cast<int>(qBlue(pixel) * mask);
+        resultRow[x] = qRgba(std::clamp(r, 0, 255),
+                             std::clamp(g, 0, 255),
+                             std::clamp(b, 0, 255),
+                             std::clamp(a, 0, 255));
       }
     }
   };
-  if (pixelCount >= 256u * 1024u) {
-    tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), applyMatteRows);
-  } else {
-    applyMatteRows(tbb::blocked_range<int>(0, h));
-  }
+  applyMatteRows(0, h);
   return result;
 }
 
@@ -1348,14 +1324,14 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         QImage lit = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
         auto* litBits = lit.bits();
         const int litStride = lit.bytesPerLine();
-        const auto applyLightRows = [&](const tbb::blocked_range<int>& rows) {
-          for (int y = rows.begin(); y != rows.end(); ++y) {
+        const auto applyLightRows = [&](int yBegin, int yEnd) {
+          for (int y = yBegin; y < yEnd; ++y) {
             auto* row = reinterpret_cast<QRgb*>(litBits + y * litStride);
             for (int x = 0; x < lit.width(); ++x) {
-            const int r = qRed(row[x]);
-            const int g = qGreen(row[x]);
-            const int b = qBlue(row[x]);
-            const int a = qAlpha(row[x]);
+              const int r = qRed(row[x]);
+              const int g = qGreen(row[x]);
+              const int b = qBlue(row[x]);
+              const int a = qAlpha(row[x]);
               row[x] = qRgba(std::clamp(static_cast<int>(r + (255 - r) * lift), 0, 255),
                              std::clamp(static_cast<int>(g + (255 - g) * lift), 0, 255),
                              std::clamp(static_cast<int>(b + (255 - b) * lift), 0, 255),
@@ -1367,10 +1343,9 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
             static_cast<std::size_t>(lit.width()) *
             static_cast<std::size_t>(lit.height());
         if (lightPixelCount >= 256u * 1024u) {
-          tbb::parallel_for(tbb::blocked_range<int>(0, lit.height(), 16),
-                            applyLightRows);
+          applyLightRows(0, lit.height());
         } else {
-          applyLightRows(tbb::blocked_range<int>(0, lit.height()));
+          applyLightRows(0, lit.height());
         }
         surface = std::move(lit);
         directProcessedBuffer.reset();

@@ -28,7 +28,6 @@ module;
 #include <QTextOption>
 #include <QVariant>
 #include <QStringList>
-#include <Layer/ArtifactCloneEffectSupport.hpp>
 #include <algorithm>
 #include <any>
 #include <array>
@@ -66,6 +65,8 @@ module;
 #include <opencv2/opencv.hpp>
 
 module Artifact.Layer.Text;
+
+import Artifact.Layer.CloneEffectSupport;
 
 import Artifact.Layers.Abstract._2D;
 import Artifact.Composition.Abstract;

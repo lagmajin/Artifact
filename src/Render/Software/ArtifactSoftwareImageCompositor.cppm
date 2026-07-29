@@ -4,8 +4,6 @@ module;
 #include <QPainter>
 #include <QColor>
 #include <QTransform>
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
 #include <algorithm>
 #include <cmath>
 #include <opencv2/opencv.hpp>
@@ -395,8 +393,6 @@ float deterministicNoise(const int x, const int y, const int seed)
  return static_cast<float>(v) / 4294967296.0f;
 }
 
-constexpr int kTbbBlendPixelThreshold = 256 * 1024;
-
 void blendBgrWithQPainter(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity, const ArtifactCore::BlendMode mode)
 {
  cv::Mat dstBgra;
@@ -440,8 +436,8 @@ void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity
  srcBgr.convertTo(srcF, CV_32FC3, 1.0 / 255.0);
 
  cv::Mat blended = dstF.clone();
- const auto blendRows = [&](const tbb::blocked_range<int>& rows) {
-  for (int y = rows.begin(); y != rows.end(); ++y) {
+ const auto blendRows = [&](int yBegin, int yEnd) {
+  for (int y = yBegin; y < yEnd; ++y) {
    const cv::Vec3f* dstRow = dstF.ptr<cv::Vec3f>(y);
    const cv::Vec3f* srcRow = srcF.ptr<cv::Vec3f>(y);
    cv::Vec3f* outRow = blended.ptr<cv::Vec3f>(y);
@@ -463,13 +459,7 @@ void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity
   }
  };
 
- const std::size_t pixelCount = static_cast<std::size_t>(dstF.rows) *
-                                static_cast<std::size_t>(dstF.cols);
- if (pixelCount >= kTbbBlendPixelThreshold) {
-  tbb::parallel_for(tbb::blocked_range<int>(0, dstF.rows, 16), blendRows);
- } else {
-  blendRows(tbb::blocked_range<int>(0, dstF.rows));
- }
+ blendRows(0, dstF.rows);
 
  cv::Mat mixed = dstF * (1.0f - a) + blended * a;
  mixed.convertTo(dstBgr, CV_8UC3, 255.0);

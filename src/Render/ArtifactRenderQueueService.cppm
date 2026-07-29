@@ -1,7 +1,4 @@
 ﻿module;
-#include <tbb/parallel_for.h>
-#include <tbb/blocked_range.h>
-#include <tbb/task_arena.h>
 #include <QObject>
 #include <QList>
 #include <QThread>
@@ -949,8 +946,8 @@ namespace Artifact
             const size_t blueSize = blue ? blue->size() : 0u;
             const size_t fallbackSize = fallback ? fallback->size() : 0u;
             const int previewHeight = preview.height();
-            const auto buildPreviewRows = [&](const tbb::blocked_range<int>& rows) {
-                for (int y = rows.begin(); y != rows.end(); ++y) {
+            const auto buildPreviewRows = [&](int yBegin, int yEnd) {
+                for (int y = yBegin; y < yEnd; ++y) {
                     auto* dst = preview.scanLine(y);
                     const int sourceY = std::clamp(
                         y * image.height() / previewHeight, 0, image.height() - 1);
@@ -975,11 +972,9 @@ namespace Artifact
             };
             if (static_cast<std::size_t>(preview.width()) * previewHeight >=
                 256u * 1024u) {
-                tbb::parallel_for(
-                    tbb::blocked_range<int>(0, previewHeight, 16),
-                    buildPreviewRows);
+                buildPreviewRows(0, previewHeight);
             } else {
-                buildPreviewRows(tbb::blocked_range<int>(0, previewHeight));
+                buildPreviewRows(0, previewHeight);
             }
             return preview;
         }
