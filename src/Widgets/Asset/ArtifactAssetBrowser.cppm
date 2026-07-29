@@ -1563,6 +1563,7 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
   bool matchesFileTypeFilter(const QString& fileName) const;
   bool matchesSearchFilter(const QString& fileName) const;
   QIcon generateThumbnail(const QString& filePath);
+  bool isCurrentThumbnail(const QString& filePath) const;
   bool hasCurrentThumbnail(const QString& filePath);
   void cacheThumbnail(const QString& filePath, const QIcon& icon);
   QIcon fileTypeIconFor(const QString& fileName) const;
@@ -2121,11 +2122,15 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
  return defaultFileIcon_;
 }
 
-bool ArtifactAssetBrowser::Impl::hasCurrentThumbnail(const QString& filePath)
+bool ArtifactAssetBrowser::Impl::isCurrentThumbnail(const QString& filePath) const
 {
   if (!thumbnailCache_.contains(filePath)) return false;
-  const QDateTime currentModified = QFileInfo(filePath).lastModified();
-  if (thumbnailCacheModified_.value(filePath) != currentModified) {
+  return thumbnailCacheModified_.value(filePath) == QFileInfo(filePath).lastModified();
+}
+
+bool ArtifactAssetBrowser::Impl::hasCurrentThumbnail(const QString& filePath)
+{
+  if (!isCurrentThumbnail(filePath)) {
     thumbnailCache_.remove(filePath);
     thumbnailCacheModified_.remove(filePath);
     return false;
@@ -2479,7 +2484,7 @@ void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QStr
 QString ArtifactAssetBrowser::Impl::thumbnailDebugStatus(const QString& filePath) const
 {
   std::lock_guard<std::mutex> lock(thumbnailMutex_);
-  if (thumbnailCache_.contains(filePath)) {
+  if (isCurrentThumbnail(filePath)) {
     return QStringLiteral("Ready");
   }
   if (pendingPreviewJobs_.contains(filePath)) {
