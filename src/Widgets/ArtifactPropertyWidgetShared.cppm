@@ -1217,7 +1217,20 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
       defaultValue.isValid();
   row->setShowResetButton(showResetButton);
   if (defaultValue.isValid()) {
-    row->setResetHandler([editor, defaultValue]() {
+    row->setResetHandler([editor, defaultValue, propertyPtr, layer]() {
+      const auto beforeKeyframes = propertyPtr
+                                       ? propertyPtr->getKeyFrames()
+                                       : std::vector<ArtifactCore::KeyFrame>{};
+      if (layer && propertyPtr && !beforeKeyframes.empty()) {
+        if (auto *mgr = UndoManager::instance()) {
+          mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+              layer, propertyPtr->getName(), beforeKeyframes,
+              std::vector<ArtifactCore::KeyFrame>{},
+              QStringLiteral("Reset Property Keyframes")));
+        } else {
+          propertyPtr->clearKeyFrames();
+        }
+      }
       editor->setValueFromVariant(defaultValue);
       editor->commitCurrentValue();
     });
