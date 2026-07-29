@@ -98,7 +98,10 @@ QColor themeColor(const QString &value, const QColor &fallback) {
 }
 
 PropertySliderWidget::PropertySliderWidget(QWidget *parent)
-    : QSlider(Qt::Horizontal, parent) {}
+    : QSlider(Qt::Horizontal, parent) {
+  setAccessibleName(QStringLiteral("Property slider"));
+  setAccessibleDescription(QStringLiteral("Adjust the selected property value"));
+}
 
 void PropertySliderWidget::setDisplayText(QString text) {
   if (displayText_ == text) {
@@ -186,7 +189,10 @@ void PropertySliderWidget::paintEvent(QPaintEvent *event) {
 
 }
 
-PropertyComboBox::PropertyComboBox(QWidget *parent) : QComboBox(parent) {}
+PropertyComboBox::PropertyComboBox(QWidget *parent) : QComboBox(parent) {
+  setAccessibleName(QStringLiteral("Property selector"));
+  setAccessibleDescription(QStringLiteral("Choose a value for the selected property"));
+}
 
 void PropertyComboBox::wheelEvent(QWheelEvent *event) {
   event->ignore();
@@ -194,7 +200,10 @@ void PropertyComboBox::wheelEvent(QWheelEvent *event) {
 
 PropertyCallbackButton::PropertyCallbackButton(const QString &text,
                                                QWidget *parent)
-    : QPushButton(text, parent) {}
+    : QPushButton(text, parent) {
+  setAccessibleName(text.isEmpty() ? QStringLiteral("Property action") : text);
+  setAccessibleDescription(QStringLiteral("Perform the property editor action"));
+}
 
 void PropertyCallbackButton::setCallback(Callback callback) {
   callback_ = std::move(callback);
