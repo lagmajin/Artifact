@@ -2614,6 +2614,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    const int sourceCount =
        (directoryModel_ && directoryModel_->indexFromGuid(QStringLiteral("assets")).isValid() ? 1 : 0) +
        (directoryModel_ && directoryModel_->indexFromGuid(QStringLiteral("packages")).isValid() ? 1 : 0);
+   const int visibleCount = assetModel_ ? assetModel_->rowCount() : 0;
    QString statusText = QStringLiteral("All");
    if (currentStatusFilter_ == QStringLiteral("imported")) {
     statusText = QStringLiteral("Imported");
@@ -2634,7 +2635,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
        ? QString()
        : QStringLiteral("  •  Search: \"%1\"").arg(searchText);
    leftHubSummaryLabel_->setText(
-       QStringLiteral("Favorites: %1  •  Sources: %2  •  Type: %3  •  Status: %4%5")
+       QStringLiteral("Showing: %1  •  Favorites: %2  •  Sources: %3  •  Type: %4  •  Status: %5%6")
+           .arg(visibleCount)
            .arg(favoriteCount)
            .arg(sourceCount)
            .arg(typeText)
