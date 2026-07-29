@@ -15958,6 +15958,54 @@ void CompositionRenderController::zoomFitSelection() {
   markRenderDirty();
 }
 
+void CompositionRenderController::zoomFitVisible() {
+  if (!impl_->renderer_) {
+    return;
+  }
+  const auto composition = impl_->previewPipeline_.composition();
+  if (!composition) {
+    return;
+  }
+
+  QRectF bounds;
+  bool hasBounds = false;
+  for (const auto& layer : composition->allLayer()) {
+    if (!layer || !layer->isVisible()) {
+      continue;
+    }
+    const QRectF layerBounds = layer->transformedBoundingBox().normalized();
+    if (!layerBounds.isValid() || layerBounds.width() <= 0.0 ||
+        layerBounds.height() <= 0.0) {
+      continue;
+    }
+    bounds = hasBounds ? bounds.united(layerBounds) : layerBounds;
+    hasBounds = true;
+  }
+  if (!hasBounds || impl_->hostWidth_ <= 0 || impl_->hostHeight_ <= 0) {
+    return;
+  }
+
+  impl_->pushViewHistory();
+  const float margin = 0.05f *
+      static_cast<float>(std::min(impl_->hostWidth_, impl_->hostHeight_));
+  const float availableWidth = std::max(
+      1.0f, static_cast<float>(impl_->hostWidth_) - 2.0f * margin);
+  const float availableHeight = std::max(
+      1.0f, static_cast<float>(impl_->hostHeight_) - 2.0f * margin);
+  const float zoom = std::clamp(
+      std::min(availableWidth / static_cast<float>(bounds.width()),
+               availableHeight / static_cast<float>(bounds.height())),
+      0.05f, 64.0f);
+  impl_->renderer_->setZoom(zoom);
+  impl_->renderer_->setPan(
+      static_cast<float>(impl_->hostWidth_) * 0.5f -
+          static_cast<float>(bounds.center().x()) * zoom,
+      static_cast<float>(impl_->hostHeight_) * 0.5f -
+          static_cast<float>(bounds.center().y()) * zoom);
+  impl_->invalidateBaseComposite();
+  markRenderDirty();
+}
+
 void CompositionRenderController::zoomFill() {
 
   if (impl_->renderer_) {

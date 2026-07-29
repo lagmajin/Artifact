@@ -1553,6 +1553,9 @@ public:
     add(QStringLiteral("View: Zoom Fit Selection"), [this]() {
       if (controller_) controller_->zoomFitSelection();
     });
+    add(QStringLiteral("View: Zoom Fit Visible"), [this]() {
+      if (controller_) controller_->zoomFitVisible();
+    });
     add(QStringLiteral("View: Zoom 100%"), [this]() {
       if (controller_) controller_->zoom100();
     });
@@ -3703,6 +3706,9 @@ public:
       add(QStringLiteral("Zoom Fit Selection"), [this]() {
         if (controller_) controller_->zoomFitSelection();
       }, hasSelectedLayer);
+      add(QStringLiteral("Zoom Fit Visible"), [this]() {
+        if (controller_) controller_->zoomFitVisible();
+      });
       add(QStringLiteral("Zoom 100%"), [this]() {
         if (controller_) controller_->zoom100();
       });

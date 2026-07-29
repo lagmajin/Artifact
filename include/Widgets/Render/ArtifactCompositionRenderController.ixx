@@ -258,6 +258,7 @@ void zoomOutAt(const QPointF& viewportPos);
 void zoomAtFactor(const QPointF& viewportPos, float factor);
 void zoomFit();
 void zoomFitSelection();
+void zoomFitVisible();
 void zoomFill();
   void zoom100();
   void focusSelectedLayer();
