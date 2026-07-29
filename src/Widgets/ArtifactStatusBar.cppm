@@ -74,9 +74,12 @@ namespace Artifact
   const QColor backgroundColor = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
   const QColor surfaceColor = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
   const QColor textColor = QColor(ArtifactCore::currentDCCTheme().textColor);
-  const QColor mutedTextColor = textColor.darker(130);
-  const QColor accentColor = QColor(ArtifactCore::currentDCCTheme().accentColor);
-  const QColor dangerColor = QColor(QStringLiteral("#E91E63"));
+  const QColor mutedTextColor = Accessibility::adjustColorForDeficiency(
+      textColor.darker(130));
+  const QColor accentColor = Accessibility::adjustColorForDeficiency(
+      QColor(ArtifactCore::currentDCCTheme().accentColor));
+  const QColor dangerColor = Accessibility::adjustColorForDeficiency(
+      QColor(QStringLiteral("#E91E63")));
   const QColor borderColor = QColor(ArtifactCore::currentDCCTheme().borderColor);
 
   setSizeGripEnabled(true);
