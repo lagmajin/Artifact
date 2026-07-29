@@ -26,6 +26,7 @@ module;
 #include <QDropEvent>
 #include <QMimeData>
 #include <QSortFilterProxyModel>
+#include <QSettings>
 #include <QDrag>
 #include <QButtonGroup>
 #include <QPixmap>
@@ -3162,6 +3163,15 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    sortByCombo->setToolTip(QStringLiteral("Sort visible assets"));
    assetToolBar->addWidget(sortByCombo);
 
+   QSettings sortSettings;
+   const QString savedSortKey = sortSettings.value(
+       QStringLiteral("AssetBrowser/SortKey"), QStringLiteral("date")).toString();
+   const int savedSortIndex = sortByCombo->findData(savedSortKey);
+   if (savedSortIndex >= 0) {
+    sortByCombo->setCurrentIndex(savedSortIndex);
+    impl_->currentSortBy_ = savedSortKey;
+   }
+
    // Sort order toggle button
    auto* sortOrderBtn = new QToolButton();
    sortOrderBtn->setText("\u2191"); // Up arrow
@@ -3171,6 +3181,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    sortOrderBtn->setFixedWidth(30);
    sortOrderBtn->setToolTip("Sort Order: Ascending/Descending");
    assetToolBar->addWidget(sortOrderBtn);
+   sortOrderBtn->setChecked(sortSettings.value(
+       QStringLiteral("AssetBrowser/SortAscending"), false).toBool());
+   impl_->sortAscending_ = sortOrderBtn->isChecked();
 
    connect(statusGroup, &QButtonGroup::idClicked, this, [this](int id) {
     switch (id) {
@@ -3186,11 +3199,15 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
    connect(sortByCombo, &QComboBox::currentIndexChanged, this, [this, sortByCombo](int) {
     impl_->currentSortBy_ = sortByCombo->currentData().toString();
+    QSettings settings;
+    settings.setValue(QStringLiteral("AssetBrowser/SortKey"), impl_->currentSortBy_);
     impl_->applyFilters();
    });
 
    connect(sortOrderBtn, &QToolButton::toggled, this, [this, sortOrderBtn](bool checked) {
     impl_->sortAscending_ = checked;
+    QSettings settings;
+    settings.setValue(QStringLiteral("AssetBrowser/SortAscending"), checked);
     sortOrderBtn->setText(checked ? "\u2191" : "\u2193");
     impl_->applyFilters();
    });
