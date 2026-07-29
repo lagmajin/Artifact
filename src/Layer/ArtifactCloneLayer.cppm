@@ -215,6 +215,24 @@ QJsonObject ArtifactCloneLayer::toJson() const {
     writeStage(QStringLiteral("clone.transform1"), settings.transform1);
     writeStage(QStringLiteral("clone.transform2"), settings.transform2);
     writeStage(QStringLiteral("clone.transform3"), settings.transform3);
+    if (!impl_->effectors_.empty()) {
+        if (const auto transformEffector =
+                ArtifactCore::dynamicPointerCast<TransformCloneEffector>(
+                    impl_->effectors_.front())) {
+            obj["clone.effector.strength"] = transformEffector->strength;
+            writeVector(QStringLiteral("clone.effector.position"),
+                        transformEffector->positionOffset);
+            writeVector(QStringLiteral("clone.effector.rotation"),
+                        transformEffector->rotationOffset);
+            writeVector(QStringLiteral("clone.effector.scale"),
+                        transformEffector->scaleOffset);
+            obj["clone.effector.useColor"] = transformEffector->useColor;
+            obj["clone.effector.color.r"] = transformEffector->colorOffset.redF();
+            obj["clone.effector.color.g"] = transformEffector->colorOffset.greenF();
+            obj["clone.effector.color.b"] = transformEffector->colorOffset.blueF();
+            obj["clone.effector.color.a"] = transformEffector->colorOffset.alphaF();
+        }
+    }
     return obj;
 }
 
@@ -261,6 +279,30 @@ void ArtifactCloneLayer::fromJsonProperties(const QJsonObject& obj) {
     readStage(QStringLiteral("clone.transform1"), settings.transform1);
     readStage(QStringLiteral("clone.transform2"), settings.transform2);
     readStage(QStringLiteral("clone.transform3"), settings.transform3);
+    if (!impl_->effectors_.empty()) {
+        if (const auto transformEffector =
+                ArtifactCore::dynamicPointerCast<TransformCloneEffector>(
+                    impl_->effectors_.front())) {
+            if (obj.contains("clone.effector.strength"))
+                transformEffector->strength = std::clamp(static_cast<float>(obj.value("clone.effector.strength").toDouble(transformEffector->strength)), 0.0f, 1.0f);
+            readVector(QStringLiteral("clone.effector.position"), transformEffector->positionOffset);
+            readVector(QStringLiteral("clone.effector.rotation"), transformEffector->rotationOffset);
+            readVector(QStringLiteral("clone.effector.scale"), transformEffector->scaleOffset);
+            if (obj.contains("clone.effector.useColor"))
+                transformEffector->useColor = obj.value("clone.effector.useColor").toBool(transformEffector->useColor);
+            const auto colorComponent = [&obj](const QString& key, float fallback) {
+                return static_cast<float>(obj.value(key).toDouble(fallback));
+            };
+            if (obj.contains("clone.effector.color.a")) {
+                QColor color;
+                color.setRgbF(colorComponent("clone.effector.color.r", transformEffector->colorOffset.redF()),
+                               colorComponent("clone.effector.color.g", transformEffector->colorOffset.greenF()),
+                               colorComponent("clone.effector.color.b", transformEffector->colorOffset.blueF()),
+                               colorComponent("clone.effector.color.a", transformEffector->colorOffset.alphaF()));
+                transformEffector->colorOffset = color;
+            }
+        }
+    }
     if (obj.contains("clone.sourceLayerId")) {
         impl_->settings_.sourceLayerId = LayerID(obj.value("clone.sourceLayerId").toString());
     }
