@@ -263,6 +263,9 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   impl_->cacheRangeVisible_ = visible;
   impl_->cacheRangeStart_ = clampedStart;
   impl_->cacheRangeEnd_ = clampedEnd;
+  setAccessibleDescription(visible
+      ? QStringLiteral("Scrub the timeline and review the cached frame range.")
+      : QStringLiteral("Scrub the timeline. No RAM preview cache range is available."));
   if (changed) {
    update();
   }
@@ -272,6 +275,11 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
  {
   if (impl_->cacheBitmap_ != bitmap) {
    impl_->cacheBitmap_ = bitmap;
+   const bool hasCache = std::any_of(bitmap.begin(), bitmap.end(),
+                                     [](const bool cached) { return cached; });
+   setAccessibleDescription(hasCache
+       ? QStringLiteral("Scrub the timeline and review cached frame ranges.")
+       : QStringLiteral("Scrub the timeline. No cached frames are available."));
    update();
   }
  }
@@ -290,6 +298,17 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   impl_->cacheBitmap_ = readyBitmap;
   impl_->failedBitmap_ = failedBitmap;
   impl_->onDiskBitmap_ = onDiskBitmap;
+  const bool hasCache = std::any_of(readyBitmap.begin(), readyBitmap.end(),
+                                    [](const bool cached) { return cached; }) ||
+                        std::any_of(onDiskBitmap.begin(), onDiskBitmap.end(),
+                                    [](const bool cached) { return cached; });
+  const bool hasFailures = std::any_of(failedBitmap.begin(), failedBitmap.end(),
+                                       [](const bool failed) { return failed; });
+  setAccessibleDescription(
+      hasCache ? QStringLiteral("Scrub the timeline and review cached frame ranges.")
+               : hasFailures
+                   ? QStringLiteral("Scrub the timeline. Cached frame generation has failures.")
+                   : QStringLiteral("Scrub the timeline. No cache information is available."));
   update();
  }
 
