@@ -685,13 +685,23 @@ ArtifactNumericEditorLayoutMode g_numericEditorLayoutMode =
 
 // ✅ プロパティリセットボタンを表示するかどうかの設定
 bool g_showPropertyResetButtons = true;
+bool g_showPropertyResetButtonsLoaded = false;
 
 bool artifactShouldShowPropertyResetButtonsImpl() {
+  if (!g_showPropertyResetButtonsLoaded) {
+    g_showPropertyResetButtons = QSettings().value(
+        QStringLiteral("ArtifactStudio/PropertyEditor/ShowResetButtons"),
+        g_showPropertyResetButtons).toBool();
+    g_showPropertyResetButtonsLoaded = true;
+  }
   return g_showPropertyResetButtons;
 }
 
 void artifactSetShowPropertyResetButtonsImpl(bool show) {
   g_showPropertyResetButtons = show;
+  g_showPropertyResetButtonsLoaded = true;
+  QSettings().setValue(
+      QStringLiteral("ArtifactStudio/PropertyEditor/ShowResetButtons"), show);
 }
 
 } // namespace detail
