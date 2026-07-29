@@ -251,6 +251,13 @@ namespace Artifact
     void ArtifactAudioScrubController::startScrub()
     {
         if (!impl_->enabled) return;
+        // A new drag must never replay audio queued by the previous drag.
+        // stopScrub() normally clears this buffer, but clearing here as well
+        // makes restart/re-entry safe when the caller starts without a stop.
+        if (impl_->audioRenderer_) {
+            impl_->audioRenderer_->clearBuffer();
+        }
+        impl_->deviceOpenFailed_ = false;
         impl_->scrubActive = true;
         impl_->lastFrame_ = -1;
         impl_->pendingFrame_ = -1;
