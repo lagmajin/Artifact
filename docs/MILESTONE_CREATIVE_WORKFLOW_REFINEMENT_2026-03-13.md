@@ -40,6 +40,12 @@ Date: 2026-03-13
 - ✅ The same filter now narrows the effect rack by effect ID, display name, or editable property name, and reports when no effect matches.
 - ⏳ Component surfaces and runtime verification remain incomplete.
 
+### M-CW-5 Implementation Loop
+
+- ✅ Effect racks accept internal drag-and-drop and translate the drop distance into repeated existing move operations.
+- ✅ Reordering is applied through `moveEffectById()`, preserving composition/layer ownership and the existing Undo path; the visual list is not independently reordered.
+- ⏳ Multi-selection drag semantics and runtime verification remain incomplete.
+
 ### M-CW-2 Inspector-Property Sync
 - Implement a signal-slot connection such that selecting an effect in the `ArtifactInspectorWidget` rack automatically:
   - Calls `ArtifactPropertyWidget::setFocusedEffectId()`.

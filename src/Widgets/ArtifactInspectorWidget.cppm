@@ -11,6 +11,7 @@ module;
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDropEvent>
 #include <QDoubleSpinBox>
 #include <QFont>
 #include <QFontMetrics>
@@ -2500,6 +2501,8 @@ class EffectRackSurface final : public QWidget {
 
 class EffectRackList final : public QListWidget {
  public:
+  using ReorderHandler = std::function<void(const QString&, int)>;
+
   explicit EffectRackList(QWidget* parent = nullptr) : QListWidget(parent) {
     setAttribute(Qt::WA_Hover, true);
     if (viewport()) {
@@ -2507,7 +2510,29 @@ class EffectRackList final : public QListWidget {
     }
   }
 
+  void setReorderHandler(ReorderHandler handler) {
+    reorderHandler_ = std::move(handler);
+  }
+
  protected:
+  void dropEvent(QDropEvent* event) override {
+    if (!event || event->source() != this || !reorderHandler_) {
+      QListWidget::dropEvent(event);
+      return;
+    }
+    const int sourceRow = currentRow();
+    const int targetRow = qBound(
+        0, indexAt(event->position().toPoint()).row(), qMax(0, count() - 1));
+    auto* sourceItem = currentItem();
+    if (!sourceItem || sourceRow == targetRow) {
+      event->ignore();
+      return;
+    }
+    reorderHandler_(sourceItem->data(Qt::UserRole).toString(),
+                    targetRow - sourceRow);
+    event->acceptProposedAction();
+  }
+
   void paintEvent(QPaintEvent* event) override {
     QPainter painter(viewport());
     painter.setRenderHint(QPainter::Antialiasing, true);
@@ -2555,6 +2580,9 @@ class EffectRackList final : public QListWidget {
         QRectF(viewport()->rect()).adjusted(0.5, 0.5, -0.5, -0.5),
         3.0, 3.0);
   }
+
+ private:
+  ReorderHandler reorderHandler_;
 };
 
 class InspectorActionMenu final : public QMenu {
@@ -7459,6 +7487,30 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     auto rackLayout = new QVBoxLayout();
 
     impl_->racks[i].listWidget = new EffectRackList();
+    impl_->racks[i].listWidget->setDragEnabled(true);
+    impl_->racks[i].listWidget->setAcceptDrops(true);
+    impl_->racks[i].listWidget->setDropIndicatorShown(true);
+    impl_->racks[i].listWidget->setDragDropMode(QAbstractItemView::DragDrop);
+    impl_->racks[i].listWidget->setDefaultDropAction(Qt::MoveAction);
+    impl_->racks[i].listWidget->setReorderHandler(
+        [this](const QString &effectId, int distance) {
+          if (effectId.trimmed().isEmpty() || distance == 0) {
+            return;
+          }
+          const int direction = distance > 0 ? 1 : -1;
+          const int steps = std::abs(distance);
+          bool moved = false;
+          for (int step = 0; step < steps; ++step) {
+            if (!impl_->moveEffectById(effectId, direction)) {
+              break;
+            }
+            moved = true;
+          }
+          if (moved) {
+            impl_->updateEffectsList();
+            impl_->syncEffectPropertyWidget();
+          }
+        });
     impl_->racks[i].listWidget->setMinimumHeight(38);
     impl_->racks[i].listWidget->setMaximumHeight(132);
     impl_->racks[i].listWidget->setUniformItemSizes(true);
