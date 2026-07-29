@@ -2501,7 +2501,7 @@ class EffectRackSurface final : public QWidget {
 
 class EffectRackList final : public QListWidget {
  public:
-  using ReorderHandler = std::function<void(const QString&, int)>;
+  using ReorderHandler = std::function<void(const QStringList&, int)>;
 
   explicit EffectRackList(QWidget* parent = nullptr) : QListWidget(parent) {
     setAttribute(Qt::WA_Hover, true);
@@ -2528,8 +2528,22 @@ class EffectRackList final : public QListWidget {
       event->ignore();
       return;
     }
-    reorderHandler_(sourceItem->data(Qt::UserRole).toString(),
-                    targetRow - sourceRow);
+    QStringList selectedEffectIds;
+    const auto selected = selectedItems();
+    for (auto *item : selected) {
+      if (!item) {
+        continue;
+      }
+      const QString effectId = item->data(Qt::UserRole).toString().trimmed();
+      if (!effectId.isEmpty()) {
+        selectedEffectIds.push_back(effectId);
+      }
+    }
+    if (selectedEffectIds.isEmpty()) {
+      selectedEffectIds.push_back(
+          sourceItem->data(Qt::UserRole).toString().trimmed());
+    }
+    reorderHandler_(selectedEffectIds, targetRow - sourceRow);
     event->acceptProposedAction();
   }
 
@@ -7493,18 +7507,33 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     impl_->racks[i].listWidget->setDragDropMode(QAbstractItemView::DragDrop);
     impl_->racks[i].listWidget->setDefaultDropAction(Qt::MoveAction);
     impl_->racks[i].listWidget->setReorderHandler(
-        [this](const QString &effectId, int distance) {
-          if (effectId.trimmed().isEmpty() || distance == 0) {
+        [this](const QStringList &effectIds, int distance) {
+          if (effectIds.isEmpty() || distance == 0) {
             return;
           }
           const int direction = distance > 0 ? 1 : -1;
           const int steps = std::abs(distance);
           bool moved = false;
           for (int step = 0; step < steps; ++step) {
-            if (!impl_->moveEffectById(effectId, direction)) {
+            // Move the lower rows first when moving down and the upper rows
+            // first when moving up so a multi-selection keeps its order.
+            const int begin = direction > 0 ? effectIds.size() - 1 : 0;
+            const int end = direction > 0 ? -1 : effectIds.size();
+            const int increment = direction > 0 ? -1 : 1;
+            bool movedThisStep = false;
+            for (int index = begin; index != end; index += increment) {
+              const QString effectId = effectIds.at(index).trimmed();
+              if (effectId.isEmpty()) {
+                continue;
+              }
+              if (impl_->moveEffectById(effectId, direction)) {
+                moved = true;
+                movedThisStep = true;
+              }
+            }
+            if (!movedThisStep) {
               break;
             }
-            moved = true;
           }
           if (moved) {
             impl_->updateEffectsList();
