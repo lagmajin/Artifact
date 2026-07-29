@@ -22,12 +22,16 @@ ArtifactDashPatternPropertyEditor::ArtifactDashPatternPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyDashPatternEditor"));
+  setAccessibleName(QStringLiteral("Dash pattern property editor"));
+  setAccessibleDescription(QStringLiteral("Choose or enter the selected stroke dash pattern"));
 
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
 
   presetCombo_ = new PropertyComboBox(this);
+  presetCombo_->setAccessibleName(QStringLiteral("Dash pattern preset"));
+  presetCombo_->setAccessibleDescription(QStringLiteral("Choose a solid, dotted, dashed, or custom dash pattern"));
   presetCombo_->addItem(QStringLiteral("Solid"), QString());
   presetCombo_->addItem(QStringLiteral("Dotted"), QStringLiteral("2,4"));
   presetCombo_->addItem(QStringLiteral("Dashed"), QStringLiteral("6,3"));
@@ -38,6 +42,8 @@ ArtifactDashPatternPropertyEditor::ArtifactDashPatternPropertyEditor(
   applyPropertyFieldPalette(presetCombo_, true);
 
   customEdit_ = new QLineEdit(this);
+  customEdit_->setAccessibleName(QStringLiteral("Custom dash pattern"));
+  customEdit_->setAccessibleDescription(QStringLiteral("Enter comma-separated dash and gap lengths"));
   customEdit_->setPlaceholderText(QStringLiteral("e.g. 4,2"));
   customEdit_->setMinimumHeight(22);
   customEdit_->setEnabled(false);
