@@ -6997,24 +6997,35 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
     impl_->compositionNameEdit = new QLineEdit(impl_->compositionEditorPanel);
     impl_->compositionNameEdit->setObjectName(QStringLiteral("projectCompositionNameEdit"));
+    impl_->compositionNameEdit->setAccessibleName(QStringLiteral("Composition name"));
+    impl_->compositionNameEdit->setAccessibleDescription(
+        QStringLiteral("Edit the selected composition name."));
     impl_->compositionWidthSpin = new QSpinBox(impl_->compositionEditorPanel);
     impl_->compositionWidthSpin->setObjectName(QStringLiteral("projectCompositionWidthSpin"));
+    impl_->compositionWidthSpin->setAccessibleName(QStringLiteral("Composition width"));
     impl_->compositionWidthSpin->setRange(1, 32768);
     impl_->compositionHeightSpin = new QSpinBox(impl_->compositionEditorPanel);
     impl_->compositionHeightSpin->setObjectName(QStringLiteral("projectCompositionHeightSpin"));
+    impl_->compositionHeightSpin->setAccessibleName(QStringLiteral("Composition height"));
     impl_->compositionHeightSpin->setRange(1, 32768);
     impl_->compositionFrameRateSpin = new QDoubleSpinBox(impl_->compositionEditorPanel);
     impl_->compositionFrameRateSpin->setObjectName(QStringLiteral("projectCompositionFrameRateSpin"));
+    impl_->compositionFrameRateSpin->setAccessibleName(QStringLiteral("Composition frame rate"));
     impl_->compositionFrameRateSpin->setRange(1.0, 240.0);
     impl_->compositionFrameRateSpin->setDecimals(3);
     impl_->compositionFrameRateSpin->setSingleStep(0.5);
     impl_->compositionStartFrameSpin = new QSpinBox(impl_->compositionEditorPanel);
     impl_->compositionStartFrameSpin->setObjectName(QStringLiteral("projectCompositionStartFrameSpin"));
+    impl_->compositionStartFrameSpin->setAccessibleName(QStringLiteral("Composition start frame"));
     impl_->compositionStartFrameSpin->setRange(-1000000, 1000000);
     impl_->compositionEndFrameSpin = new QSpinBox(impl_->compositionEditorPanel);
     impl_->compositionEndFrameSpin->setObjectName(QStringLiteral("projectCompositionEndFrameSpin"));
+    impl_->compositionEndFrameSpin->setAccessibleName(QStringLiteral("Composition end frame"));
     impl_->compositionEndFrameSpin->setRange(-1000000, 1000000);
     impl_->compositionBackgroundButton = new CompositionBackgroundColorButton(QColor(0, 0, 0), impl_->compositionEditorPanel);
+    impl_->compositionBackgroundButton->setAccessibleName(QStringLiteral("Composition background color"));
+    impl_->compositionBackgroundButton->setAccessibleDescription(
+        QStringLiteral("Choose the selected composition background color."));
 
     auto* sizeRow = new QWidget(impl_->compositionEditorPanel);
     sizeRow->setObjectName(QStringLiteral("projectCompositionSizeRow"));
@@ -7047,9 +7058,11 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     compositionActionRow->setSpacing(6);
     impl_->compositionApplyButton = new QPushButton(QStringLiteral("Apply Settings"), impl_->compositionEditorPanel);
     impl_->compositionApplyButton->setObjectName(QStringLiteral("projectCompositionApplyButton"));
+    impl_->compositionApplyButton->setAccessibleName(QStringLiteral("Apply composition settings"));
     impl_->compositionApplyFrameRateButton = new QPushButton(
         QStringLiteral("Apply FPS to Selection"), impl_->compositionEditorPanel);
     impl_->compositionApplyFrameRateButton->setObjectName(QStringLiteral("projectCompositionApplyFrameRateButton"));
+    impl_->compositionApplyFrameRateButton->setAccessibleName(QStringLiteral("Apply frame rate to selection"));
     impl_->compositionApplyButton->setToolTip(
         QStringLiteral("Apply the inline composition settings to the selected composition."));
     impl_->compositionApplyFrameRateButton->setToolTip(
