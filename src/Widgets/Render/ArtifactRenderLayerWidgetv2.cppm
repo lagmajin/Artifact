@@ -5548,7 +5548,11 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
    break;
  }
 
- QAction* chosen = bgMenu.exec(event->globalPos());
+ int menuX = event->globalPos().x();
+ int menuY = event->globalPos().y();
+ Accessibility::adjustContextMenuPosition(menuX, menuY,
+                                          bgMenu.sizeHint().width());
+ QAction* chosen = bgMenu.exec(QPoint(menuX, menuY));
  if (!chosen) {
   event->accept();
   return;
