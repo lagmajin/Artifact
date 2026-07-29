@@ -267,6 +267,8 @@ AudioChannelStripWidget::AudioChannelStripWidget(ArtifactCore::SharedPtr<Artifac
     QSlider* panSlider = new QSlider(Qt::Horizontal, this);
     panSlider->setRange(-100, 100);
     panSlider->setValue(static_cast<int>(bus->getPan() * 100));
+    panSlider->setAccessibleName(QStringLiteral("Pan: %1").arg(busName));
+    panSlider->setAccessibleDescription(QStringLiteral("Adjust stereo pan for %1").arg(busName));
     connect(panSlider, &QSlider::valueChanged, this, [this](int val) {
         bus_->setPan(val / 100.0f);
     });
@@ -279,6 +281,8 @@ AudioChannelStripWidget::AudioChannelStripWidget(ArtifactCore::SharedPtr<Artifac
     QSlider* fader = new QSlider(Qt::Vertical, this);
     fader->setRange(-600, 120); // -60dB to +12dB (0.1dB step)
     fader->setValue(static_cast<int>(bus->getVolume() * 10));
+    fader->setAccessibleName(QStringLiteral("Volume: %1").arg(busName));
+    fader->setAccessibleDescription(QStringLiteral("Adjust volume for %1 in decibels").arg(busName));
     connect(fader, &QSlider::valueChanged, this, [this](int val) {
         bus_->setVolume(val / 10.0f);
     });
@@ -292,6 +296,8 @@ AudioChannelStripWidget::AudioChannelStripWidget(ArtifactCore::SharedPtr<Artifac
     muteBtn->setCheckable(true);
     muteBtn->setFixedSize(28, 28);
     muteBtn->setFlat(true);
+    muteBtn->setAccessibleName(QStringLiteral("Mute: %1").arg(busName));
+    muteBtn->setAccessibleDescription(QStringLiteral("Mute or unmute %1").arg(busName));
     connect(muteBtn, &QPushButton::toggled, this, [this](bool checked) {
         bus_->setMute(checked);
     });
@@ -300,6 +306,8 @@ AudioChannelStripWidget::AudioChannelStripWidget(ArtifactCore::SharedPtr<Artifac
     soloBtn->setCheckable(true);
     soloBtn->setFixedSize(28, 28);
     soloBtn->setFlat(true);
+    soloBtn->setAccessibleName(QStringLiteral("Solo: %1").arg(busName));
+    soloBtn->setAccessibleDescription(QStringLiteral("Solo or unsolo %1").arg(busName));
     connect(soloBtn, &QPushButton::toggled, this, [this](bool checked) {
         bus_->setSolo(checked);
     });
