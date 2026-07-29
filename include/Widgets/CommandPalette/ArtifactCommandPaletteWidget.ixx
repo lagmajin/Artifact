@@ -47,10 +47,9 @@ public:
     // ---- MRU (Most Recently Used) ---------------------------------------
     // The palette keeps an in-memory MRU list of action ids. The list is
     // boosted during scoring (recently used items float to the top) and is
-    // mutated whenever an action is executed. Persistence to / from the
-    // project is exposed as JSON helpers so that a future cycle can wire
-    // them through ArtifactProject::setExtensionData() / extensionData()
-    // without adding any signal/slot connection here.
+    // mutated whenever an action is executed. The list is persisted in the
+    // application settings; JSON helpers remain available for project-level
+    // persistence without adding any signal/slot connection here.
     static void recordMruAction(const QString& actionId);
     static int mruScoreFor(const QString& actionId);
     static QJsonObject mruAsJson();

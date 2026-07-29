@@ -11,6 +11,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QPointer>
+#include <QSettings>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -395,15 +396,18 @@ void ArtifactCommandPaletteWidget::bootDummyCommandPaletteActions()
 
 // ---- MRU implementation -------------------------------------------------
 //
-// Static, in-memory MRU. Persistence (QStandardPaths / project extension
-// data) is intentionally out of scope for this cycle: the JSON helpers
-// below expose a stable surface that a later cycle can wire through
-// ArtifactProject::setExtensionData() without touching the palette itself.
+// Static MRU storage backed by application settings. The JSON helpers below
+// remain available for project-level persistence without touching the palette
+// event wiring.
 
 namespace {
 QStringList &mruStorage()
 {
-    static QStringList sList;
+    static QStringList sList = [] {
+        QSettings settings;
+        return settings.value(QStringLiteral("CommandPalette/MruActions"))
+            .toStringList();
+    }();
     return sList;
 }
 
@@ -428,6 +432,8 @@ void ArtifactCommandPaletteWidget::recordMruAction(const QString& actionId)
     while (list.size() > kMruMaxEntries) {
         list.removeLast();
     }
+    QSettings settings;
+    settings.setValue(QStringLiteral("CommandPalette/MruActions"), list);
 }
 
 int ArtifactCommandPaletteWidget::mruScoreFor(const QString& actionId)
@@ -468,6 +474,8 @@ void ArtifactCommandPaletteWidget::loadMruFromJson(const QJsonObject &data)
             break;
         }
     }
+    QSettings settings;
+    settings.setValue(QStringLiteral("CommandPalette/MruActions"), list);
 }
 
 } // namespace Artifact
