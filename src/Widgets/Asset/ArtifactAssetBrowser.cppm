@@ -3372,10 +3372,15 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   leftHubCard->setLayout(leftHubLayout);
 
   auto assetModel = impl_->assetModel_ = new AssetMenuModel(this);
-  auto fileView = impl_->fileView_ = new AssetFileListView();
+ auto fileView = impl_->fileView_ = new AssetFileListView();
   fileView->setModel(assetModel);
   fileView->setItemDelegate(new AssetCardDelegate(fileView));
   impl_->currentDirectoryPath_ = desktopPath;  // Set initial directory
+  const QString savedDirectoryPath = QSettings().value(
+      QStringLiteral("AssetBrowser/CurrentDirectory")).toString();
+  if (!savedDirectoryPath.isEmpty() && QDir(savedDirectoryPath).exists()) {
+    impl_->currentDirectoryPath_ = savedDirectoryPath;
+  }
   fileView->setResizeMode(QListView::Adjust);
   fileView->setTextElideMode(Qt::ElideRight);
   fileView->setUniformItemSizes(true);  // Optimize rendering with uniform sizes
@@ -4027,6 +4032,8 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   {
   if (folderPath.isEmpty() || !QDir(folderPath).exists()) return;
   impl_->currentDirectoryPath_ = folderPath;
+  QSettings settings;
+  settings.setValue(QStringLiteral("AssetBrowser/CurrentDirectory"), folderPath);
   if (impl_->directoryModel_) {
    impl_->directoryModel_->addRecentPath(folderPath, QFileInfo(folderPath).fileName());
   }
