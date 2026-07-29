@@ -144,6 +144,42 @@ static QPoint accessibilityMenuPosition(const QMenu &menu,
 
 namespace {
 
+int naturalAssetNameCompare(const QString& lhs, const QString& rhs) {
+ int left = 0;
+ int right = 0;
+ while (left < lhs.size() && right < rhs.size()) {
+  const QChar lc = lhs.at(left);
+  const QChar rc = rhs.at(right);
+  if (lc.isDigit() && rc.isDigit()) {
+   const int leftStart = left;
+   const int rightStart = right;
+   while (left < lhs.size() && lhs.at(left).isDigit()) ++left;
+   while (right < rhs.size() && rhs.at(right).isDigit()) ++right;
+   int leftSignificant = leftStart;
+   int rightSignificant = rightStart;
+   while (leftSignificant < left && lhs.at(leftSignificant) == QChar('0')) ++leftSignificant;
+   while (rightSignificant < right && rhs.at(rightSignificant) == QChar('0')) ++rightSignificant;
+   const int leftDigits = left - leftSignificant;
+   const int rightDigits = right - rightSignificant;
+   if (leftDigits != rightDigits) return leftDigits < rightDigits ? -1 : 1;
+   const int digitCompare = lhs.mid(leftSignificant, leftDigits)
+                                .compare(rhs.mid(rightSignificant, rightDigits),
+                                         Qt::CaseInsensitive);
+   if (digitCompare != 0) return digitCompare < 0 ? -1 : 1;
+   const int leftRun = left - leftStart;
+   const int rightRun = right - rightStart;
+   if (leftRun != rightRun) return leftRun < rightRun ? -1 : 1;
+   continue;
+  }
+  const int charCompare = QString(lc).compare(QString(rc), Qt::CaseInsensitive);
+  if (charCompare != 0) return charCompare < 0 ? -1 : 1;
+  ++left;
+  ++right;
+ }
+ if (left == lhs.size() && right == rhs.size()) return 0;
+ return left == lhs.size() ? -1 : 1;
+}
+
 QString assetThumbnailDiskPath(const QFileInfo& fileInfo) {
   if (!fileInfo.exists() || !fileInfo.isFile()) return {};
   const QString cacheRoot = QStandardPaths::writableLocation(
@@ -2918,7 +2954,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     }
 
     if (currentSortBy_ == "name") {
-     int result = a.name.toQString().compare(b.name.toQString(), Qt::CaseInsensitive);
+     int result = naturalAssetNameCompare(a.name.toQString(), b.name.toQString());
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "date") {
      QFileInfo infoA(a.path.toQString());
