@@ -3545,6 +3545,55 @@ const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() cons
        }
      }
    }
+   if (style.join == PolylineJoin::Miter || style.join == PolylineJoin::Bevel) {
+     const float halfThickness = style.thickness * 0.5f;
+     const std::size_t first = style.closed ? 0 : 1;
+     const std::size_t last = style.closed ? points.size() : points.size() - 1;
+     for (std::size_t i = first; i < last; ++i) {
+       const auto previous = pointAt(i + points.size() - 1);
+       const auto current = pointAt(i);
+       const auto next = pointAt(i + 1);
+       const float ax = current.x - previous.x;
+       const float ay = current.y - previous.y;
+       const float bx = next.x - current.x;
+       const float by = next.y - current.y;
+       const float aLength = std::sqrt(ax * ax + ay * ay);
+       const float bLength = std::sqrt(bx * bx + by * by);
+       if (aLength <= 0.001f || bLength <= 0.001f) continue;
+       const float adx = ax / aLength;
+       const float ady = ay / aLength;
+       const float bdx = bx / bLength;
+       const float bdy = by / bLength;
+       const float turn = adx * bdy - ady * bdx;
+       if (std::abs(turn) <= 0.001f) continue;
+       const float side = turn > 0.0f ? -1.0f : 1.0f;
+       const Detail::float2 a{current.x + (-ady * side) * halfThickness,
+                              current.y + (adx * side) * halfThickness};
+       const Detail::float2 b{current.x + (-bdy * side) * halfThickness,
+                              current.y + (bdx * side) * halfThickness};
+       if (style.join == PolylineJoin::Bevel) {
+         impl_->primitiveRenderer_.drawSolidTriangleLocal(
+             toDiligentFloat2(a), toDiligentFloat2(current),
+             toDiligentFloat2(b), color);
+         continue;
+       }
+       const float denominator = adx * bdy - ady * bdx;
+       if (std::abs(denominator) <= 0.001f) continue;
+       const float t = ((b.x - a.x) * bdy - (b.y - a.y) * bdx) / denominator;
+       const Detail::float2 miter{a.x + adx * t, a.y + ady * t};
+       const float mx = miter.x - current.x;
+       const float my = miter.y - current.y;
+       if (mx * mx + my * my > style.thickness * style.thickness * 16.0f) {
+         impl_->primitiveRenderer_.drawSolidTriangleLocal(
+             toDiligentFloat2(a), toDiligentFloat2(current),
+             toDiligentFloat2(b), color);
+       } else {
+         impl_->primitiveRenderer_.drawSolidTriangleLocal(
+             toDiligentFloat2(a), toDiligentFloat2(miter),
+             toDiligentFloat2(b), color);
+       }
+     }
+   }
    if (style.join == PolylineJoin::Round) {
      const std::size_t first = style.closed ? 0 : 1;
      const std::size_t last = style.closed ? points.size() : points.size() - 1;
