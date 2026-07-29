@@ -208,6 +208,9 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   uiLayout->addLayout(themeLayout);
 
   auto *accessibilityGroup = new QGroupBox("Accessibility", this);
+  accessibilityGroup->setAccessibleName(QStringLiteral("Accessibility settings"));
+  accessibilityGroup->setAccessibleDescription(
+      QStringLiteral("Configure handedness, target size, contrast, text scale, and color vision assistance."));
   auto *accessibilityLayout = new QVBoxLayout(accessibilityGroup);
   auto *handednessLayout = new QHBoxLayout();
   handednessLayout->addWidget(new QLabel("Preferred hand:", this));
