@@ -687,6 +687,9 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
     impl_->inputTransferFunction_ = obj.value(QStringLiteral("image.inputTransferFunction")).toString();
     if (!sourcePath.isEmpty() && sourcePath != impl_->sourcePath_) {
         loadFromPath(sourcePath);
+    } else if (!sourcePath.isEmpty()) {
+        impl_->prefetchDone_ = false;
+        impl_->startPrefetch();
     }
     impl_->fitToLayer_ = obj.value(QStringLiteral("image.fitToLayer"))
                             .toBool(impl_->fitToLayer_);
