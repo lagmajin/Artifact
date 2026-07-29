@@ -52,8 +52,12 @@ namespace Artifact
   impl_->timecodeLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   impl_->frameNumberLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
-  setAttribute(Qt::WA_StyledBackground, false);
-  setAutoFillBackground(false);
+ setAttribute(Qt::WA_StyledBackground, false);
+ setAutoFillBackground(false);
+  setAccessibleName(QStringLiteral("Timeline timecode"));
+  setAccessibleDescription(QStringLiteral("Current timeline timecode and frame number"));
+  impl_->timecodeLabel_->setAccessibleName(QStringLiteral("Timecode"));
+  impl_->frameNumberLabel_->setAccessibleName(QStringLiteral("Frame number"));
 
   {
    const QColor textColor = QColor(ArtifactCore::currentDCCTheme().textColor);
@@ -137,6 +141,9 @@ namespace Artifact
             .arg(sign)
             .arg(totalFrames));
     }
+    setAccessibleDescription(QStringLiteral("Current timecode %1, frame %2")
+                                 .arg(tc)
+                                 .arg(frame));
 
     // Example use of RationalTime API (kept for future extension)
     Q_UNUSED(rt);
