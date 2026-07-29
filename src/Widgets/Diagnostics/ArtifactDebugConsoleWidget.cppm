@@ -271,6 +271,8 @@ public:
         toolbarLayout->addSpacing(8);
         searchEdit_ = new QLineEdit();
         searchEdit_->setPlaceholderText("Search...");
+        searchEdit_->setAccessibleName(QStringLiteral("Log search"));
+        searchEdit_->setAccessibleDescription(QStringLiteral("Search visible debug console logs"));
         {
             QPalette pal = searchEdit_->palette();
             pal.setColor(QPalette::Base, surface);
@@ -281,6 +283,8 @@ public:
         toolbarLayout->addWidget(searchEdit_);
 
         timeFilterCheck_ = new QCheckBox("Time Filter");
+        timeFilterCheck_->setAccessibleName(QStringLiteral("Time filter"));
+        timeFilterCheck_->setAccessibleDescription(QStringLiteral("Limit logs to the selected time range"));
         timeFilterCheck_->setPalette([&]() {
             QPalette pal = timeFilterCheck_->palette();
             pal.setColor(QPalette::WindowText, muted);
@@ -289,6 +293,8 @@ public:
         toolbarLayout->addWidget(timeFilterCheck_);
 
         startTimeEdit_ = new QDateTimeEdit(startTime_);
+        startTimeEdit_->setAccessibleName(QStringLiteral("Start time"));
+        startTimeEdit_->setAccessibleDescription(QStringLiteral("Set the start of the log time range"));
         startTimeEdit_->setDisplayFormat("yyyy-MM-dd hh:mm:ss");
         startTimeEdit_->setCalendarPopup(true);
         {
@@ -309,6 +315,8 @@ public:
         toolbarLayout->addWidget(toLabel);
 
         endTimeEdit_ = new QDateTimeEdit(endTime_);
+        endTimeEdit_->setAccessibleName(QStringLiteral("End time"));
+        endTimeEdit_->setAccessibleDescription(QStringLiteral("Set the end of the log time range"));
         endTimeEdit_->setDisplayFormat("yyyy-MM-dd hh:mm:ss");
         endTimeEdit_->setCalendarPopup(true);
         {
@@ -329,6 +337,8 @@ public:
         toolbarLayout->addWidget(contextLabel);
 
         contextFilterCombo_ = new QComboBox();
+        contextFilterCombo_->setAccessibleName(QStringLiteral("Context filter"));
+        contextFilterCombo_->setAccessibleDescription(QStringLiteral("Filter logs by context"));
         contextFilterCombo_->addItem("All", QString());
         {
             QPalette pal = contextFilterCombo_->palette();
@@ -348,6 +358,8 @@ public:
         toolbarLayout->addWidget(categoryLabel);
 
         categoryFilterCombo_ = new QComboBox();
+        categoryFilterCombo_->setAccessibleName(QStringLiteral("Category filter"));
+        categoryFilterCombo_->setAccessibleDescription(QStringLiteral("Filter logs by category"));
         categoryFilterCombo_->addItem("All", QString());
         categoryFilterCombo_->setPalette(contextFilterCombo_->palette());
         toolbarLayout->addWidget(categoryFilterCombo_);
@@ -381,6 +393,8 @@ public:
         fontSizeSpin_->setSuffix(QStringLiteral(" pt"));
         fontSizeSpin_->setFixedWidth(84);
         fontSizeSpin_->setToolTip(QStringLiteral("Debug console font size"));
+        fontSizeSpin_->setAccessibleName(QStringLiteral("Console font size"));
+        fontSizeSpin_->setAccessibleDescription(QStringLiteral("Set the debug console font size"));
         toolbarLayout->addWidget(fontSizeSpin_);
 
         debugFilterBtn_ = createToolButton("MaterialVS/colored/4CAF50/bug_report.svg", "Toggle Debug");
@@ -675,6 +689,8 @@ public:
         btn->setIcon(loadIcon(iconPath));
         btn->setIconSize(QSize(18, 18));
         btn->setToolTip(tooltip);
+        btn->setAccessibleName(tooltip);
+        btn->setAccessibleDescription(tooltip);
         btn->setMinimumHeight(28);
         btn->setAutoRaise(true);
         return btn;
