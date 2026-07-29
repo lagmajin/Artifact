@@ -5,6 +5,7 @@ module;
 export module Artifact.Service.Audio;
 
 import Utils.Id;
+import Artifact.Service.Playback;
 
 export namespace Artifact {
 
@@ -27,6 +28,7 @@ export namespace Artifact {
   QStringList availableOutputDeviceNames() const;
   void setOutputDeviceName(const QString& deviceName);
   QString outputDeviceName() const;
+  ArtifactPlaybackAudioDiagnostics playbackDiagnostics() const;
 
   void setMasterVolume(float volume);
   float masterVolume() const;

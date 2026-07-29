@@ -172,6 +172,14 @@ QString ArtifactAudioService::outputDeviceName() const
  return impl_->outputDeviceName;
 }
 
+ArtifactPlaybackAudioDiagnostics ArtifactAudioService::playbackDiagnostics() const
+{
+ if (auto* playback = ArtifactPlaybackService::instance()) {
+  return playback->audioDiagnostics();
+ }
+ return {};
+}
+
 void ArtifactAudioService::setMasterVolume(float volume)
 {
  impl_->masterVolume = std::clamp(volume, 0.0f, 2.0f);
