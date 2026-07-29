@@ -12,6 +12,7 @@ module;
 module ArtifactStatusBar;
 
 import Widgets.Utils.CSS;
+import Settings.Accessibility;
 
 namespace Artifact
 {
@@ -243,7 +244,11 @@ namespace Artifact
  {
   QMenu menu(this);
   rebuildVisibilityMenu(menu);
-  menu.exec(event->globalPos());
+  int menuX = event->globalPos().x();
+  int menuY = event->globalPos().y();
+  Accessibility::adjustContextMenuPosition(menuX, menuY,
+                                            menu.sizeHint().width());
+  menu.exec(QPoint(menuX, menuY));
  }
 
  QLabel* ArtifactStatusBar::itemLabel(const Item item) const
