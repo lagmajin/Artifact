@@ -145,6 +145,7 @@ namespace Artifact
   setAccessibleName(QStringLiteral("Timeline scrub bar"));
   setAccessibleDescription(QStringLiteral(
       "Scrub the timeline and review cached, failed, or on-disk frame ranges."));
+  setFocusPolicy(Qt::StrongFocus);
   setAttribute(Qt::WA_NoSystemBackground, false);
   setAttribute(Qt::WA_OpaquePaintEvent, false);
   setAttribute(Qt::WA_StyledBackground, true);
@@ -298,7 +299,6 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    return;
   }
   impl_->interactiveSeekingEnabled_ = enabled;
-  setFocusPolicy(enabled ? Qt::StrongFocus : Qt::NoFocus);
   if (!enabled) {
    impl_->dragging_ = false;
    impl_->hover_ = false;
@@ -314,7 +314,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
 
  void ArtifactTimelineScrubBar::keyPressEvent(QKeyEvent* event)
  {
-  if (!impl_->interactiveSeekingEnabled_ || impl_->totalFrames_ <= 0 ||
+  if (impl_->totalFrames_ <= 0 ||
       (impl_->isPlaying_ && impl_->seekLockDuringPlayback_)) {
    event->ignore();
    return;
