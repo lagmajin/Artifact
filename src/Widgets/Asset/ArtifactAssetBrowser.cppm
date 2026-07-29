@@ -1170,10 +1170,16 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
  impl_->rebuild();
 }
 
- class AssetFileListView final : public QListView
+class AssetFileListView final : public QListView
  {
  public:
   explicit AssetFileListView(QWidget* parent = nullptr) : QListView(parent) {}
+
+  void setEmptyStateMessage(const QString& message)
+  {
+   emptyStateMessage_ = message;
+   viewport()->update();
+  }
 
  protected:
   void startDrag(Qt::DropActions supportedActions) override
@@ -1215,6 +1221,24 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
             << "items=" << indexes.size();
    drag->exec(supportedActions, Qt::CopyAction);
   }
+
+ protected:
+  void paintEvent(QPaintEvent* event) override
+  {
+   QListView::paintEvent(event);
+   if (!model() || model()->rowCount() != 0 || emptyStateMessage_.isEmpty()) {
+    return;
+   }
+   QPainter painter(viewport());
+   painter.setRenderHint(QPainter::TextAntialiasing, true);
+   painter.setPen(palette().color(QPalette::PlaceholderText));
+   painter.drawText(viewport()->rect().adjusted(24, 24, -24, -24),
+                    Qt::AlignCenter | Qt::TextWordWrap,
+                    emptyStateMessage_);
+  }
+
+ private:
+  QString emptyStateMessage_;
  };
 
 class AssetCardDelegate final : public QStyledItemDelegate
@@ -3066,6 +3090,19 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    });
 
    assetModel_->setItems(items);
+   if (auto* assetListView = static_cast<AssetFileListView*>(fileView_)) {
+    QString emptyMessage;
+    if (currentDirectoryPath_.isEmpty()) {
+     emptyMessage = QStringLiteral("Open a folder to browse assets.");
+    } else if (!currentSearchFilter_.trimmed().isEmpty() ||
+               currentFileTypeFilter_ != QStringLiteral("all") ||
+               currentStatusFilter_ != QStringLiteral("all")) {
+     emptyMessage = QStringLiteral("No assets match the current search and filters.");
+    } else {
+     emptyMessage = QStringLiteral("No assets in this folder. Import or drop files here.");
+    }
+    assetListView->setEmptyStateMessage(emptyMessage);
+   }
  }
 
  ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
