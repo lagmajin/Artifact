@@ -20,6 +20,7 @@
 - ✅ 失敗ジョブの Retry Failed 一括操作と、ジョブ単位の Retry Job 経路を確認。
 - ✅ Add All / Batch Template による一括キュー追加経路を確認。
 - ✅ 複数選択したジョブへ、現在のジョブの出力設定・encoder backend・render backend を一括適用する UI を追加。
+- ✅ 進捗サンプルから保守的に算出する active-job ETA 表示を追加（サンプル不足時は calculating 表示）。
 - ⏳ クラッシュ後チェックポイント再開は、UI が呼び出せる公開 resume 契約を未確認。実機での出力・復旧動作も未検証。
 
 ## M-RENDER-1 UI Overhaul & UX Refinement (完了)

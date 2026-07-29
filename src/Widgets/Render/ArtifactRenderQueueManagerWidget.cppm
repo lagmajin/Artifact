@@ -14,6 +14,7 @@ module;
 #include <QFile>
 #include <QTextStream>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QStandardPaths>
 #include <QDir>
 #include <QFileInfo>
@@ -394,10 +395,13 @@ namespace Artifact
   bool syncingJobDetails = false;
   bool syncingPresetCombo = false;
   std::map<int, int> lastProgressBucketByJob;
+  std::map<int, qint64> progressStartedAtMsByJob;
+  QElapsedTimer progressClock_;
   int progressLogStepPercent = 25;
   QFont fixedFont_{"Consolas", 10};
 
   Impl() {
+    progressClock_.start();
     service = ArtifactRenderQueueService::instance();
     const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (!appDataDir.isEmpty()) {
@@ -468,6 +472,7 @@ namespace Artifact
   void syncJobsFromService() {
     if (!service) return;
     const int selectedSource = selectedSourceIndex();
+    progressStartedAtMsByJob.clear();
     jobs.clear();
     for (int i = 0; i < service->jobCount(); ++i) {
       JobEntry e;
@@ -658,6 +663,29 @@ namespace Artifact
         totalProgress += std::clamp(j.progress, 0, 100);
     }
     QString preflightText;
+    double etaSeconds = 0.0;
+    bool hasEta = false;
+    const qint64 nowMs = progressClock_.elapsed();
+    for (int index = 0; index < jobs.size(); ++index) {
+      const auto& job = jobs[index];
+      if (normalizeStatus(job.status) != QStringLiteral("Rendering") ||
+          job.progress <= 0) {
+        continue;
+      }
+      const auto started = progressStartedAtMsByJob.find(index);
+      if (started == progressStartedAtMsByJob.end()) continue;
+      const qint64 elapsedMs = nowMs - started->second;
+      if (elapsedMs < 1000) continue;
+      const double rate = static_cast<double>(job.progress) /
+                          (static_cast<double>(elapsedMs) / 1000.0);
+      if (rate <= 0.0) continue;
+      etaSeconds += (100.0 - static_cast<double>(job.progress)) / rate;
+      hasEta = true;
+    }
+    const QString etaText = hasEta
+        ? QStringLiteral(" | ETA: ~%1s")
+              .arg(static_cast<qint64>(std::llround(etaSeconds)))
+        : (running > 0 ? QStringLiteral(" | ETA: calculating") : QString());
     const int selected = selectedSourceIndex();
     if (service && selected >= 0 && selected < service->jobCount()) {
       const auto preflight = service->preflightRenderQueueAt(selected);
@@ -671,7 +699,7 @@ namespace Artifact
                               .arg(pending)
                               .arg(done)
                               .arg(failed)
-                              .arg(preflightText));
+                              .arg(preflightText + etaText));
     if (runningCountLabel) {
       runningCountLabel->setText(QString("%1 RUNNING").arg(running));
       const auto& theme = ArtifactCore::currentDCCTheme();
@@ -1486,8 +1514,14 @@ namespace Artifact
     connect(impl_->service, &ArtifactRenderQueueService::jobProgressChanged, this, [this](int index, int progress) {
         if (!impl_ || !impl_->service) return;
         if (index >= 0 && index < static_cast<int>(impl_->jobs.size())) {
+          if (impl_->progressStartedAtMsByJob.find(index) ==
+              impl_->progressStartedAtMsByJob.end()) {
+            impl_->progressStartedAtMsByJob[index] =
+                impl_->progressClock_.elapsed();
+          }
           impl_->jobs[index].progress = progress;
           impl_->updateJobItemAtIndex(index);
+          impl_->updateSummary();
         }
     });
     connect(impl_->service, &ArtifactRenderQueueService::jobStatusChanged, this, [this](int index, int status) {
@@ -1497,6 +1531,14 @@ namespace Artifact
         }
         const QString jobName = impl_->service->jobCompositionNameAt(index);
         const QString jobStatus = impl_->service->jobStatusAt(index);
+        if (jobStatus == QStringLiteral("Rendering")) {
+          impl_->progressStartedAtMsByJob[index] =
+              impl_->progressClock_.elapsed();
+        } else if (jobStatus == QStringLiteral("Completed") ||
+                   jobStatus == QStringLiteral("Failed") ||
+                   jobStatus == QStringLiteral("Canceled")) {
+          impl_->progressStartedAtMsByJob.erase(index);
+        }
         if (jobStatus == "Failed") {
           const QString error = impl_->service->jobErrorMessageAt(index);
           impl_->postHistoryMessage(QString("Job failed: %1%2")
