@@ -612,9 +612,16 @@ class HoverPreviewPopup final : public QFrame {
     }
     preview_->setPixmap(pixmap.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     title_->setText(info.fileName().isEmpty() ? filePath : info.fileName());
-    details_->setText(QStringLiteral("%1\n%2")
-                          .arg(info.exists() ? info.absoluteFilePath() : QStringLiteral("Missing"))
-                          .arg(info.isDir() ? QStringLiteral("Folder") : info.suffix().toUpper()));
+    const QString location = info.exists() ? info.absoluteFilePath() : QStringLiteral("Missing");
+    const QString kind = info.isDir() ? QStringLiteral("Folder") : info.suffix().toUpper();
+    const QString size = info.exists() && info.isFile()
+                             ? QStringLiteral("%1 bytes").arg(info.size())
+                             : QStringLiteral("-");
+    const QString modified = info.exists()
+                                 ? info.lastModified().toString(Qt::ISODate)
+                                 : QStringLiteral("-");
+    details_->setText(QStringLiteral("%1\n%2  •  Size: %3  •  Modified: %4")
+                          .arg(location, kind, size, modified));
     adjustSize();
     move(globalPos + QPoint(18, 18));
     show();
