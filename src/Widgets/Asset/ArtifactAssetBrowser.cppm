@@ -3121,6 +3121,35 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    statusGroup->addButton(favoriteBtn, 2);
    statusGroup->addButton(missingBtn, 3);
    statusGroup->addButton(unusedBtn, 4);
+   QSettings filterSettings;
+   const QString savedStatusFilter = filterSettings.value(
+       QStringLiteral("AssetBrowser/StatusFilter"), QStringLiteral("all")).toString();
+   const QHash<QString, int> statusIds{{QStringLiteral("all"), 0},
+                                       {QStringLiteral("imported"), 1},
+                                       {QStringLiteral("favorite"), 2},
+                                       {QStringLiteral("missing"), 3},
+                                       {QStringLiteral("unused"), 4}};
+   const int savedStatusId = statusIds.value(savedStatusFilter, 0);
+   impl_->currentStatusFilter_ = statusIds.contains(savedStatusFilter)
+       ? savedStatusFilter
+       : QStringLiteral("all");
+   if (auto* savedStatusButton = statusGroup->button(savedStatusId)) {
+    savedStatusButton->setChecked(true);
+   }
+   const QString savedTypeFilter = filterSettings.value(
+       QStringLiteral("AssetBrowser/FileTypeFilter"), QStringLiteral("all")).toString();
+   const QHash<QString, int> typeIds{{QStringLiteral("all"), 0},
+                                     {QStringLiteral("images"), 1},
+                                     {QStringLiteral("videos"), 2},
+                                     {QStringLiteral("audio"), 3},
+                                     {QStringLiteral("3d"), 4}};
+   impl_->currentFileTypeFilter_ = typeIds.contains(savedTypeFilter)
+       ? savedTypeFilter
+       : QStringLiteral("all");
+   if (auto* savedTypeButton = impl_->filterButtonGroup_->button(
+           typeIds.value(impl_->currentFileTypeFilter_, 0))) {
+    savedTypeButton->setChecked(true);
+   }
 
    // Status filters remain available to the model/context menu, but the main
    // browser header follows the mockup's compact type-first presentation.
@@ -3190,9 +3219,11 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
      case 0: impl_->currentStatusFilter_ = "all"; break;
      case 1: impl_->currentStatusFilter_ = "imported"; break;
      case 2: impl_->currentStatusFilter_ = "favorite"; break;
-     case 3: impl_->currentStatusFilter_ = "missing"; break;
-     case 4: impl_->currentStatusFilter_ = "unused"; break;
-    }
+    case 3: impl_->currentStatusFilter_ = "missing"; break;
+    case 4: impl_->currentStatusFilter_ = "unused"; break;
+   }
+    QSettings settings;
+    settings.setValue(QStringLiteral("AssetBrowser/StatusFilter"), impl_->currentStatusFilter_);
     impl_->applyFilters();
     impl_->refreshLeftHubSummary();
    });
@@ -3439,6 +3470,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    case 3: impl_->currentFileTypeFilter_ = "audio"; break;
    case 4: impl_->currentFileTypeFilter_ = "3d"; break;
    }
+    QSettings settings;
+    settings.setValue(QStringLiteral("AssetBrowser/FileTypeFilter"), impl_->currentFileTypeFilter_);
    impl_->applyFilters();
   });
 
