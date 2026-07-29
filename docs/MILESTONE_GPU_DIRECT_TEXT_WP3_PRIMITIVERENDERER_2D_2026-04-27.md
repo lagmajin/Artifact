@@ -379,7 +379,7 @@ Expected scope: 2-4 hours
 - **WP-1**: GlyphAtlas foundation → `ArtifactCore/include/Text/GlyphAtlas.ixx` ✅ Ready
 - **WP-2**: Shader + PSO → `Artifact/src/Render/ShaderManager.cppm` ✅ Ready  
 - **WP-3**: This document (PrimitiveRenderer2D integration) ✅ Started
-- **WP-4**: ArtifactIRenderer interface (next) ⏳ Planned
+- **WP-4**: ArtifactIRenderer interface ✅ Initial delegation API implemented
 - **WP-5**: Editor UI text migration (after WP-4) ⏳ Planned
 - **WP-6**: ArtifactTextLayer GPU draw (final) ⏳ Planned
 
@@ -387,4 +387,4 @@ Expected scope: 2-4 hours
 
 ## Conclusion
 
-WP-3 establishes the foundation for GPU-accelerated glyph rendering in PrimitiveRenderer2D. The three new methods are ready for integration, with full GPU submission deferred to WP-5 to maintain clear phase boundaries and testability.
+WP-3 establishes the foundation for GPU-accelerated glyph rendering in PrimitiveRenderer2D. `ArtifactIRenderer::drawGlyphText()` and `drawGlyphs()` now expose the existing atlas-backed path through the renderer boundary. Editor UI migration, ArtifactTextLayer integration, runtime parity, and acceptance testing remain pending.

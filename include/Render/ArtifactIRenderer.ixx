@@ -308,6 +308,12 @@ public:
                            float opacity = 1.0f,
                            const FloatColor &outlineColor = FloatColor{0.0f, 0.0f, 0.0f, 0.0f},
                            float outlineThickness = 0.0f);
+  void drawGlyphText(float x, float y, const ArtifactCore::UniString &text,
+                     const ArtifactCore::TextStyle &style,
+                     const FloatColor &color, float opacity = 1.0f);
+  void drawGlyphs(std::span<const ArtifactCore::GlyphItem> glyphs,
+                  const ArtifactCore::TextStyle &style,
+                  const FloatColor &color, float opacity = 1.0f);
   void drawGlyphsTransformed(
       std::span<const ArtifactCore::GlyphItem> glyphs,
       const ArtifactCore::TextStyle &style,

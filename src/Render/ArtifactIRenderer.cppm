@@ -3524,6 +3524,16 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
                                              Qt::Alignment alignment, float opacity,
                                              const FloatColor& outlineColor, float outlineThickness)
  { impl_->primitiveRenderer_.drawTextTransformed(rect, text, font, color, transform, alignment, opacity, outlineColor, outlineThickness); }
+ void ArtifactIRenderer::drawGlyphText(float x, float y,
+                                        const ArtifactCore::UniString& text,
+                                        const ArtifactCore::TextStyle& style,
+                                        const FloatColor& color, float opacity)
+ { impl_->primitiveRenderer_.drawGlyphText(x, y, text, style, color, opacity); }
+ void ArtifactIRenderer::drawGlyphs(
+     std::span<const ArtifactCore::GlyphItem> glyphs,
+     const ArtifactCore::TextStyle& style, const FloatColor& color,
+     float opacity)
+ { impl_->primitiveRenderer_.drawGlyphs(glyphs, style, color, opacity); }
  void ArtifactIRenderer::drawGlyphsTransformed(
      std::span<const ArtifactCore::GlyphItem> glyphs,
      const ArtifactCore::TextStyle& style,
