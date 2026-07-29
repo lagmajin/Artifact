@@ -1509,6 +1509,7 @@ namespace Artifact
         if (!impl_) {
           return;
         }
+        impl_->progressStartedAtMsByJob.clear();
         impl_->postQueueChanged(QStringLiteral("Job removed"));
     });
     connect(impl_->service, &ArtifactRenderQueueService::jobUpdated, this, [this](int index) {
