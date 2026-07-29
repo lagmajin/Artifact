@@ -1217,7 +1217,13 @@ namespace Artifact
   auto* outputPathRowLayout = new QHBoxLayout(outputPathRow);
   outputPathRowLayout->setContentsMargins(0, 0, 0, 0);
   outputPathRowLayout->addWidget(impl_->outputPathEdit, 1);
+  impl_->outputPathEdit->setAccessibleName(QStringLiteral("Render output path"));
+  impl_->outputPathEdit->setAccessibleDescription(
+      QStringLiteral("Enter or review the output file path for the selected render job"));
   impl_->outputBrowseButton = new RenderQueueActionButton(QStringLiteral("Browse"));
+  impl_->outputBrowseButton->setAccessibleName(QStringLiteral("Browse output path"));
+  impl_->outputBrowseButton->setAccessibleDescription(
+      QStringLiteral("Choose the output file path for the selected render job"));
   impl_->outputBrowseButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/animationmenu_folder_open.svg")));
   impl_->outputBrowseButton->action = [this]() {
@@ -1236,6 +1242,9 @@ namespace Artifact
   outputPathRowLayout->addWidget(impl_->outputBrowseButton);
   outputLayout->addRow("Path:", outputPathRow);
   impl_->outputSettingsButton = new QPushButton("Format...");
+  impl_->outputSettingsButton->setAccessibleName(QStringLiteral("Render output settings"));
+  impl_->outputSettingsButton->setAccessibleDescription(
+      QStringLiteral("Configure format, codec, and render settings"));
   impl_->outputSettingsButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/compositionmenu_settings.svg")));
   outputLayout->addRow("Settings:", impl_->outputSettingsButton);
@@ -1251,6 +1260,10 @@ namespace Artifact
   impl_->endFrameSpin = new RenderQueueIntSpinBox();
   impl_->startFrameSpin->setRange(0, 1000000);
   impl_->endFrameSpin->setRange(0, 1000000);
+  impl_->startFrameSpin->setAccessibleName(QStringLiteral("Render start frame"));
+  impl_->startFrameSpin->setAccessibleDescription(QStringLiteral("Set the first frame to render"));
+  impl_->endFrameSpin->setAccessibleName(QStringLiteral("Render end frame"));
+  impl_->endFrameSpin->setAccessibleDescription(QStringLiteral("Set the last frame to render"));
   auto commitFrameRange = [this]() {
     if (!impl_ || impl_->syncingJobDetails || !impl_->service) return;
     const int index = impl_->selectedSourceIndex();
