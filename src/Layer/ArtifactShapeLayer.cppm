@@ -1471,7 +1471,7 @@ QRectF ArtifactShapeLayer::localBounds() const
        ? strokeWidth
        : (impl_->strokeAlign_ == StrokeAlign::Center ? strokeWidth * 0.5 : 0.0);
    if (impl_->strokeJoin_ == StrokeJoin::Miter) {
-    strokePad = std::max(strokePad, strokeWidth * 4.0);
+    strokePad = std::max(strokePad, std::max<qreal>(1.0, strokeWidth) * 4.0);
    }
   }
   const qreal pad = std::max<qreal>(0.5, strokePad);
