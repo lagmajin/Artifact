@@ -3502,6 +3502,7 @@ const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() cons
    std::size_t dashIndex = 0;
    float dashRemaining = dashPattern.empty() ? 0.0f : dashPattern.front();
    bool drawingDash = true;
+   bool dashRunStart = true;
    for (std::size_t i = 0; i < segmentCount; ++i) {
      Detail::float2 p0 = pointAt(i);
      Detail::float2 p1 = pointAt(i + 1);
@@ -3511,7 +3512,8 @@ const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() cons
      if (length <= 0.001f) continue;
      const float nx = dx / length;
      const float ny = dy / length;
-     if (!style.closed && style.cap == PolylineCap::Square && (i == 0 || i + 1 == segmentCount)) {
+     if (dashPattern.empty() && !style.closed && style.cap == PolylineCap::Square &&
+         (i == 0 || i + 1 == segmentCount)) {
        if (i == 0) { p0.x -= nx * style.thickness * 0.5f; p0.y -= ny * style.thickness * 0.5f; }
        if (i + 1 == segmentCount) { p1.x += nx * style.thickness * 0.5f; p1.y += ny * style.thickness * 0.5f; }
      }
@@ -3526,24 +3528,54 @@ const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() cons
      float consumed = 0.0f;
      while (consumed < drawLength - 0.001f) {
        const float step = std::min(dashRemaining, drawLength - consumed);
+       const bool reachesPatternBoundary =
+           step >= dashRemaining - 0.001f;
+       const bool dashRunEnd = drawingDash &&
+           (reachesPatternBoundary ||
+            (!style.closed && i + 1 == segmentCount &&
+             consumed + step >= drawLength - 0.001f));
        if (drawingDash && step > 0.0f) {
-         const float t0 = consumed / drawLength;
-         const float t1 = (consumed + step) / drawLength;
+       const float t0 = consumed / drawLength;
+       const float t1 = (consumed + step) / drawLength;
+         Detail::float2 dashP0{p0.x + (p1.x - p0.x) * t0,
+                               p0.y + (p1.y - p0.y) * t0};
+         Detail::float2 dashP1{p0.x + (p1.x - p0.x) * t1,
+                               p0.y + (p1.y - p0.y) * t1};
+         if (style.cap == PolylineCap::Square) {
+           if (dashRunStart) {
+             dashP0.x -= nx * style.thickness * 0.5f;
+             dashP0.y -= ny * style.thickness * 0.5f;
+           }
+           if (dashRunEnd) {
+             dashP1.x += nx * style.thickness * 0.5f;
+             dashP1.y += ny * style.thickness * 0.5f;
+           }
+         }
          impl_->primitiveRenderer_.drawThickLineLocal(
-             toDiligentFloat2({p0.x + (p1.x - p0.x) * t0,
-                               p0.y + (p1.y - p0.y) * t0}),
-             toDiligentFloat2({p0.x + (p1.x - p0.x) * t1,
-                               p0.y + (p1.y - p0.y) * t1}),
+             toDiligentFloat2(dashP0), toDiligentFloat2(dashP1),
              style.thickness, color);
+         if (style.cap == PolylineCap::Round) {
+           if (dashRunStart) {
+             impl_->primitiveRenderer_.drawSolidCircle(
+                 dashP0.x, dashP0.y, style.thickness * 0.5f, color);
+           }
+           if (dashRunEnd) {
+             impl_->primitiveRenderer_.drawSolidCircle(
+                 dashP1.x, dashP1.y, style.thickness * 0.5f, color);
+           }
+         }
        }
        consumed += step;
        dashRemaining -= step;
-       if (dashRemaining <= 0.001f) {
+       if (reachesPatternBoundary) {
          dashIndex = (dashIndex + 1) % dashPattern.size();
          dashRemaining = dashPattern[dashIndex];
          drawingDash = !drawingDash;
+         dashRunStart = drawingDash;
+       } else {
+         dashRunStart = false;
        }
-     }
+      }
    }
    if (dashPattern.empty() &&
        (style.join == PolylineJoin::Miter || style.join == PolylineJoin::Bevel)) {
