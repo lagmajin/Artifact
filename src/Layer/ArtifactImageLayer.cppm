@@ -661,10 +661,15 @@ QJsonObject ArtifactImageLayer::toJson() const
 void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
 {
     ArtifactAbstract2DLayer::fromJsonProperties(obj);
+    ++impl_->prefetchGeneration_;
     // シーケンス情報は sourcePath 読み込みより先に復元する
     // （loadFromPath がシーケンス外パスでフィールドを解消するため）
     impl_->sequencePaths_.clear();
     impl_->sequenceFrameRate_ = 0.0;
+    impl_->sequenceSource_.reset();
+    impl_->sequenceCachedIndex_ = -1;
+    impl_->cache_.reset();
+    impl_->cacheBuffer_.reset();
     if (obj.value(QStringLiteral("image.sequencePaths")).isArray()) {
         const QJsonArray sequenceArray =
             obj.value(QStringLiteral("image.sequencePaths")).toArray();
