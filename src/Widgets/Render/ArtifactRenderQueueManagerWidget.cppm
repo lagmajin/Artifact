@@ -978,6 +978,9 @@ namespace Artifact
 
   impl_->jobListWidget = new RenderQueueListWidget();
   impl_->jobListWidget->setObjectName("renderQueueList");
+  impl_->jobListWidget->setAccessibleName(QStringLiteral("Render jobs"));
+  impl_->jobListWidget->setAccessibleDescription(
+      QStringLiteral("Select, reorder, and inspect queued render jobs."));
   impl_->jobListWidget->setContextMenuPolicy(Qt::CustomContextMenu);
   impl_->jobListWidget->setDragEnabled(true);
   impl_->jobListWidget->setAcceptDrops(true);

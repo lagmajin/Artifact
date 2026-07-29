@@ -83,6 +83,9 @@ namespace Artifact {
             // Search Bar Header
             searchBar = new QLineEdit();
             searchBar->setPlaceholderText("Search layers...");
+            searchBar->setAccessibleName(QStringLiteral("Graph layer search"));
+            searchBar->setAccessibleDescription(
+                QStringLiteral("Filter the composition graph by layer name."));
             QPalette searchPalette = searchBar->palette();
             searchPalette.setColor(QPalette::Base, QColor(45, 45, 48));
             searchPalette.setColor(QPalette::Text, QColor(204, 204, 204));
@@ -92,6 +95,9 @@ namespace Artifact {
 
             scene = new QGraphicsScene(parent);
             view = new GraphView(scene, parent);
+            view->setAccessibleName(QStringLiteral("Composition graph view"));
+            view->setAccessibleDescription(
+                QStringLiteral("View composition and layer relationships."));
             view->setRenderHint(QPainter::Antialiasing);
             view->setDragMode(QGraphicsView::ScrollHandDrag);
             view->setBackgroundBrush(QColor(30, 30, 32));
