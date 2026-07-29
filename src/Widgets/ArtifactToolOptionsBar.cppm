@@ -21,6 +21,7 @@ module Widgets.ToolOptionsBar;
 import Font.FreeFont;
 import Artifact.Layer.Shape;
 import Text.Style;
+import Settings.Accessibility;
 
 namespace Artifact {
 
@@ -419,9 +420,17 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
     ly->addWidget(makeLabel("コピースタンプ", frame));
 
     cloneRadiusSpin = makeSpin(frame, 1, 300, "px");
+    cloneRadiusSpin->setAccessibleName(QStringLiteral("Clone radius"));
+    cloneRadiusSpin->setAccessibleDescription(
+        QStringLiteral("Sets the copy stamp radius in pixels"));
+    cloneRadiusSpin->setMinimumHeight(Artifact::Accessibility::scaledSize(24));
     ly->addWidget(cloneRadiusSpin);
 
     alignedCheck = new QCheckBox("位置固定", frame);
+    alignedCheck->setAccessibleName(QStringLiteral("Aligned clone sampling"));
+    alignedCheck->setAccessibleDescription(
+        QStringLiteral("Keeps the sampled source position fixed while painting"));
+    alignedCheck->setMinimumHeight(Artifact::Accessibility::scaledSize(24));
     ly->addWidget(alignedCheck);
 
     ly->addStretch();
