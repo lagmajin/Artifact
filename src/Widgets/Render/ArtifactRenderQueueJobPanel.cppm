@@ -194,15 +194,21 @@ namespace Artifact
  RenderQueueJobWidget::RenderQueueJobWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   setWindowTitle("RenderQueueManagerHeaderWidget");
+  setAccessibleName(QStringLiteral("Render queue job"));
+  setAccessibleDescription(QStringLiteral("Inspect and start this render queue job"));
   QVBoxLayout* mainLayout = new QVBoxLayout(this);
   impl_->toggleButton = new QToolButton(this);
   impl_->toggleButton->setCheckable(true);
   impl_->toggleButton->setChecked(true);       // 初期状態: 開いてる
   impl_->toggleButton->setIcon(loadIconWithFallback("MaterialVS/neutral/arrow_drop_down.svg"));
   impl_->toggleButton->setAutoRaise(true);
+  impl_->toggleButton->setAccessibleName(QStringLiteral("Toggle render job details"));
+  impl_->toggleButton->setAccessibleDescription(QStringLiteral("Expand or collapse render job details"));
 
   impl_->compositionNameLabel = new EditableLabel();
   impl_->compositionNameLabel->setText("Comp1");
+  impl_->compositionNameLabel->setAccessibleName(QStringLiteral("Composition name"));
+  impl_->compositionNameLabel->setAccessibleDescription(QStringLiteral("Edit the composition name for this render job"));
 
   impl_->statusLabel = new QLabel("待機中");
   impl_->jobProgressBar = new QProgressBar();
@@ -217,6 +223,8 @@ namespace Artifact
   impl_->renderingStartButton = new QToolButton();
   impl_->renderingStartButton->setIcon(loadIconWithFallback("MaterialVS/green/play_arrow.svg"));
   impl_->renderingStartButton->setAutoRaise(true);
+  impl_->renderingStartButton->setAccessibleName(QStringLiteral("Start render job"));
+  impl_->renderingStartButton->setAccessibleDescription(QStringLiteral("Start rendering this job"));
   outputLayout->addWidget(impl_->renderingStartButton);
   outputLayout->addWidget(impl_->statusLabel);
   outputLayout->addWidget(impl_->jobProgressBar);
