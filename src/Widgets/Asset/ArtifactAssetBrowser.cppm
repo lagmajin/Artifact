@@ -1480,6 +1480,7 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
  {
  private:
  QHash<QString, QIcon> thumbnailCache_;  // Cache thumbnails by file path
+  QHash<QString, QDateTime> thumbnailCacheModified_;
   mutable std::mutex thumbnailMutex_;  // Protects thumbnail cache access
   QSize thumbnailSize_{kAssetThumbnailDefaultPx, kAssetThumbnailDefaultPx};
   QIcon defaultFileIcon_;
@@ -1562,6 +1563,8 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
   bool matchesFileTypeFilter(const QString& fileName) const;
   bool matchesSearchFilter(const QString& fileName) const;
   QIcon generateThumbnail(const QString& filePath);
+  bool hasCurrentThumbnail(const QString& filePath);
+  void cacheThumbnail(const QString& filePath, const QIcon& icon);
   QIcon fileTypeIconFor(const QString& fileName) const;
   QIcon getFileIcon(const QString& fileName, const QString& filePath);
   void clearThumbnailCache();
@@ -2118,11 +2121,29 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
  return defaultFileIcon_;
 }
 
+bool ArtifactAssetBrowser::Impl::hasCurrentThumbnail(const QString& filePath)
+{
+  if (!thumbnailCache_.contains(filePath)) return false;
+  const QDateTime currentModified = QFileInfo(filePath).lastModified();
+  if (thumbnailCacheModified_.value(filePath) != currentModified) {
+    thumbnailCache_.remove(filePath);
+    thumbnailCacheModified_.remove(filePath);
+    return false;
+  }
+  return true;
+}
+
+void ArtifactAssetBrowser::Impl::cacheThumbnail(const QString& filePath, const QIcon& icon)
+{
+  thumbnailCache_[filePath] = icon;
+  thumbnailCacheModified_[filePath] = QFileInfo(filePath).lastModified();
+}
+
  QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
  {
   std::unique_lock<std::mutex> lock(thumbnailMutex_);
   // Check cache first
-  if (thumbnailCache_.contains(filePath)) {
+  if (hasCurrentThumbnail(filePath)) {
    return thumbnailCache_[filePath];
   }
 
@@ -2132,7 +2153,7 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
 
   if (const QIcon diskIcon = loadAssetThumbnailFromDisk(fileInfo);
       !diskIcon.isNull()) {
-    thumbnailCache_[filePath] = diskIcon;
+    cacheThumbnail(filePath, diskIcon);
     return diskIcon;
   }
 
@@ -2141,7 +2162,7 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
    QStyle* style = QApplication::style();
    if (style) {
     QIcon folderIcon = style->standardIcon(QStyle::SP_DirIcon);
-    thumbnailCache_[filePath] = folderIcon;
+    cacheThumbnail(filePath, folderIcon);
     return folderIcon;
    }
    return defaultFileIcon_;
@@ -2189,17 +2210,17 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
   if (isAudioFile(fileInfo.fileName())) {
    QIcon waveIcon = generateAudioWaveformThumbnail(filePath);
    if (!waveIcon.isNull()) {
-    thumbnailCache_[filePath] = waveIcon;
+    cacheThumbnail(filePath, waveIcon);
     return waveIcon;
    }
    // Fallback to default audio icon
    const QIcon placeholder = fileTypeIconFor(fileInfo.fileName());
-   thumbnailCache_[filePath] = placeholder;
+   cacheThumbnail(filePath, placeholder);
    return placeholder;
   }
 
   if (isFontFile(fileInfo.fileName())) {
-   thumbnailCache_[filePath] = defaultFontIcon_;
+   cacheThumbnail(filePath, defaultFontIcon_);
    return defaultFontIcon_;
   }
 
@@ -2215,12 +2236,12 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
    discardStaleThumbnailWatcher(staleWatcher);
   }
   if (!failedPreviewPaths_.contains(filePath)) {
-   thumbnailCache_[filePath] = placeholder;
+   cacheThumbnail(filePath, placeholder);
    lock.unlock();
    startAsyncPreviewThumbnailGeneration(filePath);
    return placeholder;
   }
-  thumbnailCache_[filePath] = placeholder;
+  cacheThumbnail(filePath, placeholder);
   return placeholder;
  }
 
@@ -2236,6 +2257,7 @@ void ArtifactAssetBrowser::Impl::clearThumbnailCache()
   {
     std::lock_guard<std::mutex> lock(thumbnailMutex_);
     thumbnailCache_.clear();
+    thumbnailCacheModified_.clear();
     failedPreviewPaths_.clear();
     failedWavePaths_.clear();
     previewFailureReasons_.clear();
@@ -2298,7 +2320,7 @@ void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QStr
       saveAssetThumbnailToDisk(QFileInfo(filePath), image);
       {
         std::lock_guard<std::mutex> lock(thumbnailMutex_);
-        thumbnailCache_[filePath] = icon;
+        cacheThumbnail(filePath, icon);
         failedPreviewPaths_.remove(filePath);
         previewFailureReasons_.remove(filePath);
       }
@@ -4789,7 +4811,7 @@ QIcon ArtifactAssetBrowser::Impl::generateAudioWaveformThumbnail(const QString& 
     }
 
     // Check cache first
-    if (thumbnailCache_.contains(audioFilePath)) {
+    if (hasCurrentThumbnail(audioFilePath)) {
         return thumbnailCache_[audioFilePath];
     }
 
@@ -4826,7 +4848,7 @@ void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& aud
             // QPixmap/QIcon are GUI resources.  Keep their construction on the
             // watcher's thread (the browser/UI thread), never in QtConcurrent.
             const QIcon icon(QPixmap::fromImage(image));
-            thumbnailCache_[audioFilePath] = icon;
+            cacheThumbnail(audioFilePath, icon);
             if (assetModel_ && assetModel_->updateItemIconByPath(audioFilePath, icon)) {
                 // model updated via dataChanged
             } else if (fileView_) {
