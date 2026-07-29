@@ -1609,12 +1609,21 @@ namespace Artifact
    };
    QLabel* leftHeader = compareSidesSwapped ? compareFinalHeader : compareSourceHeader;
    QLabel* rightHeader = compareSidesSwapped ? compareSourceHeader : compareFinalHeader;
+   const auto compareHeaderTitle = [](const QString& badge,
+                                      const QString& title,
+                                      const QString& path) {
+    if (path.isEmpty()) {
+     return QStringLiteral("%1 · Unassigned").arg(badge);
+    }
+    const QString state = QFileInfo::exists(path) ? QString() : QStringLiteral(" · Missing");
+    return QStringLiteral("%1 · %2%3").arg(badge, title, state);
+   };
 
    if (leftHeader) {
-    leftHeader->setText(QStringLiteral("%1 · %2").arg(leftBadge, leftTitle.isEmpty() ? QStringLiteral("Unassigned") : leftTitle));
+    leftHeader->setText(compareHeaderTitle(leftBadge, leftTitle, logicalLeftPath));
    }
    if (rightHeader) {
-    rightHeader->setText(QStringLiteral("%1 · %2").arg(rightBadge, rightTitle.isEmpty() ? QStringLiteral("Unassigned") : rightTitle));
+    rightHeader->setText(compareHeaderTitle(rightBadge, rightTitle, logicalRightPath));
    }
 
    CompareCanvasPanelState leftPanel;
