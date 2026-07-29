@@ -1103,6 +1103,7 @@ void ArtifactPlaybackEngine::setComposition(ArtifactCompositionPtr composition) 
     impl_->audioSampleAccumulator_ = 0.0;
     impl_->audioSeekPending_ = true;
     impl_->audioExhausted_ = false;
+    impl_->audioFormatMismatchCount_ = 0;
     impl_->audioLastSentVolume_ = -999.0f;
     impl_->audioLastSentMuted_ = false;
     if (impl_->audioRenderer_) {
