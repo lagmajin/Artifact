@@ -597,7 +597,20 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   const int ss = totalSeconds % 60;
   const int mm = (totalSeconds / 60) % 60;
   const int hh = totalSeconds / 3600;
-  const QString leftLabel = QStringLiteral("RAM Cache");
+  const bool hasReadyCache = std::any_of(
+      impl_->cacheBitmap_.begin(), impl_->cacheBitmap_.end(),
+      [](const bool cached) { return cached; });
+  const bool hasOnDiskCache = std::any_of(
+      impl_->onDiskBitmap_.begin(), impl_->onDiskBitmap_.end(),
+      [](const bool cached) { return cached; });
+  const bool hasFailedCache = std::any_of(
+      impl_->failedBitmap_.begin(), impl_->failedBitmap_.end(),
+      [](const bool failed) { return failed; });
+  const QString leftLabel = impl_->cacheRangeVisible_ || hasReadyCache || hasOnDiskCache
+      ? QStringLiteral("RAM Cache")
+      : hasFailedCache
+          ? QStringLiteral("RAM Cache: errors")
+          : QStringLiteral("RAM Cache: unavailable");
   const QString rightLabel = QString("%1:%2:%3:%4")
    .arg(hh, 2, 10, QChar('0')).arg(mm, 2, 10, QChar('0'))
    .arg(ss, 2, 10, QChar('0')).arg(ff, 2, 10, QChar('0'));
