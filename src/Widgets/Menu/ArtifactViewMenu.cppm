@@ -1515,6 +1515,14 @@ namespace Artifact {
   if (hasComp) {
     if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
       const auto grid = settings->compositionGridSettings();
+      if (gridMajorIntervalAction) {
+        gridMajorIntervalAction->setText(
+            QStringLiteral("主間隔を変更… (%1)").arg(grid.majorInterval, 0, 'f', 2));
+      }
+      if (gridSubdivisionsAction) {
+        gridSubdivisionsAction->setText(
+            QStringLiteral("分割数を変更… (%1)").arg(grid.subdivisions));
+      }
       if (gridShowMajorAction) {
         const QSignalBlocker blocker(gridShowMajorAction);
         gridShowMajorAction->setChecked(grid.showMajor);
