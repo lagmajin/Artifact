@@ -2093,6 +2093,9 @@ public:
         presetCombo_->addItem("2.0x", 2.0);
         presetCombo_->addItem("-1.0x (REV)", -1.0);
         presetCombo_->setCurrentIndex(2);  // 1.0x
+        presetCombo_->setAccessibleName(QStringLiteral("Playback speed preset"));
+        presetCombo_->setAccessibleDescription(
+            QStringLiteral("Choose a playback speed preset."));
         presetCombo_->setFixedWidth(80);
         layout->addWidget(new QLabel("Speed:"));
         layout->addWidget(presetCombo_);
@@ -2101,6 +2104,9 @@ public:
         speedSlider_ = new QSlider(Qt::Horizontal);
         speedSlider_->setRange(-20, 20);  // -2.0x to 2.0x
         speedSlider_->setValue(10);       // 1.0x
+        speedSlider_->setAccessibleName(QStringLiteral("Playback speed slider"));
+        speedSlider_->setAccessibleDescription(
+            QStringLiteral("Adjust playback speed from reverse to double speed."));
         speedSlider_->setFixedWidth(150);
         layout->addWidget(speedSlider_);
         
@@ -2110,6 +2116,9 @@ public:
         speedSpin_->setSingleStep(0.25);
         speedSpin_->setValue(1.0);
         speedSpin_->setSuffix("x");
+        speedSpin_->setAccessibleName(QStringLiteral("Playback speed value"));
+        speedSpin_->setAccessibleDescription(
+            QStringLiteral("Enter playback speed from negative two to positive two."));
         speedSpin_->setFixedWidth(70);
         layout->addWidget(speedSpin_);
         
@@ -2158,7 +2167,10 @@ W_OBJECT_IMPL(ArtifactPlaybackSpeedWidget)
 ArtifactPlaybackSpeedWidget::ArtifactPlaybackSpeedWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl(this))
 {
-    setMinimumHeight(32);
+    setAccessibleName(QStringLiteral("Playback speed"));
+    setAccessibleDescription(
+        QStringLiteral("Choose and adjust the active playback speed."));
+    setMinimumHeight(Accessibility::scaledSize(32));
     impl_->setupUI();
     setAutoFillBackground(false);
 }
