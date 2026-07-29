@@ -7674,6 +7674,9 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
         b->setObjectName(objectName.simplified().replace(' ', '_'));
         b->setFixedSize(22, 22);
         b->setToolTip(tip);
+        b->setAccessibleName(tip);
+        b->setAccessibleDescription(
+            QStringLiteral("Project View action: %1.").arg(tip));
         QIcon icon = loadProjectViewIcon(iconPath);
         if ((icon.isNull() || icon.pixmap(16, 16).isNull()) && QApplication::style()) {
             icon = QApplication::style()->standardIcon(fallbackIcon);
