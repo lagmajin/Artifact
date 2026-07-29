@@ -1463,11 +1463,84 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
  if (!renderer) {
   return;
  }
-  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+ const QMatrix4x4 baseTransform = getGlobalTransform4x4();
   const float contentFieldWeight = compositionFieldContentWeight(this);
  auto* impl = impl_;
- // Non-solid fills, non-default stroke styles, and operators still use the
- // compatibility cache. Simple custom Bézier paths use ShapePath::flatten().
+  const bool nativeOperatorCandidate =
+      !impl->shapeOperators_.empty() &&
+      impl->fillType_ == ArtifactSolidFillType::Solid &&
+      impl->strokeAlign_ == StrokeAlign::Center &&
+      !impl->hasCustomStrokeEffects();
+  if (nativeOperatorCandidate) {
+   const auto processedPaths = buildProcessedShapePaths(
+       impl->shapeType_, impl->width_, impl->height_, impl->cornerRadius_,
+       impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_,
+       impl->customPolygonPoints_, impl->customPolygonClosed_,
+       impl->customPathVertices_, impl->customPathClosed_,
+       impl->shapeOperators_);
+   const FloatColor fill(impl->fillColor_.r(), impl->fillColor_.g(),
+                         impl->fillColor_.b(), impl->fillColor_.a());
+   const FloatColor stroke(impl->strokeColor_.r(), impl->strokeColor_.g(),
+                           impl->strokeColor_.b(), impl->strokeColor_.a());
+   drawWithClonerEffect(
+       this, baseTransform,
+        [renderer, impl, processedPaths, fill, stroke,
+        contentFieldWeight, this](const QMatrix4x4& transform, float weight) {
+        const float opacity = this->opacity() * weight * contentFieldWeight;
+        const FloatColor drawFill(fill.r(), fill.g(), fill.b(), fill.a() * opacity);
+        const FloatColor drawStroke(stroke.r(), stroke.g(), stroke.b(), stroke.a() * opacity);
+        const double scaleX = std::hypot(static_cast<double>(transform(0, 0)),
+                                         static_cast<double>(transform(1, 0)));
+        const double scaleY = std::hypot(static_cast<double>(transform(0, 1)),
+                                         static_cast<double>(transform(1, 1)));
+        const double renderScale = std::max({1.0, scaleX, scaleY});
+        for (const auto& path : processedPaths) {
+         if (impl->fillEnabled_) {
+          const auto triangles = path.triangulate(0.25 / renderScale);
+          for (const auto& triangle : triangles) {
+           const QPointF p0 = mapPoint(transform, triangle.p0);
+           const QPointF p1 = mapPoint(transform, triangle.p1);
+           const QPointF p2 = mapPoint(transform, triangle.p2);
+           renderer->drawSolidTriangleLocal(
+               {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+               {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
+               {static_cast<float>(p2.x()), static_cast<float>(p2.y())}, drawFill);
+          }
+         }
+         const auto subpaths = path.flattenSubpaths(0.25 / renderScale);
+         for (const auto& segments : subpaths) {
+          if (segments.empty()) continue;
+          std::vector<Detail::float2> points;
+          points.reserve(segments.size() + 1);
+          for (const auto& segment : segments) {
+           const QPointF p = mapPoint(transform, segment.p0);
+           points.push_back({static_cast<float>(p.x()), static_cast<float>(p.y())});
+          }
+          const QPointF end = mapPoint(transform, segments.back().p1);
+          points.push_back({static_cast<float>(end.x()), static_cast<float>(end.y())});
+          const bool closed = points.size() > 2 &&
+                              std::hypot(points.front().x - points.back().x,
+                                         points.front().y - points.back().y) < 0.01f;
+          if (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f) {
+           PolylineStyle style;
+           style.thickness = std::max(1.0f, impl->strokeWidth_);
+           style.cap = static_cast<PolylineCap>(impl->strokeCap_);
+           style.join = static_cast<PolylineJoin>(impl->strokeJoin_);
+           style.closed = closed;
+           style.dashPattern = impl->dashPattern_;
+           renderer->drawStyledPolyline(points, style, drawStroke);
+          }
+         }
+        }
+       });
+   drawFractureOverlay(renderer, baseTransform,
+                       QSizeF(impl->width_, impl->height_),
+                       opacity() * contentFieldWeight);
+   return;
+  }
+ // Non-solid fills and custom stroke effects still use the compatibility
+ // cache. Operator paths meeting the native candidate contract are handled
+ // above; simple custom Bézier paths use ShapePath::flatten().
  if (impl->useCachePipeline()) {
   impl->rebuildCache();
    const float layerOpacity = opacity() * contentFieldWeight;
