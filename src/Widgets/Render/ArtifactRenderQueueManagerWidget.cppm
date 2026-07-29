@@ -66,6 +66,7 @@ import Core.FastSettingsStore;
 import Artifact.Widgets.AppDialogs;
 import Utils.Path;
 import Utils.ExplorerUtils;
+import Settings.Accessibility;
 
 namespace Artifact
 {
@@ -1284,7 +1285,12 @@ namespace Artifact
     auto* retry = menu.addAction("Retry Job");
     menu.addSeparator();
     auto* copyPath = menu.addAction("Copy Path");
-    auto* act = menu.exec(impl_->jobListWidget->mapToGlobal(pos));
+    const QPoint origin = impl_->jobListWidget->mapToGlobal(pos);
+    int menuX = origin.x();
+    int menuY = origin.y();
+    Accessibility::adjustContextMenuPosition(menuX, menuY,
+                                              menu.sizeHint().width());
+    auto* act = menu.exec(QPoint(menuX, menuY));
     if (act == reveal) ArtifactCore::openInExplorer(path, true);
     else if (act == open) QDesktopServices::openUrl(QUrl::fromLocalFile(path));
     else if (act == retry) {
