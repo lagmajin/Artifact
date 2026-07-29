@@ -65,6 +65,8 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl())
 {
     setWindowTitle(u8"プリコンポーズ");
+    setAccessibleName(u8"プリコンポーズダイアログ");
+    setAccessibleDescription(u8"選択したレイヤーを新規コンポジションへまとめる設定");
     setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_NoChildEventsForParent);
 
@@ -90,6 +92,8 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
         titleLbl->setPalette(pal);
     }
     auto* closeBtn = new QPushButton(u8"×", header);
+    closeBtn->setAccessibleName(u8"閉じる");
+    closeBtn->setAccessibleDescription(u8"プリコンポーズダイアログを閉じる");
     closeBtn->setFixedSize(30, 30);
     {
         QPalette pal = closeBtn->palette();
@@ -129,6 +133,9 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
         }
         lbl->setMinimumWidth(100);
         impl_->nameEdit = new QLineEdit(u8"プリコンプ 1", row);
+        lbl->setBuddy(impl_->nameEdit);
+        impl_->nameEdit->setAccessibleName(u8"新規コンポジション名");
+        impl_->nameEdit->setAccessibleDescription(u8"作成する新規コンポジションの名前");
         rl->addWidget(lbl);
         rl->addWidget(impl_->nameEdit, 1);
         bLay->addWidget(row);
@@ -147,6 +154,8 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
         bLay->addWidget(secLbl);
 
         impl_->layerListWidget = new QListWidget(body);
+        impl_->layerListWidget->setAccessibleName(u8"選択中のレイヤー");
+        impl_->layerListWidget->setAccessibleDescription(u8"新規コンポジションへ移動するレイヤーの一覧");
         impl_->layerListWidget->setMinimumHeight(110);
         {
             QPalette pal = impl_->layerListWidget->palette();
@@ -193,6 +202,8 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
             rLay->setSpacing(2);
             impl_->moveSelectedRadio = new QRadioButton(
                 u8"選択したレイヤーのみを新規コンポジションに移動する", radioWidget);
+            impl_->moveSelectedRadio->setAccessibleName(u8"選択したレイヤーのみを移動");
+            impl_->moveSelectedRadio->setAccessibleDescription(u8"選択したレイヤーだけを新規コンポジションへ移動");
             impl_->moveSelectedRadio->setChecked(true);
             {
                 QPalette pal = impl_->moveSelectedRadio->palette();
@@ -222,6 +233,8 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
             rLay->setSpacing(2);
             impl_->moveAllAttribsRadio = new QRadioButton(
                 u8"すべての属性を新規コンポジションに移動する", radioWidget);
+            impl_->moveAllAttribsRadio->setAccessibleName(u8"すべての属性を移動");
+            impl_->moveAllAttribsRadio->setAccessibleDescription(u8"すべての属性を新規コンポジションへ移動");
             auto* subLbl = new QLabel(
                 u8"トランスフォームなどの属性もプリコンプに引き継がれます。", radioWidget);
             {
@@ -242,15 +255,21 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     // ── チェックボックス ──────────────────────────────────────────────────
     {
         impl_->openNewCompCheck = new QCheckBox(u8"新規コンポジションを開く", body);
+        impl_->openNewCompCheck->setAccessibleName(u8"新規コンポジションを開く");
+        impl_->openNewCompCheck->setAccessibleDescription(u8"作成後に新規コンポジションを開く");
         impl_->openNewCompCheck->setChecked(true);
         bLay->addWidget(impl_->openNewCompCheck);
 
         impl_->addAdjLayerCheck = new QCheckBox(u8"調整レイヤーとして追加", body);
+        impl_->addAdjLayerCheck->setAccessibleName(u8"調整レイヤーとして追加");
+        impl_->addAdjLayerCheck->setAccessibleDescription(u8"新規コンポジションを調整レイヤーとして追加");
         impl_->addAdjLayerCheck->setChecked(false);
         impl_->addAdjLayerCheck->setEnabled(false); // greyed out by default
         bLay->addWidget(impl_->addAdjLayerCheck);
 
         impl_->matchDurationCheck = new QCheckBox(u8"コンポジションのデュレーションをワークエリアに合わせる", body);
+        impl_->matchDurationCheck->setAccessibleName(u8"ワークエリアにデュレーションを合わせる");
+        impl_->matchDurationCheck->setAccessibleDescription(u8"新規コンポジションのデュレーションをワークエリアに合わせる");
         impl_->matchDurationCheck->setChecked(true);
         bLay->addWidget(impl_->matchDurationCheck);
     }
@@ -265,6 +284,10 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     const DialogButtonRow buttons = createWindowsDialogButtonRow(footer, QStringLiteral("OK"), QStringLiteral("キャンセル"));
     auto* okBtn = buttons.okButton;
     auto* cancelBtn = buttons.cancelButton;
+    okBtn->setAccessibleName(u8"作成");
+    okBtn->setAccessibleDescription(u8"設定した内容でプリコンポーズを作成");
+    cancelBtn->setAccessibleName(u8"キャンセル");
+    cancelBtn->setAccessibleDescription(u8"プリコンポーズをキャンセル");
     okBtn->setFixedSize(80, 28);
     cancelBtn->setFixedSize(80, 28);
     fLay->addStretch();
