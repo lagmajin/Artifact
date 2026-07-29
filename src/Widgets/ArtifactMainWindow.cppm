@@ -598,6 +598,7 @@ public:
   QVBoxLayout *centralWorkspaceLayout = nullptr;
   QWidget *centralWorkspaceWidget = nullptr;
   QString centralWorkspaceTitle;
+  QByteArray defaultDockManagerState;
   QList<CDockWidget *> dockWidgets;
   WorkspaceMode workspaceMode_ = WorkspaceMode::Default;
   bool immersiveMode_ = false;
@@ -2236,6 +2237,35 @@ bool ArtifactMainWindow::restoreDockManagerState(const QByteArray &state) {
       dock->setProperty("artifactRespectRestoredDockPlacement", true);
     }
   }
+  return true;
+}
+
+void ArtifactMainWindow::captureDefaultDockManagerState() {
+  if (!impl_ || !impl_->dockManager) {
+    return;
+  }
+  impl_->defaultDockManagerState = impl_->dockManager->saveState();
+}
+
+bool ArtifactMainWindow::resetDockManagerStateToDefault() {
+  if (!impl_ || !impl_->dockManager ||
+      impl_->defaultDockManagerState.isEmpty()) {
+    return false;
+  }
+  const QByteArray beforeState = saveDockManagerState();
+  if (!impl_->dockManager->restoreState(impl_->defaultDockManagerState)) {
+    return false;
+  }
+  pushDockLayoutSnapshot(this, beforeState,
+                         QStringLiteral("Reset Dock Layout"));
+  for (auto *dock : impl_->dockWidgets) {
+    if (!dock || !dock->property("artifactDeferredFloatingContainer").toBool()) {
+      continue;
+    }
+    dock->setProperty("artifactDeferredFloatingMaterialized",
+                      findFloatingDockContainer(dock) != nullptr);
+  }
+  setWorkspaceMode(WorkspaceMode::Default);
   return true;
 }
 

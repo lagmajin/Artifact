@@ -3740,6 +3740,9 @@ int main(int argc, char *argv[]) {
     // ADS dockState is the sole authoritative workspace layout.  QMainWindow
     // state is intentionally not restored because it can replay stale toolbar
     // and dock geometry before ADS has reached its final graph.
+    // Capture the standard ADS arrangement before restoring the user's
+    // persisted layout so View > Workspace Presets can restore it later.
+    mw->captureDefaultDockManagerState();
     mw->setWorkspaceMode(workspaceModeFromSettings());
     bool resetApplied = false;
     if (!layoutState.geometry.isEmpty() && !geometryRestored) {

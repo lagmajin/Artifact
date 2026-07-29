@@ -105,6 +105,8 @@ public /*slots*/:
   // restore は「全ての dock が登録された後」でなければならない（ADS の制約）。
   QByteArray saveDockManagerState() const;
   bool restoreDockManagerState(const QByteArray &state);
+  void captureDefaultDockManagerState();
+  bool resetDockManagerStateToDefault();
 
   // AI Cloud widget access
   ArtifactAICloudWidget *aiCloudWidget() const;

@@ -860,6 +860,7 @@ namespace Artifact {
    QAction* saveWorkspacePresetAction = nullptr;
    QAction* deleteWorkspacePresetAction = nullptr;
    QAction* restoreWorkspaceSessionAction = nullptr;
+   QAction* resetWorkspaceLayoutAction = nullptr;
    QMenu* windowPanelsMenu = nullptr;
    QStringList cachedWorkspacePresetNames_;
    QStringList cachedDockTitles_;
@@ -1111,6 +1112,8 @@ namespace Artifact {
    deleteWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
    restoreWorkspaceSessionAction = workspacePresetMenu->addAction("最後のセッションを復元");
    restoreWorkspaceSessionAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_restore_session.svg")));
+   resetWorkspaceLayoutAction = workspacePresetMenu->addAction("デフォルトレイアウトにリセット");
+   resetWorkspaceLayoutAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_restore_session.svg")));
    QObject::connect(saveWorkspacePresetAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     const QString defaultName = QStringLiteral("Custom");
@@ -1164,6 +1167,13 @@ namespace Artifact {
     if (!manager.restoreSession(mainWindow)) {
      QMessageBox::information(mainWindow, QStringLiteral("ワークスペースを復元"),
                               QStringLiteral("復元できるセッションがありません。"));
+    }
+   });
+   QObject::connect(resetWorkspaceLayoutAction, &QAction::triggered, menu, [this]() {
+    if (!mainWindow) return;
+    if (!mainWindow->resetDockManagerStateToDefault()) {
+     QMessageBox::information(mainWindow, QStringLiteral("ワークスペース"),
+                              QStringLiteral("デフォルトレイアウトを復元できません。"));
     }
    });
    
@@ -1423,6 +1433,9 @@ namespace Artifact {
   restoreWorkspaceSessionAction =
       workspacePresetMenu->addAction("最後のセッションを復元");
   restoreWorkspaceSessionAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_restore_session.svg")));
+  resetWorkspaceLayoutAction =
+      workspacePresetMenu->addAction("デフォルトレイアウトにリセット");
+  resetWorkspaceLayoutAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_restore_session.svg")));
 
   QObject::connect(saveWorkspacePresetAction, &QAction::triggered, mainWindow,
                    [mw = mainWindow]() {
@@ -1495,6 +1508,18 @@ namespace Artifact {
                        QMessageBox::information(
                            mw, QStringLiteral("ワークスペースを復元"),
                            QStringLiteral("復元できるセッションがありません。"));
+                     }
+                   });
+
+  QObject::connect(resetWorkspaceLayoutAction, &QAction::triggered,
+                   mainWindow, [mw = mainWindow]() {
+                     if (!mw) {
+                       return;
+                     }
+                     if (!mw->resetDockManagerStateToDefault()) {
+                       QMessageBox::information(
+                           mw, QStringLiteral("ワークスペース"),
+                           QStringLiteral("デフォルトレイアウトを復元できません。"));
                      }
                    });
 
