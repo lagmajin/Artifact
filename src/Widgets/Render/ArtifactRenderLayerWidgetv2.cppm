@@ -64,6 +64,7 @@ import Artifact.Layer.Image;
 import Artifact.Widgets.TransformGizmo;
 import Utils.Path;
 import Memory.SharedPtr;
+import Settings.Accessibility;
 
 namespace Artifact {
 
@@ -5336,7 +5337,11 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
                                              : QStringLiteral("Close Path"));
    }
    if (!menu.actions().isEmpty()) {
-   QAction* shapeChosen = menu.exec(event->globalPos());
+   int menuX = event->globalPos().x();
+   int menuY = event->globalPos().y();
+   Accessibility::adjustContextMenuPosition(menuX, menuY,
+                                             menu.sizeHint().width());
+   QAction* shapeChosen = menu.exec(QPoint(menuX, menuY));
    if (shapeChosen) {
      bool handled = false;
      const QJsonArray beforeOperatorState =
