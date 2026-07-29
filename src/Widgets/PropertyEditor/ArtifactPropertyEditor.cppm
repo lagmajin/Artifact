@@ -178,8 +178,14 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   nextKeyBtn_->setObjectName(QStringLiteral("propertyNextKeyButton"));
   prevKeyBtn_->setToolTip(
       QStringLiteral("Previous keyframe: %1").arg(propertyName));
+  prevKeyBtn_->setAccessibleName(QStringLiteral("Previous keyframe"));
+  prevKeyBtn_->setAccessibleDescription(
+      QStringLiteral("Go to the previous keyframe for %1").arg(propertyName));
   nextKeyBtn_->setToolTip(
       QStringLiteral("Next keyframe: %1").arg(propertyName));
+  nextKeyBtn_->setAccessibleName(QStringLiteral("Next keyframe"));
+  nextKeyBtn_->setAccessibleDescription(
+      QStringLiteral("Go to the next keyframe for %1").arg(propertyName));
   prevKeyBtn_->setFlat(true);
   nextKeyBtn_->setFlat(true);
   prevKeyBtn_->setVisible(false);
@@ -192,6 +198,9 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   keyframeButton_->setObjectName(QStringLiteral("propertyKeyButton"));
   keyframeButton_->setToolTip(
       QStringLiteral("Toggle Keyframe: %1").arg(propertyName));
+  keyframeButton_->setAccessibleName(QStringLiteral("Keyframe"));
+  keyframeButton_->setAccessibleDescription(
+      QStringLiteral("Toggle keyframe for %1").arg(propertyName));
   keyframeButton_->setFixedSize(kPropertyKeyButtonSize,
                                 kPropertyKeyButtonSize);
   keyframeButton_->setCheckable(true);
@@ -203,6 +212,9 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
 
   resetButton_->setObjectName(QStringLiteral("propertyResetButton"));
   resetButton_->setToolTip(QStringLiteral("Reset: %1").arg(propertyName));
+  resetButton_->setAccessibleName(QStringLiteral("Reset property"));
+  resetButton_->setAccessibleDescription(
+      QStringLiteral("Reset %1 to its default value").arg(propertyName));
   resetButton_->setFixedSize(kPropertyResetButtonSize,
                              kPropertyResetButtonSize);
   resetButton_->setIcon(resetIcon);
@@ -215,6 +227,9 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   expressionButton_->setObjectName(QStringLiteral("propertyExprButton"));
   expressionButton_->setToolTip(
       QStringLiteral("Expression: %1").arg(propertyName));
+  expressionButton_->setAccessibleName(QStringLiteral("Expression"));
+  expressionButton_->setAccessibleDescription(
+      QStringLiteral("Edit the expression for %1").arg(propertyName));
   expressionButton_->setFixedSize(kPropertyExprButtonWidth,
                                   kPropertyExprButtonHeight);
   expressionButton_->setIcon(expressionIcon);
@@ -228,6 +243,9 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   favoriteButton_->setObjectName(QStringLiteral("propertyFavButton"));
   favoriteButton_->setToolTip(
       QStringLiteral("Favorite: %1").arg(propertyName));
+  favoriteButton_->setAccessibleName(QStringLiteral("Favorite property"));
+  favoriteButton_->setAccessibleDescription(
+      QStringLiteral("Toggle favorite state for %1").arg(propertyName));
   favoriteButton_->setFixedSize(kPropertyKeyButtonSize,
                                 kPropertyKeyButtonSize);
   favoriteButton_->setCheckable(true);
@@ -550,13 +568,25 @@ void ArtifactPropertyEditorRowWidget::setEditorToolTip(const QString &tooltip) {
   }
   keyframeButton_->setToolTip(
       QStringLiteral("Toggle keyframe: %1").arg(propertyName_));
+  keyframeButton_->setAccessibleDescription(
+      QStringLiteral("Toggle keyframe for %1").arg(propertyName_));
   prevKeyBtn_->setToolTip(
       QStringLiteral("Previous keyframe: %1").arg(propertyName_));
+  prevKeyBtn_->setAccessibleDescription(
+      QStringLiteral("Go to the previous keyframe for %1").arg(propertyName_));
   nextKeyBtn_->setToolTip(
       QStringLiteral("Next keyframe: %1").arg(propertyName_));
+  nextKeyBtn_->setAccessibleDescription(
+      QStringLiteral("Go to the next keyframe for %1").arg(propertyName_));
   resetButton_->setToolTip(QStringLiteral("Reset: %1").arg(propertyName_));
+  resetButton_->setAccessibleDescription(
+      QStringLiteral("Reset %1 to its default value").arg(propertyName_));
   expressionButton_->setToolTip(
       QStringLiteral("Expression: %1").arg(propertyName_));
+  expressionButton_->setAccessibleDescription(
+      QStringLiteral("Edit the expression for %1").arg(propertyName_));
+  favoriteButton_->setAccessibleDescription(
+      QStringLiteral("Toggle favorite state for %1").arg(propertyName_));
 }
 
 void ArtifactPropertyEditorRowWidget::setSupplementaryText(
