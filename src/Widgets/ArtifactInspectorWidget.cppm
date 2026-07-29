@@ -4854,6 +4854,14 @@ bool ArtifactInspectorWidget::Impl::moveEffectById(const QString &effectId,
 
 void ArtifactInspectorWidget::Impl::handleProjectCreated() {
   qDebug() << "[Inspector] Project created";
+  // ProjectChangedEvent is also used for mutations and does not distinguish
+  // close. Re-check the service state so a close/reset cannot leave stale
+  // layer properties enabled in the inspector.
+  auto *projectService = ArtifactProjectService::instance();
+  if (!projectService || !projectService->hasProject()) {
+    handleProjectClosed();
+    return;
+  }
   const bool wasEnabled = containerWidget && containerWidget->isEnabled();
   containerWidget->setEnabled(true);
   if (wasEnabled) {
