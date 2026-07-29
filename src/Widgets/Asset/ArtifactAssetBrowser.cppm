@@ -4492,11 +4492,17 @@ if (!item.isFolder) {
    impl_->syncDirectorySelection();
   });
 
-  addAction(frequentMenu, QStringLiteral("Find References"), [this, filePath]() {
+  addAction(frequentMenu, QStringLiteral("Find References"), [this, filePath, item]() {
     if (filePath.isEmpty()) return;
     auto *service = ArtifactProjectService::instance();
     const auto project = service ? service->getCurrentProjectSharedPtr()
                                  : ArtifactProjectPtr{};
+    QStringList referencePaths;
+    if (item.isSequence && !item.sequencePaths.isEmpty()) {
+      referencePaths = item.sequencePaths;
+    } else {
+      referencePaths = {filePath};
+    }
     QStringList references;
     if (project) {
       std::function<void(ProjectItem*)> visit = [&](ProjectItem *item) {
@@ -4509,7 +4515,14 @@ if (!item.isFolder) {
               if (!layer) continue;
               const QByteArray serialized =
                   QJsonDocument(layer->toJson()).toJson(QJsonDocument::Compact);
-              if (QString::fromUtf8(serialized).contains(filePath, Qt::CaseInsensitive)) {
+              const QString serializedLayer = QString::fromUtf8(serialized);
+              const bool matchesReference = std::any_of(
+                  referencePaths.cbegin(), referencePaths.cend(),
+                  [&serializedLayer](const QString& referencePath) {
+                    return !referencePath.isEmpty() &&
+                           serializedLayer.contains(referencePath, Qt::CaseInsensitive);
+                  });
+              if (matchesReference) {
                 references.push_back(QStringLiteral("Composition %1 / %2 (%3)")
                                          .arg(composition->id().toString(),
                                               layer->layerName(), layer->id().toString()));
