@@ -298,6 +298,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    return;
   }
   impl_->interactiveSeekingEnabled_ = enabled;
+  setFocusPolicy(enabled ? Qt::StrongFocus : Qt::NoFocus);
   if (!enabled) {
    impl_->dragging_ = false;
    impl_->hover_ = false;
@@ -309,6 +310,50 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
  bool ArtifactTimelineScrubBar::interactiveSeekingEnabled() const
  {
   return impl_->interactiveSeekingEnabled_;
+ }
+
+ void ArtifactTimelineScrubBar::keyPressEvent(QKeyEvent* event)
+ {
+  if (!impl_->interactiveSeekingEnabled_ || impl_->totalFrames_ <= 0 ||
+      (impl_->isPlaying_ && impl_->seekLockDuringPlayback_)) {
+   event->ignore();
+   return;
+  }
+
+  int step = 0;
+  switch (event->key()) {
+  case Qt::Key_Left:
+   step = -1;
+   break;
+  case Qt::Key_Right:
+   step = 1;
+   break;
+  case Qt::Key_PageUp:
+   step = -std::max(1, impl_->fps_);
+   break;
+  case Qt::Key_PageDown:
+   step = std::max(1, impl_->fps_);
+   break;
+  case Qt::Key_Home:
+   step = -impl_->currentFrame_.framePosition();
+   break;
+  case Qt::Key_End:
+   step = impl_->totalFrames_ - 1 - impl_->currentFrame_.framePosition();
+   break;
+  default:
+   event->ignore();
+   return;
+  }
+
+  const int nextFrame = qBound(0, impl_->currentFrame_.framePosition() + step,
+                               impl_->totalFrames_ - 1);
+  if (nextFrame != impl_->currentFrame_.framePosition()) {
+   impl_->currentFrame_ = FramePosition(nextFrame);
+   impl_->visualFrame_ = static_cast<double>(nextFrame);
+   update();
+   Q_EMIT frameChanged(impl_->currentFrame_);
+  }
+  event->accept();
  }
 
   void ArtifactTimelineScrubBar::setRulerPixelsPerFrame(double ppf)

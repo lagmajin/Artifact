@@ -2,6 +2,7 @@ module;
 #include <utility>
 
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QPaintEvent>
 #include <QSize>
 #include <QWidget>
@@ -30,6 +31,7 @@ export namespace Artifact
   void mousePressEvent(QMouseEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
   void mouseReleaseEvent(QMouseEvent* event) override;
+  void keyPressEvent(QKeyEvent* event) override;
   QSize sizeHint() const override;
   QSize minimumSizeHint() const override;
 
