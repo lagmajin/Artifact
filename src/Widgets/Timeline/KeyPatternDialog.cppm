@@ -95,6 +95,9 @@ KeyPatternDialog::KeyPatternDialog(
     const ArtifactCore::KeyframePatternRequest &initialRequest)
     : QDialog(parent), impl_(new Impl()) {
   setWindowTitle(QStringLiteral("Key Pattern Dialog"));
+  setAccessibleName(QStringLiteral("Key Pattern"));
+  setAccessibleDescription(
+      QStringLiteral("Generate and apply a keyframe pattern for the selected properties"));
   resize(900, 640);
 
   impl_->applyCallback = std::move(applyCallback);
@@ -204,6 +207,42 @@ KeyPatternDialog::KeyPatternDialog(
   impl_->seedSpin->setSingleStep(1);
   form->addRow(QStringLiteral("Seed"), impl_->seedSpin);
 
+  const auto labelInput = [](QWidget *widget, const QString &name,
+                             const QString &description) {
+    widget->setAccessibleName(name);
+    widget->setAccessibleDescription(description);
+  };
+  labelInput(impl_->presetCombo, QStringLiteral("Pattern preset"),
+             QStringLiteral("Choose the keyframe pattern to generate"));
+  labelInput(impl_->startFrameSpin, QStringLiteral("Start frame"),
+             QStringLiteral("Set the first frame of the generated pattern"));
+  labelInput(impl_->endFrameSpin, QStringLiteral("End frame"),
+             QStringLiteral("Set the last frame of the generated pattern"));
+  labelInput(impl_->baseValueSpin, QStringLiteral("Base value"),
+             QStringLiteral("Set the starting value for the pattern"));
+  labelInput(impl_->targetValueSpin, QStringLiteral("Target value"),
+             QStringLiteral("Set the target value for the pattern"));
+  labelInput(impl_->amplitudeSpin, QStringLiteral("Amplitude"),
+             QStringLiteral("Set the pattern amplitude"));
+  labelInput(impl_->cyclesSpin, QStringLiteral("Cycles"),
+             QStringLiteral("Set the number of pattern cycles"));
+  labelInput(impl_->phaseSpin, QStringLiteral("Phase"),
+             QStringLiteral("Set the pattern phase"));
+  labelInput(impl_->delaySpin, QStringLiteral("Delay frames"),
+             QStringLiteral("Set the delay between generated keyframes"));
+  labelInput(impl_->bpmSpin, QStringLiteral("BPM"),
+             QStringLiteral("Set the beats per minute for beat-synced patterns"));
+  labelInput(impl_->dampingSpin, QStringLiteral("Damping"),
+             QStringLiteral("Set the damping amount"));
+  labelInput(impl_->oscillationSpin, QStringLiteral("Oscillation"),
+             QStringLiteral("Set the settle oscillation amount"));
+  labelInput(impl_->stepCountSpin, QStringLiteral("Step count"),
+             QStringLiteral("Set the number of generated steps"));
+  labelInput(impl_->sampleCountSpin, QStringLiteral("Sample count"),
+             QStringLiteral("Set the number of preview samples"));
+  labelInput(impl_->seedSpin, QStringLiteral("Random seed"),
+             QStringLiteral("Set the deterministic random seed"));
+
   impl_->warningLabel = new QLabel(this);
   impl_->warningLabel->setWordWrap(true);
   impl_->warningLabel->setVisible(false);
@@ -218,6 +257,9 @@ KeyPatternDialog::KeyPatternDialog(
   impl_->buttonBox = new QDialogButtonBox(QDialogButtonBox::Cancel | QDialogButtonBox::Ok, this);
   if (auto *applyButton = impl_->buttonBox->button(QDialogButtonBox::Ok)) {
     applyButton->setText(QStringLiteral("Apply"));
+    applyButton->setAccessibleName(QStringLiteral("Apply pattern"));
+    applyButton->setAccessibleDescription(
+        QStringLiteral("Apply the generated keyframe pattern"));
     applyButton->setEnabled(static_cast<bool>(impl_->applyCallback));
   }
   root->addWidget(impl_->buttonBox);
