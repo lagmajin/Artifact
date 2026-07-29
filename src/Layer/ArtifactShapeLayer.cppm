@@ -1272,6 +1272,7 @@ void ArtifactShapeLayer::setStrokeJoin(StrokeJoin join) {
  if (impl_->strokeJoin_ == normalized) return;
  impl_->strokeJoin_ = normalized;
  impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
  impl_->shapeContentCacheDirty_ = true;
  Q_EMIT changed();
 }
@@ -1459,6 +1460,9 @@ QRectF ArtifactShapeLayer::localBounds() const
    strokePad = impl_->strokeAlign_ == StrokeAlign::Outside
        ? strokeWidth
        : (impl_->strokeAlign_ == StrokeAlign::Center ? strokeWidth * 0.5 : 0.0);
+   if (impl_->strokeJoin_ == StrokeJoin::Miter) {
+    strokePad = std::max(strokePad, strokeWidth * 4.0);
+   }
   }
   const qreal pad = std::max<qreal>(0.5, strokePad);
   impl_->cachedLocalBounds_ = bounds.adjusted(-pad, -pad, pad, pad);
