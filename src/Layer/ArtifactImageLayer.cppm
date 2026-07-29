@@ -487,8 +487,13 @@ void ArtifactImageLayer::setInputInterpretation(
 {
     impl_->inputColorSpace_ = colorSpace.trimmed();
     impl_->inputTransferFunction_ = transferFunction.trimmed();
-    if (impl_->cacheBuffer_) {
-        impl_->applyInputInterpretation();
+    if (impl_->cacheBuffer_ && !impl_->sourcePath_.trimmed().isEmpty()) {
+        // Re-read the raw source before applying a changed interpretation;
+        // applying a second interpretation to an already converted buffer
+        // would compound transfer and gamut transforms.
+        impl_->cache_.reset();
+        impl_->cacheBuffer_.reset();
+        loadFromPath(impl_->sourcePath_);
     }
     setDirty(LayerDirtyFlag::Source);
     Q_EMIT changed();
