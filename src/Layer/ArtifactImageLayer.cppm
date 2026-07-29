@@ -32,6 +32,7 @@ module;
 module Artifact.Layer.Image;
 
 import Artifact.Layer.CloneEffectSupport;
+import Media.ImageSequenceSource;
 
 import std;
 import Artifact.Layers.Abstract._2D;
@@ -232,6 +233,8 @@ public:
     QUuid sourceAssetId_;
     QStringList sequencePaths_;
     double sequenceFrameRate_ = 0.0;
+    mutable std::unique_ptr<ArtifactCore::ImageSequenceSource> sequenceSource_;
+    mutable qint64 sequenceCachedIndex_ = -1;
     mutable std::uint64_t cachedSourceVersion_ = 0;
     SourceCrop sourceCrop_;
     mutable ArtifactCore::SharedPtr<QImage> cache_;
@@ -246,6 +249,38 @@ public:
     mutable QFutureWatcher<PrefetchResult> prefetchWatcher_;
     mutable std::uint64_t prefetchGeneration_ = 0;
     mutable bool prefetchDone_ = false;
+
+    bool refreshSequenceFrame(qint64 frameIndex) const
+    {
+        if (sequencePaths_.size() <= 1) {
+            return false;
+        }
+        if (sequenceCachedIndex_ == frameIndex && cache_) {
+            return true;
+        }
+        if (!sequenceSource_) {
+            sequenceSource_ = std::make_unique<ArtifactCore::ImageSequenceSource>();
+            if (!sequenceSource_->open(sequencePaths_.front())) {
+                sequenceSource_.reset();
+                return false;
+            }
+            if (sequenceFrameRate_ > 0.0) {
+                sequenceSource_->setFrameRate(sequenceFrameRate_);
+            }
+        }
+        if (frameIndex < 0 || frameIndex >= sequenceSource_->frameCount()) {
+            return false;
+        }
+        const QImage frame = sequenceSource_->frameAt(frameIndex);
+        if (frame.isNull()) {
+            return false;
+        }
+        cache_ = ArtifactCore::makeShared<QImage>(frame);
+        cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
+            toFrameBuffer(frame));
+        sequenceCachedIndex_ = frameIndex;
+        return true;
+    }
 
     void startPrefetch()
     {
@@ -435,6 +470,8 @@ bool ArtifactImageLayer::setImageSequence(const QStringList& framePaths, double 
     }
     impl_->sequencePaths_ = framePaths;
     impl_->sequenceFrameRate_ = frameRate > 0.0 ? frameRate : 0.0;
+    impl_->sequenceSource_.reset();
+    impl_->sequenceCachedIndex_ = -1;
     // 代表フレーム（先頭）を読み込んで表示・サイズを確定させる。
     // フレーム時刻に応じた再生は ImageSequenceSource 連携のフォローアップとする。
     return loadFromPath(framePaths.first());
@@ -841,6 +878,12 @@ void ArtifactImageLayer::setFromCvMat()
 void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!renderer) return;
+
+    if (impl_->isImageSequence()) {
+        const qint64 sequenceFrame =
+            currentFrame() - startTime().framePosition();
+        impl_->refreshSequenceFrame(std::max<qint64>(0, sequenceFrame));
+    }
 
     auto size = sourceSize();
     if (!impl_->fitToLayer_) {
