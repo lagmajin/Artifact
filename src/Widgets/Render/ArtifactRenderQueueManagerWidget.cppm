@@ -876,6 +876,9 @@ namespace Artifact
   impl_->searchEdit->setPlaceholderText("Search jobs...");
   impl_->searchEdit->setMinimumHeight(
       Artifact::Accessibility::scaledSize(24));
+  impl_->searchEdit->setAccessibleName(QStringLiteral("Render job search"));
+  impl_->searchEdit->setAccessibleDescription(
+      QStringLiteral("Filter the render queue by job name or composition."));
   impl_->searchEdit->setObjectName("renderQueueSearch");
   impl_->searchEdit->setMaximumWidth(440);
   impl_->searchEdit->changed = [this](const QString& text) {
@@ -1221,6 +1224,9 @@ namespace Artifact
   auto* historyLayout = new QVBoxLayout(historyGroup);
   impl_->historyListWidget = new QListWidget();
   impl_->historyListWidget->setObjectName("renderQueueHistory");
+  impl_->historyListWidget->setAccessibleName(QStringLiteral("Render history"));
+  impl_->historyListWidget->setAccessibleDescription(
+      QStringLiteral("Review completed and failed render job history."));
   historyLayout->addWidget(impl_->historyListWidget, 1);
   auto* historyButtonLayout = new QHBoxLayout();
   impl_->clearHistoryButton = new QPushButton("Clear");
