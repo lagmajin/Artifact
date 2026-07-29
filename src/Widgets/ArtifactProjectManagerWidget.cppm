@@ -6883,6 +6883,9 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->proxyGlobalToggle_->setObjectName(QStringLiteral("projectManagerGlobalProxyToggle"));
     impl_->proxyGlobalToggle_->setChecked(impl_->proxyGlobalEnabled_);
     impl_->proxyGlobalToggle_->setToolTip(QStringLiteral("Enable or disable proxy playback for all footage. When disabled, layers fall back to original source."));
+    impl_->proxyGlobalToggle_->setAccessibleName(QStringLiteral("Global Proxy"));
+    impl_->proxyGlobalToggle_->setAccessibleDescription(
+        QStringLiteral("Enable or disable proxy playback for all footage"));
     QObject::connect(impl_->proxyGlobalToggle_, &QCheckBox::toggled, [this](bool checked) {
         if (!impl_) return;
         impl_->proxyGlobalEnabled_ = checked;
