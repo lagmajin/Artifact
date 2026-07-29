@@ -469,6 +469,14 @@ std::vector<AbstractProperty> ArtifactCloneLayer::getProperties() const {
                         .arg(cloneModeName(impl_->settings_.mode)));
     props.push_back(modeProp);
 
+    AbstractProperty useEffectorProp;
+    useEffectorProp.setName("Use Effector");
+    useEffectorProp.setType(PropertyType::Boolean);
+    useEffectorProp.setValue(impl_->settings_.useEffector);
+    useEffectorProp.setTooltip(
+        QStringLiteral("Apply the configured clone effectors to generated clones."));
+    props.push_back(useEffectorProp);
+
     AbstractProperty transform1EnabledProp;
     transform1EnabledProp.setName("Transform 1 Enabled");
     transform1EnabledProp.setType(PropertyType::Boolean);
@@ -835,6 +843,8 @@ void ArtifactCloneLayer::setPropertyValue(const UniString& name, const QVariant&
     const QString key = name.toQString();
     if (key == QStringLiteral("Mode")) {
         impl_->settings_.mode = static_cast<CloneMode>(value.toInt());
+    } else if (key == QStringLiteral("Use Effector")) {
+        impl_->settings_.useEffector = value.toBool();
     } else if (key == QStringLiteral("Clone Count")) {
         impl_->settings_.cloneCount = std::max(1, value.toInt());
     } else if (key == QStringLiteral("Offset X")) {
