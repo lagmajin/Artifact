@@ -1960,15 +1960,24 @@ public:
         
         // フレーム表示
         frameLabel_ = createLabel("0 / 300", "現在のフレーム / 総フレーム数");
+        frameLabel_->setAccessibleName(QStringLiteral("Current frame"));
+        frameLabel_->setAccessibleDescription(
+            QStringLiteral("Current frame and total frame count."));
         layout->addWidget(frameLabel_);
         layout->addSpacing(24);
         
         // 速度表示
         speedLabel_ = createLabel("1.00x", "再生速度");
+        speedLabel_->setAccessibleName(QStringLiteral("Playback speed status"));
+        speedLabel_->setAccessibleDescription(
+            QStringLiteral("Current playback speed."));
         layout->addWidget(speedLabel_);
         
         // ドロップフレーム表示
         droppedLabel_ = createLabel("Dropped: 0", "ドロップフレーム数");
+        droppedLabel_->setAccessibleName(QStringLiteral("Dropped frames"));
+        droppedLabel_->setAccessibleDescription(
+            QStringLiteral("Number of dropped playback frames."));
         applyThemeTextPalette(droppedLabel_, QColor(ArtifactCore::currentDCCTheme().textColor), 90);
         layout->addWidget(droppedLabel_);
         
@@ -1997,7 +2006,10 @@ W_OBJECT_IMPL(ArtifactPlaybackInfoWidget)
 ArtifactPlaybackInfoWidget::ArtifactPlaybackInfoWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl(this))
 {
-    setMinimumHeight(32);
+    setAccessibleName(QStringLiteral("Playback information"));
+    setAccessibleDescription(
+        QStringLiteral("Shows current frame, playback speed, and dropped frames."));
+    setMinimumHeight(Accessibility::scaledSize(32));
     impl_->setupUI();
     setAutoFillBackground(false);
 }
