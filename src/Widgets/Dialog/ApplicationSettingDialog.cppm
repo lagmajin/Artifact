@@ -213,6 +213,9 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   impl_->handednessCombo_ = new QComboBox(this);
   impl_->handednessCombo_->addItem("Right", "right");
   impl_->handednessCombo_->addItem("Left", "left");
+  impl_->handednessCombo_->setAccessibleName(QStringLiteral("Preferred hand"));
+  impl_->handednessCombo_->setAccessibleDescription(
+      QStringLiteral("Choose the preferred hand for context menu placement."));
   handednessLayout->addWidget(impl_->handednessCombo_);
   handednessLayout->addStretch();
   accessibilityLayout->addLayout(handednessLayout);
@@ -220,6 +223,17 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   impl_->largeTargetsCheckBox_ = new QCheckBox("Use larger hit targets", this);
   impl_->highContrastHintsCheckBox_ = new QCheckBox("Emphasize high-contrast hints", this);
   impl_->reduceHoverDependencyCheckBox_ = new QCheckBox("Reduce hover dependency", this);
+  impl_->largeTargetsCheckBox_->setAccessibleName(QStringLiteral("Use larger hit targets"));
+  impl_->largeTargetsCheckBox_->setAccessibleDescription(
+      QStringLiteral("Increase interactive target sizes throughout the editor."));
+  impl_->highContrastHintsCheckBox_->setAccessibleName(
+      QStringLiteral("Emphasize high-contrast hints"));
+  impl_->highContrastHintsCheckBox_->setAccessibleDescription(
+      QStringLiteral("Increase contrast for accessibility hints and status cues."));
+  impl_->reduceHoverDependencyCheckBox_->setAccessibleName(
+      QStringLiteral("Reduce hover dependency"));
+  impl_->reduceHoverDependencyCheckBox_->setAccessibleDescription(
+      QStringLiteral("Keep important information available without relying on hover."));
   accessibilityLayout->addWidget(impl_->largeTargetsCheckBox_);
   accessibilityLayout->addWidget(impl_->highContrastHintsCheckBox_);
   accessibilityLayout->addWidget(impl_->reduceHoverDependencyCheckBox_);
@@ -229,6 +243,10 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   impl_->accessibilityFontScaleSpinBox_ = new QSpinBox(this);
   impl_->accessibilityFontScaleSpinBox_->setRange(100, 200);
   impl_->accessibilityFontScaleSpinBox_->setSuffix(" %");
+  impl_->accessibilityFontScaleSpinBox_->setAccessibleName(
+      QStringLiteral("Accessibility font scale"));
+  impl_->accessibilityFontScaleSpinBox_->setAccessibleDescription(
+      QStringLiteral("Scale accessibility text from 100 to 200 percent."));
   accessibilityFontLayout->addWidget(impl_->accessibilityFontScaleSpinBox_);
   accessibilityFontLayout->addStretch();
   accessibilityLayout->addLayout(accessibilityFontLayout);
@@ -240,6 +258,9 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   impl_->colorDeficiencyCombo_->addItem("Protanopia", "protanopia");
   impl_->colorDeficiencyCombo_->addItem("Deuteranopia", "deuteranopia");
   impl_->colorDeficiencyCombo_->addItem("Tritanopia", "tritanopia");
+  impl_->colorDeficiencyCombo_->setAccessibleName(QStringLiteral("Color vision assist"));
+  impl_->colorDeficiencyCombo_->setAccessibleDescription(
+      QStringLiteral("Choose color adjustments for common color vision deficiencies."));
   colorDeficiencyLayout->addWidget(impl_->colorDeficiencyCombo_);
   colorDeficiencyLayout->addStretch();
   accessibilityLayout->addLayout(colorDeficiencyLayout);
