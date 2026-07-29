@@ -163,6 +163,7 @@ import Artifact.Widgets.ResolutionRemapDialog;
 import Utils.Path;
 import Undo.UndoManager;
 import UI.ShortcutBindings;
+import Settings.Accessibility;
 
 namespace Artifact {
 
@@ -4682,7 +4683,12 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         }
     }
 
-    menu.exec(event->globalPos());
+    QPoint menuPosition = event->globalPos();
+    int menuX = menuPosition.x();
+    int menuY = menuPosition.y();
+    Artifact::Accessibility::adjustContextMenuPosition(
+        menuX, menuY, menu.sizeHint().width());
+    menu.exec(QPoint(menuX, menuY));
 }
 
 void ArtifactProjectView::dropEvent(QDropEvent* event) {
