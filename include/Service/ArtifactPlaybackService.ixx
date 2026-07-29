@@ -219,6 +219,8 @@ public:
   // RAM preview cache
   void setRamPreviewEnabled(bool enabled);
   bool isRamPreviewEnabled() const;
+  void setDiskPreviewCacheEnabled(bool enabled);
+  bool isDiskPreviewCacheEnabled() const;
   void setRamPreviewRadius(int frames);
   int ramPreviewRadius() const;
   void setRamPreviewRange(const FrameRange &range);

@@ -2467,12 +2467,16 @@ int main(int argc, char *argv[]) {
   auto *playbackService = ArtifactPlaybackService::instance();
   if (playbackService && settings) {
     playbackService->setRamPreviewEnabled(settings->previewEnableRamCache());
+    playbackService->setDiskPreviewCacheEnabled(
+        settings->previewEnableDiskCache());
     QObject::connect(
         settings, &ArtifactCore::ArtifactAppSettings::settingsChanged, mw,
         [playbackService, settings]() {
           if (playbackService && settings) {
             playbackService->setRamPreviewEnabled(
                 settings->previewEnableRamCache());
+            playbackService->setDiskPreviewCacheEnabled(
+                settings->previewEnableDiskCache());
           }
         });
   }

@@ -217,6 +217,7 @@ public:
   std::atomic<int64_t> pendingCompositionFrame_{0};
   std::atomic_bool compositionFrameSyncQueued_{false};
   QString previewDiskCacheRoot_;
+  std::atomic_bool previewDiskCacheEnabled_{true};
   // The namespace last used for the active composition.  Keep this separate
   // from the namespace derived from current state so invalidation after an
   // edit can remove the old cache directory as well.
@@ -395,16 +396,18 @@ public:
               FrameSkipTracker::instance()->commitFrame(frameNumber);
               storeFrameImageInRam(frameNumber, frameBuffer,
                                    QStringLiteral("playback-frame"));
-              {
-                std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
-                previewDiskWriteQueue_.push_back(
-                    PreviewDiskWriteTask{frameNumber, diskCacheFramePath,
-                                         frameBuffer, compositionId,
-                                         previewDiskRenderContract_,
-                                         currentCompositionStateHash(),
-                                         previewDiskGeneration_.load()});
+              if (previewDiskCacheEnabled_.load()) {
+                {
+                  std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
+                  previewDiskWriteQueue_.push_back(
+                      PreviewDiskWriteTask{frameNumber, diskCacheFramePath,
+                                           frameBuffer, compositionId,
+                                           previewDiskRenderContract_,
+                                           currentCompositionStateHash(),
+                                           previewDiskGeneration_.load()});
+                }
+                previewDiskWriteCv_.notify_one();
               }
-              previewDiskWriteCv_.notify_one();
               markFrameOnDisk(frameNumber, false);
             } else {
               markFrameRequested(frameNumber, QStringLiteral("playback-tick"));
@@ -1216,7 +1219,7 @@ public:
   }
 
   bool hasPreviewFrameOnDisk(const int64_t frame) {
-    if (!currentComposition_ || frame < 0 ||
+    if (!previewDiskCacheEnabled_.load() || !currentComposition_ || frame < 0 ||
         previewDiskRenderContract_ == QStringLiteral("unbound")) {
       return false;
     }
@@ -1373,7 +1376,7 @@ public:
     }
 
     storeFrameImageInRam(frame, image, reason);
-    if (persistToDisk) {
+    if (persistToDisk && previewDiskCacheEnabled_.load()) {
       const QString filePath = previewDiskCacheFramePath(frame);
       {
         std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
@@ -1404,7 +1407,7 @@ public:
     }
 
     storeFrameImageInRam(frame, image, reason);
-    if (persistToDisk) {
+    if (persistToDisk && previewDiskCacheEnabled_.load()) {
       const QString filePath = previewDiskCacheFramePath(frame);
       {
         std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
@@ -1496,7 +1499,7 @@ public:
   }
 
   bool hydrateFrameFromDisk(const int64_t frame) {
-    if (!isValidFrameIndex(frame) ||
+    if (!previewDiskCacheEnabled_.load() || !isValidFrameIndex(frame) ||
         previewDiskRenderContract_ == QStringLiteral("unbound")) {
       return false;
     }
@@ -2618,6 +2621,25 @@ void ArtifactPlaybackService::setRamPreviewEnabled(bool enabled) {
 
 bool ArtifactPlaybackService::isRamPreviewEnabled() const {
   return impl_ && impl_->ramPreviewEnabled_;
+}
+
+void ArtifactPlaybackService::setDiskPreviewCacheEnabled(bool enabled) {
+  if (!impl_) {
+    return;
+  }
+  const bool previous = impl_->previewDiskCacheEnabled_.exchange(enabled);
+  if (previous == enabled) {
+    return;
+  }
+  if (!enabled) {
+    std::lock_guard<std::mutex> lock(impl_->previewDiskWriteMutex_);
+    ++impl_->previewDiskGeneration_;
+    impl_->previewDiskWriteQueue_.clear();
+  }
+}
+
+bool ArtifactPlaybackService::isDiskPreviewCacheEnabled() const {
+  return impl_ && impl_->previewDiskCacheEnabled_.load();
 }
 
 void ArtifactPlaybackService::setRamPreviewRadius(int frames) {
