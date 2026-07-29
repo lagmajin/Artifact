@@ -9330,6 +9330,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->viewPresetButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
   impl_->viewPresetButton_->setToolTip(
       QStringLiteral("Viewport orientation presets"));
+  impl_->viewPresetButton_->setAccessibleName(QStringLiteral("View preset"));
+  impl_->viewPresetButton_->setAccessibleDescription(QStringLiteral("Choose a viewport orientation preset"));
   QObject::connect(viewPresetMenu, &QMenu::aboutToShow, this,
                    [syncViewValueEditors]() { syncViewValueEditors(); });
   impl_->topToolbar_->addWidget(impl_->viewPresetButton_);
@@ -9339,6 +9341,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->viewportBookmarkButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   impl_->viewportBookmarkButton_->setToolTip(
       QStringLiteral("Open the Camera ブックマーク menu from the main View menu"));
+  impl_->viewportBookmarkButton_->setAccessibleName(QStringLiteral("Viewport bookmarks"));
+  impl_->viewportBookmarkButton_->setAccessibleDescription(QStringLiteral("Open saved viewport camera bookmarks"));
   QObject::connect(impl_->viewportBookmarkButton_, &QToolButton::clicked, this,
                    [this]() {
                       if (!impl_) {
@@ -9530,10 +9534,15 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->screenshotButton_->setText(QStringLiteral("Screenshot"));
   impl_->screenshotButton_->setMenu(screenshotMenu);
   impl_->screenshotButton_->setPopupMode(QToolButton::InstantPopup);
+  impl_->screenshotButton_->setAccessibleName(QStringLiteral("Screenshot"));
+  impl_->screenshotButton_->setAccessibleDescription(QStringLiteral("Choose a composition screenshot action"));
   impl_->topToolbar_->addWidget(impl_->screenshotButton_);
   impl_->viewportRenderOutputButton_ = new QToolButton(impl_->topToolbar_);
   impl_->viewportRenderOutputButton_->setText(QStringLiteral("Render Output"));
   impl_->viewportRenderOutputButton_->setToolTip(
+      QStringLiteral("Open the viewport render output export dialog"));
+  impl_->viewportRenderOutputButton_->setAccessibleName(QStringLiteral("Render output"));
+  impl_->viewportRenderOutputButton_->setAccessibleDescription(
       QStringLiteral("Open the viewport render output export dialog"));
   QObject::connect(impl_->viewportRenderOutputButton_, &QToolButton::clicked, this,
                    [this]() {
