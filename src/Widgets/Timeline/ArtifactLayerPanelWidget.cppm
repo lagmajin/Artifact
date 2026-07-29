@@ -98,6 +98,7 @@ import Artifact.Event.Types;
 import Input.Operator;
 import Widgets.Utils.CSS;
 import Memory.SharedPtr;
+import Settings.Accessibility;
 
 namespace Artifact
 {
@@ -109,6 +110,13 @@ QMessageBox::StandardButton centeredQuestion(QWidget* parent,
 
 namespace {
 constexpr auto kLayerPanelContext = "Panel.LayerTree";
+
+QPoint accessibilityMenuPosition(const QMenu &menu, const QPoint &origin) {
+  int x = origin.x();
+  int y = origin.y();
+  Accessibility::adjustContextMenuPosition(x, y, menu.sizeHint().width());
+  return QPoint(x, y);
+}
 
 enum class MultiEditCycleMode {
   None,
@@ -398,7 +406,7 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
       parent->update();
     });
 
-    menu.exec(globalPos);
+    menu.exec(accessibilityMenuPosition(menu, globalPos));
   }
 
   void buildSelectedLayerMenu(
@@ -3178,7 +3186,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                                               {QStringLiteral("type"), typeIndex}});
             }
 
-            if (QAction *chosenAction = menu.exec(event->globalPos())) {
+            if (QAction *chosenAction = menu.exec(
+                    accessibilityMenuPosition(menu, event->globalPos()))) {
               const QVariantMap data = chosenAction->data().toMap();
               const QString kind = data.value(QStringLiteral("kind")).toString();
               bool indexOk = false;
@@ -4841,7 +4850,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
       replaceSelectionWithIds(comp, matching);
     });
-    QAction *chosenAction = menu.exec(event->globalPos());
+    QAction *chosenAction = menu.exec(
+        accessibilityMenuPosition(menu, event->globalPos()));
     if (chosenAction) {
       const QVariantMap data = chosenAction->data().toMap();
       const QString kind = data.value(QStringLiteral("kind")).toString();
@@ -6988,7 +6998,9 @@ public:
               }
             }
           });
-      menu.exec(selectionButton->mapToGlobal(QPoint(0, selectionButton->height())));
+      menu.exec(accessibilityMenuPosition(
+          menu, selectionButton->mapToGlobal(
+                    QPoint(0, selectionButton->height()))));
     });
   }
 }
