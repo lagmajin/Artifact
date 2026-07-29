@@ -94,14 +94,22 @@ namespace Artifact
  void WorkAreaControl::setStart(float s) {
   if (start != s) {
     start = s;
+    setAccessibleDescription(QStringLiteral(
+        "Work area from %1 to %2. Drag the bar to move it, Ctrl-drag to scale it, or drag its handles to trim it")
+        .arg(QString::number(start * 100.0f, 'f', 1) + QStringLiteral("%"))
+        .arg(QString::number(end * 100.0f, 'f', 1) + QStringLiteral("%")));
     startChanged(s);
     update();
   }
  }
 
-void WorkAreaControl::setEnd(float e) {
+ void WorkAreaControl::setEnd(float e) {
   if (end != e) {
     end = e;
+    setAccessibleDescription(QStringLiteral(
+        "Work area from %1 to %2. Drag the bar to move it, Ctrl-drag to scale it, or drag its handles to trim it")
+        .arg(QString::number(start * 100.0f, 'f', 1) + QStringLiteral("%"))
+        .arg(QString::number(end * 100.0f, 'f', 1) + QStringLiteral("%")));
     endChanged(e);
     update();
   }
