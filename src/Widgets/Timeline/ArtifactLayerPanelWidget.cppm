@@ -2425,6 +2425,21 @@ public:
              stateMatch = l->isSolo() == wantsTrue;
            }
          }
+         if (!stateQuery && queryKey == QStringLiteral("parent")) {
+           stateQuery = true;
+           const auto parent = l->parentLayer();
+           if (queryValue == QStringLiteral("none") || queryValue == QStringLiteral("root")) {
+             stateMatch = !parent;
+           } else if (parent) {
+             stateMatch = parent->layerName().contains(queryValue, Qt::CaseInsensitive) ||
+                          parent->id().toString().contains(queryValue, Qt::CaseInsensitive);
+           }
+         } else if (!stateQuery && queryKey == QStringLiteral("type")) {
+           stateQuery = true;
+           const QString typeName = l->toJson().value(QStringLiteral("layerType")).toString();
+           stateMatch = typeName.contains(queryValue, Qt::CaseInsensitive);
+           }
+         }
        }
        bool nameMatch = stateQuery
                           ? stateMatch
