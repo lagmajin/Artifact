@@ -409,6 +409,8 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         impl_->sourceAssetId_ = QUuid();
         impl_->cachedSourceVersion_ = 0;
         impl_->sourcePath_ = path;
+        impl_->sequenceSource_.reset();
+        impl_->sequenceCachedIndex_ = -1;
         ++impl_->prefetchGeneration_;
         impl_->prefetchDone_ = true;
         impl_->hasImage_ = true;
@@ -434,6 +436,8 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         impl_->sourceAssetId_ = QUuid();
         impl_->cachedSourceVersion_ = 0;
         impl_->sourcePath_ = path;
+        impl_->sequenceSource_.reset();
+        impl_->sequenceCachedIndex_ = -1;
         ++impl_->prefetchGeneration_;
         impl_->prefetchDone_ = true;
         impl_->hasImage_ = true;
