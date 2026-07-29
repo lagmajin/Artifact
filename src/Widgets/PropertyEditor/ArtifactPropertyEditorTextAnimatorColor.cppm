@@ -28,8 +28,12 @@ ArtifactTextAnimatorColorEditor::ArtifactTextAnimatorColorEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyTextAnimatorColorEditor"));
+  setAccessibleName(QStringLiteral("Text animator color editor"));
+  setAccessibleDescription(QStringLiteral("Edit text animator content and apply color to a selected text range"));
 
   textEdit_ = new QTextEdit(this);
+  textEdit_->setAccessibleName(QStringLiteral("Text animator content"));
+  textEdit_->setAccessibleDescription(QStringLiteral("Enter text and select a range to apply an animator color"));
   textEdit_->setAcceptRichText(false);
   textEdit_->setMinimumHeight(72);
   textEdit_->setTabChangesFocus(true);
@@ -38,6 +42,8 @@ ArtifactTextAnimatorColorEditor::ArtifactTextAnimatorColorEditor(
   applyPropertyFieldPalette(textEdit_, true);
 
   colorButton_ = new QPushButton(QStringLiteral(" "), this);
+  colorButton_->setAccessibleName(QStringLiteral("Apply color to selected text range"));
+  colorButton_->setAccessibleDescription(QStringLiteral("Open the color picker for the selected text range"));
   colorButton_->setObjectName(QStringLiteral("propertyColorSwatchButton"));
   colorButton_->setFixedSize(36, 24);
   colorButton_->setToolTip(QStringLiteral("Apply color to selected text range"));
