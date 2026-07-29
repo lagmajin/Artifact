@@ -332,6 +332,8 @@ public:
         cachedSourceVersion_ = currentVersion;
         cache_.reset();
         cacheBuffer_.reset();
+        sequenceSource_.reset();
+        sequenceCachedIndex_ = -1;
         prefetchDone_ = false;
         if (!sourcePath_.isEmpty()) {
             startPrefetch();
@@ -395,6 +397,8 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
     if (!impl_->sequencePaths_.isEmpty() && !impl_->sequencePaths_.contains(path)) {
         impl_->sequencePaths_.clear();
         impl_->sequenceFrameRate_ = 0.0;
+        impl_->sequenceSource_.reset();
+        impl_->sequenceCachedIndex_ = -1;
     }
     const std::string utf8Path = path.toUtf8().toStdString();
     OIIO::ImageBuf headerOnly(utf8Path);
