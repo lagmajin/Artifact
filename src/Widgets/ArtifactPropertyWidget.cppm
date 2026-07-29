@@ -1551,6 +1551,58 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       applyPropertySectionBox(group);
       applyThemeTextPalette(group, 120);
 
+      auto *effectActions = new QWidget(group);
+      auto *effectActionsLayout = new QHBoxLayout(effectActions);
+      effectActionsLayout->setContentsMargins(0, 0, 0, 0);
+      effectActionsLayout->setSpacing(4);
+      auto *enabledButton = new QToolButton(effectActions);
+      enabledButton->setCheckable(true);
+      enabledButton->setAutoRaise(true);
+      enabledButton->setText(QStringLiteral("Enabled"));
+      enabledButton->setChecked(effect->isEnabled());
+      enabledButton->setToolTip(QStringLiteral("Enable or disable this effect"));
+      effectActionsLayout->addWidget(enabledButton);
+      auto *removeButton = new QToolButton(effectActions);
+      removeButton->setAutoRaise(true);
+      removeButton->setText(QStringLiteral("Remove"));
+      removeButton->setToolTip(QStringLiteral("Remove this effect (Undo available)"));
+      effectActionsLayout->addWidget(removeButton);
+      effectActionsLayout->addStretch();
+      groupLayout->addWidget(effectActions);
+      QObject::connect(enabledButton, &QToolButton::toggled, group,
+                       [this, effect](bool enabled) {
+                         auto *service = ArtifactEffectService::instance();
+                         if (!service) {
+                           return;
+                         }
+                         const auto result = service->setCompositionEffectEnabled(
+                             effect->effectID().toQString(), enabled);
+                         if (!result.success) {
+                           effect->setEnabled(!enabled);
+                           return;
+                         }
+                         scheduleRebuild(0);
+                       });
+      QObject::connect(removeButton, &QToolButton::clicked, group,
+                       [this, effect, group](bool) {
+                         const auto result = QMessageBox::question(
+                             group, QStringLiteral("Remove Effect"),
+                             QStringLiteral("Remove %1 from this composition?")
+                                 .arg(effect->displayName().toQString()),
+                             QMessageBox::Yes | QMessageBox::No,
+                             QMessageBox::No);
+                         if (result != QMessageBox::Yes) {
+                           return;
+                         }
+                         auto *service = ArtifactEffectService::instance();
+                         if (service && service->removeEffectFromCurrentComposition(
+                                           effect->effectID().toQString())
+                                           .success) {
+                           focusedEffectId.clear();
+                           scheduleRebuild(0);
+                         }
+                       });
+
       auto *stageLabel = new QLabel(presentation.stageNoteText, group);
       stageLabel->setObjectName(QStringLiteral("propertySectionNote"));
       stageLabel->setWordWrap(true);

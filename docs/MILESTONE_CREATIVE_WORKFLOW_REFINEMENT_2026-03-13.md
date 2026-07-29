@@ -29,9 +29,9 @@ Date: 2026-03-13
 
 ### 2026-07-29 Implementation Loop
 
-- ✅ Layer effect groups in `ArtifactPropertyWidget` now expose `Enabled` and `Remove` controls.
-- ✅ Both operations use `ArtifactEffectService`, preserving the existing undo-capable service path; removal also asks for confirmation.
-- ⏳ Composition-effect controls, Inspector-Property focus synchronization, unified filtering, drag-and-drop ordering, and runtime verification remain incomplete.
+- ✅ Layer and Composition effect groups in `ArtifactPropertyWidget` now expose `Enabled` and `Remove` controls.
+- ✅ Both operation families use `ArtifactEffectService`, preserving the existing undo-capable service path; removal also asks for confirmation.
+- ⏳ Inspector-Property focus synchronization, unified filtering, drag-and-drop ordering, and runtime verification remain incomplete.
 
 ### M-CW-2 Inspector-Property Sync
 - Implement a signal-slot connection such that selecting an effect in the `ArtifactInspectorWidget` rack automatically:
