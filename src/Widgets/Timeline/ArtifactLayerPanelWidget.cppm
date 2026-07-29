@@ -2425,11 +2425,23 @@ public:
              stateMatch = l->isSolo() == wantsTrue;
            }
          }
-         if (!stateQuery && queryKey == QStringLiteral("parent")) {
+         if (!stateQuery && queryKey == QStringLiteral("hasparent")) {
+           stateQuery = true;
+           const bool wantsParent = queryValue == QStringLiteral("true") ||
+                                    queryValue == QStringLiteral("yes") ||
+                                    queryValue == QStringLiteral("1");
+           const bool wantsNoParent = queryValue == QStringLiteral("false") ||
+                                      queryValue == QStringLiteral("no") ||
+                                      queryValue == QStringLiteral("0");
+           stateMatch = wantsParent ? l->hasParent()
+                       : wantsNoParent ? !l->hasParent() : false;
+         } else if (!stateQuery && queryKey == QStringLiteral("parent")) {
            stateQuery = true;
            const auto parent = l->parentLayer();
            if (queryValue == QStringLiteral("none") || queryValue == QStringLiteral("root")) {
              stateMatch = !parent;
+           } else if (queryValue == QStringLiteral("any")) {
+             stateMatch = !!parent;
            } else if (parent) {
              stateMatch = parent->layerName().contains(queryValue, Qt::CaseInsensitive) ||
                           parent->id().toString().contains(queryValue, Qt::CaseInsensitive);
