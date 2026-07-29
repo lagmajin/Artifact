@@ -1898,6 +1898,8 @@ void PluginSettingPage::Impl::loadPlugins(PluginSettingPage *page) {
 
 PluginSettingPage::PluginSettingPage(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Plugin settings"));
+  setAccessibleDescription(QStringLiteral("View installed plugins and manage plugin loading"));
   auto *mainLayout = new QVBoxLayout(this);
   auto *infoGroup = new QGroupBox("Plugin Directory", this);
   auto *infoLayout = new QHBoxLayout(infoGroup);
@@ -1909,11 +1911,15 @@ PluginSettingPage::PluginSettingPage(QWidget *parent)
   }
   infoLayout->addWidget(dirLabel);
   impl_->openFolderButton_ = new QPushButton("Open Folder", this);
+  impl_->openFolderButton_->setAccessibleName(QStringLiteral("Open plugin folder"));
+  impl_->openFolderButton_->setAccessibleDescription(QStringLiteral("Open the folder containing installed plugins"));
   infoLayout->addWidget(impl_->openFolderButton_);
   mainLayout->addWidget(infoGroup);
   auto *tableGroup = new QGroupBox("Installed Plugins", this);
   auto *tableLayout = new QVBoxLayout(tableGroup);
   impl_->pluginTable_ = new QTableWidget(this);
+  impl_->pluginTable_->setAccessibleName(QStringLiteral("Installed plugins table"));
+  impl_->pluginTable_->setAccessibleDescription(QStringLiteral("List of installed plugins with name, version, vendor, description, and status"));
   impl_->pluginTable_->setColumnCount(5);
   impl_->pluginTable_->setHorizontalHeaderLabels(
       {"Name", "Version", "Vendor", "Description", "Status"});
@@ -1924,11 +1930,17 @@ PluginSettingPage::PluginSettingPage(QWidget *parent)
   mainLayout->addWidget(tableGroup);
   auto *buttonLayout = new QHBoxLayout();
   impl_->refreshButton_ = new QPushButton("Refresh", this);
+  impl_->refreshButton_->setAccessibleName(QStringLiteral("Refresh plugin list"));
+  impl_->refreshButton_->setAccessibleDescription(QStringLiteral("Rescan the plugin folder"));
   buttonLayout->addWidget(impl_->refreshButton_);
   buttonLayout->addStretch();
   auto *unloadButton = new QPushButton("Unload Selected", this);
+  unloadButton->setAccessibleName(QStringLiteral("Unload selected plugins"));
+  unloadButton->setAccessibleDescription(QStringLiteral("Unload the selected plugins"));
   buttonLayout->addWidget(unloadButton);
   auto *loadButton = new QPushButton("Load Selected", this);
+  loadButton->setAccessibleName(QStringLiteral("Load selected plugins"));
+  loadButton->setAccessibleDescription(QStringLiteral("Load the selected plugins"));
   buttonLayout->addWidget(loadButton);
   mainLayout->addLayout(buttonLayout);
   impl_->loadPlugins(this);
