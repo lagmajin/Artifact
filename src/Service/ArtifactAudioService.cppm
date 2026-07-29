@@ -4,6 +4,7 @@ module;
 #include <memory>
 #include <QString>
 #include <QStringList>
+#include <QSettings>
 #include <QtMultimedia/QMediaDevices>
 module Artifact.Service.Audio;
 
@@ -35,6 +36,14 @@ class ArtifactAudioService::Impl {
 public:
  float masterVolume = 1.0f;
  bool masterMuted = false;
+ QString outputDeviceName;
+
+ Impl()
+ {
+  QSettings settings;
+  outputDeviceName = settings.value(QStringLiteral("audio/outputDeviceName"))
+                         .toString().trimmed();
+ }
 
  ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> currentMixer() const
  {
@@ -58,6 +67,9 @@ public:
 ArtifactAudioService::ArtifactAudioService()
  : impl_(std::make_unique<Impl>())
 {
+ if (auto* playback = ArtifactPlaybackService::instance()) {
+  playback->setAudioOutputDeviceName(impl_->outputDeviceName);
+ }
 }
 
 ArtifactAudioService::~ArtifactAudioService() = default;
@@ -143,17 +155,21 @@ QStringList ArtifactAudioService::availableOutputDeviceNames() const
 
 void ArtifactAudioService::setOutputDeviceName(const QString& deviceName)
 {
+ const QString normalizedName = deviceName.trimmed();
+ if (impl_->outputDeviceName == normalizedName) {
+  return;
+ }
+ impl_->outputDeviceName = normalizedName;
+ QSettings settings;
+ settings.setValue(QStringLiteral("audio/outputDeviceName"), normalizedName);
  if (auto* playback = ArtifactPlaybackService::instance()) {
-  playback->setAudioOutputDeviceName(deviceName);
+  playback->setAudioOutputDeviceName(normalizedName);
  }
 }
 
 QString ArtifactAudioService::outputDeviceName() const
 {
- if (auto* playback = ArtifactPlaybackService::instance()) {
-  return playback->audioOutputDeviceName();
- }
- return {};
+ return impl_->outputDeviceName;
 }
 
 void ArtifactAudioService::setMasterVolume(float volume)
