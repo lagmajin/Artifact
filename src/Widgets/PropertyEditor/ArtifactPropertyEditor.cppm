@@ -125,6 +125,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       prevKeyBtn_(new QPushButton(this)), nextKeyBtn_(new QPushButton(this)),
       propertyName_(propertyName) {
   setObjectName(QStringLiteral("propertyRow"));
+  setAccessibleName(QStringLiteral("Property row: %1").arg(labelText));
+  setAccessibleDescription(QStringLiteral("Edit the %1 property").arg(propertyName));
   setFocusPolicy(Qt::StrongFocus);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   setMinimumHeight(kPropertyRowMinHeight);
@@ -133,6 +135,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   setAutoFillBackground(false);
 
   label_->setObjectName(QStringLiteral("propertyRowLabel"));
+  label_->setAccessibleName(labelText);
   label_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
   label_->setMinimumHeight(kPropertyRowLabelMinHeight);
   label_->setFixedWidth(kPropertyRowLabelWidth);
@@ -143,6 +146,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   supplementaryLabel_ = new QLabel(this);
   supplementaryLabel_->setObjectName(
       QStringLiteral("propertySupplementaryLabel"));
+  supplementaryLabel_->setAccessibleName(QStringLiteral("Additional property information"));
   supplementaryLabel_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
   supplementaryLabel_->setAutoFillBackground(false);
   supplementaryLabel_->setVisible(false);
@@ -258,6 +262,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
 
   auto *auxContainer = new QWidget(this);
   auxContainer->setObjectName(QStringLiteral("propertyRowActionCluster"));
+  auxContainer->setAccessibleName(QStringLiteral("Property row actions"));
+  auxContainer->setAccessibleDescription(QStringLiteral("Keyframe, reset, expression, and favorite actions"));
   auxContainer->setFixedWidth(kAuxButtonAreaWidth);
   auxContainer->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   auxContainer->setAutoFillBackground(false);
