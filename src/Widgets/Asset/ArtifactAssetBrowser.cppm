@@ -3563,6 +3563,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
   auto assetModel = impl_->assetModel_ = new AssetMenuModel(this);
  auto fileView = impl_->fileView_ = new AssetFileListView();
+  fileView->setAccessibleName(QStringLiteral("Asset file list"));
+  fileView->setAccessibleDescription(QStringLiteral("Browse and select assets in the current folder"));
   fileView->setModel(assetModel);
   fileView->setItemDelegate(new AssetCardDelegate(fileView));
   impl_->currentDirectoryPath_ = desktopPath;  // Set initial directory
@@ -3756,7 +3758,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     impl_->applyFilters();
   });
 
-  thumbnailLayout->addWidget(new QLabel("Thumbnail:"));
+  auto* thumbnailLabel = new QLabel("Thumbnail:");
+  thumbnailLabel->setAccessibleName(QStringLiteral("Thumbnail size control"));
+  thumbnailLayout->addWidget(thumbnailLabel);
   thumbnailLayout->addWidget(sizeSlider);
   thumbnailLayout->addWidget(sizeLabel);
   thumbnailControlGroup->setLayout(thumbnailLayout);
@@ -3768,6 +3772,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   fileInfoLayout->setSpacing(14);
 
   auto* filePreviewLabel = impl_->filePreviewLabel_ = new QLabel(fileInfoGroup);
+  filePreviewLabel->setAccessibleName(QStringLiteral("Asset preview"));
+  filePreviewLabel->setAccessibleDescription(QStringLiteral("Preview of the selected asset"));
   filePreviewLabel->setAlignment(Qt::AlignCenter);
   filePreviewLabel->setFixedSize(280, 164);
   filePreviewLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -3782,6 +3788,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   }
 
   auto fileInfoLabel = impl_->fileInfoLabel_ = new QLabel(QStringLiteral("Open a file to inspect details"));
+  fileInfoLabel->setAccessibleName(QStringLiteral("Asset details"));
+  fileInfoLabel->setAccessibleDescription(QStringLiteral("Details for the selected asset"));
   fileInfoLabel->setWordWrap(true);
   fileInfoLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
   {
@@ -3799,6 +3807,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   detailsLayout->setContentsMargins(0, 0, 0, 0);
   detailsLayout->setSpacing(6);
   auto* fileInfoTitle = new QLabel(QStringLiteral("Asset Details"), detailsColumn);
+  fileInfoTitle->setAccessibleName(QStringLiteral("Asset details heading"));
   {
    QFont font = fileInfoTitle->font();
    font.setBold(true);
