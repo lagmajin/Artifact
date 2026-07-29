@@ -23,6 +23,7 @@ module;
 #include <wobjectimpl.h>
 
 #include <QMessageBox>
+#include <QSignalBlocker>
 
 module Artifact.Menu.View;
 import std;
@@ -33,6 +34,7 @@ import Artifact.Application.Manager;
 import Artifact.MainWindow;
 import Artifact.Widgets.CompositionEditor;
 import Application.AppSettings;
+import Artifact.Grid.System;
 import Core.FastSettingsStore;
 import Artifact.Workspace.Manager;
 import Artifact.Workspace.Modes;
@@ -857,6 +859,12 @@ namespace Artifact {
    QAction* snapToGuidesAction = nullptr;
    QAction* showRulersAction = nullptr;
    QAction* useDisplayColorManagementAction = nullptr;
+   QMenu* gridSettingsMenu = nullptr;
+   QAction* gridMajorIntervalAction = nullptr;
+   QAction* gridSubdivisionsAction = nullptr;
+   QAction* gridShowMajorAction = nullptr;
+   QAction* gridShowMinorAction = nullptr;
+   QAction* gridShowAxisAction = nullptr;
 
    QMenu* qualityPresetMenu = nullptr;
    QActionGroup* qualityGroup = nullptr;
@@ -986,6 +994,69 @@ namespace Artifact {
    showRulersAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewShowRulers));
    showRulersAction->setCheckable(true);
    showRulersAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_straighten.svg")));
+
+   gridSettingsMenu = new QMenu(QStringLiteral("グリッド設定"));
+   gridSettingsMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
+   gridMajorIntervalAction = gridSettingsMenu->addAction(QStringLiteral("主間隔を変更…"));
+   gridSubdivisionsAction = gridSettingsMenu->addAction(QStringLiteral("分割数を変更…"));
+   gridSettingsMenu->addSeparator();
+   gridShowMajorAction = gridSettingsMenu->addAction(QStringLiteral("Major グリッドを表示"));
+   gridShowMajorAction->setCheckable(true);
+   gridShowMinorAction = gridSettingsMenu->addAction(QStringLiteral("Minor グリッドを表示"));
+   gridShowMinorAction->setCheckable(true);
+   gridShowAxisAction = gridSettingsMenu->addAction(QStringLiteral("原点軸を表示"));
+   gridShowAxisAction->setCheckable(true);
+
+   QObject::connect(gridMajorIntervalAction, &QAction::triggered, menu, [this]() {
+    auto *settings = ArtifactCore::ArtifactAppSettings::instance();
+    if (!settings) return;
+    const auto current = settings->compositionGridSettings();
+    bool ok = false;
+    const double interval = QInputDialog::getDouble(
+        mainWindow ? mainWindow : menu_, QStringLiteral("グリッド主間隔"),
+        QStringLiteral("主グリッド間隔:"), current.majorInterval, 0.01,
+        100000.0, 2, &ok);
+    if (ok) {
+      auto next = current;
+      next.majorInterval = static_cast<float>(interval);
+      settings->setCompositionGridSettings(next);
+    }
+   });
+   QObject::connect(gridSubdivisionsAction, &QAction::triggered, menu, [this]() {
+    auto *settings = ArtifactCore::ArtifactAppSettings::instance();
+    if (!settings) return;
+    const auto current = settings->compositionGridSettings();
+    bool ok = false;
+    const int subdivisions = QInputDialog::getInt(
+        mainWindow ? mainWindow : menu_, QStringLiteral("グリッド分割数"),
+        QStringLiteral("主グリッドの分割数:"), current.subdivisions, 1,
+        32, 1, &ok);
+    if (ok) {
+      auto next = current;
+      next.subdivisions = subdivisions;
+      settings->setCompositionGridSettings(next);
+    }
+   });
+   const auto updateGridFlag = [this](bool checked,
+                                      bool Artifact::Grid::GridSettings::*member) {
+    if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+      auto next = settings->compositionGridSettings();
+      next.*member = checked;
+      settings->setCompositionGridSettings(next);
+    }
+   };
+   QObject::connect(gridShowMajorAction, &QAction::toggled, menu,
+                    [updateGridFlag](bool checked) {
+                      updateGridFlag(checked, &Artifact::Grid::GridSettings::showMajor);
+                    });
+   QObject::connect(gridShowMinorAction, &QAction::toggled, menu,
+                    [updateGridFlag](bool checked) {
+                      updateGridFlag(checked, &Artifact::Grid::GridSettings::showMinor);
+                    });
+   QObject::connect(gridShowAxisAction, &QAction::toggled, menu,
+                    [updateGridFlag](bool checked) {
+                      updateGridFlag(checked, &Artifact::Grid::GridSettings::showAxis);
+                    });
 
    useDisplayColorManagementAction = new QAction("ディスプレイのカラーマネジメントを使用");
    useDisplayColorManagementAction->setCheckable(true);
@@ -1283,6 +1354,7 @@ namespace Artifact {
    menu->addMenu(workspacePresetMenu);
    menu->addSeparator();
    menu->addAction(showGridAction);
+   menu->addMenu(gridSettingsMenu);
    menu->addAction(snapToGridAction);
    menu->addAction(showGuidesAction);
    menu->addAction(snapToGuidesAction);
@@ -1411,6 +1483,26 @@ namespace Artifact {
   showGuidesAction->setEnabled(hasComp);
   snapToGuidesAction->setEnabled(hasComp);
   showRulersAction->setEnabled(hasComp);
+  if (gridSettingsMenu) {
+    gridSettingsMenu->setEnabled(hasComp);
+  }
+  if (hasComp) {
+    if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+      const auto grid = settings->compositionGridSettings();
+      if (gridShowMajorAction) {
+        const QSignalBlocker blocker(gridShowMajorAction);
+        gridShowMajorAction->setChecked(grid.showMajor);
+      }
+      if (gridShowMinorAction) {
+        const QSignalBlocker blocker(gridShowMinorAction);
+        gridShowMinorAction->setChecked(grid.showMinor);
+      }
+      if (gridShowAxisAction) {
+        const QSignalBlocker blocker(gridShowAxisAction);
+        gridShowAxisAction->setChecked(grid.showAxis);
+      }
+    }
+  }
   useDisplayColorManagementAction->setEnabled(hasComp);
   if (openContentsViewerAction) {
    openContentsViewerAction->setEnabled(true);
