@@ -9907,6 +9907,8 @@ public:
   qint64 audioWaveformCacheFileSize_ = -1;
   qint64 audioWaveformCacheModifiedMs_ = -1;
   QString audioSpectrumCacheSourcePath_;
+  qint64 audioSpectrumCacheFileSize_ = -1;
+  qint64 audioSpectrumCacheModifiedMs_ = -1;
   qint64 audioSpectrumCacheFrame_ = -1;
   std::vector<float> audioSpectrumCache_;
 
@@ -26898,12 +26900,12 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
                                 ? dynamic_cast<ArtifactAudioLayer *>(selectedLayer.get())
                                 : nullptr) {
       const QString sourcePath = audioLayer->sourcePath();
+      const QFileInfo sourceInfo(sourcePath);
+      const qint64 fileSize = sourceInfo.exists() ? sourceInfo.size() : -1;
+      const qint64 modifiedMs = sourceInfo.exists()
+                                    ? sourceInfo.lastModified().toMSecsSinceEpoch()
+                                    : -1;
       if (showAudioWaveformOverlay_) {
-        const QFileInfo sourceInfo(sourcePath);
-        const qint64 fileSize = sourceInfo.exists() ? sourceInfo.size() : -1;
-        const qint64 modifiedMs = sourceInfo.exists()
-                                      ? sourceInfo.lastModified().toMSecsSinceEpoch()
-                                      : -1;
         if (sourcePath != audioWaveformCacheSourcePath_ ||
             fileSize != audioWaveformCacheFileSize_ ||
             modifiedMs != audioWaveformCacheModifiedMs_) {
@@ -26919,6 +26921,8 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
       }
       if (showAudioSpectrumOverlay_ &&
           (sourcePath != audioSpectrumCacheSourcePath_ ||
+           fileSize != audioSpectrumCacheFileSize_ ||
+           modifiedMs != audioSpectrumCacheModifiedMs_ ||
            currentFrame.framePosition() != audioSpectrumCacheFrame_)) {
         ArtifactCore::AudioSegment segment;
         if (audioLayer->getAudio(segment, currentFrame, 1024, audioLayer->sampleRate())) {
@@ -26930,6 +26934,8 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
           audioSpectrumCache_.clear();
         }
         audioSpectrumCacheSourcePath_ = sourcePath;
+        audioSpectrumCacheFileSize_ = fileSize;
+        audioSpectrumCacheModifiedMs_ = modifiedMs;
         audioSpectrumCacheFrame_ = currentFrame.framePosition();
       }
       if (showAudioSpectrumOverlay_) {
@@ -26943,6 +26949,8 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
     audioWaveformCacheFileSize_ = -1;
     audioWaveformCacheModifiedMs_ = -1;
     audioSpectrumCacheSourcePath_.clear();
+    audioSpectrumCacheFileSize_ = -1;
+    audioSpectrumCacheModifiedMs_ = -1;
     audioSpectrumCacheFrame_ = -1;
     audioSpectrumCache_.clear();
   }
