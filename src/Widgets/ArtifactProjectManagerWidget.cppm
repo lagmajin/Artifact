@@ -5846,10 +5846,15 @@ public:
         const QString viewModeText = projectView_ && projectView_->presentationMode() == ArtifactProjectView::PresentationMode::Tile
             ? QStringLiteral("Tile")
             : QStringLiteral("Tree");
-        return QStringLiteral("%1  ·  %2  ·  %3")
+        QString summary = QStringLiteral("%1  ·  %2  ·  %3")
             .arg(viewModeText)
             .arg(typeText)
             .arg(unusedText);
+        const QString searchText = searchBar ? searchBar->text().trimmed() : QString();
+        if (!searchText.isEmpty()) {
+            summary += QStringLiteral("  ·  Search: \"%1\"").arg(searchText);
+        }
+        return summary;
     }
 
     qint64 selectedFootageBytes() const {
