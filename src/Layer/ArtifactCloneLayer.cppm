@@ -173,19 +173,90 @@ bool ArtifactCloneLayer::isCloneLayer() const {
 
 QJsonObject ArtifactCloneLayer::toJson() const {
     QJsonObject obj = ArtifactAbstractLayer::toJson();
+    const auto& settings = impl_->settings_;
+    const auto writeVector = [&obj](const QString& prefix, const QVector3D& value) {
+        obj[prefix + QStringLiteral(".x")] = value.x();
+        obj[prefix + QStringLiteral(".y")] = value.y();
+        obj[prefix + QStringLiteral(".z")] = value.z();
+    };
+    const auto writeStage = [&obj, &writeVector](const QString& prefix,
+                                                 const ArtifactCloneLayerSettings::TransformStage& stage) {
+        obj[prefix + QStringLiteral(".enabled")] = stage.enabled;
+        writeVector(prefix + QStringLiteral(".offset"), stage.offset);
+        writeVector(prefix + QStringLiteral(".scale"), stage.scale);
+        obj[prefix + QStringLiteral(".rotation")] = stage.rotation;
+    };
     obj["type"] = static_cast<int>(LayerType::Clone);
-    obj["clone.mode"] = static_cast<int>(impl_->settings_.mode);
-    obj["clone.sourceLayerId"] = impl_->settings_.sourceLayerId.toString();
-    obj["clone.sourceIndex"] = impl_->settings_.sourceIndex;
-    obj["clone.useEffector"] = impl_->settings_.useEffector;
+    obj["clone.mode"] = static_cast<int>(settings.mode);
+    obj["clone.cloneCount"] = settings.cloneCount;
+    writeVector(QStringLiteral("clone.offset"), settings.offset);
+    writeVector(QStringLiteral("clone.jitter"), settings.jitter);
+    obj["clone.seed"] = settings.seed;
+    obj["clone.curveRadius"] = settings.curveRadius;
+    obj["clone.curveStartAngle"] = settings.curveStartAngle;
+    obj["clone.curveEndAngle"] = settings.curveEndAngle;
+    obj["clone.columns"] = settings.columns;
+    obj["clone.rows"] = settings.rows;
+    obj["clone.depth"] = settings.depth;
+    writeVector(QStringLiteral("clone.gridSpacing"), settings.gridSpacing);
+    obj["clone.radialCount"] = settings.radialCount;
+    obj["clone.radius"] = settings.radius;
+    obj["clone.startAngle"] = settings.startAngle;
+    obj["clone.endAngle"] = settings.endAngle;
+    obj["clone.rotationStep"] = settings.rotationStep;
+    obj["clone.opacityDecay"] = settings.opacityDecay;
+    obj["clone.useEffector"] = settings.useEffector;
+    obj["clone.sourceLayerId"] = settings.sourceLayerId.toString();
+    obj["clone.sourceIndex"] = settings.sourceIndex;
+    writeStage(QStringLiteral("clone.transform1"), settings.transform1);
+    writeStage(QStringLiteral("clone.transform2"), settings.transform2);
+    writeStage(QStringLiteral("clone.transform3"), settings.transform3);
     return obj;
 }
 
 void ArtifactCloneLayer::fromJsonProperties(const QJsonObject& obj) {
     ArtifactAbstractLayer::fromJsonProperties(obj);
+    auto& settings = impl_->settings_;
+    const auto readVector = [&obj](const QString& prefix, QVector3D& value) {
+        if (obj.contains(prefix + QStringLiteral(".x")))
+            value.setX(static_cast<float>(obj.value(prefix + QStringLiteral(".x")).toDouble(value.x())));
+        if (obj.contains(prefix + QStringLiteral(".y")))
+            value.setY(static_cast<float>(obj.value(prefix + QStringLiteral(".y")).toDouble(value.y())));
+        if (obj.contains(prefix + QStringLiteral(".z")))
+            value.setZ(static_cast<float>(obj.value(prefix + QStringLiteral(".z")).toDouble(value.z())));
+    };
+    const auto readStage = [&obj, &readVector](const QString& prefix,
+                                               ArtifactCloneLayerSettings::TransformStage& stage) {
+        if (obj.contains(prefix + QStringLiteral(".enabled")))
+            stage.enabled = obj.value(prefix + QStringLiteral(".enabled")).toBool(stage.enabled);
+        readVector(prefix + QStringLiteral(".offset"), stage.offset);
+        readVector(prefix + QStringLiteral(".scale"), stage.scale);
+        if (obj.contains(prefix + QStringLiteral(".rotation")))
+            stage.rotation = static_cast<float>(obj.value(prefix + QStringLiteral(".rotation")).toDouble(stage.rotation));
+    };
     if (obj.contains("clone.mode")) {
-        impl_->settings_.mode = static_cast<CloneMode>(obj.value("clone.mode").toInt(0));
+        settings.mode = static_cast<CloneMode>(obj.value("clone.mode").toInt(static_cast<int>(settings.mode)));
     }
+    if (obj.contains("clone.cloneCount")) settings.cloneCount = std::max(1, obj.value("clone.cloneCount").toInt(settings.cloneCount));
+    readVector(QStringLiteral("clone.offset"), settings.offset);
+    readVector(QStringLiteral("clone.jitter"), settings.jitter);
+    if (obj.contains("clone.seed")) settings.seed = obj.value("clone.seed").toInt(settings.seed);
+    if (obj.contains("clone.curveRadius")) settings.curveRadius = static_cast<float>(obj.value("clone.curveRadius").toDouble(settings.curveRadius));
+    if (obj.contains("clone.curveStartAngle")) settings.curveStartAngle = static_cast<float>(obj.value("clone.curveStartAngle").toDouble(settings.curveStartAngle));
+    if (obj.contains("clone.curveEndAngle")) settings.curveEndAngle = static_cast<float>(obj.value("clone.curveEndAngle").toDouble(settings.curveEndAngle));
+    if (obj.contains("clone.columns")) settings.columns = std::max(1, obj.value("clone.columns").toInt(settings.columns));
+    if (obj.contains("clone.rows")) settings.rows = std::max(1, obj.value("clone.rows").toInt(settings.rows));
+    if (obj.contains("clone.depth")) settings.depth = std::max(1, obj.value("clone.depth").toInt(settings.depth));
+    readVector(QStringLiteral("clone.gridSpacing"), settings.gridSpacing);
+    if (obj.contains("clone.radialCount")) settings.radialCount = std::max(1, obj.value("clone.radialCount").toInt(settings.radialCount));
+    if (obj.contains("clone.radius")) settings.radius = static_cast<float>(obj.value("clone.radius").toDouble(settings.radius));
+    if (obj.contains("clone.startAngle")) settings.startAngle = static_cast<float>(obj.value("clone.startAngle").toDouble(settings.startAngle));
+    if (obj.contains("clone.endAngle")) settings.endAngle = static_cast<float>(obj.value("clone.endAngle").toDouble(settings.endAngle));
+    if (obj.contains("clone.rotationStep")) settings.rotationStep = static_cast<float>(obj.value("clone.rotationStep").toDouble(settings.rotationStep));
+    if (obj.contains("clone.opacityDecay")) settings.opacityDecay = std::clamp(static_cast<float>(obj.value("clone.opacityDecay").toDouble(settings.opacityDecay)), 0.0f, 1.0f);
+    readStage(QStringLiteral("clone.transform1"), settings.transform1);
+    readStage(QStringLiteral("clone.transform2"), settings.transform2);
+    readStage(QStringLiteral("clone.transform3"), settings.transform3);
     if (obj.contains("clone.sourceLayerId")) {
         impl_->settings_.sourceLayerId = LayerID(obj.value("clone.sourceLayerId").toString());
     }
