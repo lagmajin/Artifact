@@ -2939,6 +2939,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
    // Sort items
    std::sort(items.begin(), items.end(), [this](const AssetMenuItem& a, const AssetMenuItem& b) {
+    const auto compareNaturalName = [&a, &b]() {
+     return naturalAssetNameCompare(a.name.toQString(), b.name.toQString());
+    };
     // Folders always first
     if (a.isFolder && !b.isFolder) return true;
     if (!a.isFolder && b.isFolder) return false;
@@ -2954,7 +2957,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     }
 
     if (currentSortBy_ == "name") {
-     int result = naturalAssetNameCompare(a.name.toQString(), b.name.toQString());
+     int result = compareNaturalName();
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "date") {
      QFileInfo infoA(a.path.toQString());
@@ -2962,17 +2965,20 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
      QDateTime dateA = infoA.lastModified();
      QDateTime dateB = infoB.lastModified();
      int result = dateA < dateB ? -1 : (dateA > dateB ? 1 : 0);
+     if (result == 0) result = compareNaturalName();
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "size") {
      qint64 sizeA = QFileInfo(a.path.toQString()).size();
      qint64 sizeB = QFileInfo(b.path.toQString()).size();
      int result = sizeA < sizeB ? -1 : (sizeA > sizeB ? 1 : 0);
+     if (result == 0) result = compareNaturalName();
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "type") {
      int result = a.type.toQString().compare(b.type.toQString(), Qt::CaseInsensitive);
+     if (result == 0) result = compareNaturalName();
      return sortAscending_ ? result < 0 : result > 0;
     }
-    return a.name.toQString().compare(b.name.toQString(), Qt::CaseInsensitive) < 0;
+    return compareNaturalName() < 0;
    });
 
    assetModel_->setItems(items);
