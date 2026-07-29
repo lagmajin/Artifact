@@ -167,6 +167,9 @@ ArtifactTimelineSearchBarWidget::Impl::Impl()
 {
  searchLineEdit_ = new QLineEdit();
  searchLineEdit_->setPlaceholderText("検索 (type:text fx:blur tag:bg parent:none visible:false)");
+ searchLineEdit_->setAccessibleName(QStringLiteral("Timeline search"));
+ searchLineEdit_->setAccessibleDescription(
+     QStringLiteral("Search timeline layers and properties; Enter finds next and Shift-Enter finds previous"));
 }
 
 ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent)
@@ -194,7 +197,11 @@ ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent
    impl_->searchLineEdit_->setPalette(searchPal);
   }
 
-  layout->addWidget(impl_->searchLineEdit_);
+ layout->addWidget(impl_->searchLineEdit_);
+
+  setAccessibleName(QStringLiteral("Timeline search bar"));
+  setAccessibleDescription(
+      QStringLiteral("Search and filter timeline layers and properties"));
 
   setAttribute(Qt::WA_StyledBackground, true);
   setAutoFillBackground(false);
