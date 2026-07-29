@@ -2025,6 +2025,8 @@ public:
 
 AudioScrubSettingPage::AudioScrubSettingPage(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Audio scrubbing settings"));
+  setAccessibleDescription(QStringLiteral("Configure audio preview while dragging the timeline"));
   auto *mainLayout = new QVBoxLayout(this);
 
   auto *group = new QGroupBox(QStringLiteral("Audio Scrubbing"), this);
@@ -2032,6 +2034,8 @@ AudioScrubSettingPage::AudioScrubSettingPage(QWidget *parent)
 
   impl_->enabledCheckBox_ =
       new QCheckBox(QStringLiteral("Enable audio scrubbing during timeline drag"), this);
+  impl_->enabledCheckBox_->setAccessibleName(QStringLiteral("Enable audio scrubbing during timeline drag"));
+  impl_->enabledCheckBox_->setAccessibleDescription(QStringLiteral("Play a short audio preview while scrubbing the timeline"));
   layout->addWidget(impl_->enabledCheckBox_);
   layout->addWidget(new QLabel(
       QStringLiteral("When enabled, the timeline plays a short preview while you scrub."), this));
@@ -2039,6 +2043,8 @@ AudioScrubSettingPage::AudioScrubSettingPage(QWidget *parent)
   auto *latencyRow = new QHBoxLayout();
   latencyRow->addWidget(new QLabel(QStringLiteral("Latency target:"), this));
   impl_->latencyCombo_ = new QComboBox(this);
+  impl_->latencyCombo_->setAccessibleName(QStringLiteral("Audio scrubbing latency target"));
+  impl_->latencyCombo_->setAccessibleDescription(QStringLiteral("Choose the response latency for audio scrubbing"));
   impl_->latencyCombo_->addItems({
       QStringLiteral("5 ms"),
       QStringLiteral("10 ms"),
@@ -2054,6 +2060,8 @@ AudioScrubSettingPage::AudioScrubSettingPage(QWidget *parent)
   auto *volumeRow = new QHBoxLayout();
   volumeRow->addWidget(new QLabel(QStringLiteral("Volume scale:"), this));
   impl_->volumeScaleSpinBox_ = new QDoubleSpinBox(this);
+  impl_->volumeScaleSpinBox_->setAccessibleName(QStringLiteral("Audio scrubbing volume scale"));
+  impl_->volumeScaleSpinBox_->setAccessibleDescription(QStringLiteral("Set the volume of the audio scrubbing preview"));
   impl_->volumeScaleSpinBox_->setRange(0.0, 1.0);
   impl_->volumeScaleSpinBox_->setSingleStep(0.05);
   impl_->volumeScaleSpinBox_->setDecimals(2);
