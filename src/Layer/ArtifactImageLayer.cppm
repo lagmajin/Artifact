@@ -519,7 +519,7 @@ bool ArtifactImageLayer::setImageSequence(const QStringList& framePaths, double 
     impl_->sequenceSource_.reset();
     impl_->sequenceCachedIndex_ = -1;
     // 代表フレーム（先頭）を読み込んで表示・サイズを確定させる。
-    // フレーム時刻に応じた再生は ImageSequenceSource 連携のフォローアップとする。
+    // draw() 側で currentFrame() に応じた ImageSequenceSource のフレーム切替を行う。
     return loadFromPath(framePaths.first());
 }
 
