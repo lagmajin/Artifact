@@ -2208,6 +2208,7 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
 void ArtifactAssetBrowser::Impl::clearThumbnailCache()
 {
   thumbnailGeneration_.fetch_add(1, std::memory_order_relaxed);
+  importedAssetPathsCacheValid_ = false;
   {
     std::lock_guard<std::mutex> lock(thumbnailMutex_);
     thumbnailCache_.clear();
