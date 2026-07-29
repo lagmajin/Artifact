@@ -104,6 +104,10 @@ export namespace Artifact {
                 enqueueTask([this, node, &pendingDependencies, &dependents, &scheduleNode]() {
                     // --- ノードの実際の計算処理 ---
                     if (node->isDirty()) {
+                        if (!node->effect()) {
+                            node->markError();
+                            return;
+                        }
                         // TODO: 実際の Effect のバックエンド評価 (CPU/GPU)
                         // node->effect()->apply(...)
                         node->markCached(); // 計算完了したらキャッシュ済みに
