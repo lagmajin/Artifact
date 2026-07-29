@@ -152,6 +152,18 @@ export namespace Artifact {
             const auto& inPort  = tgtNode->inputPorts()[tgtPort];
             if (!outPort.isCompatibleWith(inPort)) return false;
 
+            // An input port has a single authoritative producer.  Allowing
+            // multiple connections here makes compile() count dependencies
+            // that the executor cannot represent in one input buffer and
+            // leaves the result dependent on connection order.
+            for (const auto& existing : connections_) {
+                if (existing.enabled &&
+                    existing.targetNodeId == tgtId &&
+                    existing.targetPortIndex == tgtPort) {
+                    return false;
+                }
+            }
+
             // 循環チェック → 接続後に compile を試みる
             Connection conn(ConnectionID(), srcId, srcPort, tgtId, tgtPort);
             connections_.push_back(conn);
