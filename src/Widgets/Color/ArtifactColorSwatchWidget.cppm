@@ -40,6 +40,8 @@ public:
 
 ArtifactColorSwatchWidget::ArtifactColorSwatchWidget(QWidget* parent)
     : QWidget(parent), impl_(std::unique_ptr<Impl>(new Impl())) {
+    setAccessibleName(QStringLiteral("Color swatch widget"));
+    setAccessibleDescription(QStringLiteral("Select, import, export, or clear colors in the current palette"));
     
     // UI Setup
     auto* mainLayout = new QVBoxLayout(this);
@@ -48,6 +50,8 @@ ArtifactColorSwatchWidget::ArtifactColorSwatchWidget(QWidget* parent)
 
     // Grid View
     impl_->listWidget = new QListWidget(this);
+    impl_->listWidget->setAccessibleName(QStringLiteral("Color swatches"));
+    impl_->listWidget->setAccessibleDescription(QStringLiteral("Select a color swatch from the current palette"));
     impl_->listWidget->setViewMode(QListView::IconMode);
     impl_->listWidget->setResizeMode(QListView::Adjust);
     impl_->listWidget->setSpacing(4);
@@ -73,6 +77,12 @@ ArtifactColorSwatchWidget::ArtifactColorSwatchWidget(QWidget* parent)
     impl_->btnLoad = new QPushButton("Import .gpl", this);
     impl_->btnSave = new QPushButton("Export .gpl", this);
     impl_->btnClear = new QPushButton("Clear", this);
+    impl_->btnLoad->setAccessibleName(QStringLiteral("Import GPL palette"));
+    impl_->btnLoad->setAccessibleDescription(QStringLiteral("Import colors from a GIMP palette file"));
+    impl_->btnSave->setAccessibleName(QStringLiteral("Export GPL palette"));
+    impl_->btnSave->setAccessibleDescription(QStringLiteral("Export the current colors as a GIMP palette file"));
+    impl_->btnClear->setAccessibleName(QStringLiteral("Clear color palette"));
+    impl_->btnClear->setAccessibleDescription(QStringLiteral("Remove all colors from the current palette"));
 
     toolLayout->addWidget(impl_->btnLoad);
     toolLayout->addWidget(impl_->btnSave);
