@@ -409,6 +409,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         impl_->sourceAssetId_ = QUuid();
         impl_->cachedSourceVersion_ = 0;
         impl_->sourcePath_ = path;
+        ++impl_->prefetchGeneration_;
         impl_->prefetchDone_ = true;
         impl_->hasImage_ = true;
         impl_->cache_ = ArtifactCore::makeShared<QImage>(makeMissingImagePlaceholder(QSize(256, 256),
@@ -433,6 +434,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         impl_->sourceAssetId_ = QUuid();
         impl_->cachedSourceVersion_ = 0;
         impl_->sourcePath_ = path;
+        ++impl_->prefetchGeneration_;
         impl_->prefetchDone_ = true;
         impl_->hasImage_ = true;
         impl_->cache_ = ArtifactCore::makeShared<QImage>(makeMissingImagePlaceholder(QSize(256, 256),
