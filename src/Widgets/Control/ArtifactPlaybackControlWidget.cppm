@@ -775,6 +775,9 @@ public:
         scrubSlider_->setTickInterval(60);
         scrubSlider_->setFixedHeight(44);
         scrubSlider_->setToolTip(QStringLiteral("Drag the playhead to seek"));
+        scrubSlider_->setAccessibleName(QStringLiteral("Playback position"));
+        scrubSlider_->setAccessibleDescription(
+            QStringLiteral("Drag the playhead to seek through the current composition"));
         {
             QPalette scrubPalette = scrubSlider_->palette();
             const QColor accent(ArtifactCore::currentDCCTheme().accentColor);
@@ -834,6 +837,9 @@ public:
         optionsRow->setSpacing(10);
 
         ramCacheCheckbox_ = new QCheckBox(QStringLiteral("RAM Preview"), owner_);
+        ramCacheCheckbox_->setAccessibleName(QStringLiteral("RAM Preview"));
+        ramCacheCheckbox_->setAccessibleDescription(
+            QStringLiteral("Enable RAM preview caching during playback"));
         {
             QFont font = ramCacheCheckbox_->font();
             font.setPointSize(9);
@@ -863,6 +869,7 @@ public:
         clearRamPreviewButton_->setFixedSize(112, 24);
 
         autoKeyCheckbox_ = new QCheckBox(QStringLiteral("Auto-Key"), owner_);
+        autoKeyCheckbox_->setAccessibleName(QStringLiteral("Auto-Key"));
         {
             QFont font = autoKeyCheckbox_->font();
             font.setPointSize(9);
@@ -911,9 +918,15 @@ public:
         }
         autoKeyScopeCombo_->setToolTip(
             QStringLiteral("Scope auto-key to the current layer or selected layers (per-layer override)."));
+        autoKeyScopeCombo_->setAccessibleName(QStringLiteral("Auto-Key scope"));
+        autoKeyScopeCombo_->setAccessibleDescription(
+            QStringLiteral("Choose which layers receive automatically created keyframes"));
         optionsRow->addWidget(autoKeyScopeCombo_);
 
         ghostingCheckbox_ = new QCheckBox(QStringLiteral("Ghosting"), owner_);
+        ghostingCheckbox_->setAccessibleName(QStringLiteral("Timeline ghosting"));
+        ghostingCheckbox_->setAccessibleDescription(
+            QStringLiteral("Show nearby keyframes as faint ghost markers"));
         {
             QFont font = ghostingCheckbox_->font();
             font.setPointSize(9);
@@ -943,6 +956,9 @@ public:
         ghostingFrameCountSpin_->setRange(1, 5);
         ghostingFrameCountSpin_->setFixedWidth(56);
         ghostingFrameCountSpin_->setToolTip(QStringLiteral("Nearby keyframe count"));
+        ghostingFrameCountSpin_->setAccessibleName(QStringLiteral("Ghost frame count"));
+        ghostingFrameCountSpin_->setAccessibleDescription(
+            QStringLiteral("Set how many nearby keyframes are shown as ghosts"));
         if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
             ghostingFrameCountSpin_->setValue(settings->timelineGhostingFrameCount());
         } else {
@@ -965,6 +981,9 @@ public:
         ghostingOpacitySpin_->setRange(4, 40);
         ghostingOpacitySpin_->setFixedWidth(56);
         ghostingOpacitySpin_->setToolTip(QStringLiteral("Ghost marker opacity percent"));
+        ghostingOpacitySpin_->setAccessibleName(QStringLiteral("Ghost marker opacity"));
+        ghostingOpacitySpin_->setAccessibleDescription(
+            QStringLiteral("Set the opacity of nearby keyframe ghost markers"));
         if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
             ghostingOpacitySpin_->setValue(settings->timelineGhostingOpacity());
         } else {
