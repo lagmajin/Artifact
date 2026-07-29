@@ -16,6 +16,7 @@ module Artifact.Widgets.PropertyEditor;
 
 import Property.Abstract;
 import Artifact.Widgets.RelativeSpinBox;
+import Settings.Accessibility;
 
 namespace Artifact {
 using namespace detail;
@@ -77,7 +78,13 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
         wigglyPositionAct->setToolTip(QStringLiteral("Wiggly selector: smooth position and rotation wiggles"));
         blurRevealAct->setToolTip(QStringLiteral("Blur reveal animation: scale, opacity, blur"));
 
-        QAction *chosen = menu.exec(addButton_->mapToGlobal(QPoint(0, addButton_->height())));
+        const QPoint origin =
+            addButton_->mapToGlobal(QPoint(0, addButton_->height()));
+        int menuX = origin.x();
+        int menuY = origin.y();
+        Accessibility::adjustContextMenuPosition(menuX, menuY,
+                                                  menu.sizeHint().width());
+        QAction *chosen = menu.exec(QPoint(menuX, menuY));
         if (!chosen) {
           return;
         }
