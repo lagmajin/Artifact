@@ -132,6 +132,8 @@ ArtifactResolutionRemapDialog::ArtifactResolutionRemapDialog(
     impl_->impact_ = impact;
 
     setWindowTitle(QStringLiteral("Resolution Change — Remap Wizard"));
+    setAccessibleName(QStringLiteral("Resolution remap"));
+    setAccessibleDescription(QStringLiteral("Choose how masks, keyframes, and anchors adapt to the new resolution"));
     setMinimumWidth(420);
 
     auto* mainLayout = new QVBoxLayout(this);
@@ -190,6 +192,8 @@ ArtifactResolutionRemapDialog::ArtifactResolutionRemapDialog(
         impl_->policyCombo_->addItem(impl_->policyLabel(policy));
     }
     impl_->policyCombo_->setCurrentIndex(static_cast<int>(RemapPolicy::CenterLocked));
+    impl_->policyCombo_->setAccessibleName(QStringLiteral("Remap policy"));
+    impl_->policyCombo_->setAccessibleDescription(QStringLiteral("Choose how coordinate-dependent data adapts to the new resolution"));
     policyLayout->addWidget(impl_->policyCombo_);
     mainLayout->addWidget(policyGroup);
 
@@ -206,6 +210,10 @@ ArtifactResolutionRemapDialog::ArtifactResolutionRemapDialog(
     auto* buttonLayout = new QHBoxLayout();
     auto* skipButton = new QPushButton(QStringLiteral("Skip — Keep as-is"));
     auto* applyButton = new QPushButton(QStringLiteral("Apply Remap"));
+    skipButton->setAccessibleName(QStringLiteral("Skip remap"));
+    skipButton->setAccessibleDescription(QStringLiteral("Keep existing coordinates without remapping"));
+    applyButton->setAccessibleName(QStringLiteral("Apply remap"));
+    applyButton->setAccessibleDescription(QStringLiteral("Apply the selected resolution remap policy"));
 
     buttonLayout->addWidget(skipButton);
     buttonLayout->addStretch();
