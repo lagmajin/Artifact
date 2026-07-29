@@ -2381,6 +2381,17 @@ void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {
 }
 
 void ArtifactMainWindow::keyPressEvent(QKeyEvent *event) {
+  if (event && event->modifiers() == Qt::ShiftModifier &&
+      event->key() == Qt::Key_Space) {
+    QWidget *focusedWidget = QApplication::focusWidget();
+    if (focusedWidget) {
+      // setDockImmersive() resolves child widgets to their owning dock and
+      // preserves the previous visibility/window state for restoration.
+      setDockImmersive(focusedWidget, !(impl_ && impl_->immersiveMode_));
+      event->accept();
+      return;
+    }
+  }
   if (event && event->modifiers() == Qt::ControlModifier) {
     WorkspaceMode quickMode;
     bool handled = true;
