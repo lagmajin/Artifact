@@ -410,10 +410,16 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
 
   impl_->widthSpinBox = new DragSpinBox();
   impl_->widthSpinBox->setRange(1, 16384);
+  impl_->widthSpinBox->setAccessibleName(QStringLiteral("Composition width"));
+  impl_->widthSpinBox->setAccessibleDescription(QStringLiteral("Composition width in pixels"));
   impl_->heightSpinBox = new DragSpinBox();
   impl_->heightSpinBox->setRange(1, 16384);
+  impl_->heightSpinBox->setAccessibleName(QStringLiteral("Composition height"));
+  impl_->heightSpinBox->setAccessibleDescription(QStringLiteral("Composition height in pixels"));
   
   impl_->resolutionCombobox_ = new QComboBox();
+  impl_->resolutionCombobox_->setAccessibleName(QStringLiteral("Composition resolution preset"));
+  impl_->resolutionCombobox_->setAccessibleDescription(QStringLiteral("Choose a standard or custom composition resolution"));
   impl_->resolutionCombobox_->addItem("HD 1080p (1920x1080)", QVariant::fromValue(QSize(1920, 1080)));
   impl_->resolutionCombobox_->addItem("HD 720p (1280x720)", QVariant::fromValue(QSize(1280, 720)));
   impl_->resolutionCombobox_->addItem("4K UHD (3840x2160)", QVariant::fromValue(QSize(3840, 2160)));
@@ -444,16 +450,22 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   impl_->aspectLockButton_->setAutoRaise(true);
   impl_->aspectLockButton_->setToolTip(QStringLiteral("Lock aspect ratio"));
   impl_->aspectLockButton_->setText(QStringLiteral("🔓"));
+  impl_->aspectLockButton_->setAccessibleName(QStringLiteral("Lock aspect ratio"));
+  impl_->aspectLockButton_->setAccessibleDescription(QStringLiteral("Keep composition width and height proportional"));
   sizeHBox->addWidget(impl_->aspectLockButton_);
   sizeHBox->addWidget(impl_->heightSpinBox);
   sizeHBox->addWidget(new QLabel("px"));
 
   impl_->pixelAspectCombo_ = new QComboBox();
+  impl_->pixelAspectCombo_->setAccessibleName(QStringLiteral("Pixel aspect ratio"));
+  impl_->pixelAspectCombo_->setAccessibleDescription(QStringLiteral("Choose the composition pixel aspect ratio"));
   impl_->pixelAspectCombo_->addItem("Square Pixels (1.0)", QVariant::fromValue(1.0));
   impl_->pixelAspectCombo_->addItem("D1/DV NTSC (0.91)", QVariant::fromValue(0.9091));
   impl_->pixelAspectCombo_->addItem("D1/DV PAL (1.09)", QVariant::fromValue(1.0940));
 
   impl_->fpsCombo_ = new QComboBox();
+  impl_->fpsCombo_->setAccessibleName(QStringLiteral("Frame rate"));
+  impl_->fpsCombo_->setAccessibleDescription(QStringLiteral("Choose the composition frame rate"));
   impl_->fpsCombo_->addItem("23.976 fps", QVariant::fromValue(23.976));
   impl_->fpsCombo_->addItem("24 fps", QVariant::fromValue(24.0));
   impl_->fpsCombo_->addItem("25 fps", QVariant::fromValue(25.0));
@@ -463,12 +475,18 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   impl_->fpsCombo_->setCurrentIndex(4); 
 
   impl_->startTimecodeEdit = new QLineEdit("00:00:00:00");
+  impl_->startTimecodeEdit->setAccessibleName(QStringLiteral("Start timecode"));
+  impl_->startTimecodeEdit->setAccessibleDescription(QStringLiteral("Starting timecode of the composition"));
   
   impl_->durationSpinBox = new DoubleDragSpinBox();
   impl_->durationSpinBox->setRange(0.1, 3600.0);
   impl_->durationSpinBox->setValue(10.0);
+  impl_->durationSpinBox->setAccessibleName(QStringLiteral("Composition duration"));
+  impl_->durationSpinBox->setAccessibleDescription(QStringLiteral("Composition duration in seconds"));
 
   impl_->bgColorButton = new QPushButton("Pick Color");
+  impl_->bgColorButton->setAccessibleName(QStringLiteral("Background color"));
+  impl_->bgColorButton->setAccessibleDescription(QStringLiteral("Choose the composition background color"));
   impl_->bgColorButton->setFixedSize(80, 24);
   updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
   
@@ -772,6 +790,8 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   QElapsedTimer ctorTimer;
   ctorTimer.start();
   setWindowTitle("Composition Settings");
+  setAccessibleName(QStringLiteral("Create Composition Dialog"));
+  setAccessibleDescription(QStringLiteral("Configure a new composition's name, resolution, timing, and background"));
   setWindowFlags(Qt::FramelessWindowHint | Qt::Dialog);
   
   auto mainLayout = new QVBoxLayout(this);
@@ -791,11 +811,14 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   nameLbl->setFixedWidth(60);
   impl_->compositionNameEdit_ = new EditableLabel();
   impl_->compositionNameEdit_->setText(uniqueCompositionName(QStringLiteral("Comp1")));
+  impl_->compositionNameEdit_->setAccessibleName(QStringLiteral("Composition name"));
+  impl_->compositionNameEdit_->setAccessibleDescription(QStringLiteral("Name of the new composition"));
   nameRow->addWidget(nameLbl);
   nameRow->addWidget(impl_->compositionNameEdit_);
   content->addLayout(nameRow);
 
   impl_->pTabWidget = new QTabWidget();
+  impl_->pTabWidget->setAccessibleName(QStringLiteral("Composition settings sections"));
   impl_->compositionSettingPage_ = new CompositionSettingPage();
   impl_->pTabWidget->addTab(impl_->compositionSettingPage_, "Basic");
   impl_->pTabWidget->setMinimumWidth(520);
@@ -807,8 +830,12 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   auto fLayout = new QHBoxLayout(footer);
   fLayout->setContentsMargins(15, 10, 15, 10);
   auto okBtn = new QPushButton("OK");
+  okBtn->setAccessibleName(QStringLiteral("Create composition"));
+  okBtn->setAccessibleDescription(QStringLiteral("Create the composition with the selected settings"));
   okBtn->setFixedSize(80, 28);
   auto cancelBtn = new QPushButton("Cancel");
+  cancelBtn->setAccessibleName(QStringLiteral("Cancel composition creation"));
+  cancelBtn->setAccessibleDescription(QStringLiteral("Close without creating a composition"));
   cancelBtn->setFixedSize(80, 28);
   fLayout->addStretch();
   fLayout->addWidget(okBtn);
