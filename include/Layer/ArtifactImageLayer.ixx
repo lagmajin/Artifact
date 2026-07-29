@@ -35,6 +35,9 @@ export namespace Artifact {
   bool isImageSequence() const;
   double sequenceFrameRate() const;
   QString sourcePath() const;
+  void setInputInterpretation(const QString& colorSpace, const QString& transferFunction);
+  QString inputColorSpace() const;
+  QString inputTransferFunction() const;
   QUuid sourceAssetId() const;
   std::uint64_t sourceVersion() const;
   bool canShareSourceGpuTexture() const;

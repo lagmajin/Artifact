@@ -1624,6 +1624,44 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
           if (sequenceFootage) {
             imageParams->setSequencePaths(sequenceFootage->sequencePaths);
             imageParams->setSequenceFrameRate(sequenceFootage->frameRate);
+            imageParams->setInputColorSpace(sequenceFootage->inputColorSpace);
+            imageParams->setInputTransferFunction(sequenceFootage->inputTransferFunction);
+          }
+        }
+
+        // Carry explicit source interpretation into the image layer for both
+        // still footage and sequences. Empty values intentionally preserve the
+        // importer/working-space auto path.
+        if (auto project = manager.getCurrentProjectSharedPtr()) {
+          const QString normalizedPath = QDir::cleanPath(
+              QFileInfo(imageParams->imagePath()).absoluteFilePath());
+          std::function<FootageItem *(ProjectItem *)> findFootage =
+              [&](ProjectItem *item) -> FootageItem * {
+            if (!item) return nullptr;
+            if (item->type() == eProjectItemType::Footage) {
+              auto *footage = static_cast<FootageItem *>(item);
+              if (QDir::cleanPath(QFileInfo(footage->filePath).absoluteFilePath()) ==
+                  normalizedPath) {
+                return footage;
+              }
+              for (const QString &framePath : footage->sequencePaths) {
+                if (QDir::cleanPath(QFileInfo(framePath).absoluteFilePath()) ==
+                    normalizedPath) {
+                  return footage;
+                }
+              }
+            }
+            for (auto *child : item->children) {
+              if (auto *found = findFootage(child)) return found;
+            }
+            return nullptr;
+          };
+          for (auto *root : project->projectItems()) {
+            if (auto *footage = findFootage(root)) {
+              imageParams->setInputColorSpace(footage->inputColorSpace);
+              imageParams->setInputTransferFunction(footage->inputTransferFunction);
+              break;
+            }
           }
         }
       }

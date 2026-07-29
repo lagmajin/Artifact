@@ -33,6 +33,7 @@ module Artifact.Layer.Image;
 
 import Artifact.Layer.CloneEffectSupport;
 import Media.ImageSequenceSource;
+import Artifact.Color.OCIOManager;
 
 import std;
 import Artifact.Layers.Abstract._2D;
@@ -239,6 +240,8 @@ public:
     SourceCrop sourceCrop_;
     mutable ArtifactCore::SharedPtr<QImage> cache_;
     mutable ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> cacheBuffer_;
+    QString inputColorSpace_;
+    QString inputTransferFunction_;
     // [Fix 1] バックグラウンド先読み用
     struct PrefetchResult {
         std::uint64_t generation = 0;
@@ -249,6 +252,20 @@ public:
     mutable QFutureWatcher<PrefetchResult> prefetchWatcher_;
     mutable std::uint64_t prefetchGeneration_ = 0;
     mutable bool prefetchDone_ = false;
+
+    void applyInputInterpretation() const
+    {
+        if (!cacheBuffer_ ||
+            (inputColorSpace_.trimmed().isEmpty() &&
+             inputTransferFunction_.trimmed().isEmpty())) {
+            return;
+        }
+        auto converted = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
+            *cacheBuffer_);
+        Artifact::ArtifactOCIOManager::instance()->applyInputTransformToWorkingImage(
+            *converted, inputColorSpace_, inputTransferFunction_);
+        cacheBuffer_ = std::move(converted);
+    }
 
     bool refreshSequenceFrame(qint64 frameIndex) const
     {
@@ -278,6 +295,7 @@ public:
         cache_ = ArtifactCore::makeShared<QImage>(frame);
         cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
             toFrameBuffer(frame));
+        applyInputInterpretation();
         sequenceCachedIndex_ = frameIndex;
         return true;
     }
@@ -344,6 +362,7 @@ ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
             impl_->cacheBuffer_ = result.floatImage
                 ? result.floatImage
                 : ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
+            impl_->applyInputInterpretation();
             const auto version = ArtifactCore::AssetManager::instance().sourceVersion(
                 impl_->sourceAssetId_);
             impl_->cacheBuffer_ = ArtifactCore::staticPointerCast<ArtifactCore::ImageF32x4_RGBA>(
@@ -463,6 +482,28 @@ QString ArtifactImageLayer::sourcePath() const
     return impl_->sourcePath_;
 }
 
+void ArtifactImageLayer::setInputInterpretation(
+    const QString& colorSpace, const QString& transferFunction)
+{
+    impl_->inputColorSpace_ = colorSpace.trimmed();
+    impl_->inputTransferFunction_ = transferFunction.trimmed();
+    if (impl_->cacheBuffer_) {
+        impl_->applyInputInterpretation();
+    }
+    setDirty(LayerDirtyFlag::Source);
+    Q_EMIT changed();
+}
+
+QString ArtifactImageLayer::inputColorSpace() const
+{
+    return impl_->inputColorSpace_;
+}
+
+QString ArtifactImageLayer::inputTransferFunction() const
+{
+    return impl_->inputTransferFunction_;
+}
+
 bool ArtifactImageLayer::setImageSequence(const QStringList& framePaths, double frameRate)
 {
     if (framePaths.isEmpty()) {
@@ -562,6 +603,8 @@ QJsonObject ArtifactImageLayer::toJson() const
     QJsonObject obj = ArtifactAbstract2DLayer::toJson();
     obj["type"] = static_cast<int>(LayerType::Image);
     obj["image.sourcePath"] = impl_->sourcePath_;
+    obj["image.inputColorSpace"] = impl_->inputColorSpace_;
+    obj["image.inputTransferFunction"] = impl_->inputTransferFunction_;
     obj["image.sourceAssetId"] = impl_->sourceAssetId_.toString(QUuid::WithoutBraces);
     obj["image.sourceLocalized"] = isSourceIdentityLocalized();
     obj["image.fitToLayer"] = impl_->fitToLayer_;
@@ -611,6 +654,8 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
             obj.value(QStringLiteral("image.sequenceFrameRate")).toDouble(0.0);
     }
     const QString sourcePath = obj.value(QStringLiteral("image.sourcePath")).toString();
+    impl_->inputColorSpace_ = obj.value(QStringLiteral("image.inputColorSpace")).toString();
+    impl_->inputTransferFunction_ = obj.value(QStringLiteral("image.inputTransferFunction")).toString();
     if (!sourcePath.isEmpty() && sourcePath != impl_->sourcePath_) {
         loadFromPath(sourcePath);
     }

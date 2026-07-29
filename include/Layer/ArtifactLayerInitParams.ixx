@@ -147,6 +147,8 @@ export namespace Artifact {
   QString imagePath_;
   QStringList sequencePaths_;
   double sequenceFrameRate_ = 0.0;
+  QString inputColorSpace_;
+  QString inputTransferFunction_;
 
  public:
   ArtifactImageInitParams(const QString& name);
@@ -157,6 +159,10 @@ export namespace Artifact {
   void setSequencePaths(const QStringList& paths) { sequencePaths_ = paths; }
   double sequenceFrameRate() const { return sequenceFrameRate_; }
   void setSequenceFrameRate(double frameRate) { sequenceFrameRate_ = frameRate; }
+  QString inputColorSpace() const { return inputColorSpace_; }
+  void setInputColorSpace(const QString& value) { inputColorSpace_ = value; }
+  QString inputTransferFunction() const { return inputTransferFunction_; }
+  void setInputTransferFunction(const QString& value) { inputTransferFunction_ = value; }
  };
 
  class ArtifactSvgInitParams : public ArtifactLayerInitParams

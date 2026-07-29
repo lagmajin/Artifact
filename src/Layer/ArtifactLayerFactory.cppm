@@ -105,6 +105,8 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
     // 画像パラメータからパスを取得して読み込み
     if (auto* imageParams = dynamic_cast<ArtifactImageInitParams*>(&params)) {
      auto* imageLayer = static_cast<ArtifactImageLayer*>(ptr.get());
+     imageLayer->setInputInterpretation(imageParams->inputColorSpace(),
+                                        imageParams->inputTransferFunction());
      const QStringList sequencePaths = imageParams->sequencePaths();
      if (sequencePaths.size() > 1) {
       // 連番シーケンスは代表フレーム読み込み＋シーケンス関係の保持
