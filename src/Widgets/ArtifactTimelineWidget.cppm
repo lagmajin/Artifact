@@ -9057,6 +9057,25 @@ void ArtifactTimelineWidget::setCurrentFrameForAll(double frame)
   impl_->currentFrame_ = clamped;
   if (impl_->painterTrackView_) {
     impl_->painterTrackView_->setCurrentFrame(clamped);
+    // Keep the playhead visible after seeking from the header, scrub bar,
+    // keyboard, or playback. Only adjust the horizontal view when the
+    // playhead has actually crossed the viewport edge, preserving the user's
+    // current scroll position during ordinary in-view movement.
+    const double ppf = std::max(0.001, impl_->painterTrackView_->pixelsPerFrame());
+    const double playheadX = clamped * ppf -
+                             impl_->painterTrackView_->horizontalOffset();
+    constexpr double kFollowMargin = 24.0;
+    if (playheadX < kFollowMargin ||
+        playheadX > impl_->painterTrackView_->width() - kFollowMargin) {
+      const double targetX = playheadX < kFollowMargin
+                                 ? kFollowMargin
+                                 : std::max(
+                                       kFollowMargin,
+                                       static_cast<double>(impl_->painterTrackView_->width()) -
+                                           kFollowMargin);
+      const double targetOffset = clamped * ppf - targetX;
+      impl_->painterTrackView_->setHorizontalOffset(std::max(0.0, targetOffset));
+    }
   }
   if (impl_->scrubBar_) {
     const int clampedInt = std::max(0, static_cast<int>(std::llround(clamped)));
