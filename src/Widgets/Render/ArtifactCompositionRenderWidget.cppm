@@ -65,6 +65,13 @@ namespace Artifact {
  W_OBJECT_IMPL(ArtifactCompositionRenderWidget)
 
 namespace {
+QPoint accessibilityMenuPosition(const QMenu &menu, const QPoint &origin) {
+  int x = origin.x();
+  int y = origin.y();
+  Accessibility::adjustContextMenuPosition(x, y, menu.sizeHint().width());
+  return QPoint(x, y);
+}
+
 enum class LayerDragMode {
   None,
   Move,
@@ -768,7 +775,8 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
                   menu.addSeparator();
                   menu.addAction("Bring to Front", [layer = hit.layer, comp]() { comp->bringToFront(layer->id()); });
                   menu.addAction("Send to Back", [layer = hit.layer, comp]() { comp->sendToBack(layer->id()); });
-                  menu.exec(event->globalPosition().toPoint());
+                  menu.exec(accessibilityMenuPosition(
+                      menu, event->globalPosition().toPoint()));
               }
       }
       }
