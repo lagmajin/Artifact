@@ -79,6 +79,7 @@ export namespace Artifact {
 
             auto& nodes = graph.nodes();
             auto& conns = graph.connections();
+            std::atomic_bool evaluationFailed{false};
 
             // 1. 各ノードの未解決の依存数（in-degree）を計算
             std::unordered_map<std::string, std::atomic<int>> pendingDependencies;
@@ -101,15 +102,19 @@ export namespace Artifact {
             // ※再帰的にラムダを呼ぶため std::function を使用
             std::function<void(EffectNodePtr)> scheduleNode;
             scheduleNode = [&](EffectNodePtr node) {
-                enqueueTask([this, node, &pendingDependencies, &dependents, &scheduleNode]() {
+                enqueueTask([this, node, &pendingDependencies, &dependents,
+                             &scheduleNode, &evaluationFailed]() {
                     // --- ノードの実際の計算処理 ---
                     if (node->isDirty()) {
                         if (!node->effect()) {
                             node->markError();
+                            evaluationFailed.store(true, std::memory_order_release);
                             return;
                         }
                         if (node->hasImageInput()) {
-                            node->evaluateImageEffect();
+                            if (!node->evaluateImageEffect()) {
+                                evaluationFailed.store(true, std::memory_order_release);
+                            }
                             return;
                         }
                         // TODO: 実際の Effect のバックエンド評価 (CPU/GPU)
@@ -155,7 +160,7 @@ export namespace Artifact {
 
             // 4. キューが空になり、全スレッドの処理が終わるまでブロック
             waitAll();
-            return true;
+            return !evaluationFailed.load(std::memory_order_acquire);
         }
     };
 
