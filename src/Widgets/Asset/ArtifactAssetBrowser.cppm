@@ -2750,8 +2750,19 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     if (name.isEmpty()) {
      name = paths.first();
     }
+    const int selectedRowCount =
+        (fileView_ && fileView_->selectionModel())
+            ? fileView_->selectionModel()->selectedRows().size()
+            : 0;
+    const QString sourceCountText =
+        paths.size() == selectedRowCount
+            ? QString()
+            : QStringLiteral(" • %1 source paths").arg(paths.size());
     leftHubSelectionLabel_->setText(
-        QStringLiteral("Selection: %1 selected | %2").arg(static_cast<int>(paths.size())).arg(name));
+        QStringLiteral("Selection: %1 selected%2 | %3")
+            .arg(selectedRowCount)
+            .arg(sourceCountText)
+            .arg(name));
     leftHubSelectionLabel_->setToolTip(paths.join(QStringLiteral("\n")));
    }
   }
