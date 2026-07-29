@@ -69,6 +69,8 @@ struct ArtifactPlaybackAudioDiagnostics {
     std::size_t openRetryCount = 0;
     std::size_t resyncClearCount = 0;
     std::size_t clockCorrectionCount = 0;
+    std::size_t underflowCount = 0;
+    std::size_t overflowCount = 0;
 };
 
 /// 再生スレッドエンジン

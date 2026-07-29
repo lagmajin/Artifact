@@ -1012,7 +1012,9 @@ ArtifactPlaybackAudioDiagnostics ArtifactPlaybackEngine::audioDiagnostics() cons
     diagnostics.targetBufferedFrames = impl_->audioTargetBufferedFrames_;
     diagnostics.openRetryCount = impl_->audioOpenRetryCount_;
     diagnostics.resyncClearCount = impl_->audioResyncClearCount_;
-    diagnostics.clockCorrectionCount = impl_->audioClockCorrectionCount_;
+        diagnostics.clockCorrectionCount = impl_->audioClockCorrectionCount_;
+        diagnostics.underflowCount = impl_->audioRenderer_->underflowCount();
+        diagnostics.overflowCount = impl_->audioRenderer_->overflowCount();
     return diagnostics;
 }
 
