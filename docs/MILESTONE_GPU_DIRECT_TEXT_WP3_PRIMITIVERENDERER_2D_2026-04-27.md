@@ -4,13 +4,20 @@
 
 Work Package 3 integrates GPU-accelerated glyph rendering into the `PrimitiveRenderer2D` class. This is the first concrete GPU text rendering layer in the direct text draw system.
 
-## Status: ✅ Proof-of-Concept Implementation Complete
+## Status: ✅ Static implementation complete; runtime parity pending
 
 - ✅ Added three new text drawing methods to PrimitiveRenderer2D
 - ✅ Integrated GlyphAtlas foundation into rendering pipeline
 - ✅ Created method signatures following established patterns
 - ✅ Implemented character acquisition from GPU atlas
-- ⏳ Full quad generation and GPU submission (WP-5 dependency)
+- ✅ Atlas-backed quad packet generation and command-buffer submission are present in the current implementation.
+- ⏳ Backend output parity, transformed glyph acceptance, and runtime verification remain pending.
+
+### 2026-07-29 Implementation Loop
+
+- ✅ `drawGlyphText()` / `drawGlyphs()` acquire atlas entries, upload the dirty atlas texture, emit UV-aware packets, and append them to the command buffer.
+- ✅ `drawGlyphTextTransformed()` / `drawGlyphsTransformed()` expose transformed glyph packet paths.
+- ⏳ No runtime/backend parity claim is made until the renderer is built and exercised.
 
 ---
 
