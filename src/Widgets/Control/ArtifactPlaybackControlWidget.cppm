@@ -1124,7 +1124,11 @@ public:
         button->setIcon(loadIconWithFallback(iconNames));
         button->setIconSize(QSize(22, 22));
         button->setToolTip(tooltip);
-        button->setFixedSize(40, 40);
+        button->setAccessibleName(tooltip);
+        button->setAccessibleDescription(
+            QStringLiteral("Playback control: %1").arg(tooltip));
+        const int targetSize = Accessibility::scaledSize(40);
+        button->setFixedSize(targetSize, targetSize);
         button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         applyThemeTextPalette(button, QColor(ArtifactCore::currentDCCTheme().textColor));
         
