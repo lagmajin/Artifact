@@ -492,6 +492,32 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
     impl_->fitToCompCheck = new QCheckBox(u8"平面をコンポジションサイズに合わせる", this);
     impl_->fitToCompCheck->setChecked(false);
 
+    setAccessibleName(QStringLiteral("Create plane layer settings"));
+    setAccessibleDescription(QStringLiteral("Configure a solid or gradient plane layer"));
+    const auto labelInput = [](QWidget* widget, const QString& name,
+                               const QString& description) {
+        widget->setAccessibleName(name);
+        widget->setAccessibleDescription(description);
+    };
+    labelInput(impl_->widthSpinBox, QStringLiteral("Plane width"), QStringLiteral("Set the plane width"));
+    labelInput(impl_->heightSpinBox, QStringLiteral("Plane height"), QStringLiteral("Set the plane height"));
+    labelInput(impl_->lockButton, QStringLiteral("Lock aspect ratio"), QStringLiteral("Lock or unlock the width and height ratio"));
+    labelInput(impl_->unitCombo, QStringLiteral("Size unit"), QStringLiteral("Choose the unit used for plane dimensions"));
+    labelInput(impl_->pixelAspectCombo, QStringLiteral("Pixel aspect ratio"), QStringLiteral("Choose the pixel aspect ratio"));
+    labelInput(impl_->bgColorButton, QStringLiteral("Background color"), QStringLiteral("Choose the plane background color"));
+    labelInput(impl_->gradientStartColorButton, QStringLiteral("Gradient start color"), QStringLiteral("Choose the gradient start color"));
+    labelInput(impl_->gradientEndColorButton, QStringLiteral("Gradient end color"), QStringLiteral("Choose the gradient end color"));
+    labelInput(impl_->hexColorEdit, QStringLiteral("Background color hex"), QStringLiteral("Enter the background color as a hexadecimal value"));
+    labelInput(impl_->fillModeCombo, QStringLiteral("Fill mode"), QStringLiteral("Choose solid or gradient fill"));
+    labelInput(impl_->gradientAngleSpin, QStringLiteral("Gradient angle"), QStringLiteral("Set the gradient angle"));
+    labelInput(impl_->gradientReverseCheck, QStringLiteral("Reverse gradient"), QStringLiteral("Reverse the gradient direction"));
+    labelInput(impl_->gradientCenterXSpin, QStringLiteral("Gradient center X"), QStringLiteral("Set the gradient center horizontal position"));
+    labelInput(impl_->gradientCenterYSpin, QStringLiteral("Gradient center Y"), QStringLiteral("Set the gradient center vertical position"));
+    labelInput(impl_->gradientScaleSpin, QStringLiteral("Gradient scale"), QStringLiteral("Set the gradient scale"));
+    labelInput(impl_->gradientOffsetSpin, QStringLiteral("Gradient offset"), QStringLiteral("Set the gradient offset"));
+    labelInput(impl_->matchCompButton, QStringLiteral("Use composition size"), QStringLiteral("Set the plane size to the composition size"));
+    labelInput(impl_->fitToCompCheck, QStringLiteral("Fit plane to composition"), QStringLiteral("Keep the plane fitted to the composition size"));
+
     // ── Layout ───────────────────────────────────────────────────────────────
 
     auto* vbox = new QVBoxLayout(this);
