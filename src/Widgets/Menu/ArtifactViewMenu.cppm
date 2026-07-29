@@ -863,6 +863,8 @@ namespace Artifact {
    QAction* qualityDraftAction = nullptr;
    QAction* qualityPreviewAction = nullptr;
    QAction* qualityFinalAction = nullptr;
+   QAction* ramCacheAction = nullptr;
+   QAction* diskCacheAction = nullptr;
    QMenu* workspaceMenu = nullptr;
    QMenu* workspacePresetMenu = nullptr;
    QActionGroup* workspaceGroup = nullptr;
@@ -1009,6 +1011,11 @@ namespace Artifact {
    qualityGroup->addAction(qualityDraftAction);
    qualityGroup->addAction(qualityPreviewAction);
    qualityGroup->addAction(qualityFinalAction);
+   qualityPresetMenu->addSeparator();
+   ramCacheAction = qualityPresetMenu->addAction(QStringLiteral("RAM キャッシュを有効化"));
+   ramCacheAction->setCheckable(true);
+   diskCacheAction = qualityPresetMenu->addAction(QStringLiteral("ディスクキャッシュを有効化"));
+   diskCacheAction->setCheckable(true);
 
    QObject::connect(resFullAction, &QAction::triggered, menu, []() {
     if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
@@ -1184,6 +1191,16 @@ namespace Artifact {
                               QStringLiteral("復元できるセッションがありません。"));
     }
    });
+   QObject::connect(ramCacheAction, &QAction::toggled, menu, [](bool enabled) {
+    if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+     settings->setPreviewEnableRamCache(enabled);
+    }
+   });
+   QObject::connect(diskCacheAction, &QAction::toggled, menu, [](bool enabled) {
+    if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+     settings->setPreviewEnableDiskCache(enabled);
+    }
+   });
    QObject::connect(resetWorkspaceLayoutAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     if (!mainWindow->resetDockManagerStateToDefault()) {
@@ -1357,6 +1374,12 @@ namespace Artifact {
     resQuarterAction->setEnabled(hasComp);
   }
   qualityPresetMenu->setEnabled(hasComp);
+  if (ramCacheAction) {
+    ramCacheAction->setEnabled(hasComp);
+  }
+  if (diskCacheAction) {
+    diskCacheAction->setEnabled(hasComp);
+  }
   if (hasComp) {
     if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
       const int percent = settings->previewResolutionPercent();
@@ -1371,6 +1394,14 @@ namespace Artifact {
       }
       if (resQuarterAction) {
         resQuarterAction->setChecked(percent < 28);
+      }
+      if (ramCacheAction) {
+        const QSignalBlocker blocker(ramCacheAction);
+        ramCacheAction->setChecked(settings->previewEnableRamCache());
+      }
+      if (diskCacheAction) {
+        const QSignalBlocker blocker(diskCacheAction);
+        diskCacheAction->setChecked(settings->previewEnableDiskCache());
       }
     }
   }
