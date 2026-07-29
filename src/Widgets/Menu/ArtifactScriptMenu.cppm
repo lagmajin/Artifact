@@ -56,6 +56,7 @@ public:
  void openFile(const QString& path) const;
  void runHook(const QString& hookName);
  void runMacroFile(const QString& filePath);
+ void runAeUtilityFile(const QString& filePath);
  void refreshAeUtilityActions();
  void refreshHookActions();
  void refreshMacroActions();
@@ -315,6 +316,30 @@ void ArtifactScriptMenu::Impl::runMacroFile(const QString& filePath)
  }
 }
 
+void ArtifactScriptMenu::Impl::runAeUtilityFile(const QString& filePath)
+{
+ if (filePath.trimmed().isEmpty()) {
+  return;
+ }
+
+ const QFileInfo info(filePath);
+ const QString fileName = info.fileName();
+ const bool destructive =
+     fileName == QStringLiteral("clean_layers.py") ||
+     fileName == QStringLiteral("trim_comp_to_content.py");
+ if (destructive) {
+  const auto result = QMessageBox::question(
+      menu_, tr("AE Utility Pack"),
+      tr("This utility changes the current composition. Continue?\n%1")
+          .arg(fileName),
+      QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+  if (result != QMessageBox::Yes) {
+   return;
+  }
+ }
+ runMacroFile(filePath);
+}
+
 void ArtifactScriptMenu::Impl::refreshHookActions()
 {
  for (QAction* action : hookActions) {
@@ -410,7 +435,7 @@ void ArtifactScriptMenu::Impl::refreshAeUtilityActions()
   action->setToolTip(info.absoluteFilePath());
   action->setEnabled(info.exists());
   QObject::connect(action, &QAction::triggered, menu_, [this, path]() {
-   runMacroFile(path);
+   runAeUtilityFile(path);
   });
   aeUtilityActions.push_back(action);
   hasAny = hasAny || info.exists();
