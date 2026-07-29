@@ -3492,17 +3492,57 @@ const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() cons
    const auto pointAt = [&points](std::size_t index) {
      return points[index % points.size()];
    };
+   std::vector<float> dashPattern;
+   for (const float value : style.dashPattern) {
+     if (std::isfinite(value) && value > 0.001f) dashPattern.push_back(value);
+   }
+   if (dashPattern.size() % 2 == 1) {
+     dashPattern.insert(dashPattern.end(), dashPattern.begin(), dashPattern.end());
+   }
+   std::size_t dashIndex = 0;
+   float dashRemaining = dashPattern.empty() ? 0.0f : dashPattern.front();
+   bool drawingDash = true;
    for (std::size_t i = 0; i < segmentCount; ++i) {
-     const Detail::float2 p0 = pointAt(i);
-     const Detail::float2 p1 = pointAt(i + 1);
-     if (style.dashPattern.empty()) {
-       impl_->primitiveRenderer_.drawThickLineLocal(
-           toDiligentFloat2(p0), toDiligentFloat2(p1), style.thickness, color);
-     } else if (style.dashPattern.size() >= 2) {
-       impl_->primitiveRenderer_.drawDashedLineLocal(
-           toDiligentFloat2(p0), toDiligentFloat2(p1), style.thickness,
-           std::max(0.001f, style.dashPattern[0]),
-           std::max(0.001f, style.dashPattern[1]), color);
+     Detail::float2 p0 = pointAt(i);
+     Detail::float2 p1 = pointAt(i + 1);
+     const float dx = p1.x - p0.x;
+     const float dy = p1.y - p0.y;
+     const float length = std::sqrt(dx * dx + dy * dy);
+     if (length <= 0.001f) continue;
+     const float nx = dx / length;
+     const float ny = dy / length;
+     if (!style.closed && style.cap == PolylineCap::Square && (i == 0 || i + 1 == segmentCount)) {
+       if (i == 0) { p0.x -= nx * style.thickness * 0.5f; p0.y -= ny * style.thickness * 0.5f; }
+       if (i + 1 == segmentCount) { p1.x += nx * style.thickness * 0.5f; p1.y += ny * style.thickness * 0.5f; }
+     }
+     if (dashPattern.empty()) {
+       impl_->primitiveRenderer_.drawThickLineLocal(toDiligentFloat2(p0),
+                                                    toDiligentFloat2(p1),
+                                                    style.thickness, color);
+       continue;
+     }
+     const float drawLength = std::sqrt((p1.x - p0.x) * (p1.x - p0.x) +
+                                        (p1.y - p0.y) * (p1.y - p0.y));
+     float consumed = 0.0f;
+     while (consumed < drawLength - 0.001f) {
+       const float step = std::min(dashRemaining, drawLength - consumed);
+       if (drawingDash && step > 0.0f) {
+         const float t0 = consumed / drawLength;
+         const float t1 = (consumed + step) / drawLength;
+         impl_->primitiveRenderer_.drawThickLineLocal(
+             toDiligentFloat2({p0.x + (p1.x - p0.x) * t0,
+                               p0.y + (p1.y - p0.y) * t0}),
+             toDiligentFloat2({p0.x + (p1.x - p0.x) * t1,
+                               p0.y + (p1.y - p0.y) * t1}),
+             style.thickness, color);
+       }
+       consumed += step;
+       dashRemaining -= step;
+       if (dashRemaining <= 0.001f) {
+         dashIndex = (dashIndex + 1) % dashPattern.size();
+         dashRemaining = dashPattern[dashIndex];
+         drawingDash = !drawingDash;
+       }
      }
    }
    if (style.join == PolylineJoin::Round) {
