@@ -35,6 +35,7 @@ import Artifact.VST.Host;
 import Artifact.Audio.Effects.Manager;
 import Artifact.Audio.Effects.Base;
 import Memory.SharedPtr;
+import Settings.Accessibility;
 
 namespace Artifact {
 W_OBJECT_IMPL(AudioEffectSlotWidget)
@@ -210,7 +211,12 @@ void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
         }
     }
 
-    menu.exec(mapToGlobal(event->pos()));
+    const QPoint origin = mapToGlobal(event->pos());
+    int menuX = origin.x();
+    int menuY = origin.y();
+    Accessibility::adjustContextMenuPosition(menuX, menuY,
+                                              menu.sizeHint().width());
+    menu.exec(QPoint(menuX, menuY));
 }
 
 // ============================================================================
