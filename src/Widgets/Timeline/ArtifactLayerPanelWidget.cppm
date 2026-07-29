@@ -2388,15 +2388,49 @@ public:
    }
 
    QVector<ArtifactAbstractLayerPtr> layers;
-    const QString needle = filterText.trimmed();
+   const QString needle = filterText.trimmed();
    for (auto& l : comp->allLayer()) {
      if (!l) continue;
      if (shyHidden && l->isShy()) continue;
      if (maskFilterEnabled_ && !l->hasMasks()) continue;
      if (!needle.isEmpty()) {
-       bool nameMatch = l->layerName().contains(needle, Qt::CaseInsensitive);
+       const int separator = needle.indexOf(QLatin1Char(':'));
+       const QString queryKey = separator > 0
+                                   ? needle.left(separator).trimmed().toLower()
+                                   : QString();
+       const QString queryValue = separator > 0
+                                    ? needle.mid(separator + 1).trimmed().toLower()
+                                    : QString();
+       bool stateQuery = false;
+       bool stateMatch = false;
+       if (!queryKey.isEmpty() && !queryValue.isEmpty()) {
+         const bool wantsTrue = queryValue == QStringLiteral("true") ||
+                                queryValue == QStringLiteral("yes") ||
+                                queryValue == QStringLiteral("1");
+         const bool wantsFalse = queryValue == QStringLiteral("false") ||
+                                 queryValue == QStringLiteral("no") ||
+                                 queryValue == QStringLiteral("0");
+         if (wantsTrue || wantsFalse) {
+           if (queryKey == QStringLiteral("visible") || queryKey == QStringLiteral("hidden")) {
+             stateQuery = true;
+             const bool visible = l->isVisible();
+             stateMatch = queryKey == QStringLiteral("hidden")
+                            ? (visible == !wantsTrue)
+                            : (visible == wantsTrue);
+           } else if (queryKey == QStringLiteral("locked")) {
+             stateQuery = true;
+             stateMatch = l->isLocked() == wantsTrue;
+           } else if (queryKey == QStringLiteral("solo")) {
+             stateQuery = true;
+             stateMatch = l->isSolo() == wantsTrue;
+           }
+         }
+       }
+       bool nameMatch = stateQuery
+                          ? stateMatch
+                          : l->layerName().contains(needle, Qt::CaseInsensitive);
        bool propMatch = false;
-       if (searchInProperties_ && !nameMatch) {
+       if (!stateQuery && searchInProperties_ && !nameMatch) {
          const auto groups = l->getLayerPropertyGroups();
          for (const auto& group : groups) {
            if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
