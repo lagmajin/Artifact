@@ -3253,6 +3253,9 @@ void ArtifactProjectView::mouseDoubleClickEvent(QMouseEvent* event) {
                 widest = std::max(widest, width);
             }
             setColumnWidth(resizeHit.column, std::clamp(widest + 24, 56, 420));
+            QSettings settings;
+            settings.setValue(QStringLiteral("ProjectView/ColumnWidth/%1").arg(resizeHit.column),
+                              impl_->columnWidths.value(resizeHit.column));
             refreshVisibleContent();
             event->accept();
             return;
@@ -4930,7 +4933,15 @@ void ArtifactProjectView::mousePressEvent(QMouseEvent* event) {
 }
 
 void ArtifactProjectView::mouseReleaseEvent(QMouseEvent* event) {
-    if (impl_->resizingColumn != -1) { impl_->resizingColumn = -1; unsetCursor(); return; }
+    if (impl_->resizingColumn != -1) {
+        const int column = impl_->resizingColumn;
+        impl_->resizingColumn = -1;
+        unsetCursor();
+        QSettings settings;
+        settings.setValue(QStringLiteral("ProjectView/ColumnWidth/%1").arg(column),
+                          impl_->columnWidths.value(column));
+        return;
+    }
     QWidget::mouseReleaseEvent(event);
 }
 
@@ -6557,6 +6568,14 @@ public:
                 projectView_->setColumnWidth(3, 100);
                 projectView_->setColumnWidth(4, 140);
                 projectView_->setColumnWidth(5, 180);
+                QSettings columnSettings;
+                for (int column = 0; column < 6; ++column) {
+                    const QString key = QStringLiteral("ProjectView/ColumnWidth/%1").arg(column);
+                    if (columnSettings.contains(key)) {
+                        projectView_->setColumnWidth(column, std::clamp(
+                            columnSettings.value(key).toInt(), 40, 420));
+                    }
+                }
                 headerLayoutInitialized_ = true;
             }
             projectView_->expandToDepth(1);
