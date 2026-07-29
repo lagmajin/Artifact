@@ -2617,6 +2617,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    QString statusText = QStringLiteral("All");
    if (currentStatusFilter_ == QStringLiteral("imported")) {
     statusText = QStringLiteral("Imported");
+   } else if (currentStatusFilter_ == QStringLiteral("favorite")) {
+    statusText = QStringLiteral("Favorite");
    } else if (currentStatusFilter_ == QStringLiteral("missing")) {
     statusText = QStringLiteral("Missing");
    } else if (currentStatusFilter_ == QStringLiteral("unused")) {
