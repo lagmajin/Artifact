@@ -278,6 +278,9 @@ public:
                         float outlineThickness = 1.0f);
   void drawSolidLine(Detail::float2 start, Detail::float2 end,
                      const FloatColor &color, float thickness);
+  void drawArcLocal(Detail::float2 center, float radius, float startAngleDeg,
+                    float endAngleDeg, float thickness,
+                    const FloatColor &color);
   void drawPolyline(const std::vector<Detail::float2> &points,
                     const FloatColor &color, float thickness);
   void drawQuadLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2,

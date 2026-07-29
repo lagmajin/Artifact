@@ -91,6 +91,9 @@ public:
     // Quad vertices are expected in triangle-strip order.
     void drawQuadLocal(float2 p0, float2 p1, float2 p2, float2 p3, const FloatColor& color);
     void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color);
+    void drawArcLocal(float2 center, float radius, float startAngleDeg,
+                      float endAngleDeg, float thickness,
+                      const FloatColor& color);
     void drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color);
     void drawDashedLineLocal(float2 p1, float2 p2, float thickness, float dashLength, float gapLength, const FloatColor& color);
     void drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color);

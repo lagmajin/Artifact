@@ -3493,6 +3493,12 @@ const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() cons
  void ArtifactIRenderer::drawSolidLine(Detail::float2 start, Detail::float2 end,
                                        const FloatColor& color, float thickness)
  { impl_->drawSolidLine(start, end, color, thickness); }
+ void ArtifactIRenderer::drawArcLocal(Detail::float2 center, float radius,
+                                      float startAngleDeg, float endAngleDeg,
+                                      float thickness, const FloatColor& color)
+ { impl_->primitiveRenderer_.drawArcLocal(toDiligentFloat2(center), radius,
+                                          startAngleDeg, endAngleDeg,
+                                          thickness, color); }
  void ArtifactIRenderer::drawPolyline(const std::vector<Detail::float2>& points,
                                       const FloatColor& color, float thickness)
  { impl_->drawPolyline(points, color, thickness); }

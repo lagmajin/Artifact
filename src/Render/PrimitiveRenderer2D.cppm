@@ -544,6 +544,33 @@ void PrimitiveRenderer2D::drawThickLineLocal(float2 p1, float2 p2, float thickne
                   color);
 }
 
+void PrimitiveRenderer2D::drawArcLocal(float2 center, float radius,
+                                       float startAngleDeg, float endAngleDeg,
+                                       float thickness, const FloatColor& color)
+{
+    if (radius <= 0.0f || thickness <= 0.0f || !std::isfinite(radius) ||
+        !std::isfinite(startAngleDeg) || !std::isfinite(endAngleDeg)) return;
+    constexpr float kPi = 3.14159265358979323846f;
+    const float span = endAngleDeg - startAngleDeg;
+    if (std::abs(span) <= 1.0e-4f) return;
+    const float absSpan = std::min(std::abs(span), 360.0f);
+    const int segments = std::clamp(static_cast<int>(std::ceil(absSpan / 8.0f)),
+                                    2, 128);
+    const float step = (span < 0.0f ? -absSpan : absSpan) /
+                       static_cast<float>(segments);
+    const auto pointAt = [&](float angleDeg) {
+        const float angle = angleDeg * kPi / 180.0f;
+        return float2{center.x + std::cos(angle) * radius,
+                      center.y + std::sin(angle) * radius};
+    };
+    float2 previous = pointAt(startAngleDeg);
+    for (int i = 1; i <= segments; ++i) {
+        const float2 current = pointAt(startAngleDeg + step * static_cast<float>(i));
+        drawThickLineLocal(previous, current, thickness, color);
+        previous = current;
+    }
+}
+
 void PrimitiveRenderer2D::drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color)
 {
     if (!impl_->cmdBuf_ || thickness <= 0.0f) return;
