@@ -749,6 +749,12 @@ void applyInspectorButton(QPushButton *button, const bool accent = false) {
   if (!button) {
     return;
   }
+  if (!button->text().trimmed().isEmpty()) {
+    button->setAccessibleName(button->text().trimmed());
+    if (!button->toolTip().trimmed().isEmpty()) {
+      button->setAccessibleDescription(button->toolTip().trimmed());
+    }
+  }
   const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor background =
       themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
@@ -1386,6 +1392,9 @@ public:
     searchEdit_->setObjectName(QStringLiteral("inspectorSearchEdit"));
     searchEdit_->setPlaceholderText(
         QStringLiteral("Search effects for this stage"));
+    searchEdit_->setAccessibleName(QStringLiteral("Effect search"));
+    searchEdit_->setAccessibleDescription(
+        QStringLiteral("Search effects by name, category, or keyword"));
     searchEdit_->setFrame(false);
     applyInspectorPalette(searchEdit_, true);
     auto* searchPanel = new EffectPickerPanel(this);
