@@ -901,15 +901,24 @@ namespace Artifact
     impl_->addButton->setPalette(buttonPalette);
   }
   auto* batchAllBtn = new QPushButton(QStringLiteral("Add All"));
+  batchAllBtn->setAccessibleName(QStringLiteral("Add all compositions"));
+  batchAllBtn->setAccessibleDescription(
+      QStringLiteral("Add every composition to the render queue."));
   batchAllBtn->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/playlist_add.svg")));
   batchAllBtn->setToolTip(QStringLiteral("Add all compositions to queue"));
   auto* batchTmplBtn = new QPushButton(QStringLiteral("Batch Template"));
+  batchTmplBtn->setAccessibleName(QStringLiteral("Add batch template"));
+  batchTmplBtn->setAccessibleDescription(
+      QStringLiteral("Add render jobs using a batch template."));
   batchTmplBtn->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/compositionmenu_presets.svg")));
   batchTmplBtn->setToolTip(QStringLiteral("Batch add using a template"));
   auto* presetButton = new QToolButton();
   presetButton->setText(QStringLiteral("Preset:  H.264 High Quality"));
+  presetButton->setAccessibleName(QStringLiteral("Render preset"));
+  presetButton->setAccessibleDescription(
+      QStringLiteral("Choose the output preset for queued render jobs."));
   presetButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/compositionmenu_presets.svg")));
   presetButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -1033,6 +1042,9 @@ namespace Artifact
   impl_->removeButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/delete.svg")));
   impl_->duplicateButton = new QToolButton();
+  impl_->duplicateButton->setAccessibleName(QStringLiteral("Duplicate render job"));
+  impl_->duplicateButton->setAccessibleDescription(
+      QStringLiteral("Duplicate the selected render job."));
   impl_->duplicateButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/editmenu_duplicate.svg")));
   impl_->duplicateButton->setToolTip(QStringLiteral("Duplicate selected job"));
@@ -1040,6 +1052,9 @@ namespace Artifact
   btnLayout->addWidget(impl_->duplicateButton);
   btnLayout->addStretch();
   impl_->clearButton = new RenderQueueActionButton(QStringLiteral("Clear Completed"));
+  impl_->clearButton->setAccessibleName(QStringLiteral("Clear completed jobs"));
+  impl_->clearButton->setAccessibleDescription(
+      QStringLiteral("Remove completed jobs from the render queue."));
   impl_->clearButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/clear_all.svg")));
   impl_->clearButton->action = [this]() {
@@ -1053,6 +1068,9 @@ namespace Artifact
   };
   btnLayout->addWidget(impl_->clearButton);
   impl_->rerunDoneFailedButton = new RenderQueueActionButton(QStringLiteral("Retry Failed"));
+  impl_->rerunDoneFailedButton->setAccessibleName(QStringLiteral("Retry failed jobs"));
+  impl_->rerunDoneFailedButton->setAccessibleDescription(
+      QStringLiteral("Reset failed jobs and start them again."));
   impl_->rerunDoneFailedButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/replay.svg")));
   impl_->rerunDoneFailedButton->action = [this]() {
