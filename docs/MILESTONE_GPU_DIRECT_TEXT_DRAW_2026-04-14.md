@@ -47,12 +47,18 @@ ArtifactTextLayer::toQImage()
 | `FontManager` (CJK fallback, `makeFont`) | ✅ 実装済み |
 | `ArtifactTextLayer::toQImage()` | ✅ `QPainter` + `QTextDocument` ベースで動作中 |
 | `ArtifactTextLayer::draw()` | ✅ `drawSpriteTransformed` 経由で GPU upload 動作中 |
-| GPU side `GlyphAtlas` | ❌ 未着手 |
-| GPU side glyph quad shader | ❌ 未着手 |
-| `PrimitiveRenderer2D::drawText()` | ❌ 未着手 |
-| `ArtifactIRenderer::drawText()` | ❌ 未着手 |
-| `ShaderManager` への glyph PSO 追加 | ❌ 未着手 |
+| CPU `GlyphAtlas` / cache / UV / dirty tracking | ✅ 実装済み |
+| GPU side glyph quad shader | ⚠️ PSO／shader 基盤は存在、最終 draw parity 未完了 |
+| `PrimitiveRenderer2D::drawText()` | ⚠️ GlyphAtlas upload／quad 経路あり、runtime parity 未確認 |
+| `ArtifactIRenderer::drawText()` | ❌ TextLayer 全体の直描接続は未完了 |
+| `ShaderManager` への glyph PSO 追加 | ✅ Glyph quad PSO 基盤実装済み |
 | CompositeEditor UI テキストの GPU draw 移行 | ❌ 未着手 |
+
+### 2026-07-29 Implementation Loop
+
+- ✅ WP-1 GlyphAtlas の Core 実装（QRawFont rasterization、packing、cache hit、UV metadata、dirty tracking）をコード上で確認。
+- ✅ PrimitiveRenderer2D / DiligentImmediateSubmitter の atlas upload 境界と glyph quad PSO 基盤をコード上で確認。
+- ⏳ ArtifactTextLayer 全体の GPU 直描移行、CompositeEditor UI テキスト移行、backend parity／runtime 検証は未完了。
 
 ---
 
