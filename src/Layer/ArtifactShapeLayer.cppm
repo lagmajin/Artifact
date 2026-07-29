@@ -1289,7 +1289,17 @@ void ArtifactShapeLayer::setStrokeAlign(StrokeAlign align) {
  Q_EMIT changed();
 }
 StrokeAlign ArtifactShapeLayer::strokeAlign() const { return impl_->strokeAlign_; }
-void ArtifactShapeLayer::setDashPattern(const std::vector<float>& pattern) { impl_->dashPattern_ = pattern; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setDashPattern(const std::vector<float>& pattern) {
+ std::vector<float> normalized;
+ normalized.reserve(pattern.size());
+ for (const float value : pattern) {
+  if (std::isfinite(value) && value > 0.001f) normalized.push_back(value);
+ }
+ impl_->dashPattern_ = std::move(normalized);
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 std::vector<float> ArtifactShapeLayer::dashPattern() const { return impl_->dashPattern_; }
 
 // Phase 5: Bezier path
