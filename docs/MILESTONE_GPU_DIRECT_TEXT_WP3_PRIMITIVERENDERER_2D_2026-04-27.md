@@ -387,4 +387,4 @@ Expected scope: 2-4 hours
 
 ## Conclusion
 
-WP-3 establishes the foundation for GPU-accelerated glyph rendering in PrimitiveRenderer2D. `ArtifactIRenderer::drawGlyphText()` and `drawGlyphs()` now expose the existing atlas-backed path through the renderer boundary. Editor UI migration, ArtifactTextLayer integration, runtime parity, and acceptance testing remain pending.
+WP-3 establishes the foundation for GPU-accelerated glyph rendering in PrimitiveRenderer2D. `ArtifactIRenderer::drawGlyphText()` and `drawGlyphs()` now expose the existing atlas-backed path through the renderer boundary. `ArtifactTextLayer` already uses the transformed text/glyph APIs for several GPU paths; full plain/rich/path/animator case coverage, runtime parity, and acceptance testing remain pending.

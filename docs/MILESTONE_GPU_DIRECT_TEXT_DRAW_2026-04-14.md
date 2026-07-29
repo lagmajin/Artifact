@@ -50,7 +50,7 @@ ArtifactTextLayer::toQImage()
 | CPU `GlyphAtlas` / cache / UV / dirty tracking | ✅ 実装済み |
 | GPU side glyph quad shader | ⚠️ PSO／shader 基盤は存在、最終 draw parity 未完了 |
 | `PrimitiveRenderer2D::drawText()` | ⚠️ GlyphAtlas upload／quad 経路あり、runtime parity 未確認 |
-| `ArtifactIRenderer::drawText()` | ⚠️ Glyph direct-draw delegation API added; TextLayer full connection incomplete |
+| `ArtifactIRenderer::drawText()` | ⚠️ Glyph direct-draw delegation API added; TextLayer has transformed GPU paths, full case coverage incomplete |
 | `ShaderManager` への glyph PSO 追加 | ✅ Glyph quad PSO 基盤実装済み |
 | CompositeEditor UI テキストの GPU draw 移行 | ❌ 未着手 |
 
