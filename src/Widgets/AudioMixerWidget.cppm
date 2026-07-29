@@ -438,6 +438,9 @@ void AudioChannelStripWidget::paintEvent(QPaintEvent* event) {
 
 AudioMixerWidget::AudioMixerWidget(ArtifactCore::AudioMixer* mixer, QWidget* parent)
     : QWidget(parent), mixer_(mixer) {
+    setAccessibleName(QStringLiteral("Audio Mixer"));
+    setAccessibleDescription(
+        QStringLiteral("Adjust audio bus levels, mute state, and effects."));
     
     QHBoxLayout* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);

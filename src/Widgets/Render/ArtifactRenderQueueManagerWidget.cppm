@@ -843,6 +843,9 @@ namespace Artifact
  RenderQueueManagerWidget::RenderQueueManagerWidget(QWidget* parent)
   : QWidget(parent), impl_(new Impl())
  {
+  setAccessibleName(QStringLiteral("Render Queue"));
+  setAccessibleDescription(
+      QStringLiteral("Review, reorder, and monitor composition render jobs."));
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(10, 10, 10, 8);
   layout->setSpacing(8);
