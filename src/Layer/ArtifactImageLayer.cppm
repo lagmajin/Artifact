@@ -689,13 +689,16 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
         const QJsonArray sequenceArray =
             obj.value(QStringLiteral("image.sequencePaths")).toArray();
         for (const QJsonValue& value : sequenceArray) {
-            const QString framePath = value.toString();
-            if (!framePath.isEmpty()) {
+            const QString framePath = value.toString().trimmed();
+            if (!framePath.isEmpty() && !impl_->sequencePaths_.contains(framePath)) {
                 impl_->sequencePaths_.append(framePath);
             }
         }
-        impl_->sequenceFrameRate_ =
+        const double frameRate =
             obj.value(QStringLiteral("image.sequenceFrameRate")).toDouble(0.0);
+        impl_->sequenceFrameRate_ = std::isfinite(frameRate) && frameRate > 0.0
+            ? frameRate
+            : 0.0;
     }
     const QString sourcePath = obj.value(QStringLiteral("image.sourcePath")).toString();
     impl_->inputColorSpace_ = obj.value(QStringLiteral("image.inputColorSpace")).toString();
