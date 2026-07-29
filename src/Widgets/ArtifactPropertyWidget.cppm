@@ -711,7 +711,12 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
                                       this, [this](bool checked) {
                                         setSliderBeforeValue(checked);
                                       });
-                     menu.exec(mapToGlobal(pos));
+                     const QPoint origin = mapToGlobal(pos);
+                     int menuX = origin.x();
+                     int menuY = origin.y();
+                     Accessibility::adjustContextMenuPosition(
+                         menuX, menuY, menu.sizeHint().width());
+                     menu.exec(QPoint(menuX, menuY));
                    });
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<PlaybackStateChangedEvent>(

@@ -63,6 +63,7 @@ import Time.Rational;
 import FloatColorPickerDialog;
 import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Widgets.Utils.CSS;
+import Settings.Accessibility;
 import Artifact.Layer.Text;
 import Clipboard.ClipboardManager;
 
@@ -883,7 +884,11 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
   resetAction->setEnabled(resetButton_ &&
                           resetButton_->property("baseVisible").toBool());
 
-  QAction *chosen = menu.exec(event->globalPos());
+  int menuX = event->globalPos().x();
+  int menuY = event->globalPos().y();
+  Accessibility::adjustContextMenuPosition(menuX, menuY,
+                                            menu.sizeHint().width());
+  QAction *chosen = menu.exec(QPoint(menuX, menuY));
   if (!chosen) {
     event->accept();
     return;
