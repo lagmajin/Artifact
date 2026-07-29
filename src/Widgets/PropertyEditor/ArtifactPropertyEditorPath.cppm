@@ -25,8 +25,14 @@ ArtifactPathPropertyEditor::ArtifactPathPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyPathEditor"));
+  setAccessibleName(QStringLiteral("Path property editor"));
+  setAccessibleDescription(QStringLiteral("Edit or browse for the selected path property"));
   lineEdit_ = new QLineEdit(property.getValue().toString(), this);
+  lineEdit_->setAccessibleName(QStringLiteral("Path property value"));
+  lineEdit_->setAccessibleDescription(QStringLiteral("Enter the path for the selected property"));
   browseButton_ = new QPushButton(QStringLiteral("..."), this);
+  browseButton_->setAccessibleName(QStringLiteral("Browse for path"));
+  browseButton_->setAccessibleDescription(QStringLiteral("Choose a source file for the path property"));
   lineEdit_->setMinimumHeight(26);
   lineEdit_->setFrame(false);
   browseButton_->setObjectName(QStringLiteral("propertyPathBrowseButton"));
