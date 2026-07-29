@@ -150,6 +150,8 @@ ArtifactScreenshotExportDialog::ArtifactScreenshotExportDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl())
 {
  setWindowTitle(QStringLiteral("Advanced Screenshot"));
+ setAccessibleName(QStringLiteral("Screenshot Export Dialog"));
+ setAccessibleDescription(QStringLiteral("Configure the destination and format for a composition screenshot"));
  setMinimumWidth(420);
 
  auto* root = new QVBoxLayout(this);
@@ -160,12 +162,20 @@ ArtifactScreenshotExportDialog::ArtifactScreenshotExportDialog(QWidget* parent)
  auto* pathLabel = new QLabel(QStringLiteral("File"), this);
  impl_->filePathEdit = new QLineEdit(this);
  impl_->browseButton = new QPushButton(QStringLiteral("Browse..."), this);
+ pathLabel->setBuddy(impl_->filePathEdit);
+ impl_->filePathEdit->setAccessibleName(QStringLiteral("Screenshot file path"));
+ impl_->filePathEdit->setAccessibleDescription(QStringLiteral("Path where the screenshot will be saved"));
+ impl_->browseButton->setAccessibleName(QStringLiteral("Browse for screenshot path"));
+ impl_->browseButton->setAccessibleDescription(QStringLiteral("Choose the screenshot output file"));
  pathRow->addWidget(pathLabel);
  pathRow->addWidget(impl_->filePathEdit, 1);
  pathRow->addWidget(impl_->browseButton);
 
  auto* formatLabel = new QLabel(QStringLiteral("Format"), this);
  impl_->formatCombo = new QComboBox(this);
+ formatLabel->setBuddy(impl_->formatCombo);
+ impl_->formatCombo->setAccessibleName(QStringLiteral("Screenshot format"));
+ impl_->formatCombo->setAccessibleDescription(QStringLiteral("Image format for the screenshot"));
  impl_->formatCombo->addItem(QStringLiteral("PNG"), QStringLiteral("png"));
  impl_->formatCombo->addItem(QStringLiteral("JPEG"), QStringLiteral("jpg"));
  impl_->formatCombo->addItem(QStringLiteral("EXR"), QStringLiteral("exr"));
@@ -174,6 +184,9 @@ ArtifactScreenshotExportDialog::ArtifactScreenshotExportDialog(QWidget* parent)
 
  impl_->jpegQualityLabel = new QLabel(QStringLiteral("JPEG Quality"), this);
  impl_->jpegQualitySpin = new QSpinBox(this);
+ impl_->jpegQualityLabel->setBuddy(impl_->jpegQualitySpin);
+ impl_->jpegQualitySpin->setAccessibleName(QStringLiteral("JPEG quality"));
+ impl_->jpegQualitySpin->setAccessibleDescription(QStringLiteral("JPEG compression quality from 1 to 100"));
  impl_->jpegQualitySpin->setRange(1, 100);
  impl_->jpegQualitySpin->setValue(95);
  qualityRow->addWidget(impl_->jpegQualityLabel);
@@ -181,12 +194,25 @@ ArtifactScreenshotExportDialog::ArtifactScreenshotExportDialog(QWidget* parent)
 
  impl_->captureWholeWindowCheck =
      new QCheckBox(QStringLiteral("Capture whole editor window"), this);
+ impl_->captureWholeWindowCheck->setAccessibleName(QStringLiteral("Capture whole editor window"));
+ impl_->captureWholeWindowCheck->setAccessibleDescription(QStringLiteral("Capture the entire editor window instead of the renderer area"));
  impl_->captureWholeWindowCheck->setChecked(false);
  impl_->multiChannelCheck =
      new QCheckBox(QStringLiteral("Multi-channel EXR (AOV)"), this);
+ impl_->multiChannelCheck->setAccessibleName(QStringLiteral("Multi-channel EXR AOV"));
+ impl_->multiChannelCheck->setAccessibleDescription(QStringLiteral("Include multiple render channels when exporting EXR"));
  impl_->multiChannelCheck->setChecked(false);
 
  impl_->buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+ impl_->buttonBox->setAccessibleName(QStringLiteral("Screenshot export actions"));
+ if (auto* okButton = impl_->buttonBox->button(QDialogButtonBox::Ok)) {
+  okButton->setAccessibleName(QStringLiteral("Export screenshot"));
+  okButton->setAccessibleDescription(QStringLiteral("Save the screenshot with the selected settings"));
+ }
+ if (auto* cancelButton = impl_->buttonBox->button(QDialogButtonBox::Cancel)) {
+  cancelButton->setAccessibleName(QStringLiteral("Cancel screenshot export"));
+  cancelButton->setAccessibleDescription(QStringLiteral("Close without exporting"));
+ }
 
  root->addLayout(pathRow);
  root->addLayout(formatRow);
