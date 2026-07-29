@@ -29,7 +29,11 @@ ArtifactStringPropertyEditor::ArtifactStringPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyStringEditor"));
+  setAccessibleName(QStringLiteral("String property editor"));
+  setAccessibleDescription(QStringLiteral("Edit the selected string property"));
   lineEdit_ = new QLineEdit(property.getValue().toString(), this);
+  lineEdit_->setAccessibleName(QStringLiteral("String property value"));
+  lineEdit_->setAccessibleDescription(QStringLiteral("Enter the value of the selected string property"));
   lineEdit_->setMinimumHeight(26);
   lineEdit_->setFrame(false);
   applyPropertyFieldPalette(lineEdit_);
@@ -58,7 +62,11 @@ ArtifactMultilineStringPropertyEditor::ArtifactMultilineStringPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyMultilineStringEditor"));
+  setAccessibleName(QStringLiteral("Multiline string property editor"));
+  setAccessibleDescription(QStringLiteral("Edit the selected multiline text property"));
   textEdit_ = new QTextEdit(this);
+  textEdit_->setAccessibleName(QStringLiteral("Multiline string property value"));
+  textEdit_->setAccessibleDescription(QStringLiteral("Enter the value of the selected multiline text property"));
   textEdit_->setAcceptRichText(false);
   textEdit_->setMinimumHeight(72);
   textEdit_->setTabChangesFocus(true);
@@ -102,7 +110,11 @@ ArtifactFontFamilyPropertyEditor::ArtifactFontFamilyPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyFontEditor"));
+  setAccessibleName(QStringLiteral("Font property editor"));
+  setAccessibleDescription(QStringLiteral("Choose the font family for the selected text property"));
   fontPicker_ = new FontPickerWidget(this);
+  fontPicker_->setAccessibleName(QStringLiteral("Font family"));
+  fontPicker_->setAccessibleDescription(QStringLiteral("Choose a font family"));
   applyPropertyFieldPalette(fontPicker_);
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
