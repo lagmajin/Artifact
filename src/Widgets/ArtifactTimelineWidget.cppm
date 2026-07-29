@@ -5473,10 +5473,19 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto searchBar = new ArtifactTimelineSearchBarWidget();     // Search
   auto searchModeCombo = new QComboBox();                     // Search mode
   searchModeCombo->setObjectName(QStringLiteral("timelineSearchModeCombo"));
+  searchModeCombo->setAccessibleName(QStringLiteral("Timeline search mode"));
+  searchModeCombo->setAccessibleDescription(
+      QStringLiteral("Choose how timeline search results are applied"));
   auto displayModeCombo = new QComboBox();                    // Layer display mode
   displayModeCombo->setObjectName(QStringLiteral("timelineDisplayModeCombo"));
+  displayModeCombo->setAccessibleName(QStringLiteral("Layer display mode"));
+  displayModeCombo->setAccessibleDescription(
+      QStringLiteral("Choose the timeline layer display mode"));
   auto densityCombo = new QComboBox();                        // Row density
   densityCombo->setObjectName(QStringLiteral("timelineDensityCombo"));
+  densityCombo->setAccessibleName(QStringLiteral("Timeline row density"));
+  densityCombo->setAccessibleDescription(
+      QStringLiteral("Choose the vertical density of timeline rows"));
   auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE Switches
   auto miniKeyEditorButton = new TimelineToolCallbackButton();
   miniKeyEditorButton->setObjectName(QStringLiteral("timelineMiniKeyEditorButton"));
@@ -6376,6 +6385,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         styleTimelineToolButton(button);
         button->setText(text);
         button->setToolTip(tooltip);
+        button->setAccessibleName(text);
+        button->setAccessibleDescription(tooltip);
         return button;
       };
   auto applyTangentEditWithUndo = [this](const QString& label,
