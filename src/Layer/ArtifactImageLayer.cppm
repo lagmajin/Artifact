@@ -269,6 +269,11 @@ public:
 
     bool refreshSequenceFrame(qint64 frameIndex) const
     {
+        const auto clearSequenceFrameCache = [this]() {
+            cache_.reset();
+            cacheBuffer_.reset();
+            sequenceCachedIndex_ = -1;
+        };
         if (sequencePaths_.size() <= 1) {
             return false;
         }
@@ -279,6 +284,7 @@ public:
             sequenceSource_ = std::make_unique<ArtifactCore::ImageSequenceSource>();
             if (!sequenceSource_->open(sequencePaths_.front())) {
                 sequenceSource_.reset();
+                clearSequenceFrameCache();
                 return false;
             }
             if (sequenceFrameRate_ > 0.0) {
@@ -286,10 +292,12 @@ public:
             }
         }
         if (frameIndex < 0 || frameIndex >= sequenceSource_->frameCount()) {
+            clearSequenceFrameCache();
             return false;
         }
         const QImage frame = sequenceSource_->frameAt(frameIndex);
         if (frame.isNull()) {
+            clearSequenceFrameCache();
             return false;
         }
         cache_ = ArtifactCore::makeShared<QImage>(frame);
