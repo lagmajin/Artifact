@@ -341,6 +341,9 @@ void updateCompositionColorButtonPreview(QPushButton* button, const QColor& colo
     button->setIcon(QIcon(pix));
     button->setIconSize(pix.size());
     button->setToolTip(QStringLiteral("Background Color: %1").arg(color.name(QColor::HexArgb)));
+    button->setAccessibleName(QStringLiteral("Composition background color"));
+    button->setAccessibleDescription(
+        QStringLiteral("Choose the composition background color, currently %1").arg(color.name(QColor::HexArgb)));
     button->setText(QString());
 }
 
