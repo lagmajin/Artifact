@@ -4007,15 +4007,18 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
 
   void ArtifactAssetBrowser::setFileTypeFilter(const QString& type)
   {
-   impl_->currentFileTypeFilter_ = type;
+   const QString normalizedType = type.trimmed().toLower();
+   impl_->currentFileTypeFilter_ = normalizedType;
+   QSettings settings;
+   settings.setValue(QStringLiteral("AssetBrowser/FileTypeFilter"), normalizedType);
 
    // Update button state
    if (impl_->filterButtonGroup_) {
-    if (type == "all") impl_->filterButtonGroup_->button(0)->setChecked(true);
-    else if (type == "images") impl_->filterButtonGroup_->button(1)->setChecked(true);
-    else if (type == "videos") impl_->filterButtonGroup_->button(2)->setChecked(true);
-    else if (type == "audio") impl_->filterButtonGroup_->button(3)->setChecked(true);
-    else if (type == "3d") impl_->filterButtonGroup_->button(4)->setChecked(true);
+    if (normalizedType == "all") impl_->filterButtonGroup_->button(0)->setChecked(true);
+    else if (normalizedType == "images") impl_->filterButtonGroup_->button(1)->setChecked(true);
+    else if (normalizedType == "videos") impl_->filterButtonGroup_->button(2)->setChecked(true);
+    else if (normalizedType == "audio") impl_->filterButtonGroup_->button(3)->setChecked(true);
+    else if (normalizedType == "3d") impl_->filterButtonGroup_->button(4)->setChecked(true);
    }
 
    impl_->applyFilters();
@@ -4023,7 +4026,10 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
 
   void ArtifactAssetBrowser::setStatusFilter(const QString& status)
   {
-   impl_->currentStatusFilter_ = status;
+   const QString normalizedStatus = status.trimmed().toLower();
+   impl_->currentStatusFilter_ = normalizedStatus;
+   QSettings settings;
+   settings.setValue(QStringLiteral("AssetBrowser/StatusFilter"), normalizedStatus);
    impl_->applyFilters();
    impl_->refreshLeftHubSummary();
   }
