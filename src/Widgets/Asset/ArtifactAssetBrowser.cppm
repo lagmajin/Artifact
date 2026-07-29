@@ -4020,7 +4020,14 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
 
   void ArtifactAssetBrowser::setFileTypeFilter(const QString& type)
   {
-   const QString normalizedType = type.trimmed().toLower();
+   QString normalizedType = type.trimmed().toLower();
+   if (normalizedType != QStringLiteral("all") &&
+       normalizedType != QStringLiteral("images") &&
+       normalizedType != QStringLiteral("videos") &&
+       normalizedType != QStringLiteral("audio") &&
+       normalizedType != QStringLiteral("3d")) {
+    normalizedType = QStringLiteral("all");
+   }
    impl_->currentFileTypeFilter_ = normalizedType;
    QSettings settings;
    settings.setValue(QStringLiteral("AssetBrowser/FileTypeFilter"), normalizedType);
@@ -4039,7 +4046,14 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
 
   void ArtifactAssetBrowser::setStatusFilter(const QString& status)
   {
-   const QString normalizedStatus = status.trimmed().toLower();
+   QString normalizedStatus = status.trimmed().toLower();
+   if (normalizedStatus != QStringLiteral("all") &&
+       normalizedStatus != QStringLiteral("imported") &&
+       normalizedStatus != QStringLiteral("favorite") &&
+       normalizedStatus != QStringLiteral("missing") &&
+       normalizedStatus != QStringLiteral("unused")) {
+    normalizedStatus = QStringLiteral("all");
+   }
    impl_->currentStatusFilter_ = normalizedStatus;
    QSettings settings;
    settings.setValue(QStringLiteral("AssetBrowser/StatusFilter"), normalizedStatus);
