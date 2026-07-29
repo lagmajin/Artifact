@@ -7083,6 +7083,9 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
     impl_->searchBar = new QLineEdit(chromePanel);
     impl_->searchBar->setObjectName(QStringLiteral("projectManagerSearchBar"));
+    impl_->searchBar->setAccessibleName(QStringLiteral("Project search"));
+    impl_->searchBar->setAccessibleDescription(
+        QStringLiteral("Filter project items by name, path, type, or status."));
     impl_->searchBar->setPlaceholderText(QStringLiteral("Search project"));
     impl_->searchBar->setClearButtonEnabled(true);
     {
@@ -7106,13 +7109,22 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     filterBar->setSpacing(8);
     impl_->typeFilterBox = new QComboBox(filterBarHost);
     impl_->typeFilterBox->setObjectName(QStringLiteral("projectManagerTypeFilterBox"));
+    impl_->typeFilterBox->setAccessibleName(QStringLiteral("Project item type filter"));
+    impl_->typeFilterBox->setAccessibleDescription(
+        QStringLiteral("Limit the project view to a selected item type."));
     impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage" << "Folder" << "Solid");
     impl_->viewModeBox = new QComboBox(filterBarHost);
     impl_->viewModeBox->setObjectName(QStringLiteral("projectManagerViewModeBox"));
+    impl_->viewModeBox->setAccessibleName(QStringLiteral("Project view mode"));
+    impl_->viewModeBox->setAccessibleDescription(
+        QStringLiteral("Choose hierarchy Tree view or visual Tile view."));
     impl_->viewModeBox->addItems(QStringList() << "Tree" << "Tile");
     impl_->viewModeBox->setToolTip(QStringLiteral("Switch between hierarchy-first Tree view and visual Tile view."));
     impl_->unusedOnlyCheck = new QCheckBox("Unused only", filterBarHost);
     impl_->unusedOnlyCheck->setObjectName(QStringLiteral("projectManagerUnusedOnlyCheck"));
+    impl_->unusedOnlyCheck->setAccessibleName(QStringLiteral("Unused items only"));
+    impl_->unusedOnlyCheck->setAccessibleDescription(
+        QStringLiteral("Show only project items not referenced by the current composition."));
     QSettings projectViewSettings;
     impl_->typeFilterBox->setCurrentText(projectViewSettings.value(
         QStringLiteral("ProjectView/TypeFilter"), QStringLiteral("All")).toString());
