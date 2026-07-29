@@ -186,7 +186,9 @@ SourceInterpretOverride FootageInterpretService::currentOverride(
     override.frameRate = footage->frameRate;
     override.inputColorSpace = footage->inputColorSpace;
     override.inputTransferFunction = footage->inputTransferFunction;
-    override.isActive = true;
+    override.isActive = override.frameRate > 0.0 ||
+                        override.pixelAspectRatio != 1.0 ||
+                        override.loopEnabled || override.hasColorOverride();
     return override;
 }
 
@@ -205,6 +207,8 @@ bool FootageInterpretService::applyColorInterpretation(
 bool FootageInterpretService::clearOverride(FootageItem* footage) {
     if (!footage) return false;
     footage->frameRate = 0.0;
+    footage->inputColorSpace.clear();
+    footage->inputTransferFunction.clear();
     return true;
 }
 
