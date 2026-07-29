@@ -22,17 +22,23 @@ ArtifactRotationPropertyEditor::ArtifactRotationPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyRotationEditor"));
+  setAccessibleName(QStringLiteral("Rotation property editor"));
+  setAccessibleDescription(QStringLiteral("Edit the rotation value using the numeric field or rotation knob"));
 
   auto *layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
 
   auto *knob = new PropertyRotationKnobWidget(this);
+  knob->setAccessibleName(QStringLiteral("Rotation knob"));
+  knob->setAccessibleDescription(QStringLiteral("Adjust the rotation value by dragging the knob"));
   knob_ = knob;
   knob->setFixedSize(36, 36);
   applyPropertyFieldPalette(knob);
 
   spinBox_ = new ArtifactRelativeDoubleSpinBox(this);
+  spinBox_->setAccessibleName(QStringLiteral("Rotation value"));
+  spinBox_->setAccessibleDescription(QStringLiteral("Enter the rotation value"));
   const auto meta = property.metadata();
   spinBox_->setRange(meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1000000.0,
                      meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1000000.0);
