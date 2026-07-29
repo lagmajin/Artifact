@@ -81,7 +81,10 @@ namespace Artifact
   setMinimumHeight(26);
   setToolTip(
       QStringLiteral("Work Area | Drag the bar to move. Ctrl+drag the bar to scale around center. Drag handles to trim."));
- }
+  setAccessibleName(QStringLiteral("Work area"));
+  setAccessibleDescription(
+      QStringLiteral("Drag the bar to move the work area, Ctrl-drag to scale it, or drag its handles to trim it"));
+}
 
  WorkAreaControl::~WorkAreaControl()
  {
