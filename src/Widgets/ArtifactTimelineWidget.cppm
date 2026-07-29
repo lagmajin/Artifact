@@ -4183,7 +4183,10 @@ public:
                                 QWidget *parent)
       : QWidget(parent), scrubBar_(scrubBar), trackView_(trackView) {
     Q_UNUSED(navigator);
-    setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    // Keep the overlay interactive so the playhead triangle can be dragged.
+    // The hit test below forwards all non-playhead clicks to the underlying
+    // timeline instead of stealing normal track interaction.
+    setAttribute(Qt::WA_TransparentForMouseEvents, false);
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAutoFillBackground(false);
@@ -4250,6 +4253,51 @@ public:
   }
 
 protected:
+  void mousePressEvent(QMouseEvent *event) override {
+    if (!event || event->button() != Qt::LeftButton || !trackView_) {
+      event ? event->ignore() : void();
+      return;
+    }
+
+    const int playheadX = currentPlayheadX();
+    constexpr int kHitRadius = 14;
+    if (std::abs(event->position().x() - static_cast<double>(playheadX)) >
+        kHitRadius) {
+      event->ignore();
+      return;
+    }
+
+    dragging_ = true;
+    setCursor(Qt::SizeHorCursor);
+    event->accept();
+  }
+
+  void mouseMoveEvent(QMouseEvent *event) override {
+    if (!event || !dragging_ || !trackView_ || !scrubBar_) {
+      event ? event->ignore() : void();
+      return;
+    }
+
+    const QPoint scrubPoint = mapTo(scrubBar_, event->position().toPoint());
+    const double frame = frameAtScrubX(scrubPoint.x());
+    trackView_->setCurrentFrame(frame);
+    scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(std::llround(frame))));
+    scrubBar_->setVisualFrame(frame);
+    trackView_->seekRequested(frame);
+    updatePlayhead();
+    event->accept();
+  }
+
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    if (!event || event->button() != Qt::LeftButton || !dragging_) {
+      event ? event->ignore() : void();
+      return;
+    }
+    dragging_ = false;
+    unsetCursor();
+    event->accept();
+  }
+
   void paintEvent(QPaintEvent *event) override {
     Q_UNUSED(event);
     if (!trackView_ || width() <= 0 || height() <= 0) {
@@ -4268,6 +4316,28 @@ protected:
   }
 
 private:
+  double frameAtScrubX(const int x) const {
+    const double lastFrame = std::max(0.0, trackView_->durationFrames() - 1.0);
+    if (lastFrame <= 0.0) {
+      return 0.0;
+    }
+
+    // ScrubBar exposes the forward ruler mapping. Invert it locally so the
+    // overlay follows both the normal ruler and the zoomed/scrolling ruler
+    // without duplicating its coordinate policy.
+    double low = 0.0;
+    double high = lastFrame;
+    for (int i = 0; i < 32; ++i) {
+      const double mid = (low + high) * 0.5;
+      if (scrubBar_->rulerFrameToX(mid) < x) {
+        low = mid;
+      } else {
+        high = mid;
+      }
+    }
+    return std::clamp((low + high) * 0.5, 0.0, lastFrame);
+  }
+
   int currentPlayheadX() const {
     if (!scrubBar_ || !parentWidget()) {
       return 0;
@@ -4282,6 +4352,7 @@ private:
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
   ArtifactTimelineTrackPainterView *trackView_ = nullptr;
   bool enabled_ = true;
+  bool dragging_ = false;
   int lastX_ = -9999;
 };
 
