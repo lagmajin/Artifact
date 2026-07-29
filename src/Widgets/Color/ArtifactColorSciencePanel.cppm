@@ -160,6 +160,8 @@ static ArtifactCompositionEditor *findActiveCompositionEditor(QWidget *origin) {
 
 ArtifactColorSciencePanel::ArtifactColorSciencePanel(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Color science panel"));
+  setAccessibleDescription(QStringLiteral("Configure color spaces, LUTs, OCIO color management, HDR, and color constraints"));
   impl_->manager_ = new ArtifactColorScienceManager();
   impl_->paletteManager_ = ArtifactCore::makeShared<ArtifactCore::Color::ColorPaletteManager>();
   impl_->setupUI(this);
@@ -182,6 +184,12 @@ void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
   inputSpaceCombo_ = new QComboBox();
   workingSpaceCombo_ = new QComboBox();
   outputSpaceCombo_ = new QComboBox();
+  inputSpaceCombo_->setAccessibleName(QStringLiteral("Input color space"));
+  inputSpaceCombo_->setAccessibleDescription(QStringLiteral("Choose the input color space"));
+  workingSpaceCombo_->setAccessibleName(QStringLiteral("Working color space"));
+  workingSpaceCombo_->setAccessibleDescription(QStringLiteral("Choose the working color space"));
+  outputSpaceCombo_->setAccessibleName(QStringLiteral("Output color space"));
+  outputSpaceCombo_->setAccessibleDescription(QStringLiteral("Choose the output color space"));
 
   colorSpaceLayout->addRow("Input:", inputSpaceCombo_);
   colorSpaceLayout->addRow("Working:", workingSpaceCombo_);
@@ -195,19 +203,29 @@ void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
 
   auto *browserHeaderLayout = new QHBoxLayout();
   lutFilterEdit_ = new QLineEdit();
+  lutFilterEdit_->setAccessibleName(QStringLiteral("LUT search"));
+  lutFilterEdit_->setAccessibleDescription(QStringLiteral("Filter the available LUTs by name"));
   lutFilterEdit_->setPlaceholderText("Search LUTs...");
   reloadLUTButton_ = new QPushButton("Rescan");
+  reloadLUTButton_->setAccessibleName(QStringLiteral("Rescan LUTs"));
+  reloadLUTButton_->setAccessibleDescription(QStringLiteral("Rescan the LUT folder"));
   openLUTFolderButton_ = new QPushButton("Open Folder");
+  openLUTFolderButton_->setAccessibleName(QStringLiteral("Open LUT folder"));
+  openLUTFolderButton_->setAccessibleDescription(QStringLiteral("Open the folder containing LUT files"));
   browserHeaderLayout->addWidget(lutFilterEdit_, 1);
   browserHeaderLayout->addWidget(reloadLUTButton_);
   browserHeaderLayout->addWidget(openLUTFolderButton_);
   lutLayout->addLayout(browserHeaderLayout);
 
   lutList_ = new QListWidget();
+  lutList_->setAccessibleName(QStringLiteral("Available LUTs"));
+  lutList_->setAccessibleDescription(QStringLiteral("Select a LUT to preview or apply"));
   lutList_->setSelectionMode(QAbstractItemView::SingleSelection);
   lutLayout->addWidget(lutList_, 1);
 
   lutPreviewLabel_ = new QLabel();
+  lutPreviewLabel_->setAccessibleName(QStringLiteral("LUT preview"));
+  lutPreviewLabel_->setAccessibleDescription(QStringLiteral("Preview of the selected LUT"));
   lutPreviewLabel_->setMinimumHeight(120);
   lutPreviewLabel_->setAlignment(Qt::AlignCenter);
   lutPreviewLabel_->setFrameShape(QFrame::StyledPanel);
@@ -215,11 +233,14 @@ void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
   lutLayout->addWidget(lutPreviewLabel_);
 
   lutDetailsLabel_ = new QLabel();
+  lutDetailsLabel_->setAccessibleName(QStringLiteral("LUT details"));
   lutDetailsLabel_->setWordWrap(true);
   lutLayout->addWidget(lutDetailsLabel_);
 
   auto *lutControlsLayout = new QHBoxLayout();
   lutIntensitySlider_ = new QSlider(Qt::Horizontal);
+  lutIntensitySlider_->setAccessibleName(QStringLiteral("LUT intensity"));
+  lutIntensitySlider_->setAccessibleDescription(QStringLiteral("Set the strength of the selected LUT"));
   lutIntensitySlider_->setRange(0, 100);
   lutIntensitySlider_->setValue(100);
   lutIntensityLabel_ = new QLabel("100%");
@@ -232,6 +253,9 @@ void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
   loadLUTButton_ = new QPushButton("Load LUT...");
   applySelectedButton_ = new QPushButton("Apply Selected");
   clearLUTButton_ = new QPushButton("Clear");
+  loadLUTButton_->setAccessibleName(QStringLiteral("Load LUT"));
+  applySelectedButton_->setAccessibleName(QStringLiteral("Apply selected LUT"));
+  clearLUTButton_->setAccessibleName(QStringLiteral("Clear selected LUT"));
 
   lutButtonsLayout->addWidget(loadLUTButton_);
   lutButtonsLayout->addWidget(applySelectedButton_);
@@ -248,22 +272,28 @@ void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
   auto *ocioLayout = new QFormLayout(ocioGroup);
 
   ocioPresetCombo_ = new QComboBox();
+  ocioPresetCombo_->setAccessibleName(QStringLiteral("OCIO configuration preset"));
   ocioLayout->addRow("Config Preset:", ocioPresetCombo_);
 
   ocioDisplayCombo_ = new QComboBox();
+  ocioDisplayCombo_->setAccessibleName(QStringLiteral("OCIO display"));
   ocioLayout->addRow("Display:", ocioDisplayCombo_);
 
   ocioViewCombo_ = new QComboBox();
+  ocioViewCombo_->setAccessibleName(QStringLiteral("OCIO view"));
   ocioLayout->addRow("View:", ocioViewCombo_);
 
   loadConfigBtn_ = new QPushButton("Load OCIO Config...");
+  loadConfigBtn_->setAccessibleName(QStringLiteral("Load OCIO configuration"));
   ocioLayout->addRow("", loadConfigBtn_);
 
   ocioStatusLabel_ = new QLabel("No OCIO config loaded");
+  ocioStatusLabel_->setAccessibleName(QStringLiteral("OCIO status"));
   ocioStatusLabel_->setWordWrap(true);
   ocioLayout->addRow("Status:", ocioStatusLabel_);
 
   auto *exportLUTBtn = new QPushButton("Export LUT as .cube...");
+  exportLUTBtn->setAccessibleName(QStringLiteral("Export LUT"));
   ocioLayout->addRow("", exportLUTBtn);
 
   QObject::connect(exportLUTBtn, &QPushButton::clicked, [this, parent]() {
@@ -294,6 +324,7 @@ void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
   auto *hdrLayout = new QVBoxLayout(hdrGroup);
 
   hdrCheckBox_ = new QCheckBox("Enable HDR processing");
+  hdrCheckBox_->setAccessibleName(QStringLiteral("Enable HDR processing"));
   hdrLayout->addWidget(hdrCheckBox_);
 
   layout->addWidget(hdrGroup);
@@ -361,6 +392,8 @@ void ArtifactColorSciencePanel::Impl::setupColorRulesSection(QWidget *parent, QV
   ruleLayout->addWidget(ruleHeader);
 
   ruleTable_ = new QTableWidget(ruleGroup);
+  ruleTable_->setAccessibleName(QStringLiteral("Color constraints table"));
+  ruleTable_->setAccessibleDescription(QStringLiteral("Edit color constraint rules"));
   ruleTable_->setColumnCount(5);
   ruleTable_->setHorizontalHeaderLabels({"Target", "Operator", "Value", "Scope", "Enforce"});
   ruleTable_->horizontalHeader()->setStretchLastSection(true);
@@ -372,9 +405,14 @@ void ArtifactColorSciencePanel::Impl::setupColorRulesSection(QWidget *parent, QV
   auto *controls = new QHBoxLayout();
   addRuleButton_ = new QPushButton("Add Rule", ruleGroup);
   removeRuleButton_ = new QPushButton("Remove Rule", ruleGroup);
+  addRuleButton_->setAccessibleName(QStringLiteral("Add color constraint rule"));
+  removeRuleButton_->setAccessibleName(QStringLiteral("Remove color constraint rule"));
   snapColorEdit_ = new QLineEdit(ruleGroup);
+  snapColorEdit_->setAccessibleName(QStringLiteral("Palette snap color"));
+  snapColorEdit_->setAccessibleDescription(QStringLiteral("Enter a hexadecimal color to snap to the palette"));
   snapColorEdit_->setPlaceholderText("#RRGGBB or #AARRGGBB");
   snapToPaletteButton_ = new QPushButton("Snap To Palette Color", ruleGroup);
+  snapToPaletteButton_->setAccessibleName(QStringLiteral("Snap to palette color"));
   snapResultLabel_ = new QLabel("No snap applied", ruleGroup);
   controls->addWidget(addRuleButton_);
   controls->addWidget(removeRuleButton_);
