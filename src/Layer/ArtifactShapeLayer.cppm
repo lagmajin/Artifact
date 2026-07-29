@@ -1465,24 +1465,22 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
  if (!renderer) {
   return;
  }
-  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+ const QMatrix4x4 baseTransform = getGlobalTransform4x4();
   const float contentFieldWeight = compositionFieldContentWeight(this);
  auto* impl = impl_;
-  const auto processedOperatorPaths = impl->shapeOperators_.empty()
-      ? std::vector<ArtifactCore::ShapePath>{}
-      : buildProcessedShapePaths(
-          impl->shapeType_, impl->width_, impl->height_, impl->cornerRadius_,
-          impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_,
-          impl->customPolygonPoints_, impl->customPolygonClosed_,
-          impl->customPathVertices_, impl->customPathClosed_,
-          impl->shapeOperators_);
   const bool nativeOperatorCandidate =
       !impl->shapeOperators_.empty() &&
-      !processedOperatorPaths.empty() &&
       impl->fillType_ == ArtifactSolidFillType::Solid &&
       impl->strokeAlign_ == StrokeAlign::Center &&
       !impl->hasCustomStrokeEffects();
   if (nativeOperatorCandidate) {
+   const auto processedOperatorPaths = buildProcessedShapePaths(
+       impl->shapeType_, impl->width_, impl->height_, impl->cornerRadius_,
+       impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_,
+       impl->customPolygonPoints_, impl->customPolygonClosed_,
+       impl->customPathVertices_, impl->customPathClosed_,
+       impl->shapeOperators_);
+   if (!processedOperatorPaths.empty()) {
    const FloatColor fill(impl->fillColor_.r(), impl->fillColor_.g(),
                          impl->fillColor_.b(), impl->fillColor_.a());
    const FloatColor stroke(impl->strokeColor_.r(), impl->strokeColor_.g(),
@@ -1543,6 +1541,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
                        opacity() * contentFieldWeight);
    return;
   }
+  }
  // Non-solid fills and custom stroke effects still use the compatibility
  // cache. Operator paths meeting the native candidate contract are handled
  // above; simple custom Bézier paths use ShapePath::flatten().
@@ -1550,7 +1549,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
   impl->rebuildCache();
    const float layerOpacity = opacity() * contentFieldWeight;
   drawWithClonerEffect(this, baseTransform,
-                       [renderer, impl, layerOpacity](const QMatrix4x4& transform, float weight) {
+       [renderer, impl, layerOpacity](const QMatrix4x4& transform, float weight) {
    renderer->drawSpriteTransformed(
        0.0f, 0.0f,
        static_cast<float>(impl->width_),
