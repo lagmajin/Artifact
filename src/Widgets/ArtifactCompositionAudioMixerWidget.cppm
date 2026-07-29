@@ -2091,6 +2091,9 @@ public:
 ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
     QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Composition Audio Mixer"));
+  setAccessibleDescription(
+      QStringLiteral("Monitor and adjust audio buses for the active composition."));
   setAttribute(Qt::WA_StyledBackground, true);
   setAutoFillBackground(true);
 

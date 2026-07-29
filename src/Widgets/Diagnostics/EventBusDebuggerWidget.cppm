@@ -325,6 +325,9 @@ EventBusDebuggerWidget::EventBusDebuggerWidget(QWidget* parent)
     : QWidget(parent, Qt::Tool | Qt::Window),
       impl_(new Impl())
 {
+    setAccessibleName(QStringLiteral("Event Bus Debugger"));
+    setAccessibleDescription(
+        QStringLiteral("Inspect event fire logs, subscribers, and frequencies."));
     setAttribute(Qt::WA_DeleteOnClose, false);
     setWindowTitle("EventBus Debugger");
     resize(720, 540);
