@@ -2815,6 +2815,7 @@ public:
   QLabel *effectsStateLabel = nullptr;
   QLabel *effectsTargetLabel = nullptr;
   QLabel *effectsStackSummaryLabel = nullptr;
+  QLineEdit *effectPropertyFilterEdit = nullptr;
   QTabWidget *effectsModeTabs = nullptr;
   QLabel *effectEditorTitleLabel = nullptr;
   QLabel *effectParametersHintLabel = nullptr;
@@ -3059,6 +3060,8 @@ void ArtifactInspectorWidget::Impl::ensureEffectPropertyWidget() {
   effectPropertyWidget->setVisible(false);
   effectPropertyWidget->setMinimumHeight(220);
   applyInspectorOwnerDrawScrollBars(effectPropertyWidget);
+  effectPropertyWidget->setFilterText(
+      effectPropertyFilterEdit ? effectPropertyFilterEdit->text() : QString());
   effectPropertySurface->setEditor(effectPropertyWidget);
 }
 
@@ -3169,6 +3172,8 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     lastEffectPropertyStateSignature_ = stateSignature;
     effectPropertyWidget->setCompositionEffects(comp->getEffects());
     effectPropertyWidget->setFocusedEffectId(resolvedFocusedEffectId);
+    effectPropertyWidget->setFilterText(
+        effectPropertyFilterEdit ? effectPropertyFilterEdit->text() : QString());
     const bool hasFocus = !resolvedFocusedEffectId.isEmpty();
     showEffectGuidance(
         hasFocus
@@ -3246,6 +3251,8 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     effectPropertyWidget->setLayer(layer);
   }
   effectPropertyWidget->setFocusedEffectId(resolvedFocusedEffectId);
+  effectPropertyWidget->setFilterText(
+      effectPropertyFilterEdit ? effectPropertyFilterEdit->text() : QString());
 
   const bool hasFocus = !resolvedFocusedEffectId.trimmed().isEmpty();
   showEffectGuidance(
@@ -7296,6 +7303,21 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectsTargetLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectsTargetLabel, false);
   effectsHeaderLayout->addWidget(impl_->effectsTargetLabel);
+
+  impl_->effectPropertyFilterEdit = new QLineEdit(effectsHeaderFrame);
+  impl_->effectPropertyFilterEdit->setObjectName(
+      QStringLiteral("inspectorEffectPropertyFilter"));
+  impl_->effectPropertyFilterEdit->setPlaceholderText(
+      QStringLiteral("Filter effect properties"));
+  impl_->effectPropertyFilterEdit->setFrame(false);
+  applyInspectorPalette(impl_->effectPropertyFilterEdit, true);
+  effectsHeaderLayout->addWidget(impl_->effectPropertyFilterEdit);
+  QObject::connect(impl_->effectPropertyFilterEdit, &QLineEdit::textChanged,
+                   this, [this](const QString &text) {
+                     if (impl_->effectPropertyWidget) {
+                       impl_->effectPropertyWidget->setFilterText(text);
+                     }
+                   });
 
   auto *effectsToolbarLayout = new QHBoxLayout();
   effectsToolbarLayout->setContentsMargins(0, 0, 0, 0);

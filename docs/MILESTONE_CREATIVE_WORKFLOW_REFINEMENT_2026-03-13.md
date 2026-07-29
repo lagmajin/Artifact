@@ -33,6 +33,12 @@ Date: 2026-03-13
 - ✅ Both operation families use `ArtifactEffectService`, preserving the existing undo-capable service path; removal also asks for confirmation.
 - ⏳ Inspector-Property focus synchronization, unified filtering, drag-and-drop ordering, and runtime verification remain incomplete.
 
+### M-CW-4 Implementation Loop
+
+- ✅ Added an Inspector Effects filter field and connected it to the existing `ArtifactPropertyWidget::setFilterText()` path.
+- ✅ The filter is retained when the effect property surface is created or resynchronized for layer/composition targets.
+- ⏳ Filtering the effect rack itself, component surfaces, and runtime verification remain incomplete.
+
 ### M-CW-2 Inspector-Property Sync
 - Implement a signal-slot connection such that selecting an effect in the `ArtifactInspectorWidget` rack automatically:
   - Calls `ArtifactPropertyWidget::setFocusedEffectId()`.
