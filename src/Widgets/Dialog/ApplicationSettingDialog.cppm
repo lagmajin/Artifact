@@ -769,6 +769,8 @@ ProjectDefaultsSettingPage::Impl::~Impl() {}
 
 ProjectDefaultsSettingPage::ProjectDefaultsSettingPage(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Project default settings"));
+  setAccessibleDescription(QStringLiteral("Configure default composition size, frame rate, workspace, and background color"));
   auto *mainLayout = new QVBoxLayout(this);
 
   auto *group = new QGroupBox("Project Defaults", this);
@@ -777,12 +779,16 @@ ProjectDefaultsSettingPage::ProjectDefaultsSettingPage(QWidget *parent)
   auto *sizeLayout = new QHBoxLayout();
   sizeLayout->addWidget(new QLabel("Default Composition Size:", this));
   impl_->widthSpinBox_ = new QSpinBox(this);
+  impl_->widthSpinBox_->setAccessibleName(QStringLiteral("Default composition width"));
+  impl_->widthSpinBox_->setAccessibleDescription(QStringLiteral("Default composition width in pixels"));
   impl_->widthSpinBox_->setRange(1, 16384);
   impl_->widthSpinBox_->setSuffix(" px");
   impl_->widthSpinBox_->setValue(1920);
   sizeLayout->addWidget(impl_->widthSpinBox_);
   sizeLayout->addWidget(new QLabel("x", this));
   impl_->heightSpinBox_ = new QSpinBox(this);
+  impl_->heightSpinBox_->setAccessibleName(QStringLiteral("Default composition height"));
+  impl_->heightSpinBox_->setAccessibleDescription(QStringLiteral("Default composition height in pixels"));
   impl_->heightSpinBox_->setRange(1, 16384);
   impl_->heightSpinBox_->setSuffix(" px");
   impl_->heightSpinBox_->setValue(1080);
@@ -793,6 +799,8 @@ ProjectDefaultsSettingPage::ProjectDefaultsSettingPage(QWidget *parent)
   auto *fpsLayout = new QHBoxLayout();
   fpsLayout->addWidget(new QLabel("Default Frame Rate:", this));
   impl_->frameRateCombo_ = new QComboBox(this);
+  impl_->frameRateCombo_->setAccessibleName(QStringLiteral("Default composition frame rate"));
+  impl_->frameRateCombo_->setAccessibleDescription(QStringLiteral("Default frame rate for new compositions"));
   impl_->frameRateCombo_->addItem("23.976 fps", 23.976);
   impl_->frameRateCombo_->addItem("24 fps", 24.0);
   impl_->frameRateCombo_->addItem("25 fps", 25.0);
@@ -808,6 +816,8 @@ ProjectDefaultsSettingPage::ProjectDefaultsSettingPage(QWidget *parent)
   auto *workspaceLayout = new QHBoxLayout();
   workspaceLayout->addWidget(new QLabel("Default Workspace:", this));
   impl_->workspaceModeCombo_ = new QComboBox(this);
+  impl_->workspaceModeCombo_->setAccessibleName(QStringLiteral("Default workspace"));
+  impl_->workspaceModeCombo_->setAccessibleDescription(QStringLiteral("Initial workspace mode for new projects"));
   for (const auto &info : Artifact::workspaceModeInfos()) {
     impl_->workspaceModeCombo_->addItem(info.label);
   }
@@ -818,6 +828,8 @@ ProjectDefaultsSettingPage::ProjectDefaultsSettingPage(QWidget *parent)
   auto *bgLayout = new QHBoxLayout();
   bgLayout->addWidget(new QLabel("Default Composition Background Color:", this));
   impl_->backgroundColorButton_ = new QPushButton(this);
+  impl_->backgroundColorButton_->setAccessibleName(QStringLiteral("Default composition background color"));
+  impl_->backgroundColorButton_->setAccessibleDescription(QStringLiteral("Choose the default background color for new compositions"));
   bgLayout->addWidget(impl_->backgroundColorButton_);
   bgLayout->addStretch();
   groupLayout->addLayout(bgLayout);
