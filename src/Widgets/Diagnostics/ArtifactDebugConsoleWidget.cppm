@@ -45,6 +45,7 @@ import Core.Diagnostics.Trace;
 import Frame.Debug;
 import Utils;
 import Widgets.Utils.CSS;
+import Settings.Accessibility;
 import Artifact.Service.Playback;
 
 namespace {
@@ -627,7 +628,12 @@ public:
                 });
             }
 
-            menu.exec(logList_->viewport()->mapToGlobal(pos));
+            const QPoint origin = logList_->viewport()->mapToGlobal(pos);
+            int menuX = origin.x();
+            int menuY = origin.y();
+            Accessibility::adjustContextMenuPosition(
+                menuX, menuY, menu.sizeHint().width());
+            menu.exec(QPoint(menuX, menuY));
         });
 
         // Initialize Logger Signal

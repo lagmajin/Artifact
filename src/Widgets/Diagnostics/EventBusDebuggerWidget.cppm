@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <algorithm>
 #include <cstdint>
 #include <string>
@@ -37,6 +37,7 @@ module Artifact.Widgets.EventBusDebugger;
 
 import ArtifactCore.Event.EventBusDebugger;
 import Event.Bus;
+import Settings.Accessibility;
 
 namespace Artifact {
 
@@ -427,7 +428,13 @@ EventBusDebuggerWidget::EventBusDebuggerWidget(QWidget* parent)
                              QMenu menu(impl_->logTable);
                              QAction* copySelected = menu.addAction(QStringLiteral("Copy selected rows"));
                              QAction* copyAll = menu.addAction(QStringLiteral("Copy all rows"));
-                             QAction* chosen = menu.exec(impl_->logTable->viewport()->mapToGlobal(pos));
+                             const QPoint origin =
+                                 impl_->logTable->viewport()->mapToGlobal(pos);
+                             int menuX = origin.x();
+                             int menuY = origin.y();
+                             Accessibility::adjustContextMenuPosition(
+                                 menuX, menuY, menu.sizeHint().width());
+                             QAction* chosen = menu.exec(QPoint(menuX, menuY));
                              if (chosen == copySelected) {
                                 impl_->copySelectedLogRowsToClipboard();
                             } else if (chosen == copyAll) {
