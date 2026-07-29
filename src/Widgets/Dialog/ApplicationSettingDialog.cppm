@@ -555,6 +555,8 @@ PreviewSettingPage::Impl::~Impl() {}
 
 PreviewSettingPage::PreviewSettingPage(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Preview settings"));
+  setAccessibleDescription(QStringLiteral("Configure preview quality, caches, thumbnails, and GPU acceleration"));
   auto *mainLayout = new QVBoxLayout(this);
 
   // Preview Quality Group
@@ -565,6 +567,8 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   auto *presetLayout = new QHBoxLayout();
   presetLayout->addWidget(new QLabel("Quality Preset:", this));
   impl_->previewQualityCombo_ = new QComboBox(this);
+  impl_->previewQualityCombo_->setAccessibleName(QStringLiteral("Preview quality preset"));
+  impl_->previewQualityCombo_->setAccessibleDescription(QStringLiteral("Choose the quality preset used for previews"));
   impl_->previewQualityCombo_->addItems(
       {"Draft", "Fast", "Adaptive", "Full Quality"});
   impl_->previewQualityCombo_->setCurrentText("Adaptive");
@@ -582,6 +586,8 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   resolutionLayout->addLayout(resLabelLayout);
 
   impl_->previewResolutionSlider_ = new QSlider(Qt::Horizontal, this);
+  impl_->previewResolutionSlider_->setAccessibleName(QStringLiteral("Preview resolution"));
+  impl_->previewResolutionSlider_->setAccessibleDescription(QStringLiteral("Set preview resolution from 25 to 100 percent"));
   impl_->previewResolutionSlider_->setRange(25, 100);
   impl_->previewResolutionSlider_->setValue(50);
   impl_->previewResolutionSlider_->setTickPosition(QSlider::TicksBelow);
@@ -602,12 +608,16 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   auto *cacheLayout = new QVBoxLayout(cacheGroup);
 
   impl_->enableCacheCheckBox_ = new QCheckBox("Enable RAM cache", this);
+  impl_->enableCacheCheckBox_->setAccessibleName(QStringLiteral("Enable RAM cache"));
+  impl_->enableCacheCheckBox_->setAccessibleDescription(QStringLiteral("Cache preview frames in memory"));
   impl_->enableCacheCheckBox_->setChecked(true);
   cacheLayout->addWidget(impl_->enableCacheCheckBox_);
 
   auto *cacheSizeLayout = new QHBoxLayout();
   cacheSizeLayout->addWidget(new QLabel("Cache Size:", this));
   impl_->cacheSizeSpinBox_ = new QSpinBox(this);
+  impl_->cacheSizeSpinBox_->setAccessibleName(QStringLiteral("RAM cache size"));
+  impl_->cacheSizeSpinBox_->setAccessibleDescription(QStringLiteral("Maximum RAM cache size in megabytes"));
   impl_->cacheSizeSpinBox_->setRange(512, 32768);
   impl_->cacheSizeSpinBox_->setValue(4096);
   impl_->cacheSizeSpinBox_->setSuffix(" MB");
@@ -617,6 +627,8 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   cacheLayout->addLayout(cacheSizeLayout);
 
   impl_->enableDiskCacheCheckBox_ = new QCheckBox("Enable disk cache", this);
+  impl_->enableDiskCacheCheckBox_->setAccessibleName(QStringLiteral("Enable disk cache"));
+  impl_->enableDiskCacheCheckBox_->setAccessibleDescription(QStringLiteral("Store preview cache on disk"));
   impl_->enableDiskCacheCheckBox_->setChecked(false);
   cacheLayout->addWidget(impl_->enableDiskCacheCheckBox_);
 
@@ -628,12 +640,16 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
 
   impl_->generateThumbnailsCheckBox_ =
       new QCheckBox("Generate thumbnails for media files", this);
+  impl_->generateThumbnailsCheckBox_->setAccessibleName(QStringLiteral("Generate media thumbnails"));
+  impl_->generateThumbnailsCheckBox_->setAccessibleDescription(QStringLiteral("Generate thumbnails for imported media files"));
   impl_->generateThumbnailsCheckBox_->setChecked(true);
   thumbnailLayout->addWidget(impl_->generateThumbnailsCheckBox_);
 
   auto *thumbQualityLayout = new QHBoxLayout();
   thumbQualityLayout->addWidget(new QLabel("Thumbnail Quality:", this));
   impl_->thumbnailQualityCombo_ = new QComboBox(this);
+  impl_->thumbnailQualityCombo_->setAccessibleName(QStringLiteral("Thumbnail quality"));
+  impl_->thumbnailQualityCombo_->setAccessibleDescription(QStringLiteral("Choose the quality of generated media thumbnails"));
   impl_->thumbnailQualityCombo_->addItems({"Low", "Medium", "High"});
   impl_->thumbnailQualityCombo_->setCurrentText("Medium");
   thumbQualityLayout->addWidget(impl_->thumbnailQualityCombo_);
@@ -647,12 +663,16 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   auto *gpuLayout = new QVBoxLayout(gpuGroup);
 
   impl_->enableGPUCheckBox_ = new QCheckBox("Enable GPU acceleration", this);
+  impl_->enableGPUCheckBox_->setAccessibleName(QStringLiteral("Enable GPU acceleration"));
+  impl_->enableGPUCheckBox_->setAccessibleDescription(QStringLiteral("Use GPU acceleration for preview processing"));
   impl_->enableGPUCheckBox_->setChecked(true);
   gpuLayout->addWidget(impl_->enableGPUCheckBox_);
 
   auto *gpuDeviceLayout = new QHBoxLayout();
   gpuDeviceLayout->addWidget(new QLabel("GPU Device:", this));
   impl_->gpuDeviceCombo_ = new QComboBox(this);
+  impl_->gpuDeviceCombo_->setAccessibleName(QStringLiteral("GPU device"));
+  impl_->gpuDeviceCombo_->setAccessibleDescription(QStringLiteral("Choose the GPU used for preview processing"));
   impl_->gpuDeviceCombo_->addItems(
       {"Auto (Best Available)", "NVIDIA GPU", "AMD GPU", "Intel GPU"});
   impl_->gpuDeviceCombo_->setCurrentText("Auto (Best Available)");
