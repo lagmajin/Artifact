@@ -67,6 +67,7 @@ import Artifact.Audio.ScrubController;
 import FloatColorPickerDialog;
 import Widgets.Utils.CSS;
 import UI.ShortcutBindings;
+import Settings.Accessibility;
 
 namespace ArtifactCore {
 
@@ -216,6 +217,8 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   impl_->handednessCombo_->setAccessibleName(QStringLiteral("Preferred hand"));
   impl_->handednessCombo_->setAccessibleDescription(
       QStringLiteral("Choose the preferred hand for context menu placement."));
+  impl_->handednessCombo_->setMinimumHeight(
+      Artifact::Accessibility::scaledSize(24));
   handednessLayout->addWidget(impl_->handednessCombo_);
   handednessLayout->addStretch();
   accessibilityLayout->addLayout(handednessLayout);
@@ -234,6 +237,12 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
       QStringLiteral("Reduce hover dependency"));
   impl_->reduceHoverDependencyCheckBox_->setAccessibleDescription(
       QStringLiteral("Keep important information available without relying on hover."));
+  impl_->largeTargetsCheckBox_->setMinimumHeight(
+      Artifact::Accessibility::scaledSize(24));
+  impl_->highContrastHintsCheckBox_->setMinimumHeight(
+      Artifact::Accessibility::scaledSize(24));
+  impl_->reduceHoverDependencyCheckBox_->setMinimumHeight(
+      Artifact::Accessibility::scaledSize(24));
   accessibilityLayout->addWidget(impl_->largeTargetsCheckBox_);
   accessibilityLayout->addWidget(impl_->highContrastHintsCheckBox_);
   accessibilityLayout->addWidget(impl_->reduceHoverDependencyCheckBox_);
@@ -247,6 +256,8 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
       QStringLiteral("Accessibility font scale"));
   impl_->accessibilityFontScaleSpinBox_->setAccessibleDescription(
       QStringLiteral("Scale accessibility text from 100 to 200 percent."));
+  impl_->accessibilityFontScaleSpinBox_->setMinimumHeight(
+      Artifact::Accessibility::scaledSize(24));
   accessibilityFontLayout->addWidget(impl_->accessibilityFontScaleSpinBox_);
   accessibilityFontLayout->addStretch();
   accessibilityLayout->addLayout(accessibilityFontLayout);
@@ -261,6 +272,8 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   impl_->colorDeficiencyCombo_->setAccessibleName(QStringLiteral("Color vision assist"));
   impl_->colorDeficiencyCombo_->setAccessibleDescription(
       QStringLiteral("Choose color adjustments for common color vision deficiencies."));
+  impl_->colorDeficiencyCombo_->setMinimumHeight(
+      Artifact::Accessibility::scaledSize(24));
   colorDeficiencyLayout->addWidget(impl_->colorDeficiencyCombo_);
   colorDeficiencyLayout->addStretch();
   accessibilityLayout->addLayout(colorDeficiencyLayout);
