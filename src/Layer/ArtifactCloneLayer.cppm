@@ -556,6 +556,49 @@ std::vector<AbstractProperty> ArtifactCloneLayer::getProperties() const {
         QStringLiteral("Apply the configured clone effectors to generated clones."));
     props.push_back(useEffectorProp);
 
+    if (!impl_->effectors_.empty()) {
+        if (const auto transformEffector =
+                ArtifactCore::dynamicPointerCast<TransformCloneEffector>(
+                    impl_->effectors_.front())) {
+            AbstractProperty strengthProp;
+            strengthProp.setName("Effector Strength");
+            strengthProp.setType(PropertyType::Float);
+            strengthProp.setValue(transformEffector->strength);
+            strengthProp.setTooltip(QStringLiteral("Overall Transform Effector strength."));
+            props.push_back(strengthProp);
+
+            const auto addEffectorVector = [&props](
+                                                const QString& prefix,
+                                                const QVector3D& value) {
+                for (const auto& axis : {QStringLiteral("X"), QStringLiteral("Y"),
+                                         QStringLiteral("Z")}) {
+                    AbstractProperty property;
+                    property.setName(prefix + QStringLiteral(" ") + axis);
+                    property.setType(PropertyType::Float);
+                    const float component = axis == QStringLiteral("X")
+                                                ? value.x()
+                                                : axis == QStringLiteral("Y")
+                                                      ? value.y()
+                                                      : value.z();
+                    property.setValue(component);
+                    props.push_back(property);
+                }
+            };
+            addEffectorVector(QStringLiteral("Effector Position"),
+                              transformEffector->positionOffset);
+            addEffectorVector(QStringLiteral("Effector Rotation"),
+                              transformEffector->rotationOffset);
+            addEffectorVector(QStringLiteral("Effector Scale"),
+                              transformEffector->scaleOffset);
+
+            AbstractProperty useColorProp;
+            useColorProp.setName("Effector Use Color");
+            useColorProp.setType(PropertyType::Boolean);
+            useColorProp.setValue(transformEffector->useColor);
+            props.push_back(useColorProp);
+        }
+    }
+
     AbstractProperty transform1EnabledProp;
     transform1EnabledProp.setName("Transform 1 Enabled");
     transform1EnabledProp.setType(PropertyType::Boolean);
@@ -924,6 +967,40 @@ void ArtifactCloneLayer::setPropertyValue(const UniString& name, const QVariant&
         impl_->settings_.mode = static_cast<CloneMode>(value.toInt());
     } else if (key == QStringLiteral("Use Effector")) {
         impl_->settings_.useEffector = value.toBool();
+    } else if (!impl_->effectors_.empty() &&
+               (key == QStringLiteral("Effector Strength") ||
+               key == QStringLiteral("Effector Use Color") ||
+               key.startsWith(QStringLiteral("Effector Position")) ||
+               key.startsWith(QStringLiteral("Effector Rotation")) ||
+               key.startsWith(QStringLiteral("Effector Scale")))) {
+        if (const auto transformEffector =
+                ArtifactCore::dynamicPointerCast<TransformCloneEffector>(
+                    impl_->effectors_.front())) {
+            if (key == QStringLiteral("Effector Strength")) {
+                transformEffector->strength = std::clamp(value.toFloat(), 0.0f, 1.0f);
+            } else if (key == QStringLiteral("Effector Use Color")) {
+                transformEffector->useColor = value.toBool();
+            } else {
+                const auto setVectorComponent = [&value](QVector3D& vector,
+                                                          const QString& suffix,
+                                                          const QString& propertyName) {
+                    if (propertyName.endsWith(suffix)) {
+                        if (suffix == QStringLiteral(" X")) vector.setX(value.toFloat());
+                        if (suffix == QStringLiteral(" Y")) vector.setY(value.toFloat());
+                        if (suffix == QStringLiteral(" Z")) vector.setZ(value.toFloat());
+                        return true;
+                    }
+                    return false;
+                };
+                if (key.startsWith(QStringLiteral("Effector Position"))) {
+                    setVectorComponent(transformEffector->positionOffset, key.right(2), key);
+                } else if (key.startsWith(QStringLiteral("Effector Rotation"))) {
+                    setVectorComponent(transformEffector->rotationOffset, key.right(2), key);
+                } else if (key.startsWith(QStringLiteral("Effector Scale"))) {
+                    setVectorComponent(transformEffector->scaleOffset, key.right(2), key);
+                }
+            }
+        }
     } else if (key == QStringLiteral("Clone Count")) {
         impl_->settings_.cloneCount = std::max(1, value.toInt());
     } else if (key == QStringLiteral("Offset X")) {
