@@ -12,6 +12,8 @@ namespace Artifact {
 
 ArtifactAICloudSettingsWidget::ArtifactAICloudSettingsWidget(QWidget *parent)
     : QWidget(parent) {
+  setAccessibleName(QStringLiteral("Cloud AI settings"));
+  setAccessibleDescription(QStringLiteral("Configure the cloud AI provider, endpoint, and API key"));
   auto *mainLayout = new QVBoxLayout(this);
   mainLayout->setContentsMargins(0, 0, 0, 0);
   mainLayout->setSpacing(10);
@@ -22,6 +24,7 @@ ArtifactAICloudSettingsWidget::ArtifactAICloudSettingsWidget(QWidget *parent)
   auto *hint = new QLabel(
       QStringLiteral("Store provider, endpoint, and API key separately from the chat view."),
       card);
+  hint->setAccessibleName(QStringLiteral("Cloud AI settings description"));
   hint->setWordWrap(true);
   cardLayout->addWidget(hint);
 
@@ -32,6 +35,8 @@ ArtifactAICloudSettingsWidget::ArtifactAICloudSettingsWidget(QWidget *parent)
   cardLayout->addLayout(form);
 
   providerCombo_ = new QComboBox(card);
+  providerCombo_->setAccessibleName(QStringLiteral("Cloud AI provider"));
+  providerCombo_->setAccessibleDescription(QStringLiteral("Choose the cloud AI service provider"));
   providerCombo_->addItem(QStringLiteral("OpenAI"), static_cast<int>(AICloudProvider::OpenAI));
   providerCombo_->addItem(QStringLiteral("Grok"), static_cast<int>(AICloudProvider::Grok));
   providerCombo_->addItem(QStringLiteral("OpenRouter"), static_cast<int>(AICloudProvider::OpenRouter));
@@ -41,10 +46,14 @@ ArtifactAICloudSettingsWidget::ArtifactAICloudSettingsWidget(QWidget *parent)
 
   baseUrlLabel_ = new QLabel(QStringLiteral("Base URL"), card);
   baseUrlEdit_ = new QLineEdit(card);
+  baseUrlEdit_->setAccessibleName(QStringLiteral("Cloud AI base URL"));
+  baseUrlEdit_->setAccessibleDescription(QStringLiteral("Endpoint URL for custom or gateway providers"));
   baseUrlEdit_->setPlaceholderText(QStringLiteral("https://api.openai.com/v1"));
   form->addRow(baseUrlLabel_, baseUrlEdit_);
 
   apiKeyEdit_ = new QLineEdit(card);
+  apiKeyEdit_->setAccessibleName(QStringLiteral("Cloud AI API key"));
+  apiKeyEdit_->setAccessibleDescription(QStringLiteral("API key or bearer token used for cloud AI requests"));
   apiKeyEdit_->setEchoMode(QLineEdit::Password);
   apiKeyEdit_->setPlaceholderText(QStringLiteral("API key / bearer token"));
   form->addRow(QStringLiteral("API Key"), apiKeyEdit_);
