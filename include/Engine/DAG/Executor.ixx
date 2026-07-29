@@ -117,9 +117,13 @@ export namespace Artifact {
                             }
                             return;
                         }
-                        // TODO: 実際の Effect のバックエンド評価 (CPU/GPU)
-                        // node->effect()->apply(...)
-                        node->markCached(); // 計算完了したらキャッシュ済みに
+                        // The non-image backend is not connected yet. Do not
+                        // report a successful cache hit for an unevaluated
+                        // effect; callers must be able to distinguish this
+                        // from a real cached result.
+                        node->markError();
+                        evaluationFailed.store(true, std::memory_order_release);
+                        return;
                     }
 
                     // --- 後続ノードの依存カウンタを減らす ---
