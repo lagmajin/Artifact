@@ -108,10 +108,16 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   auto initializing = ArtifactCore::makeShared<bool>(true);
   const bool displayAsPercent = isScalePercentProperty(property);
   setObjectName(QStringLiteral("propertyFloatEditor"));
+  setAccessibleName(QStringLiteral("Float property editor"));
+  setAccessibleDescription(QStringLiteral("Edit the selected floating-point property"));
   spinBox_ = new ArtifactRelativeDoubleSpinBox(this);
+  spinBox_->setAccessibleName(QStringLiteral("Floating-point property value"));
+  spinBox_->setAccessibleDescription(QStringLiteral("Enter the numeric property value"));
   spinBox_->setProperty("displayAsPercent", displayAsPercent);
   if (showSlider) {
     slider_ = new detail::PropertySliderWidget(this);
+    slider_->setAccessibleName(QStringLiteral("Floating-point property slider"));
+    slider_->setAccessibleDescription(QStringLiteral("Adjust the floating-point property value"));
     applyPropertyFieldPalette(slider_);
   }
   auto previewThrottle = ArtifactCore::makeShared<QElapsedTimer>();
@@ -400,9 +406,15 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     : ArtifactAbstractPropertyEditor(parent) {
   auto initializing = ArtifactCore::makeShared<bool>(true);
   setObjectName(QStringLiteral("propertyIntEditor"));
+  setAccessibleName(QStringLiteral("Integer property editor"));
+  setAccessibleDescription(QStringLiteral("Edit the selected integer property"));
   spinBox_ = new ArtifactRelativeSpinBox(this);
+  spinBox_->setAccessibleName(QStringLiteral("Integer property value"));
+  spinBox_->setAccessibleDescription(QStringLiteral("Enter the integer property value"));
   if (showSlider) {
     slider_ = new detail::PropertySliderWidget(this);
+    slider_->setAccessibleName(QStringLiteral("Integer property slider"));
+    slider_->setAccessibleDescription(QStringLiteral("Adjust the integer property value"));
     applyPropertyFieldPalette(slider_);
   }
   auto previewThrottle = ArtifactCore::makeShared<QElapsedTimer>();
