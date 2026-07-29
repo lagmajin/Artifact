@@ -3666,7 +3666,10 @@ int main(int argc, char *argv[]) {
     statsTimer->start();
 
     auto *recoveryTimer = new QTimer(mw);
-    recoveryTimer->setInterval(120000);
+    const int autoSaveIntervalMinutes = std::max(
+        1, ArtifactCore::ArtifactAppSettings::instance()
+               ->autoSaveIntervalMinutes());
+    recoveryTimer->setInterval(autoSaveIntervalMinutes * 60000);
     QObject::connect(recoveryTimer, &QTimer::timeout, mw, [autoSaveManager]() {
       if (!autoSaveManager || !autoSaveManager->isDirty()) {
         return;

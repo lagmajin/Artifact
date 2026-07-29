@@ -39,6 +39,7 @@ module;
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QFileInfo>
 #include <QByteArray>
 
@@ -168,7 +169,7 @@ using ArtifactCore::String;
 
       status_ = AutoSaveStatus::Saving;
       const QString fullPath = QDir(dirPath).filePath(checkpointFileName());
-      QFile file(fullPath);
+      QSaveFile file(fullPath);
       if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         status_ = AutoSaveStatus::SaveFailed;
         lastError_ = QStringLiteral("Failed to open recovery file: %1").arg(fullPath);
@@ -176,10 +177,9 @@ using ArtifactCore::String;
       }
 
       const qint64 written = file.write(projectSnapshotJsonUtf8.data(), static_cast<qint64>(projectSnapshotJsonUtf8.size()));
-      file.close();
-      if (written <= 0) {
+      if (written <= 0 || !file.commit()) {
         status_ = AutoSaveStatus::SaveFailed;
-        lastError_ = QStringLiteral("Failed to write recovery snapshot");
+        lastError_ = QStringLiteral("Failed to commit recovery snapshot");
         return false;
       }
 
