@@ -888,6 +888,9 @@ namespace Artifact
     impl_->handleJobSelected();
   };
   impl_->addButton = new QPushButton("+  Add Composition");
+  impl_->addButton->setAccessibleName(QStringLiteral("Add composition"));
+  impl_->addButton->setAccessibleDescription(
+      QStringLiteral("Add a composition as a render job."));
   impl_->addButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/add.svg")));
   {
@@ -1024,6 +1027,9 @@ namespace Artifact
   
   auto* btnLayout = new QHBoxLayout();
   impl_->removeButton = new QPushButton("Remove");
+  impl_->removeButton->setAccessibleName(QStringLiteral("Remove render job"));
+  impl_->removeButton->setAccessibleDescription(
+      QStringLiteral("Remove the selected render job from the queue."));
   impl_->removeButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/delete.svg")));
   impl_->duplicateButton = new QToolButton();
@@ -1231,6 +1237,12 @@ namespace Artifact
   auto* historyButtonLayout = new QHBoxLayout();
   impl_->clearHistoryButton = new QPushButton("Clear");
   impl_->exportHistoryButton = new QPushButton("Export...");
+  impl_->clearHistoryButton->setAccessibleName(QStringLiteral("Clear render history"));
+  impl_->clearHistoryButton->setAccessibleDescription(
+      QStringLiteral("Remove all entries from the render history."));
+  impl_->exportHistoryButton->setAccessibleName(QStringLiteral("Export render history"));
+  impl_->exportHistoryButton->setAccessibleDescription(
+      QStringLiteral("Save the render history to a file."));
   impl_->clearHistoryButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/clear_all.svg")));
   impl_->exportHistoryButton->setIcon(
@@ -1248,6 +1260,9 @@ namespace Artifact
   impl_->summaryLabel = new QLabel("Ready");
   impl_->statusLabel = new QLabel("No active jobs");
   impl_->startButton = new QPushButton("Start Queue");
+  impl_->startButton->setAccessibleName(QStringLiteral("Start render queue"));
+  impl_->startButton->setAccessibleDescription(
+      QStringLiteral("Start processing the queued render jobs."));
   impl_->startButton->setObjectName("renderStartBtn");
   impl_->startButton->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/figma_media_play.svg")));
