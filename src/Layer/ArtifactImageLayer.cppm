@@ -460,6 +460,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
     impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
     impl_->sourcePath_ = path;
     impl_->cache_.reset();
+    impl_->sequenceCachedIndex_ = -1;
     const auto version = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
     impl_->cacheBuffer_ = ArtifactCore::staticPointerCast<ArtifactCore::ImageF32x4_RGBA>(
         ArtifactCore::AssetManager::instance().decodedPayload(
