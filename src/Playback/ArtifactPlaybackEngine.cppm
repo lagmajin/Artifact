@@ -89,6 +89,7 @@ public:
     size_t audioOpenRetryCount_ = 0;
     size_t audioResyncClearCount_ = 0;
     size_t audioClockCorrectionCount_ = 0;
+    size_t audioFormatMismatchCount_ = 0;
     std::atomic<bool> audioSeekPending_{true};
     bool audioExhausted_ = false;  // 音声データが尽きたフラグ（再シーク時にリセット）
     
@@ -596,6 +597,19 @@ public:
                            << "bufferedFrames=" << audioRenderer_->bufferedFrames();
                 break;
             }
+            const int rendererSampleRate = audioRenderer_->sampleRate();
+            const int rendererChannels = audioRenderer_->channelCount();
+            if ((rendererSampleRate > 0 && segment.sampleRate != rendererSampleRate) ||
+                (rendererChannels > 0 && segment.channelCount() != rendererChannels)) {
+                ++audioFormatMismatchCount_;
+                if (audioFormatMismatchCount_ <= 4) {
+                    qWarning() << "[PlaybackEngine][Audio] format mismatch"
+                               << "sourceSampleRate=" << segment.sampleRate
+                               << "rendererSampleRate=" << rendererSampleRate
+                               << "sourceChannels=" << segment.channelCount()
+                               << "rendererChannels=" << rendererChannels;
+                }
+            }
             audioRenderer_->enqueue(segment);
             ++audioNextFrame_;
         }
@@ -1017,6 +1031,7 @@ ArtifactPlaybackAudioDiagnostics ArtifactPlaybackEngine::audioDiagnostics() cons
     diagnostics.overflowCount = impl_->audioRenderer_->overflowCount();
     diagnostics.sampleRate = impl_->audioSampleRate_;
     diagnostics.channelCount = impl_->audioRenderer_->channelCount();
+    diagnostics.formatMismatchCount = impl_->audioFormatMismatchCount_;
     return diagnostics;
 }
 

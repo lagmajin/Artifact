@@ -73,6 +73,7 @@ struct ArtifactPlaybackAudioDiagnostics {
     std::size_t overflowCount = 0;
     int sampleRate = 0;
     int channelCount = 0;
+    std::size_t formatMismatchCount = 0;
 };
 
 /// 再生スレッドエンジン
