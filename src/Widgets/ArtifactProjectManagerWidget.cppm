@@ -5829,6 +5829,52 @@ public:
             .arg(unusedText);
     }
 
+    qint64 selectedFootageBytes() const {
+        if (!projectView_ || !projectView_->selectionModel()) {
+            return 0;
+        }
+        qint64 total = 0;
+        const auto rows = projectView_->selectionModel()->selectedRows(0);
+        for (const auto& row : rows) {
+            QModelIndex sourceIdx = row;
+            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(sourceIdx.model())) {
+                sourceIdx = proxy->mapToSource(sourceIdx).siblingAtColumn(0);
+            }
+            const QVariant ptrVar = sourceIdx.data(
+                Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+            auto* item = ptrVar.isValid()
+                ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>())
+                : nullptr;
+            if (item && item->type() == eProjectItemType::Footage) {
+                const qint64 size = QFileInfo(static_cast<FootageItem*>(item)->filePath).size();
+                if (size > 0) {
+                    total += size;
+                }
+            }
+        }
+        return total;
+    }
+
+    QString selectedFootageSizeText() const {
+        const qint64 bytes = selectedFootageBytes();
+        if (bytes <= 0) {
+            return QString();
+        }
+        static const QStringList units{QStringLiteral("B"), QStringLiteral("KB"),
+                                       QStringLiteral("MB"), QStringLiteral("GB"),
+                                       QStringLiteral("TB")};
+        double value = static_cast<double>(bytes);
+        int unit = 0;
+        while (value >= 1024.0 && unit + 1 < units.size()) {
+            value /= 1024.0;
+            ++unit;
+        }
+        const QString number = value >= 100.0 ? QString::number(value, 'f', 0)
+                              : value >= 10.0 ? QString::number(value, 'f', 1)
+                                              : QString::number(value, 'f', 2);
+        return QStringLiteral("%1 %2").arg(number, units.at(unit));
+    }
+
     QString selectionStateText() const {
         const int selectedCount = projectView_ && projectView_->selectionModel()
             ? projectView_->selectionModel()->selectedRows(0).size()
@@ -5838,10 +5884,13 @@ public:
         const QString compositionPart = selectedCompositionCountValue > 0
             ? QStringLiteral(" · %1 comps").arg(selectedCompositionCountValue)
             : QString();
-        return QStringLiteral("%1 items  ·  %2 selected%3")
+        const QString sizeText = selectedFootageSizeText();
+        const QString sizePart = sizeText.isEmpty() ? QString() : QStringLiteral(" · %1").arg(sizeText);
+        return QStringLiteral("%1 items  ·  %2 selected%3%4")
             .arg(resultCount)
             .arg(selectedCount)
-            .arg(compositionPart);
+            .arg(compositionPart)
+            .arg(sizePart);
     }
 
     QString syncStateText() const {
