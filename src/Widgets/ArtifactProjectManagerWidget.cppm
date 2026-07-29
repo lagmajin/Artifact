@@ -6855,6 +6855,30 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->relinkSelectionButton->setObjectName(QStringLiteral("projectManagerRelinkSelectionButton"));
     impl_->copyPathButton = new QPushButton(QStringLiteral("Copy Path"), selectionChrome);
     impl_->copyPathButton->setObjectName(QStringLiteral("projectManagerCopyPathButton"));
+    impl_->openSelectionButton->setAccessibleDescription(
+        QStringLiteral("Open the selected project item."));
+    impl_->revealSelectionButton->setAccessibleDescription(
+        QStringLiteral("Reveal the selected item in the file browser."));
+    impl_->generateProxyButton->setAccessibleDescription(
+        QStringLiteral("Generate a proxy for the selected footage."));
+    impl_->revealProxyButton->setAccessibleDescription(
+        QStringLiteral("Reveal the selected footage proxy."));
+    impl_->clearProxyButton->setAccessibleDescription(
+        QStringLiteral("Remove the proxy from the selected footage."));
+    impl_->generateSelectedProxiesButton->setAccessibleDescription(
+        QStringLiteral("Generate proxies for all selected footage items."));
+    impl_->clearSelectedProxiesButton->setAccessibleDescription(
+        QStringLiteral("Remove proxies from all selected footage items."));
+    impl_->regenerateStaleProxiesButton->setAccessibleDescription(
+        QStringLiteral("Regenerate proxies whose source files have changed."));
+    impl_->renameSelectionButton->setAccessibleDescription(
+        QStringLiteral("Rename the selected project item."));
+    impl_->deleteSelectionButton->setAccessibleDescription(
+        QStringLiteral("Delete the selected project item."));
+    impl_->relinkSelectionButton->setAccessibleDescription(
+        QStringLiteral("Relink the selected footage to another source path."));
+    impl_->copyPathButton->setAccessibleDescription(
+        QStringLiteral("Copy the selected item path to the clipboard."));
     impl_->proxyGlobalToggle_ = new QCheckBox(QStringLiteral("Global Proxy"), selectionChrome);
     impl_->proxyGlobalToggle_->setObjectName(QStringLiteral("projectManagerGlobalProxyToggle"));
     impl_->proxyGlobalToggle_->setChecked(impl_->proxyGlobalEnabled_);
