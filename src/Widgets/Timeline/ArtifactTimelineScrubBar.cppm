@@ -204,15 +204,26 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
 
  void ArtifactTimelineScrubBar::setTotalFrames(int totalFrames)
  {
-  if (totalFrames > 0 && impl_->totalFrames_ != totalFrames) {
-   impl_->totalFrames_ = totalFrames;
-   impl_->cacheRangeStart_ = std::clamp(impl_->cacheRangeStart_, 0, totalFrames - 1);
-   impl_->cacheRangeEnd_ = std::clamp(impl_->cacheRangeEnd_, 0, totalFrames - 1);
-   if (impl_->currentFrame_.framePosition() >= totalFrames) {
-    setCurrentFrame(FramePosition(totalFrames - 1));
-   }
-   update();
+  const int normalizedTotalFrames = std::max(0, totalFrames);
+  if (impl_->totalFrames_ == normalizedTotalFrames) {
+   return;
   }
+  impl_->totalFrames_ = normalizedTotalFrames;
+  if (normalizedTotalFrames == 0) {
+   impl_->cacheRangeStart_ = 0;
+   impl_->cacheRangeEnd_ = 0;
+   impl_->currentFrame_ = FramePosition(0);
+   impl_->visualFrame_ = 0.0;
+  } else {
+   impl_->cacheRangeStart_ = std::clamp(impl_->cacheRangeStart_, 0,
+                                        normalizedTotalFrames - 1);
+   impl_->cacheRangeEnd_ = std::clamp(impl_->cacheRangeEnd_, 0,
+                                      normalizedTotalFrames - 1);
+   if (impl_->currentFrame_.framePosition() >= normalizedTotalFrames) {
+    setCurrentFrame(FramePosition(normalizedTotalFrames - 1));
+   }
+  }
+  update();
  }
 
  int ArtifactTimelineScrubBar::totalFrames() const
