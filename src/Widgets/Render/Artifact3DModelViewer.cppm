@@ -177,6 +177,8 @@ Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
     : QWidget(parent)
     , impl_(new Impl(this))
 {
+    setAccessibleName(QStringLiteral("3D model viewer"));
+    setAccessibleDescription(QStringLiteral("Inspect and navigate the active 3D model"));
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
     rootLayout->setSpacing(4);
@@ -187,7 +189,10 @@ Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
     toolbarLayout->setSpacing(8);
 
     auto* modeLabel = new QLabel("Viewport", toolbar);
+    modeLabel->setAccessibleName(QStringLiteral("Viewport shading label"));
     impl_->modeCombo = new QComboBox(toolbar);
+    impl_->modeCombo->setAccessibleName(QStringLiteral("Viewport shading mode"));
+    impl_->modeCombo->setAccessibleDescription(QStringLiteral("Choose solid, wireframe, or solid with wire shading"));
     impl_->modeCombo->addItem("Solid");
     impl_->modeCombo->addItem("Wireframe");
     impl_->modeCombo->addItem("Solid + Wire");
@@ -207,10 +212,13 @@ Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
     rootLayout->addWidget(impl_->renderContainer, 1);
 
     impl_->navHud_ = new NavHudLabel(this);
+    impl_->navHud_->setAccessibleName(QStringLiteral("3D navigation hint"));
     impl_->navHud_->setVisible(false);
     impl_->navHud_->adjustSize();
 
     impl_->statusLabel = new QLabel(this);
+    impl_->statusLabel->setAccessibleName(QStringLiteral("3D model status"));
+    impl_->statusLabel->setAccessibleDescription(QStringLiteral("Current model preview, geometry, bounds, and backend status"));
     impl_->statusLabel->setObjectName("Artifact3DViewerStatus");
     rootLayout->addWidget(impl_->statusLabel);
 
