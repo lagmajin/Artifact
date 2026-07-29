@@ -547,7 +547,9 @@ bool ArtifactImageLayer::setImageSequence(const QStringList& framePaths, double 
         return false;
     }
     impl_->sequencePaths_ = normalizedPaths;
-    impl_->sequenceFrameRate_ = frameRate > 0.0 ? frameRate : 0.0;
+    impl_->sequenceFrameRate_ = std::isfinite(frameRate) && frameRate > 0.0
+        ? frameRate
+        : 0.0;
     impl_->sequenceSource_.reset();
     impl_->sequenceCachedIndex_ = -1;
     // 代表フレーム（先頭）を読み込んで表示・サイズを確定させる。
