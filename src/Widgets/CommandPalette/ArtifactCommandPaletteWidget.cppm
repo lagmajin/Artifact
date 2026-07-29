@@ -103,6 +103,8 @@ ArtifactCommandPaletteWidget::ArtifactCommandPaletteWidget(QWidget* parent)
 {
     setObjectName(QStringLiteral("ArtifactCommandPaletteWidget"));
     setWindowTitle(tr("Command Palette"));
+    setAccessibleName(tr("Command Palette"));
+    setAccessibleDescription(tr("Search and execute available application commands"));
     setModal(true);
     resize(640, 400);
 
@@ -111,16 +113,25 @@ ArtifactCommandPaletteWidget::ArtifactCommandPaletteWidget(QWidget* parent)
     layout->setSpacing(6);
 
     filterEdit_ = new QLineEdit(this);
+    filterEdit_->setAccessibleName(tr("Command search"));
+    filterEdit_->setAccessibleDescription(tr("Type a command to filter the command list"));
     filterEdit_->setObjectName(QStringLiteral("ArtifactCommandPaletteFilter"));
     filterEdit_->setPlaceholderText(tr("Type a command (fuzzy match, e.g. \"exp png\", \"key dup\", \"ease\")..."));
     filterEdit_->setClearButtonEnabled(true);
     layout->addWidget(filterEdit_);
 
     actionList_ = new QListWidget(this);
+    actionList_->setAccessibleName(tr("Available commands"));
+    actionList_->setAccessibleDescription(tr("Select a command to execute"));
     actionList_->setObjectName(QStringLiteral("ArtifactCommandPaletteList"));
     layout->addWidget(actionList_, 1);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
+    buttons->setAccessibleName(tr("Command palette actions"));
+    if (auto* cancelButton = buttons->button(QDialogButtonBox::Cancel)) {
+        cancelButton->setAccessibleName(tr("Close command palette"));
+        cancelButton->setAccessibleDescription(tr("Close without executing a command"));
+    }
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(filterEdit_, &QLineEdit::textChanged,
