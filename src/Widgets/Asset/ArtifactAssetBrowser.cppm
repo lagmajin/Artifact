@@ -130,8 +130,17 @@ import Audio.Segment;
 import Audio.SimpleWav;
 import Input.Operator;
 import Undo.UndoManager;
+import Settings.Accessibility;
 
 namespace Artifact {
+
+static QPoint accessibilityMenuPosition(const QMenu &menu,
+                                        const QPoint &origin) {
+  int x = origin.x();
+  int y = origin.y();
+  Accessibility::adjustContextMenuPosition(x, y, menu.sizeHint().width());
+  return QPoint(x, y);
+}
 
 namespace {
 
@@ -4455,7 +4464,8 @@ if (!item.isFolder) {
   }
 
   // Show menu at cursor position
-  QAction *chosenAction = contextMenu.exec(impl_->fileView_->mapToGlobal(pos));
+  QAction *chosenAction = contextMenu.exec(accessibilityMenuPosition(
+      contextMenu, impl_->fileView_->mapToGlobal(pos)));
   if (chosenAction && chosenAction->data().isValid()) {
     const QString framePath = chosenAction->data().toString();
     if (!framePath.isEmpty()) {
