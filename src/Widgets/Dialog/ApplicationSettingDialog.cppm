@@ -1384,6 +1384,8 @@ ShortcutSettingPage::Impl::~Impl() = default;
 
 ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Shortcut settings"));
+  setAccessibleDescription(QStringLiteral("Review and manage shortcut bindings for application and workspace commands"));
   impl_->layout_ = new QVBoxLayout(this);
   impl_->layout_->setContentsMargins(12, 12, 12, 12);
   impl_->layout_->setSpacing(10);
@@ -1402,6 +1404,8 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
   impl_->layout_->addWidget(impl_->contextsLabel_);
 
   impl_->table_ = new QTableWidget(this);
+  impl_->table_->setAccessibleName(QStringLiteral("Shortcut bindings table"));
+  impl_->table_->setAccessibleDescription(QStringLiteral("Read-only list of shortcut categories, actions, defaults, and current bindings"));
   impl_->table_->setColumnCount(4);
   impl_->table_->setHorizontalHeaderLabels({
       QStringLiteral("Category"),
@@ -1421,6 +1425,12 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
   footerLayout->addWidget(impl_->importPresetButton_ = new QPushButton(QStringLiteral("Import Preset"), this));
   footerLayout->addWidget(impl_->exportPresetButton_ = new QPushButton(QStringLiteral("Export Preset"), this));
   footerLayout->addWidget(impl_->resetDefaultsButton_ = new QPushButton(QStringLiteral("Reset to Defaults"), this));
+  impl_->importPresetButton_->setAccessibleName(QStringLiteral("Import shortcut preset"));
+  impl_->importPresetButton_->setAccessibleDescription(QStringLiteral("Load shortcut bindings from a preset"));
+  impl_->exportPresetButton_->setAccessibleName(QStringLiteral("Export shortcut preset"));
+  impl_->exportPresetButton_->setAccessibleDescription(QStringLiteral("Save current shortcut bindings as a preset"));
+  impl_->resetDefaultsButton_->setAccessibleName(QStringLiteral("Reset shortcuts to defaults"));
+  impl_->resetDefaultsButton_->setAccessibleDescription(QStringLiteral("Restore default shortcut bindings"));
   footerLayout->addStretch();
   impl_->importPresetButton_->installEventFilter(this);
   impl_->exportPresetButton_->installEventFilter(this);
