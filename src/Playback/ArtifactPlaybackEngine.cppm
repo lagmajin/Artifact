@@ -5,6 +5,8 @@
 #include <chrono>
 #include <mutex>
 #include <condition_variable>
+#include <cmath>
+#include <algorithm>
 #include <QThread>
 #include <QElapsedTimer>
 #include <QMetaObject>
@@ -34,6 +36,43 @@ import ArtifactCore.Utils.PerformanceProfiler;
 namespace Artifact {
 
 using namespace ArtifactCore;
+
+namespace {
+
+AudioSegment resampleAudioSegment(const AudioSegment& source,
+                                  const int targetSampleRate) {
+    if (targetSampleRate <= 0 || source.sampleRate <= 0 ||
+        source.sampleRate == targetSampleRate || source.frameCount() <= 0) {
+        return source;
+    }
+
+    const int sourceFrames = source.frameCount();
+    const int targetFrames = std::max(
+        1, static_cast<int>(std::llround(
+               static_cast<double>(sourceFrames) * targetSampleRate /
+               source.sampleRate)));
+    AudioSegment result = source;
+    result.sampleRate = targetSampleRate;
+    for (int channel = 0; channel < source.channelCount(); ++channel) {
+        const auto& input = source.channelData[channel];
+        auto& output = result.channelData[channel];
+        output.resize(targetFrames);
+        for (int frame = 0; frame < targetFrames; ++frame) {
+            const double sourcePosition =
+                static_cast<double>(frame) * source.sampleRate /
+                targetSampleRate;
+            const int first = std::min(
+                sourceFrames - 1, static_cast<int>(std::floor(sourcePosition)));
+            const int second = std::min(sourceFrames - 1, first + 1);
+            const float fraction = static_cast<float>(sourcePosition - first);
+            output[frame] = input[first] * (1.0f - fraction) +
+                            input[second] * fraction;
+        }
+    }
+    return result;
+}
+
+} // namespace
 
 W_OBJECT_IMPL(ArtifactPlaybackEngine)
 
@@ -610,7 +649,11 @@ public:
                                << "rendererChannels=" << rendererChannels;
                 }
             }
-            audioRenderer_->enqueue(segment);
+            const AudioSegment enqueueSegment =
+                rendererSampleRate > 0 && segment.sampleRate != rendererSampleRate
+                    ? resampleAudioSegment(segment, rendererSampleRate)
+                    : segment;
+            audioRenderer_->enqueue(enqueueSegment);
             ++audioNextFrame_;
         }
 
