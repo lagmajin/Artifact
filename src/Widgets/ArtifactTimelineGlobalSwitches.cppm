@@ -56,6 +56,8 @@ public:
             btn->setCheckable(true);
             btn->setFixedSize(28, 28);
             btn->setToolTip(tooltip);
+            btn->setAccessibleName(tooltip.section(QStringLiteral(" ("), 0, 0));
+            btn->setAccessibleDescription(tooltip);
             btn->setIcon(icon);
             btn->setIconSize(QSize(19, 19));
             btn->setFlat(true);
@@ -100,6 +102,9 @@ public:
 
 ArtifactTimelineGlobalSwitches::ArtifactTimelineGlobalSwitches(QWidget* parent)
     : QWidget(parent), impl_(new Impl()) {
+    setAccessibleName(QStringLiteral("Timeline global switches"));
+    setAccessibleDescription(
+        QStringLiteral("Toggle timeline-wide display and editing options"));
     impl_->setupUi(this);
 
     connect(impl_->shyBtn, &QPushButton::toggled, this, [this](bool v){
