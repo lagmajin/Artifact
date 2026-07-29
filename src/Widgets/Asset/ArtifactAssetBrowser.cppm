@@ -35,6 +35,7 @@ module;
 #include <QFileInfo>
 #include <QStyle>
 #include <QApplication>
+#include <QScreen>
 #include <QEvent>
 #include <QMenu>
 #include <QDesktopServices>
@@ -623,7 +624,15 @@ class HoverPreviewPopup final : public QFrame {
     details_->setText(QStringLiteral("%1\n%2  •  Size: %3  •  Modified: %4")
                           .arg(location, kind, size, modified));
     adjustSize();
-    move(globalPos + QPoint(18, 18));
+    QPoint popupPos = globalPos + QPoint(18, 18);
+    if (QScreen* screen = QApplication::screenAt(globalPos)) {
+      const QRect available = screen->availableGeometry();
+      popupPos.setX(qBound(available.left(), popupPos.x(),
+                           available.right() - width() + 1));
+      popupPos.setY(qBound(available.top(), popupPos.y(),
+                           available.bottom() - height() + 1));
+    }
+    move(popupPos);
     show();
     raise();
   }
