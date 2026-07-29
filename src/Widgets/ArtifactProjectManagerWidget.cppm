@@ -1887,6 +1887,7 @@ private:
         regexPattern_.clear();
         regexEnabled_ = false;
         missingOnly_ = false;
+        bool expressionTypeSeen = false;
 
         const QStringList tokens = rawExpression_.split(' ', Qt::SkipEmptyParts);
         for (const QString& token : tokens) {
@@ -1902,7 +1903,14 @@ private:
             }
             if (token.startsWith("type:", Qt::CaseInsensitive)) {
                 const QString v = token.mid(5).trimmed().toLower();
-                if (!v.isEmpty()) typeFilter_ = v;
+                if (!v.isEmpty()) {
+                    if (!expressionTypeSeen) {
+                        typeFilter_ = v;
+                        expressionTypeSeen = true;
+                    } else if (!typeFilter_.contains(v, Qt::CaseInsensitive)) {
+                        typeFilter_ += QStringLiteral(",") + v;
+                    }
+                }
                 continue;
             }
             if (token.compare("unused:true", Qt::CaseInsensitive) == 0 ||
