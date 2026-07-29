@@ -300,6 +300,11 @@ public:
             clearSequenceFrameCache();
             return false;
         }
+        if (width_ > 0 && height_ > 0 &&
+            (frame.width() != width_ || frame.height() != height_)) {
+            clearSequenceFrameCache();
+            return false;
+        }
         cache_ = ArtifactCore::makeShared<QImage>(frame);
         cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
             toFrameBuffer(frame));
