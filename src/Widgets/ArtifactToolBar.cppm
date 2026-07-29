@@ -650,6 +650,23 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
     impl_->gridToggleAction_->setChecked(true);
     impl_->guideToggleAction_->setChecked(true);
   }
+
+  // QAction text is not consistently exposed by screen readers when the
+  // toolbar is icon-only.  Mirror the existing action labels onto the actual
+  // tool buttons without changing the visual presentation.
+  for (auto *action : actions()) {
+    auto *button = qobject_cast<QToolButton *>(widgetForAction(action));
+    if (!button || action->text().isEmpty()) {
+      continue;
+    }
+    if (button->accessibleName().isEmpty()) {
+      button->setAccessibleName(action->text());
+    }
+    if (button->accessibleDescription().isEmpty() &&
+        !action->toolTip().isEmpty()) {
+      button->setAccessibleDescription(action->toolTip());
+    }
+  }
   setAutoFillBackground(true);
 }
 
