@@ -3545,7 +3545,8 @@ const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() cons
        }
      }
    }
-   if (style.join == PolylineJoin::Miter || style.join == PolylineJoin::Bevel) {
+   if (dashPattern.empty() &&
+       (style.join == PolylineJoin::Miter || style.join == PolylineJoin::Bevel)) {
      const float halfThickness = style.thickness * 0.5f;
      const std::size_t first = style.closed ? 0 : 1;
      const std::size_t last = style.closed ? points.size() : points.size() - 1;
@@ -3594,7 +3595,7 @@ const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() cons
        }
      }
    }
-   if (style.join == PolylineJoin::Round) {
+   if (dashPattern.empty() && style.join == PolylineJoin::Round) {
      const std::size_t first = style.closed ? 0 : 1;
      const std::size_t last = style.closed ? points.size() : points.size() - 1;
      for (std::size_t i = first; i < last; ++i) {
@@ -3603,7 +3604,7 @@ const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() cons
            p.x, p.y, style.thickness * 0.5f, color);
      }
    }
-   if (!style.closed && style.cap == PolylineCap::Round) {
+   if (dashPattern.empty() && !style.closed && style.cap == PolylineCap::Round) {
      const auto p0 = points.front();
      const auto p1 = points.back();
      impl_->primitiveRenderer_.drawSolidCircle(
