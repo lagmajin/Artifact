@@ -418,6 +418,8 @@ ImportSettingPage::Impl::~Impl() {}
 
 ImportSettingPage::ImportSettingPage(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Import settings"));
+  setAccessibleDescription(QStringLiteral("Configure default media interpretation and image sequence import behavior"));
   auto *mainLayout = new QVBoxLayout(this);
 
   // Media Import Group
@@ -428,6 +430,8 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
   auto *frameRateLayout = new QHBoxLayout();
   frameRateLayout->addWidget(new QLabel("Default Frame Rate:", this));
   impl_->defaultFrameRateCombo_ = new QComboBox(this);
+  impl_->defaultFrameRateCombo_->setAccessibleName(QStringLiteral("Default import frame rate"));
+  impl_->defaultFrameRateCombo_->setAccessibleDescription(QStringLiteral("Frame rate used when importing media without embedded timing"));
   impl_->defaultFrameRateCombo_->addItems({"23.976 fps", "24 fps", "25 fps",
                                            "29.97 fps", "30 fps", "50 fps",
                                            "59.94 fps", "60 fps"});
@@ -439,6 +443,8 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
   auto *colorSpaceLayout = new QHBoxLayout();
   colorSpaceLayout->addWidget(new QLabel("Color Space:", this));
   impl_->colorSpaceCombo_ = new QComboBox(this);
+  impl_->colorSpaceCombo_->setAccessibleName(QStringLiteral("Default import color space"));
+  impl_->colorSpaceCombo_->setAccessibleDescription(QStringLiteral("Color space used when importing media"));
   impl_->colorSpaceCombo_->addItems(
       {"sRGB", "Linear", "Rec.709", "Rec.2020", "DCI-P3", "Adobe RGB"});
   colorSpaceLayout->addWidget(impl_->colorSpaceCombo_);
@@ -449,6 +455,8 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
   auto *audioSampleLayout = new QHBoxLayout();
   audioSampleLayout->addWidget(new QLabel("Audio Sample Rate:", this));
   impl_->audioSampleRateCombo_ = new QComboBox(this);
+  impl_->audioSampleRateCombo_->setAccessibleName(QStringLiteral("Default audio sample rate"));
+  impl_->audioSampleRateCombo_->setAccessibleDescription(QStringLiteral("Sample rate used when importing audio"));
   impl_->audioSampleRateCombo_->addItems(
       {"44100 Hz", "48000 Hz", "96000 Hz", "192000 Hz"});
   audioSampleLayout->addWidget(impl_->audioSampleRateCombo_);
@@ -463,16 +471,22 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
 
   impl_->autoDetectAlphaCheckBox_ =
       new QCheckBox("Auto-detect alpha channel", this);
+  impl_->autoDetectAlphaCheckBox_->setAccessibleName(QStringLiteral("Auto-detect alpha channel"));
+  impl_->autoDetectAlphaCheckBox_->setAccessibleDescription(QStringLiteral("Detect transparency information when importing images"));
   footageLayout->addWidget(impl_->autoDetectAlphaCheckBox_);
 
   impl_->interpretFootageCheckBox_ =
       new QCheckBox("Interpret footage on import", this);
+  impl_->interpretFootageCheckBox_->setAccessibleName(QStringLiteral("Interpret footage on import"));
+  impl_->interpretFootageCheckBox_->setAccessibleDescription(QStringLiteral("Apply footage interpretation settings during import"));
   footageLayout->addWidget(impl_->interpretFootageCheckBox_);
 
   // Field Order
   auto *fieldOrderLayout = new QHBoxLayout();
   fieldOrderLayout->addWidget(new QLabel("Field Order:", this));
   impl_->fieldOrderCombo_ = new QComboBox(this);
+  impl_->fieldOrderCombo_->setAccessibleName(QStringLiteral("Field order"));
+  impl_->fieldOrderCombo_->setAccessibleDescription(QStringLiteral("Choose the field order for interlaced footage"));
   impl_->fieldOrderCombo_->addItems(
       {"Progressive", "Upper Field First", "Lower Field First"});
   fieldOrderLayout->addWidget(impl_->fieldOrderCombo_);
@@ -489,6 +503,8 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
   auto *durationLayout = new QHBoxLayout();
   durationLayout->addWidget(new QLabel("Still Image Duration:", this));
   impl_->stillDurationSpinBox_ = new QSpinBox(this);
+  impl_->stillDurationSpinBox_->setAccessibleName(QStringLiteral("Still image duration"));
+  impl_->stillDurationSpinBox_->setAccessibleDescription(QStringLiteral("Default duration of imported still images in seconds"));
   impl_->stillDurationSpinBox_->setRange(1, 3600);
   impl_->stillDurationSpinBox_->setSuffix(" seconds");
   durationLayout->addWidget(impl_->stillDurationSpinBox_);
@@ -497,6 +513,8 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
 
   impl_->createCompositionCheckBox_ =
       new QCheckBox("Create composition when importing sequences", this);
+  impl_->createCompositionCheckBox_->setAccessibleName(QStringLiteral("Create composition for image sequences"));
+  impl_->createCompositionCheckBox_->setAccessibleDescription(QStringLiteral("Create a composition automatically when importing a numbered image sequence"));
   sequenceLayout->addWidget(impl_->createCompositionCheckBox_);
 
   mainLayout->addWidget(sequenceGroup);
