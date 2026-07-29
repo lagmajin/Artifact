@@ -14,7 +14,11 @@ ArtifactBoolPropertyEditor::ArtifactBoolPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyBoolEditor"));
+  setAccessibleName(QStringLiteral("Boolean property editor"));
+  setAccessibleDescription(QStringLiteral("Toggle the selected boolean property"));
   toggleSwitch_ = new ArtifactToggleSwitch(this);
+  toggleSwitch_->setAccessibleName(QStringLiteral("Boolean property value"));
+  toggleSwitch_->setAccessibleDescription(QStringLiteral("Turn the selected property on or off"));
   applyPropertyFieldPalette(toggleSwitch_);
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
