@@ -277,6 +277,15 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   colorDeficiencyLayout->addWidget(impl_->colorDeficiencyCombo_);
   colorDeficiencyLayout->addStretch();
   accessibilityLayout->addLayout(colorDeficiencyLayout);
+  setTabOrder(impl_->handednessCombo_, impl_->largeTargetsCheckBox_);
+  setTabOrder(impl_->largeTargetsCheckBox_,
+              impl_->highContrastHintsCheckBox_);
+  setTabOrder(impl_->highContrastHintsCheckBox_,
+              impl_->reduceHoverDependencyCheckBox_);
+  setTabOrder(impl_->reduceHoverDependencyCheckBox_,
+              impl_->accessibilityFontScaleSpinBox_);
+  setTabOrder(impl_->accessibilityFontScaleSpinBox_,
+              impl_->colorDeficiencyCombo_);
   uiLayout->addWidget(accessibilityGroup);
 
   mainLayout->addWidget(uiGroup);
