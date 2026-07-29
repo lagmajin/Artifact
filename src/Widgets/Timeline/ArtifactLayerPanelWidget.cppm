@@ -2445,14 +2445,20 @@ public:
                           ? stateMatch
                           : l->layerName().contains(needle, Qt::CaseInsensitive);
        bool propMatch = false;
-       if (!stateQuery && searchInProperties_ && !nameMatch) {
+       const bool searchPropertyGroups = !stateQuery &&
+                                         (searchInProperties_ ||
+                                          queryKey == QStringLiteral("fx"));
+       if (searchPropertyGroups && !nameMatch) {
          const auto groups = l->getLayerPropertyGroups();
          for (const auto& group : groups) {
            if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
                    group.name())) {
             continue;
            }
-           if (group.name().contains(needle, Qt::CaseInsensitive)) {
+           const QString groupNeedle = queryKey == QStringLiteral("fx")
+                                         ? queryValue
+                                         : needle;
+           if (group.name().contains(groupNeedle, Qt::CaseInsensitive)) {
              propMatch = true;
              break;
            }
