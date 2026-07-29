@@ -1612,17 +1612,19 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
     }
 
     if (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f && mapped.size() >= 2) {
-     const int edgeCount = closed ? static_cast<int>(mapped.size())
-                                  : static_cast<int>(mapped.size()) - 1;
-     for (int i = 0; i < edgeCount; ++i) {
-      const int next = (i + 1) % static_cast<int>(mapped.size());
-      renderer->drawThickLineLocal(
-          {static_cast<float>(mapped[static_cast<size_t>(i)].x()),
-           static_cast<float>(mapped[static_cast<size_t>(i)].y())},
-          {static_cast<float>(mapped[static_cast<size_t>(next)].x()),
-           static_cast<float>(mapped[static_cast<size_t>(next)].y())},
-          std::max(1.0f, impl->strokeWidth_), stroke);
+     std::vector<Detail::float2> strokePoints;
+     strokePoints.reserve(mapped.size());
+     for (const auto& point : mapped) {
+      strokePoints.push_back({static_cast<float>(point.x()),
+                              static_cast<float>(point.y())});
      }
+     PolylineStyle style;
+     style.thickness = std::max(1.0f, impl->strokeWidth_);
+     style.cap = static_cast<PolylineCap>(impl->strokeCap_);
+     style.join = static_cast<PolylineJoin>(impl->strokeJoin_);
+     style.closed = closed;
+     style.dashPattern = impl->dashPattern_;
+     renderer->drawStyledPolyline(strokePoints, style, stroke);
     }
   });
   drawFractureOverlay(renderer, baseTransform, QSizeF(impl_->width_, impl_->height_),
