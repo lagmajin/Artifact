@@ -83,6 +83,69 @@ QPointF mapPoint(const QMatrix4x4& transform, const QPointF& point) {
  return QPointF(v.x(), v.y());
 }
 
+void drawDashedNativeStroke(
+    Artifact::ArtifactIRenderer* renderer,
+    const std::vector<std::vector<ArtifactCore::BezierSegment>>& subpaths,
+    const QMatrix4x4& transform,
+    const std::vector<float>& pattern,
+    float width,
+    const ArtifactCore::FloatColor& color) {
+  if (!renderer || pattern.empty() || width <= 0.0f) {
+    return;
+  }
+
+  std::vector<float> normalized;
+  normalized.reserve(pattern.size() + (pattern.size() % 2));
+  for (const float value : pattern) {
+    if (std::isfinite(value) && value > 1.0e-4f) {
+      normalized.push_back(value);
+    }
+  }
+  if (normalized.empty()) {
+    return;
+  }
+  if (normalized.size() % 2 != 0) {
+    normalized.insert(normalized.end(), normalized.begin(), normalized.end());
+  }
+
+  for (const auto& segments : subpaths) {
+    std::size_t patternIndex = 0;
+    float patternRemaining = normalized.front();
+    bool drawing = true;
+    for (const auto& segment : segments) {
+      const QPointF start = segment.p0;
+      const QPointF end = segment.p1;
+      const QPointF delta = end - start;
+      const double length = std::hypot(delta.x(), delta.y());
+      if (length <= 1.0e-6) {
+        continue;
+      }
+
+      double consumed = 0.0;
+      while (consumed < length - 1.0e-6) {
+        const double step = std::min<double>(patternRemaining, length - consumed);
+        const double t0 = consumed / length;
+        const double t1 = (consumed + step) / length;
+        if (drawing) {
+          const QPointF p0 = mapPoint(transform, start + delta * t0);
+          const QPointF p1 = mapPoint(transform, start + delta * t1);
+          renderer->drawThickLineLocal(
+              {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+              {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
+              width, color);
+        }
+        consumed += step;
+        patternRemaining -= static_cast<float>(step);
+        if (patternRemaining <= 1.0e-4f) {
+          patternIndex = (patternIndex + 1) % normalized.size();
+          patternRemaining = normalized[patternIndex];
+          drawing = !drawing;
+        }
+      }
+    }
+  }
+}
+
 float compositionFieldContentWeight(const Artifact::ArtifactShapeLayer* layer) {
  if (!layer) {
   return 1.0f;
@@ -793,7 +856,7 @@ public:
           strokeCap_ != StrokeCap::Flat ||
           strokeJoin_ != StrokeJoin::Miter ||
           strokeAlign_ != StrokeAlign::Center ||
-          !dashPattern_.empty() ||
+          (!dashPattern_.empty() && customPathVertices_.empty()) ||
           !shapeOperators_.empty() ||
           hasCustomStrokeEffects();
   }
@@ -1488,14 +1551,20 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
       }
      }
      if (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f) {
-      for (const auto& segments : subpaths) {
-       for (const auto& segment : segments) {
-        const QPointF p0 = mapPoint(transform, segment.p0);
-        const QPointF p1 = mapPoint(transform, segment.p1);
-        renderer->drawThickLineLocal(
-            {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
-            {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
-            std::max(1.0f, impl->strokeWidth_), stroke);
+      if (!impl->dashPattern_.empty()) {
+       drawDashedNativeStroke(renderer, subpaths, transform,
+                              impl->dashPattern_,
+                              std::max(1.0f, impl->strokeWidth_), stroke);
+      } else {
+       for (const auto& segments : subpaths) {
+        for (const auto& segment : segments) {
+         const QPointF p0 = mapPoint(transform, segment.p0);
+         const QPointF p1 = mapPoint(transform, segment.p1);
+         renderer->drawThickLineLocal(
+             {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+             {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
+             std::max(1.0f, impl->strokeWidth_), stroke);
+        }
        }
       }
      }

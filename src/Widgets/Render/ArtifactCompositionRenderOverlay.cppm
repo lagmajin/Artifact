@@ -255,7 +255,17 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
   renderer->set3DCameraMatrices(*cameraView, *cameraProj);
 
   std::unordered_set<quint64> visitedEdges;
-  constexpr int kMaxOverlayPolygons = 24000;
+  const int kMaxOverlayPolygons = [&] {
+    switch (renderer->detailLevel()) {
+    case LODManager::DetailLevel::Low:
+      return 4000;
+    case LODManager::DetailLevel::Medium:
+      return 12000;
+    case LODManager::DetailLevel::High:
+    default:
+      return 24000;
+    }
+  }();
   const int polygonStride = std::max(
       1, (mesh.polygonCount() + kMaxOverlayPolygons - 1) / kMaxOverlayPolygons);
   const int sampledPolygonCount =
@@ -297,7 +307,8 @@ void draw3DSelectionWireframeOverlayImpl(ArtifactIRenderer *renderer,
     }
   }
 
-  if (normals && normals->data().size() == vertexPositions.size()) {
+  if (normals && normals->data().size() == vertexPositions.size() &&
+      renderer->detailLevel() != LODManager::DetailLevel::Low) {
     const int normalStride = std::max<int>(
         1, static_cast<int>((vertexPositions.size() + kMaxOverlayPolygons - 1) /
                             kMaxOverlayPolygons));
