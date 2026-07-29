@@ -61,6 +61,7 @@ module;
 #include <QProgressBar>
 #include <QStandardPaths>
 #include <QCoreApplication>
+#include <QSettings>
 #include <QPointer>
 #include <QSet>
 #include <QDialog>
@@ -6945,6 +6946,13 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->viewModeBox->setToolTip(QStringLiteral("Switch between hierarchy-first Tree view and visual Tile view."));
     impl_->unusedOnlyCheck = new QCheckBox("Unused only", filterBarHost);
     impl_->unusedOnlyCheck->setObjectName(QStringLiteral("projectManagerUnusedOnlyCheck"));
+    QSettings projectViewSettings;
+    impl_->typeFilterBox->setCurrentText(projectViewSettings.value(
+        QStringLiteral("ProjectView/TypeFilter"), QStringLiteral("All")).toString());
+    impl_->viewModeBox->setCurrentText(projectViewSettings.value(
+        QStringLiteral("ProjectView/ViewMode"), QStringLiteral("Tree")).toString());
+    impl_->unusedOnlyCheck->setChecked(projectViewSettings.value(
+        QStringLiteral("ProjectView/UnusedOnly"), false).toBool());
     const auto applyProjectControlPalette = [](QWidget* control) {
         if (!control) {
             return;
@@ -6999,6 +7007,10 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
     impl_->projectView_ = new ArtifactProjectView(this);
     impl_->projectView_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    if (impl_->viewModeBox && impl_->viewModeBox->currentText().compare(
+            QStringLiteral("Tile"), Qt::CaseInsensitive) == 0) {
+        impl_->projectView_->setPresentationMode(ArtifactProjectView::PresentationMode::Tile);
+    }
 
     auto* contentSplit = new QSplitter(Qt::Horizontal, this);
     contentSplit->setObjectName(QStringLiteral("projectManagerContentSplit"));
@@ -7051,6 +7063,10 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
     connect(impl_->searchBar, &QLineEdit::textChanged, [this](const QString& t) { impl_->handleSearch(t); });
     connect(impl_->typeFilterBox, &QComboBox::currentTextChanged, [this](const QString&) {
+        if (impl_->typeFilterBox) {
+            QSettings settings;
+            settings.setValue(QStringLiteral("ProjectView/TypeFilter"), impl_->typeFilterBox->currentText());
+        }
         impl_->handleSearch(impl_->searchBar ? impl_->searchBar->text() : QString());
     });
     connect(impl_->viewModeBox, &QComboBox::currentTextChanged, [this](const QString& modeText) {
@@ -7061,10 +7077,16 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->projectView_->setPresentationMode(tileMode
                                                      ? ArtifactProjectView::PresentationMode::Tile
                                                      : ArtifactProjectView::PresentationMode::List);
+        QSettings settings;
+        settings.setValue(QStringLiteral("ProjectView/ViewMode"), modeText);
         impl_->refreshSelectionChrome();
         scheduleProjectViewRefresh(impl_->projectView_);
     });
     connect(impl_->unusedOnlyCheck, &QCheckBox::toggled, [this](bool) {
+        if (impl_->unusedOnlyCheck) {
+            QSettings settings;
+            settings.setValue(QStringLiteral("ProjectView/UnusedOnly"), impl_->unusedOnlyCheck->isChecked());
+        }
         impl_->handleSearch(impl_->searchBar ? impl_->searchBar->text() : QString());
     });
     connect(impl_->openSelectionButton, &QPushButton::clicked, this, [this]() {
