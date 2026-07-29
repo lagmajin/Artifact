@@ -42,6 +42,8 @@ QString fallbackActionText(ArtifactCore::FallbackAction action) {
 FallbackDiagnosticsPanel::FallbackDiagnosticsPanel(QWidget* parent)
     : QWidget(parent)
 {
+    setAccessibleName(QStringLiteral("Fallback diagnostics"));
+    setAccessibleDescription(QStringLiteral("Review fallback events, warnings, and resolved resources"));
     setupUi();
     refresh();
 }
@@ -54,6 +56,7 @@ void FallbackDiagnosticsPanel::setupUi()
 
     auto* header = new QHBoxLayout;
     auto* titleLabel = new QLabel(QStringLiteral("Fallback Diagnostics"));
+    titleLabel->setAccessibleName(QStringLiteral("Fallback diagnostics heading"));
     QFont titleFont = titleLabel->font();
     titleFont.setBold(true);
     titleLabel->setFont(titleFont);
@@ -62,6 +65,8 @@ void FallbackDiagnosticsPanel::setupUi()
     header->addStretch();
 
     filterCombo_ = new QComboBox;
+    filterCombo_->setAccessibleName(QStringLiteral("Fallback category filter"));
+    filterCombo_->setAccessibleDescription(QStringLiteral("Filter fallback events by category"));
     filterCombo_->addItem(QStringLiteral("All"));
     filterCombo_->addItem(QStringLiteral("Font"));
     filterCombo_->addItem(QStringLiteral("Image"));
@@ -72,14 +77,20 @@ void FallbackDiagnosticsPanel::setupUi()
     header->addWidget(filterCombo_);
 
     refreshButton_ = new QPushButton(QStringLiteral("Refresh"));
+    refreshButton_->setAccessibleName(QStringLiteral("Refresh fallback diagnostics"));
+    refreshButton_->setAccessibleDescription(QStringLiteral("Reload the fallback event list"));
     header->addWidget(refreshButton_);
 
     clearButton_ = new QPushButton(QStringLiteral("Clear"));
+    clearButton_->setAccessibleName(QStringLiteral("Clear fallback diagnostics"));
+    clearButton_->setAccessibleDescription(QStringLiteral("Remove all recorded fallback events"));
     header->addWidget(clearButton_);
 
     layout->addLayout(header);
 
     tree_ = new QTreeWidget;
+    tree_->setAccessibleName(QStringLiteral("Fallback events table"));
+    tree_->setAccessibleDescription(QStringLiteral("List of fallback events, actions, and resolved resources"));
     tree_->setColumnCount(5);
     tree_->setHeaderLabels({
         QStringLiteral("Time"),
@@ -95,6 +106,7 @@ void FallbackDiagnosticsPanel::setupUi()
     layout->addWidget(tree_, 1);
 
     summaryLabel_ = new QLabel;
+    summaryLabel_->setAccessibleName(QStringLiteral("Fallback diagnostics summary"));
     layout->addWidget(summaryLabel_);
 
     connect(refreshButton_, &QPushButton::clicked, this, &FallbackDiagnosticsPanel::refresh);
