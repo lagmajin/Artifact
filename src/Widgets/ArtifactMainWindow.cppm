@@ -2381,6 +2381,32 @@ void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {
 }
 
 void ArtifactMainWindow::keyPressEvent(QKeyEvent *event) {
+  if (event && event->modifiers() == Qt::ControlModifier) {
+    WorkspaceMode quickMode;
+    bool handled = true;
+    switch (event->key()) {
+    case Qt::Key_1:
+      quickMode = WorkspaceMode::Default;
+      break;
+    case Qt::Key_2:
+      quickMode = WorkspaceMode::Animation;
+      break;
+    case Qt::Key_3:
+      quickMode = WorkspaceMode::Compositing;
+      break;
+    case Qt::Key_4:
+      quickMode = WorkspaceMode::Audio;
+      break;
+    default:
+      handled = false;
+      break;
+    }
+    if (handled) {
+      setWorkspaceMode(quickMode);
+      event->accept();
+      return;
+    }
+  }
 #ifdef ARTIFACT_FEATURE_COMMAND_PALETTE
   if (event && event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) &&
       event->key() == Qt::Key_P) {
