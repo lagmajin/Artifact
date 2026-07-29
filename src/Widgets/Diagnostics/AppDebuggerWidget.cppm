@@ -1199,6 +1199,22 @@ public:
         parts << QStringLiteral("dropped=%1")
                      .arg(playbackSvc ? QString::number(playbackSvc->droppedFrameCount())
                                       : QStringLiteral("<no service>"));
+        if (playbackSvc) {
+            const auto audio = playbackSvc->audioDiagnostics();
+            parts << QStringLiteral("audioDevice=%1")
+                         .arg(audio.deviceOpen ? QStringLiteral("open")
+                                               : QStringLiteral("closed"));
+            parts << QStringLiteral("audioBuffer=%1/%2")
+                         .arg(QString::number(audio.bufferedFrames))
+                         .arg(QString::number(audio.targetBufferedFrames));
+            parts << QStringLiteral("audioFormat=%1Hz/%2ch mismatch=%3")
+                         .arg(QString::number(audio.sampleRate))
+                         .arg(QString::number(audio.channelCount))
+                         .arg(QString::number(audio.formatMismatchCount));
+            parts << QStringLiteral("audioUnderrun=%1 overrun=%2")
+                         .arg(QString::number(audio.underflowCount))
+                         .arg(QString::number(audio.overflowCount));
+        }
         return parts.join(QStringLiteral("  "));
     }
 
