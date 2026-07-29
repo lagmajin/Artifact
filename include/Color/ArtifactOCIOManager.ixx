@@ -56,6 +56,14 @@ public:
     /// Apply OCIO view transform (working→display) to an image.
     void applyViewTransformToImage(ArtifactCore::ImageF32x4_RGBA& image) const;
 
+    /// Explicitly decode a source interpretation and convert RGB into the
+    /// active working space. Alpha is preserved and no range clamp is applied.
+    /// Empty source values mean that the caller has already supplied linear RGB.
+    void applyInputTransformToWorkingImage(
+        ArtifactCore::ImageF32x4_RGBA& image,
+        const QString& sourceColorSpace,
+        const QString& sourceTransferFunction) const;
+
     // Persistence
     QJsonObject toJson() const;
     bool fromJson(const QJsonObject& obj);

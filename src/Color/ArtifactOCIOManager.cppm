@@ -320,6 +320,45 @@ ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
     });
 }
 
+void ArtifactOCIOManager::applyInputTransformToWorkingImage(
+    ArtifactCore::ImageF32x4_RGBA& image,
+    const QString& sourceColorSpace,
+    const QString& sourceTransferFunction) const
+{
+    if (!impl_->config_.isValid() || !image.rgba32fData()) {
+        return;
+    }
+
+    const auto sourceCS = Impl::mapOCIOColorSpaceToEnum(sourceColorSpace);
+    const auto workingCS = Impl::mapOCIOColorSpaceToEnum(impl_->workingSpace_);
+    const QString transfer = sourceTransferFunction.trimmed().toLower();
+    const auto gamma = transfer == QLatin1String("srgb")
+                           ? ArtifactCore::GammaFunction::sRGB
+                           : transfer == QLatin1String("gamma22")
+                                 ? ArtifactCore::GammaFunction::Gamma22
+                                 : transfer == QLatin1String("gamma24")
+                                       ? ArtifactCore::GammaFunction::Gamma24
+                                       : ArtifactCore::GammaFunction::Linear;
+    const auto matrix = ArtifactCore::ColorSpaceConverter::getConversionMatrix(
+        sourceCS, workingCS);
+
+    const int w = image.width();
+    const int h = image.height();
+    float* data = image.rgba32fData();
+    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        float* row = data + static_cast<size_t>(y) * static_cast<size_t>(w) * 4u;
+        for (int x = 0; x < w; ++x) {
+            float* pixel = row + static_cast<size_t>(x) * 4u;
+            const float r = ArtifactCore::ColorSpaceConverter::removeGamma(pixel[0], gamma);
+            const float g = ArtifactCore::ColorSpaceConverter::removeGamma(pixel[1], gamma);
+            const float b = ArtifactCore::ColorSpaceConverter::removeGamma(pixel[2], gamma);
+            pixel[0] = matrix[0] * r + matrix[1] * g + matrix[2] * b;
+            pixel[1] = matrix[4] * r + matrix[5] * g + matrix[6] * b;
+            pixel[2] = matrix[8] * r + matrix[9] * g + matrix[10] * b;
+        }
+    });
+}
+
 QJsonObject ArtifactOCIOManager::toJson() const
 {
     QJsonObject obj;
