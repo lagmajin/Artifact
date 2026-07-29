@@ -655,6 +655,8 @@ public:
         overviewLayout->setContentsMargins(0, 0, 0, 0);
         overviewLayout->setSpacing(0);
         overviewSummary_ = new QLabel(overviewPage_);
+        overviewSummary_->setAccessibleName(QStringLiteral("Overview summary"));
+        overviewSummary_->setAccessibleDescription(QStringLiteral("Current render overview, warning, and next action"));
         overviewSummary_->setTextFormat(Qt::PlainText);
         overviewSummary_->setWordWrap(true);
         overviewSummary_->setMinimumHeight(56);
@@ -668,6 +670,8 @@ public:
         captureLayout->setContentsMargins(0, 0, 0, 0);
         captureLayout->setSpacing(0);
         captureSummary_ = new QLabel(capturePage_);
+        captureSummary_->setAccessibleName(QStringLiteral("Capture summary"));
+        captureSummary_->setAccessibleDescription(QStringLiteral("Current frame capture and bundle summary"));
         captureSummary_->setTextFormat(Qt::PlainText);
         captureSummary_->setWordWrap(true);
         captureSummary_->setMinimumHeight(56);
@@ -714,6 +718,8 @@ public:
         stateLayout->setContentsMargins(0, 0, 0, 0);
         stateLayout->setSpacing(0);
         stateSummary_ = new QLabel(statePage_);
+        stateSummary_->setAccessibleName(QStringLiteral("State summary"));
+        stateSummary_->setAccessibleDescription(QStringLiteral("Current application state, warning, and next action"));
         stateSummary_->setTextFormat(Qt::PlainText);
         stateSummary_->setWordWrap(true);
         stateSummary_->setMinimumHeight(56);
@@ -747,6 +753,8 @@ public:
         playbackLayout->setContentsMargins(0, 0, 0, 0);
         playbackLayout->setSpacing(0);
         playbackSummary_ = new QLabel(playbackPage_);
+        playbackSummary_->setAccessibleName(QStringLiteral("Playback summary"));
+        playbackSummary_->setAccessibleDescription(QStringLiteral("Current playback state and health summary"));
         playbackSummary_->setTextFormat(Qt::PlainText);
         playbackSummary_->setWordWrap(true);
         playbackSummary_->setMinimumHeight(56);
@@ -837,6 +845,8 @@ public:
         frameLayout->setContentsMargins(0, 0, 0, 0);
         frameLayout->setSpacing(0);
         frameSummary_ = new QLabel(framePage_);
+        frameSummary_->setAccessibleName(QStringLiteral("Frame summary"));
+        frameSummary_->setAccessibleDescription(QStringLiteral("Current frame render and resource summary"));
         frameSummary_->setTextFormat(Qt::PlainText);
         frameSummary_->setWordWrap(true);
         frameSummary_->setMinimumHeight(56);
@@ -857,6 +867,8 @@ public:
         diagnosticsLayout->setContentsMargins(0, 0, 0, 0);
         diagnosticsLayout->setSpacing(0);
         diagnosticsSummary_ = new QLabel(diagnosticsPage_);
+        diagnosticsSummary_->setAccessibleName(QStringLiteral("Diagnostics summary"));
+        diagnosticsSummary_->setAccessibleDescription(QStringLiteral("Current crash, health, and diagnostic summary"));
         diagnosticsSummary_->setTextFormat(Qt::PlainText);
         diagnosticsSummary_->setWordWrap(true);
         diagnosticsSummary_->setMinimumHeight(56);
@@ -870,6 +882,8 @@ public:
         exportLayout->setContentsMargins(0, 0, 0, 0);
         exportLayout->setSpacing(0);
         exportSummary_ = new QLabel(exportPage_);
+        exportSummary_->setAccessibleName(QStringLiteral("Export summary"));
+        exportSummary_->setAccessibleDescription(QStringLiteral("Current export and bundle readiness summary"));
         exportSummary_->setTextFormat(Qt::PlainText);
         exportSummary_->setWordWrap(true);
         exportSummary_->setMinimumHeight(56);
@@ -2556,6 +2570,8 @@ public:
 AppDebuggerWidget::AppDebuggerWidget(CompositionRenderController* controller, QWidget* parent)
     : QWidget(parent), impl_(new Impl(this, controller))
 {
+    setAccessibleName(QStringLiteral("App Debugger"));
+    setAccessibleDescription(QStringLiteral("Inspect render, playback, capture, and diagnostic summaries"));
     impl_->setupUI();
 }
 
