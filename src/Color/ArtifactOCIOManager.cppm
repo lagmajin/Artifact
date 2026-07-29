@@ -309,13 +309,13 @@ ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
             const float b = pixel[2];
             const float a = pixel[3];
 
-            float outR = matrix[0] * r + matrix[1] * g + matrix[2] * b + matrix[3] * a;
-            float outG = matrix[4] * r + matrix[5] * g + matrix[6] * b + matrix[7] * a;
-            float outB = matrix[8] * r + matrix[9] * g + matrix[10] * b + matrix[11] * a;
-
-            pixel[0] = std::clamp(outR, 0.0f, 1.0f);
-            pixel[1] = std::clamp(outG, 0.0f, 1.0f);
-            pixel[2] = std::clamp(outB, 0.0f, 1.0f);
+            // Color transforms operate on RGB only. Keep alpha independent and
+            // preserve scene-linear/HDR values until an explicit display/output
+            // encoding stage performs tone mapping or range limiting.
+            pixel[0] = matrix[0] * r + matrix[1] * g + matrix[2] * b;
+            pixel[1] = matrix[4] * r + matrix[5] * g + matrix[6] * b;
+            pixel[2] = matrix[8] * r + matrix[9] * g + matrix[10] * b;
+            pixel[3] = a;
         }
     });
 }
