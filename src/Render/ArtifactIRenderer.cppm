@@ -3483,6 +3483,46 @@ const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() cons
  void ArtifactIRenderer::drawPolyline(const std::vector<Detail::float2>& points,
                                       const FloatColor& color, float thickness)
  { impl_->drawPolyline(points, color, thickness); }
+ void ArtifactIRenderer::drawStyledPolyline(
+     const std::vector<Detail::float2>& points, const PolylineStyle& style,
+     const FloatColor& color)
+ {
+   if (points.size() < 2 || style.thickness <= 0.0f) return;
+   const std::size_t segmentCount = style.closed ? points.size() : points.size() - 1;
+   const auto pointAt = [&points](std::size_t index) {
+     return points[index % points.size()];
+   };
+   for (std::size_t i = 0; i < segmentCount; ++i) {
+     const Detail::float2 p0 = pointAt(i);
+     const Detail::float2 p1 = pointAt(i + 1);
+     if (style.dashPattern.empty()) {
+       impl_->primitiveRenderer_.drawThickLineLocal(
+           toDiligentFloat2(p0), toDiligentFloat2(p1), style.thickness, color);
+     } else if (style.dashPattern.size() >= 2) {
+       impl_->primitiveRenderer_.drawDashedLineLocal(
+           toDiligentFloat2(p0), toDiligentFloat2(p1), style.thickness,
+           std::max(0.001f, style.dashPattern[0]),
+           std::max(0.001f, style.dashPattern[1]), color);
+     }
+   }
+   if (style.join == PolylineJoin::Round) {
+     const std::size_t first = style.closed ? 0 : 1;
+     const std::size_t last = style.closed ? points.size() : points.size() - 1;
+     for (std::size_t i = first; i < last; ++i) {
+       const auto p = pointAt(i);
+       impl_->primitiveRenderer_.drawSolidCircle(
+           p.x, p.y, style.thickness * 0.5f, color);
+     }
+   }
+   if (!style.closed && style.cap == PolylineCap::Round) {
+     const auto p0 = points.front();
+     const auto p1 = points.back();
+     impl_->primitiveRenderer_.drawSolidCircle(
+         p0.x, p0.y, style.thickness * 0.5f, color);
+     impl_->primitiveRenderer_.drawSolidCircle(
+         p1.x, p1.y, style.thickness * 0.5f, color);
+   }
+ }
  void ArtifactIRenderer::drawSolidRect(float x, float y, float w, float h)
  { impl_->drawSolidRect(float2(x, y), float2(w, h), {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f); }
  void ArtifactIRenderer::drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity)

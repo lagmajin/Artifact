@@ -42,6 +42,16 @@ import Artifact.LOD.Manager;
 export namespace Artifact {
 using namespace ArtifactCore;
 
+export enum class PolylineCap { Flat = 0, Round = 1, Square = 2 };
+export enum class PolylineJoin { Miter = 0, Round = 1, Bevel = 2 };
+export struct PolylineStyle {
+  float thickness = 1.0f;
+  PolylineCap cap = PolylineCap::Flat;
+  PolylineJoin join = PolylineJoin::Miter;
+  bool closed = false;
+  std::vector<float> dashPattern;
+};
+
 export namespace Detail {
 export struct RenderShaderPair {
   void *VS = nullptr;
@@ -283,6 +293,9 @@ public:
                     const FloatColor &color);
   void drawPolyline(const std::vector<Detail::float2> &points,
                     const FloatColor &color, float thickness);
+  void drawStyledPolyline(const std::vector<Detail::float2> &points,
+                          const PolylineStyle &style,
+                          const FloatColor &color);
   void drawQuadLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2,
                      Detail::float2 p3, const FloatColor &color);
   void drawSolidRect(float x, float y, float w, float h);
