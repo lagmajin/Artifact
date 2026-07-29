@@ -24,6 +24,7 @@ export namespace Artifact {
   bool syncCurrentComposition();
   bool hasCurrentMixer() const;
   QStringList busNames() const;
+  QStringList availableOutputDeviceNames() const;
 
   void setMasterVolume(float volume);
   float masterVolume() const;

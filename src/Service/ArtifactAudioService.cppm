@@ -4,6 +4,7 @@ module;
 #include <memory>
 #include <QString>
 #include <QStringList>
+#include <QtMultimedia/QMediaDevices>
 module Artifact.Service.Audio;
 
 import Artifact.Service.Project;
@@ -123,6 +124,18 @@ QStringList ArtifactAudioService::busNames() const
  if (const auto mixer = impl_->currentMixer()) {
   for (const auto& name : mixer->busNames()) {
    result.append(QString::fromUtf8(name.data(), static_cast<int>(name.length())));
+  }
+ }
+ return result;
+}
+
+QStringList ArtifactAudioService::availableOutputDeviceNames() const
+{
+ QStringList result;
+ for (const auto& device : QMediaDevices::audioOutputs()) {
+  const QString name = device.description().trimmed();
+  if (!name.isEmpty() && !result.contains(name)) {
+   result.append(name);
   }
  }
  return result;
