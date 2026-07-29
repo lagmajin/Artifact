@@ -1621,9 +1621,15 @@ namespace Artifact
 
    if (leftHeader) {
     leftHeader->setText(compareHeaderTitle(leftBadge, leftTitle, logicalLeftPath));
+    leftHeader->setToolTip(logicalLeftPath.isEmpty()
+                               ? QStringLiteral("No source assigned")
+                               : logicalLeftPath);
    }
    if (rightHeader) {
     rightHeader->setText(compareHeaderTitle(rightBadge, rightTitle, logicalRightPath));
+    rightHeader->setToolTip(logicalRightPath.isEmpty()
+                                ? QStringLiteral("No source assigned")
+                                : logicalRightPath);
    }
 
    CompareCanvasPanelState leftPanel;
