@@ -177,6 +177,7 @@ QJsonObject ArtifactCloneLayer::toJson() const {
     obj["clone.mode"] = static_cast<int>(impl_->settings_.mode);
     obj["clone.sourceLayerId"] = impl_->settings_.sourceLayerId.toString();
     obj["clone.sourceIndex"] = impl_->settings_.sourceIndex;
+    obj["clone.useEffector"] = impl_->settings_.useEffector;
     return obj;
 }
 
@@ -189,6 +190,9 @@ void ArtifactCloneLayer::fromJsonProperties(const QJsonObject& obj) {
         impl_->settings_.sourceLayerId = LayerID(obj.value("clone.sourceLayerId").toString());
     }
     impl_->settings_.sourceIndex = std::max(0, obj.value("clone.sourceIndex").toInt(0));
+    if (obj.contains("clone.useEffector")) {
+        impl_->settings_.useEffector = obj.value("clone.useEffector").toBool(true);
+    }
 }
 
 ArtifactCloneLayerSettings ArtifactCloneLayer::cloneSettings() const {
