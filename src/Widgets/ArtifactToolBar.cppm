@@ -7,6 +7,7 @@ module;
 #include <QIcon>
 #include <QList>
 #include <QMenu>
+#include <QPoint>
 #include <QSignalBlocker>
 #include <QSize>
 #include <QString>
@@ -798,8 +799,13 @@ void ArtifactToolBar::Impl::setupMoreActionsMenu() {
     if (moreActionsMenu_ && moreActionsButton_) {
       auto *widget = toolBar->widgetForAction(moreActionsButton_);
       if (widget) {
-        moreActionsMenu_->popup(
-            widget->mapToGlobal(QPoint(0, widget->height())));
+        const QPoint origin =
+            widget->mapToGlobal(QPoint(0, widget->height()));
+        int menuX = origin.x();
+        int menuY = origin.y();
+        Accessibility::adjustContextMenuPosition(
+            menuX, menuY, moreActionsMenu_->sizeHint().width());
+        moreActionsMenu_->popup(QPoint(menuX, menuY));
       }
     }
   });
