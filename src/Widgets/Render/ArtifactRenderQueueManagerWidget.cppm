@@ -472,7 +472,14 @@ namespace Artifact
   void syncJobsFromService() {
     if (!service) return;
     const int selectedSource = selectedSourceIndex();
-    progressStartedAtMsByJob.clear();
+    for (auto it = progressStartedAtMsByJob.begin();
+         it != progressStartedAtMsByJob.end();) {
+      if (it->first < 0 || it->first >= service->jobCount()) {
+        it = progressStartedAtMsByJob.erase(it);
+      } else {
+        ++it;
+      }
+    }
     jobs.clear();
     for (int i = 0; i < service->jobCount(); ++i) {
       JobEntry e;
@@ -1559,6 +1566,7 @@ namespace Artifact
         if (!impl_) {
           return;
         }
+        impl_->progressStartedAtMsByJob.clear();
         impl_->postQueueChanged(QStringLiteral("Queue reordered"));
     });
     connect(impl_->service, &ArtifactRenderQueueService::allJobsCompleted, this, [this]() {
