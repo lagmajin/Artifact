@@ -142,6 +142,9 @@ namespace Artifact
  ArtifactTimelineScrubBar::ArtifactTimelineScrubBar(QWidget* parent)
   : QWidget(parent), impl_(new Impl)
  {
+  setAccessibleName(QStringLiteral("Timeline scrub bar"));
+  setAccessibleDescription(QStringLiteral(
+      "Scrub the timeline and review cached, failed, or on-disk frame ranges."));
   setAttribute(Qt::WA_NoSystemBackground, false);
   setAttribute(Qt::WA_OpaquePaintEvent, false);
   setAttribute(Qt::WA_StyledBackground, true);
