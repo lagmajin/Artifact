@@ -1922,11 +1922,27 @@ private:
         if (typeFilter_.isEmpty() || typeFilter_ == "all") {
             return true;
         }
-        if (typeFilter_ == "composition") return itemType == eProjectItemType::Composition;
-        if (typeFilter_ == "footage") return itemType == eProjectItemType::Footage;
-        if (typeFilter_ == "folder") return itemType == eProjectItemType::Folder;
-        if (typeFilter_ == "solid") return itemType == eProjectItemType::Solid;
-        return true;
+        const QStringList requestedTypes = typeFilter_.split(
+            QRegularExpression(QStringLiteral("[,|+]+")), Qt::SkipEmptyParts);
+        bool recognizedType = false;
+        for (const QString& requestedType : requestedTypes) {
+            const QString normalizedType = requestedType.trimmed().toLower();
+            if (normalizedType == QStringLiteral("all")) return true;
+            if (normalizedType == QStringLiteral("composition")) {
+                recognizedType = true;
+                if (itemType == eProjectItemType::Composition) return true;
+            } else if (normalizedType == QStringLiteral("footage")) {
+                recognizedType = true;
+                if (itemType == eProjectItemType::Footage) return true;
+            } else if (normalizedType == QStringLiteral("folder")) {
+                recognizedType = true;
+                if (itemType == eProjectItemType::Folder) return true;
+            } else if (normalizedType == QStringLiteral("solid")) {
+                recognizedType = true;
+                if (itemType == eProjectItemType::Solid) return true;
+            }
+        }
+        return !recognizedType;
     }
 
     bool matchesAdvanced(const QModelIndex& idx0, const eProjectItemType itemType, ProjectItem* item) const {
