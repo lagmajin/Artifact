@@ -27,6 +27,12 @@ Date: 2026-03-13
 - Ensure these effects are correctly registered in the `EffectPipelineStage::Rasterizer` or a new `Creative` stage if appropriate.
 - Verify that all parameters for these effects are visible and editable in the `ArtifactPropertyWidget`.
 
+### 2026-07-29 Implementation Loop
+
+- ✅ Layer effect groups in `ArtifactPropertyWidget` now expose `Enabled` and `Remove` controls.
+- ✅ Both operations use `ArtifactEffectService`, preserving the existing undo-capable service path; removal also asks for confirmation.
+- ⏳ Composition-effect controls, Inspector-Property focus synchronization, unified filtering, drag-and-drop ordering, and runtime verification remain incomplete.
+
 ### M-CW-2 Inspector-Property Sync
 - Implement a signal-slot connection such that selecting an effect in the `ArtifactInspectorWidget` rack automatically:
   - Calls `ArtifactPropertyWidget::setFocusedEffectId()`.
