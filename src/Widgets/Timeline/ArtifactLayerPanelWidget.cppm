@@ -2441,6 +2441,11 @@ public:
          } else if (!stateQuery && queryKey == QStringLiteral("note")) {
            stateQuery = true;
            stateMatch = l->layerNote().contains(queryValue, Qt::CaseInsensitive);
+         } else if (!stateQuery && queryKey == QStringLiteral("source")) {
+           stateQuery = true;
+           const QString serialized = QString::fromUtf8(
+               QJsonDocument(l->toJson()).toJson(QJsonDocument::Compact));
+           stateMatch = serialized.contains(queryValue, Qt::CaseInsensitive);
          }
        }
        bool nameMatch = stateQuery
