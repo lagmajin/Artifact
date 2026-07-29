@@ -2463,6 +2463,32 @@ public:
              stateMatch = parent->layerName().contains(queryValue, Qt::CaseInsensitive) ||
                           parent->id().toString().contains(queryValue, Qt::CaseInsensitive);
            }
+         } else if (!stateQuery && (queryKey == QStringLiteral("child") ||
+                                    queryKey == QStringLiteral("haschild"))) {
+           stateQuery = true;
+           const auto* group = dynamic_cast<const ArtifactGroupLayer*>(l.get());
+           const bool hasChildren = group && !group->children().empty();
+           if (queryKey == QStringLiteral("haschild")) {
+             const bool wantsChildren = queryValue == QStringLiteral("true") ||
+                                        queryValue == QStringLiteral("yes") ||
+                                        queryValue == QStringLiteral("1");
+             const bool wantsNoChildren = queryValue == QStringLiteral("false") ||
+                                          queryValue == QStringLiteral("no") ||
+                                          queryValue == QStringLiteral("0");
+             stateMatch = wantsChildren ? hasChildren : wantsNoChildren ? !hasChildren : false;
+           } else if (queryValue == QStringLiteral("any")) {
+             stateMatch = hasChildren;
+           } else if (queryValue == QStringLiteral("none") || queryValue == QStringLiteral("root")) {
+             stateMatch = !hasChildren;
+           } else if (group) {
+             for (const auto& child : group->children()) {
+               if (child && (child->layerName().contains(queryValue, Qt::CaseInsensitive) ||
+                             child->id().toString().contains(queryValue, Qt::CaseInsensitive))) {
+                 stateMatch = true;
+                 break;
+               }
+             }
+           }
          } else if (!stateQuery && queryKey == QStringLiteral("type")) {
            stateQuery = true;
            const QString typeName = l->toJson().value(QStringLiteral("layerType")).toString();
