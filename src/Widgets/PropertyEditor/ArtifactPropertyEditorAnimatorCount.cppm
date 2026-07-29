@@ -25,6 +25,8 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyAnimatorCountEditor"));
+  setAccessibleName(QStringLiteral("Animator count property editor"));
+  setAccessibleDescription(QStringLiteral("Adjust the number of text animators and choose an animator preset"));
 
   const auto meta = property.metadata();
   minCount_ = meta.hardMin.isValid() ? meta.hardMin.toInt() : 0;
@@ -38,6 +40,8 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
   layout->setSpacing(6);
 
   removeButton_ = new PropertyCallbackButton(QStringLiteral("-"), this);
+  removeButton_->setAccessibleName(QStringLiteral("Remove animator"));
+  removeButton_->setAccessibleDescription(QStringLiteral("Remove the last text animator"));
   removeButton_->setToolTip(QStringLiteral("Remove last animator"));
   removeButton_->setFixedHeight(24);
   removeButton_->setMinimumWidth(28);
@@ -45,6 +49,8 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
   removeButton_->setCallback([this]() { stepCount(-1); });
 
   countLabel_ = new QLabel(this);
+  countLabel_->setAccessibleName(QStringLiteral("Animator count"));
+  countLabel_->setAccessibleDescription(QStringLiteral("Current number of text animators"));
   countLabel_->setAlignment(Qt::AlignCenter);
   countLabel_->setMinimumHeight(24);
   countLabel_->setMinimumWidth(92);
@@ -53,6 +59,8 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
   applyPropertyLabelPalette(countLabel_, true);
 
   addButton_ = new PropertyCallbackButton(QStringLiteral("+"), this);
+  addButton_->setAccessibleName(QStringLiteral("Add animator"));
+  addButton_->setAccessibleDescription(QStringLiteral("Add an animator or choose an animator preset"));
   addButton_->setToolTip(QStringLiteral("Add animator (Click to select type)"));
   addButton_->setFixedHeight(24);
   addButton_->setMinimumWidth(28);
