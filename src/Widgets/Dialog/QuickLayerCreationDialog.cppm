@@ -138,11 +138,37 @@ QuickLayerCreationDialog::QuickLayerCreationDialog(QWidget* parent)
                             static_cast<int>(LayerCreationPlacementMode::Playhead));
   placementForm->addRow(QStringLiteral("追加位置"), impl_->placement);
   root->addWidget(placementBox);
+
+  setAccessibleName(QStringLiteral("Quick layer creation"));
+  setAccessibleDescription(QStringLiteral("Create a plane or image layer with optional mask and envelope settings"));
+  const auto labelInput = [](QWidget* widget, const QString& name,
+                             const QString& description) {
+    widget->setAccessibleName(name);
+    widget->setAccessibleDescription(description);
+  };
+  labelInput(impl_->name, QStringLiteral("Layer name"), QStringLiteral("Set the name of the new layer"));
+  labelInput(impl_->source, QStringLiteral("Layer source"), QStringLiteral("Choose a plane or image source"));
+  labelInput(impl_->imagePath, QStringLiteral("Image path"), QStringLiteral("Choose the image file for the new layer"));
+  browse->setAccessibleName(QStringLiteral("Browse image"));
+  browse->setAccessibleDescription(QStringLiteral("Choose an image file"));
+  labelInput(impl_->width, QStringLiteral("Layer width"), QStringLiteral("Set the layer width in pixels"));
+  labelInput(impl_->height, QStringLiteral("Layer height"), QStringLiteral("Set the layer height in pixels"));
+  labelInput(impl_->mask, QStringLiteral("Mask shape"), QStringLiteral("Choose an optional mask shape"));
+  labelInput(impl_->feather, QStringLiteral("Mask feather"), QStringLiteral("Set mask feathering in pixels"));
+  labelInput(impl_->entry, QStringLiteral("Entry envelope"), QStringLiteral("Enable an entry envelope"));
+  labelInput(impl_->exit, QStringLiteral("Exit envelope"), QStringLiteral("Enable an exit envelope"));
+  labelInput(impl_->timing, QStringLiteral("Envelope timing"), QStringLiteral("Choose envelope timing order"));
+  labelInput(impl_->curve, QStringLiteral("Envelope curve"), QStringLiteral("Choose the envelope interpolation curve"));
+  labelInput(impl_->frames, QStringLiteral("Envelope length"), QStringLiteral("Set the envelope length in frames"));
+  labelInput(impl_->placement, QStringLiteral("Layer placement"), QStringLiteral("Choose where to insert the new layer"));
   root->addStretch();
 
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel | QDialogButtonBox::Ok, this);
   buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("作成"));
   buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("キャンセル"));
+  buttons->button(QDialogButtonBox::Ok)->setAccessibleName(QStringLiteral("Create layer"));
+  buttons->button(QDialogButtonBox::Ok)->setAccessibleDescription(QStringLiteral("Create the new layer with these settings"));
+  buttons->button(QDialogButtonBox::Cancel)->setAccessibleName(QStringLiteral("Cancel layer creation"));
   QObject::connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
   QObject::connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
   root->addWidget(buttons);
