@@ -71,6 +71,8 @@ public /*slots*/:
                                QWidget *widget, const QRect &floatingGeometry);
   void moveDockToTabGroup(const QString &title, const QString &tabGroupPrefix);
   void setDockVisible(const QString &title, bool visible);
+  void setDockPinned(const QString &title, bool pinned);
+  bool isDockPinned(const QString &title) const;
   void activateDock(const QString &title);
   bool closeDock(const QString &title);
   void setDockImmersive(QWidget *widget, bool immersive);

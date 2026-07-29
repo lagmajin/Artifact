@@ -125,6 +125,21 @@ namespace Artifact {
    }
   }
 
+  bool isDockPinned(QWidget* window, const QString& title)
+  {
+   if (auto* artifactWindow = asArtifactMainWindow(window)) {
+    return artifactWindow->isDockPinned(title);
+   }
+   return false;
+  }
+
+  void setDockPinned(QWidget* window, const QString& title, bool pinned)
+  {
+   if (auto* artifactWindow = asArtifactMainWindow(window)) {
+    artifactWindow->setDockPinned(title, pinned);
+   }
+  }
+
   void activateDock(QWidget* window, const QString& title)
   {
    if (auto* artifactWindow = asArtifactMainWindow(window)) {
@@ -1649,6 +1664,18 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
      activateDock(mw, title);
     }
    });
+  }
+
+  auto *pinMenu = windowPanelsMenu->addMenu(QStringLiteral("ピン留め"));
+  pinMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
+  for (const QString &title : titles) {
+   QAction *pinAction = pinMenu->addAction(title);
+   pinAction->setCheckable(true);
+   pinAction->setChecked(isDockPinned(mainWindow, title));
+   QObject::connect(pinAction, &QAction::toggled, mainWindow,
+                    [mw = mainWindow, title](bool pinned) {
+                      setDockPinned(mw, title, pinned);
+                    });
   }
 
   if (titles.isEmpty()) {

@@ -1833,6 +1833,37 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
   }
 }
 
+void ArtifactMainWindow::setDockPinned(const QString &title, bool pinned) {
+  if (!impl_ || title.isEmpty()) {
+    return;
+  }
+  for (auto *dock : impl_->dockWidgets) {
+    if (!dock || (dock->objectName() != title && dock->windowTitle() != title)) {
+      continue;
+    }
+    if (dock == impl_->primaryCenterDock) {
+      return;
+    }
+    dock->setProperty("artifactDockPinned", pinned);
+    auto features = dock->features();
+    features.setFlag(ads::CDockWidget::DockWidgetClosable, !pinned);
+    dock->setFeatures(features);
+    return;
+  }
+}
+
+bool ArtifactMainWindow::isDockPinned(const QString &title) const {
+  if (!impl_ || title.isEmpty()) {
+    return false;
+  }
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == title || dock->windowTitle() == title)) {
+      return dock->property("artifactDockPinned").toBool();
+    }
+  }
+  return false;
+}
+
 void ArtifactMainWindow::activateDock(const QString &title) {
   if (!impl_)
     return;
