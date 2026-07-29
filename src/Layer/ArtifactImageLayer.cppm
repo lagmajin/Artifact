@@ -535,16 +535,24 @@ QString ArtifactImageLayer::inputTransferFunction() const
 
 bool ArtifactImageLayer::setImageSequence(const QStringList& framePaths, double frameRate)
 {
-    if (framePaths.isEmpty()) {
+    QStringList normalizedPaths;
+    normalizedPaths.reserve(framePaths.size());
+    for (const QString& path : framePaths) {
+        const QString normalized = path.trimmed();
+        if (!normalized.isEmpty() && !normalizedPaths.contains(normalized)) {
+            normalizedPaths.append(normalized);
+        }
+    }
+    if (normalizedPaths.isEmpty()) {
         return false;
     }
-    impl_->sequencePaths_ = framePaths;
+    impl_->sequencePaths_ = normalizedPaths;
     impl_->sequenceFrameRate_ = frameRate > 0.0 ? frameRate : 0.0;
     impl_->sequenceSource_.reset();
     impl_->sequenceCachedIndex_ = -1;
     // 代表フレーム（先頭）を読み込んで表示・サイズを確定させる。
     // draw() 側で currentFrame() に応じた ImageSequenceSource のフレーム切替を行う。
-    return loadFromPath(framePaths.first());
+    return loadFromPath(normalizedPaths.first());
 }
 
 QStringList ArtifactImageLayer::sequenceFramePaths() const
