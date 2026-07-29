@@ -1448,6 +1448,8 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
   QIcon defaultAudioIcon_;
   QIcon defaultFontIcon_;
   QSet<QString> unusedAssetPaths_;
+  mutable QSet<QString> importedAssetPathsCache_;
+  mutable bool importedAssetPathsCacheValid_ = false;
   std::atomic<std::uint64_t> thumbnailGeneration_{0};
 
   // Async preview thumbnail generation for image / video files
@@ -1538,6 +1540,7 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
    void startAsyncWaveformGeneration(const QString& audioFilePath);
    ArtifactCore::FileType fileType(const QString& fileName) const;
   bool isImportedAssetPath(const QString& filePath) const;
+  void refreshImportedAssetPathCache() const;
   bool isFavoriteAssetPath(const QString& filePath) const;
   bool isUnusedAssetPath(const QString& filePath) const;
   int sourceUseCountForPath(const QString& filePath,
@@ -1748,49 +1751,48 @@ ArtifactAssetBrowser::Impl::~Impl()
          lower.endsWith(".woff2");
  }
 
- bool ArtifactAssetBrowser::Impl::isImportedAssetPath(const QString& filePath) const
+void ArtifactAssetBrowser::Impl::refreshImportedAssetPathCache() const
 {
-  if (filePath.isEmpty()) {
-   return false;
-  }
-
+  importedAssetPathsCache_.clear();
   auto* svc = ArtifactProjectService::instance();
   if (!svc) {
-   return false;
+    importedAssetPathsCacheValid_ = true;
+    return;
   }
 
-  const QString canonicalTarget = QFileInfo(filePath).canonicalFilePath().isEmpty()
-    ? QFileInfo(filePath).absoluteFilePath()
-    : QFileInfo(filePath).canonicalFilePath();
-
-  std::function<bool(ProjectItem*)> containsPath = [&](ProjectItem* item) -> bool {
-   if (!item) {
-    return false;
-   }
-   if (item->type() == eProjectItemType::Footage) {
-    const QString candidatePath = static_cast<FootageItem*>(item)->filePath;
-    const QString canonicalCandidate = QFileInfo(candidatePath).canonicalFilePath().isEmpty()
-      ? QFileInfo(candidatePath).absoluteFilePath()
-      : QFileInfo(candidatePath).canonicalFilePath();
-    if (QDir::cleanPath(canonicalCandidate) == QDir::cleanPath(canonicalTarget)) {
-     return true;
-    }
-   }
-   for (auto* child : item->children) {
-    if (containsPath(child)) {
-     return true;
-    }
-   }
-   return false;
+  const auto normalizePath = [](const QString& path) {
+    if (path.trimmed().isEmpty()) return QString();
+    const QFileInfo info(path);
+    const QString canonical = info.canonicalFilePath();
+    return QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath() : canonical);
   };
+  std::function<void(ProjectItem*)> collectPaths = [&](ProjectItem* item) {
+    if (!item) return;
+    if (item->type() == eProjectItemType::Footage) {
+      const auto* footage = static_cast<const FootageItem*>(item);
+      const QString normalizedPath = normalizePath(footage->filePath);
+      if (!normalizedPath.isEmpty()) importedAssetPathsCache_.insert(normalizedPath);
+      for (const QString& sequencePath : footage->sequencePaths) {
+        const QString normalizedSequencePath = normalizePath(sequencePath);
+        if (!normalizedSequencePath.isEmpty()) {
+          importedAssetPathsCache_.insert(normalizedSequencePath);
+        }
+      }
+    }
+    for (auto* child : item->children) collectPaths(child);
+  };
+  for (auto* root : svc->projectItems()) collectPaths(root);
+  importedAssetPathsCacheValid_ = true;
+}
 
- const auto roots = svc->projectItems();
-  for (auto* root : roots) {
-   if (containsPath(root)) {
-    return true;
-   }
-  }
-  return false;
+bool ArtifactAssetBrowser::Impl::isImportedAssetPath(const QString& filePath) const
+{
+  if (filePath.trimmed().isEmpty()) return false;
+  if (!importedAssetPathsCacheValid_) refreshImportedAssetPathCache();
+  const QFileInfo info(filePath);
+  const QString canonical = info.canonicalFilePath();
+  const QString normalizedPath = QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath() : canonical);
+  return importedAssetPathsCache_.contains(normalizedPath);
 }
 
 bool ArtifactAssetBrowser::Impl::isFavoriteAssetPath(const QString& filePath) const
@@ -2712,6 +2714,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
  void ArtifactAssetBrowser::Impl::applyFilters()
  {
   if (!fileView_ || !assetModel_ || currentDirectoryPath_.isEmpty()) return;
+
+  refreshImportedAssetPathCache();
 
   QDir dir(currentDirectoryPath_);
   if (!dir.exists()) return;
