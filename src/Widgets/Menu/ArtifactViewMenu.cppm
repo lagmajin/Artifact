@@ -1120,12 +1120,21 @@ namespace Artifact {
    if (svc) {
     QObject::connect(qualityDraftAction, &QAction::triggered, menu, [svc]() {
      svc->setPreviewQualityPreset(::PreviewQualityPreset::Draft);
+     if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+      settings->setPreviewQualityText(QStringLiteral("Draft"));
+     }
     });
     QObject::connect(qualityPreviewAction, &QAction::triggered, menu, [svc]() {
      svc->setPreviewQualityPreset(::PreviewQualityPreset::Preview);
+     if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+      settings->setPreviewQualityText(QStringLiteral("Preview"));
+     }
     });
     QObject::connect(qualityFinalAction, &QAction::triggered, menu, [svc]() {
      svc->setPreviewQualityPreset(::PreviewQualityPreset::Final);
+     if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+      settings->setPreviewQualityText(QStringLiteral("Final"));
+     }
     });
 
     eventBusSubscriptions_.push_back(eventBus_.subscribe<PreviewQualityPresetChangedEvent>(
@@ -1466,6 +1475,23 @@ namespace Artifact {
       }
       if (resQuarterAction) {
         resQuarterAction->setChecked(percent < 28);
+      }
+      const QString quality = settings->previewQualityText().trimmed().toLower();
+      if (qualityDraftAction) {
+        const QSignalBlocker blocker(qualityDraftAction);
+        qualityDraftAction->setChecked(quality.contains(QStringLiteral("draft")) ||
+                                       quality.contains(QStringLiteral("fast")));
+      }
+      if (qualityPreviewAction) {
+        const QSignalBlocker blocker(qualityPreviewAction);
+        qualityPreviewAction->setChecked(
+            !quality.contains(QStringLiteral("draft")) &&
+            !quality.contains(QStringLiteral("fast")) &&
+            !quality.contains(QStringLiteral("final")));
+      }
+      if (qualityFinalAction) {
+        const QSignalBlocker blocker(qualityFinalAction);
+        qualityFinalAction->setChecked(quality.contains(QStringLiteral("final")));
       }
       if (ramCacheAction) {
         const QSignalBlocker blocker(ramCacheAction);
