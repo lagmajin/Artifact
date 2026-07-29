@@ -14,6 +14,7 @@ module;
 #include <QStringList>
 #include <QStyle>
 #include <QToolBar>
+#include <QWidget>
 #include <vector>
 #include <wobjectimpl.h>
 
@@ -795,6 +796,13 @@ void ArtifactToolBar::Impl::setupMoreActionsMenu() {
   // Create "more" button
   moreActionsButton_ = new QAction("...", toolBar);
   moreActionsButton_->setToolTip("More tools");
+  toolBar->addAction(moreActionsButton_);
+  if (auto *button = toolBar->widgetForAction(moreActionsButton_)) {
+    button->setAccessibleName(QStringLiteral("More tools"));
+    button->setAccessibleDescription(
+        QStringLiteral("Open additional editing tools"));
+    button->setMinimumHeight(Artifact::Accessibility::scaledSize(40));
+  }
   QObject::connect(moreActionsButton_, &QAction::triggered, toolBar, [this]() {
     if (moreActionsMenu_ && moreActionsButton_) {
       auto *widget = toolBar->widgetForAction(moreActionsButton_);
