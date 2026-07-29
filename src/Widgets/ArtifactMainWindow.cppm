@@ -819,6 +819,9 @@ public:
 
 ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Artifact Studio main window"));
+  setAccessibleDescription(QStringLiteral(
+      "Main workspace containing the project, timeline, inspector, and render views."));
   setUpdatesEnabled(false);
   impl_->rootLayout = new QVBoxLayout(this);
   impl_->rootLayout->setContentsMargins(0, 0, 0, 0);
@@ -862,6 +865,9 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
 
   auto *workspaceButton = new QToolButton(this);
   impl_->workspaceButton = workspaceButton;
+  workspaceButton->setAccessibleName(QStringLiteral("Workspace mode"));
+  workspaceButton->setAccessibleDescription(QStringLiteral(
+      "Choose the active workspace layout and editing mode."));
   workspaceButton->setText(Artifact::workspaceModeInfo(WorkspaceMode::Default).label);
   workspaceButton->setPopupMode(QToolButton::InstantPopup);
   auto *workspaceMenu = new QMenu(workspaceButton);
