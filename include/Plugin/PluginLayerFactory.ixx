@@ -12,6 +12,7 @@ import ArtifactCore.Plugin.Registry;
 import ArtifactCore.Plugin.Layer.Interface;
 import Artifact.Plugin.Layer.Adapter;
 import Memory.SharedPtr;
+import Core.ArtifactString;
 
 export namespace Artifact {
 

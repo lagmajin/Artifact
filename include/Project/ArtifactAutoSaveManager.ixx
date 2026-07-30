@@ -176,7 +176,7 @@ using ArtifactCore::String;
         return false;
       }
 
-      const qint64 written = file.write(projectSnapshotJsonUtf8.data(), static_cast<qint64>(projectSnapshotJsonUtf8.size()));
+      const qint64 written = file.write(projectSnapshotJsonUtf8.data(), static_cast<qint64>(projectSnapshotJsonUtf8.length()));
       if (written <= 0 || !file.commit()) {
         status_ = AutoSaveStatus::SaveFailed;
         lastError_ = QStringLiteral("Failed to commit recovery snapshot");
@@ -225,7 +225,7 @@ using ArtifactCore::String;
       file.close();
       if (outPath) *outPath = String(latest.toUtf8().constData(), static_cast<std::size_t>(latest.toUtf8().size()));
       status_ = AutoSaveStatus::RecoveringFromCrash;
-      return !outJsonUtf8->empty();
+      return !outJsonUtf8->isEmpty();
     }
   };
 

@@ -55,6 +55,8 @@ import Core.Parallel;
 
 namespace Artifact {
 
+using ArtifactCore::Parallel;
+
 W_OBJECT_IMPL(ColorNode)
 W_OBJECT_IMPL(ColorInputNode)
 W_OBJECT_IMPL(ColorOutputNode)

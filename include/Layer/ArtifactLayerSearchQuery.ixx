@@ -43,6 +43,9 @@ import Memory.SharedPtr;
 
 export namespace Artifact {
 
+ using ArtifactCore::SharedPtr;
+ using ArtifactCore::makeShared;
+
  // レイヤータイプの定義
  enum class LayerSearchType {
   Any, Solid, Adjustment, ShapeLayer, TextLayer, CameraLayer, LightLayer

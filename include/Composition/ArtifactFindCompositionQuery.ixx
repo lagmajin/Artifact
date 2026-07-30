@@ -43,6 +43,9 @@ import Memory.SharedPtr;
 
 export namespace Artifact {
 
+ using ArtifactCore::SharedPtr;
+ using ArtifactCore::makeShared;
+
  // tB^[IvV
  enum class CompositionSearchOption {
   CaseSensitive = 1 << 0,    // 啶

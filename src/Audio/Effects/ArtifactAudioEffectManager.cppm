@@ -17,7 +17,7 @@ ArtifactAudioEffectManager& ArtifactAudioEffectManager::instance()
 
 void ArtifactAudioEffectManager::registerEffectFactory(const String& effectId, AudioEffectFactory factory)
 {
-    if (effectId.empty() || factory == nullptr) {
+    if (effectId.isEmpty() || factory == nullptr) {
         return;
     }
     effectFactories_[ArtifactCore::toStdString(effectId)] = factory;

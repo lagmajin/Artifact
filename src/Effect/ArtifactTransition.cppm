@@ -734,6 +734,13 @@ void RippleTransition::process(const QImage& fromFrame,
     
     int w = output.width();
     int h = output.height();
+
+    const QImage fromPixels = isPackedRgb32(fromFrame)
+        ? fromFrame
+        : fromFrame.convertToFormat(QImage::Format_ARGB32);
+    const QImage toPixels = isPackedRgb32(toFrame)
+        ? toFrame
+        : toFrame.convertToFormat(QImage::Format_ARGB32);
     
     float cx = rippleParams_.center.x() * w;
     float cy = rippleParams_.center.y() * h;

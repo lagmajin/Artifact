@@ -18,6 +18,8 @@ import Color.ColorSpace;
 
 export namespace Artifact {
 
+using ArtifactCore::makeShared;
+
 /**
  * @brief レンダリング用途
  */

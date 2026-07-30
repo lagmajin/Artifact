@@ -31,6 +31,8 @@ module;
 #include <random>
 export module ArtifactAbstractAudioEffects;
 
+import Core.ArtifactString;
+
 
 
 

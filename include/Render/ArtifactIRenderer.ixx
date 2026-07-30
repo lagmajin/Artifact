@@ -27,6 +27,7 @@ export module Artifact.Render.IRenderer;
 import Color.Float;
 import Text.LayoutContract;
 import Text.Style;
+import Utils.String.UniString;
 import Mesh;
 import Material.Material;
 import Image.ImageF32x4_RGBA;

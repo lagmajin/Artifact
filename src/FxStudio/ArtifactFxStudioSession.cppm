@@ -7,6 +7,8 @@ module;
 
 module Artifact.FxStudio.Session;
 
+import Utils.String.View;
+
 namespace Artifact::FxStudio {
 
 EventTrack& Session::eventTrack() noexcept {
@@ -37,7 +39,7 @@ const Event* Session::selectedEvent() const noexcept {
   return selectedEventId_.has_value() ? eventTrack_.find(*selectedEventId_) : nullptr;
 }
 
-ArtifactCore::Optional<EventId> Session::insertPreset(const ArtifactCore::StringView presetId,
+ArtifactCore::Optional<EventId> Session::insertPreset(const ArtifactCore::StringView& presetId,
                                              const std::int64_t startFrame) {
   ArtifactCore::Optional<Sequence> sequence = PresetCatalog::create(presetId);
   if (!sequence.has_value()) {
