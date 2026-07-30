@@ -55,12 +55,12 @@ public:
     
     // ArtifactAbstractAudioEffect インターフェース
     void process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain = nullptr) override;
-    std::string getName() const override { return "VST Effect"; }
-    std::string getDescription() const override { return "VST plugin effect"; }
+    String getName() const override { return String("VST Effect"); }
+    String getDescription() const override { return String("VST plugin effect"); }
     
     std::vector<AudioEffectParameter> getUiParameters() const override;
-    void setParameter(const std::string& name, float value) override;
-    float getParameter(const std::string& name) const override;
+    void setParameter(const String& name, float value) override;
+    float getParameter(const String& name) const override;
 
     // VST 固有メソッド
     void openEditor(void* parentWindow);

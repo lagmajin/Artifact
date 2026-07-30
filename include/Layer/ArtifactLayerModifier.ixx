@@ -17,6 +17,8 @@ import Memory.SharedPtr;
 
 export namespace Artifact {
 
+using ArtifactCore::SharedPtr;
+
 enum class LayerModifierKind {
     Transform,
     Warp,

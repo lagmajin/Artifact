@@ -45,6 +45,7 @@ module Artifact.VST.Effect;
 import Audio.Segment;
 import Artifact.Audio.Effects.Base;
 import Artifact.VST.Host;
+import Core.ArtifactString;
 
 namespace Artifact {
 
@@ -175,8 +176,9 @@ std::vector<AudioEffectParameter> VSTEffect::getUiParameters() const {
     return params;
 }
 
-void VSTEffect::setParameter(const std::string& name, float value) {
-    impl_->parameters[name] = value;
+void VSTEffect::setParameter(const String& name, float value) {
+    const std::string key = ArtifactCore::toStdString(name);
+    impl_->parameters[key] = value;
     
     if (!impl_->isLoaded || impl_->pluginId < 0) return;
     
@@ -184,15 +186,15 @@ void VSTEffect::setParameter(const std::string& name, float value) {
     auto pluginParams = host.getPluginParameters(impl_->pluginId);
     
     for (size_t i = 0; i < pluginParams.size(); i++) {
-        if (pluginParams[i].name == name) {
+        if (pluginParams[i].name == key) {
             host.setParameter(impl_->pluginId, static_cast<int>(i), value);
             break;
         }
     }
 }
 
-float VSTEffect::getParameter(const std::string& name) const {
-    auto it = impl_->parameters.find(name);
+float VSTEffect::getParameter(const String& name) const {
+    auto it = impl_->parameters.find(ArtifactCore::toStdString(name));
     if (it != impl_->parameters.end()) {
         return it->second;
     }

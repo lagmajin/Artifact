@@ -42,6 +42,7 @@ module Artifact.Widgets.ExpressionCopilotWidget;
 import Script.Expression.Evaluator;
 import Script.Expression.Parser;
 import Script.Expression.Value;
+import Core.ArtifactString;
 
 namespace Artifact {
 
@@ -596,7 +597,9 @@ public:
             } else {
                 setStatus(
                     QStringLiteral("Runtime OK: %1")
-                        .arg(QString::fromStdString(runtime.toString()).left(96)),
+                        .arg(QString::fromStdString(
+                                 ArtifactCore::toStdString(runtime.toString()))
+                                 .left(96)),
                     QColor(74, 222, 128));
             }
             setHint(currentHintText(text), QColor(96, 165, 250));
