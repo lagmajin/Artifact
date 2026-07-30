@@ -7995,6 +7995,38 @@ public:
     precompGpuOutputs_.clear();
   }
 
+  void clearCompositionSpaceGpuCache() {
+    if (renderer_ && compositionSpaceGpuCache_.colorTargetView) {
+      renderer_->destroyOffscreenTexture(
+          compositionSpaceGpuCache_.colorTargetView);
+    }
+    compositionSpaceGpuCache_ = {};
+  }
+
+  bool ensureCompositionSpaceGpuCache(const QSize& size) {
+    if (!renderer_ || size.width() <= 0 || size.height() <= 0) {
+      return false;
+    }
+    if (compositionSpaceGpuCache_.colorTargetView &&
+        compositionSpaceGpuCache_.size == size &&
+        compositionSpaceGpuCache_.colorShaderResourceView) {
+      return true;
+    }
+    clearCompositionSpaceGpuCache();
+    compositionSpaceGpuCache_.colorTargetView =
+        renderer_->createOffscreenTexture(size.width(), size.height());
+    compositionSpaceGpuCache_.colorShaderResourceView =
+        renderer_->offscreenTextureShaderResourceView(
+            compositionSpaceGpuCache_.colorTargetView);
+    compositionSpaceGpuCache_.size = size;
+    if (!compositionSpaceGpuCache_.colorTargetView ||
+        !compositionSpaceGpuCache_.colorShaderResourceView) {
+      clearCompositionSpaceGpuCache();
+      return false;
+    }
+    return true;
+  }
+
   PrecompGpuOutputEntry* preparePrecompGpuOutput(
       const QString& compositionId, qint64 frame, const QSize& size,
       quint64 generation) {
@@ -8127,6 +8159,18 @@ public:
 
     State state = State::Free;
 
+  };
+
+  struct CompositionSpaceGpuCache {
+    void* colorTargetView = nullptr;
+    Diligent::ITextureView* colorShaderResourceView = nullptr;
+    QSize size;
+    QString contentKey;
+
+    bool isReady() const {
+      return colorTargetView && colorShaderResourceView && !size.isEmpty() &&
+             !contentKey.isEmpty();
+    }
   };
 
   struct PreviewFrameRequest {
@@ -10911,6 +10955,8 @@ public:
 
   QHash<QString, quint64> surfaceGenerations_;
 
+  CompositionSpaceGpuCache compositionSpaceGpuCache_;
+
   std::unique_ptr<GPUTextureCacheManager> gpuTextureCacheManager_;
 
   QElapsedTimer projectPreflightTimer_;
@@ -12956,6 +13002,8 @@ void CompositionRenderController::destroy() {
   impl_->compositionRenderer_.reset();
 
   impl_->clearPrecompGpuOutputs();
+
+  impl_->clearCompositionSpaceGpuCache();
 
   impl_->surfaceCache_.clear();
 
@@ -22712,6 +22760,55 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         !previewRenderSlotAcquireHazard;
 
+    const auto isCompositionSpaceCacheLayer =
+        [](const ArtifactAbstractLayerPtr& layer) {
+          if (!layer || layer->is3D() || layer->isAdjustmentLayer() ||
+              layer->maskCount() != 0 ||
+              layer->layerBlendType() !=
+                  ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL ||
+              !layer->getEffects().empty()) {
+            return false;
+          }
+          if (const auto imageLayer =
+                  dynamic_cast<ArtifactImageLayer*>(layer.get())) {
+            return !imageLayer->isImageSequence();
+          }
+          return dynamic_cast<ArtifactSolid2DLayer*>(layer.get()) ||
+                 dynamic_cast<ArtifactSolidImageLayer*>(layer.get());
+        };
+
+    const bool compositionSpaceCacheEligible =
+        !pipelineEnabled && !frameOutOfRange && !has3DCamera &&
+        !viewportOrientationActive_ && !showIsolationOverlay_ &&
+        !showXRayOverlay_ &&
+        std::all_of(layers.cbegin(), layers.cend(),
+                    isCompositionSpaceCacheLayer);
+    const int compositionCacheMaxPixels = 16 * 1024 * 1024;
+    const float compositionArea =
+        std::max(1.0f, cw) * std::max(1.0f, ch);
+    const float compositionCacheScale = std::min(
+        1.0f / std::max(1, effectivePreviewDownsample),
+        std::sqrt(static_cast<float>(compositionCacheMaxPixels) /
+                  compositionArea));
+    const QSize compositionCacheSize(
+        std::max(1, static_cast<int>(std::ceil(cw * compositionCacheScale))),
+        std::max(1, static_cast<int>(std::ceil(ch * compositionCacheScale))));
+    const QString compositionCacheKey =
+        QStringLiteral("%1|base=%2|frame=%3|size=%4x%5")
+            .arg(comp->id().toString())
+            .arg(baseInvalidationSerial_)
+            .arg(framePos)
+            .arg(compositionCacheSize.width())
+            .arg(compositionCacheSize.height());
+    const bool compositionSpaceCacheActive =
+        compositionSpaceCacheEligible &&
+        ensureCompositionSpaceGpuCache(compositionCacheSize);
+    const bool compositionSpaceCacheHit =
+        compositionSpaceCacheActive &&
+        compositionSpaceGpuCache_.contentKey == compositionCacheKey;
+    const bool compositionSpaceCacheBuild =
+        compositionSpaceCacheActive && !compositionSpaceCacheHit;
+
     if (!pipelineEnabled) {
 
       lastLayerRtPixelStats_.clear();
@@ -24275,15 +24372,47 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       if (!frameOutOfRange) {
 
-        const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
+        const bool renderToCompositionSpaceCache =
+            compositionSpaceCacheBuild;
+        const float renderZoom = renderToCompositionSpaceCache
+                                     ? compositionCacheScale
+                                     : renderer_->getZoom();
+        const QRectF renderRoi = renderToCompositionSpaceCache
+                                     ? QRectF(0.0, 0.0, cw, ch)
+                                     : roiRect;
+        const DetailLevel renderLod =
+            renderToCompositionSpaceCache
+                ? detailLevelFromZoom(renderZoom)
+                : detailLevelFromZoom(renderer_->getZoom());
+        float savedRenderZoom = renderer_->getZoom();
+        float savedRenderPanX = 0.0f;
+        float savedRenderPanY = 0.0f;
+        renderer_->getPan(savedRenderPanX, savedRenderPanY);
+        if (renderToCompositionSpaceCache) {
+          renderer_->pushRenderTarget(
+              compositionSpaceGpuCache_.colorTargetView);
+          renderer_->setViewportRect(compositionCacheSize.width(),
+                                     compositionCacheSize.height());
+          renderer_->setCanvasSize(cw, ch);
+          renderer_->setZoom(compositionCacheScale);
+          renderer_->setPan(0.0f, 0.0f);
+          renderer_->clearRenderTarget(
+              FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+        } else if (compositionSpaceCacheHit) {
+          QMatrix4x4 identity;
+          renderer_->drawSpriteTransformed(
+              0.0f, 0.0f, cw, ch, identity,
+              compositionSpaceGpuCache_.colorShaderResourceView, 1.0f);
+        }
 
         renderer_->setDetailLevel(static_cast<LODManager::DetailLevel>(
 
-            lod)); // Pass LOD to renderer/effects
+            renderLod)); // Pass LOD to renderer/effects
 
 
 
-        for (const auto &layer : layers) {
+        if (!compositionSpaceCacheHit) {
+          for (const auto &layer : layers) {
 
           if (!isLayerEffectivelyVisible(layer)) {
 
@@ -24315,7 +24444,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           const QRectF layerBounds = layer->transformedBoundingBox();
 
-          const QRectF intersected = layerBounds.intersected(roiRect);
+          const QRectF intersected = layerBounds.intersected(renderRoi);
 
 
 
@@ -24339,7 +24468,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
 
-            if (lod == DetailLevel::Low) {
+            if (renderLod == DetailLevel::Low) {
 
               if (screenW < 8.0f || screenH < 8.0f) {
 
@@ -24349,7 +24478,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               }
 
-            } else if (lod == DetailLevel::Medium) {
+            } else if (renderLod == DetailLevel::Medium) {
 
               if (screenW < 2.0f || screenH < 2.0f) {
 
@@ -24492,7 +24621,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     &surfaceCache_, gpuTextureCacheManager_.get(),
 
-                    currentFrame.framePosition(), false, lod,
+                    currentFrame.framePosition(), false, renderLod,
 
                     has3DCamera ? &cameraViewMatrix : nullptr,
 
@@ -24537,6 +24666,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           }
 
+          }
+          }
+        }
+
+        if (renderToCompositionSpaceCache) {
+          renderer_->flush();
+          renderer_->popRenderTarget();
+          renderer_->setViewportRect(viewportW, viewportH);
+          renderer_->setCanvasSize(cw, ch);
+          renderer_->setZoom(savedRenderZoom);
+          renderer_->setPan(savedRenderPanX, savedRenderPanY);
+          QMatrix4x4 identity;
+          renderer_->drawSpriteTransformed(
+              0.0f, 0.0f, cw, ch, identity,
+              compositionSpaceGpuCache_.colorShaderResourceView, 1.0f);
+          compositionSpaceGpuCache_.contentKey = compositionCacheKey;
         }
 
       }
@@ -25248,11 +25393,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             }
 
-          }
-
-
-
         }
+
+
+
+      }
 
 
 
