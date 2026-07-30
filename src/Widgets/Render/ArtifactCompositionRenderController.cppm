@@ -4229,10 +4229,12 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
                       : ArtifactAbstractComposition::CanonicalColorPipelineVersion);
 
   key += QStringLiteral("|generation=%1").arg(surfaceGeneration);
-  // Include the actual source surface identity so an image/sequence file
-  // replaced in place cannot reuse a texture created from the old pixels.
-  key += QStringLiteral("|surfaceCacheKey=%1")
-             .arg(static_cast<qulonglong>(surface.cacheKey()));
+  // Do not use QImage::cacheKey() as a generic layer identity here. Solid and
+  // gradient layers create a fresh temporary QImage on every draw, even when
+  // their content is unchanged, which would force a surface/GPU-cache miss on
+  // every frame. Image/SVG/sequence identities are encoded by their typed
+  // cache-key branches below (source version and, for animated effects,
+  // frame number).
   key += QStringLiteral("|opacity=%1").arg(layer->opacity(), 0, 'f', 6);
 
   bool hasAnimatedEffectProperty = false;

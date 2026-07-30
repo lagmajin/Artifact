@@ -1225,6 +1225,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           it->cacheSignature == cacheSignature) {
         ++staticLayerGpuCacheCounters().hitCount;
         staticCacheEntry = &(*it);
+        staticCacheEntry->lastFrameNumber = cacheFrameNumber;
         directProcessedBuffer = staticCacheEntry->processedBuffer;
         if (!staticCacheEntry->processedSurface.isNull()) {
           surface = staticCacheEntry->processedSurface;
