@@ -9,7 +9,7 @@ import Artifact.FxStudio.PresetCatalog;
 import Artifact.FxStudio.Sequence;
 import Artifact.FxStudio.ViewportModel;
 import Utils.Optional;
-import Utils.String.View;
+import Core.ArtifactString;
 
 export namespace Artifact::FxStudio {
 
@@ -25,7 +25,7 @@ public:
   Event* selectedEvent() noexcept;
   const Event* selectedEvent() const noexcept;
 
-  ArtifactCore::Optional<EventId> insertPreset(const ArtifactCore::StringView& presetId,
+  ArtifactCore::Optional<EventId> insertPreset(const ArtifactCore::String& presetId,
                                       std::int64_t startFrame);
   bool selectEvent(EventId id) noexcept;
   void clearSelection() noexcept;
