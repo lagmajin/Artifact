@@ -772,6 +772,14 @@ QJsonObject serializeEffect(const SharedPtr<ArtifactAbstractEffect>& effect)
       pobj["value"] = colorObj;
       break;
     }
+    case ArtifactCore::PropertyType::Point2D: {
+      const QPointF point = property.getValue().toPointF();
+      QJsonObject pointObj;
+      pointObj[QStringLiteral("x")] = point.x();
+      pointObj[QStringLiteral("y")] = point.y();
+      pobj[QStringLiteral("value")] = pointObj;
+      break;
+    }
     default:
       pobj["value"] = QJsonValue();
       break;
@@ -824,6 +832,11 @@ SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
       color.setBlueF(static_cast<float>(colorObj.value(QStringLiteral("b")).toDouble(0.0)));
       color.setAlphaF(static_cast<float>(colorObj.value(QStringLiteral("a")).toDouble(1.0)));
       propertyValue = color;
+    } else if (type == ArtifactCore::PropertyType::Point2D &&
+               pobj.value(QStringLiteral("value")).isObject()) {
+      const QJsonObject pointObj = pobj.value(QStringLiteral("value")).toObject();
+      propertyValue = QPointF(pointObj.value(QStringLiteral("x")).toDouble(),
+                               pointObj.value(QStringLiteral("y")).toDouble());
     } else {
       propertyValue = pobj.value(QStringLiteral("value")).toVariant();
     }

@@ -163,6 +163,8 @@ createPropertyEditorWidget(const ArtifactCore::AbstractProperty &property,
     return new ArtifactStringPropertyEditor(property, parent);
   case ArtifactCore::PropertyType::ObjectReference:
     return new ArtifactObjectReferencePropertyEditor(property, parent);
+  case ArtifactCore::PropertyType::Point2D:
+    return new ArtifactPoint2DPropertyEditor(property, parent);
   default:
     return nullptr;
   }

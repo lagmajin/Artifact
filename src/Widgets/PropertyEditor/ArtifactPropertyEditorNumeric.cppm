@@ -366,6 +366,48 @@ void ArtifactFloatPropertyEditor::setValueFromVariant(const QVariant &value) {
 
 bool ArtifactFloatPropertyEditor::supportsScrub() const { return true; }
 
+ArtifactPoint2DPropertyEditor::ArtifactPoint2DPropertyEditor(
+    const ArtifactCore::AbstractProperty& property, QWidget* parent)
+    : ArtifactAbstractPropertyEditor(parent) {
+  auto* layout = new QHBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(4);
+  xSpinBox_ = new QDoubleSpinBox(this);
+  ySpinBox_ = new QDoubleSpinBox(this);
+  for (auto* spinBox : {xSpinBox_, ySpinBox_}) {
+    spinBox->setDecimals(3);
+    spinBox->setRange(-1000000000.0, 1000000000.0);
+    spinBox->setSingleStep(1.0);
+    spinBox->setKeyboardTracking(false);
+    spinBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    applyPropertyFieldPalette(spinBox);
+    layout->addWidget(spinBox);
+  }
+  xSpinBox_->setPrefix(QStringLiteral("X "));
+  ySpinBox_->setPrefix(QStringLiteral("Y "));
+  setValueFromVariant(property.getValue());
+  QObject::connect(xSpinBox_, &QDoubleSpinBox::valueChanged, this,
+                   [this]() { previewCurrentValue(); });
+  QObject::connect(ySpinBox_, &QDoubleSpinBox::valueChanged, this,
+                   [this]() { previewCurrentValue(); });
+  QObject::connect(xSpinBox_, &QDoubleSpinBox::editingFinished, this,
+                   [this]() { commitCurrentValue(); });
+  QObject::connect(ySpinBox_, &QDoubleSpinBox::editingFinished, this,
+                   [this]() { commitCurrentValue(); });
+}
+
+QVariant ArtifactPoint2DPropertyEditor::value() const {
+  return QVariant::fromValue(QPointF(xSpinBox_->value(), ySpinBox_->value()));
+}
+
+void ArtifactPoint2DPropertyEditor::setValueFromVariant(const QVariant& value) {
+  const QPointF point = value.canConvert<QPointF>() ? value.toPointF() : QPointF();
+  QSignalBlocker xBlocker(xSpinBox_);
+  QSignalBlocker yBlocker(ySpinBox_);
+  xSpinBox_->setValue(point.x());
+  ySpinBox_->setValue(point.y());
+}
+
 QWidget *ArtifactFloatPropertyEditor::scrubTargetWidget() const {
   if (!spinBox_) {
     return ArtifactAbstractPropertyEditor::scrubTargetWidget();

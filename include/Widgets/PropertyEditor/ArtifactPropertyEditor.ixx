@@ -404,6 +404,18 @@ private:
     qint64 currentId_ = -1;
 };
 
+class ArtifactPoint2DPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    explicit ArtifactPoint2DPropertyEditor(const ArtifactCore::AbstractProperty& property,
+                                           QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+
+private:
+    QDoubleSpinBox* xSpinBox_ = nullptr;
+    QDoubleSpinBox* ySpinBox_ = nullptr;
+};
+
 class ArtifactPropertyEditorRowWidget final : public QWidget {
 public:
     using KeyFrameHandler = std::function<void(bool)>;
