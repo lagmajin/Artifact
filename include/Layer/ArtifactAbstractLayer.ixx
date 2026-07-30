@@ -108,6 +108,7 @@ inline bool HasFlag(VariantOverrideFlags flags, VariantOverrideFlags flag) {
 }
 
 class ArtifactAbstractLayer;  // forward-declared within the same module – no tag mismatch
+using ArtifactAbstractLayerPtr = SharedPtr<ArtifactAbstractLayer>;
 class ArtifactLayerModifier;
 
 class LayerVariant {
@@ -625,9 +626,6 @@ public:
 public:
 };
 
-// Aliases defined AFTER the complete class definition so MSVC attaches
-// module context to the shared_ptr<T> template argument correctly.
-using ArtifactAbstractLayerPtr = SharedPtr<ArtifactAbstractLayer>;
 using ArtifactAbstractLayerWeak = WeakPtr<ArtifactAbstractLayer>;
 
 inline uint qHash(const Artifact::ArtifactAbstractLayerPtr &key,

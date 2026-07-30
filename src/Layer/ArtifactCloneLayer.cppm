@@ -19,7 +19,7 @@ module Artifact.Layer.Clone;
 import Artifact.Layers;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Clone.Core;
-import Artifact.Effect.Clone.BasicEffectors;
+import Artifact.Effect.Clone.Basic;
 import Artifact.Effect.Abstract;
 import Memory.SharedPtr;
 import Color.Float;

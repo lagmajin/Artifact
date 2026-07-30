@@ -2890,7 +2890,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     if (!markers.isEmpty()) itemType = QStringLiteral("%1 • Folder").arg(markers.join(QStringLiteral(" • ")));
     item.type = UniString::fromQString(itemType);
     item.isFolder = true;
-    item.icon = fileTypeIconFor(entry);
+     item.icon = fileTypeIconFor(dirName);
     items.append(item);
    }
 

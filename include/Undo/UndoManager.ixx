@@ -47,6 +47,7 @@ export module Undo.UndoManager;
 export import Artifact.Composition.Abstract;
 import Utils.Id;
 import Utils.String.UniString;
+import Core.ArtifactString;
 import Artifact.Effect.Abstract;
 import Layer.Blend;
 import Artifact.Layer.Abstract;

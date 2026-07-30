@@ -14,6 +14,7 @@ module;
 #include <QStringList>
 #include <QStyle>
 #include <QToolBar>
+#include <QToolButton>
 #include <QWidget>
 #include <vector>
 #include <wobjectimpl.h>

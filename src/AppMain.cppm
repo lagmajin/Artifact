@@ -1766,10 +1766,10 @@ bool showRecoveryPrompt(ArtifactAutoSaveManager &autoSave, QWidget *parent) {
     return false;
   }
 
-  std::string recoveredJson;
-  std::string sourcePath;
-  if (!autoSave.loadLatestRecoveryPoint(&recoveredJson, &sourcePath) ||
-      recoveredJson.empty()) {
+   ArtifactCore::String recoveredJson;
+   ArtifactCore::String sourcePath;
+   if (!autoSave.loadLatestRecoveryPoint(&recoveredJson, &sourcePath) ||
+       ArtifactCore::toStdString(recoveredJson).empty()) {
     return false;
   }
 
@@ -1783,7 +1783,8 @@ bool showRecoveryPrompt(ArtifactAutoSaveManager &autoSave, QWidget *parent) {
   if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
     return false;
   }
-  out.write(QByteArray::fromStdString(recoveredJson));
+  out.write(QByteArray::fromStdString(
+      ArtifactCore::toStdString(recoveredJson)));
   out.close();
 
   ArtifactProjectManager::getInstance().loadFromFile(recoveredPath);

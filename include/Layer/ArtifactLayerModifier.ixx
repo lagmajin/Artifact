@@ -18,6 +18,7 @@ import Memory.SharedPtr;
 export namespace Artifact {
 
 using ArtifactCore::SharedPtr;
+using ArtifactCore::makeShared;
 
 enum class LayerModifierKind {
     Transform,

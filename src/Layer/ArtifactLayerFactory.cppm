@@ -82,10 +82,10 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
 
   switch (params.layerType()) {
   case LayerType::Null:
-   ptr = ArtifactAbstractLayerPtr(new ArtifactNullLayer());
+   ptr = ArtifactCore::makeShared<ArtifactNullLayer>();
    break;
   case LayerType::Solid: {
-   auto* solidLayer = new ArtifactSolidImageLayer();
+    auto solidLayer = ArtifactCore::makeShared<ArtifactSolidImageLayer>();
    if (auto* solidParams = dynamic_cast<ArtifactSolidLayerInitParams*>(&params)) {
     solidLayer->setSize(solidParams->width(), solidParams->height());
     solidLayer->setColor(solidParams->color());
@@ -96,11 +96,11 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
    } else {
     solidLayer->setSize(1920, 1080);
    }
-   ptr = ArtifactAbstractLayerPtr(solidLayer);
+   ptr = solidLayer;
    break;
   }
   case LayerType::Image:
-   ptr = ArtifactAbstractLayerPtr(new ArtifactImageLayer());
+   ptr = ArtifactCore::makeShared<ArtifactImageLayer>();
    if (ptr) {
     // 画像パラメータからパスを取得して読み込み
     if (auto* imageParams = dynamic_cast<ArtifactImageInitParams*>(&params)) {
@@ -121,22 +121,22 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
    }
    break;
   case LayerType::Adjustment:
-   ptr = ArtifactAbstractLayerPtr(new ArtifactAdjustableLayer());
+   ptr = ArtifactCore::makeShared<ArtifactAdjustableLayer>();
    break;
   case LayerType::Text:
-   ptr = ArtifactAbstractLayerPtr(new ArtifactTextLayer());
+   ptr = ArtifactCore::makeShared<ArtifactTextLayer>();
    break;
   case LayerType::Shape: {
    if (auto* svgParams = dynamic_cast<ArtifactSvgInitParams*>(&params)) {
-    auto* svgLayer = new ArtifactSvgLayer();
+     auto svgLayer = ArtifactCore::makeShared<ArtifactSvgLayer>();
     const QString path = svgParams->svgPath();
     if (path.isEmpty() || !svgLayer->loadFromPath(path)) {
      qWarning() << "[ArtifactLayerFactory] Failed to create SVG layer from path:" << path;
      break;
     }
-    ptr = ArtifactAbstractLayerPtr(svgLayer);
+     ptr = svgLayer;
    } else {
-    ptr = ArtifactAbstractLayerPtr(new ArtifactShapeLayer());
+     ptr = ArtifactCore::makeShared<ArtifactShapeLayer>();
    }
    break;
   }
@@ -150,21 +150,21 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
    ptr = createTerrainLayer();
    break;
   case LayerType::Audio: {
-   auto* audioLayer = new ArtifactAudioLayer();
+    auto audioLayer = ArtifactCore::makeShared<ArtifactAudioLayer>();
    if (auto* audioParams = dynamic_cast<ArtifactAudioInitParams*>(&params)) {
     const QString path = audioParams->audioPath();
     if (!path.isEmpty()) {
      audioLayer->loadFromPath(path);
     }
    }
-   ptr = ArtifactAbstractLayerPtr(audioLayer);
+    ptr = audioLayer;
    break;
   }
   case LayerType::Paint:
-   ptr = ArtifactAbstractLayerPtr(new ArtifactPaintLayer());
+    ptr = ArtifactCore::makeShared<ArtifactPaintLayer>();
    break;
   case LayerType::Video:
-   ptr = ArtifactAbstractLayerPtr(new ArtifactVideoLayer());
+    ptr = ArtifactCore::makeShared<ArtifactVideoLayer>();
    if (ptr) {
     if (auto* videoParams = dynamic_cast<ArtifactVideoInitParams*>(&params)) {
      const QString path = videoParams->videoPath();
@@ -179,34 +179,34 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
    ptr = ArtifactCore::makeShared<ArtifactCompositionLayer>();
    break;
   case LayerType::Camera:
-   ptr = ArtifactAbstractLayerPtr(new ArtifactCameraLayer());
+   ptr = ArtifactCore::makeShared<ArtifactCameraLayer>();
    break;
   case LayerType::Light:
-   ptr = ArtifactAbstractLayerPtr(new ArtifactLightLayer());
+   ptr = ArtifactCore::makeShared<ArtifactLightLayer>();
    break;
   case LayerType::Group:
-    ptr = ArtifactAbstractLayerPtr(new ArtifactGroupLayer());
+     ptr = ArtifactCore::makeShared<ArtifactGroupLayer>();
     break;
   case LayerType::MaterialContainer:
-    ptr = ArtifactAbstractLayerPtr(new ArtifactMaterialContainerLayer());
+     ptr = ArtifactCore::makeShared<ArtifactMaterialContainerLayer>();
     break;
    case LayerType::Clone:
-    ptr = ArtifactAbstractLayerPtr(new ArtifactCloneLayer());
+     ptr = ArtifactCore::makeShared<ArtifactCloneLayer>();
     break;
   case LayerType::SDF:
-   ptr = ArtifactAbstractLayerPtr(new ArtifactSDFLayer());
+    ptr = ArtifactCore::makeShared<ArtifactSDFLayer>();
    break;
   case LayerType::ParametricComposition:
-   ptr = ArtifactAbstractLayerPtr(new ArtifactParametricCompositionLayer());
+    ptr = ArtifactCore::makeShared<ArtifactParametricCompositionLayer>();
    break;
   case LayerType::Construction:
-   ptr = ArtifactAbstractLayerPtr(new ArtifactConstructionLayer());
+    ptr = ArtifactCore::makeShared<ArtifactConstructionLayer>();
    break;
   case LayerType::CompositionBackground:
-   ptr = ArtifactAbstractLayerPtr(new ArtifactCompositionBackgroundLayer());
+    ptr = ArtifactCore::makeShared<ArtifactCompositionBackgroundLayer>();
    break;
  case LayerType::Model3D: {
-   auto* modelLayer = new Artifact3DLayer();
+    auto modelLayer = ArtifactCore::makeShared<Artifact3DLayer>();
    if (auto* fixedParams =
            dynamic_cast<ArtifactFixedGeometry3DLayerInitParams*>(&params)) {
     modelLayer->setFixedGeometry(fixedParams->geometry());
@@ -217,14 +217,14 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
      modelLayer->loadFromFile(path);
     }
    }
-   ptr = ArtifactAbstractLayerPtr(modelLayer);
+    ptr = modelLayer;
    break;
   }
   case LayerType::SandSim2D:
-    ptr = ArtifactAbstractLayerPtr(new ArtifactSandSim2DLayer());
+     ptr = ArtifactCore::makeShared<ArtifactSandSim2DLayer>();
     break;
   case LayerType::EnvironmentMap:
-    ptr = ArtifactAbstractLayerPtr(new ArtifactEnvironmentMapLayer());
+     ptr = ArtifactCore::makeShared<ArtifactEnvironmentMapLayer>();
     if (auto* envParams = dynamic_cast<ArtifactEnvironmentMapLayerInitParams*>(&params)) {
       auto* envLayer = static_cast<ArtifactEnvironmentMapLayer*>(ptr.get());
       envLayer->setHdriPath(envParams->hdriPath());

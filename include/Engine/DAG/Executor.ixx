@@ -103,6 +103,7 @@ export namespace Artifact {
             std::function<void(EffectNodePtr)> scheduleNode;
             scheduleNode = [&](EffectNodePtr node) {
                 enqueueTask([this, node, &pendingDependencies, &dependents,
+                             &graph, &conns,
                              &scheduleNode, &evaluationFailed]() {
                     // --- ノードの実際の計算処理 ---
                     if (node->isDirty()) {
@@ -130,7 +131,7 @@ export namespace Artifact {
                     // partial buffers into downstream nodes. Independent DAG
                     // branches continue to run, while this failed branch is
                     // intentionally not released to its dependents.
-                    if (node->state() == EffectNode::NodeState::Error) {
+                    if (node->state() == NodeState::Error) {
                         evaluationFailed.store(true, std::memory_order_release);
                         return;
                     }

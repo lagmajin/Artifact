@@ -975,7 +975,7 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!renderer) return;
 
-    if (impl_->isImageSequence()) {
+    if (isImageSequence()) {
         const qint64 sequenceFrame =
             currentFrame() - startTime().framePosition();
         impl_->refreshSequenceFrame(std::max<qint64>(0, sequenceFrame));

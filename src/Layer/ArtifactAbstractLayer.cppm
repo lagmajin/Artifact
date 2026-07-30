@@ -4258,7 +4258,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   for (const auto& varPtr : impl_->variants_) {
       if (!varPtr) continue;
       QJsonObject varObj;
-      varObj["name"] = QString::fromStdString(varPtr->name_);
+       varObj["name"] = QString::fromStdString(ArtifactCore::toStdString(varPtr->name_));
       varObj["flags"] = static_cast<int>(varPtr->overrideFlags_);
       
       if (HasFlag(varPtr->overrideFlags_, VariantOverrideFlags::Opacity) && varPtr->opacityOverride.has_value()) {

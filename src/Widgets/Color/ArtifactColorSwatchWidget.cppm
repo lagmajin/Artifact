@@ -21,6 +21,7 @@ import Color.Swatch;
 import Color.Float;
 import Artifact.Event.Types;
 import Event.Bus;
+import Core.ArtifactString;
 
 namespace Artifact {
 
@@ -134,8 +135,8 @@ void ArtifactColorSwatchWidget::updateListView() {
 
         auto* item = new QListWidgetItem(QIcon(pix), "", impl_->listWidget);
         item->setSizeHint(QSize(36, 36));
-        if (!entry.name.empty()) {
-            item->setToolTip(QString::fromStdString(entry.name));
+        if (!entry.name.isEmpty()) {
+            item->setToolTip(QString::fromStdString(ArtifactCore::toStdString(entry.name)));
         } else {
             item->setToolTip(QString("R: %1, G: %2, B: %3").arg(entry.color.r()).arg(entry.color.g()).arg(entry.color.b()));
         }

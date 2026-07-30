@@ -1282,9 +1282,10 @@ namespace Artifact {
     }
    });
    QObject::connect(resetWorkspaceLayoutAction, &QAction::triggered, menu, [this]() {
-    if (!mainWindow) return;
-    if (!mainWindow->resetDockManagerStateToDefault()) {
-     QMessageBox::information(mainWindow, QStringLiteral("ワークスペース"),
+    auto *mw = qobject_cast<ArtifactMainWindow*>(mainWindow);
+    if (!mw) return;
+    if (!mw->resetDockManagerStateToDefault()) {
+     QMessageBox::information(mw, QStringLiteral("ワークスペース"),
                               QStringLiteral("デフォルトレイアウトを復元できません。"));
     }
    });
@@ -1685,12 +1686,13 @@ namespace Artifact {
 
   QObject::connect(resetWorkspaceLayoutAction, &QAction::triggered,
                    mainWindow, [mw = mainWindow]() {
-                     if (!mw) {
+                     auto *typedMw = qobject_cast<ArtifactMainWindow*>(mw);
+                     if (!typedMw) {
                        return;
                      }
-                     if (!mw->resetDockManagerStateToDefault()) {
+                     if (!typedMw->resetDockManagerStateToDefault()) {
                        QMessageBox::information(
-                           mw, QStringLiteral("ワークスペース"),
+                           typedMw, QStringLiteral("ワークスペース"),
                            QStringLiteral("デフォルトレイアウトを復元できません。"));
                      }
                    });

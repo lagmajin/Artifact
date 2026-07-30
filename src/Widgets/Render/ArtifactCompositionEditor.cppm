@@ -961,10 +961,10 @@ public:
     setFocusPolicy(Qt::NoFocus);
     setAcceptDrops(true);
 
-    auto *rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(24, 24, 24, 24);
-    rootLayout->setSpacing(0);
-    rootLayout->addStretch(1);
+    rootLayout_ = new QVBoxLayout(this);
+    rootLayout_->setContentsMargins(24, 24, 24, 24);
+    rootLayout_->setSpacing(0);
+    rootLayout_->addStretch(1);
 
     card_ = new QFrame(this);
     card_->setObjectName(QStringLiteral("compositionCardFrame"));
@@ -973,7 +973,7 @@ public:
     card_->setAutoFillBackground(true);
     card_->setMinimumWidth(0);
     card_->setMaximumWidth(640);
-    card_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    card_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
     QPalette cardPalette = card_->palette();
     cardPalette.setColor(QPalette::Window, QColor(18, 20, 25, 230));
@@ -982,14 +982,15 @@ public:
     cardPalette.setColor(QPalette::Text, QColor(248, 248, 248));
     card_->setPalette(cardPalette);
 
-    auto *cardLayout = new QVBoxLayout(card_);
-    cardLayout->setContentsMargins(32, 28, 32, 28);
-    cardLayout->setSpacing(14);
+    cardLayout_ = new QVBoxLayout(card_);
+    cardLayout_->setContentsMargins(32, 28, 32, 28);
+    cardLayout_->setSpacing(14);
 
     titleLabel_ = new QLabel(QStringLiteral("まだコンポジションがありません"), card_);
     QFont titleFont = titleLabel_->font();
     titleFont.setPointSizeF(std::max(14.0, titleFont.pointSizeF() + 2.0));
     titleFont.setBold(true);
+    titleFont.setStyleStrategy(QFont::PreferAntialias);
     titleLabel_->setFont(titleFont);
     titleLabel_->setAlignment(Qt::AlignCenter);
     titleLabel_->setMinimumWidth(0);
@@ -999,6 +1000,9 @@ public:
         QStringLiteral("新規コンポジションを作成して、編集を始めましょう。"),
         card_);
     bodyLabel_->setAlignment(Qt::AlignCenter);
+    QFont bodyFont = bodyLabel_->font();
+    bodyFont.setStyleStrategy(QFont::PreferAntialias);
+    bodyLabel_->setFont(bodyFont);
     bodyLabel_->setMinimumWidth(0);
     bodyLabel_->setWordWrap(true);
 
@@ -1006,6 +1010,9 @@ public:
         QStringLiteral("ボタンを押すと、コンポジション設定ダイアログを開きます。"),
         card_);
     helperLabel_->setAlignment(Qt::AlignCenter);
+    QFont helperFont = helperLabel_->font();
+    helperFont.setStyleStrategy(QFont::PreferAntialias);
+    helperLabel_->setFont(helperFont);
     helperLabel_->setMinimumWidth(0);
     helperLabel_->setWordWrap(true);
 
@@ -1016,18 +1023,21 @@ public:
     QFont buttonFont = createButton_->font();
     buttonFont.setPointSizeF(std::max(12.0, buttonFont.pointSizeF() + 1.0));
     buttonFont.setBold(true);
+    buttonFont.setStyleStrategy(QFont::PreferAntialias);
     createButton_->setFont(buttonFont);
     createButton_->setCursor(Qt::PointingHandCursor);
     createButton_->setDefault(true);
 
-    cardLayout->addWidget(titleLabel_);
-    cardLayout->addWidget(bodyLabel_);
-    cardLayout->addWidget(helperLabel_);
-    cardLayout->addSpacing(8);
-    cardLayout->addWidget(createButton_, 0, Qt::AlignHCenter);
+    cardLayout_->addWidget(titleLabel_);
+    cardLayout_->addWidget(bodyLabel_);
+    cardLayout_->addWidget(helperLabel_);
+    cardLayout_->addSpacing(8);
+    cardLayout_->addWidget(createButton_, 0, Qt::AlignHCenter);
 
-    rootLayout->addWidget(card_, 0, Qt::AlignHCenter);
-    rootLayout->addStretch(1);
+    rootLayout_->addWidget(card_, 0, Qt::AlignHCenter);
+    rootLayout_->addStretch(1);
+
+    updateResponsiveLayout();
 
     QObject::connect(createButton_, &QPushButton::clicked, this,
                      [this]() {
@@ -1067,6 +1077,11 @@ public:
   }
 
 protected:
+  void resizeEvent(QResizeEvent *event) override {
+    QWidget::resizeEvent(event);
+    updateResponsiveLayout();
+  }
+
   void dragEnterEvent(QDragEnterEvent *event) override {
     if (hasComposition_ && event->mimeData() && event->mimeData()->hasUrls()) {
       for (const auto &url : event->mimeData()->urls()) {
@@ -1131,9 +1146,27 @@ protected:
   }
 
 private:
+  void updateResponsiveLayout() {
+    if (!rootLayout_ || !card_ || !cardLayout_ || !createButton_) {
+      return;
+    }
+    const bool compact = width() < 420;
+    const int outerMargin = compact ? 12 : 24;
+    const int innerHorizontalMargin = compact ? 18 : 32;
+    rootLayout_->setContentsMargins(outerMargin, 24, outerMargin, 24);
+    cardLayout_->setContentsMargins(innerHorizontalMargin, 28,
+                                    innerHorizontalMargin, 28);
+    card_->setMaximumWidth(
+        std::max(0, std::min(640, width() - outerMargin * 2)));
+    createButton_->setMaximumWidth(std::max(
+        0, std::min(240, width() - outerMargin * 2 - innerHorizontalMargin * 2)));
+  }
+
   std::function<void()> createRequested_;
   std::function<void(const QStringList &)> filesDropped_;
+  QVBoxLayout *rootLayout_ = nullptr;
   QFrame *card_ = nullptr;
+  QVBoxLayout *cardLayout_ = nullptr;
   QLabel *titleLabel_ = nullptr;
   QLabel *bodyLabel_ = nullptr;
   QLabel *helperLabel_ = nullptr;
@@ -11266,11 +11299,12 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      [this]() {
                        if (!ArtifactCore::Profiler::instance().isEnabled())
                          return;
-                       const std::string report =
+                       const auto report =
                            ArtifactCore::Profiler::instance()
                                .generateDiagnosticReport(60);
                        QGuiApplication::clipboard()->setText(
-                           QString::fromStdString(report));
+                           QString::fromStdString(
+                               ArtifactCore::toStdString(report)));
                      });
 
     // --- Profiler panel (Ctrl+Shift+D to toggle) ---

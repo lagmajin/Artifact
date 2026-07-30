@@ -31,6 +31,7 @@ module;
 #include <QPen>
 #include <QPalette>
 #include <QPushButton>
+#include <QSettings>
 #include <QFrame>
 #include <QSignalBlocker>
 #include <QSlider>

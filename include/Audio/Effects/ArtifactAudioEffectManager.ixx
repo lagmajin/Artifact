@@ -39,6 +39,7 @@ export module Artifact.Audio.Effects.Manager;
 
 
 import Artifact.Audio.Effects.Base;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -51,7 +52,7 @@ public:
     void registerEffectFactory(const String& effectId, AudioEffectFactory factory);
     
     // エフェクトインスタンスの作成
-    std::unique_ptr<ArtifactAbstractAudioEffect> createEffect(const String& effectId);
+    ArtifactCore::SharedPtr<ArtifactAbstractAudioEffect> createEffect(const String& effectId);
     
     // 登録済みエフェクトの一覧取得
     std::vector<String> getAvailableEffects() const;

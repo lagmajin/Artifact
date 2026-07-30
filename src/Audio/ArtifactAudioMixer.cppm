@@ -18,6 +18,7 @@ import Artifact.Layer.Video;
 import Audio.Bus;
 import Audio.Mixer;
 import Memory.SharedPtr;
+import Core.ArtifactString;
 
 import std;
 
@@ -643,9 +644,9 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
 
             if (impl_->coreMixer_) {
                 const std::string busName = "layer_" + layer->id().toString().toStdString();
-                auto bus = impl_->coreMixer_->findBusByName(busName);
+                auto bus = impl_->coreMixer_->findBusByName(ArtifactCore::String(busName));
                 if (!bus) {
-                    bus = impl_->coreMixer_->createBus(busName);
+                    bus = impl_->coreMixer_->createBus(ArtifactCore::String(busName));
                 }
                 strip->setCoreBus(bus);
                 bus->setVolume(20.0f * std::log10(std::max(0.001f, readLayerVolume(layer))));

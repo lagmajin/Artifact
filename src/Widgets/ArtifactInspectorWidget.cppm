@@ -2891,7 +2891,7 @@ public:
 
   struct EffectRack {
     EffectRackSurface *groupBox = nullptr;
-    QListWidget *listWidget = nullptr;
+    EffectRackList *listWidget = nullptr;
     QPushButton *addButton = nullptr;
     QPushButton *removeButton = nullptr;
     QPushButton *moveUpButton = nullptr;

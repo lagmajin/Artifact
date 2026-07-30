@@ -1539,7 +1539,11 @@ private:
                         {QStringLiteral("error"), QStringLiteral("Project service unavailable")}
                     });
                 }
-                const bool success = projectService->addEffectToLayerWithUndo(ArtifactCore::LayerID(layerId), std::move(effect));
+                auto sharedEffect = ArtifactCore::makeShared(
+                    effect.release(),
+                    std::default_delete<ArtifactAbstractEffect>{});
+                const bool success = projectService->addEffectToLayerWithUndo(
+                    ArtifactCore::LayerID(layerId), std::move(sharedEffect));
                 return ArtifactCore::commandResultFromVariantMap(QVariantMap{
                     {QStringLiteral("success"), success},
                     {QStringLiteral("valid"), true},

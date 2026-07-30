@@ -214,6 +214,7 @@ public:
   PlaybackRangeMode playbackRangeMode_ = PlaybackRangeMode::All;
   std::atomic<int64_t> pendingCompositionFrame_{0};
   std::atomic_bool compositionFrameSyncQueued_{false};
+  std::atomic_bool shuttingDown_{false};
   QString previewDiskCacheRoot_;
   std::atomic_bool previewDiskCacheEnabled_{true};
   std::atomic<qint64> previewDiskCacheBudgetBytes_{
@@ -244,7 +245,8 @@ public:
   }
 
   bool ensureCurrentCompositionBound() {
-    if (!currentComposition_) {
+    if (shuttingDown_.load(std::memory_order_acquire) ||
+        !currentComposition_) {
       if (auto *projectService = ArtifactProjectService::instance()) {
         if (auto fallbackComposition = projectService->currentComposition().lock()) {
           owner_->setCurrentComposition(fallbackComposition);
@@ -535,6 +537,8 @@ public:
   }
 
   ~Impl() {
+    shuttingDown_.store(true, std::memory_order_release);
+    compositionFrameSyncQueued_.store(false, std::memory_order_release);
     if (engine_) {
       engine_->stop();
       engine_->waitForStop();
@@ -602,6 +606,11 @@ public:
     QMetaObject::invokeMethod(
         composition.get(),
         [this, composition]() {
+          if (shuttingDown_.load(std::memory_order_acquire)) {
+            compositionFrameSyncQueued_.store(false,
+                                              std::memory_order_release);
+            return;
+          }
           const int64_t latestFrame =
               pendingCompositionFrame_.load(std::memory_order_relaxed);
           compositionFrameSyncQueued_.store(false, std::memory_order_release);

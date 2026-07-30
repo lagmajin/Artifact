@@ -41,6 +41,7 @@ import Utils.Id;
 import Artifact.Engine.DAG.Port;
 import Artifact.Effect.Abstract;
 import Memory.SharedPtr;
+import Image.ImageF32x4RGBAWithCache;
 
 export namespace Artifact {
 

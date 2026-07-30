@@ -64,10 +64,10 @@ namespace Artifact {
 namespace {
 Q_LOGGING_CATEGORY(softwareInspectorPerfLog, "artifact.softwareinspectorperf")
 
-template<typename T, typename Ptr>
-ArtifactCore::SharedPtr<T> toShared(const Ptr& ptr)
+ArtifactCore::SharedPtr<ArtifactAbstractLayer> toShared(
+    const ArtifactAbstractLayerPtr& ptr)
 {
-    return ArtifactCore::SharedPtr<T>(ptr);
+    return ArtifactCore::SharedPtr<ArtifactAbstractLayer>(ptr);
 }
 
 QString blendLabel(const ArtifactCore::BlendMode mode)
@@ -550,7 +550,8 @@ QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer)
 
     const QSize layerSize = safeLayerSize(layer);
 
-    if (const auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(toShared(layer))) {
+    if (const auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(
+            toShared(layer))) {
         QImage image = imageLayer->toQImage();
         if (!image.isNull()) {
             return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
@@ -565,7 +566,8 @@ QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer)
         return placeholder;
     }
 
-    if (const auto svgLayer = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(toShared(layer))) {
+    if (const auto svgLayer = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(
+            toShared(layer))) {
         if (svgLayer->isLoaded()) {
             QImage image = svgLayer->toQImage();
             if (!image.isNull()) {

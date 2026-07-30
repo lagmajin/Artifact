@@ -13274,19 +13274,10 @@ void CompositionRenderController::setGizmoMode(
     // hit-test implementation, so the combined 2D mode intentionally maps to
     // the usable 3D move handles until a true unified 3D handle set exists.
     GizmoMode gizmo3DMode = GizmoMode::Move;
-    switch (mode) {
-    case TransformGizmo::Mode::Rotate:
+    if (mode == TransformGizmo::Mode::Rotate) {
       gizmo3DMode = GizmoMode::Rotate;
-      break;
-    case TransformGizmo::Mode::Scale:
+    } else if (mode == TransformGizmo::Mode::Scale) {
       gizmo3DMode = GizmoMode::Scale;
-      break;
-    case TransformGizmo::Mode::All:
-    case TransformGizmo::Mode::Move:
-    case TransformGizmo::Mode::AnchorPoint:
-    case TransformGizmo::Mode::None:
-    default:
-      break;
     }
     impl_->gizmo3D_->setMode(gizmo3DMode);
   }
@@ -24050,7 +24041,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               motionBlurSettings.shutterAngle = 180.0f;
               motionBlurSettings.shutterPhase = 0.0f;
               motionBlurSettings.sampleCount =
-                  static_cast<unsigned>(request.previewDownsample > 1 ? 4 : 8);
+                  static_cast<unsigned>(previewDownsample_ > 1 ? 4 : 8);
               if (motionBlurPass_->apply(renderer_->immediateContext(),
                                          resources.accumSRV,
                                          resources.pipeline->velocitySRV(),

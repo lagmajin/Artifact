@@ -7,6 +7,8 @@ module;
 
 module Artifact.Audio.Effects.Manager;
 
+import Memory.SharedPtr;
+
 namespace Artifact {
 
 ArtifactAudioEffectManager& ArtifactAudioEffectManager::instance()
@@ -23,13 +25,18 @@ void ArtifactAudioEffectManager::registerEffectFactory(const String& effectId, A
     effectFactories_[ArtifactCore::toStdString(effectId)] = factory;
 }
 
-std::unique_ptr<ArtifactAbstractAudioEffect> ArtifactAudioEffectManager::createEffect(const String& effectId)
+ArtifactCore::SharedPtr<ArtifactAbstractAudioEffect> ArtifactAudioEffectManager::createEffect(const String& effectId)
 {
     const auto it = effectFactories_.find(ArtifactCore::toStdString(effectId));
     if (it == effectFactories_.end() || it->second == nullptr) {
         return {};
     }
-    return it->second();
+    auto effect = it->second();
+    if (!effect) {
+        return {};
+    }
+    return ArtifactCore::makeShared(
+        effect.release(), std::default_delete<ArtifactAbstractAudioEffect>{});
 }
 
 std::vector<String> ArtifactAudioEffectManager::getAvailableEffects() const

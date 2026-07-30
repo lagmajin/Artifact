@@ -36,6 +36,7 @@ import Artifact.Audio.Effects.Manager;
 import Artifact.Audio.Effects.Base;
 import Memory.SharedPtr;
 import Settings.Accessibility;
+import Core.ArtifactString;
 
 namespace Artifact {
 W_OBJECT_IMPL(AudioEffectSlotWidget)
@@ -69,7 +70,9 @@ void AudioEffectSlotWidget::paintEvent(QPaintEvent* event) {
 
     // Text
     painter.setPen(hasEffect ? QColor(0, 200, 255) : QColor(100, 100, 100));
-    QString text = hasEffect ? QString::fromStdString(effect->getName()) : "--- Empty ---";
+    QString text = hasEffect
+        ? QString::fromStdString(ArtifactCore::toStdString(effect->getName()))
+        : "--- Empty ---";
     
     QFont font = painter.font();
     font.setPointSize(8);
@@ -78,28 +81,28 @@ void AudioEffectSlotWidget::paintEvent(QPaintEvent* event) {
 }
 
 // Helper: build parameter editor dialog
-static QDialog* createParameterEditor(const std::string& effectName,
-    ArtifactCore::SharedPtr<ArtifactCore::AudioEffect> effect, QWidget* parent) {
+static QDialog* createParameterEditor(const ArtifactCore::String& effectName,
+    ArtifactCore::AudioEffect* effect, QWidget* parent) {
 
     auto* dlg = new QDialog(parent);
-    dlg->setWindowTitle(QString::fromStdString(effectName) + " Parameters");
+    dlg->setWindowTitle(QString::fromStdString(ArtifactCore::toStdString(effectName)) + " Parameters");
     dlg->setMinimumWidth(320);
 
     auto* layout = new QVBoxLayout(dlg);
     auto* form = new QFormLayout();
 
     // Try new ArtifactAbstractAudioEffect interface first
-    auto absEffect = dynamic_cast<Artifact::ArtifactAbstractAudioEffect*>(effect.get());
+    auto absEffect = dynamic_cast<Artifact::ArtifactAbstractAudioEffect*>(effect);
     if (absEffect) {
         auto newParams = absEffect->getUiParameters();
         for (const auto& p : newParams) {
-            std::string pName = p.name;
+            ArtifactCore::String pName = p.name;
             std::string pDisplay = ArtifactCore::toStdString(p.displayName);
             if (p.type == Artifact::AudioEffectParameterType::Bool) {
                 auto* cb = new QComboBox();
                 cb->addItem("Off");
                 cb->addItem("On");
-                cb->setCurrentIndex(absEffect->getParameter(pName) > 0.5f ? 1 : 0);
+                 cb->setCurrentIndex(absEffect->getParameter(pName) > 0.5f ? 1 : 0);
                 QObject::connect(cb, &QComboBox::currentIndexChanged, [effect = absEffect, pName](int idx) {
                     effect->setParameter(pName, idx > 0 ? 1.0f : 0.0f);
                 });
@@ -117,9 +120,9 @@ static QDialog* createParameterEditor(const std::string& effectName,
         }
     } else {
         // Fall back to legacy EffectParameter interface
-        auto legacyParams = effect->getParameters();
+         auto legacyParams = effect->getParameters();
         for (const auto& p : legacyParams) {
-            std::string pId = ArtifactCore::toStdString(p.id);
+            ArtifactCore::String pId = p.id;
             std::string pDisplay = ArtifactCore::toStdString(p.displayName);
             auto* spin = new QDoubleSpinBox();
             spin->setRange(p.minValue, p.maxValue);
@@ -159,8 +162,8 @@ void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
                 // Create a temporary effect just to get the display name
                 auto tempEffect = mgr.createEffect(id);
                 QString displayName = tempEffect
-                    ? QString::fromStdString(tempEffect->getName())
-                    : QString::fromStdString(id);
+                    ? QString::fromStdString(ArtifactCore::toStdString(tempEffect->getName()))
+                    : QString::fromStdString(ArtifactCore::toStdString(id));
                 nativeMenu->addAction(displayName, [this, idCopy = id]() {
                     auto effect = Artifact::ArtifactAudioEffectManager::instance().createEffect(idCopy);
                     if (effect) {
@@ -198,7 +201,7 @@ void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
 
         if (hasParams) {
             menu.addAction("Edit Parameters...", [this, effect]() {
-                auto* dlg = createParameterEditor(effect->getName(), effect, this);
+             auto* dlg = createParameterEditor(effect->getName(), effect.get(), this);
                 dlg->setAttribute(Qt::WA_DeleteOnClose);
                 dlg->show();
             });

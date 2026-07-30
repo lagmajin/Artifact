@@ -6,6 +6,7 @@ export module Artifact.Service.Audio;
 
 import Utils.Id;
 import Artifact.Service.Playback;
+import Artifact.Playback.Engine;
 
 export namespace Artifact {
 

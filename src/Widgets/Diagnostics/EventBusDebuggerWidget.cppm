@@ -38,6 +38,7 @@ module Artifact.Widgets.EventBusDebugger;
 import ArtifactCore.Event.EventBusDebugger;
 import Event.Bus;
 import Settings.Accessibility;
+import Core.ArtifactString;
 
 namespace Artifact {
 
@@ -151,7 +152,7 @@ protected:
             p.setPen(kTextH);
             const QRect nameRect(card.left() + 8, card.top() + 5, card.width() - 16, 18);
             p.drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
-                       QString::fromStdString(info.eventName));
+                       QString::fromStdString(ArtifactCore::toStdString(info.eventName)));
 
             // Subs + fires
             p.setFont(fBody);
@@ -243,7 +244,7 @@ protected:
             p.setFont(fBody);
             p.setPen(kTextN);
             p.drawText(QRect(barLeft, y, 200, rowH), Qt::AlignLeft | Qt::AlignVCenter,
-                       QString::fromStdString(fe.eventName));
+                       QString::fromStdString(ArtifactCore::toStdString(fe.eventName)));
 
             // Total fires
             p.setPen(kTextD);
@@ -428,7 +429,7 @@ EventBusDebuggerWidget::EventBusDebuggerWidget(QWidget* parent)
             for (const auto& e : entries) {
                 text += QString("%1\t%2\t%3\t%4\t%5\t%6\n")
                     .arg(QString::number(e.timestampMs, 'f', 1))
-                    .arg(QString::fromStdString(e.eventName))
+                    .arg(QString::fromStdString(ArtifactCore::toStdString(e.eventName)))
                     .arg(static_cast<int>(e.subscriberCount))
                     .arg(e.durationUs)
                     .arg(fireFlagsText(e))
@@ -459,7 +460,7 @@ EventBusDebuggerWidget::EventBusDebuggerWidget(QWidget* parent)
                                 for (const auto& e : entries) {
                                     text += QString("%1\t%2\t%3\t%4\t%5\t%6\n")
                                                 .arg(QString::number(e.timestampMs, 'f', 1))
-                                                .arg(QString::fromStdString(e.eventName))
+                                                .arg(QString::fromStdString(ArtifactCore::toStdString(e.eventName)))
                                                 .arg(static_cast<int>(e.subscriberCount))
                                                 .arg(e.durationUs)
                                                 .arg(fireFlagsText(e))
@@ -479,7 +480,7 @@ EventBusDebuggerWidget::EventBusDebuggerWidget(QWidget* parent)
             const auto entries = ArtifactCore::EventBusDebugger::instance().fireLog();
             for (const auto& e : entries) {
                 out << QString::number(e.timestampMs, 'f', 1) << ','
-                    << QString::fromStdString(e.eventName) << ','
+                    << QString::fromStdString(ArtifactCore::toStdString(e.eventName)) << ','
                     << static_cast<int>(e.subscriberCount) << ','
                     << e.durationUs << ','
                     << fireFlagsText(e) << ','
@@ -588,9 +589,9 @@ void EventBusDebuggerWidget::timerEvent(QTimerEvent*)
             .arg(static_cast<qulonglong>(gs.totalEventsFired))
             .arg(gs.overallEventsPerSec, 0, 'f', 1)
             .arg(gs.uptimeSec, 0, 'f', 1);
-        if (!gs.slowestEventName.empty()) {
+        if (!gs.slowestEventName.isEmpty()) {
             overview += QString("  |  Slowest: %1 (%2 µs)")
-                .arg(QString::fromStdString(gs.slowestEventName))
+    .arg(QString::fromStdString(ArtifactCore::toStdString(gs.slowestEventName)))
                 .arg(gs.slowestMaxUs);
         }
         if (impl_->overviewBar) {
@@ -640,7 +641,7 @@ void EventBusDebuggerWidget::timerEvent(QTimerEvent*)
         if (!filter.isEmpty()) {
             entries.erase(std::remove_if(entries.begin(), entries.end(),
                 [&](const ArtifactCore::FireEntry& e) {
-                    return !QString::fromStdString(e.eventName).toLower().contains(filter);
+                    return !QString::fromStdString(ArtifactCore::toStdString(e.eventName)).toLower().contains(filter);
                 }), entries.end());
         }
 
@@ -659,7 +660,7 @@ void EventBusDebuggerWidget::timerEvent(QTimerEvent*)
             impl_->logTable->setItem(i, 0, new QTableWidgetItem(
                 QString::number(e.timestampMs, 'f', 1)));
             impl_->logTable->setItem(i, 1, new QTableWidgetItem(
-                QString::fromStdString(e.eventName)));
+                QString::fromStdString(ArtifactCore::toStdString(e.eventName))));
             impl_->logTable->setItem(i, 2, new QTableWidgetItem(
                 QString::number(static_cast<int>(e.subscriberCount))));
             impl_->logTable->setItem(i, 3, new QTableWidgetItem(
@@ -700,7 +701,7 @@ void EventBusDebuggerWidget::timerEvent(QTimerEvent*)
         for (int i = 0; i < rowCount; ++i) {
             const auto& s = stats[static_cast<std::size_t>(i)];
             impl_->statsTable->setItem(i, 0, new QTableWidgetItem(
-                QString::fromStdString(s.eventName)));
+                QString::fromStdString(ArtifactCore::toStdString(s.eventName))));
             impl_->statsTable->setItem(i, 1, new QTableWidgetItem(
                 QString::number(static_cast<qulonglong>(s.totalFires))));
             impl_->statsTable->setItem(i, 2, new QTableWidgetItem(
@@ -757,7 +758,7 @@ void EventBusDebuggerWidget::Impl::copySelectedLogRowsToClipboard() const
         const auto& e = entries[static_cast<std::size_t>(row)];
         text += QString("%1\t%2\t%3\t%4\t%5\t%6\n")
                     .arg(QString::number(e.timestampMs, 'f', 1))
-                    .arg(QString::fromStdString(e.eventName))
+                    .arg(QString::fromStdString(ArtifactCore::toStdString(e.eventName)))
                     .arg(static_cast<int>(e.subscriberCount))
                     .arg(e.durationUs)
                     .arg(fireFlagsText(e))

@@ -77,6 +77,7 @@ import Artifact.Layer.Video;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
+import Artifact.Layers.Model3D;
 import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Composition;
@@ -313,7 +314,8 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
   {
     const auto variants = layer ? layer->getVariants() : std::vector<LayerVariant*>{};
     if (index >= 0 && index < variants.size() && variants[index]) {
-      const QString name = QString::fromStdString(variants[index]->GetName()).trimmed();
+      const QString name = QString::fromStdString(
+          ArtifactCore::toStdString(variants[index]->GetName())).trimmed();
       if (!name.isEmpty()) {
         return name;
       }

@@ -6,6 +6,7 @@ module;
 #include <QStringList>
 #include <QSettings>
 #include <QtMultimedia/QMediaDevices>
+#include <QtMultimedia/QAudioDevice>
 module Artifact.Service.Audio;
 
 import Artifact.Service.Project;
