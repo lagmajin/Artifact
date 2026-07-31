@@ -58,6 +58,7 @@ import ArtifactCore.Utils.PerformanceProfiler;
 
 import Utils.Path;
 import Artifact.Service.Project;
+import Artifact.Service.Effect;
 import Artifact.Project.Manager;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
@@ -77,7 +78,6 @@ import Artifact.Layer.Video;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
-import Artifact.Layers.Model3D;
 import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Composition;
@@ -99,7 +99,6 @@ import Artifact.Event.Types;
 import Input.Operator;
 import Widgets.Utils.CSS;
 import Memory.SharedPtr;
-import Settings.Accessibility;
 
 namespace Artifact
 {
@@ -111,13 +110,6 @@ QMessageBox::StandardButton centeredQuestion(QWidget* parent,
 
 namespace {
 constexpr auto kLayerPanelContext = "Panel.LayerTree";
-
-QPoint accessibilityMenuPosition(const QMenu &menu, const QPoint &origin) {
-  int x = origin.x();
-  int y = origin.y();
-  Accessibility::adjustContextMenuPosition(x, y, menu.sizeHint().width());
-  return QPoint(x, y);
-}
 
 enum class MultiEditCycleMode {
   None,
@@ -314,8 +306,7 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
   {
     const auto variants = layer ? layer->getVariants() : std::vector<LayerVariant*>{};
     if (index >= 0 && index < variants.size() && variants[index]) {
-      const QString name = QString::fromStdString(
-          ArtifactCore::toStdString(variants[index]->GetName())).trimmed();
+      const QString name = QString::fromStdString(variants[index]->GetName()).trimmed();
       if (!name.isEmpty()) {
         return name;
       }
@@ -408,7 +399,7 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
       parent->update();
     });
 
-    menu.exec(accessibilityMenuPosition(menu, globalPos));
+    menu.exec(globalPos);
   }
 
   void buildSelectedLayerMenu(
@@ -1064,8 +1055,6 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   visButton->setIcon(impl_->visibilityIcon);
   visButton->setIconSize(QSize(15, 15));
-  visButton->setAccessibleName(QStringLiteral("Layer visibility"));
-  visButton->setAccessibleDescription(QStringLiteral("Toggle visibility for the layer column"));
   visButton->setFocusPolicy(Qt::NoFocus);
   applyLayerPanelButtonPalette(visButton);
 
@@ -1073,8 +1062,6 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   lockButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->lockIcon.isNull()) lockButton->setIcon(impl_->lockIcon);
   lockButton->setIconSize(QSize(15, 15));
-  lockButton->setAccessibleName(QStringLiteral("Layer lock"));
-  lockButton->setAccessibleDescription(QStringLiteral("Toggle locking for the layer column"));
   lockButton->setFocusPolicy(Qt::NoFocus);
   applyLayerPanelButtonPalette(lockButton);
 
@@ -1082,8 +1069,6 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   soloButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
   soloButton->setIconSize(QSize(15, 15));
-  soloButton->setAccessibleName(QStringLiteral("Layer solo"));
-  soloButton->setAccessibleDescription(QStringLiteral("Toggle solo mode for the layer column"));
   soloButton->setFocusPolicy(Qt::NoFocus);
   applyLayerPanelButtonPalette(soloButton);
 
@@ -1091,8 +1076,6 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   audioButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->audioIcon.isNull()) audioButton->setIcon(impl_->audioIcon);
   audioButton->setIconSize(QSize(15, 15));
-  audioButton->setAccessibleName(QStringLiteral("Layer audio"));
-  audioButton->setAccessibleDescription(QStringLiteral("Toggle audio for the layer column"));
   audioButton->setFocusPolicy(Qt::NoFocus);
   applyLayerPanelButtonPalette(audioButton);
 
@@ -1101,8 +1084,6 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   shyButton->setCheckable(true);
   if (!impl_->shyIcon.isNull()) shyButton->setIcon(impl_->shyIcon);
   shyButton->setToolTip("Master Shy Switch");
-  shyButton->setAccessibleName(QStringLiteral("Master Shy"));
-  shyButton->setAccessibleDescription(QStringLiteral("Hide or reveal layers marked Shy"));
   applyLayerPanelButtonPalette(shyButton, true);
 
   auto layerNameButton = impl_->layerNameButton = new QPushButton("Layer Name");
@@ -1115,9 +1096,6 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   selectionMenuButton->setFlat(true);
   selectionMenuButton->setIcon(QIcon(resolveIconPath("Studio/layermenu_select_all.svg")));
   selectionMenuButton->setToolTip(QStringLiteral("選択中レイヤーの操作メニュー"));
-  selectionMenuButton->setAccessibleName(QStringLiteral("Selected layer menu"));
-  selectionMenuButton->setAccessibleDescription(
-      QStringLiteral("Open actions for the selected layers"));
   applyLayerPanelButtonPalette(selectionMenuButton);
   
   auto parentHeader = impl_->parentHeaderButton = new QPushButton("Parent");
@@ -1340,16 +1318,6 @@ QString summarizeLayerState(const ArtifactAbstractLayerPtr& layer)
 {
  if (!layer) {
   return {};
- }
- auto parent = layer->parentLayer();
- while (parent) {
-  if (!parent->isVisible()) {
-   return QStringLiteral("Group hidden");
-  }
-  if (parent->isLocked()) {
-   return QStringLiteral("Group locked");
-  }
-  parent = parent->parentLayer();
  }
  if (!layer->isVisible()) {
   return QStringLiteral("Hidden");
@@ -2167,7 +2135,6 @@ public:
   LayerID selectedMaskLayerId;
   int selectedMaskIndex = -1;
   QVector<VisibleRow> visibleRows;
-  QSet<QString> searchMatchedLayerIds;
   QHash<QString, bool> expandedByLayerId;
   QHash<QString, bool> expandedByGroupKey;
   QPointer<QComboBox> inlineParentEditor;
@@ -2404,10 +2371,9 @@ public:
    return count;
   }
 
- void rebuildVisibleRows()
- {
+  void rebuildVisibleRows()
+  {
    visibleRows.clear();
-   searchMatchedLayerIds.clear();
 
    auto comp = safeCompositionLookup(compositionId);
    if (!comp) {
@@ -2415,171 +2381,28 @@ public:
    }
 
    QVector<ArtifactAbstractLayerPtr> layers;
-   const QString needle = filterText.trimmed();
+    const QString needle = filterText.trimmed();
    for (auto& l : comp->allLayer()) {
      if (!l) continue;
      if (shyHidden && l->isShy()) continue;
      if (maskFilterEnabled_ && !l->hasMasks()) continue;
      if (!needle.isEmpty()) {
-       const int separator = needle.indexOf(QLatin1Char(':'));
-       const QString queryKey = separator > 0
-                                   ? needle.left(separator).trimmed().toLower()
-                                   : QString();
-       const QString queryValue = separator > 0
-                                    ? needle.mid(separator + 1).trimmed().toLower()
-                                    : QString();
-       bool stateQuery = false;
-       bool stateMatch = false;
-       if (!queryKey.isEmpty() && !queryValue.isEmpty()) {
-         const bool wantsTrue = queryValue == QStringLiteral("true") ||
-                                queryValue == QStringLiteral("yes") ||
-                                queryValue == QStringLiteral("1");
-         const bool wantsFalse = queryValue == QStringLiteral("false") ||
-                                 queryValue == QStringLiteral("no") ||
-                                 queryValue == QStringLiteral("0");
-         if (wantsTrue || wantsFalse) {
-           if (queryKey == QStringLiteral("visible") || queryKey == QStringLiteral("hidden")) {
-             stateQuery = true;
-             const bool visible = l->isVisible();
-             stateMatch = queryKey == QStringLiteral("hidden")
-                            ? (visible == !wantsTrue)
-                            : (visible == wantsTrue);
-           } else if (queryKey == QStringLiteral("locked")) {
-             stateQuery = true;
-             stateMatch = l->isLocked() == wantsTrue;
-           } else if (queryKey == QStringLiteral("solo")) {
-             stateQuery = true;
-             stateMatch = l->isSolo() == wantsTrue;
-           }
-         }
-         if (!stateQuery && queryKey == QStringLiteral("is")) {
-           stateQuery = true;
-           if (queryValue == QStringLiteral("visible")) {
-             stateMatch = l->isVisible();
-           } else if (queryValue == QStringLiteral("hidden")) {
-             stateMatch = !l->isVisible();
-           } else if (queryValue == QStringLiteral("locked")) {
-             stateMatch = l->isLocked();
-           } else if (queryValue == QStringLiteral("unlocked")) {
-             stateMatch = !l->isLocked();
-           } else if (queryValue == QStringLiteral("solo")) {
-             stateMatch = l->isSolo();
-           } else if (queryValue == QStringLiteral("nonsolo")) {
-             stateMatch = !l->isSolo();
-           } else {
-             stateMatch = false;
-           }
-         } else if (!stateQuery && queryKey == QStringLiteral("hasparent")) {
-           stateQuery = true;
-           const bool wantsParent = queryValue == QStringLiteral("true") ||
-                                    queryValue == QStringLiteral("yes") ||
-                                    queryValue == QStringLiteral("1");
-           const bool wantsNoParent = queryValue == QStringLiteral("false") ||
-                                      queryValue == QStringLiteral("no") ||
-                                      queryValue == QStringLiteral("0");
-           stateMatch = wantsParent ? l->hasParent()
-                       : wantsNoParent ? !l->hasParent() : false;
-         } else if (!stateQuery && queryKey == QStringLiteral("parent")) {
-           stateQuery = true;
-           const auto parent = l->parentLayer();
-           if (queryValue == QStringLiteral("none") || queryValue == QStringLiteral("root")) {
-             stateMatch = !parent;
-           } else if (queryValue == QStringLiteral("any")) {
-             stateMatch = !!parent;
-           } else if (parent) {
-             stateMatch = parent->layerName().contains(queryValue, Qt::CaseInsensitive) ||
-                          parent->id().toString().contains(queryValue, Qt::CaseInsensitive);
-           }
-         } else if (!stateQuery && (queryKey == QStringLiteral("child") ||
-                                    queryKey == QStringLiteral("haschild"))) {
-           stateQuery = true;
-           const auto* group = dynamic_cast<const ArtifactGroupLayer*>(l.get());
-           const bool hasChildren = group && !group->children().empty();
-           if (queryKey == QStringLiteral("haschild")) {
-             const bool wantsChildren = queryValue == QStringLiteral("true") ||
-                                        queryValue == QStringLiteral("yes") ||
-                                        queryValue == QStringLiteral("1");
-             const bool wantsNoChildren = queryValue == QStringLiteral("false") ||
-                                          queryValue == QStringLiteral("no") ||
-                                          queryValue == QStringLiteral("0");
-             stateMatch = wantsChildren ? hasChildren : wantsNoChildren ? !hasChildren : false;
-           } else if (queryValue == QStringLiteral("any")) {
-             stateMatch = hasChildren;
-           } else if (queryValue == QStringLiteral("none") || queryValue == QStringLiteral("root")) {
-             stateMatch = !hasChildren;
-           } else if (group) {
-             for (const auto& child : group->children()) {
-               if (child && (child->layerName().contains(queryValue, Qt::CaseInsensitive) ||
-                             child->id().toString().contains(queryValue, Qt::CaseInsensitive))) {
-                 stateMatch = true;
-                 break;
-               }
-             }
-           }
-         } else if (!stateQuery && queryKey == QStringLiteral("type")) {
-           stateQuery = true;
-           const QString typeName = l->toJson().value(QStringLiteral("layerType")).toString();
-           stateMatch = typeName.contains(queryValue, Qt::CaseInsensitive);
-         } else if (!stateQuery && queryKey == QStringLiteral("note")) {
-           stateQuery = true;
-           stateMatch = l->layerNote().contains(queryValue, Qt::CaseInsensitive);
-         } else if (!stateQuery && queryKey == QStringLiteral("source")) {
-           stateQuery = true;
-           QString sourcePath;
-           if (const auto* image = dynamic_cast<const ArtifactImageLayer*>(l.get())) {
-             sourcePath = image->sourcePath();
-           } else if (const auto* video = dynamic_cast<const ArtifactVideoLayer*>(l.get())) {
-             sourcePath = video->sourcePath();
-           } else if (const auto* audio = dynamic_cast<const ArtifactAudioLayer*>(l.get())) {
-             sourcePath = audio->sourcePath();
-           } else if (const auto* model = dynamic_cast<const Artifact3DLayer*>(l.get())) {
-             sourcePath = model->sourcePath();
-           }
-           const QFileInfo sourceInfo(sourcePath);
-           stateMatch = sourcePath.contains(queryValue, Qt::CaseInsensitive) ||
-                        sourceInfo.fileName().contains(queryValue, Qt::CaseInsensitive);
-           const QString serialized = QString::fromUtf8(
-               QJsonDocument(l->toJson()).toJson(QJsonDocument::Compact));
-           if (!stateMatch) {
-             stateMatch = serialized.contains(queryValue, Qt::CaseInsensitive);
-           }
-         } else if (!stateQuery && queryKey == QStringLiteral("tag")) {
-           stateQuery = true;
-           const QString serialized = QString::fromUtf8(
-               QJsonDocument(l->toJson()).toJson(QJsonDocument::Compact));
-           stateMatch = serialized.contains(queryValue, Qt::CaseInsensitive);
-         }
-       }
-       const bool nameMatch = stateQuery
-                          ? stateMatch
-                          : l->layerName().contains(needle, Qt::CaseInsensitive);
+       bool nameMatch = l->layerName().contains(needle, Qt::CaseInsensitive);
        bool propMatch = false;
-         const bool searchPropertyGroups = !stateQuery &&
-                                         (searchInProperties_ ||
-                                          queryKey == QStringLiteral("fx") ||
-                                          queryKey == QStringLiteral("effect"));
-       if (searchPropertyGroups && !nameMatch) {
+       if (searchInProperties_ && !nameMatch) {
          const auto groups = l->getLayerPropertyGroups();
          for (const auto& group : groups) {
            if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
                    group.name())) {
             continue;
            }
-           const QString groupNeedle = (queryKey == QStringLiteral("fx") ||
-                                        queryKey == QStringLiteral("effect"))
-                                         ? queryValue
-                                         : needle;
-           if (group.name().contains(groupNeedle, Qt::CaseInsensitive)) {
+           if (group.name().contains(needle, Qt::CaseInsensitive)) {
              propMatch = true;
              break;
            }
          }
        }
-       const bool searchMatch = nameMatch || propMatch;
-       if (searchMatch) {
-         searchMatchedLayerIds.insert(l->id().toString());
-       }
-       if (!searchMatch && searchMatchMode == SearchMatchMode::FilterOnly) continue;
+       if (!nameMatch && !propMatch) continue;
      }
      layers.push_back(l);
     }
@@ -2606,14 +2429,6 @@ public:
     return;
    }
    const auto presentation = describeLayerPresentation(node);
-   const QString groupSummary = node->isGroupLayer()
-                                    ? groupLayerSummaryText(node)
-                                    : presentation.timelineBadgeText;
-   const QString nodeStateText = summarizeLayerState(node);
-   const QString groupSummaryWithState =
-       groupSummary.isEmpty() || nodeStateText.isEmpty()
-           ? groupSummary
-           : groupSummary + QStringLiteral(" · ") + nodeStateText;
    visibleRows.push_back(VisibleRow{
     node,
     depth,
@@ -2623,9 +2438,10 @@ public:
     QString(),
     QString(),
     QString(),
-    groupSummaryWithState,
+    node->isGroupLayer() ? groupLayerSummaryText(node)
+                         : presentation.timelineBadgeText,
     presentation.badgeTone,
-    nodeStateText,
+    summarizeLayerState(node),
     summarizeLayerStateTone(node)
    });
    emitted.insert(nodeId);
@@ -3162,9 +2978,6 @@ void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
     if (!l) return;
 
     impl_->inlineNameEditor = new QLineEdit(this);
-    impl_->inlineNameEditor->setAccessibleName(QStringLiteral("Layer name"));
-    impl_->inlineNameEditor->setAccessibleDescription(
-        QStringLiteral("Edit the selected layer name and press Enter to commit."));
     impl_->inlineNameEditor->setText(l->layerName());
     impl_->inlineNameEditor->selectAll();
     applyLayerPanelLineEditPalette(impl_->inlineNameEditor);
@@ -3366,8 +3179,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                                               {QStringLiteral("type"), typeIndex}});
             }
 
-            if (QAction *chosenAction = menu.exec(
-                    accessibilityMenuPosition(menu, event->globalPos()))) {
+            if (QAction *chosenAction = menu.exec(event->globalPos())) {
               const QVariantMap data = chosenAction->data().toMap();
               const QString kind = data.value(QStringLiteral("kind")).toString();
               bool indexOk = false;
@@ -3530,9 +3342,6 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (showInlineCombos && parentRect.contains(event->pos())) {
       impl_->clearInlineEditors();
       auto* combo = new QComboBox(this);
-      combo->setAccessibleName(QStringLiteral("Layer parent"));
-      combo->setAccessibleDescription(
-          QStringLiteral("Choose the selected layer's parent layer."));
       combo->setGeometry(parentRect);
       applyLayerPanelComboPalette(combo);
       combo->addItem(QStringLiteral("<None>"), QString());
@@ -3572,9 +3381,6 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (showInlineCombos && blendRect.contains(event->pos())) {
       impl_->clearInlineEditors();
       auto* combo = new QComboBox(this);
-      combo->setAccessibleName(QStringLiteral("Layer blend mode"));
-      combo->setAccessibleDescription(
-          QStringLiteral("Choose how the selected layer blends with layers below."));
       combo->setGeometry(blendRect);
       applyLayerPanelComboPalette(combo);
       const auto items = blendModeItems(impl_->blendModeFavorites);
@@ -5036,8 +4842,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
       replaceSelectionWithIds(comp, matching);
     });
-    QAction *chosenAction = menu.exec(
-        accessibilityMenuPosition(menu, event->globalPos()));
+    QAction *chosenAction = menu.exec(event->globalPos());
     if (chosenAction) {
       const QVariantMap data = chosenAction->data().toMap();
       const QString kind = data.value(QStringLiteral("kind")).toString();
@@ -6272,15 +6077,6 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     const bool isDisplayLeafRow = (row.kind == RowKind::Mask || row.kind == RowKind::Matte);
     const bool sel = isLayerSelectedInSelectionManager(l->id());
     const bool layerSelected = sel && row.kind == RowKind::Layer;
-    const bool dimNonMatchingSearchRow =
-        !impl_->filterText.trimmed().isEmpty() &&
-        impl_->searchMatchMode == SearchMatchMode::HighlightOnly &&
-        !impl_->searchMatchedLayerIds.contains(l->id().toString()) &&
-        !layerSelected;
-    p.save();
-    if (dimNonMatchingSearchRow) {
-      p.setOpacity(0.42);
-    }
     const bool selectionAnchor =
         layerSelected && !impl_->selectionAnchorLayerId.isNil() &&
         l->id() == impl_->selectionAnchorLayerId;
@@ -6797,7 +6593,6 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      p.drawText(chipRect.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, elidedChip);
      p.restore();
     }
-    p.restore();
    }
 
    if (!impl_->draggedLayerId.isNil() && impl_->dragInsertVisibleRow >= 0) {
@@ -6940,7 +6735,7 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
     return;
   }
 
-  if (mime->hasFormat(kLayerReorderMimeType)) {
+ if (mime->hasFormat(kLayerReorderMimeType)) {
     auto* svc = ArtifactProjectService::instance();
     auto comp = safeCompositionLookup(impl_->compositionId);
 
@@ -7029,6 +6824,25 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
 
   event->acceptProposedAction();
  }
+
+  if (mime->hasFormat(QStringLiteral("application/x-artifact-effect-add"))) {
+    const int row = impl_->rowIndexFromViewportY(static_cast<int>(event->position().y()));
+    if (row >= 0 && row < impl_->visibleRows.size() &&
+        impl_->visibleRows[row].kind == RowKind::Layer && impl_->visibleRows[row].layer) {
+      auto* service = ArtifactEffectService::instance();
+      if (service) {
+        const EffectID effectId(QString::fromUtf8(mime->data(QStringLiteral("application/x-artifact-effect-add"))));
+        const auto result = service->addEffectToLayer(impl_->visibleRows[row].layer->id(), effectId);
+        if (result.success) {
+          event->acceptProposedAction();
+          update();
+          return;
+        }
+      }
+    }
+    event->ignore();
+    return;
+  }
 
 bool ArtifactLayerPanelWidget::wouldCreateCycle(const LayerID& childId, const LayerID& parentId) const {
   auto comp = safeCompositionLookup(impl_->compositionId);
@@ -7194,9 +7008,7 @@ public:
               }
             }
           });
-      menu.exec(accessibilityMenuPosition(
-          menu, selectionButton->mapToGlobal(
-                    QPoint(0, selectionButton->height()))));
+      menu.exec(selectionButton->mapToGlobal(QPoint(0, selectionButton->height())));
     });
   }
 }

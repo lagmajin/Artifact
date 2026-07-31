@@ -40,6 +40,7 @@ import Artifact.Workspace.Manager;
 import Artifact.Workspace.Modes;
 import Artifact.Widgets.ColorPaletteWidget;
 import Artifact.Widgets.ColorSciencePanel;
+import Artifact.Widgets.EffectPalette;
 import Artifact.Widgets.SecondaryPreviewWindow;
 import Widgets.AssetBrowser;
 import Widgets.ToolBar;
@@ -1342,6 +1343,21 @@ namespace Artifact {
     auto* paletteWidget = new ArtifactColorPaletteWidget(mainWindow);
     addFloatingDock(mainWindow, dockTitle, QStringLiteral("color_palette_dock"),
                     paletteWidget, QRect(120, 120, 560, 640));
+   });
+
+   auto* openEffectPaletteAction = menu->addAction(QStringLiteral("エフェクトパレット"));
+   openEffectPaletteAction->setIcon(QIcon(resolveIconPath("Studio/effect_ops_generate.svg")));
+   QObject::connect(openEffectPaletteAction, &QAction::triggered, menu, [this]() {
+    if (!mainWindow) return;
+    const QString dockTitle = QStringLiteral("Effect Palette");
+    if (findDockByTitle(mainWindow, dockTitle)) {
+     setDockVisible(mainWindow, dockTitle, true);
+     activateDock(mainWindow, dockTitle);
+     return;
+    }
+    auto* paletteWidget = new ArtifactEffectPalette(mainWindow);
+    addFloatingDock(mainWindow, dockTitle, QStringLiteral("effect_palette_dock"),
+                    paletteWidget, QRect(160, 160, 360, 600));
    });
 
    openColorScienceAction = menu->addAction("Color Science");
