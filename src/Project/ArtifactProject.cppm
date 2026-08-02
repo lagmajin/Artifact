@@ -462,7 +462,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
       if (!sequenceArray.isEmpty()) {
         QStringList sequencePaths;
         sequencePaths.reserve(sequenceArray.size());
-      for (const auto& value : sequenceArray) {
+        for (const auto& value : sequenceArray) {
           if (sequencePaths.size() >= 100000) {
             break;
           }
