@@ -146,14 +146,14 @@ std::vector<AbstractProperty> SimpleRainEffect::getProperties() const {
 void SimpleRainEffect::setPropertyValue(const UniString& name,
                                         const QVariant& value) {
     const QString key = name.toQString();
-    if (key == QStringLiteral("Density")) density_ = std::clamp(value.toFloat(), 0.0f, 4.0f);
-    else if (key == QStringLiteral("Streak Length")) streakLength_ = std::clamp(value.toFloat(), 1.0f, 200.0f);
-    else if (key == QStringLiteral("Speed")) speed_ = std::clamp(value.toFloat(), 0.0f, 10.0f);
-    else if (key == QStringLiteral("Wind")) wind_ = std::clamp(value.toFloat(), -3.0f, 3.0f);
-    else if (key == QStringLiteral("Opacity")) opacity_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
-    else if (key == QStringLiteral("Depth")) depth_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
-    else if (key == QStringLiteral("Splash Amount")) splashAmount_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
-    else if (key == QStringLiteral("Evolution")) evolution_ = value.toFloat();
+    if (key == QStringLiteral("Density")) { const float v=value.toFloat(); density_=std::isfinite(v)?std::clamp(v,0.0f,4.0f):0.45f; }
+    else if (key == QStringLiteral("Streak Length")) { const float v=value.toFloat(); streakLength_=std::isfinite(v)?std::clamp(v,1.0f,200.0f):24.0f; }
+    else if (key == QStringLiteral("Speed")) { const float v=value.toFloat(); speed_=std::isfinite(v)?std::clamp(v,0.0f,10.0f):1.0f; }
+    else if (key == QStringLiteral("Wind")) { const float v=value.toFloat(); wind_=std::isfinite(v)?std::clamp(v,-3.0f,3.0f):-0.2f; }
+    else if (key == QStringLiteral("Opacity")) { const float v=value.toFloat(); opacity_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.35f; }
+    else if (key == QStringLiteral("Depth")) { const float v=value.toFloat(); depth_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.65f; }
+    else if (key == QStringLiteral("Splash Amount")) { const float v=value.toFloat(); splashAmount_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.12f; }
+    else if (key == QStringLiteral("Evolution")) { const float v=value.toFloat(); evolution_=std::isfinite(v)?v:0.0f; }
     else if (key == QStringLiteral("Seed")) seed_ = value.toInt();
     syncImpl();
 }
