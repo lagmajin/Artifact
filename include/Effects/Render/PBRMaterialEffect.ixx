@@ -62,25 +62,25 @@ export namespace Artifact {
         virtual ~PBRMaterialEffect() = default;
 
         QColor albedoColor() const { return albedoColor_; }
-        void setAlbedoColor(const QColor& color) { albedoColor_ = color; }
+        void setAlbedoColor(const QColor& color) { if (color.isValid()) albedoColor_ = color; }
 
         QColor emissiveColor() const { return emissiveColor_; }
-        void setEmissiveColor(const QColor& color) { emissiveColor_ = color; }
+        void setEmissiveColor(const QColor& color) { if (color.isValid()) emissiveColor_ = color; }
 
         float metallic() const { return metallic_; }
-        void setMetallic(float m) { metallic_ = std::clamp(m, 0.0f, 1.0f); }
+        void setMetallic(float m) { metallic_ = std::isfinite(m) ? std::clamp(m, 0.0f, 1.0f) : 0.0f; }
 
         float roughness() const { return roughness_; }
-        void setRoughness(float r) { roughness_ = std::clamp(r, 0.0f, 1.0f); }
+        void setRoughness(float r) { roughness_ = std::isfinite(r) ? std::clamp(r, 0.0f, 1.0f) : 0.5f; }
 
         float ambientOcclusion() const { return ambientOcclusion_; }
         void setAmbientOcclusion(float ao) {
-            ambientOcclusion_ = std::clamp(ao, 0.0f, 1.0f);
+            ambientOcclusion_ = std::isfinite(ao) ? std::clamp(ao, 0.0f, 1.0f) : 1.0f;
         }
 
         float emissiveIntensity() const { return emissiveIntensity_; }
         void setEmissiveIntensity(float intensity) {
-            emissiveIntensity_ = std::max(intensity, 0.0f);
+            emissiveIntensity_ = std::isfinite(intensity) ? std::clamp(intensity, 0.0f, 100.0f) : 0.0f;
         }
 
         ArtifactCore::Material toMaterial() const {
@@ -89,6 +89,9 @@ export namespace Artifact {
             material.setBaseColor(albedoColor_);
             material.setMetallic(metallic_);
             material.setRoughness(roughness_);
+            material.setEmissionColor(emissiveColor_);
+            material.setEmissionStrength(emissiveIntensity_);
+            material.setOcclusionStrength(ambientOcclusion_);
             return material;
         }
 
