@@ -366,13 +366,17 @@ DitheringEffect::DitheringEffect() {
 DitheringEffect::~DitheringEffect() = default;
 
 DitherAlgorithm DitheringEffect::algorithm() const { return algorithm_; }
-void DitheringEffect::setAlgorithm(DitherAlgorithm v) { algorithm_ = v; syncImpls(); }
+void DitheringEffect::setAlgorithm(DitherAlgorithm v) {
+    const int value = std::clamp(static_cast<int>(v), 0, 7);
+    algorithm_ = static_cast<DitherAlgorithm>(value);
+    syncImpls();
+}
 int DitheringEffect::colorCount() const { return colorCount_; }
 void DitheringEffect::setColorCount(int v) { colorCount_ = std::clamp(v, 2, 256); syncImpls(); }
 float DitheringEffect::amount() const { return amount_; }
-void DitheringEffect::setAmount(float v) { amount_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void DitheringEffect::setAmount(float v) { amount_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 1.0f; syncImpls(); }
 float DitheringEffect::patternScale() const { return patternScale_; }
-void DitheringEffect::setPatternScale(float v) { patternScale_ = std::max(0.1f, v); syncImpls(); }
+void DitheringEffect::setPatternScale(float v) { patternScale_ = std::isfinite(v) ? std::max(0.1f, v) : 1.0f; syncImpls(); }
 
 void DitheringEffect::syncImpls() {
     if (auto* c = dynamic_cast<DitheringEffectCPUImpl*>(cpuImpl().get())) {
