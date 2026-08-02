@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <vector>
 #include <QString>
@@ -68,11 +69,11 @@ std::vector<AbstractProperty> PhysicalHalationEffect::getProperties() const {
 void PhysicalHalationEffect::setPropertyValue(const UniString& name,
                                                const QVariant& value) {
     const QString key = name.toQString();
-    if (key == QStringLiteral("Threshold")) threshold_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
-    else if (key == QStringLiteral("Spread")) spread_ = std::clamp(value.toFloat(), 0.0f, 100.0f);
-    else if (key == QStringLiteral("Intensity")) intensity_ = std::clamp(value.toFloat(), 0.0f, 5.0f);
-    else if (key == QStringLiteral("Red Diffusion")) redDiffusion_ = std::clamp(value.toFloat(), 0.1f, 5.0f);
-    else if (key == QStringLiteral("Softness")) softness_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
+    if (key == QStringLiteral("Threshold")) { const float v = value.toFloat(); threshold_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.8f; }
+    else if (key == QStringLiteral("Spread")) { const float v = value.toFloat(); spread_ = std::isfinite(v) ? std::clamp(v, 0.0f, 100.0f) : 15.0f; }
+    else if (key == QStringLiteral("Intensity")) { const float v = value.toFloat(); intensity_ = std::isfinite(v) ? std::clamp(v, 0.0f, 5.0f) : 0.5f; }
+    else if (key == QStringLiteral("Red Diffusion")) { const float v = value.toFloat(); redDiffusion_ = std::isfinite(v) ? std::clamp(v, 0.1f, 5.0f) : 2.0f; }
+    else if (key == QStringLiteral("Softness")) { const float v = value.toFloat(); softness_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; }
     syncImpl();
 }
 
