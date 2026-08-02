@@ -24,16 +24,19 @@ int main(int argc, char* argv[]) {
     parser.addOption({QStringLiteral("host"), QStringLiteral("Master hostname"), QStringLiteral("host"), QStringLiteral("127.0.0.1")});
     parser.addOption({QStringLiteral("port"), QStringLiteral("Master RPC port"), QStringLiteral("port"), QStringLiteral("9876")});
     parser.addOption({QStringLiteral("worker-id"), QStringLiteral("Unique worker identifier"), QStringLiteral("id"), QString()});
+    parser.addOption({QStringLiteral("token"), QStringLiteral("Master authentication token"), QStringLiteral("token"), QString()});
     parser.process(app);
 
     const QString host = parser.value(QStringLiteral("host"));
     const unsigned short port = parser.value(QStringLiteral("port")).toUShort();
     const QString workerId = parser.value(QStringLiteral("worker-id"));
+    const QString authToken = parser.value(QStringLiteral("token"));
     const QString finalId = workerId.isEmpty()
         ? QStringLiteral("worker-%1").arg(QCoreApplication::applicationPid())
         : workerId;
 
     ArtifactCore::NetworkRPCClient client;
+    client.setAuthToken(authToken);
     QJsonObject capabilities;
     capabilities[QStringLiteral("os")] = QSysInfo::prettyProductName();
     capabilities[QStringLiteral("architecture")] = QSysInfo::currentCpuArchitecture();
