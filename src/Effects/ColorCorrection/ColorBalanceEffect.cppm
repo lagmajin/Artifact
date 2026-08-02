@@ -376,43 +376,43 @@ void ColorBalanceEffect::setPreset(int preset) {
 
 void ColorBalanceEffect::setShadowBalance(float r, float g, float b) {
     preset_ = Preset::Custom;
-    settings_.shadowR = std::clamp(r, -1.0f, 1.0f);
-    settings_.shadowG = std::clamp(g, -1.0f, 1.0f);
-    settings_.shadowB = std::clamp(b, -1.0f, 1.0f);
+    settings_.shadowR = std::isfinite(r) ? std::clamp(r, -1.0f, 1.0f) : 0.0f;
+    settings_.shadowG = std::isfinite(g) ? std::clamp(g, -1.0f, 1.0f) : 0.0f;
+    settings_.shadowB = std::isfinite(b) ? std::clamp(b, -1.0f, 1.0f) : 0.0f;
     syncImpls();
 }
 
 void ColorBalanceEffect::setMidtoneBalance(float r, float g, float b) {
     preset_ = Preset::Custom;
-    settings_.midtoneR = std::clamp(r, -1.0f, 1.0f);
-    settings_.midtoneG = std::clamp(g, -1.0f, 1.0f);
-    settings_.midtoneB = std::clamp(b, -1.0f, 1.0f);
+    settings_.midtoneR = std::isfinite(r) ? std::clamp(r, -1.0f, 1.0f) : 0.0f;
+    settings_.midtoneG = std::isfinite(g) ? std::clamp(g, -1.0f, 1.0f) : 0.0f;
+    settings_.midtoneB = std::isfinite(b) ? std::clamp(b, -1.0f, 1.0f) : 0.0f;
     syncImpls();
 }
 
 void ColorBalanceEffect::setHighlightBalance(float r, float g, float b) {
     preset_ = Preset::Custom;
-    settings_.highlightR = std::clamp(r, -1.0f, 1.0f);
-    settings_.highlightG = std::clamp(g, -1.0f, 1.0f);
-    settings_.highlightB = std::clamp(b, -1.0f, 1.0f);
+    settings_.highlightR = std::isfinite(r) ? std::clamp(r, -1.0f, 1.0f) : 0.0f;
+    settings_.highlightG = std::isfinite(g) ? std::clamp(g, -1.0f, 1.0f) : 0.0f;
+    settings_.highlightB = std::isfinite(b) ? std::clamp(b, -1.0f, 1.0f) : 0.0f;
     syncImpls();
 }
 
 void ColorBalanceEffect::setShadowRange(float value) {
     preset_ = Preset::Custom;
-    settings_.shadowRange = std::clamp(value, 0.0f, 1.0f);
+    settings_.shadowRange = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.33f;
     syncImpls();
 }
 
 void ColorBalanceEffect::setHighlightRange(float value) {
     preset_ = Preset::Custom;
-    settings_.highlightRange = std::clamp(value, 0.0f, 1.0f);
+    settings_.highlightRange = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.66f;
     syncImpls();
 }
 
 void ColorBalanceEffect::setMasterStrength(float value) {
     preset_ = Preset::Custom;
-    settings_.masterStrength = std::clamp(value, 0.0f, 1.0f);
+    settings_.masterStrength = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
     syncImpls();
 }
 
