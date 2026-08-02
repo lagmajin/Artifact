@@ -123,11 +123,11 @@ SharpenEffect::SharpenEffect() {
 SharpenEffect::~SharpenEffect() = default;
 
 float SharpenEffect::amount() const { return amount_; }
-void SharpenEffect::setAmount(float v) { amount_ = std::clamp(v, 0.0f, 10.0f); syncImpls(); }
+void SharpenEffect::setAmount(float v) { amount_ = std::isfinite(v) ? std::clamp(v, 0.0f, 10.0f) : 1.0f; syncImpls(); }
 float SharpenEffect::sigma() const { return sigma_; }
-void SharpenEffect::setSigma(float v) { sigma_ = std::clamp(v, 0.0f, 10.0f); syncImpls(); }
+void SharpenEffect::setSigma(float v) { sigma_ = std::isfinite(v) ? std::clamp(v, 0.0f, 10.0f) : 1.0f; syncImpls(); }
 float SharpenEffect::threshold() const { return threshold_; }
-void SharpenEffect::setThreshold(float v) { threshold_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void SharpenEffect::setThreshold(float v) { threshold_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.0f; syncImpls(); }
 
 void SharpenEffect::syncImpls() {
     if (auto* c = dynamic_cast<SharpenEffectCPUImpl*>(cpuImpl().get())) {
