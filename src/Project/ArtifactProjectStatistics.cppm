@@ -12,6 +12,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QFile>
+#include <QSaveFile>
 #include <QFont>
 #include <QFontDatabase>
 #include <QRawFont>
@@ -217,26 +218,25 @@ QStringList ArtifactProjectStatistics::collectAndCopyFontFiles(
 bool ArtifactProjectStatistics::writeFontUsageManifest(
     ArtifactProject* project, const QString& jsonPath, const QString& csvPath,
     const ArtifactCore::FontLicenseRegistry* licenseRegistry) {
-    if (!project || jsonPath.trimmed().isEmpty()) return false;
+    const QString normalizedJsonPath = jsonPath.trimmed();
+    const QString normalizedCsvPath = csvPath.trimmed();
+    if (!project || normalizedJsonPath.isEmpty()) return false;
     FontUsageCollector collector;
     collector.setLicenseRegistry(licenseRegistry);
     const QVector<ArtifactCore::MetadataCollector*> collectors{&collector};
     collectMetadata(project, collectors);
 
-    QFile jsonFile(jsonPath);
+    QSaveFile jsonFile(normalizedJsonPath);
     if (!jsonFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
     const QByteArray jsonData =
         QJsonDocument(collector.manifestJson()).toJson(QJsonDocument::Indented);
-    if (jsonFile.write(jsonData) != jsonData.size()) return false;
-    jsonFile.close();
+    if (jsonFile.write(jsonData) != jsonData.size() || !jsonFile.commit()) return false;
 
-    if (csvPath.trimmed().isEmpty()) return true;
-    QFile csvFile(csvPath);
+    if (normalizedCsvPath.isEmpty()) return true;
+    QSaveFile csvFile(normalizedCsvPath);
     if (!csvFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
     const QByteArray csvData = collector.manifestCsv().toUtf8();
-    if (csvFile.write(csvData) != csvData.size()) return false;
-    csvFile.close();
-    return true;
+    return csvFile.write(csvData) == csvData.size() && csvFile.commit();
 }
 
 bool ArtifactProjectStatistics::exportFontUsagePackage(
