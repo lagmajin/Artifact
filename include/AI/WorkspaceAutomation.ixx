@@ -212,6 +212,8 @@ public:
             {"setRenderQueueJobNameAt", IDescribable::loc("Rename a render queue job by index.", "Rename a render queue job by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("name")}},
             {"setRenderQueueJobOutputPathAt", IDescribable::loc("Set a render queue job output path by index.", "Set a render queue job output path by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("outputPath")}},
             {"setRenderQueueJobFrameRangeAt", IDescribable::loc("Set a render queue job frame range by index.", "Set a render queue job frame range by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("jobIndex"), QStringLiteral("startFrame"), QStringLiteral("endFrame")}},
+            {"getRenderQueueJobSelectiveSettingsAt", IDescribable::loc("Get selective render settings for a queue job.", "Get selective render settings for a queue job.", {}), "QVariantMap", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"setRenderQueueJobSelectiveSettingsAt", IDescribable::loc("Set selective render settings for a queue job.", "Set selective render settings for a queue job.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QVariantMap")}, {QStringLiteral("jobIndex"), QStringLiteral("settings")}},
             {"setRenderQueueJobOutputSettingsAt", IDescribable::loc("Set a render queue job output settings block by index.", "Set a render queue job output settings block by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("double"), QStringLiteral("int")}, {QStringLiteral("jobIndex"), QStringLiteral("outputFormat"), QStringLiteral("codec"), QStringLiteral("codecProfile"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("fps"), QStringLiteral("bitrateKbps")}},
             {"setRenderQueueJobIntegratedRenderEnabledAt", IDescribable::loc("Toggle integrated render for a queue job by index.", "Toggle integrated render for a queue job by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("bool")}, {QStringLiteral("jobIndex"), QStringLiteral("enabled")}},
             {"setRenderQueueJobRenderBackendAt", IDescribable::loc("Set a render queue job render backend by index.", "Set a render queue job render backend by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("backend")}},
@@ -579,6 +581,13 @@ public:
         }
         if (name == QStringLiteral("setRenderQueueJobFrameRangeAt")) {
             return setRenderQueueJobFrameRangeAt(intArg(args, 0, -1), intArg(args, 1, 0), intArg(args, 2, 0));
+        }
+        if (name == QStringLiteral("getRenderQueueJobSelectiveSettingsAt")) {
+            return getRenderQueueJobSelectiveSettingsAt(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("setRenderQueueJobSelectiveSettingsAt")) {
+            return setRenderQueueJobSelectiveSettingsAt(intArg(args, 0, -1),
+                                                        args.value(1).toMap());
         }
         if (name == QStringLiteral("setRenderQueueJobOutputSettingsAt")) {
             return setRenderQueueJobOutputSettingsAt(
@@ -4317,6 +4326,25 @@ private:
         }
         service->setJobFrameRangeAt(jobIndex, startFrame, endFrame);
         return true;
+    }
+
+    static QVariant getRenderQueueJobSelectiveSettingsAt(int jobIndex)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return QVariantMap();
+        }
+        return service->jobSelectiveSettingsAt(jobIndex);
+    }
+
+    static QVariant setRenderQueueJobSelectiveSettingsAt(
+        int jobIndex, const QVariantMap& settings)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        return service->setJobSelectiveSettingsAt(jobIndex, settings);
     }
 
     static QVariant setRenderQueueJobOutputSettingsAt(int jobIndex,
