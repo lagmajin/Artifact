@@ -60,28 +60,28 @@ private:
 public:
     LiquifyEffectCPUImpl() = default;
 
-    void setBrushType(LiquifyBrushType t) { brushType_ = t; }
+    void setBrushType(LiquifyBrushType t) { brushType_ = static_cast<LiquifyBrushType>(std::clamp(static_cast<int>(t), 0, 5)); }
     LiquifyBrushType brushType() const { return brushType_; }
 
-    void setAmount(float v) { amount_ = v; }
+    void setAmount(float v) { amount_ = std::isfinite(v) ? std::clamp(v, -100.0f, 100.0f) : 50.0f; }
     float amount() const { return amount_; }
 
-    void setRadius(float v) { radius_ = v; }
+    void setRadius(float v) { radius_ = std::isfinite(v) ? std::clamp(v, 0.01f, 1.0f) : 0.3f; }
     float radius() const { return radius_; }
 
-    void setCenterX(float v) { centerX_ = v; }
+    void setCenterX(float v) { centerX_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; }
     float centerX() const { return centerX_; }
 
-    void setCenterY(float v) { centerY_ = v; }
+    void setCenterY(float v) { centerY_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; }
     float centerY() const { return centerY_; }
 
-    void setAngle(float v) { angle_ = v; }
+    void setAngle(float v) { angle_ = std::isfinite(v) ? v : 45.0f; }
     float angle() const { return angle_; }
 
-    void setTurbulenceSeed(int s) { turbulenceSeed_ = s; }
+    void setTurbulenceSeed(int s) { turbulenceSeed_ = std::clamp(s, 0, 9999); }
     int turbulenceSeed() const { return turbulenceSeed_; }
 
-    void setMeshDensity(int d) { meshDensity_ = d; }
+    void setMeshDensity(int d) { meshDensity_ = std::clamp(d, 4, 128); }
     int meshDensity() const { return meshDensity_; }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
@@ -101,28 +101,28 @@ private:
 public:
     LiquifyEffectGPUImpl() = default;
 
-    void setBrushType(LiquifyBrushType t) { brushType_ = t; }
+    void setBrushType(LiquifyBrushType t) { brushType_ = static_cast<LiquifyBrushType>(std::clamp(static_cast<int>(t), 0, 5)); }
     LiquifyBrushType brushType() const { return brushType_; }
 
-    void setAmount(float v) { amount_ = v; }
+    void setAmount(float v) { amount_ = std::isfinite(v) ? std::clamp(v, -100.0f, 100.0f) : 50.0f; }
     float amount() const { return amount_; }
 
-    void setRadius(float v) { radius_ = v; }
+    void setRadius(float v) { radius_ = std::isfinite(v) ? std::clamp(v, 0.01f, 1.0f) : 0.3f; }
     float radius() const { return radius_; }
 
-    void setCenterX(float v) { centerX_ = v; }
+    void setCenterX(float v) { centerX_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; }
     float centerX() const { return centerX_; }
 
-    void setCenterY(float v) { centerY_ = v; }
+    void setCenterY(float v) { centerY_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; }
     float centerY() const { return centerY_; }
 
-    void setAngle(float v) { angle_ = v; }
+    void setAngle(float v) { angle_ = std::isfinite(v) ? v : 45.0f; }
     float angle() const { return angle_; }
 
-    void setTurbulenceSeed(int s) { turbulenceSeed_ = s; }
+    void setTurbulenceSeed(int s) { turbulenceSeed_ = std::clamp(s, 0, 9999); }
     int turbulenceSeed() const { return turbulenceSeed_; }
 
-    void setMeshDensity(int d) { meshDensity_ = d; }
+    void setMeshDensity(int d) { meshDensity_ = std::clamp(d, 4, 128); }
     int meshDensity() const { return meshDensity_; }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
