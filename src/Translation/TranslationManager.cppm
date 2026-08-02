@@ -21,6 +21,8 @@ namespace Artifact
 namespace
 {
 constexpr qint64 kMaxLocaleFileBytes = 8LL * 1024LL * 1024LL;
+constexpr qsizetype kMaxLocaleEntries = 100000;
+constexpr int kMaxLocaleObjectDepth = 64;
 }
 
 class TranslationManager::Impl
@@ -70,18 +72,25 @@ public:
   return QStringLiteral("en");
  }
 
- static void flattenJson(const QJsonObject& obj, const QString& prefix, QMap<QString, QString>& out)
+ static void flattenJson(const QJsonObject& obj, const QString& prefix,
+                         QMap<QString, QString>& out, qsizetype& entryCount,
+                         const int depth)
  {
+  if (depth > kMaxLocaleObjectDepth || entryCount >= kMaxLocaleEntries) return;
   for (auto it = obj.begin(); it != obj.end(); ++it) {
+   if (entryCount >= kMaxLocaleEntries) break;
    const QString key = prefix.isEmpty() ? it.key() : prefix + QStringLiteral(".") + it.key();
    if (it->isObject()) {
-    flattenJson(it->toObject(), key, out);
+    flattenJson(it->toObject(), key, out, entryCount, depth + 1);
    } else if (it->isString()) {
     out.insert(key, it->toString());
+    ++entryCount;
    } else if (it->isDouble()) {
     out.insert(key, QString::number(it->toDouble()));
+    ++entryCount;
    } else if (it->isBool()) {
     out.insert(key, it->toBool() ? QStringLiteral("true") : QStringLiteral("false"));
+    ++entryCount;
    }
   }
  }
@@ -107,7 +116,8 @@ public:
    return false;
   }
 
-  flattenJson(doc.object(), QString(), target);
+  qsizetype entryCount = 0;
+  flattenJson(doc.object(), QString(), target, entryCount, 0);
   return true;
  }
 
