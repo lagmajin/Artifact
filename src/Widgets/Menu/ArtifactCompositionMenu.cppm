@@ -33,6 +33,7 @@ module;
 #include <QVBoxLayout>
 #include <QTimer>
 #include <QVariant>
+#include <QVariantMap>
 #include <numeric>
 #include <wobjectimpl.h>
 
@@ -41,6 +42,9 @@ import std;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Artifact.Render.Queue.Service;
+import Artifact.Widgets.RenderCenterWindow;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Application.ProjectBundleIpc;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Composition;
@@ -402,6 +406,13 @@ public:
  QAction* settingsAction = nullptr;
  QAction* colorAction = nullptr;
  QAction* sendAction = nullptr;
+ QAction* addToRenderQueueAction = nullptr;
+ QAction* addCurrentFrameToRenderQueueAction = nullptr;
+ QAction* addWorkAreaToRenderQueueAction = nullptr;
+ QAction* addSelectedLayersToRenderQueueAction = nullptr;
+ QAction* addSelectedCurrentFrameToRenderQueueAction = nullptr;
+ QAction* addSelectedWorkAreaToRenderQueueAction = nullptr;
+ QAction* advancedRenderQueueAction = nullptr;
 
  void showCreate();
  void createFromPreset(const ArtifactCompositionInitParams& params);
@@ -411,6 +422,11 @@ public:
  void showSettings();
  void showColor();
  void sendCurrentComposition();
+ void addCurrentToRenderQueue();
+ void addCurrentFrameToRenderQueue();
+ void addWorkAreaToRenderQueue();
+ void addSelectedLayersToRenderQueue(int frameRangeMode = 0);
+ void showAdvancedRenderQueue();
 };
 
 ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* mainWindow)
@@ -445,6 +461,64 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
 
  sendAction = new QAction("メインプロジェクトへ送信(&T)...", menu);
  sendAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_send_project.svg")));
+ addToRenderQueueAction = new QAction(QStringLiteral("レンダーキューに追加(&Q)"), menu);
+ addToRenderQueueAction->setAccessibleName(
+     QStringLiteral("Queue composition for rendering"));
+ addToRenderQueueAction->setAccessibleDescription(
+     QStringLiteral("Queue the full composition range for rendering"));
+ addToRenderQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
+ addCurrentFrameToRenderQueueAction = new QAction(
+     QStringLiteral("現在フレームをレンダーキューに追加"), menu);
+ addCurrentFrameToRenderQueueAction->setAccessibleName(
+     QStringLiteral("Queue current frame for rendering"));
+ addCurrentFrameToRenderQueueAction->setAccessibleDescription(
+     QStringLiteral("Queue only the active composition frame for rendering"));
+ addCurrentFrameToRenderQueueAction->setStatusTip(
+     QStringLiteral("Queue only the active frame for rendering"));
+ addCurrentFrameToRenderQueueAction->setIcon(
+     QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
+ addWorkAreaToRenderQueueAction = new QAction(
+     QStringLiteral("ワークエリアをレンダーキューに追加"), menu);
+ addWorkAreaToRenderQueueAction->setAccessibleName(
+     QStringLiteral("Queue work area for rendering"));
+ addWorkAreaToRenderQueueAction->setAccessibleDescription(
+     QStringLiteral("Queue only the current work area for rendering"));
+ addWorkAreaToRenderQueueAction->setStatusTip(
+     QStringLiteral("Queue the current work area for rendering"));
+ addWorkAreaToRenderQueueAction->setIcon(
+     QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));
+ addSelectedLayersToRenderQueueAction = new QAction(
+     QStringLiteral("選択レイヤーのみをレンダーキューに追加"), menu);
+ addSelectedLayersToRenderQueueAction->setAccessibleName(
+     QStringLiteral("Queue selected layers for rendering"));
+ addSelectedLayersToRenderQueueAction->setAccessibleDescription(
+     QStringLiteral("Queue the selected layers for the full composition range"));
+ addSelectedLayersToRenderQueueAction->setStatusTip(
+     QStringLiteral("Queue only the currently selected layers"));
+ addSelectedLayersToRenderQueueAction->setIcon(
+     QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
+ addSelectedCurrentFrameToRenderQueueAction = new QAction(
+     QStringLiteral("選択レイヤーを現在フレームだけレンダー"), menu);
+ addSelectedCurrentFrameToRenderQueueAction->setAccessibleName(
+     QStringLiteral("Queue selected layers at current frame"));
+ addSelectedCurrentFrameToRenderQueueAction->setIcon(
+     QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
+ addSelectedWorkAreaToRenderQueueAction = new QAction(
+     QStringLiteral("選択レイヤーをワークエリアだけレンダー"), menu);
+ addSelectedWorkAreaToRenderQueueAction->setAccessibleName(
+     QStringLiteral("Queue selected layers for work area"));
+ addSelectedWorkAreaToRenderQueueAction->setIcon(
+     QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));
+ advancedRenderQueueAction = new QAction(
+     QStringLiteral("高度なレンダー設定を開く…"), menu);
+ advancedRenderQueueAction->setAccessibleName(
+     QStringLiteral("Open advanced render queue settings"));
+ advancedRenderQueueAction->setAccessibleDescription(
+     QStringLiteral("Open the render manager to configure range, layers, region, and output settings"));
+ advancedRenderQueueAction->setStatusTip(
+     QStringLiteral("Open the render manager for detailed queue settings"));
+ advancedRenderQueueAction->setIcon(
+     QIcon(resolveIconPath("Studio/rendermenu_settings.svg")));
 
  menu->addAction(createAction);
  menu->addMenu(presetMenu);
@@ -455,6 +529,13 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  menu->addSeparator();
  menu->addAction(settingsAction);
  menu->addAction(sendAction);
+ menu->addAction(addToRenderQueueAction);
+ menu->addAction(addCurrentFrameToRenderQueueAction);
+ menu->addAction(addWorkAreaToRenderQueueAction);
+ menu->addAction(addSelectedLayersToRenderQueueAction);
+ menu->addAction(addSelectedCurrentFrameToRenderQueueAction);
+ menu->addAction(addSelectedWorkAreaToRenderQueueAction);
+ menu->addAction(advancedRenderQueueAction);
  menu->addSeparator();
  menu->addAction(colorAction);
 
@@ -467,6 +548,20 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  QObject::connect(deleteAction, &QAction::triggered, menu, [this]() { removeCurrent(); });
  QObject::connect(settingsAction, &QAction::triggered, menu, [this]() { showSettings(); });
  QObject::connect(sendAction, &QAction::triggered, menu, [this]() { sendCurrentComposition(); });
+ QObject::connect(addToRenderQueueAction, &QAction::triggered, menu,
+                  [this]() { addCurrentToRenderQueue(); });
+ QObject::connect(addCurrentFrameToRenderQueueAction, &QAction::triggered, menu,
+                  [this]() { addCurrentFrameToRenderQueue(); });
+ QObject::connect(addWorkAreaToRenderQueueAction, &QAction::triggered, menu,
+                  [this]() { addWorkAreaToRenderQueue(); });
+ QObject::connect(addSelectedLayersToRenderQueueAction, &QAction::triggered, menu,
+                  [this]() { addSelectedLayersToRenderQueue(0); });
+ QObject::connect(addSelectedCurrentFrameToRenderQueueAction, &QAction::triggered, menu,
+                  [this]() { addSelectedLayersToRenderQueue(4); });
+ QObject::connect(addSelectedWorkAreaToRenderQueueAction, &QAction::triggered, menu,
+                  [this]() { addSelectedLayersToRenderQueue(1); });
+ QObject::connect(advancedRenderQueueAction, &QAction::triggered, menu,
+                  [this]() { showAdvancedRenderQueue(); });
  QObject::connect(colorAction, &QAction::triggered, menu, [this]() { showColor(); });
 }
 
@@ -1409,6 +1504,139 @@ void ArtifactCompositionMenu::Impl::sendCurrentComposition()
  }
 }
 
+void ArtifactCompositionMenu::Impl::showAdvancedRenderQueue()
+{
+  auto* projectService = ArtifactProjectService::instance();
+  const auto current = projectService ? projectService->currentComposition().lock()
+                                      : ArtifactCompositionPtr{};
+  auto* renderQueue = ArtifactRenderQueueService::instance();
+  if (!current || !renderQueue) {
+    QMessageBox::information(
+        mainWindow_ ? mainWindow_ : menu_, QStringLiteral("Render Queue"),
+        QStringLiteral("アクティブなコンポジションがありません。"));
+    return;
+  }
+  renderQueue->addRenderQueueForComposition(
+      current->id(), current->settings().compositionName().toQString());
+
+  QWidget* parent = mainWindow_ ? mainWindow_ : menu_;
+  if (auto* existing = parent ? parent->findChild<ArtifactRenderCenterWindow*>(
+                                   QStringLiteral("ArtifactRenderCenterWindow"))
+                              : nullptr) {
+    existing->present();
+    return;
+  }
+  auto* window = new ArtifactRenderCenterWindow(parent);
+  window->setAttribute(Qt::WA_DeleteOnClose);
+  window->present();
+}
+
+void ArtifactCompositionMenu::Impl::addCurrentToRenderQueue()
+{
+ auto* service = ArtifactProjectService::instance();
+ auto current = service ? service->currentComposition().lock()
+                         : ArtifactCompositionPtr{};
+ auto* renderQueue = ArtifactRenderQueueService::instance();
+ if (!current || !renderQueue) {
+  return;
+ }
+ renderQueue->addRenderQueueForComposition(
+     current->id(), current->settings().compositionName().toQString());
+}
+
+void ArtifactCompositionMenu::Impl::addCurrentFrameToRenderQueue()
+{
+ auto* service = ArtifactProjectService::instance();
+ auto current = service ? service->currentComposition().lock()
+                         : ArtifactCompositionPtr{};
+ auto* renderQueue = ArtifactRenderQueueService::instance();
+ if (!current || !renderQueue) {
+  return;
+ }
+ renderQueue->addRenderQueueForComposition(
+     current->id(), current->settings().compositionName().toQString());
+ const int jobIndex = renderQueue->jobCount() - 1;
+ if (jobIndex < 0) {
+  return;
+ }
+ const int frame = static_cast<int>(current->framePosition().framePosition());
+ renderQueue->setJobFrameRangeAt(jobIndex, frame, frame);
+ QVariantMap selective = renderQueue->jobSelectiveSettingsAt(jobIndex);
+ selective.insert(QStringLiteral("frameRangeMode"), 4);
+ renderQueue->setJobSelectiveSettingsAt(jobIndex, selective);
+}
+
+void ArtifactCompositionMenu::Impl::addWorkAreaToRenderQueue()
+{
+ auto* service = ArtifactProjectService::instance();
+ auto current = service ? service->currentComposition().lock()
+                         : ArtifactCompositionPtr{};
+ auto* renderQueue = ArtifactRenderQueueService::instance();
+ if (!current || !renderQueue) {
+  return;
+ }
+ renderQueue->addRenderQueueForComposition(
+     current->id(), current->settings().compositionName().toQString());
+ const int jobIndex = renderQueue->jobCount() - 1;
+ if (jobIndex < 0) {
+  return;
+ }
+ const auto range = current->workAreaRange();
+ renderQueue->setJobFrameRangeAt(jobIndex,
+                                 static_cast<int>(range.start()),
+                                 static_cast<int>(range.end()));
+ QVariantMap selective = renderQueue->jobSelectiveSettingsAt(jobIndex);
+ selective.insert(QStringLiteral("frameRangeMode"), 1);
+ renderQueue->setJobSelectiveSettingsAt(jobIndex, selective);
+}
+
+void ArtifactCompositionMenu::Impl::addSelectedLayersToRenderQueue(
+    const int frameRangeMode)
+{
+ auto* service = ArtifactProjectService::instance();
+ auto current = service ? service->currentComposition().lock()
+                         : ArtifactCompositionPtr{};
+ auto* renderQueue = ArtifactRenderQueueService::instance();
+ auto* selection = ArtifactLayerSelectionManager::instance();
+ if (!current || !renderQueue || !selection) {
+  return;
+ }
+ const auto selectedLayers = selection->selectedLayersInOrder();
+ if (selectedLayers.isEmpty()) {
+  return;
+ }
+ QStringList whitelist;
+ for (const auto& layer : selectedLayers) {
+  if (layer) {
+   whitelist.append(layer->id().toString());
+  }
+ }
+ if (whitelist.isEmpty()) {
+  return;
+ }
+ renderQueue->addRenderQueueForComposition(
+     current->id(), current->settings().compositionName().toQString());
+ const int jobIndex = renderQueue->jobCount() - 1;
+ if (jobIndex < 0) {
+  return;
+ }
+ QVariantMap selective = renderQueue->jobSelectiveSettingsAt(jobIndex);
+ selective.insert(QStringLiteral("layerFilterMode"), 4);
+ selective.insert(QStringLiteral("layerWhitelist"), whitelist);
+ selective.insert(QStringLiteral("layerBlacklist"), QStringList{});
+ selective.insert(QStringLiteral("frameRangeMode"), frameRangeMode);
+ if (frameRangeMode == 4) {
+  const int frame = static_cast<int>(current->framePosition().framePosition());
+  renderQueue->setJobFrameRangeAt(jobIndex, frame, frame);
+ } else if (frameRangeMode == 1) {
+  const auto range = current->workAreaRange();
+  renderQueue->setJobFrameRangeAt(jobIndex,
+                                  static_cast<int>(range.start()),
+                                  static_cast<int>(range.end()));
+ }
+ renderQueue->setJobSelectiveSettingsAt(jobIndex, selective);
+}
+
 ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* mainWindow, QWidget* parent)
  : QMenu(parent), impl_(new Impl(this, mainWindow))
 {
@@ -1444,6 +1672,20 @@ void ArtifactCompositionMenu::rebuildMenu()
  impl_->deleteAction->setEnabled(hasComp);
  impl_->settingsAction->setEnabled(hasComp);
  impl_->sendAction->setEnabled(hasComp);
+ impl_->addToRenderQueueAction->setEnabled(hasComp &&
+                                           ArtifactRenderQueueService::instance() != nullptr);
+ impl_->addCurrentFrameToRenderQueueAction->setEnabled(
+     hasComp && ArtifactRenderQueueService::instance() != nullptr);
+ impl_->addWorkAreaToRenderQueueAction->setEnabled(
+     hasComp && ArtifactRenderQueueService::instance() != nullptr);
+ impl_->addSelectedLayersToRenderQueueAction->setEnabled(
+     hasComp && ArtifactRenderQueueService::instance() != nullptr &&
+     ArtifactLayerSelectionManager::instance() != nullptr &&
+     !ArtifactLayerSelectionManager::instance()->selectedLayersInOrder().isEmpty());
+ impl_->addSelectedCurrentFrameToRenderQueueAction->setEnabled(
+     impl_->addSelectedLayersToRenderQueueAction->isEnabled());
+ impl_->addSelectedWorkAreaToRenderQueueAction->setEnabled(
+     impl_->addSelectedLayersToRenderQueueAction->isEnabled());
  impl_->colorAction->setEnabled(hasComp);
 }
 
