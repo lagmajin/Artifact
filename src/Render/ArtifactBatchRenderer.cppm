@@ -217,11 +217,13 @@ QString ArtifactBatchRenderer::resolveTemplateDir() const
 
 QVector<BatchTemplate> ArtifactBatchRenderer::availableTemplates() const
 {
+    constexpr qint64 kMaxBatchTemplateBytes = 8LL * 1024LL * 1024LL;
     QVector<BatchTemplate> result;
     QDir dir(resolveTemplateDir());
     if (!dir.exists()) return result;
 
     for (const auto& fi : dir.entryInfoList({"*.json"}, QDir::Files)) {
+        if (fi.size() <= 0 || fi.size() > kMaxBatchTemplateBytes) continue;
         QFile file(fi.absoluteFilePath());
         if (!file.open(QIODevice::ReadOnly)) continue;
         const auto doc = QJsonDocument::fromJson(file.readAll());
