@@ -2809,7 +2809,10 @@ void Artifact::ArtifactAICloudWidget::onModelsReply(QNetworkReply *reply) {
   QStringList ids;
   const QJsonObject obj = doc.object();
   const auto collectFromArray = [&](const QJsonArray &array) {
+    constexpr qsizetype kMaxModelIds = 10000;
     for (const auto &value : array) {
+      if (ids.size() >= kMaxModelIds) break;
+      if (!value.isObject()) continue;
       const QJsonObject item = value.toObject();
       QString id = item.value("id").toString();
       if (id.isEmpty()) {
@@ -2827,6 +2830,7 @@ void Artifact::ArtifactAICloudWidget::onModelsReply(QNetworkReply *reply) {
       if (id.isEmpty()) {
         id = item.value("title").toString();
       }
+      id = id.trimmed().left(1024);
       if (!id.isEmpty()) {
         ids.push_back(id);
       }
