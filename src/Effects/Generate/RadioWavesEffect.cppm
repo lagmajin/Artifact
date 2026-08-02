@@ -70,7 +70,13 @@ public:
 
         // 現在時刻に存在する全ウェーブを列挙
         // 各ウェーブは lifespan_ 秒間生存し、frequency_ [波/秒] で発生する
-        const int waveCount = static_cast<int>(std::ceil(currentTime_ * frequency_)) + 1;
+        const float safeFrequency = std::max(0.01f, frequency_);
+        const float safeLifespan = std::max(0.01f, lifespan_);
+        const int firstWave = std::max(
+            0, static_cast<int>(std::floor(
+                    (currentTime_ - safeLifespan) * safeFrequency)) - 1);
+        const int lastWave = std::max(
+            firstWave, static_cast<int>(std::ceil(currentTime_ * safeFrequency)));
 
 ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
             float* row = dstData + y * W * 4;
@@ -82,11 +88,11 @@ ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
                 float blendAlpha = 0.0f;
 
                 // 各ウェーブを合成（最大 alphaを取る）
-                for (int i = 0; i < waveCount; ++i) {
+                for (int i = firstWave; i <= lastWave; ++i) {
                     // ウェーブ誕生時刻
-                    const float birthTime = static_cast<float>(i) / frequency_;
+                    const float birthTime = static_cast<float>(i) / safeFrequency;
                     const float age = currentTime_ - birthTime;
-                    if (age < 0.0f || age > lifespan_) continue;
+                    if (age < 0.0f || age > safeLifespan) continue;
 
                     // 現在のウェーブ半径
                     const float radius = age * expansion_;
@@ -98,7 +104,7 @@ ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
 
                     // リングの輝度（アンチエイリアス + フェード）
                     const float edgeFade = std::clamp(1.0f - (diff - halfStroke), 0.0f, 1.0f);
-                    const float lifeFade = 1.0f - std::clamp(age / lifespan_, 0.0f, 1.0f);
+                    const float lifeFade = 1.0f - std::clamp(age / safeLifespan, 0.0f, 1.0f);
                     blendAlpha = std::max(blendAlpha, edgeFade * lifeFade);
                 }
 
@@ -138,31 +144,31 @@ RadioWavesEffect::~RadioWavesEffect() = default;
 // ── アクセサ ─────────────────────────────────────────────────────────────────
 
 float RadioWavesEffect::originX() const { return originX_; }
-void  RadioWavesEffect::setOriginX(float v) { originX_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void  RadioWavesEffect::setOriginX(float v) { originX_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; syncImpls(); }
 
 float RadioWavesEffect::originY() const { return originY_; }
-void  RadioWavesEffect::setOriginY(float v) { originY_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void  RadioWavesEffect::setOriginY(float v) { originY_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; syncImpls(); }
 
 float RadioWavesEffect::frequency() const { return frequency_; }
-void  RadioWavesEffect::setFrequency(float v) { frequency_ = std::max(0.01f, v); syncImpls(); }
+void  RadioWavesEffect::setFrequency(float v) { frequency_ = std::isfinite(v) ? std::max(0.01f, v) : 2.0f; syncImpls(); }
 
 float RadioWavesEffect::expansion() const { return expansion_; }
-void  RadioWavesEffect::setExpansion(float v) { expansion_ = std::max(0.0f, v); syncImpls(); }
+void  RadioWavesEffect::setExpansion(float v) { expansion_ = std::isfinite(v) ? std::max(0.0f, v) : 80.0f; syncImpls(); }
 
 float RadioWavesEffect::lifespan() const { return lifespan_; }
-void  RadioWavesEffect::setLifespan(float v) { lifespan_ = std::max(0.01f, v); syncImpls(); }
+void  RadioWavesEffect::setLifespan(float v) { lifespan_ = std::isfinite(v) ? std::max(0.01f, v) : 2.0f; syncImpls(); }
 
 float RadioWavesEffect::strokeWidth() const { return strokeWidth_; }
-void  RadioWavesEffect::setStrokeWidth(float v) { strokeWidth_ = std::max(0.1f, v); syncImpls(); }
+void  RadioWavesEffect::setStrokeWidth(float v) { strokeWidth_ = std::isfinite(v) ? std::max(0.1f, v) : 3.0f; syncImpls(); }
 
 float RadioWavesEffect::opacity() const { return opacity_; }
-void  RadioWavesEffect::setOpacity(float v) { opacity_ = std::clamp(v, 0.0f, 100.0f); syncImpls(); }
+void  RadioWavesEffect::setOpacity(float v) { opacity_ = std::isfinite(v) ? std::clamp(v, 0.0f, 100.0f) : 80.0f; syncImpls(); }
 
 QColor RadioWavesEffect::waveColor() const { return waveColor_; }
 void   RadioWavesEffect::setWaveColor(const QColor& c) { waveColor_ = c; syncImpls(); }
 
 float RadioWavesEffect::currentTime() const { return currentTime_; }
-void  RadioWavesEffect::setCurrentTime(float t) { currentTime_ = std::max(0.0f, t); syncImpls(); }
+void  RadioWavesEffect::setCurrentTime(float t) { currentTime_ = std::isfinite(t) ? std::max(0.0f, t) : 0.0f; syncImpls(); }
 
 // ── Properties API ────────────────────────────────────────────────────────────
 
