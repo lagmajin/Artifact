@@ -94,6 +94,14 @@ namespace Artifact
    return QJsonDocument();
   }
 
+  constexpr qint64 kMaxProjectFileBytes = 256LL * 1024LL * 1024LL;
+  const qint64 projectFileBytes = file.size();
+  if (projectFileBytes < 0 || projectFileBytes > kMaxProjectFileBytes) {
+   file.close();
+   errorMsg = UniString("Project file is too large");
+   return QJsonDocument();
+  }
+
   QByteArray data = file.readAll();
   file.close();
 
