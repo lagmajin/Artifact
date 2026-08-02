@@ -35,22 +35,22 @@ public:
     ~ChromaticGlowEffect() override;
 
     float threshold() const { return threshold_; }
-    void setThreshold(float v) { threshold_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+    void setThreshold(float v) { threshold_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.62f; syncImpls(); }
 
     float radius() const { return radius_; }
-    void setRadius(float v) { radius_ = std::clamp(v, 0.5f, 48.0f); syncImpls(); }
+    void setRadius(float v) { radius_ = std::isfinite(v) ? std::clamp(v, 0.5f, 48.0f) : 12.0f; syncImpls(); }
 
     float intensity() const { return intensity_; }
-    void setIntensity(float v) { intensity_ = std::clamp(v, 0.0f, 4.0f); syncImpls(); }
+    void setIntensity(float v) { intensity_ = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.0f; syncImpls(); }
 
     float dispersion() const { return dispersion_; }
-    void setDispersion(float v) { dispersion_ = std::clamp(v, 0.0f, 2.0f); syncImpls(); }
+    void setDispersion(float v) { dispersion_ = std::isfinite(v) ? std::clamp(v, 0.0f, 2.0f) : 0.35f; syncImpls(); }
 
     float angle() const { return angle_; }
-    void setAngle(float v) { angle_ = v; syncImpls(); }
+    void setAngle(float v) { angle_ = std::isfinite(v) ? v : 35.0f; syncImpls(); }
 
     float tintMix() const { return tintMix_; }
-    void setTintMix(float v) { tintMix_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+    void setTintMix(float v) { tintMix_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.2f; syncImpls(); }
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
