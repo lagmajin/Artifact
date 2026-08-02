@@ -31,6 +31,12 @@ public:
     // Settings
     void setSmoothing(float factor);
     float smoothing() const;
+    void setSampleRate(float framesPerSecond);
+    float sampleRate() const;
+    void setShowWireframe(bool enabled);
+    bool showWireframe() const;
+    void setShowBackground(bool enabled);
+    bool showBackground() const;
 
     // Debug/preview access
     const std::vector<QPointF>& sampledPoints() const;

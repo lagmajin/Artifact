@@ -20,6 +20,12 @@ import Undo.UndoManager;
 
 namespace Artifact {
 
+namespace {
+bool isFinitePoint(const QPointF& point) {
+    return std::isfinite(point.x()) && std::isfinite(point.y());
+}
+}
+
 W_OBJECT_IMPL(ArtifactMotionSketchTool)
 
 class MotionSketchUndoCommand final : public UndoCommand {
@@ -27,8 +33,9 @@ class MotionSketchUndoCommand final : public UndoCommand {
   using Snapshot = std::map<int64_t, std::pair<float, float>>;
 
   MotionSketchUndoCommand(ArtifactAbstractLayerPtr layer, Snapshot before,
-                          Snapshot after)
-      : layer_(layer), before_(std::move(before)), after_(std::move(after)) {}
+                          Snapshot after, int64_t frameRate)
+      : layer_(layer), before_(std::move(before)), after_(std::move(after)),
+        frameRate_(std::max<int64_t>(1, frameRate)) {}
 
   void undo() override { apply(before_); }
   void redo() override { apply(after_); }
@@ -42,7 +49,7 @@ class MotionSketchUndoCommand final : public UndoCommand {
     t3d.clearPositionKeyFrames();
     if (snap.empty()) return;
     for (const auto& [frame, xy] : snap) {
-      ArtifactCore::RationalTime rt(frame, 24);
+      ArtifactCore::RationalTime rt(frame, frameRate_);
       t3d.setPosition(rt, xy.first, xy.second);
     }
     layer->setDirty(LayerDirtyFlag::Transform);
@@ -61,12 +68,14 @@ class MotionSketchUndoCommand final : public UndoCommand {
   ArtifactAbstractLayerWeak layer_;
   Snapshot before_;
   Snapshot after_;
+  int64_t frameRate_ = 24;
 };
 
 class ArtifactMotionSketchTool::Impl {
 public:
     bool active = false;
     bool sketching = false;
+    int64_t sketchStartFrame = 0;
 
     // Sampling state
     std::vector<QPointF> sampledPoints;
@@ -77,6 +86,8 @@ public:
     float smoothing = 0.5f;
     int minSamples = 2;
     double sampleInterval = 0.016; // ~60fps sampling
+    bool showWireframe = false;
+    bool showBackground = true;
 
     // Target layer
     ArtifactAbstractLayerPtr targetLayer;
@@ -119,10 +130,16 @@ bool ArtifactMotionSketchTool::isActive() const
 
 bool ArtifactMotionSketchTool::beginSketch(const QPointF& canvasPos, ArtifactAbstractLayerPtr layer)
 {
-    if (!impl_->active || !layer) return false;
+    if (!impl_->active || !layer || !isFinitePoint(canvasPos)) return false;
 
     impl_->targetLayer = layer;
     impl_->sketching = true;
+    if (auto *comp = static_cast<ArtifactAbstractComposition *>(
+            layer->composition())) {
+        impl_->sketchStartFrame = comp->framePosition().framePosition();
+    } else {
+        impl_->sketchStartFrame = 0;
+    }
     impl_->sampledPoints.clear();
     impl_->sampledTimes.clear();
     impl_->sampledPoints.push_back(canvasPos);
@@ -130,9 +147,15 @@ bool ArtifactMotionSketchTool::beginSketch(const QPointF& canvasPos, ArtifactAbs
     impl_->sketchTimer.start();
 
     impl_->beforePositions.clear();
+    const int64_t snapshotFrameRate = [&]() -> int64_t {
+        if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+            return std::max<int64_t>(1, static_cast<int64_t>(comp->frameRate().framerate()));
+        }
+        return 24;
+    }();
     auto& t3d = layer->transform3D();
     for (const auto& kt : t3d.getPositionKeyFrameTimes()) {
-        const int64_t frame = kt.rescaledTo(24);
+        const int64_t frame = kt.rescaledTo(snapshotFrameRate);
         impl_->beforePositions[frame] = {t3d.positionXAt(kt), t3d.positionYAt(kt)};
     }
 
@@ -158,9 +181,22 @@ bool ArtifactMotionSketchTool::finishSketch()
 {
     if (!impl_->sketching) return false;
     impl_->sketching = false;
+    const int64_t sketchStartFrame = impl_->sketchStartFrame;
+    impl_->sketchStartFrame = 0;
 
     auto layer = impl_->targetLayer;
     if (!layer || impl_->sampledPoints.size() < 2) return false;
+
+    if (impl_->sampledPoints.size() != impl_->sampledTimes.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < impl_->sampledPoints.size(); ++i) {
+        if (!isFinitePoint(impl_->sampledPoints[i]) ||
+            !std::isfinite(impl_->sampledTimes[i]) ||
+            impl_->sampledTimes[i] < 0.0) {
+            return false;
+        }
+    }
 
     const size_t n = impl_->sampledPoints.size();
 
@@ -194,16 +230,10 @@ bool ArtifactMotionSketchTool::finishSketch()
         return 24.0;
     }();
 
-    const int startFrame = [&]() -> int {
-        if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
-            return static_cast<int>(comp->framePosition().framePosition());
-        }
-        return 0;
-    }();
-
     for (size_t i = 0; i < n; ++i) {
         const double t = impl_->sampledTimes[i];
-        const int frameNum = startFrame + static_cast<int>(std::llround(t * fps));
+        const int64_t frameNum =
+            sketchStartFrame + static_cast<int64_t>(std::llround(t * fps));
         const float x = static_cast<float>(smoothPoints[i].x());
         const float y = static_cast<float>(smoothPoints[i].y());
         RationalTime rt(frameNum, static_cast<int64_t>(fps));
@@ -213,13 +243,14 @@ bool ArtifactMotionSketchTool::finishSketch()
     // Capture after-state for undo
     MotionSketchUndoCommand::Snapshot afterPositions;
     for (const auto& kt : t3d.getPositionKeyFrameTimes()) {
-        const int64_t frame = kt.rescaledTo(24);
+        const int64_t frame = kt.rescaledTo(static_cast<int64_t>(fps));
         afterPositions[frame] = {t3d.positionXAt(kt), t3d.positionYAt(kt)};
     }
 
     if (auto* mgr = UndoManager::instance()) {
         mgr->push(std::make_unique<MotionSketchUndoCommand>(
-            layer, impl_->beforePositions, std::move(afterPositions)));
+            layer, impl_->beforePositions, std::move(afterPositions),
+            static_cast<int64_t>(fps)));
     }
 
     // Notify
@@ -235,6 +266,7 @@ bool ArtifactMotionSketchTool::finishSketch()
 void ArtifactMotionSketchTool::cancelSketch()
 {
     impl_->sketching = false;
+    impl_->sketchStartFrame = 0;
     impl_->sampledPoints.clear();
     impl_->sampledTimes.clear();
 }
@@ -246,7 +278,42 @@ bool ArtifactMotionSketchTool::isSketching() const
 
 void ArtifactMotionSketchTool::setSmoothing(float factor)
 {
-    impl_->smoothing = std::clamp(factor, 0.0f, 1.0f);
+    impl_->smoothing = std::isfinite(factor)
+        ? std::clamp(factor, 0.0f, 1.0f)
+        : 0.5f;
+}
+
+void ArtifactMotionSketchTool::setSampleRate(float framesPerSecond)
+{
+    const double fps = std::isfinite(framesPerSecond)
+        ? std::clamp(static_cast<double>(framesPerSecond), 1.0, 60.0)
+        : 60.0;
+    impl_->sampleInterval = 1.0 / fps;
+}
+
+void ArtifactMotionSketchTool::setShowWireframe(bool enabled)
+{
+    impl_->showWireframe = enabled;
+}
+
+bool ArtifactMotionSketchTool::showWireframe() const
+{
+    return impl_->showWireframe;
+}
+
+void ArtifactMotionSketchTool::setShowBackground(bool enabled)
+{
+    impl_->showBackground = enabled;
+}
+
+bool ArtifactMotionSketchTool::showBackground() const
+{
+    return impl_->showBackground;
+}
+
+float ArtifactMotionSketchTool::sampleRate() const
+{
+    return static_cast<float>(1.0 / std::max(0.001, impl_->sampleInterval));
 }
 
 float ArtifactMotionSketchTool::smoothing() const
