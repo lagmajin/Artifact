@@ -159,14 +159,14 @@ void EchoEffect::setEchoCount(int value)
 float EchoEffect::decay() const { return decay_; }
 void EchoEffect::setDecay(float value)
 {
-    decay_ = std::clamp(value, 0.0f, 1.0f);
+    decay_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.5f;
     syncImpls();
 }
 
 float EchoEffect::blendOperator() const { return blendOperator_; }
 void EchoEffect::setBlendOperator(float value)
 {
-    blendOperator_ = std::clamp(value, 0.0f, 1.0f);
+    blendOperator_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
     syncImpls();
 }
 
