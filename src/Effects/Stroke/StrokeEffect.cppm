@@ -99,8 +99,8 @@ public:
             cv::Vec4f*   lRow = strokeLayer.ptr<cv::Vec4f>(y);
             for (int x = 0; x < W; ++x) {
                 const float a = std::clamp(aRow[x] * so * opac, 0.0f, 1.0f);
-                // OpenCV internal order: B, G, R, A
-                lRow[x] = cv::Vec4f(sb, sg, sr, a);
+                // ImageF32x4_RGBA is stored as RGBA, including its cv::Mat view.
+                lRow[x] = cv::Vec4f(sr, sg, sb, a);
             }
         });
 
@@ -150,14 +150,14 @@ public:
         const auto& image=src.image(); const float* data=image.rgba32fData(); if(!data||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
         Diligent::TextureDesc d{};d.Name="Stroke/Input";d.Type=Diligent::RESOURCE_DIM_TEX_2D;d.Width=image.width();d.Height=image.height();d.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;d.MipLevels=1;d.ArraySize=1;d.SampleCount=1;d.Usage=Diligent::USAGE_IMMUTABLE;d.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=data;sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(d,&init,&input);if(!input){applyCPU(src,dst);return;}
         auto od=d;od.Name="Stroke/Output";od.Usage=Diligent::USAGE_DEFAULT;od.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;Diligent::RefCntAutoPtr<Diligent::ITexture> output;device->CreateTexture(od,nullptr,&output);if(!output){applyCPU(src,dst);return;}
-        struct Params{float width,opacity;float color[4];};Diligent::BufferDesc bd{};bd.Name="Stroke/Params";bd.Size=sizeof(Params);bd.Usage=Diligent::USAGE_DYNAMIC;bd.BindFlags=Diligent::BIND_UNIFORM_BUFFER;bd.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;Diligent::RefCntAutoPtr<Diligent::IBuffer> params;device->CreateBuffer(bd,nullptr,&params);if(!params){applyCPU(src,dst);return;}void*m=nullptr;context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,m);if(!m){applyCPU(src,dst);return;}Params p{cpuImpl_.width_,cpuImpl_.opacity_/100.0f,{cpuImpl_.strokeColor_.blueF(),cpuImpl_.strokeColor_.greenF(),cpuImpl_.strokeColor_.redF(),cpuImpl_.strokeColor_.alphaF()}};std::memcpy(m,&p,sizeof(p));context->UnmapBuffer(params,Diligent::MAP_WRITE);
+        struct Params{float width,opacity;float color[4];};Diligent::BufferDesc bd{};bd.Name="Stroke/Params";bd.Size=sizeof(Params);bd.Usage=Diligent::USAGE_DYNAMIC;bd.BindFlags=Diligent::BIND_UNIFORM_BUFFER;bd.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;Diligent::RefCntAutoPtr<Diligent::IBuffer> params;device->CreateBuffer(bd,nullptr,&params);if(!params){applyCPU(src,dst);return;}void*m=nullptr;context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,m);if(!m){applyCPU(src,dst);return;}Params p{cpuImpl_.width_,cpuImpl_.opacity_/100.0f,{cpuImpl_.strokeColor_.redF(),cpuImpl_.strokeColor_.greenF(),cpuImpl_.strokeColor_.blueF(),cpuImpl_.strokeColor_.alphaF()}};std::memcpy(m,&p,sizeof(p));context->UnmapBuffer(params,Diligent::MAP_WRITE);
         static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"StrokeParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};ArtifactCore::GpuContext gc{device,context};ArtifactCore::ComputeExecutor ex{gc};ArtifactCore::ComputePipelineDesc pd{};pd.name="Stroke/PSO";pd.shaderSource=kHlsl;pd.entryPoint="main";pd.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;pd.variables=vars;pd.variableCount=3;pd.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!ex.build(pd)||!ex.createShaderResourceBinding(true)||!ex.setBuffer("StrokeParams",params)||!ex.setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!ex.setTextureView("g_OutputTexture",output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}ex.dispatch(context,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         auto sd=od;sd.Name="Stroke/Readback";sd.Usage=Diligent::USAGE_STAGING;sd.BindFlags=Diligent::BIND_NONE;sd.CPUAccessFlags=Diligent::CPU_ACCESS_READ;Diligent::RefCntAutoPtr<Diligent::ITexture> staging;device->CreateTexture(sd,nullptr,&staging);if(!staging){applyCPU(src,dst);return;}context->CopyTexture(Diligent::CopyTextureAttribs(output,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}cv::Mat result(image.height(),image.width(),CV_32FC4,read.pData,read.Stride);dst.image().setFromCVMat(result,image.colorDescriptor());context->UnmapTextureSubresource(staging,0,0);
     }
 private:
     static constexpr const char* kHlsl=R"(
 Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer StrokeParams:register(b0){float g_Width;float g_Opacity;float4 g_Color;}
-float alphaAt(int2 p,uint w,uint h){return g_InputTexture[uint2(clamp(p.x,0,(int)w-1),clamp(p.y,0,(int)h-1))].a;}
+float alphaAt(int2 p,uint w,uint h){if(p.x<0||p.y<0||p.x>=(int)w||p.y>=(int)h)return 0;return g_InputTexture[uint2(p)].a;}
 [numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;int radius=min(32,max(0,(int)ceil(g_Width)));int2 p=int2(id.xy);float center=alphaAt(p,w,h),mx=0;for(int y=-32;y<=32;++y)for(int x=-32;x<=32;++x){if(abs(x)>radius||abs(y)>radius)continue;if(x*x+y*y>radius*radius)continue;mx=max(mx,alphaAt(p+int2(x,y),w,h));}float sa=saturate((mx-center)*g_Color.a*g_Opacity);float4 fg=g_InputTexture[id.xy];float oa=fg.a+sa*(1-fg.a);float3 rgb=oa>0?(fg.rgb*fg.a+g_Color.rgb*sa*(1-fg.a))/oa:0;g_OutputTexture[id.xy]=float4(rgb,oa);}
 )";
 };
@@ -181,19 +181,19 @@ StrokeEffect::~StrokeEffect() = default;
 
 QColor StrokeEffect::strokeColor() const { return strokeColor_; }
 void   StrokeEffect::setStrokeColor(const QColor& c) {
-    strokeColor_ = c;
+    if (c.isValid()) strokeColor_ = c;
     syncImpls();
 }
 
 float StrokeEffect::width() const { return width_; }
 void  StrokeEffect::setWidth(float w) {
-    width_ = std::max(0.0f, w);
+    width_ = std::isfinite(w) ? std::clamp(w, 0.0f, 64.0f) : 3.0f;
     syncImpls();
 }
 
 float StrokeEffect::opacity() const { return opacity_; }
 void  StrokeEffect::setOpacity(float o) {
-    opacity_ = std::clamp(o, 0.0f, 100.0f);
+    opacity_ = std::isfinite(o) ? std::clamp(o, 0.0f, 100.0f) : 100.0f;
     syncImpls();
 }
 
@@ -212,11 +212,15 @@ std::vector<AbstractProperty> StrokeEffect::getProperties() const {
     widthProp.setName("Width");
     widthProp.setType(PropertyType::Float);
     widthProp.setValue(width_);
+    widthProp.setMinValue(QVariant(0.0));
+    widthProp.setMaxValue(QVariant(64.0));
 
     auto& opacProp = props.emplace_back();
     opacProp.setName("Opacity");
     opacProp.setType(PropertyType::Float);
     opacProp.setValue(opacity_);
+    opacProp.setMinValue(QVariant(0.0));
+    opacProp.setMaxValue(QVariant(100.0));
 
     return props;
 }
