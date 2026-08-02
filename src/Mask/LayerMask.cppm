@@ -50,6 +50,7 @@ class LayerMask::Impl {
 public:
     std::vector<MaskPath> paths;
     bool enabled = true;
+    bool locked = false;
 };
 
 LayerMask::LayerMask() : impl_(new Impl()) {}
@@ -88,6 +89,8 @@ void LayerMask::clearMaskPaths() { impl_->paths.clear(); }
 
 bool LayerMask::isEnabled() const { return impl_->enabled; }
 void LayerMask::setEnabled(bool enabled) { impl_->enabled = enabled; }
+bool LayerMask::isLocked() const { return impl_->locked; }
+void LayerMask::setLocked(bool locked) { impl_->locked = locked; }
 
 void LayerMask::compositeAlphaMask(int width, int height, void* outMat,
                                    float offsetX, float offsetY,
