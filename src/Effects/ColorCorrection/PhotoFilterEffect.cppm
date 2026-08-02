@@ -181,25 +181,25 @@ void PhotoFilterEffect::setColor(const QColor& color) {
 
 void PhotoFilterEffect::setDensity(float value) {
     preset_ = Preset::Custom;
-    settings_.density = std::clamp(value, 0.0f, 1.0f);
+    settings_.density = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.35f;
     syncImpls();
 }
 
 void PhotoFilterEffect::setBrightness(float value) {
     preset_ = Preset::Custom;
-    settings_.brightness = std::clamp(value, -1.0f, 1.0f);
+    settings_.brightness = std::isfinite(value) ? std::clamp(value, -1.0f, 1.0f) : 0.0f;
     syncImpls();
 }
 
 void PhotoFilterEffect::setContrast(float value) {
     preset_ = Preset::Custom;
-    settings_.contrast = std::clamp(value, 0.0f, 2.0f);
+    settings_.contrast = std::isfinite(value) ? std::clamp(value, 0.0f, 2.0f) : 1.0f;
     syncImpls();
 }
 
 void PhotoFilterEffect::setSaturationBoost(float value) {
     preset_ = Preset::Custom;
-    settings_.saturationBoost = std::clamp(value, 0.0f, 2.5f);
+    settings_.saturationBoost = std::isfinite(value) ? std::clamp(value, 0.0f, 2.5f) : 1.0f;
     syncImpls();
 }
 
