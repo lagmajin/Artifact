@@ -63,7 +63,7 @@ public:
     }
 
     void setSigma(float sigma) {
-        sigma_ = sigma;
+        sigma_ = std::isfinite(sigma) ? std::clamp(sigma, 0.0f, 64.0f) : 5.0f;
         calculateKernelSize();
     }
 
@@ -90,7 +90,7 @@ public:
     ~GaussianBlurGPUImpl() override;
 
     void setSigma(float sigma) {
-        sigma_ = sigma;
+        sigma_ = std::isfinite(sigma) ? std::clamp(sigma, 0.0f, 64.0f) : 5.0f;
     }
 
     float sigma() const {
