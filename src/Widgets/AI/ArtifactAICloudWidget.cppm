@@ -2789,7 +2789,16 @@ void Artifact::ArtifactAICloudWidget::onModelsReply(QNetworkReply *reply) {
     return;
   }
 
-  const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+  constexpr qsizetype kMaxModelListResponseBytes = 16 * 1024 * 1024;
+  const QByteArray payload = reply->readAll();
+  if (payload.isEmpty() || payload.size() > kMaxModelListResponseBytes) {
+    appendTranscriptMessage(
+        QStringLiteral("system"),
+        QStringLiteral("Model list error: response is too large"));
+    reply->deleteLater();
+    return;
+  }
+  const QJsonDocument doc = QJsonDocument::fromJson(payload);
   if (doc.isNull()) {
     appendTranscriptMessage(QStringLiteral("system"),
                             QStringLiteral("Model list error: invalid JSON"));
