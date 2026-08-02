@@ -4,6 +4,7 @@ module;
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -472,9 +473,14 @@ void ArtifactColorGradingEngine::savePreset(const std::string &name) {
   root[QStringLiteral("version")] = 1;
   root[QStringLiteral("nodes")] = nodesArray;
 
-  QFile file(presetDir + QStringLiteral("/") + presetName + QStringLiteral(".json"));
+  QSaveFile file(presetDir + QStringLiteral("/") + presetName + QStringLiteral(".json"));
   if (file.open(QIODevice::WriteOnly)) {
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    if (file.write(payload) == payload.size()) {
+      file.commit();
+    } else {
+      file.cancelWriting();
+    }
   }
  
 }
