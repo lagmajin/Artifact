@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <QJsonObject>
+#include "Plugin/ArtifactPluginABI.h"
 
 export module Artifact.Plugin.Layer.Adapter;
 
@@ -11,8 +12,6 @@ import ArtifactCore.Plugin.Common;
 import ArtifactCore.Plugin.Layer.Interface;
 import ArtifactCore.Plugin.Registry;
 import Property.Group;
-
-#include "Plugin/ArtifactPluginABI.h"
 
 export namespace Artifact {
 
