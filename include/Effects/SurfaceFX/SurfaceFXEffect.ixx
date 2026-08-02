@@ -2,6 +2,7 @@ module;
 #include <QVariant>
 #include <QString>
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 export module Artifact.Effect.SurfaceFX;
@@ -84,20 +85,23 @@ public:
 
     void setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value) override {
         const QString propertyName = name.toQString();
+        const auto finiteClamp = [](float input, float minimum, float maximum, float fallback) {
+            return std::isfinite(input) ? std::clamp(input, minimum, maximum) : fallback;
+        };
         if (propertyName == QStringLiteral("Surface Preset"))
             applyPreset(value.toString());
         else if (propertyName == QStringLiteral("Surface Anchor Type"))
             data_.anchorType = anchorTypeFromName(value.toString());
         else if (propertyName == QStringLiteral("Surface Anchor X"))
-            data_.anchorX = std::clamp(value.toFloat(), 0.0f, 1.0f);
+            data_.anchorX = finiteClamp(value.toFloat(), 0.0f, 1.0f, 0.0f);
         else if (propertyName == QStringLiteral("Surface Anchor Y"))
-            data_.anchorY = std::clamp(value.toFloat(), 0.0f, 1.0f);
+            data_.anchorY = finiteClamp(value.toFloat(), 0.0f, 1.0f, 0.0f);
         else if (propertyName == QStringLiteral("Surface Anchor Width"))
-            data_.anchorWidth = std::clamp(value.toFloat(), 0.0f, 1.0f);
+            data_.anchorWidth = finiteClamp(value.toFloat(), 0.0f, 1.0f, 1.0f);
         else if (propertyName == QStringLiteral("Surface Anchor Height"))
-            data_.anchorHeight = std::clamp(value.toFloat(), 0.0f, 1.0f);
+            data_.anchorHeight = finiteClamp(value.toFloat(), 0.0f, 1.0f, 1.0f);
         else if (propertyName == QStringLiteral("Surface Feather"))
-            data_.feather = std::clamp(value.toFloat(), 0.0f, 1.0f);
+            data_.feather = finiteClamp(value.toFloat(), 0.0f, 1.0f, 0.0f);
         else if (propertyName == QStringLiteral("Surface Field Seed"))
             data_.fieldSeed = value.toInt();
         else if (propertyName == QStringLiteral("Surface Element Count")) {
@@ -115,25 +119,25 @@ public:
             if (propertyName == QStringLiteral("Surface Element Type"))
                 element.type = elementTypeFromName(value.toString());
             else if (propertyName == QStringLiteral("Surface Element X"))
-                element.x = std::clamp(value.toFloat(), 0.0f, 1.0f);
+                element.x = finiteClamp(value.toFloat(), 0.0f, 1.0f, 0.0f);
             else if (propertyName == QStringLiteral("Surface Element Y"))
-                element.y = std::clamp(value.toFloat(), 0.0f, 1.0f);
+                element.y = finiteClamp(value.toFloat(), 0.0f, 1.0f, 0.0f);
             else if (propertyName == QStringLiteral("Surface Element Width"))
-                element.width = std::clamp(value.toFloat(), 0.0f, 1.0f);
+                element.width = finiteClamp(value.toFloat(), 0.0f, 1.0f, 0.0f);
             else if (propertyName == QStringLiteral("Surface Element Height"))
-                element.height = std::clamp(value.toFloat(), 0.0f, 1.0f);
+                element.height = finiteClamp(value.toFloat(), 0.0f, 1.0f, 0.0f);
             else if (propertyName == QStringLiteral("Surface Element Rotation"))
-                element.rotation = value.toFloat();
+                element.rotation = std::isfinite(value.toFloat()) ? value.toFloat() : 0.0f;
             else if (propertyName == QStringLiteral("Surface Element Intensity"))
-                element.intensity = std::clamp(value.toFloat(), 0.0f, 1.0f);
+                element.intensity = finiteClamp(value.toFloat(), 0.0f, 1.0f, 1.0f);
             else if (propertyName == QStringLiteral("Surface Element Opacity"))
-                element.opacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
+                element.opacity = finiteClamp(value.toFloat(), 0.0f, 1.0f, 1.0f);
             else if (propertyName == QStringLiteral("Surface Element Roughness"))
-                element.roughness = std::clamp(value.toFloat(), 0.0f, 1.0f);
+                element.roughness = finiteClamp(value.toFloat(), 0.0f, 1.0f, 0.0f);
             else if (propertyName == QStringLiteral("Surface Element In Time"))
-                element.inTime = value.toFloat();
+                element.inTime = std::isfinite(value.toFloat()) ? value.toFloat() : 0.0f;
             else if (propertyName == QStringLiteral("Surface Element Out Time"))
-                element.outTime = value.toFloat();
+                element.outTime = std::isfinite(value.toFloat()) ? value.toFloat() : -1.0f;
             else if (propertyName == QStringLiteral("Surface Element Seed Offset"))
                 element.seedOffset = value.toInt();
 
