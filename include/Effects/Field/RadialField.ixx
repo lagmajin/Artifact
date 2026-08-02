@@ -81,19 +81,33 @@ export namespace Artifact {
 
         // ── アクセサ ──
         std::array<float, 3> center() const { return center_; }
-        void setCenter(const std::array<float, 3>& c) { center_ = c; }
+        void setCenter(const std::array<float, 3>& c) {
+            for (int i = 0; i < 3; ++i) {
+                center_[i] = std::isfinite(c[i]) ? c[i] : 0.0f;
+            }
+        }
 
         std::array<float, 3> axis() const { return axis_; }
-        void setAxis(const std::array<float, 3>& a) { axis_ = a; }
+        void setAxis(const std::array<float, 3>& a) {
+            for (int i = 0; i < 3; ++i) {
+                axis_[i] = std::isfinite(a[i]) ? a[i] : 0.0f;
+            }
+        }
 
         float innerRadius() const { return innerRadius_; }
-        void setInnerRadius(float r) { innerRadius_ = r; }
+        void setInnerRadius(float r) {
+            innerRadius_ = std::isfinite(r) ? std::max(0.0f, r) : 0.0f;
+        }
 
         float outerRadius() const { return outerRadius_; }
-        void setOuterRadius(float r) { outerRadius_ = r; }
+        void setOuterRadius(float r) {
+            outerRadius_ = std::isfinite(r) ? std::max(0.0f, r) : 0.0f;
+        }
 
         // ── 評価 ──
         float evaluateAt(const std::array<float, 3>& worldPos) const override {
+            if (!std::isfinite(worldPos[0]) || !std::isfinite(worldPos[1]) || !std::isfinite(worldPos[2]))
+                return 0.0f;
             // Compute vector from center to worldPos
             float dx = worldPos[0] - center_[0];
             float dy = worldPos[1] - center_[1];
@@ -113,6 +127,7 @@ export namespace Artifact {
             float py = dy - dot * axNy;
             float pz = dz - dot * axNz;
             float perpDist = std::sqrt(px*px + py*py + pz*pz);
+            if (!std::isfinite(perpDist)) return 0.0f;
 
             if (perpDist <= innerRadius_) {
                 return 1.0f;
