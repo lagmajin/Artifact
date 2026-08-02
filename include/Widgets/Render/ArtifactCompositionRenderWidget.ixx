@@ -54,6 +54,8 @@ export namespace Artifact {
   void zoomFit();
   void zoom100();
   void rotateCanvas(float degrees);
+  void setRotationSnapDegrees(float degrees);
+  float rotationSnapDegrees() const;
  };
 
 }

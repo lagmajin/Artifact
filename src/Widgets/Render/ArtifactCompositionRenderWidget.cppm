@@ -239,6 +239,15 @@ int compositionPreviewIntervalMs(
   QWidget* widget_ = nullptr;
   QTimer* resizeDebounceTimer_ = nullptr;
   QTimer* wheelRenderTimer_ = nullptr;
+  bool zoomAnimationActive_ = false;
+  float zoomAnimationStart_ = 1.0f;
+  float zoomAnimationTarget_ = 1.0f;
+  QPointF zoomAnimationAnchorViewport_;
+  QPointF zoomAnimationAnchorCanvas_;
+  std::chrono::steady_clock::time_point zoomAnimationStartedAt_{};
+  bool panMomentumActive_ = false;
+  QPointF panVelocityPerMs_;
+  std::chrono::steady_clock::time_point lastPanSampleAt_{};
   QSize pendingResizeSize_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
@@ -249,7 +258,14 @@ int compositionPreviewIntervalMs(
   bool isDraggingLayer_ = false;
   bool isPanningViewport_ = false;
   bool isRotatingViewport_ = false;
+  bool spaceHandActive_ = false;
+  ToolType toolBeforeSpace_ = ToolType::Selection;
+  bool zoomMarqueeActive_ = false;
+  QPointF zoomMarqueeStart_;
+  QPointF zoomMarqueeEnd_;
   float rotationDragStart_ = 0.0f;
+  QPointF rotationDragStartPos_;
+  float rotationSnapDegrees_ = 45.0f;
   LayerDragMode dragMode_ = LayerDragMode::None;
   QPointF dragStartCanvasPos_;
   QPointF dragStartLayerPos_;
@@ -262,6 +278,61 @@ int compositionPreviewIntervalMs(
   
   Impl() = default;
   ~Impl() { destroy(); }
+
+  void startSmoothZoomTo(const QPointF& viewportAnchor,
+                         const QPointF& canvasAnchor,
+                         float targetZoom) {
+   if (!renderer_) return;
+   zoomAnimationStart_ = renderer_->getZoom();
+   zoomAnimationTarget_ = std::clamp(targetZoom, 0.05f, 64.0f);
+   zoomAnimationAnchorViewport_ = viewportAnchor;
+   zoomAnimationAnchorCanvas_ = canvasAnchor;
+   zoomAnimationStartedAt_ = std::chrono::steady_clock::now();
+   zoomAnimationActive_ = true;
+  }
+
+  void startSmoothZoom(const QPointF& viewportPos, float factor) {
+   if (!renderer_) return;
+   const float currentZoom = renderer_->getZoom();
+   const float baseZoom = zoomAnimationActive_ ? zoomAnimationTarget_ : currentZoom;
+   const auto canvasPoint = renderer_->viewportToCanvas(
+       {static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())});
+   startSmoothZoomTo(viewportPos, QPointF(canvasPoint.x, canvasPoint.y),
+                     baseZoom * factor);
+  }
+
+  bool stepSmoothZoom() {
+   if (!renderer_ || !zoomAnimationActive_) return false;
+   constexpr auto kDuration = std::chrono::milliseconds(150);
+   const auto elapsed = std::chrono::steady_clock::now() - zoomAnimationStartedAt_;
+   const float linear = std::clamp(
+       static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()) /
+           static_cast<float>(kDuration.count()),
+       0.0f, 1.0f);
+   const float eased = linear * linear * (3.0f - 2.0f * linear);
+   const float zoom = zoomAnimationStart_ +
+                      (zoomAnimationTarget_ - zoomAnimationStart_) * eased;
+   renderer_->setZoom(zoom);
+   renderer_->setPan(
+       static_cast<float>(zoomAnimationAnchorViewport_.x()) -
+           static_cast<float>(zoomAnimationAnchorCanvas_.x()) * zoom,
+       static_cast<float>(zoomAnimationAnchorViewport_.y()) -
+           static_cast<float>(zoomAnimationAnchorCanvas_.y()) * zoom);
+   if (linear >= 1.0f) zoomAnimationActive_ = false;
+   return zoomAnimationActive_;
+  }
+
+  bool stepPanMomentum() {
+   if (!renderer_ || !panMomentumActive_) return false;
+   renderer_->panBy(static_cast<float>(panVelocityPerMs_.x() * 16.0),
+                    static_cast<float>(panVelocityPerMs_.y() * 16.0));
+   panVelocityPerMs_ *= 0.86;
+   if (std::hypot(panVelocityPerMs_.x(), panVelocityPerMs_.y()) < 0.015) {
+    panVelocityPerMs_ = {};
+    panMomentumActive_ = false;
+   }
+   return panMomentumActive_;
+  }
 
   void initialize(QWidget* window) {
    widget_ = window;
@@ -283,7 +354,12 @@ int compositionPreviewIntervalMs(
    wheelRenderTimer_ = new QTimer(widget_);
    wheelRenderTimer_->setSingleShot(true);
    QObject::connect(wheelRenderTimer_, &QTimer::timeout, widget_, [this]() {
+    const bool continueZoom = stepSmoothZoom();
+    const bool continuePan = stepPanMomentum();
     requestRender();
+    if ((continueZoom || continuePan) && wheelRenderTimer_) {
+     wheelRenderTimer_->start(16);
+    }
    });
    eventBusSubscriptions_.push_back(
        eventBus_.subscribe<PlaybackStateChangedEvent>(
@@ -477,6 +553,43 @@ int compositionPreviewIntervalMs(
     return;
    }
 
+   auto* toolManager = ArtifactApplicationManager::instance()->toolManager();
+   if (toolManager && toolManager->activeTool() == ToolType::Zoom) {
+    widget_->setCursor(hudCursor(QStringLiteral("hud_cursor_zoom.svg"),
+                                 Qt::CrossCursor));
+    return;
+   }
+   if (toolManager && toolManager->activeTool() == ToolType::Rotation) {
+    widget_->setCursor(hudCursor(QStringLiteral("hud_cursor_rotate.svg"),
+                                 Qt::CrossCursor));
+    return;
+   }
+   if (toolManager && toolManager->activeTool() == ToolType::AnchorPoint) {
+    widget_->setCursor(hudCursor(QStringLiteral("hud_cursor_anchor.svg"),
+                                 Qt::CrossCursor));
+    return;
+   }
+   if (toolManager && toolManager->activeTool() == ToolType::Move) {
+    widget_->setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
+                                 Qt::SizeAllCursor));
+    return;
+   }
+   if (toolManager && toolManager->activeTool() == ToolType::Scale) {
+    widget_->setCursor(hudCursor(QStringLiteral("hud_cursor_scale_uniform.svg"),
+                                 Qt::SizeFDiagCursor));
+    return;
+   }
+   if (toolManager && toolManager->activeTool() == ToolType::RigSelect) {
+    widget_->setCursor(hudCursor(QStringLiteral("hud_cursor_select.svg"),
+                                 Qt::CrossCursor));
+    return;
+   }
+   if (toolManager && toolManager->activeTool() == ToolType::RigWeight) {
+    widget_->setCursor(hudCursor(QStringLiteral("hud_cursor_select.svg"),
+                                 Qt::CrossCursor));
+    return;
+   }
+
    std::lock_guard<std::mutex> lock(renderMutex_);
   auto comp = previewPipeline_.composition();
   if (!comp) {
@@ -565,6 +678,7 @@ int compositionPreviewIntervalMs(
  void ArtifactCompositionRenderWidget::resetView() {
   if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+   impl_->zoomAnimationActive_ = false;
    impl_->renderer_->resetView();
    impl_->requestRender();
   }
@@ -573,7 +687,11 @@ int compositionPreviewIntervalMs(
  void ArtifactCompositionRenderWidget::zoomIn() {
   if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-   impl_->renderer_->zoomAroundViewportPoint({width() / 2.0f, height() / 2.0f}, 1.1f);
+   impl_->startSmoothZoom(QPointF(width() / 2.0, height() / 2.0), 1.1f);
+   if (impl_->wheelRenderTimer_) {
+    impl_->stepSmoothZoom();
+    impl_->wheelRenderTimer_->start(16);
+   }
    impl_->requestRender();
   }
  }
@@ -581,7 +699,11 @@ int compositionPreviewIntervalMs(
  void ArtifactCompositionRenderWidget::zoomOut() {
   if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-   impl_->renderer_->zoomAroundViewportPoint({width() / 2.0f, height() / 2.0f}, 0.909f);
+   impl_->startSmoothZoom(QPointF(width() / 2.0, height() / 2.0), 0.909f);
+   if (impl_->wheelRenderTimer_) {
+    impl_->stepSmoothZoom();
+    impl_->wheelRenderTimer_->start(16);
+   }
    impl_->requestRender();
   }
  }
@@ -589,6 +711,7 @@ int compositionPreviewIntervalMs(
  void ArtifactCompositionRenderWidget::zoomFit() {
  if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+   impl_->zoomAnimationActive_ = false;
    const float fitMargin = 0.05f * static_cast<float>(std::min(width(), height()));
    impl_->renderer_->fitToViewport(fitMargin);
    impl_->requestRender();
@@ -598,6 +721,7 @@ int compositionPreviewIntervalMs(
  void ArtifactCompositionRenderWidget::zoom100() {
   if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+   impl_->zoomAnimationActive_ = false;
    impl_->renderer_->setZoom(1.0f);
    // Center the canvas in the viewport at 100% zoom
    if (auto comp = impl_->previewPipeline_.composition()) {
@@ -619,6 +743,17 @@ int compositionPreviewIntervalMs(
   std::lock_guard<std::mutex> lock(impl_->renderMutex_);
   impl_->renderer_->setRotation(degrees);
   impl_->requestRender();
+ }
+
+ void ArtifactCompositionRenderWidget::setRotationSnapDegrees(float degrees) {
+  // Keep the public setting predictable while allowing the documented
+  // 15/30/45/90 degree presets and custom positive values from tooling.
+  if (!std::isfinite(degrees) || degrees <= 0.0f) return;
+  impl_->rotationSnapDegrees_ = std::max(1.0f, std::min(360.0f, degrees));
+ }
+
+ float ArtifactCompositionRenderWidget::rotationSnapDegrees() const {
+  return impl_->rotationSnapDegrees_;
  }
 
  void ArtifactCompositionRenderWidget::resizeEvent(QResizeEvent* event) {
@@ -706,20 +841,83 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
  }
 
  void ArtifactCompositionRenderWidget::mouseDoubleClickEvent(QMouseEvent* event) {
+  if (event && event->button() == Qt::LeftButton) {
+   if (auto* editor = qobject_cast<ArtifactCompositionEditor *>(parentWidget())) {
+    auto* toolManager = ArtifactApplicationManager::instance()
+                            ? ArtifactApplicationManager::instance()->toolManager()
+                            : nullptr;
+    if ((event->modifiers() & Qt::ControlModifier) != 0 && toolManager &&
+        toolManager->activeTool() == ToolType::AnchorPoint) {
+     if (auto* controller = editor->renderController();
+         controller && controller->resetSelected2DAnchorToCenter()) {
+      event->accept();
+      return;
+     }
+    }
+    if (toolManager && toolManager->activeTool() == ToolType::Pen) {
+      if (auto* controller = editor->renderController();
+          controller && (controller->resetHoveredMaskTangent() ||
+                         controller->resetHoveredMaskVertexTangents())) {
+       event->accept();
+       return;
+      }
+    }
+    if (auto* controller = editor->renderController();
+        controller && controller->editTextAtViewport(event->position())) {
+     event->accept();
+     return;
+    }
+    if (auto* controller = editor->renderController();
+        controller && controller->resetSelected3DTransform()) {
+     event->accept();
+     return;
+    }
+   }
+  }
   // Double click to reset view is disabled to prevent accidental resets
   // during normal workflow. Use the toolbar button or View > Reset View instead.
-  // resetView(); 
   event->accept();
  }
 
  void ArtifactCompositionRenderWidget::wheelEvent(QWheelEvent* event) {
-  float delta = event->angleDelta().y() / 120.0f;
+  const QPoint angleDelta = event->angleDelta();
+  const QPoint pixelDelta = event->pixelDelta();
+  // Trackpads often provide only pixelDelta(). Keep the old 120-unit mouse
+  // wheel convention, but normalize pixel input to a comparable step size.
+  const float verticalDelta = angleDelta.y() != 0
+                                  ? static_cast<float>(angleDelta.y()) / 120.0f
+                                  : static_cast<float>(pixelDelta.y()) / 48.0f;
   if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-   float zoomFactor = (delta > 0) ? 1.1f : 0.909f;
+   impl_->panMomentumActive_ = false;
+   if (event->modifiers() & Qt::ShiftModifier) {
+    // Prefer a genuine horizontal wheel delta.  A vertical-only wheel is
+    // retained as a compatibility fallback for mice without tilt support.
+    const int rawHorizontalDelta = angleDelta.x() != 0 ? angleDelta.x()
+                                                        : pixelDelta.x();
+    const int rawVerticalDelta = angleDelta.y() != 0 ? angleDelta.y()
+                                                      : pixelDelta.y();
+    const float horizontalDelta = rawHorizontalDelta != 0
+                                      ? (angleDelta.x() != 0
+                                             ? static_cast<float>(rawHorizontalDelta)
+                                             : static_cast<float>(rawHorizontalDelta) * 2.5f)
+                                      : (angleDelta.y() != 0
+                                             ? static_cast<float>(rawVerticalDelta)
+                                             : static_cast<float>(rawVerticalDelta) * 2.5f);
+    impl_->renderer_->panBy(horizontalDelta, 0.0f);
+    impl_->requestRender();
+    event->accept();
+    return;
+   }
+   if (std::abs(verticalDelta) < 0.001f) {
+    event->accept();
+    return;
+   }
+   const float zoomFactor = std::pow(1.1f, verticalDelta);
    QPointF pos = event->position();
-   impl_->renderer_->zoomAroundViewportPoint({(float)pos.x(), (float)pos.y()}, zoomFactor);
+   impl_->startSmoothZoom(pos, zoomFactor);
    if (impl_->wheelRenderTimer_) {
+    impl_->stepSmoothZoom();
     impl_->wheelRenderTimer_->start(16);
    } else {
     impl_->requestRender();
@@ -734,18 +932,31 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
                                 << "modifiers:" << event->modifiers();
 
   auto* tm = ArtifactApplicationManager::instance()->toolManager();
+  if (event->button() == Qt::LeftButton && tm &&
+      tm->activeTool() == ToolType::Zoom && impl_->renderer_) {
+   impl_->zoomMarqueeStart_ = event->position();
+   impl_->zoomMarqueeEnd_ = event->position();
+   impl_->zoomMarqueeActive_ = false;
+   grabMouse();
+   event->accept();
+   return;
+  }
   if (event->button() == Qt::LeftButton &&
       (event->modifiers() & Qt::ShiftModifier)) {
    impl_->lastMousePos_ = event->position();
    impl_->rotationDragStart_ = impl_->renderer_ ? impl_->renderer_->getRotation() : 0.0f;
+   impl_->rotationDragStartPos_ = event->position();
    impl_->isRotatingViewport_ = true;
    grabMouse();
    event->accept();
    return;
   }
-  bool isHandShortcut = false; // Space checking needs explicit key tracking
+  const bool isHandShortcut = impl_->spaceHandActive_;
 
   if (event->button() == Qt::MiddleButton || (event->button() == Qt::LeftButton && (tm->activeTool() == ToolType::Hand || isHandShortcut))) {
+   impl_->panMomentumActive_ = false;
+   impl_->panVelocityPerMs_ = {};
+   impl_->lastPanSampleAt_ = std::chrono::steady_clock::now();
    setCursor(hudCursor(QStringLiteral("hud_cursor_pan.svg"),
                        Qt::ClosedHandCursor));
    impl_->lastMousePos_ = event->position();
@@ -800,7 +1011,9 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
       impl_->selectedLayerId_ = hit.layer->id();
       impl_->previewPipeline_.setSelectedLayerId(impl_->selectedLayerId_);
 
-      if (tm->activeTool() != ToolType::Selection) {
+      if (tm->activeTool() != ToolType::Selection &&
+          tm->activeTool() != ToolType::Move &&
+          tm->activeTool() != ToolType::Scale) {
           impl_->isDraggingLayer_ = false;
           impl_->dragMode_ = LayerDragMode::None;
           impl_->updateHoverCursor(event->position());
@@ -845,6 +1058,50 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
  void ArtifactCompositionRenderWidget::mouseReleaseEvent(QMouseEvent* event) {
   qCDebug(compositionWidgetLog) << "[MouseRelease] ENTER pos:" << event->position()
                                 << "button:" << event->button();
+
+  if (event->button() == Qt::LeftButton &&
+      ArtifactApplicationManager::instance()->toolManager()->activeTool() == ToolType::Zoom &&
+      impl_->renderer_) {
+   const QRectF marquee(impl_->zoomMarqueeStart_, impl_->zoomMarqueeEnd_);
+   const QRectF normalized = marquee.normalized();
+   std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+   if (impl_->zoomMarqueeActive_ && normalized.width() >= 4.0 &&
+       normalized.height() >= 4.0) {
+    const auto topLeft = impl_->renderer_->viewportToCanvas(
+        {(float)normalized.left(), (float)normalized.top()});
+    const auto bottomRight = impl_->renderer_->viewportToCanvas(
+        {(float)normalized.right(), (float)normalized.bottom()});
+    const float canvasWidth = std::abs(bottomRight.x - topLeft.x);
+    const float canvasHeight = std::abs(bottomRight.y - topLeft.y);
+    if (canvasWidth > 0.001f && canvasHeight > 0.001f) {
+     const float zoomX = static_cast<float>(width()) / canvasWidth;
+     const float zoomY = static_cast<float>(height()) / canvasHeight;
+     const float zoom = std::min(zoomX, zoomY) * 0.95f;
+     const float centerX = (topLeft.x + bottomRight.x) * 0.5f;
+     const float centerY = (topLeft.y + bottomRight.y) * 0.5f;
+     impl_->startSmoothZoomTo(
+         QPointF(width() * 0.5, height() * 0.5),
+         QPointF(centerX, centerY), zoom);
+     if (impl_->wheelRenderTimer_) {
+      impl_->stepSmoothZoom();
+      impl_->wheelRenderTimer_->start(16);
+     }
+    }
+   } else {
+    const float zoomFactor = (event->modifiers() & Qt::AltModifier) ? 0.909f : 1.1f;
+    impl_->startSmoothZoom(event->position(), zoomFactor);
+    if (impl_->wheelRenderTimer_) {
+     impl_->stepSmoothZoom();
+     impl_->wheelRenderTimer_->start(16);
+    }
+   }
+   impl_->zoomMarqueeActive_ = false;
+   releaseMouse();
+   impl_->requestRender();
+   setCursor(hudCursor(QStringLiteral("hud_cursor_zoom.svg"), Qt::CrossCursor));
+   event->accept();
+   return;
+  }
 
   if (impl_->isDraggingLayer_) {
    if (impl_->renderer_) {
@@ -892,8 +1149,23 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
    impl_->updateHoverCursor(event->position());
   }
   impl_->isDraggingLayer_ = false;
+  const bool wasRotatingViewport = impl_->isRotatingViewport_;
+  const bool wasPanningViewport = impl_->isPanningViewport_;
   impl_->isRotatingViewport_ = false;
   impl_->isPanningViewport_ = false;
+  if (wasPanningViewport &&
+      std::hypot(impl_->panVelocityPerMs_.x(),
+                 impl_->panVelocityPerMs_.y()) > 0.05) {
+   impl_->panMomentumActive_ = true;
+   if (impl_->wheelRenderTimer_) impl_->wheelRenderTimer_->start(16);
+  }
+  if (wasRotatingViewport) {
+   if (auto* editor = qobject_cast<ArtifactCompositionEditor*>(parentWidget())) {
+    if (auto* controller = editor->renderController()) {
+     controller->clearInfoOverlayText();
+    }
+   }
+  }
   releaseMouse();
   impl_->dragMode_ = LayerDragMode::None;
   impl_->requestRender();
@@ -903,18 +1175,79 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
  void ArtifactCompositionRenderWidget::mouseMoveEvent(QMouseEvent* event) {
   qCDebug(compositionWidgetLog) << "[MouseMove] ENTER pos:" << event->position()
                                 << "buttons:" << event->buttons();
+  auto* tm = ArtifactApplicationManager::instance()->toolManager();
 
-  if (impl_->isRotatingViewport_) {
-   const QPointF delta = event->position() - impl_->lastMousePos_;
+  if ((event->buttons() & Qt::LeftButton) &&
+      ArtifactApplicationManager::instance()->toolManager()->activeTool() == ToolType::Zoom &&
+      impl_->renderer_) {
+   impl_->zoomMarqueeEnd_ = event->position();
+   if ((impl_->zoomMarqueeEnd_ - impl_->zoomMarqueeStart_).manhattanLength() >= 4) {
+    impl_->zoomMarqueeActive_ = true;
+   }
+   event->accept();
+  } else if (impl_->isRotatingViewport_) {
    if (impl_->renderer_) {
-    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-    impl_->renderer_->setRotation(impl_->rotationDragStart_ + static_cast<float>(delta.x()));
+   std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+    const QPointF viewportCenter(width() * 0.5, height() * 0.5);
+    const QPointF startVector = impl_->rotationDragStartPos_ - viewportCenter;
+    const QPointF currentVector = event->position() - viewportCenter;
+    const float startLength = std::hypot(static_cast<float>(startVector.x()),
+                                         static_cast<float>(startVector.y()));
+    const float currentLength = std::hypot(static_cast<float>(currentVector.x()),
+                                           static_cast<float>(currentVector.y()));
+    float rotation = impl_->rotationDragStart_;
+    if (startLength > 2.0f && currentLength > 2.0f) {
+     constexpr float kRadiansToDegrees = 57.29577951308232f;
+     const float startAngle = std::atan2(static_cast<float>(startVector.y()),
+                                         static_cast<float>(startVector.x()));
+     const float currentAngle = std::atan2(static_cast<float>(currentVector.y()),
+                                           static_cast<float>(currentVector.x()));
+     float deltaAngle = (currentAngle - startAngle) * kRadiansToDegrees;
+     while (deltaAngle > 180.0f) deltaAngle -= 360.0f;
+     while (deltaAngle < -180.0f) deltaAngle += 360.0f;
+     rotation += deltaAngle;
+    } else {
+     // Near the pivot the angle is undefined; preserve the old horizontal
+     // fallback so a drag beginning at the center remains usable.
+     rotation += static_cast<float>(event->position().x() -
+                                    impl_->rotationDragStartPos_.x());
+    }
+    if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+     float snap = std::max(1.0f, impl_->rotationSnapDegrees_);
+     // Modifier presets keep the common 15°/90° variants available without
+     // forcing a trip to a settings panel.  The widget API remains the source
+     // of the normal/default increment.
+     if (event->modifiers().testFlag(Qt::AltModifier)) {
+      snap = 15.0f;
+     } else if (event->modifiers().testFlag(Qt::ControlModifier)) {
+      snap = 90.0f;
+     }
+     rotation = std::round(rotation / snap) * snap;
+    }
+    impl_->renderer_->setRotation(rotation);
+    if (auto* editor = qobject_cast<ArtifactCompositionEditor*>(parentWidget())) {
+     if (auto* controller = editor->renderController()) {
+      controller->setInfoOverlayText(
+          QStringLiteral("Rotation"),
+          QStringLiteral("%1°").arg(rotation, 0, 'f', 1));
+     }
+    }
     impl_->requestRender();
    }
    event->accept();
   } else if (impl_->isPanningViewport_) {
    QPointF delta = event->position() - impl_->lastMousePos_;
    impl_->lastMousePos_ = event->position();
+   const auto now = std::chrono::steady_clock::now();
+   const auto elapsedMs = std::max<int64_t>(
+       1, std::chrono::duration_cast<std::chrono::milliseconds>(
+              now - impl_->lastPanSampleAt_).count());
+   impl_->panVelocityPerMs_ = delta / static_cast<double>(elapsedMs);
+   impl_->panVelocityPerMs_.setX(
+       std::clamp(impl_->panVelocityPerMs_.x(), -3.0, 3.0));
+   impl_->panVelocityPerMs_.setY(
+       std::clamp(impl_->panVelocityPerMs_.y(), -3.0, 3.0));
+   impl_->lastPanSampleAt_ = now;
    if (impl_->renderer_) {
     std::lock_guard<std::mutex> lock(impl_->renderMutex_);
     impl_->renderer_->panBy((float)delta.x(), (float)delta.y());
@@ -950,6 +1283,13 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
                 float threshold = 10.0f; // in canvas units
                 totalDelta.setX(impl_->snapValue(impl_->dragStartCanvasPos_.x() + totalDelta.x(), centerX, threshold) - impl_->dragStartCanvasPos_.x());
                 totalDelta.setY(impl_->snapValue(impl_->dragStartCanvasPos_.y() + totalDelta.y(), centerY, threshold) - impl_->dragStartCanvasPos_.y());
+                if (auto* editor = qobject_cast<ArtifactCompositionEditor*>(parentWidget())) {
+                    if (auto* controller = editor->renderController()) {
+                        const QPointF snapped = controller->snapCanvasToGrid(
+                            impl_->dragStartCanvasPos_ + totalDelta);
+                        totalDelta = snapped - impl_->dragStartCanvasPos_;
+                    }
+                }
             }
         }
     }
@@ -1007,8 +1347,15 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
         const double safeStartH = std::max(1.0, startBox.height());
         const double safeW = std::max(1.0, newW);
         const double safeH = std::max(1.0, newH);
-        const float scaleFactorX = static_cast<float>(safeW / safeStartW);
-        const float scaleFactorY = static_cast<float>(safeH / safeStartH);
+        float scaleFactorX = static_cast<float>(safeW / safeStartW);
+        float scaleFactorY = static_cast<float>(safeH / safeStartH);
+        if (tm->activeTool() == ToolType::Scale &&
+            !(event->modifiers() & Qt::ShiftModifier)) {
+         const float uniformFactor =
+             std::max(std::abs(scaleFactorX), std::abs(scaleFactorY));
+         scaleFactorX = uniformFactor;
+         scaleFactorY = uniformFactor;
+        }
         t3.setScale(t0, impl_->dragStartScaleX_ * scaleFactorX,
                     impl_->dragStartScaleY_ * scaleFactorY);
         layer->setDirty(LayerDirtyFlag::Transform);
@@ -1037,6 +1384,67 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   auto* ctx = am->activeContextService();
   auto* editor = qobject_cast<ArtifactCompositionEditor*>(parentWidget());
   auto& shortcuts = ShortcutBindings::instance();
+  auto* renderController = editor ? editor->renderController() : nullptr;
+  const auto activeTool = tm ? tm->activeTool() : ToolType::Selection;
+  if (event && !event->isAutoRepeat() && renderController &&
+      activeTool == ToolType::Pen) {
+    if (event->key() == Qt::Key_Escape) {
+      renderController->cancelMaskInteraction();
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
+      const bool deleted = renderController->deleteSelectedMaskVertices() ||
+                           renderController->deleteHoveredMaskVertex();
+      if (deleted) {
+        event->accept();
+        return;
+      }
+    }
+    if (event->key() == Qt::Key_A &&
+        event->modifiers().testFlag(Qt::ControlModifier)) {
+      renderController->selectAllMaskVertices();
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_D &&
+        event->modifiers().testFlag(Qt::ControlModifier) &&
+        renderController->duplicateHoveredMask()) {
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_C &&
+        event->modifiers().testFlag(Qt::ControlModifier) &&
+        renderController->copyHoveredMask()) {
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_V &&
+        event->modifiers().testFlag(Qt::ControlModifier) &&
+        renderController->pasteMask()) {
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_Up &&
+        renderController->moveHoveredMask(-1)) {
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_Down &&
+        renderController->moveHoveredMask(1)) {
+      event->accept();
+      return;
+    }
+  }
+  if (event && !event->isAutoRepeat() &&
+      shortcuts.matches(event, ShortcutId::Undo)) {
+    if ((activeTool == ToolType::Brush || activeTool == ToolType::Eraser) &&
+        editor && editor->renderController() &&
+        editor->renderController()->undoSelectedPaintStroke()) {
+      event->accept();
+      return;
+    }
+  }
   if (auto* input = ArtifactCore::InputOperator::instance()) {
     input->setActiveContext(QStringLiteral("Viewport.Composition"));
     if (event && input->processKeyPress(this, event->key(), event->modifiers())) {
@@ -1046,7 +1454,23 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   }
   
   if (!event->isAutoRepeat()) {
+      if (event->key() == Qt::Key_Space && !impl_->spaceHandActive_) {
+          impl_->toolBeforeSpace_ = tm->activeTool();
+          impl_->spaceHandActive_ = true;
+          setCursor(hudCursor(QStringLiteral("hud_cursor_pan.svg"),
+                              Qt::OpenHandCursor));
+          event->accept();
+          return;
+      }
       if (shortcuts.matches(event, ShortcutId::Undo)) {
+          const auto activeTool = tm ? tm->activeTool() : ToolType::Selection;
+          if ((activeTool == ToolType::Brush ||
+               activeTool == ToolType::Eraser) &&
+              editor && editor->renderController() &&
+              editor->renderController()->undoSelectedPaintStroke()) {
+              event->accept();
+              return;
+          }
           if (auto* undo = UndoManager::instance()) {
               undo->undo();
           }
@@ -1137,7 +1561,20 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
  }
 
  void ArtifactCompositionRenderWidget::keyReleaseEvent(QKeyEvent* event) {
+  if (!event->isAutoRepeat() && event->key() == Qt::Key_Space &&
+      impl_->spaceHandActive_) {
+   impl_->spaceHandActive_ = false;
+   auto* tm = ArtifactApplicationManager::instance()->toolManager();
+   if (tm && tm->activeTool() == ToolType::Hand) {
+    tm->setActiveTool(impl_->toolBeforeSpace_);
+   }
+   if (!impl_->isPanningViewport_) {
+    impl_->updateHoverCursor(mapFromGlobal(QCursor::pos()));
+   }
+   event->accept();
+   return;
+  }
   event->accept();
- }
+}
 
 }
