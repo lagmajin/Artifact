@@ -38,7 +38,10 @@ public:
         if(!sd||si.width()<=0){dst=src;return;}
         const int W=si.width(),H=si.height();
         float a=std::clamp(amount_,0.0f,1.0f),r=std::clamp(radius_,0.0f,2.0f),f=std::clamp(feather_,0.01f,2.0f);
-        float cx=cx_*(float)W,cy=cy_*(float)H,maxD=std::sqrt(cx*cx+cy*cy)*r;
+        const float cx=cx_*(float)W, cy=cy_*(float)H;
+        const float maxX=std::max(cx, static_cast<float>(W)-cx);
+        const float maxY=std::max(cy, static_cast<float>(H)-cy);
+        const float maxD=std::sqrt(maxX*maxX+maxY*maxY)*r;
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
 Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){float* p=o+(size_t)x*4;
@@ -128,17 +131,17 @@ private:
     static constexpr const char* kHlsl=R"(
 Texture2D<float4> g_InputTexture:register(t0); RWTexture2D<float4> g_OutputTexture:register(u0);
 cbuffer VignetteParams:register(b0){float g_Amount;float g_Radius;float g_Feather;float g_Cx;float g_Cy;float3 g_Pad;}
-[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float cx=g_Cx*w,cy=g_Cy*h;float maxD=sqrt(cx*cx+cy*cy)*g_Radius;float dx=(float)id.x-cx,dy=(float)id.y-cy;float dist=sqrt(dx*dx+dy*dy);float mask=1.0-saturate((dist-maxD*g_Feather)/(maxD*(1.0-g_Feather)+0.001))*g_Amount;float4 c=g_InputTexture[id.xy];g_OutputTexture[id.xy]=float4(c.rgb*mask,c.a);}
+[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float cx=g_Cx*w,cy=g_Cy*h;float maxX=max(cx,w-cx),maxY=max(cy,h-cy),maxD=sqrt(maxX*maxX+maxY*maxY)*g_Radius;float dx=(float)id.x-cx,dy=(float)id.y-cy;float dist=sqrt(dx*dx+dy*dy);float mask=1.0-saturate((dist-maxD*g_Feather)/(maxD*(1.0-g_Feather)+0.001))*g_Amount;float4 c=g_InputTexture[id.xy];g_OutputTexture[id.xy]=float4(c.rgb*mask,c.a);}
 )";
 };
 
     VignetteEffect::VignetteEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();setGPUImpl(ArtifactCore::makeShared<VignetteGPUImpl>());setComputeMode(ComputeMode::AUTO);}
 VignetteEffect::~VignetteEffect()=default;
-float VignetteEffect::amount()const{return amount_;}void VignetteEffect::setAmount(float v){amount_=std::clamp(v,0.0f,1.0f);syncImpls();}
-float VignetteEffect::radius()const{return radius_;}void VignetteEffect::setRadius(float v){radius_=std::clamp(v,0.0f,2.0f);syncImpls();}
-float VignetteEffect::feather()const{return feather_;}void VignetteEffect::setFeather(float v){feather_=std::clamp(v,0.01f,2.0f);syncImpls();}
-float VignetteEffect::centerX()const{return cx_;}void VignetteEffect::setCenterX(float v){cx_=std::clamp(v,0.0f,1.0f);syncImpls();}
-float VignetteEffect::centerY()const{return cy_;}void VignetteEffect::setCenterY(float v){cy_=std::clamp(v,0.0f,1.0f);syncImpls();}
+float VignetteEffect::amount()const{return amount_;}void VignetteEffect::setAmount(float v){amount_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.7f;syncImpls();}
+float VignetteEffect::radius()const{return radius_;}void VignetteEffect::setRadius(float v){radius_=std::isfinite(v)?std::clamp(v,0.0f,2.0f):0.8f;syncImpls();}
+float VignetteEffect::feather()const{return feather_;}void VignetteEffect::setFeather(float v){feather_=std::isfinite(v)?std::clamp(v,0.01f,2.0f):0.4f;syncImpls();}
+float VignetteEffect::centerX()const{return cx_;}void VignetteEffect::setCenterX(float v){cx_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.5f;syncImpls();}
+float VignetteEffect::centerY()const{return cy_;}void VignetteEffect::setCenterY(float v){cy_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.5f;syncImpls();}
 std::vector<AbstractProperty> VignetteEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(5);
