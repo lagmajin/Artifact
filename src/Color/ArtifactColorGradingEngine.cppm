@@ -23,6 +23,13 @@ namespace Artifact {
 namespace {
 constexpr qint64 kMaxColorGradingPresetBytes = 16LL * 1024LL * 1024LL;
 constexpr qsizetype kMaxColorGradingNodes = 100000;
+
+bool isSafeColorGradingPresetName(const QString& name)
+{
+  return !name.isEmpty() && name != QStringLiteral(".") &&
+         name != QStringLiteral("..") && name.size() <= 256 &&
+         QFileInfo(name).fileName() == name;
+}
 }
 
 using namespace ArtifactCore;
@@ -390,6 +397,7 @@ void ArtifactColorGradingEngine::savePreset(const std::string &name) {
   // Serialize all grading nodes to a JSON preset file
   Q_UNUSED(name);
   const QString presetName = QString::fromStdString(name);
+  if (!isSafeColorGradingPresetName(presetName)) return;
   const QString presetDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/grading_presets");
   QDir().mkpath(presetDir);
 
@@ -475,6 +483,7 @@ void ArtifactColorGradingEngine::loadPreset(const std::string &name) {
   // Deserialize grading nodes from a JSON preset file
   Q_UNUSED(name);
   const QString presetName = QString::fromStdString(name);
+  if (!isSafeColorGradingPresetName(presetName)) return;
   const QString presetDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/grading_presets");
 
   QFile file(presetDir + QStringLiteral("/") + presetName + QStringLiteral(".json"));
