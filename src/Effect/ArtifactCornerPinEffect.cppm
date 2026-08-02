@@ -1,9 +1,12 @@
 ﻿module;
+#include <algorithm>
 #include <utility>
 #include <vector>
 #include <QString>
 #include <QVariant>
 #include <array>
+#include <cmath>
+#include <opencv2/imgproc.hpp>
 
 module Artifact.Effect.CornerPin;
 
@@ -64,7 +67,8 @@ std::vector<ArtifactCore::AbstractProperty> ArtifactCornerPinEffect::getProperti
 
 void ArtifactCornerPinEffect::setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value) {
     const QString key = name.toQString();
-    const double v = value.toDouble();
+    const double rawValue = value.toDouble();
+    const double v = std::isfinite(rawValue) ? std::clamp(rawValue, -100000.0, 100000.0) : 0.0;
 
     if (key == QStringLiteral("Upper Left X")) {
         impl_->upperLeft.x = v;
@@ -86,9 +90,14 @@ void ArtifactCornerPinEffect::setPropertyValue(const ArtifactCore::UniString& na
 }
 
 void ArtifactCornerPinEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-    // Current implementation: CPU based bilinear warping using Homography
-    int w = src.width();
-    int h = src.height();
+    const auto& srcImage = src.image();
+    const float* sourcePixels = srcImage.rgba32fData();
+    const int w = srcImage.width();
+    const int h = srcImage.height();
+    if (!sourcePixels || w <= 0 || h <= 0) {
+        dst = src;
+        return;
+    }
     
     std::vector<QPointF> srcPoints = {
         {0, 0}, {static_cast<double>(w), 0},
@@ -102,11 +111,31 @@ void ArtifactCornerPinEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32
         {impl_->lowerRight.x, impl_->lowerRight.y}
     };
     
-    auto H = ArtifactCore::MotionTracker::computeHomography(srcPoints, dstPoints);
-    
-    // Homography inversion for backward mapping
-    // (Simplification: In regular effect impl, we'd use a shader or optimized CPU loop)
-    // For now, this is a placeholder for the logic.
+    const auto homography = ArtifactCore::MotionTracker::computeHomography(
+        srcPoints, dstPoints);
+    for (const double coefficient : homography) {
+        if (!std::isfinite(coefficient)) {
+            dst = src;
+            return;
+        }
+    }
+    cv::Mat source(h, w, CV_32FC4, const_cast<float*>(sourcePixels));
+    cv::Mat warped(h, w, CV_32FC4, cv::Scalar(0, 0, 0, 0));
+    cv::Mat matrix(3, 3, CV_64F);
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column) {
+            matrix.at<double>(row, column) = homography[row * 3 + column];
+        }
+    }
+
+    cv::warpPerspective(source, warped, matrix, cv::Size(w, h),
+                        cv::INTER_LINEAR, cv::BORDER_CONSTANT,
+                        cv::Scalar(0, 0, 0, 0));
+
+    ArtifactCore::ImageF32x4_RGBA result;
+    result.setFromRGBA32F(warped.ptr<float>(), w, h,
+                          srcImage.colorDescriptor());
+    dst = ImageF32x4RGBAWithCache(result);
 }
 
 } // namespace Artifact
