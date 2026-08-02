@@ -154,6 +154,8 @@ std::vector<AbstractProperty> WhiteBalanceEffect::getProperties() const {
     tempProp.setName("Temperature (K)");
     tempProp.setType(PropertyType::Float);
     tempProp.setValue(temperature_);
+    tempProp.setMinValue(QVariant(1000.0));
+    tempProp.setMaxValue(QVariant(20000.0));
     tempProp.setDisplayPriority(-10);
     props.push_back(tempProp);
 
@@ -161,6 +163,8 @@ std::vector<AbstractProperty> WhiteBalanceEffect::getProperties() const {
     tintProp.setName("Tint");
     tintProp.setType(PropertyType::Float);
     tintProp.setValue(tint_);
+    tintProp.setMinValue(QVariant(-1.0));
+    tintProp.setMaxValue(QVariant(1.0));
     tintProp.setDisplayPriority(0);
     props.push_back(tintProp);
 
@@ -168,6 +172,8 @@ std::vector<AbstractProperty> WhiteBalanceEffect::getProperties() const {
     brightnessProp.setName("Brightness");
     brightnessProp.setType(PropertyType::Float);
     brightnessProp.setValue(brightness_);
+    brightnessProp.setMinValue(QVariant(-1.0));
+    brightnessProp.setMaxValue(QVariant(1.0));
     brightnessProp.setDisplayPriority(10);
     props.push_back(brightnessProp);
 
@@ -175,6 +181,8 @@ std::vector<AbstractProperty> WhiteBalanceEffect::getProperties() const {
     presetProp.setName("Preset");
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(0);
+    presetProp.setMinValue(QVariant(0));
+    presetProp.setMaxValue(QVariant(6));
     presetProp.setDisplayPriority(-20);
     props.push_back(presetProp);
 
