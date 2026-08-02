@@ -153,13 +153,13 @@ std::vector<AbstractProperty> FilmDamageEffect::getProperties() const {
 void FilmDamageEffect::setPropertyValue(const UniString& name,
                                         const QVariant& value) {
     const QString key = name.toQString();
-    if (key == QStringLiteral("Grain")) grain_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
-    else if (key == QStringLiteral("Dust")) dust_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
-    else if (key == QStringLiteral("Scratches")) scratches_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
-    else if (key == QStringLiteral("Gate Weave")) gateWeave_ = std::clamp(value.toFloat(), 0.0f, 20.0f);
-    else if (key == QStringLiteral("Flicker")) flicker_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
-    else if (key == QStringLiteral("Film Burn")) filmBurn_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
-    else if (key == QStringLiteral("Evolution")) evolution_ = value.toFloat();
+    if (key == QStringLiteral("Grain")) { const float v = value.toFloat(); grain_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.12f; }
+    else if (key == QStringLiteral("Dust")) { const float v = value.toFloat(); dust_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.08f; }
+    else if (key == QStringLiteral("Scratches")) { const float v = value.toFloat(); scratches_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.1f; }
+    else if (key == QStringLiteral("Gate Weave")) { const float v = value.toFloat(); gateWeave_ = std::isfinite(v) ? std::clamp(v, 0.0f, 20.0f) : 1.5f; }
+    else if (key == QStringLiteral("Flicker")) { const float v = value.toFloat(); flicker_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.08f; }
+    else if (key == QStringLiteral("Film Burn")) { const float v = value.toFloat(); filmBurn_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.12f; }
+    else if (key == QStringLiteral("Evolution")) { const float v = value.toFloat(); evolution_ = std::isfinite(v) ? v : 0.0f; }
     else if (key == QStringLiteral("Seed")) seed_ = value.toInt();
     syncImpl();
 }
