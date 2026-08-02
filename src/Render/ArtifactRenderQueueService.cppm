@@ -507,6 +507,7 @@ namespace Artifact
         ArtifactCore::CompositionID compositionId; // 対象コンポジションID
         QString compositionName;      // コンポジション名
         QString jobName;              // ジョブ名（ユーザー編集可能）
+        int priority = 0;             // farm scheduling priority (higher first)
         QString outputPath;           // 出力パス
         QString outputFormat;         // 出力形式 (MP4, PNG sequence等)
         QString codec;                // コーデック
@@ -5430,6 +5431,7 @@ namespace Artifact
 
             ArtifactCore::RenderJobRequest farmReq;
             farmReq.jobId = farmJobId;
+            farmReq.priority = job.priority;
             farmReq.compositionId = job.compositionId;
             farmReq.compositionName = job.compositionName;
             farmReq.range.startFrame = startF;   // full range; master internally skips via checkpoint
@@ -5752,7 +5754,14 @@ namespace Artifact
             try {
                 const int count = impl_->queueManager.jobCount();
                 auto anyFailure = ArtifactCore::makeShared<std::atomic_bool>(false);
-                for (int i = 0; i < count; ++i) {
+                std::vector<int> jobOrder;
+                jobOrder.reserve(count);
+                for (int i = 0; i < count; ++i) jobOrder.push_back(i);
+                std::stable_sort(jobOrder.begin(), jobOrder.end(), [this](int lhs, int rhs) {
+                    return impl_->queueManager.getJob(lhs).priority
+                        > impl_->queueManager.getJob(rhs).priority;
+                });
+                for (const int i : jobOrder) {
                 if (impl_->shutdownRequested_.load(std::memory_order_acquire)) break;
 
                 const auto job = impl_->queueManager.getJob(i);
@@ -6192,6 +6201,7 @@ namespace Artifact
             obj["compositionId"] = job.compositionId.toString();
             obj["compositionName"] = job.compositionName;
             obj["jobName"] = job.jobName;
+            obj["priority"] = job.priority;
             obj["outputPath"] = job.outputPath;
             obj["outputFormat"] = job.outputFormat;
             obj["codec"] = job.codec;
@@ -6304,6 +6314,7 @@ namespace Artifact
             job.compositionId = ArtifactCore::CompositionID(obj["compositionId"].toString());
             job.compositionName = obj["compositionName"].toString().trimmed();
             job.jobName = obj["jobName"].toString().trimmed();
+            job.priority = std::clamp(obj["priority"].toInt(0), -1000, 1000);
             job.outputPath = obj["outputPath"].toString().trimmed();
             job.outputFormat = obj["outputFormat"].toString().trimmed();
             job.codec = obj["codec"].toString().trimmed();
