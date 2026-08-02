@@ -23,7 +23,7 @@ QPointF pointFromJson(const QJsonArray &array, const QPointF &fallback) {
     if (array.at(0).isDouble() && array.at(1).isDouble()) {
       const double x = array.at(0).toDouble(fallback.x());
       const double y = array.at(1).toDouble(fallback.y());
-      return QPointF(x, y);
+      return std::isfinite(x) && std::isfinite(y) ? QPointF(x, y) : fallback;
     }
   }
   return fallback;
@@ -40,7 +40,9 @@ QRectF rectFromJson(const QJsonArray &array, const QRectF &fallback) {
       const double y = array.at(1).toDouble(fallback.y());
       const double w = array.at(2).toDouble(fallback.width());
       const double h = array.at(3).toDouble(fallback.height());
-      return QRectF(x, y, w, h).normalized();
+      if (std::isfinite(x) && std::isfinite(y) && std::isfinite(w) && std::isfinite(h)) {
+        return QRectF(x, y, w, h).normalized();
+      }
     }
   }
   return fallback;
@@ -58,8 +60,10 @@ QRectF fullSourceRect(const QSizeF &size) {
 }
 
 QPointF clampAnchor(const QPointF &anchor) {
-  return QPointF(std::clamp(anchor.x(), 0.0, 1.0),
-                 std::clamp(anchor.y(), 0.0, 1.0));
+  const auto safe = [](double value, double fallback) {
+    return std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : fallback;
+  };
+  return QPointF(safe(anchor.x(), 0.5), safe(anchor.y(), 0.5));
 }
 
 QRectF clampRectToSource(const QRectF &rect, const QRectF &sourceBounds) {
@@ -113,6 +117,11 @@ QRectF SourceCrop::cropRect() const {
 }
 
 void SourceCrop::setCropRect(const QRectF &rect) {
+  if (!std::isfinite(rect.x()) || !std::isfinite(rect.y()) ||
+      !std::isfinite(rect.width()) || !std::isfinite(rect.height())) {
+    cropRect_ = QRectF();
+    return;
+  }
   cropRect_ = rect.normalized();
 }
 
@@ -121,7 +130,10 @@ QPointF SourceCrop::pan() const {
 }
 
 void SourceCrop::setPan(const QPointF &pan) {
-  pan_ = pan;
+  const auto safe = [](double value) {
+    return std::isfinite(value) ? std::clamp(value, -1000000.0, 1000000.0) : 0.0;
+  };
+  pan_ = QPointF(safe(pan.x()), safe(pan.y()));
 }
 
 double SourceCrop::zoom() const {
@@ -133,7 +145,7 @@ void SourceCrop::setZoom(double zoom) {
     zoom_ = 1.0;
     return;
   }
-  zoom_ = std::max(zoom, 1e-6);
+  zoom_ = std::clamp(zoom, 0.001, 1000.0);
 }
 
 double SourceCrop::rotation() const {
@@ -141,7 +153,9 @@ double SourceCrop::rotation() const {
 }
 
 void SourceCrop::setRotation(double rotation) {
-  rotation_ = std::isfinite(rotation) ? rotation : 0.0;
+  rotation_ = std::isfinite(rotation)
+      ? std::clamp(rotation, -360000.0, 360000.0)
+      : 0.0;
 }
 
 QPointF SourceCrop::anchor() const {
@@ -265,7 +279,8 @@ QJsonObject SourceCrop::toJson() const {
 void SourceCrop::fromJson(const QJsonObject &obj) {
   enabled_ = obj.value(QStringLiteral("enabled")).toBool(false);
   cropRect_ = rectFromJson(obj.value(QStringLiteral("cropRect")).toArray(), QRectF());
-  pan_ = pointFromJson(obj.value(QStringLiteral("pan")).toArray(), QPointF(0.0, 0.0));
+  const QPointF storedPan = pointFromJson(
+      obj.value(QStringLiteral("pan")).toArray(), QPointF(0.0, 0.0));
   zoom_ = obj.value(QStringLiteral("zoom")).toDouble(1.0);
   rotation_ = obj.value(QStringLiteral("rotation")).toDouble(0.0);
   anchor_ = pointFromJson(obj.value(QStringLiteral("anchor")).toArray(), QPointF(0.5, 0.5));
@@ -273,6 +288,7 @@ void SourceCrop::fromJson(const QJsonObject &obj) {
   setZoom(zoom_);
   setRotation(rotation_);
   setAnchor(anchor_);
+  setPan(storedPan);
   if (!cropRect_.isValid() || cropRect_.width() <= 0.0 || cropRect_.height() <= 0.0) {
     cropRect_ = QRectF();
   }
