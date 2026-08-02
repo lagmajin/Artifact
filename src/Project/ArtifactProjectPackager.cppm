@@ -8,6 +8,7 @@ module;
 #include <QHash>
 #include <QFileInfo>
 #include <QFile>
+#include <QSaveFile>
 #include <QIODevice>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -96,38 +97,78 @@ QStringList ArtifactProjectPackager::getAllExternalFiles(ArtifactProject* projec
 }
 
 bool ArtifactProjectPackager::collectAndPackage(ArtifactProject* project, const PackageSettings& settings) {
-    if (!project || settings.targetDir.isEmpty()) return false;
+    const QString normalizedTargetDir = settings.targetDir.trimmed();
+    if (!project || normalizedTargetDir.isEmpty()) return false;
 
-    QDir dir(settings.targetDir);
+    // Packaging creates a standalone project file, so it must enforce the
+    // same metadata and tree invariants as the normal exporter before copying
+    // any assets into the destination.
+    const auto validationIssues = project->validate();
+    QStringList blockingIssues;
+    for (const auto& issue : validationIssues) {
+        if (issue.severity == ProjectValidationIssue::Severity::Error) {
+            blockingIssues.append(QStringLiteral("%1: %2")
+                                      .arg(issue.field, issue.message));
+        } else {
+            qWarning() << "[Packager] Project validation notice:"
+                       << issue.field << issue.message;
+        }
+    }
+    QString treeError;
+    if (!project->validateProjectTree(&treeError)) {
+        blockingIssues.append(treeError);
+    }
+    if (!blockingIssues.isEmpty()) {
+        qWarning() << "[Packager] Project validation failed:"
+                   << blockingIssues.join(QStringLiteral("\n"));
+        return false;
+    }
+
+    QDir dir(normalizedTargetDir);
+    if (QFileInfo::exists(dir.absolutePath()) && !QFileInfo(dir.absolutePath()).isDir()) {
+        qWarning() << "[Packager] Target path is not a directory:" << dir.absolutePath();
+        return false;
+    }
     if (!dir.exists()) {
         if (!dir.mkpath(".")) return false;
     }
 
     QDir assetsDir(dir.filePath("Assets"));
-    assetsDir.mkpath(".");
+    if (!assetsDir.exists() && !assetsDir.mkpath(".")) {
+        qWarning() << "[Packager] Failed to create Assets directory:"
+                   << assetsDir.absolutePath();
+        return false;
+    }
 
     QStringList sourceFiles = getAllExternalFiles(project);
     QHash<QString, QString> pathMap;
     QSet<QString> usedNames;
+
+    for (const auto& srcPath : sourceFiles) {
+        const QFileInfo sourceInfo(srcPath);
+        if (!sourceInfo.exists() || !sourceInfo.isFile()) {
+            qWarning() << "[Packager] Missing external file:" << srcPath;
+            return false;
+        }
+    }
     
     qDebug() << "Packaging" << sourceFiles.size() << "files...";
 
     for (const auto& srcPath : sourceFiles) {
-        QFileInfo fi(srcPath);
         const QString destName = packagedAssetNameForSource(srcPath, settings, usedNames);
         QString destPath = assetsDir.filePath(destName);
         
-        if (QFile::exists(srcPath)) {
-            usedNames.insert(destName);
-            pathMap.insert(srcPath, QStringLiteral("Assets/%1").arg(destName));
-            if (QFile::exists(destPath)) {
-                QFile::remove(destPath);
-            }
-            if (!QFile::copy(srcPath, destPath)) {
-                qDebug() << "Failed to copy:" << srcPath;
-                // Continue with others or fail?
+        usedNames.insert(destName);
+        pathMap.insert(srcPath, QStringLiteral("Assets/%1").arg(destName));
+        if (QFile::exists(destPath)) {
+            if (!QFile::remove(destPath)) {
+                qWarning() << "[Packager] Failed to replace existing asset:" << destPath;
                 return false;
             }
+        }
+        if (!QFile::copy(srcPath, destPath)) {
+            qDebug() << "Failed to copy:" << srcPath;
+            return false;
         }
     }
 
@@ -136,13 +177,24 @@ bool ArtifactProjectPackager::collectAndPackage(ArtifactProject* project, const 
     rewriteFootagePaths(rootValue, pathMap);
     projectJson = rootValue.toObject();
 
-    QFile projectFile(dir.filePath(QStringLiteral("project.json")));
+    QSaveFile projectFile(dir.filePath(QStringLiteral("project.json")));
     if (!projectFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         qDebug() << "Failed to open packaged project file for writing";
         return false;
     }
-    projectFile.write(QJsonDocument(projectJson).toJson(QJsonDocument::Indented));
-    projectFile.close();
+    const QByteArray serializedProject =
+        QJsonDocument(projectJson).toJson(QJsonDocument::Indented);
+    if (projectFile.write(serializedProject) != serializedProject.size()) {
+        qWarning() << "[Packager] Failed to write packaged project file:"
+                   << projectFile.errorString();
+        projectFile.cancelWriting();
+        return false;
+    }
+    if (!projectFile.commit()) {
+        qWarning() << "[Packager] Failed to commit packaged project file:"
+                   << projectFile.errorString();
+        return false;
+    }
     
     return true;
 }
