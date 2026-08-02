@@ -3,6 +3,7 @@ module;
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -18,6 +19,11 @@ module Color.GradingEngine;
 import Core.Parallel;
 
 namespace Artifact {
+
+namespace {
+constexpr qint64 kMaxColorGradingPresetBytes = 16LL * 1024LL * 1024LL;
+constexpr qsizetype kMaxColorGradingNodes = 100000;
+}
 
 using namespace ArtifactCore;
 
@@ -472,7 +478,8 @@ void ArtifactColorGradingEngine::loadPreset(const std::string &name) {
   const QString presetDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/grading_presets");
 
   QFile file(presetDir + QStringLiteral("/") + presetName + QStringLiteral(".json"));
-  if (!file.open(QIODevice::ReadOnly)) return;
+  if (file.size() <= 0 || file.size() > kMaxColorGradingPresetBytes ||
+      !file.open(QIODevice::ReadOnly)) return;
 
   QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
   if (!doc.isObject()) return;
@@ -481,7 +488,9 @@ void ArtifactColorGradingEngine::loadPreset(const std::string &name) {
   QJsonArray nodesArray = root[QStringLiteral("nodes")].toArray();
 
   impl_->nodes_.clear();
+  qsizetype loadedNodes = 0;
   for (const QJsonValue& val : nodesArray) {
+    if (loadedNodes++ >= kMaxColorGradingNodes) break;
     if (!val.isObject()) continue;
     QJsonObject nodeObj = val.toObject();
 
