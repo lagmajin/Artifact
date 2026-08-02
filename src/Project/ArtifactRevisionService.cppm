@@ -24,6 +24,13 @@ import Artifact.Project;
 import Artifact.Render.Queue.Service;
 import Core.Diagnostics.SessionLedger;
 
+namespace
+{
+constexpr qint64 kMaxRevisionLedgerBytes = 16LL * 1024LL * 1024LL;
+constexpr qint64 kMaxRevisionSnapshotBytes = 256LL * 1024LL * 1024LL;
+constexpr qsizetype kMaxRevisionRecords = 100000;
+}
+
 namespace Artifact {
 namespace {
 
@@ -223,7 +230,8 @@ public:
 
   void loadLedger() {
     QFile file(ledgerPath_);
-    if (!file.open(QIODevice::ReadOnly)) {
+    if (file.size() <= 0 || file.size() > kMaxRevisionLedgerBytes ||
+        !file.open(QIODevice::ReadOnly)) {
       return;
     }
     const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
@@ -235,6 +243,9 @@ public:
     const QJsonObject root = doc.object();
     headRevisionId_ = root.value(QStringLiteral("headRevisionId")).toString();
     const QJsonArray revisions = root.value(QStringLiteral("revisions")).toArray();
+    if (revisions.size() > kMaxRevisionRecords) {
+      return;
+    }
     revisions_.clear();
     revisions_.reserve(revisions.size());
     for (const auto &value : revisions) {
@@ -272,7 +283,8 @@ public:
     if (!revisions_.isEmpty()) {
       const auto &latest = revisions_.last();
       QFile file(snapshotFileFor(latest.snapshotFile));
-      if (file.open(QIODevice::ReadOnly)) {
+      if (file.size() <= 0 || file.size() > kMaxRevisionSnapshotBytes ||
+          !file.open(QIODevice::ReadOnly)) {
         const QByteArray bytes = file.readAll();
         file.close();
         const QJsonDocument doc = QJsonDocument::fromJson(bytes);
@@ -378,7 +390,8 @@ public:
       return std::nullopt;
     }
     QFile file(snapshotFileFor(record->snapshotFile));
-    if (!file.open(QIODevice::ReadOnly)) {
+    if (file.size() <= 0 || file.size() > kMaxRevisionSnapshotBytes ||
+        !file.open(QIODevice::ReadOnly)) {
       return std::nullopt;
     }
     const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
