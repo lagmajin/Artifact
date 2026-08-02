@@ -378,7 +378,7 @@ QStringList extractModelIdsFromJson(const QJsonDocument &doc) {
       if (id.isEmpty()) {
         id = item.value("title").toString();
       }
-      if (!id.isEmpty()) {
+      if (!id.isEmpty() && !ids.contains(id)) {
         ids.push_back(id);
       }
     }
@@ -2854,8 +2854,7 @@ void Artifact::ArtifactAICloudWidget::onModelsReply(QNetworkReply *reply) {
         id = item.value("title").toString();
       }
       id = id.trimmed().left(1024);
-      id = id.trimmed().left(1024);
-      if (!id.isEmpty()) {
+      if (!id.isEmpty() && !ids.contains(id)) {
         ids.push_back(id);
       }
     }
