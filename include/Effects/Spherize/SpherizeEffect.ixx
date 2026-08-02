@@ -51,16 +51,16 @@ private:
 public:
     SpherizeEffectCPUImpl() = default;
 
-    void setAmount(float amount) { amount_ = amount; }
+    void setAmount(float amount) { amount_ = std::isfinite(amount) ? std::clamp(amount, -100.0f, 100.0f) : 50.0f; }
     float amount() const { return amount_; }
 
-    void setRadius(float radius) { radius_ = radius; }
+    void setRadius(float radius) { radius_ = std::isfinite(radius) ? std::clamp(radius, 0.0f, 1.0f) : 0.5f; }
     float radius() const { return radius_; }
 
-    void setCenterX(float cx) { centerX_ = cx; }
+    void setCenterX(float cx) { centerX_ = std::isfinite(cx) ? std::clamp(cx, 0.0f, 1.0f) : 0.5f; }
     float centerX() const { return centerX_; }
 
-    void setCenterY(float cy) { centerY_ = cy; }
+    void setCenterY(float cy) { centerY_ = std::isfinite(cy) ? std::clamp(cy, 0.0f, 1.0f) : 0.5f; }
     float centerY() const { return centerY_; }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
@@ -76,16 +76,16 @@ private:
 public:
     SpherizeEffectGPUImpl() = default;
 
-    void setAmount(float amount) { amount_ = amount; }
+    void setAmount(float amount) { amount_ = std::isfinite(amount) ? std::clamp(amount, -100.0f, 100.0f) : 50.0f; }
     float amount() const { return amount_; }
 
-    void setRadius(float radius) { radius_ = radius; }
+    void setRadius(float radius) { radius_ = std::isfinite(radius) ? std::clamp(radius, 0.0f, 1.0f) : 0.5f; }
     float radius() const { return radius_; }
 
-    void setCenterX(float cx) { centerX_ = cx; }
+    void setCenterX(float cx) { centerX_ = std::isfinite(cx) ? std::clamp(cx, 0.0f, 1.0f) : 0.5f; }
     float centerX() const { return centerX_; }
 
-    void setCenterY(float cy) { centerY_ = cy; }
+    void setCenterY(float cy) { centerY_ = std::isfinite(cy) ? std::clamp(cy, 0.0f, 1.0f) : 0.5f; }
     float centerY() const { return centerY_; }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
