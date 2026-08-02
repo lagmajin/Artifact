@@ -624,8 +624,10 @@ void ShaderManager::Impl::createPSOCache()
     const QString filePath = psoCacheFilePath();
     QByteArray cacheData;
     if (!filePath.isEmpty()) {
+        constexpr qint64 kMaxPsoCacheBytes = 512LL * 1024LL * 1024LL;
         QFile file(filePath);
-        if (file.open(QIODevice::ReadOnly)) {
+        if (file.size() > 0 && file.size() <= kMaxPsoCacheBytes &&
+            file.open(QIODevice::ReadOnly)) {
             cacheData = file.readAll();
         }
     }
