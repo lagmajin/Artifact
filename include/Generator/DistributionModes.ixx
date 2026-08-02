@@ -1,5 +1,8 @@
 module;
 #include <utility>
+#include <algorithm>
+#include <cmath>
+#include <vector>
 #include <QString>
 #include <QVector3D>
 
@@ -52,7 +55,7 @@ public:
         if (points_.empty())
             return {{0, 0, 0}, {1, 0, 0}};
 
-        t = std::clamp(t, 0.0f, 1.0f);
+        t = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.0f;
         int n = static_cast<int>(points_.size());
 
         if (n == 1) return {points_[0], {1, 0, 0}};
@@ -69,7 +72,7 @@ public:
         auto& p0 = (i > 0) ? points_[i - 1] : points_[i];
         auto& p1 = points_[i];
         auto& p2 = (i + 1 < n) ? points_[i + 1] : points_[i];
-        auto& p3 = (i + 2 < n) ? points_[i + 2] : points_[i + 1 - segCount + 1];
+        auto& p3 = (i + 2 < n) ? points_[i + 2] : points_[i + 1];
 
         float t2 = localT * localT;
         float t3 = t2 * localT;
@@ -83,7 +86,11 @@ public:
         QVector3D t2_ = (p3 - p1) * 0.5f;
 
         QVector3D pos = p1 * h0 + p2 * h1 + t1 * h2 + t2_ * h3;
-        QVector3D tan = t1 * h2 + t2_ * h3;
+        const float dh0 = 6.0f * t2 - 6.0f * localT;
+        const float dh1 = -6.0f * t2 + 6.0f * localT;
+        const float dh2 = 3.0f * t2 - 4.0f * localT + 1.0f;
+        const float dh3 = 3.0f * t2 - 2.0f * localT;
+        QVector3D tan = p1 * dh0 + p2 * dh1 + t1 * dh2 + t2_ * dh3;
         float len = tan.length();
         if (len > 0.001f) tan /= len;
 
