@@ -130,11 +130,11 @@ Texture2D<float4> InTex:register(t0);Texture2D<float2> VelTex:register(t1);RWTex
 VectorBlurEffect::VectorBlurEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();}
 VectorBlurEffect::~VectorBlurEffect()=default;
 float VectorBlurEffect::shutterAngle()const{return shutterAngle_;}
-void VectorBlurEffect::setShutterAngle(float v){shutterAngle_=std::clamp(v,0.0f,720.0f);syncImpls();}
+void VectorBlurEffect::setShutterAngle(float v){shutterAngle_=std::isfinite(v)?std::clamp(v,0.0f,720.0f):180.0f;syncImpls();}
 int VectorBlurEffect::samples()const{return samples_;}
 void VectorBlurEffect::setSamples(int v){samples_=std::clamp(v,2,32);syncImpls();}
 float VectorBlurEffect::exposureCompensation()const{return exposureComp_;}
-void VectorBlurEffect::setExposureCompensation(float v){exposureComp_=std::max(v,0.0f);syncImpls();}
+void VectorBlurEffect::setExposureCompensation(float v){exposureComp_=std::isfinite(v)?std::clamp(v,0.0f,4.0f):1.0f;syncImpls();}
 std::vector<AbstractProperty> VectorBlurEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(3);
