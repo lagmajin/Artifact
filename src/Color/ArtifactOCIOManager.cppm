@@ -234,7 +234,7 @@ QString ArtifactOCIOManager::workingSpace() const
 
 void ArtifactOCIOManager::setWorkingSpace(const QString& cs)
 {
-    const QString normalized = cs.trimmed();
+    const QString normalized = cs.trimmed().left(4096);
     if (impl_->config_.isValid() &&
         !impl_->config_.colorSpaces().contains(normalized)) {
         return;
@@ -254,7 +254,7 @@ QString ArtifactOCIOManager::display() const
 
 void ArtifactOCIOManager::setDisplay(const QString& display)
 {
-    const QString normalized = display.trimmed();
+    const QString normalized = display.trimmed().left(4096);
     if (impl_->config_.isValid() &&
         !impl_->config_.displays().contains(normalized)) {
         return;
@@ -280,7 +280,7 @@ QString ArtifactOCIOManager::view() const
 
 void ArtifactOCIOManager::setView(const QString& view)
 {
-    const QString normalized = view.trimmed();
+    const QString normalized = view.trimmed().left(4096);
     if (impl_->config_.isValid() &&
         !impl_->config_.viewsForDisplay(impl_->display_).contains(normalized)) {
         return;
@@ -300,7 +300,7 @@ QString ArtifactOCIOManager::looks() const
 
 void ArtifactOCIOManager::setLooks(const QString& looks)
 {
-    const QString normalized = looks.trimmed();
+    const QString normalized = looks.trimmed().left(4096);
     if (impl_->looks_ == normalized)
         return;
     impl_->looks_ = normalized;
