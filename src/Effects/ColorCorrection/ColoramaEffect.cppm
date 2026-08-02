@@ -183,31 +183,31 @@ void ColoramaEffect::setPalette(ColoramaPalette palette) {
 
 void ColoramaEffect::setPhase(float value) {
     preset_ = Preset::Custom;
-    settings_.phase = std::clamp(value, 0.0f, 1.0f);
+    settings_.phase = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
     syncImpls();
 }
 
 void ColoramaEffect::setSpread(float value) {
     preset_ = Preset::Custom;
-    settings_.spread = std::max(0.0f, value);
+    settings_.spread = std::isfinite(value) ? std::max(0.0f, value) : 1.0f;
     syncImpls();
 }
 
 void ColoramaEffect::setStrength(float value) {
     preset_ = Preset::Custom;
-    settings_.strength = std::clamp(value, 0.0f, 1.0f);
+    settings_.strength = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
     syncImpls();
 }
 
 void ColoramaEffect::setSaturationBoost(float value) {
     preset_ = Preset::Custom;
-    settings_.saturationBoost = std::clamp(value, 0.0f, 2.5f);
+    settings_.saturationBoost = std::isfinite(value) ? std::clamp(value, 0.0f, 2.5f) : 1.4f;
     syncImpls();
 }
 
 void ColoramaEffect::setContrast(float value) {
     preset_ = Preset::Custom;
-    settings_.contrast = std::clamp(value, 0.0f, 2.5f);
+    settings_.contrast = std::isfinite(value) ? std::clamp(value, 0.0f, 2.5f) : 1.15f;
     syncImpls();
 }
 
