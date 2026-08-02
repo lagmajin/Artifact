@@ -95,18 +95,27 @@ export namespace Artifact {
         void setCenter(const std::array<float, 3>& c) { center_ = c; }
 
         std::array<float, 3> halfExtent() const { return halfExtent_; }
-        void setHalfExtent(const std::array<float, 3>& h) { halfExtent_ = h; }
+        void setHalfExtent(const std::array<float, 3>& h) {
+            for (int i = 0; i < 3; ++i) {
+                halfExtent_[i] = std::isfinite(h[i]) ? std::max(0.0f, h[i]) : 0.0f;
+            }
+        }
 
         float falloffWidth() const { return falloffWidth_; }
-        void setFalloffWidth(float w) { falloffWidth_ = w; }
+        void setFalloffWidth(float w) {
+            falloffWidth_ = std::isfinite(w) ? std::max(0.0f, w) : 0.0f;
+        }
 
         // ── 評価 ──
         float evaluateAt(const std::array<float, 3>& worldPos) const override {
+            if (!std::isfinite(worldPos[0]) || !std::isfinite(worldPos[1]) || !std::isfinite(worldPos[2]))
+                return 0.0f;
             // SDF (Signed Distance Field) approach for axis-aligned box
             float dx = std::max(0.0f, std::abs(worldPos[0] - center_[0]) - halfExtent_[0]);
             float dy = std::max(0.0f, std::abs(worldPos[1] - center_[1]) - halfExtent_[1]);
             float dz = std::max(0.0f, std::abs(worldPos[2] - center_[2]) - halfExtent_[2]);
             float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (!std::isfinite(dist)) return 0.0f;
 
             if (dist <= 0.0f) {
                 return 1.0f;
