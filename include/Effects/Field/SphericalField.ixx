@@ -81,20 +81,31 @@ export namespace Artifact {
 
         // ── アクセサ ──
         std::array<float, 3> center() const { return center_; }
-        void setCenter(const std::array<float, 3>& c) { center_ = c; }
+        void setCenter(const std::array<float, 3>& c) {
+            for (int i = 0; i < 3; ++i) {
+                center_[i] = std::isfinite(c[i]) ? c[i] : 0.0f;
+            }
+        }
 
         float radius() const { return radius_; }
-        void setRadius(float r) { radius_ = r; }
+        void setRadius(float r) {
+            radius_ = std::isfinite(r) ? std::max(0.0f, r) : 0.0f;
+        }
 
         float falloffWidth() const { return falloffWidth_; }
-        void setFalloffWidth(float w) { falloffWidth_ = w; }
+        void setFalloffWidth(float w) {
+            falloffWidth_ = std::isfinite(w) ? std::max(0.0f, w) : 0.0f;
+        }
 
         // ── 評価 ──
         float evaluateAt(const std::array<float, 3>& worldPos) const override {
+            if (!std::isfinite(worldPos[0]) || !std::isfinite(worldPos[1]) || !std::isfinite(worldPos[2]))
+                return 0.0f;
             float dx = worldPos[0] - center_[0];
             float dy = worldPos[1] - center_[1];
             float dz = worldPos[2] - center_[2];
             float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (!std::isfinite(dist)) return 0.0f;
 
             if (dist <= radius_) {
                 return 1.0f;
