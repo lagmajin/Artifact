@@ -113,12 +113,12 @@ std::vector<AbstractProperty> LuminescenceCausticsEffect::getProperties() const 
 void LuminescenceCausticsEffect::setPropertyValue(const UniString& name,
                                                   const QVariant& value) {
     const QString key = name.toQString();
-    if (key == QStringLiteral("Threshold")) threshold_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
-    else if (key == QStringLiteral("Edge Weight")) edgeWeight_ = std::clamp(value.toFloat(), 0.0f, 5.0f);
-    else if (key == QStringLiteral("Scale")) scale_ = std::clamp(value.toFloat(), 2.0f, 200.0f);
-    else if (key == QStringLiteral("Intensity")) intensity_ = std::clamp(value.toFloat(), 0.0f, 5.0f);
-    else if (key == QStringLiteral("Evolution")) evolution_ = value.toFloat();
-    else if (key == QStringLiteral("Color Shift")) colorShift_ = std::clamp(value.toFloat(), -1.0f, 1.0f);
+    if (key == QStringLiteral("Threshold")) { const float v = value.toFloat(); threshold_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.55f; }
+    else if (key == QStringLiteral("Edge Weight")) { const float v = value.toFloat(); edgeWeight_ = std::isfinite(v) ? std::clamp(v, 0.0f, 5.0f) : 0.8f; }
+    else if (key == QStringLiteral("Scale")) { const float v = value.toFloat(); scale_ = std::isfinite(v) ? std::clamp(v, 2.0f, 200.0f) : 22.0f; }
+    else if (key == QStringLiteral("Intensity")) { const float v = value.toFloat(); intensity_ = std::isfinite(v) ? std::clamp(v, 0.0f, 5.0f) : 0.75f; }
+    else if (key == QStringLiteral("Evolution")) { const float v = value.toFloat(); evolution_ = std::isfinite(v) ? v : 0.0f; }
+    else if (key == QStringLiteral("Color Shift")) { const float v = value.toFloat(); colorShift_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.35f; }
     syncImpl();
 }
 
