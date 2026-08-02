@@ -67,7 +67,7 @@ void LensDistortionEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, I
     float maxR = std::min(static_cast<float>(width), static_cast<float>(height)) * 0.5f;
     float k = distortion_ / 100.0f;
     if (invertDistortion_) k = -k;
-    float zm = zoom_;
+    const float zm = std::max(zoom_, 0.001f);
 
     ImageF32x4_RGBA dstImage;
     dstImage.resize(width, height);
