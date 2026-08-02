@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <vector>
 #include <wobjectimpl.h>
+#include <QFileInfo>
+#include <QDir>
 
 #include <iostream>
 #include <vector>
@@ -62,10 +64,24 @@ StabilizerEffect::~StabilizerEffect()
 void StabilizerEffect::setParams(const StabilizerParams& params)
 {
     params_ = params;
+    if (!params_.outputSize.isEmpty()) {
+        params_.outputSize.setWidth(std::clamp(params_.outputSize.width(), 1, 16384));
+        params_.outputSize.setHeight(std::clamp(params_.outputSize.height(), 1, 16384));
+    }
+    params_.borderFill = std::isfinite(params_.borderFill)
+        ? std::clamp(params_.borderFill, 0.0, 1.0) : 0.0;
+    params_.smoothingWindowSize = std::clamp(params_.smoothingWindowSize, 1, 10000);
+    frameMotions_.clear();
+    smoothedMotions_.clear();
+    stabilized_ = false;
 }
 
 QImage StabilizerEffect::processFrame(const QImage& frame, int frameIndex)
 {
+    if (frame.isNull() || frame.width() <= 0 || frame.height() <= 0 ||
+        frame.width() > 16384 || frame.height() > 16384) {
+        return frame;
+    }
     if (!stabilized_ || frameIndex < 0 || frameIndex >= smoothedMotions_.size()) {
         return frame;
     }
@@ -75,9 +91,12 @@ QImage StabilizerEffect::processFrame(const QImage& frame, int frameIndex)
     FrameMotion inverse = motion.inverted();
     
     QSize outputSize = params_.outputSize.isEmpty() ? frame.size() : params_.outputSize;
+    if (outputSize.width() <= 0 || outputSize.height() <= 0) {
+        outputSize = frame.size();
+    }
     
     // Simple transformation implementation (would use OpenCV or similar for production)
-    QImage result(outputSize, QImage::Format_RGB32);
+    QImage result(outputSize, QImage::Format_ARGB32_Premultiplied);
     const QImage source = (frame.format() == QImage::Format_RGB32 ||
                            frame.format() == QImage::Format_ARGB32)
         ? frame
@@ -86,8 +105,14 @@ QImage StabilizerEffect::processFrame(const QImage& frame, int frameIndex)
     int h = outputSize.height();
     
     // Create transformation matrix
-    double cosRot = std::cos(inverse.rotation);
-    double sinRot = std::sin(inverse.rotation);
+    const double rotation = std::isfinite(inverse.rotation) ? inverse.rotation : 0.0;
+    const double scale = std::isfinite(inverse.scale) &&
+                         std::abs(inverse.scale) > 1.0e-6
+        ? inverse.scale : 1.0;
+    const double translationX = std::isfinite(inverse.x) ? inverse.x : 0.0;
+    const double translationY = std::isfinite(inverse.y) ? inverse.y : 0.0;
+    double cosRot = std::cos(rotation);
+    double sinRot = std::sin(rotation);
     
     ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
         auto* resultRow = reinterpret_cast<QRgb*>(result.scanLine(y));
@@ -98,11 +123,11 @@ QImage StabilizerEffect::processFrame(const QImage& frame, int frameIndex)
             double dstX = srcX * cosRot - srcY * sinRot;
             double dstY = srcX * sinRot + srcY * cosRot;
             
-            dstX /= inverse.scale;
-            dstY /= inverse.scale;
+            dstX /= scale;
+            dstY /= scale;
             
-            dstX += frame.width() / 2.0 - inverse.x;
-            dstY += frame.height() / 2.0 - inverse.y;
+            dstX += frame.width() / 2.0 - translationX;
+            dstY += frame.height() / 2.0 - translationY;
             
             if (dstX >= 0 && dstX < source.width() && dstY >= 0 && dstY < source.height()) {
                 int sx = static_cast<int>(std::floor(dstX));
@@ -131,9 +156,12 @@ QImage StabilizerEffect::processFrame(const QImage& frame, int frameIndex)
             } else {
                 // Border handling
                 QRgb borderColor = qRgb(0, 0, 0);
-                if (params_.borderFill > 0.0) {
-                    int bx = static_cast<int>(std::clamp(dstX, 0.0, static_cast<double>(source.width() - 1)));
-                    int by = static_cast<int>(std::clamp(dstY, 0.0, static_cast<double>(source.height() - 1)));
+                if (params_.borderFill > 0.0 && std::isfinite(dstX) &&
+                    std::isfinite(dstY)) {
+                    int bx = static_cast<int>(std::clamp(
+                        dstX, 0.0, static_cast<double>(source.width() - 1)));
+                    int by = static_cast<int>(std::clamp(
+                        dstY, 0.0, static_cast<double>(source.height() - 1)));
                     borderColor = reinterpret_cast<const QRgb*>(source.constScanLine(by))[bx];
                 }
                 resultRow[x] = borderColor;
@@ -146,10 +174,15 @@ QImage StabilizerEffect::processFrame(const QImage& frame, int frameIndex)
 
 QRgb StabilizerEffect::interpolatePixel(QRgb c0, QRgb c1, double t) const
 {
-    int r = qRed(c0) * (1 - t) + qRed(c1) * t;
-    int g = qGreen(c0) * (1 - t) + qGreen(c1) * t;
-    int b = qBlue(c0) * (1 - t) + qBlue(c1) * t;
-    int a = qAlpha(c0) * (1 - t) + qAlpha(c1) * t;
+    const double safeT = std::isfinite(t) ? std::clamp(t, 0.0, 1.0) : 0.0;
+    const auto channel = [safeT](const int first, const int second) {
+        return std::clamp(static_cast<int>(std::lround(
+            first * (1.0 - safeT) + second * safeT)), 0, 255);
+    };
+    const int r = channel(qRed(c0), qRed(c1));
+    const int g = channel(qGreen(c0), qGreen(c1));
+    const int b = channel(qBlue(c0), qBlue(c1));
+    const int a = channel(qAlpha(c0), qAlpha(c1));
     
     return qRgba(r, g, b, a);
 }
@@ -157,6 +190,15 @@ QRgb StabilizerEffect::interpolatePixel(QRgb c0, QRgb c1, double t) const
 void StabilizerEffect::setFeatureTracks(const QVector<FeatureTrack>& tracks)
 {
     featureTracks_ = tracks;
+    frameMotions_.clear();
+    smoothedMotions_.clear();
+    stabilized_ = false;
+    totalFeatures_ = 0;
+    for (const auto& track : featureTracks_) {
+        if (track.valid) {
+            ++totalFeatures_;
+        }
+    }
     emit featuresDetected(featureTracks_);
 }
 
@@ -165,9 +207,22 @@ bool StabilizerEffect::stabilize()
     if (frames_.empty()) {
         return false;
     }
+
+    // 再実行時に前回の平滑化結果を残さない。
+    smoothedMotions_.clear();
+    stabilized_ = false;
     
     if (params_.outputSize.isEmpty()) {
         params_.outputSize = frames_.first().size();
+    }
+
+    if (frames_.size() == 1) {
+        frameMotions_.clear();
+        smoothedMotions_.clear();
+        smoothedMotions_.append(FrameMotion{});
+        stabilized_ = true;
+        emit stabilizationComplete();
+        return true;
     }
     
     // Feature detection and tracking
@@ -177,6 +232,9 @@ bool StabilizerEffect::stabilize()
     
     // Motion estimation
     estimateFrameMotions();
+    if (frameMotions_.isEmpty()) {
+        return false;
+    }
     
     // Motion smoothing
     smoothMotions();
@@ -192,12 +250,14 @@ bool StabilizerEffect::trackFeaturesBetweenFrames()
     if (frames_.empty()) return false;
     
     featureTracks_.clear();
+    totalFeatures_ = 0;
     
     for (int i = 1; i < frames_.size(); i++) {
         QVector<QPointF> featuresPrev, featuresCurr;
         
         if (i == 1) {
             featuresPrev = detectFeatures(frames_[0]);
+            totalFeatures_ = featuresPrev.size();
             for (int j = 0; j < featuresPrev.size(); j++) {
                 FeatureTrack track;
                 track.id = j;
@@ -217,6 +277,22 @@ bool StabilizerEffect::trackFeaturesBetweenFrames()
         
         updateFeatureTracks(matches, featuresCurr);
     }
+
+    // 追跡途中では、まだ後続フレームの位置が揃っていない。
+    // 全フレームを処理した後に完全なトラックだけを有効扱いにする。
+    for (auto& track : featureTracks_) {
+        track.valid = track.positions.size() == frames_.size();
+    }
+
+    if (featureTracks_.isEmpty()) {
+        return false;
+    }
+    totalFeatures_ = 0;
+    for (const auto& track : featureTracks_) {
+        if (track.valid) {
+            ++totalFeatures_;
+        }
+    }
     
     emit featuresDetected(featureTracks_);
     return true;
@@ -225,32 +301,79 @@ bool StabilizerEffect::trackFeaturesBetweenFrames()
 QVector<QPointF> StabilizerEffect::detectFeatures(const QImage& frame) const
 {
     QVector<QPointF> features;
+    struct Candidate {
+        QPointF point;
+        double response = 0.0;
+    };
+    std::vector<Candidate> candidates;
     
     int w = frame.width();
     int h = frame.height();
-    
-    for (int y = params_.featureParams.blockSize; y < h - params_.featureParams.blockSize; y += 2) {
-        for (int x = params_.featureParams.blockSize; x < w - params_.featureParams.blockSize; x += 2) {
-            double cornerResponse = 0.0;
-            
-            int dx = 0, dy = 0;
-            for (int ky = -params_.featureParams.blockSize; ky <= params_.featureParams.blockSize; ky++) {
-                for (int kx = -params_.featureParams.blockSize; kx <= params_.featureParams.blockSize; kx++) {
-                    QRgb prev = frame.pixel(x + kx - 1, y + ky);
-                    QRgb curr = frame.pixel(x + kx, y + ky);
-                    QRgb next = frame.pixel(x + kx + 1, y + ky);
-                    
-                    int r = qRed(curr) - qRed(prev);
-                    dx += r * r;
-                    
-                    r = qBlue(curr) - qBlue(prev);
-                    dy += r * r;
+    if (w <= 2 || h <= 2) {
+        return features;
+    }
+    const int blockSize = std::max(1, params_.featureParams.blockSize);
+    const int minDimension = std::min(w, h);
+    if (blockSize > (minDimension - 2) / 2) {
+        return features;
+    }
+    const double qualityLevel = std::isfinite(params_.featureParams.qualityLevel)
+        ? params_.featureParams.qualityLevel : 0.0;
+
+    for (int y = blockSize; y < h - blockSize; y += 2) {
+        for (int x = blockSize; x < w - blockSize; x += 2) {
+            double sumGxx = 0.0;
+            double sumGyy = 0.0;
+            double sumGxy = 0.0;
+            for (int ky = -blockSize; ky <= blockSize; ky++) {
+                for (int kx = -blockSize; kx <= blockSize; kx++) {
+                    const int px = x + kx;
+                    const int py = y + ky;
+                    const double gx = static_cast<double>(qGray(frame.pixel(px + 1, py)))
+                                    - static_cast<double>(qGray(frame.pixel(px - 1, py)));
+                    const double gy = static_cast<double>(qGray(frame.pixel(px, py + 1)))
+                                    - static_cast<double>(qGray(frame.pixel(px, py - 1)));
+                    sumGxx += gx * gx;
+                    sumGyy += gy * gy;
+                    sumGxy += gx * gy;
                 }
             }
-            
-            double det = dx * dy - pow(dx + dy, 2);
-            if (det > params_.featureParams.qualityLevel) {
-                features.append(QPointF(x, y));
+
+            const double det = sumGxx * sumGyy - sumGxy * sumGxy;
+            const double trace = sumGxx + sumGyy;
+            const double cornerResponse = det - 0.04 * trace * trace;
+            if (cornerResponse > qualityLevel) {
+                candidates.push_back({QPointF(x, y), cornerResponse});
+            }
+        }
+    }
+
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& a, const Candidate& b) {
+                  return a.response > b.response;
+              });
+
+    const int maxFeatures = std::max(0, params_.featureParams.maxFeatures);
+    if (maxFeatures == 0) {
+        return features;
+    }
+    const double minDistance = std::isfinite(params_.featureParams.minDistance)
+        ? std::max(0.0, params_.featureParams.minDistance) : 0.0;
+    const double minDistanceSquared = minDistance * minDistance;
+    for (const auto& candidate : candidates) {
+        bool sufficientlySeparated = true;
+        for (const auto& selected : features) {
+            const double dx = candidate.point.x() - selected.x();
+            const double dy = candidate.point.y() - selected.y();
+            if (dx * dx + dy * dy < minDistanceSquared) {
+                sufficientlySeparated = false;
+                break;
+            }
+        }
+        if (sufficientlySeparated) {
+            features.append(candidate.point);
+            if (features.size() >= maxFeatures) {
+                break;
             }
         }
     }
@@ -265,8 +388,17 @@ QVector<int> StabilizerEffect::trackFeatures(
     QVector<QPointF>& currFeatures
 ) const {
     QVector<int> matches;
+    if (prevFrame.isNull() || currFrame.isNull() ||
+        prevFrame.width() <= 0 || prevFrame.height() <= 0 ||
+        currFrame.width() <= 0 || currFrame.height() <= 0) {
+        return matches;
+    }
     
     for (int i = 0; i < prevFeatures.size(); i++) {
+        if (!std::isfinite(prevFeatures[i].x()) ||
+            !std::isfinite(prevFeatures[i].y())) {
+            continue;
+        }
         QPointF bestMatch;
         double bestDistance = 1e9;
         int matchIdx = -1;
@@ -330,17 +462,21 @@ QVector<int> StabilizerEffect::trackFeatures(
 
 void StabilizerEffect::updateFeatureTracks(const QVector<int>& matches, const QVector<QPointF>& currFeatures)
 {
+    // trackFeatures() keeps the detected candidates and appends the selected
+    // best-match positions. The appended range is the actual track output.
+    for (auto& track : featureTracks_) {
+        track.valid = false;
+    }
+    const int matchedOffset = currFeatures.size() - matches.size();
     for (int i = 0; i < matches.size(); i++) {
-        if (matches[i] >= 0 && matches[i] < featureTracks_.size()) {
-            featureTracks_[matches[i]].positions << currFeatures[i];
+        const int matchedIndex = matchedOffset + i;
+        if (matches[i] >= 0 && matches[i] < featureTracks_.size()
+            && matchedIndex >= 0 && matchedIndex < currFeatures.size()) {
+            featureTracks_[matches[i]].positions << currFeatures[matchedIndex];
+            featureTracks_[matches[i]].valid = true;
         }
     }
-    
-    for (int i = 0; i < featureTracks_.size(); i++) {
-        if (featureTracks_[i].positions.size() != processedFrames_ + 1) {
-            featureTracks_[i].valid = false;
-        }
-    }
+
 }
 
 QVector<QPointF> StabilizerEffect::getPrevFeatures(const QVector<FeatureTrack>& tracks) const
@@ -387,19 +523,49 @@ FrameMotion StabilizerEffect::estimateMotion(
     
     FrameMotion motion;
     
-    // Simple motion estimation based on average displacement
-    double avgX = 0, avgY = 0, avgRot = 0, avgScale = 1.0;
-    
-    for (int i = 0; i < prevPoints.size() && i < currPoints.size(); i++) {
-        double dx = currPoints[i].x() - prevPoints[i].x();
-        double dy = currPoints[i].y() - prevPoints[i].y();
-        
-        avgX += dx;
-        avgY += dy;
+    // Estimate a 2D similarity transform from centered point pairs.
+    // This keeps translation separate from rotation/scale so the stabilizer
+    // can apply the same transform model in processFrame().
+    QPointF prevCenter;
+    QPointF currCenter;
+    const int pointCount = std::min(prevPoints.size(), currPoints.size());
+    for (int i = 0; i < pointCount; ++i) {
+        prevCenter += prevPoints[i];
+        currCenter += currPoints[i];
     }
-    
-    motion.x = avgX / prevPoints.size();
-    motion.y = avgY / prevPoints.size();
+    prevCenter /= static_cast<double>(pointCount);
+    currCenter /= static_cast<double>(pointCount);
+
+    double dot = 0.0;
+    double cross = 0.0;
+    double prevMagnitude = 0.0;
+    for (int i = 0; i < pointCount; ++i) {
+        const QPointF p = prevPoints[i] - prevCenter;
+        const QPointF q = currPoints[i] - currCenter;
+        dot += p.x() * q.x() + p.y() * q.y();
+        cross += p.x() * q.y() - p.y() * q.x();
+        prevMagnitude += p.x() * p.x() + p.y() * p.y();
+    }
+
+    const bool canEstimateShape = prevMagnitude > 1e-9;
+    const double estimatedRotation = canEstimateShape ? std::atan2(cross, dot) : 0.0;
+    const double estimatedScale = canEstimateShape
+        ? std::max(1e-6, std::sqrt(dot * dot + cross * cross) / prevMagnitude)
+        : 1.0;
+    const double effectiveRotation = params_.stabilizeRotation ? estimatedRotation : 0.0;
+    const double cosRotation = std::cos(effectiveRotation);
+    const double sinRotation = std::sin(effectiveRotation);
+    const double effectiveScale = params_.stabilizeScale ? estimatedScale : 1.0;
+
+    const QPointF transformedPrev(
+        effectiveScale * (cosRotation * prevCenter.x() - sinRotation * prevCenter.y()),
+        effectiveScale * (sinRotation * prevCenter.x() + cosRotation * prevCenter.y()));
+
+    motion.x = currCenter.x() - transformedPrev.x();
+    motion.y = currCenter.y() - transformedPrev.y();
+    motion.rotation = effectiveRotation;
+    motion.scale = effectiveScale;
+    motion.center = prevCenter;
     
     return motion;
 }
@@ -409,8 +575,10 @@ void StabilizerEffect::smoothMotions()
     if (frameMotions_.empty()) {
         return;
     }
+
+    smoothedMotions_.clear();
     
-    int window = params_.smoothingWindowSize;
+    int window = std::max(1, params_.smoothingWindowSize);
     int halfWindow = window / 2;
     
     for (int i = 0; i < frameMotions_.size(); i++) {
@@ -440,9 +608,17 @@ void StabilizerEffect::smoothMotions()
 
 void StabilizerEffect::addFrame(const QImage& frame, FramePosition pos)
 {
+    if (frame.isNull() || frame.width() <= 0 || frame.height() <= 0 ||
+        frame.width() > 16384 || frame.height() > 16384 ||
+        frames_.size() >= 10000) {
+        return;
+    }
     frames_.push_back(frame);
     framePositions_.push_back(pos);
     processedFrames_ = frames_.size();
+    frameMotions_.clear();
+    smoothedMotions_.clear();
+    stabilized_ = false;
 }
 
 void StabilizerEffect::clearFrames()
@@ -454,6 +630,8 @@ void StabilizerEffect::clearFrames()
     smoothedMotions_.clear();
     stabilized_ = false;
     processedFrames_ = 0;
+    totalFeatures_ = 0;
+    processingTime_ = 0.0;
 }
 
 QImage StabilizerEffect::visualizeFeatures(const QImage& frame, const QVector<QPointF>& features) const
@@ -463,6 +641,9 @@ QImage StabilizerEffect::visualizeFeatures(const QImage& frame, const QVector<QP
     painter.setPen(QPen(params_.debugColor, 2));
     
     for (const auto& point : features) {
+        if (!std::isfinite(point.x()) || !std::isfinite(point.y())) {
+            continue;
+        }
         painter.drawEllipse(point, 2, 2);
     }
     
@@ -484,7 +665,13 @@ QImage StabilizerEffect::visualizeMotionVectors(const QImage& frame, const QVect
         
         painter.setPen(trackPen);
         for (int i = 1; i < track.positions.size(); i++) {
-            painter.drawLine(track.positions[i - 1], track.positions[i]);
+            const auto& from = track.positions[i - 1];
+            const auto& to = track.positions[i];
+            if (!std::isfinite(from.x()) || !std::isfinite(from.y()) ||
+                !std::isfinite(to.x()) || !std::isfinite(to.y())) {
+                continue;
+            }
+            painter.drawLine(from, to);
         }
     }
     
@@ -507,11 +694,21 @@ LiveStabilizer::~LiveStabilizer()
 void LiveStabilizer::setParams(const StabilizerParams& params)
 {
     params_ = params;
+    if (!params_.outputSize.isEmpty()) {
+        params_.outputSize.setWidth(std::clamp(params_.outputSize.width(), 1, 16384));
+        params_.outputSize.setHeight(std::clamp(params_.outputSize.height(), 1, 16384));
+    }
+    params_.borderFill = std::isfinite(params_.borderFill)
+        ? std::clamp(params_.borderFill, 0.0, 1.0) : 0.0;
+    params_.smoothingWindowSize = std::clamp(params_.smoothingWindowSize, 1, 10000);
+    history_.clear();
+    motionHistory_.clear();
+    initialized_ = false;
 }
 
 void LiveStabilizer::setMaxHistorySize(int size)
 {
-    maxHistorySize_ = size;
+    maxHistorySize_ = std::clamp(size, 1, 10000);
     if (history_.size() > maxHistorySize_) {
         history_.erase(history_.begin(), history_.begin() + (history_.size() - maxHistorySize_));
         motionHistory_.erase(motionHistory_.begin(), motionHistory_.begin() + (motionHistory_.size() - maxHistorySize_));
@@ -520,6 +717,10 @@ void LiveStabilizer::setMaxHistorySize(int size)
 
 QImage LiveStabilizer::processFrame(const QImage& frame)
 {
+    if (frame.isNull() || frame.width() <= 0 || frame.height() <= 0 ||
+        frame.width() > 16384 || frame.height() > 16384) {
+        return frame;
+    }
     history_.push_back(frame);
     
     if (history_.size() > maxHistorySize_) {
@@ -566,21 +767,45 @@ BatchStabilizer::~BatchStabilizer()
 void BatchStabilizer::setParams(const StabilizerParams& params)
 {
     params_ = params;
+    if (!params_.outputSize.isEmpty()) {
+        params_.outputSize.setWidth(std::clamp(params_.outputSize.width(), 1, 16384));
+        params_.outputSize.setHeight(std::clamp(params_.outputSize.height(), 1, 16384));
+    }
+    params_.borderFill = std::isfinite(params_.borderFill)
+        ? std::clamp(params_.borderFill, 0.0, 1.0) : 0.0;
+    params_.smoothingWindowSize = std::clamp(params_.smoothingWindowSize, 1, 10000);
+    if (!isProcessing_) {
+        currentFrame_ = 0;
+        totalFrames_ = 0;
+    }
 }
 
 void BatchStabilizer::setInputFile(const QString& filePath)
 {
-    inputFile_ = filePath;
+    inputFile_ = filePath.trimmed();
 }
 
 void BatchStabilizer::setOutputFile(const QString& filePath)
 {
-    outputFile_ = filePath;
+    outputFile_ = filePath.trimmed();
 }
 
 bool BatchStabilizer::process()
 {
     if (inputFile_.isEmpty() || outputFile_.isEmpty() || isProcessing_) {
+        return false;
+    }
+    const QFileInfo inputInfo(inputFile_);
+    if (!inputInfo.isFile() ||
+        QDir::cleanPath(inputInfo.absoluteFilePath()) ==
+            QDir::cleanPath(QFileInfo(outputFile_).absoluteFilePath())) {
+        return false;
+    }
+    const QFileInfo outputInfo(outputFile_);
+    if (outputInfo.exists() && !outputInfo.isFile()) {
+        return false;
+    }
+    if (!QDir().mkpath(outputInfo.absolutePath())) {
         return false;
     }
     
