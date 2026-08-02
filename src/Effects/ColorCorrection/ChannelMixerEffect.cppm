@@ -351,7 +351,7 @@ void ChannelMixerEffect::setPreset(int preset) {
 
 void ChannelMixerEffect::setStrength(float value) {
     preset_ = Preset::Custom;
-    settings_.strength = std::clamp(value, 0.0f, 1.0f);
+    settings_.strength = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
     syncImpls();
 }
 
@@ -371,7 +371,15 @@ void ChannelMixerEffect::setMatrix(float rr, float rg, float rb,
                                    float gr, float gg, float gb,
                                    float br, float bg, float bb) {
     preset_ = Preset::Custom;
-    settings_.matrix = {{{rr, rg, rb}, {gr, gg, gb}, {br, bg, bb}}};
+    settings_.matrix = {{{std::isfinite(rr) ? rr : 1.0f,
+                          std::isfinite(rg) ? rg : 0.0f,
+                          std::isfinite(rb) ? rb : 0.0f},
+                         {std::isfinite(gr) ? gr : 0.0f,
+                          std::isfinite(gg) ? gg : 1.0f,
+                          std::isfinite(gb) ? gb : 0.0f},
+                         {std::isfinite(br) ? br : 0.0f,
+                          std::isfinite(bg) ? bg : 0.0f,
+                          std::isfinite(bb) ? bb : 1.0f}}};
     syncImpls();
 }
 
