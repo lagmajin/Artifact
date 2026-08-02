@@ -44,10 +44,10 @@ Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
 
 BricksEffect::BricksEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();}
 BricksEffect::~BricksEffect()=default;
-float BricksEffect::brickWidth()const{return bw_;}void BricksEffect::setBrickWidth(float v){bw_=std::max(v,8.0f);syncImpls();}
-float BricksEffect::brickHeight()const{return bh_;}void BricksEffect::setBrickHeight(float v){bh_=std::max(v,4.0f);syncImpls();}
-float BricksEffect::mortarWidth()const{return mortar_;}void BricksEffect::setMortarWidth(float v){mortar_=std::max(v,0.0f);syncImpls();}
-float BricksEffect::offset()const{return offset_;}void BricksEffect::setOffset(float v){offset_=std::clamp(v,0.0f,1.0f);syncImpls();}
+float BricksEffect::brickWidth()const{return bw_;}void BricksEffect::setBrickWidth(float v){bw_=std::isfinite(v)?std::max(v,8.0f):64.0f;syncImpls();}
+float BricksEffect::brickHeight()const{return bh_;}void BricksEffect::setBrickHeight(float v){bh_=std::isfinite(v)?std::max(v,4.0f):32.0f;syncImpls();}
+float BricksEffect::mortarWidth()const{return mortar_;}void BricksEffect::setMortarWidth(float v){mortar_=std::isfinite(v)?std::max(v,0.0f):3.0f;syncImpls();}
+float BricksEffect::offset()const{return offset_;}void BricksEffect::setOffset(float v){offset_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.5f;syncImpls();}
 std::vector<AbstractProperty> BricksEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(4);
