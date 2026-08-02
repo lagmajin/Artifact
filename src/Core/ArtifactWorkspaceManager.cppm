@@ -7,6 +7,7 @@ module;
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QIODevice>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QStringList>
 #include <utility>
@@ -154,13 +155,17 @@ static bool writeJsonFile(const QString &path, const QJsonObject &json) {
     return false;
   }
 
-  file.write(QJsonDocument(json).toJson(QJsonDocument::Indented));
-  return true;
+  const QByteArray payload = QJsonDocument(json).toJson(QJsonDocument::Indented);
+  if (file.write(payload) != payload.size()) {
+    file.cancelWriting();
+    return false;
+  }
+  return file.commit();
 }
 
 static QJsonObject readJsonFile(const QString &path) {
   constexpr qint64 kMaxWorkspaceJsonBytes = 8LL * 1024LL * 1024LL;
-  QFile file(path);
+  QSaveFile file(path);
   if (file.size() <= 0 || file.size() > kMaxWorkspaceJsonBytes ||
       !file.open(QIODevice::ReadOnly)) {
     return {};
