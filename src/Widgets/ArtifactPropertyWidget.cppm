@@ -1214,7 +1214,9 @@ bool ArtifactPropertyWidget::loadActiveExpressionPreset() {
   }
 
   QFile file(filePath);
-  if (!file.open(QIODevice::ReadOnly)) {
+  constexpr qint64 kMaxAnimationPresetBytes = 16LL * 1024LL * 1024LL;
+  if (file.size() <= 0 || file.size() > kMaxAnimationPresetBytes ||
+      !file.open(QIODevice::ReadOnly)) {
     return false;
   }
   const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
