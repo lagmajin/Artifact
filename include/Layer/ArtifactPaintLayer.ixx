@@ -23,6 +23,17 @@ struct BrushStroke {
     float radius = 10.0f;
     FloatRGBA color = {0.0f, 0.0f, 0.0f, 1.0f};
     float opacity = 1.0f;
+    float flow = 1.0f;
+    float hardness = 1.0f;
+    float angle = 0.0f;
+    float roundness = 1.0f;
+    float sizeJitter = 0.0f;
+    float opacityJitter = 0.0f;
+    float scatter = 0.0f;
+    float angleJitter = 0.0f;
+    float roundnessJitter = 0.0f;
+    float flowJitter = 0.0f;
+    bool recordUndo = true;
     bool eraser = false;
 };
 
@@ -53,6 +64,17 @@ public:
     // ブラシ操作
     void applyStroke(const BrushStroke& stroke);
     void applyStrokeAtFrame(const BrushStroke& stroke, const FramePosition& frame);
+    void applyCloneStampAtFrame(const QPointF& sourcePos,
+                                const QPointF& destinationPos,
+                                float radius, float opacity, float hardness,
+                                bool recordUndo = true,
+                                const FramePosition& frame = FramePosition(-1));
+    void applyCloneStampFromLayerAtFrame(
+        ArtifactPaintLayer* sourceLayer, const QPointF& sourcePos,
+        const QPointF& destinationPos, float radius, float opacity,
+        float hardness, bool recordUndo = true,
+        const FramePosition& sourceFrame = FramePosition(-1),
+        const FramePosition& targetFrame = FramePosition(-1));
     void undoLastStroke();
     bool canUndo() const;
 
