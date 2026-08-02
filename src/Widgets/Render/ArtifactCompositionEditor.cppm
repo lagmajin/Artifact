@@ -2,6 +2,7 @@ module;
 #include <QAction>
 #include <QActionGroup>
 #include <QClipboard>
+#include <QCheckBox>
 #include <QCloseEvent>
 #include <QColor>
 #include <QComboBox>
@@ -42,6 +43,7 @@ module;
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QTextEdit>
+#include <QTabletEvent>
 #include <QPointer>
 #include <QPolygonF>
 #include <QQuaternion>
@@ -53,6 +55,7 @@ module;
 #include <QLineEdit>
 #include <QPushButton>
 #include <QShortcut>
+#include <QSpinBox>
 #include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSplitter>
@@ -83,6 +86,7 @@ module;
 #include <atomic>
 #include <deque>
 #include <functional>
+#include <chrono>
 #include <thread>
 #include <utility>
 #include <wobjectimpl.h>
@@ -97,6 +101,7 @@ import std;
 import Memory.SharedPtr;
 
 import Artifact.Widgets.CompositionRenderController;
+import Artifact.Widgets.PointTrackerGizmo;
 import Artifact.Service.Application;
 import Tool;
 import Artifact.Contents.Viewer;
@@ -110,6 +115,9 @@ import Math.Interpolate;
 import Color.Float;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layers.Abstract._2D;
+import Artifact.Layer.Paint;
+import Artifact.Render.Queue.Service;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Text;
 import Artifact.Layer.Svg;
@@ -744,9 +752,121 @@ public:
                 1000.0, 1.0, &leadingSpin_);
       addMetric(QStringLiteral("Stretch"), textLayer->fontStretch(), 50.0,
                 200.0, 1.0, &stretchSpin_);
+      fontSizeSpin_->installEventFilter(this);
+      trackingSpin_->installEventFilter(this);
+      stretchSpin_->installEventFilter(this);
     }
     typeRow->addStretch(1);
     root->addLayout(typeRow);
+
+    if (textLayer) {
+      auto *characterRow = new QHBoxLayout();
+      characterRow->addWidget(new QLabel(QStringLiteral("Font"), this));
+      fontFamilyCombo_ = new QComboBox(this);
+      const QString currentFamily = textLayer->fontFamily().toQString();
+      const QStringList families = {currentFamily, QStringLiteral("Arial"),
+                                    QStringLiteral("Segoe UI"),
+                                    QStringLiteral("Noto Sans"),
+                                    QStringLiteral("sans-serif")};
+      for (const auto &family : families) {
+        if (fontFamilyCombo_->findText(family) < 0) {
+          fontFamilyCombo_->addItem(family);
+        }
+      }
+      fontFamilyCombo_->setCurrentText(currentFamily);
+      fontFamilyCombo_->installEventFilter(this);
+      characterRow->addWidget(fontFamilyCombo_, 1);
+      characterRow->addWidget(new QLabel(QStringLiteral("Align"), this));
+      alignmentCombo_ = new QComboBox(this);
+      alignmentCombo_->addItem(QStringLiteral("Left"), 0);
+      alignmentCombo_->addItem(QStringLiteral("Center"), 1);
+      alignmentCombo_->addItem(QStringLiteral("Right"), 2);
+      alignmentCombo_->addItem(QStringLiteral("Justify"), 3);
+      alignmentCombo_->setCurrentIndex(
+          static_cast<int>(textLayer->horizontalAlignment()));
+      alignmentCombo_->installEventFilter(this);
+      characterRow->addWidget(alignmentCombo_);
+      root->addLayout(characterRow);
+
+      auto *flagsRow = new QHBoxLayout();
+      boldCheck_ = new QCheckBox(QStringLiteral("Bold"), this);
+      italicCheck_ = new QCheckBox(QStringLiteral("Italic"), this);
+      allCapsCheck_ = new QCheckBox(QStringLiteral("All Caps"), this);
+      underlineCheck_ = new QCheckBox(QStringLiteral("Underline"), this);
+      boldCheck_->setChecked(textLayer->isBold());
+      italicCheck_->setChecked(textLayer->isItalic());
+      boldCheck_->installEventFilter(this);
+      italicCheck_->installEventFilter(this);
+      allCapsCheck_->installEventFilter(this);
+      underlineCheck_->installEventFilter(this);
+      allCapsCheck_->setChecked(textLayer->isAllCaps());
+      underlineCheck_->setChecked(textLayer->isUnderline());
+      flagsRow->addWidget(boldCheck_);
+      flagsRow->addWidget(italicCheck_);
+      flagsRow->addWidget(allCapsCheck_);
+      flagsRow->addWidget(underlineCheck_);
+      flagsRow->addStretch(1);
+      root->addLayout(flagsRow);
+
+      auto *effectsRow = new QHBoxLayout();
+      strokeCheck_ = new QCheckBox(QStringLiteral("Stroke"), this);
+      strokeWidthSpin_ = new QDoubleSpinBox(this);
+      strokeWidthSpin_->setRange(0.0, 500.0);
+      strokeWidthSpin_->setSingleStep(0.5);
+      strokeWidthSpin_->setDecimals(1);
+      strokeCheck_->setChecked(textLayer->isStrokeEnabled());
+      strokeWidthSpin_->setValue(textLayer->strokeWidth());
+      strokeCheck_->installEventFilter(this);
+      strokeWidthSpin_->installEventFilter(this);
+      effectsRow->addWidget(strokeCheck_);
+      effectsRow->addWidget(new QLabel(QStringLiteral("Width"), this));
+      effectsRow->addWidget(strokeWidthSpin_);
+      shadowCheck_ = new QCheckBox(QStringLiteral("Shadow"), this);
+      shadowBlurSpin_ = new QDoubleSpinBox(this);
+      shadowBlurSpin_->setRange(0.0, 500.0);
+      shadowBlurSpin_->setSingleStep(1.0);
+      shadowBlurSpin_->setDecimals(1);
+      shadowCheck_->setChecked(textLayer->isShadowEnabled());
+      shadowBlurSpin_->setValue(textLayer->shadowBlur());
+      shadowCheck_->installEventFilter(this);
+      shadowBlurSpin_->installEventFilter(this);
+      effectsRow->addWidget(shadowCheck_);
+      effectsRow->addWidget(new QLabel(QStringLiteral("Blur"), this));
+      effectsRow->addWidget(shadowBlurSpin_);
+      effectsRow->addStretch(1);
+      root->addLayout(effectsRow);
+
+      auto *animatorRow = new QHBoxLayout();
+      animatorRow->addWidget(new QLabel(QStringLiteral("Text Animators"), this));
+      animatorCountSpin_ = new QSpinBox(this);
+      animatorCountSpin_->setRange(0, 32);
+      animatorCountSpin_->setValue(textLayer->animatorCount());
+      animatorCountSpin_->setAccessibleName(QStringLiteral("Text animator count"));
+      animatorCountSpin_->setAccessibleDescription(
+          QStringLiteral("Set the number of text animator stacks on this layer"));
+      animatorCountSpin_->setToolTip(
+          QStringLiteral("Number of character animator stacks attached to this text layer"));
+      animatorRow->addWidget(animatorCountSpin_);
+      animatorRow->addWidget(new QLabel(QStringLiteral("Preset"), this));
+      animatorPresetCombo_ = new QComboBox(this);
+      animatorPresetCombo_->addItem(QStringLiteral("Keep current"), -1);
+      animatorPresetCombo_->addItem(QStringLiteral("None"), 0);
+      animatorPresetCombo_->addItem(QStringLiteral("Typewriter"), 1);
+      animatorPresetCombo_->addItem(QStringLiteral("Slide Up"), 2);
+      animatorPresetCombo_->addItem(QStringLiteral("Scale In"), 3);
+      animatorPresetCombo_->addItem(QStringLiteral("Rotation In"), 4);
+      animatorPresetCombo_->addItem(QStringLiteral("Tracking Fade"), 5);
+      animatorPresetCombo_->addItem(QStringLiteral("Wiggly Position"), 6);
+      animatorPresetCombo_->addItem(QStringLiteral("Blur Reveal"), 7);
+      animatorPresetCombo_->setAccessibleName(QStringLiteral("Text animator preset"));
+      animatorPresetCombo_->setAccessibleDescription(
+          QStringLiteral("Choose a text animator preset to apply when accepted"));
+      animatorPresetCombo_->setToolTip(
+          QStringLiteral("Apply a text animator preset when the dialog is accepted"));
+      animatorRow->addWidget(animatorPresetCombo_, 1);
+      animatorRow->addStretch(1);
+      root->addLayout(animatorRow);
+    }
 
     setMinimumSize(680, 520);
     resize(900, 680);
@@ -754,6 +874,21 @@ public:
 
 protected:
   bool eventFilter(QObject *obj, QEvent *event) override {
+    if ((obj == fontFamilyCombo_ || obj == fontSizeSpin_ ||
+         obj == trackingSpin_ || obj == stretchSpin_ ||
+         obj == boldCheck_ || obj == italicCheck_ || obj == allCapsCheck_ ||
+         obj == underlineCheck_ || obj == alignmentCombo_ ||
+         obj == strokeCheck_ || obj == strokeWidthSpin_ ||
+         obj == shadowCheck_ || obj == shadowBlurSpin_) &&
+        (event->type() == QEvent::KeyRelease ||
+         event->type() == QEvent::MouseButtonRelease ||
+         event->type() == QEvent::Wheel ||
+         event->type() == QEvent::FocusIn)) {
+      if (preview_) {
+        preview_->update();
+      }
+      return QDialog::eventFilter(obj, event);
+    }
     if (obj == editor_) {
       if (event->type() == QEvent::KeyPress) {
         auto *ke = static_cast<QKeyEvent *>(event);
@@ -765,6 +900,15 @@ protected:
             (ke->modifiers() & Qt::ControlModifier)) {
           accept();
           return true;
+        }
+        if ((ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter) &&
+            !(ke->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))) {
+          const auto textLayer =
+              ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
+          if (textLayer && textLayer->layoutMode() == TextLayoutMode::Point) {
+            accept();
+            return true;
+          }
         }
       } else if (event->type() == QEvent::FocusOut) {
         accept();
@@ -823,11 +967,82 @@ private:
     painter.drawLine(inner.left(), inner.center().y(), inner.right(), inner.center().y());
 
     painter.setPen(QColor(240, 240, 245));
-    painter.setFont(font());
-    const QString title = textLayer ? QStringLiteral("Diligent text surface shell")
-                                    : QStringLiteral("Text editor shell");
-    painter.drawText(inner.adjusted(14, 10, -14, -10),
-                     Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, title);
+    QFont previewFont = font();
+    if (fontFamilyCombo_ && !fontFamilyCombo_->currentText().trimmed().isEmpty()) {
+      previewFont.setFamily(fontFamilyCombo_->currentText().trimmed());
+    }
+    if (fontSizeSpin_) {
+      previewFont.setPointSizeF(std::clamp(fontSizeSpin_->value() * 0.22, 8.0, 42.0));
+    }
+    if (boldCheck_) {
+      previewFont.setBold(boldCheck_->isChecked());
+    }
+    if (italicCheck_) {
+      previewFont.setItalic(italicCheck_->isChecked());
+    }
+    if (trackingSpin_) {
+      previewFont.setLetterSpacing(QFont::AbsoluteSpacing,
+                                   trackingSpin_->value() * 0.12);
+    }
+    if (stretchSpin_) {
+      previewFont.setStretch(static_cast<int>(std::clamp(
+          stretchSpin_->value(), 50.0, 200.0)));
+    }
+    if (underlineCheck_) {
+      previewFont.setUnderline(underlineCheck_->isChecked());
+    }
+    painter.setFont(previewFont);
+    QString title = textLayer ? textEditorValue(textLayer).trimmed()
+                              : QStringLiteral("Text editor shell");
+    if (title.isEmpty()) {
+      title = QStringLiteral("Diligent text surface shell");
+    }
+    if (title.size() > 180) {
+      title = title.left(177) + QStringLiteral("…");
+    }
+    if (allCapsCheck_ && allCapsCheck_->isChecked()) {
+      title = title.toUpper();
+    }
+    Qt::Alignment titleAlignment = Qt::AlignLeft | Qt::AlignTop |
+                                   Qt::TextWordWrap;
+    if (alignmentCombo_) {
+      switch (alignmentCombo_->currentData().toInt()) {
+      case 1: titleAlignment = Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap; break;
+      case 2: titleAlignment = Qt::AlignRight | Qt::AlignTop | Qt::TextWordWrap; break;
+      case 3: titleAlignment = Qt::AlignJustify | Qt::AlignTop | Qt::TextWordWrap; break;
+      default: break;
+      }
+    }
+    const QRectF titleRect = inner.adjusted(14, 10, -14, -10);
+    const auto toQColor = [](const ArtifactCore::FloatColor &color) {
+      return QColor::fromRgbF(std::clamp(color.r(), 0.0f, 1.0f),
+                              std::clamp(color.g(), 0.0f, 1.0f),
+                              std::clamp(color.b(), 0.0f, 1.0f),
+                              std::clamp(color.a(), 0.0f, 1.0f));
+    };
+    const QColor fillColor = textLayer ? toQColor(textLayer->textColor())
+                                       : QColor(240, 240, 245);
+    if (shadowCheck_ && shadowCheck_->isChecked()) {
+      const qreal blur = shadowBlurSpin_ ? shadowBlurSpin_->value() : 0.0;
+      const int alpha = std::clamp(150 - static_cast<int>(blur * 3.0), 35, 150);
+      QColor shadowColor = textLayer ? toQColor(textLayer->shadowColor())
+                                     : QColor(0, 0, 0);
+      shadowColor.setAlpha(std::min(shadowColor.alpha(), alpha));
+      painter.setPen(shadowColor);
+      painter.drawText(titleRect.translated(3.0 + blur * 0.04,
+                                            3.0 + blur * 0.04),
+                       titleAlignment, title);
+    }
+    if (strokeCheck_ && strokeCheck_->isChecked()) {
+      const qreal width = strokeWidthSpin_ ? strokeWidthSpin_->value() * 0.08 : 1.0;
+      QPen outline(textLayer ? toQColor(textLayer->strokeColor())
+                            : QColor(40, 80, 140, 230));
+      outline.setWidthF(std::clamp(width, 0.5, 6.0));
+      painter.setPen(outline);
+      painter.drawText(titleRect, titleAlignment, title);
+    }
+    painter.setPen(fillColor);
+    painter.drawText(titleRect, titleAlignment, title);
 
     if (textLayer) {
       const QRectF bbox = textLayer->transformedBoundingBox();
@@ -855,17 +1070,72 @@ private:
     const float beforeTracking = textLayer->tracking();
     const float beforeLeading = textLayer->leading();
     const float beforeStretch = textLayer->fontStretch();
+    const QString beforeFamily = textLayer->fontFamily().toQString();
+    const auto beforeAlignment = textLayer->horizontalAlignment();
+    const bool beforeBold = textLayer->isBold();
+    const bool beforeItalic = textLayer->isItalic();
+    const bool beforeAllCaps = textLayer->isAllCaps();
+    const bool beforeUnderline = textLayer->isUnderline();
+    const bool beforeStroke = textLayer->isStrokeEnabled();
+    const float beforeStrokeWidth = textLayer->strokeWidth();
+    const bool beforeShadow = textLayer->isShadowEnabled();
+    const float beforeShadowBlur = textLayer->shadowBlur();
+    const int beforeAnimatorCount = textLayer->animatorCount();
+    bool animatorPresetChanged = false;
     if (fontSizeSpin_) textLayer->setFontSize(static_cast<float>(fontSizeSpin_->value()));
     if (trackingSpin_) textLayer->setTracking(static_cast<float>(trackingSpin_->value()));
     if (leadingSpin_) textLayer->setLeading(static_cast<float>(leadingSpin_->value()));
     if (stretchSpin_) textLayer->setFontStretch(static_cast<float>(stretchSpin_->value()));
+    if (fontFamilyCombo_) {
+      textLayer->setFontFamily(UniString(fontFamilyCombo_->currentText()));
+    }
+    if (alignmentCombo_) {
+      textLayer->setHorizontalAlignment(
+          static_cast<ArtifactCore::TextHorizontalAlignment>(
+              alignmentCombo_->currentData().toInt()));
+    }
+    if (boldCheck_) textLayer->setBold(boldCheck_->isChecked());
+    if (italicCheck_) textLayer->setItalic(italicCheck_->isChecked());
+    if (allCapsCheck_) textLayer->setAllCaps(allCapsCheck_->isChecked());
+    if (underlineCheck_) textLayer->setUnderline(underlineCheck_->isChecked());
+    if (strokeCheck_) textLayer->setStrokeEnabled(strokeCheck_->isChecked());
+    if (strokeWidthSpin_) {
+      textLayer->setStrokeWidth(static_cast<float>(strokeWidthSpin_->value()));
+    }
+    if (shadowCheck_) textLayer->setShadowEnabled(shadowCheck_->isChecked());
+    if (shadowBlurSpin_) {
+      textLayer->setShadowBlur(static_cast<float>(shadowBlurSpin_->value()));
+    }
+    if (animatorCountSpin_) {
+      textLayer->setAnimatorCount(animatorCountSpin_->value());
+    }
+    if (animatorPresetCombo_) {
+      const int presetId = animatorPresetCombo_->currentData().toInt();
+      if (presetId >= 0) {
+        textLayer->setLayerPropertyValue(QStringLiteral("text.animatorPreset"),
+                                         presetId);
+        animatorPresetChanged = true;
+      }
+    }
     const bool styleChanged = beforeFontSize != textLayer->fontSize() ||
                               beforeTracking != textLayer->tracking() ||
                               beforeLeading != textLayer->leading() ||
-                              beforeStretch != textLayer->fontStretch();
+                              beforeStretch != textLayer->fontStretch() ||
+                              beforeFamily != textLayer->fontFamily().toQString() ||
+                              beforeAlignment != textLayer->horizontalAlignment() ||
+                              beforeBold != textLayer->isBold() ||
+                              beforeItalic != textLayer->isItalic() ||
+                              beforeAllCaps != textLayer->isAllCaps() ||
+                              beforeUnderline != textLayer->isUnderline() ||
+                              beforeStroke != textLayer->isStrokeEnabled() ||
+                              beforeStrokeWidth != textLayer->strokeWidth() ||
+                              beforeShadow != textLayer->isShadowEnabled() ||
+                              beforeShadowBlur != textLayer->shadowBlur() ||
+                              beforeAnimatorCount != textLayer->animatorCount();
 
     const QString nextText = richText_ ? editor_->toHtml() : editor_->toPlainText();
-    if (commitTextEditorValue(textLayer, nextText) || styleChanged) {
+    if (commitTextEditorValue(textLayer, nextText) || styleChanged ||
+        animatorPresetChanged) {
       if (auto *comp = static_cast<ArtifactAbstractComposition *>(textLayer->composition())) {
         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
             LayerChangedEvent{comp->id().toString(), textLayer->id().toString(),
@@ -884,6 +1154,18 @@ private:
   QDoubleSpinBox *trackingSpin_ = nullptr;
   QDoubleSpinBox *leadingSpin_ = nullptr;
   QDoubleSpinBox *stretchSpin_ = nullptr;
+  QComboBox *fontFamilyCombo_ = nullptr;
+  QComboBox *alignmentCombo_ = nullptr;
+  QCheckBox *boldCheck_ = nullptr;
+  QCheckBox *italicCheck_ = nullptr;
+  QCheckBox *allCapsCheck_ = nullptr;
+  QCheckBox *underlineCheck_ = nullptr;
+  QCheckBox *strokeCheck_ = nullptr;
+  QDoubleSpinBox *strokeWidthSpin_ = nullptr;
+  QCheckBox *shadowCheck_ = nullptr;
+  QDoubleSpinBox *shadowBlurSpin_ = nullptr;
+  QSpinBox *animatorCountSpin_ = nullptr;
+  QComboBox *animatorPresetCombo_ = nullptr;
   bool richText_ = false;
   QWidget *preview_ = nullptr;
 };
@@ -1196,6 +1478,7 @@ public:
     setAttribute(Qt::WA_PaintOnScreen);
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
+    setAttribute(Qt::WA_TabletTracking, true);
     setFocusPolicy(Qt::StrongFocus);
     setAccessibleName(QStringLiteral("Composition Editor"));
     setAccessibleDescription(QStringLiteral("Edit and preview the active composition"));
@@ -1588,6 +1871,9 @@ public:
     });
     add(QStringLiteral("View: Zoom Fit Visible"), [this]() {
       if (controller_) controller_->zoomFitVisible();
+    });
+    add(QStringLiteral("View: Zoom Fit Work Area"), [this]() {
+      if (controller_) controller_->zoomFitWorkArea();
     });
     add(QStringLiteral("View: Zoom 100%"), [this]() {
       if (controller_) controller_->zoom100();
@@ -2773,6 +3059,183 @@ public:
         selection ? static_cast<int>(selection->selectedLayers().size()) : 0;
     const bool clipboardHasLayerData =
         ArtifactCore::ClipboardManager::instance().hasLayerData();
+    const auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+    const bool eraserToolActive = toolManager &&
+                                  toolManager->activeTool() == ToolType::Eraser;
+    const auto paintLayer = layer
+                                ? ArtifactCore::dynamicPointerCast<ArtifactPaintLayer>(layer)
+                                : ArtifactCore::SharedPtr<ArtifactPaintLayer>{};
+    if (layer && comp && ArtifactRenderQueueService::instance()) {
+      addSeparator();
+      const auto addLayerRenderQueueAction =
+          [this, layer, comp, &add](const QString &label, const int frameRangeMode) {
+        add(label, [this, layer, comp, frameRangeMode]() {
+            auto *renderQueue = ArtifactRenderQueueService::instance();
+            if (!renderQueue || !layer || !comp) {
+              return;
+            }
+            renderQueue->addRenderQueueForComposition(
+                comp->id(), comp->settings().compositionName().toQString());
+            const int jobIndex = renderQueue->jobCount() - 1;
+            if (jobIndex < 0) {
+              return;
+            }
+            QVariantMap selective = renderQueue->jobSelectiveSettingsAt(jobIndex);
+            selective.insert(QStringLiteral("layerFilterMode"), 4);
+            selective.insert(QStringLiteral("layerWhitelist"),
+                             QStringList{layer->id().toString()});
+            selective.insert(QStringLiteral("layerBlacklist"), QStringList{});
+            selective.insert(QStringLiteral("frameRangeMode"), frameRangeMode);
+            if (frameRangeMode == 4) {
+              const int frame = static_cast<int>(comp->framePosition().framePosition());
+              renderQueue->setJobFrameRangeAt(jobIndex, frame, frame);
+            } else if (frameRangeMode == 1) {
+              const auto range = comp->workAreaRange();
+              renderQueue->setJobFrameRangeAt(
+                  jobIndex, static_cast<int>(range.start()),
+                  static_cast<int>(range.end()));
+            }
+            renderQueue->setJobSelectiveSettingsAt(jobIndex, selective);
+            if (controller_) {
+              controller_->setInfoOverlayText(
+                  QStringLiteral("Render Queue"),
+                  QStringLiteral("Selected layer queued for rendering"));
+            }
+          });
+      };
+      addLayerRenderQueueAction(QStringLiteral("このレイヤーだけをレンダーキューに追加"), 0);
+      addLayerRenderQueueAction(QStringLiteral("このレイヤーを現在フレームだけレンダー"), 4);
+      addLayerRenderQueueAction(QStringLiteral("このレイヤーをワークエリアだけレンダー"), 1);
+    }
+    if (eraserToolActive && paintLayer) {
+      addSeparator();
+      add(QStringLiteral("Paintレイヤー全体を消去…"),
+          [this, paintLayer, comp]() {
+            QWidget *parent = this;
+            const auto answer = QMessageBox::question(
+                parent, QStringLiteral("Paintレイヤーを消去"),
+                QStringLiteral("このPaintレイヤーの全フレームを消去しますか？"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (answer != QMessageBox::Yes || !paintLayer) {
+              return;
+            }
+            paintLayer->clearAllFrames();
+            if (comp) {
+              ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                  LayerChangedEvent{comp->id().toString(), paintLayer->id().toString(),
+                                    LayerChangedEvent::ChangeType::Modified});
+            }
+            if (controller_) {
+              controller_->markRenderDirty();
+              controller_->setInfoOverlayText(
+                  QStringLiteral("Eraser"),
+                  QStringLiteral("All Paint frames cleared"));
+            }
+          });
+    }
+    const auto rigLayer = layer
+                              ? dynamic_cast<ArtifactAbstract2DLayer *>(layer.get())
+                              : nullptr;
+    const bool hasRig = rigLayer &&
+                        (rigLayer->rig2D().rootBone() != nullptr ||
+                         !rigLayer->rig2D().controls().isEmpty() ||
+                         rigLayer->rig2D().skinMesh() != nullptr);
+    if (hasRig) {
+      addSeparator();
+      add(QStringLiteral("Rig Overlay: %1")
+              .arg(controller_->isShowRigOverlay()
+                       ? QStringLiteral("Hide")
+                       : QStringLiteral("Show")),
+          [this]() {
+            if (!controller_) {
+              return;
+            }
+            controller_->setShowRigOverlay(!controller_->isShowRigOverlay());
+            controller_->setInfoOverlayText(
+                QStringLiteral("Rig Overlay"),
+                controller_->isShowRigOverlay()
+                    ? QStringLiteral("Bones, controls and mesh overlay enabled")
+                    : QStringLiteral("Rig overlay hidden"));
+          });
+      add(QStringLiteral("Normalize Rig Weights"),
+          [this]() {
+            if (controller_ && controller_->normalizeRigWeights()) {
+              controller_->setInfoOverlayText(
+                  QStringLiteral("Rig Weights"),
+                  QStringLiteral("All vertex weights normalized"));
+            }
+          },
+          rigLayer->rig2D().skinMesh() != nullptr);
+      add(QStringLiteral("Smooth Rig Weights"),
+          [this]() {
+            if (controller_ && controller_->smoothRigWeights()) {
+              controller_->setInfoOverlayText(
+                  QStringLiteral("Rig Weights"),
+                  QStringLiteral("Selected bone weights smoothed"));
+            }
+          },
+          rigLayer->rig2D().skinMesh() != nullptr);
+      add(QStringLiteral("Mirror Rig Weights"),
+          [this]() {
+            if (controller_ && controller_->mirrorRigWeights()) {
+              controller_->setInfoOverlayText(
+                  QStringLiteral("Rig Weights"),
+                  QStringLiteral("Selected bone weights mirrored"));
+            }
+          },
+          rigLayer->rig2D().skinMesh() != nullptr);
+      add(QStringLiteral("Capture Rig Pose"),
+          [this]() {
+            if (controller_ && controller_->captureRigPose()) {
+              controller_->setInfoOverlayText(
+                  QStringLiteral("Rig Pose"),
+                  QStringLiteral("Current pose captured to clipboard"));
+            }
+          },
+          rigLayer->rig2D().rootBone() != nullptr ||
+              !rigLayer->rig2D().controls().isEmpty());
+      add(QStringLiteral("Apply Captured Rig Pose (50%)"),
+          [this]() {
+            if (controller_ && controller_->applyCapturedRigPose(0.5f)) {
+              controller_->setInfoOverlayText(
+                  QStringLiteral("Rig Pose"),
+                  QStringLiteral("Captured pose blended at 50%"));
+            }
+          },
+          rigLayer->rig2D().rootBone() != nullptr ||
+              !rigLayer->rig2D().controls().isEmpty());
+      add(QStringLiteral("Save Rig Pose Slot 1"),
+          [this]() {
+            if (controller_ && controller_->saveRigPoseSlot(1)) {
+              controller_->setInfoOverlayText(
+                  QStringLiteral("Rig Pose"),
+                  QStringLiteral("Pose saved to slot 1"));
+            }
+          },
+          rigLayer->rig2D().rootBone() != nullptr ||
+              !rigLayer->rig2D().controls().isEmpty());
+      add(QStringLiteral("Apply Rig Pose Slot 1 (50%)"),
+          [this]() {
+            if (controller_ && controller_->applyRigPoseSlot(1, 0.5f)) {
+              controller_->setInfoOverlayText(
+                  QStringLiteral("Rig Pose"),
+                  QStringLiteral("Slot 1 blended at 50%"));
+            }
+          },
+          rigLayer->rig2D().rootBone() != nullptr ||
+              !rigLayer->rig2D().controls().isEmpty());
+      add(QStringLiteral("Clear Rig Pose Slots"),
+          [this]() {
+            if (controller_) {
+              controller_->clearRigPoseSlots();
+              controller_->setInfoOverlayText(
+                  QStringLiteral("Rig Pose"),
+                  QStringLiteral("Pose slots and clipboard cleared"));
+            }
+          });
+    }
     add(QStringLiteral("Place Work Cursor Here"),
         [this, viewportPos]() {
           if (controller_) {
@@ -3294,6 +3757,103 @@ public:
                               clickedLayer->id().toString(),
                               LayerChangedEvent::ChangeType::Modified});
       });
+      if (selected && layer->is3D()) {
+        add(QStringLiteral("Reset 3D Transform"), [this]() {
+          if (controller_) {
+            controller_->resetSelected3DTransform();
+          }
+        });
+        add(QStringLiteral("Edit 3D Transform Numerically…"), [this, layer]() {
+          if (!controller_ || !layer || !layer->is3D()) return;
+          const auto currentPosition = layer->position3D();
+          const auto currentRotation = layer->rotation3D();
+          const QVector3D currentScale(layer->transform3D().scaleX(),
+                                        layer->transform3D().scaleY(), 1.0f);
+          bool accepted = false;
+          const auto read = [this, &accepted](const QString& label,
+                                               double value,
+                                               double minimum,
+                                               double maximum) {
+            return QInputDialog::getDouble(this, QStringLiteral("3D Transform"),
+                                           label, value, minimum, maximum, 3,
+                                           &accepted);
+          };
+          const double px = read(QStringLiteral("Position X"), currentPosition.x(),
+                                 -1000000.0, 1000000.0);
+          if (!accepted) return;
+          const double py = read(QStringLiteral("Position Y"), currentPosition.y(),
+                                 -1000000.0, 1000000.0);
+          if (!accepted) return;
+          const double pz = read(QStringLiteral("Position Z"), currentPosition.z(),
+                                 -1000000.0, 1000000.0);
+          if (!accepted) return;
+          const double rx = read(QStringLiteral("Rotation X"), currentRotation.x(),
+                                 -36000.0, 36000.0);
+          if (!accepted) return;
+          const double ry = read(QStringLiteral("Rotation Y"), currentRotation.y(),
+                                 -36000.0, 36000.0);
+          if (!accepted) return;
+          const double rz = read(QStringLiteral("Rotation Z"), currentRotation.z(),
+                                 -36000.0, 36000.0);
+          if (!accepted) return;
+          const double sx = read(QStringLiteral("Scale X"), currentScale.x(),
+                                 0.001, 10000.0);
+          if (!accepted) return;
+          const double sy = read(QStringLiteral("Scale Y"), currentScale.y(),
+                                 0.001, 10000.0);
+          if (!accepted) return;
+          const QVector3D position(static_cast<float>(px), static_cast<float>(py),
+                                   static_cast<float>(pz));
+          const QVector3D rotation(static_cast<float>(rx), static_cast<float>(ry),
+                                   static_cast<float>(rz));
+          const QVector3D scale(static_cast<float>(sx), static_cast<float>(sy), 1.0f);
+          controller_->setSelected3DTransform(position, rotation, scale);
+        });
+        add(QStringLiteral("Copy 3D Transform"), [layer]() {
+          if (!layer || !layer->is3D()) return;
+          const auto position = layer->position3D();
+          const auto rotation = layer->rotation3D();
+          const auto scale = QVector3D(layer->transform3D().scaleX(),
+                                       layer->transform3D().scaleY(), 1.0f);
+          QSettings settings;
+          settings.setValue(QStringLiteral("viewport/3dTransformClipboard"),
+                            QVariantList{
+                                position.x(), position.y(), position.z(),
+                                rotation.x(), rotation.y(), rotation.z(),
+                                scale.x(), scale.y(), scale.z()});
+        });
+        const QSettings transformSettings;
+        const QVariantList transformClipboard = transformSettings.value(
+            QStringLiteral("viewport/3dTransformClipboard")).toList();
+        add(QStringLiteral("Paste 3D Transform"), [this, transformClipboard]() {
+          if (!controller_ || transformClipboard.size() < 8) return;
+          const auto finite = [](float value) {
+            return std::isfinite(static_cast<double>(value));
+          };
+          const QVector3D position(transformClipboard.at(0).toFloat(),
+                                   transformClipboard.at(1).toFloat(),
+                                   transformClipboard.at(2).toFloat());
+          const QVector3D rotation(transformClipboard.at(3).toFloat(),
+                                   transformClipboard.at(4).toFloat(),
+                                   transformClipboard.at(5).toFloat());
+          const QVector3D scale(transformClipboard.at(6).toFloat(),
+                                transformClipboard.at(7).toFloat(),
+                                transformClipboard.size() > 8
+                                    ? transformClipboard.at(8).toFloat()
+                                    : 1.0f);
+          if (!finite(position.x()) || !finite(position.y()) ||
+              !finite(position.z()) || !finite(rotation.x()) ||
+              !finite(rotation.y()) || !finite(rotation.z()) ||
+              !finite(scale.x()) || !finite(scale.y()) || !finite(scale.z())) {
+            return;
+          }
+          controller_->setSelected3DTransform(position, rotation, scale);
+        }, transformClipboard.size() >= 8);
+        add(QStringLiteral("Clear 3D Transform Clipboard"), []() {
+          QSettings settings;
+          settings.remove(QStringLiteral("viewport/3dTransformClipboard"));
+        }, transformClipboard.size() >= 8);
+      }
       if (controller_->isShowMotionPathOverlay() && selected) {
         const auto playback = ArtifactPlaybackService::instance();
         const auto currentFrame =
@@ -3742,6 +4302,9 @@ public:
       add(QStringLiteral("Zoom Fit Visible"), [this]() {
         if (controller_) controller_->zoomFitVisible();
       });
+      add(QStringLiteral("Zoom Fit Work Area"), [this]() {
+        if (controller_) controller_->zoomFitWorkArea();
+      });
       add(QStringLiteral("Zoom 100%"), [this]() {
         if (controller_) controller_->zoom100();
       });
@@ -3778,6 +4341,10 @@ public:
         add(QStringLiteral("Apply to Layer Anchor"),
             [this, ctrl = controller_]() {
               if (ctrl) ctrl->trackerApplyToAnchor();
+            });
+        add(QStringLiteral("Apply All Points to Null Layers"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerApplyAllPoints();
             });
         addSeparator();
         add(QStringLiteral("Delete Tracker"),
@@ -4097,6 +4664,9 @@ protected:
       return;
     }
 
+    panMomentumActive_ = false;
+    panVelocityPerMs_ = {};
+
     if (activatedCallback_) {
       activatedCallback_();
     }
@@ -4105,6 +4675,50 @@ protected:
 
     const auto modifiers = event->modifiers();
     const QPointF angleDelta = event->angleDelta();
+
+    if (angleDelta.y() != 0.0 && !modifiers.testFlag(Qt::ShiftModifier) &&
+        !modifiers.testFlag(Qt::AltModifier) &&
+        !modifiers.testFlag(Qt::ControlModifier)) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::Rectangle) {
+        const float delta = angleDelta.y() > 0.0 ? 2.0f : -2.0f;
+        if (controller_->adjustRectangleToolRoundness(delta)) {
+          event->accept();
+          return;
+        }
+        if (toolManager &&
+            (toolManager->activeTool() == ToolType::Rectangle ||
+             toolManager->activeTool() == ToolType::Shape) &&
+            controller_->adjustSelectedShapeCornerRadius(delta)) {
+          event->accept();
+          return;
+        }
+      }
+    }
+
+    const auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()
+                                        ->toolManager()
+                                  : nullptr;
+    if (toolManager && toolManager->activeTool() == ToolType::Puppet &&
+        !modifiers.testFlag(Qt::ShiftModifier) &&
+        !modifiers.testFlag(Qt::AltModifier) &&
+        !modifiers.testFlag(Qt::ControlModifier) && angleDelta.y() != 0.0) {
+      const float weightDelta = angleDelta.y() > 0.0 ? 0.05f : -0.05f;
+      if (controller_->adjustSelectedPuppetPinWeightAt(event->position(),
+                                                        weightDelta)) {
+        event->accept();
+        return;
+      }
+      const float depthDelta = angleDelta.y() > 0.0 ? 0.05f : -0.05f;
+      if (controller_->adjustSelectedPuppetPinDepthAt(event->position(),
+                                                       depthDelta)) {
+        event->accept();
+        return;
+      }
+    }
 
     if (modifiers.testFlag(Qt::AltModifier) ||
         modifiers.testFlag(Qt::ControlModifier)) {
@@ -4116,7 +4730,11 @@ protected:
       }
     } else if (modifiers.testFlag(Qt::ShiftModifier)) {
       // AE Style: Shift + Wheel = Horizontal Pan
-      float deltaX = angleDelta.y(); // Vertical wheel converted to horizontal
+      // Prefer a real horizontal tilt delta; use vertical wheel input only
+      // as a fallback for mice without a horizontal wheel axis.
+      const float deltaX = angleDelta.x() != 0.0
+          ? static_cast<float>(angleDelta.x())
+          : static_cast<float>(angleDelta.y());
       controller_->panBy(QPointF(deltaX, 0));
     } else {
       // Wheel without modifier = Zoom (industry-standard default).
@@ -4139,6 +4757,39 @@ protected:
 
   void mouseDoubleClickEvent(QMouseEvent *event) override {
     if (controller_) {
+      if (controller_->resetHoveredMaskTangent()) {
+        event->accept();
+        return;
+      }
+      if (controller_->resetProjectedFrameHandleAt(event->position())) {
+        event->accept();
+        return;
+      }
+      const auto *toolManager = ArtifactApplicationManager::instance()
+                                    ? ArtifactApplicationManager::instance()
+                                          ->toolManager()
+                                    : nullptr;
+      if (toolManager &&
+          (toolManager->activeTool() == ToolType::Rectangle ||
+           toolManager->activeTool() == ToolType::Shape) &&
+          controller_->resetSelectedShapeCornerRadius()) {
+        event->accept();
+        return;
+      }
+      if (toolManager && toolManager->activeTool() == ToolType::Puppet &&
+          controller_->resetSelectedPuppetPinRotation()) {
+        event->accept();
+        return;
+      }
+      const bool anchorToolActive =
+          toolManager && toolManager->activeTool() == ToolType::AnchorPoint;
+      if (event->modifiers().testFlag(Qt::ControlModifier) &&
+          anchorToolActive &&
+          (controller_->resetSelected3DAnchorToCenter() ||
+           controller_->resetSelected2DAnchorToCenter())) {
+        event->accept();
+        return;
+      }
       const auto layerId = controller_->layerAtViewportPos(event->position());
       if (!layerId.isNil()) {
         if (const auto comp = currentComposition()) {
@@ -4160,6 +4811,96 @@ protected:
   }
 
   void contextMenuEvent(QContextMenuEvent *event) override {
+    if (controller_) {
+      controller_->handleMouseMove(event->pos());
+      QMenu maskMenu(this);
+      maskMenu.setTitle(QStringLiteral("Mask Mode"));
+      const std::array<std::pair<const char *, int>, 4> modes = {{
+          {"Add", 0}, {"Subtract", 1}, {"Intersect", 2}, {"Difference", 3}}};
+      bool added = controller_->hasHoveredMaskPath();
+      if (added) for (const auto &[label, mode] : modes) {
+        QAction *action = maskMenu.addAction(QString::fromUtf8(label));
+        action->setProperty("artifactMaskMode", mode);
+      }
+      if (added) {
+        maskMenu.addSeparator();
+        QAction *toggle = maskMenu.addAction(QStringLiteral("Toggle Enabled"));
+        toggle->setProperty("artifactMaskAction", QStringLiteral("toggle"));
+        QAction *remove = maskMenu.addAction(QStringLiteral("Delete Mask"));
+        remove->setProperty("artifactMaskAction", QStringLiteral("delete"));
+        QAction *lock = maskMenu.addAction(QStringLiteral("Toggle Locked"));
+        lock->setProperty("artifactMaskAction", QStringLiteral("lock"));
+        QAction *duplicate = maskMenu.addAction(QStringLiteral("Duplicate Mask"));
+        duplicate->setProperty("artifactMaskAction", QStringLiteral("duplicate"));
+        QAction *moveUp = maskMenu.addAction(QStringLiteral("Move Up"));
+        moveUp->setProperty("artifactMaskAction", QStringLiteral("up"));
+        QAction *moveDown = maskMenu.addAction(QStringLiteral("Move Down"));
+        moveDown->setProperty("artifactMaskAction", QStringLiteral("down"));
+        QAction *copy = maskMenu.addAction(QStringLiteral("Copy Mask"));
+        copy->setProperty("artifactMaskAction", QStringLiteral("copy"));
+        QAction *paste = maskMenu.addAction(QStringLiteral("Paste Mask"));
+        paste->setProperty("artifactMaskAction", QStringLiteral("paste"));
+        QAction *invert = maskMenu.addAction(QStringLiteral("Toggle Inverted"));
+        invert->setProperty("artifactMaskAction", QStringLiteral("invert"));
+        QAction *featherIn = maskMenu.addAction(QStringLiteral("Increase Feather"));
+        featherIn->setProperty("artifactMaskAction", QStringLiteral("featherIn"));
+        QAction *featherOut = maskMenu.addAction(QStringLiteral("Decrease Feather"));
+        featherOut->setProperty("artifactMaskAction", QStringLiteral("featherOut"));
+        QAction *expand = maskMenu.addAction(QStringLiteral("Expand Mask"));
+        expand->setProperty("artifactMaskAction", QStringLiteral("expand"));
+        QAction *contract = maskMenu.addAction(QStringLiteral("Contract Mask"));
+        contract->setProperty("artifactMaskAction", QStringLiteral("contract"));
+        QAction *opacityIn = maskMenu.addAction(QStringLiteral("Increase Opacity"));
+        opacityIn->setProperty("artifactMaskAction", QStringLiteral("opacityIn"));
+        QAction *opacityOut = maskMenu.addAction(QStringLiteral("Decrease Opacity"));
+        opacityOut->setProperty("artifactMaskAction", QStringLiteral("opacityOut"));
+      }
+      if (added) {
+        QAction *chosen = maskMenu.exec(event->globalPos());
+        if (chosen && controller_) {
+          if (chosen->property("artifactMaskMode").isValid()) {
+            controller_->setHoveredMaskMode(
+                chosen->property("artifactMaskMode").toInt());
+          } else {
+            const QString action =
+                chosen->property("artifactMaskAction").toString();
+            if (action == QStringLiteral("toggle")) {
+              controller_->toggleHoveredMaskEnabled();
+            } else if (action == QStringLiteral("delete")) {
+              controller_->deleteHoveredMask();
+            } else if (action == QStringLiteral("lock")) {
+              controller_->toggleHoveredMaskLocked();
+            } else if (action == QStringLiteral("duplicate")) {
+              controller_->duplicateHoveredMask();
+            } else if (action == QStringLiteral("up")) {
+              controller_->moveHoveredMask(-1);
+            } else if (action == QStringLiteral("down")) {
+              controller_->moveHoveredMask(1);
+            } else if (action == QStringLiteral("copy")) {
+              controller_->copyHoveredMask();
+            } else if (action == QStringLiteral("paste")) {
+              controller_->pasteMask();
+            } else if (action == QStringLiteral("invert")) {
+              controller_->toggleHoveredMaskInverted();
+            } else if (action == QStringLiteral("featherIn")) {
+              controller_->adjustHoveredMaskGeometry(5.0f, 0.0f);
+            } else if (action == QStringLiteral("featherOut")) {
+              controller_->adjustHoveredMaskGeometry(-5.0f, 0.0f);
+            } else if (action == QStringLiteral("expand")) {
+              controller_->adjustHoveredMaskGeometry(0.0f, 5.0f);
+            } else if (action == QStringLiteral("contract")) {
+              controller_->adjustHoveredMaskGeometry(0.0f, -5.0f);
+            } else if (action == QStringLiteral("opacityIn")) {
+              controller_->adjustHoveredMaskOpacity(0.1f);
+            } else if (action == QStringLiteral("opacityOut")) {
+              controller_->adjustHoveredMaskOpacity(-0.1f);
+            }
+          }
+        }
+        event->accept();
+        return;
+      }
+    }
     showViewportContextMenu(event->pos());
     event->accept();
   }
@@ -4168,6 +4909,10 @@ protected:
     if (activatedCallback_) {
       activatedCallback_();
     }
+    // Any fresh pointer gesture takes ownership of the viewport and stops
+    // residual momentum from a previous pan.
+    panMomentumActive_ = false;
+    panVelocityPerMs_ = {};
 
     if (controller_ && controller_->isPieMenuOverlayVisible()) {
       if (event->button() == Qt::LeftButton) {
@@ -4204,6 +4949,9 @@ protected:
       isAltZooming_ = true;
       setNavigationFeedback(NavigationFeedbackMode::Zoom);
       lastMousePos_ = event->position();
+      panMomentumActive_ = false;
+      panVelocityPerMs_ = {};
+      lastPanSampleAt_ = std::chrono::steady_clock::now();
       grabMouse();
       if (controller_) {
         controller_->notifyViewportInteractionActivity();
@@ -4215,7 +4963,11 @@ protected:
 
     if (event->button() == Qt::LeftButton &&
         event->modifiers().testFlag(Qt::AltModifier) &&
-        !event->modifiers().testFlag(Qt::ControlModifier) && controller_) {
+        !event->modifiers().testFlag(Qt::ControlModifier) && controller_ &&
+        !(ArtifactApplicationManager::instance() &&
+          ArtifactApplicationManager::instance()->toolManager() &&
+          ArtifactApplicationManager::instance()->toolManager()->activeTool() ==
+              ToolType::Clone)) {
       isAltOrbiting_ = true;
       setNavigationFeedback(NavigationFeedbackMode::Orbit);
       orbitDragStartPos_ = event->position();
@@ -4338,6 +5090,14 @@ protected:
     if (isPanning_ && controller_) {
       const QPointF delta = event->position() - lastMousePos_;
       lastMousePos_ = event->position();
+      const auto now = std::chrono::steady_clock::now();
+      const auto elapsedMs = std::max<int64_t>(
+          1, std::chrono::duration_cast<std::chrono::milliseconds>(
+                 now - lastPanSampleAt_).count());
+      panVelocityPerMs_ = delta / static_cast<double>(elapsedMs);
+      panVelocityPerMs_.setX(std::clamp(panVelocityPerMs_.x(), -3.0, 3.0));
+      panVelocityPerMs_.setY(std::clamp(panVelocityPerMs_.y(), -3.0, 3.0));
+      lastPanSampleAt_ = now;
       controller_->notifyViewportInteractionActivity();
       controller_->panBy(delta);
       qDebug() << "[VP] panning, delta=" << delta;
@@ -4386,6 +5146,25 @@ protected:
          (!isPanningWithMiddle_ && event->button() == Qt::LeftButton))) {
       isPanning_ = false;
       isPanningWithMiddle_ = false;
+      if (std::hypot(panVelocityPerMs_.x(), panVelocityPerMs_.y()) > 0.05) {
+        panMomentumActive_ = true;
+        auto momentumStep = std::make_shared<std::function<void()>>();
+        const std::weak_ptr<std::function<void()>> weakMomentum = momentumStep;
+        *momentumStep = [this, weakMomentum]() {
+          if (!controller_ || !panMomentumActive_) return;
+          controller_->panBy(panVelocityPerMs_ * 16.0);
+          panVelocityPerMs_ *= 0.86;
+          if (std::hypot(panVelocityPerMs_.x(), panVelocityPerMs_.y()) < 0.015) {
+            panVelocityPerMs_ = {};
+            panMomentumActive_ = false;
+            return;
+          }
+          if (const auto next = weakMomentum.lock()) {
+            QTimer::singleShot(16, this, [next]() { (*next)(); });
+          }
+        };
+        QTimer::singleShot(16, this, [momentumStep]() { (*momentumStep)(); });
+      }
       clearNavigationFeedback();
       if (controller_) {
         controller_->finishViewportInteraction();
@@ -4430,6 +5209,21 @@ protected:
       const bool wasScaleDrag = isScaleDragActive();
       const bool wasSpatialGizmoDragging = isSpatialGizmoDragging();
       controller_->handleMouseRelease();
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::Text) {
+        auto *selection = ArtifactApplicationManager::instance()
+                              ? ArtifactApplicationManager::instance()
+                                    ->layerSelectionManager()
+                              : nullptr;
+        if (selection) {
+          if (const auto layer = selection->currentLayer();
+              layer && ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
+            editTextLayerInline(this, layer, controller_);
+          }
+        }
+      }
       if (wasSpatialGizmoDragging && QWidget::mouseGrabber() == this) {
         releaseMouse();
       }
@@ -4449,6 +5243,31 @@ protected:
     }
 
     QWidget::mouseReleaseEvent(event);
+  }
+
+  void tabletEvent(QTabletEvent *event) override {
+    if (!event || !controller_) {
+      QWidget::tabletEvent(event);
+      return;
+    }
+    const float pressure = std::clamp(static_cast<float>(event->pressure()),
+                                      0.0f, 1.0f);
+    controller_->setPointerPressure(pressure);
+    controller_->setPointerTilt(static_cast<float>(event->xTilt()),
+                                 static_cast<float>(event->yTilt()));
+    if (event->type() == QEvent::TabletPress) {
+      QMouseEvent synth(QEvent::MouseButtonPress, event->position(),
+                        event->globalPosition(), Qt::LeftButton,
+                        Qt::LeftButton, event->modifiers());
+      controller_->handleMousePress(&synth);
+    } else if (event->type() == QEvent::TabletMove) {
+      controller_->handleMouseMove(event->position());
+    } else if (event->type() == QEvent::TabletRelease) {
+      controller_->handleMouseRelease();
+      controller_->setPointerPressure(1.0f);
+      controller_->setPointerTilt(0.0f, 0.0f);
+    }
+    event->accept();
   }
 
   void leaveEvent(QEvent *event) override {
@@ -4720,9 +5539,461 @@ protected:
 #endif
 
   void keyPressEvent(QKeyEvent *event) override {
+    if (event && event->key() == Qt::Key_Escape && !event->isAutoRepeat()) {
+      panMomentumActive_ = false;
+      panVelocityPerMs_ = {};
+    }
     if (auto *owner = qobject_cast<ArtifactCompositionEditor *>(parentWidget())) {
       if (owner->handleImportPlacementKeyPress(event)) {
         return;
+      }
+    }
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->hasPendingMaskEdit()) {
+      controller_->cancelMaskInteraction();
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->cancelTextToolInteraction()) {
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->clearRigSelection()) {
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_Tab &&
+        event->modifiers().testFlag(Qt::ControlModifier)) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr) {
+        const bool rigMode = toolManager->activeTool() == ToolType::RigSelect ||
+            toolManager->activeTool() == ToolType::RigWeight;
+        toolManager->setActiveTool(rigMode ? ToolType::Selection
+                                           : ToolType::RigSelect);
+        if (controller_) {
+          if (rigMode) controller_->clearRigSelection();
+          controller_->setInfoOverlayText(
+              QStringLiteral("Rig Mode"),
+              rigMode ? QStringLiteral("Rig editing disabled")
+                      : QStringLiteral("Rig Select active"));
+        }
+        event->accept();
+        return;
+      }
+    }
+    if (!event->isAutoRepeat() &&
+        (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) &&
+        controller_ &&
+        ArtifactApplicationManager::instance() &&
+        ArtifactApplicationManager::instance()->toolManager() &&
+        ArtifactApplicationManager::instance()->toolManager()->activeTool() ==
+            ToolType::Puppet && controller_->deleteSelectedPuppetPin()) {
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() &&
+        (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) &&
+        controller_ && (controller_->deleteSelectedMaskVertices() ||
+                        controller_->deleteHoveredMaskVertex())) {
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_A &&
+        event->modifiers().testFlag(Qt::ControlModifier) && controller_) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::Pen) {
+        controller_->selectAllMaskVertices();
+        event->accept();
+        return;
+      }
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_D &&
+        event->modifiers().testFlag(Qt::ControlModifier) && controller_ &&
+        controller_->duplicateHoveredMask()) {
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_Z &&
+        event->modifiers() == (Qt::ControlModifier | Qt::AltModifier)) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::Eraser) {
+        const auto comp = currentComposition();
+        const auto layer = comp && controller_
+            ? comp->layerById(controller_->selectedLayerId())
+            : ArtifactAbstractLayerPtr{};
+        if (const auto paintLayer = layer
+                                        ? ArtifactCore::dynamicPointerCast<ArtifactPaintLayer>(layer)
+                                        : ArtifactCore::SharedPtr<ArtifactPaintLayer>{}) {
+          if (paintLayer->canUndo()) {
+            paintLayer->undoLastStroke();
+            if (comp) {
+              ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                  LayerChangedEvent{comp->id().toString(), paintLayer->id().toString(),
+                                    LayerChangedEvent::ChangeType::Modified});
+            }
+            if (controller_) {
+              controller_->setInfoOverlayText(
+                  QStringLiteral("Eraser"),
+                  QStringLiteral("Last paint stroke removed"));
+              controller_->markRenderDirty();
+            }
+            event->accept();
+            return;
+          }
+        }
+      }
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_C &&
+        event->modifiers().testFlag(Qt::ControlModifier) && controller_ &&
+        controller_->copyHoveredMask()) {
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_V &&
+        event->modifiers().testFlag(Qt::ControlModifier) && controller_ &&
+        controller_->pasteMask()) {
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && controller_ &&
+        (event->modifiers() == Qt::ShiftModifier ||
+         event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) &&
+        (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right ||
+         event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::RigSelect) {
+        const float step = event->modifiers().testFlag(Qt::ControlModifier)
+            ? 10.0f : 1.0f;
+        QVector2D delta;
+        if (event->key() == Qt::Key_Left) delta = QVector2D(-step, 0.0f);
+        if (event->key() == Qt::Key_Right) delta = QVector2D(step, 0.0f);
+        if (event->key() == Qt::Key_Up) delta = QVector2D(0.0f, -step);
+        if (event->key() == Qt::Key_Down) delta = QVector2D(0.0f, step);
+        if (controller_->nudgeSelectedRigControl(delta)) {
+          event->accept();
+          return;
+        }
+      }
+    }
+    if (!event->isAutoRepeat() && controller_ &&
+        event->key() == Qt::Key_Up && controller_->moveHoveredMask(-1)) {
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && controller_ &&
+        event->key() == Qt::Key_Down && controller_->moveHoveredMask(1)) {
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_N && controller_) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::RigWeight) {
+        if (controller_->normalizeRigWeights()) {
+          controller_->setInfoOverlayText(
+              QStringLiteral("Rig Weights"),
+              QStringLiteral("Normalized all vertex weights"));
+        }
+        event->accept();
+        return;
+      }
+    }
+    if (!event->isAutoRepeat() && controller_ &&
+        event->key() == Qt::Key_E &&
+        event->modifiers() == Qt::NoModifier) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::RigSelect &&
+          controller_->nudgeSelectedRigBoneRotation(15.0f)) {
+        event->accept();
+        return;
+      }
+    }
+    if (!event->isAutoRepeat() && controller_ &&
+        event->key() == Qt::Key_E &&
+        event->modifiers() == Qt::ShiftModifier) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::RigSelect &&
+          controller_->nudgeSelectedRigBoneRotation(-15.0f)) {
+        event->accept();
+        return;
+      }
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_S && controller_) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::RigWeight) {
+        if (controller_->smoothRigWeights()) {
+          controller_->setInfoOverlayText(
+              QStringLiteral("Rig Weights"),
+              QStringLiteral("Smoothed selected bone weights"));
+        }
+        event->accept();
+        return;
+      }
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_M && controller_) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::RigWeight) {
+        if (controller_->mirrorRigWeights()) {
+          controller_->setInfoOverlayText(
+              QStringLiteral("Rig Weights"),
+              QStringLiteral("Mirrored selected bone weights"));
+        }
+        event->accept();
+        return;
+      }
+    }
+    if (!event->isAutoRepeat() && controller_ &&
+        event->modifiers().testFlag(Qt::ControlModifier) &&
+        event->modifiers().testFlag(Qt::ShiftModifier) &&
+        (event->key() == Qt::Key_C || event->key() == Qt::Key_V ||
+         event->key() == Qt::Key_B)) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && (toolManager->activeTool() == ToolType::RigSelect ||
+                          toolManager->activeTool() == ToolType::RigWeight)) {
+        const bool handled = event->key() == Qt::Key_C
+            ? controller_->captureRigPose()
+            : controller_->applyCapturedRigPose(
+                  event->key() == Qt::Key_B ? 0.5f : 1.0f);
+        if (handled) {
+          controller_->setInfoOverlayText(
+              QStringLiteral("Rig Pose"),
+              event->key() == Qt::Key_C
+                  ? QStringLiteral("Pose captured")
+                  : event->key() == Qt::Key_B
+                      ? QStringLiteral("Pose blended 50%")
+                      : QStringLiteral("Pose applied"));
+        }
+        event->accept();
+        return;
+      }
+    }
+    if (!event->isAutoRepeat() && controller_ &&
+        event->key() == Qt::Key_Backspace &&
+        event->modifiers().testFlag(Qt::ControlModifier) &&
+        event->modifiers().testFlag(Qt::ShiftModifier) &&
+        event->modifiers().testFlag(Qt::AltModifier)) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && (toolManager->activeTool() == ToolType::RigSelect ||
+                          toolManager->activeTool() == ToolType::RigWeight)) {
+        controller_->clearRigPoseSlots();
+        controller_->setInfoOverlayText(
+            QStringLiteral("Rig Pose"), QStringLiteral("All pose slots cleared"));
+        event->accept();
+        return;
+      }
+    }
+    if (!event->isAutoRepeat() && controller_ &&
+        event->modifiers().testFlag(Qt::ControlModifier) &&
+        event->modifiers().testFlag(Qt::ShiftModifier) &&
+        (event->key() >= Qt::Key_1 && event->key() <= Qt::Key_9)) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && (toolManager->activeTool() == ToolType::RigSelect ||
+                          toolManager->activeTool() == ToolType::RigWeight)) {
+        const int slot = static_cast<int>(event->key() - Qt::Key_0);
+        const bool load = event->modifiers().testFlag(Qt::AltModifier);
+        const bool handled = load
+            ? controller_->applyRigPoseSlot(slot)
+            : controller_->saveRigPoseSlot(slot);
+        if (handled) {
+          controller_->setInfoOverlayText(
+              QStringLiteral("Rig Pose Slot %1").arg(slot),
+              load ? QStringLiteral("Pose loaded")
+                   : QStringLiteral("Pose saved"));
+        }
+        event->accept();
+        return;
+      }
+    }
+    if (!event->isAutoRepeat() && controller_ &&
+        (event->key() == Qt::Key_BracketLeft ||
+         event->key() == Qt::Key_BracketRight)) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::Pen) {
+        const float delta = event->key() == Qt::Key_BracketRight ? 0.1f : -0.1f;
+        if (controller_->adjustHoveredMaskOpacity(delta)) {
+          event->accept();
+          return;
+        }
+      }
+      if (toolManager &&
+          (toolManager->activeTool() == ToolType::Brush ||
+           toolManager->activeTool() == ToolType::Eraser)) {
+        if (auto *brush = ArtifactApplicationManager::instance()
+                              ? ArtifactApplicationManager::instance()->brushTool()
+                              : nullptr) {
+          const float direction =
+              event->key() == Qt::Key_BracketRight ? 1.0f : -1.0f;
+          const auto modifiers = event->modifiers();
+          const bool shift = modifiers.testFlag(Qt::ShiftModifier);
+          const bool control = modifiers.testFlag(Qt::ControlModifier);
+          const bool alt = modifiers.testFlag(Qt::AltModifier);
+          if (shift && control && alt) {
+            brush->setSpacing(brush->spacing() + direction * 0.05f);
+          } else if (shift && alt) {
+            brush->setAngle(brush->angle() + direction * 15.0f);
+          } else if (control && alt) {
+            brush->setRoundness(brush->roundness() + direction * 0.05f);
+          } else if (alt) {
+            brush->setHardness(brush->hardness() + direction * 0.05f);
+          } else if (shift) {
+            brush->setFlow(brush->flow() + direction * 0.05f);
+          } else if (control) {
+            brush->setOpacity(brush->opacity() + direction * 0.05f);
+          } else {
+            brush->setRadius(brush->radius() + direction * 2.0f);
+          }
+          event->accept();
+          return;
+        }
+      }
+      if (toolManager && toolManager->activeTool() == ToolType::RigWeight) {
+        const float direction =
+            event->key() == Qt::Key_BracketRight ? 1.0f : -1.0f;
+        if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+          controller_->adjustRigWeightBrushFlow(direction * 0.05f);
+        } else if (event->modifiers().testFlag(Qt::ControlModifier)) {
+          controller_->adjustRigWeightBrush(0.0f, direction * 0.05f);
+        } else {
+          controller_->adjustRigWeightBrush(direction * 3.0f);
+        }
+        event->accept();
+        return;
+      }
+      if (toolManager && toolManager->activeTool() == ToolType::TrackPoint) {
+        if (auto *gizmo = controller_->trackerGizmo()) {
+          auto state = gizmo->state();
+          const float delta = event->key() == Qt::Key_BracketRight ? 2.0f : -2.0f;
+          const bool searchSize = event->modifiers().testFlag(Qt::ShiftModifier);
+          if (searchSize) {
+            state.outerHalfW = std::max(state.innerHalfW + 2.0f,
+                                        state.outerHalfW + delta);
+            state.outerHalfH = std::max(state.innerHalfH + 2.0f,
+                                        state.outerHalfH + delta);
+          } else {
+            state.innerHalfW = std::clamp(
+                state.innerHalfW + delta, 2.0f,
+                std::max(2.0f, state.outerHalfW - 2.0f));
+            state.innerHalfH = std::clamp(
+                state.innerHalfH + delta, 2.0f,
+                std::max(2.0f, state.outerHalfH - 2.0f));
+          }
+          gizmo->setState(state);
+          QSettings trackerSettings;
+          trackerSettings.setValue(QStringLiteral("trackPoint/featureWidth"),
+                                   state.innerHalfW * 2.0f);
+          trackerSettings.setValue(QStringLiteral("trackPoint/featureHeight"),
+                                   state.innerHalfH * 2.0f);
+          trackerSettings.setValue(QStringLiteral("trackPoint/searchWidth"),
+                                   state.outerHalfW * 2.0f);
+          trackerSettings.setValue(QStringLiteral("trackPoint/searchHeight"),
+                                   state.outerHalfH * 2.0f);
+          controller_->markRenderDirty();
+          event->accept();
+          return;
+        }
+      }
+      if (toolManager && toolManager->activeTool() == ToolType::MotionSketch) {
+        if (auto *motionSketch = ArtifactApplicationManager::instance()
+                                     ? ArtifactApplicationManager::instance()
+                                           ->motionSketchTool()
+                                     : nullptr) {
+          const bool increase = event->key() == Qt::Key_BracketRight;
+          if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+            const float delta = increase ? 5.0f : -5.0f;
+            motionSketch->setSampleRate(motionSketch->sampleRate() + delta);
+            QSettings motionSettings;
+            motionSettings.setValue(QStringLiteral("motionSketch/sampleRate"),
+                                    motionSketch->sampleRate());
+          } else {
+            const float delta = increase ? 0.1f : -0.1f;
+            motionSketch->setSmoothing(motionSketch->smoothing() + delta);
+            QSettings motionSettings;
+            motionSettings.setValue(QStringLiteral("motionSketch/smoothing"),
+                                    motionSketch->smoothing() * 100.0f);
+          }
+          event->accept();
+          return;
+        }
+      }
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_B &&
+        event->modifiers() == Qt::NoModifier) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::RigSelect) {
+        toolManager->setActiveTool(ToolType::RigWeight);
+        if (controller_) {
+          controller_->setInfoOverlayText(
+              QStringLiteral("Weight Paint"),
+              QStringLiteral("RigWeight tool enabled"));
+        }
+        event->accept();
+        return;
+      }
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_W &&
+        event->modifiers() == Qt::NoModifier) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::MotionSketch) {
+        if (auto *motionSketch = ArtifactApplicationManager::instance()
+                                     ? ArtifactApplicationManager::instance()
+                                           ->motionSketchTool()
+                                     : nullptr) {
+          motionSketch->setShowWireframe(!motionSketch->showWireframe());
+          QSettings motionSettings;
+          motionSettings.setValue(QStringLiteral("motionSketch/showWireframe"),
+                                  motionSketch->showWireframe());
+          event->accept();
+          return;
+        }
+      }
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_B &&
+        event->modifiers() == Qt::NoModifier) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::MotionSketch) {
+        if (auto *motionSketch = ArtifactApplicationManager::instance()
+                                     ? ArtifactApplicationManager::instance()
+                                           ->motionSketchTool()
+                                     : nullptr) {
+          motionSketch->setShowBackground(!motionSketch->showBackground());
+          QSettings motionSettings;
+          motionSettings.setValue(QStringLiteral("motionSketch/showBackground"),
+                                  motionSketch->showBackground());
+          event->accept();
+          return;
+        }
       }
     }
     if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
@@ -4740,11 +6011,18 @@ protected:
     if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
         !controller_->isPieMenuOverlayVisible() &&
         !controller_->isViewportOverlayVisible()) {
-      auto* app = ArtifactApplicationManager::instance();
-      if (app && app->motionSketchTool() && app->motionSketchTool()->isSketching()) {
-        app->motionSketchTool()->cancelSketch();
-        if (controller_) {
-          controller_->markRenderDirty();
+      if (controller_) {
+        auto* app = ArtifactApplicationManager::instance();
+        if (controller_ && controller_->cancelCloneStamp()) {
+          event->accept();
+          return;
+        }
+        if (controller_ && controller_->cancelBrushStroke()) {
+          event->accept();
+          return;
+        }
+        if (app && app->motionSketchTool() && app->motionSketchTool()->isSketching()) {
+          controller_->cancelMotionSketch();
         }
         event->accept();
         return;
@@ -5439,6 +6717,9 @@ protected:
   std::function<void()> resizeCallback_;
   bool isPanning_ = false;
   bool isPanningWithMiddle_ = false;
+  bool panMomentumActive_ = false;
+  QPointF panVelocityPerMs_;
+  std::chrono::steady_clock::time_point lastPanSampleAt_{};
   bool isAltOrbiting_ = false;
   bool isAltZooming_ = false;
   bool nativePointerCaptureActive_ = false;
@@ -8097,6 +9378,57 @@ public:
       break;
     case ToolType::AnchorPoint:
       toolModeButton_->setText(QStringLiteral("Anchor"));
+      break;
+    case ToolType::TrackPoint:
+      toolModeButton_->setText(QStringLiteral("Track Point"));
+      break;
+    case ToolType::Brush:
+      toolModeButton_->setText(QStringLiteral("Brush"));
+      break;
+    case ToolType::Clone:
+      toolModeButton_->setText(QStringLiteral("Clone"));
+      break;
+    case ToolType::Eraser:
+      toolModeButton_->setText(QStringLiteral("Eraser"));
+      break;
+    case ToolType::ScrubPreview:
+      toolModeButton_->setText(QStringLiteral("Scrub"));
+      break;
+    case ToolType::RigSelect:
+      toolModeButton_->setText(QStringLiteral("Rig Select"));
+      break;
+    case ToolType::RigWeight:
+      toolModeButton_->setText(QStringLiteral("Rig Weight"));
+      break;
+    case ToolType::Puppet:
+      toolModeButton_->setText(QStringLiteral("Puppet"));
+      break;
+    case ToolType::MotionSketch:
+      toolModeButton_->setText(QStringLiteral("Motion Sketch"));
+      break;
+    case ToolType::Move:
+      toolModeButton_->setText(QStringLiteral("Move"));
+      break;
+    case ToolType::Scale:
+      toolModeButton_->setText(QStringLiteral("Scale"));
+      break;
+    case ToolType::Rotation:
+      toolModeButton_->setText(QStringLiteral("Rotate"));
+      break;
+    case ToolType::Zoom:
+      toolModeButton_->setText(QStringLiteral("Zoom"));
+      break;
+    case ToolType::Ripple:
+      toolModeButton_->setText(QStringLiteral("Ripple"));
+      break;
+    case ToolType::Rolling:
+      toolModeButton_->setText(QStringLiteral("Rolling"));
+      break;
+    case ToolType::Slip:
+      toolModeButton_->setText(QStringLiteral("Slip"));
+      break;
+    case ToolType::Slide:
+      toolModeButton_->setText(QStringLiteral("Slide"));
       break;
     default:
       toolModeButton_->setText(QStringLiteral("Tool"));

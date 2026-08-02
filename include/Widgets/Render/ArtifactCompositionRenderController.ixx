@@ -21,6 +21,7 @@ import Color.Float;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
+import Artifact.Widgets.Render.ViewportScaleOverlay;
 import Artifact.Grid.System;
 import Frame.Debug;
 import Artifact.Service.Project;
@@ -85,6 +86,9 @@ export namespace Artifact {
   SelectionRect,
   MotionPath,
   DebugProbe,
+  RigBone,
+  RigControl,
+  RigSkin,
   Unknown
  };
 
@@ -146,6 +150,8 @@ int compositionBackgroundMode() const;
 
 void setShowGrid(bool show);
 bool isShowGrid() const;
+void setShowViewportRuler(bool show);
+bool isShowViewportRuler() const;
 void setLineDebugKindVisible(LineDebugKind kind, bool visible);
 bool isLineDebugKindVisible(LineDebugKind kind) const;
 void setShowCheckerboard(bool show);
@@ -154,8 +160,19 @@ void setCheckerboardSize(float size);
 float checkerboardSize() const;
 void setGridSettings(const Artifact::Grid::GridSettings& settings);
 Artifact::Grid::GridSettings gridSettings() const;
+void setGridAutoStepEnabled(bool enabled);
+bool isGridAutoStepEnabled() const;
+void setGridAutoStepTargetViewportInterval(float pixels);
+float gridAutoStepTargetViewportInterval() const;
+void setGridPolarMode(bool enabled);
+bool isGridPolarMode() const;
+void setGridIsometricMode(bool enabled);
+bool isGridIsometricMode() const;
+QPointF snapCanvasToGrid(const QPointF& canvasPosition) const;
 void setShowGuides(bool show);
 bool isShowGuides() const;
+void setSnapToGuides(bool snap);
+bool isSnapToGuides() const;
 void setShowSafeMargins(bool show);
 bool isShowSafeMargins() const;
 void setGpuBlendEnabled(bool enabled);
@@ -192,6 +209,8 @@ void setShowIsolationOverlay(bool show);
 bool isShowIsolationOverlay() const;
 void setShowOnionSkin(bool show);
 bool isShowOnionSkin() const;
+void setShowRigOverlay(bool show);
+bool isShowRigOverlay() const;
 void setShowAudioWaveformOverlay(bool show);
 bool isShowAudioWaveformOverlay() const;
 void setShowAudioSpectrumOverlay(bool show);
@@ -259,6 +278,7 @@ void zoomAtFactor(const QPointF& viewportPos, float factor);
 void zoomFit();
 void zoomFitSelection();
 void zoomFitVisible();
+void zoomFitWorkArea();
 void zoomFill();
   void zoom100();
   void focusSelectedLayer();
@@ -270,6 +290,13 @@ void zoomFill();
   float gizmoScale() const;
 
   LayerID layerAtViewportPos(const QPointF& viewportPos) const;
+  bool resetProjectedFrameHandleAt(const QPointF& viewportPos);
+  bool resetSelected3DAnchorToCenter();
+  bool resetSelected3DTransform();
+  bool setSelected3DTransform(const QVector3D& position,
+                              const QVector3D& rotation,
+                              const QVector3D& scale);
+  bool resetSelected2DAnchorToCenter();
   ArtifactIRenderer* renderer() const;
   QImage captureCurrentFrameImage() const;
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
@@ -279,7 +306,54 @@ void zoomFill();
 void handleMousePress(QMouseEvent* event);
 void handleMouseMove(const QPointF& viewportPos);
   void handleMouseRelease();
+  void setPointerPressure(float pressure);
+  void setPointerTilt(float tiltX, float tiltY);
   bool hasPendingMaskEdit() const;
+  void cancelMaskInteraction();
+  bool cancelTextToolInteraction();
+  bool deleteSelectedPuppetPin();
+  bool resetSelectedPuppetPinRotation();
+  bool adjustSelectedPuppetPinWeightAt(const QPointF& viewportPos, float delta);
+  bool adjustSelectedPuppetPinDepthAt(const QPointF& viewportPos, float delta);
+bool clearRigSelection();
+bool nudgeSelectedRigBoneRotation(float deltaDegrees);
+bool nudgeSelectedRigControl(const QVector2D &delta);
+void adjustRigWeightBrush(float radiusDelta, float opacityDelta = 0.0f);
+float rigWeightBrushRadius() const;
+float rigWeightBrushOpacity() const;
+void adjustRigWeightBrushFlow(float delta);
+float rigWeightBrushFlow() const;
+bool normalizeRigWeights();
+bool smoothRigWeights();
+bool mirrorRigWeights();
+bool captureRigPose();
+bool applyCapturedRigPose(float blendWeight = 1.0f);
+bool saveRigPoseSlot(int slot);
+bool applyRigPoseSlot(int slot, float blendWeight = 1.0f);
+void clearRigPoseSlots();
+  bool adjustRectangleToolRoundness(float delta);
+  bool adjustSelectedShapeCornerRadius(float delta);
+  bool resetSelectedShapeCornerRadius();
+  bool deleteHoveredMaskVertex();
+  bool deleteSelectedMaskVertices();
+  bool deleteHoveredMask();
+  bool resetHoveredMaskTangent();
+  bool resetHoveredMaskVertexTangents();
+  void selectAllMaskVertices();
+  bool setHoveredMaskMode(int modeValue);
+  bool hasHoveredMaskPath() const;
+  bool toggleHoveredMaskEnabled();
+  bool toggleHoveredMaskLocked();
+  bool duplicateHoveredMask();
+  bool moveHoveredMask(int direction);
+  bool copyHoveredMask();
+  bool pasteMask();
+  bool toggleHoveredMaskInverted();
+  bool adjustHoveredMaskGeometry(float featherDelta, float expansionDelta);
+  bool adjustHoveredMaskOpacity(float opacityDelta);
+  bool createTextLayerAtCanvas(const QPointF& canvasPos,
+                               const QSizeF& boxSize = QSizeF());
+  bool editTextAtViewport(const QPointF& viewportPos);
 
 TransformGizmo* gizmo() const;
  class Artifact3DGizmo* gizmo3D() const;
@@ -313,7 +387,12 @@ void pushViewHistory();
   void trackerTrackAll();
   void trackerApplyToPosition();
   void trackerApplyToAnchor();
+  void trackerApplyAllPoints();
   void trackerDelete();
+  void cancelMotionSketch();
+  bool cancelBrushStroke();
+  bool undoSelectedPaintStroke();
+  bool cancelCloneStamp();
 
 public /*slots*/:
 

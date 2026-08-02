@@ -24,6 +24,7 @@ module;
 
 #include <QMessageBox>
 #include <QSignalBlocker>
+#include <QSettings>
 
 module Artifact.Menu.View;
 import std;
@@ -859,6 +860,14 @@ namespace Artifact {
    QAction* showGuidesAction = nullptr;
    QAction* snapToGuidesAction = nullptr;
    QAction* showRulersAction = nullptr;
+   QAction* showRigOverlayAction = nullptr;
+   QAction* showRigWeightMapAction = nullptr;
+   QAction* showOnionSkinAction = nullptr;
+   QAction* showSafeMarginsAction = nullptr;
+   QAction* captureRigPoseAction = nullptr;
+   QAction* saveRigPoseSlotAction = nullptr;
+   QAction* applyRigPoseSlotAction = nullptr;
+   QAction* clearRigPoseSlotsAction = nullptr;
    QAction* useDisplayColorManagementAction = nullptr;
    QMenu* gridSettingsMenu = nullptr;
    QAction* gridMajorIntervalAction = nullptr;
@@ -866,6 +875,11 @@ namespace Artifact {
    QAction* gridShowMajorAction = nullptr;
    QAction* gridShowMinorAction = nullptr;
    QAction* gridShowAxisAction = nullptr;
+   QAction* gridShowNumbersAction = nullptr;
+   QAction* gridAutoStepAction = nullptr;
+   QAction* gridAutoTargetAction = nullptr;
+   QAction* gridPolarAction = nullptr;
+   QAction* gridIsometricAction = nullptr;
 
    QMenu* qualityPresetMenu = nullptr;
    QActionGroup* qualityGroup = nullptr;
@@ -995,6 +1009,157 @@ namespace Artifact {
    showRulersAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewShowRulers));
    showRulersAction->setCheckable(true);
    showRulersAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_straighten.svg")));
+   QObject::connect(showRulersAction, &QAction::toggled, menu,
+                    [this](bool checked) {
+                      auto *editor = activeCompositionEditor(
+                          mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+                      if (!editor || !editor->renderController()) {
+                        return;
+                      }
+                      editor->renderController()->setShowViewportRuler(checked);
+                      QSettings settings;
+                      settings.setValue(QStringLiteral("viewport/showRuler"), checked);
+                    });
+
+   showRigOverlayAction = new QAction(QStringLiteral("リグオーバーレイを表示"));
+   showRigOverlayAction->setAccessibleName(QStringLiteral("Rig overlay visibility"));
+   showRigOverlayAction->setAccessibleDescription(
+       QStringLiteral("Show or hide rig bones, controls and skin overlays"));
+   showRigOverlayAction->setCheckable(true);
+   showRigOverlayAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
+   QObject::connect(showRigOverlayAction, &QAction::toggled, menu,
+                    [this](bool checked) {
+                      auto *editor = activeCompositionEditor(
+                          mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+                      if (!editor || !editor->renderController()) {
+                        return;
+                      }
+                      editor->renderController()->setShowRigOverlay(checked);
+                    });
+
+   showRigWeightMapAction = new QAction(QStringLiteral("ウェイトマップを表示"));
+   showRigWeightMapAction->setAccessibleName(QStringLiteral("Rig weight map visibility"));
+   showRigWeightMapAction->setAccessibleDescription(
+       QStringLiteral("Show or hide the selected bone weight map"));
+   showRigWeightMapAction->setCheckable(true);
+   showRigWeightMapAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
+   QObject::connect(showRigWeightMapAction, &QAction::toggled, menu,
+                    [this](bool checked) {
+                      auto *editor = activeCompositionEditor(
+                          mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+                      if (!editor || !editor->renderController()) {
+                        return;
+                      }
+                      editor->renderController()->setLineDebugKindVisible(
+                          LineDebugKind::RigSkin, checked);
+                    });
+
+   showOnionSkinAction = new QAction(QStringLiteral("オニオンスキンを表示"));
+   showOnionSkinAction->setAccessibleName(QStringLiteral("Onion skin visibility"));
+   showOnionSkinAction->setAccessibleDescription(
+       QStringLiteral("Show or hide previous-frame onion skin previews"));
+   showOnionSkinAction->setCheckable(true);
+   showOnionSkinAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
+   QObject::connect(showOnionSkinAction, &QAction::toggled, menu,
+                    [this](bool checked) {
+                      auto *editor = activeCompositionEditor(
+                          mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+                      if (!editor || !editor->renderController()) {
+                        return;
+                      }
+                      editor->renderController()->setShowOnionSkin(checked);
+                    });
+
+   showSafeMarginsAction = new QAction(QStringLiteral("セーフマージンを表示"));
+   showSafeMarginsAction->setAccessibleName(QStringLiteral("Safe margins visibility"));
+   showSafeMarginsAction->setAccessibleDescription(
+       QStringLiteral("Show or hide title and action safe margins"));
+   showSafeMarginsAction->setCheckable(true);
+   showSafeMarginsAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_straighten.svg")));
+   QObject::connect(showSafeMarginsAction, &QAction::toggled, menu,
+                    [this](bool checked) {
+                      auto *editor = activeCompositionEditor(
+                          mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+                      if (!editor || !editor->renderController()) {
+                        return;
+                      }
+                      editor->renderController()->setShowSafeMargins(checked);
+                    });
+
+   captureRigPoseAction = new QAction(QStringLiteral("現在のRigポーズをCapture"));
+   captureRigPoseAction->setAccessibleName(QStringLiteral("Capture current rig pose"));
+   captureRigPoseAction->setAccessibleDescription(
+       QStringLiteral("Capture the current rig pose for later reuse"));
+   captureRigPoseAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+   QObject::connect(captureRigPoseAction, &QAction::triggered, menu,
+                    [this]() {
+                      auto *editor = activeCompositionEditor(
+                          mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+                      if (!editor || !editor->renderController()) {
+                        return;
+                      }
+                      if (editor->renderController()->captureRigPose()) {
+                        editor->renderController()->setInfoOverlayText(
+                            QStringLiteral("Rig Pose"),
+                            QStringLiteral("Current pose captured"));
+                      }
+                    });
+
+   saveRigPoseSlotAction = new QAction(QStringLiteral("現在のRigポーズをSlot 1へ保存"));
+   saveRigPoseSlotAction->setAccessibleName(QStringLiteral("Save rig pose to slot 1"));
+   saveRigPoseSlotAction->setAccessibleDescription(
+       QStringLiteral("Save the current rig pose in pose slot 1"));
+   saveRigPoseSlotAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+   QObject::connect(saveRigPoseSlotAction, &QAction::triggered, menu,
+                    [this]() {
+                      auto *editor = activeCompositionEditor(
+                          mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+                      if (!editor || !editor->renderController()) {
+                        return;
+                      }
+                      if (editor->renderController()->saveRigPoseSlot(1)) {
+                        editor->renderController()->setInfoOverlayText(
+                            QStringLiteral("Rig Pose"),
+                            QStringLiteral("Current pose saved to Slot 1"));
+                      }
+                    });
+
+   applyRigPoseSlotAction = new QAction(QStringLiteral("Rig Pose Slot 1を適用 (50%)"));
+   applyRigPoseSlotAction->setAccessibleName(QStringLiteral("Apply rig pose slot 1"));
+   applyRigPoseSlotAction->setAccessibleDescription(
+       QStringLiteral("Blend pose slot 1 into the current rig at 50 percent"));
+   applyRigPoseSlotAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+   QObject::connect(applyRigPoseSlotAction, &QAction::triggered, menu,
+                    [this]() {
+                      auto *editor = activeCompositionEditor(
+                          mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+                      if (!editor || !editor->renderController()) {
+                        return;
+                      }
+                      if (editor->renderController()->applyRigPoseSlot(1, 0.5f)) {
+                        editor->renderController()->setInfoOverlayText(
+                            QStringLiteral("Rig Pose"),
+                            QStringLiteral("Pose Slot 1 applied at 50%"));
+                      }
+                    });
+
+   clearRigPoseSlotsAction = new QAction(QStringLiteral("Rig Pose Slotを消去"));
+   clearRigPoseSlotsAction->setAccessibleName(QStringLiteral("Clear rig pose slots"));
+   clearRigPoseSlotsAction->setAccessibleDescription(
+       QStringLiteral("Clear all saved rig pose slots and the pose clipboard"));
+   clearRigPoseSlotsAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
+   QObject::connect(clearRigPoseSlotsAction, &QAction::triggered, menu,
+                    [this]() {
+                      auto *editor = activeCompositionEditor(
+                          mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+                      if (!editor || !editor->renderController()) {
+                        return;
+                      }
+                      editor->renderController()->clearRigPoseSlots();
+                      editor->renderController()->setInfoOverlayText(
+                          QStringLiteral("Rig Pose"),
+                          QStringLiteral("Pose slots cleared"));
+                    });
 
    gridSettingsMenu = new QMenu(QStringLiteral("グリッド設定"));
    gridSettingsMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
@@ -1007,6 +1172,16 @@ namespace Artifact {
    gridShowMinorAction->setCheckable(true);
    gridShowAxisAction = gridSettingsMenu->addAction(QStringLiteral("原点軸を表示"));
    gridShowAxisAction->setCheckable(true);
+   gridShowNumbersAction = gridSettingsMenu->addAction(QStringLiteral("グリッド数値を表示"));
+   gridShowNumbersAction->setCheckable(true);
+   gridSettingsMenu->addSeparator();
+   gridAutoStepAction = gridSettingsMenu->addAction(QStringLiteral("ズーム連動ステップ"));
+   gridAutoStepAction->setCheckable(true);
+   gridAutoTargetAction = gridSettingsMenu->addAction(QStringLiteral("ズーム連動間隔を変更…"));
+   gridPolarAction = gridSettingsMenu->addAction(QStringLiteral("極座標グリッド"));
+   gridPolarAction->setCheckable(true);
+   gridIsometricAction = gridSettingsMenu->addAction(QStringLiteral("アイソメトリックグリッド"));
+   gridIsometricAction->setCheckable(true);
 
    QObject::connect(gridMajorIntervalAction, &QAction::triggered, menu, [this]() {
     auto *settings = ArtifactCore::ArtifactAppSettings::instance();
@@ -1057,6 +1232,102 @@ namespace Artifact {
    QObject::connect(gridShowAxisAction, &QAction::toggled, menu,
                     [updateGridFlag](bool checked) {
                       updateGridFlag(checked, &Artifact::Grid::GridSettings::showAxis);
+                    });
+   QObject::connect(gridShowNumbersAction, &QAction::toggled, menu,
+                    [updateGridFlag](bool checked) {
+                      updateGridFlag(checked, &Artifact::Grid::GridSettings::showNumbers);
+                    });
+   auto activeController = [this]() -> ArtifactCompositionRenderController* {
+     auto* editor = activeCompositionEditor(
+         mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+     return editor ? editor->renderController() : nullptr;
+   };
+   QObject::connect(showGridAction, &QAction::toggled, menu,
+                    [this, activeController](bool checked) {
+                      if (auto* controller = activeController()) {
+                        controller->setShowGrid(checked);
+                        QSettings settings;
+                        settings.setValue(QStringLiteral("viewport/showGrid"), checked);
+                      }
+                    });
+   QObject::connect(showGuidesAction, &QAction::toggled, menu,
+                    [this, activeController](bool checked) {
+                      if (auto* controller = activeController()) {
+                        controller->setShowGuides(checked);
+                        QSettings settings;
+                        settings.setValue(QStringLiteral("viewport/showGuides"), checked);
+                      }
+                    });
+   QObject::connect(snapToGuidesAction, &QAction::toggled, menu,
+                    [this, activeController](bool checked) {
+                      if (auto* controller = activeController()) {
+                        controller->setSnapToGuides(checked);
+                        QSettings settings;
+                        settings.setValue(QStringLiteral("viewport/snapGuides"), checked);
+                      }
+                    });
+   QObject::connect(snapToGridAction, &QAction::toggled, menu,
+                    [this, activeController](bool checked) {
+                      if (auto* controller = activeController()) {
+                        auto grid = controller->gridSettings();
+                        grid.snapToGrid = checked;
+                        controller->setGridSettings(grid);
+                        QSettings settings;
+                        settings.setValue(QStringLiteral("viewport/snapGrid"), checked);
+                      }
+                    });
+   QObject::connect(gridAutoStepAction, &QAction::toggled, menu,
+                    [this, activeController](bool checked) {
+                      if (auto* controller = activeController()) {
+                        controller->setGridAutoStepEnabled(checked);
+                        QSettings settings;
+                        settings.setValue(QStringLiteral("viewport/gridAutoStep"), checked);
+                      }
+                    });
+   QObject::connect(gridAutoTargetAction, &QAction::triggered, menu,
+                    [this, activeController]() {
+                      auto* controller = activeController();
+                      if (!controller) {
+                        return;
+                      }
+                      const double current = controller->gridAutoStepTargetViewportInterval();
+                      bool ok = false;
+                      const double value = QInputDialog::getDouble(
+                          mainWindow ? mainWindow : menu_,
+                          QStringLiteral("ズーム連動グリッド間隔"),
+                          QStringLiteral("ビューポート上の目標間隔 (px):"),
+                          current, 24.0, 512.0, 1, &ok);
+                      if (!ok) {
+                        return;
+                      }
+                      controller->setGridAutoStepTargetViewportInterval(
+                          static_cast<float>(value));
+                      QSettings settings;
+                      settings.setValue(QStringLiteral("viewport/gridAutoTarget"), value);
+                    });
+   QObject::connect(gridPolarAction, &QAction::toggled, menu,
+                    [this, activeController](bool checked) {
+                      if (auto* controller = activeController()) {
+                        controller->setGridPolarMode(checked);
+                        if (checked && gridIsometricAction) {
+                          const QSignalBlocker blocker(gridIsometricAction);
+                          gridIsometricAction->setChecked(false);
+                        }
+                        QSettings settings;
+                        settings.setValue(QStringLiteral("viewport/gridPolar"), checked);
+                      }
+                    });
+   QObject::connect(gridIsometricAction, &QAction::toggled, menu,
+                    [this, activeController](bool checked) {
+                      if (auto* controller = activeController()) {
+                        controller->setGridIsometricMode(checked);
+                        if (checked && gridPolarAction) {
+                          const QSignalBlocker blocker(gridPolarAction);
+                          gridPolarAction->setChecked(false);
+                        }
+                        QSettings settings;
+                        settings.setValue(QStringLiteral("viewport/gridIsometric"), checked);
+                      }
                     });
 
    useDisplayColorManagementAction = new QAction("ディスプレイのカラーマネジメントを使用");
@@ -1385,6 +1656,15 @@ namespace Artifact {
    menu->addAction(showGuidesAction);
    menu->addAction(snapToGuidesAction);
    menu->addAction(showRulersAction);
+   menu->addAction(showRigOverlayAction);
+   menu->addAction(showRigWeightMapAction);
+   menu->addAction(showOnionSkinAction);
+   menu->addAction(showSafeMarginsAction);
+   menu->addSeparator();
+   menu->addAction(captureRigPoseAction);
+   menu->addAction(saveRigPoseSlotAction);
+   menu->addAction(applyRigPoseSlotAction);
+   menu->addAction(clearRigPoseSlotsAction);
    menu->addAction(openColorScienceAction);
    menu->addSeparator();
     windowPanelsMenu = menu->addMenu("ウィンドウパネル(&W)");
@@ -1448,6 +1728,51 @@ namespace Artifact {
   zoomOutAction->setEnabled(hasComp);
   defaultZoomAction->setEnabled(hasComp);
   fitToScreenAction->setEnabled(hasComp);
+  if (showRigOverlayAction) {
+    showRigOverlayAction->setEnabled(hasViewport);
+    if (editor && editor->renderController()) {
+      const QSignalBlocker blocker(showRigOverlayAction);
+      showRigOverlayAction->setChecked(
+          editor->renderController()->isShowRigOverlay());
+    }
+  }
+  if (showRigWeightMapAction) {
+    showRigWeightMapAction->setEnabled(hasViewport);
+    if (editor && editor->renderController()) {
+      const QSignalBlocker blocker(showRigWeightMapAction);
+      showRigWeightMapAction->setChecked(
+          editor->renderController()->isLineDebugKindVisible(
+              LineDebugKind::RigSkin));
+    }
+  }
+  if (showOnionSkinAction) {
+    showOnionSkinAction->setEnabled(hasViewport);
+    if (editor && editor->renderController()) {
+      const QSignalBlocker blocker(showOnionSkinAction);
+      showOnionSkinAction->setChecked(
+          editor->renderController()->isShowOnionSkin());
+    }
+  }
+  if (showSafeMarginsAction) {
+    showSafeMarginsAction->setEnabled(hasViewport);
+    if (editor && editor->renderController()) {
+      const QSignalBlocker blocker(showSafeMarginsAction);
+      showSafeMarginsAction->setChecked(
+          editor->renderController()->isShowSafeMargins());
+    }
+  }
+  if (captureRigPoseAction) {
+    captureRigPoseAction->setEnabled(hasViewport);
+  }
+  if (saveRigPoseSlotAction) {
+    saveRigPoseSlotAction->setEnabled(hasViewport);
+  }
+  if (applyRigPoseSlotAction) {
+    applyRigPoseSlotAction->setEnabled(hasViewport);
+  }
+  if (clearRigPoseSlotsAction) {
+    clearRigPoseSlotsAction->setEnabled(hasViewport);
+  }
   if (viewportBookmarkMenu) {
    viewportBookmarkMenu->setEnabled(hasViewport);
   }
@@ -1526,6 +1851,50 @@ namespace Artifact {
   showGuidesAction->setEnabled(hasComp);
   snapToGuidesAction->setEnabled(hasComp);
   showRulersAction->setEnabled(hasComp);
+  if (showRulersAction && hasViewport) {
+    const bool showRuler = QSettings().value(
+        QStringLiteral("viewport/showRuler"),
+        editor->renderController()->isShowViewportRuler()).toBool();
+    editor->renderController()->setShowViewportRuler(showRuler);
+    const QSignalBlocker blocker(showRulersAction);
+    showRulersAction->setChecked(showRuler);
+  }
+  if (hasViewport) {
+    const bool showGrid = QSettings().value(
+        QStringLiteral("viewport/showGrid"),
+        editor->renderController()->isShowGrid()).toBool();
+    const bool snapGrid = QSettings().value(
+        QStringLiteral("viewport/snapGrid"),
+        editor->renderController()->gridSettings().snapToGrid).toBool();
+    editor->renderController()->setShowGrid(showGrid);
+    auto grid = editor->renderController()->gridSettings();
+    grid.snapToGrid = snapGrid;
+    editor->renderController()->setGridSettings(grid);
+    {
+      const QSignalBlocker blocker(showGridAction);
+      showGridAction->setChecked(showGrid);
+    }
+    {
+      const QSignalBlocker blocker(snapToGridAction);
+      snapToGridAction->setChecked(snapGrid);
+    }
+    const bool showGuides = QSettings().value(
+        QStringLiteral("viewport/showGuides"),
+        editor->renderController()->isShowGuides()).toBool();
+    editor->renderController()->setShowGuides(showGuides);
+    {
+      const QSignalBlocker blocker(showGuidesAction);
+      showGuidesAction->setChecked(showGuides);
+    }
+    const bool snapGuides = QSettings().value(
+        QStringLiteral("viewport/snapGuides"),
+        editor->renderController()->isSnapToGuides()).toBool();
+    editor->renderController()->setSnapToGuides(snapGuides);
+    {
+      const QSignalBlocker blocker(snapToGuidesAction);
+      snapToGuidesAction->setChecked(snapGuides);
+    }
+  }
   if (gridSettingsMenu) {
     gridSettingsMenu->setEnabled(hasComp);
   }
@@ -1551,6 +1920,42 @@ namespace Artifact {
       if (gridShowAxisAction) {
         const QSignalBlocker blocker(gridShowAxisAction);
         gridShowAxisAction->setChecked(grid.showAxis);
+      }
+      if (gridShowNumbersAction) {
+        const QSignalBlocker blocker(gridShowNumbersAction);
+        gridShowNumbersAction->setChecked(grid.showNumbers);
+      }
+      if (gridAutoStepAction && hasViewport) {
+        const QSignalBlocker blocker(gridAutoStepAction);
+        const bool enabled = QSettings().value(
+            QStringLiteral("viewport/gridAutoStep"),
+            editor->renderController()->isGridAutoStepEnabled()).toBool();
+        editor->renderController()->setGridAutoStepEnabled(enabled);
+        gridAutoStepAction->setChecked(enabled);
+        const float target = QSettings().value(
+            QStringLiteral("viewport/gridAutoTarget"),
+            editor->renderController()->gridAutoStepTargetViewportInterval()).toFloat();
+        editor->renderController()->setGridAutoStepTargetViewportInterval(target);
+        if (gridAutoTargetAction) {
+          gridAutoTargetAction->setText(QStringLiteral("ズーム連動間隔を変更… (%1 px)")
+                                            .arg(QString::number(target, 'f', 0)));
+        }
+      }
+      if (gridPolarAction && hasViewport) {
+        const QSignalBlocker blocker(gridPolarAction);
+        const bool enabled = QSettings().value(
+            QStringLiteral("viewport/gridPolar"),
+            editor->renderController()->isGridPolarMode()).toBool();
+        editor->renderController()->setGridPolarMode(enabled);
+        gridPolarAction->setChecked(enabled);
+      }
+      if (gridIsometricAction && hasViewport) {
+        const QSignalBlocker blocker(gridIsometricAction);
+        const bool enabled = QSettings().value(
+            QStringLiteral("viewport/gridIsometric"),
+            editor->renderController()->isGridIsometricMode()).toBool();
+        editor->renderController()->setGridIsometricMode(enabled);
+        gridIsometricAction->setChecked(enabled);
       }
     }
   }
