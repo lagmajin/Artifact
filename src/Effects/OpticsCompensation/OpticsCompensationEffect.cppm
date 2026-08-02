@@ -16,20 +16,20 @@ OpticsCompensationEffect::OpticsCompensationEffect() {
 }
 
 float OpticsCompensationEffect::centerX() const { return centerX_; }
-void OpticsCompensationEffect::setCenterX(float v) { centerX_ = std::clamp(v, 0.0f, 1.0f); }
+void OpticsCompensationEffect::setCenterX(float v) { centerX_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; }
 float OpticsCompensationEffect::centerY() const { return centerY_; }
-void OpticsCompensationEffect::setCenterY(float v) { centerY_ = std::clamp(v, 0.0f, 1.0f); }
+void OpticsCompensationEffect::setCenterY(float v) { centerY_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; }
 float OpticsCompensationEffect::fov() const { return fov_; }
-void OpticsCompensationEffect::setFov(float v) { fov_ = std::clamp(v, 1.0f, 180.0f); }
+void OpticsCompensationEffect::setFov(float v) { fov_ = std::isfinite(v) ? std::clamp(v, 1.0f, 180.0f) : 45.0f; }
 int OpticsCompensationEffect::direction() const { return direction_; }
 void OpticsCompensationEffect::setDirection(int v) { direction_ = (v >= 0 ? 1 : -1); }
 
 std::vector<ArtifactCore::AbstractProperty> OpticsCompensationEffect::getProperties() const {
     std::vector<ArtifactCore::AbstractProperty> props;
-    auto& cx = props.emplace_back(); cx.setName("Center X"); cx.setType(PropertyType::Float); cx.setValue(centerX_);
-    auto& cy = props.emplace_back(); cy.setName("Center Y"); cy.setType(PropertyType::Float); cy.setValue(centerY_);
-    auto& f = props.emplace_back(); f.setName("FOV"); f.setType(PropertyType::Float); f.setValue(fov_);
-    auto& d = props.emplace_back(); d.setName("Direction"); d.setType(PropertyType::Integer); d.setValue(direction_);
+    auto& cx = props.emplace_back(); cx.setName("Center X"); cx.setType(PropertyType::Float); cx.setValue(centerX_); cx.setMinValue(QVariant(0.0)); cx.setMaxValue(QVariant(1.0));
+    auto& cy = props.emplace_back(); cy.setName("Center Y"); cy.setType(PropertyType::Float); cy.setValue(centerY_); cy.setMinValue(QVariant(0.0)); cy.setMaxValue(QVariant(1.0));
+    auto& f = props.emplace_back(); f.setName("FOV"); f.setType(PropertyType::Float); f.setValue(fov_); f.setMinValue(QVariant(1.0)); f.setMaxValue(QVariant(180.0));
+    auto& d = props.emplace_back(); d.setName("Direction"); d.setType(PropertyType::Integer); d.setValue(direction_); d.setMinValue(QVariant(-1)); d.setMaxValue(QVariant(1));
     return props;
 }
 
