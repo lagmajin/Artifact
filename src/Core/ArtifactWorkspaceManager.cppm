@@ -150,7 +150,7 @@ static bool writeJsonFile(const QString &path, const QJsonObject &json) {
     dir.mkpath(QStringLiteral("."));
   }
 
-  QFile file(path);
+  QSaveFile file(path);
   if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
     return false;
   }
@@ -165,7 +165,7 @@ static bool writeJsonFile(const QString &path, const QJsonObject &json) {
 
 static QJsonObject readJsonFile(const QString &path) {
   constexpr qint64 kMaxWorkspaceJsonBytes = 8LL * 1024LL * 1024LL;
-  QSaveFile file(path);
+  QFile file(path);
   if (file.size() <= 0 || file.size() > kMaxWorkspaceJsonBytes ||
       !file.open(QIODevice::ReadOnly)) {
     return {};
