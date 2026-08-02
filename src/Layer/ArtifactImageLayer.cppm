@@ -3,6 +3,8 @@ module;
 #include <array>
 #include <algorithm>
 #include <cstring>
+#include <limits>
+#include <cmath>
 
 #include <QDebug>
 #include <QUuid>
@@ -139,9 +141,10 @@ QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* 
 
     OIIO::ImageBuf oriented = OIIO::ImageBufAlgo::reorient(source);
     const OIIO::ImageSpec& spec = oriented.spec();
-    if (spec.width <= 0 || spec.height <= 0 || spec.nchannels <= 0) {
+    if (spec.width <= 0 || spec.height <= 0 || spec.nchannels <= 0 ||
+        spec.width > 16384 || spec.height > 16384) {
         if (errorOut) {
-            *errorOut = QStringLiteral("Invalid image dimensions or channel count.");
+            *errorOut = QStringLiteral("Unsupported image dimensions or channel count.");
         }
         return {};
     }
@@ -219,6 +222,22 @@ QImage makeMissingImagePlaceholder(const QSize& size = QSize(256, 256), const QS
                      label);
     return placeholder;
 }
+
+qint64 resolveSequenceFrame(qint64 layerFrame, double compositionFps,
+                            double sequenceFps)
+{
+    if (layerFrame <= 0 || !std::isfinite(compositionFps) || compositionFps <= 0.0 ||
+        !std::isfinite(sequenceFps) || sequenceFps <= 0.0) {
+        return std::max<qint64>(0, layerFrame);
+    }
+
+    const double sequenceTime = static_cast<double>(layerFrame) / compositionFps;
+    const double resolved = std::floor(sequenceTime * sequenceFps);
+    if (!std::isfinite(resolved) || resolved >= static_cast<double>(std::numeric_limits<qint64>::max())) {
+        return std::numeric_limits<qint64>::max();
+    }
+    return std::max<qint64>(0, static_cast<qint64>(resolved));
+}
 }
 
 class ArtifactImageLayer::Impl {
@@ -291,12 +310,26 @@ public:
                 sequenceSource_->setFrameRate(sequenceFrameRate_);
             }
         }
-        if (frameIndex < 0 || frameIndex >= sequenceSource_->frameCount()) {
+        const qint64 frameCount = sequenceSource_->frameCount();
+        if (frameCount <= 0) {
             clearSequenceFrameCache();
             return false;
         }
-        const QImage frame = sequenceSource_->frameAt(frameIndex);
+        // Hold the nearest valid source frame while the layer remains visible
+        // beyond the discovered sequence range. This keeps an image-sequence
+        // layer stable at its in/out boundaries instead of flashing blank.
+        const qint64 resolvedFrame = std::clamp<qint64>(
+            frameIndex, 0, frameCount - 1);
+        if (sequenceCachedIndex_ == resolvedFrame && cache_) {
+            return true;
+        }
+        const QImage frame = sequenceSource_->frameAt(resolvedFrame);
         if (frame.isNull()) {
+            clearSequenceFrameCache();
+            return false;
+        }
+        if (frame.width() <= 0 || frame.height() <= 0 ||
+            frame.width() > 16384 || frame.height() > 16384) {
             clearSequenceFrameCache();
             return false;
         }
@@ -309,7 +342,7 @@ public:
         cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
             toFrameBuffer(frame));
         applyInputInterpretation();
-        sequenceCachedIndex_ = frameIndex;
+        sequenceCachedIndex_ = resolvedFrame;
         return true;
     }
 
@@ -406,22 +439,23 @@ ArtifactImageLayer::~ArtifactImageLayer() {
 
 bool ArtifactImageLayer::loadFromPath(const QString& path)
 {
+    const QString normalizedPath = path.trimmed().left(32768);
     // 連番シーケンス外のパスを読み込んだ場合はシーケンス関係を解消する
-    if (!impl_->sequencePaths_.isEmpty() && !impl_->sequencePaths_.contains(path)) {
+    if (!impl_->sequencePaths_.isEmpty() && !impl_->sequencePaths_.contains(normalizedPath)) {
         impl_->sequencePaths_.clear();
         impl_->sequenceFrameRate_ = 0.0;
         impl_->sequenceSource_.reset();
         impl_->sequenceCachedIndex_ = -1;
     }
-    const std::string utf8Path = path.toUtf8().toStdString();
+    const std::string utf8Path = normalizedPath.toUtf8().toStdString();
     OIIO::ImageBuf headerOnly(utf8Path);
     if (!headerOnly.read(0, 0, true, OIIO::TypeDesc::UINT8)) {
-        qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
+        qWarning() << "[ArtifactImageLayer] Failed to load image from:" << normalizedPath
                    << "error=" << QString::fromStdString(headerOnly.geterror());
         ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
         impl_->sourceAssetId_ = QUuid();
         impl_->cachedSourceVersion_ = 0;
-        impl_->sourcePath_ = path;
+        impl_->sourcePath_ = normalizedPath;
         impl_->sequenceSource_.reset();
         impl_->sequenceCachedIndex_ = -1;
         ++impl_->prefetchGeneration_;
@@ -436,19 +470,20 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         ArtifactCore::FallbackTracker::instance()->record(
             ArtifactCore::FallbackCategory::Image,
         ArtifactCore::FallbackAction::Fallback,
-            path, "placeholder",
+            normalizedPath, "placeholder",
             QStringLiteral("Image missing, using placeholder"));
         Q_EMIT changed();
         return false;
     }
     const OIIO::ImageSpec& spec = headerOnly.spec();
-    if (spec.width <= 0 || spec.height <= 0) {
-        qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
-                   << "error=" << QString::fromStdString(headerOnly.geterror());
+    if (spec.width <= 0 || spec.height <= 0 ||
+        spec.width > 16384 || spec.height > 16384) {
+        qWarning() << "[ArtifactImageLayer] Failed to load image from:" << normalizedPath
+                   << "error=unsupported image dimensions";
         ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
         impl_->sourceAssetId_ = QUuid();
         impl_->cachedSourceVersion_ = 0;
-        impl_->sourcePath_ = path;
+        impl_->sourcePath_ = normalizedPath;
         impl_->sequenceSource_.reset();
         impl_->sequenceCachedIndex_ = -1;
         ++impl_->prefetchGeneration_;
@@ -463,21 +498,21 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         ArtifactCore::FallbackTracker::instance()->record(
             ArtifactCore::FallbackCategory::Image,
         ArtifactCore::FallbackAction::Fallback,
-            path, "placeholder",
+            normalizedPath, "placeholder",
             QStringLiteral("Image missing, using placeholder"));
         Q_EMIT changed();
         return false;
     }
 
     const QUuid nextAssetId = ArtifactCore::AssetManager::instance().acquireSource(
-        path, ArtifactCore::AssetType::Image);
+        normalizedPath, ArtifactCore::AssetType::Image);
     if (nextAssetId.isNull()) {
         return false;
     }
     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
     impl_->sourceAssetId_ = nextAssetId;
     impl_->cachedSourceVersion_ = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
-    impl_->sourcePath_ = path;
+    impl_->sourcePath_ = normalizedPath;
     impl_->cache_.reset();
     impl_->sequenceCachedIndex_ = -1;
     const auto version = ArtifactCore::AssetManager::instance().sourceVersion(nextAssetId);
@@ -495,7 +530,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
     impl_->startPrefetch();
     impl_->sourceCrop_.clampToSource(QSizeF(impl_->width_, impl_->height_));
 
-    qDebug() << "[ArtifactImageLayer] OIIO prefetch started:" << path
+    qDebug() << "[ArtifactImageLayer] OIIO prefetch started:" << normalizedPath
              << "sizeHint=" << QSize(spec.width, spec.height);
     Q_EMIT changed();
     return true;
@@ -509,8 +544,23 @@ QString ArtifactImageLayer::sourcePath() const
 void ArtifactImageLayer::setInputInterpretation(
     const QString& colorSpace, const QString& transferFunction)
 {
-    impl_->inputColorSpace_ = colorSpace.trimmed();
-    impl_->inputTransferFunction_ = transferFunction.trimmed();
+    const QString normalizedColorSpace = colorSpace.trimmed();
+    const auto* ocio = Artifact::ArtifactOCIOManager::instance();
+    const QStringList availableSpaces = ocio->availableWorkingSpaces();
+    QString resolvedColorSpace = normalizedColorSpace;
+    if (!normalizedColorSpace.isEmpty() && !availableSpaces.isEmpty()) {
+        const auto canonical = std::find_if(
+            availableSpaces.cbegin(), availableSpaces.cend(),
+            [&normalizedColorSpace](const QString& candidate) {
+                return candidate.compare(normalizedColorSpace,
+                                          Qt::CaseInsensitive) == 0;
+            });
+        resolvedColorSpace = canonical == availableSpaces.cend()
+            ? QString()
+            : *canonical;
+    }
+    impl_->inputColorSpace_ = resolvedColorSpace;
+    impl_->inputTransferFunction_ = transferFunction.trimmed().left(1024);
     if (impl_->cacheBuffer_ && !impl_->sourcePath_.trimmed().isEmpty()) {
         // Re-read the raw source before applying a changed interpretation;
         // applying a second interpretation to an already converted buffer
@@ -535,10 +585,14 @@ QString ArtifactImageLayer::inputTransferFunction() const
 
 bool ArtifactImageLayer::setImageSequence(const QStringList& framePaths, double frameRate)
 {
+    constexpr qsizetype kMaxSequenceFrames = 100000;
     QStringList normalizedPaths;
-    normalizedPaths.reserve(framePaths.size());
+    normalizedPaths.reserve(std::min(framePaths.size(), kMaxSequenceFrames));
     for (const QString& path : framePaths) {
-        const QString normalized = path.trimmed();
+        if (normalizedPaths.size() >= kMaxSequenceFrames) {
+            break;
+        }
+        const QString normalized = path.trimmed().left(32768);
         if (!normalized.isEmpty() && !normalizedPaths.contains(normalized)) {
             normalizedPaths.append(normalized);
         }
@@ -548,7 +602,7 @@ bool ArtifactImageLayer::setImageSequence(const QStringList& framePaths, double 
     }
     impl_->sequencePaths_ = normalizedPaths;
     impl_->sequenceFrameRate_ = std::isfinite(frameRate) && frameRate > 0.0
-        ? frameRate
+        ? std::clamp(frameRate, 0.001, 1000.0)
         : 0.0;
     impl_->sequenceSource_.reset();
     impl_->sequenceCachedIndex_ = -1;
@@ -686,9 +740,16 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
     impl_->cache_.reset();
     impl_->cacheBuffer_.reset();
     if (obj.value(QStringLiteral("image.sequencePaths")).isArray()) {
+        constexpr qsizetype kMaxSequenceFrames = 100000;
         const QJsonArray sequenceArray =
             obj.value(QStringLiteral("image.sequencePaths")).toArray();
         for (const QJsonValue& value : sequenceArray) {
+            if (impl_->sequencePaths_.size() >= kMaxSequenceFrames) {
+                break;
+            }
+            if (!value.isString()) {
+                continue;
+            }
             const QString framePath = value.toString().trimmed();
             if (!framePath.isEmpty() && !impl_->sequencePaths_.contains(framePath)) {
                 impl_->sequencePaths_.append(framePath);
@@ -697,12 +758,16 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
         const double frameRate =
             obj.value(QStringLiteral("image.sequenceFrameRate")).toDouble(0.0);
         impl_->sequenceFrameRate_ = std::isfinite(frameRate) && frameRate > 0.0
-            ? frameRate
+            ? std::clamp(frameRate, 0.001, 1000.0)
             : 0.0;
     }
-    const QString sourcePath = obj.value(QStringLiteral("image.sourcePath")).toString();
-    impl_->inputColorSpace_ = obj.value(QStringLiteral("image.inputColorSpace")).toString();
-    impl_->inputTransferFunction_ = obj.value(QStringLiteral("image.inputTransferFunction")).toString();
+    const QString sourcePath = obj.value(QStringLiteral("image.sourcePath"))
+                                   .toString().trimmed().left(32768);
+    const QString inputColorSpace =
+        obj.value(QStringLiteral("image.inputColorSpace")).toString();
+    const QString inputTransferFunction =
+        obj.value(QStringLiteral("image.inputTransferFunction")).toString();
+    setInputInterpretation(inputColorSpace, inputTransferFunction);
     if (!sourcePath.isEmpty() && sourcePath != impl_->sourcePath_) {
         loadFromPath(sourcePath);
     } else if (!sourcePath.isEmpty()) {
@@ -746,6 +811,26 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     imageGroup.addProperty(makeProp(QStringLiteral("image.sourcePath"),
                                     ArtifactCore::PropertyType::String,
                                     sourcePath(), -150));
+    auto inputColorSpaceProp = makeProp(
+        QStringLiteral("image.inputColorSpace"),
+        ArtifactCore::PropertyType::String, inputColorSpace(), -145);
+    inputColorSpaceProp->setDisplayLabel(QStringLiteral("Input Color Space"));
+    const QStringList workingSpaces =
+        Artifact::ArtifactOCIOManager::instance()->availableWorkingSpaces();
+    if (!workingSpaces.isEmpty()) {
+        inputColorSpaceProp->setTooltip(
+            QStringLiteral("OCIO working spaces: %1")
+                .arg(workingSpaces.join(QStringLiteral(", "))));
+    }
+    imageGroup.addProperty(inputColorSpaceProp);
+    auto inputTransferFunctionProp = makeProp(
+        QStringLiteral("image.inputTransferFunction"),
+        ArtifactCore::PropertyType::String, inputTransferFunction(), -144);
+    inputTransferFunctionProp->setDisplayLabel(QStringLiteral("Input Transfer"));
+    inputTransferFunctionProp->setTooltip(
+        QStringLiteral("Supported: linear, sRGB, gamma22, gamma24, gamma26, "
+                       "Rec709, PQ/ST2084, HLG, ACEScc, ACEScct, SLog3"));
+    imageGroup.addProperty(inputTransferFunctionProp);
     auto localizedProp = makeProp(QStringLiteral("source.localized"),
                                   ArtifactCore::PropertyType::Boolean,
                                   isSourceIdentityLocalized(), -149);
@@ -761,6 +846,17 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
     imageGroup.addProperty(makeProp(QStringLiteral("image.fitToLayer"),
                                     ArtifactCore::PropertyType::Boolean,
                                     impl_->fitToLayer_, -140));
+    if (isImageSequence()) {
+        auto sequenceRateProp = makeProp(
+            QStringLiteral("image.sequenceFrameRate"),
+            ArtifactCore::PropertyType::Float,
+            impl_->sequenceFrameRate_, -139);
+        sequenceRateProp->setDisplayLabel(QStringLiteral("Sequence FPS"));
+        sequenceRateProp->setSoftRange(1.0, 120.0);
+        sequenceRateProp->setHardRange(0.001, 1000.0);
+        sequenceRateProp->setUnit(QStringLiteral("fps"));
+        imageGroup.addProperty(sequenceRateProp);
+    }
 
     groups.push_back(imageGroup);
 
@@ -870,10 +966,37 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
         return false;
     }
     if (propertyPath == QStringLiteral("image.sourcePath") || propertyPath == QStringLiteral("sourcePath")) {
-        return loadFromPath(value.toString());
+        return loadFromPath(value.toString().trimmed().left(32768));
+    }
+    if (propertyPath == QStringLiteral("image.sequenceFrameRate")) {
+        const double frameRate = value.toDouble();
+        if (!std::isfinite(frameRate) || frameRate < 0.0) {
+            return false;
+        }
+        impl_->sequenceFrameRate_ = frameRate > 0.0
+            ? std::clamp(frameRate, 0.001, 1000.0)
+            : 0.0;
+        if (impl_->sequenceSource_) {
+            impl_->sequenceSource_->setFrameRate(impl_->sequenceFrameRate_);
+        }
+        setDirty(LayerDirtyFlag::Source);
+        Q_EMIT changed();
+        return true;
     }
     if (propertyPath == QStringLiteral("image.fitToLayer")) {
         setFitToLayer(value.toBool());
+        return true;
+    }
+    if (propertyPath == QStringLiteral("image.inputColorSpace") ||
+        propertyPath == QStringLiteral("image.inputTransferFunction")) {
+        QString colorSpace = inputColorSpace();
+        QString transferFunction = inputTransferFunction();
+        if (propertyPath == QStringLiteral("image.inputColorSpace")) {
+            colorSpace = value.toString();
+        } else {
+            transferFunction = value.toString();
+        }
+        setInputInterpretation(colorSpace, transferFunction);
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.enabled")) {
@@ -892,13 +1015,17 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
             rect = QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
         }
         if (propertyPath == QStringLiteral("sourceCrop.cropX")) {
-            rect.moveLeft(value.toDouble());
+            const double next = value.toDouble();
+            rect.moveLeft(std::isfinite(next) ? std::clamp(next, -1000000.0, 1000000.0) : rect.left());
         } else if (propertyPath == QStringLiteral("sourceCrop.cropY")) {
-            rect.moveTop(value.toDouble());
+            const double next = value.toDouble();
+            rect.moveTop(std::isfinite(next) ? std::clamp(next, -1000000.0, 1000000.0) : rect.top());
         } else if (propertyPath == QStringLiteral("sourceCrop.cropWidth")) {
-            rect.setWidth(std::max(1.0, value.toDouble()));
+            const double next = value.toDouble();
+            rect.setWidth(std::isfinite(next) ? std::clamp(next, 1.0, 1000000.0) : rect.width());
         } else {
-            rect.setHeight(std::max(1.0, value.toDouble()));
+            const double next = value.toDouble();
+            rect.setHeight(std::isfinite(next) ? std::clamp(next, 1.0, 1000000.0) : rect.height());
         }
         impl_->sourceCrop_.setCropRect(rect);
         impl_->sourceCrop_.clampToSource(QSizeF(size.width, size.height));
@@ -910,9 +1037,11 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
         propertyPath == QStringLiteral("sourceCrop.panY")) {
         QPointF pan = impl_->sourceCrop_.pan();
         if (propertyPath == QStringLiteral("sourceCrop.panX")) {
-            pan.setX(value.toDouble());
+            const double next = value.toDouble();
+            pan.setX(std::isfinite(next) ? std::clamp(next, -1000000.0, 1000000.0) : pan.x());
         } else {
-            pan.setY(value.toDouble());
+            const double next = value.toDouble();
+            pan.setY(std::isfinite(next) ? std::clamp(next, -1000000.0, 1000000.0) : pan.y());
         }
         impl_->sourceCrop_.setPan(pan);
         setDirty(LayerDirtyFlag::Property);
@@ -920,13 +1049,15 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.zoom")) {
-        impl_->sourceCrop_.setZoom(value.toDouble());
+        const double next = value.toDouble();
+        impl_->sourceCrop_.setZoom(std::isfinite(next) ? std::clamp(next, 0.001, 1000.0) : 1.0);
         setDirty(LayerDirtyFlag::Property);
         Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("sourceCrop.rotation")) {
-        impl_->sourceCrop_.setRotation(value.toDouble());
+        const double next = value.toDouble();
+        impl_->sourceCrop_.setRotation(std::isfinite(next) ? std::clamp(next, -360000.0, 360000.0) : 0.0);
         setDirty(LayerDirtyFlag::Property);
         Q_EMIT changed();
         return true;
@@ -935,9 +1066,11 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
         propertyPath == QStringLiteral("sourceCrop.anchorY")) {
         QPointF anchor = impl_->sourceCrop_.anchor();
         if (propertyPath == QStringLiteral("sourceCrop.anchorX")) {
-            anchor.setX(value.toDouble());
+            const double next = value.toDouble();
+            anchor.setX(std::isfinite(next) ? std::clamp(next, -100.0, 100.0) : anchor.x());
         } else {
-            anchor.setY(value.toDouble());
+            const double next = value.toDouble();
+            anchor.setY(std::isfinite(next) ? std::clamp(next, -100.0, 100.0) : anchor.y());
         }
         impl_->sourceCrop_.setAnchor(anchor);
         setDirty(LayerDirtyFlag::Property);
@@ -976,9 +1109,10 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
     if (!renderer) return;
 
     if (isImageSequence()) {
-        const qint64 sequenceFrame =
+        const qint64 layerFrame =
             currentFrame() - startTime().framePosition();
-        impl_->refreshSequenceFrame(std::max<qint64>(0, sequenceFrame));
+        impl_->refreshSequenceFrame(resolveSequenceFrame(
+            layerFrame, compositionFrameRate(), impl_->sequenceFrameRate_));
     }
 
     auto size = sourceSize();
@@ -1067,6 +1201,13 @@ QImage ArtifactImageLayer::toQImage() const
     impl_->refreshSourceVersionIfNeeded();
     if (!impl_->hasImage_) {
         return makeMissingImagePlaceholder(QSize(256, 256), QStringLiteral("Missing image"));
+    }
+
+    if (isImageSequence()) {
+        const qint64 layerFrame =
+            currentFrame() - startTime().framePosition();
+        impl_->refreshSequenceFrame(resolveSequenceFrame(
+            layerFrame, compositionFrameRate(), impl_->sequenceFrameRate_));
     }
 
     const bool isMainThread = (QThread::currentThread() == qApp->thread());
@@ -1163,6 +1304,11 @@ const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() co
 {
     static ArtifactCore::ImageF32x4_RGBA empty;
     impl_->refreshSourceVersionIfNeeded();
+    if (isImageSequence()) {
+        // Sequence refresh is shared with the QImage path so effect/GPU
+        // consumers do not keep using the previously drawn frame.
+        (void)toQImage();
+    }
     if (impl_ && !impl_->cacheBuffer_ && impl_->cache_) {
         impl_->cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
         const auto version = ArtifactCore::AssetManager::instance().sourceVersion(

@@ -194,16 +194,20 @@ void FormParticleSettings::fromJson(const QJsonObject& obj)
         particleOpacity = clampValue(static_cast<float>(obj.value("particleOpacity").toDouble(particleOpacity)), 0.0f, 1.0f);
     }
     if (obj.contains("noiseAmount")) {
-        noiseAmount = std::max(0.0f, static_cast<float>(obj.value("noiseAmount").toDouble(noiseAmount)));
+        const float value = static_cast<float>(obj.value("noiseAmount").toDouble(noiseAmount));
+        noiseAmount = std::isfinite(value) ? std::clamp(value, 0.0f, 100000.0f) : 0.0f;
     }
     if (obj.contains("noiseScale")) {
-        noiseScale = std::max(0.0f, static_cast<float>(obj.value("noiseScale").toDouble(noiseScale)));
+        const float value = static_cast<float>(obj.value("noiseScale").toDouble(noiseScale));
+        noiseScale = std::isfinite(value) ? std::clamp(value, 0.0f, 100000.0f) : 0.0f;
     }
     if (obj.contains("noiseSpeed")) {
-        noiseSpeed = static_cast<float>(obj.value("noiseSpeed").toDouble(noiseSpeed));
+        const float value = static_cast<float>(obj.value("noiseSpeed").toDouble(noiseSpeed));
+        noiseSpeed = std::isfinite(value) ? std::clamp(value, -10000.0f, 10000.0f) : 0.0f;
     }
     if (obj.contains("noisePhase")) {
-        noisePhase = static_cast<float>(obj.value("noisePhase").toDouble(noisePhase));
+        const float value = static_cast<float>(obj.value("noisePhase").toDouble(noisePhase));
+        noisePhase = std::isfinite(value) ? std::clamp(value, -100000.0f, 100000.0f) : 0.0f;
     }
     if (obj.contains("sourcePath")) {
         sourcePath = obj.value("sourcePath").toString();
@@ -1000,19 +1004,23 @@ bool ArtifactFormParticleLayer::setLayerPropertyValue(const QString& propertyPat
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("field.noiseAmount")) {
-        impl_->settings.noiseAmount = std::max(0.0f, static_cast<float>(value.toDouble()));
+        const float input = static_cast<float>(value.toDouble());
+        impl_->settings.noiseAmount = std::isfinite(input) ? std::clamp(input, 0.0f, 100000.0f) : 0.0f;
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("field.noiseScale")) {
-        impl_->settings.noiseScale = std::max(0.0f, static_cast<float>(value.toDouble()));
+        const float input = static_cast<float>(value.toDouble());
+        impl_->settings.noiseScale = std::isfinite(input) ? std::clamp(input, 0.0f, 100000.0f) : 0.0f;
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("field.noiseSpeed")) {
-        impl_->settings.noiseSpeed = static_cast<float>(value.toDouble());
+        const float input = static_cast<float>(value.toDouble());
+        impl_->settings.noiseSpeed = std::isfinite(input) ? std::clamp(input, -10000.0f, 10000.0f) : 0.0f;
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("field.noisePhase")) {
-        impl_->settings.noisePhase = static_cast<float>(value.toDouble());
+        const float input = static_cast<float>(value.toDouble());
+        impl_->settings.noisePhase = std::isfinite(input) ? std::clamp(input, -100000.0f, 100000.0f) : 0.0f;
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("field.twistAmount")) {

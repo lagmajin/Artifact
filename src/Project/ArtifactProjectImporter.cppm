@@ -1,5 +1,6 @@
 ﻿module;
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -46,6 +47,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Asset.Manager;
 import Memory.SharedPtr;
+import Artifact.Color.OCIOManager;
 
 namespace Artifact
 {
@@ -75,12 +77,18 @@ namespace Artifact
 
  void ArtifactProjectImporter::Impl::setInputPath(const QString& path)
  {
-  inputPath_ = path;
+  inputPath_ = path.trimmed();
  }
 
  QJsonDocument ArtifactProjectImporter::Impl::loadJsonDocument(const QString& path, UniString& errorMsg)
  {
-  QFile file(path);
+  const QString normalizedPath = path.trimmed();
+  if (normalizedPath.isEmpty() || !QFileInfo::exists(normalizedPath) ||
+      !QFileInfo(normalizedPath).isFile()) {
+   errorMsg = UniString("Project file path is invalid");
+   return QJsonDocument();
+  }
+  QFile file(normalizedPath);
   if (!file.open(QIODevice::ReadOnly)) {
    errorMsg = UniString("Failed to open file: " + file.errorString().toStdString());
    return QJsonDocument();
@@ -247,9 +255,12 @@ namespace Artifact
   if (root.contains("ai_tags") && root["ai_tags"].isArray()) {
    QStringList tags;
    QJsonArray tagsArray = root["ai_tags"].toArray();
+   constexpr qsizetype kMaxImportedTags = 10000;
+   qsizetype importedTags = 0;
    for (const auto& tagVal : tagsArray) {
+    if (importedTags++ >= kMaxImportedTags) break;
     if (tagVal.isString()) {
-     tags.append(tagVal.toString());
+     tags.append(tagVal.toString().trimmed().left(256));
     }
    }
    projectPtr->setAITags(tags);
@@ -300,7 +311,10 @@ namespace Artifact
   // コンポジションの読み込み
   if (root.contains("compositions") && root["compositions"].isArray()) {
    QJsonArray compsArray = root["compositions"].toArray();
+   constexpr qsizetype kMaxImportedCompositions = 10000;
+   qsizetype importedCompositions = 0;
    for (const auto& compVal : compsArray) {
+    if (importedCompositions++ >= kMaxImportedCompositions) break;
     if (!compVal.isObject()) continue;
     QJsonObject compObj = compVal.toObject();
     if (!compObj.contains("id")) continue;
@@ -318,7 +332,10 @@ namespace Artifact
     // レイヤーの読み込み
     if (compObj.contains("layers") && compObj["layers"].isArray()) {
      QJsonArray layersArray = compObj["layers"].toArray();
+     constexpr qsizetype kMaxImportedLayers = 100000;
+     qsizetype importedLayers = 0;
      for (const auto& layerVal : layersArray) {
+      if (importedLayers++ >= kMaxImportedLayers) break;
       if (layerVal.isObject()) {
        auto layer = ArtifactAbstractLayer::fromJson(layerVal.toObject());
        if (layer) {
@@ -355,6 +372,15 @@ namespace Artifact
   // 拡張データ(コマンドパレット MRU 等)を復元
   if (root.contains("_extension_data") && root["_extension_data"].isObject()) {
    projectPtr->setExtensionData(root["_extension_data"].toObject());
+  }
+
+  // Restore project-scoped OCIO selection after the project data is parsed.
+  // Missing or invalid external config files are handled by the manager's
+  // existing fallback behavior and must not reject the project itself.
+  if (root.contains(QStringLiteral("ocio")) && root[QStringLiteral("ocio")].isObject()) {
+   if (auto* ocio = ArtifactOCIOManager::instance()) {
+    ocio->fromJson(root[QStringLiteral("ocio")].toObject());
+   }
   }
 
   // 健康状態のチェックと自動修復の実行

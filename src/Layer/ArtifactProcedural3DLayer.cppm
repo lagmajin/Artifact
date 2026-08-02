@@ -491,6 +491,12 @@ public:
 
     void fromJson(const QJsonObject& object)
     {
+        const auto safeFinite = [](const double value, const float fallback,
+                                   const float lower, const float upper) {
+            return std::isfinite(value)
+                ? std::clamp(static_cast<float>(value), lower, upper)
+                : fallback;
+        };
         kind = static_cast<Procedural3DLayerKind>(
             std::clamp(object.value(QStringLiteral("kind")).toInt(static_cast<int>(kind)), 0, 1));
         shading = static_cast<ArtifactCore::Procedural3DShading>(
@@ -507,20 +513,19 @@ public:
             std::clamp(terrainJson.value(QStringLiteral("heightSource")).toInt(static_cast<int>(terrain.heightSource)), 0, 2));
         terrain.uvMode = static_cast<ArtifactCore::TerrainUvMode>(
             std::clamp(terrainJson.value(QStringLiteral("uvMode")).toInt(static_cast<int>(terrain.uvMode)), 0, 2));
-        terrainHeightSourcePath = terrainJson.value(QStringLiteral("heightSourcePath")).toString();
-        terrainAudioGain = std::max(
-            0.0f,
-            static_cast<float>(
-                terrainJson.value(QStringLiteral("audioGain")).toDouble(terrainAudioGain)));
-        terrain.columns = terrainJson.value(QStringLiteral("columns")).toInt(terrain.columns);
-        terrain.rows = terrainJson.value(QStringLiteral("rows")).toInt(terrain.rows);
-        terrain.sizeX = static_cast<float>(terrainJson.value(QStringLiteral("sizeX")).toDouble(terrain.sizeX));
-        terrain.sizeY = static_cast<float>(terrainJson.value(QStringLiteral("sizeY")).toDouble(terrain.sizeY));
-        terrain.height = static_cast<float>(terrainJson.value(QStringLiteral("height")).toDouble(terrain.height));
-        terrain.noiseScale = static_cast<float>(terrainJson.value(QStringLiteral("noiseScale")).toDouble(terrain.noiseScale));
-        terrain.noiseAmplitude = static_cast<float>(terrainJson.value(QStringLiteral("noiseAmplitude")).toDouble(terrain.noiseAmplitude));
-        terrain.noiseOctaves = terrainJson.value(QStringLiteral("noiseOctaves")).toInt(terrain.noiseOctaves);
-        terrain.noiseEvolution = static_cast<float>(terrainJson.value(QStringLiteral("noiseEvolution")).toDouble(terrain.noiseEvolution));
+        terrainHeightSourcePath = terrainJson.value(QStringLiteral("heightSourcePath")).toString().trimmed().left(32768);
+        terrainAudioGain = safeFinite(
+            terrainJson.value(QStringLiteral("audioGain")).toDouble(terrainAudioGain),
+            terrainAudioGain, 0.0f, 1000000.0f);
+        terrain.columns = std::clamp(terrainJson.value(QStringLiteral("columns")).toInt(terrain.columns), 2, 4096);
+        terrain.rows = std::clamp(terrainJson.value(QStringLiteral("rows")).toInt(terrain.rows), 2, 4096);
+        terrain.sizeX = safeFinite(terrainJson.value(QStringLiteral("sizeX")).toDouble(terrain.sizeX), terrain.sizeX, 0.001f, 100000.0f);
+        terrain.sizeY = safeFinite(terrainJson.value(QStringLiteral("sizeY")).toDouble(terrain.sizeY), terrain.sizeY, 0.001f, 100000.0f);
+        terrain.height = safeFinite(terrainJson.value(QStringLiteral("height")).toDouble(terrain.height), terrain.height, 0.0f, 100000.0f);
+        terrain.noiseScale = safeFinite(terrainJson.value(QStringLiteral("noiseScale")).toDouble(terrain.noiseScale), terrain.noiseScale, 0.0001f, 100000.0f);
+        terrain.noiseAmplitude = safeFinite(terrainJson.value(QStringLiteral("noiseAmplitude")).toDouble(terrain.noiseAmplitude), terrain.noiseAmplitude, 0.0f, 100000.0f);
+        terrain.noiseOctaves = std::clamp(terrainJson.value(QStringLiteral("noiseOctaves")).toInt(terrain.noiseOctaves), 1, 12);
+        terrain.noiseEvolution = safeFinite(terrainJson.value(QStringLiteral("noiseEvolution")).toDouble(terrain.noiseEvolution), terrain.noiseEvolution, -100000.0f, 100000.0f);
         terrain.quality = static_cast<ArtifactCore::Procedural3DQuality>(
             std::clamp(terrainJson.value(QStringLiteral("quality")).toInt(static_cast<int>(terrain.quality)), 0, 2));
 
@@ -528,20 +533,20 @@ public:
         pathTube.seed = static_cast<std::uint32_t>(std::max(0, pathJson.value(QStringLiteral("seed")).toInt(static_cast<int>(pathTube.seed))));
         pathTube.pathSource = static_cast<ArtifactCore::ProceduralPathSource>(
             std::clamp(pathJson.value(QStringLiteral("pathSource")).toInt(static_cast<int>(pathTube.pathSource)), 0, 1));
-        pathSourceLayerId = pathJson.value(QStringLiteral("pathSourceLayerId")).toString();
+        pathSourceLayerId = pathJson.value(QStringLiteral("pathSourceLayerId")).toString().trimmed().left(1024);
         pathTube.profile = static_cast<ArtifactCore::ProceduralPathProfile>(
             std::clamp(pathJson.value(QStringLiteral("profile")).toInt(static_cast<int>(pathTube.profile)), 0, 1));
-        pathTube.pathSamples = pathJson.value(QStringLiteral("pathSamples")).toInt(pathTube.pathSamples);
-        pathTube.sides = pathJson.value(QStringLiteral("sides")).toInt(pathTube.sides);
-        pathTube.radius = static_cast<float>(pathJson.value(QStringLiteral("radius")).toDouble(pathTube.radius));
-        pathTube.taperStart = static_cast<float>(pathJson.value(QStringLiteral("taperStart")).toDouble(pathTube.taperStart));
-        pathTube.taperEnd = static_cast<float>(pathJson.value(QStringLiteral("taperEnd")).toDouble(pathTube.taperEnd));
-        pathTube.twist = static_cast<float>(pathJson.value(QStringLiteral("twist")).toDouble(pathTube.twist));
-        pathTube.pathOffset = static_cast<float>(pathJson.value(QStringLiteral("pathOffset")).toDouble(pathTube.pathOffset));
-        pathTube.repeatCount = static_cast<float>(pathJson.value(QStringLiteral("repeatCount")).toDouble(pathTube.repeatCount));
-        pathTube.pathScale = static_cast<float>(pathJson.value(QStringLiteral("pathScale")).toDouble(pathTube.pathScale));
-        pathTube.noiseScale = static_cast<float>(pathJson.value(QStringLiteral("noiseScale")).toDouble(pathTube.noiseScale));
-        pathTube.noiseAmplitude = static_cast<float>(pathJson.value(QStringLiteral("noiseAmplitude")).toDouble(pathTube.noiseAmplitude));
+        pathTube.pathSamples = std::clamp(pathJson.value(QStringLiteral("pathSamples")).toInt(pathTube.pathSamples), 2, 10000);
+        pathTube.sides = std::clamp(pathJson.value(QStringLiteral("sides")).toInt(pathTube.sides), 3, 256);
+        pathTube.radius = safeFinite(pathJson.value(QStringLiteral("radius")).toDouble(pathTube.radius), pathTube.radius, 0.0f, 100000.0f);
+        pathTube.taperStart = safeFinite(pathJson.value(QStringLiteral("taperStart")).toDouble(pathTube.taperStart), pathTube.taperStart, 0.0f, 1000.0f);
+        pathTube.taperEnd = safeFinite(pathJson.value(QStringLiteral("taperEnd")).toDouble(pathTube.taperEnd), pathTube.taperEnd, 0.0f, 1000.0f);
+        pathTube.twist = safeFinite(pathJson.value(QStringLiteral("twist")).toDouble(pathTube.twist), pathTube.twist, -100000.0f, 100000.0f);
+        pathTube.pathOffset = safeFinite(pathJson.value(QStringLiteral("pathOffset")).toDouble(pathTube.pathOffset), pathTube.pathOffset, -100000.0f, 100000.0f);
+        pathTube.repeatCount = safeFinite(pathJson.value(QStringLiteral("repeatCount")).toDouble(pathTube.repeatCount), pathTube.repeatCount, 0.001f, 100000.0f);
+        pathTube.pathScale = safeFinite(pathJson.value(QStringLiteral("pathScale")).toDouble(pathTube.pathScale), pathTube.pathScale, 0.001f, 100000.0f);
+        pathTube.noiseScale = safeFinite(pathJson.value(QStringLiteral("noiseScale")).toDouble(pathTube.noiseScale), pathTube.noiseScale, 0.0001f, 100000.0f);
+        pathTube.noiseAmplitude = safeFinite(pathJson.value(QStringLiteral("noiseAmplitude")).toDouble(pathTube.noiseAmplitude), pathTube.noiseAmplitude, 0.0f, 100000.0f);
         pathTube.quality = static_cast<ArtifactCore::Procedural3DQuality>(
             std::clamp(pathJson.value(QStringLiteral("quality")).toInt(static_cast<int>(pathTube.quality)), 0, 2));
         invalidate();
@@ -936,21 +941,28 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
         Q_EMIT changed();
         return true;
     };
+    const auto safeValue = [](const QVariant& input, const float fallback,
+                              const float minimum, const float maximum) {
+        const float raw = static_cast<float>(input.toDouble());
+        return std::isfinite(raw) ? std::clamp(raw, minimum, maximum) : fallback;
+    };
     if (path == QStringLiteral("procedural.kind")) {
         impl_->kind = static_cast<Procedural3DLayerKind>(std::clamp(value.toInt(), 0, 1));
         return commitChange();
     }
     if (path == QStringLiteral("procedural.baseColor")) {
-        impl_->baseColor = value.value<QColor>();
+        const QColor color = value.value<QColor>();
+        if (color.isValid()) impl_->baseColor = color;
         return commitChange();
     }
     if (path == QStringLiteral("material.emission.color")) {
-        impl_->material.setEmissionColor(value.value<QColor>());
+        const QColor color = value.value<QColor>();
+        if (color.isValid()) impl_->material.setEmissionColor(color);
         return commitChange();
     }
     if (path == QStringLiteral("material.emissionStrength")) {
         impl_->material.setEmissionStrength(
-            std::max(0.0f, static_cast<float>(value.toDouble())));
+            safeValue(value, 0.0f, 0.0f, 1000000.0f));
         return commitChange();
     }
     if (path == QStringLiteral("procedural.shading")) {
@@ -963,11 +975,11 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
         impl_->pathTube.quality = quality;
         return commitChange();
     }
-    if (path == QStringLiteral("terrain.columns")) { impl_->terrain.columns = std::max(1, value.toInt()); return commitChange(); }
-    if (path == QStringLiteral("terrain.rows")) { impl_->terrain.rows = std::max(1, value.toInt()); return commitChange(); }
-    if (path == QStringLiteral("terrain.sizeX")) { impl_->terrain.sizeX = std::max(0.001f, static_cast<float>(value.toDouble())); return commitChange(); }
-    if (path == QStringLiteral("terrain.sizeY")) { impl_->terrain.sizeY = std::max(0.001f, static_cast<float>(value.toDouble())); return commitChange(); }
-    if (path == QStringLiteral("terrain.height")) { impl_->terrain.height = std::max(0.0f, static_cast<float>(value.toDouble())); return commitChange(); }
+    if (path == QStringLiteral("terrain.columns")) { impl_->terrain.columns = std::clamp(value.toInt(), 2, 4096); return commitChange(); }
+    if (path == QStringLiteral("terrain.rows")) { impl_->terrain.rows = std::clamp(value.toInt(), 2, 4096); return commitChange(); }
+    if (path == QStringLiteral("terrain.sizeX")) { impl_->terrain.sizeX = safeValue(value, 1.0f, 0.001f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("terrain.sizeY")) { impl_->terrain.sizeY = safeValue(value, 1.0f, 0.001f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("terrain.height")) { impl_->terrain.height = safeValue(value, 0.0f, 0.0f, 100000.0f); return commitChange(); }
     if (path == QStringLiteral("terrain.seed")) { impl_->terrain.seed = static_cast<std::uint32_t>(std::max(0, value.toInt())); return commitChange(); }
     if (path == QStringLiteral("terrain.heightSource")) {
         impl_->terrain.heightSource = static_cast<ArtifactCore::TerrainHeightSource>(
@@ -976,18 +988,18 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
         return commitChange();
     }
     if (path == QStringLiteral("terrain.heightSourcePath")) {
-        impl_->terrainHeightSourcePath = value.toString();
+        impl_->terrainHeightSourcePath = value.toString().trimmed().left(32768);
         impl_->loadedTerrainHeightSourcePath.clear();
         return commitChange();
     }
     if (path == QStringLiteral("procedural.wireThickness")) {
         impl_->wireThickness =
-            std::max(0.1f, static_cast<float>(value.toDouble()));
+            safeValue(value, 1.0f, 0.1f, 100000.0f);
         return commitChange();
     }
     if (path == QStringLiteral("terrain.audioGain")) {
         impl_->terrainAudioGain =
-            std::max(0.0f, static_cast<float>(value.toDouble()));
+            safeValue(value, 1.0f, 0.0f, 1000000.0f);
         return commitChange();
     }
     if (path == QStringLiteral("terrain.uvMode")) {
@@ -995,10 +1007,10 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
             std::clamp(value.toInt(), 0, 2));
         return commitChange();
     }
-    if (path == QStringLiteral("terrain.noiseScale")) { impl_->terrain.noiseScale = std::max(0.0001f, static_cast<float>(value.toDouble())); return commitChange(); }
-    if (path == QStringLiteral("terrain.noiseAmplitude")) { impl_->terrain.noiseAmplitude = std::max(0.0f, static_cast<float>(value.toDouble())); return commitChange(); }
+    if (path == QStringLiteral("terrain.noiseScale")) { impl_->terrain.noiseScale = safeValue(value, 1.0f, 0.0001f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("terrain.noiseAmplitude")) { impl_->terrain.noiseAmplitude = safeValue(value, 0.0f, 0.0f, 100000.0f); return commitChange(); }
     if (path == QStringLiteral("terrain.noiseOctaves")) { impl_->terrain.noiseOctaves = std::clamp(value.toInt(), 1, 12); return commitChange(); }
-    if (path == QStringLiteral("terrain.noiseEvolution")) { impl_->terrain.noiseEvolution = static_cast<float>(value.toDouble()); return commitChange(); }
+    if (path == QStringLiteral("terrain.noiseEvolution")) { impl_->terrain.noiseEvolution = safeValue(value, 0.0f, -100000.0f, 100000.0f); return commitChange(); }
     if (path == QStringLiteral("path.profile")) { impl_->pathTube.profile = static_cast<ArtifactCore::ProceduralPathProfile>(std::clamp(value.toInt(), 0, 1)); return commitChange(); }
     if (path == QStringLiteral("path.source")) {
         impl_->pathTube.pathSource = static_cast<ArtifactCore::ProceduralPathSource>(
@@ -1007,22 +1019,22 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
         return commitChange();
     }
     if (path == QStringLiteral("path.sourceLayerId")) {
-        impl_->pathSourceLayerId = value.toString();
+        impl_->pathSourceLayerId = value.toString().trimmed().left(1024);
         impl_->pathTube.pathPoints.clear();
         return commitChange();
     }
-    if (path == QStringLiteral("path.samples")) { impl_->pathTube.pathSamples = std::max(2, value.toInt()); return commitChange(); }
-    if (path == QStringLiteral("path.sides")) { impl_->pathTube.sides = std::max(3, value.toInt()); return commitChange(); }
-    if (path == QStringLiteral("path.radius")) { impl_->pathTube.radius = std::max(0.0f, static_cast<float>(value.toDouble())); return commitChange(); }
-    if (path == QStringLiteral("path.taperStart")) { impl_->pathTube.taperStart = std::max(0.0f, static_cast<float>(value.toDouble())); return commitChange(); }
-    if (path == QStringLiteral("path.taperEnd")) { impl_->pathTube.taperEnd = std::max(0.0f, static_cast<float>(value.toDouble())); return commitChange(); }
-    if (path == QStringLiteral("path.twist")) { impl_->pathTube.twist = static_cast<float>(value.toDouble()); return commitChange(); }
-    if (path == QStringLiteral("path.pathOffset")) { impl_->pathTube.pathOffset = static_cast<float>(value.toDouble()); return commitChange(); }
-    if (path == QStringLiteral("path.repeatCount")) { impl_->pathTube.repeatCount = std::max(0.001f, static_cast<float>(value.toDouble())); return commitChange(); }
-    if (path == QStringLiteral("path.pathScale")) { impl_->pathTube.pathScale = std::max(0.001f, static_cast<float>(value.toDouble())); return commitChange(); }
+    if (path == QStringLiteral("path.samples")) { impl_->pathTube.pathSamples = std::clamp(value.toInt(), 2, 10000); return commitChange(); }
+    if (path == QStringLiteral("path.sides")) { impl_->pathTube.sides = std::clamp(value.toInt(), 3, 256); return commitChange(); }
+    if (path == QStringLiteral("path.radius")) { impl_->pathTube.radius = safeValue(value, 1.0f, 0.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("path.taperStart")) { impl_->pathTube.taperStart = safeValue(value, 1.0f, 0.0f, 1000.0f); return commitChange(); }
+    if (path == QStringLiteral("path.taperEnd")) { impl_->pathTube.taperEnd = safeValue(value, 1.0f, 0.0f, 1000.0f); return commitChange(); }
+    if (path == QStringLiteral("path.twist")) { impl_->pathTube.twist = safeValue(value, 0.0f, -100000.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("path.pathOffset")) { impl_->pathTube.pathOffset = safeValue(value, 0.0f, -100000.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("path.repeatCount")) { impl_->pathTube.repeatCount = safeValue(value, 1.0f, 0.001f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("path.pathScale")) { impl_->pathTube.pathScale = safeValue(value, 1.0f, 0.001f, 100000.0f); return commitChange(); }
     if (path == QStringLiteral("path.seed")) { impl_->pathTube.seed = static_cast<std::uint32_t>(std::max(0, value.toInt())); return commitChange(); }
-    if (path == QStringLiteral("path.noiseScale")) { impl_->pathTube.noiseScale = std::max(0.0001f, static_cast<float>(value.toDouble())); return commitChange(); }
-    if (path == QStringLiteral("path.noiseAmplitude")) { impl_->pathTube.noiseAmplitude = std::max(0.0f, static_cast<float>(value.toDouble())); return commitChange(); }
+    if (path == QStringLiteral("path.noiseScale")) { impl_->pathTube.noiseScale = safeValue(value, 1.0f, 0.0001f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("path.noiseAmplitude")) { impl_->pathTube.noiseAmplitude = safeValue(value, 0.0f, 0.0f, 100000.0f); return commitChange(); }
     return ArtifactAbstractLayer::setLayerPropertyValue(path, value);
 }
 

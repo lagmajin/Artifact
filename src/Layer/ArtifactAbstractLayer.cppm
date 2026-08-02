@@ -62,6 +62,9 @@ import Layer.Matte;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
+import Artifact.Effect.Keying.ChromaKey;
+import Artifact.Effect.Keying.LumaKey;
+import Artifact.Effect.Keying.DifferenceKey;
 import Artifact.Effect.Generator.Cloner;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
@@ -1404,6 +1407,10 @@ void ArtifactAbstractLayer::setLabelColorIndex(int index) {
 void ArtifactAbstractLayer::setDirty(LayerDirtyFlag flag) {
   impl_->dirtyFlags_ |= (uint32_t)flag;
   ++impl_->geometryRevision_;
+  // A thumbnail is derived from layer content. Any mutation invalidates the
+  // cached image so a later renderer cannot return a stale preview.
+  impl_->thumbnailCache_ = QImage();
+  impl_->thumbnailCacheSize_ = QSize();
 }
 void ArtifactAbstractLayer::clearDirty(LayerDirtyFlag flag) {
   impl_->dirtyFlags_ &= ~(uint32_t)flag;
@@ -4015,6 +4022,8 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
     QJsonObject eobj;
     eobj["id"] = eff->effectID().toQString();
     eobj["displayName"] = eff->displayName().toQString();
+    eobj["enabled"] = eff->isEnabled();
+    eobj["pipelineStage"] = static_cast<int>(eff->pipelineStage());
 
     QJsonArray propsArr;
     auto props = eff->getProperties();
@@ -4293,6 +4302,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
       const auto layerMask = impl_->getMask(maskIndex);
       QJsonObject mobj;
       mobj["enabled"] = layerMask.isEnabled();
+      mobj["locked"] = layerMask.isLocked();
 
       QJsonArray pathsArr;
       for (int pathIndex = 0; pathIndex < layerMask.maskPathCount();
@@ -4398,8 +4408,33 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
       continue;
     UniString eid(eobj["id"].toString().toStdString());
     auto eff = getEffect(eid);
+    if (!eff) {
+      const QString effectId = eobj.value(QStringLiteral("id")).toString();
+      if (effectId == QStringLiteral("chroma_key") ||
+          effectId == QStringLiteral("Effect.Keying.ChromaKey")) {
+        eff = makeShared<ChromaKeyEffect>();
+      } else if (effectId == QStringLiteral("luma_key") ||
+                 effectId == QStringLiteral("Effect.Keying.LumaKey")) {
+        eff = makeShared<LumaKeyEffect>();
+      } else if (effectId == QStringLiteral("difference_key") ||
+                 effectId == QStringLiteral("Effect.Keying.DifferenceKey")) {
+        eff = makeShared<DifferenceKeyEffect>();
+      }
+      if (eff) {
+        eff->setEffectID(eid);
+        addEffect(eff);
+      }
+    }
     if (!eff)
       continue;
+    if (eobj.contains(QStringLiteral("enabled"))) {
+      eff->setEnabled(eobj.value(QStringLiteral("enabled")).toBool(true));
+    }
+    if (eobj.contains(QStringLiteral("pipelineStage"))) {
+      eff->setPipelineStage(static_cast<EffectPipelineStage>(
+          eobj.value(QStringLiteral("pipelineStage")).toInt(
+              static_cast<int>(EffectPipelineStage::Rasterizer))));
+    }
     if (!eobj.contains("properties") || !eobj["properties"].isArray())
       continue;
     auto props = eobj["properties"].toArray();
@@ -4440,7 +4475,7 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
           serialized.name = name;
           serialized.type = static_cast<int>(ptype);
           serialized.value = pobj.value("value");
-          serialized.expression = pobj.value("expression").toString();
+          serialized.expression = pobj.value("expression").toString().trimmed().left(16384);
           serialized.keyframes = pobj.value("keyframes").toArray();
           serialized.envelopes = pobj.value("envelopes").toArray();
           ArtifactCore::PropertySerializationBridge::deserializeProperty(
@@ -5053,6 +5088,9 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       LayerMask layerMask;
       if (mobj.contains("enabled")) {
         layerMask.setEnabled(mobj["enabled"].toBool(true));
+      }
+      if (mobj.contains("locked")) {
+        layerMask.setLocked(mobj["locked"].toBool(false));
       }
 
       if (mobj.contains("paths") && mobj["paths"].isArray()) {
@@ -7435,6 +7473,13 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
     maskEnabledProp->setDisplayLabel(QStringLiteral("Enabled"));
     maskGroup.addProperty(maskEnabledProp);
 
+    auto maskLockedProp =
+        makeProp(maskPropertyPrefix(maskIndex) + QStringLiteral(".locked"),
+                 PropertyType::Boolean, resolvedMask.isLocked(),
+                 -239 - maskIndex);
+    maskLockedProp->setDisplayLabel(QStringLiteral("Locked"));
+    maskGroup.addProperty(maskLockedProp);
+
     for (int pathIndex = 0; pathIndex < resolvedMask.maskPathCount();
          ++pathIndex) {
       const MaskPath path = resolvedMask.maskPath(pathIndex);
@@ -7856,6 +7901,13 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       LayerMask mask = impl_->getMask(maskAddress->maskIndex);
       if (maskAddress->field == QStringLiteral("enabled")) {
         mask.setEnabled(value.toBool());
+        impl_->setMask(maskAddress->maskIndex, mask);
+        notifyLayerMutation(this, LayerDirtyFlag::Mask,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      if (maskAddress->field == QStringLiteral("locked")) {
+        mask.setLocked(value.toBool());
         impl_->setMask(maskAddress->maskIndex, mask);
         notifyLayerMutation(this, LayerDirtyFlag::Mask,
                             LayerDirtyReason::PropertyChanged);

@@ -83,12 +83,10 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
     float kg = keyColor_.g();
     float kb = keyColor_.b();
     
-    float sim = similarity_;
-    float smooth = smoothness_;
-    float spill = spillReduction_;
+    float sim = std::clamp(similarity_, 0.0f, 1.7320508f);
+    float smooth = std::clamp(smoothness_, 0.001f, 1.7320508f);
+    float spill = std::clamp(spillReduction_, 0.0f, 1.0f);
     
-    if(smooth < 0.001f) smooth = 0.001f;
-
     ArtifactCore::Parallel::For(0, rows, rows * cols, [&](int y) {
         cv::Vec4f* ptr = dstMat.ptr<cv::Vec4f>(y);
         for(int x=0; x<cols; ++x) {
@@ -99,6 +97,10 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
 
             // Euclidian distance
             float dist = std::sqrt(std::pow(r - kr, 2) + std::pow(g - kg, 2) + std::pow(b - kb, 2));
+            if (!std::isfinite(dist) || !std::isfinite(a)) {
+                ptr[x][3] = 0.0f;
+                continue;
+            }
 
             float alphaFactor = 1.0f;
             if (dist < sim) {
@@ -119,7 +121,7 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
                  }
             }
 
-            ptr[x][3] = a * alphaFactor;
+            ptr[x][3] = std::clamp(a * alphaFactor, 0.0f, 1.0f);
         }
     });
 
@@ -143,18 +145,24 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     auto& similarityProp = props.emplace_back();
     similarityProp.setName("similarity");
     similarityProp.setType(ArtifactCore::PropertyType::Float);
+    similarityProp.setSoftRange(0.0, 1.7320508);
+    similarityProp.setHardRange(0.0, 1.7320508);
     similarityProp.setDefaultValue(QVariant(static_cast<double>(similarity())));
     similarityProp.setValue(QVariant(static_cast<double>(similarity())));
 
     auto& smoothProp = props.emplace_back();
     smoothProp.setName("smoothness");
     smoothProp.setType(ArtifactCore::PropertyType::Float);
+    smoothProp.setSoftRange(0.001, 1.7320508);
+    smoothProp.setHardRange(0.001, 1.7320508);
     smoothProp.setDefaultValue(QVariant(static_cast<double>(smoothness())));
     smoothProp.setValue(QVariant(static_cast<double>(smoothness())));
 
     auto& spillProp = props.emplace_back();
     spillProp.setName("spillReduction");
     spillProp.setType(ArtifactCore::PropertyType::Float);
+    spillProp.setSoftRange(0.0, 1.0);
+    spillProp.setHardRange(0.0, 1.0);
     spillProp.setDefaultValue(QVariant(static_cast<double>(spillReduction())));
     spillProp.setValue(QVariant(static_cast<double>(spillReduction())));
 
@@ -163,16 +171,23 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
 
 void ChromaKeyEffect::setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value) {
     QString n = name.toQString();
+    const auto safeValue = [&value](const float fallback,
+                                    const float minimum,
+                                    const float maximum) {
+        const float raw = static_cast<float>(value.toDouble());
+        return std::isfinite(raw) ? std::clamp(raw, minimum, maximum) : fallback;
+    };
     if (n == "similarity") {
-        setSimilarity(static_cast<float>(value.toDouble()));
+        setSimilarity(safeValue(0.0f, 0.0f, 1.7320508f));
     } else if (n == "smoothness") {
-        setSmoothness(static_cast<float>(value.toDouble()));
+        setSmoothness(safeValue(0.001f, 0.001f, 1.7320508f));
     } else if (n == "spillReduction") {
-        setSpillReduction(static_cast<float>(value.toDouble()));
+        setSpillReduction(safeValue(0.0f, 0.0f, 1.0f));
     } else if (n == "keyColor") {
         // Expect QColor or other representation; best-effort
         if (value.canConvert<QColor>()) {
             QColor c = value.value<QColor>();
+            if (!c.isValid()) return;
             setKeyColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
         }
     }
@@ -194,21 +209,21 @@ const FloatRGBA& ChromaKeyEffect::keyColor() const {
 }
 
 void ChromaKeyEffect::setSimilarity(float val) {
-    typedCpuImpl_->setSimilarity(val);
+    typedCpuImpl_->setSimilarity(std::isfinite(val) ? std::clamp(val, 0.0f, 1.7320508f) : 0.4f);
 }
 float ChromaKeyEffect::similarity() const {
     return typedCpuImpl_->similarity();
 }
 
 void ChromaKeyEffect::setSmoothness(float val) {
-    typedCpuImpl_->setSmoothness(val);
+    typedCpuImpl_->setSmoothness(std::isfinite(val) ? std::clamp(val, 0.001f, 1.7320508f) : 0.1f);
 }
 float ChromaKeyEffect::smoothness() const {
     return typedCpuImpl_->smoothness();
 }
 
 void ChromaKeyEffect::setSpillReduction(float val) {
-    typedCpuImpl_->setSpillReduction(val);
+    typedCpuImpl_->setSpillReduction(std::isfinite(val) ? std::clamp(val, 0.0f, 1.0f) : 0.5f);
 }
 float ChromaKeyEffect::spillReduction() const {
     return typedCpuImpl_->spillReduction();

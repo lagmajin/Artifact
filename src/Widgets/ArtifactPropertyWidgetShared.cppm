@@ -972,8 +972,9 @@ void launchExpressionCopilot(
   }
   if (propertyPtr && applyHandler) {
     copilot->setApplyHandler([propertyPtr, applyHandler](const QString &expr) {
-      propertyPtr->setExpression(expr);
-      applyHandler(expr);
+      const QString normalized = expr.trimmed().left(16384);
+      propertyPtr->setExpression(normalized);
+      applyHandler(normalized);
     });
   }
   copilot->setAttribute(Qt::WA_DeleteOnClose);

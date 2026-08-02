@@ -459,6 +459,43 @@ namespace Artifact
     // レンダリングジョブクラス
     class ArtifactRenderJob {
     public:
+        enum class FrameRangeMode {
+            Composition,
+            WorkArea,
+            Custom,
+            SelectedFrames,
+            SingleFrame
+        };
+
+        enum class RegionMode {
+            Full,
+            RegionOfInterest,
+            CustomCrop
+        };
+
+        enum class LayerFilterMode {
+            All,
+            Selected,
+            Solo,
+            Visible,
+            Custom
+        };
+
+        enum class ResolutionPreset {
+            Custom,
+            Composition,
+            Half,
+            Third,
+            Quarter
+        };
+
+        struct RenderPassConfig {
+            QString name;
+            LayerFilterMode layerFilter = LayerFilterMode::All;
+            QList<ArtifactCore::LayerID> layerIds;
+            bool enabled = true;
+        };
+
         enum class Status {
             Pending,       // 待機中
             Rendering,     // レンダリング中
@@ -488,6 +525,21 @@ namespace Artifact
         int bitrate;                  // ビットレート (kbps)
         int startFrame;               // 開始フレーム
         int endFrame;                 // 終了フレーム
+        FrameRangeMode frameRangeMode = FrameRangeMode::Composition;
+        QList<QPair<int, int>> selectedFrameRanges;
+        RegionMode regionMode = RegionMode::Full;
+        int cropX = 0;
+        int cropY = 0;
+        int cropW = 0;
+        int cropH = 0;
+        LayerFilterMode layerFilterMode = LayerFilterMode::All;
+        QList<ArtifactCore::LayerID> layerWhitelist;
+        QList<ArtifactCore::LayerID> layerBlacklist;
+        bool excludeGuideLayers = false;
+        bool excludeAdjustmentLayers = false;
+        bool splitPasses = false;
+        QList<RenderPassConfig> renderPasses;
+        ResolutionPreset resolutionPreset = ResolutionPreset::Composition;
         Status status;                // ステータス
         int progress;                 // 進捗率 (0-100)
         QString errorMessage;         // エラーメッセージ
@@ -683,7 +735,7 @@ namespace Artifact
         {
             QStringList sanitized;
             for (const auto& name : requestedChannels) {
-                const auto parsed = rendererChannelFromKey(name);
+                const auto parsed = rendererChannelFromKey(name.trimmed());
                 if (!parsed.has_value()) {
                     continue;
                 }
@@ -2065,7 +2117,7 @@ namespace Artifact
         void setJobOutputPath(int index, const QString& outputPath) {
             if (index < 0 || index >= jobs.size()) return;
             auto& job = jobs[index];
-            const QString trimmed = outputPath.trimmed();
+            const QString trimmed = outputPath.trimmed().left(32768);
             job.outputPath = trimmed.isEmpty() ? defaultOutputPathForJob(job) : trimmed;
             if (jobUpdated) jobUpdated(index);
         }
@@ -2124,18 +2176,19 @@ namespace Artifact
         {
             if (index < 0 || index >= jobs.size()) return;
             auto& job = jobs[index];
-            const QString fmt = outputFormat.trimmed();
-            const QString cdc = codec.trimmed();
+            const QString fmt = outputFormat.trimmed().left(256);
+            const QString cdc = codec.trimmed().left(256);
             ArtifactRenderJob normalizedJob;
             normalizedJob.outputFormat = fmt.isEmpty() ? QStringLiteral("MP4") : fmt;
             job.outputFormat = Artifact::deriveContainerFromJob(normalizedJob);
             job.codec = cdc.isEmpty() ? QStringLiteral("H.264") : cdc;
-            job.codecProfile = codecProfile.trimmed().isEmpty()
+            const QString normalizedProfile = codecProfile.trimmed().left(256);
+            job.codecProfile = normalizedProfile.isEmpty()
                 ? (normalizeCodecName(job.codec) == QStringLiteral("prores") ? QStringLiteral("hq") : QString())
-                : codecProfile.trimmed();
+                : normalizedProfile;
             job.resolutionWidth = std::clamp(width, 16, 16384);
             job.resolutionHeight = std::clamp(height, 16, 16384);
-            job.frameRate = std::clamp(fps, 1.0, 240.0);
+            job.frameRate = std::isfinite(fps) ? std::clamp(fps, 1.0, 240.0) : 30.0;
             job.bitrate = std::clamp(bitrateKbps, 128, 200000);
             if (jobUpdated) jobUpdated(index);
         }
@@ -2204,7 +2257,7 @@ namespace Artifact
 
         void setJobAudioSourcePath(int index, const QString& path) {
             if (index < 0 || index >= jobs.size()) return;
-            jobs[index].audioSourcePath = path.trimmed();
+            jobs[index].audioSourcePath = path.trimmed().left(32768);
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -2217,7 +2270,8 @@ namespace Artifact
 
         void setJobAudioCodec(int index, const QString& codec) {
             if (index < 0 || index >= jobs.size()) return;
-            jobs[index].audioCodec = codec.trimmed().isEmpty() ? QStringLiteral("aac") : codec.trimmed();
+            const QString normalized = codec.trimmed().left(256);
+            jobs[index].audioCodec = normalized.isEmpty() ? QStringLiteral("aac") : normalized;
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -2272,6 +2326,41 @@ namespace Artifact
         void updateJob(int index, const ArtifactRenderJob& job) {
             if (index < 0 || index >= jobs.size()) return;
             jobs[index] = job;
+            jobs[index].outputFormat = jobs[index].outputFormat.trimmed().left(256).isEmpty()
+                ? QStringLiteral("MP4") : jobs[index].outputFormat.trimmed().left(256);
+            jobs[index].jobName = jobs[index].jobName.trimmed().left(256);
+            jobs[index].audioSourcePath = jobs[index].audioSourcePath.trimmed().left(32768);
+            jobs[index].outputPath = jobs[index].outputPath.trimmed().left(32768);
+            jobs[index].codec = jobs[index].codec.trimmed().left(256).isEmpty()
+                ? QStringLiteral("H.264") : jobs[index].codec.trimmed().left(256);
+            jobs[index].codecProfile = jobs[index].codecProfile.trimmed().left(256);
+            jobs[index].audioCodec = jobs[index].audioCodec.trimmed().left(256).isEmpty()
+                ? QStringLiteral("aac") : jobs[index].audioCodec.trimmed().left(256);
+            const QString audioMode = jobs[index].audioChannelMode.trimmed().toLower();
+            jobs[index].audioChannelMode =
+                audioMode == QStringLiteral("mono") || audioMode == QStringLiteral("5.1") ||
+                        audioMode == QStringLiteral("7.1") || audioMode == QStringLiteral("source")
+                    ? audioMode : QStringLiteral("stereo");
+            jobs[index].resolutionWidth = std::clamp(jobs[index].resolutionWidth, 16, 16384);
+            jobs[index].resolutionHeight = std::clamp(jobs[index].resolutionHeight, 16, 16384);
+            jobs[index].frameRate = std::isfinite(jobs[index].frameRate)
+                ? std::clamp(jobs[index].frameRate, 1.0, 240.0) : 30.0;
+            jobs[index].bitrate = std::clamp(jobs[index].bitrate, 128, 200000);
+            jobs[index].audioBitrateKbps = std::clamp(jobs[index].audioBitrateKbps, 32, 1024);
+            jobs[index].audioSampleRate =
+                jobs[index].audioSampleRate == 0 || jobs[index].audioSampleRate == 48000 ||
+                        jobs[index].audioSampleRate == 96000
+                    ? jobs[index].audioSampleRate : 48000;
+            jobs[index].startFrame = std::max(0, jobs[index].startFrame);
+            jobs[index].endFrame = std::max(jobs[index].startFrame, jobs[index].endFrame);
+            jobs[index].overlayOffsetX = std::isfinite(jobs[index].overlayOffsetX)
+                ? std::clamp(jobs[index].overlayOffsetX, -100000.0f, 100000.0f) : 0.0f;
+            jobs[index].overlayOffsetY = std::isfinite(jobs[index].overlayOffsetY)
+                ? std::clamp(jobs[index].overlayOffsetY, -100000.0f, 100000.0f) : 0.0f;
+            jobs[index].overlayScale = std::isfinite(jobs[index].overlayScale)
+                ? std::clamp(jobs[index].overlayScale, 0.05f, 8.0f) : 1.0f;
+            jobs[index].overlayRotationDeg = std::isfinite(jobs[index].overlayRotationDeg)
+                ? std::clamp(jobs[index].overlayRotationDeg, -360000.0f, 360000.0f) : 0.0f;
             if (jobs[index].outputPath.trimmed().isEmpty()) {
                 jobs[index].outputPath = defaultOutputPathForJob(jobs[index]);
             }
@@ -2320,7 +2409,7 @@ namespace Artifact
             if (index < 0 || index >= jobs.size()) {
                 return;
             }
-            jobs[index].jobName = name;
+            jobs[index].jobName = name.trimmed().left(256);
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -2376,10 +2465,14 @@ namespace Artifact
                 return;
             }
             auto& job = jobs[index];
-            job.overlayOffsetX = offsetX;
-            job.overlayOffsetY = offsetY;
-            job.overlayScale = std::clamp(scale, 0.05f, 8.0f);
-            job.overlayRotationDeg = rotationDeg;
+            job.overlayOffsetX = std::isfinite(offsetX)
+                ? std::clamp(offsetX, -100000.0f, 100000.0f) : 0.0f;
+            job.overlayOffsetY = std::isfinite(offsetY)
+                ? std::clamp(offsetY, -100000.0f, 100000.0f) : 0.0f;
+            job.overlayScale = std::isfinite(scale)
+                ? std::clamp(scale, 0.05f, 8.0f) : 1.0f;
+            job.overlayRotationDeg = std::isfinite(rotationDeg)
+                ? std::clamp(rotationDeg, -360000.0f, 360000.0f) : 0.0f;
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -3469,8 +3562,36 @@ namespace Artifact
 
             const ArtifactCore::FramePosition currentPos(frameNumber);
             const auto& layers = composition->allLayerRef();
+            const bool hasSoloLayer = std::any_of(
+                layers.begin(), layers.end(), [](const auto& layer) {
+                    return layer && layer->isSolo();
+                });
+            const auto shouldRenderLayer = [&job, hasSoloLayer](const auto& layer) {
+                if (!layer) return false;
+                const auto layerId = layer->id();
+                if (job.layerBlacklist.contains(layerId) ||
+                    (job.excludeGuideLayers && layer->isGuide())) return false;
+                if (job.excludeAdjustmentLayers && layer->isAdjustmentLayer()) {
+                    return false;
+                }
+                switch (job.layerFilterMode) {
+                case ArtifactRenderJob::LayerFilterMode::All:
+                    return true;
+                case ArtifactRenderJob::LayerFilterMode::Selected:
+                    return job.layerWhitelist.contains(layerId);
+                case ArtifactRenderJob::LayerFilterMode::Custom:
+                    return job.layerWhitelist.isEmpty() ||
+                           job.layerWhitelist.contains(layerId);
+                case ArtifactRenderJob::LayerFilterMode::Solo:
+                    return !hasSoloLayer || layer->isSolo();
+                case ArtifactRenderJob::LayerFilterMode::Visible:
+                    return layer->isVisible();
+                }
+                return true;
+            };
             for (const auto& layer : layers) {
-                if (!layer || !layer->isVisible() || !layer->isActiveAt(currentPos)) {
+                if (!shouldRenderLayer(layer) || !layer->isVisible() ||
+                    !layer->isActiveAt(currentPos)) {
                     continue;
                 }
 
@@ -3492,24 +3613,81 @@ namespace Artifact
                 painter.restore();
             }
 
-            const int outW = std::max(16, job.resolutionWidth);
-            const int outH = std::max(16, job.resolutionHeight);
             QImage finalFrame = canvas;
-            if (canvas.width() != outW || canvas.height() != outH) {
-                finalFrame = canvas.scaled(outW, outH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            if (job.regionMode != ArtifactRenderJob::RegionMode::Full) {
+                const QRect requestedCrop(job.cropX, job.cropY, job.cropW, job.cropH);
+                const QRect crop = requestedCrop.intersected(canvas.rect());
+                if (!crop.isEmpty()) {
+                    finalFrame = canvas.copy(crop);
+                }
+            }
+
+            const bool hasCrop = job.regionMode != ArtifactRenderJob::RegionMode::Full &&
+                !finalFrame.isNull() && finalFrame.size() != canvas.size();
+            const int baseW = hasCrop ? finalFrame.width() : compW;
+            const int baseH = hasCrop ? finalFrame.height() : compH;
+            int outW = std::max(16, job.resolutionWidth);
+            int outH = std::max(16, job.resolutionHeight);
+            switch (job.resolutionPreset) {
+            case ArtifactRenderJob::ResolutionPreset::Half:
+                outW = std::max(16, baseW / 2);
+                outH = std::max(16, baseH / 2);
+                break;
+            case ArtifactRenderJob::ResolutionPreset::Third:
+                outW = std::max(16, baseW / 3);
+                outH = std::max(16, baseH / 3);
+                break;
+            case ArtifactRenderJob::ResolutionPreset::Quarter:
+                outW = std::max(16, baseW / 4);
+                outH = std::max(16, baseH / 4);
+                break;
+            case ArtifactRenderJob::ResolutionPreset::Composition:
+                outW = baseW;
+                outH = baseH;
+                break;
+            case ArtifactRenderJob::ResolutionPreset::Custom:
+                break;
+            }
+            if (finalFrame.width() != outW || finalFrame.height() != outH) {
+                finalFrame = finalFrame.scaled(outW, outH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
             }
             applyCompositionFinalEffectsToImage(composition.get(), finalFrame);
             return finalFrame;
         }
 
         bool renderSingleFrameGPU(const ArtifactRenderJob& job, int index, QString* outputPath, QString* errorMessage) {
-            const int width  = std::max(16, job.resolutionWidth);
-            const int height = std::max(16, job.resolutionHeight);
-
             const auto comp = resolveComposition(job);
             if (!comp) {
                 if (errorMessage) *errorMessage = QStringLiteral("Composition not found for GPU rendering");
                 return false;
+            }
+
+            const QSize compSize = comp->effectiveCompositionSize();
+            const bool hasCrop = job.regionMode != ArtifactRenderJob::RegionMode::Full &&
+                job.cropW > 0 && job.cropH > 0;
+                const int baseW = hasCrop ? output.beauty.width() : compSize.width();
+                const int baseH = hasCrop ? output.beauty.height() : compSize.height();
+            int width = std::max(16, job.resolutionWidth);
+            int height = std::max(16, job.resolutionHeight);
+            switch (job.resolutionPreset) {
+            case ArtifactRenderJob::ResolutionPreset::Composition:
+                width = std::max(16, baseW);
+                height = std::max(16, baseH);
+                break;
+            case ArtifactRenderJob::ResolutionPreset::Half:
+                width = std::max(16, baseW / 2);
+                height = std::max(16, baseH / 2);
+                break;
+            case ArtifactRenderJob::ResolutionPreset::Third:
+                width = std::max(16, baseW / 3);
+                height = std::max(16, baseH / 3);
+                break;
+            case ArtifactRenderJob::ResolutionPreset::Quarter:
+                width = std::max(16, baseW / 4);
+                height = std::max(16, baseH / 4);
+                break;
+            case ArtifactRenderJob::ResolutionPreset::Custom:
+                break;
             }
 
             if (!gpuRenderer_) {
@@ -3535,7 +3713,6 @@ namespace Artifact
             // コンポジションのフレームを設定
             comp->goToFrame(job.startFrame);
 
-            const auto compSize = comp->effectiveCompositionSize();
             QHash<QString, LayerSurfaceCacheEntry> surfaceCache;
             GPUTextureCacheManager gpuTextureCacheManager;
             gpuTextureCacheManager.setDevice(gpuRenderer_->device());
@@ -3544,9 +3721,37 @@ namespace Artifact
             gpuRenderer_->clear();
             const auto& layers = comp->allLayerRef();
             const ArtifactCore::FramePosition currentPos(job.startFrame);
+            const bool hasSoloLayer = std::any_of(
+                layers.begin(), layers.end(), [](const auto& layer) {
+                    return layer && layer->isSolo();
+                });
+            const auto shouldRenderLayer = [&job, hasSoloLayer](const auto& layer) {
+                if (!layer) return false;
+                const auto layerId = layer->id();
+                if (job.layerBlacklist.contains(layerId) ||
+                    (job.excludeGuideLayers && layer->isGuide()) ||
+                    (job.excludeAdjustmentLayers && layer->isAdjustmentLayer())) {
+                    return false;
+                }
+                switch (job.layerFilterMode) {
+                case ArtifactRenderJob::LayerFilterMode::All:
+                    return true;
+                case ArtifactRenderJob::LayerFilterMode::Selected:
+                    return job.layerWhitelist.contains(layerId);
+                case ArtifactRenderJob::LayerFilterMode::Custom:
+                    return job.layerWhitelist.isEmpty() ||
+                           job.layerWhitelist.contains(layerId);
+                case ArtifactRenderJob::LayerFilterMode::Solo:
+                    return !hasSoloLayer || layer->isSolo();
+                case ArtifactRenderJob::LayerFilterMode::Visible:
+                    return layer->isVisible();
+                }
+                return true;
+            };
 
-                for (const auto& layer : layers) {
-                    if (!layer || !layer->isVisible() || !layer->isActiveAt(currentPos)) {
+            for (const auto& layer : layers) {
+                    if (!shouldRenderLayer(layer) || !layer->isVisible() ||
+                        !layer->isActiveAt(currentPos)) {
                         continue;
                     }
                     layer->goToFrame(job.startFrame);
@@ -3572,6 +3777,15 @@ namespace Artifact
                 if (frame.isNull()) {
                     if (errorMessage) *errorMessage = QStringLiteral("GPU readback failed");
                     return false;
+                }
+                if (job.regionMode != ArtifactRenderJob::RegionMode::Full) {
+                    const QRect crop = QRect(job.cropX, job.cropY, job.cropW, job.cropH)
+                                            .intersected(frame.rect());
+                    if (!crop.isEmpty()) frame = frame.copy(crop);
+                }
+                if (frame.width() != width || frame.height() != height) {
+                    frame = frame.scaled(width, height, Qt::IgnoreAspectRatio,
+                                         Qt::SmoothTransformation);
                 }
                 applyCompositionFinalEffectsToImage(comp.get(), frame);
             }
@@ -4095,6 +4309,286 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    QVariantMap ArtifactRenderQueueService::jobSelectiveSettingsAt(int index) const
+    {
+        if (index < 0 || index >= impl_->queueManager.jobCount()) return {};
+        const auto job = impl_->queueManager.getJob(index);
+        QVariantMap settings;
+        settings.insert(QStringLiteral("frameRangeMode"),
+                        static_cast<int>(job.frameRangeMode));
+        QVariantList selectedRanges;
+        for (const auto& range : job.selectedFrameRanges) {
+            QVariantMap rangeValue;
+            rangeValue.insert(QStringLiteral("start"), range.first);
+            rangeValue.insert(QStringLiteral("end"), range.second);
+            selectedRanges.append(rangeValue);
+        }
+        settings.insert(QStringLiteral("selectedFrameRanges"), selectedRanges);
+        settings.insert(QStringLiteral("regionMode"),
+                        static_cast<int>(job.regionMode));
+        settings.insert(QStringLiteral("cropX"), job.cropX);
+        settings.insert(QStringLiteral("cropY"), job.cropY);
+        settings.insert(QStringLiteral("cropW"), job.cropW);
+        settings.insert(QStringLiteral("cropH"), job.cropH);
+        settings.insert(QStringLiteral("layerFilterMode"),
+                        static_cast<int>(job.layerFilterMode));
+        auto idsToStrings = [](const QList<ArtifactCore::LayerID>& ids) {
+            QStringList values;
+            for (const auto& id : ids) values.append(id.toString());
+            return values;
+        };
+        settings.insert(QStringLiteral("layerWhitelist"), idsToStrings(job.layerWhitelist));
+        settings.insert(QStringLiteral("layerBlacklist"), idsToStrings(job.layerBlacklist));
+        settings.insert(QStringLiteral("excludeGuideLayers"), job.excludeGuideLayers);
+        settings.insert(QStringLiteral("excludeAdjustmentLayers"), job.excludeAdjustmentLayers);
+        settings.insert(QStringLiteral("splitPasses"), job.splitPasses);
+        settings.insert(QStringLiteral("resolutionPreset"),
+                        static_cast<int>(job.resolutionPreset));
+        QVariantList passes;
+        for (const auto& pass : job.renderPasses) {
+            QVariantMap value;
+            value.insert(QStringLiteral("name"), pass.name);
+            value.insert(QStringLiteral("layerFilter"), static_cast<int>(pass.layerFilter));
+            value.insert(QStringLiteral("layerIds"), idsToStrings(pass.layerIds));
+            value.insert(QStringLiteral("enabled"), pass.enabled);
+            passes.append(value);
+        }
+        settings.insert(QStringLiteral("renderPasses"), passes);
+        return settings;
+    }
+
+    bool ArtifactRenderQueueService::setJobSelectiveSettingsAt(
+        int index, const QVariantMap& settings)
+    {
+        if (index < 0 || index >= impl_->queueManager.jobCount()) return false;
+        auto job = impl_->queueManager.getJob(index);
+        const auto boundedEnum = [](int value, int maximum, int fallback) {
+            return value >= 0 && value <= maximum ? value : fallback;
+        };
+        job.frameRangeMode = static_cast<ArtifactRenderJob::FrameRangeMode>(
+            boundedEnum(settings.value(QStringLiteral("frameRangeMode"),
+                                      static_cast<int>(job.frameRangeMode)).toInt(),
+                        static_cast<int>(ArtifactRenderJob::FrameRangeMode::SingleFrame),
+                        static_cast<int>(ArtifactRenderJob::FrameRangeMode::Composition)));
+        if (settings.contains(QStringLiteral("selectedFrameRanges"))) {
+            job.selectedFrameRanges.clear();
+            for (const auto& raw : settings.value(QStringLiteral("selectedFrameRanges")).toList()) {
+                const QVariantMap range = raw.toMap();
+                const int start = range.value(QStringLiteral("start"), -1).toInt();
+                const int end = range.value(QStringLiteral("end"), -1).toInt();
+                if (start >= 0 && end > start) {
+                    job.selectedFrameRanges.append(qMakePair(start, end));
+                }
+            }
+        }
+        job.regionMode = static_cast<ArtifactRenderJob::RegionMode>(
+            boundedEnum(settings.value(QStringLiteral("regionMode"),
+                                      static_cast<int>(job.regionMode)).toInt(),
+                        static_cast<int>(ArtifactRenderJob::RegionMode::CustomCrop),
+                        static_cast<int>(ArtifactRenderJob::RegionMode::Full)));
+        job.cropX = settings.value(QStringLiteral("cropX"), job.cropX).toInt();
+        job.cropY = settings.value(QStringLiteral("cropY"), job.cropY).toInt();
+        job.cropW = std::max(0, settings.value(QStringLiteral("cropW"), job.cropW).toInt());
+        job.cropH = std::max(0, settings.value(QStringLiteral("cropH"), job.cropH).toInt());
+        job.layerFilterMode = static_cast<ArtifactRenderJob::LayerFilterMode>(
+            boundedEnum(settings.value(QStringLiteral("layerFilterMode"),
+                                      static_cast<int>(job.layerFilterMode)).toInt(),
+                        static_cast<int>(ArtifactRenderJob::LayerFilterMode::Custom),
+                        static_cast<int>(ArtifactRenderJob::LayerFilterMode::All)));
+        const auto stringsToIds = [](const QVariant& value) {
+            QList<ArtifactCore::LayerID> ids;
+            for (const auto& text : value.toStringList()) {
+                if (!text.trimmed().isEmpty()) ids.append(ArtifactCore::LayerID(text));
+            }
+            return ids;
+        };
+        if (settings.contains(QStringLiteral("layerWhitelist"))) {
+            job.layerWhitelist = stringsToIds(settings.value(QStringLiteral("layerWhitelist")));
+        }
+        if (settings.contains(QStringLiteral("layerBlacklist"))) {
+            job.layerBlacklist = stringsToIds(settings.value(QStringLiteral("layerBlacklist")));
+        }
+        job.excludeGuideLayers = settings.value(QStringLiteral("excludeGuideLayers"),
+                                                job.excludeGuideLayers).toBool();
+        job.excludeAdjustmentLayers = settings.value(QStringLiteral("excludeAdjustmentLayers"),
+                                                      job.excludeAdjustmentLayers).toBool();
+        job.splitPasses = settings.value(QStringLiteral("splitPasses"), job.splitPasses).toBool();
+        job.resolutionPreset = static_cast<ArtifactRenderJob::ResolutionPreset>(
+            boundedEnum(settings.value(QStringLiteral("resolutionPreset"),
+                                      static_cast<int>(job.resolutionPreset)).toInt(),
+                        static_cast<int>(ArtifactRenderJob::ResolutionPreset::Quarter),
+                        static_cast<int>(ArtifactRenderJob::ResolutionPreset::Composition)));
+        if (settings.contains(QStringLiteral("renderPasses"))) {
+            job.renderPasses.clear();
+            for (const auto& raw : settings.value(QStringLiteral("renderPasses")).toList()) {
+                const QVariantMap value = raw.toMap();
+                ArtifactRenderJob::RenderPassConfig pass;
+                pass.name = value.value(QStringLiteral("name")).toString().trimmed();
+                pass.layerFilter = static_cast<ArtifactRenderJob::LayerFilterMode>(
+                    boundedEnum(value.value(QStringLiteral("layerFilter"), 0).toInt(),
+                                static_cast<int>(ArtifactRenderJob::LayerFilterMode::Custom), 0));
+                pass.layerIds = stringsToIds(value.value(QStringLiteral("layerIds")));
+                pass.enabled = value.value(QStringLiteral("enabled"), true).toBool();
+                if (!pass.name.isEmpty()) job.renderPasses.append(pass);
+            }
+        }
+
+        void expandEnabledRenderPasses() {
+            const int count = queueManager.jobCount();
+            QList<ArtifactRenderJob> expanded;
+            expanded.reserve(count);
+            const auto passOutputPath = [](const QString& path, const QString& passName) {
+                const QFileInfo info(path);
+                QString safeName = passName.trimmed();
+                safeName.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9._-]+")),
+                                 QStringLiteral("_"));
+                if (safeName.isEmpty()) safeName = QStringLiteral("pass");
+                const QString base = info.completeBaseName().isEmpty()
+                    ? QStringLiteral("render") : info.completeBaseName();
+                const QString suffix = info.suffix();
+                const QString fileName = base + QStringLiteral("_") + safeName +
+                    (suffix.isEmpty() ? QString() : QStringLiteral(".") + suffix);
+                return info.dir().filePath(fileName);
+            };
+
+            std::set<QString> occupiedOutputPaths;
+            for (int i = 0; i < count; ++i) {
+                const ArtifactRenderJob existingJob = queueManager.getJob(i);
+                if (!existingJob.splitPasses || existingJob.renderPasses.isEmpty()) {
+                    const QString output = existingJob.outputPath.trimmed();
+                    if (!output.isEmpty()) {
+                        occupiedOutputPaths.insert(output.toCaseFolded());
+                    }
+                }
+            }
+            for (int i = 0; i < count; ++i) {
+                const ArtifactRenderJob job = queueManager.getJob(i);
+                QList<ArtifactRenderJob::RenderPassConfig> passes;
+                for (const auto& pass : job.renderPasses) {
+                    if (pass.enabled) passes.append(pass);
+                }
+                if (!job.splitPasses || passes.isEmpty()) {
+                    expanded.append(job);
+                    continue;
+                }
+                for (const auto& pass : passes) {
+                    ArtifactRenderJob passJob = job;
+                    const QString basePassPath = passOutputPath(job.outputPath, pass.name);
+                    QString passPath = basePassPath;
+                    int collisionIndex = 2;
+                    while (occupiedOutputPaths.contains(passPath.toCaseFolded())) {
+                        const QFileInfo pathInfo(basePassPath);
+                        const QString stem = pathInfo.completeBaseName();
+                        const QString suffix = pathInfo.suffix();
+                        passPath = pathInfo.dir().filePath(
+                            QStringLiteral("%1_%2%3")
+                                .arg(stem)
+                                .arg(collisionIndex++)
+                                .arg(suffix.isEmpty()
+                                         ? QString()
+                                         : QStringLiteral(".") + suffix));
+                    }
+                    occupiedOutputPaths.insert(passPath.toCaseFolded());
+                    passJob.jobName = (job.jobName.trimmed().isEmpty()
+                        ? job.compositionName : job.jobName) +
+                        QStringLiteral(" / ") + pass.name;
+                    passJob.outputPath = passPath;
+                    passJob.splitPasses = false;
+                    passJob.renderPasses.clear();
+                    passJob.layerFilterMode = pass.layerFilter;
+                    passJob.layerWhitelist = pass.layerIds;
+                    passJob.status = ArtifactRenderJob::Status::Pending;
+                    passJob.progress = 0;
+                    expanded.append(passJob);
+                }
+            }
+
+            if (expanded.size() == count) return;
+            queueManager.removeAllJobs();
+            for (const auto& job : expanded) queueManager.addJob(job);
+        }
+
+        void expandSelectedFrameRanges() {
+            const int count = queueManager.jobCount();
+            QList<ArtifactRenderJob> expanded;
+            expanded.reserve(count);
+            const auto rangeOutputPath = [](const QString& path, int start, int end) {
+                const QFileInfo info(path);
+                const QString base = info.completeBaseName().isEmpty()
+                    ? QStringLiteral("render") : info.completeBaseName();
+                const QString suffix = info.suffix();
+                const QString fileName = QStringLiteral("%1_f%2-%3%4")
+                    .arg(base).arg(start).arg(end)
+                    .arg(suffix.isEmpty() ? QString() : QStringLiteral(".") + suffix);
+                return info.dir().filePath(fileName);
+            };
+
+            for (int i = 0; i < count; ++i) {
+                const ArtifactRenderJob job = queueManager.getJob(i);
+                if (job.frameRangeMode != ArtifactRenderJob::FrameRangeMode::SelectedFrames ||
+                    job.selectedFrameRanges.isEmpty()) {
+                    expanded.append(job);
+                    continue;
+                }
+                QList<QPair<int, int>> normalizedRanges;
+                for (const auto& range : job.selectedFrameRanges) {
+                    // Composition timelines may legitimately start before
+                    // frame zero. Validate the half-open interval itself and
+                    // let the composition range clamp it later.
+                    if (range.second <= range.first) continue;
+                    if (!normalizedRanges.isEmpty() &&
+                        range.first <= normalizedRanges.last().second) {
+                        normalizedRanges.last().second = std::max(
+                            normalizedRanges.last().second, range.second);
+                    } else {
+                        normalizedRanges.append(range);
+                    }
+                }
+                std::sort(normalizedRanges.begin(), normalizedRanges.end(),
+                          [](const auto& left, const auto& right) {
+                              return left.first < right.first;
+                          });
+                QList<QPair<int, int>> mergedRanges;
+                for (const auto& range : normalizedRanges) {
+                    if (!mergedRanges.isEmpty() &&
+                        range.first <= mergedRanges.last().second) {
+                        mergedRanges.last().second = std::max(
+                            mergedRanges.last().second, range.second);
+                    } else {
+                        mergedRanges.append(range);
+                    }
+                }
+                int appendedRanges = 0;
+                for (const auto& range : mergedRanges) {
+                    ArtifactRenderJob rangeJob = job;
+                    rangeJob.frameRangeMode = ArtifactRenderJob::FrameRangeMode::Custom;
+                    rangeJob.selectedFrameRanges.clear();
+                    rangeJob.startFrame = range.first;
+                    rangeJob.endFrame = range.second;
+                    rangeJob.outputPath = rangeOutputPath(job.outputPath,
+                                                           range.first, range.second);
+                    rangeJob.jobName = (job.jobName.trimmed().isEmpty()
+                        ? job.compositionName : job.jobName) +
+                        QStringLiteral(" / Frames %1-%2").arg(range.first).arg(range.second);
+                    rangeJob.status = ArtifactRenderJob::Status::Pending;
+                    rangeJob.progress = 0;
+                    expanded.append(rangeJob);
+                    ++appendedRanges;
+                }
+                if (appendedRanges == 0) {
+                    expanded.append(job);
+                }
+            }
+
+            if (expanded.size() == count) return;
+            queueManager.removeAllJobs();
+            for (const auto& job : expanded) queueManager.addJob(job);
+        }
+        impl_->queueManager.updateJob(index, job);
+        impl_->syncCoreQueueModel();
+        return true;
+    }
+
     bool ArtifactRenderQueueService::jobOutputSettingsAt(
         int index,
         QString* outputFormat,
@@ -4299,6 +4793,101 @@ namespace Artifact
                 QStringLiteral("Relink the job to an existing composition"),
                 compId));
             return result;
+        }
+
+        const QSize compositionSize = composition->effectiveCompositionSize();
+        if (job.regionMode != ArtifactRenderJob::RegionMode::Full) {
+            if (job.cropW <= 0 || job.cropH <= 0) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Render crop region is empty"),
+                    QStringLiteral("ROI/custom crop must have a positive width and height."),
+                    QStringLiteral("Set a valid crop rectangle"), compId));
+            } else {
+                const QRect compositionRect(QPoint(0, 0), compositionSize);
+                const QRect cropRect(job.cropX, job.cropY, job.cropW, job.cropH);
+                const QRect clippedCrop = cropRect.intersected(compositionRect);
+                if (clippedCrop.isEmpty()) {
+                    result.addDiagnostic(makePreflightDiagnostic(
+                        ArtifactCore::DiagnosticSeverity::Error,
+                        ArtifactCore::DiagnosticCategory::Configuration,
+                        QStringLiteral("Render crop does not intersect composition"),
+                        QStringLiteral("Crop %1,%2 %3x%4 lies completely outside composition bounds %5x%6.")
+                            .arg(job.cropX).arg(job.cropY).arg(job.cropW).arg(job.cropH)
+                            .arg(compositionSize.width()).arg(compositionSize.height()),
+                        QStringLiteral("Move the crop rectangle inside the composition"),
+                        compId));
+                } else if (!compositionRect.contains(cropRect)) {
+                    result.addDiagnostic(makePreflightDiagnostic(
+                        ArtifactCore::DiagnosticSeverity::Warning,
+                        ArtifactCore::DiagnosticCategory::Configuration,
+                        QStringLiteral("Render crop extends outside composition"),
+                        QStringLiteral("Crop %1,%2 %3x%4 is clipped to composition bounds %5x%6.")
+                            .arg(job.cropX).arg(job.cropY).arg(job.cropW).arg(job.cropH)
+                            .arg(compositionSize.width()).arg(compositionSize.height()),
+                        QStringLiteral("Adjust the crop rectangle to the composition bounds"),
+                        compId));
+                }
+            }
+        }
+
+        if (job.frameRangeMode == ArtifactRenderJob::FrameRangeMode::SelectedFrames) {
+            int validRangeCount = 0;
+            for (const auto& range : job.selectedFrameRanges) {
+                if (range.first >= 0 && range.second > range.first) {
+                    ++validRangeCount;
+                }
+            }
+            if (validRangeCount == 0) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Selected frame ranges are empty"),
+                    QStringLiteral("SelectedFrames mode requires at least one valid [start,end) range."),
+                    QStringLiteral("Add a valid selected frame range or choose another range mode"),
+                    compId));
+            }
+        }
+
+        if (job.layerFilterMode == ArtifactRenderJob::LayerFilterMode::Selected &&
+            job.layerWhitelist.isEmpty()) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Error,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Selected layer filter is empty"),
+                QStringLiteral("Selected mode requires at least one layer ID."),
+                QStringLiteral("Select at least one layer or choose All/Custom"),
+                compId));
+        }
+
+        if (job.splitPasses) {
+            int enabledPassCount = 0;
+            for (const auto& pass : job.renderPasses) {
+                if (pass.enabled && !pass.name.trimmed().isEmpty()) {
+                    ++enabledPassCount;
+                    if (pass.layerFilter == ArtifactRenderJob::LayerFilterMode::Selected &&
+                        pass.layerIds.isEmpty()) {
+                        result.addDiagnostic(makePreflightDiagnostic(
+                            ArtifactCore::DiagnosticSeverity::Error,
+                            ArtifactCore::DiagnosticCategory::Configuration,
+                            QStringLiteral("Selected render pass has no layers"),
+                            QStringLiteral("Pass '%1' uses Selected filtering but has no layer IDs.")
+                                .arg(pass.name),
+                            QStringLiteral("Add layer IDs to the pass or choose another filter"),
+                            compId));
+                    }
+                }
+            }
+            if (enabledPassCount == 0) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Render pass split has no enabled passes"),
+                    QStringLiteral("splitPasses is enabled but no named pass is enabled."),
+                    QStringLiteral("Enable at least one named render pass or disable pass splitting"),
+                    compId));
+            }
         }
 
         if (job.integratedRenderEnabled) {
@@ -4521,8 +5110,36 @@ namespace Artifact
             }
             const auto& gpuLayers = snap.composition->allLayerRef();
             const ArtifactCore::FramePosition gpuPos(snap.frameNumber);
+            const bool hasSoloGpuLayer = std::any_of(
+                gpuLayers.begin(), gpuLayers.end(), [](const auto& layer) {
+                    return layer && layer->isSolo();
+                });
+            const auto shouldRenderGpuLayer = [&snap, hasSoloGpuLayer](const auto& layer) {
+                if (!layer) return false;
+                const auto layerId = layer->id();
+                if (snap.job.layerBlacklist.contains(layerId) ||
+                    (snap.job.excludeGuideLayers && layer->isGuide()) ||
+                    (snap.job.excludeAdjustmentLayers && layer->isAdjustmentLayer())) {
+                    return false;
+                }
+                switch (snap.job.layerFilterMode) {
+                case ArtifactRenderJob::LayerFilterMode::All:
+                    return true;
+                case ArtifactRenderJob::LayerFilterMode::Selected:
+                    return snap.job.layerWhitelist.contains(layerId);
+                case ArtifactRenderJob::LayerFilterMode::Custom:
+                    return snap.job.layerWhitelist.isEmpty() ||
+                           snap.job.layerWhitelist.contains(layerId);
+                case ArtifactRenderJob::LayerFilterMode::Solo:
+                    return !hasSoloGpuLayer || layer->isSolo();
+                case ArtifactRenderJob::LayerFilterMode::Visible:
+                    return layer->isVisible();
+                }
+                return true;
+            };
             for (const auto& layer : gpuLayers) {
-                if (!layer || !layer->isVisible() || !layer->isActiveAt(gpuPos)) continue;
+                if (!shouldRenderGpuLayer(layer) || !layer->isVisible() ||
+                    !layer->isActiveAt(gpuPos)) continue;
                 layer->goToFrame(snap.frameNumber);
                 drawLayerForCompositionView(layer.get(), gpuRenderer_.get(), 1.0f, nullptr,
                                             snap.gpuSurfaceCache, snap.gpuTextureCacheManager, snap.frameNumber, true);
@@ -4539,6 +5156,12 @@ namespace Artifact
                 }
             } else {
                 output.beauty = gpuRenderer_->readbackToImage();
+                if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
+                    const QRect crop = QRect(snap.job.cropX, snap.job.cropY,
+                                             snap.job.cropW, snap.job.cropH)
+                                           .intersected(output.beauty.rect());
+                    if (!crop.isEmpty()) output.beauty = output.beauty.copy(crop);
+                }
                 applyCompositionFinalEffectsToImage(snap.composition.get(), output.beauty);
             }
         } else {
@@ -5106,6 +5729,9 @@ namespace Artifact
         if (impl_->isRendering_.exchange(true, std::memory_order_acq_rel)) return;
         impl_->shutdownRequested_.store(false, std::memory_order_release);
 
+        impl_->expandSelectedFrameRanges();
+        impl_->expandEnabledRenderPasses();
+
         // Promote pending jobs before either queue backend starts.  Leaving
         // them pending made the UI say the queue had started while the core
         // renderer still observed an idle queue.
@@ -5165,9 +5791,51 @@ namespace Artifact
                     format == QStringLiteral("html") ||
                     job.codec.trimmed().toLower() == QStringLiteral("css");
 
-                const int startF = job.startFrame;
-                const int endF = job.endFrame;
+                int startF = job.startFrame;
+                int endF = job.endFrame;
+                if (const auto rangeComposition = impl_->resolveComposition(job)) {
+                    switch (job.frameRangeMode) {
+                    case ArtifactRenderJob::FrameRangeMode::Composition: {
+                        const auto range = rangeComposition->frameRange();
+                        startF = static_cast<int>(range.startPosition().framePosition());
+                        endF = static_cast<int>(range.endPosition().framePosition());
+                        break;
+                    }
+                    case ArtifactRenderJob::FrameRangeMode::WorkArea: {
+                        const auto range = rangeComposition->workAreaRange();
+                        startF = static_cast<int>(range.startPosition().framePosition());
+                        endF = static_cast<int>(range.endPosition().framePosition());
+                        break;
+                    }
+                    case ArtifactRenderJob::FrameRangeMode::SingleFrame:
+                        startF = static_cast<int>(rangeComposition->framePosition().framePosition());
+                        endF = startF + 1;
+                        break;
+                    case ArtifactRenderJob::FrameRangeMode::Custom:
+                    case ArtifactRenderJob::FrameRangeMode::SelectedFrames:
+                        // SelectedFrames currently uses the persisted custom range;
+                        // the timeline selection bridge can replace it later without
+                        // changing the queue worker contract.
+                        break;
+                    }
+                    const auto range = rangeComposition->frameRange();
+                    const int rangeStart = static_cast<int>(
+                        range.startPosition().framePosition());
+                    const int rangeEnd = static_cast<int>(
+                        range.endPosition().framePosition());
+                    startF = std::clamp(startF, rangeStart, rangeEnd);
+                    // Keep SingleFrame valid even when the current frame is
+                    // the range's last frame (where the exclusive end can
+                    // equal startF). Other modes retain their requested end.
+                    const int minimumEnd = startF + 1;
+                    const int maximumEnd = std::max(minimumEnd, rangeEnd);
+                    endF = std::clamp(endF, minimumEnd, maximumEnd);
+                }
                 const int totalFrames = std::max(1, endF - startF);
+                ArtifactRenderJob effectiveJob = job;
+                effectiveJob.startFrame = startF;
+                effectiveJob.endFrame = endF;
+                effectiveJob.frameRangeMode = ArtifactRenderJob::FrameRangeMode::Custom;
 
                 std::atomic<bool> success = true;
                 std::atomic<int> framesRendered = 0;
@@ -5175,7 +5843,8 @@ namespace Artifact
                 QStringList htmlFrameFiles;
 
                 if (impl_->usesExternalRenderer(job)) {
-                    const bool externalSuccess = impl_->runExternalRendererJob(job, i, &failureReason);
+                    const bool externalSuccess = impl_->runExternalRendererJob(
+                        effectiveJob, i, &failureReason);
                     QMetaObject::invokeMethod(this, [this, i, externalSuccess, failureReason, anyFailure]() {
                         if (externalSuccess) {
                             impl_->queueManager.setJobProgress(i, 100);
@@ -5233,6 +5902,39 @@ namespace Artifact
                 }
 
                 const auto requestedBackend = impl_->effectiveRenderBackendForJob(job);
+                const auto effectiveOutputSize = [&job, &compositionForRender]() {
+                    const QSize compositionSize = compositionForRender
+                        ? (*compositionForRender)->effectiveCompositionSize()
+                        : QSize(job.resolutionWidth, job.resolutionHeight);
+                    const bool hasCrop = job.regionMode != ArtifactRenderJob::RegionMode::Full &&
+                        job.cropW > 0 && job.cropH > 0;
+                    const QRect compositionRect(QPoint(0, 0), compositionSize);
+                    const QRect cropRect = QRect(job.cropX, job.cropY, job.cropW, job.cropH)
+                        .intersected(compositionRect);
+                    const int baseW = hasCrop && !cropRect.isEmpty()
+                        ? cropRect.width() : compositionSize.width();
+                    const int baseH = hasCrop && !cropRect.isEmpty()
+                        ? cropRect.height() : compositionSize.height();
+                    switch (job.resolutionPreset) {
+                    case ArtifactRenderJob::ResolutionPreset::Composition:
+                        return QSize(std::max(16, baseW), std::max(16, baseH));
+                    case ArtifactRenderJob::ResolutionPreset::Half:
+                        return QSize(std::max(16, baseW / 2),
+                                     std::max(16, baseH / 2));
+                    case ArtifactRenderJob::ResolutionPreset::Third:
+                        return QSize(std::max(16, baseW / 3),
+                                     std::max(16, baseH / 3));
+                    case ArtifactRenderJob::ResolutionPreset::Quarter:
+                        return QSize(std::max(16, baseW / 4),
+                                     std::max(16, baseH / 4));
+                    case ArtifactRenderJob::ResolutionPreset::Custom:
+                        return QSize(std::max(16, job.resolutionWidth),
+                                     std::max(16, job.resolutionHeight));
+                    }
+                    return QSize(std::max(16, job.resolutionWidth),
+                                 std::max(16, job.resolutionHeight));
+                };
+                const QSize effectiveSize = effectiveOutputSize();
                 const bool requiresGeneratorGpu =
                     (*compositionForRender) &&
                     std::any_of(
@@ -5247,8 +5949,8 @@ namespace Artifact
                 if (success.load(std::memory_order_relaxed)) {
                     if (requestedBackend == Impl::RenderBackend::GPU ||
                         requiresGeneratorGpu) {
-                        const int rw = std::max(16, job.resolutionWidth);
-                        const int rh = std::max(16, job.resolutionHeight);
+                        const int rw = effectiveSize.width();
+                        const int rh = effectiveSize.height();
                         const char* requestedLabel = "gpu";
                         QString gpuFailureReason;
                         if (impl_->ensureGpuRendererInitialized(rw, rh, &gpuFailureReason)) {
@@ -5267,8 +5969,8 @@ namespace Artifact
                             }
                         }
                     } else if (requestedBackend == Impl::RenderBackend::Auto) {
-                        const int rw = std::max(16, job.resolutionWidth);
-                        const int rh = std::max(16, job.resolutionHeight);
+                        const int rw = effectiveSize.width();
+                        const int rh = effectiveSize.height();
                         QString gpuProbeReason;
                         if (impl_->ensureGpuRendererInitialized(rw, rh, &gpuProbeReason)) {
                             useGpuBackend = true;
@@ -5471,6 +6173,14 @@ namespace Artifact
 
     QJsonArray ArtifactRenderQueueService::toJson() const {
         QJsonArray arr;
+        const auto idsToJson = [](const QList<ArtifactCore::LayerID>& ids) {
+            QJsonArray result;
+            for (const auto& id : ids) result.append(id.toString());
+            return result;
+        };
+        const auto filterToInt = [](ArtifactRenderJob::LayerFilterMode mode) {
+            return static_cast<int>(mode);
+        };
         const int count = impl_->queueManager.jobCount();
         for (int i = 0; i < count; ++i) {
             const auto job = impl_->queueManager.getJob(i);
@@ -5502,6 +6212,37 @@ namespace Artifact
             obj["bitrate"] = job.bitrate;
             obj["startFrame"] = job.startFrame;
             obj["endFrame"] = job.endFrame;
+            obj["frameRangeMode"] = static_cast<int>(job.frameRangeMode);
+            QJsonArray selectedRanges;
+            for (const auto& range : job.selectedFrameRanges) {
+                QJsonObject rangeObject;
+                rangeObject["start"] = range.first;
+                rangeObject["end"] = range.second;
+                selectedRanges.append(rangeObject);
+            }
+            obj["selectedFrameRanges"] = selectedRanges;
+            obj["regionMode"] = static_cast<int>(job.regionMode);
+            obj["cropX"] = job.cropX;
+            obj["cropY"] = job.cropY;
+            obj["cropW"] = job.cropW;
+            obj["cropH"] = job.cropH;
+            obj["layerFilterMode"] = filterToInt(job.layerFilterMode);
+            obj["layerWhitelist"] = idsToJson(job.layerWhitelist);
+            obj["layerBlacklist"] = idsToJson(job.layerBlacklist);
+            obj["excludeGuideLayers"] = job.excludeGuideLayers;
+            obj["excludeAdjustmentLayers"] = job.excludeAdjustmentLayers;
+            obj["splitPasses"] = job.splitPasses;
+            obj["resolutionPreset"] = static_cast<int>(job.resolutionPreset);
+            QJsonArray passArray;
+            for (const auto& pass : job.renderPasses) {
+                QJsonObject passObject;
+                passObject["name"] = pass.name;
+                passObject["layerFilter"] = filterToInt(pass.layerFilter);
+                passObject["layerIds"] = idsToJson(pass.layerIds);
+                passObject["enabled"] = pass.enabled;
+                passArray.append(passObject);
+            }
+            obj["renderPasses"] = passArray;
             obj["overlayOffsetX"] = static_cast<double>(job.overlayOffsetX);
             obj["overlayOffsetY"] = static_cast<double>(job.overlayOffsetY);
             obj["overlayScale"] = static_cast<double>(job.overlayScale);
@@ -5513,19 +6254,57 @@ namespace Artifact
 
     void ArtifactRenderQueueService::fromJson(const QJsonArray& arr) {
         impl_->queueManager.removeAllJobs();
+        const auto intToFrameRange = [](int value) {
+            return value >= 0 && value <= static_cast<int>(ArtifactRenderJob::FrameRangeMode::SingleFrame)
+                       ? static_cast<ArtifactRenderJob::FrameRangeMode>(value)
+                       : ArtifactRenderJob::FrameRangeMode::Composition;
+        };
+        const auto intToRegion = [](int value) {
+            return value >= 0 && value <= static_cast<int>(ArtifactRenderJob::RegionMode::CustomCrop)
+                       ? static_cast<ArtifactRenderJob::RegionMode>(value)
+                       : ArtifactRenderJob::RegionMode::Full;
+        };
+        const auto intToFilter = [](int value) {
+            return value >= 0 && value <= static_cast<int>(ArtifactRenderJob::LayerFilterMode::Custom)
+                       ? static_cast<ArtifactRenderJob::LayerFilterMode>(value)
+                       : ArtifactRenderJob::LayerFilterMode::All;
+        };
+        const auto intToResolution = [](int value) {
+            return value >= 0 && value <= static_cast<int>(ArtifactRenderJob::ResolutionPreset::Quarter)
+                       ? static_cast<ArtifactRenderJob::ResolutionPreset>(value)
+                       : ArtifactRenderJob::ResolutionPreset::Composition;
+        };
+        const auto jsonToIds = [](const QJsonArray& values) {
+            QList<ArtifactCore::LayerID> result;
+            constexpr qsizetype kMaxLayerIds = 10000;
+            for (const auto& value : values) {
+                if (result.size() >= kMaxLayerIds) break;
+                if (!value.isString()) continue;
+                const QString id = value.toString().trimmed();
+                if (!id.isEmpty() && id.size() <= 1024) {
+                    result.append(ArtifactCore::LayerID(id));
+                }
+            }
+            return result;
+        };
+        constexpr qsizetype kMaxRestoredJobs = 10000;
+        qsizetype restoredJobs = 0;
         for (const auto& val : arr) {
+            if (restoredJobs >= kMaxRestoredJobs) {
+                break;
+            }
             if (!val.isObject()) continue;
             const QJsonObject obj = val.toObject();
 
             ArtifactRenderJob job;
             job.compositionId = ArtifactCore::CompositionID(obj["compositionId"].toString());
-            job.compositionName = obj["compositionName"].toString();
-            job.jobName = obj["jobName"].toString();
-            job.outputPath = obj["outputPath"].toString();
-            job.outputFormat = obj["outputFormat"].toString();
-            job.codec = obj["codec"].toString();
-            job.codecProfile = obj["codecProfile"].toString();
-            job.encoderBackend = obj["encoderBackend"].toString("auto");
+            job.compositionName = obj["compositionName"].toString().trimmed();
+            job.jobName = obj["jobName"].toString().trimmed();
+            job.outputPath = obj["outputPath"].toString().trimmed();
+            job.outputFormat = obj["outputFormat"].toString().trimmed();
+            job.codec = obj["codec"].toString().trimmed();
+            job.codecProfile = obj["codecProfile"].toString().trimmed();
+            job.encoderBackend = obj["encoderBackend"].toString("auto").trimmed();
             const QString savedRenderBackend = obj["renderBackend"].toString("auto");
             job.renderBackend = savedRenderBackend.trimmed().compare(
                 QStringLiteral("external-cycles"), Qt::CaseInsensitive) == 0
@@ -5533,7 +6312,9 @@ namespace Artifact
                 : normalizeRenderBackend(savedRenderBackend);
             job.integratedRenderEnabled = obj["integratedRenderEnabled"].toBool(false);
             job.multiChannelExportEnabled = obj["multiChannelExportEnabled"].toBool(false);
+            qsizetype channelCount = 0;
             for (const auto& value : obj["multiChannelExportChannels"].toArray()) {
+                if (channelCount++ >= 128) break;
                 job.multiChannelExportChannels.push_back(value.toString());
             }
             if (job.multiChannelExportEnabled) {
@@ -5542,10 +6323,10 @@ namespace Artifact
                         job.multiChannelExportChannels);
             }
             job.framePadding = obj["framePadding"].toInt(4);
-            job.audioSourcePath = obj["audioSourcePath"].toString();
-            job.audioCodec = obj["audioCodec"].toString("aac");
-            job.audioBitrateKbps = obj["audioBitrateKbps"].toInt(128);
-            job.audioChannelMode = obj["audioChannelMode"].toString("stereo");
+            job.audioSourcePath = obj["audioSourcePath"].toString().trimmed();
+            job.audioCodec = obj["audioCodec"].toString("aac").trimmed();
+            job.audioBitrateKbps = std::clamp(obj["audioBitrateKbps"].toInt(128), 0, 1000000);
+            job.audioChannelMode = obj["audioChannelMode"].toString("stereo").trimmed();
             job.audioSampleRate = obj["audioSampleRate"].toInt(48000);
             if (job.audioChannelMode != QStringLiteral("source")
                 && job.audioChannelMode != QStringLiteral("mono")
@@ -5558,20 +6339,66 @@ namespace Artifact
                 && job.audioSampleRate != 96000) {
                 job.audioSampleRate = 48000;
             }
-            job.resolutionWidth = obj["resolutionWidth"].toInt(1920);
-            job.resolutionHeight = obj["resolutionHeight"].toInt(1080);
-            job.frameRate = obj["frameRate"].toDouble(30.0);
-            job.bitrate = obj["bitrate"].toInt(8000);
-            job.startFrame = obj["startFrame"].toInt(0);
-            job.endFrame = obj["endFrame"].toInt(100);
-            job.overlayOffsetX = static_cast<float>(obj["overlayOffsetX"].toDouble(0.0));
-            job.overlayOffsetY = static_cast<float>(obj["overlayOffsetY"].toDouble(0.0));
-            job.overlayScale = static_cast<float>(obj["overlayScale"].toDouble(1.0));
-            job.overlayRotationDeg = static_cast<float>(obj["overlayRotationDeg"].toDouble(0.0));
+            job.resolutionWidth = std::clamp(obj["resolutionWidth"].toInt(1920), 1, 16384);
+            job.resolutionHeight = std::clamp(obj["resolutionHeight"].toInt(1080), 1, 16384);
+            const double frameRate = obj["frameRate"].toDouble(30.0);
+            job.frameRate = std::isfinite(frameRate) ? std::clamp(frameRate, 0.001, 240.0) : 30.0;
+            job.bitrate = std::clamp(obj["bitrate"].toInt(8000), 0, 1000000);
+            job.startFrame = std::max(0, obj["startFrame"].toInt(0));
+            job.endFrame = std::max(job.startFrame, obj["endFrame"].toInt(100));
+            job.frameRangeMode = intToFrameRange(obj["frameRangeMode"].toInt(0));
+            qsizetype rangeCount = 0;
+            for (const auto& rangeValue : obj["selectedFrameRanges"].toArray()) {
+                if (rangeCount++ >= 10000) break;
+                if (!rangeValue.isObject()) continue;
+                const auto rangeObject = rangeValue.toObject();
+                const int start = rangeObject["start"].toInt(-1);
+                const int end = rangeObject["end"].toInt(-1);
+                if (start >= 0 && end > start) {
+                    job.selectedFrameRanges.append(qMakePair(start, end));
+                }
+            }
+            job.regionMode = intToRegion(obj["regionMode"].toInt(0));
+            job.cropX = obj["cropX"].toInt(0);
+            job.cropY = obj["cropY"].toInt(0);
+            job.cropW = std::max(0, obj["cropW"].toInt(0));
+            job.cropH = std::max(0, obj["cropH"].toInt(0));
+            job.layerFilterMode = intToFilter(obj["layerFilterMode"].toInt(0));
+            job.layerWhitelist = jsonToIds(obj["layerWhitelist"].toArray());
+            job.layerBlacklist = jsonToIds(obj["layerBlacklist"].toArray());
+            job.excludeGuideLayers = obj["excludeGuideLayers"].toBool(false);
+            job.excludeAdjustmentLayers = obj["excludeAdjustmentLayers"].toBool(false);
+            job.splitPasses = obj["splitPasses"].toBool(false);
+            job.resolutionPreset = intToResolution(obj["resolutionPreset"].toInt(1));
+            qsizetype passCount = 0;
+            for (const auto& passValue : obj["renderPasses"].toArray()) {
+                if (passCount++ >= 256) break;
+                if (!passValue.isObject()) continue;
+                const auto passObject = passValue.toObject();
+                ArtifactRenderJob::RenderPassConfig pass;
+                pass.name = passObject["name"].toString();
+                pass.layerFilter = intToFilter(passObject["layerFilter"].toInt(0));
+                pass.layerIds = jsonToIds(passObject["layerIds"].toArray());
+                pass.enabled = passObject["enabled"].toBool(true);
+                job.renderPasses.append(pass);
+            }
+            const double overlayOffsetX = obj["overlayOffsetX"].toDouble(0.0);
+            const double overlayOffsetY = obj["overlayOffsetY"].toDouble(0.0);
+            const double overlayScale = obj["overlayScale"].toDouble(1.0);
+            const double overlayRotation = obj["overlayRotationDeg"].toDouble(0.0);
+            job.overlayOffsetX = std::isfinite(overlayOffsetX)
+                ? std::clamp(static_cast<float>(overlayOffsetX), -100000.0f, 100000.0f) : 0.0f;
+            job.overlayOffsetY = std::isfinite(overlayOffsetY)
+                ? std::clamp(static_cast<float>(overlayOffsetY), -100000.0f, 100000.0f) : 0.0f;
+            job.overlayScale = std::isfinite(overlayScale)
+                ? std::clamp(static_cast<float>(overlayScale), 0.001f, 1000.0f) : 1.0f;
+            job.overlayRotationDeg = std::isfinite(overlayRotation)
+                ? std::clamp(static_cast<float>(overlayRotation), -360000.0f, 360000.0f) : 0.0f;
             job.status = ArtifactRenderJob::Status::Pending;
             job.progress = 0;
 
             impl_->queueManager.addJob(job);
+            ++restoredJobs;
         }
     }
 

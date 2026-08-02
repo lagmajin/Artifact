@@ -1189,47 +1189,69 @@ QJsonObject textAnimatorToJson(const TextAnimatorState &animator) {
 
 TextAnimatorState textAnimatorFromJson(const QJsonObject &obj, const int index) {
   TextAnimatorState animator = defaultTextAnimatorState(index);
-  animator.name = obj.value("name").toString(animator.name);
+  const auto safeFloat = [](double value, float fallback, float minimum,
+                            float maximum) {
+    const float converted = static_cast<float>(value);
+    return std::isfinite(converted) ? std::clamp(converted, minimum, maximum)
+                                    : fallback;
+  };
+  animator.name = obj.value("name").toString(animator.name).trimmed();
+  if (animator.name.isEmpty()) {
+    animator.name = defaultTextAnimatorState(index).name;
+  } else if (animator.name.size() > 256) {
+    animator.name = animator.name.left(256);
+  }
   animator.enabled = obj.value("enabled").toBool(true);
 
   if (obj.contains("range") && obj.value("range").isObject()) {
     const QJsonObject rangeObj = obj.value("range").toObject();
-    animator.range.start = static_cast<float>(rangeObj.value("start").toDouble(animator.range.start));
-    animator.range.end = static_cast<float>(rangeObj.value("end").toDouble(animator.range.end));
-    animator.range.offset = static_cast<float>(rangeObj.value("offset").toDouble(animator.range.offset));
-    animator.range.units = static_cast<SelectorUnits>(rangeObj.value("units").toInt(static_cast<int>(animator.range.units)));
-    animator.range.shape = static_cast<SelectorShape>(rangeObj.value("shape").toInt(static_cast<int>(animator.range.shape)));
+    animator.range.start = safeFloat(rangeObj.value("start").toDouble(animator.range.start), animator.range.start, -100000.0f, 100000.0f);
+    animator.range.end = safeFloat(rangeObj.value("end").toDouble(animator.range.end), animator.range.end, -100000.0f, 100000.0f);
+    animator.range.offset = safeFloat(rangeObj.value("offset").toDouble(animator.range.offset), animator.range.offset, -100000.0f, 100000.0f);
+    const int units = rangeObj.value("units").toInt(static_cast<int>(animator.range.units));
+    animator.range.units = static_cast<SelectorUnits>(std::clamp(units, 0, 4));
+    const int shape = rangeObj.value("shape").toInt(static_cast<int>(animator.range.shape));
+    animator.range.shape = static_cast<SelectorShape>(std::clamp(shape, 0, 5));
     animator.range.regexEnabled = rangeObj.value("regexEnabled").toBool(animator.range.regexEnabled);
     animator.range.selectorPattern = rangeObj.value("selectorPattern").toString(animator.range.selectorPattern);
-    animator.range.easeHigh = static_cast<float>(rangeObj.value("easeHigh").toDouble(animator.range.easeHigh));
-    animator.range.easeLow = static_cast<float>(rangeObj.value("easeLow").toDouble(animator.range.easeLow));
+    if (animator.range.selectorPattern.size() > 4096) {
+      animator.range.selectorPattern = animator.range.selectorPattern.left(4096);
+    }
+    if (animator.range.regexEnabled && !animator.range.selectorPattern.isEmpty()) {
+      const QRegularExpression regex(animator.range.selectorPattern);
+      if (!regex.isValid()) {
+        animator.range.regexEnabled = false;
+      }
+    }
+    animator.range.easeHigh = safeFloat(rangeObj.value("easeHigh").toDouble(animator.range.easeHigh), animator.range.easeHigh, 0.0f, 100.0f);
+    animator.range.easeLow = safeFloat(rangeObj.value("easeLow").toDouble(animator.range.easeLow), animator.range.easeLow, 0.0f, 100.0f);
   }
 
   if (obj.contains("wiggly") && obj.value("wiggly").isObject()) {
     const QJsonObject wigglyObj = obj.value("wiggly").toObject();
     animator.wiggly.enabled = wigglyObj.value("enabled").toBool(animator.wiggly.enabled);
-    animator.wiggly.wigglesPerSecond = static_cast<float>(wigglyObj.value("wigglesPerSecond").toDouble(animator.wiggly.wigglesPerSecond));
-    animator.wiggly.correlation = static_cast<float>(wigglyObj.value("correlation").toDouble(animator.wiggly.correlation));
-    animator.wiggly.phase = static_cast<float>(wigglyObj.value("phase").toDouble(animator.wiggly.phase));
+    animator.wiggly.wigglesPerSecond = safeFloat(wigglyObj.value("wigglesPerSecond").toDouble(animator.wiggly.wigglesPerSecond), animator.wiggly.wigglesPerSecond, 0.0f, 1000.0f);
+    animator.wiggly.correlation = safeFloat(wigglyObj.value("correlation").toDouble(animator.wiggly.correlation), animator.wiggly.correlation, 0.0f, 100.0f);
+    animator.wiggly.phase = safeFloat(wigglyObj.value("phase").toDouble(animator.wiggly.phase), animator.wiggly.phase, -100000.0f, 100000.0f);
     animator.wiggly.seed = wigglyObj.value("seed").toInt(animator.wiggly.seed);
   }
 
   if (obj.contains("properties") && obj.value("properties").isObject()) {
     const QJsonObject propsObj = obj.value("properties").toObject();
-    animator.properties.position.setX(static_cast<float>(propsObj.value("positionX").toDouble(animator.properties.position.x())));
-    animator.properties.position.setY(static_cast<float>(propsObj.value("positionY").toDouble(animator.properties.position.y())));
-    animator.properties.scale = static_cast<float>(propsObj.value("scale").toDouble(animator.properties.scale));
-    animator.properties.rotation = static_cast<float>(propsObj.value("rotation").toDouble(animator.properties.rotation));
-    animator.properties.opacity = static_cast<float>(propsObj.value("opacity").toDouble(animator.properties.opacity));
-    animator.properties.skew = static_cast<float>(propsObj.value("skew").toDouble(animator.properties.skew));
-    animator.properties.tracking = static_cast<float>(propsObj.value("tracking").toDouble(animator.properties.tracking));
-    animator.properties.z = static_cast<float>(propsObj.value("z").toDouble(animator.properties.z));
+    animator.properties.position.setX(safeFloat(propsObj.value("positionX").toDouble(animator.properties.position.x()), animator.properties.position.x(), -100000.0f, 100000.0f));
+    animator.properties.position.setY(safeFloat(propsObj.value("positionY").toDouble(animator.properties.position.y()), animator.properties.position.y(), -100000.0f, 100000.0f));
+    animator.properties.scale = safeFloat(propsObj.value("scale").toDouble(animator.properties.scale), animator.properties.scale, 0.0f, 8.0f);
+    animator.properties.rotation = safeFloat(propsObj.value("rotation").toDouble(animator.properties.rotation), animator.properties.rotation, -360000.0f, 360000.0f);
+    animator.properties.opacity = safeFloat(propsObj.value("opacity").toDouble(animator.properties.opacity), animator.properties.opacity, 0.0f, 1.0f);
+    animator.properties.skew = safeFloat(propsObj.value("skew").toDouble(animator.properties.skew), animator.properties.skew, -360000.0f, 360000.0f);
+    animator.properties.tracking = safeFloat(propsObj.value("tracking").toDouble(animator.properties.tracking), animator.properties.tracking, -100000.0f, 100000.0f);
+    animator.properties.z = safeFloat(propsObj.value("z").toDouble(animator.properties.z), animator.properties.z, -100000.0f, 100000.0f);
     animator.properties.colorEnabled = propsObj.value("colorEnabled").toBool(animator.properties.colorEnabled);
     animator.properties.fillColor = colorFromJsonValue(propsObj.value("fillColor"), animator.properties.fillColor);
     animator.properties.strokeEnabled = propsObj.value("strokeEnabled").toBool(animator.properties.strokeEnabled);
     animator.properties.strokeColor = colorFromJsonValue(propsObj.value("strokeColor"), animator.properties.strokeColor);
-    animator.properties.strokeWidth = static_cast<float>(propsObj.value("strokeWidth").toDouble(animator.properties.strokeWidth));
-    animator.properties.blur = static_cast<float>(propsObj.value("blur").toDouble(animator.properties.blur));
+    animator.properties.strokeWidth = safeFloat(propsObj.value("strokeWidth").toDouble(animator.properties.strokeWidth), animator.properties.strokeWidth, 0.0f, 256.0f);
+    animator.properties.blur = safeFloat(propsObj.value("blur").toDouble(animator.properties.blur), animator.properties.blur, 0.0f, 10000.0f);
   }
 
   return animator;
@@ -1442,19 +1464,25 @@ void ArtifactTextLayer::markDirty() {
 }
 
 void ArtifactTextLayer::setText(const UniString &text) {
-  impl_->text_ = text;
+  constexpr qsizetype kMaxTextCharacters = 1000000;
+  const QString normalized = text.toQString();
+  impl_->text_ = UniString(normalized.left(kMaxTextCharacters));
   markDirty();
 }
 
 UniString ArtifactTextLayer::text() const { return impl_->text_; }
 
 void ArtifactTextLayer::setSourceTextAtFrame(const qint64 frame, const QString& text) {
+  if (frame < 0) {
+    return;
+  }
   const auto property = getProperty(QStringLiteral("text.value"));
   if (!property) {
     return;
   }
   const RationalTime time(frame, effectiveTextTimelineFps(this));
-  property->addKeyFrame(time, text, InterpolationType::Constant);
+  constexpr qsizetype kMaxTextCharacters = 1000000;
+  property->addKeyFrame(time, text.left(kMaxTextCharacters), InterpolationType::Constant);
   markDirty();
   changed();
 }
@@ -1490,7 +1518,7 @@ bool ArtifactTextLayer::hasSourceTextKeyframes() const {
 }
 
 void ArtifactTextLayer::setFontSize(float size) {
-  if (size <= 0.0f)
+  if (!std::isfinite(size) || size <= 0.0f)
     size = 1.0f;
   impl_->textStyle_.fontSize = size;
   markDirty();
@@ -1499,7 +1527,11 @@ void ArtifactTextLayer::setFontSize(float size) {
 float ArtifactTextLayer::fontSize() const { return impl_->textStyle_.fontSize; }
 
 void ArtifactTextLayer::setFontFamily(const UniString &family) {
-  impl_->textStyle_.fontFamily = family;
+  constexpr qsizetype kMaxFontFamilyCharacters = 1024;
+  const QString normalizedFamily = family.toQString().trimmed().left(
+      kMaxFontFamilyCharacters);
+  impl_->textStyle_.fontFamily = UniString(
+      normalizedFamily.isEmpty() ? QStringLiteral("Arial") : normalizedFamily);
   markDirty();
 }
 
@@ -1508,8 +1540,12 @@ UniString ArtifactTextLayer::fontFamily() const {
 }
 
 void ArtifactTextLayer::setTextColor(const FloatColor &color) {
+  const auto channel = [](const float value, const float fallback) {
+    return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+  };
   impl_->textStyle_.fillColor =
-      FloatRGBA(color.r(), color.g(), color.b(), color.a());
+      FloatRGBA(channel(color.r(), 0.0f), channel(color.g(), 0.0f),
+                channel(color.b(), 0.0f), channel(color.a(), 1.0f));
   markDirty();
 }
 
@@ -1530,8 +1566,12 @@ bool ArtifactTextLayer::isStrokeEnabled() const {
 }
 
 void ArtifactTextLayer::setStrokeColor(const FloatColor &color) {
+  const auto channel = [](const float value, const float fallback) {
+    return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+  };
   impl_->textStyle_.strokeColor =
-      FloatRGBA(color.r(), color.g(), color.b(), color.a());
+      FloatRGBA(channel(color.r(), 0.0f), channel(color.g(), 0.0f),
+                channel(color.b(), 0.0f), channel(color.a(), 1.0f));
   markDirty();
 }
 
@@ -1543,7 +1583,8 @@ FloatColor ArtifactTextLayer::strokeColor() const {
 }
 
 void ArtifactTextLayer::setStrokeWidth(float width) {
-  impl_->textStyle_.strokeWidth = width;
+  impl_->textStyle_.strokeWidth =
+      std::isfinite(width) ? std::clamp(width, 0.0f, 256.0f) : 0.0f;
   markDirty();
 }
 
@@ -1561,8 +1602,12 @@ bool ArtifactTextLayer::isShadowEnabled() const {
 }
 
 void ArtifactTextLayer::setShadowColor(const FloatColor &color) {
+  const auto channel = [](const float value, const float fallback) {
+    return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+  };
   impl_->textStyle_.shadowColor =
-      FloatRGBA(color.r(), color.g(), color.b(), color.a());
+      FloatRGBA(channel(color.r(), 0.0f), channel(color.g(), 0.0f),
+                channel(color.b(), 0.0f), channel(color.a(), 1.0f));
   markDirty();
 }
 
@@ -1574,8 +1619,10 @@ FloatColor ArtifactTextLayer::shadowColor() const {
 }
 
 void ArtifactTextLayer::setShadowOffset(float x, float y) {
-  impl_->textStyle_.shadowOffsetX = x;
-  impl_->textStyle_.shadowOffsetY = y;
+  impl_->textStyle_.shadowOffsetX = std::isfinite(x)
+      ? std::clamp(x, -10000.0f, 10000.0f) : 0.0f;
+  impl_->textStyle_.shadowOffsetY = std::isfinite(y)
+      ? std::clamp(y, -10000.0f, 10000.0f) : 0.0f;
   markDirty();
 }
 
@@ -1588,7 +1635,8 @@ float ArtifactTextLayer::shadowOffsetY() const {
 }
 
 void ArtifactTextLayer::setShadowBlur(float blur) {
-  impl_->textStyle_.shadowBlur = blur;
+  impl_->textStyle_.shadowBlur =
+      std::isfinite(blur) ? std::clamp(blur, 0.0f, 10000.0f) : 0.0f;
   markDirty();
 }
 
@@ -1597,14 +1645,16 @@ float ArtifactTextLayer::shadowBlur() const {
 }
 
 void ArtifactTextLayer::setTracking(float tracking) {
-  impl_->textStyle_.tracking = tracking;
+  impl_->textStyle_.tracking = std::isfinite(tracking)
+      ? std::clamp(tracking, -1000.0f, 1000.0f) : 0.0f;
   markDirty();
 }
 
 float ArtifactTextLayer::tracking() const { return impl_->textStyle_.tracking; }
 
 void ArtifactTextLayer::setFontStretch(float stretch) {
-  impl_->textStyle_.fontStretch = std::clamp(stretch, 50.0f, 200.0f);
+  impl_->textStyle_.fontStretch = std::isfinite(stretch)
+      ? std::clamp(stretch, 50.0f, 200.0f) : 100.0f;
   markDirty();
 }
 
@@ -1613,7 +1663,8 @@ float ArtifactTextLayer::fontStretch() const {
 }
 
 void ArtifactTextLayer::setLeading(float leading) {
-  impl_->textStyle_.leading = leading;
+  impl_->textStyle_.leading = std::isfinite(leading)
+      ? std::clamp(leading, -1000.0f, 1000.0f) : 0.0f;
   markDirty();
 }
 
@@ -1714,7 +1765,8 @@ TextWritingMode ArtifactTextLayer::writingMode() const {
 }
 
 void ArtifactTextLayer::setRubyText(const QString &text) {
-  impl_->rubyText_ = text;
+  constexpr qsizetype kMaxTextCharacters = 1000000;
+  impl_->rubyText_ = text.left(kMaxTextCharacters);
   markDirty();
 }
 
@@ -1723,7 +1775,8 @@ QString ArtifactTextLayer::rubyText() const {
 }
 
 void ArtifactTextLayer::setRubyScale(float scale) {
-  impl_->rubyScale_ = std::clamp(scale, 0.1f, 1.0f);
+  impl_->rubyScale_ = std::isfinite(scale)
+      ? std::clamp(scale, 0.1f, 1.0f) : 1.0f;
   markDirty();
 }
 
@@ -1732,7 +1785,9 @@ float ArtifactTextLayer::rubyScale() const {
 }
 
 void ArtifactTextLayer::setMaxWidth(float width) {
-  impl_->paragraphStyle_.boxWidth = (width <= 0.0f) ? 0.0f : width;
+  impl_->paragraphStyle_.boxWidth =
+      (!std::isfinite(width) || width <= 0.0f)
+          ? 0.0f : std::clamp(width, 0.0f, 100000.0f);
   if (impl_->paragraphStyle_.boxWidth > 0.0f ||
       impl_->paragraphStyle_.boxHeight > 0.0f) {
     impl_->layoutMode_ = TextLayoutMode::Box;
@@ -1747,7 +1802,9 @@ float ArtifactTextLayer::maxWidth() const {
 }
 
 void ArtifactTextLayer::setBoxHeight(float height) {
-  impl_->paragraphStyle_.boxHeight = (height <= 0.0f) ? 0.0f : height;
+  impl_->paragraphStyle_.boxHeight =
+      (!std::isfinite(height) || height <= 0.0f)
+          ? 0.0f : std::clamp(height, 0.0f, 100000.0f);
   if (impl_->paragraphStyle_.boxWidth > 0.0f ||
       impl_->paragraphStyle_.boxHeight > 0.0f) {
     impl_->layoutMode_ = TextLayoutMode::Box;
@@ -1762,8 +1819,18 @@ float ArtifactTextLayer::boxHeight() const {
 }
 
 void ArtifactTextLayer::setPathSegments(const std::vector<ArtifactCore::BezierSegment>& segments) {
-  impl_->pathSegments_ = segments;
-  if (impl_->layoutMode_ != TextLayoutMode::Path && !segments.empty()) {
+  const auto finitePoint = [](const QPointF& point) {
+    return std::isfinite(point.x()) && std::isfinite(point.y());
+  };
+  impl_->pathSegments_.clear();
+  impl_->pathSegments_.reserve(segments.size());
+  for (const auto& segment : segments) {
+    if (finitePoint(segment.p0) && finitePoint(segment.cp1) &&
+        finitePoint(segment.cp2) && finitePoint(segment.p1)) {
+      impl_->pathSegments_.push_back(segment);
+    }
+  }
+  if (impl_->layoutMode_ != TextLayoutMode::Path && !impl_->pathSegments_.empty()) {
     impl_->layoutMode_ = TextLayoutMode::Path;
   }
   markDirty();
@@ -1775,7 +1842,8 @@ std::vector<ArtifactCore::BezierSegment> ArtifactTextLayer::pathSegments() const
 
 void ArtifactTextLayer::setPathStartOffset(double offset) {
   if (!impl_->paragraphStyle_.pathBinding) impl_->paragraphStyle_.pathBinding.emplace();
-  impl_->paragraphStyle_.pathBinding->startOffset = offset;
+  impl_->paragraphStyle_.pathBinding->startOffset = std::isfinite(offset)
+      ? std::clamp(offset, -100000.0, 100000.0) : 0.0;
   markDirty();
 }
 
@@ -1785,7 +1853,8 @@ double ArtifactTextLayer::pathStartOffset() const {
 
 void ArtifactTextLayer::setPathEndOffset(double offset) {
   if (!impl_->paragraphStyle_.pathBinding) impl_->paragraphStyle_.pathBinding.emplace();
-  impl_->paragraphStyle_.pathBinding->endOffset = offset;
+  impl_->paragraphStyle_.pathBinding->endOffset = std::isfinite(offset)
+      ? std::clamp(offset, -100000.0, 100000.0) : 0.0;
   markDirty();
 }
 
@@ -1814,7 +1883,8 @@ bool ArtifactTextLayer::pathReverse() const {
 }
 
 void ArtifactTextLayer::setParagraphSpacing(float spacing) {
-  impl_->paragraphStyle_.paragraphSpacing = std::max(0.0f, spacing);
+  impl_->paragraphStyle_.paragraphSpacing =
+      std::isfinite(spacing) ? std::clamp(spacing, 0.0f, 1000.0f) : 0.0f;
   markDirty();
 }
 
@@ -1823,6 +1893,9 @@ float ArtifactTextLayer::paragraphSpacing() const {
 }
 
 void ArtifactTextLayer::addAnimator() {
+  if (animatorCount() >= 16) {
+    return;
+  }
   impl_->animators_.push_back(defaultTextAnimatorState(animatorCount()));
   markDirty();
 }
@@ -1836,7 +1909,7 @@ void ArtifactTextLayer::removeAnimator(const int index) {
 }
 
 void ArtifactTextLayer::setAnimatorCount(const int count) {
-  const int clampedCount = std::max(0, count);
+  const int clampedCount = std::clamp(count, 0, 16);
   const int currentCount = animatorCount();
   if (clampedCount == currentCount) {
     return;
@@ -2011,13 +2084,13 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
             .toInt(static_cast<int>(horizontalAlignment()))));
   }
   if (obj.contains("text.verticalAlignment")) {
-    setVerticalAlignment(static_cast<TextVerticalAlignment>(
+    setVerticalAlignment(static_cast<TextVerticalAlignment>(std::clamp(
         obj.value("text.verticalAlignment")
-            .toInt(static_cast<int>(verticalAlignment()))));
+            .toInt(static_cast<int>(verticalAlignment())), 0, 2)));
   }
   if (obj.contains("text.wrapMode")) {
     setWrapMode(static_cast<TextWrapMode>(
-        obj.value("text.wrapMode").toInt(static_cast<int>(wrapMode()))));
+        std::clamp(obj.value("text.wrapMode").toInt(static_cast<int>(wrapMode())), 0, 3)));
   }
   if (obj.contains("text.writingMode")) {
     setWritingMode(static_cast<TextWritingMode>(
@@ -2051,15 +2124,24 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
       obj.value("text.sourceTextKeyframes").isArray()) {
     const auto keyframeArray = obj.value("text.sourceTextKeyframes").toArray();
     if (const auto textProp = getProperty(QStringLiteral("text.value"))) {
+      constexpr qsizetype kMaxSourceTextKeyframes = 10000;
       textProp->clearKeyFrames();
       for (const auto& value : keyframeArray) {
+        if (textProp->getKeyFrames().size() >= kMaxSourceTextKeyframes) {
+          break;
+        }
         if (!value.isObject()) {
           continue;
         }
         const QJsonObject keyframeObj = value.toObject();
+        const qint64 timeValue = keyframeObj.value("timeValue").toInteger();
+        const qint64 timeScale = keyframeObj.value("timeScale").toInteger(1);
+        if (timeValue < 0 || timeScale <= 0) {
+          continue;
+        }
         const RationalTime time(
-            keyframeObj.value("timeValue").toInteger(),
-            keyframeObj.value("timeScale").toInteger(1));
+            timeValue,
+            timeScale);
         const auto interpolation = static_cast<InterpolationType>(
             keyframeObj.value("interpolation").toInt(static_cast<int>(InterpolationType::Constant)));
         const float cp1_x = static_cast<float>(keyframeObj.value("cp1_x").toDouble(0.42));
@@ -2071,7 +2153,9 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
             keyframeObj.value("anchor").toInt(static_cast<int>(KeyFrame::Anchor::Absolute)));
         const auto colorLabel = static_cast<KeyFrame::ColorLabel>(
             keyframeObj.value("colorLabel").toInt(static_cast<int>(KeyFrame::ColorLabel::None)));
-        const QString textValue = keyframeObj.value("value").toString();
+        constexpr qsizetype kMaxTextCharacters = 1000000;
+        const QString textValue =
+            keyframeObj.value("value").toString().left(kMaxTextCharacters);
         textProp->addKeyFrame(time, textValue, interpolation, cp1_x, cp1_y, cp2_x, cp2_y, roving);
         textProp->setKeyFrameAnchorAt(time, anchor);
         textProp->setKeyFrameColorLabelAt(time, colorLabel);
@@ -2154,8 +2238,9 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
   impl_->animators_.clear();
   if (obj.contains("text.animators") && obj.value("text.animators").isArray()) {
     const QJsonArray animatorArray = obj.value("text.animators").toArray();
-    impl_->animators_.reserve(animatorArray.size());
-    for (int i = 0; i < animatorArray.size(); ++i) {
+    const int animatorCount = std::min(animatorArray.size(), 16);
+    impl_->animators_.reserve(animatorCount);
+    for (int i = 0; i < animatorCount; ++i) {
       if (!animatorArray.at(i).isObject()) {
         continue;
       }
@@ -2900,12 +2985,22 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   addEssentialTextProp(QStringLiteral("text.fontFamily"),
                        ArtifactCore::PropertyType::String,
                        fontFamily().toQString(), QStringLiteral("Font Family"), -110);
-  addEssentialTextProp(QStringLiteral("text.fontSize"),
-                       ArtifactCore::PropertyType::Float, fontSize(),
-                       QStringLiteral("Font Size"), -100);
-  addEssentialTextProp(QStringLiteral("text.tracking"),
-                       ArtifactCore::PropertyType::Float, tracking(),
-                       QStringLiteral("Tracking"), -95);
+  auto fontSizeProp = makeProp(QStringLiteral("text.fontSize"),
+                               ArtifactCore::PropertyType::Float,
+                               fontSize(), -100);
+  fontSizeProp->setDisplayLabel(QStringLiteral("Font Size"));
+  fontSizeProp->setHardRange(1.0, 1000.0);
+  fontSizeProp->setSoftRange(8.0, 144.0);
+  fontSizeProp->setAnimatable(true);
+  textGroup.addProperty(fontSizeProp);
+  auto trackingProp = makeProp(QStringLiteral("text.tracking"),
+                               ArtifactCore::PropertyType::Float,
+                               tracking(), -95);
+  trackingProp->setDisplayLabel(QStringLiteral("Tracking"));
+  trackingProp->setHardRange(-1000.0, 1000.0);
+  trackingProp->setSoftRange(-100.0, 100.0);
+  trackingProp->setAnimatable(true);
+  textGroup.addProperty(trackingProp);
   auto fontStretchProp = makeProp(QStringLiteral("text.fontStretch"),
                                   ArtifactCore::PropertyType::Float,
                                   fontStretch(), -94);
@@ -2915,9 +3010,14 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   fontStretchProp->setStep(1.0);
   fontStretchProp->setAnimatable(true);
   textGroup.addProperty(fontStretchProp);
-  addEssentialTextProp(QStringLiteral("text.leading"),
-                       ArtifactCore::PropertyType::Float, leading(),
-                       QStringLiteral("Leading"), -93);
+  auto leadingProp = makeProp(QStringLiteral("text.leading"),
+                              ArtifactCore::PropertyType::Float,
+                              leading(), -93);
+  leadingProp->setDisplayLabel(QStringLiteral("Leading"));
+  leadingProp->setHardRange(-1000.0, 1000.0);
+  leadingProp->setSoftRange(-100.0, 100.0);
+  leadingProp->setAnimatable(true);
+  textGroup.addProperty(leadingProp);
   addEssentialTextProp(QStringLiteral("text.bold"),
                        ArtifactCore::PropertyType::Boolean, isBold(),
                        QStringLiteral("Bold"), -93);
@@ -3140,6 +3240,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                   ArtifactCore::PropertyType::Float,
                                   strokeWidth(), -69);
   strokeWidthProp->setDisplayLabel(QStringLiteral("Stroke Width"));
+  strokeWidthProp->setHardRange(0.0, 256.0);
+  strokeWidthProp->setSoftRange(0.0, 32.0);
   strokeWidthProp->setAnimatable(true);
   textGroup.addProperty(strokeWidthProp);
 
@@ -3158,15 +3260,24 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
       QColor::fromRgbF(shc.r(), shc.g(), shc.b(), shc.a()));
   shadowColorProp->setValue(shadowColorProp->getColorValue());
   textGroup.addProperty(shadowColorProp);
-  textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetX"),
+  auto shadowOffsetXProp = makeProp(QStringLiteral("text.shadowOffsetX"),
+                                    ArtifactCore::PropertyType::Float,
+                                    shadowOffsetX(), -66);
+  shadowOffsetXProp->setHardRange(-10000.0, 10000.0);
+  shadowOffsetXProp->setSoftRange(-256.0, 256.0);
+  textGroup.addProperty(shadowOffsetXProp);
+  auto shadowOffsetYProp = makeProp(QStringLiteral("text.shadowOffsetY"),
+                                    ArtifactCore::PropertyType::Float,
+                                    shadowOffsetY(), -65);
+  shadowOffsetYProp->setHardRange(-10000.0, 10000.0);
+  shadowOffsetYProp->setSoftRange(-256.0, 256.0);
+  textGroup.addProperty(shadowOffsetYProp);
+  auto shadowBlurProp = makeProp(QStringLiteral("text.shadowBlur"),
                                  ArtifactCore::PropertyType::Float,
-                                 shadowOffsetX(), -66));
-  textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetY"),
-                                 ArtifactCore::PropertyType::Float,
-                                 shadowOffsetY(), -65));
-  textGroup.addProperty(makeProp(QStringLiteral("text.shadowBlur"),
-                                 ArtifactCore::PropertyType::Float,
-                                 shadowBlur(), -64));
+                                 shadowBlur(), -64);
+  shadowBlurProp->setHardRange(0.0, 10000.0);
+  shadowBlurProp->setSoftRange(0.0, 128.0);
+  textGroup.addProperty(shadowBlurProp);
   auto animatorCountProp =
       makeProp(QStringLiteral("text.animatorCount"),
                ArtifactCore::PropertyType::Integer, animatorCount(), -63);
@@ -3180,6 +3291,8 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   auto animatorPresetProp =
       makeProp(QStringLiteral("text.animatorPreset"),
                ArtifactCore::PropertyType::Integer, 0, -62);
+  animatorPresetProp->setHardRange(0, 7);
+  animatorPresetProp->setSoftRange(0, 7);
   animatorPresetProp->setDisplayLabel(QStringLiteral("Preset"));
   animatorPresetProp->setTooltip(animatorPresetTooltip());
   animatorPresetProp->setValue(inferTextAnimatorPresetId(impl_->animators_));
@@ -3189,12 +3302,18 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 
   // Path Options
   ArtifactCore::PropertyGroup pathGroup(QStringLiteral("Path Options"));
-  pathGroup.addProperty(makeProp(QStringLiteral("text.pathStartOffset"),
-                                 ArtifactCore::PropertyType::Float,
-                                 pathStartOffset(), -70));
-  pathGroup.addProperty(makeProp(QStringLiteral("text.pathEndOffset"),
-                                 ArtifactCore::PropertyType::Float,
-                                 pathEndOffset(), -69));
+  auto pathStartProp = makeProp(QStringLiteral("text.pathStartOffset"),
+                                ArtifactCore::PropertyType::Float,
+                                pathStartOffset(), -70);
+  pathStartProp->setHardRange(-100000.0, 100000.0);
+  pathStartProp->setSoftRange(-1000.0, 1000.0);
+  pathGroup.addProperty(pathStartProp);
+  auto pathEndProp = makeProp(QStringLiteral("text.pathEndOffset"),
+                              ArtifactCore::PropertyType::Float,
+                              pathEndOffset(), -69);
+  pathEndProp->setHardRange(-100000.0, 100000.0);
+  pathEndProp->setSoftRange(-1000.0, 1000.0);
+  pathGroup.addProperty(pathEndProp);
   pathGroup.addProperty(makeProp(QStringLiteral("text.pathReverse"),
                                  ArtifactCore::PropertyType::Boolean,
                                  pathReverse(), -68));
@@ -3314,6 +3433,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                     animator.wiggly.wigglesPerSecond, -110);
     wpsProp->setDisplayLabel(QStringLiteral("Wiggles/Sec"));
     wpsProp->setSoftRange(0.0, 20.0);
+    wpsProp->setHardRange(0.0, 1000.0);
     animatorGroup.addProperty(wpsProp);
 
     auto correlationProp =
@@ -3549,17 +3669,19 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("text.alignment")) {
-    setHorizontalAlignment(static_cast<TextHorizontalAlignment>(value.toInt()));
+    setHorizontalAlignment(static_cast<TextHorizontalAlignment>(
+        std::clamp(value.toInt(), 0, 3)));
     setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.verticalAlignment")) {
-    setVerticalAlignment(static_cast<TextVerticalAlignment>(value.toInt()));
+    setVerticalAlignment(static_cast<TextVerticalAlignment>(
+        std::clamp(value.toInt(), 0, 2)));
     setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.wrapMode")) {
-    setWrapMode(static_cast<TextWrapMode>(value.toInt()));
+    setWrapMode(static_cast<TextWrapMode>(std::clamp(value.toInt(), 0, 3)));
     setDirty(LayerDirtyFlag::Property);
     return true;
   }
@@ -3714,62 +3836,87 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
 
     auto &animator = impl_->animators_[index];
     bool handled = true;
+    const float numericValue = [&]() {
+      const float parsed = static_cast<float>(value.toDouble());
+      return std::isfinite(parsed) ? parsed : 0.0f;
+    }();
     if (field == QStringLiteral("name")) {
       animator.name = value.toString().trimmed();
       if (animator.name.isEmpty()) {
         animator.name = QStringLiteral("Animator %1").arg(index + 1);
+      } else if (animator.name.size() > 256) {
+        animator.name = animator.name.left(256);
       }
     } else if (field == QStringLiteral("enabled")) {
       animator.enabled = value.toBool();
     } else if (field == QStringLiteral("start")) {
-      animator.range.start = static_cast<float>(value.toDouble());
+      animator.range.start = std::clamp(numericValue, -100000.0f, 100000.0f);
     } else if (field == QStringLiteral("end")) {
-      animator.range.end = static_cast<float>(value.toDouble());
+      animator.range.end = std::clamp(numericValue, -100000.0f, 100000.0f);
     } else if (field == QStringLiteral("offset")) {
-      animator.range.offset = static_cast<float>(value.toDouble());
+      animator.range.offset = std::clamp(numericValue, -100000.0f, 100000.0f);
     } else if (field == QStringLiteral("units")) {
       animator.range.units =
-          static_cast<SelectorUnits>(value.toInt());
+          static_cast<SelectorUnits>(std::clamp(value.toInt(), 0, 4));
     } else if (field == QStringLiteral("shape")) {
       animator.range.shape =
-          static_cast<SelectorShape>(value.toInt());
+          static_cast<SelectorShape>(std::clamp(value.toInt(), 0, 5));
     } else if (field == QStringLiteral("regexEnabled")) {
       animator.range.regexEnabled = value.toBool();
+      if (animator.range.regexEnabled && !animator.range.selectorPattern.isEmpty()) {
+        const QRegularExpression regex(animator.range.selectorPattern);
+        if (!regex.isValid()) {
+          animator.range.regexEnabled = false;
+        }
+      }
     } else if (field == QStringLiteral("selectorPattern")) {
-      animator.range.selectorPattern = value.toString();
+      animator.range.selectorPattern = value.toString().left(4096);
+      if (animator.range.regexEnabled && !animator.range.selectorPattern.isEmpty()) {
+        const QRegularExpression regex(animator.range.selectorPattern);
+        if (!regex.isValid()) {
+          animator.range.regexEnabled = false;
+        }
+      }
     } else if (field == QStringLiteral("easeHigh")) {
       animator.range.easeHigh =
-          std::clamp(static_cast<float>(value.toDouble()), 0.0f, 100.0f);
+          std::clamp(numericValue, 0.0f, 100.0f);
     } else if (field == QStringLiteral("easeLow")) {
       animator.range.easeLow =
-          std::clamp(static_cast<float>(value.toDouble()), 0.0f, 100.0f);
+          std::clamp(numericValue, 0.0f, 100.0f);
     } else if (field == QStringLiteral("wigglyEnabled")) {
       animator.wiggly.enabled = value.toBool();
     } else if (field == QStringLiteral("wigglesPerSecond")) {
-      animator.wiggly.wigglesPerSecond = static_cast<float>(value.toDouble());
+      animator.wiggly.wigglesPerSecond =
+          std::clamp(numericValue, 0.0f, 1000.0f);
     } else if (field == QStringLiteral("correlation")) {
       animator.wiggly.correlation =
-          std::clamp(static_cast<float>(value.toDouble()), 0.0f, 100.0f);
+          std::clamp(numericValue, 0.0f, 100.0f);
     } else if (field == QStringLiteral("phase")) {
-      animator.wiggly.phase = static_cast<float>(value.toDouble());
+      animator.wiggly.phase =
+          std::clamp(numericValue, -100000.0f, 100000.0f);
     } else if (field == QStringLiteral("seed")) {
       animator.wiggly.seed = value.toInt();
     } else if (field == QStringLiteral("positionX")) {
-      animator.properties.position.setX(static_cast<float>(value.toDouble()));
+      animator.properties.position.setX(
+          std::clamp(numericValue, -100000.0f, 100000.0f));
     } else if (field == QStringLiteral("positionY")) {
-      animator.properties.position.setY(static_cast<float>(value.toDouble()));
+      animator.properties.position.setY(
+          std::clamp(numericValue, -100000.0f, 100000.0f));
     } else if (field == QStringLiteral("scale")) {
       animator.properties.scale =
-          std::max(0.0f, static_cast<float>(value.toDouble()));
+          std::clamp(numericValue, 0.0f, 8.0f);
     } else if (field == QStringLiteral("rotation")) {
-      animator.properties.rotation = static_cast<float>(value.toDouble());
+      animator.properties.rotation =
+          std::clamp(numericValue, -360000.0f, 360000.0f);
     } else if (field == QStringLiteral("opacity")) {
       animator.properties.opacity =
-          std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+          std::clamp(numericValue, 0.0f, 1.0f);
     } else if (field == QStringLiteral("skew")) {
-      animator.properties.skew = static_cast<float>(value.toDouble());
+      animator.properties.skew =
+          std::clamp(numericValue, -360000.0f, 360000.0f);
     } else if (field == QStringLiteral("tracking")) {
-      animator.properties.tracking = static_cast<float>(value.toDouble());
+      animator.properties.tracking =
+          std::clamp(numericValue, -100000.0f, 100000.0f);
     } else if (field == QStringLiteral("colorEnabled")) {
       animator.properties.colorEnabled = value.toBool();
     } else if (field == QStringLiteral("fillColor")) {
@@ -3784,11 +3931,13 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
       animator.properties.strokeEnabled = true;
     } else if (field == QStringLiteral("strokeWidth")) {
       animator.properties.strokeWidth =
-          std::max(0.0f, static_cast<float>(value.toDouble()));
+          std::clamp(numericValue, 0.0f, 256.0f);
     } else if (field == QStringLiteral("blur")) {
-      animator.properties.blur = std::max(0.0f, static_cast<float>(value.toDouble()));
+      animator.properties.blur =
+          std::clamp(numericValue, 0.0f, 10000.0f);
     } else if (field == QStringLiteral("z")) {
-      animator.properties.z = static_cast<float>(value.toDouble());
+      animator.properties.z =
+          std::clamp(numericValue, -100000.0f, 100000.0f);
     } else {
       handled = false;
     }

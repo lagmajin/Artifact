@@ -1237,7 +1237,8 @@ bool ArtifactPropertyWidget::loadActiveExpressionPreset() {
   serialized.name = propertyObj.value(QStringLiteral("name")).toString();
   serialized.type = propertyObj.value(QStringLiteral("type")).toInt();
   serialized.value = propertyObj.value(QStringLiteral("value"));
-  serialized.expression = propertyObj.value(QStringLiteral("expression")).toString();
+  serialized.expression = propertyObj.value(QStringLiteral("expression"))
+                              .toString().trimmed().left(16384);
   serialized.keyframes = propertyObj.value(QStringLiteral("keyframes")).toArray();
   serialized.metadata = propertyObj.value(QStringLiteral("metadata")).toObject();
 

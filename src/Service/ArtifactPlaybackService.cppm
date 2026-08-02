@@ -11,6 +11,7 @@ module;
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QMetaObject>
+#include <QImageReader>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QStringList>
@@ -364,6 +365,10 @@ public:
     QObject::connect(
         engine_, &ArtifactPlaybackEngine::frameChanged, owner_,
         [this](const FramePosition &position, const QImage &frame) {
+          if (shuttingDown_.load(std::memory_order_acquire)) {
+            return;
+          }
+
           const QString compositionId =
               currentComposition_ ? currentComposition_->id().toString()
                                   : QString();
@@ -1188,10 +1193,20 @@ public:
   bool isPreviewDiskManifestFrameValid(const int64_t frame,
                                        const QString &filePath) {
     const QFileInfo frameInfo(filePath);
+    if (!frameInfo.isFile() || frameInfo.size() <= 0) {
+      return false;
+    }
+    QImageReader imageReader(filePath);
+    if (!imageReader.canRead()) {
+      return false;
+    }
     const QString manifestPath =
         QDir(frameInfo.absolutePath()).filePath(QStringLiteral("manifest.json"));
     QFile manifestFile(manifestPath);
     if (!manifestFile.open(QIODevice::ReadOnly)) {
+      return false;
+    }
+    if (manifestFile.size() <= 0 || manifestFile.size() > 16 * 1024 * 1024) {
       return false;
     }
     QJsonParseError parseError;
@@ -1203,6 +1218,9 @@ public:
 
     const QJsonObject object = document.object();
     const QJsonArray frames = object.value(QStringLiteral("frames")).toArray();
+    if (frames.size() > 100000) {
+      return false;
+    }
     if (object.value(QStringLiteral("schema")).toInt() !=
             kPreviewDiskManifestSchema ||
         object.value(QStringLiteral("frameCount")).toInt() != frames.size() ||
@@ -1217,12 +1235,28 @@ public:
       return false;
     }
 
+    std::unordered_set<qint64> manifestFrames;
+    manifestFrames.reserve(static_cast<size_t>(frames.size()));
     for (const QJsonValue &value : frames) {
+      if (!value.isObject()) {
+        return false;
+      }
       const QJsonObject entry = value.toObject();
-      if (entry.value(QStringLiteral("frame")).toVariant().toLongLong() == frame &&
-          entry.value(QStringLiteral("file")).toString() == frameInfo.fileName() &&
-          entry.value(QStringLiteral("bytes")).toVariant().toLongLong() ==
-              frameInfo.size()) {
+      const qint64 entryFrame =
+          entry.value(QStringLiteral("frame")).toVariant().toLongLong();
+      const qint64 entryBytes =
+          entry.value(QStringLiteral("bytes")).toVariant().toLongLong();
+      const QString entryFile = entry.value(QStringLiteral("file")).toString();
+      if (entryFrame < 0 || entryBytes <= 0 || entryFile.isEmpty() ||
+          QFileInfo(entryFile).fileName() != entryFile) {
+        return false;
+      }
+      if (!manifestFrames.insert(entryFrame).second) {
+        return false;
+      }
+      if (entryFile == frameInfo.fileName() &&
+              entryFrame == frame &&
+              entryBytes == frameInfo.size()) {
         return true;
       }
     }
@@ -2676,6 +2710,25 @@ void ArtifactPlaybackService::setDiskPreviewCacheBudgetMB(const int megabytes) {
   }
   const qint64 clampedMegabytes = std::clamp<qint64>(megabytes, 512, 32768);
   impl_->previewDiskCacheBudgetBytes_.store(clampedMegabytes * 1024LL * 1024LL);
+
+  // Apply a reduced budget immediately instead of waiting for the next frame
+  // write. The eviction helper derives the cache root from any existing frame.
+  QDir cacheRoot(impl_->previewDiskCacheRoot());
+  if (!cacheRoot.exists()) {
+    return;
+  }
+  QDirIterator frames(cacheRoot.absolutePath(),
+                      QStringList{QStringLiteral("frame_*.png")},
+                      QDir::Files, QDirIterator::Subdirectories);
+  if (!frames.hasNext()) {
+    return;
+  }
+  frames.next();
+  const auto evicted =
+      impl_->enforcePreviewDiskCacheGlobalBudget(frames.filePath());
+  for (const int64_t frame : evicted) {
+    impl_->markFrameOnDisk(frame, false);
+  }
 }
 
 void ArtifactPlaybackService::setRamPreviewRadius(int frames) {

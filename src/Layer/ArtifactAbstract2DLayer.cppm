@@ -282,7 +282,104 @@ class ArtifactAbstract2DLayer::Impl {
  {
   ArtifactAbstractLayer::fromJsonProperties(obj);
   if (obj.contains("rig2D") && obj.value("rig2D").isObject()) {
-   impl_->rig2D() = ArtifactCore::Rig2D::fromJson(obj.value("rig2D").toObject());
+   QJsonObject rigObject = obj.value("rig2D").toObject();
+   const auto capArray = [&rigObject](const QString& key, const qsizetype maximum) {
+    const QJsonArray source = rigObject.value(key).toArray();
+    if (source.size() <= maximum) {
+     return;
+    }
+    QJsonArray capped;
+    capped.reserve(static_cast<int>(maximum));
+    for (qsizetype i = 0; i < maximum; ++i) {
+     capped.append(source.at(i));
+    }
+    rigObject.insert(key, capped);
+   };
+   capArray(QStringLiteral("bones"), 4096);
+   capArray(QStringLiteral("controls"), 1024);
+   capArray(QStringLiteral("constraints"), 4096);
+   capArray(QStringLiteral("propertyBindings"), 4096);
+   capArray(QStringLiteral("smartBones"), 1024);
+   if (rigObject.value(QStringLiteral("skinMesh")).isObject()) {
+    const QJsonObject sourceMesh = rigObject.value(QStringLiteral("skinMesh")).toObject();
+    const int restoredBoneCount = rigObject.value(QStringLiteral("bones")).toArray().size();
+    QJsonObject safeMesh;
+    QJsonArray safeVertices;
+    const QJsonArray vertices = sourceMesh.value(QStringLiteral("vertices")).toArray();
+    for (qsizetype i = 0; i < vertices.size() && safeVertices.size() < 1000000; ++i) {
+     if (!vertices.at(i).isObject()) continue;
+     const QJsonObject vertex = vertices.at(i).toObject();
+     const QJsonArray weights = vertex.value(QStringLiteral("w")).toArray();
+     const QJsonArray boneIndices = vertex.value(QStringLiteral("bi")).toArray();
+     if (weights.size() < 4 || boneIndices.size() < 4 ||
+         !std::isfinite(vertex.value(QStringLiteral("px")).toDouble()) ||
+         !std::isfinite(vertex.value(QStringLiteral("py")).toDouble()) ||
+         !std::isfinite(vertex.value(QStringLiteral("u")).toDouble()) ||
+         !std::isfinite(vertex.value(QStringLiteral("v")).toDouble())) {
+      continue;
+     }
+     bool validWeights = true;
+     QJsonArray safeWeights;
+     std::array<double, 4> normalizedWeights{};
+     double weightTotal = 0.0;
+     bool hasValidBone = false;
+     QJsonArray safeBoneIndices;
+     for (int component = 0; component < 4; ++component) {
+      const double weight = weights.at(component).toDouble();
+      if (!std::isfinite(weight)) {
+       validWeights = false;
+       break;
+      }
+      const int boneIndex = boneIndices.at(component).toInt(-1);
+      const bool validBone = boneIndex >= 0 && boneIndex < restoredBoneCount;
+      hasValidBone = hasValidBone || validBone;
+      normalizedWeights[component] = validBone
+          ? std::clamp(weight, 0.0, 1.0) : 0.0;
+      weightTotal += normalizedWeights[component];
+      safeBoneIndices.append(
+          validBone ? boneIndex : -1);
+     }
+     if (!validWeights) continue;
+     if (weightTotal > 0.0 && std::isfinite(weightTotal)) {
+      for (const double weight : normalizedWeights) {
+       safeWeights.append(weight / weightTotal);
+      }
+     } else if (hasValidBone) {
+      safeWeights.append(1.0);
+      safeWeights.append(0.0);
+      safeWeights.append(0.0);
+      safeWeights.append(0.0);
+     } else {
+      for (int component = 0; component < 4; ++component) {
+       safeWeights.append(0.0);
+      }
+     }
+     QJsonObject safeVertex = vertex;
+     safeVertex.insert(QStringLiteral("px"), std::clamp(vertex.value(QStringLiteral("px")).toDouble(), -1000000.0, 1000000.0));
+     safeVertex.insert(QStringLiteral("py"), std::clamp(vertex.value(QStringLiteral("py")).toDouble(), -1000000.0, 1000000.0));
+     safeVertex.insert(QStringLiteral("u"), std::clamp(vertex.value(QStringLiteral("u")).toDouble(), -100000.0, 100000.0));
+     safeVertex.insert(QStringLiteral("v"), std::clamp(vertex.value(QStringLiteral("v")).toDouble(), -100000.0, 100000.0));
+     safeVertex.insert(QStringLiteral("w"), safeWeights);
+     safeVertex.insert(QStringLiteral("bi"), safeBoneIndices);
+     safeVertices.append(safeVertex);
+    }
+    safeMesh.insert(QStringLiteral("vertices"), safeVertices);
+    QJsonArray safeTriangles;
+    const QJsonArray triangles = sourceMesh.value(QStringLiteral("triangles")).toArray();
+    const qint64 safeVertexCount = safeVertices.size();
+    for (qsizetype i = 0; i < triangles.size() && safeTriangles.size() < 3000000; ++i) {
+     const qint64 triangle = triangles.at(i).toInteger(-1);
+     if (triangle >= 0 && triangle < safeVertexCount) {
+      safeTriangles.append(triangle);
+     }
+    }
+    while (safeTriangles.size() % 3 != 0) {
+     safeTriangles.removeLast();
+    }
+    safeMesh.insert(QStringLiteral("triangles"), safeTriangles);
+    rigObject.insert(QStringLiteral("skinMesh"), safeMesh);
+   }
+   impl_->rig2D() = ArtifactCore::Rig2D::fromJson(rigObject);
   }
  }
 

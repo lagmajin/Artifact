@@ -303,6 +303,14 @@ QColor toQColor(const FloatColor& color) {
      std::clamp(color.a(), 0.0f, 1.0f));
 }
 
+FloatColor normalizedShapeColor(const FloatColor& color) {
+ const auto channel = [](const float value, const float fallback) {
+  return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+ };
+ return FloatColor(channel(color.r(), 0.0f), channel(color.g(), 0.0f),
+                  channel(color.b(), 0.0f), channel(color.a(), 1.0f));
+}
+
 QPainterPath buildLayerPath(const Artifact::ShapeType shapeType,
                             const int width,
                             const int height,
@@ -353,6 +361,70 @@ std::unique_ptr<ArtifactCore::ShapeOperator> createShapeOperator(ArtifactCore::S
     return std::make_unique<ArtifactCore::HandDrawnWobble>();
   default:
     return nullptr;
+  }
+}
+
+void normalizeRestoredShapeOperator(ArtifactCore::ShapeOperator *op) {
+  if (auto trim = dynamic_cast<ArtifactCore::TrimPaths *>(op)) {
+    const auto safe = [](const float value, const float fallback) {
+      return std::isfinite(value) ? std::clamp(value, -100000.0f, 100000.0f) : fallback;
+    };
+    trim->setStart(safe(trim->start(), 0.0f));
+    trim->setEnd(safe(trim->end(), 100.0f));
+    trim->setOffset(safe(trim->offset(), 0.0f));
+  } else if (auto repeater = dynamic_cast<ArtifactCore::Repeater *>(op)) {
+    repeater->setCopies(std::clamp(repeater->copies(), 1, 1000));
+    const auto safePoint = [](const QPointF &point, const QPointF &fallback) {
+      return std::isfinite(point.x()) && std::isfinite(point.y())
+          ? QPointF(std::clamp(point.x(), -1000000.0, 1000000.0),
+                    std::clamp(point.y(), -1000000.0, 1000000.0))
+          : fallback;
+    };
+    repeater->setAnchorPoint(safePoint(repeater->anchorPoint(), {}));
+    repeater->setPosition(safePoint(repeater->position(), {}));
+    repeater->setScale(safePoint(repeater->scale(), {1.0, 1.0}));
+    const float offset = repeater->offset();
+    repeater->setOffset(std::isfinite(offset)
+        ? std::clamp(offset, -100000.0f, 100000.0f) : 0.0f);
+    const float rotation = repeater->rotation();
+    repeater->setRotation(std::isfinite(rotation)
+        ? std::clamp(rotation, -360000.0f, 360000.0f) : 0.0f);
+    const auto safeOpacity = [](const float value) {
+      return std::isfinite(value) ? std::clamp(value, 0.0f, 100.0f) : 100.0f;
+    };
+    repeater->setStartOpacity(safeOpacity(repeater->startOpacity()));
+    repeater->setEndOpacity(safeOpacity(repeater->endOpacity()));
+  } else if (auto wiggle = dynamic_cast<ArtifactCore::WigglePaths *>(op)) {
+    wiggle->setAmount(std::isfinite(wiggle->amount())
+        ? std::clamp(wiggle->amount(), -100000.0f, 100000.0f) : 0.0f);
+    wiggle->setFrequency(std::isfinite(wiggle->frequency())
+        ? std::clamp(wiggle->frequency(), 0.0f, 10000.0f) : 1.0f);
+  } else if (auto zigzag = dynamic_cast<ArtifactCore::ZigZag *>(op)) {
+    zigzag->setAmount(std::isfinite(zigzag->amount())
+        ? std::clamp(zigzag->amount(), -100000.0f, 100000.0f) : 0.0f);
+    zigzag->setFrequency(std::isfinite(zigzag->frequency())
+        ? std::clamp(zigzag->frequency(), 0.0f, 10000.0f) : 1.0f);
+  } else if (auto wobble = dynamic_cast<ArtifactCore::HandDrawnWobble *>(op)) {
+    wobble->setWobbleAmount(std::isfinite(wobble->wobbleAmount())
+        ? std::clamp(wobble->wobbleAmount(), 0.0f, 100000.0f) : 0.0f);
+    wobble->setWobbleFrequency(std::isfinite(wobble->wobbleFrequency())
+        ? std::clamp(wobble->wobbleFrequency(), 0.0f, 10000.0f) : 1.0f);
+    wobble->setPressureJitter(std::isfinite(wobble->pressureJitter())
+        ? std::clamp(wobble->pressureJitter(), 0.0f, 1.0f) : 0.0f);
+    wobble->setGapProbability(std::isfinite(wobble->gapProbability())
+        ? std::clamp(wobble->gapProbability(), 0.0f, 1.0f) : 0.0f);
+  } else if (auto offset = dynamic_cast<ArtifactCore::OffsetPaths *>(op)) {
+    const float value = offset->offset();
+    offset->setOffset(std::isfinite(value)
+        ? std::clamp(value, -100000.0f, 100000.0f) : 0.0f);
+  } else if (auto pucker = dynamic_cast<ArtifactCore::PuckerBloat *>(op)) {
+    const float value = pucker->amount();
+    pucker->setAmount(std::isfinite(value)
+        ? std::clamp(value, -100000.0f, 100000.0f) : 0.0f);
+  } else if (auto rounded = dynamic_cast<ArtifactCore::RoundedCorners *>(op)) {
+    const float value = rounded->radius();
+    rounded->setRadius(std::isfinite(value)
+        ? std::clamp(value, 0.0f, 100000.0f) : 0.0f);
   }
 }
 
@@ -1071,8 +1143,8 @@ void ArtifactShapeLayer::setSize(int w, int h) {
   // Property editors can temporarily submit zero/negative values while an
   // edit is being committed; allowing those through makes QImage construction
   // fail and leaves the previous cached shape visible.
-  const int clampedWidth = std::max(1, w);
-  const int clampedHeight = std::max(1, h);
+  const int clampedWidth = std::clamp(w, 1, 16384);
+  const int clampedHeight = std::clamp(h, 1, 16384);
   if (impl_->width_ == clampedWidth && impl_->height_ == clampedHeight) {
    return;
   }
@@ -1091,7 +1163,7 @@ int ArtifactShapeLayer::shapeHeight() const { return impl_->height_; }
 // Style
 // ============================================================
 
-void ArtifactShapeLayer::setFillColor(const FloatColor& c) { impl_->fillColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setFillColor(const FloatColor& c) { impl_->fillColor_ = normalizedShapeColor(c); impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::fillColor() const { return impl_->fillColor_; }
 void ArtifactShapeLayer::setFillType(ArtifactSolidFillType t) {
  int raw = std::clamp(static_cast<int>(t),
@@ -1107,23 +1179,23 @@ void ArtifactShapeLayer::setFillType(ArtifactSolidFillType t) {
  Q_EMIT changed();
 }
 ArtifactSolidFillType ArtifactShapeLayer::fillType() const { return impl_->fillType_; }
-void ArtifactShapeLayer::setFillGradientStartColor(const FloatColor& c) { impl_->fillGradientStartColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setFillGradientStartColor(const FloatColor& c) { impl_->fillGradientStartColor_ = normalizedShapeColor(c); impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::fillGradientStartColor() const { return impl_->fillGradientStartColor_; }
-void ArtifactShapeLayer::setFillGradientEndColor(const FloatColor& c) { impl_->fillGradientEndColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setFillGradientEndColor(const FloatColor& c) { impl_->fillGradientEndColor_ = normalizedShapeColor(c); impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::fillGradientEndColor() const { return impl_->fillGradientEndColor_; }
-void ArtifactShapeLayer::setFillGradientAngleDegrees(float d) { impl_->fillGradientAngleDegrees_ = d; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setFillGradientAngleDegrees(float d) { impl_->fillGradientAngleDegrees_ = std::isfinite(d) ? d : 0.0f; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 float ArtifactShapeLayer::fillGradientAngleDegrees() const { return impl_->fillGradientAngleDegrees_; }
-void ArtifactShapeLayer::setFillGradientCenterX(float v) { impl_->fillGradientCenterX_ = v; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setFillGradientCenterX(float v) { impl_->fillGradientCenterX_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 float ArtifactShapeLayer::fillGradientCenterX() const { return impl_->fillGradientCenterX_; }
-void ArtifactShapeLayer::setFillGradientCenterY(float v) { impl_->fillGradientCenterY_ = v; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setFillGradientCenterY(float v) { impl_->fillGradientCenterY_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 float ArtifactShapeLayer::fillGradientCenterY() const { return impl_->fillGradientCenterY_; }
-void ArtifactShapeLayer::setFillGradientRadius(float v) { impl_->fillGradientRadius_ = v; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setFillGradientRadius(float v) { impl_->fillGradientRadius_ = std::isfinite(v) ? std::max(0.0f, v) : 0.5f; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 float ArtifactShapeLayer::fillGradientRadius() const { return impl_->fillGradientRadius_; }
 void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) {
- impl_->strokeColor_ = c;
+ impl_->strokeColor_ = normalizedShapeColor(c);
  if (!impl_->strokeGradientEnabled_) {
-  impl_->strokeGradientStartColor_ = c;
-  impl_->strokeGradientEndColor_ = c;
+  impl_->strokeGradientStartColor_ = impl_->strokeColor_;
+  impl_->strokeGradientEndColor_ = impl_->strokeColor_;
  }
  impl_->markDirty();
  impl_->shapeContentCacheDirty_ = true;
@@ -1131,7 +1203,7 @@ void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) {
 }
 FloatColor ArtifactShapeLayer::strokeColor() const { return impl_->strokeColor_; }
 void ArtifactShapeLayer::setStrokeWidth(float w) {
- impl_->strokeWidth_ = std::max(0.0f, w);
+ impl_->strokeWidth_ = std::isfinite(w) ? std::max(0.0f, w) : 0.0f;
  impl_->markDirty();
  impl_->localBoundsCacheDirty_ = true;
  impl_->shapeContentCacheDirty_ = true;
@@ -1143,8 +1215,8 @@ bool ArtifactShapeLayer::fillEnabled() const { return impl_->fillEnabled_; }
 void ArtifactShapeLayer::setStrokeEnabled(bool e) { impl_->strokeEnabled_ = e; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 bool ArtifactShapeLayer::strokeEnabled() const { return impl_->strokeEnabled_; }
 void ArtifactShapeLayer::setStrokeTaper(float startScale, float endScale) {
- impl_->strokeTaperStart_ = std::clamp(startScale, 0.0f, 1.0f);
- impl_->strokeTaperEnd_ = std::clamp(endScale, 0.0f, 1.0f);
+ impl_->strokeTaperStart_ = std::isfinite(startScale) ? std::clamp(startScale, 0.0f, 1.0f) : 1.0f;
+ impl_->strokeTaperEnd_ = std::isfinite(endScale) ? std::clamp(endScale, 0.0f, 1.0f) : 1.0f;
  impl_->markDirty();
  impl_->localBoundsCacheDirty_ = true;
  impl_->shapeContentCacheDirty_ = true;
@@ -1160,14 +1232,14 @@ void ArtifactShapeLayer::setStrokeGradientEnabled(bool enabled) {
 }
 bool ArtifactShapeLayer::strokeGradientEnabled() const { return impl_->strokeGradientEnabled_; }
 void ArtifactShapeLayer::setStrokeGradientStartColor(const FloatColor& color) {
- impl_->strokeGradientStartColor_ = color;
+ impl_->strokeGradientStartColor_ = normalizedShapeColor(color);
  impl_->markDirty();
  impl_->shapeContentCacheDirty_ = true;
  Q_EMIT changed();
 }
 FloatColor ArtifactShapeLayer::strokeGradientStartColor() const { return impl_->strokeGradientStartColor_; }
 void ArtifactShapeLayer::setStrokeGradientEndColor(const FloatColor& color) {
- impl_->strokeGradientEndColor_ = color;
+ impl_->strokeGradientEndColor_ = normalizedShapeColor(color);
  impl_->markDirty();
  impl_->shapeContentCacheDirty_ = true;
  Q_EMIT changed();
@@ -1231,17 +1303,23 @@ bool ArtifactShapeLayer::direct3DCardStrokeClosed() const {
 // Shape Params
 // ============================================================
 
-void ArtifactShapeLayer::setCornerRadius(float r) { impl_->cornerRadius_ = r; impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setCornerRadius(float r) { impl_->cornerRadius_ = std::isfinite(r) ? std::max(0.0f, r) : 0.0f; impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 float ArtifactShapeLayer::cornerRadius() const { return impl_->cornerRadius_; }
 void ArtifactShapeLayer::setStarPoints(int p) { impl_->starPoints_ = std::max(3, p); impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 int ArtifactShapeLayer::starPoints() const { return impl_->starPoints_; }
-void ArtifactShapeLayer::setStarInnerRadius(float r) { impl_->starInnerRadius_ = std::clamp(r, 0.0f, 1.0f); impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setStarInnerRadius(float r) { impl_->starInnerRadius_ = std::isfinite(r) ? std::clamp(r, 0.0f, 1.0f) : 0.5f; impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 float ArtifactShapeLayer::starInnerRadius() const { return impl_->starInnerRadius_; }
 void ArtifactShapeLayer::setPolygonSides(int s) { impl_->polygonSides_ = std::max(3, s); impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 int ArtifactShapeLayer::polygonSides() const { return impl_->polygonSides_; }
 bool ArtifactShapeLayer::hasCustomPolygon() const { return impl_->customPolygonPoints_.size() >= 3; }
 void ArtifactShapeLayer::setCustomPolygonPoints(const std::vector<QPointF>& points, bool closed) {
-  impl_->customPolygonPoints_ = points;
+  impl_->customPolygonPoints_.clear();
+  impl_->customPolygonPoints_.reserve(points.size());
+  for (const auto& point : points) {
+    if (std::isfinite(point.x()) && std::isfinite(point.y())) {
+      impl_->customPolygonPoints_.push_back(point);
+    }
+  }
   impl_->customPolygonClosed_ = closed;
   impl_->customPathVertices_.clear(); // mutual exclusion
   impl_->markDirty();
@@ -1305,7 +1383,17 @@ std::vector<float> ArtifactShapeLayer::dashPattern() const { return impl_->dashP
 // Phase 5: Bezier path
 bool ArtifactShapeLayer::hasCustomPath() const { return impl_->customPathVertices_.size() >= 3; }
 void ArtifactShapeLayer::setCustomPathVertices(const std::vector<CustomPathVertex>& vertices, bool closed) {
-  impl_->customPathVertices_ = vertices;
+  impl_->customPathVertices_.clear();
+  impl_->customPathVertices_.reserve(vertices.size());
+  for (const auto& vertex : vertices) {
+    const auto finitePoint = [](const QPointF& point) {
+      return std::isfinite(point.x()) && std::isfinite(point.y());
+    };
+    if (finitePoint(vertex.pos) && finitePoint(vertex.inTangent) &&
+        finitePoint(vertex.outTangent)) {
+      impl_->customPathVertices_.push_back(vertex);
+    }
+  }
   impl_->customPathClosed_ = closed;
   impl_->customPolygonPoints_.clear(); // mutual exclusion
   impl_->markDirty();
@@ -1768,12 +1856,14 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
                            ArtifactCore::PropertyType::Integer, impl_->width_,
                            -219);
  widthProp->setDisplayLabel(QStringLiteral("Width"));
+ widthProp->setHardRange(1, 16384);
  shapeGroup.addProperty(widthProp);
 
  auto heightProp = makeProp(QStringLiteral("shape.height"),
                             ArtifactCore::PropertyType::Integer,
                             impl_->height_, -218);
  heightProp->setDisplayLabel(QStringLiteral("Height"));
+ heightProp->setHardRange(1, 16384);
  shapeGroup.addProperty(heightProp);
 
  groups.push_back(shapeGroup);
@@ -1834,24 +1924,32 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
   auto fillGradAngleProp = makeProp(QStringLiteral("shape.fillGradientAngle"),
                                     ArtifactCore::PropertyType::Float,
                                     impl_->fillGradientAngleDegrees_, -196);
+  fillGradAngleProp->setSoftRange(-360.0, 360.0);
+  fillGradAngleProp->setHardRange(-360.0, 360.0);
   fillGradAngleProp->setDisplayLabel(QStringLiteral("Gradient Angle"));
    appearanceGroup.addProperty(fillGradAngleProp);
 
   auto fillGradCenterXProp = makeProp(QStringLiteral("shape.fillGradientCenterX"),
                                       ArtifactCore::PropertyType::Float,
                                       impl_->fillGradientCenterX_, -195);
+  fillGradCenterXProp->setSoftRange(0.0, 1.0);
+  fillGradCenterXProp->setHardRange(0.0, 1.0);
   fillGradCenterXProp->setDisplayLabel(QStringLiteral("Gradient Center X"));
    appearanceGroup.addProperty(fillGradCenterXProp);
 
   auto fillGradCenterYProp = makeProp(QStringLiteral("shape.fillGradientCenterY"),
                                       ArtifactCore::PropertyType::Float,
                                       impl_->fillGradientCenterY_, -194);
+  fillGradCenterYProp->setSoftRange(0.0, 1.0);
+  fillGradCenterYProp->setHardRange(0.0, 1.0);
   fillGradCenterYProp->setDisplayLabel(QStringLiteral("Gradient Center Y"));
    appearanceGroup.addProperty(fillGradCenterYProp);
 
   auto fillGradRadiusProp = makeProp(QStringLiteral("shape.fillGradientRadius"),
                                      ArtifactCore::PropertyType::Float,
                                      impl_->fillGradientRadius_, -193);
+  fillGradRadiusProp->setSoftRange(0.0, 2.0);
+  fillGradRadiusProp->setHardRange(0.0, 100000.0);
   fillGradRadiusProp->setDisplayLabel(QStringLiteral("Gradient Radius"));
    appearanceGroup.addProperty(fillGradRadiusProp);
 
@@ -1870,6 +1968,8 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  auto strokeWidthProp = makeProp(QStringLiteral("shape.strokeWidth"),
                                  ArtifactCore::PropertyType::Float,
                                  impl_->strokeWidth_, -207);
+ strokeWidthProp->setSoftRange(0.0, 64.0);
+ strokeWidthProp->setHardRange(0.0, 100000.0);
  strokeWidthProp->setDisplayLabel(QStringLiteral("Stroke Width"));
   appearanceGroup.addProperty(strokeWidthProp);
 
@@ -1883,6 +1983,8 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
                                       ArtifactCore::PropertyType::Float,
                                       impl_->strokeTaperStart_, -205, false);
  strokeTaperStartProp->setDisplayLabel(QStringLiteral("Taper Start"));
+ strokeTaperStartProp->setSoftRange(0.0, 1.0);
+ strokeTaperStartProp->setHardRange(0.0, 1.0);
  strokeTaperStartProp->setTooltip(QStringLiteral("0.0 = thin, 1.0 = full width"));
  appearanceGroup.addProperty(strokeTaperStartProp);
 
@@ -1890,6 +1992,8 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
                                     ArtifactCore::PropertyType::Float,
                                     impl_->strokeTaperEnd_, -204, false);
  strokeTaperEndProp->setDisplayLabel(QStringLiteral("Taper End"));
+ strokeTaperEndProp->setSoftRange(0.0, 1.0);
+ strokeTaperEndProp->setHardRange(0.0, 1.0);
  strokeTaperEndProp->setTooltip(QStringLiteral("0.0 = thin, 1.0 = full width"));
  appearanceGroup.addProperty(strokeTaperEndProp);
 
@@ -1926,6 +2030,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  auto strokeCapProp = makeProp(QStringLiteral("shape.strokeCap"),
                                ArtifactCore::PropertyType::Integer,
                                static_cast<int>(impl_->strokeCap_), -200, false);
+  strokeCapProp->setHardRange(0, 2);
   strokeCapProp->setDisplayLabel(QStringLiteral("Stroke Cap"));
   strokeCapProp->setTooltip(QStringLiteral("0=Flat, 1=Round, 2=Square"));
    appearanceGroup.addProperty(strokeCapProp);
@@ -1933,6 +2038,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  auto strokeJoinProp = makeProp(QStringLiteral("shape.strokeJoin"),
                                 ArtifactCore::PropertyType::Integer,
                                 static_cast<int>(impl_->strokeJoin_), -199, false);
+  strokeJoinProp->setHardRange(0, 2);
   strokeJoinProp->setDisplayLabel(QStringLiteral("Stroke Join"));
   strokeJoinProp->setTooltip(QStringLiteral("0=Miter, 1=Round, 2=Bevel"));
    appearanceGroup.addProperty(strokeJoinProp);
@@ -1940,6 +2046,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  auto strokeAlignProp = makeProp(QStringLiteral("shape.strokeAlign"),
                                 ArtifactCore::PropertyType::Integer,
                                 static_cast<int>(impl_->strokeAlign_), -198, false);
+  strokeAlignProp->setHardRange(0, 2);
   strokeAlignProp->setDisplayLabel(QStringLiteral("Stroke Align"));
   strokeAlignProp->setTooltip(QStringLiteral("0=Center, 1=Inside, 2=Outside"));
    appearanceGroup.addProperty(strokeAlignProp);
@@ -1961,17 +2068,22 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
                             ArtifactCore::PropertyType::Float,
                             impl_->cornerRadius_, -200);
  cornerProp->setDisplayLabel(QStringLiteral("Corner Radius"));
+ cornerProp->setSoftRange(0.0, 256.0);
+ cornerProp->setHardRange(0.0, 100000.0);
   paramsGroup.addProperty(cornerProp);
  auto pointsProp = makeProp(QStringLiteral("shape.starPoints"),
                             ArtifactCore::PropertyType::Integer,
                             impl_->starPoints_, -199);
  pointsProp->setDisplayLabel(QStringLiteral("Points"));
+ pointsProp->setHardRange(3, 2048);
   paramsGroup.addProperty(pointsProp);
 
  auto innerProp = makeProp(QStringLiteral("shape.starInnerRadius"),
                            ArtifactCore::PropertyType::Float,
                            impl_->starInnerRadius_, -198);
  innerProp->setDisplayLabel(QStringLiteral("Inner Radius"));
+ innerProp->setSoftRange(0.0, 1.0);
+ innerProp->setHardRange(0.0, 1.0);
   paramsGroup.addProperty(innerProp);
  auto sidesProp = makeProp(QStringLiteral("shape.polygonSides"),
                            ArtifactCore::PropertyType::Integer,
@@ -2240,7 +2352,7 @@ if (propertyPath == "shape.type") {
        } else if (auto repeater =
                       dynamic_cast<ArtifactCore::Repeater *>(op.get())) {
          if (field == "copies") {
-           repeater->setCopies(value.toInt());
+           repeater->setCopies(std::clamp(value.toInt(), 1, 1000));
            handled = true;
          } else if (field == "offset") {
            repeater->setOffset(value.toFloat());
@@ -2258,10 +2370,14 @@ if (propertyPath == "shape.type") {
            repeater->setRotation(value.toFloat());
            handled = true;
          } else if (field == "startOpacity") {
-           repeater->setStartOpacity(value.toFloat());
+           const float opacity = value.toFloat();
+           repeater->setStartOpacity(std::isfinite(opacity)
+               ? std::clamp(opacity, 0.0f, 100.0f) : 100.0f);
            handled = true;
          } else if (field == "endOpacity") {
-           repeater->setEndOpacity(value.toFloat());
+           const float opacity = value.toFloat();
+           repeater->setEndOpacity(std::isfinite(opacity)
+               ? std::clamp(opacity, 0.0f, 100.0f) : 100.0f);
            handled = true;
          }
        } else if (auto offset =
@@ -2290,19 +2406,29 @@ if (propertyPath == "shape.type") {
          }
        } else if (auto wp =
                       dynamic_cast<ArtifactCore::WigglePaths *>(op.get())) {
+         const auto safeOperatorValue = [](const QVariant &input, const float fallback,
+                                           const float lower, const float upper) {
+           const float value = input.toFloat();
+           return std::isfinite(value) ? std::clamp(value, lower, upper) : fallback;
+         };
          if (field == "amount") {
-           wp->setAmount(value.toFloat());
+           wp->setAmount(safeOperatorValue(value, 0.0f, -100000.0f, 100000.0f));
            handled = true;
          } else if (field == "frequency") {
-           wp->setFrequency(value.toFloat());
+           wp->setFrequency(safeOperatorValue(value, 1.0f, 0.0f, 10000.0f));
            handled = true;
          }
        } else if (auto zz = dynamic_cast<ArtifactCore::ZigZag *>(op.get())) {
+         const auto safeOperatorValue = [](const QVariant &input, const float fallback,
+                                           const float lower, const float upper) {
+           const float value = input.toFloat();
+           return std::isfinite(value) ? std::clamp(value, lower, upper) : fallback;
+         };
          if (field == "amount") {
-           zz->setAmount(value.toFloat());
+           zz->setAmount(safeOperatorValue(value, 0.0f, -100000.0f, 100000.0f));
            handled = true;
          } else if (field == "frequency") {
-           zz->setFrequency(value.toFloat());
+           zz->setFrequency(safeOperatorValue(value, 1.0f, 0.0f, 10000.0f));
            handled = true;
          }
        } else if (auto twist =
@@ -2313,17 +2439,22 @@ if (propertyPath == "shape.type") {
          }
        } else if (auto wobble =
                       dynamic_cast<ArtifactCore::HandDrawnWobble *>(op.get())) {
+         const auto safeOperatorValue = [](const QVariant &input, const float fallback,
+                                           const float lower, const float upper) {
+           const float value = input.toFloat();
+           return std::isfinite(value) ? std::clamp(value, lower, upper) : fallback;
+         };
          if (field == "wobbleAmount") {
-           wobble->setWobbleAmount(value.toFloat());
+           wobble->setWobbleAmount(safeOperatorValue(value, 0.0f, 0.0f, 100000.0f));
            handled = true;
          } else if (field == "wobbleFrequency") {
-           wobble->setWobbleFrequency(value.toFloat());
+           wobble->setWobbleFrequency(safeOperatorValue(value, 1.0f, 0.0f, 10000.0f));
            handled = true;
          } else if (field == "pressureJitter") {
-           wobble->setPressureJitter(value.toFloat());
+           wobble->setPressureJitter(safeOperatorValue(value, 0.0f, 0.0f, 1.0f));
            handled = true;
          } else if (field == "gapProbability") {
-           wobble->setGapProbability(value.toFloat());
+           wobble->setGapProbability(safeOperatorValue(value, 0.0f, 0.0f, 1.0f));
            handled = true;
          }
        }
@@ -2492,39 +2623,55 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
   layer->impl_->customPolygonClosed_ = obj["customPolygonClosed"].toBool(true);
   layer->impl_->customPolygonPoints_.clear();
   const QJsonArray customPolygonPoints = obj["customPolygonPoints"].toArray();
-  layer->impl_->customPolygonPoints_.reserve(customPolygonPoints.size());
-  for (const auto &value : customPolygonPoints) {
+  const int polygonPointCount = std::min(customPolygonPoints.size(), 100000);
+  layer->impl_->customPolygonPoints_.reserve(polygonPointCount);
+  for (int pointIndex = 0; pointIndex < polygonPointCount; ++pointIndex) {
+    const auto value = customPolygonPoints.at(pointIndex);
     const QJsonObject p = value.toObject();
-    layer->impl_->customPolygonPoints_.push_back(
-        QPointF(p["x"].toDouble(), p["y"].toDouble()));
+    const double x = p["x"].toDouble();
+    const double y = p["y"].toDouble();
+    if (std::isfinite(x) && std::isfinite(y)) {
+      layer->impl_->customPolygonPoints_.push_back(QPointF(x, y));
+    }
   }
   // Phase 5: bezier path (takes priority over customPolygon)
   const QJsonArray customPathArr = obj["customPath"].toArray();
   if (customPathArr.size() >= 3) {
     layer->impl_->customPathClosed_ = obj["customPathClosed"].toBool(true);
     layer->impl_->customPathVertices_.clear();
-    layer->impl_->customPathVertices_.reserve(customPathArr.size());
-    for (const auto &val : customPathArr) {
+    const int pathVertexCount = std::min(customPathArr.size(), 100000);
+    layer->impl_->customPathVertices_.reserve(pathVertexCount);
+    for (int vertexIndex = 0; vertexIndex < pathVertexCount; ++vertexIndex) {
+      const auto val = customPathArr.at(vertexIndex);
       const QJsonObject vObj = val.toObject();
       CustomPathVertex v;
       v.pos = QPointF(vObj["px"].toDouble(), vObj["py"].toDouble());
       v.inTangent = QPointF(vObj["ix"].toDouble(), vObj["iy"].toDouble());
       v.outTangent = QPointF(vObj["ox"].toDouble(), vObj["oy"].toDouble());
       v.smooth = vObj["smooth"].toBool(false);
-      layer->impl_->customPathVertices_.push_back(v);
+      const auto finitePoint = [](const QPointF& point) {
+        return std::isfinite(point.x()) && std::isfinite(point.y());
+      };
+      if (finitePoint(v.pos) && finitePoint(v.inTangent) &&
+          finitePoint(v.outTangent)) {
+        layer->impl_->customPathVertices_.push_back(v);
+      }
     }
     layer->impl_->customPolygonPoints_.clear(); // mutual exclusion
   }
   const QJsonArray operators = obj["shapeOperators"].toArray();
   layer->impl_->shapeOperators_.clear();
-  layer->impl_->shapeOperators_.reserve(operators.size());
-  for (const auto &val : operators) {
+  const int operatorCount = std::min(operators.size(), 128);
+  layer->impl_->shapeOperators_.reserve(operatorCount);
+  for (int operatorIndex = 0; operatorIndex < operatorCount; ++operatorIndex) {
+    const auto val = operators.at(operatorIndex);
     const QJsonObject opObj = val.toObject();
     const auto type = static_cast<ArtifactCore::ShapeOperatorType>(
         opObj.value(QStringLiteral("type")).toInt(0));
     auto op = createShapeOperator(type);
     if (op) {
       op->fromJson(opObj);
+      normalizeRestoredShapeOperator(op.get());
        layer->impl_->shapeOperators_.push_back(std::move(op));
     }
   }
@@ -2538,14 +2685,17 @@ void ArtifactShapeLayer::restoreOperatorsFromJson(const QJsonArray& operators)
     return;
   }
   impl_->shapeOperators_.clear();
-  impl_->shapeOperators_.reserve(operators.size());
-  for (const auto& val : operators) {
+  const int operatorCount = std::min(operators.size(), 128);
+  impl_->shapeOperators_.reserve(operatorCount);
+  for (int operatorIndex = 0; operatorIndex < operatorCount; ++operatorIndex) {
+    const auto val = operators.at(operatorIndex);
     const QJsonObject opObj = val.toObject();
     const auto type = static_cast<ArtifactCore::ShapeOperatorType>(
         opObj.value(QStringLiteral("type")).toInt(0));
     auto op = createShapeOperator(type);
     if (op) {
       op->fromJson(opObj);
+      normalizeRestoredShapeOperator(op.get());
       impl_->shapeOperators_.push_back(std::move(op));
     }
   }

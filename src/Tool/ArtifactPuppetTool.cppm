@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <QApplication>
@@ -39,6 +40,7 @@ struct PinRecord {
     QPointF originalPos;
     int type = 0; // 0=Position, 1=Starch, 2=Bend, 3=Overlap
     float rotation = 0.0f;
+    float weight = 1.0f;
     float depth = 0.0f;
 };
 
@@ -111,8 +113,10 @@ bool ArtifactPuppetTool::isActive() const
 
 bool ArtifactPuppetTool::addPin(const LayerID& layerId, const QPointF& canvasPos)
 {
+    if (!std::isfinite(canvasPos.x()) || !std::isfinite(canvasPos.y())) return false;
     auto* lp = impl_->getOrCreateLayerPins(layerId);
     if (!lp) return false;
+    if (lp->pins.size() >= 1024) return false;
 
     const int idx = static_cast<int>(lp->pins.size());
     const QString pinId = QStringLiteral("pin_%1_%2").arg(layerId.toString()).arg(idx);
@@ -138,6 +142,9 @@ bool ArtifactPuppetTool::removePin(const QString& pinId)
         if (it != lp.pins.end()) {
             lp.pins.erase(it, lp.pins.end());
             lp.needsRebind = true;
+            if (lp.engine) {
+                lp.engine->reset();
+            }
             if (impl_->selectedPinId == pinId) impl_->selectedPinId.clear();
             return true;
         }
@@ -148,7 +155,7 @@ bool ArtifactPuppetTool::removePin(const QString& pinId)
 bool ArtifactPuppetTool::movePin(const QString& pinId, const QPointF& canvasPos)
 {
     auto* pin = impl_->findPin(pinId);
-    if (!pin) return false;
+    if (!pin || !std::isfinite(canvasPos.x()) || !std::isfinite(canvasPos.y())) return false;
     pin->canvasPos = canvasPos;
 
     auto* lp = impl_->getLayerPins(pin->layerId);
@@ -161,9 +168,61 @@ bool ArtifactPuppetTool::movePin(const QString& pinId, const QPointF& canvasPos)
     return true;
 }
 
+QPointF ArtifactPuppetTool::pinPosition(const QString& pinId) const
+{
+    if (const auto* pin = impl_->findPin(pinId)) return pin->canvasPos;
+    return {};
+}
+
+float ArtifactPuppetTool::pinRotation(const QString& pinId) const
+{
+    if (const auto* pin = impl_->findPin(pinId)) return pin->rotation;
+    return 0.0f;
+}
+
+void ArtifactPuppetTool::setPinRotation(const QString& pinId, float degrees)
+{
+    if (auto* pin = impl_->findPin(pinId)) {
+        pin->rotation = std::isfinite(degrees)
+            ? std::fmod(degrees + 180.0f, 360.0f)
+            : 0.0f;
+        if (pin->rotation < 0.0f) pin->rotation += 360.0f;
+        pin->rotation -= 180.0f;
+    }
+}
+
+float ArtifactPuppetTool::pinWeight(const QString& pinId) const
+{
+    if (const auto* pin = impl_->findPin(pinId)) return pin->weight;
+    return 1.0f;
+}
+
+void ArtifactPuppetTool::setPinWeight(const QString& pinId, float weight)
+{
+    if (auto* pin = impl_->findPin(pinId)) {
+        pin->weight = std::isfinite(weight) ? std::clamp(weight, 0.0f, 1.0f) : 1.0f;
+    }
+}
+
+float ArtifactPuppetTool::pinDepth(const QString& pinId) const
+{
+    if (const auto* pin = impl_->findPin(pinId)) return pin->depth;
+    return 0.0f;
+}
+
+void ArtifactPuppetTool::setPinDepth(const QString& pinId, float depth)
+{
+    if (auto* pin = impl_->findPin(pinId)) {
+        pin->depth = std::isfinite(depth) ? std::clamp(depth, -1.0f, 1.0f) : 0.0f;
+    }
+}
+
 QString ArtifactPuppetTool::hitTestPin(const QPointF& canvasPos, float threshold) const
 {
-    const float threshSq = threshold * threshold;
+    if (!std::isfinite(canvasPos.x()) || !std::isfinite(canvasPos.y())) return {};
+    const float safeThreshold = std::isfinite(threshold)
+        ? std::clamp(threshold, 0.0f, 100000.0f) : 12.0f;
+    const float threshSq = safeThreshold * safeThreshold;
     QString closestId;
     float closestDistSq = threshSq;
 
@@ -194,6 +253,7 @@ void ArtifactPuppetTool::deformLayer(const LayerID& layerId, ArtifactIRenderer* 
 
     // Bind image to engine if dirty
     if (lp->needsRebind) {
+        bool rebound = false;
         QImage qimg = imageLayer->toQImage();
         if (!qimg.isNull() && qimg.width() > 0 && qimg.height() > 0) {
             QImage safe = qimg.convertToFormat(QImage::Format_RGBA8888).copy();
@@ -205,13 +265,20 @@ void ArtifactPuppetTool::deformLayer(const LayerID& layerId, ArtifactIRenderer* 
                     std::memcpy(mat.ptr(y), safe.constScanLine(y), static_cast<size_t>(copyBytes));
                 }
                 lp->engine->bindImage(mat, 10);
+                rebound = true;
             }
         }
-        lp->needsRebind = false;
+        lp->needsRebind = !rebound;
     }
 
     // Synchronize pins to engine
     for (const auto& pin : lp->pins) {
+        if (!std::isfinite(pin.originalPos.x()) ||
+            !std::isfinite(pin.originalPos.y()) ||
+            !std::isfinite(pin.canvasPos.x()) ||
+            !std::isfinite(pin.canvasPos.y())) {
+            continue;
+        }
         ArtifactCore::PuppetPin ppin;
         ppin.id = pin.id.toStdString();
         ppin.originalPosition = cv::Point2f(
@@ -221,9 +288,13 @@ void ArtifactPuppetTool::deformLayer(const LayerID& layerId, ArtifactIRenderer* 
             static_cast<float>(pin.canvasPos.x()),
             static_cast<float>(pin.canvasPos.y()));
         ppin.type = static_cast<ArtifactCore::PuppetPinType>(pin.type);
-        ppin.weight = 1.0f;
-        ppin.rotation = pin.rotation;
-        ppin.depth = pin.depth;
+        ppin.weight = std::isfinite(pin.weight)
+            ? std::clamp(pin.weight, 0.0f, 1.0f) : 1.0f;
+        // PinRecord/UI rotation is stored in degrees; PuppetEngine applies
+        // std::sin/cos directly and therefore consumes radians.
+        const float safeRotation = std::isfinite(pin.rotation) ? pin.rotation : 0.0f;
+        ppin.rotation = safeRotation * 0.017453292519943295f;
+        ppin.depth = std::isfinite(pin.depth) ? std::clamp(pin.depth, -1.0f, 1.0f) : 0.0f;
         lp->engine->addPin(ppin);
     }
 
@@ -257,7 +328,10 @@ QString ArtifactPuppetTool::selectedPinId() const
 
 void ArtifactPuppetTool::setSelectedPinId(const QString& pinId)
 {
-    impl_->selectedPinId = pinId;
+    const QString normalized = pinId.trimmed().left(256);
+    impl_->selectedPinId = normalized.isEmpty() || !impl_->findPin(normalized)
+        ? QString()
+        : normalized;
 }
 
 void ArtifactPuppetTool::renderOverlay(ArtifactIRenderer* renderer, const LayerID& layerId) const
@@ -267,7 +341,38 @@ void ArtifactPuppetTool::renderOverlay(ArtifactIRenderer* renderer, const LayerI
     auto* lp = impl_->getLayerPins(layerId);
     if (!lp) return;
 
+    if (lp->engine) {
+        const ArtifactCore::PuppetMesh mesh = lp->engine->getDeformedMesh();
+        const ArtifactCore::FloatColor meshColor{0.35f, 0.82f, 1.0f, 0.34f};
+        const auto drawEdge = [&](int first, int second) {
+            if (first < 0 || second < 0 ||
+                first >= static_cast<int>(mesh.vertices.size()) ||
+                second >= static_cast<int>(mesh.vertices.size())) {
+                return;
+            }
+            const auto &a = mesh.vertices[static_cast<size_t>(first)];
+            const auto &b = mesh.vertices[static_cast<size_t>(second)];
+            if (!std::isfinite(a.x) || !std::isfinite(a.y) ||
+                !std::isfinite(b.x) || !std::isfinite(b.y)) {
+                return;
+            }
+            renderer->drawSolidLine({a.x, a.y}, {b.x, b.y}, meshColor, 0.8f);
+        };
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            const int a = mesh.indices[i];
+            const int b = mesh.indices[i + 1];
+            const int c = mesh.indices[i + 2];
+            drawEdge(a, b);
+            drawEdge(b, c);
+            drawEdge(c, a);
+        }
+    }
+
     for (const auto& pin : lp->pins) {
+        if (!std::isfinite(pin.canvasPos.x()) ||
+            !std::isfinite(pin.canvasPos.y())) {
+            continue;
+        }
         const float x = static_cast<float>(pin.canvasPos.x());
         const float y = static_cast<float>(pin.canvasPos.y());
         const bool selected = (pin.id == impl_->selectedPinId);
@@ -282,12 +387,41 @@ void ArtifactPuppetTool::renderOverlay(ArtifactIRenderer* renderer, const LayerI
         default: color = ArtifactCore::FloatColor{1.0f, 1.0f, 0.0f, 1.0f};
         }
 
-        const float zoom = std::max(0.001f, renderer->getZoom());
+        const float rawZoom = renderer->getZoom();
+        const float zoom = std::isfinite(rawZoom)
+            ? std::clamp(rawZoom, 0.001f, 10000.0f) : 1.0f;
         const float pinSize = (selected ? 11.5f : 9.0f) / zoom;
-        const QString label = QString::number(pin.type);
+        const QString label = pin.type == 0
+            ? QStringLiteral("Pos")
+            : pin.type == 1
+                ? QStringLiteral("Starch")
+                : pin.type == 2
+                    ? QStringLiteral("Bend")
+                    : QStringLiteral("Overlap");
+        const QString displayLabel = pin.type == 1
+            ? QStringLiteral("Starch %1%").arg(
+                  QString::number(pin.weight * 100.0f, 'f', 0))
+            : pin.type == 2
+                ? QStringLiteral("Bend %1°").arg(
+                      QString::number(pin.rotation, 'f', 0))
+            : pin.type == 3
+                ? QStringLiteral("Overlap %1").arg(
+                      QString::number(pin.depth, 'f', 2))
+            : label;
         drawTrackerPinOverlay(renderer, x, y, pinSize, color,
                               ArtifactCore::FloatColor{1.0f, 1.0f, 1.0f, 1.0f},
-                              selected, label);
+                              selected, displayLabel);
+        if (selected) {
+            const float radius = 24.0f / zoom;
+            const float angle = pin.rotation *
+                                0.017453292519943295f;
+            const float handleX = x + std::cos(angle) * radius;
+            const float handleY = y + std::sin(angle) * radius;
+            renderer->drawSolidLine({x, y}, {handleX, handleY}, color, 1.0f);
+            renderer->drawCrosshair(handleX, handleY, 5.0f / zoom,
+                                    ArtifactCore::FloatColor{1.0f, 0.85f,
+                                                             0.35f, 0.95f});
+        }
     }
 }
 
