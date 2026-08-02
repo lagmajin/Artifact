@@ -52,19 +52,19 @@ private:
 public:
     WaveEffectCPUImpl() = default;
 
-    void setAmplitude(float amp) { amplitude_ = amp; }
+    void setAmplitude(float amp) { amplitude_ = std::isfinite(amp) ? std::clamp(amp, -4096.0f, 4096.0f) : 10.0f; }
     float amplitude() const { return amplitude_; }
 
-    void setFrequency(float freq) { frequency_ = freq; }
+    void setFrequency(float freq) { frequency_ = std::isfinite(freq) ? std::clamp(freq, -10.0f, 10.0f) : 0.1f; }
     float frequency() const { return frequency_; }
 
-    void setPhase(float phase) { phase_ = phase; }
+    void setPhase(float phase) { phase_ = std::isfinite(phase) ? phase : 0.0f; }
     float phase() const { return phase_; }
 
-    void setWaveType(int type) { waveType_ = type; }
+    void setWaveType(int type) { waveType_ = std::clamp(type, 0, 1); }
     int waveType() const { return waveType_; }
 
-    void setOrientation(int ori) { orientation_ = ori; }
+    void setOrientation(int ori) { orientation_ = std::clamp(ori, 0, 1); }
     int orientation() const { return orientation_; }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
@@ -81,19 +81,19 @@ private:
 public:
     WaveEffectGPUImpl() = default;
 
-    void setAmplitude(float amp) { amplitude_ = amp; }
+    void setAmplitude(float amp) { amplitude_ = std::isfinite(amp) ? std::clamp(amp, -4096.0f, 4096.0f) : 10.0f; }
     float amplitude() const { return amplitude_; }
 
-    void setFrequency(float freq) { frequency_ = freq; }
+    void setFrequency(float freq) { frequency_ = std::isfinite(freq) ? std::clamp(freq, -10.0f, 10.0f) : 0.1f; }
     float frequency() const { return frequency_; }
 
-    void setPhase(float phase) { phase_ = phase; }
+    void setPhase(float phase) { phase_ = std::isfinite(phase) ? phase : 0.0f; }
     float phase() const { return phase_; }
 
-    void setWaveType(int type) { waveType_ = type; }
+    void setWaveType(int type) { waveType_ = std::clamp(type, 0, 1); }
     int waveType() const { return waveType_; }
 
-    void setOrientation(int ori) { orientation_ = ori; }
+    void setOrientation(int ori) { orientation_ = std::clamp(ori, 0, 1); }
     int orientation() const { return orientation_; }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
