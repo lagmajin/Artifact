@@ -12,6 +12,7 @@ module;
 #include <QVector3D>
 #include <QVector>
 #include <QtGlobal>
+#include <cmath>
 #include <utility>
 
 module Artifact.Layers.Model3D;
@@ -29,6 +30,10 @@ import Core.Parallel;
 namespace Artifact {
 
 namespace {
+float finiteClamped(float value, float fallback, float minimum, float maximum) {
+  return std::isfinite(value) ? std::clamp(value, minimum, maximum) : fallback;
+}
+
 Artifact::Detail::float3 toFloat3(const QVector3D &v) {
   return {v.x(), v.y(), v.z()};
 }
@@ -131,14 +136,20 @@ void Artifact3DLayer::loadFromFile() {
 }
 
 void Artifact3DLayer::loadFromFile(const QString &filePath) {
-  if (filePath.isEmpty()) {
+  const QString normalizedInput = filePath.trimmed();
+  if (normalizedInput.isEmpty()) {
     qWarning() << "[Artifact3DLayer] Ignoring empty source path reload";
+    return;
+  }
+  const QFileInfo inputInfo(normalizedInput);
+  if (!inputInfo.exists() || !inputInfo.isFile()) {
+    qWarning() << "[Artifact3DLayer] Ignoring missing model source:" << normalizedInput;
     return;
   }
   impl_->fixedGeometry_ = FixedGeometry3D::Auto;
 
   ArtifactCore::MeshImporter importer;
-  auto mesh = importer.importMeshFromFile(UniString(filePath));
+  auto mesh = importer.importMeshFromFile(UniString(normalizedInput));
 
   if (mesh && mesh->vertexCount() > 0) {
     impl_->mesh_ = *mesh;
@@ -193,7 +204,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
           ArtifactCore::UniString::fromQString(importedOpacityTexture));
     }
     if (impl_->material_.baseColorTexture().toQString().isEmpty()) {
-      const QString detectedTexture = detectSiblingBaseColorTexture(filePath);
+      const QString detectedTexture = detectSiblingBaseColorTexture(normalizedInput);
       if (!detectedTexture.isEmpty()) {
         qDebug() << "[Artifact3DLayer] Auto-detected base color texture:" << detectedTexture;
         impl_->material_.setBaseColorTexture(ArtifactCore::UniString::fromQString(detectedTexture));
@@ -211,7 +222,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
   }
 
   // Fallback to cube on failure
-  qWarning() << "Failed to load mesh from:" << filePath
+  qWarning() << "Failed to load mesh from:" << normalizedInput
              << "- using default cube";
   impl_->fixedGeometry_ = FixedGeometry3D::Cube;
   impl_->sourcePath_.clear();
@@ -267,6 +278,15 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["material.metallic"] = impl_->material_.metallic();
   obj["material.roughness"] = impl_->material_.roughness();
   obj["material.opacity"] = impl_->material_.opacity();
+  const QColor emissionColor = impl_->material_.emissionColor();
+  obj["material.emission.color"] = QJsonObject{
+      {QStringLiteral("r"), emissionColor.redF()},
+      {QStringLiteral("g"), emissionColor.greenF()},
+      {QStringLiteral("b"), emissionColor.blueF()},
+      {QStringLiteral("a"), emissionColor.alphaF()}};
+  obj["material.emissionStrength"] = impl_->material_.emissionStrength();
+  obj["material.normalStrength"] = impl_->material_.normalStrength();
+  obj["material.occlusionStrength"] = impl_->material_.occlusionStrength();
   obj["material.baseColorTexture"] = impl_->material_.baseColorTexture().toQString();
   obj["material.metallicRoughnessTexture"] =
       impl_->material_.metallicRoughnessTexture().toQString();
@@ -281,9 +301,9 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
 {
   ArtifactAbstractLayer::fromJsonProperties(obj);
 
-  impl_->geometryWidth_ = std::max(0.01f, static_cast<float>(obj.value("geometry.width").toDouble(impl_->geometryWidth_)));
-  impl_->geometryHeight_ = std::max(0.01f, static_cast<float>(obj.value("geometry.height").toDouble(impl_->geometryHeight_)));
-  impl_->geometryDepth_ = std::max(0.01f, static_cast<float>(obj.value("geometry.depth").toDouble(impl_->geometryDepth_)));
+  impl_->geometryWidth_ = finiteClamped(static_cast<float>(obj.value("geometry.width").toDouble(impl_->geometryWidth_)), impl_->geometryWidth_, 0.01f, 100000.0f);
+  impl_->geometryHeight_ = finiteClamped(static_cast<float>(obj.value("geometry.height").toDouble(impl_->geometryHeight_)), impl_->geometryHeight_, 0.01f, 100000.0f);
+  impl_->geometryDepth_ = finiteClamped(static_cast<float>(obj.value("geometry.depth").toDouble(impl_->geometryDepth_)), impl_->geometryDepth_, 0.01f, 100000.0f);
   impl_->geometrySegments_ = std::clamp(obj.value("geometry.segments").toInt(impl_->geometrySegments_), 3, 128);
   impl_->geometryRings_ = std::clamp(obj.value("geometry.rings").toInt(impl_->geometryRings_), 2, 128);
 
@@ -295,16 +315,61 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
   }
 
   if (obj.contains("fixedGeometry")) {
-    setFixedGeometry(static_cast<FixedGeometry3D>(obj.value("fixedGeometry").toInt()));
+    const int geometry = obj.value("fixedGeometry").toInt(
+        static_cast<int>(FixedGeometry3D::Auto));
+    if (geometry >= static_cast<int>(FixedGeometry3D::Auto) &&
+        geometry <= static_cast<int>(FixedGeometry3D::Cone)) {
+      setFixedGeometry(static_cast<FixedGeometry3D>(geometry));
+    }
   }
 
   if (obj.contains("renderMode")) {
-    setRenderMode(static_cast<RenderMode>(obj.value("renderMode").toInt()));
+    const int mode = obj.value("renderMode").toInt(
+        static_cast<int>(RenderMode::Solid));
+    if (mode >= static_cast<int>(RenderMode::Wireframe) &&
+        mode <= static_cast<int>(RenderMode::Solid)) {
+      setRenderMode(static_cast<RenderMode>(mode));
+    }
   }
   impl_->useTextureInSolid_ =
       obj.value("render.useTextureInSolid").toBool(impl_->useTextureInSolid_);
   impl_->wireOverlay_ =
       obj.value("render.wireOverlay").toBool(impl_->wireOverlay_);
+
+  const QJsonObject baseColor = obj.value("material.base.color").toObject();
+  if (!baseColor.isEmpty()) {
+    const float r = finiteClamped(static_cast<float>(baseColor.value("r").toDouble(1.0)), 1.0f, 0.0f, 1.0f);
+    const float g = finiteClamped(static_cast<float>(baseColor.value("g").toDouble(1.0)), 1.0f, 0.0f, 1.0f);
+    const float b = finiteClamped(static_cast<float>(baseColor.value("b").toDouble(1.0)), 1.0f, 0.0f, 1.0f);
+    const float a = finiteClamped(static_cast<float>(baseColor.value("a").toDouble(1.0)), 1.0f, 0.0f, 1.0f);
+    impl_->material_.setBaseColor(QColor::fromRgbF(r, g, b, a));
+  }
+  impl_->material_.setMetallic(
+      finiteClamped(static_cast<float>(obj.value("material.metallic").toDouble(impl_->material_.metallic())),
+                    impl_->material_.metallic(), 0.0f, 1.0f));
+  impl_->material_.setRoughness(
+      finiteClamped(static_cast<float>(obj.value("material.roughness").toDouble(impl_->material_.roughness())),
+                    impl_->material_.roughness(), 0.0f, 1.0f));
+  impl_->material_.setOpacity(
+      finiteClamped(static_cast<float>(obj.value("material.opacity").toDouble(impl_->material_.opacity())),
+                    impl_->material_.opacity(), 0.0f, 1.0f));
+  const QJsonObject emissionColor = obj.value("material.emission.color").toObject();
+  if (!emissionColor.isEmpty()) {
+    impl_->material_.setEmissionColor(QColor::fromRgbF(
+        finiteClamped(static_cast<float>(emissionColor.value("r").toDouble(1.0)), 1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(emissionColor.value("g").toDouble(1.0)), 1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(emissionColor.value("b").toDouble(1.0)), 1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(emissionColor.value("a").toDouble(1.0)), 1.0f, 0.0f, 1.0f)));
+  }
+  impl_->material_.setEmissionStrength(
+      finiteClamped(static_cast<float>(obj.value("material.emissionStrength").toDouble(impl_->material_.emissionStrength())),
+                    impl_->material_.emissionStrength(), 0.0f, 100000.0f));
+  impl_->material_.setNormalStrength(
+      finiteClamped(static_cast<float>(obj.value("material.normalStrength").toDouble(impl_->material_.normalStrength())),
+                    impl_->material_.normalStrength(), 0.0f, 10.0f));
+  impl_->material_.setOcclusionStrength(
+      finiteClamped(static_cast<float>(obj.value("material.occlusionStrength").toDouble(impl_->material_.occlusionStrength())),
+                    impl_->material_.occlusionStrength(), 0.0f, 1.0f));
 
   const QString baseColorTexture = obj.contains("material.baseColorTexture")
                                        ? obj.value("material.baseColorTexture").toString()
@@ -970,12 +1035,14 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       QStringLiteral("material.metallic"), PropertyType::Float,
       impl_->material_.metallic(), -34);
   metallicProp->setDisplayLabel(QStringLiteral("Metallic"));
+  metallicProp->setHardRange(0.0, 1.0);
   materialGroup.addProperty(metallicProp);
 
   auto roughnessProp = persistentLayerProperty(
       QStringLiteral("material.roughness"), PropertyType::Float,
       impl_->material_.roughness(), -33);
   roughnessProp->setDisplayLabel(QStringLiteral("Roughness"));
+  roughnessProp->setHardRange(0.0, 1.0);
   materialGroup.addProperty(roughnessProp);
 
   auto emissionStrengthProp = persistentLayerProperty(
@@ -990,6 +1057,7 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       impl_->material_.opacity(), -31);
   opacityProp->setDisplayLabel(QStringLiteral("Opacity"));
   opacityProp->setTooltip(QStringLiteral("Material opacity (0=transparent, 1=opaque)"));
+  opacityProp->setHardRange(0.0, 1.0);
   materialGroup.addProperty(opacityProp);
 
   auto normalStrengthProp = persistentLayerProperty(
@@ -997,6 +1065,7 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       impl_->material_.normalStrength(), -30);
   normalStrengthProp->setDisplayLabel(QStringLiteral("Normal Strength"));
   normalStrengthProp->setTooltip(QStringLiteral("Normal map intensity"));
+  normalStrengthProp->setHardRange(0.0, 10.0);
   materialGroup.addProperty(normalStrengthProp);
 
   auto occlusionStrengthProp = persistentLayerProperty(
@@ -1004,6 +1073,7 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       impl_->material_.occlusionStrength(), -29);
   occlusionStrengthProp->setDisplayLabel(QStringLiteral("Occlusion Strength"));
   occlusionStrengthProp->setTooltip(QStringLiteral("Ambient occlusion intensity"));
+  occlusionStrengthProp->setHardRange(0.0, 1.0);
   materialGroup.addProperty(occlusionStrengthProp);
 
   // MaterialX summary
@@ -1031,7 +1101,7 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
       return true;
     }
   } else if (propertyPath == QStringLiteral("geometry.width")) {
-    impl_->geometryWidth_ = std::max(0.01f, value.toFloat());
+    impl_->geometryWidth_ = finiteClamped(value.toFloat(), impl_->geometryWidth_, 0.01f, 100000.0f);
     if (impl_->fixedGeometry_ != FixedGeometry3D::Auto) {
       createFixedGeometryMesh(impl_->fixedGeometry_);
       updateSourceSizeFromMesh();
@@ -1039,7 +1109,7 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("geometry.height")) {
-    impl_->geometryHeight_ = std::max(0.01f, value.toFloat());
+    impl_->geometryHeight_ = finiteClamped(value.toFloat(), impl_->geometryHeight_, 0.01f, 100000.0f);
     if (impl_->fixedGeometry_ != FixedGeometry3D::Auto) {
       createFixedGeometryMesh(impl_->fixedGeometry_);
       updateSourceSizeFromMesh();
@@ -1047,7 +1117,7 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("geometry.depth")) {
-    impl_->geometryDepth_ = std::max(0.01f, value.toFloat());
+    impl_->geometryDepth_ = finiteClamped(value.toFloat(), impl_->geometryDepth_, 0.01f, 100000.0f);
     if (impl_->fixedGeometry_ != FixedGeometry3D::Auto) {
       createFixedGeometryMesh(impl_->fixedGeometry_);
       updateSourceSizeFromMesh();
@@ -1127,27 +1197,27 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.metallic")) {
-    impl_->material_.setMetallic(value.toFloat());
+    impl_->material_.setMetallic(finiteClamped(value.toFloat(), impl_->material_.metallic(), 0.0f, 1.0f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.roughness")) {
-    impl_->material_.setRoughness(value.toFloat());
+    impl_->material_.setRoughness(finiteClamped(value.toFloat(), impl_->material_.roughness(), 0.0f, 1.0f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.emissionStrength")) {
-    impl_->material_.setEmissionStrength(value.toFloat());
+    impl_->material_.setEmissionStrength(finiteClamped(value.toFloat(), impl_->material_.emissionStrength(), 0.0f, 100000.0f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.opacity")) {
-    impl_->material_.setOpacity(value.toFloat());
+    impl_->material_.setOpacity(finiteClamped(value.toFloat(), impl_->material_.opacity(), 0.0f, 1.0f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.normalStrength")) {
-    impl_->material_.setNormalStrength(value.toFloat());
+    impl_->material_.setNormalStrength(finiteClamped(value.toFloat(), impl_->material_.normalStrength(), 0.0f, 10.0f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.occlusionStrength")) {
-    impl_->material_.setOcclusionStrength(value.toFloat());
+    impl_->material_.setOcclusionStrength(finiteClamped(value.toFloat(), impl_->material_.occlusionStrength(), 0.0f, 1.0f));
     Q_EMIT changed();
     return true;
   }
