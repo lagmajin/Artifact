@@ -195,26 +195,36 @@ std::vector<AbstractProperty> EdgeBloomEffect::getProperties() const {
     thresholdProp.setName("Threshold");
     thresholdProp.setType(PropertyType::Float);
     thresholdProp.setValue(threshold_);
+    thresholdProp.setMinValue(QVariant(0.0));
+    thresholdProp.setMaxValue(QVariant(1.0));
 
     auto& radiusProp = props.emplace_back();
     radiusProp.setName("Radius");
     radiusProp.setType(PropertyType::Float);
     radiusProp.setValue(radius_);
+    radiusProp.setMinValue(QVariant(0.5));
+    radiusProp.setMaxValue(QVariant(32.0));
 
     auto& amountProp = props.emplace_back();
     amountProp.setName("Amount");
     amountProp.setType(PropertyType::Float);
     amountProp.setValue(amount_);
+    amountProp.setMinValue(QVariant(0.0));
+    amountProp.setMaxValue(QVariant(4.0));
 
     auto& edgeBoostProp = props.emplace_back();
     edgeBoostProp.setName("Edge Boost");
     edgeBoostProp.setType(PropertyType::Float);
     edgeBoostProp.setValue(edgeBoost_);
+    edgeBoostProp.setMinValue(QVariant(0.0));
+    edgeBoostProp.setMaxValue(QVariant(4.0));
 
     auto& tintMixProp = props.emplace_back();
     tintMixProp.setName("Tint Mix");
     tintMixProp.setType(PropertyType::Float);
     tintMixProp.setValue(tintMix_);
+    tintMixProp.setMinValue(QVariant(0.0));
+    tintMixProp.setMaxValue(QVariant(1.0));
 
     return props;
 }
