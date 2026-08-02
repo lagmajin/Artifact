@@ -27,6 +27,10 @@ import Composition.ParametricComposition;
 namespace Artifact {
 
 namespace {
+constexpr qsizetype kMaxBundleIpcResponseBytes = 32 * 1024 * 1024;
+}
+
+namespace {
 constexpr auto kProjectBundleServerName =
     "ArtifactStudio.ProjectBundleBridge";
 
@@ -313,12 +317,28 @@ bool sendWirePayload(const QByteArray& payload, QString* error) {
     }
 
     QByteArray responseBytes = socket.readAll();
+    if (responseBytes.size() <= 0 ||
+        responseBytes.size() > kMaxBundleIpcResponseBytes) {
+        if (error) {
+            *error = QStringLiteral("IPC response is too large");
+        }
+        socket.disconnectFromServer();
+        return false;
+    }
     QBuffer responseBuffer(&responseBytes);
     responseBuffer.open(QIODevice::ReadOnly);
     QDataStream in(&responseBuffer);
     in.setVersion(QDataStream::Qt_6_5);
     QByteArray responseJson;
     in >> responseJson;
+    if (responseJson.size() <= 0 ||
+        responseJson.size() > kMaxBundleIpcResponseBytes) {
+        if (error) {
+            *error = QStringLiteral("IPC response JSON is too large");
+        }
+        socket.disconnectFromServer();
+        return false;
+    }
     QJsonParseError parseError{};
     const QJsonDocument responseDoc = QJsonDocument::fromJson(responseJson, &parseError);
     if (parseError.error != QJsonParseError::NoError || !responseDoc.isObject()) {
