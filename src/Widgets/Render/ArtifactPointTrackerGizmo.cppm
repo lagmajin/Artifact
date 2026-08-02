@@ -3,6 +3,7 @@ module;
 #include <QPointF>
 #include <QRectF>
 #include <QCursor>
+#include <QFont>
 #include <cmath>
 #include <algorithm>
 #include <vector>
@@ -138,6 +139,23 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
                               fillColor, accentColor, false);
     }
 
+    // Feature/Search サイズはブラケット操作やハンドル操作の結果を
+    // 常時確認できるよう、既存のトラッカー領域の右上へ表示する。
+    {
+        const QFont sizeFont(QStringLiteral("sans-serif"), 8);
+        const QString sizeText =
+            QStringLiteral("Feature %1×%2  Search %3×%4")
+                .arg(QString::number(st.innerHalfW * 2.0f, 'f', 0))
+                .arg(QString::number(st.innerHalfH * 2.0f, 'f', 0))
+                .arg(QString::number(st.outerHalfW * 2.0f, 'f', 0))
+                .arg(QString::number(st.outerHalfH * 2.0f, 'f', 0));
+        renderer->drawText(
+            QRectF(cx - st.outerHalfW, cy - st.outerHalfH - 22.0f * invZoom,
+                   190.0f * invZoom, 16.0f * invZoom),
+            sizeText, sizeFont, {0.82f, 0.92f, 1.0f, 0.94f},
+            Qt::AlignLeft | Qt::AlignVCenter);
+    }
+
     // --- モーションパス軌跡 (tracker 参照がある場合) ---
     if (impl_->tracker && impl_->tracker->hasResult()) {
         // 最初のトラッキングポイント(=pointId 0) の軌跡を描画
@@ -156,10 +174,40 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
             const FloatColor dotFill{0.2f, 0.85f, 0.4f, 0.88f};
             const FloatColor dotAccent{0.45f, 1.0f, 0.62f, 1.0f};
             const float dotSize = 5.6f * invZoom;
-            for (const auto& p : pts) {
-                drawTrackerPinOverlay(renderer, p.x, p.y, dotSize, dotFill,
-                                      dotAccent, false);
+            const auto result = impl_->tracker->result();
+            for (size_t i = 0; i < pts.size(); ++i) {
+                float confidence = 1.0f;
+                if (i < result.frames.size()) {
+                    if (const auto *point = result.frames[i].findPoint(0)) {
+                        confidence = static_cast<float>(std::clamp(
+                            point->confidence, 0.0, 1.0));
+                    }
+                }
+                const FloatColor confidenceFill{
+                    1.0f - confidence, 0.25f + confidence * 0.65f,
+                    0.25f, 0.88f};
+                drawTrackerPinOverlay(renderer, pts[i].x, pts[i].y, dotSize,
+                                      confidenceFill, dotAccent, false);
             }
+            const int currentIndex = std::clamp(
+                static_cast<int>(std::llround(impl_->currentTime)), 0,
+                static_cast<int>(pts.size()) - 1);
+            const auto &currentPoint = pts[static_cast<size_t>(currentIndex)];
+            renderer->drawPoint(currentPoint.x, currentPoint.y,
+                                10.0f * invZoom,
+                                {1.0f, 1.0f, 1.0f, 0.95f});
+            renderer->drawPoint(currentPoint.x, currentPoint.y,
+                                5.0f * invZoom,
+                                {0.15f, 0.95f, 0.9f, 1.0f});
+            const QFont confidenceFont(QStringLiteral("sans-serif"), 9);
+            renderer->drawText(
+                QRectF(cx + st.outerHalfW + 8.0f,
+                       cy - st.outerHalfH - 8.0f, 96.0f, 16.0f),
+                QStringLiteral("Confidence %1")
+                    .arg(QString::number(impl_->tracker->averageConfidence(),
+                                         'f', 2)),
+                confidenceFont, {0.75f, 1.0f, 0.78f, 0.95f},
+                Qt::AlignLeft | Qt::AlignVCenter);
         }
     }
 }
