@@ -237,7 +237,7 @@ float ArtifactCameraLayer::fov() const {
     return static_cast<float>(2.0 * std::atan(540.0 / camImpl_->zoom_) * 180.0 / 3.14159265358979);
 }
 void ArtifactCameraLayer::setFov(float fovDegrees) {
-    camImpl_->fov_ = fovDegrees;
+    camImpl_->fov_ = std::isfinite(fovDegrees) ? std::clamp(fovDegrees, 1.0f, 179.0f) : 60.0f;
     camImpl_->useManualFov_ = true;
     changed();
 }
@@ -260,26 +260,28 @@ void ArtifactCameraLayer::resetFovToZoom() {
 }
 
 float ArtifactCameraLayer::orthoWidth() const { return camImpl_->orthoWidth_; }
-void ArtifactCameraLayer::setOrthoWidth(float w) { camImpl_->orthoWidth_ = w; changed(); }
+void ArtifactCameraLayer::setOrthoWidth(float w) { camImpl_->orthoWidth_ = std::isfinite(w) ? std::clamp(w, 10.0f, 100000.0f) : 1920.0f; changed(); }
 
 float ArtifactCameraLayer::orthoHeight() const { return camImpl_->orthoHeight_; }
-void ArtifactCameraLayer::setOrthoHeight(float h) { camImpl_->orthoHeight_ = h; changed(); }
+void ArtifactCameraLayer::setOrthoHeight(float h) { camImpl_->orthoHeight_ = std::isfinite(h) ? std::clamp(h, 10.0f, 100000.0f) : 1080.0f; changed(); }
 
 float ArtifactCameraLayer::nearClipPlane() const { return camImpl_->nearClipPlane_; }
 void ArtifactCameraLayer::setNearClipPlane(float d) {
-    camImpl_->nearClipPlane_ = std::max(0.01f, d);
+    camImpl_->nearClipPlane_ = std::isfinite(d) ? std::clamp(d, 0.01f, 100000.0f) : 0.1f;
     changed();
 }
 
 float ArtifactCameraLayer::farClipPlane() const { return camImpl_->farClipPlane_; }
 void ArtifactCameraLayer::setFarClipPlane(float d) {
-    camImpl_->farClipPlane_ = std::max(camImpl_->nearClipPlane_ + 0.01f, d);
+    camImpl_->farClipPlane_ = std::isfinite(d)
+        ? std::clamp(std::max(camImpl_->nearClipPlane_ + 0.01f, d), 1.0f, 1000000.0f)
+        : std::max(camImpl_->nearClipPlane_ + 0.01f, 1000.0f);
     changed();
 }
 
 float ArtifactCameraLayer::ipd() const { return camImpl_->ipd_; }
 void ArtifactCameraLayer::setIpd(float ipd) {
-    camImpl_->ipd_ = std::max(0.0f, ipd);
+    camImpl_->ipd_ = std::isfinite(ipd) ? std::clamp(ipd, 0.0f, 1.0f) : 0.064f;
     changed();
 }
 
@@ -305,7 +307,11 @@ QVector3D ArtifactCameraLayer::shakeOffset() const {
 }
 
 void ArtifactCameraLayer::setShakeOffset(const QVector3D& offset) {
-    camImpl_->shakeOffset_ = offset;
+    const auto safe = [](float value) {
+        return std::isfinite(value) ? std::clamp(value, -100000.0f, 100000.0f) : 0.0f;
+    };
+    camImpl_->shakeOffset_ = QVector3D(
+        safe(offset.x()), safe(offset.y()), safe(offset.z()));
     changed();
 }
 
@@ -314,7 +320,11 @@ QVector3D ArtifactCameraLayer::shakeRotation() const {
 }
 
 void ArtifactCameraLayer::setShakeRotation(const QVector3D& eulerDegrees) {
-    camImpl_->shakeRotation_ = eulerDegrees;
+    const auto safe = [](float value) {
+        return std::isfinite(value) ? std::clamp(value, -360000.0f, 360000.0f) : 0.0f;
+    };
+    camImpl_->shakeRotation_ = QVector3D(
+        safe(eulerDegrees.x()), safe(eulerDegrees.y()), safe(eulerDegrees.z()));
     changed();
 }
 
@@ -337,19 +347,23 @@ void ArtifactCameraLayer::addTrauma(float amount) {
 float ArtifactCameraLayer::trauma() const { return camImpl_->trauma_; }
 
 void ArtifactCameraLayer::setTraumaDecay(float decayPerSecond) {
-    camImpl_->traumaDecay_ = std::max(0.0f, decayPerSecond);
+    camImpl_->traumaDecay_ = std::isfinite(decayPerSecond) ? std::clamp(decayPerSecond, 0.0f, 100.0f) : 1.0f;
 }
 
 float ArtifactCameraLayer::traumaDecay() const { return camImpl_->traumaDecay_; }
 
 void ArtifactCameraLayer::setShakeFrequency(float frequencyHz) {
-    camImpl_->shakeFrequency_ = std::max(0.0f, frequencyHz);
+    camImpl_->shakeFrequency_ = std::isfinite(frequencyHz) ? std::clamp(frequencyHz, 0.0f, 240.0f) : 0.0f;
 }
 
 float ArtifactCameraLayer::shakeFrequency() const { return camImpl_->shakeFrequency_; }
 
 void ArtifactCameraLayer::setShakePositionAmplitude(const QVector3D& amplitude) {
-    camImpl_->shakePositionAmplitude_ = amplitude;
+    const auto safe = [](float value) {
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 10000.0f) : 0.0f;
+    };
+    camImpl_->shakePositionAmplitude_ = QVector3D(
+        safe(amplitude.x()), safe(amplitude.y()), safe(amplitude.z()));
 }
 
 QVector3D ArtifactCameraLayer::shakePositionAmplitude() const {
@@ -357,7 +371,12 @@ QVector3D ArtifactCameraLayer::shakePositionAmplitude() const {
 }
 
 void ArtifactCameraLayer::setShakeRotationAmplitude(const QVector3D& amplitudeDegrees) {
-    camImpl_->shakeRotationAmplitude_ = amplitudeDegrees;
+    const auto safe = [](float value) {
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 360.0f) : 0.0f;
+    };
+    camImpl_->shakeRotationAmplitude_ = QVector3D(
+        safe(amplitudeDegrees.x()), safe(amplitudeDegrees.y()),
+        safe(amplitudeDegrees.z()));
 }
 
 QVector3D ArtifactCameraLayer::shakeRotationAmplitude() const {
@@ -725,7 +744,8 @@ void ArtifactCameraLayer::fromJsonProperties(const QJsonObject& obj)
         setUseManualFov(obj.value("cameraUseManualFov").toBool());
     }
     if (obj.contains("cameraFov")) {
-        camImpl_->fov_ = static_cast<float>(obj.value("cameraFov").toDouble(camImpl_->fov_));
+        const float fov = static_cast<float>(obj.value("cameraFov").toDouble(camImpl_->fov_));
+        camImpl_->fov_ = std::isfinite(fov) ? std::clamp(fov, 1.0f, 179.0f) : 60.0f;
     }
     if (obj.contains("cameraZoom")) {
         setZoom(static_cast<float>(obj.value("cameraZoom").toDouble(camImpl_->zoom_)));
@@ -761,7 +781,8 @@ void ArtifactCameraLayer::fromJsonProperties(const QJsonObject& obj)
         setIpd(static_cast<float>(obj.value("cameraIpd").toDouble(camImpl_->ipd_)));
     }
     if (obj.contains("cameraShakeTrauma")) {
-        camImpl_->trauma_ = std::clamp(static_cast<float>(obj.value("cameraShakeTrauma").toDouble()), 0.0f, 1.0f);
+        const float trauma = static_cast<float>(obj.value("cameraShakeTrauma").toDouble(camImpl_->trauma_));
+        camImpl_->trauma_ = std::isfinite(trauma) ? std::clamp(trauma, 0.0f, 1.0f) : 0.0f;
     }
     if (obj.contains("cameraShakeTraumaDecay")) {
         setTraumaDecay(static_cast<float>(obj.value("cameraShakeTraumaDecay").toDouble()));
