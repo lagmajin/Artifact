@@ -61,6 +61,8 @@ public:
     // マスク全体の有効/無効
     bool isEnabled() const;
     void setEnabled(bool enabled);
+    bool isLocked() const;
+    void setLocked(bool locked);
 
     /// 全マスクパスを合成して単一アルファマスク (CV_32FC1) を生成
     /// offsetX/offsetY: レイヤーローカル空間→ピクセル空間変換オフセット
