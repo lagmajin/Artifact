@@ -108,8 +108,8 @@ public:
             cv::Vec4f*   sRow = shadowLayer.ptr<cv::Vec4f>(y);
             for (int x = 0; x < W; ++x) {
                 const float a = std::clamp(aRow[x] * so * opac, 0.0f, 1.0f);
-                // OpenCV 内部順: BGR-A
-                sRow[x] = cv::Vec4f(sb, sg, sr, a);
+                // ImageF32x4_RGBA is stored as RGBA, including its cv::Mat view.
+                sRow[x] = cv::Vec4f(sr, sg, sb, a);
             }
         });
 
@@ -149,8 +149,8 @@ public:
 static constexpr const char* kDropShadowHlsl=R"(
 Texture2D<float4> g_InputTexture:register(t0); RWTexture2D<float4> g_OutputTexture:register(u0);
 cbuffer DropShadowParams:register(b0){float g_OffX;float g_OffY;float g_Softness;float g_Opacity;float4 g_Color;}
-float alphaAt(int2 p,uint w,uint h){return g_InputTexture[uint2(clamp(p.x,0,(int)w-1),clamp(p.y,0,(int)h-1))].a;}
-[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;int2 q=int2(id.xy);float radius=clamp(g_Softness,0,32),sum=0,weight=0;[unroll]for(int oy=-4;oy<=4;++oy){[unroll]for(int ox=-4;ox<=4;++ox){float2 d=float2(ox,oy),ww=exp(-dot(d,d)/max(2*radius*radius,1));sum+=alphaAt(q-int2(round(float2(g_OffX,g_OffY)))+int2(ox,oy),w,h)*ww;weight+=ww;}}float sa=(sum/max(weight,0.0001))*g_Opacity* g_Color.a;float4 fg=g_InputTexture[q],sh=float4(g_Color.rgb,clamp(sa,0,1));float oa=fg.a+sh.a*(1-fg.a);float4 outp=oa>0?float4((fg.rgb*fg.a+sh.rgb*sh.a*(1-fg.a))/oa,oa):0;g_OutputTexture[q]=outp;}
+float alphaAt(int2 p,uint w,uint h){if(p.x<0||p.y<0||p.x>=(int)w||p.y>=(int)h)return 0;return g_InputTexture[uint2(p)].a;}
+[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;int2 q=int2(id.xy);float radius=clamp(g_Softness,0,32),sum=0,weight=0;int sampleRadius=min(32,max(0,(int)ceil(radius*2.5)));for(int oy=-32;oy<=32;++oy){for(int ox=-32;ox<=32;++ox){if(abs(ox)>sampleRadius||abs(oy)>sampleRadius)continue;float2 d=float2(ox,oy),ww=exp(-dot(d,d)/max(2*radius*radius,1));sum+=alphaAt(q-int2(round(float2(g_OffX,g_OffY)))+int2(ox,oy),w,h)*ww;weight+=ww;}}float sa=(sum/max(weight,0.0001))*g_Opacity* g_Color.a;float4 fg=g_InputTexture[q],sh=float4(g_Color.rgb,clamp(sa,0,1));float oa=fg.a+sh.a*(1-fg.a);float4 outp=oa>0?float4((fg.rgb*fg.a+sh.rgb*sh.a*(1-fg.a))/oa,oa):0;g_OutputTexture[q]=outp;}
 )";
 
 // ─── GPU Impl ───────────────────────────────────────────────────────────────
@@ -203,26 +203,26 @@ void   DropShadowEffect::setShadowColor(const QColor& c) {
 
 float DropShadowEffect::distance() const { return distance_; }
 void  DropShadowEffect::setDistance(float d) {
-    distance_ = std::max(0.0f, d);
+    distance_ = std::isfinite(d) ? std::max(0.0f, d) : 5.0f;
     syncImpls();
 }
 
 float DropShadowEffect::angle() const { return angle_; }
 void  DropShadowEffect::setAngle(float a) {
     // 正規化は不要 (任意 degree)
-    angle_ = a;
+    angle_ = std::isfinite(a) ? a : 135.0f;
     syncImpls();
 }
 
 float DropShadowEffect::softness() const { return softness_; }
 void  DropShadowEffect::setSoftness(float s) {
-    softness_ = std::max(0.0f, s);
+    softness_ = std::isfinite(s) ? std::max(0.0f, s) : 8.0f;
     syncImpls();
 }
 
 float DropShadowEffect::opacity() const { return opacity_; }
 void  DropShadowEffect::setOpacity(float o) {
-    opacity_ = std::clamp(o, 0.0f, 100.0f);
+    opacity_ = std::isfinite(o) ? std::clamp(o, 0.0f, 100.0f) : 75.0f;
     syncImpls();
 }
 
