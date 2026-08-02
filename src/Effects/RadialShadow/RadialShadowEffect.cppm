@@ -54,28 +54,25 @@ public:
         const float cx = centerX_ * w;
         const float cy = centerY_ * h;
 
-        cv::Mat colorMat(h, w, CV_32FC4);
+        const float shadowR = color_.redF();
+        const float shadowG = color_.greenF();
+        const float shadowB = color_.blueF();
+        const float opacity = std::clamp(opacity_, 0.0f, 1.0f);
         ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
-            cv::Vec4f* row = colorMat.ptr<cv::Vec4f>(y);
+            cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < w; ++x) {
                 float dx = x - cx;
                 float dy = y - cy;
                 float dist = std::sqrt(dx * dx + dy * dy);
                 float shadow = dist / std::max(1.0f, distance_ + softness_);
                 float alpha = 1.0f - std::clamp(shadow, 0.0f, 1.0f);
-                alpha *= opacity_;
-                row[x] = cv::Vec4f(
-                    color_.blueF(),
-                    color_.greenF(),
-                    color_.redF(),
-                    alpha
-                );
+                alpha *= opacity;
+                row[x][0] = std::clamp(row[x][0] + shadowR * alpha, 0.0f, 1.0f);
+                row[x][1] = std::clamp(row[x][1] + shadowG * alpha, 0.0f, 1.0f);
+                row[x][2] = std::clamp(row[x][2] + shadowB * alpha, 0.0f, 1.0f);
+                row[x][3] = std::clamp(row[x][3] + alpha, 0.0f, 1.0f);
             }
         });
-
-        // Alpha compositing: shadow over src
-        cv::Mat srcMat = mat.clone();
-        cv::addWeighted(srcMat, 1.0, colorMat, 1.0, 0.0, mat);
     }
 };
 
@@ -120,15 +117,15 @@ RadialShadowEffect::~RadialShadowEffect() = default;
 QColor RadialShadowEffect::color() const { return color_; }
 void RadialShadowEffect::setColor(const QColor& v) { color_ = v; syncImpls(); }
 float RadialShadowEffect::distance() const { return distance_; }
-void RadialShadowEffect::setDistance(float v) { distance_ = std::max(0.0f, v); syncImpls(); }
+void RadialShadowEffect::setDistance(float v) { distance_ = std::isfinite(v) ? std::max(0.0f, v) : 10.0f; syncImpls(); }
 float RadialShadowEffect::softness() const { return softness_; }
-void RadialShadowEffect::setSoftness(float v) { softness_ = std::max(0.0f, v); syncImpls(); }
+void RadialShadowEffect::setSoftness(float v) { softness_ = std::isfinite(v) ? std::max(0.0f, v) : 8.0f; syncImpls(); }
 float RadialShadowEffect::opacity() const { return opacity_; }
-void RadialShadowEffect::setOpacity(float v) { opacity_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void RadialShadowEffect::setOpacity(float v) { opacity_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.75f; syncImpls(); }
 float RadialShadowEffect::centerX() const { return centerX_; }
-void RadialShadowEffect::setCenterX(float v) { centerX_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void RadialShadowEffect::setCenterX(float v) { centerX_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; syncImpls(); }
 float RadialShadowEffect::centerY() const { return centerY_; }
-void RadialShadowEffect::setCenterY(float v) { centerY_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void RadialShadowEffect::setCenterY(float v) { centerY_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; syncImpls(); }
 
 void RadialShadowEffect::syncImpls() {
     if (auto* c = dynamic_cast<RadialShadowEffectCPUImpl*>(cpuImpl().get())) {
