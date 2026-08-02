@@ -7,7 +7,10 @@ module;
 #include <QJsonArray>
 #include <QDateTime>
 #include <QSaveFile>
+#include <QStringList>
 module Artifact.Project.Exporter;
+
+import Artifact.Color.OCIOManager;
 
 namespace Artifact
 {
@@ -64,6 +67,28 @@ namespace Artifact
    return result;
   }
 
+  // Validate project metadata before serializing.  The tree validator below
+  // cannot catch invalid project names or metadata because those belong to
+  // ArtifactProjectSettings.
+  const auto projectIssues = projectPtr_->validate();
+  QStringList blockingIssues;
+  for (const auto& issue : projectIssues) {
+   const QString message = QStringLiteral("%1: %2")
+                               .arg(issue.field, issue.message);
+   if (issue.severity == ProjectValidationIssue::Severity::Error) {
+    blockingIssues.append(message);
+   } else {
+    qWarning() << "[Exporter] Project validation notice:" << message;
+   }
+  }
+  if (!blockingIssues.isEmpty()) {
+   result.errorStage = "settings_validation";
+   result.errorMessage = blockingIssues.join(QStringLiteral("\n"));
+   qWarning() << "[Exporter] Project settings validation failed:"
+              << result.errorMessage;
+   return result;
+  }
+
   QString treeError;
   if (!projectPtr_->validateProjectTree(&treeError)) {
    result.errorStage = "validation";
@@ -73,6 +98,12 @@ namespace Artifact
   }
 
   QJsonObject obj = projectPtr_->toJson();
+
+  // Project-scoped OCIO selection. Keep this at the project root so older
+  // importers can ignore it without affecting composition/layer data.
+  if (auto* ocio = ArtifactOCIOManager::instance()) {
+   obj[QStringLiteral("ocio")] = ocio->toJson();
+  }
 
   // AI向けメタデータセクションを追加
   QJsonObject aiMetadata;
