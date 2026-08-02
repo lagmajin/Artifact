@@ -98,7 +98,7 @@ private:
     static constexpr const char* kHlsl=R"(
 Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer FindEdgesParams:register(b0){float g_Amount;float g_Invert;float2 g_Pad;}
 float luma(float3 c){return dot(c,float3(0.299,0.587,0.114));}float4 sampleP(int2 p,uint w,uint h){p.x=clamp(p.x,0,(int)w-1);p.y=clamp(p.y,0,(int)h-1);return g_InputTexture[uint2(p)];}
-[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;int2 p=int2(id.xy);float gx=-luma(sampleP(p+int2(-1,-1),w,h).rgb)-2*luma(sampleP(p+int2(-1,0),w,h).rgb)-luma(sampleP(p+int2(-1,1),w,h).rgb)+luma(sampleP(p+int2(1,-1),w,h).rgb)+2*luma(sampleP(p+int2(1,0),w,h).rgb)+luma(sampleP(p+int2(1,1),w,h).rgb);float gy=-luma(sampleP(p+int2(-1,-1),w,h).rgb)-2*luma(sampleP(p+int2(0,-1),w,h).rgb)-luma(sampleP(p+int2(1,-1),w,h).rgb)+luma(sampleP(p+int2(-1,1),w,h).rgb)+2*luma(sampleP(p+int2(0,1),w,h).rgb)+luma(sampleP(p+int2(1,1),w,h).rgb);float e=saturate(length(float2(gx,gy))*g_Amount);if(g_Invert>0.5)e=1-e;g_OutputTexture[id.xy]=float4(e,e,e,1);}
+[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;int2 p=int2(id.xy);float4 center=sampleP(p,w,h);float gx=-luma(sampleP(p+int2(-1,-1),w,h).rgb)-2*luma(sampleP(p+int2(-1,0),w,h).rgb)-luma(sampleP(p+int2(-1,1),w,h).rgb)+luma(sampleP(p+int2(1,-1),w,h).rgb)+2*luma(sampleP(p+int2(1,0),w,h).rgb)+luma(sampleP(p+int2(1,1),w,h).rgb);float gy=-luma(sampleP(p+int2(-1,-1),w,h).rgb)-2*luma(sampleP(p+int2(0,-1),w,h).rgb)-luma(sampleP(p+int2(1,-1),w,h).rgb)+luma(sampleP(p+int2(-1,1),w,h).rgb)+2*luma(sampleP(p+int2(0,1),w,h).rgb)+luma(sampleP(p+int2(1,1),w,h).rgb);float e=saturate(length(float2(gx,gy))*g_Amount);if(g_Invert>0.5)e=1-e;g_OutputTexture[id.xy]=float4(e,e,e,center.a);}
 )";
 };
 
@@ -112,7 +112,7 @@ FindEdgesEffect::FindEdgesEffect() {
 FindEdgesEffect::~FindEdgesEffect() = default;
 
 float FindEdgesEffect::amount() const { return amount_; }
-void FindEdgesEffect::setAmount(float v) { amount_ = std::clamp(v, 0.0f, 5.0f); syncImpls(); }
+void FindEdgesEffect::setAmount(float v) { amount_ = std::isfinite(v) ? std::clamp(v, 0.0f, 5.0f) : 1.0f; syncImpls(); }
 bool FindEdgesEffect::invert() const { return invert_; }
 void FindEdgesEffect::setInvert(bool v) { invert_ = v; syncImpls(); }
 
