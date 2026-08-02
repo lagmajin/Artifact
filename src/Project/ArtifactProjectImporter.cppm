@@ -355,7 +355,14 @@ namespace Artifact
 
   // Project items (Footage, Folder, etc.) restoration
   if (root.contains("projectItems") && root["projectItems"].isArray()) {
-   QJsonArray projectItemsArray = root["projectItems"].toArray();
+   const QJsonArray sourceProjectItems = root["projectItems"].toArray();
+   QJsonArray projectItemsArray;
+   constexpr qsizetype kMaxImportedProjectItems = 100000;
+   const qsizetype projectItemCount = std::min(
+       sourceProjectItems.size(), kMaxImportedProjectItems);
+   for (qsizetype i = 0; i < projectItemCount; ++i) {
+    projectItemsArray.append(sourceProjectItems.at(i));
+   }
    projectPtr->restoreProjectItems(projectItemsArray);
    qDebug() << "[Importer] Project items restored:" << projectItemsArray.size() << "top-level items";
   }
