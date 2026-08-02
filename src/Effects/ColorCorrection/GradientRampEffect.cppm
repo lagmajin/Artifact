@@ -177,21 +177,21 @@ void GradientRampEffect::setEndColor(const QColor& color) {
 
 void GradientRampEffect::setStartPoint(float x, float y) {
     preset_ = Preset::Custom;
-    settings_.startX = std::clamp(x, 0.0f, 1.0f);
-    settings_.startY = std::clamp(y, 0.0f, 1.0f);
+    settings_.startX = std::isfinite(x) ? std::clamp(x, 0.0f, 1.0f) : 0.0f;
+    settings_.startY = std::isfinite(y) ? std::clamp(y, 0.0f, 1.0f) : 0.0f;
     syncImpls();
 }
 
 void GradientRampEffect::setEndPoint(float x, float y) {
     preset_ = Preset::Custom;
-    settings_.endX = std::clamp(x, 0.0f, 1.0f);
-    settings_.endY = std::clamp(y, 0.0f, 1.0f);
+    settings_.endX = std::isfinite(x) ? std::clamp(x, 0.0f, 1.0f) : 1.0f;
+    settings_.endY = std::isfinite(y) ? std::clamp(y, 0.0f, 1.0f) : 1.0f;
     syncImpls();
 }
 
 void GradientRampEffect::setOpacity(float value) {
     preset_ = Preset::Custom;
-    settings_.opacity = std::clamp(value, 0.0f, 1.0f);
+    settings_.opacity = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
     syncImpls();
 }
 
