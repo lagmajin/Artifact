@@ -31,13 +31,13 @@ public:
     HueAndSaturation();
     ~HueAndSaturation() override;
 
-    void setHue(float v) { hueShift_ = std::clamp(v, -180.0f, 180.0f); syncImpls(); }
+    void setHue(float v) { hueShift_ = std::isfinite(v) ? std::clamp(v, -180.0f, 180.0f) : 0.0f; syncImpls(); }
     float hue() const { return hueShift_; }
 
-    void setSaturation(float v) { saturationScale_ = std::clamp(v, 0.0f, 2.0f); syncImpls(); }
+    void setSaturation(float v) { saturationScale_ = std::isfinite(v) ? std::clamp(v, 0.0f, 2.0f) : 1.0f; syncImpls(); }
     float saturation() const { return saturationScale_; }
 
-    void setLightness(float v) { lightnessShift_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
+    void setLightness(float v) { lightnessShift_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; syncImpls(); }
     float lightness() const { return lightnessShift_; }
 
     void setColorize(bool v) { colorize_ = v; syncImpls(); }
