@@ -508,6 +508,7 @@ namespace Artifact
         QString compositionName;      // コンポジション名
         QString jobName;              // ジョブ名（ユーザー編集可能）
         int priority = 0;             // farm scheduling priority (higher first)
+        QStringList dependsOn;        // prerequisite job names
         QString outputPath;           // 出力パス
         QString outputFormat;         // 出力形式 (MP4, PNG sequence等)
         QString codec;                // コーデック
@@ -5758,8 +5759,11 @@ namespace Artifact
                 jobOrder.reserve(count);
                 for (int i = 0; i < count; ++i) jobOrder.push_back(i);
                 std::stable_sort(jobOrder.begin(), jobOrder.end(), [this](int lhs, int rhs) {
-                    return impl_->queueManager.getJob(lhs).priority
-                        > impl_->queueManager.getJob(rhs).priority;
+                    const auto leftJob = impl_->queueManager.getJob(lhs);
+                    const auto rightJob = impl_->queueManager.getJob(rhs);
+                    if (leftJob.dependsOn.contains(rightJob.jobName)) return false;
+                    if (rightJob.dependsOn.contains(leftJob.jobName)) return true;
+                    return leftJob.priority > rightJob.priority;
                 });
                 for (const int i : jobOrder) {
                 if (impl_->shutdownRequested_.load(std::memory_order_acquire)) break;
@@ -5767,6 +5771,29 @@ namespace Artifact
                 const auto job = impl_->queueManager.getJob(i);
                 if (job.status != ArtifactRenderJob::Status::Rendering &&
                     job.status != ArtifactRenderJob::Status::Pending) {
+                    continue;
+                }
+
+                bool dependenciesReady = true;
+                for (const QString& dependency : job.dependsOn) {
+                    bool completed = false;
+                    for (int candidate = 0; candidate < count; ++candidate) {
+                        const auto dependencyJob = impl_->queueManager.getJob(candidate);
+                        if (dependencyJob.jobName == dependency &&
+                            dependencyJob.status == ArtifactRenderJob::Status::Completed) {
+                            completed = true;
+                            break;
+                        }
+                    }
+                    if (!completed) {
+                        dependenciesReady = false;
+                        break;
+                    }
+                }
+                if (!dependenciesReady) {
+                    QMetaObject::invokeMethod(this, [this, i]() {
+                        impl_->queueManager.setJobStatus(i, ArtifactRenderJob::Status::Pending);
+                    }, Qt::QueuedConnection);
                     continue;
                 }
 
@@ -6202,6 +6229,7 @@ namespace Artifact
             obj["compositionName"] = job.compositionName;
             obj["jobName"] = job.jobName;
             obj["priority"] = job.priority;
+            obj["dependsOn"] = QJsonArray::fromStringList(job.dependsOn);
             obj["outputPath"] = job.outputPath;
             obj["outputFormat"] = job.outputFormat;
             obj["codec"] = job.codec;
@@ -6315,6 +6343,13 @@ namespace Artifact
             job.compositionName = obj["compositionName"].toString().trimmed();
             job.jobName = obj["jobName"].toString().trimmed();
             job.priority = std::clamp(obj["priority"].toInt(0), -1000, 1000);
+            job.dependsOn.clear();
+            for (const auto& dependency : obj["dependsOn"].toArray()) {
+                if (job.dependsOn.size() >= 64) break;
+                const QString name = dependency.toString().trimmed();
+                if (!name.isEmpty() && name != job.jobName)
+                    job.dependsOn.append(name.left(256));
+            }
             job.outputPath = obj["outputPath"].toString().trimmed();
             job.outputFormat = obj["outputFormat"].toString().trimmed();
             job.codec = obj["codec"].toString().trimmed();
