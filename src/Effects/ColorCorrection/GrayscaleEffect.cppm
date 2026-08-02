@@ -172,7 +172,7 @@ GrayscaleEffect::GrayscaleEffect() {
 GrayscaleEffect::~GrayscaleEffect() = default;
 
 void GrayscaleEffect::setStrength(float value) {
-    strength_ = std::clamp(value, 0.0f, 1.0f);
+    strength_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
     syncImpls();
 }
 
