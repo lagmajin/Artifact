@@ -1521,7 +1521,9 @@ void ShortcutSettingPage::importPreset() {
   }
 
   QFile file(path);
-  if (!file.open(QIODevice::ReadOnly)) {
+  constexpr qint64 kMaxShortcutPresetBytes = 4LL * 1024LL * 1024LL;
+  if (file.size() <= 0 || file.size() > kMaxShortcutPresetBytes ||
+      !file.open(QIODevice::ReadOnly)) {
     QMessageBox::warning(this, QStringLiteral("Import Shortcut Preset"),
                          QStringLiteral("Could not open the preset file for reading."));
     return;
