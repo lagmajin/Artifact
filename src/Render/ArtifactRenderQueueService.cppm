@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QObject>
 #include <QList>
 #include <QThread>
@@ -5462,7 +5462,7 @@ namespace Artifact
                             QStringLiteral("master"), frame);
                         farmLog.logDebug(QStringLiteral("worker"),
                             QStringLiteral("Frame %1 done").arg(frame), frame);
-                        return;
+                        return true;
                     }
                 }
                 // All retries exhausted: permanent failure
@@ -5470,6 +5470,7 @@ namespace Artifact
                 farmLog.logError(QStringLiteral("worker"),
                     QStringLiteral("Frame %1 failed after %2 attempts")
                         .arg(frame).arg(kFarmMaxRetries), frame);
+                return false;
             };
 
             // Apply retry policy from service config
