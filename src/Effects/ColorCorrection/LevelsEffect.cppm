@@ -384,31 +384,33 @@ void LevelsEffect::setPreset(int preset) {
 
 void LevelsEffect::setInputBlack(float value) {
     preset_ = Preset::Custom;
-    settings_.inputBlack = value;
+    settings_.inputBlack = std::isfinite(value) ? static_cast<double>(value) : 0.0;
     syncImpls();
 }
 
 void LevelsEffect::setInputWhite(float value) {
     preset_ = Preset::Custom;
-    settings_.inputWhite = value;
+    settings_.inputWhite = std::isfinite(value) ? static_cast<double>(value) : 255.0;
     syncImpls();
 }
 
 void LevelsEffect::setInputGamma(float value) {
     preset_ = Preset::Custom;
-    settings_.inputGamma = std::clamp(static_cast<double>(value), 0.01, 10.0);
+    settings_.inputGamma = std::isfinite(value)
+        ? std::clamp(static_cast<double>(value), 0.01, 10.0)
+        : 1.0;
     syncImpls();
 }
 
 void LevelsEffect::setOutputBlack(float value) {
     preset_ = Preset::Custom;
-    settings_.outputBlack = value;
+    settings_.outputBlack = std::isfinite(value) ? static_cast<double>(value) : 0.0;
     syncImpls();
 }
 
 void LevelsEffect::setOutputWhite(float value) {
     preset_ = Preset::Custom;
-    settings_.outputWhite = value;
+    settings_.outputWhite = std::isfinite(value) ? static_cast<double>(value) : 255.0;
     syncImpls();
 }
 
