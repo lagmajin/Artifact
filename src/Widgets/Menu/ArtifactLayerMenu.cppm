@@ -13,6 +13,7 @@ module;
 #include <QMenu>
 #include <QDockWidget>
 #include <QWidget>
+#include <QVector2D>
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -44,9 +45,11 @@ import Utils.Path;
 import Utils.Id;
 import Utils.String.UniString;
 import Artifact.Application.Manager;
+import Artifact.Tool.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Abstract;
+import Artifact.Layers.Abstract._2D;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Composition;
 import Artifact.Layer.ParametricComposition;
@@ -885,6 +888,7 @@ public:
     QActionGroup* proxyQualityGroup = nullptr;
 
     QAction* createSolidAction = nullptr;
+    QAction* createRigAction = nullptr;
     QAction* createQuickLayerAction = nullptr;
     QAction* createNullAction = nullptr;
     QAction* createConstructionAction = nullptr;
@@ -1003,6 +1007,7 @@ public:
     QAction* controllerLearnAction = nullptr;
 
     void handleCreateSolid();
+    void handleCreateRig();
     void handleCreateQuickLayer();
     void handleCreateNull();
     void handleCreateConstruction();
@@ -1099,6 +1104,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createSolidAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateSolid));
     createSolidAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_palette.svg")));
+    createRigAction = new QAction(QStringLiteral("リグレイヤー(&G)"), createMenu);
+    createRigAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
+    createRigAction->setToolTip(QStringLiteral("2D平面と初期ボーンを作成します"));
     createQuickLayerAction = new QAction(QStringLiteral("クイックレイヤー作成..."), createMenu);
     createQuickLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_add.svg")));
     createQuickLayerAction->setToolTip(QStringLiteral("平面、マスク、入場・退場をまとめて作成します"));
@@ -1234,6 +1242,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMotionTrackerAction = new QAction("モーショントラッカーを作成(&M)", menu);
 
     createMenu->addAction(createSolidAction);
+    createMenu->addAction(createRigAction);
     createMenu->addAction(createQuickLayerAction);
     createMenu->addAction(createNullAction);
     createMenu->addAction(createConstructionAction);
@@ -1570,6 +1579,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             return;
         }
         if (action == createSolidAction) { handleCreateSolid(); return; }
+        if (action == createRigAction) { handleCreateRig(); return; }
         if (action == createQuickLayerAction) { handleCreateQuickLayer(); return; }
         if (action == createNullAction) { handleCreateNull(); return; }
         if (action == createConstructionAction) { handleCreateConstruction(); return; }
@@ -2017,6 +2027,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
 
     // Creation actions can auto-create first composition when a project exists.
     createSolidAction->setEnabled(hasProject);
+    createRigAction->setEnabled(hasProject);
     createQuickLayerAction->setEnabled(hasProject);
     createNullAction->setEnabled(hasProject);
     createConstructionAction->setEnabled(hasProject);
@@ -2356,6 +2367,71 @@ void ArtifactLayerMenu::Impl::handleCreateSolid()
     service->addLayerToCurrentComposition(
         dialog.submittedParams(), true,
         dialog.submittedPlacementMode() == LayerCreationPlacementMode::Playhead);
+}
+
+void ArtifactLayerMenu::Impl::handleCreateRig()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr,
+                             QStringLiteral("Layer"),
+                             QStringLiteral("コンポジションが選択されていません。"));
+        return;
+    }
+
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+
+    const auto composition = service->currentComposition().lock();
+    if (!composition) {
+        return;
+    }
+
+    const QSize compositionSize = composition->settings().compositionSize();
+    ArtifactSolidLayerInitParams params(uniqueLayerName(QStringLiteral("Rig Layer 1")));
+    params.setWidth(std::max(1, compositionSize.width()));
+    params.setHeight(std::max(1, compositionSize.height()));
+    params.setColor(FloatColor(0.16f, 0.20f, 0.26f, 1.0f));
+    service->addLayerToCurrentComposition(params, true,
+                                           placeAtCurrentFrameRequested());
+
+    auto* selection = ArtifactLayerSelectionManager::instance();
+    const auto created = selection ? selection->currentLayer()
+                                   : ArtifactAbstractLayerPtr{};
+    auto *rigLayer = created
+        ? dynamic_cast<ArtifactAbstract2DLayer *>(created.get())
+        : nullptr;
+    if (!rigLayer) {
+        return;
+    }
+
+    if (!rigLayer->rig2D().rootBone()) {
+        auto *root = rigLayer->addRigBone(QStringLiteral("root"));
+        if (root) {
+            root->setLocalPosition(QVector2D(
+                static_cast<float>(compositionSize.width()) * 0.5f,
+                static_cast<float>(compositionSize.height()) * 0.5f));
+            root->setLength(std::max(32.0f,
+                                     static_cast<float>(compositionSize.height()) * 0.18f));
+        }
+    }
+    rigLayer->addRigPoint(QStringLiteral("root_ctrl"), QVector2D(
+        static_cast<float>(compositionSize.width()) * 0.5f,
+        static_cast<float>(compositionSize.height()) * 0.5f));
+    if (rigLayer->rig2D().rootBone()) {
+        rigLayer->rig2D().rootBone()->updateHierarchy();
+    }
+    rigLayer->setLayerName(QStringLiteral("Rig Layer 1"));
+    rigLayer->setOpacity(0.18f);
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{composition->id().toString(), rigLayer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+    if (auto *app = ArtifactApplicationManager::instance()) {
+        if (auto *toolManager = app->toolManager()) {
+            toolManager->setActiveTool(ToolType::RigSelect);
+        }
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleCreateQuickLayer()
@@ -3712,6 +3788,11 @@ void ArtifactLayerMenu::Impl::handleCreateMotionTracker()
 
     const int existingTrackerId = videoLayer->motionTrackerId();
     if (existingTrackerId > 0 && ArtifactCore::TrackerManager::instance().tracker(existingTrackerId)) {
+        if (auto *app = ArtifactApplicationManager::instance()) {
+            if (auto *toolManager = app->toolManager()) {
+                toolManager->setActiveTool(ToolType::TrackPoint);
+            }
+        }
         QMessageBox::information(menu_->window(), "Motion Tracker",
                                  QStringLiteral("このレイヤーには既存のトラッカー #%1 が紐づいています。")
                                      .arg(existingTrackerId));
@@ -3732,6 +3813,12 @@ void ArtifactLayerMenu::Impl::handleCreateMotionTracker()
     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
         LayerChangedEvent{comp->id().toString(), videoLayer->id().toString(),
                           LayerChangedEvent::ChangeType::Modified});
+
+    if (auto *app = ArtifactApplicationManager::instance()) {
+        if (auto *toolManager = app->toolManager()) {
+            toolManager->setActiveTool(ToolType::TrackPoint);
+        }
+    }
 
     QMessageBox::information(menu_->window(), "Motion Tracker",
                              QStringLiteral("トラッカー #%1 を作成してレイヤーに紐づけました。")
