@@ -152,8 +152,10 @@ bool writeJsonObjectFile(const QString& filePath, const QJsonObject& object)
 
 QJsonObject readJsonObjectFile(const QString& filePath)
 {
+    constexpr qint64 kMaxDebuggerJsonBytes = 8LL * 1024LL * 1024LL;
     QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
+    if (file.size() <= 0 || file.size() > kMaxDebuggerJsonBytes ||
+        !file.open(QIODevice::ReadOnly)) {
         return {};
     }
 
@@ -163,8 +165,10 @@ QJsonObject readJsonObjectFile(const QString& filePath)
 
 QJsonObject readDebugMcpStateObject()
 {
+    constexpr qint64 kMaxDebuggerJsonBytes = 8LL * 1024LL * 1024LL;
     QFile file(debugMcpStateFilePath());
-    if (!file.open(QIODevice::ReadOnly)) {
+    if (file.size() <= 0 || file.size() > kMaxDebuggerJsonBytes ||
+        !file.open(QIODevice::ReadOnly)) {
         return {};
     }
 
