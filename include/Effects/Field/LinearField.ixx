@@ -96,16 +96,28 @@ export namespace Artifact {
 
         // ── アクセサ ──
         std::array<float, 3> startPos() const { return startPos_; }
-        void setStartPos(const std::array<float, 3>& p) { startPos_ = p; dirty_ = true; }
+        void setStartPos(const std::array<float, 3>& p) {
+            for (int i = 0; i < 3; ++i) {
+                startPos_[i] = std::isfinite(p[i]) ? p[i] : 0.0f;
+            }
+            dirty_ = true;
+        }
 
         std::array<float, 3> endPos() const { return endPos_; }
-        void setEndPos(const std::array<float, 3>& p) { endPos_ = p; dirty_ = true; }
+        void setEndPos(const std::array<float, 3>& p) {
+            for (int i = 0; i < 3; ++i) {
+                endPos_[i] = std::isfinite(p[i]) ? p[i] : 0.0f;
+            }
+            dirty_ = true;
+        }
 
         bool useSmoothstep() const { return useSmoothstep_; }
         void setUseSmoothstep(bool s) { useSmoothstep_ = s; }
 
         // ── 評価 ──
         float evaluateAt(const std::array<float, 3>& worldPos) const override {
+            if (!std::isfinite(worldPos[0]) || !std::isfinite(worldPos[1]) || !std::isfinite(worldPos[2]))
+                return 0.0f;
             if (dirty_) recalculate();
             if (length_ <= 0.0f) return 1.0f;
 
@@ -116,6 +128,7 @@ export namespace Artifact {
             float proj = dx * direction_[0] + dy * direction_[1] + dz * direction_[2];
 
             float t = proj / length_;
+            if (!std::isfinite(t)) return 0.0f;
             t = std::clamp(t, 0.0f, 1.0f);
 
             // t = 0 → influence 1.0,  t = 1 → influence 0.0
