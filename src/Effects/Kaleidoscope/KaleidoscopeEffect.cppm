@@ -81,23 +81,23 @@ public:
                 float sx = cx + srcR * std::cos(srcAngle);
                 float sy = cy + srcR * std::sin(srcAngle);
 
-                int si = std::clamp(int(std::round(sx)), 0, w - 1);
-                int sj = std::clamp(int(std::round(sy)), 0, h - 1);
-                int srcIdx = (sj * w + si) * 4;
                 int dstIdx = (y * w + x) * 4;
+                const FloatRGBA sampled = sampleBilinear(srcImage, sx, sy);
                 if (feather_ > 0.001f) {
                     float edgeDist = r;
-                    float maxR = std::sqrt(cx * cx + cy * cy) * 1.5f;
+                    const float maxX = std::max(cx, static_cast<float>(w) - cx);
+                    const float maxY = std::max(cy, static_cast<float>(h) - cy);
+                    float maxR = std::sqrt(maxX * maxX + maxY * maxY);
                     float fade = 1.0f - std::clamp((edgeDist - maxR * (1.0f - feather_)) / std::max(maxR * feather_, 0.001f), 0.0f, 1.0f);
-                    dstPixels[dstIdx + 0] = dstPixels[dstIdx + 0] * (1.0f - fade) + pixels[srcIdx + 0] * fade;
-                    dstPixels[dstIdx + 1] = dstPixels[dstIdx + 1] * (1.0f - fade) + pixels[srcIdx + 1] * fade;
-                    dstPixels[dstIdx + 2] = dstPixels[dstIdx + 2] * (1.0f - fade) + pixels[srcIdx + 2] * fade;
-                    dstPixels[dstIdx + 3] = pixels[srcIdx + 3];
+                    dstPixels[dstIdx + 0] = dstPixels[dstIdx + 0] * (1.0f - fade) + sampled.r() * fade;
+                    dstPixels[dstIdx + 1] = dstPixels[dstIdx + 1] * (1.0f - fade) + sampled.g() * fade;
+                    dstPixels[dstIdx + 2] = dstPixels[dstIdx + 2] * (1.0f - fade) + sampled.b() * fade;
+                    dstPixels[dstIdx + 3] = sampled.a();
                 } else {
-                    dstPixels[dstIdx + 0] = pixels[srcIdx + 0];
-                    dstPixels[dstIdx + 1] = pixels[srcIdx + 1];
-                    dstPixels[dstIdx + 2] = pixels[srcIdx + 2];
-                    dstPixels[dstIdx + 3] = pixels[srcIdx + 3];
+                    dstPixels[dstIdx + 0] = sampled.r();
+                    dstPixels[dstIdx + 1] = sampled.g();
+                    dstPixels[dstIdx + 2] = sampled.b();
+                    dstPixels[dstIdx + 3] = sampled.a();
                 }
             }
         });
@@ -321,15 +321,15 @@ KaleidoscopeEffect::~KaleidoscopeEffect() = default;
 int KaleidoscopeEffect::segments() const { return segments_; }
 void KaleidoscopeEffect::setSegments(int v) { segments_ = std::clamp(v, 2, 64); syncImpls(); }
 float KaleidoscopeEffect::centerX() const { return centerX_; }
-void KaleidoscopeEffect::setCenterX(float v) { centerX_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void KaleidoscopeEffect::setCenterX(float v) { centerX_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; syncImpls(); }
 float KaleidoscopeEffect::centerY() const { return centerY_; }
-void KaleidoscopeEffect::setCenterY(float v) { centerY_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void KaleidoscopeEffect::setCenterY(float v) { centerY_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; syncImpls(); }
 float KaleidoscopeEffect::rotation() const { return rotation_; }
-void KaleidoscopeEffect::setRotation(float v) { rotation_ = std::fmod(v, 360.0f); syncImpls(); }
+void KaleidoscopeEffect::setRotation(float v) { rotation_ = std::isfinite(v) ? std::fmod(v, 360.0f) : 0.0f; syncImpls(); }
 float KaleidoscopeEffect::zoom() const { return zoom_; }
-void KaleidoscopeEffect::setZoom(float v) { zoom_ = std::max(0.01f, v); syncImpls(); }
+void KaleidoscopeEffect::setZoom(float v) { zoom_ = std::isfinite(v) ? std::max(0.01f, v) : 1.0f; syncImpls(); }
 float KaleidoscopeEffect::feather() const { return feather_; }
-void KaleidoscopeEffect::setFeather(float v) { feather_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void KaleidoscopeEffect::setFeather(float v) { feather_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.0f; syncImpls(); }
 bool KaleidoscopeEffect::mirror() const { return mirror_; }
 void KaleidoscopeEffect::setMirror(bool v) { mirror_ = v; syncImpls(); }
 
