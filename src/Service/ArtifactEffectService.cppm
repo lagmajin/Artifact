@@ -45,6 +45,8 @@ import Artifact.Effect.Glow.LiquidGlow;
 import Artifact.Effect.Glow.ResidualGlow;
 import Artifact.Effect.GauusianBlur;
 import Artifact.Effect.Keying.ChromaKey;
+import Artifact.Effect.Keying.LumaKey;
+import Artifact.Effect.Keying.DifferenceKey;
 import Artifact.Effect.LensDistortion;
 import Artifact.Effect.LiftGammaGain;
 import ExposureEffect;
@@ -269,6 +271,20 @@ W_OBJECT_IMPL(ArtifactEffectService)
    auto effect = std::make_unique<ChromaKeyEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
    effect->setDisplayName(QStringLiteral("Chroma Key"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("luma_key") ||
+      effectId == QStringLiteral("Effect.Keying.LumaKey")) {
+   auto effect = std::make_unique<LumaKeyEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Luma Key"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("difference_key") ||
+      effectId == QStringLiteral("Effect.Keying.DifferenceKey")) {
+   auto effect = std::make_unique<DifferenceKeyEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Difference Key"));
    return effect;
   }
   if (effectId == QStringLiteral("effect.blur.gaussian")) {
@@ -712,6 +728,8 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("effect.colorcorrection.channelmixer"), "Channel Mixer"});
   effects.push_back({EffectID("effect.colorcorrection.selectivecolor"), "Selective Color"});
   effects.push_back({EffectID("chroma_key"), "Chroma Key"});
+  effects.push_back({EffectID("luma_key"), "Luma Key"});
+  effects.push_back({EffectID("difference_key"), "Difference Key"});
   effects.push_back({EffectID("drop_shadow"), "Drop Shadow"});
   effects.push_back({EffectID("inner_shadow"), "Inner Shadow"});
   effects.push_back({EffectID("stroke"), "Stroke"});
