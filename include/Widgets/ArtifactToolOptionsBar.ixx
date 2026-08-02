@@ -20,6 +20,8 @@ public:
 
   // ツール名に応じてオプションパネルを切替
   void setCurrentTool(const QString &toolName);
+  void syncBrushOptionsFromTool();
+  void syncMotionSketchOptionsFromTool();
   void setTextOptions(const QString &fontFamily, int fontSize, bool bold,
                       bool italic, bool underline, int horizontalAlignment,
                       int verticalAlignment, int wrapMode, int layoutMode,

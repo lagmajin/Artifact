@@ -1,8 +1,11 @@
 module;
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <utility>
 #include <QCheckBox>
+#include <QColor>
+#include <QDialog>
 #include <QComboBox>
 #include <QDebug>
 #include <QHBoxLayout>
@@ -13,6 +16,7 @@ module;
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QString>
+#include <QStringList>
 #include <QToolButton>
 #include <QWidget>
 #include <wobjectimpl.h>
@@ -20,9 +24,13 @@ module;
 module Widgets.ToolOptionsBar;
 
 import Font.FreeFont;
+import Artifact.Application.Manager;
+import Artifact.Tool.MotionSketchTool;
 import Artifact.Layer.Shape;
 import Text.Style;
 import Settings.Accessibility;
+import FloatColorPickerDialog;
+import Color.Float;
 
 namespace Artifact {
 
@@ -38,6 +46,7 @@ enum OptionRow : int {
   BrushTool,
   CloneTool,
   EraserTool,
+  MotionSketchTool,
   OptionCount
 };
 
@@ -94,15 +103,42 @@ public:
   QSpinBox *brushSizeSpin = nullptr;
   QSlider *brushSizeSlider = nullptr;
   QSpinBox *brushOpacitySpin = nullptr;
+  QSpinBox *brushFlowSpin = nullptr;
   QSpinBox *brushHardnessSpin = nullptr;
+  QSpinBox *brushSpacingSpin = nullptr;
+  QSpinBox *brushAngleSpin = nullptr;
+  QSpinBox *brushRoundnessSpin = nullptr;
+  QSpinBox *brushSizeJitterSpin = nullptr;
+  QSpinBox *brushOpacityJitterSpin = nullptr;
+  QSpinBox *brushScatterSpin = nullptr;
+  QSpinBox *brushAngleJitterSpin = nullptr;
+  QSpinBox *brushRoundnessJitterSpin = nullptr;
+  QSpinBox *brushFlowJitterSpin = nullptr;
+  QCheckBox *brushPressureFlowCheck = nullptr;
+  QCheckBox *brushPressureSizeCheck = nullptr;
+  QCheckBox *brushPressureOpacityCheck = nullptr;
+  QCheckBox *brushTiltAngleCheck = nullptr;
+  QCheckBox *brushTiltRoundnessCheck = nullptr;
+  QToolButton *brushColorButton = nullptr;
+  ArtifactCore::FloatColor brushColor{0.0f, 0.0f, 0.0f, 1.0f};
 
   // CloneTool
   QSpinBox *cloneRadiusSpin = nullptr;
   QCheckBox *alignedCheck = nullptr;
+  QSpinBox *cloneTimeOffsetSpin = nullptr;
 
   // EraserTool
   QSpinBox *eraserSizeSpin = nullptr;
   QSpinBox *eraserOpacitySpin = nullptr;
+  QSpinBox *eraserHardnessSpin = nullptr;
+  QSpinBox *eraserAngleSpin = nullptr;
+  QSpinBox *eraserRoundnessSpin = nullptr;
+  QSpinBox *eraserStrengthSpin = nullptr;
+  QCheckBox *eraserLastStrokeCheck = nullptr;
+  QComboBox *eraserModeCombo = nullptr;
+  QSpinBox *motionSmoothingSpin = nullptr;
+  QSpinBox *motionSampleRateSpin = nullptr;
+  QCheckBox *motionWireframeCheck = nullptr;
 
   void createFrames(QHBoxLayout *parentLayout);
   void connectSignals();
@@ -388,11 +424,13 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
     ly->setSpacing(8);
     ly->addWidget(makeLabel("ブラシ", frame));
 
-    brushSizeSpin = makeSpin(frame, 1, 500, "px");
+    brushSizeSpin = makeSpin(frame, 1, 2500, "px");
+    brushSizeSpin->setAccessibleName(QStringLiteral("Brush diameter"));
+    brushSizeSpin->setToolTip(QStringLiteral("Brush diameter in pixels"));
     ly->addWidget(brushSizeSpin);
 
     brushSizeSlider = new QSlider(Qt::Horizontal, frame);
-    brushSizeSlider->setRange(1, 500);
+    brushSizeSlider->setRange(1, 2500);
     brushSizeSlider->setMinimumWidth(100);
     connect(brushSizeSlider, &QSlider::valueChanged, brushSizeSpin,
             &QSpinBox::setValue);
@@ -401,13 +439,148 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
     ly->addWidget(brushSizeSlider);
 
     brushHardnessSpin = makeSpin(frame, 0, 100, "%");
+    brushHardnessSpin->setAccessibleName(QStringLiteral("Brush hardness"));
+    brushHardnessSpin->setToolTip(QStringLiteral("Brush edge hardness"));
     ly->addWidget(brushHardnessSpin);
 
     brushOpacitySpin = makeSpin(frame, 1, 100, "%");
+    brushOpacitySpin->setAccessibleName(QStringLiteral("Brush opacity"));
+    brushOpacitySpin->setToolTip(QStringLiteral("Brush opacity"));
     ly->addWidget(brushOpacitySpin);
+
+    brushFlowSpin = makeSpin(frame, 1, 100, "%");
+    brushFlowSpin->setValue(100);
+    brushFlowSpin->setAccessibleName(QStringLiteral("Brush flow"));
+    brushFlowSpin->setToolTip(QStringLiteral("Paint flow per dab"));
+    ly->addWidget(brushFlowSpin);
+
+    brushSpacingSpin = makeSpin(frame, 1, 1000, "%");
+    brushSpacingSpin->setValue(25);
+    brushSpacingSpin->setAccessibleName(QStringLiteral("Brush spacing"));
+    brushSpacingSpin->setToolTip(QStringLiteral("Distance between brush dabs"));
+    ly->addWidget(brushSpacingSpin);
+
+    brushAngleSpin = makeSpin(frame, 0, 360, "°");
+    brushAngleSpin->setAccessibleName(QStringLiteral("Brush angle"));
+    brushAngleSpin->setToolTip(QStringLiteral("Brush tip angle"));
+    ly->addWidget(brushAngleSpin);
+
+    brushRoundnessSpin = makeSpin(frame, 1, 100, "%");
+    brushRoundnessSpin->setValue(100);
+    brushRoundnessSpin->setAccessibleName(QStringLiteral("Brush roundness"));
+    brushRoundnessSpin->setToolTip(QStringLiteral("Brush tip roundness"));
+    ly->addWidget(brushRoundnessSpin);
+
+    brushSizeJitterSpin = makeSpin(frame, 0, 100, "%");
+    brushSizeJitterSpin->setAccessibleName(QStringLiteral("Size jitter"));
+    brushSizeJitterSpin->setToolTip(QStringLiteral("Random size variation"));
+    ly->addWidget(brushSizeJitterSpin);
+
+    brushOpacityJitterSpin = makeSpin(frame, 0, 100, "%");
+    brushOpacityJitterSpin->setAccessibleName(QStringLiteral("Opacity jitter"));
+    brushOpacityJitterSpin->setToolTip(QStringLiteral("Random opacity variation"));
+    ly->addWidget(brushOpacityJitterSpin);
+
+    brushScatterSpin = makeSpin(frame, 0, 100, "%");
+    brushScatterSpin->setAccessibleName(QStringLiteral("Scatter"));
+    brushScatterSpin->setToolTip(QStringLiteral("Scatter brush dabs"));
+    ly->addWidget(brushScatterSpin);
+
+    brushAngleJitterSpin = makeSpin(frame, 0, 100, "%");
+    brushAngleJitterSpin->setAccessibleName(QStringLiteral("Angle jitter"));
+    brushAngleJitterSpin->setToolTip(QStringLiteral("Random angle variation"));
+    ly->addWidget(brushAngleJitterSpin);
+
+    brushRoundnessJitterSpin = makeSpin(frame, 0, 100, "%");
+    brushRoundnessJitterSpin->setAccessibleName(QStringLiteral("Roundness jitter"));
+    brushRoundnessJitterSpin->setToolTip(QStringLiteral("Random roundness variation"));
+    ly->addWidget(brushRoundnessJitterSpin);
+
+    brushFlowJitterSpin = makeSpin(frame, 0, 100, "%");
+    brushFlowJitterSpin->setAccessibleName(QStringLiteral("Flow jitter"));
+    brushFlowJitterSpin->setToolTip(QStringLiteral("Random flow variation"));
+    ly->addWidget(brushFlowJitterSpin);
+
+    brushPressureFlowCheck =
+        new QCheckBox(QStringLiteral("Pressure Flow"), frame);
+    brushPressureFlowCheck->setChecked(true);
+    brushPressureFlowCheck->setAccessibleName(
+        QStringLiteral("Pressure affects flow"));
+    brushPressureFlowCheck->setToolTip(
+        QStringLiteral("Use tablet pressure to modulate brush flow"));
+    ly->addWidget(brushPressureFlowCheck);
+
+    brushPressureSizeCheck =
+        new QCheckBox(QStringLiteral("Pressure Size"), frame);
+    brushPressureSizeCheck->setChecked(true);
+    brushPressureSizeCheck->setAccessibleName(
+        QStringLiteral("Pressure affects size"));
+    brushPressureSizeCheck->setToolTip(
+        QStringLiteral("Use tablet pressure to modulate brush diameter"));
+    ly->addWidget(brushPressureSizeCheck);
+
+    brushPressureOpacityCheck =
+        new QCheckBox(QStringLiteral("Pressure Opacity"), frame);
+    brushPressureOpacityCheck->setChecked(true);
+    brushPressureOpacityCheck->setAccessibleName(
+        QStringLiteral("Pressure affects opacity"));
+    brushPressureOpacityCheck->setToolTip(
+        QStringLiteral("Use tablet pressure to modulate brush opacity"));
+    ly->addWidget(brushPressureOpacityCheck);
+
+    brushTiltAngleCheck = new QCheckBox(QStringLiteral("Tilt Angle"), frame);
+    brushTiltAngleCheck->setChecked(true);
+    brushTiltAngleCheck->setAccessibleName(QStringLiteral("Tilt affects angle"));
+    brushTiltAngleCheck->setToolTip(
+        QStringLiteral("Use pen tilt to rotate the brush tip"));
+    ly->addWidget(brushTiltAngleCheck);
+
+    brushTiltRoundnessCheck =
+        new QCheckBox(QStringLiteral("Tilt Roundness"), frame);
+    brushTiltRoundnessCheck->setChecked(true);
+    brushTiltRoundnessCheck->setAccessibleName(
+        QStringLiteral("Tilt affects roundness"));
+    brushTiltRoundnessCheck->setToolTip(
+        QStringLiteral("Use pen tilt to change brush roundness"));
+    ly->addWidget(brushTiltRoundnessCheck);
+
+    brushColorButton = new QToolButton(frame);
+    brushColorButton->setText(QStringLiteral("Color"));
+    brushColorButton->setAccessibleName(QStringLiteral("Brush fill color"));
+    brushColorButton->setAccessibleDescription(
+        QStringLiteral("Choose the color used by the brush"));
+    brushColorButton->setToolTip(QStringLiteral("Brush fill color"));
+    {
+      QPalette palette = brushColorButton->palette();
+      palette.setColor(QPalette::Button, QColor(0, 0, 0));
+      palette.setColor(QPalette::ButtonText, QColor(255, 255, 255));
+      brushColorButton->setPalette(palette);
+    }
+    ly->addWidget(brushColorButton);
 
     ly->addStretch();
     optionFrames[BrushTool] = frame;
+    parentLayout->addWidget(frame);
+    frame->setVisible(false);
+  }
+
+  // ===== MotionSketch =====
+  {
+    auto *frame = new QWidget(toolOptionsBar);
+    auto *ly = new QHBoxLayout(frame);
+    ly->setContentsMargins(4, 2, 4, 2);
+    ly->setSpacing(8);
+    ly->addWidget(makeLabel("モーションスケッチ", frame));
+    motionSmoothingSpin = makeSpin(frame, 0, 100, "%");
+    motionSmoothingSpin->setValue(50);
+    ly->addWidget(motionSmoothingSpin);
+    motionSampleRateSpin = makeSpin(frame, 1, 60, "fps");
+    motionSampleRateSpin->setValue(60);
+    ly->addWidget(motionSampleRateSpin);
+    motionWireframeCheck = new QCheckBox(QStringLiteral("Wireframe"), frame);
+    ly->addWidget(motionWireframeCheck);
+    ly->addStretch();
+    optionFrames[MotionSketchTool] = frame;
     parentLayout->addWidget(frame);
     frame->setVisible(false);
   }
@@ -434,6 +607,14 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
     alignedCheck->setMinimumHeight(Artifact::Accessibility::scaledSize(24));
     ly->addWidget(alignedCheck);
 
+    cloneTimeOffsetSpin = makeSpin(frame, -10000, 10000, "frames");
+    cloneTimeOffsetSpin->setValue(0);
+    cloneTimeOffsetSpin->setAccessibleName(QStringLiteral("Clone time offset"));
+    cloneTimeOffsetSpin->setAccessibleDescription(
+        QStringLiteral("Offsets the sampled source frame relative to the current frame"));
+    cloneTimeOffsetSpin->setMinimumHeight(Artifact::Accessibility::scaledSize(24));
+    ly->addWidget(cloneTimeOffsetSpin);
+
     ly->addStretch();
     optionFrames[CloneTool] = frame;
     parentLayout->addWidget(frame);
@@ -449,10 +630,53 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
     ly->addWidget(makeLabel("消しゴム", frame));
 
     eraserSizeSpin = makeSpin(frame, 1, 500, "px");
+    eraserSizeSpin->setAccessibleName(QStringLiteral("Eraser diameter"));
+    eraserSizeSpin->setToolTip(QStringLiteral("Eraser diameter in pixels"));
     ly->addWidget(eraserSizeSpin);
 
     eraserOpacitySpin = makeSpin(frame, 0, 100, "%");
+    eraserOpacitySpin->setAccessibleName(QStringLiteral("Eraser opacity"));
+    eraserOpacitySpin->setToolTip(QStringLiteral("Eraser opacity"));
     ly->addWidget(eraserOpacitySpin);
+
+    eraserHardnessSpin = makeSpin(frame, 0, 100, "%");
+    eraserHardnessSpin->setValue(100);
+    eraserHardnessSpin->setAccessibleName(QStringLiteral("Eraser hardness"));
+    eraserHardnessSpin->setToolTip(QStringLiteral("Eraser hardness"));
+    ly->addWidget(eraserHardnessSpin);
+
+    eraserAngleSpin = makeSpin(frame, 0, 360, "°");
+    eraserAngleSpin->setAccessibleName(QStringLiteral("Eraser angle"));
+    eraserAngleSpin->setToolTip(QStringLiteral("Shared brush tip angle"));
+    ly->addWidget(eraserAngleSpin);
+
+    eraserRoundnessSpin = makeSpin(frame, 1, 100, "%");
+    eraserRoundnessSpin->setValue(100);
+    eraserRoundnessSpin->setAccessibleName(QStringLiteral("Eraser roundness"));
+    eraserRoundnessSpin->setToolTip(QStringLiteral("Shared brush tip roundness"));
+    ly->addWidget(eraserRoundnessSpin);
+
+    eraserStrengthSpin = makeSpin(frame, 0, 100, "%");
+    eraserStrengthSpin->setValue(100);
+    eraserStrengthSpin->setAccessibleName(QStringLiteral("Eraser strength"));
+    eraserStrengthSpin->setToolTip(QStringLiteral("Eraser strength"));
+    ly->addWidget(eraserStrengthSpin);
+    eraserLastStrokeCheck = new QCheckBox(QStringLiteral("Last Stroke Only"), frame);
+    eraserLastStrokeCheck->setAccessibleName(
+        QStringLiteral("Erase last stroke only"));
+    eraserLastStrokeCheck->setAccessibleDescription(
+        QStringLiteral("Remove only the most recent paint stroke"));
+    eraserLastStrokeCheck->setToolTip(
+        QStringLiteral("Undo only the most recent paint stroke"));
+    ly->addWidget(eraserLastStrokeCheck);
+    eraserModeCombo = new QComboBox(frame);
+    eraserModeCombo->addItem(QStringLiteral("Paint Eraser"), 0);
+    eraserModeCombo->addItem(QStringLiteral("Layer Eraser"), 1);
+    eraserModeCombo->addItem(QStringLiteral("Last Stroke Only"), 2);
+    eraserModeCombo->setAccessibleName(QStringLiteral("Eraser mode"));
+    eraserModeCombo->setAccessibleDescription(
+        QStringLiteral("Choose paint, layer, or last-stroke erasing"));
+    ly->addWidget(eraserModeCombo);
 
     ly->addStretch();
     optionFrames[EraserTool] = frame;
@@ -639,15 +863,136 @@ void ArtifactToolOptionsBar::Impl::connectSignals() {
             toolOptionsBar,
             [emitOpt](int v) { emitOpt("ブラシ", "brushOpacity", v); });
 
+  if (brushFlowSpin)
+    connect(brushFlowSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            toolOptionsBar,
+            [emitOpt](int v) { emitOpt("ブラシ", "brushFlow", v); });
+
   if (brushHardnessSpin)
     connect(brushHardnessSpin, QOverload<int>::of(&QSpinBox::valueChanged),
             toolOptionsBar,
             [emitOpt](int v) { emitOpt("ブラシ", "brushHardness", v); });
 
+  if (brushSpacingSpin)
+    connect(brushSpacingSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            toolOptionsBar,
+            [emitOpt](int v) { emitOpt("ブラシ", "brushSpacing", v); });
+
+  if (brushAngleSpin)
+    connect(brushAngleSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            toolOptionsBar,
+            [emitOpt](int v) { emitOpt("ブラシ", "brushAngle", v); });
+
+  if (brushRoundnessSpin)
+    connect(brushRoundnessSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            toolOptionsBar,
+            [emitOpt](int v) { emitOpt("ブラシ", "brushRoundness", v); });
+
+  if (brushSizeJitterSpin)
+    connect(brushSizeJitterSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged), toolOptionsBar,
+            [emitOpt](int v) { emitOpt("ブラシ", "sizeJitter", v); });
+
+  if (brushOpacityJitterSpin)
+    connect(brushOpacityJitterSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged), toolOptionsBar,
+            [emitOpt](int v) { emitOpt("ブラシ", "opacityJitter", v); });
+
+  if (brushScatterSpin)
+    connect(brushScatterSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            toolOptionsBar,
+            [emitOpt](int v) { emitOpt("ブラシ", "scatter", v); });
+
+  if (brushAngleJitterSpin)
+    connect(brushAngleJitterSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged), toolOptionsBar,
+            [emitOpt](int v) { emitOpt("ブラシ", "angleJitter", v); });
+
+  if (brushRoundnessJitterSpin)
+    connect(brushRoundnessJitterSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged), toolOptionsBar,
+            [emitOpt](int v) { emitOpt("ブラシ", "roundnessJitter", v); });
+
+  if (brushFlowJitterSpin)
+    connect(brushFlowJitterSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged), toolOptionsBar,
+            [emitOpt](int v) { emitOpt("ブラシ", "flowJitter", v); });
+
+  if (brushPressureFlowCheck)
+    connect(brushPressureFlowCheck, &QCheckBox::toggled, toolOptionsBar,
+            [emitOpt](bool enabled) {
+              emitOpt("ブラシ", "pressureAffectsFlow", enabled);
+            });
+
+  if (brushPressureSizeCheck)
+    connect(brushPressureSizeCheck, &QCheckBox::toggled, toolOptionsBar,
+            [emitOpt](bool enabled) {
+              emitOpt("ブラシ", "pressureAffectsSize", enabled);
+            });
+
+  if (brushPressureOpacityCheck)
+    connect(brushPressureOpacityCheck, &QCheckBox::toggled, toolOptionsBar,
+            [emitOpt](bool enabled) {
+              emitOpt("ブラシ", "pressureAffectsOpacity", enabled);
+            });
+
+  if (brushTiltAngleCheck)
+    connect(brushTiltAngleCheck, &QCheckBox::toggled, toolOptionsBar,
+            [emitOpt](bool enabled) {
+              emitOpt("ブラシ", "tiltAffectsAngle", enabled);
+            });
+
+  if (brushTiltRoundnessCheck)
+    connect(brushTiltRoundnessCheck, &QCheckBox::toggled, toolOptionsBar,
+            [emitOpt](bool enabled) {
+              emitOpt("ブラシ", "tiltAffectsRoundness", enabled);
+            });
+
+  if (brushColorButton)
+    connect(brushColorButton, &QToolButton::clicked, toolOptionsBar,
+            [this, emitOpt]() {
+              ArtifactWidgets::FloatColorPicker picker(toolOptionsBar);
+              picker.setInitialColor(brushColor);
+              picker.setColor(brushColor);
+              if (picker.exec() != QDialog::Accepted) {
+                return;
+              }
+              const auto color = picker.getColor();
+              brushColor = color;
+              QPalette palette = brushColorButton->palette();
+              palette.setColor(
+                  QPalette::Button,
+                  QColor::fromRgbF(color.r(), color.g(), color.b(), color.a()));
+              const float luminance = 0.2126f * color.r() +
+                                      0.7152f * color.g() +
+                                      0.0722f * color.b();
+              palette.setColor(QPalette::ButtonText,
+                               luminance > 0.52f ? QColor(0, 0, 0)
+                                                : QColor(255, 255, 255));
+              brushColorButton->setPalette(palette);
+              emitOpt("ブラシ", "brushColor",
+                      QStringLiteral("%1,%2,%3,%4")
+                          .arg(color.r(), 0, 'f', 6)
+                          .arg(color.g(), 0, 'f', 6)
+                          .arg(color.b(), 0, 'f', 6)
+                          .arg(color.a(), 0, 'f', 6));
+            });
+
   if (cloneRadiusSpin)
     connect(cloneRadiusSpin, QOverload<int>::of(&QSpinBox::valueChanged),
             toolOptionsBar,
             [emitOpt](int v) { emitOpt("コピースタンプ", "radius", v); });
+
+  if (alignedCheck)
+    connect(alignedCheck, &QCheckBox::toggled, toolOptionsBar,
+            [emitOpt](bool enabled) {
+              emitOpt("コピースタンプ", "aligned", enabled);
+            });
+
+  if (cloneTimeOffsetSpin)
+    connect(cloneTimeOffsetSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            toolOptionsBar,
+            [emitOpt](int v) { emitOpt("コピースタンプ", "timeOffset", v); });
 
   if (eraserSizeSpin)
     connect(eraserSizeSpin, QOverload<int>::of(&QSpinBox::valueChanged),
@@ -658,6 +1003,59 @@ void ArtifactToolOptionsBar::Impl::connectSignals() {
     connect(eraserOpacitySpin, QOverload<int>::of(&QSpinBox::valueChanged),
             toolOptionsBar,
             [emitOpt](int v) { emitOpt("消しゴム", "opacity", v); });
+
+  if (eraserHardnessSpin)
+    connect(eraserHardnessSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged), toolOptionsBar,
+            [emitOpt](int v) { emitOpt("消しゴム", "hardness", v); });
+
+  if (eraserAngleSpin)
+    connect(eraserAngleSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            toolOptionsBar,
+            [emitOpt](int v) { emitOpt("消しゴム", "angle", v); });
+
+  if (eraserRoundnessSpin)
+    connect(eraserRoundnessSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged), toolOptionsBar,
+            [emitOpt](int v) { emitOpt("消しゴム", "roundness", v); });
+
+  if (eraserStrengthSpin)
+    connect(eraserStrengthSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged), toolOptionsBar,
+            [emitOpt](int v) { emitOpt("消しゴム", "strength", v); });
+
+  if (eraserLastStrokeCheck)
+    connect(eraserLastStrokeCheck, &QCheckBox::toggled, toolOptionsBar,
+            [emitOpt](bool enabled) {
+              emitOpt("消しゴム", "lastStrokeOnly", enabled);
+            });
+
+  if (eraserModeCombo)
+    connect(eraserModeCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged), toolOptionsBar,
+            [this, emitOpt](int index) {
+              emitOpt("消しゴム", "mode", eraserModeCombo->itemData(index));
+            });
+
+  if (motionSmoothingSpin)
+    connect(motionSmoothingSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged), toolOptionsBar,
+            [emitOpt](int v) {
+              emitOpt("モーションスケッチ", "smoothing", v);
+            });
+
+  if (motionSampleRateSpin)
+    connect(motionSampleRateSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged), toolOptionsBar,
+            [emitOpt](int v) {
+              emitOpt("モーションスケッチ", "sampleRate", v);
+            });
+
+  if (motionWireframeCheck)
+    connect(motionWireframeCheck, &QCheckBox::toggled, toolOptionsBar,
+            [emitOpt](bool enabled) {
+              emitOpt("モーションスケッチ", "showWireframe", enabled);
+            });
 }
 
 ArtifactToolOptionsBar::ArtifactToolOptionsBar(QWidget *parent)
@@ -699,12 +1097,15 @@ void ArtifactToolOptionsBar::setCurrentTool(const QString &toolName) {
   } else if (toolName == "ペン") {
     impl_->optionFrames[PenTool]->setVisible(true);
     impl_->currentRow = PenTool;
-  } else if (toolName == "シェイプ") {
+  } else if (toolName == "シェイプ" || toolName == "楕円") {
     impl_->optionFrames[ShapeTool]->setVisible(true);
     impl_->currentRow = ShapeTool;
   } else if (toolName == "テキスト") {
     impl_->optionFrames[TextTool]->setVisible(true);
     impl_->currentRow = TextTool;
+  } else if (toolName == "モーションスケッチ") {
+    impl_->optionFrames[MotionSketchTool]->setVisible(true);
+    impl_->currentRow = MotionSketchTool;
   } else if (toolName == "ブラシ") {
     impl_->optionFrames[BrushTool]->setVisible(true);
     impl_->currentRow = BrushTool;
@@ -714,6 +1115,121 @@ void ArtifactToolOptionsBar::setCurrentTool(const QString &toolName) {
   } else if (toolName == "消しゴム") {
     impl_->optionFrames[EraserTool]->setVisible(true);
     impl_->currentRow = EraserTool;
+  }
+}
+
+void ArtifactToolOptionsBar::syncBrushOptionsFromTool() {
+  if (!impl_) {
+    return;
+  }
+  auto *app = ArtifactApplicationManager::instance();
+  auto *brush = app ? app->brushTool() : nullptr;
+  if (!brush) {
+    return;
+  }
+  const QSignalBlocker sizeBlocker(impl_->brushSizeSpin);
+  const QSignalBlocker opacityBlocker(impl_->brushOpacitySpin);
+  const QSignalBlocker flowBlocker(impl_->brushFlowSpin);
+  const QSignalBlocker hardnessBlocker(impl_->brushHardnessSpin);
+  const QSignalBlocker spacingBlocker(impl_->brushSpacingSpin);
+  const QSignalBlocker angleBlocker(impl_->brushAngleSpin);
+  const QSignalBlocker roundnessBlocker(impl_->brushRoundnessSpin);
+  const QSignalBlocker sizeJitterBlocker(impl_->brushSizeJitterSpin);
+  const QSignalBlocker opacityJitterBlocker(impl_->brushOpacityJitterSpin);
+  const QSignalBlocker scatterBlocker(impl_->brushScatterSpin);
+  const QSignalBlocker angleJitterBlocker(impl_->brushAngleJitterSpin);
+  const QSignalBlocker roundnessJitterBlocker(impl_->brushRoundnessJitterSpin);
+  const QSignalBlocker flowJitterBlocker(impl_->brushFlowJitterSpin);
+  const QSignalBlocker pressureFlowBlocker(impl_->brushPressureFlowCheck);
+  const QSignalBlocker pressureSizeBlocker(impl_->brushPressureSizeCheck);
+  const QSignalBlocker pressureOpacityBlocker(impl_->brushPressureOpacityCheck);
+  const QSignalBlocker tiltAngleBlocker(impl_->brushTiltAngleCheck);
+  const QSignalBlocker tiltRoundnessBlocker(impl_->brushTiltRoundnessCheck);
+  const QSignalBlocker eraserSizeBlocker(impl_->eraserSizeSpin);
+  const QSignalBlocker eraserOpacityBlocker(impl_->eraserOpacitySpin);
+  const QSignalBlocker eraserHardnessBlocker(impl_->eraserHardnessSpin);
+  const QSignalBlocker eraserAngleBlocker(impl_->eraserAngleSpin);
+  const QSignalBlocker eraserRoundnessBlocker(impl_->eraserRoundnessSpin);
+  const QSignalBlocker eraserStrengthBlocker(impl_->eraserStrengthSpin);
+  const QSignalBlocker eraserLastBlocker(impl_->eraserLastStrokeCheck);
+  const QSignalBlocker eraserModeBlocker(impl_->eraserModeCombo);
+  const QSignalBlocker cloneRadiusBlocker(impl_->cloneRadiusSpin);
+  const QSignalBlocker cloneAlignedBlocker(impl_->alignedCheck);
+  const QSignalBlocker cloneOffsetBlocker(impl_->cloneTimeOffsetSpin);
+
+  impl_->brushSizeSpin->setValue(static_cast<int>(std::lround(brush->radius())));
+  impl_->brushOpacitySpin->setValue(static_cast<int>(std::lround(brush->opacity() * 100.0f)));
+  impl_->brushFlowSpin->setValue(static_cast<int>(std::lround(brush->flow() * 100.0f)));
+  impl_->brushHardnessSpin->setValue(static_cast<int>(std::lround(brush->hardness() * 100.0f)));
+  impl_->brushSpacingSpin->setValue(static_cast<int>(std::lround(brush->spacing() * 100.0f)));
+  impl_->brushAngleSpin->setValue(static_cast<int>(std::lround(brush->angle())));
+  impl_->brushRoundnessSpin->setValue(static_cast<int>(std::lround(brush->roundness() * 100.0f)));
+  impl_->brushSizeJitterSpin->setValue(static_cast<int>(std::lround(brush->sizeJitter() * 100.0f)));
+  impl_->brushOpacityJitterSpin->setValue(static_cast<int>(std::lround(brush->opacityJitter() * 100.0f)));
+  impl_->brushScatterSpin->setValue(static_cast<int>(std::lround(brush->scatter() * 100.0f)));
+  impl_->brushAngleJitterSpin->setValue(static_cast<int>(std::lround(brush->angleJitter() * 100.0f)));
+  impl_->brushRoundnessJitterSpin->setValue(static_cast<int>(std::lround(brush->roundnessJitter() * 100.0f)));
+  impl_->brushFlowJitterSpin->setValue(static_cast<int>(std::lround(brush->flowJitter() * 100.0f)));
+  impl_->brushPressureFlowCheck->setChecked(brush->pressureAffectsFlow());
+  impl_->brushPressureSizeCheck->setChecked(brush->pressureAffectsSize());
+  impl_->brushPressureOpacityCheck->setChecked(brush->pressureAffectsOpacity());
+  impl_->brushTiltAngleCheck->setChecked(brush->tiltAffectsAngle());
+  impl_->brushTiltRoundnessCheck->setChecked(brush->tiltAffectsRoundness());
+  impl_->eraserSizeSpin->setValue(static_cast<int>(std::lround(brush->radius())));
+  impl_->eraserOpacitySpin->setValue(static_cast<int>(std::lround(brush->opacity() * 100.0f)));
+  impl_->eraserHardnessSpin->setValue(static_cast<int>(std::lround(brush->hardness() * 100.0f)));
+  impl_->eraserAngleSpin->setValue(static_cast<int>(std::lround(brush->angle())));
+  impl_->eraserRoundnessSpin->setValue(static_cast<int>(std::lround(brush->roundness() * 100.0f)));
+  impl_->eraserStrengthSpin->setValue(static_cast<int>(std::lround(brush->opacity() * 100.0f)));
+  impl_->eraserLastStrokeCheck->setChecked(brush->lastStrokeOnly());
+  if (impl_->eraserModeCombo) {
+    const int modeIndex = impl_->eraserModeCombo->findData(brush->eraserModeKind());
+    if (modeIndex >= 0) {
+      impl_->eraserModeCombo->setCurrentIndex(modeIndex);
+    }
+  }
+  impl_->cloneRadiusSpin->setValue(static_cast<int>(std::lround(brush->radius())));
+  impl_->alignedCheck->setChecked(brush->cloneAligned());
+  impl_->cloneTimeOffsetSpin->setValue(brush->cloneTimeOffset());
+  impl_->brushColor = brush->color();
+  if (impl_->brushColorButton) {
+    QPalette palette = impl_->brushColorButton->palette();
+    palette.setColor(
+        QPalette::Button,
+        QColor::fromRgbF(impl_->brushColor.r(), impl_->brushColor.g(),
+                         impl_->brushColor.b(), impl_->brushColor.a()));
+    const float luminance = 0.2126f * impl_->brushColor.r() +
+                            0.7152f * impl_->brushColor.g() +
+                            0.0722f * impl_->brushColor.b();
+    palette.setColor(QPalette::ButtonText,
+                     luminance > 0.52f ? QColor(0, 0, 0)
+                                      : QColor(255, 255, 255));
+    impl_->brushColorButton->setPalette(palette);
+  }
+}
+
+void ArtifactToolOptionsBar::syncMotionSketchOptionsFromTool() {
+  if (!impl_) {
+    return;
+  }
+  auto *app = ArtifactApplicationManager::instance();
+  auto *motion = app ? app->motionSketchTool() : nullptr;
+  if (!motion) {
+    return;
+  }
+  if (impl_->motionSmoothingSpin) {
+    const QSignalBlocker blocker(impl_->motionSmoothingSpin);
+    impl_->motionSmoothingSpin->setValue(
+        std::clamp(static_cast<int>(std::lround(motion->smoothing() * 100.0f)), 0, 100));
+  }
+  if (impl_->motionSampleRateSpin) {
+    const QSignalBlocker blocker(impl_->motionSampleRateSpin);
+    impl_->motionSampleRateSpin->setValue(
+        std::clamp(static_cast<int>(std::lround(motion->sampleRate())), 1, 60));
+  }
+  if (impl_->motionWireframeCheck) {
+    const QSignalBlocker blocker(impl_->motionWireframeCheck);
+    impl_->motionWireframeCheck->setChecked(motion->showWireframe());
   }
 }
 
