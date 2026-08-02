@@ -113,8 +113,8 @@ public:
             cv::Vec4f*   lRow = satinLayer.ptr<cv::Vec4f>(y);
             for (int x = 0; x < W; ++x) {
                 const float a = std::clamp(aRow[x] * so * opac, 0.0f, 1.0f);
-                // OpenCV internal order: B, G, R, A
-                lRow[x] = cv::Vec4f(sb, sg, sr, a);
+                // ImageF32x4_RGBA is stored as RGBA, including its cv::Mat view.
+                lRow[x] = cv::Vec4f(sr, sg, sb, a);
             }
         });
 
@@ -134,7 +134,7 @@ public:
                 const float saA = sa[x][3];
                 // Satin: src の内側にサテン色を乗算ブレンドで合成
                 // satinAlpha で src 内側をマスク
-                const float blendFactor = saA * fa;
+                const float blendFactor = saA;
                 const float oa = fa + blendFactor * (1.0f - fa);
                 if (oa < 1e-6f) {
                     out[x] = cv::Vec4f(0.f, 0.f, 0.f, 0.f);
@@ -197,7 +197,7 @@ public:
             cpuImpl_.opacity_ / 100.0f,
             cpuImpl_.invert_ ? 1.0f : 0.0f,
             {0.0f, 0.0f, 0.0f},
-            {cpuImpl_.satinColor_.blueF(), cpuImpl_.satinColor_.greenF(), cpuImpl_.satinColor_.redF(), cpuImpl_.satinColor_.alphaF()}
+            {cpuImpl_.satinColor_.redF(), cpuImpl_.satinColor_.greenF(), cpuImpl_.satinColor_.blueF(), cpuImpl_.satinColor_.alphaF()}
         };
         std::memcpy(m, &p, sizeof(p));
         context->UnmapBuffer(params, Diligent::MAP_WRITE);
@@ -207,7 +207,7 @@ public:
 private:
     static constexpr const char* kHlsl=R"(
 Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer SatinParams:register(b0){float g_Distance;float g_Angle;float g_Softness;float g_Opacity;float g_Invert;float4 g_Color;}
-float alphaAt(int2 p,uint w,uint h){return g_InputTexture[uint2(clamp(p.x,0,(int)w-1),clamp(p.y,0,(int)h-1))].a;}
+float alphaAt(int2 p,uint w,uint h){if(p.x<0||p.y<0||p.x>=(int)w||p.y>=(int)h)return 0;return g_InputTexture[uint2(p)].a;}
 [numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 base=g_InputTexture[id.xy];float2 dir=float2(cos(g_Angle*0.0174532925),-sin(g_Angle*0.0174532925));float2 off=dir*g_Distance;float a=0;int n=max(1,(int)(g_Softness*2+1));for(int i=-n;i<=n;++i){float t=(float)i/max(1,n);a+=alphaAt(int2(float2(id.xy)+off+dir*t*g_Softness),w,h);}a/=2*n+1;if(g_Invert>0.5)a=1-a;float sa=saturate(a*g_Color.a*g_Opacity);float oa=base.a+sa*(1-base.a);float3 rgb=oa>0?(base.rgb*base.a+(base.rgb*g_Color.rgb)*sa*(1-base.a))/oa:0;g_OutputTexture[id.xy]=float4(rgb,oa);}
 )";
 };
@@ -237,25 +237,25 @@ void   SatinEffect::setSatinColor(const QColor& c) {
 
 float SatinEffect::distance() const { return distance_; }
 void  SatinEffect::setDistance(float d) {
-    distance_ = std::max(0.0f, d);
+    distance_ = std::isfinite(d) ? std::max(0.0f, d) : 0.0f;
     syncImpls();
 }
 
 float SatinEffect::angle() const { return angle_; }
 void  SatinEffect::setAngle(float a) {
-    angle_ = a;
+    angle_ = std::isfinite(a) ? a : 0.0f;
     syncImpls();
 }
 
 float SatinEffect::softness() const { return softness_; }
 void  SatinEffect::setSoftness(float s) {
-    softness_ = std::max(0.0f, s);
+    softness_ = std::isfinite(s) ? std::max(0.0f, s) : 5.0f;
     syncImpls();
 }
 
 float SatinEffect::opacity() const { return opacity_; }
 void  SatinEffect::setOpacity(float o) {
-    opacity_ = std::clamp(o, 0.0f, 100.0f);
+    opacity_ = std::isfinite(o) ? std::clamp(o, 0.0f, 100.0f) : 50.0f;
     syncImpls();
 }
 
