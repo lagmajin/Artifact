@@ -136,7 +136,7 @@ namespace Artifact
 
  void CloneGenerator::setSpacing(float spacing)
  {
-  impl_->spacing_ = spacing;
+  impl_->spacing_ = std::isfinite(spacing) ? std::max(0.0f, spacing) : 0.0f;
  }
 
  float CloneGenerator::spacing() const
@@ -157,7 +157,10 @@ namespace Artifact
  // 分布モード
  void CloneGenerator::setDistributionMode(DistributionMode mode)
  {
-  impl_->mode_ = mode;
+  const int value = std::clamp(static_cast<int>(mode),
+                               static_cast<int>(DistributionMode::Linear),
+                               static_cast<int>(DistributionMode::Spiral));
+  impl_->mode_ = static_cast<DistributionMode>(value);
  }
 
  DistributionMode CloneGenerator::distributionMode() const
@@ -167,7 +170,10 @@ namespace Artifact
 
  void CloneGenerator::setTransformSpace(TransformSpace space)
  {
-  impl_->space_ = space;
+  const int value = std::clamp(static_cast<int>(space),
+                               static_cast<int>(TransformSpace::Local),
+                               static_cast<int>(TransformSpace::World));
+  impl_->space_ = static_cast<TransformSpace>(value);
  }
 
  TransformSpace CloneGenerator::transformSpace() const
@@ -178,7 +184,7 @@ namespace Artifact
  // Radial
  void CloneGenerator::setRadius(float radius)
  {
-  impl_->radius_ = radius;
+  impl_->radius_ = std::isfinite(radius) ? std::max(0.0f, radius) : 0.0f;
  }
 
  float CloneGenerator::radius() const
@@ -219,7 +225,7 @@ namespace Artifact
 
  void CloneGenerator::setGridSpacingX(float spacing)
  {
-  impl_->gridSpacingX_ = spacing;
+   impl_->gridSpacingX_ = std::isfinite(spacing) ? std::max(0.0f, spacing) : 0.0f;
  }
 
  float CloneGenerator::gridSpacingX() const
@@ -229,7 +235,7 @@ namespace Artifact
 
  void CloneGenerator::setGridSpacingY(float spacing)
  {
-  impl_->gridSpacingY_ = spacing;
+   impl_->gridSpacingY_ = std::isfinite(spacing) ? std::max(0.0f, spacing) : 0.0f;
  }
 
  float CloneGenerator::gridSpacingY() const
@@ -239,7 +245,7 @@ namespace Artifact
 
  void CloneGenerator::setGridSpacingZ(float spacing)
  {
-  impl_->gridSpacingZ_ = spacing;
+   impl_->gridSpacingZ_ = std::isfinite(spacing) ? std::max(0.0f, spacing) : 0.0f;
  }
 
  float CloneGenerator::gridSpacingZ() const
@@ -260,7 +266,8 @@ namespace Artifact
 
  void CloneGenerator::setVariation(float variation)
  {
-  impl_->variation_ = std::max(0.0f, std::min(1.0f, variation));
+   impl_->variation_ = std::isfinite(variation)
+    ? std::clamp(variation, 0.0f, 1.0f) : 0.0f;
  }
 
  float CloneGenerator::variation() const
@@ -270,7 +277,11 @@ namespace Artifact
 
  void CloneGenerator::setBounds(const QVector3D& bounds)
  {
-  impl_->bounds_ = bounds;
+  const auto sanitize = [](float value) {
+   return std::isfinite(value) ? std::max(0.0f, value) : 0.0f;
+  };
+  impl_->bounds_ = QVector3D(sanitize(bounds.x()), sanitize(bounds.y()),
+                             sanitize(bounds.z()));
  }
 
  QVector3D CloneGenerator::bounds() const
@@ -291,7 +302,7 @@ namespace Artifact
  // Spiral
  void CloneGenerator::setSpiralRotations(float rotations)
  {
-  impl_->spiralRotations_ = rotations;
+  impl_->spiralRotations_ = std::isfinite(rotations) ? rotations : 0.0f;
  }
 
  float CloneGenerator::spiralRotations() const
@@ -312,7 +323,7 @@ namespace Artifact
 
  void CloneGenerator::setRotationStep(float degrees)
  {
-  impl_->rotationStep_ = degrees;
+  impl_->rotationStep_ = std::isfinite(degrees) ? degrees : 0.0f;
  }
 
  float CloneGenerator::rotationStep() const
@@ -374,6 +385,7 @@ namespace Artifact
     int rows = impl_->gridRows_;
     float offsetX = (cols - 1) * impl_->gridSpacingX_ / 2.0f;
     float offsetY = (rows - 1) * impl_->gridSpacingY_ / 2.0f;
+    int cloneIndex = 0;
 
     for (int row = 0; row < rows; ++row) {
      for (int col = 0; col < cols; ++col) {
@@ -383,7 +395,9 @@ namespace Artifact
        row * impl_->gridSpacingY_ - offsetY + impl_->offset_.y(),
        impl_->offset_.z()
       );
+      m.rotate(cloneIndex * impl_->rotationStep_, 0.0f, 0.0f, 1.0f);
       transforms.push_back(m);
+      ++cloneIndex;
      }
     }
     break;
@@ -397,6 +411,7 @@ namespace Artifact
     float offsetX = (cols - 1) * impl_->gridSpacingX_ / 2.0f;
     float offsetY = (rows - 1) * impl_->gridSpacingY_ / 2.0f;
     float offsetZ = (depth - 1) * impl_->gridSpacingZ_ / 2.0f;
+    int cloneIndex = 0;
 
     for (int z = 0; z < depth; ++z) {
      for (int row = 0; row < rows; ++row) {
@@ -407,7 +422,9 @@ namespace Artifact
         row * impl_->gridSpacingY_ - offsetY + impl_->offset_.y(),
         z * impl_->gridSpacingZ_ - offsetZ + impl_->offset_.z()
        );
+       m.rotate(cloneIndex * impl_->rotationStep_, 0.0f, 0.0f, 1.0f);
        transforms.push_back(m);
+       ++cloneIndex;
       }
      }
     }
@@ -425,6 +442,7 @@ namespace Artifact
      QMatrix4x4 m;
      m.rotate(angle, 0.0f, 0.0f, 1.0f);
      m.translate(currentRadius, 0.0f, currentHeight);
+     m.translate(impl_->offset_.x(), impl_->offset_.y(), 0.0f);
      m.rotate(i * impl_->rotationStep_, 0.0f, 0.0f, 1.0f);
      transforms.push_back(m);
     }
@@ -450,6 +468,7 @@ namespace Artifact
       m.rotate(angle, 0.0f, 0.0f, 1.0f);
       m.translate(r, 0.0f, 0.0f);
       m.translate(impl_->offset_.x(), impl_->offset_.y(), impl_->offset_.z());
+      m.rotate(idx * impl_->rotationStep_, 0.0f, 0.0f, 1.0f);
       transforms.push_back(m);
       idx++;
      }
@@ -462,16 +481,41 @@ namespace Artifact
     std::mt19937 rng(impl_->randomSeed_);
     std::uniform_real_distribution<float> distX(-impl_->bounds_.x() / 2, impl_->bounds_.x() / 2);
     std::uniform_real_distribution<float> distY(-impl_->bounds_.y() / 2, impl_->bounds_.y() / 2);
-    std::uniform_real_distribution<float> distZ(-impl_->bounds_.z() / 2, impl_->bounds_.z() / 2);
-    std::uniform_real_distribution<float> distRot(0.0f, 360.0f);
-    std::uniform_real_distribution<float> distScale(0.5f, 1.5f);
+   std::uniform_real_distribution<float> distZ(-impl_->bounds_.z() / 2, impl_->bounds_.z() / 2);
+   std::uniform_real_distribution<float> distRot(0.0f, 360.0f);
+   std::uniform_real_distribution<float> distScale(0.5f, 1.5f);
+   std::vector<QVector3D> acceptedPositions;
+   if (impl_->usePoissonDisk_) {
+    acceptedPositions.reserve(count);
+   }
 
-    for (int i = 0; i < count; ++i) {
+   for (int i = 0; i < count; ++i) {
+     QVector3D position;
+     const float minimumDistance = std::max(0.0f, impl_->spacing_);
+     bool accepted = false;
+     for (int attempt = 0; attempt < 64 && !accepted; ++attempt) {
+      position = QVector3D(distX(rng), distY(rng), distZ(rng));
+      accepted = !impl_->usePoissonDisk_ || minimumDistance <= 0.0f;
+      if (!accepted) {
+       accepted = std::all_of(
+           acceptedPositions.begin(), acceptedPositions.end(),
+           [&](const QVector3D& other) {
+            return (position - other).lengthSquared() >=
+                   minimumDistance * minimumDistance;
+           });
+      }
+     }
+     if (impl_->usePoissonDisk_ && !accepted) {
+      position = QVector3D(distX(rng), distY(rng), distZ(rng));
+     }
+     if (impl_->usePoissonDisk_) {
+      acceptedPositions.push_back(position);
+     }
      QMatrix4x4 m;
      m.translate(
-      distX(rng) + impl_->offset_.x(),
-      distY(rng) + impl_->offset_.y(),
-      distZ(rng) + impl_->offset_.z()
+      position.x() + impl_->offset_.x(),
+      position.y() + impl_->offset_.y(),
+      position.z() + impl_->offset_.z()
      );
 
      // Variation: ランダム回転・スケール
@@ -549,6 +593,7 @@ namespace Artifact
       QMatrix4x4 m;
       m.translate(i * impl_->spacing_, 0.0f, 0.0f);
       m.translate(impl_->offset_.x(), impl_->offset_.y(), impl_->offset_.z());
+      m.rotate(i * impl_->rotationStep_, 0.0f, 0.0f, 1.0f);
       transforms.push_back(m);
      }
     }
