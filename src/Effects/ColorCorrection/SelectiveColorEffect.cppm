@@ -172,7 +172,7 @@ void SelectiveColorEffect::setPreset(int preset) {
 
 void SelectiveColorEffect::setStrength(float value) {
     preset_ = Preset::Custom;
-    settings_.strength = std::clamp(value, 0.0f, 1.0f);
+    settings_.strength = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
     syncImpls();
 }
 
@@ -191,10 +191,10 @@ void SelectiveColorEffect::setPreserveLuma(bool value) {
 void SelectiveColorEffect::setAdjustment(ArtifactCore::SelectiveColorGroup group, float c, float m, float y, float k) {
     preset_ = Preset::Custom;
     auto& adj = settings_.groups[static_cast<size_t>(group)];
-    adj.cyan = std::clamp(c, -1.0f, 1.0f);
-    adj.magenta = std::clamp(m, -1.0f, 1.0f);
-    adj.yellow = std::clamp(y, -1.0f, 1.0f);
-    adj.black = std::clamp(k, -1.0f, 1.0f);
+    adj.cyan = std::isfinite(c) ? std::clamp(c, -1.0f, 1.0f) : 0.0f;
+    adj.magenta = std::isfinite(m) ? std::clamp(m, -1.0f, 1.0f) : 0.0f;
+    adj.yellow = std::isfinite(y) ? std::clamp(y, -1.0f, 1.0f) : 0.0f;
+    adj.black = std::isfinite(k) ? std::clamp(k, -1.0f, 1.0f) : 0.0f;
     syncImpls();
 }
 
