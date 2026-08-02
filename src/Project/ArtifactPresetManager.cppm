@@ -4,6 +4,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
 #include <QByteArray>
 
 #include <iostream>
@@ -53,6 +55,10 @@ import Utils.String.UniString;
 import Artifact.Color.Palette;
 
 namespace Artifact {
+
+namespace {
+constexpr qint64 kMaxPresetFileBytes = 16LL * 1024LL * 1024LL;
+}
 
 namespace {
 
@@ -354,24 +360,33 @@ bool ArtifactPresetManager::applyPresetJsonToMask(LayerMask& mask, const QJsonOb
 
 bool ArtifactPresetManager::saveMaskPreset(const LayerMask& mask, const QString& filePath) {
     const QJsonObject json = maskToPresetJson(mask);
-    if (json.isEmpty()) {
+    const QString normalizedPath = filePath.trimmed();
+    if (json.isEmpty() || normalizedPath.isEmpty()) {
         return false;
     }
 
-    QFile file(filePath);
+    QSaveFile file(normalizedPath);
     if (!file.open(QIODevice::WriteOnly)) {
         return false;
     }
 
     const QJsonDocument doc(json);
-    file.write(doc.toJson());
-    file.close();
-    return true;
+    const QByteArray payload = doc.toJson();
+    if (file.write(payload) != payload.size()) {
+        file.cancelWriting();
+        return false;
+    }
+    return file.commit();
 }
 
 bool ArtifactPresetManager::loadMaskPreset(LayerMask& mask, const QString& filePath) {
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
+    const QString normalizedPath = filePath.trimmed();
+    if (normalizedPath.isEmpty() || !QFileInfo::exists(normalizedPath)) {
+        return false;
+    }
+    QFile file(normalizedPath);
+    if (file.size() <= 0 || file.size() > kMaxPresetFileBytes ||
+        !file.open(QIODevice::ReadOnly)) {
         return false;
     }
 
@@ -388,20 +403,29 @@ bool ArtifactPresetManager::loadMaskPreset(LayerMask& mask, const QString& fileP
 
 bool ArtifactPresetManager::saveEffectPreset(const ArtifactAbstractEffectPtr& effect, const QString& filePath) {
     QJsonObject json = effectToPresetJson(effect);
-    if (json.isEmpty()) return false;
+    const QString normalizedPath = filePath.trimmed();
+    if (json.isEmpty() || normalizedPath.isEmpty()) return false;
 
-    QFile file(filePath);
+    QSaveFile file(normalizedPath);
     if (!file.open(QIODevice::WriteOnly)) return false;
 
     QJsonDocument doc(json);
-    file.write(doc.toJson());
-    file.close();
-    return true;
+    const QByteArray payload = doc.toJson();
+    if (file.write(payload) != payload.size()) {
+        file.cancelWriting();
+        return false;
+    }
+    return file.commit();
 }
 
 bool ArtifactPresetManager::loadEffectPreset(ArtifactAbstractEffectPtr& effect, const QString& filePath) {
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) return false;
+    const QString normalizedPath = filePath.trimmed();
+    if (!effect || normalizedPath.isEmpty() || !QFileInfo::exists(normalizedPath)) {
+        return false;
+    }
+    QFile file(normalizedPath);
+    if (file.size() <= 0 || file.size() > kMaxPresetFileBytes ||
+        !file.open(QIODevice::ReadOnly)) return false;
 
     QByteArray data = file.readAll();
     file.close();
@@ -413,11 +437,14 @@ bool ArtifactPresetManager::loadEffectPreset(ArtifactAbstractEffectPtr& effect, 
 }
 
 bool ArtifactPresetManager::saveColorPaletteMapping(const ArtifactCore::Color::ColorPaletteManager& manager, const QString& filePath) {
-    return manager.saveToFile(filePath);
+    const QString normalizedPath = filePath.trimmed();
+    return !normalizedPath.isEmpty() && manager.saveToFile(normalizedPath);
 }
 
 bool ArtifactPresetManager::loadColorPaletteMapping(ArtifactCore::Color::ColorPaletteManager& manager, const QString& filePath) {
-    return manager.loadFromFile(filePath);
+    const QString normalizedPath = filePath.trimmed();
+    return !normalizedPath.isEmpty() && QFileInfo::exists(normalizedPath) &&
+           manager.loadFromFile(normalizedPath);
 }
 
 } // namespace Artifact
