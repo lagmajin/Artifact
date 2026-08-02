@@ -55,7 +55,7 @@ public:
     void setMosaicStrength(int strength) { mosaicStrength_ = std::max(1, strength); }
 
     float feather() const { return feather_; }
-    void setFeather(float f) { feather_ = std::max(0.0f, f); }
+    void setFeather(float f) { feather_ = std::isfinite(f) ? std::max(0.0f, f) : 0.0f; }
 
     bool useFaceDetection() const { return useFaceDetection_; }
     void setUseFaceDetection(bool enabled) { useFaceDetection_ = enabled; }
