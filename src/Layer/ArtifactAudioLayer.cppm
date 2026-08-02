@@ -1,5 +1,7 @@
 module;
 #include <utility>
+#include <algorithm>
+#include <cmath>
 
 #include <QDebug>
 #include <QJsonObject>
@@ -123,7 +125,7 @@ ArtifactAudioLayer::~ArtifactAudioLayer()
 
 void ArtifactAudioLayer::setVolume(float volume)
 {
-  impl_->volume_ = std::clamp(volume, 0.0f, 2.0f);
+  impl_->volume_ = std::isfinite(volume) ? std::clamp(volume, 0.0f, 2.0f) : 1.0f;
   Q_EMIT changed();
 }
 
@@ -134,7 +136,7 @@ float ArtifactAudioLayer::volume() const
 
 void ArtifactAudioLayer::setPan(float pan)
 {
-  impl_->pan_ = std::clamp(pan, -1.0f, 1.0f);
+  impl_->pan_ = std::isfinite(pan) ? std::clamp(pan, -1.0f, 1.0f) : 0.0f;
   Q_EMIT changed();
 }
 
@@ -200,8 +202,10 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
    impl_->sourceSampleRate_ = impl_->wav_.sampleRate();
    impl_->sourceChannelCount_ = std::max(1, impl_->wav_.channelCount());
    impl_->totalFrames_ = impl_->wav_.frameCount();
-   impl_->duration_ = static_cast<double>(impl_->totalFrames_) / impl_->sourceSampleRate_;
-   impl_->isLoaded_ = impl_->totalFrames_ > 0;
+   impl_->duration_ = impl_->sourceSampleRate_ > 0
+       ? static_cast<double>(impl_->totalFrames_) / impl_->sourceSampleRate_
+       : 0.0;
+   impl_->isLoaded_ = impl_->totalFrames_ > 0 && impl_->sourceSampleRate_ > 0;
 
    // 新規ロード時はキャッシュクリア
    impl_->cache_.clear();
