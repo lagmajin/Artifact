@@ -35,13 +35,13 @@ public:
     ~WhiteBalanceEffect() override;
 
     float temperature() const { return temperature_; }
-    void setTemperature(float t) { temperature_ = std::clamp(t, 1000.0f, 20000.0f); syncImpls(); }
+    void setTemperature(float t) { temperature_ = std::isfinite(t) ? std::clamp(t, 1000.0f, 20000.0f) : 6500.0f; syncImpls(); }
 
     float tint() const { return tint_; }
-    void setTint(float t) { tint_ = std::clamp(t, -1.0f, 1.0f); syncImpls(); }
+    void setTint(float t) { tint_ = std::isfinite(t) ? std::clamp(t, -1.0f, 1.0f) : 0.0f; syncImpls(); }
 
     float brightness() const { return brightness_; }
-    void setBrightness(float b) { brightness_ = std::clamp(b, -1.0f, 1.0f); syncImpls(); }
+    void setBrightness(float b) { brightness_ = std::isfinite(b) ? std::clamp(b, -1.0f, 1.0f) : 0.0f; syncImpls(); }
 
     // プリセット
     void setPreset(const QString& preset);
