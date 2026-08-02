@@ -40,10 +40,10 @@ public:
     virtual ~BlurEffect() = default;
 
     float radius() const { return radius_; }
-    void setRadius(float r) { radius_ = std::max(0.1f, r); syncImpls(); }
+    void setRadius(float r) { radius_ = std::isfinite(r) ? std::max(0.1f, r) : 10.0f; syncImpls(); }
 
     float strength() const { return strength_; }
-    void setStrength(float s) { strength_ = std::clamp(s, 0.0f, 1.0f); syncImpls(); }
+    void setStrength(float s) { strength_ = std::isfinite(s) ? std::clamp(s, 0.0f, 1.0f) : 1.0f; syncImpls(); }
 
     float sigma() const { return std::max(0.1f, radius_ * 0.5f); }
     void setSigma(float s) { setRadius(std::max(0.1f, s) * 2.0f); }
@@ -58,7 +58,7 @@ public:
     void setPremultiplied(bool p) { premultiplied_ = p; syncImpls(); }
 
     float edgeThreshold() const { return edgeThreshold_; }
-    void setEdgeThreshold(float t) { edgeThreshold_ = std::clamp(t, 0.0f, 1.0f); syncImpls(); }
+    void setEdgeThreshold(float t) { edgeThreshold_ = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.1f; syncImpls(); }
 
     std::vector<AbstractProperty> getProperties() const override {
         std::vector<AbstractProperty> props;
