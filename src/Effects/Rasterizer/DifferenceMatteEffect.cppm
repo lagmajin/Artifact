@@ -60,7 +60,7 @@ DifferenceMatteEffect::~DifferenceMatteEffect()=default;
 int DifferenceMatteEffect::referenceOffset()const{return refOffset_;}
 void DifferenceMatteEffect::setReferenceOffset(int v){refOffset_=std::clamp(v,1,60);syncImpls();}
 float DifferenceMatteEffect::threshold()const{return threshold_;}
-void DifferenceMatteEffect::setThreshold(float v){threshold_=std::clamp(v,0.0f,1.0f);syncImpls();}
+void DifferenceMatteEffect::setThreshold(float v){threshold_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.0f;syncImpls();}
 std::vector<AbstractProperty> DifferenceMatteEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(2);
