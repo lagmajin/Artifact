@@ -46,8 +46,10 @@ inline float sampleChannel(const float* pixel4, DisplaceChannel ch) {
 cv::Vec4f sampleBilinear(const cv::Mat& mat, float fx, float fy) {
     const int W = mat.cols;
     const int H = mat.rows;
-    const int x0 = std::clamp(static_cast<int>(std::floor(fx)), 0, W - 1);
-    const int y0 = std::clamp(static_cast<int>(std::floor(fy)), 0, H - 1);
+    fx = std::clamp(fx, 0.0f, static_cast<float>(W - 1));
+    fy = std::clamp(fy, 0.0f, static_cast<float>(H - 1));
+    const int x0 = static_cast<int>(std::floor(fx));
+    const int y0 = static_cast<int>(std::floor(fy));
     const int x1 = std::min(x0 + 1, W - 1);
     const int y1 = std::min(y0 + 1, H - 1);
     const float tx = fx - std::floor(fx);
@@ -149,25 +151,27 @@ DisplacementMapEffect::~DisplacementMapEffect() = default;
 
 float DisplacementMapEffect::maxHorizontal() const { return maxHorizontal_; }
 void  DisplacementMapEffect::setMaxHorizontal(float v) {
-    maxHorizontal_ = v;
+    maxHorizontal_ = std::isfinite(v) ? std::clamp(v, -4096.0f, 4096.0f) : 20.0f;
     syncImpls();
 }
 
 float DisplacementMapEffect::maxVertical() const { return maxVertical_; }
 void  DisplacementMapEffect::setMaxVertical(float v) {
-    maxVertical_ = v;
+    maxVertical_ = std::isfinite(v) ? std::clamp(v, -4096.0f, 4096.0f) : 20.0f;
     syncImpls();
 }
 
 DisplaceChannel DisplacementMapEffect::horizontalChannel() const { return horizontalChannel_; }
 void            DisplacementMapEffect::setHorizontalChannel(DisplaceChannel c) {
-    horizontalChannel_ = c;
+    const int value = std::clamp(static_cast<int>(c), 0, 4);
+    horizontalChannel_ = static_cast<DisplaceChannel>(value);
     syncImpls();
 }
 
 DisplaceChannel DisplacementMapEffect::verticalChannel() const { return verticalChannel_; }
 void            DisplacementMapEffect::setVerticalChannel(DisplaceChannel c) {
-    verticalChannel_ = c;
+    const int value = std::clamp(static_cast<int>(c), 0, 4);
+    verticalChannel_ = static_cast<DisplaceChannel>(value);
     syncImpls();
 }
 
