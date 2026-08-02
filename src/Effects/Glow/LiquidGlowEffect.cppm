@@ -153,37 +153,37 @@ LiquidGlowEffect::~LiquidGlowEffect() = default;
 
 void LiquidGlowEffect::setThreshold(float value)
 {
-    threshold_ = std::clamp(value, 0.0f, 1.0f);
+    threshold_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.55f;
     syncImpls();
 }
 
 void LiquidGlowEffect::setRadius(float value)
 {
-    radius_ = std::clamp(value, 0.5f, 64.0f);
+    radius_ = std::isfinite(value) ? std::clamp(value, 0.5f, 64.0f) : 16.0f;
     syncImpls();
 }
 
 void LiquidGlowEffect::setIntensity(float value)
 {
-    intensity_ = std::clamp(value, 0.0f, 4.0f);
+    intensity_ = std::isfinite(value) ? std::clamp(value, 0.0f, 4.0f) : 1.1f;
     syncImpls();
 }
 
 void LiquidGlowEffect::setFlowScale(float value)
 {
-    flowScale_ = std::clamp(value, 4.0f, 256.0f);
+    flowScale_ = std::isfinite(value) ? std::clamp(value, 4.0f, 256.0f) : 42.0f;
     syncImpls();
 }
 
 void LiquidGlowEffect::setDistortion(float value)
 {
-    distortion_ = std::clamp(value, 0.0f, 64.0f);
+    distortion_ = std::isfinite(value) ? std::clamp(value, 0.0f, 64.0f) : 8.0f;
     syncImpls();
 }
 
 void LiquidGlowEffect::setPhase(float value)
 {
-    phase_ = value;
+    phase_ = std::isfinite(value) ? value : 0.0f;
     syncImpls();
 }
 
