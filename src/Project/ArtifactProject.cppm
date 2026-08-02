@@ -401,12 +401,20 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   }
 
   bool changed = false;
+  constexpr std::size_t kMaxAddedItems = 100000;
+  constexpr int kMaxAddedFolderDepth = 64;
+  std::size_t addedItemCount = 0;
 
-  std::function<bool(const QJsonObject&, ProjectItem*)> appendItem =
-      [&](const QJsonObject& obj, ProjectItem* currentParent) -> bool {
+  std::function<bool(const QJsonObject&, ProjectItem*, int)> appendItem =
+      [&](const QJsonObject& obj, ProjectItem* currentParent,
+          const int depth) -> bool {
     if (!currentParent || currentParent->type() != eProjectItemType::Folder) {
       return false;
     }
+    if (depth > kMaxAddedFolderDepth || addedItemCount >= kMaxAddedItems) {
+      return false;
+    }
+    ++addedItemCount;
 
     const QString type = obj.value(QStringLiteral("type")).toString();
     const QString name = obj.value(QStringLiteral("name")).toString();
@@ -436,7 +444,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
         if (!childVal.isObject()) {
           continue;
         }
-        appendItem(childVal.toObject(), rawFolder);
+        appendItem(childVal.toObject(), rawFolder, depth + 1);
       }
       return true;
     }
@@ -454,7 +462,10 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
       if (!sequenceArray.isEmpty()) {
         QStringList sequencePaths;
         sequencePaths.reserve(sequenceArray.size());
-        for (const auto& value : sequenceArray) {
+      for (const auto& value : sequenceArray) {
+          if (sequencePaths.size() >= 100000) {
+            break;
+          }
           if (value.isString()) {
             sequencePaths.append(value.toString());
           }
@@ -531,7 +542,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
     if (!val.isObject()) {
       continue;
     }
-    appendItem(val.toObject(), targetParent);
+    appendItem(val.toObject(), targetParent, 0);
   }
 
   if (changed) {
