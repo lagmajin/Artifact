@@ -208,25 +208,25 @@ void TritoneEffect::setHighlightColor(const QColor& color) {
 
 void TritoneEffect::setBalance(float value) {
     preset_ = Preset::Custom;
-    settings_.balance = std::clamp(value, 0.0f, 1.0f);
+    settings_.balance = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.5f;
     syncImpls();
 }
 
 void TritoneEffect::setSoftness(float value) {
     preset_ = Preset::Custom;
-    settings_.softness = std::clamp(value, 0.0f, 1.0f);
+    settings_.softness = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.55f;
     syncImpls();
 }
 
 void TritoneEffect::setMasterStrength(float value) {
     preset_ = Preset::Custom;
-    settings_.masterStrength = std::clamp(value, 0.0f, 1.0f);
+    settings_.masterStrength = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
     syncImpls();
 }
 
 void TritoneEffect::setColorMix(float value) {
     preset_ = Preset::Custom;
-    settings_.colorMix = std::clamp(value, 0.0f, 1.0f);
+    settings_.colorMix = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.85f;
     syncImpls();
 }
 
