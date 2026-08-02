@@ -28,6 +28,13 @@ public:
     bool addPin(const LayerID& layerId, const QPointF& canvasPos);
     bool removePin(const QString& pinId);
     bool movePin(const QString& pinId, const QPointF& canvasPos);
+    QPointF pinPosition(const QString& pinId) const;
+    float pinRotation(const QString& pinId) const;
+    void setPinRotation(const QString& pinId, float degrees);
+    float pinWeight(const QString& pinId) const;
+    void setPinWeight(const QString& pinId, float weight);
+    float pinDepth(const QString& pinId) const;
+    void setPinDepth(const QString& pinId, float depth);
     QString hitTestPin(const QPointF& canvasPos, float threshold = 12.0f) const;
 
     // Deformation
