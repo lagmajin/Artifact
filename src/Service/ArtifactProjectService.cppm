@@ -1624,8 +1624,10 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
           if (sequenceFootage) {
             imageParams->setSequencePaths(sequenceFootage->sequencePaths);
             imageParams->setSequenceFrameRate(sequenceFootage->frameRate);
-            imageParams->setInputColorSpace(sequenceFootage->inputColorSpace);
-            imageParams->setInputTransferFunction(sequenceFootage->inputTransferFunction);
+            imageParams->setInputColorSpace(
+                sequenceFootage->inputColorSpace.trimmed().left(4096));
+            imageParams->setInputTransferFunction(
+                sequenceFootage->inputTransferFunction.trimmed().left(1024));
           }
         }
 
@@ -1658,8 +1660,10 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
           };
           for (auto *root : project->projectItems()) {
             if (auto *footage = findFootage(root)) {
-              imageParams->setInputColorSpace(footage->inputColorSpace);
-              imageParams->setInputTransferFunction(footage->inputTransferFunction);
+              imageParams->setInputColorSpace(
+                  footage->inputColorSpace.trimmed().left(4096));
+              imageParams->setInputTransferFunction(
+                  footage->inputTransferFunction.trimmed().left(1024));
               break;
             }
           }
