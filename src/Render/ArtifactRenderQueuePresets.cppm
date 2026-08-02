@@ -305,15 +305,36 @@ QVector<ArtifactRenderFormatPreset> ArtifactRenderFormatPresetManager::presetsBy
     QVector<ArtifactRenderFormatPreset> result;
     
         const auto filterByCategory = [category](const ArtifactRenderFormatPreset& preset) -> bool {
+        const QString container = preset.container.trimmed().toLower();
+        const QString codec = preset.codec.trimmed().toLower();
+        const bool isAudio = container == QStringLiteral("wav") ||
+                             container == QStringLiteral("mp3") ||
+                             container == QStringLiteral("m4a") ||
+                             container == QStringLiteral("aac") ||
+                             codec == QStringLiteral("pcm_s16le") ||
+                             codec == QStringLiteral("aac") ||
+                             codec == QStringLiteral("mp3");
+        const bool isVideo = container == QStringLiteral("mp4") ||
+                             container == QStringLiteral("mov") ||
+                             container == QStringLiteral("avi") ||
+                             container == QStringLiteral("wmv") ||
+                             container == QStringLiteral("webm") ||
+                             codec == QStringLiteral("h264") ||
+                             codec == QStringLiteral("h265") ||
+                             codec == QStringLiteral("hevc") ||
+                             codec == QStringLiteral("prores") ||
+                             codec == QStringLiteral("vp9") ||
+                             codec == QStringLiteral("dnxhd");
         switch (category) {
             case ArtifactRenderFormatCategory::Video:
-                return !preset.isImageSequence && !preset.isAnimatedImage;
+                return !preset.isImageSequence && !preset.isAnimatedImage &&
+                       !isAudio && isVideo;
             case ArtifactRenderFormatCategory::AnimatedImage:
                 return preset.isAnimatedImage;
             case ArtifactRenderFormatCategory::ImageSequence:
                 return preset.isImageSequence;
             case ArtifactRenderFormatCategory::Audio:
-                return false; // Audio presets not implemented yet
+                return isAudio;
             case ArtifactRenderFormatCategory::Custom:
                 return true;
         }
