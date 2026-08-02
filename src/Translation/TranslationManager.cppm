@@ -18,6 +18,11 @@ module Translation.Manager;
 namespace Artifact
 {
 
+namespace
+{
+constexpr qint64 kMaxLocaleFileBytes = 8LL * 1024LL * 1024LL;
+}
+
 class TranslationManager::Impl
 {
 public:
@@ -83,8 +88,9 @@ public:
 
  bool loadLocaleFile(const QString& filePath, QMap<QString, QString>& target)
  {
-  QFile file(filePath);
-  if (!file.open(QIODevice::ReadOnly)) {
+ QFile file(filePath);
+  if (file.size() <= 0 || file.size() > kMaxLocaleFileBytes ||
+      !file.open(QIODevice::ReadOnly)) {
    qWarning() << "[TranslationManager] cannot open:" << filePath;
    return false;
   }
