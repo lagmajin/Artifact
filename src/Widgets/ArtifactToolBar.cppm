@@ -113,11 +113,15 @@ QString toolLabelForType(Artifact::ToolType type)
     case Artifact::ToolType::Text:        return QStringLiteral("テキスト");
     case Artifact::ToolType::Shape:       return QStringLiteral("シェイプ");
     case Artifact::ToolType::Rectangle:   return QStringLiteral("シェイプ");
-    case Artifact::ToolType::Ellipse:     return QStringLiteral("シェイプ");
+    case Artifact::ToolType::Ellipse:     return QStringLiteral("楕円");
     case Artifact::ToolType::Move:        return QStringLiteral("移動");
     case Artifact::ToolType::Scale:       return QStringLiteral("スケール");
     case Artifact::ToolType::Brush:       return QStringLiteral("ブラシ");
+    case Artifact::ToolType::Clone:       return QStringLiteral("コピースタンプ");
     case Artifact::ToolType::Eraser:      return QStringLiteral("消しゴム");
+    case Artifact::ToolType::RigSelect:   return QStringLiteral("リグ選択");
+    case Artifact::ToolType::RigWeight:   return QStringLiteral("ウェイト");
+    case Artifact::ToolType::TrackPoint:  return QStringLiteral("トラックポイント");
     default:                              return {};
   }
 }
@@ -197,12 +201,16 @@ public:
   QAction *cameraTool_ = nullptr;
   QAction *panBehindTool_ = nullptr;
   QAction *shapeTool_ = nullptr;
+  QAction *ellipseTool_ = nullptr;
   QAction *penTool_ = nullptr;
   QAction *textTool_ = nullptr;
   QAction *brushTool_ = nullptr;
   QAction *cloneStampTool_ = nullptr;
   QAction *eraserTool_ = nullptr;
   QAction *puppetTool_ = nullptr;
+  QAction *rigSelectTool_ = nullptr;
+  QAction *rigWeightTool_ = nullptr;
+  QAction *trackPointTool_ = nullptr;
   QAction *motionSketchTool_ = nullptr;
   QAction *scrubPreviewTool_ = nullptr;
 
@@ -356,6 +364,12 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                          QStringLiteral("MaterialVS/neutral/crop.svg"),
                          QStringLiteral("Material/crop.svg")},
              "シェイプ", "シェイプツール (Q)", QKeySequence(Qt::Key_Q));
+  createTool(impl_->ellipseTool_,
+             QStringList{QString::fromLatin1(kToolbarIconShape),
+                         QStringLiteral("MaterialVS/neutral/circle.svg"),
+                         QStringLiteral("Material/circle.svg")},
+             "楕円", "楕円ツール (Shift+Q)",
+             QKeySequence(Qt::SHIFT | Qt::Key_Q));
   createTool(impl_->penTool_,
              QStringList{QString::fromLatin1(kToolbarIconPen),
                          QStringLiteral("MaterialVS/neutral/draw.svg"),
@@ -389,6 +403,31 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                          QStringLiteral("Material/push_pin.svg")},
              "パペット", "パペットピンツール (Ctrl+P)",
              QKeySequence(Qt::CTRL | Qt::Key_P));
+  createTool(impl_->rigSelectTool_,
+             QStringList{QString::fromLatin1(kToolbarIconPuppet),
+                         QStringLiteral("MaterialVS/neutral/account_tree.svg"),
+                         QStringLiteral("Material/account_tree.svg")},
+             "リグ選択", "リグのボーンとコントロールを選択", QKeySequence());
+  createTool(impl_->rigWeightTool_,
+             QStringList{QString::fromLatin1(kToolbarIconBrush),
+                         QStringLiteral("MaterialVS/neutral/colorize.svg"),
+                         QStringLiteral("Material/colorize.svg")},
+             "ウェイト", "リグのウェイトをペイント", QKeySequence());
+  impl_->rigSelectTool_->setAccessibleName(QStringLiteral("Rig Select Tool"));
+  impl_->rigSelectTool_->setAccessibleDescription(
+      QStringLiteral("Select rig bones and controls, then drag bones to pose them."));
+  impl_->rigWeightTool_->setAccessibleName(QStringLiteral("Rig Weight Tool"));
+  impl_->rigWeightTool_->setAccessibleDescription(
+      QStringLiteral("Inspect the selected bone's mesh weight heatmap."));
+  createTool(impl_->trackPointTool_,
+             QStringList{QString::fromLatin1(kToolbarIconCamera),
+                         QStringLiteral("MaterialVS/neutral/track_changes.svg"),
+                         QStringLiteral("Material/track_changes.svg")},
+             "トラックポイント", "ポイントトラッキングツール (T)",
+             QKeySequence(Qt::Key_T));
+  impl_->trackPointTool_->setAccessibleName(QStringLiteral("Track Point Tool"));
+  impl_->trackPointTool_->setAccessibleDescription(
+      QStringLiteral("Place a tracking point in the composition viewer and track it across frames."));
   createTool(impl_->scrubPreviewTool_,
              QStringList{QString::fromLatin1(kToolbarIconScrubPreview),
                          QStringLiteral("MaterialVS/neutral/pan_tool_alt.svg"),
@@ -510,6 +549,7 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
           editMode = EditMode::Mask;
           break;
         case ToolType::Brush:
+        case ToolType::Clone:
         case ToolType::Eraser:
           editMode = EditMode::Paint;
           break;
@@ -561,6 +601,9 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                      } else if (action == impl_->shapeTool_) {
                        shapeToolRequested();
                        setTool(ToolType::Rectangle);
+                     } else if (action == impl_->ellipseTool_) {
+                       shapeToolRequested();
+                       setTool(ToolType::Ellipse);
                      } else if (action == impl_->penTool_) {
                        penToolRequested();
                        setTool(ToolType::Pen);
@@ -570,14 +613,21 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                      } else if (action == impl_->brushTool_) {
                        brushToolRequested();
                        setTool(ToolType::Brush);
-                     } else if (action == impl_->cloneStampTool_) {
-                       cloneStampToolRequested();
+                    } else if (action == impl_->cloneStampTool_) {
+                      cloneStampToolRequested();
+                      setTool(ToolType::Clone);
                      } else if (action == impl_->eraserTool_) {
                        eraserToolRequested();
                        setTool(ToolType::Eraser);
                      } else if (action == impl_->puppetTool_) {
                        puppetToolRequested();
                        setTool(ToolType::Puppet);
+                     } else if (action == impl_->rigSelectTool_) {
+                       setTool(ToolType::RigSelect);
+                    } else if (action == impl_->rigWeightTool_) {
+                       setTool(ToolType::RigWeight);
+                     } else if (action == impl_->trackPointTool_) {
+                       setTool(ToolType::TrackPoint);
                      } else if (action == impl_->motionSketchTool_) {
                        motionSketchToolRequested();
                        setTool(ToolType::MotionSketch);
