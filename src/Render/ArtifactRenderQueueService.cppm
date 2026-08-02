@@ -6230,6 +6230,9 @@ namespace Artifact
             obj["jobName"] = job.jobName;
             obj["priority"] = job.priority;
             obj["dependsOn"] = QJsonArray::fromStringList(job.dependsOn);
+            obj["status"] = static_cast<int>(job.status);
+            obj["progress"] = job.progress;
+            obj["errorMessage"] = job.errorMessage;
             obj["outputPath"] = job.outputPath;
             obj["outputFormat"] = job.outputFormat;
             obj["codec"] = job.codec;
@@ -6350,6 +6353,17 @@ namespace Artifact
                 if (!name.isEmpty() && name != job.jobName)
                     job.dependsOn.append(name.left(256));
             }
+            const int savedStatus = obj["status"].toInt(static_cast<int>(ArtifactRenderJob::Status::Pending));
+            if (savedStatus == static_cast<int>(ArtifactRenderJob::Status::Completed)
+                || savedStatus == static_cast<int>(ArtifactRenderJob::Status::Failed)
+                || savedStatus == static_cast<int>(ArtifactRenderJob::Status::Canceled)) {
+                job.status = static_cast<ArtifactRenderJob::Status>(savedStatus);
+            } else {
+                // A process cannot safely restore an in-flight render thread.
+                job.status = ArtifactRenderJob::Status::Pending;
+            }
+            job.progress = std::clamp(obj["progress"].toInt(0), 0, 100);
+            job.errorMessage = obj["errorMessage"].toString().left(4096);
             job.outputPath = obj["outputPath"].toString().trimmed();
             job.outputFormat = obj["outputFormat"].toString().trimmed();
             job.codec = obj["codec"].toString().trimmed();
