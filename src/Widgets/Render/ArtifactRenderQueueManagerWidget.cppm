@@ -4,9 +4,12 @@ module;
 #include <QLabel>
 #include <QProgressBar>
 #include <QVBoxLayout>
+#include <QCheckBox>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
 #include <QLineEdit>
+#include <QStringList>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
@@ -19,6 +22,7 @@ module;
 #include <QDir>
 #include <QFileInfo>
 #include <QByteArray>
+#include <QVariantMap>
 #include <QListWidgetItem>
 #include <QAbstractItemView>
 #include <QSignalBlocker>
@@ -61,6 +65,7 @@ import Artifact.Render.Queue.Service;
 import Artifact.Render.Batch;
 import Artifact.Render.Queue.Presets;
 import Artifact.Service.Project;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Widget.Dialog.RenderOutputSetting;
 import Artifact.Widgets.RenderQueuePresetSelector;
 import Core.FastSettingsStore;
@@ -389,6 +394,28 @@ namespace Artifact
   RenderQueueDoubleSpinBox* overlayYSpin = nullptr;
   RenderQueueDoubleSpinBox* overlayScaleSpin = nullptr;
   RenderQueueDoubleSpinBox* overlayRotationSpin = nullptr;
+  QCheckBox* excludeAdjustmentLayersCheck = nullptr;
+  QCheckBox* excludeGuideLayersCheck = nullptr;
+  QCheckBox* splitPassesCheck = nullptr;
+  QComboBox* resolutionPresetCombo = nullptr;
+  QComboBox* frameRangeModeCombo = nullptr;
+  RenderQueueIntSpinBox* selectedRangeStartSpin = nullptr;
+  RenderQueueIntSpinBox* selectedRangeEndSpin = nullptr;
+  QPushButton* addSelectedRangeButton = nullptr;
+  QPushButton* clearSelectedRangesButton = nullptr;
+  QLabel* selectedRangesSummaryLabel = nullptr;
+  QComboBox* regionModeCombo = nullptr;
+  QComboBox* layerFilterModeCombo = nullptr;
+  QPushButton* configurePassesButton = nullptr;
+  QPushButton* useSelectedLayersButton = nullptr;
+  QPushButton* excludeSelectedLayersButton = nullptr;
+  QPushButton* clearWhitelistButton = nullptr;
+  QPushButton* clearBlacklistButton = nullptr;
+  QLabel* layerFilterSummaryLabel = nullptr;
+  RenderQueueIntSpinBox* cropXSpin = nullptr;
+  RenderQueueIntSpinBox* cropYSpin = nullptr;
+  RenderQueueIntSpinBox* cropWSpin = nullptr;
+  RenderQueueIntSpinBox* cropHSpin = nullptr;
   std::unique_ptr<ArtifactCore::FastSettingsStore> historyStore_;
   std::unique_ptr<ArtifactCore::FastSettingsStore> presetStore_;
   bool syncingTransformControls = false;
@@ -693,6 +720,17 @@ namespace Artifact
         ? QStringLiteral(" | ETA: ~%1s")
               .arg(static_cast<qint64>(std::llround(etaSeconds)))
         : (running > 0 ? QStringLiteral(" | ETA: calculating") : QString());
+    QString farmText;
+    if (service && service->farmEnabled()) {
+      farmText = QStringLiteral(" | Farm: %1 workers")
+                     .arg(service->farmWorkerCount());
+      if (service->isFarmRpcServerRunning()) {
+        farmText += QStringLiteral(" | RPC online");
+      }
+      if (service->farmAllowRemoteWorkers()) {
+        farmText += QStringLiteral(" | remote workers allowed");
+      }
+    }
     const int selected = selectedSourceIndex();
     if (service && selected >= 0 && selected < service->jobCount()) {
       const auto preflight = service->preflightRenderQueueAt(selected);
@@ -706,7 +744,7 @@ namespace Artifact
                               .arg(pending)
                               .arg(done)
                               .arg(failed)
-                              .arg(preflightText + etaText));
+                              .arg(preflightText + etaText + farmText));
     if (runningCountLabel) {
       runningCountLabel->setText(QString("%1 RUNNING").arg(running));
       const auto& theme = ArtifactCore::currentDCCTheme();
@@ -785,6 +823,21 @@ namespace Artifact
         previewLabel->setText(QStringLiteral("Select a job to preview"));
       }
       if (previewSummaryLabel) previewSummaryLabel->clear();
+      if (selectedRangesSummaryLabel) {
+        selectedRangesSummaryLabel->setText(QStringLiteral("Ranges: none"));
+      }
+      if (layerFilterSummaryLabel) {
+        layerFilterSummaryLabel->setText(QStringLiteral(
+            "Mode: All\nIncluded: none\nExcluded: none"));
+      }
+      if (selectedRangeStartSpin) selectedRangeStartSpin->setEnabled(false);
+      if (selectedRangeEndSpin) selectedRangeEndSpin->setEnabled(false);
+      if (addSelectedRangeButton) addSelectedRangeButton->setEnabled(false);
+      if (clearSelectedRangesButton) clearSelectedRangesButton->setEnabled(false);
+      if (configurePassesButton) {
+        configurePassesButton->setText(QStringLiteral("Configure Passes…"));
+        configurePassesButton->setEnabled(false);
+      }
       syncingJobDetails = false;
       return;
     }
@@ -799,6 +852,19 @@ namespace Artifact
     const QSignalBlocker blockY(overlayYSpin);
     const QSignalBlocker blockScale(overlayScaleSpin);
     const QSignalBlocker blockRotation(overlayRotationSpin);
+    const QSignalBlocker blockExclude(excludeAdjustmentLayersCheck);
+    const QSignalBlocker blockGuide(excludeGuideLayersCheck);
+    const QSignalBlocker blockSplit(splitPassesCheck);
+    const QSignalBlocker blockResolution(resolutionPresetCombo);
+    const QSignalBlocker blockFrameMode(frameRangeModeCombo);
+    const QSignalBlocker blockSelectedRangeStart(selectedRangeStartSpin);
+    const QSignalBlocker blockSelectedRangeEnd(selectedRangeEndSpin);
+    const QSignalBlocker blockRegionMode(regionModeCombo);
+    const QSignalBlocker blockLayerFilter(layerFilterModeCombo);
+    const QSignalBlocker blockCropX(cropXSpin);
+    const QSignalBlocker blockCropY(cropYSpin);
+    const QSignalBlocker blockCropW(cropWSpin);
+    const QSignalBlocker blockCropH(cropHSpin);
 
     if (outputPathEdit) outputPathEdit->setText(service->jobOutputPathAt(index));
 
@@ -829,15 +895,102 @@ namespace Artifact
         int previewStartFrame = 0;
         int previewEndFrame = 0;
         service->jobFrameRangeAt(index, &previewStartFrame, &previewEndFrame);
+        const QVariantMap selective = service->jobSelectiveSettingsAt(index);
+        const QVariantMap rangeLabels{{QStringLiteral("0"), QStringLiteral("Composition")},
+                                      {QStringLiteral("1"), QStringLiteral("Work Area")},
+                                      {QStringLiteral("2"), QStringLiteral("Custom")},
+                                      {QStringLiteral("3"), QStringLiteral("Selected Frames")},
+                                      {QStringLiteral("4"), QStringLiteral("Single Frame")}};
+        const QVariantMap regionLabels{{QStringLiteral("0"), QStringLiteral("Full")},
+                                       {QStringLiteral("1"), QStringLiteral("Region of Interest")},
+                                       {QStringLiteral("2"), QStringLiteral("Custom Crop")}};
+        const QVariantMap filterLabels{{QStringLiteral("0"), QStringLiteral("All Layers")},
+                                       {QStringLiteral("1"), QStringLiteral("Selected Layers")},
+                                       {QStringLiteral("2"), QStringLiteral("Solo Layers")},
+                                       {QStringLiteral("3"), QStringLiteral("Visible Layers")},
+                                       {QStringLiteral("4"), QStringLiteral("Custom Layers")}};
+        const QVariantMap resolutionLabels{{QStringLiteral("0"), QStringLiteral("Custom")},
+                                           {QStringLiteral("1"), QStringLiteral("Composition")},
+                                           {QStringLiteral("2"), QStringLiteral("Half")},
+                                           {QStringLiteral("3"), QStringLiteral("Third")},
+                                           {QStringLiteral("4"), QStringLiteral("Quarter")}};
+        const auto lookup = [](const QVariantMap& labels, int value,
+                               const QString& fallback) {
+          return labels.value(QString::number(value), fallback).toString();
+        };
+        QString selectiveSummary = QStringLiteral("Range: %1 | Region: %2 | Layers: %3 | Resolution: %4")
+            .arg(lookup(rangeLabels, selective.value(QStringLiteral("frameRangeMode")).toInt(), QStringLiteral("Composition")))
+            .arg(lookup(regionLabels, selective.value(QStringLiteral("regionMode")).toInt(), QStringLiteral("Full")))
+            .arg(lookup(filterLabels, selective.value(QStringLiteral("layerFilterMode")).toInt(), QStringLiteral("All Layers")))
+            .arg(lookup(resolutionLabels, selective.value(QStringLiteral("resolutionPreset")).toInt(), QStringLiteral("Composition")));
+        if (selective.value(QStringLiteral("frameRangeMode")).toInt() == 3) {
+          const int selectedRangeCount = selective.value(
+              QStringLiteral("selectedFrameRanges")).toList().size();
+          selectiveSummary += QStringLiteral(" | Selected ranges: %1")
+              .arg(selectedRangeCount);
+        }
+        const bool excludeAdjustmentLayers = selective.value(
+            QStringLiteral("excludeAdjustmentLayers")).toBool();
+        const bool excludeGuideLayers = selective.value(
+            QStringLiteral("excludeGuideLayers")).toBool();
+        const bool splitPasses = selective.value(
+            QStringLiteral("splitPasses")).toBool();
+        if (excludeAdjustmentLayers || excludeGuideLayers || splitPasses) {
+          selectiveSummary += QStringLiteral(" | %1%2%3")
+              .arg(excludeAdjustmentLayers ? QStringLiteral("No Adjustments") : QString())
+              .arg(excludeGuideLayers
+                       ? ((excludeAdjustmentLayers) ? QStringLiteral(", No Guides")
+                                                     : QStringLiteral("No Guides"))
+                       : QString())
+              .arg(splitPasses
+                       ? ((excludeAdjustmentLayers || excludeGuideLayers)
+                              ? QStringLiteral(", Split Passes")
+                                                   : QStringLiteral("Split Passes"))
+                       : QString());
+        }
+        if (splitPasses) {
+          QStringList passNames;
+          for (const auto& rawPass : selective.value(
+                   QStringLiteral("renderPasses")).toList()) {
+            const QVariantMap pass = rawPass.toMap();
+            if (pass.value(QStringLiteral("enabled"), true).toBool()) {
+              const QString name = pass.value(QStringLiteral("name")).toString().trimmed();
+              if (!name.isEmpty()) {
+                passNames.append(name);
+              }
+            }
+          }
+          if (!passNames.isEmpty()) {
+            selectiveSummary += QStringLiteral(" | Passes: %1")
+                .arg(passNames.join(QStringLiteral(", ")));
+          }
+        }
+        const int whitelistCount = selective.value(
+            QStringLiteral("layerWhitelist")).toStringList().size();
+        const int blacklistCount = selective.value(
+            QStringLiteral("layerBlacklist")).toStringList().size();
+        if (whitelistCount > 0 || blacklistCount > 0) {
+          selectiveSummary += QStringLiteral(" | Layer IDs: %1 included / %2 excluded")
+              .arg(whitelistCount)
+              .arg(blacklistCount);
+        }
+        if (selective.value(QStringLiteral("regionMode")).toInt() != 0) {
+          selectiveSummary += QStringLiteral(" | Crop: %1,%2 %3×%4")
+              .arg(selective.value(QStringLiteral("cropX")).toDouble(), 0, 'f', 1)
+              .arg(selective.value(QStringLiteral("cropY")).toDouble(), 0, 'f', 1)
+              .arg(selective.value(QStringLiteral("cropW")).toDouble(), 0, 'f', 1)
+              .arg(selective.value(QStringLiteral("cropH")).toDouble(), 0, 'f', 1);
+        }
         previewSummaryLabel->setText(
-            QStringLiteral("Format: %1 (%2)\nResolution: %3 × %4\nFrame Rate: %5 FPS\nFrames: %6 – %7")
+            QStringLiteral("Format: %1 (%2)\nResolution: %3 × %4\nFrame Rate: %5 FPS\nFrames: %6 – %7\n%8")
                 .arg(outputFormat.isEmpty() ? QStringLiteral("MP4") : outputFormat)
                 .arg(codec.isEmpty() ? QStringLiteral("H.264") : codec)
                 .arg(width > 0 ? QString::number(width) : QStringLiteral("Auto"))
                 .arg(height > 0 ? QString::number(height) : QStringLiteral("Auto"))
                 .arg(fps > 0.0 ? QString::number(fps, 'f', 2) : QStringLiteral("Auto"))
                 .arg(previewStartFrame)
-                .arg(previewEndFrame));
+                .arg(previewEndFrame)
+                .arg(selectiveSummary));
       }
       outputSettingsSummaryLabel->setText(
           QString("Format: %1 | Codec: %2%3\nBackends: Encode %4  •  Render %5%6\nPreflight: %7 errors  •  %8 warnings")
@@ -872,6 +1025,146 @@ namespace Artifact
       if (startFrameSpin) startFrameSpin->setValue(startFrame);
       if (endFrameSpin) endFrameSpin->setValue(endFrame);
     }
+    const QVariantMap selective = service->jobSelectiveSettingsAt(index);
+    if (excludeAdjustmentLayersCheck) {
+      excludeAdjustmentLayersCheck->setChecked(
+          selective.value(QStringLiteral("excludeAdjustmentLayers")).toBool());
+    }
+    if (excludeGuideLayersCheck) {
+      excludeGuideLayersCheck->setChecked(
+          selective.value(QStringLiteral("excludeGuideLayers")).toBool());
+    }
+    if (splitPassesCheck) {
+      splitPassesCheck->setChecked(
+          selective.value(QStringLiteral("splitPasses")).toBool());
+    }
+    if (configurePassesButton) {
+      configurePassesButton->setEnabled(
+          selective.value(QStringLiteral("splitPasses")).toBool());
+    }
+    if (resolutionPresetCombo) {
+      const int preset = selective.value(QStringLiteral("resolutionPreset"), 1).toInt();
+      const int comboIndex = resolutionPresetCombo->findData(preset);
+      resolutionPresetCombo->setCurrentIndex(comboIndex >= 0 ? comboIndex : 1);
+    }
+    if (frameRangeModeCombo) {
+      const int mode = selective.value(QStringLiteral("frameRangeMode"), 0).toInt();
+      const int comboIndex = frameRangeModeCombo->findData(mode);
+      frameRangeModeCombo->setCurrentIndex(comboIndex >= 0 ? comboIndex : 0);
+      const bool selectedRangeEnabled = mode == 3;
+      if (selectedRangeStartSpin) selectedRangeStartSpin->setEnabled(selectedRangeEnabled);
+      if (selectedRangeEndSpin) selectedRangeEndSpin->setEnabled(selectedRangeEnabled);
+      const QVariantList ranges = selective.value(
+          QStringLiteral("selectedFrameRanges")).toList();
+      if (addSelectedRangeButton) addSelectedRangeButton->setEnabled(selectedRangeEnabled);
+      if (clearSelectedRangesButton) {
+        clearSelectedRangesButton->setEnabled(selectedRangeEnabled && !ranges.isEmpty());
+      }
+      if (selectedRangesSummaryLabel) {
+        QStringList rangeLabels;
+        for (const auto& rawRange : ranges) {
+          const QVariantMap range = rawRange.toMap();
+          rangeLabels.append(QStringLiteral("[%1, %2)")
+                                 .arg(range.value(QStringLiteral("start"), 0).toInt())
+                                 .arg(range.value(QStringLiteral("end"), 1).toInt()));
+        }
+        selectedRangesSummaryLabel->setText(
+            rangeLabels.isEmpty() ? QStringLiteral("Ranges: none")
+                                  : QStringLiteral("Ranges: %1")
+                                        .arg(rangeLabels.join(QStringLiteral(", "))));
+      }
+      if (!ranges.isEmpty()) {
+        const QVariantMap firstRange = ranges.first().toMap();
+        if (selectedRangeStartSpin) {
+          selectedRangeStartSpin->setValue(firstRange.value(QStringLiteral("start"), 0).toInt());
+        }
+        if (selectedRangeEndSpin) {
+          selectedRangeEndSpin->setValue(firstRange.value(QStringLiteral("end"), 1).toInt());
+        }
+      } else if (selectedRangeEnabled) {
+        int jobStart = 0;
+        int jobEnd = 1;
+        if (service->jobFrameRangeAt(index, &jobStart, &jobEnd)) {
+          if (selectedRangeStartSpin) selectedRangeStartSpin->setValue(jobStart);
+          if (selectedRangeEndSpin) selectedRangeEndSpin->setValue(std::max(jobStart + 1, jobEnd));
+        }
+      }
+    }
+    if (regionModeCombo) {
+      const int mode = selective.value(QStringLiteral("regionMode"), 0).toInt();
+      const int comboIndex = regionModeCombo->findData(mode);
+      regionModeCombo->setCurrentIndex(comboIndex >= 0 ? comboIndex : 0);
+      const bool cropEnabled = mode != 0;
+      if (cropXSpin) cropXSpin->setEnabled(cropEnabled);
+      if (cropYSpin) cropYSpin->setEnabled(cropEnabled);
+      if (cropWSpin) cropWSpin->setEnabled(cropEnabled);
+      if (cropHSpin) cropHSpin->setEnabled(cropEnabled);
+    }
+    if (clearWhitelistButton) {
+      clearWhitelistButton->setEnabled(
+          !selective.value(QStringLiteral("layerWhitelist")).toStringList().isEmpty());
+    }
+    if (clearBlacklistButton) {
+      clearBlacklistButton->setEnabled(
+          !selective.value(QStringLiteral("layerBlacklist")).toStringList().isEmpty());
+    }
+    if (layerFilterSummaryLabel) {
+      const QStringList whitelist = selective.value(
+          QStringLiteral("layerWhitelist")).toStringList();
+      const QStringList blacklist = selective.value(
+          QStringLiteral("layerBlacklist")).toStringList();
+      const int filterMode = selective.value(QStringLiteral("layerFilterMode"), 0).toInt();
+      const QStringList modeLabels{QStringLiteral("All"), QStringLiteral("Selected"),
+                                  QStringLiteral("Solo"), QStringLiteral("Visible"),
+                                  QStringLiteral("Custom")};
+      const QString modeText = filterMode >= 0 && filterMode < modeLabels.size()
+          ? modeLabels.at(filterMode) : QStringLiteral("Unknown");
+      const auto summarizeIds = [](const QStringList& ids) {
+        QStringList shortened;
+        for (const QString& id : ids) {
+          const QString trimmed = id.trimmed();
+          if (trimmed.isEmpty()) continue;
+          shortened.append(trimmed.size() > 12
+              ? trimmed.left(8) + QStringLiteral("…") + trimmed.right(3)
+              : trimmed);
+          if (shortened.size() >= 4) break;
+        }
+        QString result = shortened.join(QStringLiteral(", "));
+        if (ids.size() > shortened.size()) {
+          result += QStringLiteral(" … +%1").arg(ids.size() - shortened.size());
+        }
+        return result.isEmpty() ? QStringLiteral("none") : result;
+      };
+      layerFilterSummaryLabel->setText(
+          QStringLiteral("Mode: %1\nIncluded: %2\nExcluded: %3")
+              .arg(modeText, summarizeIds(whitelist), summarizeIds(blacklist)));
+    }
+    if (layerFilterModeCombo) {
+      const int mode = selective.value(QStringLiteral("layerFilterMode"), 0).toInt();
+      const int comboIndex = layerFilterModeCombo->findData(mode);
+      layerFilterModeCombo->setCurrentIndex(comboIndex >= 0 ? comboIndex : 0);
+    }
+    if (configurePassesButton) {
+      int enabledPassCount = 0;
+      for (const auto& rawPass : selective.value(
+               QStringLiteral("renderPasses")).toList()) {
+        const QVariantMap pass = rawPass.toMap();
+        if (pass.value(QStringLiteral("enabled"), true).toBool() &&
+            !pass.value(QStringLiteral("name")).toString().trimmed().isEmpty()) {
+          ++enabledPassCount;
+        }
+      }
+      configurePassesButton->setText(
+          enabledPassCount > 0
+              ? QStringLiteral("Configure Passes (%1)…").arg(enabledPassCount)
+              : QStringLiteral("Configure Passes…"));
+      configurePassesButton->setEnabled(
+          selective.value(QStringLiteral("splitPasses")).toBool());
+    }
+    if (cropXSpin) cropXSpin->setValue(selective.value(QStringLiteral("cropX"), 0).toInt());
+    if (cropYSpin) cropYSpin->setValue(selective.value(QStringLiteral("cropY"), 0).toInt());
+    if (cropWSpin) cropWSpin->setValue(selective.value(QStringLiteral("cropW"), 0).toInt());
+    if (cropHSpin) cropHSpin->setValue(selective.value(QStringLiteral("cropH"), 0).toInt());
 
     float offsetX = 0.0f;
     float offsetY = 0.0f;
@@ -1276,6 +1569,556 @@ namespace Artifact
   rangeLayout->addRow("Start:", impl_->startFrameSpin);
   rangeLayout->addRow("End:", impl_->endFrameSpin);
   detailLayout->addWidget(rangeGroup);
+
+  // Group: Selective render
+  auto* selectiveGroup = new QGroupBox(QStringLiteral("Selective Render"));
+  auto* selectiveLayout = new QVBoxLayout(selectiveGroup);
+  impl_->excludeAdjustmentLayersCheck = new QCheckBox(
+      QStringLiteral("Exclude Adjustment Layers"));
+  impl_->excludeAdjustmentLayersCheck->setAccessibleName(
+      QStringLiteral("Exclude adjustment layers"));
+  impl_->excludeAdjustmentLayersCheck->setAccessibleDescription(
+      QStringLiteral("Skip adjustment layers when rendering this job."));
+  impl_->excludeGuideLayersCheck = new QCheckBox(
+      QStringLiteral("Exclude Guide Layers"));
+  impl_->excludeGuideLayersCheck->setAccessibleName(
+      QStringLiteral("Exclude guide layers"));
+  impl_->excludeGuideLayersCheck->setAccessibleDescription(
+      QStringLiteral("Skip guide layers when rendering this job."));
+  impl_->splitPassesCheck = new QCheckBox(QStringLiteral("Split Passes"));
+  impl_->splitPassesCheck->setAccessibleName(QStringLiteral("Split render passes"));
+  impl_->splitPassesCheck->setAccessibleDescription(
+      QStringLiteral("Render enabled named passes as separate outputs."));
+  selectiveLayout->addWidget(impl_->excludeAdjustmentLayersCheck);
+  selectiveLayout->addWidget(impl_->excludeGuideLayersCheck);
+  selectiveLayout->addWidget(impl_->splitPassesCheck);
+  impl_->configurePassesButton = new QPushButton(QStringLiteral("Configure Passes…"));
+  impl_->configurePassesButton->setAccessibleName(QStringLiteral("Configure render passes"));
+  impl_->configurePassesButton->setAccessibleDescription(
+      QStringLiteral("Edit the names of the enabled split render passes."));
+  impl_->configurePassesButton->setEnabled(false);
+  selectiveLayout->addWidget(impl_->configurePassesButton);
+  auto* resolutionRow = new QHBoxLayout();
+  resolutionRow->addWidget(new QLabel(QStringLiteral("Resolution:")));
+  impl_->resolutionPresetCombo = new QComboBox();
+  impl_->resolutionPresetCombo->addItem(QStringLiteral("Custom"), 0);
+  impl_->resolutionPresetCombo->addItem(QStringLiteral("Composition"), 1);
+  impl_->resolutionPresetCombo->addItem(QStringLiteral("Half"), 2);
+  impl_->resolutionPresetCombo->addItem(QStringLiteral("Third"), 3);
+  impl_->resolutionPresetCombo->addItem(QStringLiteral("Quarter"), 4);
+  impl_->resolutionPresetCombo->setAccessibleName(QStringLiteral("Render resolution preset"));
+  impl_->resolutionPresetCombo->setAccessibleDescription(
+      QStringLiteral("Choose the output resolution preset for this render job."));
+  resolutionRow->addWidget(impl_->resolutionPresetCombo, 1);
+  selectiveLayout->addLayout(resolutionRow);
+  auto* rangeModeRow = new QHBoxLayout();
+  rangeModeRow->addWidget(new QLabel(QStringLiteral("Frame Range:")));
+  impl_->frameRangeModeCombo = new QComboBox();
+  impl_->frameRangeModeCombo->addItem(QStringLiteral("Composition"), 0);
+  impl_->frameRangeModeCombo->addItem(QStringLiteral("Work Area"), 1);
+  impl_->frameRangeModeCombo->addItem(QStringLiteral("Custom"), 2);
+  impl_->frameRangeModeCombo->addItem(QStringLiteral("Selected Frames"), 3);
+  impl_->frameRangeModeCombo->addItem(QStringLiteral("Single Frame"), 4);
+  impl_->frameRangeModeCombo->setAccessibleName(QStringLiteral("Render frame range mode"));
+  rangeModeRow->addWidget(impl_->frameRangeModeCombo, 1);
+  selectiveLayout->addLayout(rangeModeRow);
+  auto* selectedRangeRow = new QHBoxLayout();
+  selectedRangeRow->addWidget(new QLabel(QStringLiteral("Selected range:")));
+  impl_->selectedRangeStartSpin = new RenderQueueIntSpinBox();
+  impl_->selectedRangeEndSpin = new RenderQueueIntSpinBox();
+  for (auto* spin : {impl_->selectedRangeStartSpin,
+                     impl_->selectedRangeEndSpin}) {
+    spin->setRange(std::numeric_limits<int>::min(),
+                   std::numeric_limits<int>::max());
+    spin->setEnabled(false);
+  }
+  impl_->selectedRangeStartSpin->setAccessibleName(
+      QStringLiteral("Selected frame range start"));
+  impl_->selectedRangeEndSpin->setAccessibleName(
+      QStringLiteral("Selected frame range end"));
+  selectedRangeRow->addWidget(impl_->selectedRangeStartSpin);
+  selectedRangeRow->addWidget(new QLabel(QStringLiteral("to")));
+  selectedRangeRow->addWidget(impl_->selectedRangeEndSpin);
+  impl_->addSelectedRangeButton = new QPushButton(QStringLiteral("Add Range"));
+  impl_->clearSelectedRangesButton = new QPushButton(QStringLiteral("Clear Ranges"));
+  impl_->addSelectedRangeButton->setEnabled(false);
+  impl_->clearSelectedRangesButton->setEnabled(false);
+  selectedRangeRow->addWidget(impl_->addSelectedRangeButton);
+  selectedRangeRow->addWidget(impl_->clearSelectedRangesButton);
+  selectiveLayout->addLayout(selectedRangeRow);
+  impl_->selectedRangesSummaryLabel = new QLabel(QStringLiteral("Ranges: none"));
+  impl_->selectedRangesSummaryLabel->setWordWrap(true);
+  impl_->selectedRangesSummaryLabel->setAccessibleName(
+      QStringLiteral("Selected frame ranges summary"));
+  selectiveLayout->addWidget(impl_->selectedRangesSummaryLabel);
+  auto* regionModeRow = new QHBoxLayout();
+  regionModeRow->addWidget(new QLabel(QStringLiteral("Region:")));
+  impl_->regionModeCombo = new QComboBox();
+  impl_->regionModeCombo->addItem(QStringLiteral("Full"), 0);
+  impl_->regionModeCombo->addItem(QStringLiteral("Region of Interest"), 1);
+  impl_->regionModeCombo->addItem(QStringLiteral("Custom Crop"), 2);
+  impl_->regionModeCombo->setAccessibleName(QStringLiteral("Render region mode"));
+  regionModeRow->addWidget(impl_->regionModeCombo, 1);
+  selectiveLayout->addLayout(regionModeRow);
+  auto* layerFilterRow = new QHBoxLayout();
+  layerFilterRow->addWidget(new QLabel(QStringLiteral("Layers:")));
+  impl_->layerFilterModeCombo = new QComboBox();
+  impl_->layerFilterModeCombo->addItem(QStringLiteral("All Layers"), 0);
+  impl_->layerFilterModeCombo->addItem(QStringLiteral("Selected Layers"), 1);
+  impl_->layerFilterModeCombo->addItem(QStringLiteral("Solo Layers"), 2);
+  impl_->layerFilterModeCombo->addItem(QStringLiteral("Visible Layers"), 3);
+  impl_->layerFilterModeCombo->addItem(QStringLiteral("Custom Layers"), 4);
+  impl_->layerFilterModeCombo->setAccessibleName(QStringLiteral("Render layer filter mode"));
+  impl_->layerFilterModeCombo->setAccessibleDescription(
+      QStringLiteral("Choose which layers are included in this render job."));
+  layerFilterRow->addWidget(impl_->layerFilterModeCombo, 1);
+  selectiveLayout->addLayout(layerFilterRow);
+  impl_->useSelectedLayersButton = new QPushButton(
+      QStringLiteral("Use Current Selection"));
+  impl_->useSelectedLayersButton->setAccessibleName(
+      QStringLiteral("Use current layer selection for render"));
+  impl_->useSelectedLayersButton->setAccessibleDescription(
+      QStringLiteral("Copy the current layer selection into the Custom Layers filter."));
+  selectiveLayout->addWidget(impl_->useSelectedLayersButton);
+  impl_->excludeSelectedLayersButton = new QPushButton(
+      QStringLiteral("Exclude Current Selection"));
+  impl_->excludeSelectedLayersButton->setAccessibleName(
+      QStringLiteral("Exclude current layer selection from render"));
+  impl_->excludeSelectedLayersButton->setAccessibleDescription(
+      QStringLiteral("Add the current layer selection to the render blacklist."));
+  selectiveLayout->addWidget(impl_->excludeSelectedLayersButton);
+  auto* layerFilterClearRow = new QHBoxLayout();
+  impl_->clearWhitelistButton = new QPushButton(QStringLiteral("Clear Included"));
+  impl_->clearBlacklistButton = new QPushButton(QStringLiteral("Clear Excluded"));
+  impl_->clearWhitelistButton->setAccessibleName(QStringLiteral("Clear included layers"));
+  impl_->clearBlacklistButton->setAccessibleName(QStringLiteral("Clear excluded layers"));
+  layerFilterClearRow->addWidget(impl_->clearWhitelistButton);
+  layerFilterClearRow->addWidget(impl_->clearBlacklistButton);
+  selectiveLayout->addLayout(layerFilterClearRow);
+  impl_->layerFilterSummaryLabel = new QLabel(QStringLiteral(
+      "Mode: All\nIncluded: none\nExcluded: none"));
+  impl_->layerFilterSummaryLabel->setWordWrap(true);
+  impl_->layerFilterSummaryLabel->setAccessibleName(
+      QStringLiteral("Render layer filter summary"));
+  selectiveLayout->addWidget(impl_->layerFilterSummaryLabel);
+  auto* cropGrid = new QGridLayout();
+  cropGrid->addWidget(new QLabel(QStringLiteral("Crop X:")), 0, 0);
+  cropGrid->addWidget(new QLabel(QStringLiteral("Crop Y:")), 0, 2);
+  cropGrid->addWidget(new QLabel(QStringLiteral("Width:")), 1, 0);
+  cropGrid->addWidget(new QLabel(QStringLiteral("Height:")), 1, 2);
+  impl_->cropXSpin = new RenderQueueIntSpinBox();
+  impl_->cropYSpin = new RenderQueueIntSpinBox();
+  impl_->cropWSpin = new RenderQueueIntSpinBox();
+  impl_->cropHSpin = new RenderQueueIntSpinBox();
+  for (auto* spin : {impl_->cropXSpin, impl_->cropYSpin,
+                     impl_->cropWSpin, impl_->cropHSpin}) {
+    spin->setRange(0, 1000000);
+  }
+  impl_->cropXSpin->setAccessibleName(QStringLiteral("Crop X"));
+  impl_->cropYSpin->setAccessibleName(QStringLiteral("Crop Y"));
+  impl_->cropWSpin->setAccessibleName(QStringLiteral("Crop width"));
+  impl_->cropHSpin->setAccessibleName(QStringLiteral("Crop height"));
+  cropGrid->addWidget(impl_->cropXSpin, 0, 1);
+  cropGrid->addWidget(impl_->cropYSpin, 0, 3);
+  cropGrid->addWidget(impl_->cropWSpin, 1, 1);
+  cropGrid->addWidget(impl_->cropHSpin, 1, 3);
+  selectiveLayout->addLayout(cropGrid);
+  detailLayout->addWidget(selectiveGroup);
+
+  auto commitSelectiveSetting = [this](const QString& key, bool value) {
+    if (!impl_ || impl_->syncingJobDetails || !impl_->service) {
+      return;
+    }
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) {
+      return;
+    }
+    QVariantMap settings = impl_->service->jobSelectiveSettingsAt(index);
+    settings.insert(key, value);
+    impl_->service->setJobSelectiveSettingsAt(index, settings);
+    impl_->syncDetailEditorsFromJob(index);
+  };
+  connect(impl_->excludeAdjustmentLayersCheck, &QCheckBox::toggled, this,
+          [commitSelectiveSetting](bool checked) {
+            commitSelectiveSetting(QStringLiteral("excludeAdjustmentLayers"), checked);
+          });
+  connect(impl_->excludeGuideLayersCheck, &QCheckBox::toggled, this,
+          [commitSelectiveSetting](bool checked) {
+            commitSelectiveSetting(QStringLiteral("excludeGuideLayers"), checked);
+          });
+  connect(impl_->splitPassesCheck, &QCheckBox::toggled, this,
+          [this, commitSelectiveSetting](bool checked) {
+            if (!checked || !impl_ || impl_->syncingJobDetails ||
+                !impl_->service) {
+              commitSelectiveSetting(QStringLiteral("splitPasses"), checked);
+              return;
+            }
+            const int index = impl_->selectedSourceIndex();
+            if (index < 0 || index >= impl_->service->jobCount()) {
+              return;
+            }
+            QVariantMap settings = impl_->service->jobSelectiveSettingsAt(index);
+            settings.insert(QStringLiteral("splitPasses"), true);
+            const QVariantList existingPasses = settings.value(
+                QStringLiteral("renderPasses")).toList();
+            if (existingPasses.isEmpty()) {
+              QVariantMap beautyPass;
+              beautyPass.insert(QStringLiteral("name"), QStringLiteral("Beauty"));
+              beautyPass.insert(QStringLiteral("layerFilter"), 0);
+              beautyPass.insert(QStringLiteral("enabled"), true);
+              QVariantList defaultPasses;
+              defaultPasses.append(beautyPass);
+              settings.insert(QStringLiteral("renderPasses"), defaultPasses);
+            }
+            impl_->service->setJobSelectiveSettingsAt(index, settings);
+            impl_->syncDetailEditorsFromJob(index);
+          });
+  connect(impl_->configurePassesButton, &QPushButton::clicked, this, [this]() {
+    if (!impl_ || !impl_->service || !impl_->configurePassesButton) {
+      return;
+    }
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) {
+      return;
+    }
+    const QVariantMap current = impl_->service->jobSelectiveSettingsAt(index);
+    QStringList currentNames;
+    for (const auto& rawPass : current.value(QStringLiteral("renderPasses")).toList()) {
+      const QVariantMap pass = rawPass.toMap();
+      if (pass.value(QStringLiteral("enabled"), true).toBool()) {
+        const QString name = pass.value(QStringLiteral("name")).toString().trimmed();
+        if (!name.isEmpty()) {
+          currentNames.append(name);
+        }
+      }
+    }
+    bool accepted = false;
+    const QString text = QInputDialog::getText(
+        this, QStringLiteral("Configure Render Passes"),
+        QStringLiteral("Enabled pass names (comma separated):"),
+        QLineEdit::Normal, currentNames.join(QStringLiteral(", ")), &accepted);
+    if (!accepted) {
+      return;
+    }
+    QStringList names;
+    for (const QString& rawName : text.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+      const QString name = rawName.trimmed();
+      if (!name.isEmpty() && !names.contains(name, Qt::CaseInsensitive)) {
+        names.append(name);
+      }
+    }
+    if (names.isEmpty()) {
+      return;
+    }
+    QVariantList passes;
+    for (const QString& name : names) {
+      QVariantMap pass;
+      pass.insert(QStringLiteral("name"), name);
+      pass.insert(QStringLiteral("layerFilter"), 0);
+      pass.insert(QStringLiteral("enabled"), true);
+      passes.append(pass);
+    }
+    QVariantMap settings = current;
+    settings.insert(QStringLiteral("splitPasses"), true);
+    settings.insert(QStringLiteral("renderPasses"), passes);
+    impl_->service->setJobSelectiveSettingsAt(index, settings);
+    impl_->syncDetailEditorsFromJob(index);
+  });
+  connect(impl_->resolutionPresetCombo,
+          QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this](int comboIndex) {
+            if (!impl_ || impl_->syncingJobDetails || !impl_->service ||
+                !impl_->resolutionPresetCombo) {
+              return;
+            }
+            const int index = impl_->selectedSourceIndex();
+            if (index < 0 || index >= impl_->service->jobCount()) {
+              return;
+            }
+            QVariantMap settings = impl_->service->jobSelectiveSettingsAt(index);
+            settings.insert(QStringLiteral("resolutionPreset"),
+                            impl_->resolutionPresetCombo->itemData(comboIndex));
+            impl_->service->setJobSelectiveSettingsAt(index, settings);
+            impl_->syncDetailEditorsFromJob(index);
+          });
+  auto commitSelectiveCombo = [this](QComboBox* combo, const QString& key) {
+    if (!impl_ || impl_->syncingJobDetails || !impl_->service || !combo) {
+      return;
+    }
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) {
+      return;
+    }
+    QVariantMap settings = impl_->service->jobSelectiveSettingsAt(index);
+    settings.insert(key, combo->currentData());
+    if (key == QStringLiteral("frameRangeMode") &&
+        combo->currentData().toInt() == 3 &&
+        settings.value(QStringLiteral("selectedFrameRanges")).toList().isEmpty()) {
+      int startFrame = 0;
+      int endFrame = 0;
+      if (impl_->service->jobFrameRangeAt(index, &startFrame, &endFrame) &&
+          endFrame > startFrame) {
+        QVariantMap initialRange;
+        initialRange.insert(QStringLiteral("start"), startFrame);
+        initialRange.insert(QStringLiteral("end"), endFrame);
+        settings.insert(QStringLiteral("selectedFrameRanges"),
+                        QVariantList{initialRange});
+      }
+    }
+    impl_->service->setJobSelectiveSettingsAt(index, settings);
+    impl_->syncDetailEditorsFromJob(index);
+  };
+  auto commitSelectedRange = [this]() {
+    if (!impl_ || impl_->syncingJobDetails || !impl_->service ||
+        !impl_->selectedRangeStartSpin || !impl_->selectedRangeEndSpin) {
+      return;
+    }
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) {
+      return;
+    }
+    const int start = impl_->selectedRangeStartSpin->value();
+    const int end = impl_->selectedRangeEndSpin->value();
+    if (end <= start) {
+      impl_->selectedRangeEndSpin->setValue(start + 1);
+    }
+    QVariantMap settings = impl_->service->jobSelectiveSettingsAt(index);
+    QVariantMap range;
+    range.insert(QStringLiteral("start"), start);
+    range.insert(QStringLiteral("end"),
+                 std::max(end, start + 1));
+    settings.insert(QStringLiteral("selectedFrameRanges"),
+                    QVariantList{range});
+    settings.insert(QStringLiteral("frameRangeMode"), 3);
+    impl_->service->setJobSelectiveSettingsAt(index, settings);
+    impl_->syncDetailEditorsFromJob(index);
+  };
+  connect(impl_->frameRangeModeCombo,
+          QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this, commitSelectiveCombo](int) {
+            commitSelectiveCombo(impl_->frameRangeModeCombo,
+                                 QStringLiteral("frameRangeMode"));
+          });
+  impl_->selectedRangeStartSpin->committed =
+      [commitSelectedRange](int) { commitSelectedRange(); };
+  impl_->selectedRangeEndSpin->committed =
+      [commitSelectedRange](int) { commitSelectedRange(); };
+  connect(impl_->addSelectedRangeButton, &QPushButton::clicked, this,
+          [this]() {
+            if (!impl_ || impl_->syncingJobDetails || !impl_->service ||
+                !impl_->selectedRangeStartSpin || !impl_->selectedRangeEndSpin) {
+              return;
+            }
+            const int index = impl_->selectedSourceIndex();
+            if (index < 0 || index >= impl_->service->jobCount()) return;
+            const int start = impl_->selectedRangeStartSpin->value();
+            const int end = impl_->selectedRangeEndSpin->value();
+            if (end <= start) return;
+            QVariantMap settings = impl_->service->jobSelectiveSettingsAt(index);
+            QVariantList ranges = settings.value(
+                QStringLiteral("selectedFrameRanges")).toList();
+            for (const auto &rawRange : ranges) {
+              const QVariantMap existing = rawRange.toMap();
+              if (existing.value(QStringLiteral("start")).toInt() == start &&
+                  existing.value(QStringLiteral("end")).toInt() == end) {
+                impl_->syncDetailEditorsFromJob(index);
+                return;
+              }
+            }
+            QVariantMap range;
+            range.insert(QStringLiteral("start"), start);
+            range.insert(QStringLiteral("end"), end);
+            ranges.append(range);
+            std::sort(ranges.begin(), ranges.end(), [](const QVariant &left,
+                                                       const QVariant &right) {
+              const QVariantMap lhs = left.toMap();
+              const QVariantMap rhs = right.toMap();
+              const int lhsStart = lhs.value(QStringLiteral("start")).toInt();
+              const int rhsStart = rhs.value(QStringLiteral("start")).toInt();
+              if (lhsStart != rhsStart) return lhsStart < rhsStart;
+              return lhs.value(QStringLiteral("end")).toInt() <
+                     rhs.value(QStringLiteral("end")).toInt();
+            });
+            QVariantList mergedRanges;
+            for (const auto &rawRange : ranges) {
+              const QVariantMap current = rawRange.toMap();
+              const int currentStart = current.value(QStringLiteral("start")).toInt();
+              const int currentEnd = current.value(QStringLiteral("end")).toInt();
+              if (!mergedRanges.isEmpty()) {
+                QVariantMap previous = mergedRanges.last().toMap();
+                const int previousEnd = previous.value(QStringLiteral("end")).toInt();
+                if (currentStart <= previousEnd) {
+                  previous.insert(QStringLiteral("end"),
+                                  std::max(previousEnd, currentEnd));
+                  mergedRanges.last() = previous;
+                  continue;
+                }
+              }
+              mergedRanges.append(current);
+            }
+            settings.insert(QStringLiteral("selectedFrameRanges"), mergedRanges);
+            settings.insert(QStringLiteral("frameRangeMode"), 3);
+            impl_->service->setJobSelectiveSettingsAt(index, settings);
+            impl_->syncDetailEditorsFromJob(index);
+          });
+  connect(impl_->clearSelectedRangesButton, &QPushButton::clicked, this,
+          [this]() {
+            if (!impl_ || impl_->syncingJobDetails || !impl_->service) return;
+            const int index = impl_->selectedSourceIndex();
+            if (index < 0 || index >= impl_->service->jobCount()) return;
+            QVariantMap settings = impl_->service->jobSelectiveSettingsAt(index);
+            settings.insert(QStringLiteral("selectedFrameRanges"), QVariantList{});
+            impl_->service->setJobSelectiveSettingsAt(index, settings);
+            impl_->syncDetailEditorsFromJob(index);
+          });
+  connect(impl_->regionModeCombo,
+          QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this, commitSelectiveCombo](int) {
+            commitSelectiveCombo(impl_->regionModeCombo,
+                                 QStringLiteral("regionMode"));
+            if (impl_ && impl_->regionModeCombo) {
+              const bool cropEnabled = impl_->regionModeCombo->currentData().toInt() != 0;
+              if (impl_->cropXSpin) impl_->cropXSpin->setEnabled(cropEnabled);
+              if (impl_->cropYSpin) impl_->cropYSpin->setEnabled(cropEnabled);
+              if (impl_->cropWSpin) impl_->cropWSpin->setEnabled(cropEnabled);
+              if (impl_->cropHSpin) impl_->cropHSpin->setEnabled(cropEnabled);
+            }
+          });
+  connect(impl_->layerFilterModeCombo,
+          QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this](int comboIndex) {
+            if (!impl_ || impl_->syncingJobDetails || !impl_->service ||
+                !impl_->layerFilterModeCombo) {
+              return;
+            }
+            const int index = impl_->selectedSourceIndex();
+            if (index < 0 || index >= impl_->service->jobCount()) {
+              return;
+            }
+            QVariantMap settings = impl_->service->jobSelectiveSettingsAt(index);
+            settings.insert(QStringLiteral("layerFilterMode"),
+                            impl_->layerFilterModeCombo->itemData(comboIndex));
+            impl_->service->setJobSelectiveSettingsAt(index, settings);
+            impl_->syncDetailEditorsFromJob(index);
+          });
+  connect(impl_->useSelectedLayersButton, &QPushButton::clicked, this, [this]() {
+    if (!impl_ || !impl_->service) {
+      return;
+    }
+    auto* selectionManager = ArtifactLayerSelectionManager::instance();
+    if (!selectionManager) {
+      return;
+    }
+    const auto selectedLayers = selectionManager->selectedLayersInOrder();
+    if (selectedLayers.isEmpty()) {
+      return;
+    }
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) {
+      return;
+    }
+    QStringList whitelist;
+    for (const auto& layer : selectedLayers) {
+      if (layer) {
+        whitelist.append(layer->id().toString());
+      }
+    }
+    if (whitelist.isEmpty()) {
+      return;
+    }
+    QVariantMap settings = impl_->service->jobSelectiveSettingsAt(index);
+    settings.insert(QStringLiteral("layerFilterMode"), 4);
+    settings.insert(QStringLiteral("layerWhitelist"), whitelist);
+    QStringList blacklist = settings.value(QStringLiteral("layerBlacklist"))
+                                .toStringList();
+    for (const QString& id : whitelist) {
+      blacklist.removeAll(id);
+    }
+    settings.insert(QStringLiteral("layerBlacklist"), blacklist);
+    impl_->service->setJobSelectiveSettingsAt(index, settings);
+    impl_->syncDetailEditorsFromJob(index);
+  });
+  connect(impl_->excludeSelectedLayersButton, &QPushButton::clicked, this, [this]() {
+    if (!impl_ || !impl_->service) {
+      return;
+    }
+    auto* selectionManager = ArtifactLayerSelectionManager::instance();
+    if (!selectionManager) {
+      return;
+    }
+    const auto selectedLayers = selectionManager->selectedLayersInOrder();
+    if (selectedLayers.isEmpty()) {
+      return;
+    }
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) {
+      return;
+    }
+    QVariantMap settings = impl_->service->jobSelectiveSettingsAt(index);
+    QStringList blacklist = settings.value(QStringLiteral("layerBlacklist"))
+                                .toStringList();
+    for (const auto& layer : selectedLayers) {
+      if (layer) {
+        const QString id = layer->id().toString();
+        if (!blacklist.contains(id)) {
+          blacklist.append(id);
+        }
+      }
+    }
+    if (blacklist.isEmpty()) {
+      return;
+    }
+    QStringList whitelist = settings.value(QStringLiteral("layerWhitelist"))
+                                .toStringList();
+    for (const QString& id : blacklist) {
+      whitelist.removeAll(id);
+    }
+    settings.insert(QStringLiteral("layerWhitelist"), whitelist);
+    settings.insert(QStringLiteral("layerBlacklist"), blacklist);
+    impl_->service->setJobSelectiveSettingsAt(index, settings);
+    impl_->syncDetailEditorsFromJob(index);
+  });
+  auto clearLayerFilterList = [this](const QString& key) {
+    if (!impl_ || !impl_->service) {
+      return;
+    }
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) {
+      return;
+    }
+    QVariantMap settings = impl_->service->jobSelectiveSettingsAt(index);
+    settings.insert(key, QStringList{});
+    impl_->service->setJobSelectiveSettingsAt(index, settings);
+    impl_->syncDetailEditorsFromJob(index);
+  };
+  connect(impl_->clearWhitelistButton, &QPushButton::clicked, this,
+          [clearLayerFilterList]() {
+            clearLayerFilterList(QStringLiteral("layerWhitelist"));
+          });
+  connect(impl_->clearBlacklistButton, &QPushButton::clicked, this,
+          [clearLayerFilterList]() {
+            clearLayerFilterList(QStringLiteral("layerBlacklist"));
+          });
+  auto commitCrop = [this]() {
+    if (!impl_ || impl_->syncingJobDetails || !impl_->service) {
+      return;
+    }
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) {
+      return;
+    }
+    QVariantMap settings = impl_->service->jobSelectiveSettingsAt(index);
+    settings.insert(QStringLiteral("cropX"), impl_->cropXSpin->value());
+    settings.insert(QStringLiteral("cropY"), impl_->cropYSpin->value());
+    settings.insert(QStringLiteral("cropW"), impl_->cropWSpin->value());
+    settings.insert(QStringLiteral("cropH"), impl_->cropHSpin->value());
+    impl_->service->setJobSelectiveSettingsAt(index, settings);
+    impl_->syncDetailEditorsFromJob(index);
+  };
+  impl_->cropXSpin->committed = [commitCrop](int) { commitCrop(); };
+  impl_->cropYSpin->committed = [commitCrop](int) { commitCrop(); };
+  impl_->cropWSpin->committed = [commitCrop](int) { commitCrop(); };
+  impl_->cropHSpin->committed = [commitCrop](int) { commitCrop(); };
 
   // Group: Overlay
   auto* overlayGroup = new QGroupBox("Overlay Transform");
