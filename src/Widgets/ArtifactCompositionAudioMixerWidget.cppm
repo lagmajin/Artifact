@@ -1055,6 +1055,8 @@ private:
       return QStringLiteral("Basic Color");
     }
     if (effectId == QStringLiteral("chroma_key") ||
+        effectId == QStringLiteral("luma_key") ||
+        effectId == QStringLiteral("difference_key") ||
         effectId == QStringLiteral("drop_shadow") ||
         effectId == QStringLiteral("glow") ||
         effectId == QStringLiteral("edge_bloom") ||
@@ -1107,6 +1109,11 @@ private:
     }
     if (effectId == QStringLiteral("residual_glow")) {
       return QStringLiteral("A");
+    }
+    if (effectId == QStringLiteral("chroma_key") ||
+        effectId == QStringLiteral("luma_key") ||
+        effectId == QStringLiteral("difference_key")) {
+      return QStringLiteral("K");
     }
     if (effectId.startsWith(QStringLiteral("ofx."))) {
       return QStringLiteral("O");
