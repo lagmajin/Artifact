@@ -3,6 +3,7 @@ module;
 #include <QString>
 #include <QPointF>
 #include <vector>
+#include <set>
 #include <cmath>
 #include <utility>
 
@@ -38,13 +39,24 @@ public:
         const ApplyOptions& options,
         ArtifactAbstractLayerPtr targetLayer = nullptr)
     {
-        if (!comp) return false;
+        if (!comp || options.pointId < 0) return false;
 
-        const auto keyframes = tracker.exportKeyframes(options.pointId);
+        const auto exportedKeyframes = tracker.exportKeyframes(options.pointId);
+        std::vector<std::pair<double, QPointF>> keyframes;
+        keyframes.reserve(exportedKeyframes.size());
+        for (const auto& [timeSeconds, pos] : exportedKeyframes) {
+            if (std::isfinite(timeSeconds) && std::abs(timeSeconds) <= 1.0e9 &&
+                std::isfinite(pos.x()) && std::isfinite(pos.y()) &&
+                std::abs(pos.x()) <= 1.0e9 && std::abs(pos.y()) <= 1.0e9) {
+                keyframes.push_back({timeSeconds, pos});
+            }
+        }
         if (keyframes.empty()) return false;
 
         const float fps = comp->frameRate().framerate();
-        if (fps <= 0.0f) return false;
+        if (!std::isfinite(fps) || fps <= 0.0f || fps > 240.0f) return false;
+        const auto compositionRange = comp->frameRange();
+        if (!compositionRange.isValid()) return false;
 
         ArtifactAbstractLayerPtr writeLayer;
 
@@ -65,12 +77,17 @@ public:
         auto& t3d = writeLayer->transform3D();
 
         bool isFirst = true;
+        bool appliedAny = false;
         for (const auto& [timeSeconds, pos] : keyframes) {
             // time (double seconds) → frame number → RationalTime
             const int64_t frame = static_cast<int64_t>(std::round(timeSeconds * fps));
+            if (frame < compositionRange.start() || frame > compositionRange.end()) {
+                continue;
+            }
             const ArtifactCore::RationalTime rt(frame, static_cast<int64_t>(fps));
 
             t3d.setPosition(rt, static_cast<float>(pos.x()), static_cast<float>(pos.y()));
+            appliedAny = true;
 
             // 初期フレームでアンカーポイントを追跡点中心に設定
             if (options.writeAnchor && isFirst) {
@@ -79,7 +96,10 @@ public:
             }
         }
 
-        return true;
+        writeLayer->setDirty(LayerDirtyFlag::Transform);
+        writeLayer->changed();
+
+        return appliedAny;
     }
 
     /// 全トラッキングポイントの結果をそれぞれ個別の Null レイヤーに書き出す。
@@ -95,13 +115,20 @@ public:
 
         // 全ポイント ID を収集
         std::vector<int> pointIds;
+        std::set<int> seenPointIds;
         for (const auto& frame : result.frames) {
             for (const auto& pt : frame.points) {
                 if (pt.active) {
-                    if (pointIds.empty() || pointIds.back() != pt.id) {
+                    if (seenPointIds.insert(pt.id).second) {
                         pointIds.push_back(pt.id);
+                        if (pointIds.size() >= 1024) {
+                            break;
+                        }
                     }
                 }
+            }
+            if (pointIds.size() >= 1024) {
+                break;
             }
         }
 
