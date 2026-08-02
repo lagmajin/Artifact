@@ -55,7 +55,15 @@ public:
     ChromaKeyEffectCPUImpl() = default;
     virtual ~ChromaKeyEffectCPUImpl() = default;
 
-    void setKeyColor(const FloatRGBA& color) { keyColor_ = color; }
+    void setKeyColor(const FloatRGBA& color) {
+        const auto safeChannel = [](float value, float fallback) {
+            return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+        };
+        keyColor_ = FloatRGBA(safeChannel(color.r(), 0.0f),
+                              safeChannel(color.g(), 1.0f),
+                              safeChannel(color.b(), 0.0f),
+                              safeChannel(color.a(), 1.0f));
+    }
     const FloatRGBA& keyColor() const { return keyColor_; }
 
     void setSimilarity(float val) { similarity_ = val; }
