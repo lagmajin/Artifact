@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QMetaType>
 #include <QObject>
+#include <QVariantMap>
 #include <QStringList>
 #include <algorithm>
 #include <any>
@@ -100,6 +101,8 @@ public:
   void setJobRenderBackendAt(int index, const QString &backend);
   bool jobFrameRangeAt(int index, int *startFrame, int *endFrame) const;
   void setJobFrameRangeAt(int index, int startFrame, int endFrame);
+  QVariantMap jobSelectiveSettingsAt(int index) const;
+  bool setJobSelectiveSettingsAt(int index, const QVariantMap &settings);
   bool jobOutputSettingsAt(int index, QString *outputFormat, QString *codec,
                            QString *codecProfile, int *width, int *height,
                            double *fps, int *bitrateKbps) const;
