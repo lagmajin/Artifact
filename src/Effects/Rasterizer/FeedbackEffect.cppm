@@ -81,17 +81,17 @@ FeedbackEffect::FeedbackEffect() : ArtifactAbstractEffect() {
 }
 FeedbackEffect::~FeedbackEffect() = default;
 float FeedbackEffect::amount() const { return amount_; }
-void FeedbackEffect::setAmount(float v) { amount_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void FeedbackEffect::setAmount(float v) { amount_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; syncImpls(); }
 float FeedbackEffect::decay() const { return decay_; }
-void FeedbackEffect::setDecay(float v) { decay_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void FeedbackEffect::setDecay(float v) { decay_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.9f; syncImpls(); }
 float FeedbackEffect::centerOffsetX() const { return cx_; }
-void FeedbackEffect::setCenterOffsetX(float v) { cx_ = v; syncImpls(); }
+void FeedbackEffect::setCenterOffsetX(float v) { cx_ = std::isfinite(v) ? std::clamp(v, -1000.0f, 1000.0f) : 0.0f; syncImpls(); }
 float FeedbackEffect::centerOffsetY() const { return cy_; }
-void FeedbackEffect::setCenterOffsetY(float v) { cy_ = v; syncImpls(); }
+void FeedbackEffect::setCenterOffsetY(float v) { cy_ = std::isfinite(v) ? std::clamp(v, -1000.0f, 1000.0f) : 0.0f; syncImpls(); }
 float FeedbackEffect::zoom() const { return zoom_; }
-void FeedbackEffect::setZoom(float v) { zoom_ = std::max(v, 0.01f); syncImpls(); }
+void FeedbackEffect::setZoom(float v) { zoom_ = std::isfinite(v) ? std::clamp(v, 0.01f, 10.0f) : 1.0f; syncImpls(); }
 float FeedbackEffect::rotation() const { return rotation_; }
-void FeedbackEffect::setRotation(float v) { rotation_ = v; syncImpls(); }
+void FeedbackEffect::setRotation(float v) { rotation_ = std::isfinite(v) ? std::clamp(v, -180.0f, 180.0f) : 0.0f; syncImpls(); }
 
 std::vector<AbstractProperty> FeedbackEffect::getProperties() const {
     std::vector<AbstractProperty> props;
