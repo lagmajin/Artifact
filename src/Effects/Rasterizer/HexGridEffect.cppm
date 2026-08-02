@@ -77,15 +77,15 @@ private:
     void cpuFallback(const ImageF32x4RGBAWithCache& src,ImageF32x4RGBAWithCache& dst){HexGridCPUImpl c;c.cellSize_=cellSize_;c.lineWidth_=lineWidth_;c.angle_=angle_;c.applyCPU(src,dst);}
     static constexpr const char* kHlsl=R"(
 RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer HexGridParams:register(b0){float g_Cell;float g_Line;float g_Angle;float g_Pad;}
-[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float a=g_Angle*0.0174532925,cr=cos(a),sr=sin(a),rx=id.x*cr-id.y*sr,ry=id.x*sr+id.y*cr;float hh=g_Cell*0.8660254,q=rx/g_Cell,r=ry/hh,qf=q-floor(q),rf=r-floor(r);int ri=(int)floor(r);float2 d;if((ri&1)==0)d=float2((qf-0.5)*g_Cell,(rf-0.5)*hh);else d=float2(qf*g_Cell,(rf-0.5)*hh);float dist=max(abs(d.x)/g_Cell,abs(d.y)/hh)*2;float v=dist>1-g_Line/max(g_Cell,0.001)?0:1;g_OutputTexture[id.xy]=float4(v,v,v,1);}
+[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float cell=max(g_Cell,4.0),line=max(g_Line,0.5);float a=g_Angle*0.0174532925,cr=cos(a),sr=sin(a),rx=id.x*cr-id.y*sr,ry=id.x*sr+id.y*cr;float hh=cell*0.8660254,q=rx/cell,r=ry/hh,qf=q-floor(q),rf=r-floor(r);int ri=(int)floor(r);float2 d;if((ri&1)==0)d=float2((qf-0.5)*cell,(rf-0.5)*hh);else d=float2(qf*cell,(rf-0.5)*hh);float dist=max(abs(d.x)/cell,abs(d.y)/hh)*2;float v=dist>1-line/cell?0:1;g_OutputTexture[id.xy]=float4(v,v,v,1);}
 )";
 };
 
     HexGridEffect::HexGridEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();setGPUImpl(ArtifactCore::makeShared<HexGridGPUImpl>());}
 HexGridEffect::~HexGridEffect()=default;
-float HexGridEffect::cellSize()const{return cellSize_;}void HexGridEffect::setCellSize(float v){cellSize_=std::max(v,4.0f);syncImpls();}
-float HexGridEffect::lineWidth()const{return lineWidth_;}void HexGridEffect::setLineWidth(float v){lineWidth_=std::max(v,0.5f);syncImpls();}
-float HexGridEffect::angle()const{return angle_;}void HexGridEffect::setAngle(float v){angle_=v;syncImpls();}
+float HexGridEffect::cellSize()const{return cellSize_;}void HexGridEffect::setCellSize(float v){cellSize_=std::isfinite(v)?std::clamp(v,4.0f,1024.0f):32.0f;syncImpls();}
+float HexGridEffect::lineWidth()const{return lineWidth_;}void HexGridEffect::setLineWidth(float v){lineWidth_=std::isfinite(v)?std::clamp(v,0.5f,1024.0f):2.0f;syncImpls();}
+float HexGridEffect::angle()const{return angle_;}void HexGridEffect::setAngle(float v){angle_=std::isfinite(v)?v:0.0f;syncImpls();}
 std::vector<AbstractProperty> HexGridEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(3);
