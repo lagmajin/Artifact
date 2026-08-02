@@ -15,6 +15,8 @@ module;
 #include <cmath>
 #include <memory>
 #include <QGuiApplication>
+#include <QSettings>
+#include <array>
 
 module Artifact.Widgets.TransformGizmo;
 
@@ -42,6 +44,22 @@ namespace {
 Q_LOGGING_CATEGORY(transformGizmoLog, "artifact.transformgizmo")
 
 constexpr float kPi = 3.14159265358979323846f;
+
+float rotationSnapStepDegrees() {
+ const float configured = static_cast<float>(QSettings().value(
+     QStringLiteral("ArtifactStudio/Viewport/RotationSnapDegrees"), 45.0).toDouble());
+ constexpr std::array<float, 4> kAllowedSteps{15.0f, 30.0f, 45.0f, 90.0f};
+ float closest = kAllowedSteps.front();
+ float closestDistance = std::abs(configured - closest);
+ for (const float candidate : kAllowedSteps) {
+  const float distance = std::abs(configured - candidate);
+  if (distance < closestDistance) {
+   closest = candidate;
+   closestDistance = distance;
+  }
+ }
+ return closest;
+}
 
 struct GizmoVisualStyle {
  static constexpr float scaleAxisThickness = 1.25f;
@@ -218,6 +236,14 @@ bool handleAffectsHeight(const TransformGizmo::HandleType handle)
  default:
   return false;
  }
+}
+
+bool isCornerScaleHandle(const TransformGizmo::HandleType handle)
+{
+ return handle == TransformGizmo::HandleType::Scale_TL ||
+        handle == TransformGizmo::HandleType::Scale_TR ||
+        handle == TransformGizmo::HandleType::Scale_BL ||
+        handle == TransformGizmo::HandleType::Scale_BR;
 }
 
 QPointF fixedPointForHandle(const QRectF& rect, const TransformGizmo::HandleType handle)
@@ -2094,9 +2120,37 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
   renderer->drawCrosshair((float)anchorWorld.x(),
                            (float)anchorWorld.y(),
                            handleSize * 2.0f, outer);
-  renderer->drawCrosshair((float)anchorWorld.x() - std::max(1.0f, 0.4f * invZoom),
+ renderer->drawCrosshair((float)anchorWorld.x() - std::max(1.0f, 0.4f * invZoom),
                            (float)anchorWorld.y() - std::max(1.0f, 0.4f * invZoom),
                            handleSize * 1.32f, inner);
+
+  if (isDragging_ && activeHandle_ == HandleType::Anchor) {
+   QFont anchorFont = QApplication::font();
+   anchorFont.setPointSizeF(std::max(10.0, static_cast<double>(anchorFont.pointSizeF()) + 1.0));
+   anchorFont.setBold(true);
+   const QString anchorText =
+       QStringLiteral("OVR:ANCHOR  X: %1  Y: %2")
+           .arg(QString::number(t3d.anchorX(), 'f', 1))
+           .arg(QString::number(t3d.anchorY(), 'f', 1));
+   const QFontMetrics anchorMetrics(anchorFont);
+   const float anchorTextWidth =
+       static_cast<float>(anchorMetrics.horizontalAdvance(anchorText)) + 28.0f;
+   const float anchorTextHeight = static_cast<float>(anchorMetrics.height()) + 14.0f;
+   const QPointF anchorLabelPosition(
+       anchorWorld.x() + std::max(20.0f, handleSize * 1.8f),
+       anchorWorld.y() - std::max(24.0f, handleSize * 1.6f));
+   const QRectF anchorRect(anchorLabelPosition.x() - anchorTextWidth * 0.5f,
+                           anchorLabelPosition.y() - anchorTextHeight * 0.5f,
+                           anchorTextWidth, anchorTextHeight);
+   renderer->drawOverlayPanel(static_cast<float>(anchorRect.left()),
+                              static_cast<float>(anchorRect.top()),
+                              static_cast<float>(anchorRect.width()),
+                              static_cast<float>(anchorRect.height()),
+                              FloatColor{0.04f, 0.05f, 0.07f, 0.88f},
+                              FloatColor{0.96f, 0.78f, 0.24f, 0.94f});
+   renderer->drawText(anchorRect, anchorText, anchorFont,
+                      FloatColor{1.0f, 0.98f, 0.88f, 1.0f}, Qt::AlignCenter);
+  }
  }
 
  // Draw Smart Guides (Snapping Lines)
@@ -2829,7 +2883,14 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    const float currentAngle = angleDegreesAround(pivotWorldStart, currentCanvasPos);
    dragAccumulatedRotationDelta_ +=
        normalizeAngleDeltaDegrees(currentAngle - previousAngle);
-   const float newRotation = dragStartRotation_ + dragAccumulatedRotationDelta_;
+   float newRotation = dragStartRotation_ + dragAccumulatedRotationDelta_;
+   if (QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier)) {
+    const float rotationSnapStep = rotationSnapStepDegrees();
+    newRotation = std::round(newRotation / rotationSnapStep) * rotationSnapStep;
+    // Keep the accumulated value aligned with the visible/committed rotation so
+    // the ring, HUD, and subsequent incremental mouse deltas stay coherent.
+    dragAccumulatedRotationDelta_ = newRotation - dragStartRotation_;
+   }
    for (const auto& target : targets) {
     if (!target) continue;
     auto& targetT3d = target->transform3D();
@@ -2889,6 +2950,14 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    const float newScaleX = dragStartScaleX_ * factor;
    const float newScaleY = dragStartScaleY_ * factor;
 
+   resizeBadgeVisible_ = true;
+   resizeBadgeAnchor_ = resizeBadgeAnchorForHandle(dragStartBoundingBox_, activeHandle_);
+   resizeBadgeBox_ = dragStartBoundingBox_;
+   resizeBadgeLines_.clear();
+   resizeBadgeLines_.push_back(
+       QStringLiteral("%1%")
+           .arg(QString::number(static_cast<double>(factor * 100.0f), 'f', 1)));
+
    const QPointF localOffset = pivotLocal - dragStartAnchor_;
    const QPointF startOffset = applyScaleRotateToVector(
        localOffset, dragStartScaleX_, dragStartScaleY_, dragStartRotation_);
@@ -2947,7 +3016,24 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
     if (startBox.isValid() && startBox.width() > 0.0 && startBox.height() > 0.0 &&
         localBounds.isValid() && localBounds.width() > 0.0 && localBounds.height() > 0.0) {
      const QPointF snappedDelta = snappedCanvasPos - dragStartCanvasPos_;
-     const QRectF targetBox = adjustedResizeBox(startBox, snappedDelta, activeHandle_);
+     QRectF targetBox = adjustedResizeBox(startBox, snappedDelta, activeHandle_);
+     const bool preserveAspect = isCornerScaleHandle(activeHandle_) &&
+         !QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
+     if (preserveAspect && startBox.width() > 0.0 && startBox.height() > 0.0) {
+      const double aspect = startBox.width() / startBox.height();
+      const QPointF fixed = fixedPointForHandle(startBox, activeHandle_);
+      const double widthFactor = targetBox.width() / startBox.width();
+      const double heightFactor = targetBox.height() / startBox.height();
+      const double factor = std::max(0.05, std::max(widthFactor, heightFactor));
+      const double width = std::max(1.0, startBox.width() * factor);
+      const double height = std::max(1.0, width / aspect);
+      const bool left = activeHandle_ == HandleType::Scale_TL ||
+                        activeHandle_ == HandleType::Scale_BL;
+      const bool top = activeHandle_ == HandleType::Scale_TL ||
+                       activeHandle_ == HandleType::Scale_TR;
+      targetBox = QRectF(left ? fixed.x() - width : fixed.x(),
+                         top ? fixed.y() - height : fixed.y(), width, height);
+     }
      double textMargin = 0.0;
      resizeBadgeVisible_ = true;
      resizeBadgeAnchor_ = resizeBadgeAnchorForHandle(targetBox, activeHandle_);
