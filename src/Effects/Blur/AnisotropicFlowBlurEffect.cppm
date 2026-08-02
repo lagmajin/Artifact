@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <vector>
 #include <QString>
@@ -61,10 +62,22 @@ std::vector<AbstractProperty> AnisotropicFlowBlurEffect::getProperties() const {
 void AnisotropicFlowBlurEffect::setPropertyValue(const UniString& name,
                                                   const QVariant& value) {
     const QString key = name.toQString();
-    if (key == QStringLiteral("Blur Amount")) blurAmount_ = std::clamp(value.toFloat(), 0.0f, 100.0f);
-    else if (key == QStringLiteral("Tensor Noise Scale")) tensorNoiseScale_ = std::clamp(value.toFloat(), 0.1f, 20.0f);
-    else if (key == QStringLiteral("Tensor Integration Scale")) tensorIntegrationScale_ = std::clamp(value.toFloat(), 0.1f, 20.0f);
-    else if (key == QStringLiteral("Edge Adherence")) edgeAdherence_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
+    if (key == QStringLiteral("Blur Amount")) {
+        const float v = value.toFloat();
+        blurAmount_ = std::isfinite(v) ? std::clamp(v, 0.0f, 100.0f) : 10.0f;
+    }
+    else if (key == QStringLiteral("Tensor Noise Scale")) {
+        const float v = value.toFloat();
+        tensorNoiseScale_ = std::isfinite(v) ? std::clamp(v, 0.1f, 20.0f) : 1.0f;
+    }
+    else if (key == QStringLiteral("Tensor Integration Scale")) {
+        const float v = value.toFloat();
+        tensorIntegrationScale_ = std::isfinite(v) ? std::clamp(v, 0.1f, 20.0f) : 4.0f;
+    }
+    else if (key == QStringLiteral("Edge Adherence")) {
+        const float v = value.toFloat();
+        edgeAdherence_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.8f;
+    }
     syncImpl();
 }
 
