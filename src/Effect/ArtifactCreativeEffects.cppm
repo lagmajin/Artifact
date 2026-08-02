@@ -14,6 +14,7 @@ module Artifact.Effect.Creative;
 
 import Artifact.Effect.Abstract;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Math.Noise;
 import Math.Random;
 import Core.Parallel;
@@ -33,20 +34,22 @@ bool runCreativeCompute(const ImageF32x4RGBAWithCache& src,
     Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
     if (!acquireSharedRenderDeviceForCurrentBackend(device, context)) return false;
     const auto& image = src.image();
-    const float* pixels = image.rgba32fData();
-    if (!pixels || image.width() <= 0 || image.height() <= 0) return false;
+    const auto upload = ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView());
+    if (!upload.isValid() || image.width() <= 0 || image.height() <= 0) return false;
 
     Diligent::TextureDesc inputDesc;
     inputDesc.Name = label;
     inputDesc.Type = Diligent::RESOURCE_DIM_TEX_2D;
     inputDesc.Width = image.width(); inputDesc.Height = image.height();
-    inputDesc.Format = Diligent::TEX_FORMAT_RGBA32_FLOAT;
+    inputDesc.Format = upload.format == ArtifactCore::GpuImageFormat::Rgba16Float
+        ? Diligent::TEX_FORMAT_RGBA16_FLOAT
+        : Diligent::TEX_FORMAT_RGBA32_FLOAT;
     inputDesc.MipLevels = 1; inputDesc.ArraySize = 1; inputDesc.SampleCount = 1;
     inputDesc.Usage = Diligent::USAGE_IMMUTABLE;
     inputDesc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
     Diligent::TextureSubResData inputData{};
-    inputData.pData = pixels;
-    inputData.Stride = static_cast<Diligent::Uint64>(image.width()) * sizeof(float) * 4ull;
+    inputData.pData = upload.bytes.data();
+    inputData.Stride = upload.rowStride;
     Diligent::TextureData textureData{};
     textureData.pSubResources = &inputData;
     textureData.NumSubresources = 1;
@@ -92,7 +95,9 @@ bool runCreativeCompute(const ImageF32x4RGBAWithCache& src,
     context->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
     if (!mapped.pData || !mapped.Stride) return false;
     cv::Mat result(static_cast<int>(outputDesc.Height), static_cast<int>(outputDesc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-    dst.image().setFromCVMat(result);
+    auto outputDescriptor = image.colorDescriptor();
+    outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::RGBA;
+    dst.image().setFromCVMat(result, outputDescriptor);
     context->UnmapTextureSubresource(staging, 0, 0);
     return true;
 }
