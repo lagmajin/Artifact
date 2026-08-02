@@ -111,31 +111,31 @@ ResidualGlowEffect::~ResidualGlowEffect() = default;
 
 void ResidualGlowEffect::setThreshold(float value)
 {
-    threshold_ = std::clamp(value, 0.0f, 1.0f);
+    threshold_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.6f;
     syncImpls();
 }
 
 void ResidualGlowEffect::setRadius(float value)
 {
-    radius_ = std::clamp(value, 0.5f, 64.0f);
+    radius_ = std::isfinite(value) ? std::clamp(value, 0.5f, 64.0f) : 12.0f;
     syncImpls();
 }
 
 void ResidualGlowEffect::setIntensity(float value)
 {
-    intensity_ = std::clamp(value, 0.0f, 4.0f);
+    intensity_ = std::isfinite(value) ? std::clamp(value, 0.0f, 4.0f) : 1.0f;
     syncImpls();
 }
 
 void ResidualGlowEffect::setDecay(float value)
 {
-    decay_ = std::clamp(value, 0.0f, 0.995f);
+    decay_ = std::isfinite(value) ? std::clamp(value, 0.0f, 0.995f) : 0.82f;
     syncImpls();
 }
 
 void ResidualGlowEffect::setHistoryMix(float value)
 {
-    historyMix_ = std::clamp(value, 0.0f, 1.0f);
+    historyMix_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.75f;
     syncImpls();
 }
 
