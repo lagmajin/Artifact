@@ -3233,7 +3233,10 @@ namespace Artifact
             }
 
             QFile summaryFile(summaryPath);
-            if (summaryFile.open(QIODevice::ReadOnly)) {
+            constexpr qint64 kMaxExternalRendererSummaryBytes = 16LL * 1024LL * 1024LL;
+            if (summaryFile.size() > 0 &&
+                summaryFile.size() <= kMaxExternalRendererSummaryBytes &&
+                summaryFile.open(QIODevice::ReadOnly)) {
                 QJsonParseError parseError;
                 const QJsonDocument summaryDoc = QJsonDocument::fromJson(summaryFile.readAll(), &parseError);
                 if (parseError.error == QJsonParseError::NoError && summaryDoc.isObject()) {
