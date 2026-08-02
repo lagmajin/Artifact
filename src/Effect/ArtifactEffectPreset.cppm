@@ -7,6 +7,7 @@
 #include <QUuid>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QDebug>
@@ -403,13 +404,16 @@ bool ArtifactEffectPresetCollection::saveToFile(const QString& filePath) const
         arr.append(preset->toJson());
     }
 
-    QJsonDocument doc(arr);
-    QFile file(filePath);
-    if (file.open(QIODevice::WriteOnly)) {
-        file.write(doc.toJson());
-        return true;
+    const QString normalizedPath = filePath.trimmed();
+    if (normalizedPath.isEmpty()) return false;
+    QSaveFile file(normalizedPath);
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    const QByteArray payload = QJsonDocument(arr).toJson();
+    if (file.write(payload) != payload.size()) {
+        file.cancelWriting();
+        return false;
     }
-    return false;
+    return file.commit();
 }
 
 bool ArtifactEffectPresetCollection::loadFromFile(const QString& filePath)
