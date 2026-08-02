@@ -24,6 +24,12 @@ TextGizmo::~TextGizmo() {}
 
 void TextGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
     layer_ = layer;
+    isDragging_ = false;
+    activeHandle_ = HandleType::None;
+    dragStartCanvasPos_ = QPointF();
+    dragStartLayerPosition_ = QPointF();
+    dragStartBounds_ = QRectF();
+    dragStartValue_ = 0.0f;
 }
 
 void TextGizmo::draw(ArtifactIRenderer* renderer) {
@@ -64,7 +70,8 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
         const float heatY = bbox.top() - heatGap - heatH;
         const float stripW = bbox.width() / static_cast<float>(weightPreview.size());
         for (int i = 0; i < weightPreview.size(); ++i) {
-            const float w = std::clamp(weightPreview[i], 0.0f, 1.0f);
+            const float w = std::isfinite(weightPreview[i])
+                ? std::clamp(weightPreview[i], 0.0f, 1.0f) : 0.0f;
             const FloatColor cool{0.12f, 0.20f, 0.32f, 0.75f};
             const FloatColor mid{0.95f, 0.45f, 0.10f, 0.80f};
             const FloatColor hot{1.00f, 0.92f, 0.25f, 0.90f};
@@ -87,8 +94,9 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
         QFont labelFont(QStringLiteral("Segoe UI"));
         labelFont.setPointSizeF(static_cast<qreal>(std::max<float>(6.0f, 9.0f * invZoom)));
         for (int i = 0; i < clusterBoundaries.size(); ++i) {
-            const float t = clusterBoundaries[i];
-            const float x = bbox.left() + bbox.width() * std::clamp(t, 0.0f, 1.0f);
+            const float t = std::isfinite(clusterBoundaries[i])
+                ? std::clamp(clusterBoundaries[i], 0.0f, 1.0f) : 0.0f;
+            const float x = bbox.left() + bbox.width() * t;
             renderer->drawSolidRect(x, heatY - 2.0f * invZoom, 1.0f * invZoom,
                                     heatH + 4.0f * invZoom,
                                     FloatColor{0.95f, 0.90f, 0.25f, 0.90f});
@@ -101,8 +109,9 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
 
         const auto lineBoundaries = textLayer->selectorLineBoundaryPreview();
         for (int i = 0; i < lineBoundaries.size(); ++i) {
-            const float t = lineBoundaries[i];
-            const float x = bbox.left() + bbox.width() * std::clamp(t, 0.0f, 1.0f);
+            const float t = std::isfinite(lineBoundaries[i])
+                ? std::clamp(lineBoundaries[i], 0.0f, 1.0f) : 0.0f;
+            const float x = bbox.left() + bbox.width() * t;
             renderer->drawSolidRect(x, heatY - 4.0f * invZoom, 1.5f * invZoom,
                                     heatH + 8.0f * invZoom,
                                     FloatColor{0.85f, 0.50f, 0.95f, 0.85f});
@@ -165,7 +174,9 @@ TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRe
         bbox = QRectF(0, 0, 400, 100);
     }
 
-    const float hitThreshold = 10.0f / renderer->getZoom();
+    const float zoom = renderer->getZoom();
+    const float hitThreshold = std::isfinite(zoom) && zoom > 0.0001f
+        ? 10.0f / zoom : 10.0f;
 
     // Check corner handles
     if (std::abs(canvasMouse.x - bbox.left()) < hitThreshold && std::abs(canvasMouse.y - bbox.top()) < hitThreshold) {
