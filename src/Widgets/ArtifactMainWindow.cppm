@@ -34,6 +34,7 @@ module;
 #include <QObject>
 #include <QPointer>
 #include <QSet>
+#include <QSettings>
 #include <QShowEvent>
 #include <QStatusBar>
 #include <QTimer>
@@ -50,6 +51,8 @@ module;
 module Artifact.MainWindow;
 
 import Artifact.Application.Manager;
+import Artifact.Tool.MotionSketchTool;
+import Artifact.Tool.Brush;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
 import Artifact.Layers.Selection.Manager;
@@ -945,6 +948,140 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
         const auto current =
             selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
 
+        if (toolName == QStringLiteral("ブラシ") ||
+            toolName == QStringLiteral("消しゴム") ||
+            toolName == QStringLiteral("コピースタンプ")) {
+          auto *brushTool = app ? app->brushTool() : nullptr;
+          if (!brushTool) {
+            return;
+          }
+          if (optionName == QStringLiteral("brushSize") ||
+              optionName == QStringLiteral("size") ||
+              (toolName == QStringLiteral("コピースタンプ") &&
+               optionName == QStringLiteral("radius"))) {
+            brushTool->setRadius(
+                std::clamp(value.toFloat(), 1.0f, 2500.0f));
+          } else if (toolName == QStringLiteral("コピースタンプ") &&
+                     optionName == QStringLiteral("aligned")) {
+            brushTool->setCloneAligned(value.toBool());
+          } else if (toolName == QStringLiteral("コピースタンプ") &&
+                     optionName == QStringLiteral("timeOffset")) {
+            brushTool->setCloneTimeOffset(value.toInt());
+          } else if (optionName == QStringLiteral("brushOpacity") ||
+                     optionName == QStringLiteral("opacity") ||
+                     optionName == QStringLiteral("strength")) {
+            brushTool->setOpacity(
+                std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f));
+          } else if (optionName == QStringLiteral("lastStrokeOnly")) {
+            brushTool->setLastStrokeOnly(value.toBool());
+          } else if (optionName == QStringLiteral("mode")) {
+            brushTool->setEraserModeKind(value.toInt());
+          } else if (optionName == QStringLiteral("brushFlow")) {
+            brushTool->setFlow(
+                std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f));
+          } else if (optionName == QStringLiteral("brushHardness")) {
+            brushTool->setHardness(
+                std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f));
+          } else if (optionName == QStringLiteral("hardness")) {
+            brushTool->setHardness(
+                std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f));
+          } else if (optionName == QStringLiteral("angle")) {
+            brushTool->setAngle(value.toFloat());
+          } else if (optionName == QStringLiteral("roundness")) {
+            brushTool->setRoundness(
+                std::clamp(value.toFloat() / 100.0f, 0.01f, 1.0f));
+          } else if (optionName == QStringLiteral("brushSpacing")) {
+            brushTool->setSpacing(
+                std::clamp(value.toFloat() / 100.0f, 0.01f, 10.0f));
+          } else if (optionName == QStringLiteral("brushAngle")) {
+            brushTool->setAngle(value.toFloat());
+          } else if (optionName == QStringLiteral("brushRoundness")) {
+            brushTool->setRoundness(
+                std::clamp(value.toFloat() / 100.0f, 0.01f, 1.0f));
+          } else if (optionName == QStringLiteral("sizeJitter")) {
+            brushTool->setSizeJitter(
+                std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f));
+          } else if (optionName == QStringLiteral("opacityJitter")) {
+            brushTool->setOpacityJitter(
+                std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f));
+          } else if (optionName == QStringLiteral("scatter")) {
+            brushTool->setScatter(
+                std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f));
+          } else if (optionName == QStringLiteral("angleJitter")) {
+            brushTool->setAngleJitter(
+                std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f));
+          } else if (optionName == QStringLiteral("roundnessJitter")) {
+            brushTool->setRoundnessJitter(
+                std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f));
+          } else if (optionName == QStringLiteral("flowJitter")) {
+            brushTool->setFlowJitter(
+                std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f));
+          } else if (optionName == QStringLiteral("pressureAffectsFlow")) {
+            brushTool->setPressureAffectsFlow(value.toBool());
+          } else if (optionName == QStringLiteral("pressureAffectsSize")) {
+            brushTool->setPressureAffectsSize(value.toBool());
+          } else if (optionName == QStringLiteral("pressureAffectsOpacity")) {
+            brushTool->setPressureAffectsOpacity(value.toBool());
+          } else if (optionName == QStringLiteral("tiltAffectsAngle")) {
+            brushTool->setTiltAffectsAngle(value.toBool());
+          } else if (optionName == QStringLiteral("tiltAffectsRoundness")) {
+            brushTool->setTiltAffectsRoundness(value.toBool());
+          } else if (optionName == QStringLiteral("brushColor")) {
+            const QStringList channels = value.toString().split(
+                QLatin1Char(','), Qt::KeepEmptyParts);
+            if (channels.size() == 4) {
+              bool okR = false, okG = false, okB = false, okA = false;
+              const float r = channels[0].toFloat(&okR);
+              const float g = channels[1].toFloat(&okG);
+              const float b = channels[2].toFloat(&okB);
+              const float a = channels[3].toFloat(&okA);
+              if (okR && okG && okB && okA) {
+                brushTool->setColor(
+                    FloatRGBA(std::clamp(r, 0.0f, 1.0f),
+                              std::clamp(g, 0.0f, 1.0f),
+                              std::clamp(b, 0.0f, 1.0f),
+                              std::clamp(a, 0.0f, 1.0f)));
+              }
+            }
+          }
+          QSettings brushSettings;
+          brushSettings.setValue(QStringLiteral("brush/%1").arg(optionName),
+                                 value);
+          return;
+        }
+
+        if (toolName == QStringLiteral("モーションスケッチ") &&
+            optionName == QStringLiteral("smoothing")) {
+          QSettings motionSettings;
+          motionSettings.setValue(QStringLiteral("motionSketch/smoothing"), value);
+          if (app && app->motionSketchTool()) {
+            app->motionSketchTool()->setSmoothing(
+                std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f));
+          }
+          return;
+        }
+
+        if (toolName == QStringLiteral("モーションスケッチ") &&
+            optionName == QStringLiteral("sampleRate")) {
+          QSettings motionSettings;
+          motionSettings.setValue(QStringLiteral("motionSketch/sampleRate"), value);
+          if (app && app->motionSketchTool()) {
+            app->motionSketchTool()->setSampleRate(
+                std::clamp(value.toFloat(), 1.0f, 60.0f));
+          }
+          return;
+        }
+
+        if (toolName == QStringLiteral("モーションスケッチ") &&
+            optionName == QStringLiteral("showWireframe")) {
+          QSettings motionSettings;
+          motionSettings.setValue(QStringLiteral("motionSketch/showWireframe"), value);
+          if (app && app->motionSketchTool()) {
+            app->motionSketchTool()->setShowWireframe(value.toBool());
+          }
+          return;
+        }
+
         if (toolName == QStringLiteral("テキスト")) {
           const auto textLayer =
               ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(current);
@@ -1163,6 +1300,113 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
                                 LayerChangedEvent::ChangeType::Modified});
         }
       });
+
+  // Restore the shared brush profile after the option route is established.
+  // The toolbar widgets may be recreated independently, so the BrushTool is
+  // the single source of truth for the restored values.
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    if (auto *brushTool = app->brushTool()) {
+      QSettings brushSettings;
+      brushTool->setRadius(brushSettings.value(QStringLiteral("brush/brushSize"),
+                                               brushTool->radius()).toFloat());
+      brushTool->setOpacity(brushSettings.value(QStringLiteral("brush/brushOpacity"),
+                                                brushTool->opacity() * 100.0f).toFloat() /
+                            100.0f);
+      brushTool->setFlow(brushSettings.value(QStringLiteral("brush/brushFlow"),
+                                             brushTool->flow() * 100.0f).toFloat() /
+                        100.0f);
+      brushTool->setHardness(brushSettings.value(QStringLiteral("brush/brushHardness"),
+                                                 brushTool->hardness() * 100.0f).toFloat() /
+                             100.0f);
+      brushTool->setSpacing(brushSettings.value(QStringLiteral("brush/brushSpacing"),
+                                                brushTool->spacing() * 100.0f).toFloat() /
+                            100.0f);
+      brushTool->setAngle(brushSettings.value(QStringLiteral("brush/brushAngle"),
+                                              brushTool->angle()).toFloat());
+      brushTool->setRoundness(brushSettings.value(QStringLiteral("brush/brushRoundness"),
+                                                  brushTool->roundness() * 100.0f).toFloat() /
+                              100.0f);
+      brushTool->setSizeJitter(brushSettings.value(QStringLiteral("brush/sizeJitter"),
+                                                   brushTool->sizeJitter() * 100.0f).toFloat() /
+                               100.0f);
+      brushTool->setOpacityJitter(brushSettings.value(QStringLiteral("brush/opacityJitter"),
+                                                      brushTool->opacityJitter() * 100.0f).toFloat() /
+                                  100.0f);
+      brushTool->setScatter(brushSettings.value(QStringLiteral("brush/scatter"),
+                                                brushTool->scatter() * 100.0f).toFloat() /
+                            100.0f);
+      brushTool->setAngleJitter(brushSettings.value(QStringLiteral("brush/angleJitter"),
+                                                    brushTool->angleJitter() * 100.0f).toFloat() /
+                                100.0f);
+      brushTool->setRoundnessJitter(brushSettings.value(QStringLiteral("brush/roundnessJitter"),
+                                                        brushTool->roundnessJitter() * 100.0f).toFloat() /
+                                    100.0f);
+      brushTool->setFlowJitter(brushSettings.value(QStringLiteral("brush/flowJitter"),
+                                                   brushTool->flowJitter() * 100.0f).toFloat() /
+                               100.0f);
+      brushTool->setPressureAffectsFlow(brushSettings.value(QStringLiteral("brush/pressureAffectsFlow"),
+                                                             brushTool->pressureAffectsFlow()).toBool());
+      brushTool->setPressureAffectsSize(brushSettings.value(QStringLiteral("brush/pressureAffectsSize"),
+                                                             brushTool->pressureAffectsSize()).toBool());
+      brushTool->setPressureAffectsOpacity(brushSettings.value(QStringLiteral("brush/pressureAffectsOpacity"),
+                                                                brushTool->pressureAffectsOpacity()).toBool());
+      brushTool->setTiltAffectsAngle(brushSettings.value(QStringLiteral("brush/tiltAffectsAngle"),
+                                                         brushTool->tiltAffectsAngle()).toBool());
+      brushTool->setTiltAffectsRoundness(brushSettings.value(QStringLiteral("brush/tiltAffectsRoundness"),
+                                                             brushTool->tiltAffectsRoundness()).toBool());
+      brushTool->setEraserModeKind(
+          brushSettings.value(QStringLiteral("brush/mode"),
+                              brushSettings.value(QStringLiteral("eraser/mode"),
+                                                  brushTool->eraserModeKind()))
+              .toInt());
+      brushTool->setLastStrokeOnly(
+          brushSettings.value(QStringLiteral("brush/lastStrokeOnly"),
+                              brushSettings.value(QStringLiteral("eraser/lastStrokeOnly"),
+                                                  brushTool->lastStrokeOnly()))
+              .toBool());
+      if (!brushSettings.contains(QStringLiteral("brush/brushSize"))) {
+        brushTool->setRadius(brushSettings.value(
+            QStringLiteral("brush/radius"), brushTool->radius()).toFloat());
+      }
+      brushTool->setCloneAligned(brushSettings.value(
+          QStringLiteral("brush/aligned"), brushTool->cloneAligned()).toBool());
+      brushTool->setCloneTimeOffset(brushSettings.value(
+          QStringLiteral("brush/timeOffset"), brushTool->cloneTimeOffset()).toInt());
+      const QString colorText =
+          brushSettings.value(QStringLiteral("brush/brushColor")).toString();
+      const QStringList channels = colorText.split(QLatin1Char(','),
+                                                    Qt::KeepEmptyParts);
+      if (channels.size() == 4) {
+        bool okR = false, okG = false, okB = false, okA = false;
+        const float r = channels[0].toFloat(&okR);
+        const float g = channels[1].toFloat(&okG);
+        const float b = channels[2].toFloat(&okB);
+        const float a = channels[3].toFloat(&okA);
+        if (okR && okG && okB && okA) {
+          brushTool->setColor(FloatRGBA(std::clamp(r, 0.0f, 1.0f),
+                                        std::clamp(g, 0.0f, 1.0f),
+                                        std::clamp(b, 0.0f, 1.0f),
+                                        std::clamp(a, 0.0f, 1.0f)));
+        }
+      }
+    }
+  }
+  impl_->toolOptionsBar->syncBrushOptionsFromTool();
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    if (auto *motion = app->motionSketchTool()) {
+      QSettings motionSettings;
+      motion->setSmoothing(motionSettings.value(
+          QStringLiteral("motionSketch/smoothing"), motion->smoothing() * 100.0f).toFloat() /
+                           100.0f);
+      motion->setSampleRate(motionSettings.value(
+          QStringLiteral("motionSketch/sampleRate"), motion->sampleRate()).toFloat());
+      motion->setShowWireframe(motionSettings.value(
+          QStringLiteral("motionSketch/showWireframe"), motion->showWireframe()).toBool());
+      motion->setShowBackground(motionSettings.value(
+          QStringLiteral("motionSketch/showBackground"), motion->showBackground()).toBool());
+    }
+  }
+  impl_->toolOptionsBar->syncMotionSketchOptionsFromTool();
 
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<LayerSelectionChangedEvent>([this](const LayerSelectionChangedEvent&) {
