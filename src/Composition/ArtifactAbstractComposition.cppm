@@ -51,6 +51,9 @@ import Artifact.Layer.CloneEffectSupport;
 import Artifact.Layer.Factory;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.SurfaceFX;
+import Artifact.Effect.Keying.ChromaKey;
+import Artifact.Effect.Keying.LumaKey;
+import Artifact.Effect.Keying.DifferenceKey;
 import Artifact.Render.CompositionViewDrawing;
 import Artifact.Event.Types;
 import Event.Bus;
@@ -796,6 +799,15 @@ SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
   const QString effectId = eobj.value(QStringLiteral("id")).toString();
   if (effectId == QStringLiteral("surfacefx")) {
     effect = makeShared<SurfaceFXEffect>();
+  } else if (effectId == QStringLiteral("chroma_key") ||
+             effectId == QStringLiteral("Effect.Keying.ChromaKey")) {
+    effect = makeShared<ChromaKeyEffect>();
+  } else if (effectId == QStringLiteral("luma_key") ||
+             effectId == QStringLiteral("Effect.Keying.LumaKey")) {
+    effect = makeShared<LumaKeyEffect>();
+  } else if (effectId == QStringLiteral("difference_key") ||
+             effectId == QStringLiteral("Effect.Keying.DifferenceKey")) {
+    effect = makeShared<DifferenceKeyEffect>();
   } else {
     effect = makeShared<ArtifactAbstractEffect>();
   }
