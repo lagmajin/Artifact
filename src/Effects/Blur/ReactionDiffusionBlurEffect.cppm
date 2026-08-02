@@ -135,12 +135,27 @@ std::vector<AbstractProperty> ReactionDiffusionBlurEffect::getProperties() const
 void ReactionDiffusionBlurEffect::setPropertyValue(const UniString& name,
                                                     const QVariant& value) {
     const QString key = name.toQString();
-    if (key == QStringLiteral("Blur Radius")) blurRadius_ = std::clamp(value.toFloat(), 0.0f, 80.0f);
-    else if (key == QStringLiteral("Feed")) feed_ = std::clamp(value.toFloat(), 0.01f, 0.1f);
-    else if (key == QStringLiteral("Kill")) kill_ = std::clamp(value.toFloat(), 0.01f, 0.1f);
-    else if (key == QStringLiteral("Pattern Strength")) patternStrength_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
+    if (key == QStringLiteral("Blur Radius")) {
+        const float v = value.toFloat();
+        blurRadius_ = std::isfinite(v) ? std::clamp(v, 0.0f, 80.0f) : 8.0f;
+    }
+    else if (key == QStringLiteral("Feed")) {
+        const float v = value.toFloat();
+        feed_ = std::isfinite(v) ? std::clamp(v, 0.01f, 0.1f) : 0.055f;
+    }
+    else if (key == QStringLiteral("Kill")) {
+        const float v = value.toFloat();
+        kill_ = std::isfinite(v) ? std::clamp(v, 0.01f, 0.1f) : 0.062f;
+    }
+    else if (key == QStringLiteral("Pattern Strength")) {
+        const float v = value.toFloat();
+        patternStrength_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.65f;
+    }
     else if (key == QStringLiteral("Iterations")) iterations_ = std::clamp(value.toInt(), 1, 96);
-    else if (key == QStringLiteral("Evolution")) evolution_ = value.toFloat();
+    else if (key == QStringLiteral("Evolution")) {
+        const float v = value.toFloat();
+        evolution_ = std::isfinite(v) ? v : 0.0f;
+    }
     syncImpl();
 }
 
