@@ -581,6 +581,12 @@ RenderScheduler* BatchRenderer::scheduler() const {
 
 void BatchRenderer::renderRange(const FrameRange& range, TaskPriority priority) {
     if (!impl_->scheduler_) return;
+
+    const auto firstFrame = range.startPosition().framePosition();
+    const auto lastFrame = range.endPosition().framePosition();
+    if (firstFrame > lastFrame) {
+        return;
+    }
     
     impl_->batchRange_ = range;
     impl_->batchRunning_ = true;
@@ -589,11 +595,14 @@ void BatchRenderer::renderRange(const FrameRange& range, TaskPriority priority) 
     emit batchStarted();
     
     // Create tasks for each frame in range
-        for (long long f = range.startPosition().framePosition(); f <= range.endPosition().framePosition(); ++f) {
+        for (long long f = firstFrame;; ++f) {
         auto* task = new RenderTask(FrameRange(FramePosition(f), FramePosition(f)), priority);
         task->setDeduplicationKey(
             QStringLiteral("batch-frame:%1").arg(f));
         impl_->scheduler_->submitTask(task);
+        if (f == lastFrame) {
+            break;
+        }
     }
     
     impl_->scheduler_->startExecution();
@@ -614,8 +623,9 @@ void BatchRenderer::renderMissingFrames() {
 }
 
 void BatchRenderer::renderAroundFrame(const FramePosition& frame, int radius) {
-    FrameRange range(FramePosition(frame.framePosition() - radius),
-                   FramePosition(frame.framePosition() + radius));
+    const auto safeRadius = std::max(0, radius);
+    FrameRange range(FramePosition(frame.framePosition() - safeRadius),
+                   FramePosition(frame.framePosition() + safeRadius));
     renderRange(range, TaskPriority::High);
 }
 
