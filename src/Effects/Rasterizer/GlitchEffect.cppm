@@ -93,10 +93,10 @@ public:
 
 GlitchEffect::GlitchEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();}
 GlitchEffect::~GlitchEffect()=default;
-float GlitchEffect::intensity()const{return intensity_;}void GlitchEffect::setIntensity(float v){intensity_=std::clamp(v,0.0f,1.0f);syncImpls();}
-float GlitchEffect::colorShift()const{return colorShift_;}void GlitchEffect::setColorShift(float v){colorShift_=std::clamp(v,0.0f,1.0f);syncImpls();}
-float GlitchEffect::scanlines()const{return scanlines_;}void GlitchEffect::setScanlines(float v){scanlines_=std::clamp(v,0.0f,1.0f);syncImpls();}
-int GlitchEffect::seed()const{return seed_;}void GlitchEffect::setSeed(int v){seed_=v;syncImpls();}
+float GlitchEffect::intensity()const{return intensity_;}void GlitchEffect::setIntensity(float v){intensity_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.3f;syncImpls();}
+float GlitchEffect::colorShift()const{return colorShift_;}void GlitchEffect::setColorShift(float v){colorShift_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.5f;syncImpls();}
+float GlitchEffect::scanlines()const{return scanlines_;}void GlitchEffect::setScanlines(float v){scanlines_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.5f;syncImpls();}
+int GlitchEffect::seed()const{return seed_;}void GlitchEffect::setSeed(int v){seed_=std::clamp(v,0,9999);syncImpls();}
 std::vector<AbstractProperty> GlitchEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(4);
