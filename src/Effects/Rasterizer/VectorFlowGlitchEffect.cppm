@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <vector>
 #include <QString>
@@ -63,11 +64,11 @@ std::vector<AbstractProperty> VectorFlowGlitchEffect::getProperties() const {
 void VectorFlowGlitchEffect::setPropertyValue(const UniString& name,
                                                const QVariant& value) {
     const QString key = name.toQString();
-    if (key == QStringLiteral("Glitch Amount")) glitchAmount_ = std::clamp(value.toFloat(), 0.0f, 200.0f);
-    else if (key == QStringLiteral("Frequency")) frequency_ = std::clamp(value.toFloat(), 0.001f, 1.0f);
-    else if (key == QStringLiteral("Chromatic Aberration")) chromaticAberration_ = std::clamp(value.toFloat(), 0.0f, 50.0f);
-    else if (key == QStringLiteral("Edge Flow Influence")) edgeFlowInfluence_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
-    else if (key == QStringLiteral("Evolution")) seed_ = value.toFloat();
+    if (key == QStringLiteral("Glitch Amount")) { const float v = value.toFloat(); glitchAmount_ = std::isfinite(v) ? std::clamp(v, 0.0f, 200.0f) : 20.0f; }
+    else if (key == QStringLiteral("Frequency")) { const float v = value.toFloat(); frequency_ = std::isfinite(v) ? std::clamp(v, 0.001f, 1.0f) : 0.05f; }
+    else if (key == QStringLiteral("Chromatic Aberration")) { const float v = value.toFloat(); chromaticAberration_ = std::isfinite(v) ? std::clamp(v, 0.0f, 50.0f) : 5.0f; }
+    else if (key == QStringLiteral("Edge Flow Influence")) { const float v = value.toFloat(); edgeFlowInfluence_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.7f; }
+    else if (key == QStringLiteral("Evolution")) { const float v = value.toFloat(); seed_ = std::isfinite(v) ? v : 0.0f; }
     syncImpl();
 }
 
