@@ -5,6 +5,7 @@ module;
 #include <QHash>
 #include <QDebug>
 #include <cmath>
+#include <cstdint>
 
 #include <iostream>
 #include <vector>
@@ -72,6 +73,7 @@ namespace Artifact
     int endFrame_ = 100;
     int currentFrame_ = 0;
     bool enabled_ = true;
+    ImageF32x4RGBAWithCache output_;
   };
 
   AbstractGeneratorEffector::Impl::Impl()
@@ -95,8 +97,20 @@ namespace Artifact
 
   void AbstractGeneratorEffector::apply()
   {
-    qDebug() << "[AbstractGeneratorEffector] apply() called";
-    // TODO: 実装
+    if (!impl_->enabled_) {
+        return;
+    }
+    if (impl_->currentFrame_ < impl_->startFrame_ ||
+        impl_->currentFrame_ > impl_->endFrame_) {
+        return;
+    }
+    generateContent(impl_->output_, impl_->currentFrame_,
+                    impl_->outputWidth_, impl_->outputHeight_);
+  }
+
+  const ImageF32x4RGBAWithCache& AbstractGeneratorEffector::output() const
+  {
+    return impl_->output_;
   }
 
   void AbstractGeneratorEffector::applyToLayer(ArtifactCore::SharedPtr<ArtifactAbstractLayer> layer)
@@ -140,8 +154,15 @@ namespace Artifact
 
   void AbstractGeneratorEffector::setOutputSize(int width, int height)
   {
-    impl_->outputWidth_ = width;
-    impl_->outputHeight_ = height;
+    const int normalizedWidth = std::max(1, width);
+    const int normalizedHeight = std::max(1, height);
+    if (impl_->outputWidth_ == normalizedWidth &&
+        impl_->outputHeight_ == normalizedHeight) {
+      return;
+    }
+    impl_->outputWidth_ = normalizedWidth;
+    impl_->outputHeight_ = normalizedHeight;
+    impl_->output_ = ImageF32x4RGBAWithCache();
   }
 
   int AbstractGeneratorEffector::outputWidth() const
@@ -156,8 +177,8 @@ namespace Artifact
 
   void AbstractGeneratorEffector::setFrameRange(int startFrame, int endFrame)
   {
-    impl_->startFrame_ = startFrame;
-    impl_->endFrame_ = endFrame;
+    impl_->startFrame_ = std::min(startFrame, endFrame);
+    impl_->endFrame_ = std::max(startFrame, endFrame);
   }
 
   int AbstractGeneratorEffector::startFrame() const
@@ -242,7 +263,10 @@ namespace Artifact
 
   void GradientGeneratorEffector::setGradientType(GradientType type)
   {
-    gradientType_ = type;
+    const int value = std::clamp(static_cast<int>(type),
+                                 static_cast<int>(Linear),
+                                 static_cast<int>(Conic));
+    gradientType_ = static_cast<GradientType>(value);
   }
 
   GradientGeneratorEffector::GradientType GradientGeneratorEffector::gradientType() const
@@ -275,6 +299,9 @@ namespace Artifact
                                                   int width, 
                                                   int height)
   {
+    if (width <= 0 || height <= 0) {
+      return;
+    }
     cv::Mat mat(height, width, CV_32FC4);
     
     cv::Vec4f cStart(startColor_.redF(), startColor_.greenF(), startColor_.blueF(), startColor_.alphaF());
@@ -286,16 +313,32 @@ Parallel::For(0, height, width * height, [&](int y) {
             cv::Vec4f color = cStart * (1.0f - t) + cEnd * t;
             mat.row(y).setTo(color);
         });
-    } else {
+    } else if (gradientType_ == Radial) {
         // Radial (簡易実装: 中心から円形に)
         float cx = width / 2.0f;
         float cy = height / 2.0f;
-        float maxDist = std::sqrt(cx*cx + cy*cy);
+        float maxDist = std::max(1.0f, std::sqrt(cx*cx + cy*cy));
 Parallel::For(0, height, width * height, [&](int y) {
             cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < width; ++x) {
                 float dist = std::sqrt((x-cx)*(x-cx) + (y-cy)*(y-cy));
                 float t = std::min(1.0f, dist / maxDist);
+                row[x] = cStart * (1.0f - t) + cEnd * t;
+            }
+        });
+    } else {
+        // Conic: angle around the center, clockwise from the positive X axis.
+        const float cx = width / 2.0f;
+        const float cy = height / 2.0f;
+        constexpr float twoPi = 6.28318530717958647692f;
+        constexpr float pi = 3.14159265358979323846f;
+        Parallel::For(0, height, width * height, [&](int y) {
+            cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
+            for (int x = 0; x < width; ++x) {
+                float angle = std::atan2(static_cast<float>(y) - cy,
+                                         static_cast<float>(x) - cx);
+                float t = (angle + pi) / twoPi;
+                t = std::clamp(t, 0.0f, 1.0f);
                 row[x] = cStart * (1.0f - t) + cEnd * t;
             }
         });
@@ -323,7 +366,10 @@ Parallel::For(0, height, width * height, [&](int y) {
 
   void NoiseGeneratorEffector::setNoiseType(NoiseType type)
   {
-    noiseType_ = type;
+    const int value = std::clamp(static_cast<int>(type),
+                                 static_cast<int>(Perlin),
+                                 static_cast<int>(WhiteNoise));
+    noiseType_ = static_cast<NoiseType>(value);
   }
 
   NoiseGeneratorEffector::NoiseType NoiseGeneratorEffector::noiseType() const
@@ -333,7 +379,7 @@ Parallel::For(0, height, width * height, [&](int y) {
 
   void NoiseGeneratorEffector::setScale(float scale)
   {
-    scale_ = scale;
+    scale_ = std::isfinite(scale) ? std::max(0.001f, std::abs(scale)) : 0.001f;
   }
 
   float NoiseGeneratorEffector::scale() const
@@ -343,7 +389,7 @@ Parallel::For(0, height, width * height, [&](int y) {
 
   void NoiseGeneratorEffector::setAmplitude(float amplitude)
   {
-    amplitude_ = amplitude;
+    amplitude_ = std::isfinite(amplitude) ? amplitude : 0.0f;
   }
 
   float NoiseGeneratorEffector::amplitude() const
@@ -353,7 +399,7 @@ Parallel::For(0, height, width * height, [&](int y) {
 
   void NoiseGeneratorEffector::setOctaves(int octaves)
   {
-    octaves_ = octaves;
+    octaves_ = std::clamp(octaves, 1, 12);
   }
 
   int NoiseGeneratorEffector::octaves() const
@@ -366,18 +412,52 @@ Parallel::For(0, height, width * height, [&](int y) {
                                                int width, 
                                                int height)
   {
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+
+    // Build deterministic multi-octave value noise.  The previous implementation
+    // ignored scale/octaves and produced a different image on every call.
+    cv::Mat accumulated = cv::Mat::zeros(height, width, CV_32FC1);
+    const int octaveCount = std::clamp(octaves_, 1, 12);
+    const float baseScale = std::max(0.001f, std::abs(scale_));
+    float normalization = 0.0f;
+    for (int octave = 0; octave < octaveCount; ++octave) {
+      const float frequency = baseScale * std::pow(2.0f, static_cast<float>(octave));
+      const int maxGridWidth = std::max(2, std::min(width, 512));
+      const int maxGridHeight = std::max(2, std::min(height, 512));
+      const int gridWidth = std::clamp(
+          static_cast<int>(std::ceil(width * frequency)), 2, maxGridWidth);
+      const int gridHeight = std::clamp(
+          static_cast<int>(std::ceil(height * frequency)), 2, maxGridHeight);
+      const bool whiteNoise = noiseType_ == WhiteNoise;
+      cv::Mat coarse(whiteNoise ? height : gridHeight,
+                     whiteNoise ? width : gridWidth, CV_32FC1);
+      cv::RNG rng(static_cast<std::uint64_t>(frameNumber + 1) * 1009u +
+                  static_cast<std::uint64_t>(octave + 1) * 9176u);
+      rng.fill(coarse, cv::RNG::UNIFORM, 0.0f, 1.0f);
+      cv::Mat octaveNoise;
+      if (whiteNoise) {
+        octaveNoise = coarse;
+      } else {
+        cv::resize(coarse, octaveNoise, cv::Size(width, height), 0.0, 0.0,
+                   cv::INTER_LINEAR);
+      }
+      const float weight = 1.0f / std::pow(2.0f, static_cast<float>(octave));
+      accumulated += octaveNoise * weight;
+      normalization += weight;
+    }
+    accumulated *= amplitude_ / std::max(normalization, 1.0e-6f);
+
     cv::Mat mat(height, width, CV_32FC4);
-    
-    // 簡易的なノイズ生成（本来はPerlin/Simplexノイズライブラリを使用する）
-    cv::Mat noise(height, width, CV_32FC4);
-    cv::randu(noise, cv::Scalar::all(0.0f), cv::Scalar::all(amplitude_));
-    
-    // アルファチャンネルは1.0に固定
-    int from_to[] = { 0,0, 1,1, 2,2 };
-    cv::mixChannels(&noise, 1, &mat, 1, from_to, 3);
-    cv::Mat alpha(height, width, CV_32FC1, cv::Scalar(1.0f));
-    int alpha_from_to[] = { 0, 3 };
-    cv::mixChannels(&alpha, 1, &mat, 1, alpha_from_to, 1);
+    for (int y = 0; y < height; ++y) {
+      const float* sourceRow = accumulated.ptr<float>(y);
+      cv::Vec4f* destinationRow = mat.ptr<cv::Vec4f>(y);
+      for (int x = 0; x < width; ++x) {
+        const float value = sourceRow[x];
+        destinationRow[x] = cv::Vec4f(value, value, value, 1.0f);
+      }
+    }
 
     dst.image().setFromRGBA32F(mat.ptr<float>(), width, height);
     dst.UpdateGpuTextureFromCpuData();
@@ -401,7 +481,10 @@ Parallel::For(0, height, width * height, [&](int y) {
 
   void ShapeGeneratorEffector::setShapeType(ShapeType type)
   {
-    shapeType_ = type;
+    const int value = std::clamp(static_cast<int>(type),
+                                 static_cast<int>(Rectangle),
+                                 static_cast<int>(Polygon));
+    shapeType_ = static_cast<ShapeType>(value);
   }
 
   ShapeGeneratorEffector::ShapeType ShapeGeneratorEffector::shapeType() const
@@ -431,7 +514,7 @@ Parallel::For(0, height, width * height, [&](int y) {
 
   void ShapeGeneratorEffector::setShapeSize(float size)
   {
-    shapeSize_ = size;
+    shapeSize_ = std::isfinite(size) ? std::clamp(size, 0.0f, 1.0f) : 0.5f;
   }
 
   float ShapeGeneratorEffector::shapeSize() const
@@ -444,6 +527,9 @@ Parallel::For(0, height, width * height, [&](int y) {
                                                int width, 
                                                int height)
   {
+    if (width <= 0 || height <= 0) {
+      return;
+    }
     cv::Scalar bg(backgroundColor_.redF(), backgroundColor_.greenF(), backgroundColor_.blueF(), backgroundColor_.alphaF());
     cv::Scalar fg(shapeColor_.redF(), shapeColor_.greenF(), shapeColor_.blueF(), shapeColor_.alphaF());
     
@@ -451,7 +537,8 @@ Parallel::For(0, height, width * height, [&](int y) {
 
     int cx = width / 2;
     int cy = height / 2;
-    int size = static_cast<int>(std::min(width, height) * shapeSize_);
+    int size = std::max(0, static_cast<int>(
+        std::min(width, height) * std::max(0.0f, shapeSize_)));
 
     switch (shapeType_) {
         case Rectangle:

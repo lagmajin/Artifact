@@ -69,6 +69,7 @@ export namespace Artifact
     // レイヤーに適用
     void apply();
     void applyToLayer(ArtifactCore::SharedPtr<ArtifactAbstractLayer> layer);
+    const ImageF32x4RGBAWithCache& output() const;
 
     // 基本情報
     void setName(const UniString& name);
