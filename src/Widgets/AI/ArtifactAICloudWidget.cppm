@@ -2526,6 +2526,15 @@ void Artifact::ArtifactAICloudWidget::refreshModelList() {
     return;
   }
 
+  constexpr qsizetype kMaxCurlModelListResponseBytes = 16 * 1024 * 1024;
+  if (result.stdoutBytes.isEmpty() ||
+      result.stdoutBytes.size() > kMaxCurlModelListResponseBytes) {
+    appendTranscriptMessage(
+        QStringLiteral("system"),
+        QStringLiteral("Model list error: response is too large"));
+    updateModelList();
+    return;
+  }
   const QJsonDocument doc = QJsonDocument::fromJson(result.stdoutBytes);
   if (doc.isNull()) {
     appendTranscriptMessage(QStringLiteral("system"),
