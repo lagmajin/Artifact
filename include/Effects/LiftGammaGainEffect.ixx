@@ -56,9 +56,9 @@ public:
         liftB_ = std::clamp(b, -1.0f, 1.0f);
         syncImpls();
     }
-    void setLiftR(float v) { liftR_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
-    void setLiftG(float v) { liftG_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
-    void setLiftB(float v) { liftB_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
+    void setLiftR(float v) { liftR_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; syncImpls(); }
+    void setLiftG(float v) { liftG_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; syncImpls(); }
+    void setLiftB(float v) { liftB_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; syncImpls(); }
     float liftR() const { return liftR_; }
     float liftG() const { return liftG_; }
     float liftB() const { return liftB_; }
@@ -70,9 +70,9 @@ public:
         gammaB_ = std::clamp(b, 0.1f, 5.0f);
         syncImpls();
     }
-    void setGammaR(float v) { gammaR_ = std::clamp(v, 0.1f, 5.0f); syncImpls(); }
-    void setGammaG(float v) { gammaG_ = std::clamp(v, 0.1f, 5.0f); syncImpls(); }
-    void setGammaB(float v) { gammaB_ = std::clamp(v, 0.1f, 5.0f); syncImpls(); }
+    void setGammaR(float v) { gammaR_ = std::isfinite(v) ? std::clamp(v, 0.1f, 5.0f) : 1.0f; syncImpls(); }
+    void setGammaG(float v) { gammaG_ = std::isfinite(v) ? std::clamp(v, 0.1f, 5.0f) : 1.0f; syncImpls(); }
+    void setGammaB(float v) { gammaB_ = std::isfinite(v) ? std::clamp(v, 0.1f, 5.0f) : 1.0f; syncImpls(); }
     float gammaR() const { return gammaR_; }
     float gammaG() const { return gammaG_; }
     float gammaB() const { return gammaB_; }
@@ -84,9 +84,9 @@ public:
         gainB_ = std::clamp(b, 0.0f, 4.0f);
         syncImpls();
     }
-    void setGainR(float v) { gainR_ = std::clamp(v, 0.0f, 4.0f); syncImpls(); }
-    void setGainG(float v) { gainG_ = std::clamp(v, 0.0f, 4.0f); syncImpls(); }
-    void setGainB(float v) { gainB_ = std::clamp(v, 0.0f, 4.0f); syncImpls(); }
+    void setGainR(float v) { gainR_ = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.0f; syncImpls(); }
+    void setGainG(float v) { gainG_ = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.0f; syncImpls(); }
+    void setGainB(float v) { gainB_ = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.0f; syncImpls(); }
     float gainR() const { return gainR_; }
     float gainG() const { return gainG_; }
     float gainB() const { return gainB_; }
