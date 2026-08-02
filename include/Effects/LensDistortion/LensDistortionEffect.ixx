@@ -48,19 +48,19 @@ private:
 public:
     LensDistortionEffectCPUImpl() = default;
 
-    void setDistortion(float v) { distortion_ = v; }
+    void setDistortion(float v) { distortion_ = std::isfinite(v) ? std::clamp(v, -100.0f, 100.0f) : 0.0f; }
     float distortion() const { return distortion_; }
 
-    void setCenterX(float cx) { centerX_ = cx; }
+    void setCenterX(float cx) { centerX_ = std::isfinite(cx) ? std::clamp(cx, 0.0f, 1.0f) : 0.5f; }
     float centerX() const { return centerX_; }
 
-    void setCenterY(float cy) { centerY_ = cy; }
+    void setCenterY(float cy) { centerY_ = std::isfinite(cy) ? std::clamp(cy, 0.0f, 1.0f) : 0.5f; }
     float centerY() const { return centerY_; }
 
     void setInvertDistortion(bool v) { invertDistortion_ = v; }
     bool invertDistortion() const { return invertDistortion_; }
 
-    void setZoom(float v) { zoom_ = v; }
+    void setZoom(float v) { zoom_ = std::isfinite(v) ? std::max(0.01f, v) : 1.0f; }
     float zoom() const { return zoom_; }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
@@ -77,19 +77,19 @@ private:
 public:
     LensDistortionEffectGPUImpl() = default;
 
-    void setDistortion(float v) { distortion_ = v; }
+    void setDistortion(float v) { distortion_ = std::isfinite(v) ? std::clamp(v, -100.0f, 100.0f) : 0.0f; }
     float distortion() const { return distortion_; }
 
-    void setCenterX(float cx) { centerX_ = cx; }
+    void setCenterX(float cx) { centerX_ = std::isfinite(cx) ? std::clamp(cx, 0.0f, 1.0f) : 0.5f; }
     float centerX() const { return centerX_; }
 
-    void setCenterY(float cy) { centerY_ = cy; }
+    void setCenterY(float cy) { centerY_ = std::isfinite(cy) ? std::clamp(cy, 0.0f, 1.0f) : 0.5f; }
     float centerY() const { return centerY_; }
 
     void setInvertDistortion(bool v) { invertDistortion_ = v; }
     bool invertDistortion() const { return invertDistortion_; }
 
-    void setZoom(float v) { zoom_ = v; }
+    void setZoom(float v) { zoom_ = std::isfinite(v) ? std::max(0.01f, v) : 1.0f; }
     float zoom() const { return zoom_; }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
