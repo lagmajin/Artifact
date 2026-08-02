@@ -66,6 +66,7 @@ namespace Artifact
   ArtifactToolManager toolManager_;
   ArtifactMotionSketchTool motionSketchTool_;
   ArtifactPuppetTool puppetTool_;
+  ArtifactBrushTool brushTool_;
   EnvironmentVariableManager manager_;
   ArtifactCompositionManager compositionManager_;
 
@@ -85,6 +86,7 @@ namespace Artifact
   ArtifactMotionSketchTool* motionSketchTool();
   ArtifactCompositionManager* compositionManager();
   ArtifactPuppetTool* puppetTool();
+  ArtifactBrushTool* brushTool();
  };
 
  ArtifactApplicationManager::Impl::Impl()
@@ -146,6 +148,11 @@ ArtifactLayerSelectionManager* ArtifactApplicationManager::Impl::layerSelectionM
   return &puppetTool_;
  }
 
+ ArtifactBrushTool* ArtifactApplicationManager::Impl::brushTool()
+ {
+  return &brushTool_;
+ }
+
  ArtifactApplicationManager::ArtifactApplicationManager() :impl_(new Impl())
  {
 
@@ -202,6 +209,11 @@ ArtifactActiveContextService* ArtifactApplicationManager::activeContextService()
  ArtifactPuppetTool* ArtifactApplicationManager::puppetTool() const
  {
   return impl_->puppetTool();
+ }
+
+ ArtifactBrushTool* ArtifactApplicationManager::brushTool() const
+ {
+  return impl_->brushTool();
  }
 
  entt::registry& ArtifactApplicationManager::registry()
