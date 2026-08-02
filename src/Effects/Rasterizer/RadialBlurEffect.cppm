@@ -57,11 +57,11 @@ Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
 
 RadialBlurEffect::RadialBlurEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();}
 RadialBlurEffect::~RadialBlurEffect()=default;
-float RadialBlurEffect::amount()const{return amount_;}void RadialBlurEffect::setAmount(float v){amount_=std::clamp(v,0.0f,2.0f);syncImpls();}
+float RadialBlurEffect::amount()const{return amount_;}void RadialBlurEffect::setAmount(float v){amount_=std::isfinite(v)?std::clamp(v,0.0f,2.0f):0.5f;syncImpls();}
 int RadialBlurEffect::quality()const{return quality_;}void RadialBlurEffect::setQuality(int v){quality_=std::clamp(v,2,32);syncImpls();}
-float RadialBlurEffect::centerX()const{return cx_;}void RadialBlurEffect::setCenterX(float v){cx_=std::clamp(v,0.0f,1.0f);syncImpls();}
-float RadialBlurEffect::centerY()const{return cy_;}void RadialBlurEffect::setCenterY(float v){cy_=std::clamp(v,0.0f,1.0f);syncImpls();}
-float RadialBlurEffect::mode()const{return mode_;}void RadialBlurEffect::setMode(float v){mode_=std::clamp(v,0.0f,1.0f);syncImpls();}
+float RadialBlurEffect::centerX()const{return cx_;}void RadialBlurEffect::setCenterX(float v){cx_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.5f;syncImpls();}
+float RadialBlurEffect::centerY()const{return cy_;}void RadialBlurEffect::setCenterY(float v){cy_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.5f;syncImpls();}
+float RadialBlurEffect::mode()const{return mode_;}void RadialBlurEffect::setMode(float v){mode_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.0f;syncImpls();}
 std::vector<AbstractProperty> RadialBlurEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(5);
