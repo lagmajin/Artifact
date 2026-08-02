@@ -12,6 +12,7 @@ module;
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QSaveFile>
 #include <QTemporaryFile>
 #include <QTimer>
 #include <QSet>
@@ -283,8 +284,8 @@ public:
     if (!revisions_.isEmpty()) {
       const auto &latest = revisions_.last();
       QFile file(snapshotFileFor(latest.snapshotFile));
-      if (file.size() <= 0 || file.size() > kMaxRevisionSnapshotBytes ||
-          !file.open(QIODevice::ReadOnly)) {
+      if (file.size() > 0 && file.size() <= kMaxRevisionSnapshotBytes &&
+          file.open(QIODevice::ReadOnly)) {
         const QByteArray bytes = file.readAll();
         file.close();
         const QJsonDocument doc = QJsonDocument::fromJson(bytes);
@@ -340,13 +341,16 @@ public:
     root[QStringLiteral("headRevisionId")] = headRevisionId_;
     root[QStringLiteral("revisions")] = revisionsArray;
 
-    QFile file(ledgerPath_);
+    QSaveFile file(ledgerPath_);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
       return false;
     }
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    file.close();
-    return true;
+    const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    if (file.write(payload) != payload.size()) {
+      file.cancelWriting();
+      return false;
+    }
+    return file.commit();
   }
 
   ProjectRevisionRecord makeRecord(const QJsonObject &snapshot,
@@ -372,13 +376,16 @@ public:
     if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
       return false;
     }
-    QFile file(dir.filePath(snapshotFile));
+    QSaveFile file(dir.filePath(snapshotFile));
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
       return false;
     }
-    file.write(QJsonDocument(snapshot).toJson(QJsonDocument::Indented));
-    file.close();
-    return true;
+    const QByteArray payload = QJsonDocument(snapshot).toJson(QJsonDocument::Indented);
+    if (file.write(payload) != payload.size()) {
+      file.cancelWriting();
+      return false;
+    }
+    return file.commit();
   }
 
   std::optional<QJsonObject> loadSnapshotById(const QString &revisionId) const {
