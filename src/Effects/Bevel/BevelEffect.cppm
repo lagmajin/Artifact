@@ -137,8 +137,8 @@ public:
         void* mapped = nullptr; context->MapBuffer(params, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
         if (!mapped) { applyCPU(src, dst); return; }
         Params p{cpuImpl_.strength_, cpuImpl_.softness_, cpuImpl_.edgeMode_ ? 1.0f : 0.0f, 0.0f,
-            {cpuImpl_.highlightColor_.blueF(), cpuImpl_.highlightColor_.greenF(), cpuImpl_.highlightColor_.redF()}, 0.0f,
-            {cpuImpl_.shadowColor_.blueF(), cpuImpl_.shadowColor_.greenF(), cpuImpl_.shadowColor_.redF()}, 0.0f};
+            {cpuImpl_.highlightColor_.redF(), cpuImpl_.highlightColor_.greenF(), cpuImpl_.highlightColor_.blueF()}, 0.0f,
+            {cpuImpl_.shadowColor_.redF(), cpuImpl_.shadowColor_.greenF(), cpuImpl_.shadowColor_.blueF()}, 0.0f};
         std::memcpy(mapped, &p, sizeof(p)); context->UnmapBuffer(params, Diligent::MAP_WRITE);
         static Diligent::ShaderResourceVariableDesc vars[] = {
             {Diligent::SHADER_TYPE_COMPUTE, "BevelParams", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
@@ -179,9 +179,9 @@ BevelEffect::BevelEffect() {
 BevelEffect::~BevelEffect() = default;
 
 float BevelEffect::strength() const { return strength_; }
-void BevelEffect::setStrength(float v) { strength_ = std::clamp(v, 0.0f, 5.0f); syncImpls(); }
+void BevelEffect::setStrength(float v) { strength_ = std::isfinite(v) ? std::clamp(v, 0.0f, 5.0f) : 1.0f; syncImpls(); }
 float BevelEffect::softness() const { return softness_; }
-void BevelEffect::setSoftness(float v) { softness_ = std::max(0.0f, v); syncImpls(); }
+void BevelEffect::setSoftness(float v) { softness_ = std::isfinite(v) ? std::clamp(v, 0.0f, 64.0f) : 2.0f; syncImpls(); }
 bool BevelEffect::edgeMode() const { return edgeMode_; }
 void BevelEffect::setEdgeMode(bool v) { edgeMode_ = v; syncImpls(); }
 
