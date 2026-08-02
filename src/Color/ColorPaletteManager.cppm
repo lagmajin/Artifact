@@ -3,6 +3,7 @@ module;
 #include <QColor>
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QUuid>
@@ -18,6 +19,8 @@ namespace ArtifactCore::Color {
 namespace {
 
 constexpr int kSchemaVersion = 1;
+constexpr qint64 kMaxPaletteFileBytes = 16LL * 1024LL * 1024LL;
+constexpr qsizetype kMaxPaletteEntries = 100000;
 
 FloatColor clampColor(const FloatColor& color)
 {
@@ -163,8 +166,14 @@ QStringList ColorPaletteManager::paletteNames() const
 
 bool ColorPaletteManager::loadFromFile(const QString& filePath)
 {
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
+    const QString normalizedPath = filePath.trimmed();
+    if (normalizedPath.isEmpty() || !QFileInfo::exists(normalizedPath)) {
+        lastError_ = QStringLiteral("Palette file path is invalid");
+        return false;
+    }
+    QFile file(normalizedPath);
+    if (file.size() <= 0 || file.size() > kMaxPaletteFileBytes ||
+        !file.open(QIODevice::ReadOnly)) {
         lastError_ = QStringLiteral("Failed to open palette file for reading");
         return false;
     }
@@ -178,7 +187,9 @@ bool ColorPaletteManager::loadFromFile(const QString& filePath)
 
     palettes_.clear();
     if (doc.isArray()) {
+        qsizetype loadedCount = 0;
         for (const auto& value : doc.array()) {
+            if (loadedCount++ >= kMaxPaletteEntries) break;
             if (!value.isObject()) continue;
             const ColorPalette palette = ColorPalette::fromJson(value.toObject());
             if (!palette.name.isEmpty()) {
