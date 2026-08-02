@@ -1,4 +1,4 @@
-﻿module;
+module;
 #define _CRT_SECURE_NO_WARNINGS
 #pragma warning(disable : 4996)
 #include <cstdio>
@@ -7,6 +7,8 @@
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QJsonObject>
+#include <QSysInfo>
+#include <QThread>
 
 module FarmWorkerMain;
 
@@ -32,6 +34,11 @@ int main(int argc, char* argv[]) {
         : workerId;
 
     ArtifactCore::NetworkRPCClient client;
+    QJsonObject capabilities;
+    capabilities[QStringLiteral("os")] = QSysInfo::prettyProductName();
+    capabilities[QStringLiteral("architecture")] = QSysInfo::currentCpuArchitecture();
+    capabilities[QStringLiteral("cpuCount")] = QThread::idealThreadCount();
+    client.setCapabilities(capabilities);
     client.setOnJobAssigned([&](const QJsonObject& jobData) {
         int startFrame = jobData[QStringLiteral("startFrame")].toInt(0);
         int endFrame = jobData[QStringLiteral("endFrame")].toInt(0);
