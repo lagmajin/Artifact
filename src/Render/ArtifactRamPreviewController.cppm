@@ -149,6 +149,14 @@ void ArtifactRamPreviewController::setFrameRange(int64_t start, int64_t end) {
 void ArtifactRamPreviewController::setPreviewRange(int64_t start, int64_t end) {
     impl_->previewStart_ = start;
     impl_->previewEnd_ = end;
+    if (start >= end) {
+        impl_->frameStates_.clear();
+        impl_->jobQueue_ = std::priority_queue<BuildJob>();
+        impl_->readyCount_ = 0;
+        impl_->failedCount_ = 0;
+        impl_->lastError_.clear();
+        return;
+    }
     impl_->ensureFrameStates();
 }
 
@@ -195,6 +203,7 @@ void ArtifactRamPreviewController::startBuild() {
             fs.status = RamPreviewFrameStatus::Failed;
             impl_->failedCount_++;
             fs.failReason = QString("Render returned false");
+            impl_->lastError_ = QString("Frame %1: %2").arg(job.frame).arg(fs.failReason);
             frameFailed(job.frame, fs.failReason);
         }
 
