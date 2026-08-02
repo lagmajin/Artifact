@@ -33,16 +33,16 @@ public:
     BrightnessEffect();
     ~BrightnessEffect() override;
 
-    void setBrightness(float v) { brightness_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
+    void setBrightness(float v) { brightness_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; syncImpls(); }
     float brightness() const { return brightness_; }
 
-    void setContrast(float v) { contrast_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
+    void setContrast(float v) { contrast_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; syncImpls(); }
     float contrast() const { return contrast_; }
 
-    void setHighlights(float v) { highlights_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
+    void setHighlights(float v) { highlights_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; syncImpls(); }
     float highlights() const { return highlights_; }
 
-    void setShadows(float v) { shadows_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
+    void setShadows(float v) { shadows_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; syncImpls(); }
     float shadows() const { return shadows_; }
 
     std::vector<AbstractProperty> getProperties() const override;
