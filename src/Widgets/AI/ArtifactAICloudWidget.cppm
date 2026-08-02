@@ -1687,9 +1687,15 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
                                  : QString();
     QJsonArray argsArray;
     if (!argsText.isEmpty()) {
+      constexpr qsizetype kMaxMcpArgumentsBytes = 4 * 1024 * 1024;
+      const QByteArray argsBytes = argsText.toUtf8();
+      if (argsBytes.size() > kMaxMcpArgumentsBytes) {
+        appendMcpLog(QStringLiteral("Tool call rejected: arguments are too large"));
+        return;
+      }
       QJsonParseError parseError;
       const QJsonDocument argsDoc =
-          QJsonDocument::fromJson(argsText.toUtf8(), &parseError);
+          QJsonDocument::fromJson(argsBytes, &parseError);
       if (parseError.error == QJsonParseError::NoError) {
         if (argsDoc.isArray()) {
           argsArray = argsDoc.array();
