@@ -38,17 +38,17 @@ public:
     float baseAlpha_ = 0.3f;
     float alphaFalloff_ = 0.6f;
 
-    void setGlowGain(float gain) { glowGain_ = gain; }
+    void setGlowGain(float gain) { glowGain_ = std::isfinite(gain) ? std::clamp(gain, 0.0f, 10.0f) : 1.0f; }
     float glowGain() const { return glowGain_; }
-    void setLayerCount(int count) { layerCount_ = count; }
+    void setLayerCount(int count) { layerCount_ = std::clamp(count, 1, 16); }
     int layerCount() const { return layerCount_; }
-    void setBaseSigma(float sigma) { baseSigma_ = sigma; }
+    void setBaseSigma(float sigma) { baseSigma_ = std::isfinite(sigma) ? std::clamp(sigma, 0.1f, 128.0f) : 5.0f; }
     float baseSigma() const { return baseSigma_; }
-    void setSigmaGrowth(float growth) { sigmaGrowth_ = growth; }
+    void setSigmaGrowth(float growth) { sigmaGrowth_ = std::isfinite(growth) ? std::clamp(growth, 0.1f, 4.0f) : 1.8f; }
     float sigmaGrowth() const { return sigmaGrowth_; }
-    void setBaseAlpha(float alpha) { baseAlpha_ = alpha; }
+    void setBaseAlpha(float alpha) { baseAlpha_ = std::isfinite(alpha) ? std::clamp(alpha, 0.0f, 1.0f) : 0.3f; }
     float baseAlpha() const { return baseAlpha_; }
-    void setAlphaFalloff(float falloff) { alphaFalloff_ = falloff; }
+    void setAlphaFalloff(float falloff) { alphaFalloff_ = std::isfinite(falloff) ? std::clamp(falloff, 0.0f, 1.0f) : 0.6f; }
     float alphaFalloff() const { return alphaFalloff_; }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
@@ -72,17 +72,17 @@ public:
 
     ~GlowEffectGPUImpl() override;
 
-    void setGlowGain(float gain) { glowGain_ = gain; }
+    void setGlowGain(float gain) { glowGain_ = std::isfinite(gain) ? std::clamp(gain, 0.0f, 10.0f) : 1.0f; }
     float glowGain() const { return glowGain_; }
-    void setLayerCount(int count) { layerCount_ = count; }
+    void setLayerCount(int count) { layerCount_ = std::clamp(count, 1, 16); }
     int layerCount() const { return layerCount_; }
-    void setBaseSigma(float sigma) { baseSigma_ = sigma; }
+    void setBaseSigma(float sigma) { baseSigma_ = std::isfinite(sigma) ? std::clamp(sigma, 0.1f, 128.0f) : 5.0f; }
     float baseSigma() const { return baseSigma_; }
-    void setSigmaGrowth(float growth) { sigmaGrowth_ = growth; }
+    void setSigmaGrowth(float growth) { sigmaGrowth_ = std::isfinite(growth) ? std::clamp(growth, 0.1f, 4.0f) : 1.8f; }
     float sigmaGrowth() const { return sigmaGrowth_; }
-    void setBaseAlpha(float alpha) { baseAlpha_ = alpha; }
+    void setBaseAlpha(float alpha) { baseAlpha_ = std::isfinite(alpha) ? std::clamp(alpha, 0.0f, 1.0f) : 0.3f; }
     float baseAlpha() const { return baseAlpha_; }
-    void setAlphaFalloff(float falloff) { alphaFalloff_ = falloff; }
+    void setAlphaFalloff(float falloff) { alphaFalloff_ = std::isfinite(falloff) ? std::clamp(falloff, 0.0f, 1.0f) : 0.6f; }
     float alphaFalloff() const { return alphaFalloff_; }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
@@ -317,12 +317,14 @@ void GlowEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     cv::Mat alpha = channels[3];
 
     cv::Mat glowAccum = cv::Mat::zeros(color.size(), color.type());
-    cv::Mat mask;
-    cv::cvtColor(color, mask, cv::COLOR_BGR2GRAY);
-    cv::threshold(mask, mask, 0.6, 1.0, cv::THRESH_TOZERO);
+    cv::Mat mask = channels[0] * 0.299f +
+                   channels[1] * 0.587f +
+                   channels[2] * 0.114f;
+    cv::threshold(mask, mask, 0.6, 0.0, cv::THRESH_TOZERO);
     if (glowGain_ > 0.0f) {
         mask *= glowGain_;
     }
+    cv::min(mask, cv::Scalar::all(1.0), mask);
 
     cv::Mat mask3;
     cv::merge(std::vector<cv::Mat>{mask, mask, mask}, mask3);
