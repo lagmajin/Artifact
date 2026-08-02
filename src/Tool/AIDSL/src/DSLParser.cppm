@@ -128,7 +128,11 @@ std::vector<std::string> tokenize(const std::string& line) {
 
 // Check if token is a number
 bool isNumber(const std::string& s) {
-    return !s.empty() && std::all_of(s.begin(), s.end(), ::isdigit);
+    if (s.empty()) return false;
+    std::size_t start = (s[0] == '+' || s[0] == '-') ? 1 : 0;
+    return start < s.size() &&
+           std::all_of(s.begin() + static_cast<std::ptrdiff_t>(start), s.end(),
+                       [](const char c) { return std::isdigit(static_cast<unsigned char>(c)); });
 }
 
 // Check if token is a float
@@ -179,6 +183,7 @@ bool isBoolean(const std::string& s) {
 
 // Parse value from token
 Value parseValue(const std::string& token) {
+    if (token.empty()) return std::string();
     if (token == "true") return true;
     if (token == "false") return false;
     if (isFloat(token)) return std::stod(token);
@@ -229,8 +234,11 @@ BinOp parseBinOp(const std::string& op) {
 std::unique_ptr<ExprNode> parseFilter(const std::vector<std::string>& tokens, size_t start) {
     // Simplified: property op value [and property op value ...]
     std::vector<std::unique_ptr<ExprNode>> conditions;
+    std::vector<BinOp> joins;
+    BinOp nextJoin = BinOp::And;
     for (size_t i = start; i < tokens.size(); ) {
-        if (tokens[i] == "and") {
+        if (tokens[i] == "and" || tokens[i] == "or") {
+            nextJoin = tokens[i] == "or" ? BinOp::Or : BinOp::And;
             ++i;
             continue;
         }
@@ -248,6 +256,10 @@ std::unique_ptr<ExprNode> parseFilter(const std::vector<std::string>& tokens, si
         expr.rhs = std::move(rhs);
         auto cond = std::make_unique<BinaryExpr>(std::move(expr));
         conditions.push_back(std::move(cond));
+        if (conditions.size() > 1) {
+            joins.push_back(nextJoin);
+        }
+        nextJoin = BinOp::And;
     }
 
     if (conditions.empty()) {
@@ -261,7 +273,7 @@ std::unique_ptr<ExprNode> parseFilter(const std::vector<std::string>& tokens, si
     for (size_t i = 1; i < conditions.size(); ++i) {
         auto expr = BinaryExpr{};
         expr.lhs = std::move(result);
-        expr.op = BinOp::Eq;  // placeholder op; will not be used
+        expr.op = joins[i - 1];
         expr.rhs = std::move(conditions[i]);
         result = std::make_unique<BinaryExpr>(std::move(expr));
         // Actually we need a proper AND chain, but for simplicity we flatten later
@@ -270,6 +282,25 @@ std::unique_ptr<ExprNode> parseFilter(const std::vector<std::string>& tokens, si
 }
 
 } // namespace
+
+FrameTime FrameExpr::resolve(
+    const std::unordered_map<std::string, FrameTime>& context) const
+{
+    if (const auto* frame = std::get_if<int64_t>(&value)) {
+        return *frame;
+    }
+    const auto& expression = std::get<std::string>(value);
+    if (const auto it = context.find(expression); it != context.end()) {
+        return it->second;
+    }
+    try {
+        std::size_t consumed = 0;
+        const auto resolved = std::stoll(expression, &consumed);
+        return consumed == expression.size() ? resolved : 0;
+    } catch (const std::exception&) {
+        return 0;
+    }
+}
 
 // Convert PropertyRef::evaluate to use actual lookup
 bool PropertyRef::evaluate(const std::unordered_map<std::string, Value>& props) const {
@@ -283,9 +314,101 @@ bool Literal::evaluate(const std::unordered_map<std::string, Value>& /*props*/) 
     return true;  // Literals don't need evaluation; they're values
 }
 
+namespace {
+
+std::optional<Value> expressionValue(
+    const ExprNode* expression,
+    const std::unordered_map<std::string, Value>& props)
+{
+    if (const auto* property = dynamic_cast<const PropertyRef*>(expression)) {
+        const auto it = props.find(property->path);
+        return it == props.end() ? std::nullopt
+                                 : std::optional<Value>(it->second);
+    }
+    if (const auto* literal = dynamic_cast<const Literal*>(expression)) {
+        return literal->value;
+    }
+    if (const auto* binary = dynamic_cast<const BinaryExpr*>(expression)) {
+        return Value(binary->evaluate(props));
+    }
+    return std::nullopt;
+}
+
+bool numericValue(const Value& value, double& out)
+{
+    if (const auto* integer = std::get_if<int64_t>(&value)) {
+        out = static_cast<double>(*integer);
+        return true;
+    }
+    if (const auto* real = std::get_if<double>(&value)) {
+        out = *real;
+        return true;
+    }
+    return false;
+}
+
+bool equalValue(const Value& lhs, const Value& rhs)
+{
+    double leftNumber = 0.0;
+    double rightNumber = 0.0;
+    if (numericValue(lhs, leftNumber) && numericValue(rhs, rightNumber)) {
+        return leftNumber == rightNumber;
+    }
+    return lhs == rhs;
+}
+
+} // namespace
+
 bool BinaryExpr::evaluate(const std::unordered_map<std::string, Value>& props) const {
-    // This is a stub; real implementation would evaluate both sides and compare
-    return true;
+    if (op == BinOp::And) {
+        return lhs && lhs->evaluate(props) && rhs && rhs->evaluate(props);
+    }
+    if (op == BinOp::Or) {
+        return (lhs && lhs->evaluate(props)) || (rhs && rhs->evaluate(props));
+    }
+    const auto lhsValue = expressionValue(lhs.get(), props);
+    const auto rhsValue = expressionValue(rhs.get(), props);
+    if (!lhsValue || !rhsValue) {
+        return false;
+    }
+
+    switch (op) {
+    case BinOp::Eq:
+        return equalValue(*lhsValue, *rhsValue);
+    case BinOp::Ne:
+        return !equalValue(*lhsValue, *rhsValue);
+    case BinOp::Gt:
+    case BinOp::Lt:
+    case BinOp::Ge:
+    case BinOp::Le: {
+        double leftNumber = 0.0;
+        double rightNumber = 0.0;
+        if (numericValue(*lhsValue, leftNumber) && numericValue(*rhsValue, rightNumber)) {
+            if (op == BinOp::Gt) return leftNumber > rightNumber;
+            if (op == BinOp::Lt) return leftNumber < rightNumber;
+            if (op == BinOp::Ge) return leftNumber >= rightNumber;
+            return leftNumber <= rightNumber;
+        }
+        const auto* leftString = std::get_if<std::string>(&*lhsValue);
+        const auto* rightString = std::get_if<std::string>(&*rhsValue);
+        if (!leftString || !rightString) return false;
+        if (op == BinOp::Gt) return *leftString > *rightString;
+        if (op == BinOp::Lt) return *leftString < *rightString;
+        if (op == BinOp::Ge) return *leftString >= *rightString;
+        return *leftString <= *rightString;
+    }
+    case BinOp::Matches: {
+        const auto* leftString = std::get_if<std::string>(&*lhsValue);
+        const auto* rightString = std::get_if<std::string>(&*rhsValue);
+        if (!leftString || !rightString) return false;
+        try {
+            return std::regex_search(*leftString, std::regex(*rightString));
+        } catch (const std::regex_error&) {
+            return false;
+        }
+    }
+    }
+    return false;
 }
 
 // Public parse function
@@ -373,9 +496,9 @@ ParseResult AIDSLInterpreter::parseImpl(const std::string& input) {
                         break;
                     }
                 }
-                // TODO: parse filter expression from tokens[wherePos...]
-                // For now, store the whole line and implement filter later
-                cmd->filter = nullptr;  // placeholder
+                if (wherePos < tokens.size()) {
+                    cmd->filter = parseFilter(tokens, wherePos);
+                }
                 cmd->sourceLine = trimmed;
                 if (inTransaction && currentTransaction) {
                     currentTransaction->body.push_back(std::move(cmd));
@@ -414,7 +537,7 @@ ParseResult AIDSLInterpreter::parseImpl(const std::string& input) {
             }
         }
         else if (tokens[0] == "add") {
-            if (tokens.size() >= 5 && tokens[1] == "key" && tokens[2] == "at") {
+            if (tokens.size() >= 7 && tokens[1] == "key" && tokens[2] == "at") {
                 auto cmd = std::make_unique<AddKeyCommand>();
                 // Parse frame
                 std::string frameStr = tokens[3];
@@ -422,15 +545,20 @@ ParseResult AIDSLInterpreter::parseImpl(const std::string& input) {
                     frameStr.pop_back();
                 }
                 cmd->frame = FrameExpr{ std::stoll(frameStr) };
-                // property = value
-                if (tokens[4] == "=" && tokens.size() > 5) {
-                    cmd->property = tokens[3]; // Actually should be after `at`? Wait order: add key at 12f opacity = 0
-                    // Correct parse: tokens[3] is frame, tokens[4] is property, tokens[5] is '=', tokens[6] is value
-                    // Actually typical DSL: "add key at 12f opacity = 0"
-                    // So: tokens[0]="add", [1]="key", [2]="at", [3]="12f", [4]="opacity", [5]="=", [6]="0"
-                    // We need to parse better
-                    // For now, skip complex parsing; this is a stub
+                // Typical DSL: "add key at 12f opacity = 0".
+                if (tokens[4].empty() || tokens[5] != "=") {
+                    script.hasError = true;
+                    script.parseError = "Line " + std::to_string(lineNum) + ": invalid add key assignment";
+                    result.error = script.parseError;
+                    break;
                 }
+                cmd->property = tokens[4];
+                std::string valueStr;
+                for (size_t i = 6; i < tokens.size(); ++i) {
+                    if (i > 6) valueStr += " ";
+                    valueStr += tokens[i];
+                }
+                cmd->value = parseValue(valueStr);
                 cmd->sourceLine = trimmed;
                 if (inTransaction && currentTransaction) {
                     currentTransaction->body.push_back(std::move(cmd));
@@ -445,16 +573,93 @@ ParseResult AIDSLInterpreter::parseImpl(const std::string& input) {
             }
         }
         else if (tokens[0] == "rename") {
-            // stub
+            if (tokens.size() >= 4 && tokens[1] == "selected" && tokens[2] == "with") {
+                auto cmd = std::make_unique<RenameCommand>();
+                cmd->target = RenameCommand::Target::Selected;
+                cmd->templateStr = tokens[3];
+                cmd->sourceLine = trimmed;
+                if (inTransaction && currentTransaction) {
+                    currentTransaction->body.push_back(std::move(cmd));
+                } else {
+                    script.commands.push_back(std::move(cmd));
+                }
+            } else {
+                script.hasError = true;
+                script.parseError = "Line " + std::to_string(lineNum) + ": invalid rename syntax";
+                result.error = script.parseError;
+                break;
+            }
         }
         else if (tokens[0] == "delete") {
-            // stub
+            if (tokens.size() >= 2 && tokens[1] == "selected") {
+                auto cmd = std::make_unique<DeleteCommand>();
+                cmd->target = DeleteCommand::Target::Selected;
+                cmd->sourceLine = trimmed;
+                if (inTransaction && currentTransaction) {
+                    currentTransaction->body.push_back(std::move(cmd));
+                } else {
+                    script.commands.push_back(std::move(cmd));
+                }
+            } else {
+                script.hasError = true;
+                script.parseError = "Line " + std::to_string(lineNum) + ": invalid delete syntax";
+                result.error = script.parseError;
+                break;
+            }
         }
         else if (tokens[0] == "group") {
-            // stub
+            if (tokens.size() >= 4 && tokens[1] == "layers" && tokens[2] == "into") {
+                auto cmd = std::make_unique<GroupCommand>();
+                cmd->target = GroupCommand::Target::Selected;
+                cmd->groupName = tokens[3];
+                cmd->sourceLine = trimmed;
+                if (inTransaction && currentTransaction) {
+                    currentTransaction->body.push_back(std::move(cmd));
+                } else {
+                    script.commands.push_back(std::move(cmd));
+                }
+            } else {
+                script.hasError = true;
+                script.parseError = "Line " + std::to_string(lineNum) + ": invalid group syntax";
+                result.error = script.parseError;
+                break;
+            }
         }
         else if (tokens[0] == "query") {
-            // stub for queries
+            if (tokens.size() == 2 && tokens[1] == "selected_layers") {
+                script.queries.push_back(std::make_unique<QuerySelectedLayers>());
+            } else if (tokens.size() == 2 && tokens[1] == "active_comp") {
+                script.queries.push_back(std::make_unique<QueryActiveComp>());
+            } else if (tokens.size() >= 2 && tokens[1] == "comp_size") {
+                auto query = std::make_unique<QueryCompSize>();
+                query->compId = tokens.size() >= 3 ? tokens[2] : std::string();
+                script.queries.push_back(std::move(query));
+            } else if (tokens.size() >= 4 && tokens[1] == "list" &&
+                       tokens[2] == "properties" && tokens[3] == "of" &&
+                       tokens.size() >= 5 && tokens[4] == "selected") {
+                // The current query model represents a single layer; keep an
+                // empty id so the executor can report the available lookup.
+                auto query = std::make_unique<QueryListProperties>();
+                query->layerId.clear();
+                script.queries.push_back(std::move(query));
+            } else if (tokens.size() >= 4 && tokens[1] == "find" &&
+                       tokens[2] == "layers" && tokens[3] == "where") {
+                auto query = std::make_unique<QueryFindLayers>();
+                if (tokens.size() > 4) {
+                    query->filter = parseFilter(tokens, 4);
+                }
+                script.queries.push_back(std::move(query));
+            } else if (tokens.size() >= 3 && tokens[1] == "describe" &&
+                       tokens[2] == "layer") {
+                auto query = std::make_unique<QueryDescribeLayer>();
+                query->layerId = tokens.size() >= 4 ? tokens[3] : std::string();
+                script.queries.push_back(std::move(query));
+            } else {
+                script.hasError = true;
+                script.parseError = "Line " + std::to_string(lineNum) + ": invalid query syntax";
+                result.error = script.parseError;
+                break;
+            }
         }
         else {
             // Unknown command
@@ -484,56 +689,175 @@ std::unique_ptr<Action> UseCompCommand::compile(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return nullptr;
+    (void)layerMap;
+    CompID resolved = resolvedCompId;
+    if (resolved.empty() && compName.starts_with('#')) {
+        resolved = compName;
+    }
+    if (resolved.empty()) {
+        const auto it = compMap.find(compName);
+        if (it == compMap.end()) {
+            return nullptr;
+        }
+        resolved = it->second;
+    }
+    auto action = std::make_unique<CommandAction>();
+    action->kind = "use_comp";
+    action->argument = resolved;
+    return action;
 }
 
 std::unique_ptr<Action> SelectLayersCommand::compile(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return nullptr;
+    (void)compMap;
+    auto action = std::make_unique<CommandAction>();
+    action->kind = "select_layers";
+    action->valueText = filter ? "filtered" : "all";
+    std::size_t layerCount = 0;
+    for (const auto& [name, layerIds] : layerMap) {
+        (void)name;
+        layerCount += layerIds.size();
+    }
+    action->argument = std::to_string(layerCount);
+    return action;
 }
 
 std::unique_ptr<Action> SetPropertyCommand::compile(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return nullptr;
+    (void)compMap;
+    (void)layerMap;
+    if (property.empty()) {
+        return nullptr;
+    }
+    auto action = std::make_unique<CommandAction>();
+    action->kind = "set_property";
+    action->argument = property;
+    action->valueText = std::visit([](const auto& item) -> std::string {
+        using T = std::decay_t<decltype(item)>;
+        if constexpr (std::is_same_v<T, bool>) {
+            return item ? "true" : "false";
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            return item;
+        } else if constexpr (std::is_same_v<T, std::vector<double>>) {
+            std::ostringstream text;
+            text << '[';
+            for (std::size_t i = 0; i < item.size(); ++i) {
+                if (i > 0) text << ',';
+                text << item[i];
+            }
+            text << ']';
+            return text.str();
+        } else {
+            return std::to_string(item);
+        }
+    }, value);
+    return action;
 }
 
 std::unique_ptr<Action> AddKeyCommand::compile(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return nullptr;
+    (void)compMap;
+    (void)layerMap;
+    if (property.empty()) {
+        return nullptr;
+    }
+    auto action = std::make_unique<CommandAction>();
+    action->kind = "add_key";
+    action->argument = property;
+    if (const auto* frame = std::get_if<int64_t>(&this->frame.value)) {
+        action->frameText = std::to_string(*frame);
+    } else {
+        action->frameText = std::get<std::string>(this->frame.value);
+    }
+    action->valueText = std::visit([](const auto& item) -> std::string {
+        using T = std::decay_t<decltype(item)>;
+        if constexpr (std::is_same_v<T, bool>) {
+            return item ? "true" : "false";
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            return item;
+        } else if constexpr (std::is_same_v<T, std::vector<double>>) {
+            std::ostringstream text;
+            text << '[';
+            for (std::size_t i = 0; i < item.size(); ++i) {
+                if (i > 0) text << ',';
+                text << item[i];
+            }
+            text << ']';
+            return text.str();
+        } else {
+            return std::to_string(item);
+        }
+    }, value);
+    return action;
 }
 
 std::unique_ptr<Action> RenameCommand::compile(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return nullptr;
+    (void)compMap;
+    (void)layerMap;
+    if (templateStr.empty()) {
+        return nullptr;
+    }
+    auto action = std::make_unique<CommandAction>();
+    action->kind = "rename";
+    action->argument = templateStr;
+    action->valueText = target == RenameCommand::Target::Selected ? "selected" : "all";
+    return action;
 }
 
 std::unique_ptr<Action> DeleteCommand::compile(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return nullptr;
+    (void)compMap;
+    (void)layerMap;
+    auto action = std::make_unique<CommandAction>();
+    action->kind = "delete";
+    action->valueText = target == DeleteCommand::Target::Selected ? "selected" : "all";
+    return action;
 }
 
 std::unique_ptr<Action> GroupCommand::compile(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return nullptr;
+    (void)compMap;
+    (void)layerMap;
+    if (groupName.empty()) {
+        return nullptr;
+    }
+    auto action = std::make_unique<CommandAction>();
+    action->kind = "group";
+    action->argument = groupName;
+    action->valueText = target == GroupCommand::Target::Selected ? "selected" : "all";
+    return action;
 }
 
 std::unique_ptr<Action> TransactionCommand::compile(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return nullptr;
+    auto transaction = std::make_unique<TransactionAction>();
+    transaction->name = name;
+    transaction->actions.reserve(body.size());
+    for (const auto& command : body) {
+        if (!command) {
+            continue;
+        }
+        auto action = command->compile(compMap, layerMap);
+        if (action) {
+            transaction->actions.push_back(std::move(action));
+        }
+    }
+    return transaction;
 }
 
 // Query stubs
@@ -571,16 +895,19 @@ std::string QueryCompSize::execute(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
+    const CompID requestedId = this->compId.empty() && !compMap.empty()
+                                   ? compMap.begin()->second
+                                   : this->compId;
     bool known = false;
     for (const auto& [name, knownCompId] : compMap) {
         (void)name;
-        if (knownCompId == this->compId) {
+        if (knownCompId == requestedId) {
             known = true;
             break;
         }
     }
     std::ostringstream out;
-    out << "{\"status\":\"partial\",\"compId\":" << jsonString(this->compId)
+    out << "{\"status\":\"partial\",\"compId\":" << jsonString(requestedId)
         << ",\"knownComp\":" << jsonBool(known)
         << ",\"availableLayerGroupCount\":" << layerMap.size() << "}";
     return out.str();
@@ -592,15 +919,29 @@ std::string QueryFindLayers::execute(
 ) const {
     std::vector<std::string> ids;
     for (const auto& [name, layerIds] : layerMap) {
-        (void)name;
         for (const auto& layerId : layerIds) {
-            ids.push_back(layerId);
+            if (!filter) {
+                ids.push_back(layerId);
+                continue;
+            }
+
+            // The lookup does not expose full host properties yet, but it does
+            // provide stable layer-group names and IDs. Make those available
+            // to the filter instead of silently returning every layer.
+            std::unordered_map<std::string, Value> props;
+            props.emplace("id", layerId);
+            props.emplace("name", name);
+            props.emplace("layer.id", layerId);
+            props.emplace("layer.name", name);
+            if (filter->evaluate(props)) {
+                ids.push_back(layerId);
+            }
         }
     }
     std::ostringstream out;
-    out << "{\"status\":\"partial\",\"matchedLayerIds\":" << jsonArray(ids)
+    out << "{\"status\":\"ok\",\"matchedLayerIds\":" << jsonArray(ids)
         << ",\"availableCompCount\":" << compMap.size()
-        << ",\"note\":\"filter evaluation is still pending\"}";
+        << ",\"filterScope\":\"layer id and lookup name\"}";
     return out.str();
 }
 
@@ -647,10 +988,17 @@ AIDSLInterpreter::AIDSLInterpreter() = default;
 AIDSLInterpreter::~AIDSLInterpreter() = default;
 
 std::string AIDSLInterpreter::dryRun(const DSLScript& script) const {
+    std::size_t compiledActionCount = 0;
+    for (const auto& command : script.commands) {
+        if (command && command->compile(compNameToId_, layerNameToIds_)) {
+            ++compiledActionCount;
+        }
+    }
     std::ostringstream out;
     out << '{'
         << "\"mode\":\"dry_run\","
         << "\"script\":" << summarizeScript(script, "dry_run") << ','
+        << "\"compiledActionCount\":" << compiledActionCount << ','
         << "\"knownCompCount\":" << compNameToId_.size() << ','
         << "\"knownLayerGroupCount\":" << layerNameToIds_.size()
         << '}';
@@ -666,11 +1014,19 @@ std::string AIDSLInterpreter::execute(const DSLScript& script) {
         }
     }
 
+    std::size_t compiledActionCount = 0;
+    for (const auto& command : script.commands) {
+        if (command && command->compile(compNameToId_, layerNameToIds_)) {
+            ++compiledActionCount;
+        }
+    }
+
     std::ostringstream out;
     out << '{'
         << "\"mode\":\"execute\","
         << "\"script\":" << summarizeScript(script, "execute") << ','
         << "\"queryResults\":" << jsonArray(queryResults) << ','
+        << "\"compiledActionCount\":" << compiledActionCount << ','
         << "\"knownCompCount\":" << compNameToId_.size() << ','
         << "\"knownLayerGroupCount\":" << layerNameToIds_.size() << ','
         << "\"note\":\"command execution remains to be wired to host actions\""
@@ -695,8 +1051,9 @@ std::string AIDSLInterpreter::executeQuery(const QueryNode& query) {
 
 bool AIDSLInterpreter::undo() {
     if (undoStack_.empty()) return false;
-    // stub
-    return true;
+    // Actions currently carry compile metadata only; without an apply/revert
+    // contract, claiming success would leave the host state unchanged.
+    return false;
 }
 
 bool AIDSLInterpreter::canUndo() const {
@@ -751,9 +1108,13 @@ std::unique_ptr<TransactionAction> AIDSLInterpreter::compileTransaction(const Tr
     tx->name = cmd.name;
     // Compile each subcommand
     for (const auto& sub : cmd.body) {
-        // call compile on each
-        // auto action = sub->compile(compNameToId_, layerNameToIds_);
-        // if (action) tx->actions.push_back(std::move(action));
+        if (!sub) {
+            continue;
+        }
+        auto action = sub->compile(compNameToId_, layerNameToIds_);
+        if (action) {
+            tx->actions.push_back(std::move(action));
+        }
     }
     return tx;
 }

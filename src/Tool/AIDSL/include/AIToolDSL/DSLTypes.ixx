@@ -30,6 +30,13 @@ using CompID = std::string;   // "#C9"
 using FrameTime = int64_t;    // frame number
 using PropertyPath = std::string;  // "layer.opacity", "transform.position.x"
 
+struct CommandAction : Action {
+    std::string kind;
+    std::string argument;
+    std::string valueText;
+    std::string frameText;
+};
+
 // Value variant (supports all property types)
 export using Value = std::variant<
     bool,
@@ -47,7 +54,7 @@ struct FrameExpr {
 
 // Binary operator for filters
 enum class BinOp {
-    Eq, Ne, Gt, Lt, Ge, Le, Matches  // ~= for regex
+    Eq, Ne, Gt, Lt, Ge, Le, Matches, And, Or  // ~= for regex
 };
 
 // Expression tree for filter conditions
