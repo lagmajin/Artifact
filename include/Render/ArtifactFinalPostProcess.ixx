@@ -27,6 +27,7 @@ public:
     /// Upload a CPU ColorLUT to GPU.
     /// data: RGB float values (size^3 * 3 floats), size: LUT dimension (e.g. 33).
     void updateFromColorLUT(const float* data, int size);
+    void setLUTInputDomain(float minValue, float maxValue);
 
     /// Clear the active LUT.
     void clearLUT();

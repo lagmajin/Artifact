@@ -51,16 +51,20 @@ public:
         hasLUT_ = false;
     }
 
+    void setLUTInputDomain(float minValue, float maxValue)
+    {
+        lutComputer_.setInputDomain(minValue, maxValue);
+    }
+
     bool apply(IDeviceContext* pContext,
                ITextureView* srcSRV,
                ITextureView* dstUAV,
                int width, int height)
     {
-        // Apply working-to-display view transform (pre-LUT)
+        // The OCIO working-to-display transform is represented by the active
+        // baked LUT in this path. A direct GPUProcessor shader path remains a
+        // separate backend.
         if (viewTransformEnabled_ && srcSRV && dstUAV) {
-            // For now, this is a metadata pass. The actual matrix-based conversion
-            // is applied in the composition render controller's CPU path.
-            // GPU shader-based view transform will be added in a later phase.
             if (!hasLUT_) return true;
         }
 
@@ -94,6 +98,17 @@ ArtifactFinalPostProcess::ArtifactFinalPostProcess(GpuContext& ctx)
     : impl_(std::make_unique<Impl>(ctx)) {}
 
 ArtifactFinalPostProcess::~ArtifactFinalPostProcess() = default;
+
+void ArtifactFinalPostProcess::updateFromColorLUT(const float* data, int size)
+{
+    impl_->updateFromColorLUT(data, size);
+}
+
+void ArtifactFinalPostProcess::setLUTInputDomain(float minValue,
+                                                  float maxValue)
+{
+    impl_->setLUTInputDomain(minValue, maxValue);
+}
 
 void ArtifactFinalPostProcess::updateFromEffectStack(
     const ArtifactCore::CompositionFinalEffectStack& stack)
