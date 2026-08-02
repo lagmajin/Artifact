@@ -97,6 +97,8 @@ public:
  QAction* showRenderManagerAction = nullptr;
  QAction* renderSettingsAction = nullptr;
  QAction* startRenderAction = nullptr;
+ QAction* pauseRenderAction = nullptr;
+ QAction* cancelRenderAction = nullptr;
  QAction* clearAllAction = nullptr;
  QAction* scrollPoCAction = nullptr;
  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
@@ -107,6 +109,8 @@ public:
  void showRenderManager();
  void showRenderSettings();
  void startRender();
+ void pauseRender();
+ void cancelRender();
  void clearAll();
  void showScrollPoC();
 };
@@ -115,31 +119,61 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  : menu_(menu), mainWindow_(mainWindow)
 {
  addCurrentToQueueAction = new QAction("現在のコンポジションをレンダーキューに追加(&A)");
+ addCurrentToQueueAction->setAccessibleDescription(
+     QStringLiteral("Add the active composition to the render queue"));
+ addCurrentToQueueAction->setStatusTip(
+     QStringLiteral("Add the active composition to the render queue"));
  addCurrentToQueueAction->setShortcut(
      ShortcutBindings::instance().shortcut(ShortcutId::RenderAddCurrentToQueue));
  addCurrentToQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
 
 showQueueAction = new QAction("レンダーキューを表示(&Q)...");
+ showQueueAction->setAccessibleDescription(
+     QStringLiteral("Open the render queue window"));
+ showQueueAction->setStatusTip(QStringLiteral("Open the render queue window"));
  showQueueAction->setShortcut(
      ShortcutBindings::instance().shortcut(ShortcutId::RenderShowQueue));
  showQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_queue.svg")));
 
 showRenderManagerAction = new QAction("レンダーマネージャーを表示(&M)...");
+ showRenderManagerAction->setAccessibleDescription(
+     QStringLiteral("Open the render queue manager"));
+ showRenderManagerAction->setStatusTip(
+     QStringLiteral("Open the render queue manager"));
  showRenderManagerAction->setShortcut(
      ShortcutBindings::instance().shortcut(ShortcutId::RenderShowManager));
  showRenderManagerAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_manager.svg")));
 
 renderSettingsAction = new QAction("レンダー出力設定(&S)...");
+ renderSettingsAction->setAccessibleDescription(
+     QStringLiteral("Configure render output and preflight settings"));
+ renderSettingsAction->setStatusTip(
+     QStringLiteral("Configure render output and preflight settings"));
  renderSettingsAction->setShortcut(
      ShortcutBindings::instance().shortcut(ShortcutId::RenderSettings));
  renderSettingsAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_settings.svg")));
 
-startRenderAction = new QAction("レンダリングを開始(&S)");
+ startRenderAction = new QAction("レンダリングを開始／再開(&S)");
+ startRenderAction->setAccessibleDescription(
+     QStringLiteral("Start or resume all pending render queue jobs"));
+ startRenderAction->setStatusTip(
+     QStringLiteral("Start all pending render queue jobs"));
  startRenderAction->setShortcut(
      ShortcutBindings::instance().shortcut(ShortcutId::RenderStart));
  startRenderAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_start.svg")));
+ pauseRenderAction = new QAction(QStringLiteral("レンダリングを一時停止"));
+ pauseRenderAction->setAccessibleDescription(
+     QStringLiteral("Pause all active render queue jobs"));
+ pauseRenderAction->setIcon(QIcon(resolveIconPath("Studio/timemenu_stop.svg")));
+ cancelRenderAction = new QAction(QStringLiteral("全ジョブをキャンセル"));
+ cancelRenderAction->setAccessibleDescription(
+     QStringLiteral("Cancel all active render queue jobs"));
+ cancelRenderAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_clear_all.svg")));
 
  clearAllAction = new QAction("すべてのジョブをクリア(&C)");
+ clearAllAction->setAccessibleDescription(
+     QStringLiteral("Remove all render queue jobs"));
+ clearAllAction->setStatusTip(QStringLiteral("Remove all render queue jobs"));
  clearAllAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_clear_all.svg")));
 
  scrollPoCAction = new QAction("Scroll PoC (Floating)", menu);
@@ -147,6 +181,10 @@ startRenderAction = new QAction("レンダリングを開始(&S)");
 
  menu->addAction(addCurrentToQueueAction);
  addAllCompositionsAction = new QAction("全コンポジションをキューに追加(&A)", menu);
+ addAllCompositionsAction->setAccessibleDescription(
+     QStringLiteral("Add every composition to the render queue"));
+ addAllCompositionsAction->setStatusTip(
+     QStringLiteral("Add every composition to the render queue"));
  addAllCompositionsAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));
  menu->addAction(addAllCompositionsAction);
  menu->addSeparator();
@@ -155,6 +193,8 @@ startRenderAction = new QAction("レンダリングを開始(&S)");
  menu->addAction(renderSettingsAction);
  menu->addSeparator();
  menu->addAction(startRenderAction);
+ menu->addAction(pauseRenderAction);
+ menu->addAction(cancelRenderAction);
  menu->addAction(clearAllAction);
  menu->addSeparator();
  menu->addAction(scrollPoCAction);
@@ -165,6 +205,8 @@ startRenderAction = new QAction("レンダリングを開始(&S)");
  QObject::connect(showRenderManagerAction, &QAction::triggered, menu, [this]() { showRenderManager(); });
  QObject::connect(renderSettingsAction, &QAction::triggered, menu, [this]() { showRenderSettings(); });
  QObject::connect(startRenderAction, &QAction::triggered, menu, [this]() { startRender(); });
+ QObject::connect(pauseRenderAction, &QAction::triggered, menu, [this]() { pauseRender(); });
+ QObject::connect(cancelRenderAction, &QAction::triggered, menu, [this]() { cancelRender(); });
  QObject::connect(clearAllAction, &QAction::triggered, menu, [this]() { clearAll(); });
  QObject::connect(scrollPoCAction, &QAction::triggered, menu, [this]() { showScrollPoC(); });
 
@@ -268,6 +310,22 @@ void ArtifactRenderMenu::Impl::startRender()
  }
 }
 
+void ArtifactRenderMenu::Impl::pauseRender()
+{
+ auto* queueService = ArtifactRenderQueueService::instance();
+ if (queueService) {
+  queueService->pauseAllJobs();
+ }
+}
+
+void ArtifactRenderMenu::Impl::cancelRender()
+{
+ auto* queueService = ArtifactRenderQueueService::instance();
+ if (queueService) {
+  queueService->cancelAllJobs();
+ }
+}
+
 void ArtifactRenderMenu::Impl::clearAll()
 {
  auto* queueService = ArtifactRenderQueueService::instance();
@@ -311,6 +369,8 @@ void ArtifactRenderMenu::rebuildMenu()
  auto* queueService = ArtifactRenderQueueService::instance();
  const bool hasJobs = queueService && queueService->jobCount() > 0;
  impl_->startRenderAction->setEnabled(hasJobs);
+ impl_->pauseRenderAction->setEnabled(hasJobs);
+ impl_->cancelRenderAction->setEnabled(hasJobs);
  impl_->clearAllAction->setEnabled(hasJobs);
  if (impl_->scrollPoCAction) {
   impl_->scrollPoCAction->setEnabled(static_cast<bool>(impl_->mainWindow_));
