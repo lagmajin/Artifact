@@ -322,9 +322,9 @@ KuwaharaEffect::KuwaharaEffect() {
 KuwaharaEffect::~KuwaharaEffect() = default;
 
 float KuwaharaEffect::radius() const { return radius_; }
-void KuwaharaEffect::setRadius(float v) { radius_ = std::clamp(v, 1.0f, 50.0f); syncImpls(); }
+void KuwaharaEffect::setRadius(float v) { radius_ = std::isfinite(v) ? std::clamp(v, 1.0f, 50.0f) : 5.0f; syncImpls(); }
 float KuwaharaEffect::sharpness() const { return sharpness_; }
-void KuwaharaEffect::setSharpness(float v) { sharpness_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void KuwaharaEffect::setSharpness(float v) { sharpness_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; syncImpls(); }
 bool KuwaharaEffect::anisotropic() const { return anisotropic_; }
 void KuwaharaEffect::setAnisotropic(bool v) { anisotropic_ = v; syncImpls(); }
 
