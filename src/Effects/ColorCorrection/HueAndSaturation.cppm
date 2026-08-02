@@ -53,7 +53,7 @@ public:
         cv::merge(std::vector<cv::Mat>{channels[0], channels[1], channels[2]}, bgr);
 
         cv::Mat hsv;
-        cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
+        cv::cvtColor(bgr, hsv, cv::COLOR_RGB2HSV);
 
         ArtifactCore::Parallel::For(0, hsv.rows, hsv.rows * hsv.cols, [&](int y) {
             cv::Vec3f* row = hsv.ptr<cv::Vec3f>(y);
@@ -71,7 +71,7 @@ public:
             }
         });
 
-        cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
+        cv::cvtColor(hsv, bgr, cv::COLOR_HSV2RGB);
         cv::merge(std::vector<cv::Mat>{bgr, alpha}, floatMat);
         dst.image().setFromRGBA32F(
             floatMat.ptr<float>(), floatMat.cols, floatMat.rows,
@@ -367,13 +367,16 @@ std::vector<AbstractProperty> HueAndSaturation::getProperties() const {
 void HueAndSaturation::setPropertyValue(const UniString& name, const QVariant& value) {
     const QString key = name.toQString();
     if (key == QString("Hue")) {
-        hueShift_ = std::clamp(value.toFloat(), -180.0f, 180.0f);
+        const float v = value.toFloat();
+        hueShift_ = std::isfinite(v) ? std::clamp(v, -180.0f, 180.0f) : 0.0f;
         syncImpls();
     } else if (key == QString("Saturation")) {
-        saturationScale_ = std::clamp(value.toFloat(), 0.0f, 2.0f);
+        const float v = value.toFloat();
+        saturationScale_ = std::isfinite(v) ? std::clamp(v, 0.0f, 2.0f) : 1.0f;
         syncImpls();
     } else if (key == QString("Lightness")) {
-        lightnessShift_ = std::clamp(value.toFloat(), -1.0f, 1.0f);
+        const float v = value.toFloat();
+        lightnessShift_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f;
         syncImpls();
     } else if (key == QString("Colorize")) {
         colorize_ = value.toBool();
