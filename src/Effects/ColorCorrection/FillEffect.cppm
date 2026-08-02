@@ -338,7 +338,7 @@ void FillEffect::setColor(const QColor& color) {
 
 void FillEffect::setOpacity(float value) {
     preset_ = Preset::Custom;
-    settings_.opacity = std::clamp(value, 0.0f, 1.0f);
+    settings_.opacity = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
     syncImpls();
 }
 
