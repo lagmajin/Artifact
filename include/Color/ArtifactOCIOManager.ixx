@@ -4,6 +4,7 @@ module;
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QVector>
 #include <QJsonObject>
 #include <wobjectdefs.h>
 
@@ -50,11 +51,29 @@ public:
     QString looks() const;
     void setLooks(const QString& looks);
 
+    // Viewer-only adjustments applied after the OCIO display transform.
+    // They do not alter the project working-space or source interpretation.
+    float viewerExposure() const;
+    void setViewerExposure(float ev);
+    float viewerGamma() const;
+    void setViewerGamma(float gamma);
+
     // Apply to ColorScienceManager
     void syncToColorScienceManager(ArtifactColorScienceManager* mgr) const;
 
     /// Apply OCIO view transform (working→display) to an image.
     void applyViewTransformToImage(ArtifactCore::ImageF32x4_RGBA& image) const;
+
+    /// Generate the OCIO HLSL program for the active display transform.
+    /// The returned source is a function/library fragment; the renderer owns
+    /// the compute-wrapper and resource binding stage.
+    QString gpuViewTransformShader() const;
+    /// Return shader source plus the OCIO texture/uniform binding metadata.
+    QJsonObject gpuViewTransformDescriptor() const;
+    /// Bake the active view transform to an RGB 3D LUT in [0,1] domain.
+    bool bakeViewTransformLUT(int size, QVector<float>& rgbValues,
+                              float domainMin = 0.0f,
+                              float domainMax = 1.0f) const;
 
     /// Explicitly decode a source interpretation and convert RGB into the
     /// active working space. Alpha is preserved and no range clamp is applied.
