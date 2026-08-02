@@ -453,10 +453,16 @@ public:
 
   // Offscreen rendering for group layers
   void *createOffscreenTexture(int width, int height);
+  // Floating-point offscreen target intended for compute post-processing.
+  void *createOffscreenComputeTexture(int width, int height);
   void *createOffscreenDepthTexture(int width, int height);
   // Returns the shader-resource view owned by an offscreen color RTV. The
   // caller must keep the source RTV alive and must not Release this view.
   Diligent::ITextureView *offscreenTextureShaderResourceView(
+      void *textureView) const;
+  // Returns the unordered-access view owned by an offscreen color RTV.
+  // The caller must keep the source RTV alive and must not Release this view.
+  Diligent::ITextureView *offscreenTextureUnorderedAccessView(
       void *textureView) const;
   void destroyOffscreenTexture(void *textureView);
   void pushRenderTarget(void *textureView);

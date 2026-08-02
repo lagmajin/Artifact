@@ -4254,14 +4254,43 @@ bool ArtifactIRenderer::applyTrackMatte(
   desc.Width = static_cast<Diligent::Uint32>(width);
   desc.Height = static_cast<Diligent::Uint32>(height);
   desc.MipLevels = 1;
-  desc.Format = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB;
+ desc.Format = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB;
   desc.Usage = Diligent::USAGE_DEFAULT;
-  desc.BindFlags = Diligent::BIND_RENDER_TARGET | Diligent::BIND_SHADER_RESOURCE;
+  desc.BindFlags = Diligent::BIND_RENDER_TARGET |
+                   Diligent::BIND_SHADER_RESOURCE;
 
   impl_->deviceManager_.device()->CreateTexture(desc, nullptr, &texture);
   if (!texture) return nullptr;
 
   auto* view = texture->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
+  view->AddRef();
+ return static_cast<void*>(view);
+ }
+
+ void* ArtifactIRenderer::createOffscreenComputeTexture(int width, int height)
+ {
+  if (!impl_->deviceManager_.device() || width <= 0 || height <= 0) {
+   return nullptr;
+  }
+
+  Diligent::RefCntAutoPtr<Diligent::ITexture> texture;
+  Diligent::TextureDesc desc;
+  desc.Name = "ComputePostProcessTexture";
+  desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+  desc.Width = static_cast<Diligent::Uint32>(width);
+  desc.Height = static_cast<Diligent::Uint32>(height);
+  desc.MipLevels = 1;
+  desc.Format = Diligent::TEX_FORMAT_RGBA16_FLOAT;
+  desc.Usage = Diligent::USAGE_DEFAULT;
+  desc.BindFlags = Diligent::BIND_RENDER_TARGET |
+                   Diligent::BIND_SHADER_RESOURCE |
+                   Diligent::BIND_UNORDERED_ACCESS;
+
+  impl_->deviceManager_.device()->CreateTexture(desc, nullptr, &texture);
+  if (!texture) return nullptr;
+
+  auto* view = texture->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
+  if (!view) return nullptr;
   view->AddRef();
   return static_cast<void*>(view);
  }
@@ -4299,8 +4328,18 @@ bool ArtifactIRenderer::applyTrackMatte(
  {
   auto* rtv = static_cast<Diligent::ITextureView*>(textureView);
   auto* texture = rtv ? rtv->GetTexture() : nullptr;
-  return texture ? texture->GetDefaultView(
+ return texture ? texture->GetDefaultView(
                        Diligent::TEXTURE_VIEW_SHADER_RESOURCE)
+                 : nullptr;
+ }
+
+ Diligent::ITextureView* ArtifactIRenderer::offscreenTextureUnorderedAccessView(
+     void* textureView) const
+ {
+  auto* rtv = static_cast<Diligent::ITextureView*>(textureView);
+  auto* texture = rtv ? rtv->GetTexture() : nullptr;
+  return texture ? texture->GetDefaultView(
+                       Diligent::TEXTURE_VIEW_UNORDERED_ACCESS)
                  : nullptr;
  }
 
