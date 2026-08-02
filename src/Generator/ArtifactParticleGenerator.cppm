@@ -73,8 +73,9 @@ float evaluateTriStageLinear(float startValue,
                              float midPosition,
                              float t)
 {
-    const float clampedMid = std::clamp(midPosition, 0.001f, 0.999f);
-    const float clampedT = std::clamp(t, 0.0f, 1.0f);
+    const float clampedMid = std::isfinite(midPosition)
+        ? std::clamp(midPosition, 0.001f, 0.999f) : 0.5f;
+    const float clampedT = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.0f;
     if (clampedT <= clampedMid) {
         const float localT = clampedT / clampedMid;
         return startValue + (midValue - startValue) * localT;
@@ -116,7 +117,8 @@ QColor evaluateTriStageColor(const QColor& startColor,
 float particleStretchFactor(const QVector3D& velocity)
 {
     const float speed = velocity.length();
-    return std::clamp(1.0f + speed * 0.004f, 1.0f, 6.0f);
+    return std::isfinite(speed)
+        ? std::clamp(1.0f + speed * 0.004f, 1.0f, 6.0f) : 1.0f;
 }
 
 int clampFlipbookFrame(int frame, int startFrame, int frameCount, int rows, int cols)
@@ -415,29 +417,35 @@ QVector3D ParticleEmitter::getEmissionPosition() const
             
         case EmitterShape::Sphere: {
             float theta = impl_->rng.bounded(360.0f) * M_PI / 180.0f;
-            float phi = impl_->rng.bounded(180.0f) * M_PI / 180.0f;
-            float r = params_.radius * std::cbrt(impl_->rng.bounded(1.0f));  // Uniform distribution
+            const float cosPhi = impl_->rng.bounded(2.0f) - 1.0f;
+            const float sinPhi = std::sqrt(std::max(0.0f, 1.0f - cosPhi * cosPhi));
+            const float radius = std::max(0.0f, params_.radius);
+            float r = radius * std::cbrt(impl_->rng.bounded(1.0f));  // Uniform distribution
             
             localOffset = QVector3D(
-                r * std::sin(phi) * std::cos(theta),
-                r * std::sin(phi) * std::sin(theta),
-                r * std::cos(phi)
+                r * sinPhi * std::cos(theta),
+                r * sinPhi * std::sin(theta),
+                r * cosPhi
             );
             break;
         }
             
         case EmitterShape::Box: {
+            const float width = std::max(0.0f, params_.width);
+            const float height = std::max(0.0f, params_.height);
+            const float depth = std::max(0.0f, params_.depth);
             localOffset = QVector3D(
-                (impl_->rng.bounded(1.0f) - 0.5f) * params_.width,
-                (impl_->rng.bounded(1.0f) - 0.5f) * params_.height,
-                (impl_->rng.bounded(1.0f) - 0.5f) * params_.depth
+                (impl_->rng.bounded(1.0f) - 0.5f) * width,
+                (impl_->rng.bounded(1.0f) - 0.5f) * height,
+                (impl_->rng.bounded(1.0f) - 0.5f) * depth
             );
             break;
         }
             
         case EmitterShape::Circle: {
             float angle = impl_->rng.bounded(360.0f) * M_PI / 180.0f;
-            float r = params_.radius * std::sqrt(impl_->rng.bounded(1.0f));
+            const float radius = std::max(0.0f, params_.radius);
+            float r = radius * std::sqrt(impl_->rng.bounded(1.0f));
             
             localOffset = QVector3D(
                 r * std::cos(angle),
@@ -448,17 +456,20 @@ QVector3D ParticleEmitter::getEmissionPosition() const
         }
             
         case EmitterShape::Rectangle: {
+            const float width = std::max(0.0f, params_.width);
+            const float height = std::max(0.0f, params_.height);
             localOffset = QVector3D(
-                (impl_->rng.bounded(1.0f) - 0.5f) * params_.width,
-                (impl_->rng.bounded(1.0f) - 0.5f) * params_.height,
+                (impl_->rng.bounded(1.0f) - 0.5f) * width,
+                (impl_->rng.bounded(1.0f) - 0.5f) * height,
                 0
             );
             break;
         }
             
         case EmitterShape::Line: {
+            const float lineLength = std::max(0.0f, params_.lineLength);
             localOffset = QVector3D(
-                (impl_->rng.bounded(1.0f) - 0.5f) * params_.lineLength,
+                (impl_->rng.bounded(1.0f) - 0.5f) * lineLength,
                 0,
                 0
             );
@@ -475,9 +486,15 @@ QVector3D ParticleEmitter::getEmissionPosition() const
 QVector3D ParticleEmitter::getEmissionDirection() const
 {
     QVector3D dir = rotateByEulerDegrees(params_.direction, params_.rotation).normalized();
+    if (dir.lengthSquared() < 1.0e-6f) {
+        dir = QVector3D(0.0f, 1.0f, 0.0f);
+    }
     
-    if (params_.directionSpread > 0.0f) {
-        float spreadRad = params_.directionSpread * M_PI / 180.0f;
+    const float spreadDegrees = std::isfinite(params_.directionSpread)
+                                    ? std::clamp(params_.directionSpread, 0.0f, 180.0f)
+                                    : 0.0f;
+    if (spreadDegrees > 0.0f) {
+        float spreadRad = spreadDegrees * M_PI / 180.0f;
         float theta = (impl_->rng.bounded(1.0f) - 0.5f) * spreadRad;
         float phi = (impl_->rng.bounded(1.0f) - 0.5f) * spreadRad;
         
@@ -498,7 +515,8 @@ QVector3D ParticleEmitter::getEmissionDirection() const
         dir = dir * cosT * cosP + right * sinT + up * sinP;
     }
     
-    return dir;
+    return dir.lengthSquared() > 1.0e-6f ? dir.normalized()
+                                         : QVector3D(0.0f, 1.0f, 0.0f);
 }
 
 void ParticleEmitter::applyEmitterLocalSpaceDelta()
@@ -646,7 +664,11 @@ void ParticleEmitter::initializeParticle(Particle& p)
 
 void ParticleEmitter::emitParticles(int count)
 {
-    int available = params_.maxParticles - static_cast<int>(particles_.size());
+    if (count <= 0 || params_.maxParticles <= 0) {
+        return;
+    }
+    int available = std::max(
+        0, params_.maxParticles - static_cast<int>(particles_.size()));
     int toEmit = std::min(count, available);
     
     for (int i = 0; i < toEmit; i++) {
@@ -718,7 +740,11 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
     
     // Update age and life
     p.age += deltaTime;
-    p.life = 1.0f - (p.age / p.maxLife);
+    const float safeMaxLife = std::isfinite(p.maxLife)
+                                  ? std::max(0.001f, p.maxLife)
+                                  : 0.001f;
+    p.maxLife = safeMaxLife;
+    p.life = 1.0f - (p.age / safeMaxLife);
     
     if (p.life <= 0.0f) {
         if (params_.auxEnabled &&
@@ -931,7 +957,13 @@ void ParticleEmitter::simulateStep(float deltaTime)
     // Emit new particles
     switch (params_.mode) {
         case EmissionMode::Continuous: {
-            emitAccumulator_ += deltaTime * params_.rate;
+            const float emissionRate = std::isfinite(params_.rate)
+                                           ? std::max(0.0f, params_.rate)
+                                           : 0.0f;
+            emitAccumulator_ += deltaTime * emissionRate;
+            if (!std::isfinite(emitAccumulator_)) {
+                emitAccumulator_ = 0.0f;
+            }
             int toEmit = static_cast<int>(emitAccumulator_);
             if (toEmit > 0) {
                 emitParticles(toEmit);
@@ -940,8 +972,11 @@ void ParticleEmitter::simulateStep(float deltaTime)
             break;
         }
         case EmissionMode::Burst: {
+            const float burstInterval = std::isfinite(params_.burstInterval)
+                                             ? std::max(0.0f, params_.burstInterval)
+                                             : 0.0f;
             burstTimer_ += deltaTime;
-            if (burstTimer_ >= params_.burstInterval) {
+            if (burstTimer_ >= burstInterval) {
                 emitBurst();
                 burstTimer_ = 0.0f;
             }
@@ -974,6 +1009,7 @@ void ParticleEmitter::simulateStep(float deltaTime)
 void ParticleEmitter::update(float deltaTime)
 {
     if (!active_) return;
+    if (!std::isfinite(deltaTime) || deltaTime <= 0.0f) return;
 
     if (!impl_->hasEmitterTransform) {
         impl_->lastEmitterPosition = params_.position;
@@ -981,12 +1017,8 @@ void ParticleEmitter::update(float deltaTime)
         impl_->hasEmitterTransform = true;
     }
 
-    if (deltaTime > 0.0f) {
-        impl_->inheritedVelocity =
-            (params_.position - impl_->lastEmitterPosition) / deltaTime;
-    } else {
-        impl_->inheritedVelocity = QVector3D(0.0f, 0.0f, 0.0f);
-    }
+    impl_->inheritedVelocity =
+        (params_.position - impl_->lastEmitterPosition) / deltaTime;
 
     if (!params_.worldSpace) {
         applyEmitterLocalSpaceDelta();
