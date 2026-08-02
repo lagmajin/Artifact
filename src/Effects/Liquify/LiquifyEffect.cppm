@@ -108,8 +108,8 @@ cv::Vec4f sampleBilinearCV(const cv::Mat& src, float sx, float sy) {
     float fy = sy - y0;
 
     const cv::Vec4f c00 = src.ptr<cv::Vec4f>(y0)[x0];
-    const cv::Vec4f c10 = src.ptr<cv::Vec4f>(y1)[x0];
-    const cv::Vec4f c01 = src.ptr<cv::Vec4f>(y0)[x1];
+    const cv::Vec4f c10 = src.ptr<cv::Vec4f>(y0)[x1];
+    const cv::Vec4f c01 = src.ptr<cv::Vec4f>(y1)[x0];
     const cv::Vec4f c11 = src.ptr<cv::Vec4f>(y1)[x1];
 
     cv::Vec4f result;
@@ -276,7 +276,7 @@ static constexpr const char* kLiquifyHlsl=R"(
 Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);
 cbuffer LiquifyParams:register(b0){float g_Amount;float g_Radius;float g_Cx;float g_Cy;float g_Angle;int g_Brush;float2 g_Pad;}
 float4 atp(int2 p,uint w,uint h){return g_InputTexture[uint2(clamp(p.x,0,(int)w-1),clamp(p.y,0,(int)h-1))];}
-[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float2 c=float2(g_Cx*w,g_Cy*h),q=float2(id.xy),d=q-c,dist=length(d),r=max(g_Radius*min(w,h),1);if(dist>r){g_OutputTexture[id.xy]=atp(int2(q),w,h);return;}float fall=1-dist/r,rad=g_Angle*0.0174532925;float2 dir=float2(cos(rad),sin(rad));float strength=(g_Amount/100)*r*fall*fall;float2 source=q-dir*strength;g_OutputTexture[id.xy]=atp(int2(source+0.5),w,h);}
+[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float2 c=float2(g_Cx*w,g_Cy*h),q=float2(id.xy),d=q-c,dist=length(d),r=max(g_Radius*min(w,h),1);if(dist>r){g_OutputTexture[id.xy]=atp(int2(q),w,h);return;}float fall=1-dist/r,rad=g_Angle*0.0174532925;float2 dir=float2(cos(rad),sin(rad));float strength=(g_Amount/100)*r*fall*fall;float2 source=q+dir*strength;g_OutputTexture[id.xy]=atp(int2(source+0.5),w,h);}
 )";
 
 void LiquifyEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
