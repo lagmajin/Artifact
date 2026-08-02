@@ -184,12 +184,12 @@ public:
     bool premultiplied_ = true;
     float edgeThreshold_ = 0.1f;
 
-    void setRadius(float r) { radius_ = std::max(0.1f, r); }
-    void setStrength(float s) { strength_ = std::clamp(s, 0.0f, 1.0f); }
+    void setRadius(float r) { radius_ = std::isfinite(r) ? std::max(0.1f, r) : 10.0f; }
+    void setStrength(float s) { strength_ = std::isfinite(s) ? std::clamp(s, 0.0f, 1.0f) : 1.0f; }
     void setIterations(int n) { iterations_ = std::max(1, n); }
     void setMode(BlurMode m) { mode_ = m; }
     void setPremultiplied(bool p) { premultiplied_ = p; }
-    void setEdgeThreshold(float t) { edgeThreshold_ = std::clamp(t, 0.0f, 1.0f); }
+    void setEdgeThreshold(float t) { edgeThreshold_ = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.1f; }
 
     void mixWithSource(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) const {
         const float mix = std::clamp(strength_, 0.0f, 1.0f);
