@@ -180,11 +180,23 @@ std::vector<AbstractProperty> ApertureShapeBlurEffect::getProperties() const {
 void ApertureShapeBlurEffect::setPropertyValue(const UniString& name,
                                                const QVariant& value) {
     const QString key = name.toQString();
-    if (key == QStringLiteral("Radius")) radius_ = std::clamp(value.toFloat(), 0.0f, 256.0f);
+    if (key == QStringLiteral("Radius")) {
+        const float v = value.toFloat();
+        radius_ = std::isfinite(v) ? std::clamp(v, 0.0f, 256.0f) : 18.0f;
+    }
     else if (key == QStringLiteral("Shape")) shape_ = std::clamp(value.toInt(), 0, 3);
-    else if (key == QStringLiteral("Rotation")) rotation_ = value.toFloat();
-    else if (key == QStringLiteral("Edge Brightness")) edgeBrightness_ = std::clamp(value.toFloat(), 0.0f, 3.0f);
-    else if (key == QStringLiteral("Highlight Boost")) highlightBoost_ = std::clamp(value.toFloat(), 0.0f, 4.0f);
+    else if (key == QStringLiteral("Rotation")) {
+        const float v = value.toFloat();
+        rotation_ = std::isfinite(v) ? v : 0.0f;
+    }
+    else if (key == QStringLiteral("Edge Brightness")) {
+        const float v = value.toFloat();
+        edgeBrightness_ = std::isfinite(v) ? std::clamp(v, 0.0f, 3.0f) : 0.2f;
+    }
+    else if (key == QStringLiteral("Highlight Boost")) {
+        const float v = value.toFloat();
+        highlightBoost_ = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 0.35f;
+    }
     else if (key == QStringLiteral("PSF Image Path")) psfImagePath_ = value.toString();
     syncImpl();
 }
