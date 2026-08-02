@@ -17,7 +17,9 @@ module;
 #include <QStringList>
 #include <QTransform>
 #include <QVector3D>
+#include <QVector4D>
 #include <DiligentCore/Common/interface/BasicMath.hpp>
+#include <array>
 #include <unordered_set>
 #include <algorithm>
 #include <cmath>
@@ -1048,6 +1050,20 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
       const QVector3D transformed = world.map(QVector3D(x, y, 0.0f));
       return Detail::float3(transformed.x(), transformed.y(), transformed.z());
     };
+    const auto isVisibleInCamera = [&](qreal x, qreal y) {
+      if (!cameraView || !cameraProj) {
+        return true;
+      }
+      const QVector3D worldPoint = world.map(
+          QVector3D(static_cast<float>(x), static_cast<float>(y), 0.0f));
+      const QVector4D clip = (*cameraProj) * (*cameraView) *
+                             QVector4D(worldPoint, 1.0f);
+      if (!std::isfinite(clip.w()) || clip.w() <= 0.0f) {
+        return false;
+      }
+      const float ndcZ = clip.z() / clip.w();
+      return std::isfinite(ndcZ) && ndcZ >= -1.0f && ndcZ <= 1.0f;
+    };
     const auto tl = point(static_cast<float>(bounds.left()),
                           static_cast<float>(bounds.top()));
     const auto tr = point(static_cast<float>(bounds.right()),
@@ -1056,17 +1072,51 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
                           static_cast<float>(bounds.bottom()));
     const auto bl = point(static_cast<float>(bounds.left()),
                           static_cast<float>(bounds.bottom()));
+    FloatColor clippedFrameColor = color;
+    if (cameraView && cameraProj) {
+      const std::array<QVector3D, 4> frameWorld{
+          QVector3D(tl.x, tl.y, tl.z), QVector3D(tr.x, tr.y, tr.z),
+          QVector3D(br.x, br.y, br.z), QVector3D(bl.x, bl.y, bl.z)};
+      int visibleCorners = 0;
+      for (const QVector3D &worldPoint : frameWorld) {
+        const QVector4D clip = (*cameraProj) * (*cameraView) *
+                               QVector4D(worldPoint, 1.0f);
+        if (!std::isfinite(clip.w()) || clip.w() <= 0.0f) {
+          continue;
+        }
+        const float ndcZ = clip.z() / clip.w();
+        if (std::isfinite(ndcZ) && ndcZ >= -1.0f && ndcZ <= 1.0f) {
+          ++visibleCorners;
+        }
+      }
+      if (visibleCorners == 0) {
+        return;
+      }
+      if (visibleCorners < static_cast<int>(frameWorld.size())) {
+        clippedFrameColor = FloatColor{color.r(), color.g(), color.b(),
+                                       color.a() * 0.48f};
+      }
+    }
     if (cameraView && cameraProj) {
       renderer->set3DCameraMatrices(*cameraView, *cameraProj);
     }
     const auto edge = [&](const Detail::float3 &a, const Detail::float3 &b) {
       renderer->draw3DLine(a, b, shadow, safeThickness + 1.8f);
-      renderer->draw3DLine(a, b, color, safeThickness);
+      renderer->draw3DLine(a, b, clippedFrameColor, safeThickness);
     };
     edge(tl, tr);
     edge(tr, br);
     edge(br, bl);
     edge(bl, tl);
+
+    // 投影空間でのコーナーリサイズ時に対角方向を読み取りやすくする
+    // リファレンスマーク。枠線より薄く描き、通常の選択表示を圧迫しない。
+    const FloatColor diagonalColor{color.r(), color.g(), color.b(),
+                                   color.a() * 0.28f};
+    renderer->draw3DLine(tl, br, diagonalColor,
+                         std::max(0.75f, safeThickness * 0.55f));
+    renderer->draw3DLine(tr, bl, diagonalColor,
+                         std::max(0.75f, safeThickness * 0.55f));
 
     // A projected border alone is easy to confuse with the composition outline.
     // Add plane-aligned corner handles so the 3D frame remains identifiable and
@@ -1076,6 +1126,9 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
     const qreal handleHalf = handleSize * 0.5;
     const qreal shadowHalf = handleHalf + std::max<qreal>(2.0, handleSize * 0.12);
     const auto handle = [&](qreal x, qreal y) {
+      if (!isVisibleInCamera(x, y)) {
+        return;
+      }
       const auto quad = [&](qreal half, const FloatColor &fill) {
         renderer->draw3DQuad(
             point(static_cast<float>(x - half), static_cast<float>(y - half)),
@@ -1085,12 +1138,61 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
             fill);
       };
       quad(shadowHalf, shadow);
-      quad(handleHalf, color);
+      quad(handleHalf, clippedFrameColor);
     };
     handle(bounds.left(), bounds.top());
     handle(bounds.right(), bounds.top());
     handle(bounds.right(), bounds.bottom());
     handle(bounds.left(), bounds.bottom());
+    const qreal edgeHandleHalf = handleHalf * 0.8;
+    const auto edgeHandle = [&](qreal x, qreal y) {
+      if (!isVisibleInCamera(x, y)) {
+        return;
+      }
+      const auto quad = [&](qreal half, const FloatColor &fill) {
+        renderer->draw3DQuad(
+            point(static_cast<float>(x - half), static_cast<float>(y - half)),
+            point(static_cast<float>(x + half), static_cast<float>(y - half)),
+            point(static_cast<float>(x + half), static_cast<float>(y + half)),
+            point(static_cast<float>(x - half), static_cast<float>(y + half)),
+            fill);
+      };
+      quad(edgeHandleHalf + 2.0, shadow);
+      quad(edgeHandleHalf, clippedFrameColor);
+    };
+    edgeHandle(bounds.center().x(), bounds.top());
+    edgeHandle(bounds.center().x(), bounds.bottom());
+    edgeHandle(bounds.left(), bounds.center().y());
+    edgeHandle(bounds.right(), bounds.center().y());
+
+    // Rotation handle: keep it above the top edge with a stable local-space
+    // offset so it stays separated from the top resize handle after projection.
+    const qreal rotationOffset = std::clamp(
+        std::min(localBounds.width(), localBounds.height()) * 0.08, 28.0, 64.0);
+    const qreal rotationX = bounds.center().x();
+    const qreal rotationY = bounds.top() - rotationOffset;
+    const auto rotationHandle = [&](qreal x, qreal y) {
+      if (!isVisibleInCamera(x, y)) {
+        return;
+      }
+      const qreal rotationHalf = std::max<qreal>(6.0, edgeHandleHalf * 0.9);
+      const auto quad = [&](qreal half, const FloatColor &fill) {
+        renderer->draw3DQuad(
+            point(static_cast<float>(x - half), static_cast<float>(y - half)),
+            point(static_cast<float>(x + half), static_cast<float>(y - half)),
+            point(static_cast<float>(x + half), static_cast<float>(y + half)),
+            point(static_cast<float>(x - half), static_cast<float>(y + half)),
+            fill);
+      };
+      quad(rotationHalf + 2.0, shadow);
+      quad(rotationHalf, color);
+      renderer->draw3DLine(
+          point(static_cast<float>(bounds.center().x()),
+                static_cast<float>(bounds.center().y())),
+          point(static_cast<float>(rotationX), static_cast<float>(rotationY)),
+          clippedFrameColor, std::max(1.0f, safeThickness));
+    };
+    rotationHandle(rotationX, rotationY);
     renderer->flushGizmo3D();
     if (cameraView && cameraProj) {
       renderer->reset3DCameraMatrices();
