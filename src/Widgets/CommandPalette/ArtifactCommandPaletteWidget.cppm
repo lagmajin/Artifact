@@ -10,6 +10,7 @@
 #include <QListWidgetItem>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QPointer>
 #include <QSettings>
 #include <QVBoxLayout>
@@ -27,6 +28,11 @@
 #include "Input.Operator";
 
 module Command.Palette;
+
+import Artifact.Layers.Selection.Manager;
+import Artifact.Mask.LayerMask;
+import Artifact.Mask.Path;
+import Undo.UndoManager;
 
 namespace Artifact
 {
@@ -97,6 +103,36 @@ QString synthesizeActionId(const QAction* action)
     return QStringLiteral("qaction::text::") + stripped;
 }
 } // namespace
+
+class AddCommandPaletteMaskCommand final : public UndoCommand {
+public:
+    AddCommandPaletteMaskCommand(ArtifactAbstractLayerPtr layer,
+                                 std::vector<LayerMask> before,
+                                 std::vector<LayerMask> after)
+        : layer_(std::move(layer)), before_(std::move(before)),
+          after_(std::move(after)) {}
+
+    void undo() override { apply(before_); }
+    void redo() override { apply(after_); }
+    QString label() const override { return QStringLiteral("Add Mask"); }
+
+private:
+    void apply(const std::vector<LayerMask>& masks) {
+        if (!layer_) return;
+        while (layer_->maskCount() > 0) {
+            layer_->removeMask(layer_->maskCount() - 1);
+        }
+        for (const auto& mask : masks) {
+            layer_->addMask(mask);
+        }
+        layer_->setDirty(LayerDirtyFlag::Mask);
+        layer_->changed();
+    }
+
+    ArtifactAbstractLayerPtr layer_;
+    std::vector<LayerMask> before_;
+    std::vector<LayerMask> after_;
+};
 
 ArtifactCommandPaletteWidget::ArtifactCommandPaletteWidget(QWidget* parent)
     : QDialog(parent)
@@ -385,9 +421,9 @@ void ArtifactCommandPaletteWidget::bootDummyCommandPaletteActions()
     };
     static const Dummy kDummies[] = {
         {"palette.dummy.echo", "Echo", "Print a hello to stdout (dummy)", "Palette"},
-        {"palette.dummy.about", "About Command Palette", "Show that the palette shell is alive (dummy)", "Palette"},
+        {"palette.palette.about", "About Command Palette", "Show command palette information", "Palette"},
         {"palette.dummy.noop", "No-Op", "Does nothing (dummy)", "Palette"},
-        {"palette.dummy.addMask", "Add Mask", "Add a mask to the selected layer (stub; menu integration pending)", "Layer"},
+        {"palette.layer.addMask", "Add Mask", "Add a full-source rectangular mask to the selected layer", "Layer"},
     };
     for (const auto& d : kDummies) {
         if (mgr->getAction(QString::fromUtf8(d.id))) {
@@ -398,6 +434,52 @@ void ArtifactCommandPaletteWidget::bootDummyCommandPaletteActions()
             QString::fromUtf8(d.name),
             QString::fromUtf8(d.desc),
             [id = QString::fromUtf8(d.id)]() {
+                if (id == QStringLiteral("palette.layer.addMask")) {
+                    auto* selection = ArtifactLayerSelectionManager::instance();
+                    const auto layer = selection ? selection->currentLayer()
+                                                 : ArtifactAbstractLayerPtr{};
+                    if (!layer) {
+                        return;
+                    }
+
+                    const auto size = layer->sourceSize();
+                    if (size.width <= 0 || size.height <= 0) {
+                        return;
+                    }
+
+                    MaskPath path;
+                    path.addVertex({QPointF(0.0, 0.0), {}, {}});
+                    path.addVertex({QPointF(size.width, 0.0), {}, {}});
+                    path.addVertex({QPointF(size.width, size.height), {}, {}});
+                    path.addVertex({QPointF(0.0, size.height), {}, {}});
+                    path.setClosed(true);
+
+                    LayerMask mask;
+                    mask.addMaskPath(path);
+                    if (auto* undo = UndoManager::instance()) {
+                        std::vector<LayerMask> before;
+                        before.reserve(static_cast<size_t>(layer->maskCount()));
+                        for (int i = 0; i < layer->maskCount(); ++i) {
+                            before.push_back(layer->mask(i));
+                        }
+                        auto after = before;
+                        after.push_back(mask);
+                        undo->push(std::make_unique<AddCommandPaletteMaskCommand>(
+                            layer, std::move(before), std::move(after)));
+                    } else {
+                        layer->addMask(mask);
+                        layer->setDirty(LayerDirtyFlag::Mask);
+                        layer->changed();
+                    }
+                    return;
+                }
+                if (id == QStringLiteral("palette.palette.about")) {
+                    QMessageBox::information(
+                        nullptr,
+                        QStringLiteral("Command Palette"),
+                        QStringLiteral("Search and execute registered application commands."));
+                    return;
+                }
                 std::fprintf(stdout, "[CommandPalette] executed: %s\n",
                              id.toUtf8().constData());
                 std::fflush(stdout);
