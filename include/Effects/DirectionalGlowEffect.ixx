@@ -49,22 +49,22 @@ public:
     ~DirectionalGlowEffect() override;
 
     float threshold() const { return threshold_; }
-    void setThreshold(float t) { threshold_ = std::clamp(t, 0.0f, 1.0f); syncImpls(); }
+    void setThreshold(float t) { threshold_ = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.8f; syncImpls(); }
 
     float intensity() const { return intensity_; }
-    void setIntensity(float i) { intensity_ = std::max(0.0f, i); syncImpls(); }
+    void setIntensity(float i) { intensity_ = std::isfinite(i) ? std::max(0.0f, i) : 1.0f; syncImpls(); }
 
     float length1() const { return length1_; }
-    void setLength1(float l) { length1_ = std::max(1.0f, l); syncImpls(); }
+    void setLength1(float l) { length1_ = std::isfinite(l) ? std::max(1.0f, l) : 64.0f; syncImpls(); }
 
     float length2() const { return length2_; }
-    void setLength2(float l) { length2_ = std::max(1.0f, l); syncImpls(); }
+    void setLength2(float l) { length2_ = std::isfinite(l) ? std::max(1.0f, l) : 128.0f; syncImpls(); }
 
     float weight1() const { return weight1_; }
-    void setWeight1(float w) { weight1_ = std::clamp(w, 0.0f, 1.0f); syncImpls(); }
+    void setWeight1(float w) { weight1_ = std::isfinite(w) ? std::clamp(w, 0.0f, 1.0f) : 0.6f; syncImpls(); }
 
     float weight2() const { return weight2_; }
-    void setWeight2(float w) { weight2_ = std::clamp(w, 0.0f, 1.0f); syncImpls(); }
+    void setWeight2(float w) { weight2_ = std::isfinite(w) ? std::clamp(w, 0.0f, 1.0f) : 0.4f; syncImpls(); }
 
     StreakPattern pattern() const { return pattern_; }
     void setPattern(StreakPattern p) { pattern_ = p; syncImpls(); }
@@ -73,7 +73,7 @@ public:
     void setCustomAngles(const QVector<float>& angles) { customAngles_ = angles; syncImpls(); }
 
     float angleOffset() const { return angleOffset_; }
-    void setAngleOffset(float a) { angleOffset_ = a; syncImpls(); }
+    void setAngleOffset(float a) { angleOffset_ = std::isfinite(a) ? a : 0.0f; syncImpls(); }
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
