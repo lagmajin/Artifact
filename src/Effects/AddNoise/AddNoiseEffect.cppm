@@ -17,6 +17,7 @@ module Artifact.Effect.Rasterizer.AddNoise;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
@@ -64,8 +65,10 @@ public:
             Parallel::For(0, mat.rows, mat.rows * mat.cols, [&](int y) {
                 cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
                 for (int x = 0; x < mat.cols; ++x) {
+                    const auto ux = static_cast<uint32_t>(std::floor(static_cast<float>(x) / size_));
+                    const auto uy = static_cast<uint32_t>(std::floor(static_cast<float>(y) / size_));
                     const float n = noiseAt(
-                        static_cast<uint32_t>(x), static_cast<uint32_t>(y), 1u) *
+                        ux, uy, 1u) *
                         amount_;
                     cv::Vec4f& p = row[x];
                     p[0] = std::clamp(p[0] + n, 0.0f, 1.0f);
@@ -78,8 +81,8 @@ public:
                 cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
                 for (int x = 0; x < mat.cols; ++x) {
                     cv::Vec4f& p = row[x];
-                    const auto ux = static_cast<uint32_t>(x);
-                    const auto uy = static_cast<uint32_t>(y);
+                    const auto ux = static_cast<uint32_t>(std::floor(static_cast<float>(x) / size_));
+                    const auto uy = static_cast<uint32_t>(std::floor(static_cast<float>(y) / size_));
                     p[0] = std::clamp(p[0] + noiseAt(ux, uy, 1u) * amount_, 0.0f, 1.0f);
                     p[1] = std::clamp(p[1] + noiseAt(ux, uy, 2u) * amount_, 0.0f, 1.0f);
                     p[2] = std::clamp(p[2] + noiseAt(ux, uy, 3u) * amount_, 0.0f, 1.0f);
@@ -90,11 +93,13 @@ public:
             Parallel::For(0, mat.rows, mat.rows * mat.cols, [&](int y) {
                 cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
                 for (int x = 0; x < mat.cols; ++x) {
+                    const auto ux = static_cast<uint32_t>(std::floor(static_cast<float>(x) / size_));
+                    const auto uy = static_cast<uint32_t>(std::floor(static_cast<float>(y) / size_));
                     float luma = row[x][0] * 0.299f
                                + row[x][1] * 0.587f
                                + row[x][2] * 0.114f;
                     const float n = noiseAt(
-                        static_cast<uint32_t>(x), static_cast<uint32_t>(y), 1u) *
+                        ux, uy, 1u) *
                         amount_;
                     float newLuma = std::clamp(luma + n, 0.0f, 1.0f);
                     float diff = newLuma - luma;
@@ -159,8 +164,8 @@ public:
             gpuContext_=std::make_unique<ArtifactCore::GpuContext>(device_,context_);
             executor_=std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
         }
-        const auto& image=src.image();const float* pixels=image.rgba32fData();if(!pixels||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
-        Diligent::TextureDesc desc{};desc.Name="AddNoise/Input";desc.Type=Diligent::RESOURCE_DIM_TEX_2D;desc.Width=image.width();desc.Height=image.height();desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;desc.MipLevels=1;desc.ArraySize=1;desc.SampleCount=1;desc.Usage=Diligent::USAGE_DEFAULT;desc.BindFlags=Diligent::BIND_SHADER_RESOURCE;
+         const auto& image=src.image();const auto upload=ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView());if(!upload.isValid()||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
+        Diligent::TextureDesc desc{};desc.Name="AddNoise/Input";desc.Type=Diligent::RESOURCE_DIM_TEX_2D;desc.Width=image.width();desc.Height=image.height();desc.Format=upload.format==ArtifactCore::GpuImageFormat::Rgba16Float?Diligent::TEX_FORMAT_RGBA16_FLOAT:Diligent::TEX_FORMAT_RGBA32_FLOAT;desc.MipLevels=1;desc.ArraySize=1;desc.SampleCount=1;desc.Usage=Diligent::USAGE_DEFAULT;desc.BindFlags=Diligent::BIND_SHADER_RESOURCE;
         Diligent::TextureDesc outDesc=desc;outDesc.Name="AddNoise/Output";outDesc.Usage=Diligent::USAGE_DEFAULT;outDesc.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;
         if(!input_||!output_||!staging_||textureWidth_!=outDesc.Width||textureHeight_!=outDesc.Height){
             staging_.Release();output_.Release();input_.Release();
@@ -170,22 +175,22 @@ public:
             device_->CreateTexture(stagingDesc,nullptr,&staging_);if(!staging_){output_.Release();applyCPU(src,dst);return;}
             textureWidth_=outDesc.Width;textureHeight_=outDesc.Height;
         }
-        Diligent::TextureSubResData sub{};sub.pData=pixels;sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;
+         Diligent::TextureSubResData sub{};sub.pData=upload.bytes.data();sub.Stride=upload.rowStride;
         const Diligent::Box uploadBox(0,outDesc.Width,0,outDesc.Height,0,1);
         context_->UpdateTexture(input_,0,0,uploadBox,sub,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         if(!params_){Diligent::BufferDesc cbDesc{};cbDesc.Name="AddNoise/Params";cbDesc.Size=sizeof(Params);cbDesc.Usage=Diligent::USAGE_DYNAMIC;cbDesc.BindFlags=Diligent::BIND_UNIFORM_BUFFER;cbDesc.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;device_->CreateBuffer(cbDesc,nullptr,&params_);}if(!params_){applyCPU(src,dst);return;}
-        void* mapped=nullptr;context_->MapBuffer(params_,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}Params values{amount_,colorNoise_?1.0f:0.0f,monochrome_?1.0f:0.0f,static_cast<float>(seed_)};std::memcpy(mapped,&values,sizeof(values));context_->UnmapBuffer(params_,Diligent::MAP_WRITE);
+        void* mapped=nullptr;context_->MapBuffer(params_,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}Params values{amount_,colorNoise_?1.0f:0.0f,monochrome_?1.0f:0.0f,static_cast<float>(seed_),size_};std::memcpy(mapped,&values,sizeof(values));context_->UnmapBuffer(params_,Diligent::MAP_WRITE);
         static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"AddNoiseParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
         if(!pipelineReady_){ArtifactCore::ComputePipelineDesc pipeline{};pipeline.name="AddNoise/PSO";pipeline.shaderSource=kHlsl;pipeline.entryPoint="main";pipeline.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;pipeline.variables=vars;pipeline.variableCount=3;pipeline.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!executor_->build(pipeline)||!executor_->createShaderResourceBinding(true)||!executor_->setBuffer("AddNoiseParams",params_)){applyCPU(src,dst);return;}pipelineReady_=true;}
         if(!executor_->setTextureView("g_InputTexture",input_->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor_->setTextureView("g_OutputTexture",output_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}executor_->dispatch(context_,ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width,outDesc.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        Diligent::CopyTextureAttribs copy(output_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);context_->CopyTexture(copy);context_->Flush();context_->WaitForIdle();Diligent::MappedTextureSubresource read{};context_->MapTextureSubresource(staging_,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}cv::Mat result(static_cast<int>(outDesc.Height),static_cast<int>(outDesc.Width),CV_32FC4,read.pData,read.Stride);dst.image().setFromCVMat(result,image.colorDescriptor());context_->UnmapTextureSubresource(staging_,0,0);
+         Diligent::CopyTextureAttribs copy(output_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);context_->CopyTexture(copy);context_->Flush();context_->WaitForIdle();Diligent::MappedTextureSubresource read{};context_->MapTextureSubresource(staging_,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}cv::Mat result(static_cast<int>(outDesc.Height),static_cast<int>(outDesc.Width),CV_32FC4,read.pData,read.Stride);auto outputDescriptor=image.colorDescriptor();outputDescriptor.channelOrder=ArtifactCore::SurfaceChannelOrder::RGBA;dst.image().setFromCVMat(result,outputDescriptor);context_->UnmapTextureSubresource(staging_,0,0);
     }
 private:
-    struct Params{float amount,colorNoise,monochrome,seed;};
+    struct Params{float amount,colorNoise,monochrome,seed,size;};
     static constexpr const char* kHlsl=R"(
-Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer AddNoiseParams:register(b0){float g_Amount;float g_ColorNoise;float g_Monochrome;float g_Seed;}
+Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer AddNoiseParams:register(b0){float g_Amount;float g_ColorNoise;float g_Monochrome;float g_Seed;float g_Size;}
 uint hash(uint v){v^=v>>16;v*=0x7feb352du;v^=v>>15;v*=0x846ca68bu;return v^(v>>16);}float rnd(uint x,uint y,uint c){return ((hash(x*73856093u^y*19349663u^c*83492791u^asuint(g_Seed))&0x00ffffffu)/16777215.0f)*2.0f-1.0f;}
-[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 p=g_InputTexture[id.xy];float n=rnd(id.x,id.y,1u)*g_Amount;if(g_Monochrome>0.5)p.rgb=saturate(p.rgb+n);else if(g_ColorNoise>0.5)p.rgb=saturate(p.rgb+float3(rnd(id.x,id.y,1u),rnd(id.x,id.y,2u),rnd(id.x,id.y,3u))*g_Amount);else{float l=dot(p.rgb,float3(0.299,0.587,0.114));float nl=saturate(l+n);p.rgb=saturate(p.rgb+(nl-l));}g_OutputTexture[id.xy]=p;}
+[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;uint nx=(uint)floor((float)id.x/max(g_Size,0.1)),ny=(uint)floor((float)id.y/max(g_Size,0.1));float4 p=g_InputTexture[id.xy];float n=rnd(nx,ny,1u)*g_Amount;if(g_Monochrome>0.5)p.rgb=saturate(p.rgb+n);else if(g_ColorNoise>0.5)p.rgb=saturate(p.rgb+float3(rnd(nx,ny,1u),rnd(nx,ny,2u),rnd(nx,ny,3u))*g_Amount);else{float l=dot(p.rgb,float3(0.299,0.587,0.114));float nl=saturate(l+n);p.rgb=saturate(p.rgb+(nl-l));}g_OutputTexture[id.xy]=p;}
 )";
 };
 
@@ -198,15 +203,15 @@ AddNoiseEffect::AddNoiseEffect() {
 AddNoiseEffect::~AddNoiseEffect() = default;
 
 float AddNoiseEffect::amount() const { return amount_; }
-void AddNoiseEffect::setAmount(float v) { amount_ = std::clamp(v, 0.0f, 1.0f); syncImpls(); }
+void AddNoiseEffect::setAmount(float v) { amount_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.15f; syncImpls(); }
 float AddNoiseEffect::size() const { return size_; }
-void AddNoiseEffect::setSize(float v) { size_ = std::max(0.1f, v); syncImpls(); }
+void AddNoiseEffect::setSize(float v) { size_ = std::isfinite(v) ? std::clamp(v, 0.1f, 64.0f) : 1.0f; syncImpls(); }
 bool AddNoiseEffect::colorNoise() const { return colorNoise_; }
 void AddNoiseEffect::setColorNoise(bool v) { colorNoise_ = v; syncImpls(); }
 bool AddNoiseEffect::monochrome() const { return monochrome_; }
 void AddNoiseEffect::setMonochrome(bool v) { monochrome_ = v; syncImpls(); }
 int AddNoiseEffect::seed() const { return seed_; }
-void AddNoiseEffect::setSeed(int v) { seed_ = v; syncImpls(); }
+void AddNoiseEffect::setSeed(int v) { seed_ = std::clamp(v, 0, 9999); syncImpls(); }
 
 void AddNoiseEffect::syncImpls() {
     if (auto* c = dynamic_cast<AddNoiseEffectCPUImpl*>(cpuImpl().get())) {
