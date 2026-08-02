@@ -64,13 +64,16 @@ export namespace Artifact {
             angleProp.setName("Angle");
             angleProp.setType(PropertyType::Float);
             angleProp.setValue(angle_);
+            angleProp.setMinValue(QVariant(-720.0));
+            angleProp.setMaxValue(QVariant(720.0));
 
             return props;
         }
 
         void setPropertyValue(const UniString& name, const QVariant& value) override {
             if (name == UniString("Angle")) {
-                angle_ = value.toFloat();
+                const float angle = value.toFloat();
+                angle_ = std::isfinite(angle) ? std::clamp(angle, -720.0f, 720.0f) : 45.0f;
                 // trigger repaint update...
             }
         }
