@@ -30,7 +30,6 @@
 #include <numeric>
 #include <regex>
 #include <random>
-export module Artifact.Effect.Stabilizer;
 #include <wobjectdefs.h>
 #include <QObject>
 #include <QString>
@@ -39,6 +38,7 @@ export module Artifact.Effect.Stabilizer;
 #include <QPointF>
 #include <QSize>
 #include <QColor>
+export module Artifact.Effect.Stabilizer;
 
 
 
