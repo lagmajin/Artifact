@@ -33,13 +33,13 @@ public:
     ExposureEffect();
     ~ExposureEffect() override;
 
-    void setExposure(float ev) { exposure_ = std::clamp(ev, -5.0f, 5.0f); syncImpls(); }
+    void setExposure(float ev) { exposure_ = std::isfinite(ev) ? std::clamp(ev, -5.0f, 5.0f) : 0.0f; syncImpls(); }
     float exposure() const { return exposure_; }
 
-    void setOffset(float offset) { offset_ = std::clamp(offset, -0.5f, 0.5f); syncImpls(); }
+    void setOffset(float offset) { offset_ = std::isfinite(offset) ? std::clamp(offset, -0.5f, 0.5f) : 0.0f; syncImpls(); }
     float offset() const { return offset_; }
 
-    void setGammaCorrection(float gamma) { gammaCorrection_ = std::clamp(gamma, 0.2f, 5.0f); syncImpls(); }
+    void setGammaCorrection(float gamma) { gammaCorrection_ = std::isfinite(gamma) ? std::clamp(gamma, 0.2f, 5.0f) : 1.0f; syncImpls(); }
     float gammaCorrection() const { return gammaCorrection_; }
 
     std::vector<AbstractProperty> getProperties() const override;
