@@ -50,9 +50,9 @@ public:
 
 HalftoneEffect::HalftoneEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();}
 HalftoneEffect::~HalftoneEffect()=default;
-float HalftoneEffect::dotSize()const{return dotSize_;}void HalftoneEffect::setDotSize(float v){dotSize_=std::max(v,1.0f);syncImpls();}
-float HalftoneEffect::angle()const{return angle_;}void HalftoneEffect::setAngle(float v){angle_=v;syncImpls();}
-float HalftoneEffect::contrast()const{return contrast_;}void HalftoneEffect::setContrast(float v){contrast_=std::clamp(v,0.0f,3.0f);syncImpls();}
+float HalftoneEffect::dotSize()const{return dotSize_;}void HalftoneEffect::setDotSize(float v){dotSize_=std::isfinite(v)?std::clamp(v,1.0f,512.0f):8.0f;syncImpls();}
+float HalftoneEffect::angle()const{return angle_;}void HalftoneEffect::setAngle(float v){angle_=std::isfinite(v)?v:45.0f;syncImpls();}
+float HalftoneEffect::contrast()const{return contrast_;}void HalftoneEffect::setContrast(float v){contrast_=std::isfinite(v)?std::clamp(v,0.0f,3.0f):1.0f;syncImpls();}
 std::vector<AbstractProperty> HalftoneEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(3);
