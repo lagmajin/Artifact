@@ -56,8 +56,8 @@ namespace Artifact {
  QJsonObject ArtifactProjectSettings::Impl::toJson() const
  {
   QJsonObject result;
-  result["name"] = name_;
-  result["author"] = author_.toQString();
+  result["name"] = name_.trimmed();
+  result["author"] = author_.toQString().trimmed();
   result["version"] = "1.0";
   return result;
  }
@@ -65,10 +65,10 @@ namespace Artifact {
  void ArtifactProjectSettings::Impl::setFromJson(const QJsonObject& json)
  {
   if (json.contains("name")) {
-    name_ = json["name"].toString();
+    name_ = json["name"].toString().trimmed();
   }
   if (json.contains("author")) {
-    author_ = UniString(json["author"].toString());
+    author_ = UniString(json["author"].toString().trimmed());
   }
  }
 
@@ -93,7 +93,7 @@ namespace Artifact {
       issues.push_back({
         ProjectValidationIssue::Severity::Error,
         "projectName",
-        "プロジェクト名に使用できない文字が含まされています",
+        "プロジェクト名に使用できない文字が含まれています",
         "次の文字は使用できません: < > : \" / \\ | ? *"
       });
     }
