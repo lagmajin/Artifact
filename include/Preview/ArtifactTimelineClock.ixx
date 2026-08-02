@@ -29,10 +29,10 @@
 #include <numeric>
 #include <regex>
 #include <random>
-export module Artifact.Preview.Clock;
 #include <wobjectimpl.h>
 #include <QObject>
 #include <QString>
+export module Artifact.Preview.Clock;
 
 
 
