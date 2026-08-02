@@ -314,7 +314,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
 namespace {
 std::vector<ArtifactCore::CurvePoint> makeSCurvePoints(float strength) {
-    const float s = std::clamp(strength, 0.0f, 1.0f);
+    const float s = std::isfinite(strength) ? std::clamp(strength, 0.0f, 1.0f) : 0.0f;
     const float lowY = 0.25f - 0.15f * s;
     const float highY = 0.75f + 0.15f * s;
     return {
@@ -346,7 +346,7 @@ void CurvesEffect::setPreset(int preset) {
 }
 
 void CurvesEffect::setStrength(float strength) {
-    strength_ = std::clamp(strength, 0.0f, 1.0f);
+    strength_ = std::isfinite(strength) ? std::clamp(strength, 0.0f, 1.0f) : 0.0f;
     syncImpls();
 }
 
