@@ -164,13 +164,13 @@ public:
 EdgeEffect::EdgeEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();}
 EdgeEffect::~EdgeEffect()=default;
 float EdgeEffect::mode()const{return mode_;}
-void EdgeEffect::setMode(float v){mode_=std::clamp(v,0.0f,1.0f);syncImpls();}
+void EdgeEffect::setMode(float v){mode_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.0f;syncImpls();}
 float EdgeEffect::intensity()const{return intensity_;}
-void EdgeEffect::setIntensity(float v){intensity_=std::clamp(v,0.0f,10.0f);syncImpls();}
+void EdgeEffect::setIntensity(float v){intensity_=std::isfinite(v)?std::clamp(v,0.0f,10.0f):1.0f;syncImpls();}
 float EdgeEffect::threshold()const{return threshold_;}
-void EdgeEffect::setThreshold(float v){threshold_=std::clamp(v,0.0f,1.0f);syncImpls();}
+void EdgeEffect::setThreshold(float v){threshold_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.1f;syncImpls();}
 float EdgeEffect::invert()const{return invert_;}
-void EdgeEffect::setInvert(float v){invert_=std::clamp(v,0.0f,1.0f);syncImpls();}
+void EdgeEffect::setInvert(float v){invert_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.0f;syncImpls();}
 std::vector<AbstractProperty> EdgeEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(4);
@@ -209,20 +209,20 @@ RimLightEffect::RimLightEffect() : ArtifactAbstractEffect() {
 RimLightEffect::~RimLightEffect() = default;
 float RimLightEffect::angle() const { return angle_; }
 void RimLightEffect::setAngle(float v) {
-    angle_ = std::fmod(v, 360.0f);
+    angle_ = std::isfinite(v) ? std::fmod(v, 360.0f) : 315.0f;
     if (angle_ < 0.0f) angle_ += 360.0f;
     syncImpl();
 }
 float RimLightEffect::width() const { return width_; }
-void RimLightEffect::setWidth(float v) { width_ = std::clamp(v, 1.0f, 64.0f); syncImpl(); }
+void RimLightEffect::setWidth(float v) { width_ = std::isfinite(v) ? std::clamp(v, 1.0f, 64.0f) : 8.0f; syncImpl(); }
 float RimLightEffect::softness() const { return softness_; }
-void RimLightEffect::setSoftness(float v) { softness_ = std::clamp(v, 0.0f, 1.0f); syncImpl(); }
+void RimLightEffect::setSoftness(float v) { softness_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.55f; syncImpl(); }
 float RimLightEffect::intensity() const { return intensity_; }
-void RimLightEffect::setIntensity(float v) { intensity_ = std::clamp(v, 0.0f, 5.0f); syncImpl(); }
+void RimLightEffect::setIntensity(float v) { intensity_ = std::isfinite(v) ? std::clamp(v, 0.0f, 5.0f) : 1.5f; syncImpl(); }
 QColor RimLightEffect::color() const { return color_; }
 void RimLightEffect::setColor(const QColor& v) { if (v.isValid()) color_ = v; syncImpl(); }
 float RimLightEffect::mix() const { return mix_; }
-void RimLightEffect::setMix(float v) { mix_ = std::clamp(v, 0.0f, 1.0f); syncImpl(); }
+void RimLightEffect::setMix(float v) { mix_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 1.0f; syncImpl(); }
 
 std::vector<AbstractProperty> RimLightEffect::getProperties() const {
     std::vector<AbstractProperty> props;
