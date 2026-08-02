@@ -1,5 +1,7 @@
 module;
 
+#include <algorithm>
+#include <cmath>
 #include <QVector>
 
 module Artifact.Service.FootageInterpret;
@@ -87,7 +89,8 @@ FootageInterpretService& FootageInterpretService::instance() {
 InterpretImpactReport FootageInterpretService::preflightChange(
     FootageItem* footage, double newFrameRate) const {
     InterpretImpactReport report;
-    if (!footage || newFrameRate <= 0.0) return report;
+    if (!footage || !std::isfinite(newFrameRate) || newFrameRate <= 0.0) return report;
+    newFrameRate = std::clamp(newFrameRate, 0.001, 1000.0);
 
     if (!impl_) impl_ = std::make_unique<Impl>();
 
@@ -122,15 +125,17 @@ InterpretImpactReport FootageInterpretService::preflightChange(
 bool FootageInterpretService::applyFrameRateChange(
     FootageItem* footage, double newFrameRate,
     FrameRatePreserveMode mode, QString* errorOut) {
-    if (!footage || newFrameRate <= 0.0) {
+    if (!footage || !std::isfinite(newFrameRate) || newFrameRate <= 0.0) {
         if (errorOut) *errorOut = "Invalid footage or frame rate";
         return false;
     }
+    newFrameRate = std::clamp(newFrameRate, 0.001, 1000.0);
 
     if (!impl_) impl_ = std::make_unique<Impl>();
 
     const double oldFrameRate = footage->frameRate;
-    if (oldFrameRate <= 0.0 || std::abs(oldFrameRate - newFrameRate) < 0.001) {
+    if (!std::isfinite(oldFrameRate) || oldFrameRate <= 0.0 ||
+        std::abs(oldFrameRate - newFrameRate) < 0.001) {
         footage->frameRate = newFrameRate;
         return true;
     }
@@ -183,7 +188,9 @@ SourceInterpretOverride FootageInterpretService::currentOverride(
     const FootageItem* footage) const {
     SourceInterpretOverride override;
     if (!footage) return override;
-    override.frameRate = footage->frameRate;
+    override.frameRate = std::isfinite(footage->frameRate) && footage->frameRate > 0.0
+        ? std::clamp(footage->frameRate, 0.001, 1000.0)
+        : 0.0;
     override.inputColorSpace = footage->inputColorSpace;
     override.inputTransferFunction = footage->inputTransferFunction;
     override.isActive = override.frameRate > 0.0 ||
