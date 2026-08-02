@@ -6,6 +6,7 @@
 #include <QColor>
 #include <QUuid>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QDebug>
@@ -53,6 +54,12 @@ import Artifact.Effect.Abstract;
 
 namespace Artifact
 {
+
+namespace
+{
+constexpr qint64 kMaxEffectPresetFileBytes = 16LL * 1024LL * 1024LL;
+constexpr qsizetype kMaxEffectPresetEntries = 100000;
+}
 
 // ==================== ArtifactEffectPreset::Impl ====================
 
@@ -407,8 +414,13 @@ bool ArtifactEffectPresetCollection::saveToFile(const QString& filePath) const
 
 bool ArtifactEffectPresetCollection::loadFromFile(const QString& filePath)
 {
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
+    const QString normalizedPath = filePath.trimmed();
+    if (normalizedPath.isEmpty() || !QFileInfo::exists(normalizedPath)) {
+        return false;
+    }
+    QFile file(normalizedPath);
+    if (file.size() <= 0 || file.size() > kMaxEffectPresetFileBytes ||
+        !file.open(QIODevice::ReadOnly)) {
         return false;
     }
 
@@ -416,7 +428,14 @@ bool ArtifactEffectPresetCollection::loadFromFile(const QString& filePath)
     QJsonDocument doc = QJsonDocument::fromJson(data);
     if (doc.isArray()) {
         QJsonArray arr = doc.array();
+        qsizetype loadedCount = 0;
         for (const QJsonValue& v : arr) {
+            if (loadedCount++ >= kMaxEffectPresetEntries) {
+                break;
+            }
+            if (!v.isObject()) {
+                continue;
+            }
             auto preset = ArtifactEffectPreset::fromJson(v.toObject());
             auto id = preset.id();
             impl_->presets_[id] = std::make_unique<ArtifactEffectPreset>(preset);
