@@ -616,22 +616,28 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
 
 void ArtifactProjectManager::loadFromFile(const QString& fullpath)
  {
+  const QString normalizedPath = fullpath.trimmed();
+  if (normalizedPath.isEmpty() || !QFileInfo::exists(normalizedPath) ||
+      !QFileInfo(normalizedPath).isFile()) {
+   qWarning() << "[loadFromFile] Invalid project file path:" << fullpath;
+   return;
+  }
   ArtifactProjectImporter importer;
-  importer.setInputPath(fullpath);
+  importer.setInputPath(normalizedPath);
   auto importResult = importer.importProject();
 
   if (!importResult.success || !importResult.project) {
    if (!importResult.errorMessage.toQString().isEmpty()) {
-    qWarning() << "[loadFromFile] Failed to open project file:" << fullpath
+    qWarning() << "[loadFromFile] Failed to open project file:" << normalizedPath
                << importResult.errorMessage.toQString();
    } else {
-    qWarning() << "[loadFromFile] Failed to open project file:" << fullpath;
+    qWarning() << "[loadFromFile] Failed to open project file:" << normalizedPath;
    }
    return;
   }
 
   const int restoredComponentBakes =
-      loadComponentBakeSidecar(importResult.project, fullpath);
+      loadComponentBakeSidecar(importResult.project, normalizedPath);
   if (restoredComponentBakes > 0) {
     qInfo() << "[loadFromFile] Restored component simulation bakes:"
             << restoredComponentBakes;
@@ -639,8 +645,8 @@ void ArtifactProjectManager::loadFromFile(const QString& fullpath)
 
   impl_->currentProjectPtr_.reset();
   impl_->currentProjectPtr_ = importResult.project;
-  impl_->currentProjectPath_ = fullpath;
-  impl_->projectRootPath_ = QFileInfo(fullpath).absolutePath();
+  impl_->currentProjectPath_ = normalizedPath;
+  impl_->projectRootPath_ = QFileInfo(normalizedPath).absolutePath();
 
   if (impl_->currentProjectPtr_) {
    publishProjectCreatedEvent(impl_->projectDisplayName_);
@@ -815,6 +821,12 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& 
   ArtifactProjectExporterResult result;
   result.success = false;
 
+  const QString normalizedPath = fullpath.trimmed();
+  if (normalizedPath.isEmpty()) {
+    qWarning() << "[saveToFile] Empty project file path";
+    return result;
+  }
+
   auto projectPtr = impl_->currentProjectPtr_;
   if (!projectPtr || projectPtr->isNull()) {
    return result;
@@ -831,29 +843,29 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& 
     qDebug() << "[saveToFile] Validation warnings:" << validation.warnings;
   }
 
-  runProjectHookScript(QStringLiteral("before_project_save"), fullpath);
+  runProjectHookScript(QStringLiteral("before_project_save"), normalizedPath);
 
   // Create backup before saving (if file exists)
-  if (QFile::exists(fullpath)) {
-    if (!createBackupFile(fullpath)) {
-      qWarning() << "[saveToFile] Failed to create backup for:" << fullpath;
+  if (QFile::exists(normalizedPath)) {
+    if (!createBackupFile(normalizedPath)) {
+      qWarning() << "[saveToFile] Failed to create backup for:" << normalizedPath;
     }
   }
 
   ArtifactProjectExporter exporter;
   exporter.setProject(projectPtr);
-  exporter.setOutputPath(fullpath);
+  exporter.setOutputPath(normalizedPath);
   result = exporter.exportProject();
 
   if (result.success) {
-   if (!saveComponentBakeSidecar(projectPtr, fullpath)) {
+   if (!saveComponentBakeSidecar(projectPtr, normalizedPath)) {
     qWarning() << "[saveToFile] Failed to save component bake sidecar for:"
-               << fullpath;
+               << normalizedPath;
    }
-   impl_->currentProjectPath_ = fullpath;
-   runProjectHookScript(QStringLiteral("after_project_export"), fullpath);
+   impl_->currentProjectPath_ = normalizedPath;
+   runProjectHookScript(QStringLiteral("after_project_export"), normalizedPath);
   } else {
-   runProjectHookScript(QStringLiteral("on_project_save_failed"), fullpath);
+   runProjectHookScript(QStringLiteral("on_project_save_failed"), normalizedPath);
   }
   return result;
 }
@@ -921,10 +933,19 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
                                                ProjectLoadFinishedFn onFinished,
                                                ProjectProgressFn onProgress)
 {
+  const QString normalizedPath = fullpath.trimmed();
+  if (normalizedPath.isEmpty() || !QFileInfo::exists(normalizedPath) ||
+      !QFileInfo(normalizedPath).isFile()) {
+    ArtifactProjectImporterResult result;
+    result.success = false;
+    result.errorMessage = UniString(QStringLiteral("Invalid project file path"));
+    if (onFinished) onFinished(result);
+    return;
+  }
   auto* watcher = new QFutureWatcher<ArtifactProjectImporterResult>(this);
 
   QObject::connect(watcher, &QFutureWatcher<ArtifactProjectImporterResult>::finished,
-                   this, [this, watcher, fullpath, onFinished]() {
+                   this, [this, watcher, normalizedPath, onFinished]() {
     auto importResult = watcher->result();
     watcher->deleteLater();
 
@@ -934,11 +955,11 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
     }
 
       // Switch to main thread for UI updates
-    QMetaObject::invokeMethod(this, [this, importResult, fullpath, onFinished]() {
+    QMetaObject::invokeMethod(this, [this, importResult, normalizedPath, onFinished]() {
       impl_->currentProjectPtr_.reset();
       impl_->currentProjectPtr_ = importResult.project;
-      impl_->currentProjectPath_ = fullpath;
-      impl_->projectRootPath_ = QFileInfo(fullpath).absolutePath();
+      impl_->currentProjectPath_ = normalizedPath;
+      impl_->projectRootPath_ = QFileInfo(normalizedPath).absolutePath();
 
       if (impl_->currentProjectPtr_) {
         publishProjectCreatedEvent(impl_->projectDisplayName_);
@@ -949,11 +970,11 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
   });
 
   // Run import in background thread
-  watcher->setFuture(QtConcurrent::run([fullpath, onProgress]() -> ArtifactProjectImporterResult {
+  watcher->setFuture(QtConcurrent::run([normalizedPath, onProgress]() -> ArtifactProjectImporterResult {
     if (onProgress) onProgress(0, 100, QStringLiteral("Reading file..."));
 
     ArtifactProjectImporter importer;
-    importer.setInputPath(fullpath);
+    importer.setInputPath(normalizedPath);
 
     if (onProgress) onProgress(20, 100, QStringLiteral("Parsing JSON..."));
     auto importResult = importer.importProject();
@@ -963,7 +984,7 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
     }
 
     const int restoredComponentBakes =
-        loadComponentBakeSidecar(importResult.project, fullpath);
+        loadComponentBakeSidecar(importResult.project, normalizedPath);
     if (restoredComponentBakes > 0) {
       qInfo() << "[loadFromFileAsync] Restored component simulation bakes:"
               << restoredComponentBakes;
@@ -996,6 +1017,13 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
                                              ProjectSaveFinishedFn onFinished,
                                              ProjectProgressFn onProgress)
 {
+  const QString normalizedPath = fullpath.trimmed();
+  if (normalizedPath.isEmpty()) {
+    ArtifactProjectExporterResult result;
+    result.success = false;
+    if (onFinished) onFinished(result);
+    return;
+  }
   auto projectPtr = impl_->currentProjectPtr_;
   if (!projectPtr || projectPtr->isNull()) {
     ArtifactProjectExporterResult result;
@@ -1007,19 +1035,19 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
   auto* watcher = new QFutureWatcher<ArtifactProjectExporterResult>(this);
 
   QObject::connect(watcher, &QFutureWatcher<ArtifactProjectExporterResult>::finished,
-                   this, [this, watcher, fullpath, onFinished]() {
+                   this, [this, watcher, normalizedPath, onFinished]() {
     auto result = watcher->result();
     watcher->deleteLater();
 
     if (result.success) {
-      QMetaObject::invokeMethod(this, [this, fullpath]() {
-        impl_->currentProjectPath_ = fullpath;
-        impl_->projectRootPath_ = QFileInfo(fullpath).absolutePath();
-        runProjectHookScript(QStringLiteral("after_project_export"), fullpath);
+      QMetaObject::invokeMethod(this, [this, normalizedPath]() {
+        impl_->currentProjectPath_ = normalizedPath;
+        impl_->projectRootPath_ = QFileInfo(normalizedPath).absolutePath();
+        runProjectHookScript(QStringLiteral("after_project_export"), normalizedPath);
       }, Qt::QueuedConnection);
     } else {
-      QMetaObject::invokeMethod(this, [fullpath]() {
-        runProjectHookScript(QStringLiteral("on_project_save_failed"), fullpath);
+      QMetaObject::invokeMethod(this, [normalizedPath]() {
+        runProjectHookScript(QStringLiteral("on_project_save_failed"), normalizedPath);
       }, Qt::QueuedConnection);
     }
 
@@ -1027,7 +1055,7 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
   });
 
   // Run export in background thread
-  watcher->setFuture(QtConcurrent::run([projectPtr, fullpath, onProgress]() -> ArtifactProjectExporterResult {
+  watcher->setFuture(QtConcurrent::run([projectPtr, normalizedPath, onProgress]() -> ArtifactProjectExporterResult {
     ArtifactProjectExporterResult result;
     result.success = false;
 
@@ -1045,9 +1073,9 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
 
     if (onProgress) onProgress(10, 100, QStringLiteral("Creating backup..."));
     // Create backup before saving (if file exists)
-    if (QFile::exists(fullpath)) {
-      if (!createBackupFile(fullpath)) {
-        qWarning() << "[saveToFileAsync] Failed to create backup for:" << fullpath;
+    if (QFile::exists(normalizedPath)) {
+      if (!createBackupFile(normalizedPath)) {
+        qWarning() << "[saveToFileAsync] Failed to create backup for:" << normalizedPath;
       }
     }
 
@@ -1055,15 +1083,15 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
     ArtifactProjectExporter exporter;
     auto projectToSave = projectPtr;
     exporter.setProject(projectToSave);
-    exporter.setOutputPath(fullpath);
+    exporter.setOutputPath(normalizedPath);
 
     if (onProgress) onProgress(40, 100, QStringLiteral("Exporting..."));
     result = exporter.exportProject();
 
     if (result.success) {
-      if (!saveComponentBakeSidecar(projectPtr, fullpath)) {
+      if (!saveComponentBakeSidecar(projectPtr, normalizedPath)) {
         qWarning() << "[saveToFileAsync] Failed to save component bake sidecar for:"
-                   << fullpath;
+                   << normalizedPath;
       }
       if (onProgress) onProgress(100, 100, QStringLiteral("Saved"));
     } else {
