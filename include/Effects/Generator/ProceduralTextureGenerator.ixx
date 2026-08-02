@@ -31,6 +31,7 @@
 #include <random>
 #include <cstdint>
 #include <QString>
+#include <QVariant>
 
 export module Artifact.Effect.Generator.ProceduralTexture;
 
@@ -75,7 +76,8 @@ export namespace Artifact
         ProceduralTexturePreset preset() const { return preset_; }
         void setPreset(ProceduralTexturePreset preset)
         {
-            preset_ = preset;
+            const auto value = std::clamp(static_cast<std::uint32_t>(preset), 0u, 5u);
+            preset_ = static_cast<ProceduralTexturePreset>(value);
             settings_ = ProceduralTextureGenerator::makePreset(preset_, settings_.primary.seed);
         }
 
@@ -88,15 +90,17 @@ export namespace Artifact
         }
 
         int width() const { return settings_.width; }
-        void setWidth(int width) { settings_.width = width; }
+        void setWidth(int width) { settings_.width = std::clamp(width, 1, 8192); }
 
         int height() const { return settings_.height; }
-        void setHeight(int height) { settings_.height = height; }
+        void setHeight(int height) { settings_.height = std::clamp(height, 1, 8192); }
 
         const ProceduralTextureSettings& settings() const { return settings_; }
         void setSettings(const ProceduralTextureSettings& settings)
         {
             settings_ = settings;
+            settings_.width = std::clamp(settings_.width, 1, 8192);
+            settings_.height = std::clamp(settings_.height, 1, 8192);
         }
 
         // The generator currently owns only the CPU preset pipeline.
@@ -105,7 +109,47 @@ export namespace Artifact
 
         std::vector<ArtifactCore::AbstractProperty> getProperties() const override
         {
-            return {};
+            std::vector<ArtifactCore::AbstractProperty> props;
+            auto& preset = props.emplace_back();
+            preset.setName("Preset");
+            preset.setType(PropertyType::Integer);
+            preset.setValue(static_cast<int>(preset_));
+            preset.setMinValue(QVariant(0));
+            preset.setMaxValue(QVariant(5));
+
+            auto& seed = props.emplace_back();
+            seed.setName("Seed");
+            seed.setType(PropertyType::Integer);
+            seed.setValue(static_cast<qulonglong>(settings_.primary.seed));
+
+            auto& width = props.emplace_back();
+            width.setName("Width");
+            width.setType(PropertyType::Integer);
+            width.setValue(settings_.width);
+            width.setMinValue(QVariant(1));
+            width.setMaxValue(QVariant(8192));
+
+            auto& height = props.emplace_back();
+            height.setName("Height");
+            height.setType(PropertyType::Integer);
+            height.setValue(settings_.height);
+            height.setMinValue(QVariant(1));
+            height.setMaxValue(QVariant(8192));
+            return props;
+        }
+
+        void setPropertyValue(const UniString& name, const QVariant& value) override
+        {
+            const QString key = name.toQString();
+            if (key == QStringLiteral("Preset")) {
+                setPreset(static_cast<ProceduralTexturePreset>(value.toUInt()));
+            } else if (key == QStringLiteral("Seed")) {
+                setSeed(value.toUInt());
+            } else if (key == QStringLiteral("Width")) {
+                setWidth(value.toInt());
+            } else if (key == QStringLiteral("Height")) {
+                setHeight(value.toInt());
+            }
         }
 
     private:
