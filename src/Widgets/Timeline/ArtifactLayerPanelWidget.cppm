@@ -306,7 +306,7 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
   {
     const auto variants = layer ? layer->getVariants() : std::vector<LayerVariant*>{};
     if (index >= 0 && index < variants.size() && variants[index]) {
-      const QString name = QString::fromStdString(variants[index]->GetName()).trimmed();
+      const QString name = QString::fromStdString(ArtifactCore::toStdString(variants[index]->GetName())).trimmed();
       if (!name.isEmpty()) {
         return name;
       }
@@ -6823,7 +6823,6 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
   importTimelineDroppedPaths(validPaths);
 
   event->acceptProposedAction();
- }
 
   if (mime->hasFormat(QStringLiteral("application/x-artifact-effect-add"))) {
     const int row = impl_->rowIndexFromViewportY(static_cast<int>(event->position().y()));
@@ -6843,6 +6842,8 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
     event->ignore();
     return;
   }
+
+}
 
 bool ArtifactLayerPanelWidget::wouldCreateCycle(const LayerID& childId, const LayerID& parentId) const {
   auto comp = safeCompositionLookup(impl_->compositionId);
