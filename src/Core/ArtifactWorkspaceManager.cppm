@@ -159,8 +159,10 @@ static bool writeJsonFile(const QString &path, const QJsonObject &json) {
 }
 
 static QJsonObject readJsonFile(const QString &path) {
+  constexpr qint64 kMaxWorkspaceJsonBytes = 8LL * 1024LL * 1024LL;
   QFile file(path);
-  if (!file.open(QIODevice::ReadOnly)) {
+  if (file.size() <= 0 || file.size() > kMaxWorkspaceJsonBytes ||
+      !file.open(QIODevice::ReadOnly)) {
     return {};
   }
 
