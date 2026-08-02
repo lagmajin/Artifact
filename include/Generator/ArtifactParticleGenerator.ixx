@@ -592,7 +592,9 @@ public:
     void setPaused(bool paused) { paused_ = paused; }
     bool isPaused() const { return paused_; }
     
-    void setTimeScale(float scale) { timeScale_ = scale; }
+    void setTimeScale(float scale) {
+        timeScale_ = std::isfinite(scale) ? std::max(0.0f, scale) : 1.0f;
+    }
     float timeScale() const { return timeScale_; }
     
     float time() const { return time_; }
