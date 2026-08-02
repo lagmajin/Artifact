@@ -1698,7 +1698,12 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
           QJsonDocument::fromJson(argsBytes, &parseError);
       if (parseError.error == QJsonParseError::NoError) {
         if (argsDoc.isArray()) {
-          argsArray = argsDoc.array();
+          constexpr qsizetype kMaxMcpArgumentItems = 10000;
+          qsizetype itemCount = 0;
+          for (const QJsonValue &value : argsDoc.array()) {
+            if (itemCount++ >= kMaxMcpArgumentItems) break;
+            argsArray.append(value);
+          }
         } else if (argsDoc.isObject()) {
           argsArray = QJsonArray{argsDoc.object()};
         }
