@@ -114,50 +114,50 @@ ColorWheelsEffect::ColorWheelsEffect() {
 ColorWheelsEffect::~ColorWheelsEffect() = default;
 
 void ColorWheelsEffect::setLift(float r, float g, float b) {
-    wheels_.liftR = std::clamp(r, -2.0f, 2.0f);
-    wheels_.liftG = std::clamp(g, -2.0f, 2.0f);
-    wheels_.liftB = std::clamp(b, -2.0f, 2.0f);
+    wheels_.liftR = std::isfinite(r) ? std::clamp(r, -2.0f, 2.0f) : 0.0f;
+    wheels_.liftG = std::isfinite(g) ? std::clamp(g, -2.0f, 2.0f) : 0.0f;
+    wheels_.liftB = std::isfinite(b) ? std::clamp(b, -2.0f, 2.0f) : 0.0f;
     syncImpls();
 }
 
 void ColorWheelsEffect::setGamma(float r, float g, float b) {
-    wheels_.gammaR = std::clamp(r, 0.1f, 5.0f);
-    wheels_.gammaG = std::clamp(g, 0.1f, 5.0f);
-    wheels_.gammaB = std::clamp(b, 0.1f, 5.0f);
+    wheels_.gammaR = std::isfinite(r) ? std::clamp(r, 0.1f, 5.0f) : 1.0f;
+    wheels_.gammaG = std::isfinite(g) ? std::clamp(g, 0.1f, 5.0f) : 1.0f;
+    wheels_.gammaB = std::isfinite(b) ? std::clamp(b, 0.1f, 5.0f) : 1.0f;
     syncImpls();
 }
 
 void ColorWheelsEffect::setGain(float r, float g, float b) {
-    wheels_.gainR = std::clamp(r, 0.0f, 4.0f);
-    wheels_.gainG = std::clamp(g, 0.0f, 4.0f);
-    wheels_.gainB = std::clamp(b, 0.0f, 4.0f);
+    wheels_.gainR = std::isfinite(r) ? std::clamp(r, 0.0f, 4.0f) : 1.0f;
+    wheels_.gainG = std::isfinite(g) ? std::clamp(g, 0.0f, 4.0f) : 1.0f;
+    wheels_.gainB = std::isfinite(b) ? std::clamp(b, 0.0f, 4.0f) : 1.0f;
     syncImpls();
 }
 
 void ColorWheelsEffect::setOffset(float r, float g, float b) {
-    wheels_.offsetR = std::clamp(r, -2.0f, 2.0f);
-    wheels_.offsetG = std::clamp(g, -2.0f, 2.0f);
-    wheels_.offsetB = std::clamp(b, -2.0f, 2.0f);
+    wheels_.offsetR = std::isfinite(r) ? std::clamp(r, -2.0f, 2.0f) : 0.0f;
+    wheels_.offsetG = std::isfinite(g) ? std::clamp(g, -2.0f, 2.0f) : 0.0f;
+    wheels_.offsetB = std::isfinite(b) ? std::clamp(b, -2.0f, 2.0f) : 0.0f;
     syncImpls();
 }
 
 void ColorWheelsEffect::setLiftMaster(float v) {
-    wheels_.liftMaster = std::clamp(v, -2.0f, 2.0f);
+    wheels_.liftMaster = std::isfinite(v) ? std::clamp(v, -2.0f, 2.0f) : 0.0f;
     syncImpls();
 }
 
 void ColorWheelsEffect::setGammaMaster(float v) {
-    wheels_.gammaMaster = std::clamp(v, 0.1f, 5.0f);
+    wheels_.gammaMaster = std::isfinite(v) ? std::clamp(v, 0.1f, 5.0f) : 1.0f;
     syncImpls();
 }
 
 void ColorWheelsEffect::setGainMaster(float v) {
-    wheels_.gainMaster = std::clamp(v, 0.0f, 4.0f);
+    wheels_.gainMaster = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.0f;
     syncImpls();
 }
 
 void ColorWheelsEffect::setOffsetMaster(float v) {
-    wheels_.offsetMaster = std::clamp(v, -2.0f, 2.0f);
+    wheels_.offsetMaster = std::isfinite(v) ? std::clamp(v, -2.0f, 2.0f) : 0.0f;
     syncImpls();
 }
 
