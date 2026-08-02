@@ -44,7 +44,9 @@ LayerEnvelopeSample LayerEffectEnvelope::sample(const std::int64_t relativeFrame
     break;
   }
 
-  return {opacityT, effectStart + (effectEnd - effectStart) * effectT};
+  const float safeStart = std::isfinite(effectStart) ? effectStart : 0.0f;
+  const float safeEnd = std::isfinite(effectEnd) ? effectEnd : 1.0f;
+  return {opacityT, safeStart + (safeEnd - safeStart) * effectT};
 }
 
 }
