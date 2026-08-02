@@ -29,7 +29,9 @@ QString layerBusName(const ArtifactCore::LayerID& layerId)
 
 float linearToDecibels(const float volume)
 {
- return 20.0f * std::log10(std::max(0.001f, volume));
+ const float safeVolume = std::isfinite(volume)
+     ? std::max(0.001f, volume) : 1.0f;
+ return 20.0f * std::log10(safeVolume);
 }
 }
 
@@ -183,7 +185,8 @@ ArtifactPlaybackAudioDiagnostics ArtifactAudioService::playbackDiagnostics() con
 
 void ArtifactAudioService::setMasterVolume(float volume)
 {
- impl_->masterVolume = std::clamp(volume, 0.0f, 2.0f);
+ impl_->masterVolume = std::isfinite(volume)
+     ? std::clamp(volume, 0.0f, 2.0f) : 1.0f;
  if (auto* playback = ArtifactPlaybackService::instance()) {
   playback->setAudioMasterVolume(impl_->masterVolume);
  }
@@ -213,7 +216,8 @@ bool ArtifactAudioService::setLayerBusVolume(
  const auto mixer = impl_->currentMixer();
  const auto bus = mixer ? mixer->findBusByName(layerBusName(layerId)) : nullptr;
  if (!bus) return false;
- const float normalized = std::clamp(volume, 0.0f, 2.0f);
+ const float normalized = std::isfinite(volume)
+     ? std::clamp(volume, 0.0f, 2.0f) : 1.0f;
  if (const auto layer = impl_->currentLayer(layerId)) {
   if (const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
    audioLayer->setVolume(normalized);
@@ -232,7 +236,8 @@ bool ArtifactAudioService::setLayerBusPan(
  const auto mixer = impl_->currentMixer();
  const auto bus = mixer ? mixer->findBusByName(layerBusName(layerId)) : nullptr;
  if (!bus) return false;
- const float normalized = std::clamp(pan, -1.0f, 1.0f);
+ const float normalized = std::isfinite(pan)
+     ? std::clamp(pan, -1.0f, 1.0f) : 0.0f;
  if (const auto layer = impl_->currentLayer(layerId)) {
   if (const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
    audioLayer->setPan(normalized);
