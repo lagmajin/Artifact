@@ -1794,8 +1794,18 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
   // Clear existing children
   root->children.clear();
 
-  // Helper function to restore items recursively
-  std::function<void(const QJsonObject&, ProjectItem*)> restoreItem = [&](const QJsonObject& obj, ProjectItem* parent) {
+  // Helper function to restore items recursively.  Keep malformed project
+  // trees bounded before they can allocate unbounded ProjectItem ownership.
+  constexpr std::size_t kMaxRestoredItems = 100000;
+  constexpr int kMaxRestoredFolderDepth = 64;
+  std::size_t restoredItemCount = 0;
+  std::function<void(const QJsonObject&, ProjectItem*, int)> restoreItem =
+      [&](const QJsonObject& obj, ProjectItem* parent, const int depth) {
+    if (!parent || depth > kMaxRestoredFolderDepth ||
+        restoredItemCount >= kMaxRestoredItems) {
+      return;
+    }
+    ++restoredItemCount;
     QString type = obj["type"].toString();
     QString name = obj["name"].toString();
     QString idStr = obj["id"].toString();
@@ -1824,7 +1834,7 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
       QJsonArray children = obj["children"].toArray();
       for (const auto& childVal : children) {
         if (childVal.isObject()) {
-          restoreItem(childVal.toObject(), folderUp.get());
+          restoreItem(childVal.toObject(), folderUp.get(), depth + 1);
         }
       }
     } else if (type == "solid") {
@@ -1861,7 +1871,7 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
   // Restore top-level items
   for (const auto& val : items) {
     if (val.isObject()) {
-      restoreItem(val.toObject(), root);
+      restoreItem(val.toObject(), root, 0);
     }
   }
 
