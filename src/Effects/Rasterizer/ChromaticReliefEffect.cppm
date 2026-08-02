@@ -107,11 +107,11 @@ std::vector<AbstractProperty> ChromaticReliefEffect::getProperties() const {
 void ChromaticReliefEffect::setPropertyValue(const UniString& name,
                                              const QVariant& value) {
     const QString key = name.toQString();
-    if (key == QStringLiteral("Relief Amount")) reliefAmount_ = std::clamp(value.toFloat(), 0.0f, 3.0f);
-    else if (key == QStringLiteral("Chromatic Offset")) chromaticOffset_ = std::clamp(value.toFloat(), 0.0f, 40.0f);
-    else if (key == QStringLiteral("Direction")) direction_ = value.toFloat();
-    else if (key == QStringLiteral("Edge Softness")) edgeSoftness_ = std::clamp(value.toFloat(), 0.0f, 10.0f);
-    else if (key == QStringLiteral("Mix")) mix_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
+    if (key == QStringLiteral("Relief Amount")) { const float v = value.toFloat(); reliefAmount_ = std::isfinite(v) ? std::clamp(v, 0.0f, 3.0f) : 0.7f; }
+    else if (key == QStringLiteral("Chromatic Offset")) { const float v = value.toFloat(); chromaticOffset_ = std::isfinite(v) ? std::clamp(v, 0.0f, 40.0f) : 4.0f; }
+    else if (key == QStringLiteral("Direction")) { const float v = value.toFloat(); direction_ = std::isfinite(v) ? v : 45.0f; }
+    else if (key == QStringLiteral("Edge Softness")) { const float v = value.toFloat(); edgeSoftness_ = std::isfinite(v) ? std::clamp(v, 0.0f, 10.0f) : 1.2f; }
+    else if (key == QStringLiteral("Mix")) { const float v = value.toFloat(); mix_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.8f; }
     syncImpl();
 }
 
