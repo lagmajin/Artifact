@@ -5234,6 +5234,7 @@ public:
     QLabel* syncStateLabel = nullptr;
     QLabel* projectHealthLabel = nullptr;
     QLabel* selectionSummaryLabel = nullptr;
+    QLabel* filterSummaryLabel = nullptr;
     QLabel* selectionStateLabel = nullptr;
     QLabel* selectionDetailLabel = nullptr;
     QPushButton* openSelectionButton = nullptr;
@@ -5929,6 +5930,20 @@ public:
         return summary;
     }
 
+    QString filterSummaryText() const {
+        const QString typeText = typeFilterBox ? typeFilterBox->currentText() : QStringLiteral("All");
+        const QString unusedText = unusedOnlyCheck && unusedOnlyCheck->isChecked()
+            ? QStringLiteral("On")
+            : QStringLiteral("Off");
+        const QString queryText = searchBar ? searchBar->text().trimmed() : QString();
+        QString summary = QStringLiteral("Type: %1  |  Unused: %2")
+            .arg(typeText, unusedText);
+        if (!queryText.isEmpty()) {
+            summary += QStringLiteral("  |  Query: %1").arg(queryText);
+        }
+        return summary;
+    }
+
     qint64 selectedFootageBytes() const {
         if (!projectView_ || !projectView_->selectionModel()) {
             return 0;
@@ -6033,6 +6048,11 @@ public:
             selectionSummaryLabel->setText(selectionSummaryText());
             selectionSummaryLabel->setToolTip(
                 QStringLiteral("Current view mode, active filter scope, and search text."));
+        }
+        if (filterSummaryLabel) {
+            filterSummaryLabel->setText(filterSummaryText());
+            filterSummaryLabel->setToolTip(
+                QStringLiteral("Active Project View search and filter conditions."));
         }
         if (selectionStateLabel) {
             selectionStateLabel->setText(selectionStateText());
@@ -6790,6 +6810,20 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->selectionSummaryLabel->setPalette(pal);
     }
     selectionChromeLayout->addWidget(impl_->selectionSummaryLabel);
+    impl_->filterSummaryLabel = new QLabel(selectionChrome);
+    impl_->filterSummaryLabel->setObjectName(QStringLiteral("projectManagerFilterSummary"));
+    impl_->filterSummaryLabel->setWordWrap(true);
+    impl_->filterSummaryLabel->setMaximumHeight(32);
+    impl_->filterSummaryLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    {
+        QFont f = impl_->filterSummaryLabel->font();
+        f.setPointSize(std::max(8, f.pointSize() - 1));
+        impl_->filterSummaryLabel->setFont(f);
+        QPalette pal = impl_->filterSummaryLabel->palette();
+        pal.setColor(QPalette::WindowText, pal.color(QPalette::PlaceholderText));
+        impl_->filterSummaryLabel->setPalette(pal);
+    }
+    selectionChromeLayout->addWidget(impl_->filterSummaryLabel);
     impl_->selectionStateLabel = new QLabel(QStringLiteral("0 items  ·  0 selected"), selectionChrome);
     impl_->selectionStateLabel->setWordWrap(true);
     impl_->selectionStateLabel->setMaximumHeight(40);
