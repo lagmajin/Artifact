@@ -83,10 +83,10 @@ Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTextur
 
     StripesEffect::StripesEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();setGPUImpl(ArtifactCore::makeShared<StripesGPUImpl>());setComputeMode(ComputeMode::AUTO);}
 StripesEffect::~StripesEffect()=default;
-float StripesEffect::frequency()const{return frequency_;}void StripesEffect::setFrequency(float v){frequency_=std::max(v,0.5f);syncImpls();}
-float StripesEffect::angle()const{return angle_;}void StripesEffect::setAngle(float v){angle_=v;syncImpls();}
-float StripesEffect::thickness()const{return thickness_;}void StripesEffect::setThickness(float v){thickness_=std::clamp(v,0.0f,1.0f);syncImpls();}
-float StripesEffect::offset()const{return offset_;}void StripesEffect::setOffset(float v){offset_=v;syncImpls();}
+float StripesEffect::frequency()const{return frequency_;}void StripesEffect::setFrequency(float v){frequency_=std::isfinite(v)?std::clamp(v,0.5f,512.0f):10.0f;syncImpls();}
+float StripesEffect::angle()const{return angle_;}void StripesEffect::setAngle(float v){angle_=std::isfinite(v)?v:0.0f;syncImpls();}
+float StripesEffect::thickness()const{return thickness_;}void StripesEffect::setThickness(float v){thickness_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.5f;syncImpls();}
+float StripesEffect::offset()const{return offset_;}void StripesEffect::setOffset(float v){offset_=std::isfinite(v)?v:0.0f;syncImpls();}
 std::vector<AbstractProperty> StripesEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(4);
