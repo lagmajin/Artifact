@@ -102,8 +102,8 @@ public:
             cv::Vec4f*   sRow = shadowLayer.ptr<cv::Vec4f>(y);
             for (int x = 0; x < W; ++x) {
                 const float a = std::clamp(aRow[x] * so * opac, 0.0f, 1.0f);
-                // OpenCV internal order: B, G, R, A
-                sRow[x] = cv::Vec4f(sb, sg, sr, a);
+                // ImageF32x4_RGBA is stored as RGBA, including its cv::Mat view.
+                sRow[x] = cv::Vec4f(sr, sg, sb, a);
             }
         });
         
@@ -124,14 +124,15 @@ public:
             for (int x = 0; x < W; ++x) {
                 const float fa = fg[x][3];
                 const float sa = sh[x][3];
-                const float shadowFactor = sa * (1.0f - fa);
-                const float oa = fa + shadowFactor * (1.0f - fa);
+                const float shadowFactor = std::clamp(sa * fa, 0.0f, 1.0f);
+                const float oa = fa;
                 if (oa < 1e-6f) {
                     out[x] = cv::Vec4f(0.f, 0.f, 0.f, 0.f);
                     continue;
                 }
                 for (int c = 0; c < 3; ++c) {
-                    out[x][c] = (fg[x][c] * fa + sh[x][c] * shadowFactor * (1.0f - fa)) / oa;
+                    out[x][c] = (fg[x][c] * fa * (1.0f - shadowFactor) +
+                                 sh[x][c] * shadowFactor) / oa;
                 }
                 out[x][3] = oa;
             }
@@ -181,25 +182,25 @@ void   InnerShadowEffect::setShadowColor(const QColor& c) {
 
 float InnerShadowEffect::distance() const { return distance_; }
 void  InnerShadowEffect::setDistance(float d) {
-    distance_ = std::max(0.0f, d);
+    distance_ = std::isfinite(d) ? std::max(0.0f, d) : 5.0f;
     syncImpls();
 }
 
 float InnerShadowEffect::angle() const { return angle_; }
 void  InnerShadowEffect::setAngle(float a) {
-    angle_ = a;
+    angle_ = std::isfinite(a) ? a : 135.0f;
     syncImpls();
 }
 
 float InnerShadowEffect::softness() const { return softness_; }
 void  InnerShadowEffect::setSoftness(float s) {
-    softness_ = std::max(0.0f, s);
+    softness_ = std::isfinite(s) ? std::max(0.0f, s) : 8.0f;
     syncImpls();
 }
 
 float InnerShadowEffect::opacity() const { return opacity_; }
 void  InnerShadowEffect::setOpacity(float o) {
-    opacity_ = std::clamp(o, 0.0f, 100.0f);
+    opacity_ = std::isfinite(o) ? std::clamp(o, 0.0f, 100.0f) : 75.0f;
     syncImpls();
 }
 
