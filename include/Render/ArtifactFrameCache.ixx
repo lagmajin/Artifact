@@ -34,13 +34,14 @@
 #include <regex>
 #include <random>
 #include <wobjectdefs.h>
-export module Artifact.Render.FrameCache;
 #include <QObject>
 #include <QImage>
 #include <QSize>
 #include <QString>
 #include <QMutex>
 #include <QWaitCondition>
+
+export module Artifact.Render.FrameCache;
 
 
 

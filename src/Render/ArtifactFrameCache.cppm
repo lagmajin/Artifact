@@ -165,6 +165,7 @@ public:
         if (entries_.empty()) return nullptr;
         
         FramePosition toEvict;
+        bool found = false;
         
         switch (policy_) {
             case CachePolicy::LRU: {
@@ -177,6 +178,7 @@ public:
                         timeIt->second == candidate.key &&
                         entries_.find(frame) != entries_.end()) {
                         toEvict = frame;
+                        found = true;
                         break;
                     }
                 }
@@ -192,6 +194,7 @@ public:
                         countIt->second == static_cast<int>(candidate.key) &&
                         entries_.find(frame) != entries_.end()) {
                         toEvict = frame;
+                        found = true;
                         break;
                     }
                 }
@@ -203,6 +206,7 @@ public:
                     insertionOrder_.pop_front();
                     if (entries_.find(frame) != entries_.end()) {
                         toEvict = frame;
+                        found = true;
                         break;
                     }
                 }
@@ -217,6 +221,7 @@ public:
                     if (entryIt != entries_.end() && entryIt->second &&
                         entryIt->second->memorySize == candidate.key) {
                         toEvict = frame;
+                        found = true;
                         break;
                     }
                 }
@@ -224,6 +229,14 @@ public:
             }
             default:
                 toEvict = entries_.begin()->first;
+                found = true;
+        }
+
+        // Candidate queues are intentionally lazy and may contain only stale
+        // records after invalidation/replacement. Never let eviction spin
+        // forever when that bookkeeping has no live candidate.
+        if (!found && !entries_.empty()) {
+            toEvict = entries_.begin()->first;
         }
         
         auto it = entries_.find(toEvict);
@@ -284,7 +297,8 @@ int FrameCache::maxFrameCount() const {
 
 void FrameCache::setPolicy(CachePolicy policy) {
     QMutexLocker locker(&impl_->mutex_);
-    impl_->policy_ = policy;
+    const int value = std::clamp(static_cast<int>(policy), 0, 4);
+    impl_->policy_ = static_cast<CachePolicy>(value);
     impl_->rebuildCandidates();
 }
 
@@ -305,7 +319,12 @@ ArtifactCore::SharedPtr<FrameCacheEntry> FrameCache::get(const FramePosition& fr
     
     auto it = impl_->entries_.find(frame);
     if (it != impl_->entries_.end()) {
-        if (it->second && it->second->generation != impl_->generation_) {
+        if (!it->second) {
+            impl_->entries_.erase(it);
+            impl_->missCount_++;
+            return nullptr;
+        }
+        if (it->second->generation != impl_->generation_) {
             impl_->memoryUsage_ -= it->second->memorySize;
             impl_->entries_.erase(it);
             impl_->accessTimes_.erase(frame);
@@ -330,6 +349,10 @@ void FrameCache::put(ArtifactCore::SharedPtr<FrameCacheEntry> entry) {
     if (!entry) return;
 
     QMutexLocker locker(&impl_->mutex_);
+
+    if (impl_->maxFrameCount_ <= 0) {
+        throw std::invalid_argument("Frame cache capacity is zero");
+    }
 
     // Validate entry memory size
     if (entry->memorySize == 0 || entry->memorySize > impl_->maxMemory_) {
@@ -491,15 +514,23 @@ void FrameCache::prefetch(const FramePosition& frame) {
 
 void FrameCache::prefetchRange(const FrameRange& range) {
     QMutexLocker locker(&impl_->mutex_);
-    for (long long f = range.start().value(); f <= range.end().value(); ++f) {
+    const auto first = range.start().value();
+    const auto last = range.end().value();
+    if (first > last) return;
+    for (long long f = first;; ++f) {
         impl_->prefetchQueue_.insert(FramePosition(f));
+        if (f == last) break;
     }
 }
 
 void FrameCache::cancelPrefetch(const FrameRange& range) {
     QMutexLocker locker(&impl_->mutex_);
-    for (long long f = range.start().value(); f <= range.end().value(); ++f) {
+    const auto first = range.start().value();
+    const auto last = range.end().value();
+    if (first > last) return;
+    for (long long f = first;; ++f) {
         impl_->prefetchQueue_.erase(FramePosition(f));
+        if (f == last) break;
     }
 }
 
@@ -549,8 +580,9 @@ ProgressiveRenderer::ProgressiveRenderer(QObject* parent)
 ProgressiveRenderer::~ProgressiveRenderer() = default;
 
 void ProgressiveRenderer::setQuality(RenderQuality quality) {
-    impl_->quality_ = quality;
-    emit qualityChanged(quality);
+    const int value = std::clamp(static_cast<int>(quality), 0, 3);
+    impl_->quality_ = static_cast<RenderQuality>(value);
+    emit qualityChanged(impl_->quality_);
 }
 
 RenderQuality ProgressiveRenderer::quality() const {
@@ -558,11 +590,11 @@ RenderQuality ProgressiveRenderer::quality() const {
 }
 
 void ProgressiveRenderer::setDraftQuality(int downsampling) {
-    impl_->draftDownsample_ = downsampling;
+    impl_->draftDownsample_ = std::clamp(downsampling, 1, 64);
 }
 
 void ProgressiveRenderer::setPreviewQuality(int downsampling) {
-    impl_->previewDownsample_ = downsampling;
+    impl_->previewDownsample_ = std::clamp(downsampling, 1, 64);
 }
 
 float ProgressiveRenderer::currentProgress() const {
@@ -653,6 +685,9 @@ RenderPerformanceMonitor::RenderPerformanceMonitor(QObject* parent)
 RenderPerformanceMonitor::~RenderPerformanceMonitor() = default;
 
 void RenderPerformanceMonitor::recordFrameRender(double timeMs, RenderQuality quality) {
+    if (!std::isfinite(timeMs) || timeMs < 0.0) {
+        return;
+    }
     impl_->recordFrameTime(timeMs);
     
     switch (quality) {
@@ -669,7 +704,10 @@ void RenderPerformanceMonitor::recordFrameRender(double timeMs, RenderQuality qu
         impl_->frameCountForFPS_ = 0;
         impl_->fpsTimer_.restart();
         
-        emit fpsChanged(impl_->currentFPS_, 1000.0 / impl_->metrics_.averageFrameTime);
+        const double averageFPS = impl_->metrics_.averageFrameTime > 0.0
+            ? 1000.0 / impl_->metrics_.averageFrameTime
+            : 0.0;
+        emit fpsChanged(impl_->currentFPS_, averageFPS);
     }
     
     // Check performance
@@ -707,10 +745,14 @@ double RenderPerformanceMonitor::averageFPS() const {
 }
 
 bool RenderPerformanceMonitor::isPerformanceAcceptable() const {
-    return impl_->metrics_.averageFrameTime <= impl_->frameTimeBudget_;
+    return impl_->metrics_.averageFrameTime > 0.0 &&
+           impl_->metrics_.averageFrameTime <= impl_->frameTimeBudget_;
 }
 
 void RenderPerformanceMonitor::setTargetFPS(double fps) {
+    if (!std::isfinite(fps) || fps <= 0.0) {
+        return;
+    }
     impl_->targetFPS_ = fps;
     impl_->frameTimeBudget_ = 1000.0 / fps;
 }
@@ -720,6 +762,9 @@ double RenderPerformanceMonitor::targetFPS() const {
 }
 
 void RenderPerformanceMonitor::setFrameTimeBudget(double ms) {
+    if (!std::isfinite(ms) || ms < 0.0) {
+        return;
+    }
     impl_->frameTimeBudget_ = ms;
 }
 
@@ -732,6 +777,7 @@ void RenderPerformanceMonitor::reset() {
     impl_->metrics_ = RenderMetrics();
     impl_->currentFPS_ = 0;
     impl_->frameCountForFPS_ = 0;
+    impl_->fpsTimer_.restart();
 }
 
 } // namespace Artifact
