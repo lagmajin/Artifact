@@ -54,7 +54,11 @@ void ArtifactToolManager::setActiveTool(ToolType type) {
    case ToolType::Puppet: return "PuppetTool";
    case ToolType::ScrubPreview: return "ScrubPreviewTool";
    case ToolType::Brush: return "BrushTool";
+   case ToolType::Clone: return "CloneStampTool";
    case ToolType::Eraser: return "EraserTool";
+   case ToolType::RigSelect: return "RigSelectTool";
+   case ToolType::RigWeight: return "WeightPaintTool";
+   case ToolType::TrackPoint: return "TrackPointTool";
    default: return "Unknown";
   }
  }

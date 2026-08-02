@@ -34,8 +34,12 @@ export namespace Artifact {
   ScrubPreview,
   // 2D Tracking
   TrackPoint,
-   Brush,
-   Eraser
+  Brush,
+  Clone,
+  Eraser,
+  // 2D rig editing
+  RigSelect,
+  RigWeight
  };
 
  class ArtifactToolManager : public QObject {
