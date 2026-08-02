@@ -60,10 +60,10 @@ Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
 
 VoronoiEffect::VoronoiEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();}
 VoronoiEffect::~VoronoiEffect()=default;
-float VoronoiEffect::scale()const{return scale_;}void VoronoiEffect::setScale(float v){scale_=std::max(v,1.0f);syncImpls();}
-float VoronoiEffect::jitter()const{return jitter_;}void VoronoiEffect::setJitter(float v){jitter_=std::clamp(v,0.0f,2.0f);syncImpls();}
+float VoronoiEffect::scale()const{return scale_;}void VoronoiEffect::setScale(float v){scale_=std::isfinite(v)?std::clamp(v,1.0f,200.0f):20.0f;syncImpls();}
+float VoronoiEffect::jitter()const{return jitter_;}void VoronoiEffect::setJitter(float v){jitter_=std::isfinite(v)?std::clamp(v,0.0f,2.0f):1.0f;syncImpls();}
 int VoronoiEffect::mode()const{return mode_;}void VoronoiEffect::setMode(int v){mode_=std::clamp(v,0,3);syncImpls();}
-int VoronoiEffect::seed()const{return seed_;}void VoronoiEffect::setSeed(int v){seed_=v;syncImpls();}
+int VoronoiEffect::seed()const{return seed_;}void VoronoiEffect::setSeed(int v){seed_=std::clamp(v,0,9999);syncImpls();}
 std::vector<AbstractProperty> VoronoiEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(4);
