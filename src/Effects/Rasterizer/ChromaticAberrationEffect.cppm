@@ -84,10 +84,10 @@ float4 atp(int2 p,uint w,uint h){return g_InputTexture[uint2(clamp(p.x,0,(int)w-
 
 ChromaticAberrationEffect::ChromaticAberrationEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();setGPUImpl(ArtifactCore::makeShared<ChromaticAberrationGPUImpl>());}
 ChromaticAberrationEffect::~ChromaticAberrationEffect()=default;
-float ChromaticAberrationEffect::redShift()const{return redShift_;}void ChromaticAberrationEffect::setRedShift(float v){redShift_=std::clamp(v,0.0f,50.0f);syncImpls();}
-float ChromaticAberrationEffect::blueShift()const{return blueShift_;}void ChromaticAberrationEffect::setBlueShift(float v){blueShift_=std::clamp(v,0.0f,50.0f);syncImpls();}
-float ChromaticAberrationEffect::centerX()const{return cx_;}void ChromaticAberrationEffect::setCenterX(float v){cx_=std::clamp(v,0.0f,1.0f);syncImpls();}
-float ChromaticAberrationEffect::centerY()const{return cy_;}void ChromaticAberrationEffect::setCenterY(float v){cy_=std::clamp(v,0.0f,1.0f);syncImpls();}
+float ChromaticAberrationEffect::redShift()const{return redShift_;}void ChromaticAberrationEffect::setRedShift(float v){redShift_=std::isfinite(v)?std::clamp(v,0.0f,50.0f):2.0f;syncImpls();}
+float ChromaticAberrationEffect::blueShift()const{return blueShift_;}void ChromaticAberrationEffect::setBlueShift(float v){blueShift_=std::isfinite(v)?std::clamp(v,0.0f,50.0f):2.0f;syncImpls();}
+float ChromaticAberrationEffect::centerX()const{return cx_;}void ChromaticAberrationEffect::setCenterX(float v){cx_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.5f;syncImpls();}
+float ChromaticAberrationEffect::centerY()const{return cy_;}void ChromaticAberrationEffect::setCenterY(float v){cy_=std::isfinite(v)?std::clamp(v,0.0f,1.0f):0.5f;syncImpls();}
 std::vector<AbstractProperty> ChromaticAberrationEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(4);
