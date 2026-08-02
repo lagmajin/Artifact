@@ -158,15 +158,15 @@ TurbulentDisplaceEffect::TurbulentDisplaceEffect() {
 TurbulentDisplaceEffect::~TurbulentDisplaceEffect() = default;
 
 float TurbulentDisplaceEffect::amount() const { return amount_; }
-void TurbulentDisplaceEffect::setAmount(float v) { amount_ = std::max(0.0f, v); syncImpls(); }
+void TurbulentDisplaceEffect::setAmount(float v) { amount_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1000.0f) : 20.0f; syncImpls(); }
 float TurbulentDisplaceEffect::size() const { return size_; }
-void TurbulentDisplaceEffect::setSize(float v) { size_ = std::max(1.0f, v); syncImpls(); }
+void TurbulentDisplaceEffect::setSize(float v) { size_ = std::isfinite(v) ? std::clamp(v, 1.0f, 1024.0f) : 30.0f; syncImpls(); }
 int TurbulentDisplaceEffect::octaves() const { return octaves_; }
-void TurbulentDisplaceEffect::setOctaves(int v) { octaves_ = std::max(1, v); syncImpls(); }
+void TurbulentDisplaceEffect::setOctaves(int v) { octaves_ = std::clamp(v, 1, 12); syncImpls(); }
 int TurbulentDisplaceEffect::seed() const { return seed_; }
-void TurbulentDisplaceEffect::setSeed(int v) { seed_ = v; syncImpls(); }
+void TurbulentDisplaceEffect::setSeed(int v) { seed_ = std::clamp(v, 0, 9999); syncImpls(); }
 float TurbulentDisplaceEffect::domainWarp() const { return domainWarp_; }
-void TurbulentDisplaceEffect::setDomainWarp(float v) { domainWarp_ = std::max(0.0f, v); syncImpls(); }
+void TurbulentDisplaceEffect::setDomainWarp(float v) { domainWarp_ = std::isfinite(v) ? std::clamp(v, 0.0f, 100.0f) : 0.0f; syncImpls(); }
 
 void TurbulentDisplaceEffect::syncImpls() {
     if (auto* c = dynamic_cast<TurbulentDisplaceEffectCPUImpl*>(cpuImpl().get())) {
@@ -187,11 +187,11 @@ void TurbulentDisplaceEffect::syncImpls() {
 
 std::vector<AbstractProperty> TurbulentDisplaceEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    auto& a = props.emplace_back(); a.setName("Amount"); a.setType(PropertyType::Float); a.setValue(amount_);
-    auto& s = props.emplace_back(); s.setName("Size"); s.setType(PropertyType::Float); s.setValue(size_);
-    auto& o = props.emplace_back(); o.setName("Octaves"); o.setType(PropertyType::Integer); o.setValue(octaves_);
-    auto& sd = props.emplace_back(); sd.setName("Seed"); sd.setType(PropertyType::Integer); sd.setValue(seed_);
-    auto& dw = props.emplace_back(); dw.setName("Domain Warp"); dw.setType(PropertyType::Float); dw.setValue(domainWarp_);
+    auto& a = props.emplace_back(); a.setName("Amount"); a.setType(PropertyType::Float); a.setValue(amount_); a.setMinValue(QVariant(0.0)); a.setMaxValue(QVariant(1000.0));
+    auto& s = props.emplace_back(); s.setName("Size"); s.setType(PropertyType::Float); s.setValue(size_); s.setMinValue(QVariant(1.0)); s.setMaxValue(QVariant(1024.0));
+    auto& o = props.emplace_back(); o.setName("Octaves"); o.setType(PropertyType::Integer); o.setValue(octaves_); o.setMinValue(QVariant(1)); o.setMaxValue(QVariant(12));
+    auto& sd = props.emplace_back(); sd.setName("Seed"); sd.setType(PropertyType::Integer); sd.setValue(seed_); sd.setMinValue(QVariant(0)); sd.setMaxValue(QVariant(9999));
+    auto& dw = props.emplace_back(); dw.setName("Domain Warp"); dw.setType(PropertyType::Float); dw.setValue(domainWarp_); dw.setMinValue(QVariant(0.0)); dw.setMaxValue(QVariant(100.0));
     return props;
 }
 
