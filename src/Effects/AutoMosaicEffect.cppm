@@ -145,15 +145,51 @@ QImage AutoMosaicEffect::applyMosaic(const QImage& input, const QVector<QRect>& 
     if (src.empty()) return input;
 
     cv::Mat result = src.clone();
+    QVector<QRect> mergedRegions;
 
     for (const QRect& region : regions) {
         if (region.isEmpty()) continue;
 
+        const QRect clipped = region.intersected(QRect(0, 0, src.cols, src.rows));
+        if (clipped.isEmpty()) continue;
+
+        bool merged = false;
+        for (auto& existing : mergedRegions) {
+            if (existing.intersects(clipped) ||
+                existing.adjusted(-1, -1, 1, 1).intersects(clipped)) {
+                existing = existing.united(clipped);
+                merged = true;
+                break;
+            }
+        }
+        if (!merged) {
+            mergedRegions.append(clipped);
+        }
+    }
+
+    bool mergedAny = true;
+    while (mergedAny) {
+        mergedAny = false;
+        for (int i = 0; i < mergedRegions.size() && !mergedAny; ++i) {
+            for (int j = i + 1; j < mergedRegions.size(); ++j) {
+                const QRect expanded = mergedRegions[i].adjusted(-1, -1, 1, 1);
+                if (!expanded.intersects(mergedRegions[j])) {
+                    continue;
+                }
+                mergedRegions[i] = mergedRegions[i].united(mergedRegions[j]);
+                mergedRegions.removeAt(j);
+                mergedAny = true;
+                break;
+            }
+        }
+    }
+
+    for (const QRect& region : mergedRegions) {
         cv::Rect cvRegion(
-            std::max(0, region.x()),
-            std::max(0, region.y()),
-            std::min(region.width(), src.cols - region.x()),
-            std::min(region.height(), src.rows - region.y())
+            region.x(),
+            region.y(),
+            region.width(),
+            region.height()
         );
 
         if (cvRegion.width <= 0 || cvRegion.height <= 0) continue;
