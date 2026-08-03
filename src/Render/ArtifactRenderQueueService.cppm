@@ -6732,4 +6732,8 @@ namespace Artifact
         return impl_->farmAllowRemote_;
     }
 
+    QJsonArray ArtifactRenderQueueService::farmWorkerSnapshot() const {
+        return ArtifactCore::RenderFarmMaster::instance().remoteWorkerSnapshot();
+    }
+
 }

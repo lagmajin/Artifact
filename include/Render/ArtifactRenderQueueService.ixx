@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -247,6 +247,7 @@ public:
   bool isFarmRpcServerRunning() const;
   void setFarmAllowRemoteWorkers(bool allow);
   bool farmAllowRemoteWorkers() const;
+  QJsonArray farmWorkerSnapshot() const;
 };
 
 }; // namespace Artifact
