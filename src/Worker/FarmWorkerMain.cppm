@@ -8,6 +8,7 @@ module;
 #include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QDebug>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QFile>
@@ -34,12 +35,19 @@ int main(int argc, char* argv[]) {
     parser.addOption({QStringLiteral("port"), QStringLiteral("Master RPC port"), QStringLiteral("port"), QStringLiteral("9876")});
     parser.addOption({QStringLiteral("worker-id"), QStringLiteral("Unique worker identifier"), QStringLiteral("id"), QString()});
     parser.addOption({QStringLiteral("token"), QStringLiteral("Master authentication token"), QStringLiteral("token"), QString()});
+    parser.addOption({QStringLiteral("gpu-vendor"), QStringLiteral("GPU vendor capability"), QStringLiteral("vendor"), QString()});
+    parser.addOption({QStringLiteral("gpu-name"), QStringLiteral("GPU device capability"), QStringLiteral("name"), QString()});
+    parser.addOption({QStringLiteral("vram-bytes"), QStringLiteral("GPU VRAM capacity capability"), QStringLiteral("bytes"), QString()});
+    parser.addOption({QStringLiteral("plugins"), QStringLiteral("Comma-separated plugin capability list"), QStringLiteral("names"), QString()});
     parser.process(app);
 
     const QString host = parser.value(QStringLiteral("host"));
     const unsigned short port = parser.value(QStringLiteral("port")).toUShort();
     const QString workerId = parser.value(QStringLiteral("worker-id"));
     const QString authToken = parser.value(QStringLiteral("token"));
+    const QString gpuVendor = parser.value(QStringLiteral("gpu-vendor")).trimmed();
+    const QString gpuName = parser.value(QStringLiteral("gpu-name")).trimmed();
+    const qint64 vramBytes = parser.value(QStringLiteral("vram-bytes")).toLongLong();
     const QString finalId = workerId.isEmpty()
         ? QStringLiteral("worker-%1").arg(QCoreApplication::applicationPid())
         : workerId;
@@ -50,6 +58,15 @@ int main(int argc, char* argv[]) {
     capabilities[QStringLiteral("os")] = QSysInfo::prettyProductName();
     capabilities[QStringLiteral("architecture")] = QSysInfo::currentCpuArchitecture();
     capabilities[QStringLiteral("cpuCount")] = QThread::idealThreadCount();
+    if (!gpuVendor.isEmpty()) capabilities[QStringLiteral("gpuVendor")] = gpuVendor;
+    if (!gpuName.isEmpty()) capabilities[QStringLiteral("gpuName")] = gpuName;
+    if (vramBytes > 0) capabilities[QStringLiteral("vramBytes")] = vramBytes;
+    QJsonArray plugins;
+    for (const auto& plugin : parser.value(QStringLiteral("plugins")).split(',', Qt::SkipEmptyParts)) {
+        const QString name = plugin.trimmed();
+        if (!name.isEmpty() && !plugins.contains(name)) plugins.append(name);
+    }
+    if (!plugins.isEmpty()) capabilities[QStringLiteral("plugins")] = plugins;
     client.setCapabilities(capabilities);
     client.setOnJobAssigned([&](const QJsonObject& jobData) {
         int startFrame = jobData[QStringLiteral("startFrame")].toInt(0);
