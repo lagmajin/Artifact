@@ -4052,6 +4052,28 @@ namespace Artifact
             file.commit();
         }
 
+        void restoreCompletedHistory(const QJsonArray& history) {
+            completedHistory.clear();
+            for (const auto& value : history) {
+                if (!value.isObject()) continue;
+                ArtifactRenderJob archived;
+                const QJsonObject item = value.toObject();
+                archived.compositionId = ArtifactCore::CompositionID(
+                    item.value(QStringLiteral("compositionId")).toString());
+                archived.jobName = item.value(QStringLiteral("jobName")).toString();
+                archived.compositionName = item.value(QStringLiteral("compositionName")).toString();
+                archived.outputPath = item.value(QStringLiteral("outputPath")).toString();
+                archived.outputFormat = item.value(QStringLiteral("outputFormat")).toString();
+                archived.codec = item.value(QStringLiteral("codec")).toString();
+                archived.startFrame = item.value(QStringLiteral("startFrame")).toInt(archived.startFrame);
+                archived.endFrame = item.value(QStringLiteral("endFrame")).toInt(archived.endFrame);
+                archived.errorMessage = item.value(QStringLiteral("errorMessage")).toString();
+                archived.progress = item.value(QStringLiteral("progress")).toInt(100);
+                archived.status = ArtifactRenderJob::Status::Completed;
+                completedHistory.append(archived);
+            }
+        }
+
         void loadPersistentQueue() {
             const QString path = persistentQueuePath();
             QFile file(path);
@@ -4065,25 +4087,7 @@ namespace Artifact
             owner_->fromJson(jobs.toArray());
             const QJsonValue history = document.object().value(QStringLiteral("history"));
             if (history.isArray()) {
-                owner_->clearCompletedJobHistory();
-                for (const auto& value : history.toArray()) {
-                    if (!value.isObject()) continue;
-                    ArtifactRenderJob archived;
-                    const QJsonObject item = value.toObject();
-                    archived.compositionId = ArtifactCore::CompositionID(
-                        item.value(QStringLiteral("compositionId")).toString());
-                    archived.jobName = item.value(QStringLiteral("jobName")).toString();
-                    archived.compositionName = item.value(QStringLiteral("compositionName")).toString();
-                    archived.outputPath = item.value(QStringLiteral("outputPath")).toString();
-                    archived.outputFormat = item.value(QStringLiteral("outputFormat")).toString();
-                    archived.codec = item.value(QStringLiteral("codec")).toString();
-                    archived.startFrame = item.value(QStringLiteral("startFrame")).toInt(archived.startFrame);
-                    archived.endFrame = item.value(QStringLiteral("endFrame")).toInt(archived.endFrame);
-                    archived.errorMessage = item.value(QStringLiteral("errorMessage")).toString();
-                    archived.progress = item.value(QStringLiteral("progress")).toInt(100);
-                    archived.status = ArtifactRenderJob::Status::Completed;
-                    completedHistory.append(archived);
-                }
+                restoreCompletedHistory(history.toArray());
             }
             loadingPersistentQueue_ = false;
         }
@@ -6877,6 +6881,9 @@ namespace Artifact
         const QJsonValue jobs = document.object().value(QStringLiteral("jobs"));
         if (!jobs.isArray()) return false;
         fromJson(jobs.toArray());
+        const QJsonValue history = document.object().value(QStringLiteral("history"));
+        if (history.isArray()) impl_->restoreCompletedHistory(history.toArray());
+        impl_->persistQueueState();
         return true;
     }
 
