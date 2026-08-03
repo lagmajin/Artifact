@@ -14,6 +14,7 @@ module;
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QTemporaryFile>
 #include <QTemporaryDir>
 #include <QDir>
@@ -202,6 +203,41 @@ int main(int argc, char* argv[]) {
                 const QFileInfo outputInfo(outputPath);
                 if (!outputInfo.isFile() || outputInfo.size() <= 0) {
                     const QString message = QStringLiteral("External renderer produced no output");
+                    for (int f = startFrame; f < endFrame; f += step) {
+                        client.sendFrameFailed(f, message);
+                        ++failedFrames;
+                        client.sendWorkerProgress(completedFrames, failedFrames, f);
+                    }
+                    return;
+                }
+            }
+            if (!outputPath.isEmpty() && sequenceOutput && !outputPath.contains('*')) {
+                const QRegularExpression hashPattern(QStringLiteral("#+"));
+                const QRegularExpression printfPattern(QStringLiteral("%0?(\\d*)d"));
+                QString missingFrame;
+                for (int f = startFrame; f < endFrame; f += step) {
+                    QString framePath = outputPath;
+                    const auto hashMatch = hashPattern.match(framePath);
+                    if (hashMatch.hasMatch()) {
+                        framePath.replace(hashMatch.capturedStart(), hashMatch.capturedLength(),
+                                          QStringLiteral("%1").arg(f, hashMatch.capturedLength(), 10,
+                                                                  QChar('0')));
+                    } else {
+                        const auto printfMatch = printfPattern.match(framePath);
+                        if (!printfMatch.hasMatch()) continue;
+                        const int width = printfMatch.captured(1).toInt();
+                        framePath.replace(printfMatch.capturedStart(), printfMatch.capturedLength(),
+                                          QStringLiteral("%1").arg(f, width, 10, QChar('0')));
+                    }
+                    const QFileInfo frameInfo(framePath);
+                    if (!frameInfo.isFile() || frameInfo.size() <= 0) {
+                        missingFrame = QStringLiteral("%1 (frame %2)").arg(framePath).arg(f);
+                        break;
+                    }
+                }
+                if (!missingFrame.isEmpty()) {
+                    const QString message = QStringLiteral("Missing or empty rendered frame: %1")
+                        .arg(missingFrame);
                     for (int f = startFrame; f < endFrame; f += step) {
                         client.sendFrameFailed(f, message);
                         ++failedFrames;
