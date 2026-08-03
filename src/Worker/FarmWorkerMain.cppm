@@ -79,7 +79,11 @@ int main(int argc, char* argv[]) {
             QProcess rendererProcess;
             rendererProcess.start(renderer, {QStringLiteral("--job"), jobFile.fileName()});
             const bool started = rendererProcess.waitForStarted(5000);
-            const bool finished = started && rendererProcess.waitForFinished(-1);
+            const int timeoutMs = jobData[QStringLiteral("jobTimeoutMs")].toInt(0);
+            const bool finished = started && rendererProcess.waitForFinished(
+                timeoutMs > 0 ? timeoutMs : -1);
+            if (started && !finished && rendererProcess.state() != QProcess::NotRunning)
+                rendererProcess.kill();
             const QString error = QString::fromLocal8Bit(rendererProcess.readAllStandardError()).trimmed();
             if (!started || !finished || rendererProcess.exitStatus() != QProcess::NormalExit
                 || rendererProcess.exitCode() != 0) {
