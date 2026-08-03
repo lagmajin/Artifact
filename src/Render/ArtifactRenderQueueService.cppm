@@ -5950,14 +5950,41 @@ namespace Artifact
                 std::unordered_set<int> failedJobs;
                 std::vector<int> jobOrder;
                 jobOrder.reserve(count);
-                for (int i = 0; i < count; ++i) jobOrder.push_back(i);
-                std::stable_sort(jobOrder.begin(), jobOrder.end(), [this](int lhs, int rhs) {
-                    const auto leftJob = impl_->queueManager.getJob(lhs);
-                    const auto rightJob = impl_->queueManager.getJob(rhs);
-                    if (leftJob.dependsOn.contains(rightJob.jobName)) return false;
-                    if (rightJob.dependsOn.contains(leftJob.jobName)) return true;
-                    return leftJob.priority > rightJob.priority;
-                });
+                std::vector<bool> emitted(static_cast<size_t>(count), false);
+                for (int orderIndex = 0; orderIndex < count; ++orderIndex) {
+                    int selected = -1;
+                    for (int candidate = 0; candidate < count; ++candidate) {
+                        if (emitted[static_cast<size_t>(candidate)]) continue;
+                        const auto candidateJob = impl_->queueManager.getJob(candidate);
+                        bool prerequisitesEmitted = true;
+                        for (const QString& dependency : candidateJob.dependsOn) {
+                            for (int prerequisite = 0; prerequisite < count; ++prerequisite) {
+                                if (!emitted[static_cast<size_t>(prerequisite)] &&
+                                    impl_->queueManager.getJob(prerequisite).jobName == dependency) {
+                                    prerequisitesEmitted = false;
+                                    break;
+                                }
+                            }
+                            if (!prerequisitesEmitted) break;
+                        }
+                        if (!prerequisitesEmitted) continue;
+                        if (selected < 0 || candidateJob.priority >
+                                impl_->queueManager.getJob(selected).priority) {
+                            selected = candidate;
+                        }
+                    }
+                    if (selected < 0) {
+                        for (int candidate = 0; candidate < count; ++candidate) {
+                            if (!emitted[static_cast<size_t>(candidate)]) {
+                                selected = candidate;
+                                break;
+                            }
+                        }
+                    }
+                    if (selected < 0) break;
+                    emitted[static_cast<size_t>(selected)] = true;
+                    jobOrder.push_back(selected);
+                }
                 for (const int i : jobOrder) {
                 if (impl_->shutdownRequested_.load(std::memory_order_acquire)) break;
 
