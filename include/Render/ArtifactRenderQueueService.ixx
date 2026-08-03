@@ -269,6 +269,7 @@ public:
   void setFarmRpcAuthToken(const QString &token);
   bool setFarmRpcTlsCertificateFiles(const QString &certificateFile,
                                      const QString &privateKeyFile);
+  bool setFarmWorkerMaintenance(const QString &workerId, bool maintenance);
   QJsonObject farmProgressSnapshot() const;
   void setFarmAllowRemoteWorkers(bool allow);
   bool farmAllowRemoteWorkers() const;

@@ -7303,6 +7303,12 @@ namespace Artifact
             certificateFile, privateKeyFile);
     }
 
+    bool ArtifactRenderQueueService::setFarmWorkerMaintenance(
+        const QString& workerId, bool maintenance) {
+        return ArtifactCore::RenderFarmMaster::instance().setRemoteWorkerMaintenance(
+            workerId.trimmed(), maintenance);
+    }
+
     void ArtifactRenderQueueService::setFarmAllowRemoteWorkers(bool allow) {
         impl_->farmAllowRemote_ = allow;
         ArtifactCore::ArtifactAppSettings::instance()->setFarmAllowRemote(allow);
