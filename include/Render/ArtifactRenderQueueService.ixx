@@ -93,6 +93,10 @@ public:
   QString jobCompositionNameAt(int index) const;
   QString jobNameAt(int index) const;
   void setJobNameAt(int index, const QString &name);
+  int jobPriorityAt(int index) const;
+  void setJobPriorityAt(int index, int priority);
+  QStringList jobDependenciesAt(int index) const;
+  void setJobDependenciesAt(int index, const QStringList &dependencies);
   QString jobStatusAt(int index) const;
   int jobProgressAt(int index) const;
   QString jobOutputPathAt(int index) const;

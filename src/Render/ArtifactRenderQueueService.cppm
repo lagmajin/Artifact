@@ -2415,6 +2415,37 @@ namespace Artifact
             if (jobUpdated) jobUpdated(index);
         }
 
+        int jobPriorityAt(int index) const {
+            if (index < 0 || index >= jobs.size()) return 0;
+            return jobs[index].priority;
+        }
+
+        void setJobPriority(int index, int priority) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].priority = std::clamp(priority, -1000, 1000);
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        QStringList jobDependenciesAt(int index) const {
+            if (index < 0 || index >= jobs.size()) return {};
+            return jobs[index].dependsOn;
+        }
+
+        void setJobDependencies(int index, const QStringList& dependencies) {
+            if (index < 0 || index >= jobs.size()) return;
+            QStringList normalized;
+            for (const auto& dependency : dependencies) {
+                const QString name = dependency.trimmed().left(256);
+                if (!name.isEmpty() && name != jobs[index].jobName
+                    && !normalized.contains(name, Qt::CaseSensitive)) {
+                    if (normalized.size() >= 64) break;
+                    normalized.append(name);
+                }
+            }
+            jobs[index].dependsOn = normalized;
+            if (jobUpdated) jobUpdated(index);
+        }
+
         QString jobStatusAt(int index) const {
             if (index < 0 || index >= jobs.size()) {
                 return QStringLiteral("Pending");
@@ -4180,6 +4211,25 @@ namespace Artifact
     void ArtifactRenderQueueService::setJobNameAt(int index, const QString& name)
     {
         impl_->queueManager.setJobName(index, name.trimmed());
+        impl_->syncCoreQueueModel();
+    }
+
+    int ArtifactRenderQueueService::jobPriorityAt(int index) const {
+        return impl_->queueManager.jobPriorityAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobPriorityAt(int index, int priority) {
+        impl_->queueManager.setJobPriority(index, priority);
+        impl_->syncCoreQueueModel();
+    }
+
+    QStringList ArtifactRenderQueueService::jobDependenciesAt(int index) const {
+        return impl_->queueManager.jobDependenciesAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobDependenciesAt(
+        int index, const QStringList& dependencies) {
+        impl_->queueManager.setJobDependencies(index, dependencies);
         impl_->syncCoreQueueModel();
     }
 
