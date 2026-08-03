@@ -40,6 +40,7 @@ int main(int argc, char* argv[]) {
     parser.addOption({QStringLiteral("vram-bytes"), QStringLiteral("GPU VRAM capacity capability"), QStringLiteral("bytes"), QString()});
     parser.addOption({QStringLiteral("ram-bytes"), QStringLiteral("System RAM capacity capability"), QStringLiteral("bytes"), QString()});
     parser.addOption({QStringLiteral("plugins"), QStringLiteral("Comma-separated plugin capability list"), QStringLiteral("names"), QString()});
+    parser.addOption({QStringLiteral("plugin-versions"), QStringLiteral("Plugin versions as JSON object"), QStringLiteral("json"), QString()});
     parser.addOption({QStringLiteral("pool"), QStringLiteral("Logical worker pool capability"), QStringLiteral("name"), QString()});
     parser.process(app);
 
@@ -73,6 +74,11 @@ int main(int argc, char* argv[]) {
         if (!name.isEmpty() && !plugins.contains(name)) plugins.append(name);
     }
     if (!plugins.isEmpty()) capabilities[QStringLiteral("plugins")] = plugins;
+    const QJsonDocument pluginVersionsDoc = QJsonDocument::fromJson(
+        parser.value(QStringLiteral("plugin-versions")).toUtf8());
+    if (pluginVersionsDoc.isObject()) {
+        capabilities[QStringLiteral("pluginVersions")] = pluginVersionsDoc.object();
+    }
     client.setCapabilities(capabilities);
     client.setOnJobAssigned([&](const QJsonObject& jobData) {
         int startFrame = jobData[QStringLiteral("startFrame")].toInt(0);
