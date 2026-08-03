@@ -13,6 +13,7 @@ module;
 #include <QFile>
 #include <QProcess>
 #include <QTemporaryFile>
+#include <QTemporaryDir>
 #include <QDir>
 #include <QSysInfo>
 #include <QThread>
@@ -69,6 +70,18 @@ int main(int argc, char* argv[]) {
                 QJsonObject output = renderJob[QStringLiteral("output")].toObject();
                 output[QStringLiteral("path")] = jobData[QStringLiteral("outputPath")].toString();
                 renderJob[QStringLiteral("output")] = output;
+            }
+
+            QTemporaryDir diagnosticsDir;
+            if (diagnosticsDir.isValid()) {
+                QJsonObject diagnostics = renderJob[QStringLiteral("diagnostics")].toObject();
+                diagnostics[QStringLiteral("summaryFile")] = QDir(diagnosticsDir.path()).filePath(
+                    QStringLiteral("summary.json"));
+                diagnostics[QStringLiteral("eventLogFile")] = QDir(diagnosticsDir.path()).filePath(
+                    QStringLiteral("events.jsonl"));
+                diagnostics[QStringLiteral("cancelFile")] = QDir(diagnosticsDir.path()).filePath(
+                    QStringLiteral("cancel"));
+                renderJob[QStringLiteral("diagnostics")] = diagnostics;
             }
 
             QTemporaryFile jobFile(QDir::tempPath() + QStringLiteral("/artifact-farm-job-XXXXXX.json"));
