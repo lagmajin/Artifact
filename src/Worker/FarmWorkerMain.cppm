@@ -259,7 +259,8 @@ int main(int argc, char* argv[]) {
                 return;
             }
 
-            const QString outputPath = jobData[QStringLiteral("outputPath")].toString().trimmed();
+            const QString outputPath = resolvePath(
+                jobData[QStringLiteral("outputPath")].toString().trimmed());
             const bool sequenceOutput = outputPath.contains('%') || outputPath.contains('*')
                 || outputPath.contains(QStringLiteral("####"));
             if (!outputPath.isEmpty() && !sequenceOutput) {
