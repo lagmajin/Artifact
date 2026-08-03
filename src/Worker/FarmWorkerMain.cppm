@@ -14,6 +14,7 @@ module;
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QTemporaryFile>
 #include <QTemporaryDir>
@@ -45,6 +46,7 @@ int main(int argc, char* argv[]) {
     parser.addOption({QStringLiteral("plugins"), QStringLiteral("Comma-separated plugin capability list"), QStringLiteral("names"), QString()});
     parser.addOption({QStringLiteral("plugin-versions"), QStringLiteral("Plugin versions as JSON object"), QStringLiteral("json"), QString()});
     parser.addOption({QStringLiteral("pool"), QStringLiteral("Logical worker pool capability"), QStringLiteral("name"), QString()});
+    parser.addOption({QStringLiteral("env"), QStringLiteral("Renderer environment overrides (KEY=VALUE,comma-separated)"), QStringLiteral("values"), QString()});
     parser.addOption({QStringLiteral("maintenance"), QStringLiteral("Register worker in maintenance mode")});
     parser.process(app);
 
@@ -55,6 +57,7 @@ int main(int argc, char* argv[]) {
     const QString gpuVendor = parser.value(QStringLiteral("gpu-vendor")).trimmed();
     const QString gpuName = parser.value(QStringLiteral("gpu-name")).trimmed();
     const QString pool = parser.value(QStringLiteral("pool")).trimmed();
+    const QStringList environmentOverrides = parser.value(QStringLiteral("env")).split(',', Qt::SkipEmptyParts);
     const bool maintenance = parser.isSet(QStringLiteral("maintenance"));
     const qint64 vramBytes = parser.value(QStringLiteral("vram-bytes")).toLongLong();
     const qint64 ramBytes = parser.value(QStringLiteral("ram-bytes")).toLongLong();
@@ -164,6 +167,21 @@ int main(int argc, char* argv[]) {
                 jobData[QStringLiteral("retryInitialBackoffMs")].toInt(0));
             bool renderSucceeded = false;
             QString error;
+            QProcessEnvironment rendererEnvironment = QProcessEnvironment::systemEnvironment();
+            for (const auto& overrideValue : environmentOverrides) {
+                const int separator = overrideValue.indexOf('=');
+                if (separator <= 0) continue;
+                const QString key = overrideValue.left(separator).trimmed();
+                if (!key.isEmpty()) {
+                    rendererEnvironment.insert(key, overrideValue.mid(separator + 1));
+                }
+            }
+            const QJsonObject payloadEnvironment = renderJob[QStringLiteral("environment")].toObject();
+            for (auto it = payloadEnvironment.begin(); it != payloadEnvironment.end(); ++it) {
+                if (!it.key().trimmed().isEmpty() && it.value().isString()) {
+                    rendererEnvironment.insert(it.key(), it.value().toString());
+                }
+            }
             for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
                 if (attempt > 1 && initialBackoffMs > 0) {
                     const int exponent = std::min(attempt - 2, 16);
@@ -172,6 +190,7 @@ int main(int argc, char* argv[]) {
                     QThread::msleep(static_cast<unsigned long>(backoff));
                 }
                 QProcess rendererProcess;
+                rendererProcess.setProcessEnvironment(rendererEnvironment);
                 rendererProcess.start(renderer, {QStringLiteral("--job"), jobFile.fileName()});
                 const bool started = rendererProcess.waitForStarted(5000);
                 const bool finished = started && rendererProcess.waitForFinished(
