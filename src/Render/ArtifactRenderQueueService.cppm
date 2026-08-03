@@ -2081,6 +2081,25 @@ namespace Artifact
         void startAllJobs() {
             for (int i = 0; i < jobs.size(); ++i) {
                 if (jobs[i].status == ArtifactRenderJob::Status::Pending) {
+                    const QString output = jobs[i].outputPath.trimmed();
+                    const bool patternedOutput = output.contains('%')
+                        || output.contains('*') || output.contains(QStringLiteral("####"));
+                    if (!patternedOutput && QFileInfo(output).isFile()) {
+                        const QFileInfo info(output);
+                        QString stem = info.path() + QLatin1Char('/') + info.completeBaseName();
+                        const QString suffix = info.suffix().isEmpty()
+                            ? QString() : QStringLiteral(".") + info.suffix();
+                        QRegularExpression versionPattern(QStringLiteral("_v(\\d+)$"));
+                        const auto match = versionPattern.match(stem);
+                        int version = match.hasMatch() ? match.captured(1).toInt() + 1 : 1;
+                        if (match.hasMatch()) stem = stem.left(match.capturedStart());
+                        QString versioned;
+                        do {
+                            versioned = QStringLiteral("%1_v%2%3").arg(stem).arg(version++).arg(suffix);
+                        } while (QFileInfo::exists(versioned));
+                        jobs[i].outputPath = versioned;
+                        if (jobUpdated) jobUpdated(i);
+                    }
                     jobs[i].status = ArtifactRenderJob::Status::Rendering;
                     if (jobStatusChanged) jobStatusChanged(i, jobs[i].status);
                 }
