@@ -38,6 +38,7 @@ int main(int argc, char* argv[]) {
     parser.addOption({QStringLiteral("gpu-vendor"), QStringLiteral("GPU vendor capability"), QStringLiteral("vendor"), QString()});
     parser.addOption({QStringLiteral("gpu-name"), QStringLiteral("GPU device capability"), QStringLiteral("name"), QString()});
     parser.addOption({QStringLiteral("vram-bytes"), QStringLiteral("GPU VRAM capacity capability"), QStringLiteral("bytes"), QString()});
+    parser.addOption({QStringLiteral("ram-bytes"), QStringLiteral("System RAM capacity capability"), QStringLiteral("bytes"), QString()});
     parser.addOption({QStringLiteral("plugins"), QStringLiteral("Comma-separated plugin capability list"), QStringLiteral("names"), QString()});
     parser.addOption({QStringLiteral("pool"), QStringLiteral("Logical worker pool capability"), QStringLiteral("name"), QString()});
     parser.process(app);
@@ -50,6 +51,7 @@ int main(int argc, char* argv[]) {
     const QString gpuName = parser.value(QStringLiteral("gpu-name")).trimmed();
     const QString pool = parser.value(QStringLiteral("pool")).trimmed();
     const qint64 vramBytes = parser.value(QStringLiteral("vram-bytes")).toLongLong();
+    const qint64 ramBytes = parser.value(QStringLiteral("ram-bytes")).toLongLong();
     const QString finalId = workerId.isEmpty()
         ? QStringLiteral("worker-%1").arg(QCoreApplication::applicationPid())
         : workerId;
@@ -63,6 +65,7 @@ int main(int argc, char* argv[]) {
     if (!gpuVendor.isEmpty()) capabilities[QStringLiteral("gpuVendor")] = gpuVendor;
     if (!gpuName.isEmpty()) capabilities[QStringLiteral("gpuName")] = gpuName;
     if (vramBytes > 0) capabilities[QStringLiteral("vramBytes")] = vramBytes;
+    if (ramBytes > 0) capabilities[QStringLiteral("ramBytes")] = ramBytes;
     if (!pool.isEmpty()) capabilities[QStringLiteral("pool")] = pool;
     QJsonArray plugins;
     for (const auto& plugin : parser.value(QStringLiteral("plugins")).split(',', Qt::SkipEmptyParts)) {
