@@ -4,6 +4,7 @@ module;
 #include <QThread>
 #include <QDir>
 #include <QImage>
+#include <QColor>
 #include <QPainter>
 #include <QFont>
 #include <QSize>
@@ -1988,6 +1989,25 @@ namespace Artifact
                             failedFrames.append(FailedFrameInfo{jobId, f, QStringLiteral("Frame not found"), QDateTime::currentMSecsSinceEpoch()});
                         } else if (QFileInfo(framePath).size() == 0) {
                             failedFrames.append(FailedFrameInfo{jobId, f, QStringLiteral("Frame is empty"), QDateTime::currentMSecsSinceEpoch()});
+                        } else {
+                            QImage image(framePath);
+                            if (!image.isNull()) {
+                                bool hasVisiblePixel = false;
+                                const int stepX = std::max(1, image.width() / 16);
+                                const int stepY = std::max(1, image.height() / 16);
+                                for (int y = 0; y < image.height() && !hasVisiblePixel; y += stepY) {
+                                    for (int x = 0; x < image.width(); x += stepX) {
+                                        const QColor pixel = image.pixelColor(x, y);
+                                        if (pixel.red() > 2 || pixel.green() > 2 || pixel.blue() > 2) {
+                                            hasVisiblePixel = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (!hasVisiblePixel) {
+                                    failedFrames.append(FailedFrameInfo{jobId, f, QStringLiteral("Frame is black"), QDateTime::currentMSecsSinceEpoch()});
+                                }
+                            }
                         }
                     }
                 } else {
