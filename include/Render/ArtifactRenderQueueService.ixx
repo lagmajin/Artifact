@@ -85,6 +85,7 @@ public:
   int resumeRenderQueuesAt(const QList<int> &indices);
   int pauseRenderQueuesAt(const QList<int> &indices);
   void cancelRenderQueueAt(int index);
+  int cancelRenderQueuesAt(const QList<int> &indices);
   void removeAllRenderQueues();
   void removeRenderQueuesForComposition(
       const ArtifactCore::CompositionID &compositionId);
