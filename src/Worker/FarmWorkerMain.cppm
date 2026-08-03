@@ -83,9 +83,6 @@ int main(int argc, char* argv[]) {
             jobFile.write(QJsonDocument(renderJob).toJson(QJsonDocument::Compact));
             jobFile.flush();
 
-            QProcess rendererProcess;
-            rendererProcess.start(renderer, {QStringLiteral("--job"), jobFile.fileName()});
-            const bool started = rendererProcess.waitForStarted(5000);
             const int jobTimeoutMs = jobData[QStringLiteral("jobTimeoutMs")].toInt(0);
             const int frameTimeoutMs = jobData[QStringLiteral("frameTimeoutMs")].toInt(0);
             const int frameCount = std::max(1, (endFrame - startFrame + step - 1) / step);
@@ -96,15 +93,34 @@ int main(int argc, char* argv[]) {
                     ? static_cast<int>(std::min<qint64>(timeoutMs, sliceTimeout))
                     : static_cast<int>(std::min<qint64>(sliceTimeout, INT_MAX));
             }
-            const bool finished = started && rendererProcess.waitForFinished(
-                timeoutMs > 0 ? timeoutMs : -1);
-            if (started && !finished && rendererProcess.state() != QProcess::NotRunning)
-                rendererProcess.kill();
-            const QString error = QString::fromLocal8Bit(rendererProcess.readAllStandardError()).trimmed();
-            if (!started || !finished || rendererProcess.exitStatus() != QProcess::NormalExit
-                || rendererProcess.exitCode() != 0) {
+            const int maxAttempts = std::max(1, jobData[QStringLiteral("retryMaxAttempts")].toInt(1));
+            const int initialBackoffMs = std::max(0,
+                jobData[QStringLiteral("retryInitialBackoffMs")].toInt(0));
+            bool renderSucceeded = false;
+            QString error;
+            for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
+                if (attempt > 1 && initialBackoffMs > 0) {
+                    const qint64 backoff = std::min<qint64>(
+                        60000, static_cast<qint64>(initialBackoffMs) << (attempt - 2));
+                    QThread::msleep(static_cast<unsigned long>(backoff));
+                }
+                QProcess rendererProcess;
+                rendererProcess.start(renderer, {QStringLiteral("--job"), jobFile.fileName()});
+                const bool started = rendererProcess.waitForStarted(5000);
+                const bool finished = started && rendererProcess.waitForFinished(
+                    timeoutMs > 0 ? timeoutMs : -1);
+                if (started && !finished && rendererProcess.state() != QProcess::NotRunning)
+                    rendererProcess.kill();
+                error = QString::fromLocal8Bit(rendererProcess.readAllStandardError()).trimmed();
+                if (started && finished && rendererProcess.exitStatus() == QProcess::NormalExit
+                    && rendererProcess.exitCode() == 0) {
+                    renderSucceeded = true;
+                    break;
+                }
+            }
+            if (!renderSucceeded) {
                 const QString message = error.isEmpty()
-                    ? QStringLiteral("External renderer failed") : error;
+                    ? QStringLiteral("External renderer failed after retries") : error;
                 for (int f = startFrame; f < endFrame; f += step) {
                     client.sendFrameFailed(f, message);
                     ++failedFrames;
