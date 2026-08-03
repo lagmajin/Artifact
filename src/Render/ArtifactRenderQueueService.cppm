@@ -1971,7 +1971,9 @@ namespace Artifact
                 
                 // 画像シーケンスかどうかを判定
                 const QString ext = QFileInfo(outputPath).suffix().toLower();
-                const bool isSequence = (ext == QLatin1String("png") || ext == QLatin1String("exr") ||
+                const QString format = Artifact::deriveContainerFromJob(job);
+                const bool isSequence = Artifact::isImageSequenceContainer(format) ||
+                                        ext == QLatin1String("png") || ext == QLatin1String("exr") ||
                                         ext == QLatin1String("tiff") || ext == QLatin1String("tif") ||
                                         ext == QLatin1String("jpg") || ext == QLatin1String("jpeg") ||
                                         ext == QLatin1String("bmp"));
@@ -2003,7 +2005,10 @@ namespace Artifact
                 QFileInfo fi(basePath);
                 QString dir = fi.path();
                 QString baseName = fi.completeBaseName();
-                QString ext = fi.suffix();
+                        QString ext = fi.suffix();
+                        if (ext.isEmpty()) {
+                            ext = Artifact::sequenceExtension(job.outputFormat, job.codec);
+                        }
                 
                 // アンダースコア区切りのフレーム番号を想定 (e.g., render_0001.png)
                 QRegularExpression re("_(\\d+)$");
