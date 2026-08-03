@@ -7260,6 +7260,17 @@ namespace Artifact
         return ArtifactCore::RenderFarmMaster::instance().isRpcServerRunning();
     }
 
+    QJsonObject ArtifactRenderQueueService::farmProgressSnapshot() const {
+        const auto progress = ArtifactCore::RenderFarmMaster::instance().overallProgress();
+        return QJsonObject{
+            {QStringLiteral("completedFrames"), progress.completedFrames.load()},
+            {QStringLiteral("failedFrames"), progress.failedFrames.load()},
+            {QStringLiteral("totalFrames"), progress.totalFrames},
+            {QStringLiteral("elapsedMs"), progress.elapsedMs},
+            {QStringLiteral("estimatedRemainingMs"), progress.estimatedRemainingMs}
+        };
+    }
+
     void ArtifactRenderQueueService::setFarmRpcAuthToken(const QString& token) {
         ArtifactCore::RenderFarmMaster::instance().setRpcAuthToken(token.trimmed());
     }
