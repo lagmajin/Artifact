@@ -95,6 +95,7 @@ public:
   void setJobNameAt(int index, const QString &name);
   int jobPriorityAt(int index) const;
   void setJobPriorityAt(int index, int priority);
+  int setJobPriorityForIndices(const QList<int> &indices, int priority);
   int jobTimeoutMsAt(int index) const;
   void setJobTimeoutMsAt(int index, int timeoutMs);
   int jobFrameTimeoutMsAt(int index) const;

@@ -4354,6 +4354,20 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    int ArtifactRenderQueueService::setJobPriorityForIndices(
+        const QList<int>& indices, int priority) {
+        int changed = 0;
+        std::set<int> uniqueIndices;
+        for (const int index : indices) {
+            if (index < 0 || index >= impl_->queueManager.jobCount()
+                || !uniqueIndices.insert(index).second) continue;
+            impl_->queueManager.setJobPriority(index, priority);
+            ++changed;
+        }
+        if (changed > 0) impl_->syncCoreQueueModel();
+        return changed;
+    }
+
     int ArtifactRenderQueueService::jobTimeoutMsAt(int index) const {
         return impl_->queueManager.jobTimeoutMsAt(index);
     }
