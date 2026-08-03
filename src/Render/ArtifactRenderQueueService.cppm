@@ -508,6 +508,8 @@ namespace Artifact
         QString compositionName;      // コンポジション名
         QString jobName;              // ジョブ名（ユーザー編集可能）
         int priority = 0;             // farm scheduling priority (higher first)
+        int jobTimeoutMs = 0;
+        int frameTimeoutMs = 0;
         QStringList dependsOn;        // prerequisite job names
         QString outputPath;           // 出力パス
         QString outputFormat;         // 出力形式 (MP4, PNG sequence等)
@@ -2426,6 +2428,28 @@ namespace Artifact
             if (jobUpdated) jobUpdated(index);
         }
 
+        int jobTimeoutMsAt(int index) const {
+            if (index < 0 || index >= jobs.size()) return 0;
+            return jobs[index].jobTimeoutMs;
+        }
+
+        void setJobTimeoutMs(int index, int timeoutMs) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].jobTimeoutMs = std::clamp(timeoutMs, 0, 7 * 24 * 60 * 60 * 1000);
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        int jobFrameTimeoutMsAt(int index) const {
+            if (index < 0 || index >= jobs.size()) return 0;
+            return jobs[index].frameTimeoutMs;
+        }
+
+        void setJobFrameTimeoutMs(int index, int timeoutMs) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].frameTimeoutMs = std::clamp(timeoutMs, 0, 24 * 60 * 60 * 1000);
+            if (jobUpdated) jobUpdated(index);
+        }
+
         QStringList jobDependenciesAt(int index) const {
             if (index < 0 || index >= jobs.size()) return {};
             return jobs[index].dependsOn;
@@ -4223,6 +4247,24 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    int ArtifactRenderQueueService::jobTimeoutMsAt(int index) const {
+        return impl_->queueManager.jobTimeoutMsAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobTimeoutMsAt(int index, int timeoutMs) {
+        impl_->queueManager.setJobTimeoutMs(index, timeoutMs);
+        impl_->syncCoreQueueModel();
+    }
+
+    int ArtifactRenderQueueService::jobFrameTimeoutMsAt(int index) const {
+        return impl_->queueManager.jobFrameTimeoutMsAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobFrameTimeoutMsAt(int index, int timeoutMs) {
+        impl_->queueManager.setJobFrameTimeoutMs(index, timeoutMs);
+        impl_->syncCoreQueueModel();
+    }
+
     QStringList ArtifactRenderQueueService::jobDependenciesAt(int index) const {
         return impl_->queueManager.jobDependenciesAt(index);
     }
@@ -5483,6 +5525,8 @@ namespace Artifact
             ArtifactCore::RenderJobRequest farmReq;
             farmReq.jobId = farmJobId;
             farmReq.priority = job.priority;
+            farmReq.jobTimeoutMs = job.jobTimeoutMs;
+            farmReq.frameTimeoutMs = job.frameTimeoutMs;
             farmReq.compositionId = job.compositionId;
             farmReq.compositionName = job.compositionName;
             farmReq.range.startFrame = startF;   // full range; master internally skips via checkpoint
@@ -6314,6 +6358,8 @@ namespace Artifact
             obj["compositionName"] = job.compositionName;
             obj["jobName"] = job.jobName;
             obj["priority"] = job.priority;
+            obj["jobTimeoutMs"] = job.jobTimeoutMs;
+            obj["frameTimeoutMs"] = job.frameTimeoutMs;
             obj["dependsOn"] = QJsonArray::fromStringList(job.dependsOn);
             obj["status"] = static_cast<int>(job.status);
             obj["progress"] = job.progress;
@@ -6431,6 +6477,8 @@ namespace Artifact
             job.compositionName = obj["compositionName"].toString().trimmed();
             job.jobName = obj["jobName"].toString().trimmed();
             job.priority = std::clamp(obj["priority"].toInt(0), -1000, 1000);
+            job.jobTimeoutMs = std::clamp(obj["jobTimeoutMs"].toInt(0), 0, 7 * 24 * 60 * 60 * 1000);
+            job.frameTimeoutMs = std::clamp(obj["frameTimeoutMs"].toInt(0), 0, 24 * 60 * 60 * 1000);
             job.dependsOn.clear();
             for (const auto& dependency : obj["dependsOn"].toArray()) {
                 if (job.dependsOn.size() >= 64) break;
