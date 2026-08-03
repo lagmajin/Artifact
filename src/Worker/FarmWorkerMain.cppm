@@ -53,6 +53,8 @@ int main(int argc, char* argv[]) {
         int startFrame = jobData[QStringLiteral("startFrame")].toInt(0);
         int endFrame = jobData[QStringLiteral("endFrame")].toInt(0);
         int step = jobData[QStringLiteral("step")].toInt(1);
+        int completedFrames = 0;
+        int failedFrames = 0;
         qDebug() << "[Worker] Assigned frames" << startFrame << "to" << endFrame << "step" << step;
 
         const QString renderer = jobData[QStringLiteral("rendererExecutable")].toString().trimmed();
@@ -71,8 +73,11 @@ int main(int argc, char* argv[]) {
 
             QTemporaryFile jobFile(QDir::tempPath() + QStringLiteral("/artifact-farm-job-XXXXXX.json"));
             if (!jobFile.open()) {
-                for (int f = startFrame; f < endFrame; f += step)
+                for (int f = startFrame; f < endFrame; f += step) {
                     client.sendFrameFailed(f, QStringLiteral("Failed to create renderer job file"));
+                    ++failedFrames;
+                    client.sendWorkerProgress(completedFrames, failedFrames, f);
+                }
                 return;
             }
             jobFile.write(QJsonDocument(renderJob).toJson(QJsonDocument::Compact));
@@ -100,14 +105,19 @@ int main(int argc, char* argv[]) {
                 || rendererProcess.exitCode() != 0) {
                 const QString message = error.isEmpty()
                     ? QStringLiteral("External renderer failed") : error;
-                for (int f = startFrame; f < endFrame; f += step)
+                for (int f = startFrame; f < endFrame; f += step) {
                     client.sendFrameFailed(f, message);
+                    ++failedFrames;
+                    client.sendWorkerProgress(completedFrames, failedFrames, f);
+                }
                 return;
             }
         }
 
         for (int f = startFrame; f < endFrame; f += step) {
             client.sendFrameCompleted(f);
+            ++completedFrames;
+            client.sendWorkerProgress(completedFrames, failedFrames, f);
             qDebug() << "[Worker] Completed frame" << f;
         }
         qDebug() << "[Worker] Slice done";
