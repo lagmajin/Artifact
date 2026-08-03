@@ -35,6 +35,8 @@ int main(int argc, char* argv[]) {
     parser.addOption({QStringLiteral("port"), QStringLiteral("Master RPC port"), QStringLiteral("port"), QStringLiteral("9876")});
     parser.addOption({QStringLiteral("worker-id"), QStringLiteral("Unique worker identifier"), QStringLiteral("id"), QString()});
     parser.addOption({QStringLiteral("token"), QStringLiteral("Master authentication token"), QStringLiteral("token"), QString()});
+    parser.addOption({QStringLiteral("tls"), QStringLiteral("Use TLS for RPC transport")});
+    parser.addOption({QStringLiteral("ca-cert"), QStringLiteral("CA certificate PEM file for TLS"), QStringLiteral("file"), QString()});
     parser.addOption({QStringLiteral("gpu-vendor"), QStringLiteral("GPU vendor capability"), QStringLiteral("vendor"), QString()});
     parser.addOption({QStringLiteral("gpu-name"), QStringLiteral("GPU device capability"), QStringLiteral("name"), QString()});
     parser.addOption({QStringLiteral("vram-bytes"), QStringLiteral("GPU VRAM capacity capability"), QStringLiteral("bytes"), QString()});
@@ -59,6 +61,8 @@ int main(int argc, char* argv[]) {
 
     ArtifactCore::NetworkRPCClient client;
     client.setAuthToken(authToken);
+    client.setTlsEnabled(parser.isSet(QStringLiteral("tls")),
+                         parser.value(QStringLiteral("ca-cert")));
     QJsonObject capabilities;
     capabilities[QStringLiteral("os")] = QSysInfo::prettyProductName();
     capabilities[QStringLiteral("architecture")] = QSysInfo::currentCpuArchitecture();
