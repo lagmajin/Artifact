@@ -5838,20 +5838,42 @@ namespace Artifact
                 }
 
                 bool dependenciesReady = true;
+                bool dependencyFailed = false;
+                QString dependencyFailureReason;
                 for (const QString& dependency : job.dependsOn) {
                     bool completed = false;
+                    bool found = false;
                     for (int candidate = 0; candidate < count; ++candidate) {
                         const auto dependencyJob = impl_->queueManager.getJob(candidate);
-                        if (dependencyJob.jobName == dependency &&
-                            dependencyJob.status == ArtifactRenderJob::Status::Completed) {
-                            completed = true;
+                        if (dependencyJob.jobName == dependency) {
+                            found = true;
+                            if (dependencyJob.status == ArtifactRenderJob::Status::Completed) {
+                                completed = true;
+                            } else if (dependencyJob.status == ArtifactRenderJob::Status::Failed
+                                       || dependencyJob.status == ArtifactRenderJob::Status::Canceled) {
+                                dependencyFailed = true;
+                                dependencyFailureReason = QStringLiteral(
+                                    "Dependency '%1' did not complete").arg(dependency);
+                            }
                             break;
                         }
+                    }
+                    if (!found) {
+                        dependencyFailed = true;
+                        dependencyFailureReason = QStringLiteral(
+                            "Dependency '%1' was not found").arg(dependency);
                     }
                     if (!completed) {
                         dependenciesReady = false;
                         break;
                     }
+                }
+                if (dependencyFailed) {
+                    QMetaObject::invokeMethod(this, [this, i, dependencyFailureReason, anyFailure]() {
+                        anyFailure->store(true, std::memory_order_release);
+                        impl_->queueManager.markJobFailed(i, dependencyFailureReason);
+                    }, Qt::QueuedConnection);
+                    continue;
                 }
                 if (!dependenciesReady) {
                     QMetaObject::invokeMethod(this, [this, i]() {
