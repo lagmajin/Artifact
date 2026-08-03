@@ -4848,6 +4848,42 @@ namespace Artifact
             }
         }
 
+        const QString outputFormat = Artifact::deriveContainerFromJob(job);
+        const bool supportedFormat = isImageSequenceContainer(outputFormat)
+            || isVideoContainer(outputFormat)
+            || outputFormat == QStringLiteral("svg");
+        if (!supportedFormat) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Error,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Unsupported render output format"),
+                QStringLiteral("Job '%1' resolves to unsupported output format '%2'.")
+                    .arg(jobName, outputFormat),
+                QStringLiteral("Choose a supported image sequence or video format"),
+                compId));
+        }
+
+        const QString normalizedCodec = normalizeCodecName(job.codec);
+        const bool supportedCodec = normalizedCodec == QStringLiteral("h264")
+            || normalizedCodec == QStringLiteral("h265")
+            || normalizedCodec == QStringLiteral("prores")
+            || normalizedCodec == QStringLiteral("mjpeg")
+            || normalizedCodec == QStringLiteral("png")
+            || normalizedCodec == QStringLiteral("gif")
+            || normalizedCodec == QStringLiteral("apng")
+            || normalizedCodec == QStringLiteral("webp")
+            || normalizedCodec == QStringLiteral("vp9");
+        if (!supportedCodec) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Error,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Unsupported render codec"),
+                QStringLiteral("Job '%1' specifies unsupported codec '%2'.")
+                    .arg(jobName, job.codec),
+                QStringLiteral("Choose a supported codec"),
+                compId));
+        }
+
         if (job.resolutionWidth <= 0 || job.resolutionHeight <= 0) {
             result.addDiagnostic(makePreflightDiagnostic(
                 ArtifactCore::DiagnosticSeverity::Error,
