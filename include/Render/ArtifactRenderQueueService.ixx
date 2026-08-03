@@ -249,6 +249,7 @@ public:
   void startFarmRpcServer(unsigned short port = 0);
   void stopFarmRpcServer();
   bool isFarmRpcServerRunning() const;
+  void setFarmRpcAuthToken(const QString &token);
   void setFarmAllowRemoteWorkers(bool allow);
   bool farmAllowRemoteWorkers() const;
   QJsonArray farmWorkerSnapshot() const;

@@ -6794,6 +6794,10 @@ namespace Artifact
         return ArtifactCore::RenderFarmMaster::instance().isRpcServerRunning();
     }
 
+    void ArtifactRenderQueueService::setFarmRpcAuthToken(const QString& token) {
+        ArtifactCore::RenderFarmMaster::instance().setRpcAuthToken(token.trimmed());
+    }
+
     void ArtifactRenderQueueService::setFarmAllowRemoteWorkers(bool allow) {
         impl_->farmAllowRemote_ = allow;
         ArtifactCore::ArtifactAppSettings::instance()->setFarmAllowRemote(allow);
