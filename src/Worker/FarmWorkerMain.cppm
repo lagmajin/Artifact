@@ -2,6 +2,8 @@ module;
 #define _CRT_SECURE_NO_WARNINGS
 #pragma warning(disable : 4996)
 #include <cstdio>
+#include <climits>
+#include <algorithm>
 #include <iostream>
 #include <QCoreApplication>
 #include <QCommandLineParser>
@@ -79,7 +81,16 @@ int main(int argc, char* argv[]) {
             QProcess rendererProcess;
             rendererProcess.start(renderer, {QStringLiteral("--job"), jobFile.fileName()});
             const bool started = rendererProcess.waitForStarted(5000);
-            const int timeoutMs = jobData[QStringLiteral("jobTimeoutMs")].toInt(0);
+            const int jobTimeoutMs = jobData[QStringLiteral("jobTimeoutMs")].toInt(0);
+            const int frameTimeoutMs = jobData[QStringLiteral("frameTimeoutMs")].toInt(0);
+            const int frameCount = std::max(1, (endFrame - startFrame + step - 1) / step);
+            int timeoutMs = jobTimeoutMs;
+            if (frameTimeoutMs > 0) {
+                const qint64 sliceTimeout = static_cast<qint64>(frameTimeoutMs) * frameCount;
+                timeoutMs = timeoutMs > 0
+                    ? static_cast<int>(std::min<qint64>(timeoutMs, sliceTimeout))
+                    : static_cast<int>(std::min<qint64>(sliceTimeout, INT_MAX));
+            }
             const bool finished = started && rendererProcess.waitForFinished(
                 timeoutMs > 0 ? timeoutMs : -1);
             if (started && !finished && rendererProcess.state() != QProcess::NotRunning)
