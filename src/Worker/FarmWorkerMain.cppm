@@ -62,6 +62,8 @@ int main(int argc, char* argv[]) {
         const QJsonObject payload = jobData[QStringLiteral("renderPayload")].toObject();
         if (!renderer.isEmpty() && !payload.isEmpty()) {
             QJsonObject renderJob = payload;
+            renderJob[QStringLiteral("jobId")] = renderJob[QStringLiteral("jobId")].toString()
+                + QStringLiteral("-worker-%1-%2-%3").arg(finalId).arg(startFrame).arg(endFrame);
             QJsonObject composition = renderJob[QStringLiteral("composition")].toObject();
             composition[QStringLiteral("frameStart")] = startFrame;
             composition[QStringLiteral("frameEnd")] = endFrame;
