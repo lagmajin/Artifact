@@ -3,6 +3,7 @@ module;
 #pragma warning(disable : 4996)
 #include <cstdio>
 #include <climits>
+#include <exception>
 #include <algorithm>
 #include <functional>
 #include <iostream>
@@ -340,16 +341,22 @@ int main(int argc, char* argv[]) {
             const int startFrame = jobData[QStringLiteral("startFrame")].toInt(0);
             const int endFrame = jobData[QStringLiteral("endFrame")].toInt(0);
             const int step = std::max(1, jobData[QStringLiteral("step")].toInt(1));
-            for (int frame = startFrame; frame < endFrame; frame += step)
+            int failedFrames = 0;
+            for (int frame = startFrame; frame < endFrame; frame += step) {
                 client.sendFrameFailed(frame, message);
+                client.sendWorkerProgress(0, ++failedFrames, frame, 0);
+            }
         } catch (...) {
             const QString message = QStringLiteral("Worker frame assignment failed: unknown exception");
             client.sendWorkerLog(QStringLiteral("error"), message);
             const int startFrame = jobData[QStringLiteral("startFrame")].toInt(0);
             const int endFrame = jobData[QStringLiteral("endFrame")].toInt(0);
             const int step = std::max(1, jobData[QStringLiteral("step")].toInt(1));
-            for (int frame = startFrame; frame < endFrame; frame += step)
+            int failedFrames = 0;
+            for (int frame = startFrame; frame < endFrame; frame += step) {
                 client.sendFrameFailed(frame, message);
+                client.sendWorkerProgress(0, ++failedFrames, frame, 0);
+            }
         }
     });
 
