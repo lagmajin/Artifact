@@ -4,6 +4,7 @@ module;
 #include <cstdio>
 #include <climits>
 #include <algorithm>
+#include <functional>
 #include <iostream>
 #include <QCoreApplication>
 #include <QCommandLineParser>
@@ -47,6 +48,7 @@ int main(int argc, char* argv[]) {
     parser.addOption({QStringLiteral("plugin-versions"), QStringLiteral("Plugin versions as JSON object"), QStringLiteral("json"), QString()});
     parser.addOption({QStringLiteral("pool"), QStringLiteral("Logical worker pool capability"), QStringLiteral("name"), QString()});
     parser.addOption({QStringLiteral("env"), QStringLiteral("Renderer environment overrides (KEY=VALUE,comma-separated)"), QStringLiteral("values"), QString()});
+    parser.addOption({QStringLiteral("path-map"), QStringLiteral("Path mappings for renderer payloads (SOURCE=TARGET,comma-separated)"), QStringLiteral("mappings"), QString()});
     parser.addOption({QStringLiteral("maintenance"), QStringLiteral("Register worker in maintenance mode")});
     parser.process(app);
 
@@ -58,6 +60,22 @@ int main(int argc, char* argv[]) {
     const QString gpuName = parser.value(QStringLiteral("gpu-name")).trimmed();
     const QString pool = parser.value(QStringLiteral("pool")).trimmed();
     const QStringList environmentOverrides = parser.value(QStringLiteral("env")).split(',', Qt::SkipEmptyParts);
+    QList<QPair<QString, QString>> pathMappings;
+    for (const auto& mapping : parser.value(QStringLiteral("path-map")).split(',', Qt::SkipEmptyParts)) {
+        const int separator = mapping.indexOf('=');
+        if (separator <= 0) continue;
+        const QString source = mapping.left(separator).trimmed();
+        const QString target = mapping.mid(separator + 1).trimmed();
+        if (!source.isEmpty() && !target.isEmpty()) pathMappings.append({source, target});
+    }
+    const auto resolvePath = [&pathMappings](const QString& value) {
+        for (const auto& mapping : pathMappings) {
+            if (value.startsWith(mapping.first, Qt::CaseInsensitive)) {
+                return mapping.second + value.mid(mapping.first.size());
+            }
+        }
+        return value;
+    };
     const bool maintenance = parser.isSet(QStringLiteral("maintenance"));
     const qint64 vramBytes = parser.value(QStringLiteral("vram-bytes")).toLongLong();
     const qint64 ramBytes = parser.value(QStringLiteral("ram-bytes")).toLongLong();
@@ -114,7 +132,24 @@ int main(int argc, char* argv[]) {
         }
 
         {
-            QJsonObject renderJob = payload;
+            std::function<QJsonValue(const QJsonValue&)> remapJson;
+            remapJson = [&remapJson, &resolvePath](const QJsonValue& value) -> QJsonValue {
+                if (value.isString()) return resolvePath(value.toString());
+                if (value.isArray()) {
+                    QJsonArray array;
+                    for (const auto& item : value.toArray()) array.append(remapJson(item));
+                    return array;
+                }
+                if (value.isObject()) {
+                    QJsonObject object;
+                    const QJsonObject sourceObject = value.toObject();
+                    for (auto it = sourceObject.begin(); it != sourceObject.end(); ++it)
+                        object.insert(it.key(), remapJson(it.value()));
+                    return object;
+                }
+                return value;
+            };
+            QJsonObject renderJob = remapJson(payload).toObject();
             renderJob[QStringLiteral("jobId")] = renderJob[QStringLiteral("jobId")].toString()
                 + QStringLiteral("-worker-%1-%2-%3").arg(finalId).arg(startFrame).arg(endFrame);
             QJsonObject composition = renderJob[QStringLiteral("composition")].toObject();
@@ -123,7 +158,8 @@ int main(int argc, char* argv[]) {
             renderJob[QStringLiteral("composition")] = composition;
             if (!jobData[QStringLiteral("outputPath")].toString().isEmpty()) {
                 QJsonObject output = renderJob[QStringLiteral("output")].toObject();
-                output[QStringLiteral("path")] = jobData[QStringLiteral("outputPath")].toString();
+                output[QStringLiteral("path")] = resolvePath(
+                    jobData[QStringLiteral("outputPath")].toString());
                 renderJob[QStringLiteral("output")] = output;
             }
 
