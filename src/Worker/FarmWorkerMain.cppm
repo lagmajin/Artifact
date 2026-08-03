@@ -44,6 +44,7 @@ int main(int argc, char* argv[]) {
     parser.addOption({QStringLiteral("plugins"), QStringLiteral("Comma-separated plugin capability list"), QStringLiteral("names"), QString()});
     parser.addOption({QStringLiteral("plugin-versions"), QStringLiteral("Plugin versions as JSON object"), QStringLiteral("json"), QString()});
     parser.addOption({QStringLiteral("pool"), QStringLiteral("Logical worker pool capability"), QStringLiteral("name"), QString()});
+    parser.addOption({QStringLiteral("maintenance"), QStringLiteral("Register worker in maintenance mode")});
     parser.process(app);
 
     const QString host = parser.value(QStringLiteral("host"));
@@ -53,6 +54,7 @@ int main(int argc, char* argv[]) {
     const QString gpuVendor = parser.value(QStringLiteral("gpu-vendor")).trimmed();
     const QString gpuName = parser.value(QStringLiteral("gpu-name")).trimmed();
     const QString pool = parser.value(QStringLiteral("pool")).trimmed();
+    const bool maintenance = parser.isSet(QStringLiteral("maintenance"));
     const qint64 vramBytes = parser.value(QStringLiteral("vram-bytes")).toLongLong();
     const qint64 ramBytes = parser.value(QStringLiteral("ram-bytes")).toLongLong();
     const QString finalId = workerId.isEmpty()
@@ -72,6 +74,7 @@ int main(int argc, char* argv[]) {
     if (vramBytes > 0) capabilities[QStringLiteral("vramBytes")] = vramBytes;
     if (ramBytes > 0) capabilities[QStringLiteral("ramBytes")] = ramBytes;
     if (!pool.isEmpty()) capabilities[QStringLiteral("pool")] = pool;
+    capabilities[QStringLiteral("maintenance")] = maintenance;
     QJsonArray plugins;
     for (const auto& plugin : parser.value(QStringLiteral("plugins")).split(',', Qt::SkipEmptyParts)) {
         const QString name = plugin.trimmed();
