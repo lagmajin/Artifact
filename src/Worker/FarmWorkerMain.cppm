@@ -97,7 +97,19 @@ int main(int argc, char* argv[]) {
 
         const QString renderer = jobData[QStringLiteral("rendererExecutable")].toString().trimmed();
         const QJsonObject payload = jobData[QStringLiteral("renderPayload")].toObject();
-        if (!renderer.isEmpty() && !payload.isEmpty()) {
+        if (renderer.isEmpty() || payload.isEmpty()) {
+            const QString message = renderer.isEmpty()
+                ? QStringLiteral("No renderer executable was provided for farm assignment")
+                : QStringLiteral("No render payload was provided for farm assignment");
+            for (int f = startFrame; f < endFrame; f += step) {
+                client.sendFrameFailed(f, message);
+                ++failedFrames;
+                client.sendWorkerProgress(completedFrames, failedFrames, f);
+            }
+            return;
+        }
+
+        {
             QJsonObject renderJob = payload;
             renderJob[QStringLiteral("jobId")] = renderJob[QStringLiteral("jobId")].toString()
                 + QStringLiteral("-worker-%1-%2-%3").arg(finalId).arg(startFrame).arg(endFrame);
