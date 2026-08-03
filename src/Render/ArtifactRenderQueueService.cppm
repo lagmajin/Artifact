@@ -3938,22 +3938,26 @@ namespace Artifact
         void handleJobAdded(int index) {
             Q_EMIT owner_->jobAdded(index);
             if (jobAdded) jobAdded(index);
+            persistQueueState();
         }
 
         void handleJobRemoved(int index) {
             Q_EMIT owner_->jobRemoved(index);
             if (jobRemoved) jobRemoved(index);
+            persistQueueState();
         }
 
         void handleJobUpdated(int index) {
             Q_EMIT owner_->jobUpdated(index);
             if (jobUpdated) jobUpdated(index);
+            persistQueueState();
         }
 
         void handleJobStatusChanged(int index, ArtifactRenderJob::Status status) {
             Q_EMIT owner_->jobStatusChanged(index, static_cast<int>(status));
             if (jobStatusChangedForUi) jobStatusChangedForUi(index, static_cast<int>(status));
             if (jobStatusChanged) jobStatusChanged(index, status);
+            persistQueueState();
         }
 
         void handleJobProgressChanged(int index, int progress) {
@@ -3962,7 +3966,42 @@ namespace Artifact
             if (jobProgressChanged) jobProgressChanged(index, progress);
         }
 
+        QString persistentQueuePath() const {
+            const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+            return QDir(base).filePath(QStringLiteral("render-queue.json"));
+        }
+
+        void persistQueueState() {
+            if (!owner_ || loadingPersistentQueue_) return;
+            const QString path = persistentQueuePath();
+            const QFileInfo info(path);
+            if (!QDir().mkpath(info.absolutePath())) return;
+            QSaveFile file(path);
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+            const QJsonObject root{
+                {QStringLiteral("version"), 1},
+                {QStringLiteral("jobs"), owner_->toJson()}
+            };
+            file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+            file.commit();
+        }
+
+        void loadPersistentQueue() {
+            const QString path = persistentQueuePath();
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly)) return;
+            QJsonParseError parseError;
+            const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+            if (parseError.error != QJsonParseError::NoError || !document.isObject()) return;
+            const QJsonValue jobs = document.object().value(QStringLiteral("jobs"));
+            if (!jobs.isArray()) return;
+            loadingPersistentQueue_ = true;
+            owner_->fromJson(jobs.toArray());
+            loadingPersistentQueue_ = false;
+        }
+
         ArtifactRenderQueueService* owner_ = nullptr;
+        bool loadingPersistentQueue_ = false;
         // シグナル
         std::function<void(int)> jobAdded;
         std::function<void(int)> jobRemoved;
@@ -3988,9 +4027,11 @@ namespace Artifact
         impl_->farmRetryPolicy_.maxBackoffMs = as->farmRetryMaxBackoffMs();
         impl_->farmRpcPort_ = as->farmRpcPort();
         impl_->farmAllowRemote_ = as->farmAllowRemote();
+        impl_->loadPersistentQueue();
     }
 
     ArtifactRenderQueueService::~ArtifactRenderQueueService() {
+        impl_->persistQueueState();
         delete impl_;
     }
 
