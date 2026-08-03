@@ -5210,13 +5210,40 @@ namespace Artifact
         if (jobIndex < 0 || jobIndex >= count || frameNumbers.isEmpty()) {
             return 0;
         }
-        
-        // 失敗フレームのみを再レンダリングするジョブを作成
-        // 実際の実装は複雑になるため、現在はジョブを再設定して再レンダリング
-        impl_->queueManager.setJobStatus(jobIndex, ArtifactRenderJob::Status::Pending);
+
+        auto job = impl_->queueManager.getJob(jobIndex);
+        QList<int> frames;
+        for (const int frame : frameNumbers) {
+            if (frame >= job.startFrame && frame < job.endFrame && !frames.contains(frame)) {
+                frames.append(frame);
+            }
+        }
+        if (frames.isEmpty()) return 0;
+        std::sort(frames.begin(), frames.end());
+
+        QList<QPair<int, int>> ranges;
+        int rangeStart = frames.front();
+        int rangeEnd = rangeStart + 1;
+        for (int i = 1; i < frames.size(); ++i) {
+            if (frames[i] <= rangeEnd) {
+                rangeEnd = frames[i] + 1;
+            } else {
+                ranges.append(qMakePair(rangeStart, rangeEnd));
+                rangeStart = frames[i];
+                rangeEnd = rangeStart + 1;
+            }
+        }
+        ranges.append(qMakePair(rangeStart, rangeEnd));
+
+        job.frameRangeMode = ArtifactRenderJob::FrameRangeMode::SelectedFrames;
+        job.selectedFrameRanges = ranges;
+        job.status = ArtifactRenderJob::Status::Pending;
+        job.progress = 0;
+        job.errorMessage.clear();
+        impl_->queueManager.updateJob(jobIndex, job);
         impl_->syncCoreQueueModel();
-        
-        return frameNumbers.size();
+
+        return frames.size();
     }
 
     bool ArtifactRenderQueueService::Impl::renderSingleFrame(const FrameRenderSnapshot& snap, FrameRenderOutput& output, QString& failureReason) {
