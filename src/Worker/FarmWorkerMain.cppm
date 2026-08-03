@@ -49,6 +49,7 @@ int main(int argc, char* argv[]) {
     parser.addOption({QStringLiteral("pool"), QStringLiteral("Logical worker pool capability"), QStringLiteral("name"), QString()});
     parser.addOption({QStringLiteral("env"), QStringLiteral("Renderer environment overrides (KEY=VALUE,comma-separated)"), QStringLiteral("values"), QString()});
     parser.addOption({QStringLiteral("path-map"), QStringLiteral("Path mappings for renderer payloads (SOURCE=TARGET,comma-separated)"), QStringLiteral("mappings"), QString()});
+    parser.addOption({QStringLiteral("ocio-config"), QStringLiteral("OCIO config file for the renderer"), QStringLiteral("file"), QString()});
     parser.addOption({QStringLiteral("maintenance"), QStringLiteral("Register worker in maintenance mode")});
     parser.process(app);
 
@@ -59,6 +60,7 @@ int main(int argc, char* argv[]) {
     const QString gpuVendor = parser.value(QStringLiteral("gpu-vendor")).trimmed();
     const QString gpuName = parser.value(QStringLiteral("gpu-name")).trimmed();
     const QString pool = parser.value(QStringLiteral("pool")).trimmed();
+    const QString ocioConfig = parser.value(QStringLiteral("ocio-config")).trimmed();
     const QStringList environmentOverrides = parser.value(QStringLiteral("env")).split(',', Qt::SkipEmptyParts);
     QList<QPair<QString, QString>> pathMappings;
     for (const auto& mapping : parser.value(QStringLiteral("path-map")).split(',', Qt::SkipEmptyParts)) {
@@ -211,6 +213,9 @@ int main(int argc, char* argv[]) {
                 if (!key.isEmpty()) {
                     rendererEnvironment.insert(key, overrideValue.mid(separator + 1));
                 }
+            }
+            if (!ocioConfig.isEmpty()) {
+                rendererEnvironment.insert(QStringLiteral("OCIO"), resolvePath(ocioConfig));
             }
             const QJsonObject payloadEnvironment = renderJob[QStringLiteral("environment")].toObject();
             for (auto it = payloadEnvironment.begin(); it != payloadEnvironment.end(); ++it) {
