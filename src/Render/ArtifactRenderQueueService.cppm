@@ -5379,6 +5379,24 @@ namespace Artifact
         return changed;
     }
 
+    int ArtifactRenderQueueService::resetRenderQueuesAt(const QList<int>& indices) {
+        std::set<int> uniqueIndices;
+        for (const int index : indices) {
+            if (index >= 0 && index < impl_->queueManager.jobCount())
+                uniqueIndices.insert(index);
+        }
+        int changed = 0;
+        for (const int index : uniqueIndices) {
+            const auto status = impl_->queueManager.getJob(index).status;
+            if (status == ArtifactRenderJob::Status::Completed
+                || status == ArtifactRenderJob::Status::Failed) {
+                if (impl_->queueManager.resetJobForRerun(index)) ++changed;
+            }
+        }
+        if (changed > 0) impl_->syncCoreQueueModel();
+        return changed;
+    }
+
     QList<ArtifactRenderQueueService::FailedFrameInfo> ArtifactRenderQueueService::detectFailedFrames(int jobIndex) const
     {
         const int count = impl_->queueManager.jobCount();

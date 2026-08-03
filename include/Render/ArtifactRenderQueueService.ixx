@@ -158,6 +158,7 @@ public:
                               float scale, float rotationDeg);
   void resetJobForRerun(int index);
   int resetCompletedAndFailedJobsForRerun();
+  int resetRenderQueuesAt(const QList<int> &indices);
 
   // Render Recovery: 失敗フレーム検出
   struct FailedFrameInfo {
