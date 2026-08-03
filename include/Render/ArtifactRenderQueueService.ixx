@@ -102,6 +102,8 @@ public:
   void setJobFrameTimeoutMsAt(int index, int timeoutMs);
   QStringList jobDependenciesAt(int index) const;
   void setJobDependenciesAt(int index, const QStringList &dependencies);
+  QString jobWorkerPoolAt(int index) const;
+  void setJobWorkerPoolAt(int index, const QString &pool);
   QString jobStatusAt(int index) const;
   int jobProgressAt(int index) const;
   QString jobOutputPathAt(int index) const;
