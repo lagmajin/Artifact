@@ -121,6 +121,9 @@ int main(int argc, char* argv[]) {
         QElapsedTimer renderTimer;
         renderTimer.start();
         qDebug() << "[Worker] Assigned frames" << startFrame << "to" << endFrame << "step" << step;
+        client.sendWorkerLog(QStringLiteral("info"),
+                             QStringLiteral("Assigned frames %1-%2 step %3")
+                                 .arg(startFrame).arg(endFrame).arg(step));
 
         const QString renderer = jobData[QStringLiteral("rendererExecutable")].toString().trimmed();
         const QJsonObject payload = jobData[QStringLiteral("renderPayload")].toObject();
@@ -251,6 +254,7 @@ int main(int argc, char* argv[]) {
             if (!renderSucceeded) {
                 const QString message = error.isEmpty()
                     ? QStringLiteral("External renderer failed after retries") : error;
+                client.sendWorkerLog(QStringLiteral("error"), message);
                 for (int f = startFrame; f < endFrame; f += step) {
                     client.sendFrameFailed(f, message);
                     ++failedFrames;
@@ -317,6 +321,8 @@ int main(int argc, char* argv[]) {
             ++completedFrames;
             client.sendWorkerProgress(completedFrames, failedFrames, f, renderTimer.elapsed());
             qDebug() << "[Worker] Completed frame" << f;
+            client.sendWorkerLog(QStringLiteral("info"),
+                                 QStringLiteral("Completed frame %1").arg(f), f);
         }
         qDebug() << "[Worker] Slice done";
     });
