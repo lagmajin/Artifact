@@ -46,6 +46,7 @@ module;
 module Artifact.Color.Management;
 
 import Color.ColorSpace;
+import Color.GamutConversion;
 
 
 
@@ -53,6 +54,22 @@ import Color.ColorSpace;
 
 namespace Artifact
 {
+
+namespace {
+ArtifactCore::Gamut gamutFor(ColorSpace space)
+{
+    switch (space) {
+    case ColorSpace::Rec709: return ArtifactCore::Gamut::Rec709;
+    case ColorSpace::Rec2020: return ArtifactCore::Gamut::Rec2020;
+    case ColorSpace::P3: return ArtifactCore::Gamut::DCI_P3;
+    case ColorSpace::ACES_AP0: return ArtifactCore::Gamut::ACES_AP0;
+    case ColorSpace::ACES_AP1: return ArtifactCore::Gamut::ACES_AP1;
+    case ColorSpace::Linear:
+    case ColorSpace::sRGB:
+    default: return ArtifactCore::Gamut::sRGB;
+    }
+}
+}
 W_OBJECT_IMPL(ColorManager)
 
 // ==================== ColorSettings::Impl ====================
@@ -506,15 +523,14 @@ const ColorSettings* ColorManager::settings() const
 
 QMatrix4x4 ColorManager::getConversionMatrix(ColorSpace from, ColorSpace to) const
 {
-    const auto conversion = ArtifactCore::ColorSpaceConverter::getConversionMatrix(
-        static_cast<ArtifactCore::ColorSpace>(from),
-        static_cast<ArtifactCore::ColorSpace>(to));
+    const auto conversion = ArtifactCore::ColorGamutConversion::getConversionMatrix(
+        gamutFor(from), gamutFor(to));
     QMatrix4x4 matrix;
     matrix.setToIdentity();
-    matrix.setRow(0, QVector4D(conversion[0], conversion[1], conversion[2], conversion[3]));
-    matrix.setRow(1, QVector4D(conversion[4], conversion[5], conversion[6], conversion[7]));
-    matrix.setRow(2, QVector4D(conversion[8], conversion[9], conversion[10], conversion[11]));
-    matrix.setRow(3, QVector4D(conversion[12], conversion[13], conversion[14], conversion[15]));
+    matrix.setRow(0, QVector4D(conversion[0][0], conversion[0][1], conversion[0][2], 0.0f));
+    matrix.setRow(1, QVector4D(conversion[1][0], conversion[1][1], conversion[1][2], 0.0f));
+    matrix.setRow(2, QVector4D(conversion[2][0], conversion[2][1], conversion[2][2], 0.0f));
+    matrix.setRow(3, QVector4D(0.0f, 0.0f, 0.0f, 1.0f));
     return matrix;
 }
 

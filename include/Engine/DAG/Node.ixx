@@ -184,6 +184,17 @@ export namespace Artifact {
     private:
         void setupDefaultPorts() {
             switch (stage_) {
+                case EffectPipelineStage::PreProcess:
+                    // Pre-process nodes operate on the image stream before
+                    // generator/geometry-specific stages are introduced.
+                    inputPorts_.push_back(Port(UniString("image_in"),
+                                                PortDataType::ImageBuffer,
+                                                PortDirection::Input, 0));
+                    outputPorts_.push_back(Port(UniString("image_out"),
+                                                 PortDataType::ImageBuffer,
+                                                 PortDirection::Output, 0));
+                    break;
+
                 case EffectPipelineStage::Generator:
                     // 入力なし → ジオメトリ出力
                     outputPorts_.push_back(Port(UniString("geometry_out"), PortDataType::GeometryBuffer, PortDirection::Output, 0));

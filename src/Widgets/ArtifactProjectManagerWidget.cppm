@@ -4237,8 +4237,11 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 transferCombo->addItem(QStringLiteral("Auto"), QString());
                 transferCombo->addItem(QStringLiteral("Linear"), QStringLiteral("Linear"));
                 transferCombo->addItem(QStringLiteral("sRGB"), QStringLiteral("sRGB"));
-                transferCombo->addItem(QStringLiteral("LogC"), QStringLiteral("LogC"));
+                transferCombo->addItem(QStringLiteral("Rec.2020"), QStringLiteral("Rec2020_10"));
+                transferCombo->addItem(QStringLiteral("Cineon / DPX"), QStringLiteral("Cineon"));
                 transferCombo->addItem(QStringLiteral("S-Log3"), QStringLiteral("S-Log3"));
+                transferCombo->addItem(QStringLiteral("Canon Log 2"), QStringLiteral("CanonLog2"));
+                transferCombo->addItem(QStringLiteral("Canon Log 3"), QStringLiteral("CanonLog3"));
                 transferCombo->addItem(QStringLiteral("PQ"), QStringLiteral("PQ"));
                 transferCombo->addItem(QStringLiteral("HLG"), QStringLiteral("HLG"));
                 const int transferIndex = transferCombo->findData(currentInputTransferFunction);

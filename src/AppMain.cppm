@@ -142,6 +142,7 @@ import Core.Localization;
 import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Widgets.ProjectManagerWidget;
+import Artifact.Widgets.CompositionGraphWidget;
 import Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Widgets.DopeSheetWidget;
 import Artifact.Widgets.Timeline;
@@ -2736,6 +2737,13 @@ int main(int argc, char *argv[]) {
     projectManagerWidget->setMinimumWidth(240);
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea,
                         projectManagerWidget);
+    auto *compositionGraphWidget = WidgetCreationDiagnostics::createMeasured(
+        QStringLiteral("Composition Graph"), QStringLiteral("eager-widget"),
+        QStringLiteral("startup-registered-left-tool"),
+        [mw]() { return new ArtifactCompositionGraphWidget(mw); });
+    mw->addDockedWidgetTabbed(QStringLiteral("Composition Graph"),
+                              ads::LeftDockWidgetArea, compositionGraphWidget,
+                              QStringLiteral("Project"));
     auto *assetBrowser = WidgetCreationDiagnostics::createMeasured(
         QStringLiteral("Asset Browser"), QStringLiteral("eager-widget"),
         QStringLiteral("startup-default-workspace"),

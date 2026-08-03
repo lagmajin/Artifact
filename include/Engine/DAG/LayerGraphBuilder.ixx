@@ -77,19 +77,20 @@ export namespace Artifact {
             EffectGraph graph(layerName);
 
             // ステージ別にグルーピング
-            std::array<std::vector<ArtifactAbstractEffectPtr>, 5> stageEffects;
+            constexpr int stageCount = 6;
+            std::array<std::vector<ArtifactAbstractEffectPtr>, stageCount> stageEffects;
             for (const auto& e : effects) {
                 if (!e) continue;
                 int idx = static_cast<int>(e->pipelineStage());
-                if (idx >= 0 && idx < 5) {
+                if (idx >= 0 && idx < stageCount) {
                     stageEffects[idx].push_back(e);
                 }
             }
 
             // 各ステージのノードを生成
-            std::array<std::vector<EffectNodePtr>, 5> stageNodes;
+            std::array<std::vector<EffectNodePtr>, stageCount> stageNodes;
             int nodeCounter = 0;
-            for (int s = 0; s < 5; ++s) {
+            for (int s = 0; s < stageCount; ++s) {
                 auto stage = static_cast<EffectPipelineStage>(s);
                 for (const auto& effect : stageEffects[s]) {
                     auto nodeId = NodeID(QString("node_%1").arg(nodeCounter++));
@@ -102,7 +103,7 @@ export namespace Artifact {
             }
 
             // ステージ内チェーン接続
-            for (int s = 0; s < 5; ++s) {
+            for (int s = 0; s < stageCount; ++s) {
                 auto& nodes = stageNodes[s];
                 for (size_t i = 1; i < nodes.size(); ++i) {
                     // 前のノードの output[0] → 次のノードの input[0]
@@ -112,7 +113,7 @@ export namespace Artifact {
 
             // ステージ間接続: 前ステージの最後のノード → 次ステージの最初のノード
             EffectNodePtr lastNode = nullptr;
-            for (int s = 0; s < 5; ++s) {
+            for (int s = 0; s < stageCount; ++s) {
                 auto& nodes = stageNodes[s];
                 if (nodes.empty()) continue;
 

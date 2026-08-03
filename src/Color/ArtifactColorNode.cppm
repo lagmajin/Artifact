@@ -47,6 +47,7 @@ module Artifact.Color.Node;
 
 
 import Color.ColorSpace;
+import Color.GamutConversion;
 import Core.Parallel;
 
 
@@ -54,6 +55,22 @@ import Core.Parallel;
 
 
 namespace Artifact {
+
+namespace {
+ArtifactCore::Gamut gamutFor(ColorSpace space)
+{
+    switch (space) {
+    case ColorSpace::Rec709: return ArtifactCore::Gamut::Rec709;
+    case ColorSpace::Rec2020: return ArtifactCore::Gamut::Rec2020;
+    case ColorSpace::P3: return ArtifactCore::Gamut::DCI_P3;
+    case ColorSpace::ACES_AP0: return ArtifactCore::Gamut::ACES_AP0;
+    case ColorSpace::ACES_AP1: return ArtifactCore::Gamut::ACES_AP1;
+    case ColorSpace::Linear:
+    case ColorSpace::sRGB:
+    default: return ArtifactCore::Gamut::sRGB;
+    }
+}
+}
 
 using ArtifactCore::Parallel;
 
@@ -421,9 +438,9 @@ void ColorSpaceNode::process(float* pixels, int width, int height) {
     if (sourceSpace_ == targetSpace_) return;
 
     const int totalPixels = width * height;
-    const auto matrix = ArtifactCore::ColorSpaceConverter::getConversionMatrix(
-        static_cast<ArtifactCore::ColorSpace>(sourceSpace_),
-        static_cast<ArtifactCore::ColorSpace>(targetSpace_));
+    const auto matrix = ArtifactCore::ColorGamutConversion::getConversionMatrix(
+        gamutFor(static_cast<ColorSpace>(sourceSpace_)),
+        gamutFor(static_cast<ColorSpace>(targetSpace_)));
 
     // 4x4 matrix applied to each RGBA pixel
     for (int i = 0; i < totalPixels; ++i) {
@@ -433,10 +450,10 @@ void ColorSpaceNode::process(float* pixels, int width, int height) {
         const float b = pixels[idx + 2];
         const float a = pixels[idx + 3];
 
-        pixels[idx + 0] = matrix[0] * r + matrix[1] * g + matrix[2] * b + matrix[3] * a;
-        pixels[idx + 1] = matrix[4] * r + matrix[5] * g + matrix[6] * b + matrix[7] * a;
-        pixels[idx + 2] = matrix[8] * r + matrix[9] * g + matrix[10] * b + matrix[11] * a;
-        pixels[idx + 3] = matrix[12] * r + matrix[13] * g + matrix[14] * b + matrix[15] * a;
+        pixels[idx + 0] = matrix(0, r, g, b);
+        pixels[idx + 1] = matrix(1, r, g, b);
+        pixels[idx + 2] = matrix(2, r, g, b);
+        pixels[idx + 3] = a;
     }
 }
 

@@ -1,5 +1,7 @@
 # Static Layer GPU Cache (2026-03-26)
 
+**ステータス:** 実装完了（runtime性能検証待ち）
+
 `Composition Editor` には部分的な surface cache は入ってきたが、
 静止レイヤーの `GPU texture` を長く使い回す専用層はまだない。
 
@@ -149,4 +151,4 @@ CPU 側 surface を守りつつ、静止レイヤーだけ GPU 上の中間結�
 - Composition Render Controller は 512MB、256エントリの既定予算を設定し、layer state／device変更時に明示 clear/invalidate を行う。
 - 時系列で内容が変わる Image Sequence は static cache と source GPU texture sharing の対象から除外し、フレーム単位の描画経路を維持する。
 
-判定: **Phase 1〜4 実装済み。Phase 5 Static Scene Fast Path と runtime性能確認は pending。**
+判定: **Phase 1〜5 の cache key、GPU再利用、budget/LRU、diagnostics、Composition Space static-scene fast path を実装。runtime性能確認は pending。**

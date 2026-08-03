@@ -18,6 +18,7 @@ module Artifact.Color.OCIOManager;
 import Color.OCIOConfig;
 import Color.ScienceManager;
 import Color.ColorSpace;
+import Color.GamutConversion;
 import Color.TransferFunction;
 import Core.Parallel;
 import Image.ImageF32x4_RGBA;
@@ -52,6 +53,29 @@ public:
         if (lower == QLatin1String("aces2065") || lower == QLatin1String("ap0"))
             return ArtifactCore::ColorSpace::ACES_AP0;
         return ArtifactCore::ColorSpace::Linear;
+    }
+
+    static ArtifactCore::Gamut mapColorSpaceToGamut(ArtifactCore::ColorSpace space)
+    {
+        switch (space) {
+        case ArtifactCore::ColorSpace::sRGB:
+            return ArtifactCore::Gamut::sRGB;
+        case ArtifactCore::ColorSpace::Rec709:
+            return ArtifactCore::Gamut::Rec709;
+        case ArtifactCore::ColorSpace::Rec2020:
+            return ArtifactCore::Gamut::Rec2020;
+        case ArtifactCore::ColorSpace::P3:
+            return ArtifactCore::Gamut::DCI_P3;
+        case ArtifactCore::ColorSpace::ACES_AP0:
+            return ArtifactCore::Gamut::ACES_AP0;
+        case ArtifactCore::ColorSpace::ACES_AP1:
+            return ArtifactCore::Gamut::ACES_AP1;
+        case ArtifactCore::ColorSpace::Linear:
+        default:
+            // ColorSpace::Linear uses the sRGB/Rec.709 primaries in the
+            // legacy converter; preserve that contract in the Gamut path.
+            return ArtifactCore::Gamut::sRGB;
+        }
     }
 };
 
@@ -456,7 +480,8 @@ void ArtifactOCIOManager::applyViewTransformToImage(ArtifactCore::ImageF32x4_RGB
         return;
     }
 
-    const auto matrix = ArtifactCore::ColorSpaceConverter::getConversionMatrix(workingCS, displayCS);
+    const auto matrix = ArtifactCore::ColorGamutConversion::getConversionMatrix(
+        Impl::mapColorSpaceToGamut(workingCS), Impl::mapColorSpaceToGamut(displayCS));
 
     const int w = image.width();
     const int h = image.height();
@@ -473,9 +498,9 @@ ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
             // Color transforms operate on RGB only. Keep alpha independent and
             // preserve scene-linear/HDR values until an explicit display/output
             // encoding stage performs tone mapping or range limiting.
-            pixel[0] = matrix[0] * r + matrix[1] * g + matrix[2] * b;
-            pixel[1] = matrix[4] * r + matrix[5] * g + matrix[6] * b;
-            pixel[2] = matrix[8] * r + matrix[9] * g + matrix[10] * b;
+            pixel[0] = matrix(0, r, g, b);
+            pixel[1] = matrix(1, r, g, b);
+            pixel[2] = matrix(2, r, g, b);
             pixel[3] = a;
         }
     });
@@ -689,8 +714,9 @@ bool ArtifactOCIOManager::bakeViewTransformLUT(
             const auto display = Impl::mapOCIOColorSpaceToEnum(
                 impl_->display_);
             const auto matrix =
-                ArtifactCore::ColorSpaceConverter::getConversionMatrix(
-                    working, display);
+                ArtifactCore::ColorGamutConversion::getConversionMatrix(
+                    Impl::mapColorSpaceToGamut(working),
+                    Impl::mapColorSpaceToGamut(display));
             rgbValues.resize(size * size * size * 3);
             const float exposureScale =
                 std::pow(2.0f, impl_->viewerExposure_);
@@ -707,9 +733,9 @@ bool ArtifactOCIOManager::bakeViewTransformLUT(
                         const float blue = domainMin + (domainMax - domainMin) *
                             static_cast<float>(b) / static_cast<float>(size - 1);
                         float pixel[3] = {
-                            matrix[0] * red + matrix[1] * green + matrix[2] * blue,
-                            matrix[4] * red + matrix[5] * green + matrix[6] * blue,
-                            matrix[8] * red + matrix[9] * green + matrix[10] * blue};
+                            matrix(0, red, green, blue),
+                            matrix(1, red, green, blue),
+                            matrix(2, red, green, blue)};
                         for (float& channel : pixel) {
                             channel = std::pow(
                                 std::max(0.0f, channel * exposureScale),
@@ -818,6 +844,11 @@ void ArtifactOCIOManager::applyInputTransformToWorkingImage(
         if (transfer == QLatin1String("gamma24")) return TransferFunction::Gamma24;
         if (transfer == QLatin1String("gamma26")) return TransferFunction::Gamma26;
         if (transfer == QLatin1String("rec709")) return TransferFunction::Rec709;
+        if (transfer == QLatin1String("rec2020") ||
+            transfer == QLatin1String("rec2020_10") ||
+            transfer == QLatin1String("bt2020")) {
+            return TransferFunction::Rec2020_10;
+        }
         if (transfer == QLatin1String("pq") ||
             transfer == QLatin1String("st2084") ||
             transfer == QLatin1String("rec2084_pq")) {
@@ -830,10 +861,24 @@ void ArtifactOCIOManager::applyInputTransformToWorkingImage(
             transfer == QLatin1String("sony_slog3")) {
             return TransferFunction::SonySLog3;
         }
+        if (transfer == QLatin1String("cineon") ||
+            transfer == QLatin1String("dpx")) {
+            return TransferFunction::Cineon;
+        }
+        if (transfer == QLatin1String("canonlog2") ||
+            transfer == QLatin1String("canon log 2") ||
+            transfer == QLatin1String("canon_log2")) {
+            return TransferFunction::CanonLog2;
+        }
+        if (transfer == QLatin1String("canonlog3") ||
+            transfer == QLatin1String("canon log 3") ||
+            transfer == QLatin1String("canon_log3")) {
+            return TransferFunction::CanonLog3;
+        }
         return TransferFunction::Linear;
     }();
-    const auto matrix = ArtifactCore::ColorSpaceConverter::getConversionMatrix(
-        sourceCS, workingCS);
+    const auto matrix = ArtifactCore::ColorGamutConversion::getConversionMatrix(
+        Impl::mapColorSpaceToGamut(sourceCS), Impl::mapColorSpaceToGamut(workingCS));
 
     const int w = image.width();
     const int h = image.height();
@@ -845,9 +890,9 @@ void ArtifactOCIOManager::applyInputTransformToWorkingImage(
             const float r = ArtifactCore::ColorTransferFunction::decode(pixel[0], transferFunction);
             const float g = ArtifactCore::ColorTransferFunction::decode(pixel[1], transferFunction);
             const float b = ArtifactCore::ColorTransferFunction::decode(pixel[2], transferFunction);
-            pixel[0] = matrix[0] * r + matrix[1] * g + matrix[2] * b;
-            pixel[1] = matrix[4] * r + matrix[5] * g + matrix[6] * b;
-            pixel[2] = matrix[8] * r + matrix[9] * g + matrix[10] * b;
+            pixel[0] = matrix(0, r, g, b);
+            pixel[1] = matrix(1, r, g, b);
+            pixel[2] = matrix(2, r, g, b);
         }
     });
 }
