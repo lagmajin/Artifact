@@ -2458,11 +2458,27 @@ namespace Artifact
         void setJobDependencies(int index, const QStringList& dependencies) {
             if (index < 0 || index >= jobs.size()) return;
             QStringList normalized;
+            const QString currentName = jobs[index].jobName;
+            const auto reaches = [this](const QString& from, const QString& target,
+                                        const auto& self, QStringList visiting) -> bool {
+                if (from == target) return true;
+                if (visiting.contains(from)) return false;
+                visiting.append(from);
+                for (const auto& candidate : jobs) {
+                    if (candidate.jobName == from) {
+                        for (const auto& dependency : candidate.dependsOn) {
+                            if (self(dependency, target, self, visiting)) return true;
+                        }
+                    }
+                }
+                return false;
+            };
             for (const auto& dependency : dependencies) {
                 const QString name = dependency.trimmed().left(256);
                 if (!name.isEmpty() && name != jobs[index].jobName
                     && !normalized.contains(name, Qt::CaseSensitive)) {
                     if (normalized.size() >= 64) break;
+                    if (reaches(name, currentName, reaches, QStringList{})) continue;
                     normalized.append(name);
                 }
             }
