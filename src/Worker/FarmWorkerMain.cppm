@@ -109,15 +109,17 @@ int main(int argc, char* argv[]) {
                     ? static_cast<int>(std::min<qint64>(timeoutMs, sliceTimeout))
                     : static_cast<int>(std::min<qint64>(sliceTimeout, INT_MAX));
             }
-            const int maxAttempts = std::max(1, jobData[QStringLiteral("retryMaxAttempts")].toInt(1));
+            const int maxAttempts = std::clamp(
+                jobData[QStringLiteral("retryMaxAttempts")].toInt(1), 1, 32);
             const int initialBackoffMs = std::max(0,
                 jobData[QStringLiteral("retryInitialBackoffMs")].toInt(0));
             bool renderSucceeded = false;
             QString error;
             for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
                 if (attempt > 1 && initialBackoffMs > 0) {
+                    const int exponent = std::min(attempt - 2, 16);
                     const qint64 backoff = std::min<qint64>(
-                        60000, static_cast<qint64>(initialBackoffMs) << (attempt - 2));
+                        60000, static_cast<qint64>(initialBackoffMs) << exponent);
                     QThread::msleep(static_cast<unsigned long>(backoff));
                 }
                 QProcess rendererProcess;
