@@ -7,6 +7,11 @@ module;
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QJsonObject>
+#include <QJsonDocument>
+#include <QFile>
+#include <QProcess>
+#include <QTemporaryFile>
+#include <QDir>
 #include <QSysInfo>
 #include <QThread>
 
@@ -47,6 +52,45 @@ int main(int argc, char* argv[]) {
         int endFrame = jobData[QStringLiteral("endFrame")].toInt(0);
         int step = jobData[QStringLiteral("step")].toInt(1);
         qDebug() << "[Worker] Assigned frames" << startFrame << "to" << endFrame << "step" << step;
+
+        const QString renderer = jobData[QStringLiteral("rendererExecutable")].toString().trimmed();
+        const QJsonObject payload = jobData[QStringLiteral("renderPayload")].toObject();
+        if (!renderer.isEmpty() && !payload.isEmpty()) {
+            QJsonObject renderJob = payload;
+            QJsonObject composition = renderJob[QStringLiteral("composition")].toObject();
+            composition[QStringLiteral("frameStart")] = startFrame;
+            composition[QStringLiteral("frameEnd")] = endFrame;
+            renderJob[QStringLiteral("composition")] = composition;
+            if (!jobData[QStringLiteral("outputPath")].toString().isEmpty()) {
+                QJsonObject output = renderJob[QStringLiteral("output")].toObject();
+                output[QStringLiteral("path")] = jobData[QStringLiteral("outputPath")].toString();
+                renderJob[QStringLiteral("output")] = output;
+            }
+
+            QTemporaryFile jobFile(QDir::tempPath() + QStringLiteral("/artifact-farm-job-XXXXXX.json"));
+            if (!jobFile.open()) {
+                for (int f = startFrame; f < endFrame; f += step)
+                    client.sendFrameFailed(f, QStringLiteral("Failed to create renderer job file"));
+                return;
+            }
+            jobFile.write(QJsonDocument(renderJob).toJson(QJsonDocument::Compact));
+            jobFile.flush();
+
+            QProcess rendererProcess;
+            rendererProcess.start(renderer, {QStringLiteral("--job"), jobFile.fileName()});
+            const bool started = rendererProcess.waitForStarted(5000);
+            const bool finished = started && rendererProcess.waitForFinished(-1);
+            const QString error = QString::fromLocal8Bit(rendererProcess.readAllStandardError()).trimmed();
+            if (!started || !finished || rendererProcess.exitStatus() != QProcess::NormalExit
+                || rendererProcess.exitCode() != 0) {
+                const QString message = error.isEmpty()
+                    ? QStringLiteral("External renderer failed") : error;
+                for (int f = startFrame; f < endFrame; f += step)
+                    client.sendFrameFailed(f, message);
+                return;
+            }
+        }
+
         for (int f = startFrame; f < endFrame; f += step) {
             client.sendFrameCompleted(f);
             qDebug() << "[Worker] Completed frame" << f;
