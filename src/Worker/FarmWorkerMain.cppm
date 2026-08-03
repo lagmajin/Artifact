@@ -131,6 +131,7 @@ int main(int argc, char* argv[]) {
             const QString message = renderer.isEmpty()
                 ? QStringLiteral("No renderer executable was provided for farm assignment")
                 : QStringLiteral("No render payload was provided for farm assignment");
+            client.sendWorkerLog(QStringLiteral("error"), message);
             for (int f = startFrame; f < endFrame; f += step) {
                 client.sendFrameFailed(f, message);
                 ++failedFrames;
@@ -185,6 +186,8 @@ int main(int argc, char* argv[]) {
 
             QTemporaryFile jobFile(QDir::tempPath() + QStringLiteral("/artifact-farm-job-XXXXXX.json"));
             if (!jobFile.open()) {
+                client.sendWorkerLog(QStringLiteral("error"),
+                                     QStringLiteral("Failed to create renderer job file"));
                 for (int f = startFrame; f < endFrame; f += step) {
                     client.sendFrameFailed(f, QStringLiteral("Failed to create renderer job file"));
                     ++failedFrames;
@@ -267,10 +270,11 @@ int main(int argc, char* argv[]) {
                 jobData[QStringLiteral("outputPath")].toString().trimmed());
             const bool sequenceOutput = outputPath.contains('%') || outputPath.contains('*')
                 || outputPath.contains(QStringLiteral("####"));
-            if (!outputPath.isEmpty() && !sequenceOutput) {
+                if (!outputPath.isEmpty() && !sequenceOutput) {
                 const QFileInfo outputInfo(outputPath);
                 if (!outputInfo.isFile() || outputInfo.size() <= 0) {
                     const QString message = QStringLiteral("External renderer produced no output");
+                    client.sendWorkerLog(QStringLiteral("error"), message);
                     for (int f = startFrame; f < endFrame; f += step) {
                         client.sendFrameFailed(f, message);
                         ++failedFrames;
