@@ -77,6 +77,7 @@ public:
 
   void removeRenderQueue();
   void removeRenderQueueAt(int index);
+  int removeRenderQueuesAt(const QList<int> &indices);
   void duplicateRenderQueueAt(int index);
   void moveRenderQueue(int fromIndex, int toIndex);
   void startRenderQueueAt(int index);

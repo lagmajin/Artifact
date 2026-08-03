@@ -4248,6 +4248,20 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    int ArtifactRenderQueueService::removeRenderQueuesAt(const QList<int>& indices) {
+        std::set<int> uniqueIndices;
+        for (const int index : indices) {
+            if (index >= 0 && index < impl_->queueManager.jobCount()) {
+                uniqueIndices.insert(index);
+            }
+        }
+        for (auto it = uniqueIndices.rbegin(); it != uniqueIndices.rend(); ++it) {
+            impl_->queueManager.removeJob(*it);
+        }
+        if (!uniqueIndices.empty()) impl_->syncCoreQueueModel();
+        return static_cast<int>(uniqueIndices.size());
+    }
+
     void ArtifactRenderQueueService::duplicateRenderQueueAt(int index)
     {
         const int count = impl_->queueManager.jobCount();
