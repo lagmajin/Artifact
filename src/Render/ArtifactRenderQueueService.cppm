@@ -2086,6 +2086,22 @@ namespace Artifact
                     const QString output = jobs[i].outputPath.trimmed();
                     const bool patternedOutput = output.contains('%')
                         || output.contains('*') || output.contains(QStringLiteral("####"));
+                    if (patternedOutput && reservedOutputs.contains(output)) {
+                        int marker = output.indexOf('%');
+                        const int hashMarker = output.indexOf(QStringLiteral("####"));
+                        const int starMarker = output.indexOf('*');
+                        if (marker < 0 || (hashMarker >= 0 && hashMarker < marker)) marker = hashMarker;
+                        if (marker < 0 || (starMarker >= 0 && starMarker < marker)) marker = starMarker;
+                        const QString stem = output.left(std::max(0, marker));
+                        const QString pattern = output.mid(std::max(0, marker));
+                        int version = 1;
+                        QString versioned;
+                        do {
+                            versioned = QStringLiteral("%1_v%2%3").arg(stem).arg(version++).arg(pattern);
+                        } while (reservedOutputs.contains(versioned));
+                        jobs[i].outputPath = versioned;
+                        if (jobUpdated) jobUpdated(i);
+                    }
                     if (!patternedOutput && (QFileInfo(output).isFile() || reservedOutputs.contains(output))) {
                         const QFileInfo info(output);
                         QString stem = info.path() + QLatin1Char('/') + info.completeBaseName();
@@ -2102,7 +2118,7 @@ namespace Artifact
                         jobs[i].outputPath = versioned;
                         if (jobUpdated) jobUpdated(i);
                     }
-                    if (!patternedOutput) reservedOutputs.insert(jobs[i].outputPath.trimmed());
+                    reservedOutputs.insert(jobs[i].outputPath.trimmed());
                     jobs[i].status = ArtifactRenderJob::Status::Rendering;
                     if (jobStatusChanged) jobStatusChanged(i, jobs[i].status);
                 }
