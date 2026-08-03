@@ -5438,6 +5438,19 @@ namespace Artifact
             farmReq.range.startFrame = startF;   // full range; master internally skips via checkpoint
             farmReq.range.endFrame = endF;
             farmReq.range.step = 1;
+            const QString remoteRenderer = qEnvironmentVariable(
+                "ARTIFACT_RENDERER_EXECUTABLE").trimmed();
+            if (!remoteRenderer.isEmpty()) {
+                const QString payloadDir = QDir(QDir::tempPath()).filePath(
+                    QStringLiteral("ArtifactStudio/farm/remote/%1").arg(farmJobId));
+                QDir().mkpath(payloadDir);
+                QString summaryPath;
+                QString eventLogPath;
+                QString cancelPath;
+                farmReq.renderPayload = buildExternalRendererJobJson(
+                    job, payloadDir, &summaryPath, &eventLogPath, &cancelPath);
+                farmReq.rendererExecutable = remoteRenderer;
+            }
             farmReq.renderFrame = [&](int frame) {
                 // Inline retry loop: each attempt calls renderOneFrame which writes to
                 // outputBuffer and signals the consumer. On failure we wait with
