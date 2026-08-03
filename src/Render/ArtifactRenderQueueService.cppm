@@ -5878,6 +5878,8 @@ namespace Artifact
             try {
                 const int count = impl_->queueManager.jobCount();
                 auto anyFailure = ArtifactCore::makeShared<std::atomic_bool>(false);
+                std::unordered_set<int> completedJobs;
+                std::unordered_set<int> failedJobs;
                 std::vector<int> jobOrder;
                 jobOrder.reserve(count);
                 for (int i = 0; i < count; ++i) jobOrder.push_back(i);
@@ -5907,9 +5909,11 @@ namespace Artifact
                         const auto dependencyJob = impl_->queueManager.getJob(candidate);
                         if (dependencyJob.jobName == dependency) {
                             found = true;
-                            if (dependencyJob.status == ArtifactRenderJob::Status::Completed) {
+                            if (completedJobs.contains(candidate)
+                                || dependencyJob.status == ArtifactRenderJob::Status::Completed) {
                                 completed = true;
-                            } else if (dependencyJob.status == ArtifactRenderJob::Status::Failed
+                            } else if (failedJobs.contains(candidate)
+                                       || dependencyJob.status == ArtifactRenderJob::Status::Failed
                                        || dependencyJob.status == ArtifactRenderJob::Status::Canceled) {
                                 dependencyFailed = true;
                                 dependencyFailureReason = QStringLiteral(
@@ -6030,6 +6034,11 @@ namespace Artifact
                 if (impl_->usesExternalRenderer(job)) {
                     const bool externalSuccess = impl_->runExternalRendererJob(
                         effectiveJob, i, &failureReason);
+                    if (externalSuccess) {
+                        completedJobs.insert(i);
+                    } else {
+                        failedJobs.insert(i);
+                    }
                     QMetaObject::invokeMethod(this, [this, i, externalSuccess, failureReason, anyFailure]() {
                         if (externalSuccess) {
                             impl_->queueManager.setJobProgress(i, 100);
@@ -6281,6 +6290,11 @@ namespace Artifact
                         impl_->queueManager.markJobFailed(i, reason);
                     }
                 }, Qt::QueuedConnection);
+                if (success.load(std::memory_order_relaxed)) {
+                    completedJobs.insert(i);
+                } else {
+                    failedJobs.insert(i);
+                }
             }
 
             QMetaObject::invokeMethod(this, [this, anyFailure]() {
