@@ -82,6 +82,8 @@ public:
   void moveRenderQueue(int fromIndex, int toIndex);
   void startRenderQueueAt(int index);
   void pauseRenderQueueAt(int index);
+  int resumeRenderQueuesAt(const QList<int> &indices);
+  int pauseRenderQueuesAt(const QList<int> &indices);
   void cancelRenderQueueAt(int index);
   void removeAllRenderQueues();
   void removeRenderQueuesForComposition(

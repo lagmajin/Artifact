@@ -4320,6 +4320,40 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    int ArtifactRenderQueueService::pauseRenderQueuesAt(const QList<int>& indices) {
+        std::set<int> uniqueIndices;
+        for (const int index : indices) {
+            if (index >= 0 && index < impl_->queueManager.jobCount())
+                uniqueIndices.insert(index);
+        }
+        int changed = 0;
+        for (const int index : uniqueIndices) {
+            if (impl_->queueManager.getJob(index).status == ArtifactRenderJob::Status::Rendering) {
+                impl_->queueManager.pauseRendering(index);
+                ++changed;
+            }
+        }
+        if (changed > 0) impl_->syncCoreQueueModel();
+        return changed;
+    }
+
+    int ArtifactRenderQueueService::resumeRenderQueuesAt(const QList<int>& indices) {
+        std::set<int> uniqueIndices;
+        for (const int index : indices) {
+            if (index >= 0 && index < impl_->queueManager.jobCount())
+                uniqueIndices.insert(index);
+        }
+        int changed = 0;
+        for (const int index : uniqueIndices) {
+            if (impl_->queueManager.getJob(index).status == ArtifactRenderJob::Status::Pending) {
+                impl_->queueManager.startRendering(index);
+                ++changed;
+            }
+        }
+        if (changed > 0) impl_->syncCoreQueueModel();
+        return changed;
+    }
+
     void ArtifactRenderQueueService::cancelRenderQueueAt(int index)
     {
         if (index < 0 || index >= impl_->queueManager.jobCount()) {
