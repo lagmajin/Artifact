@@ -7342,6 +7342,22 @@ namespace Artifact
             workerId.trimmed(), maintenance);
     }
 
+    bool ArtifactRenderQueueService::startFarmHttpApi(unsigned short port) {
+        return ArtifactCore::RenderFarmMaster::instance().startHttpApi(port);
+    }
+
+    void ArtifactRenderQueueService::stopFarmHttpApi() {
+        ArtifactCore::RenderFarmMaster::instance().stopHttpApi();
+    }
+
+    bool ArtifactRenderQueueService::isFarmHttpApiRunning() const {
+        return ArtifactCore::RenderFarmMaster::instance().isHttpApiRunning();
+    }
+
+    unsigned short ArtifactRenderQueueService::farmHttpApiPort() const {
+        return ArtifactCore::RenderFarmMaster::instance().httpApiPort();
+    }
+
     void ArtifactRenderQueueService::setFarmAllowRemoteWorkers(bool allow) {
         impl_->farmAllowRemote_ = allow;
         ArtifactCore::ArtifactAppSettings::instance()->setFarmAllowRemote(allow);

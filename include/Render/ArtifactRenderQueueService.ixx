@@ -272,6 +272,10 @@ public:
   bool setFarmRpcTlsCertificateFiles(const QString &certificateFile,
                                      const QString &privateKeyFile);
   bool setFarmWorkerMaintenance(const QString &workerId, bool maintenance);
+  bool startFarmHttpApi(unsigned short port = 0);
+  void stopFarmHttpApi();
+  bool isFarmHttpApiRunning() const;
+  unsigned short farmHttpApiPort() const;
   QJsonObject farmProgressSnapshot() const;
   void setFarmAllowRemoteWorkers(bool allow);
   bool farmAllowRemoteWorkers() const;
