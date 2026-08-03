@@ -11,6 +11,7 @@ module;
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcess>
 #include <QTemporaryFile>
 #include <QTemporaryDir>
@@ -142,6 +143,22 @@ int main(int argc, char* argv[]) {
                     client.sendWorkerProgress(completedFrames, failedFrames, f);
                 }
                 return;
+            }
+
+            const QString outputPath = jobData[QStringLiteral("outputPath")].toString().trimmed();
+            const bool sequenceOutput = outputPath.contains('%') || outputPath.contains('*')
+                || outputPath.contains(QStringLiteral("####"));
+            if (!outputPath.isEmpty() && !sequenceOutput) {
+                const QFileInfo outputInfo(outputPath);
+                if (!outputInfo.isFile() || outputInfo.size() <= 0) {
+                    const QString message = QStringLiteral("External renderer produced no output");
+                    for (int f = startFrame; f < endFrame; f += step) {
+                        client.sendFrameFailed(f, message);
+                        ++failedFrames;
+                        client.sendWorkerProgress(completedFrames, failedFrames, f);
+                    }
+                    return;
+                }
             }
         }
 
