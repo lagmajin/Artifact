@@ -38,6 +38,7 @@ int main(int argc, char* argv[]) {
     parser.addOption({QStringLiteral("host"), QStringLiteral("Master hostname"), QStringLiteral("host"), QStringLiteral("127.0.0.1")});
     parser.addOption({QStringLiteral("port"), QStringLiteral("Master RPC port"), QStringLiteral("port"), QStringLiteral("9876")});
     parser.addOption({QStringLiteral("worker-id"), QStringLiteral("Unique worker identifier"), QStringLiteral("id"), QString()});
+    parser.addOption({QStringLiteral("worker-version"), QStringLiteral("Worker version capability"), QStringLiteral("version"), QString()});
     parser.addOption({QStringLiteral("token"), QStringLiteral("Master authentication token"), QStringLiteral("token"), QString()});
     parser.addOption({QStringLiteral("tls"), QStringLiteral("Use TLS for RPC transport")});
     parser.addOption({QStringLiteral("ca-cert"), QStringLiteral("CA certificate PEM file for TLS"), QStringLiteral("file"), QString()});
@@ -57,6 +58,7 @@ int main(int argc, char* argv[]) {
     const QString host = parser.value(QStringLiteral("host"));
     const unsigned short port = parser.value(QStringLiteral("port")).toUShort();
     const QString workerId = parser.value(QStringLiteral("worker-id"));
+    const QString workerVersion = parser.value(QStringLiteral("worker-version")).trimmed();
     const QString authToken = parser.value(QStringLiteral("token"));
     const QString gpuVendor = parser.value(QStringLiteral("gpu-vendor")).trimmed();
     const QString gpuName = parser.value(QStringLiteral("gpu-name")).trimmed();
@@ -94,6 +96,7 @@ int main(int argc, char* argv[]) {
     capabilities[QStringLiteral("os")] = QSysInfo::prettyProductName();
     capabilities[QStringLiteral("architecture")] = QSysInfo::currentCpuArchitecture();
     capabilities[QStringLiteral("cpuCount")] = QThread::idealThreadCount();
+    if (!workerVersion.isEmpty()) capabilities[QStringLiteral("version")] = workerVersion;
     if (!gpuVendor.isEmpty()) capabilities[QStringLiteral("gpuVendor")] = gpuVendor;
     if (!gpuName.isEmpty()) capabilities[QStringLiteral("gpuName")] = gpuName;
     if (vramBytes > 0) capabilities[QStringLiteral("vramBytes")] = vramBytes;
