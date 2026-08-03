@@ -512,6 +512,7 @@ namespace Artifact
         int frameTimeoutMs = 0;
         QStringList dependsOn;        // prerequisite job names
         QString workerPool;           // optional remote worker pool requirement
+        QJsonObject workerRequirements;
         QString outputPath;           // 出力パス
         QString outputFormat;         // 出力形式 (MP4, PNG sequence等)
         QString codec;                // コーデック
@@ -2511,6 +2512,17 @@ namespace Artifact
             if (jobUpdated) jobUpdated(index);
         }
 
+        QJsonObject jobWorkerRequirementsAt(int index) const {
+            if (index < 0 || index >= jobs.size()) return {};
+            return jobs[index].workerRequirements;
+        }
+
+        void setJobWorkerRequirements(int index, const QJsonObject& requirements) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].workerRequirements = requirements;
+            if (jobUpdated) jobUpdated(index);
+        }
+
         void setJobDependencies(int index, const QStringList& dependencies) {
             if (index < 0 || index >= jobs.size()) return;
             QStringList normalized;
@@ -4503,6 +4515,16 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    QJsonObject ArtifactRenderQueueService::jobWorkerRequirementsAt(int index) const {
+        return impl_->queueManager.jobWorkerRequirementsAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobWorkerRequirementsAt(
+        int index, const QJsonObject& requirements) {
+        impl_->queueManager.setJobWorkerRequirements(index, requirements);
+        impl_->syncCoreQueueModel();
+    }
+
     QString ArtifactRenderQueueService::jobStatusAt(int index) const
     {
         return impl_->queueManager.jobStatusAt(index);
@@ -5836,6 +5858,7 @@ namespace Artifact
             farmReq.priority = job.priority;
             farmReq.jobTimeoutMs = job.jobTimeoutMs;
             farmReq.frameTimeoutMs = job.frameTimeoutMs;
+            farmReq.requiredCapabilities = job.workerRequirements;
             if (!job.workerPool.trimmed().isEmpty()) {
                 farmReq.requiredCapabilities[QStringLiteral("pool")] = job.workerPool.trimmed();
             }
@@ -6715,6 +6738,7 @@ namespace Artifact
             obj["frameTimeoutMs"] = job.frameTimeoutMs;
             obj["dependsOn"] = QJsonArray::fromStringList(job.dependsOn);
             obj["workerPool"] = job.workerPool;
+            obj["workerRequirements"] = job.workerRequirements;
             obj["status"] = static_cast<int>(job.status);
             obj["progress"] = job.progress;
             obj["errorMessage"] = job.errorMessage;
@@ -6879,6 +6903,7 @@ namespace Artifact
                     job.dependsOn.append(name.left(256));
             }
             job.workerPool = obj["workerPool"].toString().trimmed().left(128);
+            job.workerRequirements = obj["workerRequirements"].toObject();
             const int savedStatus = obj["status"].toInt(static_cast<int>(ArtifactRenderJob::Status::Pending));
             if (savedStatus == static_cast<int>(ArtifactRenderJob::Status::Completed)
                 || savedStatus == static_cast<int>(ArtifactRenderJob::Status::Failed)

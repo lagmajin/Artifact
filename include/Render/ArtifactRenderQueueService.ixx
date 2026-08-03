@@ -108,6 +108,8 @@ public:
   void setJobDependenciesAt(int index, const QStringList &dependencies);
   QString jobWorkerPoolAt(int index) const;
   void setJobWorkerPoolAt(int index, const QString &pool);
+  QJsonObject jobWorkerRequirementsAt(int index) const;
+  void setJobWorkerRequirementsAt(int index, const QJsonObject &requirements);
   QString jobStatusAt(int index) const;
   int jobProgressAt(int index) const;
   QString jobOutputPathAt(int index) const;
