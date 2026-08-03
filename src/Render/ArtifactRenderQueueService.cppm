@@ -5083,10 +5083,12 @@ namespace Artifact
         }
 
         const QString outputFormat = Artifact::deriveContainerFromJob(job);
+        const bool externalRendererConfigured = !qEnvironmentVariable(
+            "ARTIFACT_RENDERER_EXECUTABLE").trimmed().isEmpty();
         const bool supportedFormat = isImageSequenceContainer(outputFormat)
             || isVideoContainer(outputFormat)
             || outputFormat == QStringLiteral("svg");
-        if (!supportedFormat) {
+        if (!supportedFormat && !externalRendererConfigured) {
             result.addDiagnostic(makePreflightDiagnostic(
                 ArtifactCore::DiagnosticSeverity::Error,
                 ArtifactCore::DiagnosticCategory::Configuration,
@@ -5107,7 +5109,7 @@ namespace Artifact
             || normalizedCodec == QStringLiteral("apng")
             || normalizedCodec == QStringLiteral("webp")
             || normalizedCodec == QStringLiteral("vp9");
-        if (!supportedCodec) {
+        if (!supportedCodec && !externalRendererConfigured) {
             result.addDiagnostic(makePreflightDiagnostic(
                 ArtifactCore::DiagnosticSeverity::Error,
                 ArtifactCore::DiagnosticCategory::Configuration,
