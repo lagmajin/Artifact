@@ -7264,6 +7264,12 @@ namespace Artifact
         ArtifactCore::RenderFarmMaster::instance().setRpcAuthToken(token.trimmed());
     }
 
+    bool ArtifactRenderQueueService::setFarmRpcTlsCertificateFiles(
+        const QString& certificateFile, const QString& privateKeyFile) {
+        return ArtifactCore::RenderFarmMaster::instance().setRpcTlsCertificateFiles(
+            certificateFile, privateKeyFile);
+    }
+
     void ArtifactRenderQueueService::setFarmAllowRemoteWorkers(bool allow) {
         impl_->farmAllowRemote_ = allow;
         ArtifactCore::ArtifactAppSettings::instance()->setFarmAllowRemote(allow);
