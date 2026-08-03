@@ -2127,6 +2127,8 @@ namespace Artifact
             if (index < 0 || index >= jobs.size()) return;
             jobs[index].progress = 100;
             jobs[index].status = ArtifactRenderJob::Status::Completed;
+            completedHistory.append(jobs[index]);
+            while (completedHistory.size() > 256) completedHistory.removeFirst();
             if (jobProgressChanged) jobProgressChanged(index, jobs[index].progress);
             if (jobStatusChanged) jobStatusChanged(index, jobs[index].status);
             if (jobUpdated) jobUpdated(index);
@@ -2760,6 +2762,7 @@ namespace Artifact
         }
 
         ArtifactRenderQueueManager queueManager;
+        QList<ArtifactRenderJob> completedHistory;
         void* ffmpegEncoder = nullptr; // Temporarily void* to bypass build error
         std::unordered_map<int, ArtifactCore::ImageF32x4_RGBA> frameBuffer;
         int nextFrameToEncode = 0;
@@ -3980,7 +3983,8 @@ namespace Artifact
             if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
             const QJsonObject root{
                 {QStringLiteral("version"), 1},
-                {QStringLiteral("jobs"), owner_->toJson()}
+                {QStringLiteral("jobs"), owner_->toJson()},
+                {QStringLiteral("history"), owner_->completedJobHistory()}
             };
             file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
             file.commit();
@@ -3997,6 +4001,22 @@ namespace Artifact
             if (!jobs.isArray()) return;
             loadingPersistentQueue_ = true;
             owner_->fromJson(jobs.toArray());
+            const QJsonValue history = document.object().value(QStringLiteral("history"));
+            if (history.isArray()) {
+                owner_->clearCompletedJobHistory();
+                for (const auto& value : history.toArray()) {
+                    if (!value.isObject()) continue;
+                    ArtifactRenderJob archived;
+                    const QJsonObject item = value.toObject();
+                    archived.jobName = item.value(QStringLiteral("jobName")).toString();
+                    archived.compositionName = item.value(QStringLiteral("compositionName")).toString();
+                    archived.outputPath = item.value(QStringLiteral("outputPath")).toString();
+                    archived.errorMessage = item.value(QStringLiteral("errorMessage")).toString();
+                    archived.progress = item.value(QStringLiteral("progress")).toInt(100);
+                    archived.status = ArtifactRenderJob::Status::Completed;
+                    completedHistory.append(archived);
+                }
+            }
             loadingPersistentQueue_ = false;
         }
 
@@ -6611,6 +6631,25 @@ namespace Artifact
             arr.append(obj);
         }
         return arr;
+    }
+
+    QJsonArray ArtifactRenderQueueService::completedJobHistory() const {
+        QJsonArray result;
+        for (const auto& job : impl_->completedHistory) {
+            result.append(QJsonObject{
+                {QStringLiteral("jobName"), job.jobName},
+                {QStringLiteral("compositionName"), job.compositionName},
+                {QStringLiteral("outputPath"), job.outputPath},
+                {QStringLiteral("progress"), job.progress},
+                {QStringLiteral("errorMessage"), job.errorMessage}
+            });
+        }
+        return result;
+    }
+
+    void ArtifactRenderQueueService::clearCompletedJobHistory() {
+        impl_->completedHistory.clear();
+        impl_->persistQueueState();
     }
 
     void ArtifactRenderQueueService::fromJson(const QJsonArray& arr) {

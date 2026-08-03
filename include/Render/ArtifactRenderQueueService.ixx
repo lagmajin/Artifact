@@ -213,6 +213,8 @@ public:
   QJsonArray toJson() const;
   void fromJson(const QJsonArray &arr);
   void clearQueueForLoad();
+  QJsonArray completedJobHistory() const;
+  void clearCompletedJobHistory();
 
   // Batch rendering
   int addAllCompositions();
