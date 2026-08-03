@@ -4008,9 +4008,15 @@ namespace Artifact
                     if (!value.isObject()) continue;
                     ArtifactRenderJob archived;
                     const QJsonObject item = value.toObject();
+                    archived.compositionId = ArtifactCore::CompositionID(
+                        item.value(QStringLiteral("compositionId")).toString());
                     archived.jobName = item.value(QStringLiteral("jobName")).toString();
                     archived.compositionName = item.value(QStringLiteral("compositionName")).toString();
                     archived.outputPath = item.value(QStringLiteral("outputPath")).toString();
+                    archived.outputFormat = item.value(QStringLiteral("outputFormat")).toString();
+                    archived.codec = item.value(QStringLiteral("codec")).toString();
+                    archived.startFrame = item.value(QStringLiteral("startFrame")).toInt(archived.startFrame);
+                    archived.endFrame = item.value(QStringLiteral("endFrame")).toInt(archived.endFrame);
                     archived.errorMessage = item.value(QStringLiteral("errorMessage")).toString();
                     archived.progress = item.value(QStringLiteral("progress")).toInt(100);
                     archived.status = ArtifactRenderJob::Status::Completed;
@@ -6637,9 +6643,14 @@ namespace Artifact
         QJsonArray result;
         for (const auto& job : impl_->completedHistory) {
             result.append(QJsonObject{
+                {QStringLiteral("compositionId"), job.compositionId.toString()},
                 {QStringLiteral("jobName"), job.jobName},
                 {QStringLiteral("compositionName"), job.compositionName},
                 {QStringLiteral("outputPath"), job.outputPath},
+                {QStringLiteral("outputFormat"), job.outputFormat},
+                {QStringLiteral("codec"), job.codec},
+                {QStringLiteral("startFrame"), job.startFrame},
+                {QStringLiteral("endFrame"), job.endFrame},
                 {QStringLiteral("progress"), job.progress},
                 {QStringLiteral("errorMessage"), job.errorMessage}
             });
@@ -6650,6 +6661,20 @@ namespace Artifact
     void ArtifactRenderQueueService::clearCompletedJobHistory() {
         impl_->completedHistory.clear();
         impl_->persistQueueState();
+    }
+
+    bool ArtifactRenderQueueService::requeueCompletedHistoryAt(int historyIndex) {
+        if (historyIndex < 0 || historyIndex >= impl_->completedHistory.size()) return false;
+        ArtifactRenderJob job = impl_->completedHistory.at(historyIndex);
+        job.status = ArtifactRenderJob::Status::Pending;
+        job.progress = 0;
+        job.errorMessage.clear();
+        const QString baseName = job.jobName.trimmed().isEmpty()
+            ? job.compositionName.trimmed() : job.jobName.trimmed();
+        job.jobName = baseName + QStringLiteral(" / Requeue");
+        impl_->queueManager.addJob(job);
+        impl_->syncCoreQueueModel();
+        return true;
     }
 
     void ArtifactRenderQueueService::fromJson(const QJsonArray& arr) {

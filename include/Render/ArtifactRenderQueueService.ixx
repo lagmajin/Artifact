@@ -215,6 +215,7 @@ public:
   void clearQueueForLoad();
   QJsonArray completedJobHistory() const;
   void clearCompletedJobHistory();
+  bool requeueCompletedHistoryAt(int historyIndex);
 
   // Batch rendering
   int addAllCompositions();
