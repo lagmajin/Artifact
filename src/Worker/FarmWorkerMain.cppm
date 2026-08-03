@@ -17,6 +17,7 @@ module;
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
+#include <QElapsedTimer>
 #include <QTemporaryFile>
 #include <QTemporaryDir>
 #include <QDir>
@@ -117,6 +118,8 @@ int main(int argc, char* argv[]) {
         int step = jobData[QStringLiteral("step")].toInt(1);
         int completedFrames = 0;
         int failedFrames = 0;
+        QElapsedTimer renderTimer;
+        renderTimer.start();
         qDebug() << "[Worker] Assigned frames" << startFrame << "to" << endFrame << "step" << step;
 
         const QString renderer = jobData[QStringLiteral("rendererExecutable")].toString().trimmed();
@@ -128,7 +131,7 @@ int main(int argc, char* argv[]) {
             for (int f = startFrame; f < endFrame; f += step) {
                 client.sendFrameFailed(f, message);
                 ++failedFrames;
-                client.sendWorkerProgress(completedFrames, failedFrames, f);
+                client.sendWorkerProgress(completedFrames, failedFrames, f, renderTimer.elapsed());
             }
             return;
         }
@@ -182,7 +185,7 @@ int main(int argc, char* argv[]) {
                 for (int f = startFrame; f < endFrame; f += step) {
                     client.sendFrameFailed(f, QStringLiteral("Failed to create renderer job file"));
                     ++failedFrames;
-                    client.sendWorkerProgress(completedFrames, failedFrames, f);
+                    client.sendWorkerProgress(completedFrames, failedFrames, f, renderTimer.elapsed());
                 }
                 return;
             }
@@ -251,7 +254,7 @@ int main(int argc, char* argv[]) {
                 for (int f = startFrame; f < endFrame; f += step) {
                     client.sendFrameFailed(f, message);
                     ++failedFrames;
-                    client.sendWorkerProgress(completedFrames, failedFrames, f);
+                    client.sendWorkerProgress(completedFrames, failedFrames, f, renderTimer.elapsed());
                 }
                 return;
             }
@@ -266,7 +269,7 @@ int main(int argc, char* argv[]) {
                     for (int f = startFrame; f < endFrame; f += step) {
                         client.sendFrameFailed(f, message);
                         ++failedFrames;
-                        client.sendWorkerProgress(completedFrames, failedFrames, f);
+                    client.sendWorkerProgress(completedFrames, failedFrames, f, renderTimer.elapsed());
                     }
                     return;
                 }
@@ -301,7 +304,7 @@ int main(int argc, char* argv[]) {
                     for (int f = startFrame; f < endFrame; f += step) {
                         client.sendFrameFailed(f, message);
                         ++failedFrames;
-                        client.sendWorkerProgress(completedFrames, failedFrames, f);
+                        client.sendWorkerProgress(completedFrames, failedFrames, f, renderTimer.elapsed());
                     }
                     return;
                 }
@@ -311,7 +314,7 @@ int main(int argc, char* argv[]) {
         for (int f = startFrame; f < endFrame; f += step) {
             client.sendFrameCompleted(f);
             ++completedFrames;
-            client.sendWorkerProgress(completedFrames, failedFrames, f);
+            client.sendWorkerProgress(completedFrames, failedFrames, f, renderTimer.elapsed());
             qDebug() << "[Worker] Completed frame" << f;
         }
         qDebug() << "[Worker] Slice done";
