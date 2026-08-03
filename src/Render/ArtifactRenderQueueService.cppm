@@ -6847,6 +6847,39 @@ namespace Artifact
         return result;
     }
 
+    bool ArtifactRenderQueueService::exportQueueJson(const QString& filePath) const {
+        const QString path = filePath.trimmed();
+        if (path.isEmpty()) return false;
+        const QFileInfo info(path);
+        if (!QDir().mkpath(info.absolutePath())) return false;
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+        const QJsonObject root{
+            {QStringLiteral("version"), 1},
+            {QStringLiteral("jobs"), toJson()},
+            {QStringLiteral("history"), completedJobHistory()}
+        };
+        if (file.write(QJsonDocument(root).toJson(QJsonDocument::Indented)) < 0) {
+            file.cancelWriting();
+            return false;
+        }
+        return file.commit();
+    }
+
+    bool ArtifactRenderQueueService::importQueueJson(const QString& filePath) {
+        const QString path = filePath.trimmed();
+        if (path.isEmpty()) return false;
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) return false;
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+        if (parseError.error != QJsonParseError::NoError || !document.isObject()) return false;
+        const QJsonValue jobs = document.object().value(QStringLiteral("jobs"));
+        if (!jobs.isArray()) return false;
+        fromJson(jobs.toArray());
+        return true;
+    }
+
     void ArtifactRenderQueueService::clearCompletedJobHistory() {
         impl_->completedHistory.clear();
         impl_->persistQueueState();

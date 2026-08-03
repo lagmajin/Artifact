@@ -222,6 +222,8 @@ public:
   // Serialization for project save/load
   QJsonArray toJson() const;
   void fromJson(const QJsonArray &arr);
+  bool exportQueueJson(const QString &filePath) const;
+  bool importQueueJson(const QString &filePath);
   void clearQueueForLoad();
   QJsonArray completedJobHistory() const;
   void clearCompletedJobHistory();
