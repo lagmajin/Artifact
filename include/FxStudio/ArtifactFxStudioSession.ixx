@@ -1,6 +1,7 @@
 module;
 
 #include <cstdint>
+#include <QJsonObject>
 
 export module Artifact.FxStudio.Session;
 
@@ -35,6 +36,9 @@ public:
   bool resizeSelectedEvent(std::int64_t durationFrames);
   bool setSelectedEventStrength(float strength);
   bool setSelectedEventEnabled(bool enabled);
+
+  QJsonObject toJson() const;
+  bool fromJson(const QJsonObject& object);
 
 private:
   EventId allocateEventId() noexcept;

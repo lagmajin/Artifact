@@ -26,14 +26,24 @@ using namespace ArtifactCore;
 
 struct PluginLayerFactory::Impl {
     std::vector<LayerPluginInfo> plugins;
+    std::unique_ptr<ArtifactPluginLoader> loader = std::make_unique<ArtifactPluginLoader>();
 
     void registerFromDll(const ArtifactCore::String& pluginId,
                          ArtifactPluginInstance instance,
-                         ArtifactLayerPluginVTable vtable) {
-        auto adapter = ArtifactCore::makeShared<LayerPluginAdapter>(ArtifactCore::toStdString(pluginId), vtable, instance);
+                         ArtifactLayerPluginVTable vtable,
+                         LayerPluginAdapter::DestroyFunction destroy,
+                         const ArtifactCore::String& version) {
+        for (const auto& existing : plugins) {
+            if (existing.id == pluginId) {
+                if (destroy && instance) destroy(instance);
+                return;
+            }
+        }
+        auto adapter = ArtifactCore::makeShared<LayerPluginAdapter>(ArtifactCore::toStdString(pluginId), vtable, instance, destroy);
         if (adapter->initialize()) {
             LayerPluginInfo info;
             info.id = pluginId;
+            info.version = version;
             info.displayName = adapter->displayName();
             info.plugin = adapter;
             plugins.push_back(std::move(info));
@@ -47,20 +57,22 @@ PluginLayerFactory& PluginLayerFactory::instance() {
 }
 
 void PluginLayerFactory::scanAndRegister() {
-    ArtifactPluginLoader loader;
-
     // For each loaded layer plugin DLL, resolve the layer-specific ABI functions
     // and create an adapter via registerFromDll.
-    loader.setOnPluginLoaded([this](const QString& dllPath, void* libHandle,
+    if (!impl_) impl_ = std::make_unique<Impl>();
+    impl_->loader->setOnPluginLoaded([this](const QString& dllPath, void* libHandle,
                                      const ArtifactCore::PluginDescriptor& desc) {
         if (desc.category != PluginCategory::Layer) return;
 
         auto* lib = static_cast<QLibrary*>(libHandle);
 
         using CreateLayerFn = ArtifactPluginInstance (*)(const char*);
+        using DestroyLayerFn = void (*)(ArtifactPluginInstance);
         using GetVTableFn = const ArtifactLayerPluginVTable* (*)(const char*);
         auto fnCreate = reinterpret_cast<CreateLayerFn>(
             lib->resolve("ArtifactPlugin_CreateLayer"));
+        auto fnDestroy = reinterpret_cast<DestroyLayerFn>(
+            lib->resolve("ArtifactPlugin_DestroyLayer"));
         auto fnVTable = reinterpret_cast<GetVTableFn>(
             lib->resolve("ArtifactPlugin_GetLayerVTable"));
 
@@ -70,7 +82,9 @@ void PluginLayerFactory::scanAndRegister() {
         auto instance = fnCreate(descriptorId.c_str());
         auto vtable = fnVTable(descriptorId.c_str());
         if (instance && vtable) {
-            registerFromDll(desc.id, instance, *vtable);
+            registerFromDll(desc.id, instance, *vtable, fnDestroy, desc.version);
+        } else if (instance && fnDestroy) {
+            fnDestroy(instance);
         }
     });
 
@@ -78,18 +92,22 @@ void PluginLayerFactory::scanAndRegister() {
     QStringList paths = {
         QDir(QCoreApplication::applicationDirPath()).filePath("plugins/layers"),
     };
-    loader.discoverAndLoad(paths, PluginLoadMode::DllInProcess);
+    impl_->loader->discoverAndLoad(paths, PluginLoadMode::DllInProcess);
 }
 
 void PluginLayerFactory::registerFromDll(const ArtifactCore::String& pluginId,
                                           ArtifactPluginInstance instance,
-                                          ArtifactLayerPluginVTable vtable) {
+                                          ArtifactLayerPluginVTable vtable,
+                                          LayerPluginAdapter::DestroyFunction destroy,
+                                          const ArtifactCore::String& version) {
     if (!impl_) impl_ = std::make_unique<Impl>();
-    impl_->registerFromDll(pluginId, instance, vtable);
+    impl_->registerFromDll(pluginId, instance, vtable, destroy, version);
 }
 
 void PluginLayerFactory::unregisterAll() {
-    if (impl_) impl_->plugins.clear();
+    if (!impl_) return;
+    impl_->plugins.clear();
+    impl_->loader->unloadAll();
 }
 
 std::vector<LayerPluginInfo> PluginLayerFactory::availablePlugins() const {

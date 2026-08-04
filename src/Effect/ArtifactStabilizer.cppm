@@ -5,6 +5,8 @@
 #include <wobjectimpl.h>
 #include <QFileInfo>
 #include <QDir>
+#include <QImageReader>
+#include <QImageWriter>
 
 #include <iostream>
 #include <vector>
@@ -809,15 +811,37 @@ bool BatchStabilizer::process()
         return false;
     }
     
+    QImageReader reader(inputInfo.absoluteFilePath());
+    const QImage input = reader.read();
+    if (input.isNull()) {
+        emit errorOccurred(reader.errorString());
+        return false;
+    }
+
     isProcessing_ = true;
     currentFrame_ = 0;
-    totalFrames_ = 100; // ダミー値
-    
-    for (int i = 0; i < 100; i++) {
-        currentFrame_ = i;
-        emit progressChanged(i, 100);
+    totalFrames_ = 1;
+    emit progressChanged(0, totalFrames_);
+
+    ArtifactCore::VideoStabilizer stabilizer;
+    stabilizer.setParams(params_);
+    stabilizer.addFrame(input);
+    if (!stabilizer.stabilize()) {
+        isProcessing_ = false;
+        emit errorOccurred(QStringLiteral("Video stabilization failed."));
+        return false;
     }
-    
+
+    const QImage output = stabilizer.getStabilizedFrame(0);
+    QImageWriter writer(outputInfo.absoluteFilePath());
+    if (output.isNull() || !writer.write(output)) {
+        isProcessing_ = false;
+        emit errorOccurred(writer.errorString());
+        return false;
+    }
+
+    currentFrame_ = 1;
+    emit progressChanged(currentFrame_, totalFrames_);
     isProcessing_ = false;
     emit stabilizationComplete();
     

@@ -581,7 +581,9 @@ namespace Artifact
        orient.setColumn(2, QVector4D(tangent, 0));
        orient.setColumn(3, QVector4D(0, 0, 0, 1));
 
-       m = orient * m;
+       // Keep the spline point in place; apply orientation after the
+       // translation instead of rotating the point around the origin.
+       m *= orient;
       }
 
       m.rotate(i * impl_->rotationStep_, 0.0f, 0.0f, 1.0f);

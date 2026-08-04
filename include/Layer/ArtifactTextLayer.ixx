@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -174,6 +174,7 @@ public:
      int applyColorToSelectorRange(int charStart, int charEnd, const ArtifactCore::FloatRGBA& color);
 
     QImage toQImage() const;
+    QImage getThumbnail(int width = 128, int height = 128) const override;
     const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
     bool hasCurrentFrameBuffer() const;
     QString debugState() const;

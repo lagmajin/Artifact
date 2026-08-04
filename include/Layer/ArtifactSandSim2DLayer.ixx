@@ -32,6 +32,7 @@ public:
     bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 
     QImage toQImage() const;
+    QImage getThumbnail(int width = 128, int height = 128) const override;
     QJsonObject toJson() const override;
     void fromJsonProperties(const QJsonObject& obj) override;
     static SharedPtr<ArtifactSandSim2DLayer> fromJson(const QJsonObject& obj);

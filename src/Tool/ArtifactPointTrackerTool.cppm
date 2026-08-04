@@ -4,8 +4,10 @@ module;
 #include <QPointF>
 #include <vector>
 #include <set>
+#include <array>
 #include <cmath>
 #include <utility>
+#include <QVariant>
 
 export module Artifact.Tool.PointTracker;
 
@@ -16,6 +18,8 @@ import Artifact.Layer.InitParams;
 import Tracking.MotionTracker;
 import Animation.Transform3D;
 import Time.Rational;
+import Artifact.Service.Effect;
+import Artifact.Effect.Abstract;
 
 namespace Artifact {
 
@@ -142,6 +146,68 @@ public:
         }
 
         return applied;
+    }
+
+    /// Planar tracking の投影四隅を Corner Pin effect の animatable
+    /// properties へ書き出す。既存の targetLayer に effect を追加し、
+    /// source rect の各コーナーを時系列キーフレーム化する。
+    static bool applyPlanarResultAsCornerPin(
+        ArtifactAbstractComposition* comp,
+        const ArtifactCore::MotionTracker& tracker,
+        const QRectF& sourceRect,
+        ArtifactAbstractLayerPtr targetLayer)
+    {
+        if (!comp || !targetLayer || tracker.trackerType() !=
+            ArtifactCore::TrackerType::Planar || !sourceRect.isValid()) {
+            return false;
+        }
+        const auto keyframes = tracker.exportProjectedRegionKeyframes(sourceRect);
+        if (keyframes.empty()) return false;
+
+        const double fpsValue = comp->frameRate().framerate();
+        if (!std::isfinite(fpsValue) || fpsValue <= 0.0 || fpsValue > 240.0)
+            return false;
+        const auto fps = static_cast<int64_t>(std::llround(fpsValue));
+        if (fps <= 0) return false;
+
+        auto* effectService = ArtifactEffectService::instance();
+        if (!effectService) return false;
+        auto effect = effectService->createEffect(EffectID("builtin.corner_pin"));
+        if (!effect) return false;
+        auto effectPtr = ArtifactCore::makeShared(
+            effect.release(), [](ArtifactAbstractEffect* pointer) { delete pointer; });
+        if (!effectPtr) return false;
+        const std::array<QString, 8> propertyNames = {
+            QStringLiteral("Upper Left X"), QStringLiteral("Upper Left Y"),
+            QStringLiteral("Upper Right X"), QStringLiteral("Upper Right Y"),
+            QStringLiteral("Lower Left X"), QStringLiteral("Lower Left Y"),
+            QStringLiteral("Lower Right X"), QStringLiteral("Lower Right Y")};
+        std::array<ArtifactCore::SharedPtr<ArtifactCore::AbstractProperty>, 8> properties{};
+        for (std::size_t i = 0; i < propertyNames.size(); ++i) {
+            properties[i] = effectPtr->editableProperty(propertyNames[i]);
+            if (!properties[i]) return false;
+        }
+
+        // Only attach the effect after all required properties have been
+        // resolved. This keeps a failed export from leaving an unusable
+        // partially-created Corner Pin effect on the target layer.
+        targetLayer->addEffect(effectPtr);
+
+        for (const auto& [timeSeconds, corners] : keyframes) {
+            if (!std::isfinite(timeSeconds)) continue;
+            const auto frame = static_cast<int64_t>(std::llround(timeSeconds * fpsValue));
+            const ArtifactCore::RationalTime time(frame, fps);
+            const std::array<double, 8> values = {
+                corners[0].x(), corners[0].y(), corners[1].x(), corners[1].y(),
+                corners[2].x(), corners[2].y(), corners[3].x(), corners[3].y()};
+            for (std::size_t i = 0; i < properties.size(); ++i) {
+                if (std::isfinite(values[i]))
+                    properties[i]->addKeyFrame(time, QVariant(values[i]));
+            }
+        }
+        targetLayer->setDirty(LayerDirtyFlag::Effect);
+        targetLayer->changed();
+        return true;
     }
 };
 

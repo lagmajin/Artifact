@@ -56,5 +56,6 @@ public:
                              const QVariant &value) override;
   void draw(ArtifactIRenderer *renderer) override;
   QImage toQImage() const;
+  QImage getThumbnail(int width = 128, int height = 128) const override;
 };
 } // namespace Artifact

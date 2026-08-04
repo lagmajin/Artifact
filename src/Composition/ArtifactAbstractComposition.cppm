@@ -54,11 +54,14 @@ import Artifact.Effect.SurfaceFX;
 import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.Keying.LumaKey;
 import Artifact.Effect.Keying.DifferenceKey;
+import Artifact.Effect.Rasterizer.DifferenceMatte;
+import Artifact.Effect.Keying.IBKKeyer;
 import Artifact.Render.CompositionViewDrawing;
 import Artifact.Event.Types;
 import Event.Bus;
 import Audio.Mixer;
 import Audio.Bus;
+import Artifact.Composition.InOutPoints;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import ArtifactCore.Control.External;
@@ -808,6 +811,12 @@ SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
   } else if (effectId == QStringLiteral("difference_key") ||
              effectId == QStringLiteral("Effect.Keying.DifferenceKey")) {
     effect = makeShared<DifferenceKeyEffect>();
+  } else if (effectId == QStringLiteral("difference_matte") ||
+             effectId == QStringLiteral("Effect.Rasterizer.DifferenceMatte")) {
+    effect = makeShared<DifferenceMatteEffect>();
+  } else if (effectId == QStringLiteral("ibk_keyer") ||
+             effectId == QStringLiteral("Effect.Keying.IBKKeyer")) {
+    effect = makeShared<IBKKeyerEffect>();
   } else {
     effect = makeShared<ArtifactAbstractEffect>();
   }
@@ -1051,6 +1060,7 @@ class ArtifactAbstractComposition::Impl {
   float playbackSpeed_ = 1.0f;
   AudioLimiter limiter_;
   ArtifactCore::SharedPtr<AudioMixer> audioMixer_;
+  std::unique_ptr<ArtifactInOutPoints> inOutPoints_;
   CompositionID id_;
   QString compositionNote_;
   int colorPipelineVersion_ =
@@ -1120,7 +1130,7 @@ class ArtifactAbstractComposition::Impl {
 
  ArtifactAbstractComposition::Impl::Impl(ArtifactAbstractComposition* owner) : owner_(owner)
  {
-
+  inOutPoints_ = std::make_unique<ArtifactInOutPoints>(owner);
  }
 
  ArtifactAbstractComposition::Impl::~Impl()
@@ -3063,6 +3073,11 @@ ArtifactCore::SharedPtr<AudioMixer> ArtifactAbstractComposition::getAudioMixer()
     return impl_->audioMixer_;
 }
 
+ArtifactInOutPoints* ArtifactAbstractComposition::inOutPoints() const
+{
+    return impl_->inOutPoints_.get();
+}
+
 QList<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer()
 {
   QList<ArtifactAbstractLayerPtr> layers = impl_->layerMultiIndex_.all();
@@ -4408,6 +4423,12 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
     obj["activeStateVariantId"] = impl_->activeStateVariantId_;
     obj["stateComparisonAId"] = impl_->stateComparisonAId_;
     obj["stateComparisonBId"] = impl_->stateComparisonBId_;
+    if (impl_->audioMixer_) {
+        obj["audioMixer"] = impl_->audioMixer_->serialize();
+    }
+    if (impl_->inOutPoints_) {
+        obj["inOutPoints"] = impl_->inOutPoints_->toJson();
+    }
     QJsonArray audioBindingsArray;
     for (const auto& binding : impl_->audioReactiveBindings_) {
         audioBindingsArray.append(binding.toJson());
@@ -4489,6 +4510,16 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
     auto comp = ArtifactCore::makeShared<ArtifactAbstractComposition>(compId, params);
     comp->setColorPipelineVersion(colorPipelineVersion);
     comp->impl_->suppressLayerChangedEvents_ = true;
+    if (obj.contains("audioMixer") && obj.value("audioMixer").isObject()) {
+        comp->ensureAudioMixer();
+        comp->impl_->audioMixer_->deserialize(obj.value("audioMixer").toObject());
+    }
+    if (obj.contains("inOutPoints") && obj.value("inOutPoints").isObject()) {
+        if (!comp->impl_->inOutPoints_->fromJson(
+                obj.value("inOutPoints").toObject())) {
+            return nullptr;
+        }
+    }
     if (obj.contains("frameRange") && obj["frameRange"].isObject()) {
         comp->setFrameRange(FrameRange::fromJson(obj["frameRange"].toObject()));
     }

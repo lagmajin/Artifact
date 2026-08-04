@@ -38,9 +38,20 @@ static QString sessionPath(const QString &workspaceRoot) {
 }
 
 static QString presetPath(const QString &workspaceRoot, const QString &presetName) {
-  const QString safeName =
-      presetName.trimmed().isEmpty() ? QStringLiteral("Default")
-                                     : presetName.trimmed();
+  QString safeName = presetName.trimmed();
+  if (safeName.isEmpty()) {
+    safeName = QStringLiteral("Default");
+  } else {
+    // Treat preset names as labels, never as relative paths.  QFileInfo's
+    // basename handling removes both slash styles on Windows and prevents a
+    // workspace preset from escaping workspaceRoot/Presets.
+    safeName = QFileInfo(safeName).fileName().trimmed();
+    if (safeName.isEmpty() || safeName == QStringLiteral(".") ||
+        safeName == QStringLiteral("..")) {
+      safeName = QStringLiteral("Default");
+    }
+    safeName = safeName.left(128);
+  }
   return QDir(presetDirPath(workspaceRoot)).filePath(safeName + QStringLiteral(".json"));
 }
 

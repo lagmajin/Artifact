@@ -215,6 +215,16 @@ QImage ArtifactSandSim2DLayer::toQImage() const
     return impl_->renderBuffer_.toQImage();
 }
 
+QImage ArtifactSandSim2DLayer::getThumbnail(int width, int height) const
+{
+  const QSize targetSize(std::max(1, width), std::max(1, height));
+  const QImage image = toQImage();
+  return image.isNull()
+      ? ArtifactAbstractLayer::getThumbnail(targetSize.width(), targetSize.height())
+      : image.scaled(targetSize, Qt::KeepAspectRatio,
+                     Qt::SmoothTransformation);
+}
+
 QJsonObject ArtifactSandSim2DLayer::toJson() const
 {
     QJsonObject obj = ArtifactAbstractLayer::toJson();

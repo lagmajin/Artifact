@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <QDebug>
+#include <QFileDialog>
 #include <wobjectimpl.h>
 #include <wobjectdefs.h>
 #include <QFileInfo>
@@ -328,7 +329,22 @@ CreateCompositionResult ArtifactProject::Impl::createComposition(const ArtifactC
  return result;
  }
 
-void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
+void ArtifactProject::Impl::createCompositions(const QStringList& names)
+{
+  for (const QString& name : names) {
+    if (name.trimmed().isEmpty()) {
+      continue;
+    }
+
+    ArtifactCompositionInitParams params;
+    params.setCompositionName(UniString(name.trimmed()));
+    const auto result = createComposition(params);
+    if (!result.success) {
+      qWarning() << "Impl::createCompositions: failed to create composition"
+                 << name << result.message.toQString();
+    }
+  }
+}
 
  FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID& id)
 {
@@ -457,6 +473,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
       }
       footageUp->filePath = obj.value(QStringLiteral("filePath")).toString();
       footageUp->isSequence = obj.value(QStringLiteral("isSequence")).toBool(false);
+      footageUp->subimageIndex = std::max(-1, obj.value(QStringLiteral("subimageIndex")).toInt(-1));
       footageUp->frameRate = obj.value(QStringLiteral("frameRate")).toDouble(0.0);
       const QJsonArray sequenceArray = obj.value(QStringLiteral("sequencePaths")).toArray();
       if (!sequenceArray.isEmpty()) {
@@ -810,6 +827,9 @@ QJsonArray compsArray;
        const auto* footage = static_cast<const FootageItem*>(item);
        obj["filePath"] = footage->filePath;
        obj["filePathExists"] = QFileInfo(footage->filePath).exists();
+       if (footage->subimageIndex >= 0) {
+        obj["subimageIndex"] = footage->subimageIndex;
+       }
        if (footage->isSequence) {
         obj["isSequence"] = true;
        }
@@ -1478,14 +1498,15 @@ void ArtifactProject::setExtensionData(const QJsonObject& data)
 
  void ArtifactProject::addAssetFile()
  {
-  // Open file dialog would be handled by UI layer
-  // For now, just log that this method was called
-  qDebug() << "ArtifactProject::addAssetFile called - UI should handle file selection";
-  
-  // In a real implementation, this would:
-  // 1. Open file dialog (handled by UI)
-  // 2. Get selected file path
-  // 3. Call addAssetFromPath(filePath)
+  const QString filePath = QFileDialog::getOpenFileName(
+      nullptr,
+      QStringLiteral("Add Asset"),
+      QString(),
+      QStringLiteral("Media Files (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.exr *.svg *.mp4 *.mov *.wav *.mp3);;All Files (*.*)"));
+  if (filePath.isEmpty()) {
+   return;
+  }
+  addAssetFromPath(filePath);
  }
  bool ArtifactProject::isDirty() const
  {
@@ -1743,7 +1764,22 @@ void ArtifactProject::setExtensionData(const QJsonObject& data)
   return result;
   }
 
-  void ArtifactProject::createCompositions(const QStringList& names) {}
+  void ArtifactProject::createCompositions(const QStringList& names)
+  {
+    for (const QString& name : names) {
+      if (name.trimmed().isEmpty()) {
+        continue;
+      }
+
+      ArtifactCompositionInitParams params;
+      params.setCompositionName(UniString(name.trimmed()));
+      const auto result = createComposition(params);
+      if (!result.success) {
+        qWarning() << "ArtifactProject::createCompositions: failed to create composition"
+                   << name << result.message.toQString();
+      }
+    }
+  }
 
  FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   {

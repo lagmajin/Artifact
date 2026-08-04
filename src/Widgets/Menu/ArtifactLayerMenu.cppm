@@ -984,6 +984,7 @@ public:
     QAction* distributeHCenterAction = nullptr;
     QAction* distributeVCenterAction = nullptr;
     QAction* distributeSpacingAction = nullptr;
+    QAction* resolveLayoutCollisionsAction = nullptr;
     QAction* radialTransformAction = nullptr;
     QAction* createLiveRadialFieldAction = nullptr;
     QAction* createLiveBoxFieldAction = nullptr;
@@ -1072,6 +1073,7 @@ public:
     void handleAlign(ArtifactCore::AlignType type);
     void handleDistribute(ArtifactCore::DistributeType type);
     void handleDistributeSpacing();
+    void handleResolveLayoutCollisions();
     void handleRadialTransform();
     void handleCreateLiveTransformField(const QString& shape);
     void handleSelectLiveRadialField();
@@ -1500,6 +1502,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     distributeMenu->addAction(distributeHCenterAction);
     distributeMenu->addAction(distributeVCenterAction);
     distributeMenu->addAction(distributeSpacingAction);
+    resolveLayoutCollisionsAction = new QAction("衝突を自動回避", menu);
 
     openInspectorAction = new QAction("Inspector を開く", menu);
     openInspectorAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_inspector.svg")));
@@ -1558,6 +1561,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     menu->addMenu(arrangeMenu);
     menu->addMenu(alignMenu);
     menu->addMenu(distributeMenu);
+    menu->addAction(resolveLayoutCollisionsAction);
     menu->addSeparator();
     menu->addAction(openInspectorAction);
     menu->addAction(openPropertiesAction);
@@ -1909,6 +1913,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == distributeHCenterAction) { handleDistribute(ArtifactCore::DistributeType::CenterHorizontal); return; }
         if (action == distributeVCenterAction) { handleDistribute(ArtifactCore::DistributeType::CenterVertical); return; }
         if (action == distributeSpacingAction) { handleDistributeSpacing(); return; }
+        if (action == resolveLayoutCollisionsAction) { handleResolveLayoutCollisions(); return; }
         if (action == trackCameraAction) { handleTrackCamera(); return; }
         if (action == createMotionTrackerAction) { handleCreateMotionTracker(); return; }
     };
@@ -3918,7 +3923,9 @@ void ArtifactLayerMenu::Impl::handleAlign(ArtifactCore::AlignType type)
         if (!layer) continue;
         const float px = layer->transform3D().positionX();
         const float py = layer->transform3D().positionY();
-        snapshots.push_back({layer->id().toString(), px, py, px, py});
+        snapshots.push_back({layer->id().toString(), px, py, px, py,
+                             layer->transform3D().scaleX(), layer->transform3D().scaleY(),
+                             layer->transform3D().scaleX(), layer->transform3D().scaleY()});
         ArtifactCore::AlignmentObject obj;
         obj.id = i;
         obj.bounds = layer->transformedBoundingBox();
@@ -3962,7 +3969,9 @@ void ArtifactLayerMenu::Impl::handleDistribute(ArtifactCore::DistributeType type
         if (!layer) continue;
         const float px = layer->transform3D().positionX();
         const float py = layer->transform3D().positionY();
-        snapshots.push_back({layer->id().toString(), px, py, px, py});
+        snapshots.push_back({layer->id().toString(), px, py, px, py,
+                             layer->transform3D().scaleX(), layer->transform3D().scaleY(),
+                             layer->transform3D().scaleX(), layer->transform3D().scaleY()});
         ArtifactCore::AlignmentObject obj;
         obj.id = i;
         obj.bounds = layer->transformedBoundingBox();
@@ -4003,7 +4012,9 @@ void ArtifactLayerMenu::Impl::handleDistributeSpacing()
         if (!layer) continue;
         const float px = layer->transform3D().positionX();
         const float py = layer->transform3D().positionY();
-        snapshots.push_back({layer->id().toString(), px, py, px, py});
+        snapshots.push_back({layer->id().toString(), px, py, px, py,
+                             layer->transform3D().scaleX(), layer->transform3D().scaleY(),
+                             layer->transform3D().scaleX(), layer->transform3D().scaleY()});
         ArtifactCore::AlignmentObject obj;
         obj.id = i;
         obj.bounds = layer->transformedBoundingBox();
@@ -4032,6 +4043,60 @@ void ArtifactLayerMenu::Impl::handleDistributeSpacing()
     }
 
     UndoManager::instance()->push(std::make_unique<AlignLayersUndoCommand>(snapshots, QStringLiteral("Distribute Spacing")));
+}
+
+void ArtifactLayerMenu::Impl::handleResolveLayoutCollisions()
+{
+    auto* selection = ArtifactLayerSelectionManager::instance();
+    if (!selection) return;
+    auto composition = selection->activeComposition();
+    if (!composition) return;
+    const auto layers = selection->selectedLayersInOrder();
+    if (layers.size() < 2) return;
+
+    const auto size = composition->effectiveCompositionSize();
+    if (!size.isValid()) return;
+    std::vector<AlignLayerSnapshot> snapshots;
+    std::vector<ArtifactCore::LayoutCollisionObject> objects;
+    snapshots.reserve(layers.size());
+    objects.reserve(layers.size());
+    for (int i = 0; i < layers.size(); ++i) {
+        const auto layer = layers[i];
+        if (!layer) continue;
+        const float px = layer->transform3D().positionX();
+        const float py = layer->transform3D().positionY();
+        snapshots.push_back({layer->id().toString(), px, py, px, py,
+                             layer->transform3D().scaleX(), layer->transform3D().scaleY(),
+                             layer->transform3D().scaleX(), layer->transform3D().scaleY()});
+        ArtifactCore::LayoutCollisionObject object;
+        object.id = i;
+        object.bounds = layer->transformedBoundingBox();
+        object.currentPosition = QPointF(px, py);
+        object.priority = layers.size() - i;
+        object.role = ArtifactCore::LayoutTargetRole::Generic;
+        objects.push_back(object);
+    }
+    if (objects.size() < 2) return;
+
+    ArtifactCore::LayerAlignment::resolveCollisions(
+        objects, QRectF(0.0, 0.0, size.width(), size.height()));
+    for (size_t i = 0; i < objects.size(); ++i) {
+        const auto layer = composition->layerById(ArtifactCore::LayerID(snapshots[i].layerId));
+        if (!layer) continue;
+        layer->transform3D().setPosition(ArtifactCore::RationalTime(0, 30000),
+            static_cast<float>(objects[i].currentPosition.x()),
+            static_cast<float>(objects[i].currentPosition.y()));
+        const float scaledX = snapshots[i].beforeScaleX * static_cast<float>(objects[i].scale);
+        const float scaledY = snapshots[i].beforeScaleY * static_cast<float>(objects[i].scale);
+        layer->transform3D().setScale(ArtifactCore::RationalTime(0, 30000), scaledX, scaledY);
+        layer->changed();
+        snapshots[i].afterX = static_cast<float>(objects[i].currentPosition.x());
+        snapshots[i].afterY = static_cast<float>(objects[i].currentPosition.y());
+        snapshots[i].afterScaleX = scaledX;
+        snapshots[i].afterScaleY = scaledY;
+    }
+    UndoManager::instance()->push(std::make_unique<AlignLayersUndoCommand>(
+        snapshots, QStringLiteral("Resolve Layout Collisions")));
 }
 
 void ArtifactLayerMenu::Impl::handleRadialTransform()

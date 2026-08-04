@@ -90,6 +90,13 @@ struct GradingNode {
   ~GradingNode();
 };
 
+struct ColorGradingSuggestion {
+  LiftGammaGainNode primary;
+  ColorWheelNode wheels;
+  float confidence = 0.0f;
+  std::string rationale;
+};
+
 class ArtifactColorGradingEngine {
 private:
   class Impl;
@@ -110,6 +117,9 @@ public:
   // Processing
   FloatColor applyGrading(const FloatColor &input) const;
   void applyGradingToBuffer(std::vector<FloatColor> &buffer) const;
+  static ColorGradingSuggestion suggestGrading(
+      const std::vector<FloatColor> &samples);
+  bool applySuggestion(const ColorGradingSuggestion &suggestion);
 
   // Preset management
   void savePreset(const std::string &name);

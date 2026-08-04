@@ -178,6 +178,10 @@ PortId ColorNode::inputPortId(int index) const {
     return { impl_->id_, index };
 }
 
+void ColorNode::addInputPort(const PortDescriptor& descriptor) {
+    impl_->inputPorts_.push_back(descriptor);
+}
+
 PortId ColorNode::outputPortId(int index) const {
     return { impl_->id_, index };
 }
@@ -464,6 +468,9 @@ void ColorSpaceNode::process(float* pixels, int width, int height) {
 MergeNode::MergeNode(QObject* parent)
     : ColorNode(ColorNodeType::Merge, parent)
 {
+    // The base node provides the main input.  Merge has a second, explicit
+    // foreground input so graph connections can represent both branches.
+    addInputPort({ "Secondary", PortDirection::Input, PortDataType::Color });
     setName("Merge");
 }
 

@@ -293,6 +293,7 @@ import Color.Float;
 import Image;
 
 import CvUtils;
+import ArtifactCore.ImageProcessing.OpenCV.RotoBrushEngine;
 
 import ArtifactCore.Utils.PerformanceProfiler;
 
@@ -2912,6 +2913,10 @@ QString toolTypeToOverlayLabel(ToolType toolType)
   case ToolType::Brush:
 
     return QStringLiteral("Brush");
+
+  case ToolType::RotoBrush:
+
+    return QStringLiteral("Roto Brush");
 
   case ToolType::Clone:
 
@@ -8589,6 +8594,16 @@ class CompositionRenderController::Impl {
 public:
 
   std::unique_ptr<ArtifactIRenderer> renderer_;
+  std::unique_ptr<ArtifactCore::OpenCVRotoBrushEngine> rotoBrushEngine_ =
+      std::make_unique<ArtifactCore::OpenCVRotoBrushEngine>();
+  cv::Mat rotoBrushMask_;
+  ArtifactCore::Id rotoBrushLayerId_;
+  int64_t rotoBrushFrame_ = -1;
+  int rotoBrushMaskIndex_ = -1;
+  std::vector<ArtifactCore::RotoBrushStroke> rotoBrushStrokes_;
+  cv::Mat rotoBrushSource_;
+  ArtifactCore::RotoBrushStrokeType rotoBrushStrokeType_ =
+      ArtifactCore::RotoBrushStrokeType::Foreground;
   std::unique_ptr<ArtifactCore::GpuContext> ocioGpuContext_;
   std::unique_ptr<ArtifactFinalPostProcess> ocioFinalPostProcess_;
   QString ocioLutKey_;
@@ -19615,7 +19630,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   }
 
   if (event->button() == Qt::LeftButton &&
-      (activeTool == ToolType::Brush || activeTool == ToolType::Eraser) &&
+      (activeTool == ToolType::Brush || activeTool == ToolType::RotoBrush ||
+       activeTool == ToolType::Eraser) &&
       selectedLayer) {
     auto *brushTool = ArtifactApplicationManager::instance()->brushTool();
     if (activeTool == ToolType::Eraser &&
@@ -19651,10 +19667,17 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       event->accept();
       return;
     }
-    const auto canvasPos = impl_->renderer_->viewportToCanvas(
+      const auto canvasPos = impl_->renderer_->viewportToCanvas(
         {static_cast<float>(viewportPos.x()),
          static_cast<float>(viewportPos.y())});
+    if (activeTool == ToolType::RotoBrush) {
+      impl_->rotoBrushStrokeType_ =
+          event->modifiers().testFlag(Qt::ShiftModifier)
+              ? ArtifactCore::RotoBrushStrokeType::Background
+              : ArtifactCore::RotoBrushStrokeType::Foreground;
+    }
     if (auto *brushTool = ArtifactApplicationManager::instance()->brushTool()) {
+      brushTool->setRotoInputMode(activeTool == ToolType::RotoBrush);
       brushTool->setEraserMode(activeTool == ToolType::Eraser);
       brushTool->mousePressEvent(selectedLayer,
                                  {canvasPos.x, canvasPos.y});
@@ -21441,7 +21464,8 @@ void CompositionRenderController::handleMouseMove(
     return;
   }
 
-  if ((activeTool == ToolType::Brush || activeTool == ToolType::Eraser) &&
+  if ((activeTool == ToolType::Brush || activeTool == ToolType::RotoBrush ||
+       activeTool == ToolType::Eraser) &&
       impl_->renderer_) {
     const auto comp = impl_->previewPipeline_.composition();
     const auto layer = comp ? comp->layerById(impl_->selectedLayerId_)
@@ -22844,7 +22868,8 @@ void CompositionRenderController::handleMouseRelease() {
     markRenderDirty();
     return;
   }
-  if (activeTool == ToolType::Brush || activeTool == ToolType::Eraser) {
+  if (activeTool == ToolType::Brush || activeTool == ToolType::RotoBrush ||
+      activeTool == ToolType::Eraser) {
     const auto comp = impl_->previewPipeline_.composition();
     const auto layer = comp ? comp->layerById(impl_->selectedLayerId_)
                             : ArtifactAbstractLayerPtr{};
@@ -22854,6 +22879,101 @@ void CompositionRenderController::handleMouseRelease() {
            static_cast<float>(impl_->brushLastViewportPos_.y())});
       if (auto *brushTool = ArtifactApplicationManager::instance()->brushTool()) {
         brushTool->mouseReleaseEvent(layer, {canvas.x, canvas.y});
+        if (activeTool == ToolType::RotoBrush && impl_->rotoBrushEngine_) {
+          if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer.get())) {
+            const QImage source = imageLayer->toQImage();
+            if (!source.isNull()) {
+              cv::Mat sourceMat = ArtifactCore::CvUtils::qImageToCvMat(source, true);
+              const QRectF bounds = imageLayer->localBounds();
+              const auto &points = brushTool->lastStrokePoints();
+              ArtifactCore::RotoBrushStroke stroke;
+              stroke.type = impl_->rotoBrushStrokeType_;
+              stroke.thickness = std::max(1, static_cast<int>(brushTool->radius()));
+              for (const QPointF &point : points) {
+                if (!std::isfinite(point.x()) || !std::isfinite(point.y()) ||
+                    bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+                  continue;
+                }
+                stroke.points.emplace_back(
+                    static_cast<int>((point.x() - bounds.left()) /
+                                     bounds.width() * sourceMat.cols),
+                    static_cast<int>((point.y() - bounds.top()) /
+                                     bounds.height() * sourceMat.rows));
+              }
+              if (!stroke.points.empty()) {
+                const int64_t frame = static_cast<int64_t>(layer->currentFrame());
+                if (impl_->rotoBrushLayerId_ != layer->id() ||
+                    impl_->rotoBrushFrame_ != frame) {
+                  if (impl_->rotoBrushLayerId_ == layer->id() &&
+                      impl_->rotoBrushMaskIndex_ >= 0 &&
+                      impl_->rotoBrushMaskIndex_ < layer->maskCount()) {
+                    impl_->beginMaskEditTransaction(layer);
+                    layer->removeMask(impl_->rotoBrushMaskIndex_);
+                    layer->changed();
+                  }
+                  impl_->rotoBrushStrokes_.clear();
+                  impl_->rotoBrushMaskIndex_ = -1;
+                }
+                impl_->rotoBrushStrokes_.push_back(std::move(stroke));
+                impl_->rotoBrushSource_ = sourceMat.clone();
+                impl_->rotoBrushEngine_->updateBaseFrame(
+                    sourceMat, impl_->rotoBrushStrokes_);
+                impl_->rotoBrushEngine_->refineCurrentMask(1);
+                impl_->rotoBrushMask_ = impl_->rotoBrushEngine_->getCurrentMask();
+                impl_->rotoBrushLayerId_ = layer->id();
+                impl_->rotoBrushFrame_ = frame;
+                MaskConversionParams conversion;
+                conversion.simplificationTolerance = 1.5f;
+                conversion.minPathVertices = 3;
+                auto paths = MaskPath::fromAlphaMask(&impl_->rotoBrushMask_, conversion);
+                if (!paths.empty() && bounds.width() > 0.0 && bounds.height() > 0.0) {
+                  LayerMask generatedMask;
+                  for (auto &path : paths) {
+                    for (int i = 0; i < path.vertexCount(); ++i) {
+                      MaskVertex vertex = path.vertex(i);
+                      vertex.position = QPointF(
+                          bounds.left() + vertex.position.x() * bounds.width(),
+                          bounds.top() + vertex.position.y() * bounds.height());
+                      vertex.inTangent = QPointF(
+                          vertex.inTangent.x() * bounds.width(),
+                          vertex.inTangent.y() * bounds.height());
+                      vertex.outTangent = QPointF(
+                          vertex.outTangent.x() * bounds.width(),
+                          vertex.outTangent.y() * bounds.height());
+                      path.setVertex(i, vertex);
+                    }
+                    generatedMask.addMaskPath(path);
+                  }
+                  beginMaskEditTransaction(layer);
+                  if (impl_->rotoBrushLayerId_ == layer->id() &&
+                      impl_->rotoBrushMaskIndex_ >= 0 &&
+                      impl_->rotoBrushMaskIndex_ < layer->maskCount()) {
+                    layer->setMask(impl_->rotoBrushMaskIndex_, generatedMask);
+                  } else {
+                    layer->addMask(generatedMask);
+                    impl_->rotoBrushMaskIndex_ = layer->maskCount() - 1;
+                  }
+                  layer->changed();
+                  setInfoOverlayText(
+                      QStringLiteral("Roto Brush"),
+                      QStringLiteral("Mask generated • %1 contour(s)")
+                          .arg(generatedMask.maskPathCount()));
+                } else if (impl_->rotoBrushMaskIndex_ >= 0 &&
+                           impl_->rotoBrushMaskIndex_ < layer->maskCount()) {
+                  // A later prompt may eliminate all foreground pixels. Do
+                  // not leave the previous generated contour visible.
+                  beginMaskEditTransaction(layer);
+                  layer->removeMask(impl_->rotoBrushMaskIndex_);
+                  impl_->rotoBrushMaskIndex_ = -1;
+                  layer->changed();
+                  setInfoOverlayText(
+                      QStringLiteral("Roto Brush"),
+                      QStringLiteral("No foreground contour detected"));
+                }
+              }
+            }
+          }
+        }
       }
     }
     impl_->brushCursorVisible_ = false;
@@ -24171,6 +24291,7 @@ bool CompositionRenderController::createTextLayerAtCanvas(
   }
   const QString layerName = uniqueLayerNameForCurrentComposition(
       QStringLiteral("Text"));
+  const LayerID previousSelectedLayerId = impl_->selectedLayerId_;
   ArtifactTextLayerInitParams params(layerName);
   service->addLayerToCurrentComposition(params, true);
   auto *selectionManager = ArtifactApplicationManager::instance()
@@ -24182,7 +24303,7 @@ bool CompositionRenderController::createTextLayerAtCanvas(
   auto textLayer = created
                        ? ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(created)
                        : ArtifactCore::SharedPtr<ArtifactTextLayer>{};
-  if (!textLayer) {
+  if (!textLayer || created->id() == previousSelectedLayerId) {
     return false;
   }
   textLayer->setText(UniString(QStringLiteral("Text")));
@@ -24263,6 +24384,57 @@ bool CompositionRenderController::cancelBrushStroke() {
   return true;
 }
 
+bool CompositionRenderController::propagateRotoBrushToCurrentFrame() {
+  if (!impl_) return false;
+  const auto composition = impl_->previewPipeline_.composition();
+  const auto layer = composition
+      ? composition->layerById(impl_->selectedLayerId_)
+      : ArtifactAbstractLayerPtr{};
+  auto *imageLayer = layer ? dynamic_cast<ArtifactImageLayer *>(layer.get()) : nullptr;
+  if (!imageLayer || !impl_->rotoBrushEngine_ || impl_->rotoBrushSource_.empty() ||
+      impl_->rotoBrushMaskIndex_ < 0 ||
+      impl_->rotoBrushMaskIndex_ >= layer->maskCount()) {
+    return false;
+  }
+  const int64_t frame = static_cast<int64_t>(layer->currentFrame());
+  if (frame == impl_->rotoBrushFrame_) return false;
+  const QImage current = imageLayer->toQImage();
+  if (current.isNull()) return false;
+  cv::Mat currentMat = ArtifactCore::CvUtils::qImageToCvMat(current, true);
+  if (currentMat.empty() || currentMat.size() != impl_->rotoBrushSource_.size()) {
+    return false;
+  }
+  impl_->rotoBrushEngine_->propagateToNextFrame(impl_->rotoBrushSource_, currentMat);
+  impl_->rotoBrushEngine_->refineCurrentMask(1);
+  impl_->rotoBrushMask_ = impl_->rotoBrushEngine_->getCurrentMask();
+  const QRectF bounds = imageLayer->localBounds();
+  if (bounds.width() <= 0.0 || bounds.height() <= 0.0) return false;
+  LayerMask generatedMask;
+  auto paths = MaskPath::fromAlphaMask(&impl_->rotoBrushMask_);
+  for (auto &path : paths) {
+    for (int i = 0; i < path.vertexCount(); ++i) {
+      auto vertex = path.vertex(i);
+      vertex.position = QPointF(bounds.left() + vertex.position.x() * bounds.width(),
+                                bounds.top() + vertex.position.y() * bounds.height());
+      vertex.inTangent = QPointF(vertex.inTangent.x() * bounds.width(),
+                                 vertex.inTangent.y() * bounds.height());
+      vertex.outTangent = QPointF(vertex.outTangent.x() * bounds.width(),
+                                  vertex.outTangent.y() * bounds.height());
+      path.setVertex(i, vertex);
+    }
+    generatedMask.addMaskPath(path);
+  }
+  if (generatedMask.maskPathCount() == 0) return false;
+  layer->setMask(impl_->rotoBrushMaskIndex_, generatedMask);
+  impl_->rotoBrushSource_ = currentMat.clone();
+  impl_->rotoBrushFrame_ = frame;
+  layer->changed();
+  impl_->publishLayerModified(layer);
+  impl_->invalidateBaseComposite();
+  impl_->invalidateOverlayComposite();
+  return true;
+}
+
 bool CompositionRenderController::undoSelectedPaintStroke() {
   if (!impl_) {
     return false;
@@ -24271,6 +24443,68 @@ bool CompositionRenderController::undoSelectedPaintStroke() {
   const auto layer = composition
                          ? composition->layerById(impl_->selectedLayerId_)
                          : ArtifactAbstractLayerPtr{};
+  auto *toolManager = ArtifactApplicationManager::instance()
+                          ? ArtifactApplicationManager::instance()->toolManager()
+                          : nullptr;
+  if (toolManager && toolManager->activeTool() == ToolType::RotoBrush &&
+      layer && impl_->rotoBrushLayerId_ == layer->id() &&
+      impl_->rotoBrushMaskIndex_ >= 0 &&
+      impl_->rotoBrushMaskIndex_ < layer->maskCount()) {
+    if (!dynamic_cast<ArtifactImageLayer *>(layer.get())) return false;
+    impl_->beginMaskEditTransaction(layer);
+    if (!impl_->rotoBrushStrokes_.empty()) {
+      impl_->rotoBrushStrokes_.pop_back();
+    }
+    if (impl_->rotoBrushStrokes_.empty() || impl_->rotoBrushSource_.empty()) {
+      layer->removeMask(impl_->rotoBrushMaskIndex_);
+      impl_->rotoBrushMaskIndex_ = -1;
+      impl_->rotoBrushMask_.release();
+      impl_->rotoBrushSource_.release();
+      if (impl_->rotoBrushEngine_) impl_->rotoBrushEngine_->reset();
+    } else if (impl_->rotoBrushEngine_) {
+      impl_->rotoBrushEngine_->updateBaseFrame(
+          impl_->rotoBrushSource_, impl_->rotoBrushStrokes_);
+      impl_->rotoBrushEngine_->refineCurrentMask(1);
+      impl_->rotoBrushMask_ = impl_->rotoBrushEngine_->getCurrentMask();
+      const auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer.get());
+      const QRectF bounds = imageLayer ? imageLayer->localBounds() : QRectF();
+      auto paths = MaskPath::fromAlphaMask(&impl_->rotoBrushMask_);
+      LayerMask generatedMask;
+      for (auto &path : paths) {
+        for (int i = 0; i < path.vertexCount(); ++i) {
+          auto vertex = path.vertex(i);
+          vertex.position = QPointF(bounds.left() + vertex.position.x() * bounds.width(),
+                                    bounds.top() + vertex.position.y() * bounds.height());
+          vertex.inTangent = QPointF(vertex.inTangent.x() * bounds.width(),
+                                     vertex.inTangent.y() * bounds.height());
+          vertex.outTangent = QPointF(vertex.outTangent.x() * bounds.width(),
+                                      vertex.outTangent.y() * bounds.height());
+          path.setVertex(i, vertex);
+        }
+        generatedMask.addMaskPath(path);
+      }
+      if (generatedMask.maskPathCount() > 0) {
+        layer->setMask(impl_->rotoBrushMaskIndex_, generatedMask);
+      } else {
+        // A valid undo can leave no foreground pixels. Remove the old
+        // generated mask instead of keeping a stale contour on the layer.
+        layer->removeMask(impl_->rotoBrushMaskIndex_);
+        impl_->rotoBrushMaskIndex_ = -1;
+        impl_->rotoBrushMask_.release();
+        impl_->rotoBrushSource_.release();
+        impl_->rotoBrushStrokes_.clear();
+        impl_->rotoBrushEngine_->reset();
+      }
+    }
+    layer->changed();
+    impl_->publishLayerModified(layer);
+    impl_->invalidateBaseComposite();
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    setInfoOverlayText(QStringLiteral("Roto Brush"),
+                       QStringLiteral("Generated mask undone"));
+    return true;
+  }
   auto *paintLayer = layer
                          ? dynamic_cast<ArtifactPaintLayer *>(layer.get())
                          : nullptr;
@@ -24559,6 +24793,20 @@ void CompositionRenderController::trackerInitialize() {
 
 }
 
+void CompositionRenderController::trackerUsePlanarMode() {
+  if (!impl_->trackerMotionTracker_) {
+    trackerInitialize();
+  }
+  if (!impl_->trackerMotionTracker_) return;
+  impl_->trackerMotionTracker_->setTrackerType(ArtifactCore::TrackerType::Planar);
+  if (impl_->trackerGizmo_) {
+    impl_->trackerGizmo_->setTracker(impl_->trackerMotionTracker_);
+  }
+  setInfoOverlayText(QStringLiteral("Planar Tracker"),
+                    QStringLiteral("Planar mode enabled; track the four-corner region"));
+  markRenderDirty();
+}
+
 
 
 static void ensureOffscreenRenderer(
@@ -24633,7 +24881,24 @@ void CompositionRenderController::trackerTrackForward() {
 
   const auto& st = gizmo->state();
 
-  tracker->addTrackPoint({st.innerCenter.x(), st.innerCenter.y()});
+  if (tracker->trackerType() == ArtifactCore::TrackerType::Planar) {
+    tracker->addTrackPoint({st.innerCenter.x() - st.innerHalfW,
+                            st.innerCenter.y() - st.innerHalfH});
+    tracker->addTrackPoint({st.innerCenter.x() + st.innerHalfW,
+                            st.innerCenter.y() - st.innerHalfH});
+    tracker->addTrackPoint({st.innerCenter.x() + st.innerHalfW,
+                            st.innerCenter.y() + st.innerHalfH});
+    tracker->addTrackPoint({st.innerCenter.x() - st.innerHalfW,
+                            st.innerCenter.y() + st.innerHalfH});
+  } else {
+    tracker->addTrackPoint({st.innerCenter.x(), st.innerCenter.y()});
+  }
+  if (tracker->trackerType() == ArtifactCore::TrackerType::Planar) {
+    tracker->addTrackRegion(QRectF(st.innerCenter.x() - st.innerHalfW,
+                                   st.innerCenter.y() - st.innerHalfH,
+                                   st.innerHalfW * 2.0f,
+                                   st.innerHalfH * 2.0f));
+  }
 
 
 
@@ -24666,8 +24931,16 @@ void CompositionRenderController::trackerTrackForward() {
 
 
 
-  tracker->trackForward(static_cast<double>(startFrame) * frameStep,
-                        static_cast<double>(range.end()) * frameStep);
+  const bool tracked = tracker->trackForward(
+      static_cast<double>(startFrame) * frameStep,
+      static_cast<double>(range.end()) * frameStep);
+  if (!tracked) {
+    gizmo->setTracker(tracker);
+    setInfoOverlayText(QStringLiteral("TrackPoint • Forward"),
+                      QStringLiteral("Tracking failed: no valid frame pair or planar ROI"));
+    markRenderDirty();
+    return;
+  }
 
 
 
@@ -24731,7 +25004,24 @@ void CompositionRenderController::trackerTrackBackward() {
 
   const auto& st = gizmo->state();
 
-  tracker->addTrackPoint({st.innerCenter.x(), st.innerCenter.y()});
+  if (tracker->trackerType() == ArtifactCore::TrackerType::Planar) {
+    tracker->addTrackPoint({st.innerCenter.x() - st.innerHalfW,
+                            st.innerCenter.y() - st.innerHalfH});
+    tracker->addTrackPoint({st.innerCenter.x() + st.innerHalfW,
+                            st.innerCenter.y() - st.innerHalfH});
+    tracker->addTrackPoint({st.innerCenter.x() + st.innerHalfW,
+                            st.innerCenter.y() + st.innerHalfH});
+    tracker->addTrackPoint({st.innerCenter.x() - st.innerHalfW,
+                            st.innerCenter.y() + st.innerHalfH});
+  } else {
+    tracker->addTrackPoint({st.innerCenter.x(), st.innerCenter.y()});
+  }
+  if (tracker->trackerType() == ArtifactCore::TrackerType::Planar) {
+    tracker->addTrackRegion(QRectF(st.innerCenter.x() - st.innerHalfW,
+                                   st.innerCenter.y() - st.innerHalfH,
+                                   st.innerHalfW * 2.0f,
+                                   st.innerHalfH * 2.0f));
+  }
 
 
 
@@ -24764,8 +25054,16 @@ void CompositionRenderController::trackerTrackBackward() {
 
 
 
-  tracker->trackBackward(static_cast<double>(startFrame) * frameStep,
-                         static_cast<double>(range.start()) * frameStep);
+  const bool tracked = tracker->trackBackward(
+      static_cast<double>(startFrame) * frameStep,
+      static_cast<double>(range.start()) * frameStep);
+  if (!tracked) {
+    gizmo->setTracker(tracker);
+    setInfoOverlayText(QStringLiteral("TrackPoint • Backward"),
+                      QStringLiteral("Tracking failed: no valid frame pair or planar ROI"));
+    markRenderDirty();
+    return;
+  }
 
 
 
@@ -24835,7 +25133,24 @@ void CompositionRenderController::trackerTrackAll() {
 
   const auto& st = gizmo->state();
 
-  tracker->addTrackPoint({st.innerCenter.x(), st.innerCenter.y()});
+  if (tracker->trackerType() == ArtifactCore::TrackerType::Planar) {
+    tracker->addTrackPoint({st.innerCenter.x() - st.innerHalfW,
+                            st.innerCenter.y() - st.innerHalfH});
+    tracker->addTrackPoint({st.innerCenter.x() + st.innerHalfW,
+                            st.innerCenter.y() - st.innerHalfH});
+    tracker->addTrackPoint({st.innerCenter.x() + st.innerHalfW,
+                            st.innerCenter.y() + st.innerHalfH});
+    tracker->addTrackPoint({st.innerCenter.x() - st.innerHalfW,
+                            st.innerCenter.y() + st.innerHalfH});
+  } else {
+    tracker->addTrackPoint({st.innerCenter.x(), st.innerCenter.y()});
+  }
+  if (tracker->trackerType() == ArtifactCore::TrackerType::Planar) {
+    tracker->addTrackRegion(QRectF(st.innerCenter.x() - st.innerHalfW,
+                                   st.innerCenter.y() - st.innerHalfH,
+                                   st.innerHalfW * 2.0f,
+                                   st.innerHalfH * 2.0f));
+  }
 
 
 
@@ -24857,7 +25172,14 @@ void CompositionRenderController::trackerTrackAll() {
 
 
 
-  tracker->trackAll();
+  const bool tracked = tracker->trackAll();
+  if (!tracked) {
+    gizmo->setTracker(tracker);
+    setInfoOverlayText(QStringLiteral("TrackPoint • All Frames"),
+                      QStringLiteral("Tracking failed: no valid frame range or planar ROI"));
+    markRenderDirty();
+    return;
+  }
 
 
 
@@ -24988,6 +25310,34 @@ void CompositionRenderController::trackerApplyAllPoints() {
       applied > 0
           ? QStringLiteral("Created %1 Null layer(s)").arg(applied)
           : QStringLiteral("No tracking points were available"));
+  markRenderDirty();
+}
+
+void CompositionRenderController::trackerApplyPlanarCornerPin() {
+  if (!impl_->trackerMotionTracker_ || !impl_->trackerGizmo_ ||
+      impl_->trackerMotionTracker_->trackerType() != ArtifactCore::TrackerType::Planar) {
+    setInfoOverlayText(QStringLiteral("Planar Tracker"),
+                      QStringLiteral("Planar tracking is not active"));
+    return;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  if (!comp || impl_->selectedLayerId_.isNil()) {
+    setInfoOverlayText(QStringLiteral("Planar Tracker"),
+                      QStringLiteral("Select a target layer first"));
+    return;
+  }
+  const auto targetLayer = comp->layerById(impl_->selectedLayerId_);
+  if (!targetLayer) return;
+  const auto& state = impl_->trackerGizmo_->state();
+  const QRectF sourceRect(
+      state.innerCenter.x() - state.innerHalfW,
+      state.innerCenter.y() - state.innerHalfH,
+      state.innerHalfW * 2.0, state.innerHalfH * 2.0);
+  const bool applied = Artifact::ArtifactPointTrackerTool::applyPlanarResultAsCornerPin(
+      comp.get(), *impl_->trackerMotionTracker_, sourceRect, targetLayer);
+  setInfoOverlayText(QStringLiteral("Planar Tracker • Corner Pin"),
+                     applied ? QStringLiteral("Corner Pin keyframes applied")
+                             : QStringLiteral("No planar keyframes were available"));
   markRenderDirty();
 }
 
@@ -25196,7 +25546,8 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
   }
 
-  if (activeTool == ToolType::Brush || activeTool == ToolType::Eraser) {
+  if (activeTool == ToolType::Brush || activeTool == ToolType::RotoBrush ||
+      activeTool == ToolType::Eraser) {
 
     return Qt::BlankCursor;
 
@@ -25390,6 +25741,13 @@ void CompositionRenderController::renderOneFrame() {
 
     }
 
+  }
+
+  // When a RotoBrush base frame exists, advance its matte before drawing the
+  // next frame so playback and scrubbing use the propagated mask.
+  if (impl_->rotoBrushMaskIndex_ >= 0 &&
+      impl_->rotoBrushLayerId_ == impl_->selectedLayerId_) {
+    (void)propagateRotoBrushToCurrentFrame();
   }
 
   // Re-entrancy guard: renderOneFrameImpl must not be called recursively.
@@ -28327,10 +28685,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   ArtifactCore::ArtifactAppSettings::instance();
               motionBlurSettings.enabled =
                   appSettings && appSettings->timelineMotionBlurActive();
-              motionBlurSettings.shutterAngle = 180.0f;
+              motionBlurSettings.shutterAngle = appSettings
+                  ? static_cast<float>(appSettings->timelineMotionBlurShutterAngle())
+                  : 180.0f;
               motionBlurSettings.shutterPhase = 0.0f;
-              motionBlurSettings.sampleCount =
-                  static_cast<unsigned>(previewDownsample_ > 1 ? 4 : 8);
+              motionBlurSettings.sampleCount = appSettings
+                  ? static_cast<unsigned>(appSettings->timelineMotionBlurSampleCount())
+                  : static_cast<unsigned>(previewDownsample_ > 1 ? 4 : 8);
               if (motionBlurPass_->apply(renderer_->immediateContext(),
                                          resources.accumSRV,
                                          resources.pipeline->velocitySRV(),

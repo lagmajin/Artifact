@@ -60,6 +60,14 @@ void ViewportModel::setLoopEnabled(const bool enabled) noexcept {
   loopEnabled_ = enabled;
 }
 
+std::int64_t ViewportModel::loopFirstFrame() const noexcept {
+  return loopFirstFrame_;
+}
+
+std::int64_t ViewportModel::loopLastFrame() const noexcept {
+  return loopLastFrame_;
+}
+
 bool ViewportModel::setLoopRange(const std::int64_t firstFrame,
                                  const std::int64_t lastFrame) noexcept {
   if (lastFrame < firstFrame) {
@@ -95,6 +103,14 @@ ArtifactCore::Optional<CueKind> ViewportModel::soloCue() const noexcept {
 
 void ViewportModel::setSoloCue(const ArtifactCore::Optional<CueKind> cue) noexcept {
   soloCue_ = cue;
+}
+
+const std::vector<CueKind>& ViewportModel::bypassedCues() const noexcept {
+  return bypassedCues_;
+}
+
+void ViewportModel::clearBypassedCues() noexcept {
+  bypassedCues_.clear();
 }
 
 bool ViewportModel::isCueBypassed(const CueKind cue) const noexcept {

@@ -16,6 +16,7 @@ class ArtifactHDRMonitor::Impl {
 public:
   HDRMonitorSettings settings_;
   mutable std::vector<float> luminanceCache_;
+  mutable std::vector<FloatColor> colorCache_;
 };
 
 ArtifactHDRMonitor::ArtifactHDRMonitor()
@@ -42,8 +43,13 @@ ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
   HDRAnalysisResult result;
 
   if (frameData.empty() || width <= 0 || height <= 0) {
+    impl_->luminanceCache_.clear();
+    impl_->colorCache_.clear();
     return result;
   }
+
+  // Keep the source RGB samples for scopes that need chroma information.
+  impl_->colorCache_ = frameData;
 
   // Pre-calculate luminance values
   impl_->luminanceCache_.resize(frameData.size());
@@ -129,20 +135,23 @@ std::vector<FloatColor> ArtifactHDRMonitor::generateWaveformData(
     return waveform;
 
   // Simple waveform: luminance distribution across image width
-  int samplesPerColumn =
-      static_cast<int>(impl_->luminanceCache_.size()) / waveformWidth;
+  const int cacheSize = static_cast<int>(impl_->luminanceCache_.size());
+  const int samplesPerColumn =
+      std::max(1, (cacheSize + waveformWidth - 1) / waveformWidth);
 
   for (int x = 0; x < waveformWidth; ++x) {
     int startIdx = x * samplesPerColumn;
-    int endIdx = std::min(startIdx + samplesPerColumn,
-                          static_cast<int>(impl_->luminanceCache_.size()));
+    int endIdx = std::min(startIdx + samplesPerColumn, cacheSize);
 
     // Calculate average luminance for this column
     float avgLuminance = 0.0f;
     for (int i = startIdx; i < endIdx; ++i) {
       avgLuminance += impl_->luminanceCache_[i];
     }
-    avgLuminance /= (endIdx - startIdx);
+    if (endIdx <= startIdx) {
+      continue;
+    }
+    avgLuminance /= static_cast<float>(endIdx - startIdx);
 
     // Draw vertical line at luminance level
     int yPos = static_cast<int>((1.0f - avgLuminance) * (waveformHeight - 1));
@@ -174,10 +183,10 @@ ArtifactHDRMonitor::generateVectorscopeData(const HDRAnalysisResult &result,
       break;
 
     // Convert RGB to YUV-like coordinates for vectorscope
-    const auto &color = result.outOfGamutPixels.empty()
-                            ? FloatColor(0.5f, 0.5f, 0.5f, 1.0f)
-                            :                           // Placeholder
-                            result.outOfGamutPixels[0]; // This is simplified
+    const FloatColor fallback(0.5f, 0.5f, 0.5f, 1.0f);
+    const auto &color = i < impl_->colorCache_.size()
+                            ? impl_->colorCache_[i]
+                            : fallback;
 
     // Simplified UV calculation (should use proper color space conversion)
     float u = (color.b() - color.g()) * 0.5f;
@@ -189,7 +198,11 @@ ArtifactHDRMonitor::generateVectorscopeData(const HDRAnalysisResult &result,
     x = std::clamp(x, 0, scopeSize - 1);
     y = std::clamp(y, 0, scopeSize - 1);
 
-    vectorscope[y * scopeSize + x] = FloatColor(1, 1, 1, 0.8f);
+    // Preserve the sampled hue in the scope so dense regions remain legible.
+    vectorscope[y * scopeSize + x] =
+        FloatColor(std::clamp(color.r(), 0.0f, 1.0f),
+                   std::clamp(color.g(), 0.0f, 1.0f),
+                   std::clamp(color.b(), 0.0f, 1.0f), 0.8f);
   }
 
   return vectorscope;

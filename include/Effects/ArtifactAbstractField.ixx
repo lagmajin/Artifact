@@ -52,6 +52,12 @@ export namespace Artifact {
         Solid // Constant 1.0 or 0.0
     };
 
+    struct FieldGPUData {
+        FieldType type = FieldType::Solid;
+        // std430-friendly float4 slots. Unused values remain zero.
+        std::array<float, 16> values{};
+    };
+
     class ArtifactAbstractField {
     protected:
         FieldType type_;
@@ -74,7 +80,7 @@ export namespace Artifact {
         
         // Compute shader settings generation.
         // Returns the struct/buffer format needed to evaluate this field on the GPU.
-        virtual void generateGPUData(/* Output formatting params here */) const = 0;
+        virtual FieldGPUData generateGPUData() const = 0;
     };
 
     typedef SharedPtr<ArtifactAbstractField> ArtifactAbstractFieldPtr;

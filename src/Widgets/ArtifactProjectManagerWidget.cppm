@@ -124,7 +124,6 @@ module;
 module Artifact.Widgets.ProjectManagerWidget;
 
 import std;
-import Artifact.Widgets.ProjectManagerWidget;
 import Proxy.Service;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import FloatColorPickerDialog;
@@ -4386,6 +4385,28 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
             addTrackedAction(QStringLiteral("preview_in_contents_viewer"), QStringLiteral("Preview in Contents Viewer"), [this, idx]() {
                 itemDoubleClicked(idx);
             }, loadProjectViewIcon(QStringLiteral("Studio/visibility.svg")));
+            const bool isPsd = QFileInfo(footagePath).suffix().compare(
+                QStringLiteral("psd"), Qt::CaseInsensitive) == 0;
+            if (isPsd) {
+                addTrackedAction(QStringLiteral("import_psd_layers"),
+                                 QStringLiteral("Import PSD Layers to Current Composition"),
+                                 [this, svc, footagePath]() {
+                    if (!svc) return;
+                    if (!svc->currentComposition().lock()) {
+                        QMessageBox::warning(this, QStringLiteral("Import PSD Layers"),
+                                             QStringLiteral("Select a composition first."));
+                        return;
+                    }
+                    // Import hidden layers as well; their PSD visibility flag
+                    // is applied to the generated layer after creation.
+                    const int imported = svc->importPsdLayersToCurrentComposition(
+                        footagePath, false);
+                    if (imported == 0) {
+                        QMessageBox::warning(this, QStringLiteral("Import PSD Layers"),
+                                             QStringLiteral("No PSD layers could be imported."));
+                    }
+                }, loadProjectViewIcon(QStringLiteral("Studio/layers.svg")));
+            }
             addTrackedAction(QStringLiteral("generate_proxy_selected"), QStringLiteral("Generate Proxy"), [this, footagePath]() {
                 if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
                     manager->generateProxyForFilePath(footagePath);

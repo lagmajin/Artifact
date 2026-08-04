@@ -1351,6 +1351,8 @@ public:
   bool defaultNewLayerHidden() const;
   void addAssetFromPath(const UniString &path);
   QStringList importAssetsFromPaths(const QStringList &sourcePaths);
+  int importPsdLayersToCurrentComposition(const QString &filePath,
+                                          bool visibleOnly);
   QStringList registerImportedAssets(const QStringList &importedPaths);
   void importAssetsFromPathsAsync(const QStringList &sourcePaths,
                                   std::function<void(QStringList)> onFinished);
@@ -1628,6 +1630,7 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
                 sequenceFootage->inputColorSpace.trimmed().left(4096));
             imageParams->setInputTransferFunction(
                 sequenceFootage->inputTransferFunction.trimmed().left(1024));
+            imageParams->setPsdSubimageIndex(sequenceFootage->subimageIndex);
           }
         }
 
@@ -1664,6 +1667,7 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
                   footage->inputColorSpace.trimmed().left(4096));
               imageParams->setInputTransferFunction(
                   footage->inputTransferFunction.trimmed().left(1024));
+              imageParams->setPsdSubimageIndex(footage->subimageIndex);
               break;
             }
           }
@@ -1911,6 +1915,73 @@ QStringList ArtifactProjectService::Impl::importAssetsFromPaths(
 
   checkImportedAssetCompatibility(finalImported);
   return finalImported;
+}
+
+int ArtifactProjectService::Impl::importPsdLayersToCurrentComposition(
+    const QString &filePath, const bool visibleOnly) {
+  const QString normalizedPath = QFileInfo(filePath).absoluteFilePath();
+  ArtifactCore::PsdDocument document;
+  if (normalizedPath.isEmpty() || !document.open(normalizedPath) ||
+      !document.hasLayerMetadata()) {
+    return 0;
+  }
+
+  int imported = 0;
+  double documentScaleX = 1.0;
+  double documentScaleY = 1.0;
+  if (auto composition = currentComposition().lock()) {
+    const QSize targetSize = composition->settings().compositionSize();
+    if (document.header().width > 0 && targetSize.width() > 0) {
+      documentScaleX = static_cast<double>(targetSize.width()) /
+                       static_cast<double>(document.header().width);
+    }
+    if (document.header().height > 0 && targetSize.height() > 0) {
+      documentScaleY = static_cast<double>(targetSize.height()) /
+                       static_cast<double>(document.header().height);
+    }
+  }
+  const auto &layers = document.layers();
+  // PSD layer records are ordered top-to-bottom, while the project API
+  // appends each new layer at the top. Iterate bottom-to-top to preserve the
+  // source stacking order.
+  for (int layerIndex = static_cast<int>(layers.size()) - 1;
+       layerIndex >= 0; --layerIndex) {
+    const auto &psdLayer = layers.at(layerIndex);
+    if (visibleOnly && !psdLayer.visible) continue;
+    if (psdLayer.subimageIndex < 1) continue;
+
+    const QString layerName = psdLayer.name.trimmed().isEmpty()
+        ? QStringLiteral("PSD Layer %1").arg(imported + 1)
+        : psdLayer.name.trimmed();
+    ArtifactImageInitParams params(layerName);
+    params.setImagePath(normalizedPath);
+    params.setPsdSubimageIndex(psdLayer.subimageIndex);
+    auto result = projectManager().addLayerToCurrentComposition(params);
+    if (!result.success || !result.layer) continue;
+    result.layer->setVisible(psdLayer.visible);
+    result.layer->setOpacity(static_cast<float>(psdLayer.opacity) / 255.0f);
+    result.layer->setBlendMode(
+        ArtifactCore::toLegacyBlendType(psdLayer.blendMode));
+    // PSD bounds are expressed in document coordinates. Image layers use a
+    // centered local image, so place the imported layer at the PSD bounds
+    // center instead of leaving every layer at the origin.
+    const auto boundsCenter = psdLayer.bounds.center();
+    result.layer->setLayerPropertyValue(QStringLiteral("transform.position.x"),
+                                        boundsCenter.x() * documentScaleX);
+    result.layer->setLayerPropertyValue(QStringLiteral("transform.position.y"),
+                                        boundsCenter.y() * documentScaleY);
+    result.layer->setLayerPropertyValue(QStringLiteral("transform.scale.x"),
+                                        documentScaleX);
+    result.layer->setLayerPropertyValue(QStringLiteral("transform.scale.y"),
+                                        documentScaleY);
+    ++imported;
+  }
+  if (imported > 0) {
+    if (auto project = projectManager().getCurrentProjectSharedPtr()) {
+      project->projectChanged();
+    }
+  }
+  return imported;
 }
 
 // 非同期インポート完了後（メインスレッド）に呼ばれ、連番シーケンス検出・
@@ -2220,7 +2291,10 @@ ChangeCompositionResult ArtifactProjectService::Impl::changeCurrentComposition(
   return result;
 }
 
-void ArtifactProjectService::Impl::removeAllAssets() {}
+void ArtifactProjectService::Impl::removeAllAssets()
+{
+  projectManager().removeAllAssets();
+}
 
 FindCompositionResult
 ArtifactProjectService::Impl::findComposition(const CompositionID &id) {
@@ -4135,6 +4209,11 @@ void ArtifactProjectService::addAssetFromPath(const UniString &path) {
 QStringList
 ArtifactProjectService::importAssetsFromPaths(const QStringList &sourcePaths) {
   return impl_->importAssetsFromPaths(sourcePaths);
+}
+
+int ArtifactProjectService::importPsdLayersToCurrentComposition(
+    const QString &filePath, const bool visibleOnly) {
+  return impl_->importPsdLayersToCurrentComposition(filePath, visibleOnly);
 }
 
 void ArtifactProjectService::importAssetsFromPathsAsync(

@@ -72,6 +72,39 @@ AudioSegment resampleAudioSegment(const AudioSegment& source,
     return result;
 }
 
+AudioSegment timeScaleAudioSegment(const AudioSegment& source,
+                                   const float playbackSpeed) {
+    if (source.frameCount() <= 0 || !std::isfinite(playbackSpeed) ||
+        std::abs(playbackSpeed) < 0.0001f) {
+        return {};
+    }
+    const int sourceFrames = source.frameCount();
+    const int targetFrames = std::max(
+        1, static_cast<int>(std::llround(
+               static_cast<double>(sourceFrames) / std::abs(playbackSpeed))));
+    AudioSegment result = source;
+    for (int channel = 0; channel < source.channelCount(); ++channel) {
+        const auto& input = source.channelData[channel];
+        auto& output = result.channelData[channel];
+        output.resize(targetFrames);
+        for (int frame = 0; frame < targetFrames; ++frame) {
+            const double normalized = targetFrames > 1
+                ? static_cast<double>(frame) / (targetFrames - 1)
+                : 0.0;
+            const double sourcePosition = playbackSpeed > 0.0f
+                ? normalized * (sourceFrames - 1)
+                : (1.0 - normalized) * (sourceFrames - 1);
+            const int first = std::clamp(static_cast<int>(std::floor(sourcePosition)),
+                                         0, sourceFrames - 1);
+            const int second = std::min(sourceFrames - 1, first + 1);
+            const float fraction = static_cast<float>(sourcePosition - first);
+            output[frame] = input[first] * (1.0f - fraction) +
+                            input[second] * fraction;
+        }
+    }
+    return result;
+}
+
 } // namespace
 
 W_OBJECT_IMPL(ArtifactPlaybackEngine)
@@ -518,10 +551,8 @@ public:
         if (state_.load() == PlaybackState::Stopped) return;
         if (!composition_ || !audioRenderer_) return;
 
-        // Time-stretch/pitch-preserving audio is not implemented in this
-        // realtime path.  Never present 1x audio as if it matched a 0.25x,
-        // 0.5x, 2x, or reverse visual preview.
-        if (std::abs(appliedPlaybackSpeed_ - 1.0f) > 0.0001f) {
+        if (!std::isfinite(appliedPlaybackSpeed_) ||
+            std::abs(appliedPlaybackSpeed_) < 0.0001f) {
             if (audioRenderer_->isActive() || audioRenderer_->bufferedFrames() > 0) {
                 audioRenderer_->stop();
                 audioRenderer_->clearBuffer();
@@ -649,10 +680,14 @@ public:
                                << "rendererChannels=" << rendererChannels;
                 }
             }
+            const AudioSegment speedAdjustedSegment =
+                std::abs(appliedPlaybackSpeed_ - 1.0f) > 0.0001f
+                    ? timeScaleAudioSegment(segment, appliedPlaybackSpeed_)
+                    : segment;
             const AudioSegment enqueueSegment =
                 rendererSampleRate > 0 && segment.sampleRate != rendererSampleRate
-                    ? resampleAudioSegment(segment, rendererSampleRate)
-                    : segment;
+                    ? resampleAudioSegment(speedAdjustedSegment, rendererSampleRate)
+                    : speedAdjustedSegment;
             audioRenderer_->enqueue(enqueueSegment);
             ++audioNextFrame_;
         }
@@ -844,8 +879,11 @@ FrameRange ArtifactPlaybackEngine::frameRange() const {
 }
 
 void ArtifactPlaybackEngine::setPlaybackSpeed(float speed) {
-    impl_->playbackSpeed_.store(speed);
-    Q_EMIT playbackSpeedChanged(speed);
+    const float safeSpeed = std::isfinite(speed)
+        ? std::clamp(speed, -8.0f, 8.0f)
+        : 1.0f;
+    impl_->playbackSpeed_.store(safeSpeed);
+    Q_EMIT playbackSpeedChanged(safeSpeed);
 }
 
 float ArtifactPlaybackEngine::playbackSpeed() const {

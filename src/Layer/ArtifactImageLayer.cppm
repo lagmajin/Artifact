@@ -127,12 +127,14 @@ QImage makeTransparentCropCanvas(const QImage& source, const QRect& cropRect)
     return canvas;
 }
 
-QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* errorOut = nullptr)
+QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* errorOut = nullptr,
+                        int subimageIndex = -1)
 {
     const std::string utf8Path = path.toUtf8().toStdString();
 
     OIIO::ImageBuf source(utf8Path);
-    if (!source.read(0, 0, true, OIIO::TypeDesc::UINT8)) {
+    const int readSubimage = std::max(0, subimageIndex);
+    if (!source.read(readSubimage, 0, true, OIIO::TypeDesc::UINT8)) {
         if (errorOut) {
             *errorOut = QString::fromStdString(source.geterror());
         }
@@ -188,12 +190,32 @@ QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* 
     return image;
 }
 
-ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> loadFloatImageViaOIIO(const QString& path)
+ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> loadFloatImageViaOIIO(
+    const QString& path, int subimageIndex = -1)
 {
     auto image = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>();
-    if (!image->load(path) || image->isEmpty()) {
+    if (subimageIndex < 0) {
+        if (!image->load(path) || image->isEmpty()) return {};
+        return image;
+    }
+    OIIO::ImageBuf source(path.toUtf8().toStdString());
+    if (!source.read(std::max(0, subimageIndex), 0, true, OIIO::TypeDesc::FLOAT) ||
+        source.spec().width <= 0 || source.spec().height <= 0) {
         return {};
     }
+    const auto& spec = source.spec();
+    OIIO::ImageBuf rgba = source;
+    if (spec.nchannels != 4) {
+        const std::array<int, 4> order{0, spec.nchannels > 1 ? 1 : 0,
+                                       spec.nchannels > 2 ? 2 : 0,
+                                       spec.nchannels > 3 ? 3 : -1};
+        const std::array<float, 4> values{0.0f, 0.0f, 0.0f, 1.0f};
+        rgba = OIIO::ImageBufAlgo::channels(source, 4, order, values);
+    }
+    std::vector<float> pixels(static_cast<size_t>(spec.width) *
+                              static_cast<size_t>(spec.height) * 4u);
+    if (!rgba.get_pixels(OIIO::ROI::All(), OIIO::TypeDesc::FLOAT, pixels.data())) return {};
+    image->setFromRGBA32F(pixels.data(), spec.width, spec.height);
     return image;
 }
 
@@ -250,6 +272,7 @@ public:
     int width_ = 0;
     int height_ = 0;
     QString sourcePath_;
+    int psdSubimageIndex_ = -1;
     QUuid sourceAssetId_;
     QStringList sequencePaths_;
     double sequenceFrameRate_ = 0.0;
@@ -301,7 +324,10 @@ public:
         }
         if (!sequenceSource_) {
             sequenceSource_ = std::make_unique<ArtifactCore::ImageSequenceSource>();
-            if (!sequenceSource_->open(sequencePaths_.front())) {
+            const bool opened = sequencePaths_.size() > 1
+                ? sequenceSource_->openFramePaths(sequencePaths_)
+                : sequenceSource_->open(sequencePaths_.front());
+            if (!opened) {
                 sequenceSource_.reset();
                 clearSequenceFrameCache();
                 return false;
@@ -351,11 +377,14 @@ public:
         const auto generation = ++prefetchGeneration_;
         prefetchDone_ = false;
         const QString path = sourcePath_;
+        const int subimageIndex = psdSubimageIndex_;
         prefetchFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(),
-            [path, generation]() -> PrefetchResult {
+            [path, generation, subimageIndex]() -> PrefetchResult {
                 ArtifactCore::ScopedThreadName threadName(
                     QStringLiteral("ImageLayer/prefetch:%1").arg(QFileInfo(path).fileName()));
-                return PrefetchResult{generation, loadImageViaOIIO(path), loadFloatImageViaOIIO(path)};
+                return PrefetchResult{generation, loadImageViaOIIO(path, nullptr, nullptr,
+                                                                    subimageIndex),
+                                      loadFloatImageViaOIIO(path, subimageIndex)};
             });
         prefetchWatcher_.setFuture(prefetchFuture_);
     }
@@ -541,6 +570,23 @@ QString ArtifactImageLayer::sourcePath() const
     return impl_->sourcePath_;
 }
 
+void ArtifactImageLayer::setPsdSubimageIndex(const int index)
+{
+    const int normalized = index < 0 ? -1 : std::min(index, 100000);
+    if (impl_->psdSubimageIndex_ == normalized) return;
+    impl_->psdSubimageIndex_ = normalized;
+    impl_->cache_.reset();
+    impl_->cacheBuffer_.reset();
+    ++impl_->prefetchGeneration_;
+    if (!impl_->sourcePath_.isEmpty()) impl_->startPrefetch();
+    setDirty(LayerDirtyFlag::Source);
+}
+
+int ArtifactImageLayer::psdSubimageIndex() const
+{
+    return impl_->psdSubimageIndex_;
+}
+
 void ArtifactImageLayer::setInputInterpretation(
     const QString& colorSpace, const QString& transferFunction)
 {
@@ -696,6 +742,7 @@ QJsonObject ArtifactImageLayer::toJson() const
     QJsonObject obj = ArtifactAbstract2DLayer::toJson();
     obj["type"] = static_cast<int>(LayerType::Image);
     obj["image.sourcePath"] = impl_->sourcePath_;
+    obj["image.psdSubimageIndex"] = impl_->psdSubimageIndex_;
     obj["image.inputColorSpace"] = impl_->inputColorSpace_;
     obj["image.inputTransferFunction"] = impl_->inputTransferFunction_;
     obj["image.sourceAssetId"] = impl_->sourceAssetId_.toString(QUuid::WithoutBraces);
@@ -739,6 +786,10 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
     impl_->sequenceCachedIndex_ = -1;
     impl_->cache_.reset();
     impl_->cacheBuffer_.reset();
+    const int serializedSubimage = obj.value(QStringLiteral("image.psdSubimageIndex")).toInt(-1);
+    impl_->psdSubimageIndex_ = serializedSubimage < 0
+        ? -1
+        : std::min(serializedSubimage, 100000);
     if (obj.value(QStringLiteral("image.sequencePaths")).isArray()) {
         constexpr qsizetype kMaxSequenceFrames = 100000;
         const QJsonArray sequenceArray =
@@ -1253,7 +1304,8 @@ QImage ArtifactImageLayer::toQImage() const
                     if (!img.isNull()) return img;
                 }
                 // futureが無い / 結果がnull: バックグラウンドで同期ロード (impl_非書き込み)
-                return loadImageViaOIIO(impl_->sourcePath_);
+                return loadImageViaOIIO(impl_->sourcePath_, nullptr, nullptr,
+                                        impl_->psdSubimageIndex_);
             }
             // メインスレッド: プリフェッチ実行中はブロックせず次フレームで再試行
             if (impl_->prefetchFuture_.isRunning()) {
@@ -1262,7 +1314,8 @@ QImage ArtifactImageLayer::toQImage() const
             // 非同期パスを通らなかった場合のフォールバック (メインスレッドのみ impl_書き込み)
             QSize size;
             QString errorString;
-            QImage loaded = loadImageViaOIIO(impl_->sourcePath_, &size, &errorString);
+            QImage loaded = loadImageViaOIIO(impl_->sourcePath_, &size, &errorString,
+                                             impl_->psdSubimageIndex_);
             if (!loaded.isNull()) {
                 impl_->cache_ = ArtifactCore::makeShared<QImage>(loaded);
                 impl_->cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(loaded));
@@ -1298,6 +1351,17 @@ QImage ArtifactImageLayer::toQImage() const
         return makeTransparentCropCanvas(base, cropRect);
     }
     return base;
+}
+
+QImage ArtifactImageLayer::getThumbnail(int width, int height) const
+{
+    const QSize targetSize(std::max(1, width), std::max(1, height));
+    QImage image = toQImage();
+    if (image.isNull()) {
+        return ArtifactAbstractLayer::getThumbnail(targetSize.width(), targetSize.height());
+    }
+    return image.scaled(targetSize, Qt::KeepAspectRatio,
+                        Qt::SmoothTransformation);
 }
 
 const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() const
@@ -1369,6 +1433,42 @@ void ArtifactImageLayer::setFromQImage(const QImage& image)
 
     setSourceSize(Size_2D(image.width(), image.height()));
     impl_->sourceCrop_.clampToSource(QSizeF(image.width(), image.height()));
+    setDirty(LayerDirtyFlag::Source);
+    Q_EMIT changed();
+}
+
+void ArtifactImageLayer::setFromImageBuffer(
+    const ArtifactCore::ImageF32x4_RGBA& image)
+{
+    ++impl_->prefetchGeneration_;
+    if (!impl_->sourceAssetId_.isNull()) {
+        ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+        impl_->sourceAssetId_ = QUuid();
+    }
+    impl_->sourcePath_.clear();
+    impl_->cachedSourceVersion_ = 0;
+    impl_->sequencePaths_.clear();
+    impl_->sequenceFrameRate_ = 0.0;
+    impl_->sequenceSource_.reset();
+    impl_->sequenceCachedIndex_ = -1;
+
+    if (image.isEmpty()) {
+        impl_->hasImage_ = false;
+        impl_->cache_.reset();
+        impl_->cacheBuffer_.reset();
+        impl_->width_ = 0;
+        impl_->height_ = 0;
+        setSourceSize(Size_2D(0, 0));
+    } else {
+        impl_->width_ = image.width();
+        impl_->height_ = image.height();
+        impl_->cacheBuffer_ = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
+            image.DeepCopy());
+        impl_->cache_ = ArtifactCore::makeShared<QImage>(image.toQImage());
+        impl_->hasImage_ = true;
+        setSourceSize(Size_2D(impl_->width_, impl_->height_));
+        impl_->sourceCrop_.clampToSource(QSizeF(impl_->width_, impl_->height_));
+    }
     setDirty(LayerDirtyFlag::Source);
     Q_EMIT changed();
 }

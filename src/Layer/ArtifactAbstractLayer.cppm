@@ -13,6 +13,8 @@ module;
 #include <vector>
 #include <QDebug>
 #include <QImage>
+#include <QPainter>
+#include <QFont>
 #include <QPointF>
 #include <QRectF>
 #include <QSize>
@@ -65,6 +67,8 @@ import Artifact.Effect.ImplBase;
 import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.Keying.LumaKey;
 import Artifact.Effect.Keying.DifferenceKey;
+import Artifact.Effect.Rasterizer.DifferenceMatte;
+import Artifact.Effect.Keying.IBKKeyer;
 import Artifact.Effect.Generator.Cloner;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
@@ -1110,13 +1114,34 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
   componentHost_.upsert(std::move(fluid));
 }
 
-void ArtifactAbstractLayer::Impl::goToStartFrame() {}
+void ArtifactAbstractLayer::Impl::goToStartFrame()
+{
+  currentFrame_ = startTime_.framePosition();
+}
 
-void ArtifactAbstractLayer::Impl::goToEndFrame() {}
+void ArtifactAbstractLayer::Impl::goToEndFrame()
+{
+  const int64_t duration = std::max<int64_t>(
+      1, outPoint_.framePosition() - inPoint_.framePosition());
+  currentFrame_ = startTime_.framePosition() + duration - 1;
+}
 
-void ArtifactAbstractLayer::Impl::goToNextFrame() {}
+void ArtifactAbstractLayer::Impl::goToNextFrame()
+{
+  const int64_t endFrame = startTime_.framePosition() + std::max<int64_t>(
+      1, outPoint_.framePosition() - inPoint_.framePosition()) - 1;
+  if (currentFrame_ < endFrame) {
+    ++currentFrame_;
+  }
+}
 
-void ArtifactAbstractLayer::Impl::goToPrevFrame() {}
+void ArtifactAbstractLayer::Impl::goToPrevFrame()
+{
+  const int64_t startFrame = startTime_.framePosition();
+  if (currentFrame_ > startFrame) {
+    --currentFrame_;
+  }
+}
 
 bool ArtifactAbstractLayer::Impl::is3D() const { return is3D_; }
 
@@ -1204,13 +1229,13 @@ std::type_index ArtifactAbstractLayer::type_index() const {
   return impl_->type_index_;
 }
 
-void ArtifactAbstractLayer::goToStartFrame() {}
+void ArtifactAbstractLayer::goToStartFrame() { impl_->goToStartFrame(); }
 
-void ArtifactAbstractLayer::goToEndFrame() {}
+void ArtifactAbstractLayer::goToEndFrame() { impl_->goToEndFrame(); }
 
-void ArtifactAbstractLayer::goToNextFrame() {}
+void ArtifactAbstractLayer::goToNextFrame() { impl_->goToNextFrame(); }
 
-void ArtifactAbstractLayer::goToPrevFrame() {}
+void ArtifactAbstractLayer::goToPrevFrame() { impl_->goToPrevFrame(); }
 
 void ArtifactAbstractLayer::goToFrame(int64_t frameNumber /*= 0*/) {
   // グローバルフレーム → レイヤー相対フレーム:
@@ -3979,6 +4004,10 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   trans["ax"] = t3.anchorX();
   trans["ay"] = t3.anchorY();
   trans["az"] = t3.anchorZ();
+  // Persist the auto-orient mode so a layer keeps its path-orientation
+  // behavior across project save/load.  The enum values are part of the
+  // public Transform3D contract (Off, AlongPath, AlongPathAtFrameStart).
+  trans["autoOrientMode"] = static_cast<int>(t3.autoOrientMode());
   QJsonArray positionKeyframes;
   for (const auto &time : t3.getPositionKeyFrameTimes()) {
     const auto frame = time.rescaledTo(24);
@@ -4002,6 +4031,29 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   }
   if (!positionKeyframes.isEmpty()) {
     trans["positionKeyframes"] = positionKeyframes;
+  }
+  QJsonArray rotationKeyframes;
+  for (const auto &time : t3.getRotationKeyFrameTimes()) {
+    const auto frame = time.rescaledTo(24);
+    QJsonObject keyframe;
+    keyframe["frame"] = static_cast<qint64>(frame);
+    keyframe["value"] = t3.rotationAt(time);
+    rotationKeyframes.append(keyframe);
+  }
+  if (!rotationKeyframes.isEmpty()) {
+    trans["rotationKeyframes"] = rotationKeyframes;
+  }
+  QJsonArray scaleKeyframes;
+  for (const auto &time : t3.getScaleKeyFrameTimes()) {
+    const auto frame = time.rescaledTo(24);
+    QJsonObject keyframe;
+    keyframe["frame"] = static_cast<qint64>(frame);
+    keyframe["x"] = t3.scaleXAt(time);
+    keyframe["y"] = t3.scaleYAt(time);
+    scaleKeyframes.append(keyframe);
+  }
+  if (!scaleKeyframes.isEmpty()) {
+    trans["scaleKeyframes"] = scaleKeyframes;
   }
   obj["transform"] = trans;
 
@@ -4419,6 +4471,12 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
       } else if (effectId == QStringLiteral("difference_key") ||
                  effectId == QStringLiteral("Effect.Keying.DifferenceKey")) {
         eff = makeShared<DifferenceKeyEffect>();
+      } else if (effectId == QStringLiteral("difference_matte") ||
+                 effectId == QStringLiteral("Effect.Rasterizer.DifferenceMatte")) {
+        eff = makeShared<DifferenceMatteEffect>();
+      } else if (effectId == QStringLiteral("ibk_keyer") ||
+                 effectId == QStringLiteral("Effect.Keying.IBKKeyer")) {
+        eff = makeShared<IBKKeyerEffect>();
       }
       if (eff) {
         eff->setEffectID(eid);
@@ -4578,6 +4636,40 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     if (trans.contains("ax"))
       t3.setAnchor(t0, trans["ax"].toDouble(), trans["ay"].toDouble(),
                    trans["az"].toDouble());
+    if (trans.contains("autoOrientMode")) {
+      const int mode = std::clamp(
+          trans["autoOrientMode"].toInt(),
+          static_cast<int>(AutoOrientMode::Off),
+          static_cast<int>(AutoOrientMode::AlongPathAtFrameStart));
+      t3.setAutoOrientMode(static_cast<AutoOrientMode>(mode));
+    }
+    if (trans.contains("rotationKeyframes") &&
+        trans["rotationKeyframes"].isArray()) {
+      t3.clearRotationKeyFrames();
+      for (const auto &value : trans["rotationKeyframes"].toArray()) {
+        if (!value.isObject()) {
+          continue;
+        }
+        const QJsonObject keyframe = value.toObject();
+        const ArtifactCore::RationalTime time(
+            keyframe["frame"].toInteger(), 24);
+        t3.setRotation(time, static_cast<float>(keyframe["value"].toDouble()));
+      }
+    }
+    if (trans.contains("scaleKeyframes") &&
+        trans["scaleKeyframes"].isArray()) {
+      t3.clearScaleKeyFrames();
+      for (const auto &value : trans["scaleKeyframes"].toArray()) {
+        if (!value.isObject()) {
+          continue;
+        }
+        const QJsonObject keyframe = value.toObject();
+        const ArtifactCore::RationalTime time(
+            keyframe["frame"].toInteger(), 24);
+        t3.setScale(time, static_cast<float>(keyframe["x"].toDouble()),
+                    static_cast<float>(keyframe["y"].toDouble()));
+      }
+    }
     if (trans.contains("positionKeyframes") &&
         trans["positionKeyframes"].isArray()) {
       t3.clearPositionKeyFrames();
@@ -9526,22 +9618,39 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
 }
 
 QImage ArtifactAbstractLayer::getThumbnail(int width, int height) const {
-  // サムネイル用に黒いイメージを作成（プレースホルダー実装）
   const QSize targetSize(std::max(1, width), std::max(1, height));
   if (!impl_->thumbnailCache_.isNull() &&
       impl_->thumbnailCacheSize_ == targetSize) {
     return impl_->thumbnailCache_;
   }
 
-  QImage thumbnail(targetSize.width(), targetSize.height(),
-                   QImage::Format_ARGB32);
-  thumbnail.fill(QColor(0, 0, 0, 255)); // 黒で塗りつぶし
+  QImage thumbnail(targetSize, QImage::Format_ARGB32_Premultiplied);
+  thumbnail.fill(QColor(34, 38, 46));
+  QPainter painter(&thumbnail);
+  painter.setRenderHint(QPainter::Antialiasing, true);
+  constexpr int cell = 8;
+  for (int y = 0; y < targetSize.height(); y += cell) {
+    for (int x = 0; x < targetSize.width(); x += cell) {
+      if (((x / cell) + (y / cell)) % 2 == 0) {
+        painter.fillRect(QRect(x, y, cell, cell), QColor(48, 53, 63));
+      }
+    }
+  }
+  painter.setPen(QPen(QColor(113, 131, 154), 1.0));
+  painter.drawRect(thumbnail.rect().adjusted(1, 1, -2, -2));
+  QFont font;
+  font.setBold(true);
+  font.setPointSizeF(std::max<qreal>(7.0, targetSize.height() * 0.075));
+  painter.setFont(font);
+  painter.setPen(QColor(230, 235, 242));
+  painter.drawText(thumbnail.rect().adjusted(8, 8, -8, -8),
+                   Qt::AlignCenter | Qt::TextWordWrap,
+                   QStringLiteral("%1\n%2 × %3")
+                       .arg(layerName().isEmpty() ? QStringLiteral("Layer") : layerName())
+                       .arg(sourceSize().width)
+                       .arg(sourceSize().height));
   impl_->thumbnailCache_ = thumbnail;
   impl_->thumbnailCacheSize_ = targetSize;
-
-  // TODO: 実際のレイヤーコンテンツをサムネイルにレンダリング
-  qDebug() << "[Thumbnail] Generated placeholder thumbnail:" << width << "x"
-           << height;
 
   return impl_->thumbnailCache_;
 }

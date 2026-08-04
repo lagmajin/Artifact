@@ -7,15 +7,22 @@ module Artifact.Generator.Abstract;
 namespace Artifact
 {
 
-	
- Generator::Generator()
- {
+ class Generator::Impl {
+ public:
+  Impl() = default;
+  ~Impl() = default;
+ };
 
- }
+	 Generator::Generator()
+	  : impl_(new Impl())
+	 {
 
- Generator::~Generator()
- {
+	 }
 
- }
+	 Generator::~Generator()
+	 {
+	  delete impl_;
+	  impl_ = nullptr;
+	 }
 
 };

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QObject>
 #include <QVector2D>
 #include <QVector3D>
@@ -1065,12 +1065,25 @@ TransitionManager::TransitionManager(QObject* parent)
 {
     // Register default transitions
     registerTransition("CrossDissolve", TransitionFactory::create(TransitionType::CrossDissolve));
+    registerTransition("Fade", TransitionFactory::create(TransitionType::Fade));
     registerTransition("WipeLeft", TransitionFactory::create(TransitionType::WipeLeft));
     registerTransition("WipeRight", TransitionFactory::create(TransitionType::WipeRight));
+    registerTransition("WipeUp", TransitionFactory::create(TransitionType::WipeUp));
+    registerTransition("WipeDown", TransitionFactory::create(TransitionType::WipeDown));
+    registerTransition("WipeRadial", TransitionFactory::create(TransitionType::WipeRadial));
+    registerTransition("WipeClock", TransitionFactory::create(TransitionType::WipeClock));
+    registerTransition("WipeDiamond", TransitionFactory::create(TransitionType::WipeDiamond));
     registerTransition("SlideLeft", TransitionFactory::create(TransitionType::SlideLeft));
     registerTransition("SlideRight", TransitionFactory::create(TransitionType::SlideRight));
+    registerTransition("SlideUp", TransitionFactory::create(TransitionType::SlideUp));
+    registerTransition("SlideDown", TransitionFactory::create(TransitionType::SlideDown));
+    registerTransition("PushLeft", TransitionFactory::create(TransitionType::PushLeft));
+    registerTransition("PushRight", TransitionFactory::create(TransitionType::PushRight));
+    registerTransition("PushUp", TransitionFactory::create(TransitionType::PushUp));
+    registerTransition("PushDown", TransitionFactory::create(TransitionType::PushDown));
     registerTransition("ZoomIn", TransitionFactory::create(TransitionType::ZoomIn));
     registerTransition("ZoomOut", TransitionFactory::create(TransitionType::ZoomOut));
+    registerTransition("ZoomRotate", TransitionFactory::create(TransitionType::ZoomRotate));
     registerTransition("Glitch", TransitionFactory::create(TransitionType::Glitch));
     registerTransition("PageCurl", TransitionFactory::create(TransitionType::PageCurl));
     registerTransition("RippleDissolve", TransitionFactory::create(TransitionType::RippleDissolve));
@@ -1082,6 +1095,9 @@ TransitionManager::~TransitionManager()
 
 void TransitionManager::registerTransition(const QString& name, std::unique_ptr<AbstractTransition> transition)
 {
+    if (name.trimmed().isEmpty() || !transition) {
+        return;
+    }
     impl_->transitions[name] = std::move(transition);
     emit transitionListChanged();
 }

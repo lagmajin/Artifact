@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -195,11 +195,28 @@ class ArtifactAbstract2DLayer::Impl {
  }
 
  ArtifactCore::RigControl2D* ArtifactAbstract2DLayer::addRigAngle(const QString& name,
-                                                                  double defaultValue,
-                                                                  double minValue,
-                                                                  double maxValue)
+                                                                   double defaultValue,
+                                                                   double minValue,
+                                                                   double maxValue)
  {
   return impl_->rig2D().addAngle(name, defaultValue, minValue, maxValue);
+ }
+
+ bool ArtifactAbstract2DLayer::setRigControlValue(const ArtifactCore::Id& controlId,
+                                                  const QVariant& value)
+ {
+  ArtifactCore::RigControl2D* control = impl_->rig2D().findControl(controlId);
+  if (!control) return false;
+  control->setValue(value);
+  impl_->rig2D().evaluate(rigTimeForLayer(this));
+  applyRigPropertyBindings(this);
+  return true;
+ }
+
+ QVariant ArtifactAbstract2DLayer::rigControlValue(const ArtifactCore::Id& controlId) const
+ {
+  const ArtifactCore::RigControl2D* control = impl_->rig2D().findControl(controlId);
+  return control ? control->value() : QVariant();
  }
 
  ArtifactCore::SharedPtr<ArtifactCore::ParentConstraint2D> ArtifactAbstract2DLayer::addRigParentConstraint(

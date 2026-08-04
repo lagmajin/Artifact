@@ -70,6 +70,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Service.Project;
 import Event.Bus;
 import Artifact.Event.Types;
+import Undo.UndoManager;
 
 namespace Artifact {
 
@@ -2605,25 +2606,33 @@ void ArtifactPlaybackService::goToOutPoint() {
 
 void ArtifactPlaybackService::addMarkerAtCurrentFrame(const QString &comment) {
   if (auto *points = inOutPoints()) {
+    const QJsonObject before = points->toJson();
     points->addMarker(currentFrame(), comment, MarkerType::Comment);
+    UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, points->toJson()));
   }
 }
 
 void ArtifactPlaybackService::addChapterMarkerAtCurrentFrame(const QString &name) {
   if (auto *points = inOutPoints()) {
+    const QJsonObject before = points->toJson();
     points->addMarker(currentFrame(), name, MarkerType::Chapter);
+    UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, points->toJson()));
   }
 }
 
 void ArtifactPlaybackService::deleteMarkerAtCurrentFrame() {
   if (auto *points = inOutPoints()) {
+    const QJsonObject before = points->toJson();
     points->removeMarker(currentFrame());
+    UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, points->toJson()));
   }
 }
 
 void ArtifactPlaybackService::clearAllMarkers() {
   if (auto *points = inOutPoints()) {
+    const QJsonObject before = points->toJson();
     points->clearAllMarkers();
+    UndoManager::instance()->push(std::make_unique<InOutPointsSnapshotCommand>(points, before, points->toJson()));
   }
 }
 

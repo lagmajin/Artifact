@@ -122,10 +122,14 @@ namespace Artifact {
   renderQueueService.addRenderQueue();
   int initialCount = renderQueueService.jobCount();
 
-  // このメソッドはまだ実装されていないので、テストはスキップ
-  // renderQueueService.removeRenderQueue();
-  qDebug() << "testRemoveRenderQueue: Method not implemented";
- }
+  renderQueueService.removeRenderQueueAt(initialCount - 1);
+
+  if (renderQueueService.jobCount() == initialCount - 1) {
+   qDebug() << "testRemoveRenderQueue passed: Job count decreased by 1";
+  } else {
+   qDebug() << "testRemoveRenderQueue failed: Job was not removed";
+  }
+}
 
  void ArtifactTestRenderQueue::Impl::testRemoveAllRenderQueues()
  {

@@ -533,6 +533,16 @@ QImage ArtifactCloneLayer::toQImage() const {
     return QImage();
 }
 
+QImage ArtifactCloneLayer::getThumbnail(int width, int height) const
+{
+  const QSize targetSize(std::max(1, width), std::max(1, height));
+  const QImage image = toQImage();
+  return image.isNull()
+      ? ArtifactAbstractLayer::getThumbnail(targetSize.width(), targetSize.height())
+      : image.scaled(targetSize, Qt::KeepAspectRatio,
+                     Qt::SmoothTransformation);
+}
+
 std::vector<ArtifactCore::PropertyGroup>
 ArtifactCloneLayer::getLayerPropertyGroups() const {
     auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();

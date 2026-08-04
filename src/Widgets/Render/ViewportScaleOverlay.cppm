@@ -88,18 +88,34 @@ std::vector<ViewportRulerTick> ViewportRulerData::generateTicks(
                                   : static_cast<float>(viewportSize.height());
   const float canvasExtent = horizontal ? static_cast<float>(canvasSize.width())
                                         : static_cast<float>(canvasSize.height());
-  const float first = std::floor(origin / step.interval) * step.interval;
-  const float last = std::min(origin + extent, canvasExtent);
   std::vector<ViewportRulerTick> ticks;
-  if (last < first || extent <= 0.0f) {
+  if (!std::isfinite(origin) || !std::isfinite(extent) ||
+      !std::isfinite(canvasExtent) || !std::isfinite(step.interval) ||
+      step.interval <= 0.0f || extent <= 0.0f || canvasExtent <= 0.0f) {
     return ticks;
   }
+  const float visibleStart = std::max(0.0f, origin);
+  const float viewportEnd = origin + extent;
+  if (!std::isfinite(viewportEnd)) {
+    return ticks;
+  }
+  const float visibleEnd = std::min(viewportEnd, canvasExtent);
+  if (visibleEnd < visibleStart) {
+    return ticks;
+  }
+  const float first = std::floor(visibleStart / step.interval) * step.interval;
+  const float last = visibleEnd;
 
   const int count = std::min(4096, std::max(0, static_cast<int>(
       std::ceil((last - first) / std::max(step.subInterval, step.interval)) + 1.0f)));
   ticks.reserve(static_cast<size_t>(count));
   const float increment = step.subInterval > 0.0f ? step.subInterval : step.interval;
-  for (float canvasPos = first; canvasPos <= last + increment * 0.25f;
+  if (!(increment > 0.0f) || !std::isfinite(increment)) {
+    return ticks;
+  }
+  int emitted = 0;
+  for (float canvasPos = first;
+       canvasPos <= last + increment * 0.25f && emitted < 4096;
        canvasPos += increment) {
     if (canvasPos < 0.0f || canvasPos > canvasExtent) {
       continue;
@@ -129,6 +145,7 @@ std::vector<ViewportRulerTick> ViewportRulerData::generateTicks(
     const float viewportPos = (canvasPos - origin) * safeZoom(zoom);
     ticks.push_back(ViewportRulerTick{
         level, canvasPos, viewportPos, label});
+    ++emitted;
   }
   return ticks;
 }
@@ -323,7 +340,8 @@ std::vector<ViewportRulerTick> ViewportOverlayManager::generateRulerTicks(
                             ViewportRulerOrientation::Horizontal;
     const bool originIndependent = entry.config.anchor !=
                                    ViewportRulerAnchor::Start;
-    if (entry.cacheValid && nearlyEqual(entry.cachedZoom, zoom) &&
+    const float normalizedZoom = safeZoom(zoom);
+    if (entry.cacheValid && nearlyEqual(entry.cachedZoom, normalizedZoom) &&
         (originIndependent || nearlyEqual(entry.cachedOrigin, viewportOrigin)) &&
         nearlyEqual(entry.cachedViewportSize, viewportSize) &&
         nearlyEqual(entry.cachedCanvasSize, canvasSize)) {
@@ -358,7 +376,7 @@ std::vector<ViewportRulerTick> ViewportOverlayManager::generateRulerTicks(
       for (auto& tick : ticks) tick.label.clear();
     }
     if (!entry.config.showTicks) ticks.clear();
-    entry.cachedZoom = zoom;
+    entry.cachedZoom = normalizedZoom;
     entry.cachedOrigin = effectiveOrigin;
     entry.cachedViewportSize = viewportSize;
     entry.cachedCanvasSize = canvasSize;
@@ -376,10 +394,14 @@ ViewportScaleBarData ViewportOverlayManager::generateScaleBarData(
     if (entry.id != id || !entry.visible) return {};
     auto data = ViewportScaleBarDataFactory::generate(
         zoom, viewportSize, entry.config.targetPixels, entry.config.unitName);
-    const float width = static_cast<float>(viewportSize.width());
-    const float height = static_cast<float>(viewportSize.height());
-    const float marginX = std::max(0.0f, entry.config.marginX);
-    const float marginY = std::max(0.0f, entry.config.marginY);
+    const float widthValue = static_cast<float>(viewportSize.width());
+    const float heightValue = static_cast<float>(viewportSize.height());
+    const float width = std::isfinite(widthValue) ? std::max(0.0f, widthValue) : 0.0f;
+    const float height = std::isfinite(heightValue) ? std::max(0.0f, heightValue) : 0.0f;
+    const float marginX = std::isfinite(entry.config.marginX)
+        ? std::max(0.0f, entry.config.marginX) : 0.0f;
+    const float marginY = std::isfinite(entry.config.marginY)
+        ? std::max(0.0f, entry.config.marginY) : 0.0f;
     const bool right = entry.config.anchor ==
                        ViewportScaleBarConfig::Anchor::BottomRight ||
                        entry.config.anchor ==
@@ -406,8 +428,16 @@ ViewportGridLabelData ViewportOverlayManager::generateGridLabelData(
     if (entry.id != id || !entry.visible) return {};
     const auto step = ViewportTickCalculator::compute(
         zoom, entry.config.targetPixels, entry.config.unitName);
-    return ViewportGridLabelData{step.interval, entry.config.viewportPosition,
-                                 step.label};
+    const float interval = std::isfinite(step.interval) && step.interval > 0.0f
+        ? step.interval : 1.0f;
+    const QPointF position(
+        std::isfinite(entry.config.viewportPosition.x())
+            ? entry.config.viewportPosition.x() : 16.0,
+        std::isfinite(entry.config.viewportPosition.y())
+            ? entry.config.viewportPosition.y() : 16.0);
+    return ViewportGridLabelData{interval, position,
+                                 step.label.isEmpty() ? QStringLiteral("1 px")
+                                                      : step.label};
   }
   return {};
 }
@@ -417,11 +447,17 @@ ViewportCompassData ViewportOverlayManager::generateCompassData(
 {
   for (const auto& entry : compasses_) {
     if (entry.id != id || !entry.visible) return {};
-    const float radians = yawDegrees * 0.017453292519943295f;
+    const float safeYaw = std::isfinite(yawDegrees) ? yawDegrees : 0.0f;
+    const float radians = safeYaw * 0.017453292519943295f;
     const float cosine = std::cos(radians);
     const float sine = std::sin(radians);
-    const QPointF center = entry.config.viewportPosition;
-    const float size = std::max(1.0f, entry.config.size);
+    const QPointF center(
+        std::isfinite(entry.config.viewportPosition.x())
+            ? entry.config.viewportPosition.x() : 48.0,
+        std::isfinite(entry.config.viewportPosition.y())
+            ? entry.config.viewportPosition.y() : 48.0);
+    const float size = std::isfinite(entry.config.size)
+        ? std::max(1.0f, entry.config.size) : 32.0f;
     const QPointF xAxisEnd(center.x() + cosine * size,
                             center.y() + sine * size);
     const QPointF yAxisEnd(center.x() - sine * size,

@@ -18,31 +18,51 @@ void GridRenderer::draw(ArtifactIRenderer* renderer,
                          const FloatColor& color,
                          GridStyle style)
 {
- if (!renderer || spacing <= 0 || w <= 0 || h <= 0) return;
+ if (!renderer || !std::isfinite(x) || !std::isfinite(y) ||
+     !std::isfinite(w) || !std::isfinite(h) || !std::isfinite(spacing) ||
+     !std::isfinite(thickness) || spacing <= 0 || w <= 0 || h <= 0) return;
 
- const float halfTick = thickness * 2.0f;
+ const float safeThickness = std::max(0.0f, thickness);
+ const float halfTick = safeThickness * 2.0f;
+ constexpr int kMaxGridSamples = 8192;
+ const int xSamples = std::min(kMaxGridSamples,
+                               std::max(1, static_cast<int>(std::ceil(w / spacing)) + 1));
+ const int ySamples = std::min(kMaxGridSamples,
+                               std::max(1, static_cast<int>(std::ceil(h / spacing)) + 1));
 
  if (style == GridStyle::Lines) {
   // Vertical lines
-  for (float gx = x; gx <= x + w; gx += spacing) {
-   renderer->drawSolidLine({gx, y}, {gx, y + h}, color, thickness);
+  for (int i = 0; i < xSamples; ++i) {
+   const float gx = x + static_cast<float>(i) * spacing;
+   if (gx > x + w) break;
+   renderer->drawSolidLine({gx, y}, {gx, y + h}, color, safeThickness);
   }
   // Horizontal lines
-  for (float gy = y; gy <= y + h; gy += spacing) {
-   renderer->drawSolidLine({x, gy}, {x + w, gy}, color, thickness);
+  for (int i = 0; i < ySamples; ++i) {
+   const float gy = y + static_cast<float>(i) * spacing;
+   if (gy > y + h) break;
+   renderer->drawSolidLine({x, gy}, {x + w, gy}, color, safeThickness);
   }
  } else if (style == GridStyle::Dots) {
-  for (float gx = x; gx <= x + w; gx += spacing) {
-   for (float gy = y; gy <= y + h; gy += spacing) {
+  for (int ix = 0; ix < xSamples; ++ix) {
+   const float gx = x + static_cast<float>(ix) * spacing;
+   if (gx > x + w) break;
+   for (int iy = 0; iy < ySamples; ++iy) {
+    const float gy = y + static_cast<float>(iy) * spacing;
+    if (gy > y + h) break;
     renderer->drawSolidRect(gx - halfTick, gy - halfTick,
                              halfTick * 2, halfTick * 2, color, 1.0f);
    }
   }
  } else if (style == GridStyle::Crosses) {
-  for (float gx = x; gx <= x + w; gx += spacing) {
-   for (float gy = y; gy <= y + h; gy += spacing) {
-    renderer->drawSolidLine({gx - halfTick, gy}, {gx + halfTick, gy}, color, thickness);
-    renderer->drawSolidLine({gx, gy - halfTick}, {gx, gy + halfTick}, color, thickness);
+  for (int ix = 0; ix < xSamples; ++ix) {
+   const float gx = x + static_cast<float>(ix) * spacing;
+   if (gx > x + w) break;
+   for (int iy = 0; iy < ySamples; ++iy) {
+    const float gy = y + static_cast<float>(iy) * spacing;
+    if (gy > y + h) break;
+    renderer->drawSolidLine({gx - halfTick, gy}, {gx + halfTick, gy}, color, safeThickness);
+    renderer->drawSolidLine({gx, gy - halfTick}, {gx, gy + halfTick}, color, safeThickness);
    }
   }
  }

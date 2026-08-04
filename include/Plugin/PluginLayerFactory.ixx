@@ -30,7 +30,9 @@ public:
     void scanAndRegister();
     void registerFromDll(const ArtifactCore::String& pluginId,
                          ArtifactPluginInstance instance,
-                         ArtifactLayerPluginVTable vtable);
+                         ArtifactLayerPluginVTable vtable,
+                         LayerPluginAdapter::DestroyFunction destroy = nullptr,
+                         const ArtifactCore::String& version = ArtifactCore::String());
     void unregisterAll();
 
     std::vector<LayerPluginInfo> availablePlugins() const;

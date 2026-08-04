@@ -64,8 +64,12 @@ void ArtifactObjectReferenceWidget::setReferenceType(const QString& typeName)
 
 void ArtifactObjectReferenceWidget::setCurrentReferenceId(const ArtifactCore::LayerID& id)
 {
+    if (currentId_ == id) {
+        return;
+    }
     currentId_ = id;
     updateDisplay();
+    Q_EMIT referenceChanged(currentId_);
 }
 
 void ArtifactObjectReferenceWidget::setAllowNull(bool allow)

@@ -52,4 +52,24 @@ public:
     bool supportsGPU() const override { return true; }
 };
 
+class PatternOverlayEffect : public ArtifactAbstractEffect {
+private:
+    float amount_ = 0.5f;
+    float scale_ = 8.0f;
+    int seed_ = 0;
+    int pattern_ = 0;
+
+public:
+    PatternOverlayEffect();
+    ~PatternOverlayEffect() override;
+
+    void setAmount(float value);
+    void setScale(float value);
+    void setSeed(int value);
+    void setPattern(int value);
+    std::vector<AbstractProperty> getProperties() const override;
+    void setPropertyValue(const UniString& name, const QVariant& value) override;
+    bool supportsGPU() const override { return false; }
+};
+
 } // namespace Artifact

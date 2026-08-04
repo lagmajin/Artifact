@@ -90,6 +90,7 @@ public:
 
     // CPU-side SDF evaluation → QImage (ARGB32_Premultiplied)
     QImage toQImage() const;
+    QImage getThumbnail(int width = 128, int height = 128) const override;
 
     // Inspector
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;

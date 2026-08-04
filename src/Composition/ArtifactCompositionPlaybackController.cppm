@@ -46,6 +46,7 @@ import Frame.Rate;
 import Frame.Range;
 import Artifact.Composition.InOutPoints;
 import Thread.PreciseTicker;
+import Artifact.Service.Playback;
 
 namespace Artifact {
 
@@ -479,10 +480,15 @@ void ArtifactCompositionPlaybackController::onTimerTick() {
 
   // Output monitoring
   if (impl_->outputMonitoringEnabled_ && impl_->outputMonitorCallback_) {
-    // TODO: Check actual audio/video output status
-    // For now, assume OK
-    bool audioOk = true;
-    bool videoOk = true;
+    const auto* playback = ArtifactPlaybackService::instance();
+    const ArtifactPlaybackAudioDiagnostics audioDiagnostics = playback
+        ? playback->audioDiagnostics()
+        : ArtifactPlaybackAudioDiagnostics{};
+    const bool audioOk = !playback ||
+        (audioDiagnostics.deviceOpen &&
+         audioDiagnostics.formatMismatchCount == 0 &&
+         audioDiagnostics.underflowCount == 0);
+    const bool videoOk = impl_->currentFrame_.isValid();
     QString context = QString("Frame: %1, Time: %2")
                           .arg(impl_->currentFrame_.framePosition())
                           .arg(impl_->elapsedTimer_.elapsed() / 1000.0);

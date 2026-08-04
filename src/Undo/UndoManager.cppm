@@ -60,6 +60,23 @@ namespace Artifact {
 
 W_OBJECT_IMPL(UndoManager)
 
+InOutPointsSnapshotCommand::InOutPointsSnapshotCommand(
+    ArtifactInOutPoints* points, const QJsonObject& before,
+    const QJsonObject& after)
+    : points_(points), before_(before), after_(after) {}
+
+void InOutPointsSnapshotCommand::undo() {
+    if (points_) points_->fromJson(before_);
+}
+
+void InOutPointsSnapshotCommand::redo() {
+    if (points_) points_->fromJson(after_);
+}
+
+QString InOutPointsSnapshotCommand::label() const {
+    return QStringLiteral("Change Timeline Markers");
+}
+
 class UndoManager::Impl {
 public:
     std::vector<std::unique_ptr<UndoCommand>> undoStack;
@@ -504,6 +521,7 @@ void AlignLayersUndoCommand::undo() {
         auto layer = comp->layerById(LayerID(s.layerId));
         if (!layer) continue;
         layer->transform3D().setPosition(RationalTime(0, 30000), s.beforeX, s.beforeY);
+        layer->transform3D().setScale(RationalTime(0, 30000), s.beforeScaleX, s.beforeScaleY);
         layer->changed();
     }
     if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
@@ -518,6 +536,7 @@ void AlignLayersUndoCommand::redo() {
         auto layer = comp->layerById(LayerID(s.layerId));
         if (!layer) continue;
         layer->transform3D().setPosition(RationalTime(0, 30000), s.afterX, s.afterY);
+        layer->transform3D().setScale(RationalTime(0, 30000), s.afterScaleX, s.afterScaleY);
         layer->changed();
     }
     if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();

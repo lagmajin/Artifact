@@ -92,6 +92,8 @@ export namespace Artifact {
 
   void addAssetFromPath(const UniString& path);
   QStringList importAssetsFromPaths(const QStringList& sourcePaths);
+  int importPsdLayersToCurrentComposition(const QString& filePath,
+                                          bool visibleOnly = true);
   void importAssetsFromPathsAsync(const QStringList& sourcePaths,
                                  std::function<void(QStringList)> onFinished);
   void removeAllAssets();

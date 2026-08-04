@@ -537,5 +537,15 @@ QImage ArtifactSolidImageLayer::toQImage() const {
   impl_->cachedGradientOffset_ = gradientOffset();
   return impl_->cachedImage_;
 }
+
+QImage ArtifactSolidImageLayer::getThumbnail(int width, int height) const
+{
+  const QSize targetSize(std::max(1, width), std::max(1, height));
+  const QImage image = toQImage();
+  return image.isNull()
+      ? ArtifactAbstractLayer::getThumbnail(targetSize.width(), targetSize.height())
+      : image.scaled(targetSize, Qt::KeepAspectRatio,
+                     Qt::SmoothTransformation);
+}
 } // namespace Artifact
 

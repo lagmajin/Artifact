@@ -74,6 +74,8 @@ export namespace Artifact {
   QStringList sequencePaths;
   double frameRate = 0.0;
   bool isSequence = false;
+  // OIIO subimage index for layered formats such as PSD; -1 means flattened.
+  int subimageIndex = -1;
   QString inputColorSpace;
   QString inputTransferFunction;
   

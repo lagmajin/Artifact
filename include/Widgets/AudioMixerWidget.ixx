@@ -2,10 +2,12 @@ module;
 #include <utility>
 #include <memory>
 #include <string>
+#include <functional>
 
 #include <wobjectdefs.h>
 #include <QWidget>
 #include <QElapsedTimer>
+#include <QComboBox>
 export module Artifact.Widgets.AudioMixer;
 
 
@@ -42,7 +44,10 @@ private:
 class AudioChannelStripWidget : public QWidget {
 	W_OBJECT(AudioChannelStripWidget)
 public:
-    AudioChannelStripWidget(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus, QWidget* parent = nullptr);
+    AudioChannelStripWidget(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus,
+                            ArtifactCore::AudioMixer* mixer = nullptr,
+                            std::function<void()> onChanged = {},
+                            QWidget* parent = nullptr);
     virtual ~AudioChannelStripWidget();
 
     void updateMeters(); // 定期的に呼び出してレベル表示を更新
@@ -52,6 +57,9 @@ protected:
 
 private:
     ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus_;
+    ArtifactCore::AudioMixer* mixer_ = nullptr;
+    std::function<void()> onChanged_;
+    QComboBox* routeCombo_ = nullptr;
     SpectrumAnalyzerWidget* analyzerWidget_;
     std::unique_ptr<ArtifactCore::AudioAnalyzer> analyzer_;
     QElapsedTimer clipTimer_;
@@ -79,6 +87,7 @@ protected:
 private:
     ArtifactCore::AudioMixer* mixer_;
     std::vector<AudioChannelStripWidget*> strips_;
+    QWidget* addBusButton_ = nullptr;
     QTimer* meterTimer_ = nullptr;
 };
 

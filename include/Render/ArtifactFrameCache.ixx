@@ -2,6 +2,7 @@
 #include <map>
 #include <set>
 #include <memory>
+#include <functional>
 
 #include <iostream>
 #include <vector>
@@ -133,6 +134,8 @@ private:
     std::unique_ptr<Impl> impl_;
     
 public:
+    using RenderCallback = std::function<bool(RenderQuality)>;
+
     explicit FrameCache(QObject* parent = nullptr);
     ~FrameCache();
     
@@ -222,9 +225,8 @@ public:
     void setDraftQuality(int downsampling);
     void setPreviewQuality(int downsampling);
     
-    // Rendering
-    // Note: This would integrate with the actual renderer
-    // For now it's a placeholder for the interface
+    // The callback performs one render at the requested quality.
+    void setRenderCallback(RenderCallback callback);
     
     // Progress tracking
     float currentProgress() const;

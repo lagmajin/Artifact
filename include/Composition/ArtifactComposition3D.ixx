@@ -7,6 +7,7 @@
 #include <set>
 #include <unordered_set>
 #include <memory>
+#include <QVector3D>
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -54,7 +55,21 @@ export namespace Artifact {
  	
   //std::unique_ptr<ArtifactCompositionPrivate> pImpl_;
  public:
- 
+  explicit ArtifactComposition3D(const CompositionID& id,
+                                 const ArtifactCompositionInitParams& params);
+  ~ArtifactComposition3D();
+
+  ArtifactComposition3D(const ArtifactComposition3D&) = delete;
+  ArtifactComposition3D& operator=(const ArtifactComposition3D&) = delete;
+
+  QVector3D cameraPosition() const;
+  void setCameraPosition(const QVector3D& position);
+  QVector3D cameraTarget() const;
+  void setCameraTarget(const QVector3D& target);
+  QVector3D cameraUp() const;
+  void setCameraUp(const QVector3D& up);
+  float cameraFieldOfView() const;
+  void setCameraFieldOfView(float degrees);
 
  };
 

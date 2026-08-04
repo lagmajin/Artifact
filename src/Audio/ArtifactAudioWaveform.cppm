@@ -544,7 +544,10 @@ AudioSyncTools::AudioSyncTools(QObject* parent)
 {
 }
 
-AudioSyncTools::~AudioSyncTools() = default;
+AudioSyncTools::~AudioSyncTools() {
+    delete impl_;
+    impl_ = nullptr;
+}
 
 AudioSegment AudioSyncTools::timeStretch(const AudioSegment& segment, float rate) {
     AudioSegment result;

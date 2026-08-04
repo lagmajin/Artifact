@@ -35,6 +35,7 @@ export namespace Artifact {
   // 2D Tracking
   TrackPoint,
   Brush,
+  RotoBrush,
   Clone,
   Eraser,
   // 2D rig editing

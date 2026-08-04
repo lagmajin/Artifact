@@ -158,6 +158,7 @@ public:
 
     /// Get the current GPU-friendly frame buffer, if available
     const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
+    QImage getThumbnail(int width = 128, int height = 128) const override;
     bool hasCurrentFrameBuffer() const;
     ArtifactCore::ImageF32x4_RGBA currentFrameImageBuffer() const;
     ArtifactCore::ImageF32x4_RGBA cachedFrameImageBuffer(int64_t frameNumber) const;

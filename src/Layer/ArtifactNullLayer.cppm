@@ -1,5 +1,7 @@
 module;
 #include <utility>
+#include <QImage>
+#include <QSize>
 
 
 module Artifact.Layer.Null;
@@ -40,7 +42,8 @@ namespace Artifact {
 
   void ArtifactNullLayer::draw(ArtifactIRenderer* renderer)
   {
-   //throw std::logic_error("The method or operation is not implemented.");
+   // Null layers intentionally contribute no pixels; the transparent image
+   // returned by toQImage() preserves that contract for preview/export paths.
   }
 
   std::vector<ArtifactCore::PropertyGroup> ArtifactNullLayer::getLayerPropertyGroups() const
@@ -55,7 +58,11 @@ namespace Artifact {
 
   QImage ArtifactNullLayer::toQImage() const
   {
-    return QImage();
+    const auto size = sourceSize();
+    const QSize imageSize(std::max(1, size.width), std::max(1, size.height));
+    QImage image(imageSize, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    return image;
   }
 
   QJsonObject ArtifactNullLayer::toJson() const
@@ -68,6 +75,16 @@ namespace Artifact {
     auto layer = ArtifactCore::makeShared<ArtifactNullLayer>();
     layer->fromJsonProperties(obj);
     return layer;
+  }
+
+  QImage ArtifactNullLayer::getThumbnail(int width, int height) const
+  {
+    const QSize targetSize(std::max(1, width), std::max(1, height));
+    const QImage image = toQImage();
+    return image.isNull()
+        ? ArtifactAbstractLayer::getThumbnail(targetSize.width(), targetSize.height())
+        : image.scaled(targetSize, Qt::KeepAspectRatio,
+                       Qt::SmoothTransformation);
   }
 
   bool ArtifactNullLayer::isAdjustmentLayer() const

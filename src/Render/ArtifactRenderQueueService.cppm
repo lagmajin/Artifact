@@ -15,6 +15,7 @@ module;
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QByteArray>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -250,7 +251,8 @@ namespace Artifact
 
         bool writeAudioSegmentAsWav(const QString& filePath,
                                     const ArtifactCore::AudioSegment& segment,
-                                    QString* errorMessage)
+                                    QString* errorMessage,
+                                    int bitDepth = 16)
         {
             const int channels = std::max(1, segment.channelCount());
             const int frameCount = segment.frameCount();
@@ -266,7 +268,11 @@ namespace Artifact
                 return false;
             }
 
-            const quint32 bytesPerSample = 2;
+            if (bitDepth != 16 && bitDepth != 24) {
+                if (errorMessage) *errorMessage = QStringLiteral("Unsupported WAV bit depth");
+                return false;
+            }
+            const quint32 bytesPerSample = static_cast<quint32>(bitDepth / 8);
             const quint32 dataBytes = static_cast<quint32>(frameCount) * static_cast<quint32>(channels) * bytesPerSample;
             const quint32 riffSize = 36u + dataBytes;
 
@@ -290,7 +296,7 @@ namespace Artifact
             out << quint32(sampleRate);
             out << quint32(sampleRate * channels * bytesPerSample);
             out << quint16(channels * bytesPerSample);
-            out << quint16(16);
+            out << quint16(bitDepth);
             if (!writeTag("data")) return false;
             out << dataBytes;
 
@@ -299,9 +305,17 @@ namespace Artifact
                     const float sample = (ch < segment.channelData.size() && i < segment.channelData[ch].size())
                         ? segment.channelData[ch][i]
                         : 0.0f;
-                    const float clamped = std::clamp(sample, -1.0f, 1.0f);
-                    const qint16 pcm = static_cast<qint16>(std::lround(clamped * 32767.0f));
-                    out << pcm;
+                    const float safeSample = std::isfinite(sample) ? sample : 0.0f;
+                    const float clamped = std::clamp(safeSample, -1.0f, 1.0f);
+                    if (bitDepth == 24) {
+                        const qint32 pcm = static_cast<qint32>(std::lround(clamped * 8388607.0f));
+                        out << static_cast<quint8>(pcm & 0xff);
+                        out << static_cast<quint8>((pcm >> 8) & 0xff);
+                        out << static_cast<quint8>((pcm >> 16) & 0xff);
+                    } else {
+                        const qint16 pcm = static_cast<qint16>(std::lround(clamped * 32767.0f));
+                        out << pcm;
+                    }
                 }
             }
 
@@ -312,7 +326,8 @@ namespace Artifact
                                          int startFrame,
                                          int endFrame,
                                          const QString& wavPath,
-                                         QString* errorMessage)
+                                         QString* errorMessage,
+                                         int bitDepth = 16)
         {
             if (!composition) {
                 if (errorMessage) *errorMessage = QStringLiteral("Composition is null");
@@ -341,7 +356,7 @@ namespace Artifact
                 return false;
             }
 
-            return writeAudioSegmentAsWav(wavPath, segment, errorMessage);
+            return writeAudioSegmentAsWav(wavPath, segment, errorMessage, bitDepth);
         }
 
         ArtifactCore::ProjectDiagnostic makePreflightDiagnostic(
@@ -765,6 +780,52 @@ namespace Artifact
             return channels.contains(channelName, Qt::CaseInsensitive);
         }
 
+        quint32 cryptomatteMurmurHash(const QString& value)
+        {
+            const QByteArray bytes = value.toUtf8();
+            const auto* data = reinterpret_cast<const unsigned char*>(bytes.constData());
+            const int length = bytes.size();
+            constexpr quint32 seed = 0u;
+            constexpr quint32 c1 = 0xcc9e2d51u;
+            constexpr quint32 c2 = 0x1b873593u;
+            quint32 hash = seed;
+            const int blockCount = length / 4;
+            for (int block = 0; block < blockCount; ++block) {
+                const int offset = block * 4;
+                quint32 k = static_cast<quint32>(data[offset]) |
+                            (static_cast<quint32>(data[offset + 1]) << 8) |
+                            (static_cast<quint32>(data[offset + 2]) << 16) |
+                            (static_cast<quint32>(data[offset + 3]) << 24);
+                k *= c1;
+                k = (k << 15) | (k >> 17);
+                k *= c2;
+                hash ^= k;
+                hash = (hash << 13) | (hash >> 19);
+                hash = hash * 5u + 0xe6546b64u;
+            }
+
+            quint32 tail = 0;
+            const int tailOffset = blockCount * 4;
+            switch (length & 3) {
+            case 3: tail ^= static_cast<quint32>(data[tailOffset + 2]) << 16; [[fallthrough]];
+            case 2: tail ^= static_cast<quint32>(data[tailOffset + 1]) << 8; [[fallthrough]];
+            case 1:
+                tail ^= static_cast<quint32>(data[tailOffset]);
+                tail *= c1;
+                tail = (tail << 15) | (tail >> 17);
+                tail *= c2;
+                hash ^= tail;
+                break;
+            default: break;
+            }
+            hash ^= static_cast<quint32>(length);
+            hash ^= hash >> 16;
+            hash *= 0x85ebca6bu;
+            hash ^= hash >> 13;
+            hash *= 0xc2b2ae35u;
+            return hash ^ (hash >> 16);
+        }
+
         QString buildCryptomatteManifestJson(const ArtifactCompositionPtr& composition,
                                              bool materialManifest)
         {
@@ -783,10 +844,10 @@ namespace Artifact
                 quint32 hashedValue = 0;
                 if (materialManifest) {
                     entryName = layer->layerName() + QStringLiteral("|material");
-                    hashedValue = qHash(entryName, 0x7f31u) & 0x00ffffffu;
+                    hashedValue = cryptomatteMurmurHash(entryName);
                 } else {
                     entryName = layer->id().toString();
-                    hashedValue = qHash(entryName, 0x51a7u) & 0x00ffffffu;
+                    hashedValue = cryptomatteMurmurHash(entryName);
                 }
 
                 if (entryName.trimmed().isEmpty()) {
@@ -794,7 +855,7 @@ namespace Artifact
                 }
                 manifest.insert(entryName,
                                 QStringLiteral("0x%1")
-                                    .arg(static_cast<qulonglong>(hashedValue), 6, 16,
+                                    .arg(static_cast<qulonglong>(hashedValue), 8, 16,
                                          QLatin1Char('0')));
             }
 
@@ -811,7 +872,7 @@ namespace Artifact
                 QStringLiteral("%1.name").arg(draftPrefix), displayName);
             options.stringAttributes.insert(
                 QStringLiteral("%1.hash").arg(draftPrefix),
-                QStringLiteral("qHash24"));
+                QStringLiteral("MurmurHash3_32"));
             options.stringAttributes.insert(
                 QStringLiteral("%1.manifest").arg(draftPrefix), manifestJson);
 
@@ -821,7 +882,7 @@ namespace Artifact
                 QStringLiteral("%1/name").arg(standardPrefix), displayName);
             options.stringAttributes.insert(
                 QStringLiteral("%1/hash").arg(standardPrefix),
-                QStringLiteral("qHash24"));
+                QStringLiteral("MurmurHash3_32"));
             options.stringAttributes.insert(
                 QStringLiteral("%1/conversion").arg(standardPrefix),
                 QStringLiteral("uint32_to_float32"));
@@ -1098,7 +1159,7 @@ namespace Artifact
                     ArtifactCore::DiagnosticSeverity::Info,
                     ArtifactCore::DiagnosticCategory::Configuration,
                     QStringLiteral("Cryptomatte export uses draft packing"),
-                    QStringLiteral("ObjectId/MaterialId exports now add draft CryptoObject00/CryptoMaterial00 packed channels with alpha-based single-hit coverage and mirror metadata into cryptomatte/* keys, but still do not provide full ranked coverage layers or MurmurHash-based standard hashing."),
+                    QStringLiteral("ObjectId/MaterialId exports now add draft CryptoObject00/CryptoMaterial00 packed channels with alpha-based single-hit coverage, MurmurHash3-based manifest values, and mirrored cryptomatte/* metadata, but still do not provide full ranked coverage layers."),
                     QStringLiteral("Treat the EXR as single-hit draft Cryptomatte output until full packed coverage layers are implemented"),
                     compId));
             }
@@ -1376,6 +1437,12 @@ namespace Artifact
                value == QStringLiteral("gif") ||
                value == QStringLiteral("apng") ||
                value == QStringLiteral("webp");
+    }
+
+    static bool isAudioContainer(const QString& format)
+    {
+        const QString value = format.trimmed().toLower();
+        return value == QStringLiteral("wav");
     }
 
     static QString normalizeCodecName(const QString& codec)
@@ -2832,6 +2899,8 @@ namespace Artifact
         std::mutex queueMutex;
         std::atomic<bool> isRendering_{false};
         std::atomic<bool> shutdownRequested_{false};
+        std::set<int> selectiveJobIndices_;
+        bool selectiveRun_ = false;
         std::thread workerThread_;
 
         // Live preview
@@ -4298,6 +4367,9 @@ namespace Artifact
     }
 
     void ArtifactRenderQueueService::removeRenderQueueAt(int index) {
+        if (index < 0 || index >= impl_->queueManager.jobCount()) {
+            return;
+        }
         impl_->queueManager.removeJob(index);
         impl_->syncCoreQueueModel();
     }
@@ -4352,17 +4424,153 @@ namespace Artifact
 
     void ArtifactRenderQueueService::startRenderQueueAt(int index)
     {
-        if (index < 0 || index >= impl_->queueManager.jobCount()) {
-            return;
+        startRenderQueuesAt(QList<int>{index});
+    }
+
+    int ArtifactRenderQueueService::startRenderQueuesAt(const QList<int>& indices) {
+        if (impl_->isRendering_.load(std::memory_order_acquire)) return 0;
+        std::set<int> uniqueIndices;
+        for (const int index : indices) {
+            if (index >= 0 && index < impl_->queueManager.jobCount()) {
+                uniqueIndices.insert(index);
+            }
         }
-        const auto preflight = preflightRenderQueueAt(index);
-        if (preflight.hasErrors()) {
-            impl_->queueManager.markJobFailed(index, summarizePreflightDiagnostics(preflight));
+
+        // A selected job cannot complete while an unfinished dependency is
+        // excluded from the run. Include the transitive dependency closure,
+        // while leaving already completed jobs untouched.
+        bool dependenciesAdded = true;
+        while (dependenciesAdded) {
+            dependenciesAdded = false;
+            for (const int index : std::vector<int>(uniqueIndices.begin(), uniqueIndices.end())) {
+                const auto job = impl_->queueManager.getJob(index);
+                for (const QString& dependency : job.dependsOn) {
+                    for (int candidate = 0;
+                         candidate < impl_->queueManager.jobCount(); ++candidate) {
+                        const auto dependencyJob = impl_->queueManager.getJob(candidate);
+                        if (dependencyJob.jobName != dependency ||
+                            dependencyJob.status == ArtifactRenderJob::Status::Completed ||
+                            dependencyJob.status == ArtifactRenderJob::Status::Failed ||
+                            dependencyJob.status == ArtifactRenderJob::Status::Canceled) {
+                            continue;
+                        }
+                        if (uniqueIndices.insert(candidate).second) {
+                            dependenciesAdded = true;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Detect cycles in the pending dependency closure before starting any
+        // job.  Otherwise iteration order could start a parent before the
+        // cycle is discovered by the worker scheduler.
+        std::map<int, int> dependencyVisitState;
+        std::vector<int> dependencyPath;
+        std::set<int> cyclicIndices;
+        const auto findDependencyIndex = [&](const QString& dependencyName) {
+            for (int candidate = 0;
+                 candidate < impl_->queueManager.jobCount(); ++candidate) {
+                if (impl_->queueManager.getJob(candidate).jobName == dependencyName) {
+                    return candidate;
+                }
+            }
+            return -1;
+        };
+        const auto visitDependency = [&](int index, auto&& self) -> void {
+            dependencyVisitState[index] = 1;
+            dependencyPath.push_back(index);
+            const auto job = impl_->queueManager.getJob(index);
+            for (const QString& dependencyName : job.dependsOn) {
+                const int dependencyIndex = findDependencyIndex(dependencyName);
+                if (dependencyIndex < 0 || !uniqueIndices.contains(dependencyIndex) ||
+                    impl_->queueManager.getJob(dependencyIndex).status != ArtifactRenderJob::Status::Pending) {
+                    continue;
+                }
+                const int dependencyState = dependencyVisitState[dependencyIndex];
+                if (dependencyState == 0) {
+                    self(dependencyIndex, self);
+                } else if (dependencyState == 1) {
+                    const auto cycleStart = std::find(
+                        dependencyPath.begin(), dependencyPath.end(), dependencyIndex);
+                    if (cycleStart != dependencyPath.end()) {
+                        cyclicIndices.insert(cycleStart, dependencyPath.end());
+                    }
+                }
+            }
+            dependencyPath.pop_back();
+            dependencyVisitState[index] = 2;
+        };
+        for (const int index : uniqueIndices) {
+            if (impl_->queueManager.getJob(index).status == ArtifactRenderJob::Status::Pending &&
+                dependencyVisitState[index] == 0) {
+                visitDependency(index, visitDependency);
+            }
+        }
+
+        int started = 0;
+        bool changed = false;
+        for (const int index : uniqueIndices) {
+            const auto currentJob = impl_->queueManager.getJob(index);
+            if (currentJob.status != ArtifactRenderJob::Status::Pending) {
+                continue;
+            }
+            if (cyclicIndices.contains(index)) {
+                impl_->queueManager.markJobFailed(
+                    index, QStringLiteral("Dependency cycle detected"));
+                changed = true;
+                continue;
+            }
+
+            QStringList dependencyErrors;
+            for (const QString& dependencyName : currentJob.dependsOn) {
+                const int dependencyIndex = findDependencyIndex(dependencyName);
+                if (dependencyIndex < 0) {
+                    dependencyErrors.append(
+                        QStringLiteral("Missing dependency: %1").arg(dependencyName));
+                    continue;
+                }
+                const auto dependencyJob = impl_->queueManager.getJob(dependencyIndex);
+                if (dependencyJob.status == ArtifactRenderJob::Status::Failed ||
+                    dependencyJob.status == ArtifactRenderJob::Status::Canceled) {
+                    dependencyErrors.append(
+                        QStringLiteral("Dependency '%1' is %2")
+                            .arg(dependencyName)
+                            .arg(dependencyJob.status == ArtifactRenderJob::Status::Failed
+                                     ? QStringLiteral("failed")
+                                     : QStringLiteral("canceled")));
+                }
+            }
+            if (!dependencyErrors.isEmpty()) {
+                impl_->queueManager.markJobFailed(
+                    index,
+                    QStringLiteral("Dependency validation failed: %1")
+                        .arg(dependencyErrors.join(QStringLiteral("; "))));
+                changed = true;
+                continue;
+            }
+
+            const auto preflight = preflightRenderQueueAt(index);
+            if (preflight.hasErrors()) {
+                impl_->queueManager.markJobFailed(index, summarizePreflightDiagnostics(preflight));
+                changed = true;
+                continue;
+            }
+            impl_->queueManager.startRendering(index);
+            impl_->selectiveJobIndices_.insert(index);
+            ++started;
+            changed = true;
+        }
+        if (changed) {
+            impl_->selectiveRun_ = started > 0;
             impl_->syncCoreQueueModel();
-            return;
+            if (started > 0) {
+                impl_->shutdownRequested_.store(false, std::memory_order_release);
+                startAllJobs();
+            }
         }
-        impl_->queueManager.startRendering(index);
-        impl_->syncCoreQueueModel();
+        return started;
     }
 
     void ArtifactRenderQueueService::pauseRenderQueueAt(int index)
@@ -5111,6 +5319,7 @@ namespace Artifact
             "ARTIFACT_RENDERER_EXECUTABLE").trimmed().isEmpty();
         const bool supportedFormat = isImageSequenceContainer(outputFormat)
             || isVideoContainer(outputFormat)
+            || isAudioContainer(outputFormat)
             || outputFormat == QStringLiteral("svg");
         if (!supportedFormat && !externalRendererConfigured) {
             result.addDiagnostic(makePreflightDiagnostic(
@@ -5133,7 +5342,12 @@ namespace Artifact
             || normalizedCodec == QStringLiteral("apng")
             || normalizedCodec == QStringLiteral("webp")
             || normalizedCodec == QStringLiteral("vp9");
-        if (!supportedCodec && !externalRendererConfigured) {
+        const bool supportedAudioCodec = normalizedCodec == QStringLiteral("pcm_s16le") ||
+            normalizedCodec == QStringLiteral("pcm_s24le") ||
+            normalizedCodec == QStringLiteral("aac") ||
+            normalizedCodec == QStringLiteral("mp3");
+        const bool codecAllowed = supportedCodec || supportedAudioCodec;
+        if (!codecAllowed && !externalRendererConfigured) {
             result.addDiagnostic(makePreflightDiagnostic(
                 ArtifactCore::DiagnosticSeverity::Error,
                 ArtifactCore::DiagnosticCategory::Configuration,
@@ -5141,6 +5355,19 @@ namespace Artifact
                 QStringLiteral("Job '%1' specifies unsupported codec '%2'.")
                     .arg(jobName, job.codec),
                 QStringLiteral("Choose a supported codec"),
+                compId));
+        }
+        if (isAudioContainer(outputFormat) &&
+            normalizedCodec != QStringLiteral("pcm_s16le") &&
+            normalizedCodec != QStringLiteral("pcm_s24le") &&
+            !externalRendererConfigured) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Error,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("WAV output requires a PCM audio codec"),
+                QStringLiteral("Audio-only WAV jobs cannot use video codec '%1'.")
+                    .arg(job.codec),
+                QStringLiteral("Choose PCM 16-bit or PCM 24-bit"),
                 compId));
         }
 
@@ -5390,6 +5617,27 @@ namespace Artifact
             }
         }
 
+        if (isAudioContainer(outputFormat) && !job.integratedRenderEnabled) {
+            const QString audioPath = job.audioSourcePath.trimmed();
+            const bool hasExternalWav = QFileInfo(audioPath).isFile() &&
+                QFileInfo(audioPath).suffix().compare(QStringLiteral("wav"),
+                                                       Qt::CaseInsensitive) == 0;
+            if (!composition->hasAudio() && !hasExternalWav) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Audio-only WAV output has no source"),
+                    QStringLiteral("Provide composition audio or an existing WAV source file."),
+                    QStringLiteral("Attach audio or set a valid WAV source path"),
+                    compId));
+            }
+            if (!audioPath.isEmpty() && !hasExternalWav && !composition->hasAudio()) {
+                auto diag = ArtifactCore::ProjectDiagnostic::createMissingFile(audioPath, QString());
+                diag.setSourceCompId(compId);
+                result.addDiagnostic(diag);
+            }
+        }
+
         appendMissingAssetDiagnostics(composition, compId, result);
         appendCompositionMismatchWarnings(job, composition, compId, result);
         appendTemplateLockDiagnostics(composition, compId, result);
@@ -5522,6 +5770,21 @@ namespace Artifact
         impl_->syncCoreQueueModel();
 
         return frames.size();
+    }
+
+    int ArtifactRenderQueueService::rerenderAllDetectedFailedFrames(int jobIndex)
+    {
+        const auto failedFrames = detectFailedFrames(jobIndex);
+        if (failedFrames.isEmpty()) {
+            return 0;
+        }
+
+        QList<int> frameNumbers;
+        frameNumbers.reserve(failedFrames.size());
+        for (const auto& failed : failedFrames) {
+            frameNumbers.append(failed.frameNumber);
+        }
+        return rerenderFailedFrames(jobIndex, frameNumbers);
     }
 
     bool ArtifactRenderQueueService::Impl::renderSingleFrame(const FrameRenderSnapshot& snap, FrameRenderOutput& output, QString& failureReason) {
@@ -5711,7 +5974,9 @@ namespace Artifact
         // path ordered; independent compositions and stateless jobs retain MFR.
         const bool useMfr = !useGpuBackend && totalFrames > 1 &&
             !usesComponentSimulation;
-        const int numWorkers = useMfr ? std::min(maxInFlightFrames_, totalFrames) : 1;
+        const int numWorkers = useMfr
+            ? std::max(1, std::min(maxInFlightFrames_, totalFrames))
+            : 1;
 
         FrameRenderSnapshot baseSnap;
         baseSnap.jobIndex = jobIndex;
@@ -6204,13 +6469,20 @@ namespace Artifact
         if (impl_->isRendering_.exchange(true, std::memory_order_acq_rel)) return;
         impl_->shutdownRequested_.store(false, std::memory_order_release);
 
-        impl_->expandSelectedFrameRanges();
-        impl_->expandEnabledRenderPasses();
+        if (!impl_->selectiveRun_) {
+            impl_->expandSelectedFrameRanges();
+            impl_->expandEnabledRenderPasses();
+        }
 
-        // Promote pending jobs before either queue backend starts.  Leaving
-        // them pending made the UI say the queue had started while the core
-        // renderer still observed an idle queue.
-        impl_->queueManager.startAllJobs();
+        // Promote only the jobs participating in this run.  A selective run
+        // must leave unrelated Pending jobs untouched for a later launch.
+        if (impl_->selectiveRun_) {
+            for (const int index : impl_->selectiveJobIndices_) {
+                impl_->queueManager.startRendering(index);
+            }
+        } else {
+            impl_->queueManager.startAllJobs();
+        }
         impl_->syncCoreQueueModel();
 
         // 既存のワーカースレッドがあれば待機
@@ -6266,6 +6538,10 @@ namespace Artifact
                 if (impl_->shutdownRequested_.load(std::memory_order_acquire)) break;
 
                 const auto job = impl_->queueManager.getJob(i);
+                if (impl_->selectiveRun_ &&
+                    !impl_->selectiveJobIndices_.contains(i)) {
+                    continue;
+                }
                 if (job.status != ArtifactRenderJob::Status::Rendering &&
                     job.status != ArtifactRenderJob::Status::Pending) {
                     continue;
@@ -6397,6 +6673,55 @@ namespace Artifact
                 effectiveJob.startFrame = startF;
                 effectiveJob.endFrame = endF;
                 effectiveJob.frameRangeMode = ArtifactRenderJob::FrameRangeMode::Custom;
+
+                const QString normalizedFormat = format.trimmed().toLower();
+                if (isAudioContainer(normalizedFormat)) {
+                    const auto audioComposition = impl_->resolveComposition(effectiveJob);
+                    const int audioBitDepth = effectiveJob.codec.trimmed().toLower() ==
+                        QStringLiteral("pcm_s24le") ? 24 : 16;
+                    QString audioError;
+                    bool audioSuccess = false;
+                    if (audioComposition && audioComposition->hasAudio()) {
+                        audioSuccess = exportCompositionAudioToWav(
+                            audioComposition, startF, endF, outputPath, &audioError,
+                            audioBitDepth);
+                    } else {
+                        const QString sourcePath = effectiveJob.audioSourcePath.trimmed();
+                        const QFileInfo sourceInfo(sourcePath);
+                        if (sourceInfo.isFile() && sourceInfo.suffix().compare(
+                                QStringLiteral("wav"), Qt::CaseInsensitive) == 0) {
+                            const QFileInfo destinationInfo(outputPath);
+                            if (sourceInfo.absoluteFilePath() == destinationInfo.absoluteFilePath()) {
+                                audioSuccess = true;
+                            } else {
+                                QFile::remove(outputPath);
+                                audioSuccess = QFile::copy(sourcePath, outputPath);
+                            }
+                            if (!audioSuccess) {
+                                audioError = QStringLiteral("Failed to copy WAV audio source");
+                            }
+                        } else {
+                            audioError = QStringLiteral("No composition audio or WAV source is available");
+                        }
+                    }
+                    if (audioSuccess) {
+                        completedJobs.insert(i);
+                    } else {
+                        failedJobs.insert(i);
+                    }
+                    QMetaObject::invokeMethod(this, [this, i, audioSuccess, audioError, anyFailure]() {
+                        if (audioSuccess) {
+                            impl_->queueManager.setJobProgress(i, 100);
+                            impl_->queueManager.setJobCompleted(i);
+                        } else {
+                            anyFailure->store(true, std::memory_order_release);
+                            impl_->queueManager.markJobFailed(
+                                i, audioError.isEmpty()
+                                    ? QStringLiteral("Audio export failed") : audioError);
+                        }
+                    }, Qt::QueuedConnection);
+                    continue;
+                }
 
                 std::atomic<bool> success = true;
                 std::atomic<int> framesRendered = 0;
@@ -6671,6 +6996,8 @@ namespace Artifact
 
             QMetaObject::invokeMethod(this, [this, anyFailure]() {
                 impl_->isRendering_.store(false, std::memory_order_release);
+                impl_->selectiveJobIndices_.clear();
+                impl_->selectiveRun_ = false;
                 if (impl_->allJobsCompleted) impl_->allJobsCompleted();
                 Q_EMIT allJobsCompleted();
             }, Qt::QueuedConnection);

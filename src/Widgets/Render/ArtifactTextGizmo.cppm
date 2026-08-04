@@ -271,20 +271,34 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
     auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
     float deltaX = canvasMouse.x - dragStartCanvasPos_.x();
     float deltaY = canvasMouse.y - dragStartCanvasPos_.y();
+    if (!std::isfinite(canvasMouse.x) || !std::isfinite(canvasMouse.y) ||
+        !std::isfinite(deltaX) || !std::isfinite(deltaY) ||
+        std::abs(deltaX) > 1.0e9f || std::abs(deltaY) > 1.0e9f) {
+        return false;
+    }
 
     QRectF bbox = dragStartBounds_;
 
     switch (activeHandle_) {
         case HandleType::Offset: {
-            auto* composition = static_cast<ArtifactAbstractComposition*>(textLayer->composition());
-            const auto frame = composition
-                                    ? ArtifactCore::RationalTime(0, 30000)
-                                    : ArtifactCore::RationalTime(0, 30000);
+            // Write the edit at the layer's current frame.  Using frame 0
+            // here made viewport drags silently alter a different time than
+            // the one currently being edited.
+            auto* composition = static_cast<ArtifactAbstractComposition*>(
+                textLayer->composition());
+            const double fps = composition
+                ? composition->frameRate().framerate() : 30.0;
+            const int64_t timeScale = std::max<int64_t>(
+                1, static_cast<int64_t>(std::llround(
+                    std::isfinite(fps) && fps > 0.0 ? fps : 30.0)));
+            const auto frame = ArtifactCore::RationalTime(
+                static_cast<int64_t>(textLayer->currentFrame()), timeScale);
             auto &start = textLayer->transform3D();
             start.setPosition(frame,
                               static_cast<float>(dragStartLayerPosition_.x() + deltaX),
                               static_cast<float>(dragStartLayerPosition_.y() + deltaY));
             textLayer->setDirty(LayerDirtyFlag::Transform);
+            textLayer->changed();
             break;
         }
         case HandleType::BoxLeft:
@@ -345,6 +359,7 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
 
     textLayer->setDirty();
     textLayer->updateImage();
+    textLayer->changed();
 
     return true;
 }

@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <d3d12.h>
 
@@ -22,6 +22,7 @@
 #include <functional>
 #include <optional>
 #include <utility>
+#include <QImage>
 #include <array>
 #include <chrono>
 #include <filesystem>
@@ -71,9 +72,15 @@ export namespace Artifact
   void setImageWriterPool();
 
   void addLayer();
+  void addLayer(float x, float y, const QImage& image);
 
 
   void renderStart();
+  void renderFrame(double time);
+  void drawSolidRect(const FloatColor& color);
+  void drawImage(float x, float y, const QImage& image);
+  void drawPoint(const Point2DF& point);
+  QImage toImage() const;
  };
 
 
@@ -88,6 +95,7 @@ export namespace Artifact
  public:
   Renderer2DFactory();
   ~Renderer2DFactory();
+  OffscreenRenderer2DPtr create(const Size_2D& size) const;
  };
 
 

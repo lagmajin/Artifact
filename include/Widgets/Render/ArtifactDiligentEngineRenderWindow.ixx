@@ -14,6 +14,7 @@
 #include <ShaderResourceBinding.h>
 #include <QColor>
 #include <QPoint>
+#include <QVector3D>
 #include <QString>
 #include <QWindow>
 #include <QWidget>
@@ -89,6 +90,8 @@ namespace Artifact
    float previewPitch_ = 25.0f;
    QVector3D previewTarget_{0.0f, 0.0f, 0.0f};
    float previewDistance_ = 4.0f;
+   QVector3D pickingRayOrigin_;
+   QVector3D pickingRayDirection_{0.0f, 0.0f, -1.0f};
    void render();
    void present();
    void ensureSolidResources();
@@ -130,6 +133,8 @@ namespace Artifact
   void requestRender();
   bool m_initialized = false;
   void pickingRay(int posx,int posy);
+  QVector3D pickingRayOrigin() const;
+  QVector3D pickingRayDirection() const;
 
  };
 

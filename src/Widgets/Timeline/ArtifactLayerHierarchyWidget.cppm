@@ -1,5 +1,6 @@
 module;
 #include <QHeaderView>
+#include <QMenu>
 #include <QTreeView>
 #include <QWidget>
 #include <utility>
@@ -65,7 +66,28 @@ ArtifactLayerHierarchyHeaderView::Impl::~Impl() {
 }
 
 void ArtifactLayerHierarchyHeaderView::Impl::showContextMenu() {
-  qDebug() << "Menu test";
+  if (!view_) {
+    return;
+  }
+
+  QMenu menu(view_);
+  menu.setTitle(QStringLiteral("Visible Columns"));
+  const QStringList labels = {
+      QStringLiteral("Visibility"), QStringLiteral("Lock"),
+      QStringLiteral("Type"), QStringLiteral("Name")};
+  for (int section = 0; section < labels.size(); ++section) {
+    QAction* action = menu.addAction(labels.at(section));
+    action->setCheckable(true);
+    action->setChecked(!view_->isSectionHidden(section));
+    action->setEnabled(section != 3);
+    QObject::connect(action, &QAction::toggled, view_,
+                     [this, section](bool visible) {
+                       if (view_) {
+                         view_->setSectionHidden(section, !visible);
+                       }
+                     });
+  }
+  menu.exec(view_->viewport()->mapToGlobal(view_->rect().center()));
 }
 
 ArtifactLayerHierarchyHeaderView::ArtifactLayerHierarchyHeaderView(

@@ -37,6 +37,7 @@ module;
 #include <QString>
 #include <QStringList>
 #include <QColor>
+#include <QJsonObject>
 export module Artifact.Composition.InOutPoints;
 
 
@@ -335,6 +336,10 @@ public:
      * @return XML string with marker data
      */
     QString exportToXML() const;
+
+    // Project persistence for in/out points and timeline markers.
+    QJsonObject toJson() const;
+    bool fromJson(const QJsonObject& object);
     
 public: // signals
     // Marker signals

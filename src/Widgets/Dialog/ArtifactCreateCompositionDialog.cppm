@@ -909,5 +909,12 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
  }
 
  void CreateCompositionDialog::closeEvent(QCloseEvent* event) { QDialog::closeEvent(event); }
- void CreateCompositionDialog::setDefaultFocus() {}
+ void CreateCompositionDialog::setDefaultFocus()
+ {
+  if (!impl_ || !impl_->compositionNameEdit_) {
+   return;
+  }
+  impl_->compositionNameEdit_->setFocus(Qt::OtherFocusReason);
+  impl_->compositionNameEdit_->selectAll();
+ }
 }

@@ -167,8 +167,7 @@ std::vector<AudioEffectParameter> VSTEffect::getUiParameters() const {
         effectParam.maxValue = param.maxValue;
         effectParam.defaultValue = param.defaultValue;
 
-        // 現在値を取得
-        // effectParam.value = host.getParameter(impl_->pluginId, param.index);
+        effectParam.value = host.getParameter(impl_->pluginId, param.index);
 
         params.push_back(effectParam);
     }
@@ -178,23 +177,39 @@ std::vector<AudioEffectParameter> VSTEffect::getUiParameters() const {
 
 void VSTEffect::setParameter(const String& name, float value) {
     const std::string key = ArtifactCore::toStdString(name);
-    impl_->parameters[key] = value;
-    
-    if (!impl_->isLoaded || impl_->pluginId < 0) return;
+    if (!impl_->isLoaded || impl_->pluginId < 0) {
+        impl_->parameters[key] = value;
+        return;
+    }
     
     auto& host = VSTHost::getInstance();
     auto pluginParams = host.getPluginParameters(impl_->pluginId);
     
     for (size_t i = 0; i < pluginParams.size(); i++) {
         if (pluginParams[i].name == key) {
-            host.setParameter(impl_->pluginId, static_cast<int>(i), value);
-            break;
+            const float clamped = std::clamp(value, pluginParams[i].minValue,
+                                             pluginParams[i].maxValue);
+            if (host.setParameter(impl_->pluginId, static_cast<int>(i), clamped)) {
+                impl_->parameters[key] = clamped;
+            }
+            return;
         }
     }
+    impl_->parameters[key] = value;
 }
 
 float VSTEffect::getParameter(const String& name) const {
-    auto it = impl_->parameters.find(ArtifactCore::toStdString(name));
+    const std::string key = ArtifactCore::toStdString(name);
+    if (impl_->isLoaded && impl_->pluginId >= 0) {
+        auto& host = VSTHost::getInstance();
+        const auto pluginParams = host.getPluginParameters(impl_->pluginId);
+        for (size_t i = 0; i < pluginParams.size(); ++i) {
+            if (pluginParams[i].name == key) {
+                return host.getParameter(impl_->pluginId, static_cast<int>(i));
+            }
+        }
+    }
+    const auto it = impl_->parameters.find(key);
     if (it != impl_->parameters.end()) {
         return it->second;
     }
@@ -223,11 +238,11 @@ bool VSTEffect::hasEditor() const {
 }
 
 void VSTEffect::setSampleRate(int sampleRate) {
-    impl_->sampleRate = sampleRate;
+    impl_->sampleRate = std::max(1, sampleRate);
 
     if (impl_->isLoaded && impl_->pluginId >= 0) {
         auto& host = VSTHost::getInstance();
-        host.setSampleRate(sampleRate);
+        host.setSampleRate(impl_->sampleRate);
     }
 }
 

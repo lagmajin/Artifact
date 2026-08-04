@@ -2265,6 +2265,15 @@ QImage ArtifactTextLayer::toQImage() const {
   return impl_->renderedImage_;
 }
 
+QImage ArtifactTextLayer::getThumbnail(int width, int height) const
+{
+    const QSize targetSize(std::max(1, width), std::max(1, height));
+    const QImage image = toQImage();
+    return image.isNull()
+        ? ArtifactAbstractLayer::getThumbnail(targetSize.width(), targetSize.height())
+        : image.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+}
+
 const ArtifactCore::ImageF32x4_RGBA &ArtifactTextLayer::currentFrameBuffer() const {
   if (impl_->isDirty_ || impl_->renderedImage_.isNull() || !impl_->renderedBuffer_) {
     const_cast<ArtifactTextLayer *>(this)->updateImage();

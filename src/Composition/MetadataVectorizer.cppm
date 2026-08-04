@@ -1,6 +1,9 @@
-﻿module;
+module;
 
 #include <QString>
+#include <QSize>
+#include <cstdint>
+#include <limits>
 #include <QVector>
 #include <vector>
 #include <cmath>
@@ -125,16 +128,34 @@ namespace Artifact {
    return components;
   }
 
-  // メタデータの抽出と正規化
-  // 注: 実装時にArtifactAbstractCompositionのAPIを確認して適切に抽出してください
+  const QSize size = composition->effectiveCompositionSize();
+  const float fps = std::max(1.0f, composition->frameRate().framerate());
+  const auto range = composition->frameRange();
+  const float frameCount = static_cast<float>(std::max<int64_t>(0, range.frameCount()));
 
-  // 仮の実装
-  components.duration = 0.5f;       // 正規化値（0-1）
-  components.frameRate = impl_->normalizeValue(30.0f, 120.0f, 1.0f);  // 1-120 fpsの範囲で正規化
-  components.width = impl_->normalizeValue(1920.0f, 4096.0f, 320.0f);  // 320-4096pxの範囲で正規化
-  components.height = impl_->normalizeValue(1080.0f, 2160.0f, 240.0f); // 240-2160pxの範囲で正規化
-  components.layerCount = impl_->normalizeValue(5.0f, 100.0f, 0.0f);   // 0-100レイヤーの範囲で正規化
-  components.keyframeCount = impl_->normalizeValue(20.0f, 1000.0f, 0.0f); // 0-1000キーフレームの範囲で正規化
+  // Compositionの実データから正規化する。取得できない値を固定値で捏造しない。
+  components.duration = impl_->normalizeValue(frameCount / fps, 300.0f, 0.0f);
+  components.frameRate = impl_->normalizeValue(fps, 120.0f, 1.0f);
+  components.width = impl_->normalizeValue(static_cast<float>(size.width()), 4096.0f, 320.0f);
+  components.height = impl_->normalizeValue(static_cast<float>(size.height()), 2160.0f, 240.0f);
+  components.layerCount = impl_->normalizeValue(static_cast<float>(composition->layerCount()), 100.0f, 0.0f);
+  std::size_t keyframeCount = 0;
+  for (const auto& layer : composition->allLayer()) {
+   if (!layer) continue;
+   for (const auto& group : layer->getLayerPropertyGroups()) {
+    for (const auto& property : group.allProperties()) {
+     if (!property) continue;
+     const auto frames = property->getKeyFrames();
+     if (frames.size() > std::numeric_limits<std::size_t>::max() - keyframeCount) {
+      keyframeCount = std::numeric_limits<std::size_t>::max();
+      break;
+     }
+     keyframeCount += frames.size();
+    }
+   }
+  }
+  components.keyframeCount = impl_->normalizeValue(
+   static_cast<float>(std::min<std::size_t>(keyframeCount, 1000)), 1000.0f, 0.0f);
   components.complexity = impl_->calculateComplexity(
    components.layerCount,
    components.keyframeCount,

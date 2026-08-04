@@ -45,6 +45,7 @@ export module Undo.UndoManager;
 
 
 export import Artifact.Composition.Abstract;
+import Artifact.Composition.InOutPoints;
 import Utils.Id;
 import Utils.String.UniString;
 import Core.ArtifactString;
@@ -271,6 +272,24 @@ struct AlignLayerSnapshot {
     QString layerId;
     float beforeX, beforeY;
     float afterX, afterY;
+    float beforeScaleX = 1.0f;
+    float beforeScaleY = 1.0f;
+    float afterScaleX = 1.0f;
+    float afterScaleY = 1.0f;
+};
+
+class InOutPointsSnapshotCommand : public UndoCommand {
+public:
+    InOutPointsSnapshotCommand(ArtifactInOutPoints* points,
+                               const QJsonObject& before,
+                               const QJsonObject& after);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactInOutPoints* points_ = nullptr;
+    QJsonObject before_;
+    QJsonObject after_;
 };
 class AlignLayersUndoCommand : public UndoCommand {
 public:

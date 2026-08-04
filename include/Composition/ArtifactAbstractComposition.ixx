@@ -34,6 +34,7 @@ import Composition.Settings;
 import Audio.Analyze;
 import Audio.Segment;
 import Audio.Mixer;
+import Artifact.Composition.InOutPoints;
 import Memory.SharedPtr;
 import Property.Abstract;
 import Artifact.Layer.Abstract;
@@ -336,6 +337,7 @@ export namespace Artifact {
    */
   void ensureAudioMixer();
   ArtifactCore::SharedPtr<AudioMixer> getAudioMixer() const;
+  ArtifactInOutPoints* inOutPoints() const;
 
 
   QJsonDocument toJson() const;

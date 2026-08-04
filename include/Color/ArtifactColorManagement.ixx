@@ -34,6 +34,7 @@ module;
 #include <random>
 #include <QObject>
 #include <QString>
+#include <QString>
 #include <QVector>
 #include <QMatrix4x4>
 export module Artifact.Color.Management;
@@ -225,6 +226,10 @@ public:
     // ワークスペース設定
     void setWorkingSpace(ColorSpace space);
     ColorSpace workingSpace() const;
+
+    // Display profile identifier used by the output transform/UI.
+    void setDisplayProfile(const QString& profile);
+    QString displayProfile() const;
 
 Q_SIGNALS:
     void colorSpaceChanged(ColorSpace space) W_SIGNAL(colorSpaceChanged, space);

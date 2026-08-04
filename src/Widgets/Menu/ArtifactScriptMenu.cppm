@@ -181,7 +181,10 @@ bool ArtifactScriptMenu::Impl::ensureScriptsWorkspaceScaffold() const
              "# ArtifactStudio AE utility pack\n"
              "# Quick Rename Layers\n"
              "\n"
-             "print(\"Quick Rename Layers stub\")\n"))) {
+             "import artifact\n"
+             "\n"
+             "# Rename the current selection using a deterministic sequence.\n"
+             "artifact.rename_selected_layers(base_name=\"Layer\", start_index=1, padding=2)\n"))) {
   return false;
  }
 
@@ -191,7 +194,9 @@ bool ArtifactScriptMenu::Impl::ensureScriptsWorkspaceScaffold() const
              "# ArtifactStudio AE utility pack\n"
              "# Clean Layers\n"
              "\n"
-             "print(\"Clean Layers stub\")\n"))) {
+             "import artifact\n"
+             "\n"
+             "artifact.clean_selected_layers()\n"))) {
   return false;
  }
 
@@ -201,7 +206,9 @@ bool ArtifactScriptMenu::Impl::ensureScriptsWorkspaceScaffold() const
              "# ArtifactStudio AE utility pack\n"
              "# Trim Comp to Content\n"
              "\n"
-             "print(\"Trim Comp to Content stub\")\n"))) {
+             "import artifact\n"
+             "\n"
+             "artifact.trim_comp_to_content()\n"))) {
   return false;
  }
 

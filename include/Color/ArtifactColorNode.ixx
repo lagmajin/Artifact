@@ -163,6 +163,11 @@ public:
     PortId inputPortId(int index) const;
     PortId outputPortId(int index) const;
 
+protected:
+    void addInputPort(const PortDescriptor& descriptor);
+
+public:
+
     // --- UI Position (for node graph editor) ---
     QPointF position() const;
     void setPosition(const QPointF& pos);

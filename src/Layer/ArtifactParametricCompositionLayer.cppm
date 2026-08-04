@@ -277,7 +277,10 @@ QRectF ArtifactParametricCompositionLayer::localBounds() const
 {
     if (auto def = impl_->instance_.definition()) {
         // Use definition metadata for bounds if available
-        // For now, return a default size
+        const auto source = sourceSize();
+        if (source.width > 0 && source.height > 0) {
+            return QRectF(0, 0, source.width, source.height);
+        }
         return QRectF(0, 0, 1920, 1080);
     }
     return QRectF(0, 0, 100, 100);

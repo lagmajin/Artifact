@@ -147,6 +147,7 @@ export namespace Artifact {
   QString imagePath_;
   QStringList sequencePaths_;
   double sequenceFrameRate_ = 0.0;
+  int psdSubimageIndex_ = -1;
   QString inputColorSpace_;
   QString inputTransferFunction_;
 
@@ -159,6 +160,8 @@ export namespace Artifact {
   void setSequencePaths(const QStringList& paths) { sequencePaths_ = paths; }
   double sequenceFrameRate() const { return sequenceFrameRate_; }
   void setSequenceFrameRate(double frameRate) { sequenceFrameRate_ = frameRate; }
+  int psdSubimageIndex() const { return psdSubimageIndex_; }
+  void setPsdSubimageIndex(int index) { psdSubimageIndex_ = index < 0 ? -1 : index; }
   QString inputColorSpace() const { return inputColorSpace_; }
   void setInputColorSpace(const QString& value) { inputColorSpace_ = value; }
   QString inputTransferFunction() const { return inputTransferFunction_; }

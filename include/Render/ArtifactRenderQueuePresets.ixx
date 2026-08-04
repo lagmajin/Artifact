@@ -45,6 +45,9 @@ struct ArtifactRenderFormatPreset {
     
     // ビデオプリセット
     static QVector<ArtifactRenderFormatPreset> getVideoPresets();
+
+    // Audio-only output presets (WAV and other registered audio formats).
+    static QVector<ArtifactRenderFormatPreset> getAudioPresets();
 };
 
 /**

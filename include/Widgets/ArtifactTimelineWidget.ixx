@@ -6,6 +6,8 @@
 #include <QFocusEvent>
 #include <QWheelEvent>
 #include <QKeyEvent>
+#include <QPointF>
+#include <QVector>
 
 #include <QWidget>
 export module Artifact.Widgets.Timeline;
@@ -88,6 +90,11 @@ class ArtifactTimelineWidget :public QWidget {
   void showKeyPatternDialog();
   void applyAnimationPreset(const ArtifactCore::KeyframePatternPreset preset);
   void applyKeyPattern(const ArtifactCore::KeyframePatternRequest& request);
+  bool applyTrajectoryToProperty(const LayerID& layerId,
+                                 const QString& propertyPath,
+                                 const QVector<QPointF>& trajectory,
+                                 int startFrame,
+                                 int numFrames);
   void jumpToSearchHit(int step);
   void jumpToKeyframeHit(int step);
   void jumpToFirstKeyframe();

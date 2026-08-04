@@ -34,6 +34,7 @@ export namespace Artifact {
     bool setLayerPropertyValue(const QString &propertyPath, const QVariant &value) override;
 
     QImage toQImage() const;
+    QImage getThumbnail(int width = 128, int height = 128) const override;
 
     QJsonObject toJson() const override;
 

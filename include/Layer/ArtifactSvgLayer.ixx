@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <iostream>
 #include <cstdint>
@@ -54,6 +54,7 @@ public:
   ~ArtifactSvgLayer();
 
   QImage toQImage() const;
+  QImage getThumbnail(int width = 128, int height = 128) const override;
   const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
   bool hasCurrentFrameBuffer() const;
   bool loadFromPath(const QString& path);

@@ -220,6 +220,33 @@ export namespace Artifact {
         bool compile() {
             executionOrder_.clear();
 
+            // Revalidate the serialized/editable connection set at the
+            // compilation boundary.  connect() performs these checks for
+            // new edges, but compile() must also protect the executor from
+            // older or externally restored graph data.
+            std::set<std::pair<std::string, int>> occupiedInputs;
+            for (const auto& c : connections_) {
+                if (!c.enabled) continue;
+                const auto source = findNode(c.sourceNodeId);
+                const auto target = findNode(c.targetNodeId);
+                if (!source || !target ||
+                    c.sourcePortIndex < 0 ||
+                    c.sourcePortIndex >= static_cast<int>(source->outputPorts().size()) ||
+                    c.targetPortIndex < 0 ||
+                    c.targetPortIndex >= static_cast<int>(target->inputPorts().size()) ||
+                    !source->outputPorts()[c.sourcePortIndex].isCompatibleWith(
+                        target->inputPorts()[c.targetPortIndex])) {
+                    compiled_ = false;
+                    return false;
+                }
+                const auto inputKey = std::make_pair(
+                    c.targetNodeId.toString().toStdString(), c.targetPortIndex);
+                if (!occupiedInputs.insert(inputKey).second) {
+                    compiled_ = false;
+                    return false;
+                }
+            }
+
             // Kahn's algorithm
             // In-degree 計算
             std::unordered_map<std::string, int> inDegree;

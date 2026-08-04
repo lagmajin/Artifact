@@ -1559,6 +1559,15 @@ const ArtifactCore::ImageF32x4_RGBA& ArtifactVideoLayer::currentFrameBuffer() co
     return impl_->currentFrameBuffer_;
 }
 
+QImage ArtifactVideoLayer::getThumbnail(int width, int height) const
+{
+    const QSize targetSize(std::max(1, width), std::max(1, height));
+    const QImage image = currentFrameImageBuffer().toQImage();
+    return image.isNull()
+        ? ArtifactAbstractLayer::getThumbnail(targetSize.width(), targetSize.height())
+        : image.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+}
+
 bool ArtifactVideoLayer::hasCurrentFrameBuffer() const
 {
     std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);

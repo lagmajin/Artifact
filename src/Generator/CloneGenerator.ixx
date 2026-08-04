@@ -69,12 +69,50 @@ namespace Artifact {
         World
     };
 
-    // Minimal placeholder for SimpleSpline
     class SimpleSpline {
     public:
         struct Point { QVector3D position; QVector3D tangent; };
-        Point getPoint(float /*t*/) const { return Point{{0,0,0},{0,0,0}}; }
-        int pointCount() const { return 0; }
+        void setPoints(const QVector<Point>& points) { points_ = points; }
+        void addPoint(const Point& point) { points_.push_back(point); }
+        void clear() { points_.clear(); }
+        Point getPoint(float t) const {
+            if (points_.isEmpty()) return Point{{0, 0, 0}, {0, 0, 0}};
+            if (points_.size() == 1) return points_.front();
+            const float safeT = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.0f;
+            const float u = safeT *
+                            static_cast<float>(points_.size() - 1);
+            const int lastSegment = static_cast<int>(points_.size()) - 2;
+            const int i1 = std::clamp(static_cast<int>(std::floor(u)), 0,
+                                      lastSegment);
+            const int i0 = std::max(0, i1 - 1);
+            const int lastPoint = static_cast<int>(points_.size()) - 1;
+            const int i2 = std::min(lastPoint, i1 + 1);
+            const int i3 = std::min(lastPoint, i1 + 2);
+            const float s = u - static_cast<float>(i1);
+            const auto& p0 = points_[i0].position;
+            const auto& p1 = points_[i1].position;
+            const auto& p2 = points_[i2].position;
+            const auto& p3 = points_[i3].position;
+            const float s2 = s * s;
+            const float s3 = s2 * s;
+            const QVector3D position =
+                0.5f * ((2.0f * p1) + (-p0 + p2) * s +
+                        (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * s2 +
+                        (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * s3);
+            const QVector3D tangent =
+                0.5f * ((-p0 + p2) +
+                        2.0f * (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * s +
+                        3.0f * (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * s2);
+            const float tangentLength = tangent.length();
+            const QVector3D safeTangent = std::isfinite(tangentLength) &&
+                                                   tangentLength > 1.0e-6f
+                                               ? tangent / tangentLength
+                                               : QVector3D(0.0f, 0.0f, 0.0f);
+            return Point{position, safeTangent};
+        }
+        int pointCount() const { return points_.size(); }
+    private:
+        QVector<Point> points_;
     };
 
     // ─────────────────────────────────────────────────────────

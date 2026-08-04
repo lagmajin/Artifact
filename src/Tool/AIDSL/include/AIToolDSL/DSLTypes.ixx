@@ -7,6 +7,7 @@
 #include <variant>
 #include <cstdint>
 #include <unordered_map>
+#include <functional>
 
 export module AIToolDSL.Types;
 
@@ -35,6 +36,7 @@ struct CommandAction : Action {
     std::string argument;
     std::string valueText;
     std::string frameText;
+    std::string targetText;
 };
 
 // Value variant (supports all property types)
@@ -262,12 +264,19 @@ public:
     // Execute commands
     std::string execute(const DSLScript& script);
 
+    // Host integration: apply a compiled action. Returning false aborts the
+    // current script and is reported as an execution failure.
+    void setActionExecutor(std::function<bool(const Action&)> executor);
+    void setActionUndoExecutor(std::function<bool(const Action&)> executor);
+
     // Execute a single query
     std::string executeQuery(const QueryNode& query);
 
     // Undo support
     bool undo();
+    bool redo();
     bool canUndo() const;
+    bool canRedo() const;
 
     // Set current composition context (from host app)
     void setActiveComp(const CompID& compId);
@@ -292,6 +301,8 @@ private:
     std::unordered_map<std::string, CompID> compNameToId_;
     std::unordered_map<std::string, std::vector<LayerID>> layerNameToIds_;
     CompID activeCompId_;
+    std::function<bool(const Action&)> actionExecutor_;
+    std::function<bool(const Action&)> actionUndoExecutor_;
     mutable std::vector<std::unique_ptr<Action>> undoStack_;
     mutable std::vector<std::unique_ptr<Action>> redoStack_;
 };

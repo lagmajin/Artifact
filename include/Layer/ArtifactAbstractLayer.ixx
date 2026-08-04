@@ -586,7 +586,7 @@ public:
   /*Script*/
 
   /*Thumbnail*/
-  QImage getThumbnail(int width = 128, int height = 128) const;
+  virtual QImage getThumbnail(int width = 128, int height = 128) const;
   /*Thumbnail*/
 
   virtual std::vector<ArtifactCore::PropertyGroup>

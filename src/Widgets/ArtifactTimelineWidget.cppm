@@ -5281,6 +5281,75 @@ void ArtifactTimelineWidget::applyKeyPattern(
   }
 }
 
+bool ArtifactTimelineWidget::applyTrajectoryToProperty(
+    const LayerID& layerId, const QString& propertyPath,
+    const QVector<QPointF>& trajectory, const int startFrame,
+    const int numFrames)
+{
+  if (trajectory.isEmpty() || numFrames <= 0 || !impl_) return false;
+
+  ArtifactCompositionPtr composition;
+  if (auto* service = ArtifactProjectService::instance()) {
+    composition = service->currentComposition().lock();
+  }
+  if (!composition) return false;
+
+  const auto layer = composition->layerById(layerId);
+  if (!layer) return false;
+  const auto property = layer->getProperty(propertyPath);
+  if (!property) return false;
+
+  const double frameRate = composition->frameRate().framerate();
+  if (!std::isfinite(frameRate) || frameRate <= 0.0 || frameRate > 10000.0) {
+    return false;
+  }
+  const int frameScale = std::max(1, static_cast<int>(std::llround(frameRate)));
+
+  const QVector<ArtifactCore::TrajectoryKeyframe> generated =
+      ArtifactCore::KeyframePatternGenerator::generateFromTrajectory(
+          trajectory, startFrame, numFrames, frameScale);
+  if (generated.isEmpty()) return false;
+
+  const QVector<KeyframePropertyRef> refs{{layerId, propertyPath}};
+  const auto before = captureKeyframePropertySnapshots(composition, refs);
+  property->setAnimatable(true);
+  property->clearKeyFrames();
+  for (const auto& keyframe : generated) {
+    property->addKeyFrame(
+        keyframe.time, QVariant::fromValue(keyframe.value),
+        static_cast<ArtifactCore::InterpolationType>(0));
+  }
+  layer->setDirty();
+  layer->changed();
+
+  if (auto* manager = UndoManager::instance()) {
+    const auto after = captureKeyframePropertySnapshots(composition, refs);
+    QPointer<ArtifactTimelineWidget> self(this);
+    manager->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+        QStringLiteral("Apply Motion Trajectory"),
+        [composition, after, self]() {
+          applyKeyframePropertySnapshots(composition, after);
+          if (self) {
+            self->refreshTracks();
+            self->updateKeyframeState();
+            self->updateSelectionState();
+          }
+        },
+        [composition, before, self]() {
+          applyKeyframePropertySnapshots(composition, before);
+          if (self) {
+            self->refreshTracks();
+            self->updateKeyframeState();
+            self->updateSelectionState();
+          }
+        }));
+  }
+  refreshTracks();
+  updateKeyframeState();
+  updateSelectionState();
+  return true;
+}
+
 bool ArtifactTimelineWidget::isGraphEditorFocusWidget(const QWidget *widget) const
 {
   if (!impl_ || !widget) {

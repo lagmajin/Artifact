@@ -164,7 +164,7 @@ bool ArtifactMotionSketchTool::beginSketch(const QPointF& canvasPos, ArtifactAbs
 
 bool ArtifactMotionSketchTool::addSample(const QPointF& canvasPos)
 {
-    if (!impl_->sketching) return false;
+    if (!impl_->sketching || !isFinitePoint(canvasPos)) return false;
 
     const double elapsed = impl_->sketchTimer.elapsed() / 1000.0;
     if (!impl_->sampledTimes.empty()) {
@@ -185,15 +185,26 @@ bool ArtifactMotionSketchTool::finishSketch()
     impl_->sketchStartFrame = 0;
 
     auto layer = impl_->targetLayer;
-    if (!layer || impl_->sampledPoints.size() < 2) return false;
+    if (!layer || impl_->sampledPoints.size() < 2) {
+        impl_->sampledPoints.clear();
+        impl_->sampledTimes.clear();
+        impl_->targetLayer.reset();
+        return false;
+    }
 
     if (impl_->sampledPoints.size() != impl_->sampledTimes.size()) {
+        impl_->sampledPoints.clear();
+        impl_->sampledTimes.clear();
+        impl_->targetLayer.reset();
         return false;
     }
     for (size_t i = 0; i < impl_->sampledPoints.size(); ++i) {
         if (!isFinitePoint(impl_->sampledPoints[i]) ||
             !std::isfinite(impl_->sampledTimes[i]) ||
             impl_->sampledTimes[i] < 0.0) {
+            impl_->sampledPoints.clear();
+            impl_->sampledTimes.clear();
+            impl_->targetLayer.reset();
             return false;
         }
     }
@@ -259,6 +270,10 @@ bool ArtifactMotionSketchTool::finishSketch()
             LayerChangedEvent{comp->id().toString(), layer->id().toString(),
                               LayerChangedEvent::ChangeType::Modified});
     }
+
+    impl_->sampledPoints.clear();
+    impl_->sampledTimes.clear();
+    impl_->targetLayer.reset();
 
     return true;
 }

@@ -21,9 +21,12 @@ module;
 #include <QFormLayout>
 #include <QDoubleSpinBox>
 #include <QComboBox>
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <cmath>
+#include <functional>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.AudioMixer;
@@ -42,6 +45,49 @@ namespace Artifact {
 W_OBJECT_IMPL(AudioEffectSlotWidget)
 W_OBJECT_IMPL(AudioChannelStripWidget)
 W_OBJECT_IMPL(AudioMixerWidget)
+
+class RoutingComboBox final : public QComboBox {
+public:
+    explicit RoutingComboBox(QWidget* parent = nullptr) : QComboBox(parent) {}
+    std::function<void(int)> acceptedSelection;
+
+protected:
+    void hidePopup() override {
+        QComboBox::hidePopup();
+        if (acceptedSelection) acceptedSelection(currentIndex());
+    }
+};
+
+class SidechainButton final : public QPushButton {
+public:
+    explicit SidechainButton(QWidget* parent = nullptr) : QPushButton(parent) {}
+    std::function<void()> openEditor;
+
+protected:
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton && openEditor) {
+            openEditor();
+            event->accept();
+            return;
+        }
+        QPushButton::mousePressEvent(event);
+    }
+};
+
+class ActionButton final : public QPushButton {
+public:
+    explicit ActionButton(QWidget* parent = nullptr) : QPushButton(parent) {}
+    std::function<void()> invoked;
+protected:
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton && invoked) {
+            invoked();
+            event->accept();
+            return;
+        }
+        QPushButton::mousePressEvent(event);
+    }
+};
 
 // ============================================================================
 // AudioEffectSlotWidget
@@ -226,8 +272,10 @@ void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
 // AudioChannelStripWidget
 // ============================================================================
 
-AudioChannelStripWidget::AudioChannelStripWidget(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus, QWidget* parent)
-    : QWidget(parent), bus_(bus) {
+AudioChannelStripWidget::AudioChannelStripWidget(
+    ArtifactCore::SharedPtr<ArtifactCore::AudioBus> bus,
+    ArtifactCore::AudioMixer* mixer, std::function<void()> onChanged, QWidget* parent)
+    : QWidget(parent), bus_(bus), mixer_(mixer), onChanged_(std::move(onChanged)) {
     
     analyzer_ = std::make_unique<ArtifactCore::AudioAnalyzer>(1024);
     clipTimer_.start();
@@ -265,6 +313,122 @@ AudioChannelStripWidget::AudioChannelStripWidget(ArtifactCore::SharedPtr<Artifac
     namePalette.setColor(QPalette::WindowText, QColor(224, 224, 224));
     nameLabel->setPalette(namePalette);
     layout->addWidget(nameLabel);
+
+    if (mixer_ && bus_ && bus_ != mixer_->getMasterBus()) {
+        auto* editButton = new ActionButton(this);
+        editButton->setText(QStringLiteral("Rename"));
+        editButton->setAccessibleName(QStringLiteral("Rename bus: %1").arg(busName));
+        editButton->invoked = [this, busName]() {
+            if (!bus_) return;
+            bool accepted = false;
+            const QString next = QInputDialog::getText(
+                this, QStringLiteral("Rename audio bus"), QStringLiteral("Name"),
+                QLineEdit::Normal, busName, &accepted).trimmed();
+            if (!accepted || next.isEmpty() || !mixer_) return;
+            if (!mixer_->findBusByName(next)) {
+                bus_->setName(ArtifactCore::ZeroString(next.toUtf8().constData()));
+                if (onChanged_) onChanged_();
+            }
+        };
+        layout->addWidget(editButton);
+
+        auto* removeButton = new ActionButton(this);
+        removeButton->setText(QStringLiteral("Remove"));
+        removeButton->setAccessibleName(QStringLiteral("Remove bus: %1").arg(busName));
+        removeButton->invoked = [this]() {
+            if (!mixer_ || !bus_) return;
+            mixer_->removeBus(bus_);
+            if (onChanged_) onChanged_();
+        };
+        layout->addWidget(removeButton);
+    }
+
+    // Output routing is edited through AudioMixer, which owns the graph.
+    if (mixer_ && bus_ && bus_ != mixer_->getMasterBus()) {
+        auto* routeLabel = new QLabel(QStringLiteral("Route"), this);
+        routeLabel->setAlignment(Qt::AlignCenter);
+        auto* routingCombo = new RoutingComboBox(this);
+        routeCombo_ = routingCombo;
+        routeCombo_->setAccessibleName(QStringLiteral("Output route: %1").arg(busName));
+        routeCombo_->setAccessibleDescription(
+            QStringLiteral("Select the destination bus for %1").arg(busName));
+        const auto buses = mixer_->getAllBuses();
+        int selectedIndex = 0;
+        for (const auto& target : buses) {
+            if (!target || target == bus_) continue;
+            const auto targetName = target->getName();
+            const QString label = QString::fromUtf8(
+                targetName.data(), static_cast<qsizetype>(targetName.length()));
+            routeCombo_->addItem(label);
+            if (mixer_->getRoutingTarget(bus_) == target)
+                selectedIndex = routeCombo_->count() - 1;
+        }
+        if (routeCombo_->count() > 0) {
+            routeCombo_->setCurrentIndex(selectedIndex);
+            routingCombo->acceptedSelection = [this](int index) {
+                if (!mixer_ || !bus_ || index < 0) return;
+                const auto buses = mixer_->getAllBuses();
+                int routeIndex = 0;
+                for (const auto& target : buses) {
+                    if (!target || target == bus_) continue;
+                    if (routeIndex++ == index) {
+                        mixer_->connect(bus_, target);
+                        return;
+                    }
+                }
+            };
+            layout->addWidget(routeLabel);
+            layout->addWidget(routeCombo_);
+
+            auto* sidechainButton = new SidechainButton(this);
+            sidechainButton->setText(QStringLiteral("SC"));
+            sidechainButton->setAccessibleName(
+                QStringLiteral("Sidechain sends: %1").arg(busName));
+            sidechainButton->setAccessibleDescription(
+                QStringLiteral("Edit sidechain sends from %1").arg(busName));
+            sidechainButton->openEditor = [this, busName, sidechainButton]() {
+                if (!mixer_ || !bus_) return;
+                QMenu menu(this);
+                const auto buses = mixer_->getAllBuses();
+                for (const auto& target : buses) {
+                    if (!target || target == bus_) continue;
+                    const auto name = target->getName();
+                    const QString label = QString::fromUtf8(
+                        name.data(), static_cast<qsizetype>(name.length()));
+                    auto* action = menu.addAction(label);
+                    action->setData(label);
+                }
+                menu.addSeparator();
+                auto* clearAction = menu.addAction(QStringLiteral("Clear sends"));
+                QAction* chosen = menu.exec(
+                    sidechainButton->mapToGlobal(QPoint(0, sidechainButton->height())));
+                if (!chosen) return;
+                if (chosen == clearAction) {
+                    for (const auto& send : mixer_->getSideChainSends(bus_)) {
+                        if (send.first) mixer_->removeSideChainSend(bus_, send.first);
+                    }
+                    return;
+                }
+                const QString targetName = chosen->data().toString();
+                const auto target = mixer_->findBusByName(targetName);
+                if (!target) return;
+                bool accepted = false;
+                const double amount = QInputDialog::getDouble(
+                    this, QStringLiteral("Sidechain amount"),
+                    QStringLiteral("Amount for %1 → %2")
+                        .arg(busName, targetName), 1.0, 0.0, 1.0, 2, &accepted);
+                if (accepted) {
+                    mixer_->addSideChainSend(
+                        bus_, target, static_cast<float>(amount));
+                }
+            };
+            layout->addWidget(sidechainButton);
+        } else {
+            delete routeCombo_;
+            routeCombo_ = nullptr;
+            delete routeLabel;
+        }
+    }
 
     // 2. Pan Pot (簡易的に水平スライダー)
     QSlider* panSlider = new QSlider(Qt::Horizontal, this);
@@ -475,10 +639,34 @@ AudioMixerWidget::AudioMixerWidget(ArtifactCore::AudioMixer* mixer, QWidget* par
 AudioMixerWidget::~AudioMixerWidget() = default;
 
 void AudioMixerWidget::refreshBuses() {
+    if (addBusButton_) {
+        layout()->removeWidget(addBusButton_);
+        addBusButton_->deleteLater();
+        addBusButton_ = nullptr;
+    }
     for (auto* strip : strips_) {
+        layout()->removeWidget(strip);
         strip->deleteLater();
     }
     strips_.clear();
+
+    auto* addButton = new ActionButton(this);
+    addBusButton_ = addButton;
+    addButton->setText(QStringLiteral("+ Bus"));
+    addButton->setFixedWidth(72);
+    addButton->setAccessibleName(QStringLiteral("Add audio bus"));
+    addButton->invoked = [this]() {
+        if (!mixer_) return;
+        bool accepted = false;
+        const QString name = QInputDialog::getText(
+            this, QStringLiteral("Add audio bus"), QStringLiteral("Name"),
+            QLineEdit::Normal, QStringLiteral("Bus"), &accepted).trimmed();
+        if (accepted && !name.isEmpty() && !mixer_->findBusByName(name)) {
+            mixer_->createBus(ArtifactCore::ZeroString(name.toUtf8().constData()));
+            refreshBuses();
+        }
+    };
+    layout()->addWidget(addButton);
 
     auto allBuses = mixer_->getAllBuses();
     bool hasMaster = false;
@@ -489,7 +677,8 @@ void AudioMixerWidget::refreshBuses() {
         if (isMaster && hasMaster) continue;
         hasMaster = hasMaster || isMaster;
 
-        auto* strip = new AudioChannelStripWidget(bus, this);
+        auto* strip = new AudioChannelStripWidget(
+            bus, mixer_, [this]() { refreshBuses(); }, this);
         strip->setFixedWidth(isMaster ? 120 : 80);
         layout()->addWidget(strip);
         strips_.push_back(strip);

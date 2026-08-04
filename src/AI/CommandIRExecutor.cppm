@@ -150,6 +150,16 @@ public:
     }
 
 private:
+    static QString resolveEffectId(const QString& layerId, int effectIndex)
+    {
+        if (layerId.trimmed().isEmpty() || effectIndex < 0) return {};
+        const QVariant effects = invokeWorkspaceAutomationMethod(
+            QStringLiteral("getLayerEffects"), QVariantList{layerId});
+        const QVariantList list = effects.toList();
+        if (effectIndex >= list.size()) return {};
+        return list.at(effectIndex).toMap().value(QStringLiteral("id")).toString();
+    }
+
     static ArtifactCore::CommandResult executeSetProperty(const ArtifactCore::CommandRequest& request)
     {
         ArtifactCore::CommandResult result;
@@ -202,18 +212,41 @@ private:
         const QString propertyPath = request.target.value(QStringLiteral("propertyPath")).toString();
         const QVariantList keys = request.arguments.value(QStringLiteral("keys")).toList();
 
+        if (keys.isEmpty()) {
+            result.error = QStringLiteral("setKeyframes requires at least one keyframe");
+            QVariantMap details;
+            details.insert(QStringLiteral("keyframeCount"), 0);
+            details.insert(QStringLiteral("succeeded"), 0);
+            details.insert(QStringLiteral("failed"), 0);
+            result.diagnostics = details;
+            return result;
+        }
+
+        int succeeded = 0;
+        int failed = 0;
         for (const QVariant& keyVar : keys) {
             const QVariantMap key = keyVar.toMap();
             int frame = key.value(QStringLiteral("frame")).toInt();
             QVariant value = key.value(QStringLiteral("value"));
             QVariantList args{layerId, propertyPath, frame, value};
-            invokeWorkspaceAutomationMethod(QStringLiteral("setKeyframe"), args);
+            const QVariant operation = invokeWorkspaceAutomationMethod(
+                QStringLiteral("setKeyframe"), args);
+            if (operation.isValid() && operation.toMap().value(QStringLiteral("success")).toBool()) {
+                ++succeeded;
+            } else {
+                ++failed;
+            }
         }
 
-        result.success = true;
-        result.executed = true;
+        result.success = failed == 0;
+        result.executed = succeeded > 0 && failed == 0;
+        if (!result.success) {
+            result.error = QStringLiteral("One or more keyframes could not be set");
+        }
         QVariantMap details;
         details.insert(QStringLiteral("keyframeCount"), static_cast<int>(keys.size()));
+        details.insert(QStringLiteral("succeeded"), succeeded);
+        details.insert(QStringLiteral("failed"), failed);
         result.diagnostics = details;
         return result;
     }
@@ -227,7 +260,20 @@ private:
         const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
         const QVariantList batches = request.arguments.value(QStringLiteral("batches")).toList();
 
+        if (batches.isEmpty()) {
+            result.error = QStringLiteral("batch_set_keyframes requires at least one batch");
+            QVariantMap details;
+            details.insert(QStringLiteral("batchCount"), 0);
+            details.insert(QStringLiteral("totalKeyframes"), 0);
+            details.insert(QStringLiteral("succeeded"), 0);
+            details.insert(QStringLiteral("failed"), 0);
+            result.diagnostics = details;
+            return result;
+        }
+
         int totalKeyframes = 0;
+        int succeeded = 0;
+        int failed = 0;
         for (const QVariant& batchVar : batches) {
             const QVariantMap batch = batchVar.toMap();
             const QString propPath = batch.value(QStringLiteral("propertyPath")).toString();
@@ -238,16 +284,29 @@ private:
                 int frame = key.value(QStringLiteral("frame")).toInt();
                 QVariant value = key.value(QStringLiteral("value"));
                 QVariantList args{layerId, propPath, frame, value};
-                invokeWorkspaceAutomationMethod(QStringLiteral("setKeyframe"), args);
+                const QVariant operation = invokeWorkspaceAutomationMethod(
+                    QStringLiteral("setKeyframe"), args);
+                if (operation.isValid() && operation.toMap().value(QStringLiteral("success")).toBool()) {
+                    ++succeeded;
+                } else {
+                    ++failed;
+                }
                 ++totalKeyframes;
             }
         }
 
-        result.success = true;
-        result.executed = true;
+        result.success = totalKeyframes > 0 && failed == 0;
+        result.executed = succeeded > 0 && failed == 0;
+        if (!result.success) {
+            result.error = totalKeyframes == 0
+                ? QStringLiteral("batch_set_keyframes requires at least one keyframe")
+                : QStringLiteral("One or more keyframes could not be set");
+        }
         QVariantMap details;
         details.insert(QStringLiteral("batchCount"), static_cast<int>(batches.size()));
         details.insert(QStringLiteral("totalKeyframes"), totalKeyframes);
+        details.insert(QStringLiteral("succeeded"), succeeded);
+        details.insert(QStringLiteral("failed"), failed);
         result.diagnostics = details;
         return result;
     }
@@ -482,8 +541,13 @@ private:
 
         const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
         int effectIndex = request.arguments.value(QStringLiteral("effectIndex")).toInt();
+        const QString effectId = resolveEffectId(layerId, effectIndex);
+        if (effectId.isEmpty()) {
+            result.error = QStringLiteral("Effect index is out of range");
+            return result;
+        }
 
-        QVariantList args{layerId, effectIndex};
+        QVariantList args{layerId, effectId};
         QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("removeLayerEffect"), args);
 
         result.success = ok.isValid() && ok.toBool();
@@ -500,15 +564,21 @@ private:
         result.type = QStringLiteral("get_scene_info");
         result.undoLabel = QStringLiteral("Get Scene Info");
 
+        const QVariant project = invokeWorkspaceAutomationMethod(QStringLiteral("projectSnapshot"), {});
+        const QVariant composition = invokeWorkspaceAutomationMethod(QStringLiteral("currentCompositionSnapshot"), {});
+        const QVariant layers = invokeWorkspaceAutomationMethod(QStringLiteral("listCurrentCompositionLayers"), {});
+        const QVariant selection = invokeWorkspaceAutomationMethod(QStringLiteral("selectionSnapshot"), {});
         QVariantMap info;
-        info.insert(QStringLiteral("project"), invokeWorkspaceAutomationMethod(QStringLiteral("projectSnapshot"), {}));
-        info.insert(QStringLiteral("composition"), invokeWorkspaceAutomationMethod(QStringLiteral("currentCompositionSnapshot"), {}));
-        info.insert(QStringLiteral("layers"), invokeWorkspaceAutomationMethod(QStringLiteral("listCurrentCompositionLayers"), {}));
-        info.insert(QStringLiteral("selection"), invokeWorkspaceAutomationMethod(QStringLiteral("selectionSnapshot"), {}));
+        info.insert(QStringLiteral("project"), project);
+        info.insert(QStringLiteral("composition"), composition);
+        info.insert(QStringLiteral("layers"), layers);
+        info.insert(QStringLiteral("selection"), selection);
 
-        result.success = true;
+        result.success = project.isValid() && composition.isValid() &&
+                         layers.isValid() && selection.isValid();
         result.valid = true;
-        result.executed = true;
+        result.executed = result.success;
+        if (!result.success) result.error = QStringLiteral("Unable to collect scene information");
         QVariantMap details;
         details.insert(QStringLiteral("scene"), info);
         result.diagnostics = details;
@@ -530,9 +600,11 @@ private:
         info.append(invokeWorkspaceAutomationMethod(QStringLiteral("getLayerRotation"), args));
         info.append(invokeWorkspaceAutomationMethod(QStringLiteral("getLayerOpacity"), args));
 
-        result.success = true;
+        result.success = std::all_of(info.cbegin(), info.cend(),
+                                     [](const QVariant& value) { return value.isValid(); });
         result.valid = true;
-        result.executed = true;
+        result.executed = result.success;
+        if (!result.success) result.error = QStringLiteral("Unable to collect layer information");
         QVariantMap details;
         details.insert(QStringLiteral("layerId"), layerId);
         details.insert(QStringLiteral("properties"), info);
@@ -631,10 +703,26 @@ private:
         const QVariantList layerIds = request.arguments.value(QStringLiteral("layerIds")).toList();
 
         QVariantList args{groupName, 1920, 1080};
-        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("createGroupLayer"), args);
+        const QVariant created = invokeWorkspaceAutomationMethod(
+            QStringLiteral("createGroupLayer"), args);
 
-        result.success = ok.isValid() && ok.toBool();
-        result.executed = result.success;
+        const QVariantMap createdMap = created.toMap();
+        const QString groupLayerId = createdMap.value(QStringLiteral("groupLayerId")).toString();
+        if (created.isValid() && createdMap.value(QStringLiteral("success")).toBool() &&
+            !groupLayerId.isEmpty()) {
+            QVariantList moveArgs{layerIds, groupLayerId};
+            const QVariant moved = invokeWorkspaceAutomationMethod(
+                QStringLiteral("moveLayersToGroup"), moveArgs);
+            const QVariantMap movedMap = moved.toMap();
+            result.success = moved.isValid() && movedMap.value(QStringLiteral("success")).toBool();
+            result.executed = result.success;
+            result.diagnostics.insert(QStringLiteral("groupLayerId"), groupLayerId);
+            result.diagnostics.insert(QStringLiteral("movedCount"),
+                                      movedMap.value(QStringLiteral("movedCount")));
+        } else {
+            result.success = false;
+            result.executed = false;
+        }
         if (!result.success) {
             result.error = QStringLiteral("groupLayers failed");
         }
@@ -689,11 +777,12 @@ private:
         const QString propertyPath = request.target.value(QStringLiteral("propertyPath")).toString();
 
         QVariantList args{layerId, propertyPath};
-        QVariant kfs = invokeWorkspaceAutomationMethod(QStringLiteral("getKeyframes"), args);
+        const QVariant kfs = invokeWorkspaceAutomationMethod(QStringLiteral("getKeyframes"), args);
 
-        result.success = true;
-        result.executed = true;
+        result.success = kfs.isValid();
+        result.executed = result.success;
         result.valid = true;
+        if (!result.success) result.error = QStringLiteral("Unable to read keyframes");
         QVariantMap details;
         details.insert(QStringLiteral("keyframes"), kfs);
         result.diagnostics = details;
@@ -730,7 +819,7 @@ private:
         int startFrame = request.arguments.value(QStringLiteral("startFrame")).toInt();
         int endFrame = request.arguments.value(QStringLiteral("endFrame")).toInt();
 
-        QVariantList args;
+        QVariantList args{startFrame, endFrame};
         QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("setWorkArea"), args);
 
         result.success = ok.isValid() && ok.toBool();
@@ -750,8 +839,12 @@ private:
         int frame = request.arguments.value(QStringLiteral("frame")).toInt();
         const QString label = request.arguments.value(QStringLiteral("label")).toString();
 
-        QVariantList args;
-        QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("playbackAddMarker"), args);
+        const QVariant seek = invokeWorkspaceAutomationMethod(
+            QStringLiteral("seekTimeline"), QVariantList{frame});
+        QVariant ok = seek.isValid() && seek.toBool()
+            ? invokeWorkspaceAutomationMethod(QStringLiteral("playbackAddMarker"),
+                                               QVariantList{label})
+            : QVariant(false);
 
         result.success = ok.isValid() && ok.toBool();
         result.executed = result.success;
@@ -771,8 +864,13 @@ private:
         int effectIndex = request.arguments.value(QStringLiteral("effectIndex")).toInt();
         const QString paramName = request.arguments.value(QStringLiteral("paramName")).toString();
         const QVariant value = request.arguments.value(QStringLiteral("value"));
+        const QString effectId = resolveEffectId(layerId, effectIndex);
+        if (effectId.isEmpty()) {
+            result.error = QStringLiteral("Effect index is out of range");
+            return result;
+        }
 
-        QVariantList args{layerId, effectIndex, paramName, value};
+        QVariantList args{layerId, effectId, paramName, value};
         QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerEffectParameter"), args);
 
         result.success = ok.isValid() && ok.toBool();
@@ -792,8 +890,13 @@ private:
         const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
         int effectIndex = request.arguments.value(QStringLiteral("effectIndex")).toInt();
         bool enabled = request.arguments.value(QStringLiteral("enabled")).toBool();
+        const QString effectId = resolveEffectId(layerId, effectIndex);
+        if (effectId.isEmpty()) {
+            result.error = QStringLiteral("Effect index is out of range");
+            return result;
+        }
 
-        QVariantList args{layerId, enabled};
+        QVariantList args{layerId, effectId, enabled};
         QVariant ok = invokeWorkspaceAutomationMethod(QStringLiteral("setLayerEffectEnabled"), args);
 
         result.success = ok.isValid() && ok.toBool();
@@ -816,9 +919,10 @@ private:
             effects.append(presets);
         }
 
-        result.success = true;
-        result.executed = true;
+        result.success = presets.isValid();
+        result.executed = result.success;
         result.valid = true;
+        if (!result.success) result.error = QStringLiteral("Unable to list available effects");
         QVariantMap details;
         details.insert(QStringLiteral("effects"), effects);
         result.diagnostics = details;
@@ -847,11 +951,12 @@ private:
         result.type = QStringLiteral("get_render_status");
         result.undoLabel = QStringLiteral("Get Render Status");
 
-        QVariant status = invokeWorkspaceAutomationMethod(QStringLiteral("renderQueueSnapshot"), QVariantList());
+        const QVariant status = invokeWorkspaceAutomationMethod(QStringLiteral("renderQueueSnapshot"), QVariantList());
 
-        result.success = true;
-        result.executed = true;
+        result.success = status.isValid();
+        result.executed = result.success;
         result.valid = true;
+        if (!result.success) result.error = QStringLiteral("Unable to read render queue status");
         QVariantMap details;
         details.insert(QStringLiteral("renderQueue"), status);
         result.diagnostics = details;
@@ -864,11 +969,12 @@ private:
         result.type = QStringLiteral("list_compositions");
         result.undoLabel = QStringLiteral("List Compositions");
 
-        QVariant comps = invokeWorkspaceAutomationMethod(QStringLiteral("listCompositions"), QVariantList());
+        const QVariant comps = invokeWorkspaceAutomationMethod(QStringLiteral("listCompositions"), QVariantList());
 
-        result.success = true;
-        result.executed = true;
+        result.success = comps.isValid();
+        result.executed = result.success;
         result.valid = true;
+        if (!result.success) result.error = QStringLiteral("Unable to list compositions");
         QVariantMap details;
         details.insert(QStringLiteral("compositions"), comps);
         result.diagnostics = details;
@@ -881,11 +987,12 @@ private:
         result.type = QStringLiteral("list_project_items");
         result.undoLabel = QStringLiteral("List Project Items");
 
-        QVariant items = invokeWorkspaceAutomationMethod(QStringLiteral("listProjectItems"), QVariantList());
+        const QVariant items = invokeWorkspaceAutomationMethod(QStringLiteral("listProjectItems"), QVariantList());
 
-        result.success = true;
-        result.executed = true;
+        result.success = items.isValid();
+        result.executed = result.success;
         result.valid = true;
+        if (!result.success) result.error = QStringLiteral("Unable to list project items");
         QVariantMap details;
         details.insert(QStringLiteral("projectItems"), items);
         result.diagnostics = details;

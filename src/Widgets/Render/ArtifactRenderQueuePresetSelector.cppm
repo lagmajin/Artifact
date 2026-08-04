@@ -51,6 +51,11 @@ public:
         item->setIcon(QIcon::fromTheme("image-x-generic"));
       } else if (preset.isAnimatedImage) {
         item->setIcon(QIcon::fromTheme("image-x-generic"));
+      } else if (preset.container == QStringLiteral("wav") ||
+                 preset.container == QStringLiteral("mp3") ||
+                 preset.container == QStringLiteral("m4a") ||
+                 preset.container == QStringLiteral("aac")) {
+        item->setIcon(QIcon::fromTheme("audio-x-generic"));
       } else {
         item->setIcon(QIcon::fromTheme("video-x-generic"));
       }
@@ -136,6 +141,9 @@ ArtifactRenderQueuePresetSelector::ArtifactRenderQueuePresetSelector(
   impl_->categoryCombo->addItem(
       QStringLiteral("連番画像"),
       static_cast<int>(ArtifactRenderFormatCategory::ImageSequence));
+  impl_->categoryCombo->addItem(
+      QStringLiteral("音声形式"),
+      static_cast<int>(ArtifactRenderFormatCategory::Audio));
   categoryRow->addWidget(impl_->categoryCombo, 1);
 
   layout->addLayout(categoryRow);

@@ -127,9 +127,14 @@ export namespace Artifact {
             return 1.0f - (t * t * (3.0f - 2.0f * t));
         }
 
-        void generateGPUData() const override {
-            // TODO: GPU バッファフォーマット生成
-            // struct { float3 center; float3 halfExtent; float falloffWidth; }
+        FieldGPUData generateGPUData() const override {
+            FieldGPUData data;
+            data.type = FieldType::Box;
+            data.values = {center_[0], center_[1], center_[2], 0.0f,
+                           halfExtent_[0], halfExtent_[1], halfExtent_[2], falloffWidth_,
+                           0.0f, 0.0f, 0.0f, 0.0f,
+                           0.0f, 0.0f, 0.0f, 0.0f};
+            return data;
         }
     };
 

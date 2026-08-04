@@ -25,12 +25,13 @@ bool ArtifactBrushTool::mousePressEvent(
     const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos)
 {
     auto* paintLayer = dynamic_cast<ArtifactPaintLayer*>(layer.get());
-    if (!paintLayer || !isFinitePoint(canvasPos)) return false;
+    if ((!paintLayer && !rotoInputMode_) || !isFinitePoint(canvasPos)) return false;
 
     dragging_ = true;
     undoRecorded_ = false;
     currentStroke_ = BrushStroke{};
     previewStrokePoints_.clear();
+    activeStrokePoints_.clear();
     if (currentStroke_.points.empty() ||
         QLineF(currentStroke_.points.back(), canvasPos).length() >=
             std::max(0.5f, radius_ * spacing_)) {
@@ -38,6 +39,7 @@ bool ArtifactBrushTool::mousePressEvent(
     }
     if (currentStroke_.points.empty()) return true;
     previewStrokePoints_.push_back(canvasPos);
+    activeStrokePoints_.push_back(canvasPos);
     currentStroke_.radius = radius_ *
         (pressureAffectsSize_ ? pressure_ : 1.0f);
     currentStroke_.opacity = opacity_ *
@@ -71,7 +73,7 @@ bool ArtifactBrushTool::mouseMoveEvent(
     if (!dragging_) return false;
     if (!isFinitePoint(canvasPos)) return true;
     auto* paintLayer = dynamic_cast<ArtifactPaintLayer*>(layer.get());
-    if (!paintLayer) {
+    if (!paintLayer && !rotoInputMode_) {
         cancelStroke(layer);
         return false;
     }
@@ -82,6 +84,7 @@ bool ArtifactBrushTool::mouseMoveEvent(
         return true;
     }
     currentStroke_.points.push_back(canvasPos);
+    activeStrokePoints_.push_back(canvasPos);
     currentStroke_.radius = radius_ *
         (pressureAffectsSize_ ? pressure_ : 1.0f);
     currentStroke_.opacity = opacity_ *
@@ -118,7 +121,7 @@ bool ArtifactBrushTool::mouseMoveEvent(
     // リアルタイム適用（点が溜まりすぎる前に逐次適用）
     if (currentStroke_.points.size() >= 5) {
         currentStroke_.recordUndo = !undoRecorded_;
-        paintLayer->applyStroke(currentStroke_);
+        if (paintLayer) paintLayer->applyStroke(currentStroke_);
         undoRecorded_ = true;
         currentStroke_.points.clear();
         currentStroke_.points.push_back(canvasPos);
@@ -133,7 +136,7 @@ bool ArtifactBrushTool::mouseReleaseEvent(
     dragging_ = false;
 
     auto* paintLayer = dynamic_cast<ArtifactPaintLayer*>(layer.get());
-    if (!paintLayer) {
+    if (!paintLayer && !rotoInputMode_) {
         cancelStroke(layer);
         return false;
     }
@@ -165,11 +168,14 @@ bool ArtifactBrushTool::mouseReleaseEvent(
             std::max(0.5f, radius_ * spacing_)) {
             currentStroke_.points.push_back(canvasPos);
             previewStrokePoints_.push_back(canvasPos);
+            activeStrokePoints_.push_back(canvasPos);
         }
         currentStroke_.recordUndo = !undoRecorded_;
-        paintLayer->applyStroke(currentStroke_);
+        if (paintLayer) paintLayer->applyStroke(currentStroke_);
+        lastStrokePoints_ = activeStrokePoints_;
     }
     currentStroke_.points.clear();
+    activeStrokePoints_.clear();
     previewStrokePoints_.clear();
     return true;
 }
@@ -184,6 +190,7 @@ void ArtifactBrushTool::cancelStroke(const ArtifactAbstractLayerPtr& layer)
     dragging_ = false;
     undoRecorded_ = false;
     currentStroke_.points.clear();
+    activeStrokePoints_.clear();
     previewStrokePoints_.clear();
 }
 

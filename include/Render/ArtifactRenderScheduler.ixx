@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <atomic>
 #include <functional>
 
@@ -79,8 +79,9 @@ class RenderTask : public QObject {
 private:
     FrameRange range_;
     TaskPriority priority_;
-    bool isCancelled_ = false;
-    int progress_ = 0;
+    std::atomic<bool> isCancelled_{false};
+    std::atomic<bool> isPaused_{false};
+    std::atomic<int> progress_{0};
     QString description_;
     QString deduplicationKey_;
     
@@ -92,12 +93,20 @@ public:
     
     FrameRange range() const { return range_; }
     TaskPriority priority() const { return priority_; }
-    
-    bool isCancelled() const { return isCancelled_; }
-    void cancel() { isCancelled_ = true; }
-    
-    int progress() const { return progress_; }
-    void setProgress(int p) { progress_ = p; emit progressChanged(p); }
+    void setPriority(TaskPriority priority) { priority_ = priority; }
+
+    bool isCancelled() const { return isCancelled_.load(std::memory_order_acquire); }
+    void cancel() { isCancelled_.store(true, std::memory_order_release); }
+    bool isPaused() const { return isPaused_.load(std::memory_order_acquire); }
+    void pause() { isPaused_.store(true, std::memory_order_release); }
+    void resume() { isPaused_.store(false, std::memory_order_release); }
+
+    int progress() const { return progress_.load(std::memory_order_acquire); }
+    void setProgress(int p) {
+        const int bounded = std::clamp(p, 0, 100);
+        progress_.store(bounded, std::memory_order_release);
+        emit progressChanged(bounded);
+    }
     
     QString description() const { return description_; }
     void setDescription(const QString& desc) { description_ = desc; }

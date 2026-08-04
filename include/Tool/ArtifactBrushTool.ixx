@@ -30,6 +30,9 @@ public:
     const std::vector<QPointF>& currentStrokePoints() const {
         return previewStrokePoints_;
     }
+    const std::vector<QPointF>& lastStrokePoints() const {
+        return lastStrokePoints_;
+    }
 
     void setRadius(float radius) {
         radius_ = std::isfinite(radius) ? std::clamp(radius, 0.5f, 2500.0f) : 10.0f;
@@ -94,6 +97,8 @@ public:
     const FloatRGBA& color() const { return color_; }
     void setEraserMode(bool eraser) { eraserMode_ = eraser; }
     bool eraserMode() const { return eraserMode_; }
+    void setRotoInputMode(bool enabled) { rotoInputMode_ = enabled; }
+    bool rotoInputMode() const { return rotoInputMode_; }
     void setLastStrokeOnly(bool enabled) { lastStrokeOnly_ = enabled; }
     bool lastStrokeOnly() const { return lastStrokeOnly_; }
     void setEraserModeKind(int mode) {
@@ -130,6 +135,7 @@ private:
     float tiltY_ = 0.0f;
     FloatRGBA color_ = {0.0f, 0.0f, 0.0f, 1.0f};
     bool eraserMode_ = false;
+    bool rotoInputMode_ = false;
     bool lastStrokeOnly_ = false;
     int eraserModeKind_ = 0;
     bool cloneAligned_ = true;
@@ -138,6 +144,8 @@ private:
     bool undoRecorded_ = false;
     BrushStroke currentStroke_;
     std::vector<QPointF> previewStrokePoints_;
+    std::vector<QPointF> lastStrokePoints_;
+    std::vector<QPointF> activeStrokePoints_;
 };
 
 } // namespace Artifact

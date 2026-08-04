@@ -4333,6 +4333,10 @@ public:
             [this, ctrl = controller_]() {
               if (ctrl) ctrl->trackerTrackAll();
             });
+        add(QStringLiteral("Use Planar Tracker"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerUsePlanarMode();
+            });
         addSeparator();
         add(QStringLiteral("Apply to Layer Position"),
             [this, ctrl = controller_]() {
@@ -4345,6 +4349,10 @@ public:
         add(QStringLiteral("Apply All Points to Null Layers"),
             [this, ctrl = controller_]() {
               if (ctrl) ctrl->trackerApplyAllPoints();
+            });
+        add(QStringLiteral("Apply Planar Track as Corner Pin"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerApplyPlanarCornerPin();
             });
         addSeparator();
         add(QStringLiteral("Delete Tracker"),
@@ -5577,7 +5585,7 @@ protected:
           if (rigMode) controller_->clearRigSelection();
           controller_->setInfoOverlayText(
               QStringLiteral("Rig Mode"),
-              rigMode ? QStringLiteral("Rig editing disabled")
+              rigMode ? QStringLiteral("Rig editing exited")
                       : QStringLiteral("Rig Select active"));
         }
         event->accept();

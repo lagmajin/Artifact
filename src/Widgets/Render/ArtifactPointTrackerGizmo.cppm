@@ -4,6 +4,7 @@ module;
 #include <QRectF>
 #include <QCursor>
 #include <QFont>
+#include <array>
 #include <cmath>
 #include <algorithm>
 #include <vector>
@@ -137,6 +138,36 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
         const FloatColor accentColor{1.0f, 0.72f, 0.36f, 1.0f};
         drawTrackerPinOverlay(renderer, cx, cy, std::max(10.0f, 11.5f * invZoom),
                               fillColor, accentColor, false);
+    }
+
+    // --- Planar track quad: project the feature region through the current
+    // homography so planar tracking remains visible even without point paths.
+    if (impl_->tracker && impl_->tracker->trackerType() ==
+            ArtifactCore::TrackerType::Planar &&
+        impl_->tracker->hasResult()) {
+        const auto frame = impl_->tracker->result().interpolateAt(impl_->currentTime);
+        std::array<QPointF, 4> projected;
+        const QRectF sourceRect(cx - st.innerHalfW, cy - st.innerHalfH,
+                                st.innerHalfW * 2.0f, st.innerHalfH * 2.0f);
+        if (frame.projectRect(sourceRect, projected)) {
+            std::vector<Detail::float2> quad;
+            quad.reserve(projected.size() + 1);
+            for (const auto& point : projected) {
+                quad.emplace_back(static_cast<float>(point.x()),
+                                  static_cast<float>(point.y()));
+            }
+            quad.push_back(quad.front());
+            renderer->drawPolyline(quad, {0.95f, 0.35f, 0.95f, 0.95f},
+                                   2.0f * invZoom);
+            const QFont planarFont(QStringLiteral("sans-serif"), 9);
+            renderer->drawText(
+                QRectF(cx + st.outerHalfW + 8.0f,
+                       cy - st.outerHalfH + 12.0f, 112.0f, 16.0f),
+                QStringLiteral("Planar %1")
+                    .arg(QString::number(frame.overallConfidence, 'f', 2)),
+                planarFont, {0.98f, 0.55f, 0.98f, 0.95f},
+                Qt::AlignLeft | Qt::AlignVCenter);
+        }
     }
 
     // Feature/Search サイズはブラケット操作やハンドル操作の結果を

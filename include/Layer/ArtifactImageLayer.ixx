@@ -27,9 +27,13 @@ export namespace Artifact {
   ArtifactImageLayer();
   ~ArtifactImageLayer();
   QImage toQImage() const;
+  QImage getThumbnail(int width = 128, int height = 128) const override;
   const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
   bool hasCurrentFrameBuffer() const;
   bool loadFromPath(const QString& path);
+  // PSD/OIIO subimage index.  -1 keeps the default flattened image (subimage 0).
+  void setPsdSubimageIndex(int index);
+  int psdSubimageIndex() const;
   bool setImageSequence(const QStringList& framePaths, double frameRate);
   QStringList sequenceFramePaths() const;
   bool isImageSequence() const;
@@ -47,6 +51,7 @@ export namespace Artifact {
   QJsonObject toJson() const;
   void fromJsonProperties(const QJsonObject& obj) override;
   void setFromQImage(const QImage& image);
+  void setFromImageBuffer(const ArtifactCore::ImageF32x4_RGBA& image);
   void setFromCvMat(const cv::Mat& mat);
   void setFromCvMat();
   void setFitToLayer(bool fit);

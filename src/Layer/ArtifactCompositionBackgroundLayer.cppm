@@ -109,22 +109,32 @@ QJsonObject ArtifactCompositionBackgroundLayer::toJson() const {
 
 void ArtifactCompositionBackgroundLayer::fromJsonProperties(const QJsonObject& obj) {
   ArtifactAbstract2DLayer::fromJsonProperties(obj);
-  impl_->width = static_cast<float>(obj.value(QStringLiteral("background.width")).toDouble(impl_->width));
-  impl_->height = static_cast<float>(obj.value(QStringLiteral("background.height")).toDouble(impl_->height));
-  impl_->fillOpacity = static_cast<float>(obj.value(QStringLiteral("background.fillOpacity")).toDouble(impl_->fillOpacity));
-  impl_->borderOpacity = static_cast<float>(obj.value(QStringLiteral("background.borderOpacity")).toDouble(impl_->borderOpacity));
-  impl_->borderThickness = static_cast<float>(obj.value(QStringLiteral("background.borderThickness")).toDouble(impl_->borderThickness));
+  const auto finiteClamped = [](double value, float fallback, float minimum, float maximum) {
+    if (!std::isfinite(value)) return fallback;
+    return static_cast<float>(std::clamp(value, static_cast<double>(minimum),
+                                         static_cast<double>(maximum)));
+  };
+  impl_->width = finiteClamped(obj.value(QStringLiteral("background.width")).toDouble(impl_->width),
+                               impl_->width, 1.0f, 100000.0f);
+  impl_->height = finiteClamped(obj.value(QStringLiteral("background.height")).toDouble(impl_->height),
+                                impl_->height, 1.0f, 100000.0f);
+  impl_->fillOpacity = finiteClamped(obj.value(QStringLiteral("background.fillOpacity")).toDouble(impl_->fillOpacity),
+                                     impl_->fillOpacity, 0.0f, 1.0f);
+  impl_->borderOpacity = finiteClamped(obj.value(QStringLiteral("background.borderOpacity")).toDouble(impl_->borderOpacity),
+                                       impl_->borderOpacity, 0.0f, 1.0f);
+  impl_->borderThickness = finiteClamped(obj.value(QStringLiteral("background.borderThickness")).toDouble(impl_->borderThickness),
+                                         impl_->borderThickness, 0.0f, 10000.0f);
   impl_->fillColor = {
-      static_cast<float>(obj.value(QStringLiteral("background.fill.r")).toDouble(impl_->fillColor.red())),
-      static_cast<float>(obj.value(QStringLiteral("background.fill.g")).toDouble(impl_->fillColor.green())),
-      static_cast<float>(obj.value(QStringLiteral("background.fill.b")).toDouble(impl_->fillColor.blue())),
-      static_cast<float>(obj.value(QStringLiteral("background.fill.a")).toDouble(impl_->fillColor.alpha()))
+      finiteClamped(obj.value(QStringLiteral("background.fill.r")).toDouble(impl_->fillColor.red()), impl_->fillColor.red(), 0.0f, 1.0f),
+      finiteClamped(obj.value(QStringLiteral("background.fill.g")).toDouble(impl_->fillColor.green()), impl_->fillColor.green(), 0.0f, 1.0f),
+      finiteClamped(obj.value(QStringLiteral("background.fill.b")).toDouble(impl_->fillColor.blue()), impl_->fillColor.blue(), 0.0f, 1.0f),
+      finiteClamped(obj.value(QStringLiteral("background.fill.a")).toDouble(impl_->fillColor.alpha()), impl_->fillColor.alpha(), 0.0f, 1.0f)
   };
   impl_->borderColor = {
-      static_cast<float>(obj.value(QStringLiteral("background.border.r")).toDouble(impl_->borderColor.red())),
-      static_cast<float>(obj.value(QStringLiteral("background.border.g")).toDouble(impl_->borderColor.green())),
-      static_cast<float>(obj.value(QStringLiteral("background.border.b")).toDouble(impl_->borderColor.blue())),
-      static_cast<float>(obj.value(QStringLiteral("background.border.a")).toDouble(impl_->borderColor.alpha()))
+      finiteClamped(obj.value(QStringLiteral("background.border.r")).toDouble(impl_->borderColor.red()), impl_->borderColor.red(), 0.0f, 1.0f),
+      finiteClamped(obj.value(QStringLiteral("background.border.g")).toDouble(impl_->borderColor.green()), impl_->borderColor.green(), 0.0f, 1.0f),
+      finiteClamped(obj.value(QStringLiteral("background.border.b")).toDouble(impl_->borderColor.blue()), impl_->borderColor.blue(), 0.0f, 1.0f),
+      finiteClamped(obj.value(QStringLiteral("background.border.a")).toDouble(impl_->borderColor.alpha()), impl_->borderColor.alpha(), 0.0f, 1.0f)
   };
   impl_->showFill = obj.value(QStringLiteral("background.showFill")).toBool(impl_->showFill);
   impl_->showBorder = obj.value(QStringLiteral("background.showBorder")).toBool(impl_->showBorder);

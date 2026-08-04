@@ -6,6 +6,8 @@ module;
 #include <map>
 #include <QString>
 #include <QColor>
+#include <QJsonObject>
+#include <QJsonArray>
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
 #include <wobjectimpl.h>
@@ -595,6 +597,75 @@ bool ArtifactInOutPoints::importFromXML(const QString& xml) {
     }
     
     return !reader.hasError();
+}
+
+QJsonObject ArtifactInOutPoints::toJson() const {
+    QJsonObject object;
+    if (impl_->inPoint_.has_value()) {
+        object.insert(QStringLiteral("inPoint"), impl_->inPoint_->framePosition());
+    }
+    if (impl_->outPoint_.has_value()) {
+        object.insert(QStringLiteral("outPoint"), impl_->outPoint_->framePosition());
+    }
+    QJsonArray markers;
+    for (const auto& entry : impl_->markers_) {
+        const auto* marker = entry.second;
+        if (!marker) continue;
+        QJsonObject item;
+        item.insert(QStringLiteral("position"), marker->position().framePosition());
+        item.insert(QStringLiteral("comment"), marker->comment());
+        item.insert(QStringLiteral("type"), static_cast<int>(marker->type()));
+        item.insert(QStringLiteral("color"), marker->color().name(QColor::HexArgb));
+        item.insert(QStringLiteral("webLink"), marker->webLink());
+        item.insert(QStringLiteral("tags"), QJsonArray::fromStringList(marker->tags()));
+        markers.append(item);
+    }
+    object.insert(QStringLiteral("markers"), markers);
+    return object;
+}
+
+bool ArtifactInOutPoints::fromJson(const QJsonObject& object) {
+    const auto markersValue = object.value(QStringLiteral("markers"));
+    if (!markersValue.isUndefined() && !markersValue.isArray()) {
+        return false;
+    }
+    const auto inValue = object.value(QStringLiteral("inPoint"));
+    const auto outValue = object.value(QStringLiteral("outPoint"));
+    if ((!inValue.isUndefined() && !inValue.isDouble()) ||
+        (!outValue.isUndefined() && !outValue.isDouble())) {
+        return false;
+    }
+    clearAllPoints();
+    clearAllMarkers();
+    if (inValue.isDouble()) {
+        setInPoint(FramePosition(inValue.toInt()));
+    }
+    if (outValue.isDouble()) {
+        setOutPoint(FramePosition(outValue.toInt()));
+    }
+    const QJsonArray markers = markersValue.toArray();
+    for (const auto& value : markers) {
+        if (!value.isObject()) continue;
+        const auto item = value.toObject();
+        const int rawType = item.value(QStringLiteral("type")).toInt(0);
+        const auto type = rawType >= static_cast<int>(MarkerType::Comment) &&
+                                  rawType <= static_cast<int>(MarkerType::Color)
+            ? static_cast<MarkerType>(rawType) : MarkerType::Comment;
+        auto* marker = addMarker(
+            FramePosition(item.value(QStringLiteral("position")).toInt()),
+            item.value(QStringLiteral("comment")).toString(), type);
+        if (!marker) continue;
+        const QColor color(item.value(QStringLiteral("color")).toString());
+        if (color.isValid()) marker->setColor(color);
+        marker->setWebLink(item.value(QStringLiteral("webLink")).toString());
+        QStringList tags;
+        for (const auto& tagValue : item.value(QStringLiteral("tags")).toArray()) {
+            const QString tag = tagValue.toString().trimmed();
+            if (!tag.isEmpty()) tags.append(tag);
+        }
+        marker->setTags(tags);
+    }
+    return true;
 }
 
 QString ArtifactInOutPoints::exportToXML() const {

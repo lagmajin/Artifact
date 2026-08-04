@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <memory>
 #include <string>
@@ -17,9 +17,11 @@ export namespace Artifact {
 
 class LayerPluginAdapter : public ArtifactCore::ILayerPlugin {
 public:
+    using DestroyFunction = void (*)(ArtifactPluginInstance);
     LayerPluginAdapter(const std::string& pluginId,
                        ArtifactLayerPluginVTable vtable,
-                       ArtifactPluginInstance instance);
+                       ArtifactPluginInstance instance,
+                       DestroyFunction destroy = nullptr);
     ~LayerPluginAdapter() override;
 
     std::string pluginId() const override;
@@ -36,6 +38,9 @@ private:
     std::string pluginId_;
     ArtifactLayerPluginVTable vtable_;
     ArtifactPluginInstance instance_ = nullptr;
+    DestroyFunction destroy_ = nullptr;
+    bool shutdownCalled_ = false;
+    bool initialized_ = false;
 };
 
 } // namespace Artifact

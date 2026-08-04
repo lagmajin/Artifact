@@ -50,6 +50,13 @@ struct MaskVertex {
     QPointF outTangent;   // 出力タンジェント（relative to position）
 };
 
+struct MaskConversionParams {
+    float simplificationTolerance = 1.5f;
+    float cornerThreshold = 10.0f;
+    int minPathVertices = 6;
+    bool closedPath = true;
+};
+
 /// 複数マスクの合成モード
 enum class MaskMode {
     Add,
@@ -140,6 +147,11 @@ public:
     static std::vector<MaskPath> fromQPainterPath(
         const QPainterPath& path,
         const QString& text = QString());
+
+    /// CV_32FC1 または CV_8UC1 のアルファマスクを編集可能な輪郭へ変換する。
+    /// outMat は cv::Mat* として渡し、閾値は 0..1 のアルファ値で指定する。
+    static std::vector<MaskPath> fromAlphaMask(
+        const void* outMat, const MaskConversionParams& params = {});
 
     /// ベジェパスからアルファマスクをラスタライズ (0.0~1.0 single channel)
     /// offsetX/offsetY: レイヤーローカル空間からピクセル空間への変換オフセット

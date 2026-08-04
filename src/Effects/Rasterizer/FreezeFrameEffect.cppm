@@ -56,10 +56,26 @@ bool FreezeFrameEffect::isFrozen() const {
     if (auto* c = dynamic_cast<FreezeFrameCPUImpl*>(cpuImpl().get())) return c->isFrozen();
     return false;
 }
-std::vector<AbstractProperty> FreezeFrameEffect::getProperties()const{
-    return{};
+std::vector<AbstractProperty> FreezeFrameEffect::getProperties() const {
+    AbstractProperty property;
+    property.setName(QStringLiteral("frozen"));
+    property.setType(PropertyType::Boolean);
+    const QVariant value(isFrozen());
+    property.setValue(value);
+    property.setDefaultValue(QVariant(false));
+    return {std::move(property)};
 }
-void FreezeFrameEffect::setPropertyValue(const UniString&,const QVariant&){}
+void FreezeFrameEffect::setPropertyValue(const UniString& name,
+                                         const QVariant& value) {
+    if (name.toQString() != QStringLiteral("frozen")) {
+        return;
+    }
+    if (value.toBool()) {
+        freeze();
+    } else {
+        release();
+    }
+}
 void FreezeFrameEffect::syncImpls(){
     auto c=ArtifactCore::makeShared<FreezeFrameCPUImpl>();setCPUImpl(c);
 }

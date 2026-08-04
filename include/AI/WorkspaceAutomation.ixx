@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <utility>
 
@@ -9,6 +10,7 @@ module;
 #include <QIODevice>
 #include <QDir>
 #include <QDateTime>
+#include <QUuid>
 #include <QStandardPaths>
 #include <QSettings>
 #include <QColor>
@@ -86,6 +88,33 @@ public:
         return automation;
     }
 
+    /// Safe-write operations share one in-memory audit stream.  Callers may
+    /// persist the returned snapshot through SafeWriteAuditLog::saveToFile().
+    static QVariant safeWriteAuditLogSnapshot()
+    {
+        return instance().safeWriteAuditLog_.toVariantList();
+    }
+
+    static QVariant saveSafeWriteAuditLog(const QString& path)
+    {
+        QString error;
+        const bool success = instance().safeWriteAuditLog_.saveToFile(path, &error);
+        return QVariantMap{{QStringLiteral("success"), success},
+                           {QStringLiteral("path"), path},
+                           {QStringLiteral("error"), error}};
+    }
+
+    static QVariant loadSafeWriteAuditLog(const QString& path)
+    {
+        QString error;
+        const bool success = instance().safeWriteAuditLog_.loadFromFile(path, &error);
+        return QVariantMap{{QStringLiteral("success"), success},
+                           {QStringLiteral("path"), path},
+                           {QStringLiteral("error"), error},
+                           {QStringLiteral("entryCount"),
+                            static_cast<int>(instance().safeWriteAuditLog_.entries().size())}};
+    }
+
     QString className() const override { return QStringLiteral("WorkspaceAutomation"); }
 
     ArtifactCore::LocalizedText briefDescription() const override
@@ -115,6 +144,9 @@ public:
         using ArtifactCore::IDescribable;
         return {
             {"workspaceSnapshot", IDescribable::loc("Return a combined project, composition, selection, and render queue snapshot.", "Return a combined project, composition, selection, and render queue snapshot.", {}), "QVariantMap"},
+            {"safeWriteAuditLogSnapshot", IDescribable::loc("Return the in-memory audit entries for confirmed safe-write operations.", "Return the in-memory audit entries for confirmed safe-write operations.", {}), "QVariantList"},
+            {"saveSafeWriteAuditLog", IDescribable::loc("Persist the safe-write audit log as JSON.", "Persist the safe-write audit log as JSON.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("path")}},
+            {"loadSafeWriteAuditLog", IDescribable::loc("Load a safe-write audit log from JSON.", "Load a safe-write audit log from JSON.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("path")}},
             {"workspaceDiagnostics", IDescribable::loc("Return a compact workspace diagnostics summary.", "Return a compact workspace diagnostics summary.", {}), "QVariantMap"},
             {"commandVocabulary", IDescribable::loc("List the supported command IR vocabulary and required fields.", "List the supported command IR vocabulary and required fields.", {}), "QVariantList"},
             {"validateCommand", IDescribable::loc("Validate a command IR request without executing it.", "Validate a command IR request without executing it.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("command")}},
@@ -148,6 +180,8 @@ public:
             {"duplicateLayerInCurrentComposition", IDescribable::loc("Duplicate a layer in the active composition.", "Duplicate a layer in the active composition.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"moveLayerInCurrentComposition", IDescribable::loc("Move a layer to a new index in the active composition.", "Move a layer to a new index in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("newIndex")}},
             {"removeLayerFromCurrentComposition", IDescribable::loc("Remove a layer from the active composition.", "Remove a layer from the active composition.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"dryRunRemoveLayerFromCurrentComposition", IDescribable::loc("Preview removing a layer without changing the project.", "Preview removing a layer without changing the project.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"removeLayerFromCurrentCompositionConfirmed", IDescribable::loc("Remove a layer after explicit confirmation.", "Remove a layer after explicit confirmation.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("layerId"), QStringLiteral("confirmed")}},
             {"setLayerVisibleInCurrentComposition", IDescribable::loc("Toggle layer visibility in the active composition.", "Toggle layer visibility in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("layerId"), QStringLiteral("visible")}},
             {"setLayerLockedInCurrentComposition", IDescribable::loc("Toggle layer lock state in the active composition.", "Toggle layer lock state in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("layerId"), QStringLiteral("locked")}},
             {"setLayerSoloInCurrentComposition", IDescribable::loc("Toggle layer solo state in the active composition.", "Toggle layer solo state in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("layerId"), QStringLiteral("solo")}},
@@ -172,6 +206,12 @@ public:
             {"getLayerOpacity", IDescribable::loc("Get the opacity of a layer in the active composition (0-100).", "Get the opacity of a layer in the active composition (0-100).", {}), "double", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"setLayerOpacity", IDescribable::loc("Set the opacity of a layer in the active composition (0-100).", "Set the opacity of a layer in the active composition (0-100).", {}), "bool", {QStringLiteral("QString"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("opacity")}},
             {"getLayerEffects", IDescribable::loc("Get the list of effects applied to a layer in the active composition.", "Get the list of effects applied to a layer in the active composition.", {}), "QVariantList", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"getEffectRegistryMetadata", IDescribable::loc("List available effects and their runtime capabilities.", "List available effects and their runtime capabilities.", {}), "QVariantList"},
+            {"getLayerEffectParameters", IDescribable::loc("Get editable parameters for an effect on a layer.", "Get editable parameters for an effect on a layer.", {}), "QVariantList", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectId")}},
+            {"setLayerEffectParameterKeyframe", IDescribable::loc("Set an effect parameter at a timeline frame.", "Set an effect parameter at a timeline frame.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("QVariant")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("paramName"), QStringLiteral("frame"), QStringLiteral("value")}},
+            {"getLayerEffectParameterKeyframes", IDescribable::loc("Get keyframes for an effect parameter.", "Get keyframes for an effect parameter.", {}), "QVariantList", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("paramName")}},
+            {"removeLayerEffectParameterKeyframe", IDescribable::loc("Remove an effect parameter keyframe at a timeline frame.", "Remove an effect parameter keyframe at a timeline frame.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("paramName"), QStringLiteral("frame")}},
+            {"setLayerEffectParameterExpression", IDescribable::loc("Set or clear an expression on an effect parameter.", "Set or clear an expression on an effect parameter.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("paramName"), QStringLiteral("expression")}},
             {"addLayerEffect", IDescribable::loc("Add an effect to a layer in the active composition.", "Add an effect to a layer in the active composition.", {}), "QString", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectType")}},
             {"removeLayerEffect", IDescribable::loc("Remove an effect from a layer in the active composition.", "Remove an effect from a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectId")}},
             {"setLayerEffectParameter", IDescribable::loc("Set an effect parameter on a layer in the active composition.", "Set an effect parameter on a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QVariant")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("paramName"), QStringLiteral("value")}},
@@ -182,20 +222,28 @@ public:
             {"loadLayerEffectPreset", IDescribable::loc("Load an effect preset into a layer effect from a file.", "Load an effect preset into a layer effect from a file.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("filePath")}},
             {"listLayerEffectPresets", IDescribable::loc("List effect preset files in a directory.", "List effect preset files in a directory.", {}), "QVariantList", {QStringLiteral("QString")}, {QStringLiteral("directoryPath")}},
             {"recentLayerEffectPresets", IDescribable::loc("List recently used effect presets.", "List recently used effect presets.", {}), "QVariantList", {QStringLiteral("int")}, {QStringLiteral("limit")}},
-            {"setKeyframe", IDescribable::loc("Set a keyframe for a layer property at a specific frame.", "Set a keyframe for a layer property at a specific frame.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath"), QStringLiteral("frameNumber"), QStringLiteral("value")}},
+            {"setKeyframe", IDescribable::loc("Set a keyframe for a layer property at a specific frame.", "Set a keyframe for a layer property at a specific frame.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("double"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath"), QStringLiteral("frameNumber"), QStringLiteral("value"), QStringLiteral("interpolation")}},
             {"getKeyframes", IDescribable::loc("Get all keyframes for a layer property.", "Get all keyframes for a layer property.", {}), "QVariantList", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath")}},
             {"deleteKeyframe", IDescribable::loc("Delete a keyframe for a layer property at a specific frame.", "Delete a keyframe for a layer property at a specific frame.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath"), QStringLiteral("frameNumber")}},
             {"getLayerKeyframeSummary", IDescribable::loc("Return a summary of keyframed properties for a layer.", "Return a summary of keyframed properties for a layer.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"batchSetKeyframes", IDescribable::loc("Set multiple keyframes for a layer from a JSON array.", "Set multiple keyframes for a layer from a JSON array.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QVariantList")}, {QStringLiteral("layerId"), QStringLiteral("keyframes")}},
+            {"createMotionSketchKeyframes", IDescribable::loc("Convert sampled motion points into position keyframes.", "Convert sampled motion points into position keyframes.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QVariantList")}, {QStringLiteral("layerId"), QStringLiteral("samples")}},
+            {"createAutoOrientKeyframes", IDescribable::loc("Create rotation keyframes from sampled motion direction.", "Create rotation keyframes from sampled motion direction.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QVariantList")}, {QStringLiteral("layerId"), QStringLiteral("samples")}},
             {"createGroupLayer", IDescribable::loc("Create a new group layer in the active composition.", "Create a new group layer in the active composition.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("name")}},
             {"moveLayersToGroup", IDescribable::loc("Move multiple layers into a group layer.", "Move multiple layers into a group layer.", {}), "QVariantMap", {QStringLiteral("QStringList"), QStringLiteral("QString")}, {QStringLiteral("layerIds"), QStringLiteral("groupLayerId")}},
             {"ungroupLayers", IDescribable::loc("Ungroup all layers in a group layer.", "Ungroup all layers in a group layer.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("groupLayerId")}},
             {"compositionRemovalConfirmationMessage", IDescribable::loc("Return the confirmation message for deleting a composition.", "Return the confirmation message for deleting a composition.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
+            {"dryRunRemoveComposition", IDescribable::loc("Preview removing a composition without changing the project.", "Preview removing a composition without changing the project.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
+            {"removeCompositionWithRenderQueueCleanupConfirmed", IDescribable::loc("Remove a composition after explicit confirmation.", "Remove a composition after explicit confirmation.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("compositionId"), QStringLiteral("confirmed")}},
             {"removeCompositionWithRenderQueueCleanup", IDescribable::loc("Remove a composition and clear related render queue jobs.", "Remove a composition and clear related render queue jobs.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
             {"removeAllAssets", IDescribable::loc("Remove all imported assets from the project.", "Remove all imported assets from the project.", {}), "bool"},
+            {"dryRunRemoveAllAssets", IDescribable::loc("Preview removing all imported assets without changing the project.", "Preview removing all imported assets without changing the project.", {}), "QVariantMap"},
+            {"removeAllAssetsConfirmed", IDescribable::loc("Remove all imported assets after explicit confirmation.", "Remove all imported assets after explicit confirmation.", {}), "bool", {QStringLiteral("bool")}, {QStringLiteral("confirmed")}},
             {"findProjectItemById", IDescribable::loc("Return a project item snapshot by id.", "Return a project item snapshot by id.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
             {"projectItemPathById", IDescribable::loc("Return the project item path from root to id.", "Return the project item path from root to id.", {}), "QVariantList", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
             {"projectItemRemovalConfirmationMessage", IDescribable::loc("Return the confirmation message for deleting a project item by id.", "Return the confirmation message for deleting a project item by id.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
+            {"dryRunRemoveProjectItemById", IDescribable::loc("Preview removing a project item without changing the project.", "Preview removing a project item without changing the project.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
+            {"removeProjectItemByIdConfirmed", IDescribable::loc("Remove a project item after explicit confirmation.", "Remove a project item after explicit confirmation.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("itemId"), QStringLiteral("confirmed")}},
             {"renameProjectItemById", IDescribable::loc("Rename a project item by id.", "Rename a project item by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("itemId"), QStringLiteral("newName")}},
             {"moveProjectItemToFolder", IDescribable::loc("Move a project item under a folder by id.", "Move a project item under a folder by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("itemId"), QStringLiteral("parentFolderId")}},
             {"batchRenameProjectItems", IDescribable::loc("Rename multiple project items from a JSON array.", "Rename multiple project items from a JSON array.", {}), "QVariantMap", {QStringLiteral("QVariantList")}, {QStringLiteral("items")}},
@@ -209,6 +257,8 @@ public:
             {"duplicateRenderQueueAt", IDescribable::loc("Duplicate a render queue job by index.", "Duplicate a render queue job by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
             {"moveRenderQueue", IDescribable::loc("Move a render queue job from one index to another.", "Move a render queue job from one index to another.", {}), "bool", {QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("fromIndex"), QStringLiteral("toIndex")}},
             {"removeRenderQueueAt", IDescribable::loc("Remove a render queue job by index.", "Remove a render queue job by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"dryRunRemoveRenderQueueAt", IDescribable::loc("Preview removing a render queue job without changing the queue.", "Preview removing a render queue job without changing the queue.", {}), "QVariantMap", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"removeRenderQueueAtConfirmed", IDescribable::loc("Remove a render queue job after explicit confirmation.", "Remove a render queue job after explicit confirmation.", {}), "bool", {QStringLiteral("int"), QStringLiteral("bool")}, {QStringLiteral("jobIndex"), QStringLiteral("confirmed")}},
             {"setRenderQueueJobNameAt", IDescribable::loc("Rename a render queue job by index.", "Rename a render queue job by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("name")}},
             {"setRenderQueueJobOutputPathAt", IDescribable::loc("Set a render queue job output path by index.", "Set a render queue job output path by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("outputPath")}},
             {"setRenderQueueJobFrameRangeAt", IDescribable::loc("Set a render queue job frame range by index.", "Set a render queue job frame range by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("jobIndex"), QStringLiteral("startFrame"), QStringLiteral("endFrame")}},
@@ -221,6 +271,7 @@ public:
             {"setRenderQueueJobAudioCodecAt", IDescribable::loc("Set a render queue job audio codec by index.", "Set a render queue job audio codec by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("codec")}},
             {"setRenderQueueJobAudioBitrateKbpsAt", IDescribable::loc("Set a render queue job audio bitrate by index.", "Set a render queue job audio bitrate by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("jobIndex"), QStringLiteral("bitrateKbps")}},
             {"resetRenderQueueJobForRerun", IDescribable::loc("Reset a render queue job for rerun by index.", "Reset a render queue job for rerun by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"rerenderAllDetectedFailedFrames", IDescribable::loc("Requeue every detected failed frame for a render queue job.", "Requeue every detected failed frame for a render queue job.", {}), "int", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
             {"resetCompletedAndFailedRenderQueueJobsForRerun", IDescribable::loc("Reset completed and failed render queue jobs for rerun.", "Reset completed and failed render queue jobs for rerun.", {}), "int"},
             {"startRenderQueueAt", IDescribable::loc("Start a render queue job by index.", "Start a render queue job by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
             {"pauseRenderQueueAt", IDescribable::loc("Pause a render queue job by index.", "Pause a render queue job by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
@@ -270,6 +321,8 @@ public:
             {"getSupportedExportFormats", IDescribable::loc("Get list of supported export file formats.", "Get list of supported export file formats.", {}), "QStringList"},
             {"getDefaultCodecForFormat", IDescribable::loc("Get the default export codec for a given format.", "Get the default export codec for a given format.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("format")}},
             {"removeAllRenderQueues", IDescribable::loc("Clear the render queue.", "Clear the render queue.", {}), "bool"},
+            {"dryRunRemoveAllRenderQueues", IDescribable::loc("Preview clearing the render queue without changing it.", "Preview clearing the render queue without changing it.", {}), "QVariantMap"},
+            {"removeAllRenderQueuesConfirmed", IDescribable::loc("Clear the render queue after explicit confirmation.", "Clear the render queue after explicit confirmation.", {}), "bool", {QStringLiteral("bool")}, {QStringLiteral("confirmed")}},
             {"createSolidLayer", IDescribable::loc("Create a solid 2D layer and append it to the composition.", "Create a solid 2D layer and append it to the composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("compositionId"), QStringLiteral("name"), QStringLiteral("colorHex"), QStringLiteral("width"), QStringLiteral("height")}},
             {"replaceLayerSource", IDescribable::loc("Replace a video/audio layer's media source file.", "Replace a video/audio layer's media source file.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("footageItemId")}},
             {"splitLayerAtTime", IDescribable::loc("Split a layer into two layers at the specified frame time.", "Split a layer into two layers at the specified frame time.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("frameTime")}},
@@ -288,6 +341,15 @@ public:
 
     QVariant invokeMethod(QStringView name, const QVariantList& args) override
     {
+        if (name == QStringLiteral("safeWriteAuditLogSnapshot")) {
+            return safeWriteAuditLogSnapshot();
+        }
+        if (name == QStringLiteral("saveSafeWriteAuditLog")) {
+            return saveSafeWriteAuditLog(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("loadSafeWriteAuditLog")) {
+            return loadSafeWriteAuditLog(stringArg(args, 0));
+        }
         if (name == QStringLiteral("workspaceSnapshot")) {
             return workspaceSnapshot();
         }
@@ -390,6 +452,12 @@ public:
         if (name == QStringLiteral("removeLayerFromCurrentComposition")) {
             return removeLayerFromCurrentComposition(stringArg(args, 0));
         }
+        if (name == QStringLiteral("dryRunRemoveLayerFromCurrentComposition")) {
+            return dryRunRemoveLayerFromCurrentComposition(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("removeLayerFromCurrentCompositionConfirmed")) {
+            return removeLayerFromCurrentCompositionConfirmed(stringArg(args, 0), boolArg(args, 1, false));
+        }
         if (name == QStringLiteral("setLayerVisibleInCurrentComposition")) {
             return setLayerVisibleInCurrentComposition(stringArg(args, 0), boolArg(args, 1, true));
         }
@@ -462,6 +530,34 @@ public:
         if (name == QStringLiteral("getLayerEffects")) {
             return getLayerEffects(stringArg(args, 0));
         }
+        if (name == QStringLiteral("getEffectRegistryMetadata")) {
+            return getEffectRegistryMetadata();
+        }
+        if (name == QStringLiteral("listAvailableEffects")) {
+            return listAvailableEffects();
+        }
+        if (name == QStringLiteral("getLayerEffectParameters")) {
+            return getLayerEffectParameters(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("setLayerEffectParameterKeyframe")) {
+            return setLayerEffectParameterKeyframe(
+                stringArg(args, 0), stringArg(args, 1), stringArg(args, 2),
+                args.value(3).toInt(), args.value(4));
+        }
+        if (name == QStringLiteral("getLayerEffectParameterKeyframes")) {
+            return getLayerEffectParameterKeyframes(
+                stringArg(args, 0), stringArg(args, 1), stringArg(args, 2));
+        }
+        if (name == QStringLiteral("removeLayerEffectParameterKeyframe")) {
+            return removeLayerEffectParameterKeyframe(
+                stringArg(args, 0), stringArg(args, 1), stringArg(args, 2),
+                args.value(3).toInt());
+        }
+        if (name == QStringLiteral("setLayerEffectParameterExpression")) {
+            return setLayerEffectParameterExpression(
+                stringArg(args, 0), stringArg(args, 1), stringArg(args, 2),
+                stringArg(args, 3));
+        }
         if (name == QStringLiteral("addLayerEffect")) {
             return addLayerEffect(stringArg(args, 0), stringArg(args, 1));
         }
@@ -493,7 +589,7 @@ public:
             return recentLayerEffectPresets(intArg(args, 0, 10));
         }
         if (name == QStringLiteral("setKeyframe")) {
-            return setKeyframe(stringArg(args, 0), stringArg(args, 1), intArg(args, 2, 0), doubleArg(args, 3, 0.0));
+            return setKeyframe(stringArg(args, 0), stringArg(args, 1), intArg(args, 2, 0), doubleArg(args, 3, 0.0), stringArg(args, 4));
         }
         if (name == QStringLiteral("getKeyframes")) {
             return getKeyframes(stringArg(args, 0), stringArg(args, 1));
@@ -507,11 +603,31 @@ public:
         if (name == QStringLiteral("batchSetKeyframes")) {
             return batchSetKeyframes(stringArg(args, 0), args.value(1).toList());
         }
+        if (name == QStringLiteral("createMotionSketchKeyframes")) {
+            return createMotionSketchKeyframes(stringArg(args, 0), args.value(1).toList());
+        }
+        if (name == QStringLiteral("createAutoOrientKeyframes")) {
+            return createAutoOrientKeyframes(stringArg(args, 0), args.value(1).toList());
+        }
         if (name == QStringLiteral("createGroupLayer")) {
             return createGroupLayer(stringArg(args, 0));
         }
         if (name == QStringLiteral("moveLayersToGroup")) {
-            return moveLayersToGroup(collectStringList(args), stringArg(args, 1));
+            QStringList layerIds;
+            if (!args.isEmpty()) {
+                const QVariant first = args.value(0);
+                if (first.canConvert<QStringList>()) {
+                    layerIds = first.toStringList();
+                } else {
+                    for (const QVariant& value : first.toList()) {
+                        const QString id = value.toString().trimmed();
+                        if (!id.isEmpty()) {
+                            layerIds.append(id);
+                        }
+                    }
+                }
+            }
+            return moveLayersToGroup(layerIds, stringArg(args, 1));
         }
         if (name == QStringLiteral("ungroupLayers")) {
             return ungroupLayers(stringArg(args, 0));
@@ -519,11 +635,23 @@ public:
         if (name == QStringLiteral("compositionRemovalConfirmationMessage")) {
             return compositionRemovalConfirmationMessage(stringArg(args, 0));
         }
+        if (name == QStringLiteral("dryRunRemoveComposition")) {
+            return dryRunRemoveComposition(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("removeCompositionWithRenderQueueCleanupConfirmed")) {
+            return removeCompositionWithRenderQueueCleanupConfirmed(stringArg(args, 0), boolArg(args, 1, false));
+        }
         if (name == QStringLiteral("removeCompositionWithRenderQueueCleanup")) {
             return removeCompositionWithRenderQueueCleanup(stringArg(args, 0));
         }
         if (name == QStringLiteral("removeAllAssets")) {
             return removeAllAssets();
+        }
+        if (name == QStringLiteral("dryRunRemoveAllAssets")) {
+            return dryRunRemoveAllAssets();
+        }
+        if (name == QStringLiteral("removeAllAssetsConfirmed")) {
+            return removeAllAssetsConfirmed(boolArg(args, 0, false));
         }
         if (name == QStringLiteral("findProjectItemById")) {
             return findProjectItemById(stringArg(args, 0));
@@ -533,6 +661,12 @@ public:
         }
         if (name == QStringLiteral("projectItemRemovalConfirmationMessage")) {
             return projectItemRemovalConfirmationMessage(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("dryRunRemoveProjectItemById")) {
+            return dryRunRemoveProjectItemById(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("removeProjectItemByIdConfirmed")) {
+            return removeProjectItemByIdConfirmed(stringArg(args, 0), boolArg(args, 1, false));
         }
         if (name == QStringLiteral("renameProjectItemById")) {
             return renameProjectItemById(stringArg(args, 0), stringArg(args, 1));
@@ -572,6 +706,12 @@ public:
         }
         if (name == QStringLiteral("removeRenderQueueAt")) {
             return removeRenderQueueAt(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("dryRunRemoveRenderQueueAt")) {
+            return dryRunRemoveRenderQueueAt(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("removeRenderQueueAtConfirmed")) {
+            return removeRenderQueueAtConfirmed(intArg(args, 0, -1), boolArg(args, 1, false));
         }
         if (name == QStringLiteral("setRenderQueueJobNameAt")) {
             return setRenderQueueJobNameAt(intArg(args, 0, -1), stringArg(args, 1));
@@ -617,6 +757,9 @@ public:
         }
         if (name == QStringLiteral("resetRenderQueueJobForRerun")) {
             return resetRenderQueueJobForRerun(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("rerenderAllDetectedFailedFrames")) {
+            return rerenderAllDetectedFailedFrames(intArg(args, 0, -1));
         }
         if (name == QStringLiteral("resetCompletedAndFailedRenderQueueJobsForRerun")) {
             return resetCompletedAndFailedRenderQueueJobsForRerun();
@@ -776,6 +919,12 @@ public:
         if (name == QStringLiteral("removeAllRenderQueues")) {
             return renderQueueRemoveAll();
         }
+        if (name == QStringLiteral("dryRunRemoveAllRenderQueues")) {
+            return dryRunRemoveAllRenderQueues();
+        }
+        if (name == QStringLiteral("removeAllRenderQueuesConfirmed")) {
+            return removeAllRenderQueuesConfirmed(boolArg(args, 0, false));
+        }
         if (name == QStringLiteral("createSolidLayer")) {
             return createSolidLayer(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), intArg(args, 3, 0), intArg(args, 4, 0));
         }
@@ -816,6 +965,21 @@ public:
     }
 
 private:
+    static void appendSafeWriteAudit(const QString& operationName,
+                                     const QStringList& targetIds,
+                                     const QString& status,
+                                     const QVariantMap& payload)
+    {
+        ArtifactCore::SafeWriteAuditEntry entry;
+        entry.entryId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        entry.timestampUtc = QDateTime::currentDateTimeUtc();
+        entry.phase = QStringLiteral("execution");
+        entry.operationName = operationName;
+        entry.status = status;
+        entry.payload = payload;
+        instance().safeWriteAuditLog_.append(entry);
+    }
+
     static QVariantMap toVariantMap(const QJsonObject& obj)
     {
         QVariantMap map;
@@ -1195,6 +1359,73 @@ private:
         diag.insert(QStringLiteral("projectName"), project.value(QStringLiteral("projectName")).toString());
         diag.insert(QStringLiteral("activeCompositionName"), comp.value(QStringLiteral("name")).toString());
         diag.insert(QStringLiteral("activeCompositionId"), comp.value(QStringLiteral("id")).toString());
+
+        QVariantList effectIds;
+        QVariantList effectNames;
+        QVariantList effectEnabled;
+        QVariantList effectPropertyCounts;
+        QVariantList effectPropertyNames;
+        QVariantList effectPropertyAnimatableCounts;
+        QVariantList effectPropertyExpressionCounts;
+        QVariantList effectPropertyKeyframeCounts;
+        QVariantList effectPropertyDescriptors;
+        if (const auto layer = currentLayer()) {
+            for (const auto& effect : layer->getEffects()) {
+                if (!effect) continue;
+                effectIds.append(effect->effectID().toQString());
+                effectNames.append(effect->displayName().toQString());
+                effectEnabled.append(effect->isEnabled());
+                const auto properties = effect->getProperties();
+                effectPropertyCounts.append(static_cast<int>(properties.size()));
+                QVariantList names;
+                int animatableCount = 0;
+                int expressionCount = 0;
+                int keyframeCount = 0;
+                QVariantList descriptors;
+                for (const auto& property : properties) {
+                    names.append(property.getName());
+                    const bool animatable = property.isAnimatable();
+                    const bool hasExpression = property.hasExpression();
+                    const int propertyKeyframeCount =
+                        static_cast<int>(property.getKeyFrames().size());
+                    if (animatable) {
+                        ++animatableCount;
+                    }
+                    if (hasExpression) {
+                        ++expressionCount;
+                    }
+                    keyframeCount += propertyKeyframeCount;
+                    QVariantMap descriptor;
+                    descriptor.insert(QStringLiteral("name"), property.getName());
+                    descriptor.insert(QStringLiteral("type"),
+                                      static_cast<int>(property.getType()));
+                    descriptor.insert(QStringLiteral("value"), property.getValue());
+                    descriptor.insert(QStringLiteral("animatable"), animatable);
+                    descriptor.insert(QStringLiteral("expression"),
+                                      property.getExpression());
+                    descriptor.insert(QStringLiteral("keyframeCount"), propertyKeyframeCount);
+                    descriptors.append(descriptor);
+                }
+                effectPropertyNames.append(names);
+                effectPropertyAnimatableCounts.append(animatableCount);
+                effectPropertyExpressionCounts.append(expressionCount);
+                effectPropertyKeyframeCounts.append(keyframeCount);
+                effectPropertyDescriptors.append(descriptors);
+            }
+        }
+        diag.insert(QStringLiteral("currentLayerEffectCount"), effectIds.size());
+        diag.insert(QStringLiteral("currentLayerEffectIds"), effectIds);
+        diag.insert(QStringLiteral("currentLayerEffectNames"), effectNames);
+        diag.insert(QStringLiteral("currentLayerEffectEnabled"), effectEnabled);
+        diag.insert(QStringLiteral("currentLayerEffectPropertyCounts"), effectPropertyCounts);
+        diag.insert(QStringLiteral("currentLayerEffectPropertyNames"), effectPropertyNames);
+        diag.insert(QStringLiteral("currentLayerEffectAnimatablePropertyCounts"),
+                   effectPropertyAnimatableCounts);
+        diag.insert(QStringLiteral("currentLayerEffectExpressionPropertyCounts"),
+                   effectPropertyExpressionCounts);
+        diag.insert(QStringLiteral("currentLayerEffectKeyframeCounts"), effectPropertyKeyframeCounts);
+        diag.insert(QStringLiteral("currentLayerEffectPropertyDescriptors"),
+                   effectPropertyDescriptors);
 
         QStringList warnings;
         if (!diag.value(QStringLiteral("hasProject")).toBool()) {
@@ -2027,6 +2258,83 @@ private:
         return service->removeLayerFromComposition(comp->id(), LayerID(layerId));
     }
 
+    static QVariant dryRunRemoveLayerFromCurrentComposition(const QString& layerId)
+    {
+        ArtifactCore::SafeWriteExecutionPlan plan;
+        plan.dryRun.operationName = QStringLiteral("removeLayerFromCurrentComposition");
+        plan.dryRun.targetIds = {layerId};
+        plan.dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
+        plan.confirmation.operationName = plan.dryRun.operationName;
+        plan.confirmation.targetIds = plan.dryRun.targetIds;
+        plan.confirmation.required = true;
+        plan.confirmation.undoAvailable = true;
+        const auto comp = currentComposition();
+        const auto layer = comp && !layerId.trimmed().isEmpty()
+            ? comp->layerById(LayerID(layerId)) : ArtifactAbstractLayerPtr{};
+        const bool exists = static_cast<bool>(layer);
+        plan.dryRun.wouldChange = exists;
+        plan.dryRun.wouldFail = !exists;
+        plan.dryRun.affectedCounts = {
+            {QStringLiteral("layers"), exists ? 1 : 0}
+        };
+        if (!exists) {
+            plan.dryRun.warnings << QStringLiteral("Layer was not found in the active composition.");
+            plan.confirmation.reason = QStringLiteral("The requested layer cannot be removed.");
+        } else {
+            plan.dryRun.warnings << QStringLiteral("Removing the layer changes the active composition.");
+            plan.confirmation.reason = QStringLiteral("Layer removal is destructive and requires confirmation.");
+        }
+        plan.confirmation.estimatedImpact = QStringLiteral("1 layer");
+        plan.confirmation.previewMessage = exists
+            ? QStringLiteral("Remove the selected layer from the active composition?")
+            : QStringLiteral("No layer will be removed.");
+        plan.inputSnapshot = {
+            {QStringLiteral("compositionId"), comp ? comp->id().toString() : QString()},
+            {QStringLiteral("layerId"), layerId}
+        };
+        return plan.toVariantMap();
+    }
+
+    static QVariant removeLayerFromCurrentCompositionConfirmed(const QString& layerId,
+                                                               bool confirmed)
+    {
+        ArtifactCore::SafeWriteDryRunResult dryRun;
+        dryRun.operationName = QStringLiteral("removeLayerFromCurrentComposition");
+        dryRun.targetIds = {layerId};
+        dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
+        const auto comp = currentComposition();
+        const bool exists = comp && !layerId.trimmed().isEmpty() &&
+                            static_cast<bool>(comp->layerById(LayerID(layerId)));
+        dryRun.wouldChange = exists;
+        dryRun.wouldFail = !exists;
+        dryRun.warnings << (exists ? QStringLiteral("Layer removal is destructive.")
+                                   : QStringLiteral("Layer was not found."));
+        ArtifactCore::SafeWriteConfirmationPayload confirmation;
+        confirmation.operationName = dryRun.operationName;
+        confirmation.targetIds = dryRun.targetIds;
+        confirmation.reason = QStringLiteral("Layer removal requires explicit confirmation.");
+        confirmation.previewMessage = QStringLiteral("Remove the selected layer?");
+        confirmation.undoAvailable = true;
+        QString error;
+        if (!ArtifactCore::SafeWriteRemovalGate::authorize(
+                dryRun, confirmation, confirmed, &error)) {
+            appendSafeWriteAudit(dryRun.operationName, dryRun.targetIds,
+                                 QStringLiteral("rejected"),
+                                 {{QStringLiteral("error"), error}});
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), error},
+                {QStringLiteral("confirmationRequired"), true}
+            };
+        }
+        const QVariant result = removeLayerFromCurrentComposition(layerId);
+        appendSafeWriteAudit(dryRun.operationName, dryRun.targetIds,
+                             result.toBool() ? QStringLiteral("succeeded")
+                                             : QStringLiteral("failed"),
+                             {{QStringLiteral("result"), result}});
+        return result;
+    }
+
     static QVariant renameComposition(const QString& compositionId, const QString& newName)
     {
         auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
@@ -2061,6 +2369,87 @@ private:
         return service->compositionRemovalConfirmationMessage(CompositionID(compositionId));
     }
 
+    static QVariant dryRunRemoveComposition(const QString& compositionId)
+    {
+        ArtifactCore::SafeWriteExecutionPlan plan;
+        plan.dryRun.operationName = QStringLiteral("removeCompositionWithRenderQueueCleanup");
+        plan.dryRun.targetIds = {compositionId};
+        plan.dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
+        plan.confirmation.operationName = plan.dryRun.operationName;
+        plan.confirmation.targetIds = plan.dryRun.targetIds;
+        plan.confirmation.required = true;
+        plan.confirmation.undoAvailable = true;
+        auto* service = ArtifactApplicationManager::instance()
+            ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        bool exists = false;
+        if (service && !compositionId.trimmed().isEmpty()) {
+            const auto found = service->findComposition(CompositionID(compositionId));
+            exists = found.success && !found.ptr.expired();
+        }
+        plan.dryRun.wouldChange = exists;
+        plan.dryRun.wouldFail = !exists;
+        plan.dryRun.affectedCounts = {
+            {QStringLiteral("compositions"), exists ? 1 : 0},
+            {QStringLiteral("renderQueueCleanup"), exists ? 1 : 0}
+        };
+        plan.dryRun.warnings << (exists
+            ? QStringLiteral("Related render queue jobs will also be removed.")
+            : QStringLiteral("Composition was not found."));
+        plan.confirmation.reason = QStringLiteral("Composition removal is destructive and requires confirmation.");
+        plan.confirmation.estimatedImpact = QStringLiteral("1 composition and related queue jobs");
+        plan.confirmation.previewMessage = exists
+            ? QStringLiteral("Remove the composition and related render queue jobs?")
+            : QStringLiteral("No composition will be removed.");
+        plan.inputSnapshot = {
+            {QStringLiteral("compositionId"), compositionId}
+        };
+        return plan.toVariantMap();
+    }
+
+    static QVariant removeCompositionWithRenderQueueCleanupConfirmed(
+        const QString& compositionId, bool confirmed)
+    {
+        ArtifactCore::SafeWriteDryRunResult dryRun;
+        dryRun.operationName = QStringLiteral("removeCompositionWithRenderQueueCleanup");
+        dryRun.targetIds = {compositionId};
+        dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
+        auto* service = ArtifactApplicationManager::instance()
+            ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        bool exists = false;
+        if (service && !compositionId.trimmed().isEmpty()) {
+            const auto found = service->findComposition(CompositionID(compositionId));
+            exists = found.success && !found.ptr.expired();
+        }
+        dryRun.wouldChange = exists;
+        dryRun.wouldFail = !exists;
+        dryRun.warnings << (exists ? QStringLiteral("Composition removal is destructive.")
+                                   : QStringLiteral("Composition was not found."));
+        ArtifactCore::SafeWriteConfirmationPayload confirmation;
+        confirmation.operationName = dryRun.operationName;
+        confirmation.targetIds = dryRun.targetIds;
+        confirmation.reason = QStringLiteral("Composition removal requires explicit confirmation.");
+        confirmation.previewMessage = QStringLiteral("Remove the composition and related queue jobs?");
+        confirmation.undoAvailable = true;
+        QString error;
+        if (!ArtifactCore::SafeWriteRemovalGate::authorize(
+                dryRun, confirmation, confirmed, &error)) {
+            appendSafeWriteAudit(dryRun.operationName, dryRun.targetIds,
+                                 QStringLiteral("rejected"),
+                                 {{QStringLiteral("error"), error}});
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), error},
+                {QStringLiteral("confirmationRequired"), true}
+            };
+        }
+        const QVariant result = removeCompositionWithRenderQueueCleanup(compositionId);
+        appendSafeWriteAudit(dryRun.operationName, dryRun.targetIds,
+                             result.toBool() ? QStringLiteral("succeeded")
+                                             : QStringLiteral("failed"),
+                             {{QStringLiteral("result"), result}});
+        return result;
+    }
+
     static QVariant removeCompositionWithRenderQueueCleanup(const QString& compositionId)
     {
         auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
@@ -2078,6 +2467,58 @@ private:
         }
         service->removeAllAssets();
         return true;
+    }
+
+    static QVariant dryRunRemoveAllAssets()
+    {
+        ArtifactCore::SafeWriteExecutionPlan plan;
+        plan.dryRun.operationName = QStringLiteral("removeAllAssets");
+        plan.dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
+        plan.dryRun.wouldChange = true;
+        plan.dryRun.affectedCounts = {{QStringLiteral("assets"), -1}};
+        plan.dryRun.warnings << QStringLiteral("All imported assets will be removed; exact dependent references require a project snapshot.");
+        plan.confirmation.operationName = plan.dryRun.operationName;
+        plan.confirmation.required = true;
+        plan.confirmation.undoAvailable = false;
+        plan.confirmation.reason = QStringLiteral("Removing all assets is destructive and requires confirmation.");
+        plan.confirmation.estimatedImpact = QStringLiteral("All imported assets");
+        plan.confirmation.previewMessage = QStringLiteral("Remove all imported assets?");
+        return plan.toVariantMap();
+    }
+
+    static QVariant removeAllAssetsConfirmed(bool confirmed)
+    {
+        ArtifactCore::SafeWriteDryRunResult dryRun;
+        dryRun.operationName = QStringLiteral("removeAllAssets");
+        dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
+        auto* service = ArtifactApplicationManager::instance()
+            ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        dryRun.wouldChange = service != nullptr;
+        dryRun.wouldFail = service == nullptr;
+        dryRun.warnings << QStringLiteral("All imported assets will be removed; exact count is unavailable.");
+        ArtifactCore::SafeWriteConfirmationPayload confirmation;
+        confirmation.operationName = dryRun.operationName;
+        confirmation.reason = QStringLiteral("Removing all assets requires explicit confirmation.");
+        confirmation.previewMessage = QStringLiteral("Remove all imported assets?");
+        confirmation.undoAvailable = false;
+        QString error;
+        if (!ArtifactCore::SafeWriteRemovalGate::authorize(
+                dryRun, confirmation, confirmed, &error)) {
+            appendSafeWriteAudit(dryRun.operationName, dryRun.targetIds,
+                                 QStringLiteral("rejected"),
+                                 {{QStringLiteral("error"), error}});
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), error},
+                {QStringLiteral("confirmationRequired"), true}
+            };
+        }
+        const QVariant result = removeAllAssets();
+        appendSafeWriteAudit(dryRun.operationName, dryRun.targetIds,
+                             result.toBool() ? QStringLiteral("succeeded")
+                                             : QStringLiteral("failed"),
+                             {{QStringLiteral("result"), result}});
+        return result;
     }
 
     static QVariant getCompositionNote(const QString& compositionId)
@@ -2176,6 +2617,11 @@ private:
 
     static QVariant setLayerPosition(const QString& layerId, double x, double y)
     {
+        if (!std::isfinite(x) || !std::isfinite(y) ||
+            x < -100000000.0 || x > 100000000.0 ||
+            y < -100000000.0 || y > 100000000.0) {
+            return false;
+        }
         auto* app = ArtifactApplicationManager::instance();
         if (!app) {
             return false;
@@ -2218,6 +2664,10 @@ private:
 
     static QVariant setLayerScale(const QString& layerId, double sx, double sy)
     {
+        if (!std::isfinite(sx) || !std::isfinite(sy) ||
+            sx < -1000.0 || sx > 1000.0 || sy < -1000.0 || sy > 1000.0) {
+            return false;
+        }
         auto* app = ArtifactApplicationManager::instance();
         if (!app) {
             return false;
@@ -2255,6 +2705,9 @@ private:
 
     static QVariant setLayerRotation(const QString& layerId, double rotation)
     {
+        if (!std::isfinite(rotation) || rotation < -1000000.0 || rotation > 1000000.0) {
+            return false;
+        }
         auto* app = ArtifactApplicationManager::instance();
         if (!app) {
             return false;
@@ -2291,6 +2744,10 @@ private:
 
     static QVariant setLayerOpacity(const QString& layerId, double opacity)
     {
+        if (!std::isfinite(opacity)) {
+            return false;
+        }
+        opacity = std::clamp(opacity, 0.0, 100.0);
         auto* app = ArtifactApplicationManager::instance();
         if (!app) {
             return false;
@@ -2321,13 +2778,90 @@ private:
         
         QVariantList effectsList;
         for (const auto& effect : layer->getEffects()) {
+            if (!effect) {
+                continue;
+            }
             QVariantMap effectMap;
             effectMap[QStringLiteral("id")] = effect->effectID().toQString();
             effectMap[QStringLiteral("name")] = effect->displayName().toQString();
             effectMap[QStringLiteral("enabled")] = effect->isEnabled();
+            const auto properties = effect->getProperties();
+            effectMap[QStringLiteral("parameterCount")] =
+                static_cast<int>(properties.size());
+            QVariantList parameterNames;
+            for (const auto& property : properties) {
+                parameterNames.append(property.getName());
+            }
+            effectMap[QStringLiteral("parameterNames")] = parameterNames;
             effectsList.append(effectMap);
         }
         return effectsList;
+    }
+
+    static QVariant getEffectRegistryMetadata()
+    {
+        auto* effectService = ArtifactEffectService::instance();
+        if (!effectService) {
+            return QVariantList();
+        }
+        QVariantList metadata;
+        for (const auto& info : effectService->availableEffects()) {
+            QVariantMap item;
+            item.insert(QStringLiteral("id"), info.id.toString());
+            item.insert(QStringLiteral("displayName"), info.displayName);
+            const QString effectId = info.id.toString();
+            QString category = QStringLiteral("Other");
+            if (effectId.startsWith(QStringLiteral("ofx."))) {
+                category = QStringLiteral("OFX");
+            } else if (effectId.startsWith(QStringLiteral("builtin."))) {
+                category = QStringLiteral("Builtin");
+            } else if (effectId.startsWith(QStringLiteral("effect.colorcorrection."))) {
+                category = QStringLiteral("ColorCorrection");
+            } else if (effectId.contains(QStringLiteral("key"), Qt::CaseInsensitive) ||
+                       effectId.contains(QStringLiteral("matte"), Qt::CaseInsensitive)) {
+                category = QStringLiteral("Keying");
+            } else if (effectId.contains(QStringLiteral("blur"), Qt::CaseInsensitive) ||
+                       effectId.contains(QStringLiteral("shadow"), Qt::CaseInsensitive)) {
+                category = QStringLiteral("BlurShadow");
+            }
+            item.insert(QStringLiteral("category"), category);
+            item.insert(QStringLiteral("provider"),
+                        effectId.startsWith(QStringLiteral("ofx."))
+                            ? QStringLiteral("OFX") : QStringLiteral("ArtifactStudio"));
+            item.insert(QStringLiteral("version"), QStringLiteral("1"));
+            const auto effect = effectService->createEffect(info.id);
+            if (!effect) {
+                item.insert(QStringLiteral("available"), false);
+                item.insert(QStringLiteral("implementationType"), QStringLiteral("missing"));
+                metadata.append(item);
+                continue;
+            }
+            const bool concreteImplementation =
+                !effect->displayName().toQString().startsWith(
+                    QStringLiteral("Plugin Effect:"), Qt::CaseInsensitive);
+            item.insert(QStringLiteral("implementationType"),
+                        concreteImplementation ? QStringLiteral("concrete")
+                                               : QStringLiteral("fallback"));
+            QString stage;
+            switch (effect->pipelineStage()) {
+            case EffectPipelineStage::PreProcess: stage = QStringLiteral("PreProcess"); break;
+            case EffectPipelineStage::Generator: stage = QStringLiteral("Generator"); break;
+            case EffectPipelineStage::GeometryTransform: stage = QStringLiteral("GeometryTransform"); break;
+            case EffectPipelineStage::MaterialRender: stage = QStringLiteral("MaterialRender"); break;
+            case EffectPipelineStage::Rasterizer: stage = QStringLiteral("Rasterizer"); break;
+            case EffectPipelineStage::LayerTransform: stage = QStringLiteral("LayerTransform"); break;
+            }
+            item.insert(QStringLiteral("available"), concreteImplementation);
+            item.insert(QStringLiteral("pipelineStage"), stage);
+            item.insert(QStringLiteral("supportsGPU"),
+                        concreteImplementation && effect->supportsGPU());
+            item.insert(QStringLiteral("propertyCount"),
+                        concreteImplementation
+                            ? static_cast<int>(effect->getProperties().size())
+                            : 0);
+            metadata.append(item);
+        }
+        return metadata;
     }
 
     static QVariant addLayerEffect(const QString& layerId, const QString& effectType)
@@ -2344,6 +2878,185 @@ private:
             return result.effectId;
         }
         return QString();
+    }
+
+    static QVariant getLayerEffectParameters(const QString& layerId,
+                                             const QString& effectId)
+    {
+        const auto effect = findLayerEffect(layerId, effectId);
+        if (!effect) {
+            return QVariantList();
+        }
+
+        QVariantList parameters;
+        for (const auto& property : effect->getProperties()) {
+            QVariantMap item;
+            item.insert(QStringLiteral("name"), property.getName());
+            item.insert(QStringLiteral("type"), static_cast<int>(property.getType()));
+            item.insert(QStringLiteral("value"), property.getValue());
+            item.insert(QStringLiteral("defaultValue"), property.getDefaultValue());
+            item.insert(QStringLiteral("minValue"), property.getMinValue());
+            item.insert(QStringLiteral("maxValue"), property.getMaxValue());
+            item.insert(QStringLiteral("animatable"), property.isAnimatable());
+            item.insert(QStringLiteral("expression"), property.getExpression());
+            item.insert(QStringLiteral("keyframeCount"),
+                        static_cast<int>(property.getKeyFrames().size()));
+            parameters.append(item);
+        }
+        return parameters;
+    }
+
+    static QVariant setLayerEffectParameterKeyframe(const QString& layerId,
+                                                    const QString& effectId,
+                                                    const QString& paramName,
+                                                    int frame,
+                                                    const QVariant& value)
+    {
+        auto* ps = ArtifactProjectService::instance();
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!ps || !playback || frame < 0) {
+            return false;
+        }
+        const auto comp = ps->currentComposition().lock();
+        if (!comp || layerId.trimmed().isEmpty() || effectId.trimmed().isEmpty() ||
+            paramName.trimmed().isEmpty() || !value.isValid()) {
+            return false;
+        }
+        const auto layer = comp->layerById(ArtifactCore::LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        ArtifactAbstractEffectPtr effect;
+        for (const auto& candidate : layer->getEffects()) {
+            if (candidate && candidate->effectID().toQString() == effectId) {
+                effect = candidate;
+                break;
+            }
+        }
+        if (!effect) {
+            return false;
+        }
+        const auto property = effect->editableProperty(paramName.trimmed());
+        if (!property || !property->isAnimatable()) {
+            return false;
+        }
+        const auto rate = std::max(1.0, playback->frameRate().framerate());
+        property->addKeyFrame(RationalTime(frame, rate), value);
+        ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
+            comp->id().toString(), layer->id().toString(),
+            LayerChangedEvent::ChangeType::Modified});
+        if (auto project = ps->getCurrentProjectSharedPtr()) {
+            ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+            project->projectChanged();
+        }
+        return true;
+    }
+
+    static QVariant getLayerEffectParameterKeyframes(const QString& layerId,
+                                                     const QString& effectId,
+                                                     const QString& paramName)
+    {
+        const auto effect = findLayerEffect(layerId, effectId);
+        if (!effect) {
+            return QVariantList();
+        }
+        const auto property = effect->editableProperty(paramName.trimmed());
+        if (!property) {
+            return QVariantList();
+        }
+        return propertyKeyframesToVariantList(property);
+    }
+
+    static QVariant removeLayerEffectParameterKeyframe(const QString& layerId,
+                                                       const QString& effectId,
+                                                       const QString& paramName,
+                                                       int frame)
+    {
+        auto* ps = ArtifactProjectService::instance();
+        if (!ps || frame < 0) {
+            return false;
+        }
+        const auto comp = ps->currentComposition().lock();
+        if (!comp) {
+            return false;
+        }
+        const auto layer = comp->layerById(ArtifactCore::LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        ArtifactAbstractEffectPtr effect;
+        for (const auto& candidate : layer->getEffects()) {
+            if (candidate && candidate->effectID().toQString() == effectId) {
+                effect = candidate;
+                break;
+            }
+        }
+        if (!effect) {
+            return false;
+        }
+        const auto property = effect->editableProperty(paramName.trimmed());
+        if (!property) {
+            return false;
+        }
+        const auto keyframes = property->getKeyFrames();
+        const auto it = std::find_if(keyframes.begin(), keyframes.end(),
+                                     [frame](const auto& keyframe) {
+                                         return keyframe.time.rescaledTo(1) == frame;
+                                     });
+        if (it == keyframes.end()) {
+            return false;
+        }
+        property->removeKeyFrame(it->time);
+        ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
+            comp->id().toString(), layer->id().toString(),
+            LayerChangedEvent::ChangeType::Modified});
+        if (auto project = ps->getCurrentProjectSharedPtr()) {
+            ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+            project->projectChanged();
+        }
+        return true;
+    }
+
+    static QVariant setLayerEffectParameterExpression(const QString& layerId,
+                                                      const QString& effectId,
+                                                      const QString& paramName,
+                                                      const QString& expression)
+    {
+        auto* ps = ArtifactProjectService::instance();
+        if (!ps) {
+            return false;
+        }
+        const auto comp = ps->currentComposition().lock();
+        if (!comp) {
+            return false;
+        }
+        const auto layer = comp->layerById(ArtifactCore::LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        ArtifactAbstractEffectPtr effect;
+        for (const auto& candidate : layer->getEffects()) {
+            if (candidate && candidate->effectID().toQString() == effectId) {
+                effect = candidate;
+                break;
+            }
+        }
+        if (!effect) {
+            return false;
+        }
+        const auto property = effect->editableProperty(paramName.trimmed());
+        if (!property || !property->isAnimatable()) {
+            return false;
+        }
+        property->setExpression(expression.trimmed());
+        ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
+            comp->id().toString(), layer->id().toString(),
+            LayerChangedEvent::ChangeType::Modified});
+        if (auto project = ps->getCurrentProjectSharedPtr()) {
+            ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+            project->projectChanged();
+        }
+        return true;
     }
 
     static QVariant removeLayerEffect(const QString& layerId, const QString& effectId)
@@ -2615,8 +3328,14 @@ private:
     // Supported property paths (transform): "transform.position.x", "transform.position.y", 
     // "transform.rotation", "transform.scale.x", "transform.scale.y", "transform.anchor.x", "transform.anchor.y"
     // Returns: {"success": bool, "keyframeId": string (frame number)}
-    static QVariant setKeyframe(const QString& layerId, const QString& propertyPath, int frameNumber, double value)
+    static QVariant setKeyframe(const QString& layerId, const QString& propertyPath, int frameNumber, double value, const QString& interpolationName = QStringLiteral("Linear"))
     {
+        if (propertyPath.trimmed().isEmpty() || frameNumber < 0 || !std::isfinite(value)) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Invalid keyframe arguments")}
+            };
+        }
         auto svc = ArtifactProjectService::instance();
         if (!svc) {
             return QVariantMap{
@@ -2641,16 +3360,36 @@ private:
             };
         }
 
+        InterpolationType interpolation = InterpolationType::Linear;
+        const QString interpolationKey = interpolationName.trimmed().toLower();
+        if (interpolationKey == QStringLiteral("constant") || interpolationKey == QStringLiteral("step")) {
+            interpolation = InterpolationType::Constant;
+        } else if (interpolationKey == QStringLiteral("smooth")) {
+            interpolation = InterpolationType::Smooth;
+        } else if (interpolationKey == QStringLiteral("easein")) {
+            interpolation = InterpolationType::EaseIn;
+        } else if (interpolationKey == QStringLiteral("easeout")) {
+            interpolation = InterpolationType::EaseOut;
+        } else if (interpolationKey == QStringLiteral("easeinout") ||
+                   interpolationKey == QStringLiteral("ease-in-out") ||
+                   interpolationKey == QStringLiteral("easy ease")) {
+            interpolation = InterpolationType::EaseInOut;
+        } else if (interpolationKey == QStringLiteral("bezier") ||
+                   interpolationKey == QStringLiteral("beziercurve")) {
+            interpolation = InterpolationType::Bezier;
+        }
+
         // Use KeyframeModel to handle the operation
         static ArtifactTimelineKeyframeModel keyframeModel;
-        RationalTime time(frameNumber, 30);  // Assuming 30fps base; can be made configurable
+        const auto frameRate = std::max(1.0, currentComp->frameRate().framerate());
+        RationalTime time(frameNumber, frameRate);
         bool added = keyframeModel.addKeyframe(
             currentComp->id(),
             layer->id(),
             propertyPath,
             time,
             QVariant(value),
-            InterpolationType::Linear
+            interpolation
         );
 
         return QVariantMap{
@@ -2687,20 +3426,34 @@ private:
         );
 
         QVariantList result;
+        const auto frameRate = std::max(1.0, currentComp->frameRate().framerate());
         for (const auto& kf : keyframes) {
             QString interpolationStr = QStringLiteral("Linear");
-            if (kf.interpolation == InterpolationType::Bezier) {
+            if (kf.interpolation == InterpolationType::Constant) {
+                interpolationStr = QStringLiteral("Constant");
+            } else if (kf.interpolation == InterpolationType::Smooth) {
+                interpolationStr = QStringLiteral("Smooth");
+            } else if (kf.interpolation == InterpolationType::Bezier) {
                 interpolationStr = QStringLiteral("Bezier");
             } else if (kf.interpolation == InterpolationType::EaseIn) {
                 interpolationStr = QStringLiteral("EaseIn");
             } else if (kf.interpolation == InterpolationType::EaseOut) {
                 interpolationStr = QStringLiteral("EaseOut");
+            } else if (kf.interpolation == InterpolationType::EaseInOut) {
+                interpolationStr = QStringLiteral("EaseInOut");
             }
 
             QVariantMap item{
-                {QStringLiteral("frame"), static_cast<int>(kf.time.value())},
-                {QStringLiteral("value"), kf.value.toDouble()},
-                {QStringLiteral("interpolation"), interpolationStr}
+                {QStringLiteral("frame"), static_cast<int>(kf.time.toFrameCount(frameRate))},
+                {QStringLiteral("timeValue"), static_cast<qint64>(kf.time.value())},
+                {QStringLiteral("timeScale"), static_cast<qint64>(kf.time.scale())},
+                {QStringLiteral("value"), kf.value},
+                {QStringLiteral("interpolation"), interpolationStr},
+                {QStringLiteral("cp1_x"), kf.cp1_x},
+                {QStringLiteral("cp1_y"), kf.cp1_y},
+                {QStringLiteral("cp2_x"), kf.cp2_x},
+                {QStringLiteral("cp2_y"), kf.cp2_y},
+                {QStringLiteral("roving"), kf.roving}
             };
             result.append(item);
         }
@@ -2736,9 +3489,20 @@ private:
             };
         }
 
-        // Use KeyframeModel to handle removal
+        if (propertyPath.trimmed().isEmpty() || frameNumber < 0) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Invalid keyframe arguments")}
+            };
+        }
+
+        // Check existence before removal so a missing keyframe is not reported as removed.
         static ArtifactTimelineKeyframeModel keyframeModel;
         RationalTime time(frameNumber, 30);  // Same base fps as setKeyframe
+        const auto existing = keyframeModel.getKeyframesFor(
+            currentComp->id(), layer->id(), propertyPath);
+        const bool exists = std::any_of(existing.begin(), existing.end(),
+            [&time](const auto& keyframe) { return keyframe.time == time; });
         bool removed = keyframeModel.removeKeyframe(
             currentComp->id(),
             layer->id(),
@@ -2747,7 +3511,7 @@ private:
         );
 
         return QVariantMap{
-            {QStringLiteral("success"), removed}
+            {QStringLiteral("success"), exists && removed}
         };
     }
 
@@ -2851,9 +3615,12 @@ private:
         for (const QVariant& entryValue : keyframes) {
             const QVariantMap entry = entryValue.toMap();
             const QString propertyPath = entry.value(QStringLiteral("propertyPath")).toString();
-            const int frameNumber = entry.value(QStringLiteral("frameNumber")).toInt();
+            const int frameNumber = entry.contains(QStringLiteral("frameNumber"))
+                ? entry.value(QStringLiteral("frameNumber")).toInt()
+                : entry.value(QStringLiteral("frame")).toInt();
             const double value = entry.value(QStringLiteral("value")).toDouble();
-            if (propertyPath.trimmed().isEmpty() || frameNumber < 0) {
+            const QString interpolation = entry.value(QStringLiteral("interpolation"), QStringLiteral("Linear")).toString();
+            if (propertyPath.trimmed().isEmpty() || frameNumber < 0 || !std::isfinite(value)) {
                 ++skippedCount;
                 continue;
             }
@@ -2863,7 +3630,15 @@ private:
                 propertyPath,
                 RationalTime(frameNumber, 30),
                 QVariant(value),
-                InterpolationType::Linear);
+                interpolation.trimmed().compare(QStringLiteral("constant"), Qt::CaseInsensitive) == 0
+                    ? InterpolationType::Constant
+                    : interpolation.trimmed().compare(QStringLiteral("smooth"), Qt::CaseInsensitive) == 0
+                        ? InterpolationType::Smooth
+                        : interpolation.trimmed().compare(QStringLiteral("easein"), Qt::CaseInsensitive) == 0
+                            ? InterpolationType::EaseIn
+                            : interpolation.trimmed().compare(QStringLiteral("easeout"), Qt::CaseInsensitive) == 0
+                                ? InterpolationType::EaseOut
+                                : InterpolationType::Linear);
             if (ok) {
                 ++addedCount;
             } else {
@@ -3041,20 +3816,54 @@ private:
             };
         }
 
+        if (groupLayerId.trimmed().isEmpty() || layerIds.isEmpty()) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("No layers supplied")}
+            };
+        }
+
         int movedCount = 0;
+        QSet<QString> processedIds;
         for (const auto& layerId : layerIds) {
+            const QString normalizedId = layerId.trimmed();
+            if (normalizedId.isEmpty() || processedIds.contains(normalizedId) ||
+                normalizedId == groupLayerId) {
+                continue;
+            }
+            processedIds.insert(normalizedId);
+
             auto layerToMove = currentComp->layerById(LayerID(layerId));
-            if (layerToMove) {
+            if (layerToMove && layerToMove->parentLayerId() != groupLayer->id()) {
+                // Do not move an ancestor into one of its descendants.
+                bool wouldCycle = false;
+                auto parentId = groupLayer->parentLayerId();
+                while (!parentId.isNil()) {
+                    if (parentId == layerToMove->id()) {
+                        wouldCycle = true;
+                        break;
+                    }
+                    const auto parent = currentComp->layerById(parentId);
+                    if (!parent) break;
+                    parentId = parent->parentLayerId();
+                }
+                if (wouldCycle) continue;
+
                 // Remove from composition
-                currentComp->removeLayerById(LayerID(layerId));
+                currentComp->removeLayerById(layerToMove->id());
                 
                 // Add to group
                 groupLayer->addChild(layerToMove);
+                if (layerToMove->parentLayerId() != groupLayer->id()) {
+                    layerToMove->clearParent();
+                    currentComp->appendLayerTop(layerToMove);
+                    continue;
+                }
                 movedCount++;
 
                 // Notify layer change
                 ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-                    LayerChangedEvent{currentComp->id().toString(), layerId,
+                    LayerChangedEvent{currentComp->id().toString(), normalizedId,
                                     LayerChangedEvent::ChangeType::Modified});
             }
         }
@@ -3115,7 +3924,11 @@ private:
         for (const auto& child : childrenCopy) {
             if (child) {
                 groupLayer->removeChild(child->id());
-                currentComp->appendLayerTop(child);
+                const auto appendResult = currentComp->appendLayerTop(child);
+                if (!appendResult.success) {
+                    groupLayer->addChild(child);
+                    continue;
+                }
                 unGroupedCount++;
 
                 ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
@@ -3124,17 +3937,26 @@ private:
             }
         }
 
-        // Remove the now-empty group layer
-        currentComp->removeLayerById(LayerID(groupLayerId));
+        // Remove the group only after every child was successfully detached.
+        const bool removedEmptyGroup = groupLayer->children().empty();
+        if (removedEmptyGroup) {
+            currentComp->removeLayerById(LayerID(groupLayerId));
+        }
         
         // Notify changes
         currentComp->changed();
-        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-            LayerChangedEvent{currentComp->id().toString(), groupLayerId,
-                            LayerChangedEvent::ChangeType::Removed});
+        if (removedEmptyGroup) {
+            ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                LayerChangedEvent{currentComp->id().toString(), groupLayerId,
+                                LayerChangedEvent::ChangeType::Removed});
+        } else if (unGroupedCount > 0) {
+            ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                LayerChangedEvent{currentComp->id().toString(), groupLayerId,
+                                LayerChangedEvent::ChangeType::Modified});
+        }
 
         return QVariantMap{
-            {QStringLiteral("success"), unGroupedCount > 0},
+            {QStringLiteral("success"), removedEmptyGroup || unGroupedCount > 0},
             {QStringLiteral("unGroupedCount"), unGroupedCount}
         };
     }
@@ -3529,6 +4351,75 @@ private:
             return QStringLiteral("Project service unavailable.");
         }
         return service->projectItemRemovalConfirmationMessage(const_cast<ProjectItem*>(item));
+    }
+
+    static QVariant dryRunRemoveProjectItemById(const QString& itemId)
+    {
+        ArtifactCore::SafeWriteExecutionPlan plan;
+        plan.dryRun.operationName = QStringLiteral("removeProjectItemById");
+        plan.dryRun.targetIds = {itemId};
+        plan.dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
+        plan.confirmation.operationName = plan.dryRun.operationName;
+        plan.confirmation.targetIds = plan.dryRun.targetIds;
+        plan.confirmation.required = true;
+        plan.confirmation.undoAvailable = true;
+        const ProjectItem* item = findProjectItemByIdPointer(itemId);
+        const bool exists = item != nullptr;
+        plan.dryRun.wouldChange = exists;
+        plan.dryRun.wouldFail = !exists;
+        plan.dryRun.affectedCounts = {
+            {QStringLiteral("projectItems"), exists ? 1 : 0}
+        };
+        plan.dryRun.warnings << (exists
+            ? QStringLiteral("The project item and its dependent references may be removed.")
+            : QStringLiteral("Project item was not found."));
+        plan.confirmation.reason = QStringLiteral("Project item removal is destructive and requires confirmation.");
+        plan.confirmation.estimatedImpact = QStringLiteral("1 project item");
+        plan.confirmation.previewMessage = exists
+            ? QStringLiteral("Remove the selected project item?")
+            : QStringLiteral("No project item will be removed.");
+        plan.inputSnapshot = {
+            {QStringLiteral("itemId"), itemId},
+            {QStringLiteral("path"), projectItemPathById(itemId)}
+        };
+        return plan.toVariantMap();
+    }
+
+    static QVariant removeProjectItemByIdConfirmed(const QString& itemId, bool confirmed)
+    {
+        ArtifactCore::SafeWriteDryRunResult dryRun;
+        dryRun.operationName = QStringLiteral("removeProjectItemById");
+        dryRun.targetIds = {itemId};
+        dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
+        const bool exists = findProjectItemByIdPointer(itemId) != nullptr;
+        dryRun.wouldChange = exists;
+        dryRun.wouldFail = !exists;
+        dryRun.warnings << (exists ? QStringLiteral("Project item removal is destructive.")
+                                   : QStringLiteral("Project item was not found."));
+        ArtifactCore::SafeWriteConfirmationPayload confirmation;
+        confirmation.operationName = dryRun.operationName;
+        confirmation.targetIds = dryRun.targetIds;
+        confirmation.reason = QStringLiteral("Project item removal requires explicit confirmation.");
+        confirmation.previewMessage = QStringLiteral("Remove the selected project item?");
+        confirmation.undoAvailable = true;
+        QString error;
+        if (!ArtifactCore::SafeWriteRemovalGate::authorize(
+                dryRun, confirmation, confirmed, &error)) {
+            appendSafeWriteAudit(dryRun.operationName, dryRun.targetIds,
+                                 QStringLiteral("rejected"),
+                                 {{QStringLiteral("error"), error}});
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), error},
+                {QStringLiteral("confirmationRequired"), true}
+            };
+        }
+        const QVariant result = removeProjectItemById(itemId);
+        appendSafeWriteAudit(dryRun.operationName, dryRun.targetIds,
+                             result.toBool() ? QStringLiteral("succeeded")
+                                             : QStringLiteral("failed"),
+                             {{QStringLiteral("result"), result}});
+        return result;
     }
 
     static QVariant moveProjectItemToFolder(const QString& itemId, const QString& parentFolderId)
@@ -4298,6 +5189,75 @@ private:
         return true;
     }
 
+    static QVariant dryRunRemoveRenderQueueAt(int jobIndex)
+    {
+        ArtifactCore::SafeWriteExecutionPlan plan;
+        plan.dryRun.operationName = QStringLiteral("removeRenderQueueAt");
+        plan.dryRun.targetIds = {QString::number(jobIndex)};
+        plan.dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
+        plan.confirmation.operationName = plan.dryRun.operationName;
+        plan.confirmation.targetIds = plan.dryRun.targetIds;
+        plan.confirmation.required = true;
+        plan.confirmation.undoAvailable = false;
+        const auto job = renderQueueJobByIndex(jobIndex).toMap();
+        const bool exists = !job.isEmpty();
+        plan.dryRun.wouldChange = exists;
+        plan.dryRun.wouldFail = !exists;
+        plan.dryRun.affectedCounts = {
+            {QStringLiteral("renderQueueJobs"), exists ? 1 : 0}
+        };
+        plan.dryRun.warnings << (exists
+            ? QStringLiteral("Render queue removal cannot be undone automatically.")
+            : QStringLiteral("Render queue job was not found."));
+        plan.confirmation.reason = QStringLiteral("Render queue removal is destructive and requires confirmation.");
+        plan.confirmation.estimatedImpact = QStringLiteral("1 render queue job");
+        plan.confirmation.previewMessage = exists
+            ? QStringLiteral("Remove this render queue job?")
+            : QStringLiteral("No render queue job will be removed.");
+        plan.inputSnapshot = {
+            {QStringLiteral("jobIndex"), jobIndex},
+            {QStringLiteral("job"), job}
+        };
+        return plan.toVariantMap();
+    }
+
+    static QVariant removeRenderQueueAtConfirmed(int jobIndex, bool confirmed)
+    {
+        ArtifactCore::SafeWriteDryRunResult dryRun;
+        dryRun.operationName = QStringLiteral("removeRenderQueueAt");
+        dryRun.targetIds = {QString::number(jobIndex)};
+        dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
+        const bool exists = !renderQueueJobByIndex(jobIndex).toMap().isEmpty();
+        dryRun.wouldChange = exists;
+        dryRun.wouldFail = !exists;
+        dryRun.warnings << (exists ? QStringLiteral("Render queue removal cannot be undone automatically.")
+                                   : QStringLiteral("Render queue job was not found."));
+        ArtifactCore::SafeWriteConfirmationPayload confirmation;
+        confirmation.operationName = dryRun.operationName;
+        confirmation.targetIds = dryRun.targetIds;
+        confirmation.reason = QStringLiteral("Render queue removal requires explicit confirmation.");
+        confirmation.previewMessage = QStringLiteral("Remove this render queue job?");
+        confirmation.undoAvailable = false;
+        QString error;
+        if (!ArtifactCore::SafeWriteRemovalGate::authorize(
+                dryRun, confirmation, confirmed, &error)) {
+            appendSafeWriteAudit(dryRun.operationName, dryRun.targetIds,
+                                 QStringLiteral("rejected"),
+                                 {{QStringLiteral("error"), error}});
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), error},
+                {QStringLiteral("confirmationRequired"), true}
+            };
+        }
+        const QVariant result = removeRenderQueueAt(jobIndex);
+        appendSafeWriteAudit(dryRun.operationName, dryRun.targetIds,
+                             result.toBool() ? QStringLiteral("succeeded")
+                                             : QStringLiteral("failed"),
+                             {{QStringLiteral("result"), result}});
+        return result;
+    }
+
     static QVariant setRenderQueueJobNameAt(int jobIndex, const QString& name)
     {
         auto* service = ArtifactRenderQueueService::instance();
@@ -4424,6 +5384,15 @@ private:
         return true;
     }
 
+    static QVariant rerenderAllDetectedFailedFrames(int jobIndex)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return 0;
+        }
+        return service->rerenderAllDetectedFailedFrames(jobIndex);
+    }
+
     static QVariant resetCompletedAndFailedRenderQueueJobsForRerun()
     {
         auto* service = ArtifactRenderQueueService::instance();
@@ -4501,6 +5470,61 @@ private:
         }
         service->removeAllRenderQueues();
         return true;
+    }
+
+    static QVariant dryRunRemoveAllRenderQueues()
+    {
+        ArtifactCore::SafeWriteExecutionPlan plan;
+        plan.dryRun.operationName = QStringLiteral("removeAllRenderQueues");
+        plan.dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
+        const auto snapshot = renderQueueSnapshot();
+        const int count = snapshot.value(QStringLiteral("jobCount"), 0).toInt();
+        plan.dryRun.wouldChange = count > 0;
+        plan.dryRun.wouldFail = !snapshot.value(QStringLiteral("available"), false).toBool();
+        plan.dryRun.affectedCounts = {{QStringLiteral("renderQueueJobs"), count}};
+        plan.dryRun.warnings << QStringLiteral("All render queue jobs will be removed.");
+        plan.confirmation.operationName = plan.dryRun.operationName;
+        plan.confirmation.required = true;
+        plan.confirmation.undoAvailable = false;
+        plan.confirmation.reason = QStringLiteral("Clearing the render queue is destructive and requires confirmation.");
+        plan.confirmation.estimatedImpact = QStringLiteral("%1 render queue jobs").arg(count);
+        plan.confirmation.previewMessage = QStringLiteral("Remove all render queue jobs?");
+        plan.inputSnapshot = {{QStringLiteral("renderQueue"), snapshot}};
+        return plan.toVariantMap();
+    }
+
+    static QVariant removeAllRenderQueuesConfirmed(bool confirmed)
+    {
+        const auto snapshot = renderQueueSnapshot();
+        ArtifactCore::SafeWriteDryRunResult dryRun;
+        dryRun.operationName = QStringLiteral("removeAllRenderQueues");
+        dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
+        dryRun.wouldChange = snapshot.value(QStringLiteral("jobCount"), 0).toInt() > 0;
+        dryRun.wouldFail = !snapshot.value(QStringLiteral("available"), false).toBool();
+        dryRun.warnings << QStringLiteral("All render queue jobs will be removed.");
+        ArtifactCore::SafeWriteConfirmationPayload confirmation;
+        confirmation.operationName = dryRun.operationName;
+        confirmation.reason = QStringLiteral("Clearing the render queue requires explicit confirmation.");
+        confirmation.previewMessage = QStringLiteral("Remove all render queue jobs?");
+        confirmation.undoAvailable = false;
+        QString error;
+        if (!ArtifactCore::SafeWriteRemovalGate::authorize(
+                dryRun, confirmation, confirmed, &error)) {
+            appendSafeWriteAudit(dryRun.operationName, dryRun.targetIds,
+                                 QStringLiteral("rejected"),
+                                 {{QStringLiteral("error"), error}});
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), error},
+                {QStringLiteral("confirmationRequired"), true}
+            };
+        }
+        const QVariant result = renderQueueRemoveAll();
+        appendSafeWriteAudit(dryRun.operationName, dryRun.targetIds,
+                             result.toBool() ? QStringLiteral("succeeded")
+                                             : QStringLiteral("failed"),
+                             {{QStringLiteral("result"), result}});
+        return result;
     }
 
     // Template Slot Definition
@@ -4585,8 +5609,13 @@ private:
             if (!sv.isObject()) continue;
             const auto entry = sv.toObject();
             const QString layerId = entry[QStringLiteral("layerId")].toString();
-            const QString slotName = entry[QStringLiteral("slotName")].toString();
-            const QString value = entry[QStringLiteral("value")].toString();
+            const QString slotName = entry.value(QStringLiteral("slotId"))
+                .toString(entry.value(QStringLiteral("slotName")).toString());
+            const QJsonValue value = entry.value(QStringLiteral("value"));
+            if (layerId.trimmed().isEmpty() || slotName.trimmed().isEmpty() ||
+                value.isUndefined()) {
+                continue;
+            }
 
             const auto layer = comp->layerById(LayerID(layerId));
             if (!layer) continue;
@@ -4611,15 +5640,26 @@ private:
 
     static QVariant createTemplateFromVariation(const QVariantList& variations, const QString& outputPreset)
     {
+        Q_UNUSED(outputPreset);
         int count = 0;
         for (const auto& v : variations) {
-            QJsonParseError err;
             const auto varObj = QJsonDocument::fromVariant(v).object();
-            if (err.error != QJsonParseError::NoError) continue;
+            if (varObj.isEmpty() || !varObj.value(QStringLiteral("slotValues")).isArray()) {
+                continue;
+            }
+
+            const auto applied = applyTemplateVariation(
+                QString::fromUtf8(QJsonDocument(varObj).toJson(QJsonDocument::Compact)));
+            if (!applied.isValid() || !applied.toBool()) {
+                continue;
+            }
 
             // Add to render queue
-            WorkspaceAutomation::instance().invokeMethod(QStringLiteral("addRenderQueueForCurrentComposition"), {});
-            count++;
+            const auto queued = WorkspaceAutomation::instance().invokeMethod(
+                QStringLiteral("addRenderQueueForCurrentComposition"), {});
+            if (queued.isValid() && queued.toBool()) {
+                ++count;
+            }
         }
         return count;
     }
@@ -4711,20 +5751,97 @@ private:
         };
     }
 
+    static QVariantMap createMotionSketchKeyframes(const QString& layerId,
+                                                   const QVariantList& samples)
+    {
+        if (layerId.trimmed().isEmpty() || samples.isEmpty() || samples.size() > 10000) {
+            return {{QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Invalid motion samples")}};
+        }
+        int added = 0;
+        int rejected = 0;
+        int previousFrame = -1;
+        for (const auto& sampleValue : samples) {
+            const auto sample = sampleValue.toMap();
+            bool frameOk = false;
+            const int frame = sample.value(QStringLiteral("frame")).toInt(&frameOk);
+            const double x = sample.value(QStringLiteral("x")).toDouble();
+            const double y = sample.value(QStringLiteral("y")).toDouble();
+            if (!frameOk || frame < 0 || frame <= previousFrame ||
+                !std::isfinite(x) || !std::isfinite(y)) {
+                ++rejected;
+                continue;
+            }
+            const auto xResult = setKeyframe(
+                layerId, QStringLiteral("transform.position.x"), frame, x,
+                QStringLiteral("Linear"));
+            const auto yResult = setKeyframe(
+                layerId, QStringLiteral("transform.position.y"), frame, y,
+                QStringLiteral("Linear"));
+            if (xResult.value(QStringLiteral("success")).toBool() &&
+                yResult.value(QStringLiteral("success")).toBool()) {
+                ++added;
+                previousFrame = frame;
+            } else {
+                ++rejected;
+            }
+        }
+        return {{QStringLiteral("success"), added > 0 && rejected == 0},
+                {QStringLiteral("addedCount"), added},
+                {QStringLiteral("rejectedCount"), rejected}};
+    }
+
+    static QVariantMap createAutoOrientKeyframes(const QString& layerId,
+                                                 const QVariantList& samples)
+    {
+        if (layerId.trimmed().isEmpty() || samples.size() < 2 || samples.size() > 10000) {
+            return {{QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("At least two motion samples are required")}};
+        }
+        int added = 0;
+        int rejected = 0;
+        int previousFrame = -1;
+        QVariantMap previous;
+        for (const auto& sampleValue : samples) {
+            const auto sample = sampleValue.toMap();
+            bool frameOk = false;
+            const int frame = sample.value(QStringLiteral("frame")).toInt(&frameOk);
+            const double x = sample.value(QStringLiteral("x")).toDouble();
+            const double y = sample.value(QStringLiteral("y")).toDouble();
+            if (!frameOk || frame < 0 || frame <= previousFrame ||
+                !std::isfinite(x) || !std::isfinite(y)) {
+                ++rejected;
+                continue;
+            }
+            if (!previous.isEmpty()) {
+                const double dx = x - previous.value(QStringLiteral("x")).toDouble();
+                const double dy = y - previous.value(QStringLiteral("y")).toDouble();
+                if (std::hypot(dx, dy) > 1.0e-9) {
+                    const double degrees = std::atan2(dy, dx) * 180.0 / 3.14159265358979323846;
+                    const auto result = setKeyframe(
+                        layerId, QStringLiteral("transform.rotation"), frame, degrees,
+                        QStringLiteral("Linear"));
+                    if (result.value(QStringLiteral("success")).toBool()) {
+                        ++added;
+                    } else {
+                        ++rejected;
+                    }
+                }
+            }
+            previous = sample;
+            previousFrame = frame;
+        }
+        return {{QStringLiteral("success"), added > 0 && rejected == 0},
+                {QStringLiteral("addedCount"), added},
+                {QStringLiteral("rejectedCount"), rejected}};
+    }
+
     static QVariantList listAvailableEffects()
     {
-        auto* effectService = ArtifactEffectService::instance();
-        if (!effectService) return {};
-        const auto effects = effectService->availableEffects();
-        QVariantList list;
-        for (const auto& eff : effects) {
-            QJsonObject obj;
-            obj[QStringLiteral("id")] = eff.id.toString();
-            obj[QStringLiteral("displayName")] = eff.displayName;
-            list.append(obj);
-        }
-        return list;
+        return getEffectRegistryMetadata().toList();
     }
+
+    ArtifactCore::SafeWriteAuditLog safeWriteAuditLog_;
 };
 
 } // namespace Artifact

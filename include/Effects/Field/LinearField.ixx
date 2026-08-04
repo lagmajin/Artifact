@@ -140,9 +140,15 @@ export namespace Artifact {
             return influence;
         }
 
-        void generateGPUData() const override {
-            // TODO: GPU バッファフォーマット生成
-            // struct { float3 startPos; float3 direction; float length; uint useSmoothstep; }
+        FieldGPUData generateGPUData() const override {
+            if (dirty_) recalculate();
+            FieldGPUData data;
+            data.type = FieldType::Linear;
+            data.values = {startPos_[0], startPos_[1], startPos_[2], 0.0f,
+                           direction_[0], direction_[1], direction_[2], length_,
+                           useSmoothstep_ ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f,
+                           0.0f, 0.0f, 0.0f, 0.0f};
+            return data;
         }
     };
 

@@ -54,7 +54,10 @@ Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
 };
 
 DifferenceMatteEffect::DifferenceMatteEffect():ArtifactAbstractEffect(){
-    setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();
+    setEffectID(UniString(QStringLiteral("Effect.Rasterizer.DifferenceMatte")));
+    setDisplayName(UniString(QStringLiteral("Difference Matte")));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+    syncImpls();
 }
 DifferenceMatteEffect::~DifferenceMatteEffect()=default;
 int DifferenceMatteEffect::referenceOffset()const{return refOffset_;}

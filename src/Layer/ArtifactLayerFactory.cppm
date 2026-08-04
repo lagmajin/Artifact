@@ -105,6 +105,7 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
     // 画像パラメータからパスを取得して読み込み
     if (auto* imageParams = dynamic_cast<ArtifactImageInitParams*>(&params)) {
      auto* imageLayer = static_cast<ArtifactImageLayer*>(ptr.get());
+     imageLayer->setPsdSubimageIndex(imageParams->psdSubimageIndex());
      imageLayer->setInputInterpretation(imageParams->inputColorSpace(),
                                         imageParams->inputTransferFunction());
      const QStringList sequencePaths = imageParams->sequencePaths();

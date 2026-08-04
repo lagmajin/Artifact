@@ -11,6 +11,7 @@ module;
 #include <QStandardPaths>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 
 import Color.Float;
@@ -132,6 +133,96 @@ public:
 ArtifactColorGradingEngine::ArtifactColorGradingEngine() : impl_(new Impl()) {}
 
 ArtifactColorGradingEngine::~ArtifactColorGradingEngine() { delete impl_; }
+
+ColorGradingSuggestion ArtifactColorGradingEngine::suggestGrading(
+    const std::vector<FloatColor> &samples) {
+  ColorGradingSuggestion suggestion;
+  if (samples.empty()) {
+    suggestion.rationale = "No color samples were provided.";
+    return suggestion;
+  }
+
+  double luminanceSum = 0.0;
+  double saturationSum = 0.0;
+  float minLuminance = std::numeric_limits<float>::max();
+  float maxLuminance = std::numeric_limits<float>::lowest();
+  std::size_t validCount = 0;
+  for (const FloatColor &color : samples) {
+    if (!std::isfinite(color.r()) || !std::isfinite(color.g()) ||
+        !std::isfinite(color.b())) {
+      continue;
+    }
+    const float luminance = std::clamp(
+        0.2126f * color.r() + 0.7152f * color.g() + 0.0722f * color.b(),
+        0.0f, 1.0f);
+    const float maximum = std::max({color.r(), color.g(), color.b()});
+    const float minimum = std::min({color.r(), color.g(), color.b()});
+    luminanceSum += luminance;
+    saturationSum += std::max(0.0f, maximum - minimum);
+    minLuminance = std::min(minLuminance, luminance);
+    maxLuminance = std::max(maxLuminance, luminance);
+    ++validCount;
+  }
+  if (validCount == 0) {
+    suggestion.rationale = "No finite color samples were provided.";
+    return suggestion;
+  }
+
+  const float averageLuminance = static_cast<float>(luminanceSum / validCount);
+  const float averageSaturation = static_cast<float>(saturationSum / validCount);
+  const float dynamicRange = std::clamp(maxLuminance - minLuminance, 0.0f, 1.0f);
+  const float exposure = std::clamp(0.5f - averageLuminance, -0.5f, 0.5f);
+  const float gain = std::clamp(1.0f + exposure, 0.5f, 1.5f);
+  suggestion.primary.gain = FloatColor(gain, gain, gain, 1.0f);
+  suggestion.primary.gamma = FloatColor(
+      std::clamp(1.0f + (0.5f - averageLuminance) * 0.25f, 0.8f, 1.2f),
+      std::clamp(1.0f + (0.5f - averageLuminance) * 0.25f, 0.8f, 1.2f),
+      std::clamp(1.0f + (0.5f - averageLuminance) * 0.25f, 0.8f, 1.2f), 1.0f);
+  suggestion.primary.pivot = 0.5f;
+  suggestion.wheels.range = 0.5f;
+  suggestion.wheels.shadows = FloatColor(0, 0, 0, 0);
+  suggestion.wheels.midtones = FloatColor(0, 0, 0, 0);
+  suggestion.wheels.highlights = FloatColor(0, 0, 0, 0);
+  suggestion.confidence = std::clamp(
+      0.5f + dynamicRange * 0.5f +
+          std::min(0.2f, static_cast<float>(validCount) / 10000.0f),
+      0.0f, 1.0f);
+  suggestion.rationale = averageLuminance < 0.35f
+      ? "Scene is dark; a restrained exposure lift is suggested."
+      : averageLuminance > 0.75f
+          ? "Scene is bright; gain is restrained to protect highlights."
+          : averageSaturation < 0.08f
+              ? "Scene has low chroma; neutral luminance correction is suggested."
+              : "Scene has balanced luminance and chroma; use a neutral correction.";
+  return suggestion;
+}
+
+bool ArtifactColorGradingEngine::applySuggestion(
+    const ColorGradingSuggestion &suggestion) {
+  const auto finiteColor = [](const FloatColor &color) {
+    return std::isfinite(color.r()) && std::isfinite(color.g()) &&
+           std::isfinite(color.b()) && std::isfinite(color.a());
+  };
+  if (!std::isfinite(suggestion.confidence) || suggestion.confidence <= 0.0f ||
+      !std::isfinite(suggestion.primary.pivot) ||
+      !std::isfinite(suggestion.wheels.range) ||
+      !finiteColor(suggestion.primary.lift) ||
+      !finiteColor(suggestion.primary.gamma) ||
+      !finiteColor(suggestion.primary.gain) ||
+      !finiteColor(suggestion.wheels.shadows) ||
+      !finiteColor(suggestion.wheels.midtones) ||
+      !finiteColor(suggestion.wheels.highlights)) {
+    return false;
+  }
+  resetAll();
+  GradingNode primary(GradingNodeType::LiftGammaGain, "AI Suggested Primary");
+  primary.liftGammaGain = suggestion.primary;
+  GradingNode wheels(GradingNodeType::ColorWheels, "AI Suggested Wheels");
+  wheels.colorWheels = suggestion.wheels;
+  addGradingNode(primary);
+  addGradingNode(wheels);
+  return true;
+}
 
 void ArtifactColorGradingEngine::addGradingNode(const GradingNode &node) {
   impl_->nodes_.push_back(node);

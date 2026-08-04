@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <windows.h>
 
 #include <cstring>
@@ -1668,6 +1668,11 @@ public:
     }
 
     scanRoots(roots);
+  }
+
+  void rescan() {
+    initialized_ = false;
+    initialize();
   }
 
   void scanDirectory(const UniString &path) {

@@ -1492,6 +1492,16 @@ QImage ArtifactShapeLayer::toQImage() const {
  return impl_->cachedImage_;
 }
 
+QImage ArtifactShapeLayer::getThumbnail(int width, int height) const
+{
+  const QSize targetSize(std::max(1, width), std::max(1, height));
+  const QImage image = toQImage();
+  return image.isNull()
+      ? ArtifactAbstractLayer::getThumbnail(targetSize.width(), targetSize.height())
+      : image.scaled(targetSize, Qt::KeepAspectRatio,
+                     Qt::SmoothTransformation);
+}
+
 QRectF ArtifactShapeLayer::localBounds() const
 {
   if (!impl_->localBoundsCacheDirty_) {

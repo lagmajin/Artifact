@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <algorithm>
 #include <chrono>
@@ -374,6 +374,7 @@ void FrameCache::put(ArtifactCore::SharedPtr<FrameCacheEntry> entry) {
     // Add new entry
     entry->generation = impl_->generation_;
     impl_->entries_[entry->frame] = entry;
+    impl_->prefetchQueue_.erase(entry->frame);
     impl_->memoryUsage_ += entry->memorySize;
     impl_->accessCounts_[entry->frame] = 0;
     impl_->recordAccess(
@@ -400,6 +401,7 @@ void FrameCache::put(ArtifactCore::SharedPtr<FrameCacheEntry> entry) {
 
 void FrameCache::invalidate(const FramePosition& frame) {
     QMutexLocker locker(&impl_->mutex_);
+    impl_->prefetchQueue_.erase(frame);
     
     auto it = impl_->entries_.find(frame);
     if (it != impl_->entries_.end()) {
@@ -413,6 +415,14 @@ void FrameCache::invalidate(const FramePosition& frame) {
 
 void FrameCache::invalidateRange(const FrameRange& range) {
     QMutexLocker locker(&impl_->mutex_);
+
+    for (auto it = impl_->prefetchQueue_.begin(); it != impl_->prefetchQueue_.end();) {
+        if (range.contains(*it)) {
+            it = impl_->prefetchQueue_.erase(it);
+        } else {
+            ++it;
+        }
+    }
     
     std::vector<FramePosition> toRemove;
     for (auto& [pos, entry] : impl_->entries_) {
@@ -430,6 +440,7 @@ void FrameCache::invalidateRange(const FrameRange& range) {
         impl_->entries_.erase(frame);
         impl_->accessTimes_.erase(frame);
         impl_->accessCounts_.erase(frame);
+        impl_->prefetchQueue_.erase(frame);
     }
 }
 
@@ -450,12 +461,14 @@ void FrameCache::invalidateStaleGenerations(uint64_t minGenerationToKeep) {
         impl_->entries_.erase(frame);
         impl_->accessTimes_.erase(frame);
         impl_->accessCounts_.erase(frame);
+        impl_->prefetchQueue_.erase(frame);
     }
 }
 
 void FrameCache::invalidateAll() {
     QMutexLocker locker(&impl_->mutex_);
     impl_->entries_.clear();
+    impl_->prefetchQueue_.clear();
     impl_->memoryUsage_ = 0;
     impl_->accessTimes_.clear();
     impl_->accessCounts_.clear();
@@ -476,6 +489,7 @@ uint64_t FrameCache::generation() const {
 uint64_t FrameCache::bumpGeneration(const QString& reason) {
     QMutexLocker locker(&impl_->mutex_);
     impl_->generation_++;
+    impl_->prefetchQueue_.clear();
     emit generationChanged(impl_->generation_, reason);
     return impl_->generation_;
 }
@@ -509,7 +523,9 @@ size_t FrameCache::cacheHitCount() const {
 
 void FrameCache::prefetch(const FramePosition& frame) {
     QMutexLocker locker(&impl_->mutex_);
-    impl_->prefetchQueue_.insert(frame);
+    if (impl_->entries_.find(frame) == impl_->entries_.end()) {
+        impl_->prefetchQueue_.insert(frame);
+    }
 }
 
 void FrameCache::prefetchRange(const FrameRange& range) {
@@ -518,7 +534,10 @@ void FrameCache::prefetchRange(const FrameRange& range) {
     const auto last = range.end().value();
     if (first > last) return;
     for (long long f = first;; ++f) {
-        impl_->prefetchQueue_.insert(FramePosition(f));
+        const FramePosition frame(f);
+        if (impl_->entries_.find(frame) == impl_->entries_.end()) {
+            impl_->prefetchQueue_.insert(frame);
+        }
         if (f == last) break;
     }
 }
@@ -558,6 +577,7 @@ class ProgressiveRenderer::Impl {
 public:
     RenderQuality quality_ = RenderQuality::Preview;
     RenderQuality renderedQuality_ = RenderQuality::Draft;
+    ProgressiveRenderer::RenderCallback renderCallback_;
     
     int draftDownsample_ = 4;
     int previewDownsample_ = 2;
@@ -589,6 +609,10 @@ RenderQuality ProgressiveRenderer::quality() const {
     return impl_->quality_;
 }
 
+void ProgressiveRenderer::setRenderCallback(RenderCallback callback) {
+    impl_->renderCallback_ = std::move(callback);
+}
+
 void ProgressiveRenderer::setDraftQuality(int downsampling) {
     impl_->draftDownsample_ = std::clamp(downsampling, 1, 64);
 }
@@ -611,16 +635,28 @@ bool ProgressiveRenderer::isUpgrading() const {
 
 void ProgressiveRenderer::requestUpgrade() {
     if (impl_->quality_ == RenderQuality::Final) return;
-    
+    if (!impl_->renderCallback_) return;
+
     impl_->upgrading_ = true;
+    impl_->progress_ = 0.0f;
     emit upgradeStarted();
-    
-    // In real implementation, this would trigger background re-render
-    // For now just simulate completion
-    impl_->renderedQuality_ = impl_->quality_;
-    impl_->progress_ = 1.0f;
+
+    const int firstQuality = static_cast<int>(impl_->renderedQuality_) + 1;
+    const int targetQuality = static_cast<int>(impl_->quality_);
+    const int qualityCount = std::max(1, targetQuality - firstQuality + 1);
+    for (int value = firstQuality; value <= targetQuality; ++value) {
+        if (!impl_->upgrading_) return;
+        const auto nextQuality = static_cast<RenderQuality>(value);
+        if (!impl_->renderCallback_(nextQuality)) {
+            impl_->upgrading_ = false;
+            return;
+        }
+        impl_->renderedQuality_ = nextQuality;
+        impl_->progress_ = static_cast<float>(value - firstQuality + 1) /
+                           static_cast<float>(qualityCount);
+        emit progressChanged(impl_->progress_);
+    }
     impl_->upgrading_ = false;
-    
     emit upgradeCompleted();
 }
 

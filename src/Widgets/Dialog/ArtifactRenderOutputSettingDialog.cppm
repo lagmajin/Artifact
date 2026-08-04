@@ -454,7 +454,7 @@ namespace Artifact
    if (imageSequence) {
      outputPackageLabel->setText(QStringLiteral(
          "出力パッケージ: 画像連番のみ。連番には音声を格納できません。"
-         "音声が必要な場合は別途WAVなどを用意してください（音声別出力の自動生成は未対応）。"));
+         "音声が必要な場合はレンダーキューで音声形式（WAV PCM）を別ジョブとして追加してください。"));
      palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#F09A3E")));
    } else if (!supportsIntegratedAudio) {
      outputPackageLabel->setText(QStringLiteral(

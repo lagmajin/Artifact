@@ -179,6 +179,8 @@ import Artifact.Effect.GauusianBlur;
 import Artifact.Effect.LiftGammaGain;
 import Artifact.Effect.LensDistortion;
 import Artifact.Effect.Keying.ChromaKey;
+import Artifact.Effect.Keying.IBKKeyer;
+import Artifact.Effect.Rasterizer.DifferenceMatte;
 import Artifact.Effect.Wave;
 import Artifact.Effect.Spherize;
 import Artifact.Widgets.LayerPanelWidget;
@@ -369,6 +371,18 @@ std::vector<EffectCatalogEntry> buildEffectCatalogEntries() {
       {EffectPipelineStage::Rasterizer, QStringLiteral("blur"),
        QStringLiteral("Blur"), QStringLiteral("Blur"),
        QStringLiteral("Simple raster blur."), QStringLiteral("soften blur")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("frame_blend"),
+       QStringLiteral("Frame Blend"), QStringLiteral("Blur"),
+       QStringLiteral("Blend neighboring frames for temporal motion blur."),
+       QStringLiteral("frame blend temporal ghost motion blur")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("time_blur"),
+       QStringLiteral("Time Blur"), QStringLiteral("Blur"),
+       QStringLiteral("Blur across time using sampled neighboring frames."),
+       QStringLiteral("time blur temporal motion")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("vector_blur"),
+       QStringLiteral("Vector Blur"), QStringLiteral("Blur"),
+       QStringLiteral("Apply blur using per-pixel velocity vectors."),
+       QStringLiteral("vector blur velocity motion")},
       {EffectPipelineStage::Rasterizer,
        QStringLiteral("effect.blur.gaussian"),
        QStringLiteral("Gaussian Blur"), QStringLiteral("Blur"),
@@ -644,6 +658,14 @@ std::vector<EffectCatalogEntry> buildEffectCatalogEntries() {
        QStringLiteral("Difference Key"), QStringLiteral("Keying"),
        QStringLiteral("Key out pixels close to a reference color."),
        QStringLiteral("difference key reference color matte")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("ibk_keyer"),
+       QStringLiteral("IBK Keyer"), QStringLiteral("Keying"),
+       QStringLiteral("Difference-based keyer with clean-plate support."),
+       QStringLiteral("ibk keyer clean plate screen matte")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("difference_matte"),
+       QStringLiteral("Difference Matte"), QStringLiteral("Keying"),
+       QStringLiteral("Generate a matte from a reference image."),
+       QStringLiteral("difference matte reference image keying")},
       {EffectPipelineStage::Rasterizer, QStringLiteral("wave"),
        QStringLiteral("Wave"), QStringLiteral("Distort"),
        QStringLiteral("Wave deformation effect."),
@@ -6259,7 +6281,13 @@ void ArtifactInspectorWidget::Impl::handleApplyLipSyncToSwitchLayer() {
                            QStringLiteral("Lip Sync を Switch Layer に適用しました。"));
 }
 
-void ArtifactInspectorWidget::update() {}
+void ArtifactInspectorWidget::update()
+{
+  if (!impl_) {
+    return;
+  }
+  impl_->scheduleRefresh();
+}
 
 void ArtifactInspectorWidget::focusInEvent(QFocusEvent* event)
 {

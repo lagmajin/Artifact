@@ -81,6 +81,7 @@ public:
   void duplicateRenderQueueAt(int index);
   void moveRenderQueue(int fromIndex, int toIndex);
   void startRenderQueueAt(int index);
+  int startRenderQueuesAt(const QList<int> &indices);
   void pauseRenderQueueAt(int index);
   int resumeRenderQueuesAt(const QList<int> &indices);
   int pauseRenderQueuesAt(const QList<int> &indices);
@@ -172,6 +173,7 @@ public:
   Q_INVOKABLE QList<FailedFrameInfo> detectFailedFrames(int jobIndex) const;
   Q_INVOKABLE int rerenderFailedFrames(int jobIndex,
                                        const QList<int> &frameNumbers);
+  Q_INVOKABLE int rerenderAllDetectedFailedFrames(int jobIndex);
 
   void startRenderQueue();
   void startAllRenderQueues();

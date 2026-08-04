@@ -55,7 +55,7 @@ export namespace Artifact {
   void createProject();
   CreateProjectResult createProject(const UniString& name, bool force = false);
   void createProject(const QString& projectName, bool force = false);
-   void loadFromFile(const QString& fullpath);
+   bool loadFromFile(const QString& fullpath);
    ArtifactProjectExporterResult saveToFile(const QString& fullpath);
    ArtifactProjectExporterResult saveIncremental(const QString& fullpath);
    bool persistComponentSimulationBakes();

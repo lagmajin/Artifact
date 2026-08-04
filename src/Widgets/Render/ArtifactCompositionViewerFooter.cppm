@@ -133,6 +133,10 @@ namespace Artifact {
   QLabel* memLabel = nullptr;
   QLabel* ramPreviewLabel = nullptr;
   QLabel* selectionLabel = nullptr;
+  QLabel* zoomLabel = nullptr;
+  QLabel* mouseLabel = nullptr;
+  QLabel* resolutionInfoLabel = nullptr;
+  QComboBox* resolutionCombo = nullptr;
   double fps_ = 0.0;
   uint64_t memMB_ = 0;
   float ramPreviewHitRate_ = 0.0f;
@@ -177,6 +181,9 @@ namespace Artifact {
   memLabel = new QLabel("Mem: N/A");
   ramPreviewLabel = new QLabel("RAM: N/A");
   selectionLabel = new QLabel("");
+  zoomLabel = new QLabel("Zoom: 100%");
+  mouseLabel = new QLabel("XY: -,-");
+  resolutionInfoLabel = new QLabel("Res: -");
   refreshTimer = std::make_unique<ArtifactCore::PreciseTicker>();
  }
 
@@ -193,6 +200,9 @@ namespace Artifact {
   delete memLabel;
   delete ramPreviewLabel;
   delete selectionLabel;
+  delete zoomLabel;
+  delete mouseLabel;
+  delete resolutionInfoLabel;
  }
 
 ArtifactCompositionViewerFooter::ArtifactCompositionViewerFooter(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
@@ -210,11 +220,11 @@ ArtifactCompositionViewerFooter::ArtifactCompositionViewerFooter(QWidget* parent
   resLabel->setFont(font);
   layout->addWidget(resLabel);
 
-  auto resCombo = new QComboBox(this);
-  resCombo->addItems({ "1920x1080", "1280x720", "800x600" });
-  resCombo->setAccessibleName(QStringLiteral("Preview resolution"));
-  resCombo->setAccessibleDescription(QStringLiteral("Choose the composition preview resolution"));
-  layout->addWidget(resCombo);
+  impl_->resolutionCombo = new QComboBox(this);
+  impl_->resolutionCombo->addItems({ "1920x1080", "1280x720", "800x600" });
+  impl_->resolutionCombo->setAccessibleName(QStringLiteral("Preview resolution"));
+  impl_->resolutionCombo->setAccessibleDescription(QStringLiteral("Choose the composition preview resolution"));
+  layout->addWidget(impl_->resolutionCombo);
 
   // Playback controls
   impl_->pPlayPauseButton->setToolTip("Play/Pause");
@@ -229,6 +239,12 @@ ArtifactCompositionViewerFooter::ArtifactCompositionViewerFooter(QWidget* parent
   layout->addStretch();
 
   // Status labels (right aligned)
+  impl_->zoomLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  impl_->mouseLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  impl_->resolutionInfoLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  layout->addWidget(impl_->zoomLabel);
+  layout->addWidget(impl_->mouseLabel);
+  layout->addWidget(impl_->resolutionInfoLabel);
   impl_->selectionLabel->setFixedWidth(200);
   impl_->selectionLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
   impl_->fpsLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -295,15 +311,17 @@ ArtifactCompositionViewerFooter::ArtifactCompositionViewerFooter(QWidget* parent
 
 void ArtifactCompositionViewerFooter::setZoomLevel(float zoomPercent)
 {
-  Q_UNUSED(zoomPercent);
-  // For now no-op; could display zoom in future
+  if (!impl_ || !impl_->zoomLabel) return;
+  const float safeZoom = std::isfinite(zoomPercent)
+      ? std::max(0.0f, zoomPercent) : 100.0f;
+  impl_->zoomLabel->setText(
+      QStringLiteral("Zoom: %1%").arg(QString::number(safeZoom, 'f', 1)));
 }
 
 void ArtifactCompositionViewerFooter::setMouseCoordinates(int x, int y)
 {
-  Q_UNUSED(x);
-  Q_UNUSED(y);
-  // Could display mouse coordinates in selectionLabel if required
+  if (!impl_ || !impl_->mouseLabel) return;
+  impl_->mouseLabel->setText(QStringLiteral("XY: %1,%2").arg(x).arg(y));
 }
 
 void ArtifactCompositionViewerFooter::setFPS(double fps)
@@ -347,9 +365,19 @@ void ArtifactCompositionViewerFooter::setSelectedLayerInfo(const QString& layerI
 void ArtifactCompositionViewerFooter::setResolutionInfo(uint32_t width, uint32_t height)
 {
   if (!impl_) return;
-  Q_UNUSED(width);
-  Q_UNUSED(height);
-  // resolution currently managed by combo box; could update label if needed
+  if (width == 0 || height == 0) {
+    impl_->resolutionInfoLabel->setText(QStringLiteral("Res: -"));
+    return;
+  }
+  const QString resolution = QStringLiteral("%1x%2").arg(width).arg(height);
+  if (impl_->resolutionCombo) {
+    const int index = impl_->resolutionCombo->findText(resolution);
+    if (index >= 0) {
+      impl_->resolutionCombo->setCurrentIndex(index);
+    }
+  }
+  impl_->resolutionInfoLabel->setText(
+      QStringLiteral("Res: %1×%2").arg(width).arg(height));
 }
 
 };

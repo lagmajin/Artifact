@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -72,7 +72,6 @@ export namespace Artifact
  template <StringLike T>
  void ArtifactProjectExporter::setOutputPath(const T& name)
  {
-  //setOutputPath(name);
+  setOutputPath(toQString(name));
  }
 };
-

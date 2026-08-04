@@ -117,6 +117,7 @@ QString toolLabelForType(Artifact::ToolType type)
     case Artifact::ToolType::Move:        return QStringLiteral("移動");
     case Artifact::ToolType::Scale:       return QStringLiteral("スケール");
     case Artifact::ToolType::Brush:       return QStringLiteral("ブラシ");
+    case Artifact::ToolType::RotoBrush:   return QStringLiteral("ロトブラシ");
     case Artifact::ToolType::Clone:       return QStringLiteral("コピースタンプ");
     case Artifact::ToolType::Eraser:      return QStringLiteral("消しゴム");
     case Artifact::ToolType::RigSelect:   return QStringLiteral("リグ選択");
@@ -205,6 +206,7 @@ public:
   QAction *penTool_ = nullptr;
   QAction *textTool_ = nullptr;
   QAction *brushTool_ = nullptr;
+  QAction *rotoBrushTool_ = nullptr;
   QAction *cloneStampTool_ = nullptr;
   QAction *eraserTool_ = nullptr;
   QAction *puppetTool_ = nullptr;
@@ -387,6 +389,12 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                          QStringLiteral("Material/brush.svg")},
              "ブラシ", "ブラシツール (Ctrl+B)",
              QKeySequence(Qt::CTRL | Qt::Key_B));
+  createTool(impl_->rotoBrushTool_,
+             QStringList{QString::fromLatin1(kToolbarIconBrush),
+                         QStringLiteral("MaterialVS/neutral/brush.svg"),
+                         QStringLiteral("Material/brush.svg")},
+             "ロトブラシ", "前景・背景ストロークでマスクを作成するロトブラシ",
+             QKeySequence());
   createTool(impl_->cloneStampTool_,
              QStringList{QString::fromLatin1(kToolbarIconClone),
                          QStringLiteral("MaterialVS/neutral/content_copy.svg"),
@@ -549,6 +557,7 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
           editMode = EditMode::Mask;
           break;
         case ToolType::Brush:
+        case ToolType::RotoBrush:
         case ToolType::Clone:
         case ToolType::Eraser:
           editMode = EditMode::Paint;
@@ -610,9 +619,11 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                      } else if (action == impl_->textTool_) {
                        textToolRequested();
                        setTool(ToolType::Text);
-                     } else if (action == impl_->brushTool_) {
+                    } else if (action == impl_->brushTool_) {
                        brushToolRequested();
                        setTool(ToolType::Brush);
+                    } else if (action == impl_->rotoBrushTool_) {
+                       setTool(ToolType::RotoBrush);
                     } else if (action == impl_->cloneStampTool_) {
                       cloneStampToolRequested();
                       setTool(ToolType::Clone);

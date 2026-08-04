@@ -283,8 +283,14 @@ bool ColorNodeGraph::connect(const PortId& source, const PortId& destination) {
     if (!source.isValid() || !destination.isValid()) return false;
     if (source.nodeId == destination.nodeId) return false;
 
-    // Check that both nodes exist
-    if (!impl_->nodes_.count(source.nodeId) || !impl_->nodes_.count(destination.nodeId))
+    // Check that both nodes and port indices exist.
+    const auto sourceIt = impl_->nodes_.find(source.nodeId);
+    const auto destinationIt = impl_->nodes_.find(destination.nodeId);
+    if (sourceIt == impl_->nodes_.end() || destinationIt == impl_->nodes_.end() ||
+        source.portIndex < 0 ||
+        source.portIndex >= sourceIt->second->outputPortCount() ||
+        destination.portIndex < 0 ||
+        destination.portIndex >= destinationIt->second->inputPortCount())
         return false;
 
     // Check for cycle
@@ -295,6 +301,8 @@ bool ColorNodeGraph::connect(const PortId& source, const PortId& destination) {
     for (const auto& conn : impl_->connections_) {
         if (conn.source == source && conn.destination == destination)
             return false;
+        if (conn.destination == destination)
+            return false; // input ports are single-consumer in the current node contract
     }
 
     NodeConnection conn{ source, destination };
@@ -408,6 +416,37 @@ bool ColorNodeGraph::isValid() const {
     if (sorted.size() != impl_->nodes_.size())
         return false;
 
+    // A graph must contain an actual input-to-output path.  Merely having
+    // both special nodes present is not sufficient: disconnected nodes used
+    // to pass validation and were then silently skipped during evaluation.
+    std::unordered_set<QUuid> reachable;
+    std::queue<QUuid> pending;
+    pending.push(impl_->inputNodeId_);
+    while (!pending.empty()) {
+        const QUuid current = pending.front();
+        pending.pop();
+        if (!reachable.insert(current).second) continue;
+        for (const auto& successor : impl_->successors(current)) {
+            pending.push(successor);
+        }
+    }
+    if (!reachable.contains(impl_->outputNodeId_))
+        return false;
+
+    // Validate every edge against the current node port declarations.  This
+    // also protects graphs loaded from older serialized data.
+    for (const auto& conn : impl_->connections_) {
+        const auto sourceIt = impl_->nodes_.find(conn.source.nodeId);
+        const auto destinationIt = impl_->nodes_.find(conn.destination.nodeId);
+        if (sourceIt == impl_->nodes_.end() || destinationIt == impl_->nodes_.end() ||
+            conn.source.portIndex < 0 ||
+            conn.source.portIndex >= sourceIt->second->outputPortCount() ||
+            conn.destination.portIndex < 0 ||
+            conn.destination.portIndex >= destinationIt->second->inputPortCount()) {
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -502,8 +541,7 @@ QUuid ColorNodeGraph::insertParallel(const QUuid& branchFromNodeId, ColorNodeTyp
         // branchFrom -> parallelNode -> merge (input 1, parallel path)
         connect(branchFromNodeId, 0, mergeId, 0);
         connect(branchFromNodeId, 0, parallelId, 0);
-        // Note: merge input 1 would need a second input port, for now connect serial
-        connect(parallelId, 0, mergeId, 0);
+        connect(parallelId, 0, mergeId, 1);
         connect(mergeId, 0, nextNodeId, 0);
 
         // Position
@@ -537,14 +575,39 @@ void ColorNodeGraph::evaluate(float* pixels, const float* secondaryInput,
 
     impl_->ensureOrder();
 
+    std::unordered_map<QUuid, std::vector<float>> mainInputs;
     for (const QUuid& nodeId : impl_->evaluationOrder_) {
         ColorNode* n = node(nodeId);
         if (!n || !n->isEnabled() || n->isBypassed()) continue;
 
+        // Preserve the main branch immediately after it reaches a Merge.
+        for (const auto& conn : impl_->connections_) {
+            if (conn.source.nodeId == nodeId &&
+                conn.destination.portIndex == 0 &&
+                node(conn.destination.nodeId) &&
+                node(conn.destination.nodeId)->type() == ColorNodeType::Merge) {
+                mainInputs[conn.destination.nodeId] =
+                    std::vector<float>(pixels, pixels + (width * height * 4));
+            }
+        }
+
         // If it's a merge node and we have secondary input, provide it
-        if (n->type() == ColorNodeType::Merge && secondaryInput) {
+        if (n->type() == ColorNodeType::Merge) {
             auto* mergeNode = static_cast<MergeNode*>(n);
-            mergeNode->setSecondaryInput(secondaryInput);
+            const float* mergeInput = secondaryInput;
+            std::vector<float> graphSecondary;
+            for (const auto& conn : impl_->connections_) {
+                if (conn.destination.nodeId == nodeId && conn.destination.portIndex == 1) {
+                    graphSecondary.assign(pixels, pixels + (width * height * 4));
+                    mergeInput = graphSecondary.data();
+                    break;
+                }
+            }
+            if (mergeInput) mergeNode->setSecondaryInput(mergeInput);
+            auto main = mainInputs.find(nodeId);
+            if (main != mainInputs.end()) {
+                std::copy(main->second.begin(), main->second.end(), pixels);
+            }
         }
 
         n->process(pixels, width, height);

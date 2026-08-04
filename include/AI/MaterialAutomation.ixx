@@ -4,6 +4,9 @@ module;
 #include <QColor>
 #include <QString>
 #include <QVariant>
+#include <QMap>
+#include <algorithm>
+#include <cmath>
 
 
 export module Artifact.AI.MaterialAutomation;
@@ -11,6 +14,8 @@ export module Artifact.AI.MaterialAutomation;
 import std;
 import Core.AI.Describable;
 import Material.Material;
+import Artifact.Service.Project;
+import Artifact.Layers.Model3D;
 
 export namespace Artifact {
 
@@ -118,12 +123,21 @@ public:
     return QVariant();
   }
 
+  QVariantMap materialProperties(const QString &name) const {
+    return materials_.value(name.trimmed());
+  }
+
+  QString assignedMaterial(const QString &layerId) const {
+    return layerAssignments_.value(layerId.trimmed());
+  }
+
 private:
   QVariant createMaterial(const QVariantList &args) {
     if (args.size() < 2)
       return QVariant();
-    QString name = args[0].toString();
-    QVariantMap properties = args[1].toMap();
+    const QString name = args[0].toString().trimmed();
+    if (name.isEmpty()) return QVariant();
+    const QVariantMap properties = args[1].toMap();
 
     // Create material based on properties
     ArtifactCore::Material material = ArtifactCore::Material::makeDefault();
@@ -139,8 +153,18 @@ private:
       material.setRoughness(properties["roughness"].toFloat());
     }
 
-    // For now, just return success - in full implementation would store
-    // material
+    QVariantMap stored;
+    stored["diffuseColor"] = properties.value("diffuseColor", QColor(200, 200, 200));
+    stored["specularColor"] = properties.value("specularColor", QColor(255, 255, 255));
+    stored["roughness"] = std::clamp(properties.value("roughness", 0.5).toFloat(), 0.0f, 1.0f);
+    stored["metallic"] = std::clamp(properties.value("metallic", 0.0).toFloat(), 0.0f, 1.0f);
+    materials_[name] = stored;
+    for (auto assignment = layerAssignments_.cbegin();
+         assignment != layerAssignments_.cend(); ++assignment) {
+      if (assignment.value() == name) {
+        applyMaterialToLayer(assignment.key(), name);
+      }
+    }
     QVariantMap result;
     result["success"] = true;
     result["materialName"] = name;
@@ -150,34 +174,62 @@ private:
   QVariant getMaterialProperties(const QVariantList &args) {
     if (args.isEmpty())
       return QVariant();
-    QString name = args[0].toString();
-
-    // Placeholder - would lookup material by name
-    QVariantMap properties;
-    properties["diffuseColor"] = QColor(200, 200, 200);
-    properties["specularColor"] = QColor(255, 255, 255);
-    properties["roughness"] = 0.5f;
-    return properties;
+    const QString name = args[0].toString().trimmed();
+    return materials_.value(name);
   }
 
   QVariant updateMaterialProperty(const QVariantList &args) {
     if (args.size() < 3)
       return false;
-    QString name = args[0].toString();
-    QString property = args[1].toString();
-    QVariant value = args[2];
-
-    // Placeholder - would update material property
+    const QString name = args[0].toString().trimmed();
+    const QString property = args[1].toString().trimmed();
+    auto it = materials_.find(name);
+    if (it == materials_.end()) return false;
+    if (property != "diffuseColor" && property != "specularColor" &&
+        property != "roughness" && property != "metallic") return false;
+    if (property == "diffuseColor" || property == "specularColor") {
+      if (!args[2].canConvert<QColor>()) return false;
+      it.value()[property] = args[2].value<QColor>();
+    } else {
+      const float numeric = args[2].toFloat();
+      if (!std::isfinite(numeric)) return false;
+      it.value()[property] = std::clamp(numeric, 0.0f, 1.0f);
+    }
+    for (auto assignment = layerAssignments_.cbegin();
+         assignment != layerAssignments_.cend(); ++assignment) {
+      if (assignment.value() == name) {
+        applyMaterialToLayer(assignment.key(), name);
+      }
+    }
     return true;
   }
 
   QVariant applyMaterialPreset(const QVariantList &args) {
     if (args.size() < 2)
       return false;
-    QString preset = args[0].toString();
-    QString layerId = args[1].toString();
-
-    // Placeholder - would apply preset to layer
+    const QString preset = args[0].toString().trimmed();
+    const QString layerId = args[1].toString().trimmed();
+    if (layerId.isEmpty() || !listMaterialPresets({}).contains(preset) ||
+        !layerExistsInCurrentComposition(layerId)) return false;
+    if (!materials_.contains(preset)) {
+      QVariantMap presetProperties;
+      presetProperties["diffuseColor"] = QColor(200, 200, 200);
+      presetProperties["specularColor"] = QColor(255, 255, 255);
+      presetProperties["roughness"] = 0.5f;
+      presetProperties["metallic"] = 0.0f;
+      if (preset == QStringLiteral("Plastic")) {
+        presetProperties["roughness"] = 0.3f;
+      } else if (preset == QStringLiteral("Metal")) {
+        presetProperties["metallic"] = 1.0f;
+        presetProperties["roughness"] = 0.2f;
+      } else if (preset == QStringLiteral("Glass")) {
+        presetProperties["roughness"] = 0.05f;
+        presetProperties["specularColor"] = QColor(255, 255, 255, 220);
+      }
+      materials_[preset] = presetProperties;
+    }
+    if (!applyMaterialToLayer(layerId, preset)) return false;
+    layerAssignments_[layerId] = preset;
     return true;
   }
 
@@ -191,12 +243,47 @@ private:
   QVariant assignMaterialToLayer(const QVariantList &args) {
     if (args.size() < 2)
       return false;
-    QString materialName = args[0].toString();
-    QString layerId = args[1].toString();
-
-    // Placeholder - would assign material to layer
+    const QString materialName = args[0].toString().trimmed();
+    const QString layerId = args[1].toString().trimmed();
+    if (materialName.isEmpty() || layerId.isEmpty() ||
+        !materials_.contains(materialName) ||
+        !layerExistsInCurrentComposition(layerId)) return false;
+    if (!applyMaterialToLayer(layerId, materialName)) return false;
+    layerAssignments_[layerId] = materialName;
     return true;
   }
+
+  bool applyMaterialToLayer(const QString &layerId, const QString &materialName) {
+    auto *service = ArtifactProjectService::instance();
+    if (!service) return false;
+    const auto composition = service->currentComposition().lock();
+    if (!composition) return false;
+    const auto layer = composition->layerById(ArtifactCore::LayerID(layerId));
+    auto *model = layer ? dynamic_cast<Artifact3DLayer *>(layer.get()) : nullptr;
+    if (!model) return false;
+    const QVariantMap properties = materials_.value(materialName);
+    bool changed = false;
+    changed |= model->setLayerPropertyValue(
+        QStringLiteral("material.base.color"), properties.value(QStringLiteral("diffuseColor")));
+    changed |= model->setLayerPropertyValue(
+        QStringLiteral("material.emission.color"), properties.value(QStringLiteral("specularColor")));
+    changed |= model->setLayerPropertyValue(
+        QStringLiteral("material.roughness"), properties.value(QStringLiteral("roughness")));
+    changed |= model->setLayerPropertyValue(
+        QStringLiteral("material.metallic"), properties.value(QStringLiteral("metallic")));
+    if (changed) model->changed();
+    return changed;
+  }
+
+  static bool layerExistsInCurrentComposition(const QString &layerId) {
+    auto *service = ArtifactProjectService::instance();
+    if (!service) return false;
+    const auto composition = service->currentComposition().lock();
+    return composition && composition->layerById(ArtifactCore::LayerID(layerId));
+  }
+
+  QMap<QString, QVariantMap> materials_;
+  QMap<QString, QString> layerAssignments_;
 };
 
 } // namespace Artifact

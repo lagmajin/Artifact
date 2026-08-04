@@ -1,5 +1,6 @@
 module;
 #include <iostream>
+#include <cstdint>
 #include <fstream>
 #include <filesystem>
 #include <cctype>
@@ -55,6 +56,69 @@ namespace Artifact {
 
 namespace {
 
+struct VstAEffect;
+using VstIntPtr = intptr_t;
+using VstAudioMasterCallback = VstIntPtr (*)(VstAEffect*, int32_t, int32_t,
+                                               VstIntPtr, void*, float);
+using VstDispatcherProc = VstIntPtr (*)(VstAEffect*, int32_t, int32_t,
+                                         VstIntPtr, void*, float);
+using VstProcessProc = void (*)(VstAEffect*, float**, float**, int32_t);
+using VstProcessDoubleProc = void (*)(VstAEffect*, double**, double**, int32_t);
+using VstSetParameterProc = void (*)(VstAEffect*, int32_t, float);
+using VstGetParameterProc = float (*)(VstAEffect*, int32_t);
+
+struct VstAEffect {
+    int32_t magic = 0;
+    VstDispatcherProc dispatcher = nullptr;
+    VstProcessProc process = nullptr;
+    VstSetParameterProc setParameter = nullptr;
+    VstGetParameterProc getParameter = nullptr;
+    int32_t numPrograms = 0;
+    int32_t numParams = 0;
+    int32_t numInputs = 0;
+    int32_t numOutputs = 0;
+    int32_t flags = 0;
+    void* resvd1 = nullptr;
+    void* resvd2 = nullptr;
+    int32_t initialDelay = 0;
+    int32_t realQualities = 0;
+    int32_t offQualities = 0;
+    float ioRatio = 1.0f;
+    void* object = nullptr;
+    void* user = nullptr;
+    VstProcessDoubleProc processDouble = nullptr;
+    char future[56]{};
+};
+
+constexpr int32_t kVstMagic = 'VstP';
+constexpr int32_t kEffOpen = 0;
+constexpr int32_t kEffClose = 1;
+constexpr int32_t kEffSetSampleRate = 24;
+constexpr int32_t kEffSetBlockSize = 25;
+constexpr int32_t kEffMainsChanged = 12;
+constexpr int32_t kEffGetParamLabel = 6;
+constexpr int32_t kEffGetParamDisplay = 7;
+constexpr int32_t kEffGetParamName = 8;
+constexpr int32_t kEffGetVendorString = 47;
+constexpr int32_t kEffGetProductString = 48;
+constexpr int32_t kVstEffectFlagIsSynth = 4;
+constexpr int32_t kVstEffectFlagHasEditor = 1;
+
+VstIntPtr vstHostCallback(VstAEffect*, int32_t opcode, int32_t, VstIntPtr,
+                          void*, float) {
+    if (opcode == 1) return 2400;
+    return 0;
+}
+
+std::string vstDispatcherString(VstAEffect* effect, int32_t opcode,
+                                int32_t index = 0) {
+    if (!effect || !effect->dispatcher) return {};
+    char buffer[256]{};
+    effect->dispatcher(effect, opcode, index, 0, buffer, 0.0f);
+    buffer[sizeof(buffer) - 1] = '\0';
+    return std::string(buffer);
+}
+
 std::string toLowerCopy(std::string value)
 {
     std::transform(value.begin(), value.end(), value.begin(),
@@ -74,6 +138,24 @@ VSTPluginInfo makePluginInfoFromPath(const std::string& path, bool isVST3)
     info.numParameters = 0;
     info.isSynth = false;
     info.hasEditor = true;
+    return info;
+}
+
+VSTPluginInfo makeVST3PluginInfo(const std::string& path) {
+    VSTPluginInfo info = makePluginInfoFromPath(path, true);
+    Steinberg::VST3Module module;
+    if (!module.load(ArtifactCore::String(path))) return info;
+    auto *factory = module.getFactory();
+    if (!factory || factory->countPlugins() <= 0) return info;
+    Steinberg::PClassInfo classInfo;
+    if (factory->getPluginInfo(0, classInfo) == Steinberg::kResultOk) {
+        if (classInfo.name && *classInfo.name) {
+            info.name = std::string(classInfo.name) + " (VST3)";
+        }
+        if (classInfo.vendor && *classInfo.vendor) {
+            info.vendor = classInfo.vendor;
+        }
+    }
     return info;
 }
 
@@ -107,6 +189,8 @@ struct VSTHost::Impl {
 
         // VST2 関数ポインタ
         void* entryPoint = nullptr;
+        VstAEffect* effect = nullptr;
+        VstAEffect* (*vstMain)(VstAudioMasterCallback) = nullptr;
         int (*main)(void*) = nullptr;
         int (*dispatcher)(int32_t, int, int32_t, void*, float) = nullptr;
         void (*setParameter)(int32_t, float) = nullptr;
@@ -197,7 +281,8 @@ std::unique_ptr<VSTPluginInfo> VSTPluginLoader::loadPluginInfo(const std::string
     }
 
     auto info = std::make_unique<VSTPluginInfo>();
-    *info = makePluginInfoFromPath(path, isVST3Plugin(path));
+    *info = isVST3Plugin(path) ? makeVST3PluginInfo(path)
+                               : makePluginInfoFromPath(path, false);
     return info;
 }
 
@@ -262,6 +347,18 @@ bool VSTHost::loadPlugin(const std::string& path) {
             std::cerr << "Failed to load VST3 plugin: " << path << std::endl;
             return false;
         }
+        if (auto *factory = plugin.vst3Module->getFactory(); factory &&
+            factory->countPlugins() > 0) {
+            Steinberg::PClassInfo classInfo;
+            if (factory->getPluginInfo(0, classInfo) == Steinberg::kResultOk) {
+                if (classInfo.name && *classInfo.name) {
+                    plugin.info.name = std::string(classInfo.name) + " (VST3)";
+                }
+                if (classInfo.vendor && *classInfo.vendor) {
+                    plugin.info.vendor = classInfo.vendor;
+                }
+            }
+        }
     } else {
 #ifdef _WIN32
         plugin.handle = LoadLibraryA(path.c_str());
@@ -294,6 +391,44 @@ bool VSTHost::loadPlugin(const std::string& path) {
             releaseLibraryHandle(plugin.handle);
             return false;
         }
+
+        plugin.vstMain = reinterpret_cast<VstAEffect* (*)(VstAudioMasterCallback)>(
+            plugin.entryPoint);
+        plugin.effect = plugin.vstMain(vstHostCallback);
+        if (!plugin.effect || plugin.effect->magic != kVstMagic ||
+            !plugin.effect->dispatcher) {
+            std::cerr << "Invalid VST2 AEffect: " << path << std::endl;
+            releaseLibraryHandle(plugin.handle);
+            return false;
+        }
+        plugin.info.numInputs = std::max(0, plugin.effect->numInputs);
+        plugin.info.numOutputs = std::max(0, plugin.effect->numOutputs);
+        plugin.info.numParameters = std::max(0, plugin.effect->numParams);
+        plugin.info.isSynth = (plugin.effect->flags & kVstEffectFlagIsSynth) != 0;
+        plugin.info.hasEditor = (plugin.effect->flags & kVstEffectFlagHasEditor) != 0;
+        const std::string product = vstDispatcherString(
+            plugin.effect, kEffGetProductString);
+        const std::string vendor = vstDispatcherString(
+            plugin.effect, kEffGetVendorString);
+        if (!product.empty()) plugin.info.name = product;
+        if (!vendor.empty()) plugin.info.vendor = vendor;
+        plugin.parameters.resize(static_cast<size_t>(plugin.info.numParameters), 0.0f);
+        plugin.effect->dispatcher(plugin.effect, kEffOpen, 0, 0, nullptr, 0.0f);
+        plugin.effect->dispatcher(plugin.effect, kEffSetSampleRate, 0, 0,
+                                  nullptr, static_cast<float>(impl_->sampleRate));
+        plugin.effect->dispatcher(plugin.effect, kEffSetBlockSize, 0,
+                                  static_cast<VstIntPtr>(impl_->blockSize), nullptr, 0.0f);
+        plugin.effect->dispatcher(plugin.effect, kEffMainsChanged, 0, 1, nullptr, 0.0f);
+        plugin.isProcessing = true;
+        if (plugin.effect->getParameter) {
+            for (int32_t index = 0; index < plugin.effect->numParams; ++index) {
+                const float value = plugin.effect->getParameter(plugin.effect, index);
+                if (std::isfinite(value)) {
+                    plugin.parameters[static_cast<size_t>(index)] =
+                        std::clamp(value, 0.0f, 1.0f);
+                }
+            }
+        }
     }
 
     const int pluginId = nextPluginId_++;
@@ -311,6 +446,14 @@ void VSTHost::unloadPlugin(int pluginId) {
     auto implIt = impl_->loadedPlugins.find(pluginId);
     if (implIt != impl_->loadedPlugins.end()) {
         if (!implIt->second.isVST3) {
+            if (implIt->second.effect && implIt->second.effect->dispatcher) {
+                implIt->second.effect->dispatcher(implIt->second.effect,
+                                                  kEffMainsChanged, 0, 0,
+                                                  nullptr, 0.0f);
+                implIt->second.effect->dispatcher(implIt->second.effect,
+                                                  kEffClose, 0, 0, nullptr,
+                                                  0.0f);
+            }
             releaseLibraryHandle(implIt->second.handle);
         }
         impl_->loadedPlugins.erase(implIt);
@@ -369,6 +512,17 @@ std::vector<VSTParameterInfo> VSTHost::getPluginParameters(int pluginId) const {
         param.display = (i < static_cast<int>(plugin.parameters.size()))
                             ? std::to_string(plugin.parameters[static_cast<size_t>(i)])
                             : "0";
+        if (plugin.effect && plugin.effect->dispatcher) {
+            const std::string name = vstDispatcherString(
+                plugin.effect, kEffGetParamName, i);
+            const std::string display = vstDispatcherString(
+                plugin.effect, kEffGetParamDisplay, i);
+            const std::string label = vstDispatcherString(
+                plugin.effect, kEffGetParamLabel, i);
+            if (!name.empty()) param.name = name;
+            if (!display.empty()) param.display = display;
+            param.isDiscrete = !label.empty() && label == "bool";
+        }
         param.minValue = 0.0f;
         param.maxValue = 1.0f;
         param.defaultValue = 0.0f;
@@ -385,12 +539,22 @@ bool VSTHost::setParameter(int pluginId, int paramIndex, float value) {
         return false;
     }
 
+    if (!std::isfinite(value)) {
+        return false;
+    }
+
     auto& plugin = it->second;
+    if (plugin.info.numParameters > 0 && paramIndex >= plugin.info.numParameters) {
+        return false;
+    }
     const size_t index = static_cast<size_t>(paramIndex);
     if (plugin.parameters.size() <= index) {
         plugin.parameters.resize(index + 1, 0.0f);
     }
-    plugin.parameters[index] = value;
+    plugin.parameters[index] = std::clamp(value, 0.0f, 1.0f);
+    if (plugin.effect && plugin.effect->setParameter) {
+        plugin.effect->setParameter(plugin.effect, paramIndex, plugin.parameters[index]);
+    }
     return true;
 }
 
@@ -405,39 +569,122 @@ float VSTHost::getParameter(int pluginId, int paramIndex) const {
     if (index >= params.size()) {
         return 0.0f;
     }
-    return params[index];
+    if (it->second.effect && it->second.effect->getParameter) {
+        const float value = it->second.effect->getParameter(it->second.effect, paramIndex);
+        if (std::isfinite(value)) return std::clamp(value, 0.0f, 1.0f);
+        return params[index];
+    }
+    return std::isfinite(params[index]) ? std::clamp(params[index], 0.0f, 1.0f)
+                                        : 0.0f;
 }
 
 std::string VSTHost::getParameterDisplay(int pluginId, int paramIndex) const {
+    const auto it = impl_->loadedPlugins.find(pluginId);
+    if (it == impl_->loadedPlugins.end() || paramIndex < 0 ||
+        (it->second.info.numParameters > 0 &&
+         paramIndex >= it->second.info.numParameters)) {
+        return {};
+    }
+    if (it->second.effect && it->second.effect->dispatcher) {
+        const std::string display = vstDispatcherString(
+            it->second.effect, kEffGetParamDisplay, paramIndex);
+        if (!display.empty()) return display;
+    }
     return std::to_string(getParameter(pluginId, paramIndex));
 }
 
 void VSTHost::setSampleRate(double sampleRate) {
-    impl_->sampleRate = sampleRate;
+    impl_->sampleRate = std::isfinite(sampleRate) ? std::max(1.0, sampleRate) : 44100.0;
+    for (auto& [id, plugin] : impl_->loadedPlugins) {
+        (void)id;
+        if (!plugin.isVST3 && plugin.effect && plugin.effect->dispatcher) {
+            plugin.effect->dispatcher(plugin.effect, kEffSetSampleRate, 0, 0,
+                                       nullptr, static_cast<float>(impl_->sampleRate));
+        }
+    }
 }
 
 void VSTHost::setBlockSize(int blockSize) {
-    impl_->blockSize = blockSize;
+    impl_->blockSize = std::clamp(blockSize, 1, 8192);
+    for (auto& [id, plugin] : impl_->loadedPlugins) {
+        (void)id;
+        if (!plugin.isVST3 && plugin.effect && plugin.effect->dispatcher) {
+            plugin.effect->dispatcher(plugin.effect, kEffSetBlockSize, 0,
+                                       static_cast<VstIntPtr>(impl_->blockSize),
+                                       nullptr, 0.0f);
+        }
+    }
 }
 
 void VSTHost::process(int pluginId, const ArtifactCore::AudioSegment& input, ArtifactCore::AudioSegment& output) {
-    if (!isPluginLoaded(pluginId)) {
+    const auto it = impl_->loadedPlugins.find(pluginId);
+    if (it == impl_->loadedPlugins.end() || it->second.isVST3 ||
+        !it->second.effect || !it->second.effect->process ||
+        !it->second.isProcessing || input.frameCount() <= 0 ||
+        input.channelCount() <= 0 || input.channelCount() > 2 ||
+        it->second.info.numInputs > 2 || it->second.info.numOutputs > 2 ||
+        (it->second.info.numInputs > 0 &&
+         input.channelCount() < it->second.info.numInputs)) {
         output = input;
         return;
     }
 
-    // 現時点は状態管理とロード経路の整備を優先し、オーディオは透過させる。
-    output = input;
+    const auto& plugin = it->second;
+    const int frames = input.frameCount();
+    const int inputChannels = std::min(input.channelCount(), 2);
+    const int outputChannels = std::max(
+        1, std::min(2, plugin.info.numOutputs > 0 ? plugin.info.numOutputs
+                                                   : inputChannels));
+    output.channelData.resize(outputChannels);
+    output.sampleRate = input.sampleRate;
+    output.layout = input.layout;
+    output.startFrame = input.startFrame;
+    std::array<const float*, 2> source{nullptr, nullptr};
+    for (int channel = 0; channel < inputChannels; ++channel) {
+        source[channel] = input.channelData[channel].constData();
+    }
+    for (int channel = 0; channel < outputChannels; ++channel) {
+        output.channelData[channel].fill(0.0f, frames);
+    }
+    const int maxBlock = std::max(1, impl_->blockSize);
+    for (int offset = 0; offset < frames; offset += maxBlock) {
+        const int blockFrames = std::min(maxBlock, frames - offset);
+        std::array<float*, 2> inputs{nullptr, nullptr};
+        std::array<float*, 2> outputs{nullptr, nullptr};
+        for (int channel = 0; channel < inputChannels; ++channel) {
+            inputs[channel] = const_cast<float*>(source[channel]) + offset;
+        }
+        for (int channel = 0; channel < outputChannels; ++channel) {
+            outputs[channel] = output.channelData[channel].data() + offset;
+        }
+        plugin.effect->process(plugin.effect, inputs.data(), outputs.data(), blockFrames);
+    }
 }
 
 void VSTHost::processDouble(int pluginId, const std::vector<double>& input, std::vector<double>& output) {
-    (void)pluginId;
     output = input;
+    const auto it = impl_->loadedPlugins.find(pluginId);
+    if (it == impl_->loadedPlugins.end() || it->second.isVST3 ||
+        !it->second.effect || !it->second.effect->processDouble ||
+        !it->second.isProcessing || input.empty()) {
+        return;
+    }
+    double* inputData = const_cast<double*>(input.data());
+    double* outputData = output.data();
+    double* inputs[] = {inputData};
+    double* outputs[] = {outputData};
+    it->second.effect->processDouble(it->second.effect, inputs, outputs,
+                                     static_cast<int32_t>(input.size()));
 }
 
 void VSTHost::resume(int pluginId) {
     auto it = impl_->loadedPlugins.find(pluginId);
     if (it != impl_->loadedPlugins.end()) {
+        if (!it->second.isVST3 && it->second.effect &&
+            it->second.effect->dispatcher) {
+            it->second.effect->dispatcher(it->second.effect, kEffMainsChanged,
+                                          0, 1, nullptr, 0.0f);
+        }
         it->second.isProcessing = true;
     }
 }
@@ -445,6 +692,11 @@ void VSTHost::resume(int pluginId) {
 void VSTHost::suspend(int pluginId) {
     auto it = impl_->loadedPlugins.find(pluginId);
     if (it != impl_->loadedPlugins.end()) {
+        if (!it->second.isVST3 && it->second.effect &&
+            it->second.effect->dispatcher) {
+            it->second.effect->dispatcher(it->second.effect, kEffMainsChanged,
+                                          0, 0, nullptr, 0.0f);
+        }
         it->second.isProcessing = false;
     }
 }
@@ -463,9 +715,12 @@ int VSTHost::getLoadedPluginIdByPath(const std::string& path) const {
 }
 
 void VSTHost::openEditor(int pluginId, void* window) {
-    (void)window;
     auto it = impl_->loadedPlugins.find(pluginId);
-    if (it != impl_->loadedPlugins.end()) {
+    if (it != impl_->loadedPlugins.end() && !it->second.isVST3 &&
+        it->second.info.hasEditor && it->second.effect &&
+        it->second.effect->dispatcher && window) {
+        it->second.effect->dispatcher(it->second.effect, effEditOpen, 0, 0,
+                                      window, 0.0f);
         std::cout << "[VSTHost] openEditor requested for " << it->second.info.name
                   << std::endl;
     }
@@ -473,7 +728,11 @@ void VSTHost::openEditor(int pluginId, void* window) {
 
 void VSTHost::closeEditor(int pluginId) {
     auto it = impl_->loadedPlugins.find(pluginId);
-    if (it != impl_->loadedPlugins.end()) {
+    if (it != impl_->loadedPlugins.end() && !it->second.isVST3 &&
+        it->second.info.hasEditor && it->second.effect &&
+        it->second.effect->dispatcher) {
+        it->second.effect->dispatcher(it->second.effect, effEditClose, 0, 0,
+                                      nullptr, 0.0f);
         std::cout << "[VSTHost] closeEditor requested for " << it->second.info.name
                   << std::endl;
     }

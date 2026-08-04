@@ -1,5 +1,7 @@
 module;
 #include <utility>
+#include <algorithm>
+#include <chrono>
 #if defined(_WIN32)
 #include <Windows.h>
 #else
@@ -27,7 +29,12 @@ CpuMonitor::~CpuMonitor() {}
 SystemMemoryInfo CpuMonitor::queryMemory() const {
     SystemMemoryInfo info;
 #if defined(_WIN32)
-    Q_UNUSED(info);
+    MEMORYSTATUSEX memory{};
+    memory.dwLength = sizeof(memory);
+    if (GlobalMemoryStatusEx(&memory)) {
+        info.totalBytes = static_cast<uint64_t>(memory.ullTotalPhys);
+        info.freeBytes = static_cast<uint64_t>(memory.ullAvailPhys);
+    }
 #else
     FILE* f = fopen("/proc/meminfo", "r");
     if (!f) return info;
@@ -50,7 +57,30 @@ SystemMemoryInfo CpuMonitor::queryMemory() const {
 ProcessCpuInfo CpuMonitor::queryProcessCpu() {
     ProcessCpuInfo info;
 #if defined(_WIN32)
-    Q_UNUSED(info);
+    FILETIME creation{}, exit{}, kernel{}, user{};
+    if (GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) {
+        const auto toSeconds = [](const FILETIME& value) {
+            ULARGE_INTEGER ticks{};
+            ticks.LowPart = value.dwLowDateTime;
+            ticks.HighPart = value.dwHighDateTime;
+            return static_cast<double>(ticks.QuadPart) / 10000000.0;
+        };
+        const double processSeconds = toSeconds(kernel) + toSeconds(user);
+        const double now = std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        static double previousProcessSeconds = 0.0;
+        static double previousWallSeconds = 0.0;
+        if (previousWallSeconds > 0.0) {
+            const double processDelta = processSeconds - previousProcessSeconds;
+            const double wallDelta = now - previousWallSeconds;
+            if (wallDelta > 0.0 && processDelta >= 0.0) {
+                info.processPercent = std::clamp((processDelta / wallDelta) * 100.0,
+                                                 0.0, 100.0);
+            }
+        }
+        previousProcessSeconds = processSeconds;
+        previousWallSeconds = now;
+    }
 #else
     struct rusage usage;
     if (getrusage(RUSAGE_SELF, &usage) == 0) {

@@ -2,6 +2,7 @@ module;
 #include <memory>
 #include <vector>
 #include <cstdint>
+#include <cmath>
 #include <QRectF>
 #include <QString>
 #include <QVariant>
@@ -38,23 +39,29 @@ public:
         if (hdriPath_ != path) {
             hdriPath_ = path;
             ++revision_;
+            changed();
         }
     }
 
     float intensity() const { return intensity_; }
     void setIntensity(float intensity) {
-        const float clamped = intensity < 0.0f ? 0.0f : intensity;
+        const float clamped = std::isfinite(intensity)
+            ? (intensity < 0.0f ? 0.0f : intensity)
+            : 0.0f;
         if (intensity_ != clamped) {
             intensity_ = clamped;
             ++revision_;
+            changed();
         }
     }
 
     float rotation() const { return rotation_; }
     void setRotation(float rotationDegrees) {
+        if (!std::isfinite(rotationDegrees)) return;
         if (rotation_ != rotationDegrees) {
             rotation_ = rotationDegrees;
             ++revision_;
+            changed();
         }
     }
 
@@ -63,6 +70,7 @@ public:
         if (visibleAsBackground_ != visible) {
             visibleAsBackground_ = visible;
             ++revision_;
+            changed();
         }
     }
 

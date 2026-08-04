@@ -47,6 +47,8 @@ import Artifact.Effect.GauusianBlur;
 import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.Keying.LumaKey;
 import Artifact.Effect.Keying.DifferenceKey;
+import Artifact.Effect.Rasterizer.DifferenceMatte;
+import Artifact.Effect.Keying.IBKKeyer;
 import Artifact.Effect.LensDistortion;
 import Artifact.Effect.LiftGammaGain;
 import ExposureEffect;
@@ -56,6 +58,32 @@ import Artifact.Effect.Rasterizer.DropShadow;
 import Artifact.Effect.Rasterizer.InnerShadow;
 import Artifact.Effect.Rasterizer.Stroke;
 import Artifact.Effect.Rasterizer.Satin;
+import Artifact.Effect.Rasterizer.Echo;
+import Artifact.Effect.Rasterizer.Ghost;
+import Artifact.Effect.Rasterizer.Feedback;
+import Artifact.Effect.Rasterizer.FrameAccumulation;
+import Artifact.Effect.Rasterizer.FrameBlend;
+import Artifact.Effect.Rasterizer.FrameAverage;
+import Artifact.Effect.Rasterizer.FreezeFrame;
+import Artifact.Effect.Rasterizer.TemporalDenoise;
+import Artifact.Effect.Rasterizer.TemporalMedian;
+import Artifact.Effect.Rasterizer.TemporalSmear;
+import Artifact.Effect.Rasterizer.TimeBlur;
+import Artifact.Effect.Rasterizer.TrailFade;
+import Artifact.Effect.AutoMosaic;
+import Artifact.Effect.CornerPin;
+import Artifact.Effect.Rasterizer.ChromaticAberration;
+import Artifact.Effect.Rasterizer.DataMosh;
+import Artifact.Effect.Rasterizer.Deflicker;
+import Artifact.Effect.Rasterizer.LightTrails;
+import Artifact.Effect.Rasterizer.MotionTrail;
+import Artifact.Effect.Rasterizer.OpticalFlowBlur;
+import Artifact.Effect.Rasterizer.PixelSort;
+import Artifact.Effect.Rasterizer.PosterizeTime;
+import Artifact.Effect.Rasterizer.SlitScan;
+import Artifact.Effect.Rasterizer.Strobe;
+import Artifact.Effect.Rasterizer.TimeWarp;
+import Artifact.Effect.Rasterizer.VectorBlur;
 import Artifact.Effect.Render.PBRMaterial;
 import Artifact.Effect.Spherize;
 import Artifact.Effect.Transform.Bend;
@@ -243,6 +271,21 @@ W_OBJECT_IMPL(ArtifactEffectService)
   if (effectId == QStringLiteral("effect.colorcorrection.fill")) {
    return std::make_unique<FillEffect>();
   }
+  if (effectId == QStringLiteral("effect.layerstyle.coloroverlay")) {
+   auto effect = std::make_unique<FillEffect>();
+   effect->setDisplayName(UniString("Color Overlay"));
+   effect->setEffectID(UniString::fromQString(effectId));
+   return effect;
+  }
+  if (effectId == QStringLiteral("effect.layerstyle.gradientoverlay")) {
+   auto effect = std::make_unique<GradientRampEffect>();
+   effect->setDisplayName(UniString("Gradient Overlay"));
+   effect->setEffectID(UniString::fromQString(effectId));
+   return effect;
+  }
+  if (effectId == QStringLiteral("effect.layerstyle.patternoverlay")) {
+   return std::make_unique<PatternOverlayEffect>();
+  }
   if (effectId == QStringLiteral("effect.colorcorrection.tritone")) {
    return std::make_unique<TritoneEffect>();
   }
@@ -282,10 +325,24 @@ W_OBJECT_IMPL(ArtifactEffectService)
   }
   if (effectId == QStringLiteral("difference_key") ||
       effectId == QStringLiteral("Effect.Keying.DifferenceKey")) {
-   auto effect = std::make_unique<DifferenceKeyEffect>();
+    auto effect = std::make_unique<DifferenceKeyEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
    effect->setDisplayName(QStringLiteral("Difference Key"));
-   return effect;
+    return effect;
+  }
+  if (effectId == QStringLiteral("difference_matte") ||
+      effectId == QStringLiteral("Effect.Rasterizer.DifferenceMatte")) {
+    auto effect = std::make_unique<DifferenceMatteEffect>();
+    effect->setEffectID(UniString::fromQString(effectId));
+    effect->setDisplayName(QStringLiteral("Difference Matte"));
+    return effect;
+  }
+  if (effectId == QStringLiteral("ibk_keyer") ||
+      effectId == QStringLiteral("Effect.Keying.IBKKeyer")) {
+    auto effect = std::make_unique<IBKKeyerEffect>();
+    effect->setEffectID(UniString::fromQString(effectId));
+    effect->setDisplayName(QStringLiteral("IBK Keyer"));
+    return effect;
   }
   if (effectId == QStringLiteral("effect.blur.gaussian")) {
    auto effect = std::make_unique<GaussianBlur>();
@@ -315,6 +372,162 @@ W_OBJECT_IMPL(ArtifactEffectService)
    auto effect = std::make_unique<SatinEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
    effect->setDisplayName(QStringLiteral("Satin"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("echo") ||
+      effectId == QStringLiteral("Effect.Rasterizer.Echo")) {
+   auto effect = std::make_unique<EchoEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Echo / Afterimage"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("ghost") ||
+      effectId == QStringLiteral("Effect.Rasterizer.Ghost")) {
+   auto effect = std::make_unique<GhostEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Ghost"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("feedback") ||
+      effectId == QStringLiteral("Effect.Rasterizer.Feedback")) {
+   auto effect = std::make_unique<FeedbackEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Feedback"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("frame_accumulation") ||
+      effectId == QStringLiteral("Effect.Rasterizer.FrameAccumulation")) {
+   auto effect = std::make_unique<FrameAccumulationEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Frame Accumulation"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("frame_blend") ||
+      effectId == QStringLiteral("Effect.Rasterizer.FrameBlend")) {
+   auto effect = std::make_unique<FrameBlendEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Frame Blend"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("frame_average") ||
+      effectId == QStringLiteral("Effect.Rasterizer.FrameAverage")) {
+   auto effect = std::make_unique<FrameAverageEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Frame Average"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("freeze_frame") ||
+      effectId == QStringLiteral("Effect.Rasterizer.FreezeFrame")) {
+   auto effect = std::make_unique<FreezeFrameEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Freeze Frame"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("temporal_denoise") ||
+      effectId == QStringLiteral("Effect.Rasterizer.TemporalDenoise")) {
+   auto effect = std::make_unique<TemporalDenoiseEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Temporal Denoise"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("temporal_median") ||
+      effectId == QStringLiteral("Effect.Rasterizer.TemporalMedian")) {
+   auto effect = std::make_unique<TemporalMedianEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Temporal Median"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("temporal_smear") ||
+      effectId == QStringLiteral("Effect.Rasterizer.TemporalSmear")) {
+   auto effect = std::make_unique<TemporalSmearEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Temporal Smear"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("time_blur") ||
+      effectId == QStringLiteral("Effect.Rasterizer.TimeBlur")) {
+   auto effect = std::make_unique<TimeBlurEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Time Blur"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("trail_fade") ||
+      effectId == QStringLiteral("Effect.Rasterizer.TrailFade")) {
+   auto effect = std::make_unique<TrailFadeEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Trail Fade"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("chromatic_aberration")) {
+   auto effect = std::make_unique<ChromaticAberrationEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Chromatic Aberration"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("data_mosh")) {
+   auto effect = std::make_unique<DataMoshEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Data Mosh"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("deflicker")) {
+   auto effect = std::make_unique<DeflickerEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Deflicker"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("light_trails")) {
+   auto effect = std::make_unique<LightTrailsEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Light Trails"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("motion_trail")) {
+   auto effect = std::make_unique<MotionTrailEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Motion Trail"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("optical_flow_blur")) {
+   auto effect = std::make_unique<OpticalFlowBlurEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Optical Flow Blur"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("pixel_sort")) {
+   auto effect = std::make_unique<PixelSortEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Pixel Sort"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("posterize_time")) {
+   auto effect = std::make_unique<PosterizeTimeEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Posterize Time"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("slit_scan")) {
+   auto effect = std::make_unique<SlitScanEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Slit Scan"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("strobe")) {
+   auto effect = std::make_unique<StrobeEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Strobe"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("time_warp")) {
+   auto effect = std::make_unique<TimeWarpEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Time Warp"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("vector_blur")) {
+   auto effect = std::make_unique<VectorBlurEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Vector Blur"));
    return effect;
   }
   if (effectId == QStringLiteral("glow")) {
@@ -478,6 +691,20 @@ W_OBJECT_IMPL(ArtifactEffectService)
    auto effect = std::make_unique<MosaicEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
    effect->setDisplayName(QStringLiteral("Mosaic"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("auto_mosaic") ||
+      effectId == QStringLiteral("Effect.AutoMosaic")) {
+   auto effect = std::make_unique<AutoMosaicEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Auto Mosaic"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("builtin.corner_pin") ||
+      effectId == QStringLiteral("corner_pin")) {
+   auto effect = std::make_unique<ArtifactCornerPinEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Corner Pin"));
    return effect;
   }
   if (effectId == QStringLiteral("builtin.pixelate") ||
@@ -700,11 +927,18 @@ W_OBJECT_IMPL(ArtifactEffectService)
 
   if (!impl_->effectManager_) return nullptr;
   // Delegate to the global effect manager's factory
-  impl_->effectManager_->factoryByID(id);
-  // The manager creates and registers internally; retrieve via ID
-  // For now return nullptr as factoryByID doesn't return the effect directly
-  // The actual creation is done through project service
-  return nullptr;
+  if (auto pluginEffect = impl_->effectManager_->factoryByID(id)) {
+    return pluginEffect;
+  }
+
+  // The legacy global manager does not expose a concrete factory result yet.
+  // Keep the requested plugin effect in the layer/effect graph instead of
+  // dropping it: the generic effect preserves its ID and property envelope,
+  // and can be replaced by a plugin implementation when one is available.
+  auto fallback = std::make_unique<ArtifactAbstractEffect>();
+  fallback->setEffectID(UniString::fromQString(effectId));
+  fallback->setDisplayName(QStringLiteral("Plugin Effect: %1").arg(effectId));
+  return fallback;
  }
 
  std::vector<EffectInfo> ArtifactEffectService::availableEffects() const
@@ -721,6 +955,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("effect.colorcorrection.photofilter"), "Photo Filter"});
   effects.push_back({EffectID("effect.colorcorrection.gradientramp"), "Gradient Ramp"});
   effects.push_back({EffectID("effect.colorcorrection.fill"), "Fill"});
+  effects.push_back({EffectID("effect.layerstyle.coloroverlay"), "Color Overlay"});
+  effects.push_back({EffectID("effect.layerstyle.gradientoverlay"), "Gradient Overlay"});
+  effects.push_back({EffectID("effect.layerstyle.patternoverlay"), "Pattern Overlay"});
   effects.push_back({EffectID("effect.colorcorrection.tritone"), "Tritone"});
   effects.push_back({EffectID("effect.colorcorrection.colorama"), "Colorama"});
   effects.push_back({EffectID("effect.colorcorrection.colorbalance"), "Color Balance"});
@@ -730,10 +967,35 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("chroma_key"), "Chroma Key"});
   effects.push_back({EffectID("luma_key"), "Luma Key"});
   effects.push_back({EffectID("difference_key"), "Difference Key"});
+  effects.push_back({EffectID("difference_matte"), "Difference Matte"});
   effects.push_back({EffectID("drop_shadow"), "Drop Shadow"});
   effects.push_back({EffectID("inner_shadow"), "Inner Shadow"});
   effects.push_back({EffectID("stroke"), "Stroke"});
   effects.push_back({EffectID("satin"), "Satin"});
+  effects.push_back({EffectID("echo"), "Echo / Afterimage"});
+  effects.push_back({EffectID("ghost"), "Ghost"});
+  effects.push_back({EffectID("feedback"), "Feedback"});
+  effects.push_back({EffectID("frame_accumulation"), "Frame Accumulation"});
+  effects.push_back({EffectID("frame_blend"), "Frame Blend"});
+  effects.push_back({EffectID("frame_average"), "Frame Average"});
+  effects.push_back({EffectID("freeze_frame"), "Freeze Frame"});
+  effects.push_back({EffectID("temporal_denoise"), "Temporal Denoise"});
+  effects.push_back({EffectID("temporal_median"), "Temporal Median"});
+  effects.push_back({EffectID("temporal_smear"), "Temporal Smear"});
+  effects.push_back({EffectID("time_blur"), "Time Blur"});
+  effects.push_back({EffectID("trail_fade"), "Trail Fade"});
+  effects.push_back({EffectID("chromatic_aberration"), "Chromatic Aberration"});
+  effects.push_back({EffectID("data_mosh"), "Data Mosh"});
+  effects.push_back({EffectID("deflicker"), "Deflicker"});
+  effects.push_back({EffectID("light_trails"), "Light Trails"});
+  effects.push_back({EffectID("motion_trail"), "Motion Trail"});
+  effects.push_back({EffectID("optical_flow_blur"), "Optical Flow Blur"});
+  effects.push_back({EffectID("pixel_sort"), "Pixel Sort"});
+  effects.push_back({EffectID("posterize_time"), "Posterize Time"});
+  effects.push_back({EffectID("slit_scan"), "Slit Scan"});
+  effects.push_back({EffectID("strobe"), "Strobe"});
+  effects.push_back({EffectID("time_warp"), "Time Warp"});
+  effects.push_back({EffectID("vector_blur"), "Vector Blur"});
   effects.push_back({EffectID("directional_glow"), "Directional Glow / Streaks"});
   effects.push_back({EffectID("glow"), "Glow"});
   effects.push_back({EffectID("edge_bloom"), "Edge Bloom"});
@@ -761,6 +1023,8 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("radial_shadow"), "Radial Shadow"});
   effects.push_back({EffectID("optics_compensation"), "Optics Compensation"});
   effects.push_back({EffectID("mosaic"), "Mosaic"});
+  effects.push_back({EffectID("auto_mosaic"), "Auto Mosaic"});
+  effects.push_back({EffectID("builtin.corner_pin"), "Corner Pin"});
   effects.push_back({EffectID("builtin.pixelate"), "Pixelate"});
   effects.push_back({EffectID("builtin.posterize"), "Posterize"});
   effects.push_back({EffectID("turbulent_displace"), "Turbulent Displace"});

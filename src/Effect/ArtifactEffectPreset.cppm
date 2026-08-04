@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QString>
 #include <QVector>
@@ -475,6 +475,42 @@ void ArtifactEffectPresetCollection::loadDefaultPresets()
     shadowPreset->addParameter("shadowAngle", 45.0f);
     shadowPreset->addParameter("shadowDistance", 5.0f);
     shadowPreset->addParameter("shadowBlur", 5.0f);
+
+    // Layer-style presets. Keep property names aligned with the rasterizer
+    // effects so the preset browser can apply them without a special-case
+    // adapter.
+    auto* bevelPreset = createPreset("Bevel");
+    bevelPreset->setCategory(PresetCategories::Stylize);
+    bevelPreset->setDescription("Adds an adjustable edge bevel to the layer");
+    bevelPreset->addParameter("Strength", 1.0f);
+    bevelPreset->addParameter("Softness", 2.0f);
+    bevelPreset->addParameter("Edge Mode", false);
+
+    auto* innerShadowPreset = createPreset("Inner Shadow");
+    innerShadowPreset->setCategory(PresetCategories::Stylize);
+    innerShadowPreset->setDescription("Adds a soft shadow inside the layer alpha");
+    innerShadowPreset->addParameter("Shadow Color", QColor(0, 0, 0, 255));
+    innerShadowPreset->addParameter("Distance", 5.0f);
+    innerShadowPreset->addParameter("Angle", 45.0f);
+    innerShadowPreset->addParameter("Softness", 5.0f);
+    innerShadowPreset->addParameter("Opacity", 50.0f);
+
+    auto* strokePreset = createPreset("Stroke");
+    strokePreset->setCategory(PresetCategories::Stylize);
+    strokePreset->setDescription("Adds an outline around the layer alpha");
+    strokePreset->addParameter("Stroke Color", QColor(255, 255, 255, 255));
+    strokePreset->addParameter("Width", 4.0f);
+    strokePreset->addParameter("Opacity", 100.0f);
+
+    auto* satinPreset = createPreset("Satin");
+    satinPreset->setCategory(PresetCategories::Stylize);
+    satinPreset->setDescription("Adds an inner satin shading effect");
+    satinPreset->addParameter("Satin Color", QColor(200, 200, 200, 180));
+    satinPreset->addParameter("Distance", 4.0f);
+    satinPreset->addParameter("Angle", 45.0f);
+    satinPreset->addParameter("Softness", 3.0f);
+    satinPreset->addParameter("Opacity", 50.0f);
+    satinPreset->addParameter("Invert", false);
 
     // デフォルトプリセット例：Glow
     auto* glowPreset = createPreset("Glow");

@@ -1438,7 +1438,8 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   }
   if (event && !event->isAutoRepeat() &&
       shortcuts.matches(event, ShortcutId::Undo)) {
-    if ((activeTool == ToolType::Brush || activeTool == ToolType::Eraser) &&
+    if ((activeTool == ToolType::Brush || activeTool == ToolType::RotoBrush ||
+         activeTool == ToolType::Eraser) &&
         editor && editor->renderController() &&
         editor->renderController()->undoSelectedPaintStroke()) {
       event->accept();
@@ -1465,6 +1466,7 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
       if (shortcuts.matches(event, ShortcutId::Undo)) {
           const auto activeTool = tm ? tm->activeTool() : ToolType::Selection;
           if ((activeTool == ToolType::Brush ||
+               activeTool == ToolType::RotoBrush ||
                activeTool == ToolType::Eraser) &&
               editor && editor->renderController() &&
               editor->renderController()->undoSelectedPaintStroke()) {

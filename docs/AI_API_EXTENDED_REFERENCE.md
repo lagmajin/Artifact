@@ -10,8 +10,8 @@ The Cloud AI widget API now supports comprehensive composition and layer manipul
 - **Phase 1**: Composition and layer notes ✅
 - **Phase 2**: Layer properties (position, scale, rotation, opacity) ✅
 - **Phase 3**: Effects and masks 🟡 (core effect operations available)
-- **Phase 4**: Keyframe animation 🔧 (Framework ready, stub implementations)
-- **Phase 5**: Group layer management 🔧 (Framework ready, stub implementations)
+- **Phase 4**: Keyframe animation ✅ (Layer and effect keyframe read/write/delete APIs)
+- **Phase 5**: Group layer management ✅ (Create, move, and ungroup operations)
 
 ---
 
@@ -205,6 +205,12 @@ The core effect surface is now callable through `WorkspaceAutomation`.
 #### `getLayerEffects(layerId: string) → QVariantList`
 List effects applied to a layer.
 
+#### `getEffectRegistryMetadata() → QVariantList`
+List registered effects with availability, pipeline stage, GPU capability, and parameter count.
+
+#### `getLayerEffectParameters(layerId: string, effectId: string) → QVariantList`
+Return editable parameter descriptors, current values, ranges, expressions, and keyframe counts.
+
 #### `addLayerEffect(layerId: string, effectType: string) → string`
 Add an effect to a layer; returns effect ID.
 
@@ -213,6 +219,18 @@ Remove an effect from a layer.
 
 #### `setLayerEffectParameter(layerId: string, effectId: string, paramName: string, value: double) → bool`
 Modify an effect parameter.
+
+#### `setLayerEffectParameterKeyframe(layerId: string, effectId: string, paramName: string, frame: int, value: QVariant) → bool`
+Write an animatable effect parameter at a timeline frame.
+
+#### `getLayerEffectParameterKeyframes(layerId: string, effectId: string, paramName: string) → QVariantList`
+Read effect parameter keyframes, including interpolation and handles.
+
+#### `removeLayerEffectParameterKeyframe(layerId: string, effectId: string, paramName: string, frame: int) → bool`
+Remove an effect parameter keyframe at a timeline frame.
+
+#### `setLayerEffectParameterExpression(layerId: string, effectId: string, paramName: string, expression: string) → bool`
+Set or clear an expression on an animatable effect parameter.
 
 #### `setLayerEffectEnabled(layerId: string, effectId: string, enabled: bool) → bool`
 Enable or disable an effect.
@@ -238,18 +256,19 @@ List recently used effect presets.
 #### `workspaceDiagnostics() → QVariantMap`
 Return a compact status summary for the current workspace.
 
-**TODO**: 
-- Access effect stack API
-- Build effect type registry
-- Implement parameter getter/setter
+**Remaining**:
+- Registry metadata can be expanded with user-facing category and version fields.
 
 ---
 
-## Phase 4: Keyframe Animation API (Framework)
+## Phase 4: Keyframe Animation API
 
-All Phase 4 methods are registered and callable. Implementations currently return stub values pending keyframe API clarification.
+All Phase 4 methods are registered and callable; the initial keyframe storage path is implemented.
 
 ### Keyframes
+
+The keyframe methods are backed by the active layer/property store and return
+structured results; they are no longer placeholder registrations.
 
 #### `setKeyframe(layerId: string, propertyPath: string, frameNumber: int, value: double) → bool`
 Set a keyframe for a property at a specific frame.
@@ -292,18 +311,19 @@ For keyframe commands, the facade accepts compact `time` inputs for DSL/MCP conv
 
 Future optional helpers such as `preview` / `explain` can sit on top of the same command IR, but they are not required for the initial contract.
 
-**TODO**:
-- Access timeline/keyframe storage
-- Define property path syntax
-- Build keyframe curve interpolation
+**Remaining**:
+- Expand property-path coverage and curve interpolation options.
 
 ---
 
-## Phase 5: Group Layer API (Framework)
+## Phase 5: Group Layer API
 
-All Phase 5 methods are registered and callable. Implementations currently return stub values pending group layer API clarification.
+All Phase 5 methods are registered and callable; the initial group/project-item operation path is implemented.
 
 ### Group Management
+
+Group creation, reparenting, ungrouping, and batch project-item operations are
+implemented through the workspace automation facade.
 
 #### `createGroupLayer(name: string) → string`
 Create a new group layer; returns group layer ID.
@@ -320,9 +340,6 @@ Rename multiple project items from a JSON-style array of `{ itemId, newName }` o
 #### `batchMoveProjectItemsToFolder(itemIds: string[], parentFolderId: string) → QVariantMap`
 Move multiple project items into a folder.
 
-**TODO**:
-- Access group layer creation API
-- Implement layer reparenting logic
 - Handle nested groups
 
 ---
@@ -402,8 +419,8 @@ AI executes:
 | 1 | Notes | ✅ Complete | Both composition and layer notes working |
 | 2 | Properties | ✅ Implemented | Position, scale, rotation, opacity working |
 | 3 | Effects/Masks | 🟡 Partial | Core effect operations exposed |
-| 4 | Keyframes | 🔧 Framework | Methods registered, stubs ready for implementation |
-| 5 | Groups | 🔧 Framework | Methods registered, stubs ready for implementation |
+| 4 | Keyframes | ✅ Implemented | Layer and effect keyframe operations are registered and callable |
+| 5 | Groups | ✅ Implemented | Group creation, layer moves, and ungrouping are registered and callable |
 
 ---
 

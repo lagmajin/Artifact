@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <cmath>
 #include <algorithm>
@@ -327,6 +327,16 @@ QImage ArtifactSDFLayer::toQImage() const
         }
     }
     return img;
+}
+
+QImage ArtifactSDFLayer::getThumbnail(int width, int height) const
+{
+    const QSize targetSize(std::max(1, width), std::max(1, height));
+    const QImage image = toQImage();
+    return image.isNull()
+        ? ArtifactAbstractLayer::getThumbnail(targetSize.width(), targetSize.height())
+        : image.scaled(targetSize, Qt::KeepAspectRatio,
+                       Qt::SmoothTransformation);
 }
 
 // ---------------------------------------------------------------------------

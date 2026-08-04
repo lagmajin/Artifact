@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QWidget>
 #include <QFrame>
@@ -27,6 +27,7 @@
 #include <QStyle>
 #include <QSizePolicy>
 #include <QPainter>
+#include <QPaintEvent>
 #include <QWheelEvent>
 #include <QMouseEvent>
 #include <QFocusEvent>
@@ -111,6 +112,89 @@ namespace Artifact
 {
  namespace
  {
+  class WaveformScopeWidget final : public QWidget
+  {
+  public:
+   explicit WaveformScopeWidget(QWidget* parent = nullptr) : QWidget(parent)
+   {
+    setMinimumHeight(180);
+    setAutoFillBackground(true);
+   }
+
+   void updateFrame(const QImage& image)
+   {
+    frame_ = image.convertToFormat(QImage::Format_RGB32);
+    update();
+   }
+
+  protected:
+   void paintEvent(QPaintEvent*) override
+   {
+    QPainter painter(this);
+    painter.fillRect(rect(), QColor(12, 14, 18));
+    const QRect plot = rect().adjusted(28, 12, -10, -22);
+    painter.setPen(QColor(55, 62, 72));
+    for (int i = 0; i <= 4; ++i) {
+     const int y = plot.top() + (plot.height() * i) / 4;
+     painter.drawLine(plot.left(), y, plot.right(), y);
+    }
+    painter.setPen(QColor(170, 180, 190));
+    painter.drawText(QRect(2, plot.top() - 8, 24, 18), Qt::AlignRight,
+                     QStringLiteral("100"));
+    painter.drawText(QRect(2, plot.bottom() - 8, 24, 18), Qt::AlignRight,
+                     QStringLiteral("0"));
+    if (frame_.isNull() || plot.width() <= 0 || plot.height() <= 0) {
+     return;
+    }
+
+    QPainterPath redPath;
+    QPainterPath greenPath;
+    QPainterPath bluePath;
+    QPainterPath lumaPath;
+    const int columns = std::max(1, plot.width());
+    for (int x = 0; x < columns; ++x) {
+     const int sourceX = std::clamp((x * frame_.width()) / columns, 0,
+                                    frame_.width() - 1);
+     float r = 0.0f;
+     float g = 0.0f;
+     float b = 0.0f;
+     int count = 0;
+     const int step = std::max(1, frame_.height() / 96);
+     for (int y = 0; y < frame_.height(); y += step) {
+      const QColor c = frame_.pixelColor(sourceX, y);
+      r += c.redF();
+      g += c.greenF();
+      b += c.blueF();
+      ++count;
+     }
+     if (count <= 0) continue;
+     r /= count; g /= count; b /= count;
+     const float luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+     const QPointF point(plot.left() + x,
+                         plot.bottom() - luma * plot.height());
+     if (x == 0) {
+      redPath.moveTo(plot.left(), plot.bottom() - r * plot.height());
+      greenPath.moveTo(plot.left(), plot.bottom() - g * plot.height());
+      bluePath.moveTo(plot.left(), plot.bottom() - b * plot.height());
+      lumaPath.moveTo(point);
+     } else {
+      redPath.lineTo(point.x(), plot.bottom() - r * plot.height());
+      greenPath.lineTo(point.x(), plot.bottom() - g * plot.height());
+      bluePath.lineTo(point.x(), plot.bottom() - b * plot.height());
+      lumaPath.lineTo(point);
+     }
+    }
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(QPen(QColor(255, 75, 75, 190), 1)); painter.drawPath(redPath);
+    painter.setPen(QPen(QColor(80, 235, 120, 190), 1)); painter.drawPath(greenPath);
+    painter.setPen(QPen(QColor(90, 150, 255, 190), 1)); painter.drawPath(bluePath);
+    painter.setPen(QPen(QColor(235, 235, 235, 220), 1)); painter.drawPath(lumaPath);
+   }
+
+  private:
+   QImage frame_;
+  };
+
   struct CompareCanvasPanelState
   {
    QString path;
@@ -568,6 +652,7 @@ namespace Artifact
    QTabWidget* imageTabs = nullptr;
    QWidget* imagePreviewPage = nullptr;
    ArtifactWidgets::ParadeScopeWidget* paradeScopeWidget = nullptr;
+   WaveformScopeWidget* waveformScopeWidget = nullptr;
    QVideoWidget* videoWidget = nullptr;
    QMediaPlayer* mediaPlayer = nullptr;
    QAudioOutput* audioOutput = nullptr;
@@ -1376,12 +1461,14 @@ namespace Artifact
    paradeScopeWidget = new ArtifactWidgets::ParadeScopeWidget(imageTabs);
    paradeScopeWidget->setMinimumHeight(180);
    paradeScopeWidget->setMode(ArtifactWidgets::ParadeMode::RGB);
+   waveformScopeWidget = new WaveformScopeWidget(imageTabs);
 
    previewLayout->addWidget(imageScrollArea, 1);
    imagePreviewPage->setLayout(previewLayout);
 
    imageTabs->addTab(imagePreviewPage, QStringLiteral("Preview"));
    imageTabs->addTab(paradeScopeWidget, QStringLiteral("Parade"));
+   imageTabs->addTab(waveformScopeWidget, QStringLiteral("Waveform"));
    stackedWidget->addWidget(imageTabs);
   }
 
@@ -1399,6 +1486,9 @@ namespace Artifact
     return;
    }
    paradeScopeWidget->updateFrame(currentPixmap.toImage());
+   if (waveformScopeWidget) {
+    waveformScopeWidget->updateFrame(currentPixmap.toImage());
+   }
   }
 
   void ArtifactContentsViewer::Impl::ensureModelViewer()

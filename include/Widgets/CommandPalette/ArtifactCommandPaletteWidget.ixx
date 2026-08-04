@@ -27,8 +27,8 @@ export namespace Artifact
  * thin shell on top of the existing ActionManager; it does not introduce
  * new signals/slots and does not own any action registration state.
  *
- * Scope is intentionally tiny: registration of real actions is a TODO and
- * is expected to be wired in by the host (see boot_dummy_command_palette_actions()).
+ * Standard project, asset, layer, and composition actions are registered at
+ * palette startup, then palette-specific commands are added on top.
  */
 class ArtifactCommandPaletteWidget : public QDialog
 {

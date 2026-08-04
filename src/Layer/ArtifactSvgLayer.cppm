@@ -215,6 +215,15 @@ QImage ArtifactSvgLayer::toQImage() const
     return *impl_->cache_;
 }
 
+QImage ArtifactSvgLayer::getThumbnail(int width, int height) const
+{
+    const QSize targetSize(std::max(1, width), std::max(1, height));
+    const QImage image = toQImage();
+    return image.isNull()
+        ? ArtifactAbstractLayer::getThumbnail(targetSize.width(), targetSize.height())
+        : image.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+}
+
 const ArtifactCore::ImageF32x4_RGBA &ArtifactSvgLayer::currentFrameBuffer() const
 {
     if (!impl_->loaded_) {

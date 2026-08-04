@@ -4,6 +4,7 @@ module;
 #include <memory>
 #include <QString>
 #include <QStringList>
+#include <QSet>
 #include <QSettings>
 #include <QtMultimedia/QMediaDevices>
 #include <QtMultimedia/QAudioDevice>
@@ -98,11 +99,13 @@ bool ArtifactAudioService::syncCurrentComposition()
  if (!mixer) {
   return false;
  }
+ QSet<QString> activeLayerBuses;
  for (const auto& layer : composition->allLayer()) {
   if (!layer || !layer->hasAudio()) {
    continue;
   }
   const QString name = layerBusName(layer->id());
+  activeLayerBuses.insert(name);
   auto bus = mixer->findBusByName(name);
   if (!bus) {
    bus = mixer->createBus(name);
@@ -120,6 +123,17 @@ bool ArtifactAudioService::syncCurrentComposition()
    bus->setMute(videoLayer->isAudioMuted());
   }
   bus->setSolo(layer->isSolo());
+ }
+ for (const auto& rawName : mixer->busNames()) {
+  const QString name = QString::fromUtf8(rawName.data(),
+                                         static_cast<int>(rawName.length()));
+  if (!name.startsWith(QStringLiteral("layer_")) ||
+      activeLayerBuses.contains(name)) {
+   continue;
+  }
+  if (const auto staleBus = mixer->findBusByName(name)) {
+   mixer->removeBus(staleBus);
+  }
  }
  if (auto* playback = ArtifactPlaybackService::instance()) {
   playback->setAudioMasterVolume(impl_->masterVolume);

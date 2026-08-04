@@ -47,6 +47,10 @@ public:
     int addCompositions(const QVector<ArtifactCore::CompositionID>& ids,
                         const QString& outputDir,
                         const QString& fileNamePattern = "%compName%_%date%");
+    int addAudioCompositions(const QVector<ArtifactCore::CompositionID>& ids,
+                             const QString& outputDir,
+                             bool pcm24 = false,
+                             const QString& fileNamePattern = "%compName%_%date%");
     int addCompositionsWithTemplate(const QVector<ArtifactCore::CompositionID>& ids,
                                     const BatchTemplate& tmpl);
 

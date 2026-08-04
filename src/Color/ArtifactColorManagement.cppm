@@ -151,7 +151,11 @@ HDRMode ColorSettings::hdrMode() const
 
 void ColorSettings::setMaxNits(float nits)
 {
-    impl_->maxNits_ = nits;
+    impl_->maxNits_ = std::isfinite(nits) ? std::clamp(nits, 0.001f, 100000.0f)
+                                         : 1000.0f;
+    if (impl_->minNits_ > impl_->maxNits_) {
+        impl_->minNits_ = impl_->maxNits_;
+    }
 }
 
 float ColorSettings::maxNits() const
@@ -161,7 +165,8 @@ float ColorSettings::maxNits() const
 
 void ColorSettings::setMinNits(float nits)
 {
-    impl_->minNits_ = nits;
+    impl_->minNits_ = std::isfinite(nits) ? std::clamp(nits, 0.0f, impl_->maxNits_)
+                                         : 0.001f;
 }
 
 float ColorSettings::minNits() const
@@ -171,7 +176,7 @@ float ColorSettings::minNits() const
 
 void ColorSettings::setBitDepth(int bits)
 {
-    impl_->bitDepth_ = bits;
+    impl_->bitDepth_ = std::clamp(bits, 8, 32);
 }
 
 int ColorSettings::bitDepth() const
@@ -214,38 +219,51 @@ bool LUTData::loadFromFile(const QString& filePath)
     QString line;
     int size = 0;
     bool readingSize = false;
+    bool validHeader = false;
     int readCount = 0;
 
     while (!in.atEnd()) {
         line = in.readLine().trimmed();
 
         if (line.startsWith("LUT_3D_SIZE")) {
-            QStringList parts = line.split(" ");
+            QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
             if (parts.size() >= 2) {
                 size = parts[1].toInt();
+                if (size < 2 || size > 256) return false;
                 impl_->size_ = size;
                 impl_->is1D_ = false;
                 impl_->data3D_.resize(size * size * size * 3);
                 readingSize = true;
+                validHeader = true;
             }
         } else if (line.startsWith("LUT_1D_SIZE")) {
-            QStringList parts = line.split(" ");
+            QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
             if (parts.size() >= 2) {
                 size = parts[1].toInt();
+                if (size < 2 || size > 65536) return false;
                 impl_->size_ = size;
                 impl_->is1D_ = true;
                 impl_->data1D_.resize(size * 3);
                 readingSize = true;
+                validHeader = true;
             }
         } else if (line.isEmpty() || line.startsWith("#")) {
             continue;
         } else {
             // 数値行
             QStringList values = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-            if (values.size() >= 3) {
-                float r = values[0].toFloat();
-                float g = values[1].toFloat();
-                float b = values[2].toFloat();
+            if (values.size() != 3) {
+                return false;
+            }
+            if (values.size() == 3) {
+                bool okR = false, okG = false, okB = false;
+                float r = values[0].toFloat(&okR);
+                float g = values[1].toFloat(&okG);
+                float b = values[2].toFloat(&okB);
+                if (!readingSize || !okR || !okG || !okB ||
+                    !std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) {
+                    return false;
+                }
 
                 if (!impl_->is1D_ && readCount < impl_->data3D_.size()) {
                     impl_->data3D_[readCount++] = r;
@@ -261,11 +279,25 @@ bool LUTData::loadFromFile(const QString& filePath)
     }
 
     file.close();
-    return true;
+    const int expected = impl_->is1D_ ? impl_->data1D_.size() : impl_->data3D_.size();
+    return validHeader && readCount == expected;
 }
 
 bool LUTData::saveToFile(const QString& filePath) const
 {
+    const int expected = impl_->is1D_
+        ? impl_->size_ * 3
+        : impl_->size_ * impl_->size_ * impl_->size_ * 3;
+    const auto& values = impl_->is1D_ ? impl_->data1D_ : impl_->data3D_;
+    if (impl_->size_ < 2 || values.size() != expected) {
+        return false;
+    }
+    for (const float value : values) {
+        if (!std::isfinite(value)) {
+            return false;
+        }
+    }
+
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
@@ -314,21 +346,31 @@ int LUTData::size() const
 
 QVector3D LUTData::apply(float r, float g, float b) const
 {
+    const int requiredSize = impl_->is1D_
+        ? impl_->size_ * 3
+        : impl_->size_ * impl_->size_ * impl_->size_ * 3;
+    const int actualSize = impl_->is1D_ ? impl_->data1D_.size() : impl_->data3D_.size();
+    if (impl_->size_ < 2 || actualSize < requiredSize) {
+        return QVector3D(r, g, b);
+    }
+    const auto safeChannel = [](float value) {
+        return std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 1.0f);
+    };
+    r = safeChannel(r);
+    g = safeChannel(g);
+    b = safeChannel(b);
+
     if (impl_->is1D_) {
         // 1D LUT - 简单補間
-        float idxf = r * (impl_->size_ - 1);
-        int idx0 = static_cast<int>(idxf);
-        int idx1 = std::min(idx0 + 1, impl_->size_ - 1);
-        float t = idxf - idx0;
-
-        int i0 = idx0 * 3;
-        int i1 = idx1 * 3;
-
-        return QVector3D(
-            impl_->data1D_[i0] * (1 - t) + impl_->data1D_[i1] * t,
-            impl_->data1D_[i0 + 1] * (1 - t) + impl_->data1D_[i1 + 1] * t,
-            impl_->data1D_[i0 + 2] * (1 - t) + impl_->data1D_[i1 + 2] * t
-        );
+        const auto sample = [this](float value, int channel) {
+            const float index = value * (impl_->size_ - 1);
+            const int index0 = static_cast<int>(index);
+            const int index1 = std::min(index0 + 1, impl_->size_ - 1);
+            const float t = index - index0;
+            return impl_->data1D_[index0 * 3 + channel] * (1.0f - t) +
+                   impl_->data1D_[index1 * 3 + channel] * t;
+        };
+        return QVector3D(sample(r, 0), sample(g, 1), sample(b, 2));
     } else {
         // 3D LUT - триリニア補間
         float rf = r * (impl_->size_ - 1);
@@ -386,7 +428,7 @@ const float* LUTData::data3D() const
 
 int LUTData::dataSize() const
 {
-    return impl_->data3D_.size();
+    return impl_->is1D_ ? impl_->data1D_.size() : impl_->data3D_.size();
 }
 
 const float* LUTData::data1D() const
@@ -434,7 +476,8 @@ ArtifactCore::SharedPtr<LUTData> ColorLUTEffect::lut() const
 
 void ColorLUTEffect::setIntensity(float intensity)
 {
-    impl_->intensity_ = std::max(0.0f, std::min(1.0f, intensity));
+    impl_->intensity_ = std::isfinite(intensity)
+        ? std::clamp(intensity, 0.0f, 1.0f) : 1.0f;
 }
 
 float ColorLUTEffect::intensity() const
@@ -464,17 +507,27 @@ GammaFunction ColorLUTEffect::outputGamma() const
 
 QVector3D ColorLUTEffect::transform(float r, float g, float b) const
 {
+    const auto finite = [](float value) { return std::isfinite(value) ? value : 0.0f; };
+    const QVector3D source(finite(r), finite(g), finite(b));
     if (!impl_->lut_) {
-        return QVector3D(r, g, b);
+        return source;
     }
 
-    // 入力ガンマ除去
-    // （簡略実装 - 実際はColorManagerを使用）
-    QVector3D result = impl_->lut_->apply(r, g, b);
+    const auto decode = [this](float value) {
+        return ArtifactCore::ColorSpaceConverter::removeGamma(
+            value, static_cast<ArtifactCore::GammaFunction>(impl_->inputGamma_));
+    };
+    const auto encode = [this](float value) {
+        return ArtifactCore::ColorSpaceConverter::applyGamma(
+            value, static_cast<ArtifactCore::GammaFunction>(impl_->outputGamma_));
+    };
+    const QVector3D linear(decode(source.x()), decode(source.y()), decode(source.z()));
+    const QVector3D lutResult = impl_->lut_->apply(linear.x(), linear.y(), linear.z());
+    const QVector3D result(encode(lutResult.x()), encode(lutResult.y()), encode(lutResult.z()));
 
     // 強度ブレンド
     if (impl_->intensity_ < 1.0f) {
-        result = QVector3D(r, g, b) * (1 - impl_->intensity_) + result * impl_->intensity_;
+        return source * (1.0f - impl_->intensity_) + result * impl_->intensity_;
     }
 
     return result;
@@ -490,6 +543,7 @@ public:
     float maxFall_ = 500.0f;    // Frame Average Light Level
     float avgBrightness_ = 200.0f;
     ColorSpace workingSpace_ = ColorSpace::Linear;
+    QString displayProfile_;
 };
 
 // ==================== ColorManager ====================
@@ -536,37 +590,22 @@ QMatrix4x4 ColorManager::getConversionMatrix(ColorSpace from, ColorSpace to) con
 
 float ColorManager::applyGamma(float value, GammaFunction gamma) const
 {
-    switch (gamma) {
-    case GammaFunction::Linear:
-        return value;
-    case GammaFunction::sRGB:
-        return value <= 0.0031308f ? value * 12.92f : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
-    case GammaFunction::Gamma22:
-        return std::pow(value, 1.0f / 2.2f);
-    default:
-        return value;
-    }
+    return ArtifactCore::ColorSpaceConverter::applyGamma(
+        value, static_cast<ArtifactCore::GammaFunction>(gamma));
 }
 
 float ColorManager::removeGamma(float value, GammaFunction gamma) const
 {
-    switch (gamma) {
-    case GammaFunction::Linear:
-        return value;
-    case GammaFunction::sRGB:
-        return value <= 0.04045f ? value / 12.92f : std::pow((value + 0.055f) / 1.055f, 2.4f);
-    case GammaFunction::Gamma22:
-        return std::pow(value, 2.2f);
-    default:
-        return value;
-    }
+    return ArtifactCore::ColorSpaceConverter::removeGamma(
+        value, static_cast<ArtifactCore::GammaFunction>(gamma));
 }
 
 void ColorManager::setHDRMetadata(float maxCll, float maxFall, float avgBrightness)
 {
-    impl_->maxCll_ = maxCll;
-    impl_->maxFall_ = maxFall;
-    impl_->avgBrightness_ = avgBrightness;
+    impl_->maxCll_ = std::isfinite(maxCll) ? std::max(0.0f, maxCll) : 1000.0f;
+    impl_->maxFall_ = std::isfinite(maxFall) ? std::max(0.0f, maxFall) : 500.0f;
+    impl_->avgBrightness_ = std::isfinite(avgBrightness)
+        ? std::max(0.0f, avgBrightness) : 200.0f;
 }
 
 float ColorManager::maxContentLightLevel() const
@@ -593,6 +632,19 @@ void ColorManager::setWorkingSpace(ColorSpace space)
 ColorSpace ColorManager::workingSpace() const
 {
     return impl_->workingSpace_;
+}
+
+void ColorManager::setDisplayProfile(const QString& profile)
+{
+    const QString normalized = profile.trimmed();
+    if (impl_->displayProfile_ == normalized) return;
+    impl_->displayProfile_ = normalized;
+    Q_EMIT colorSpaceChanged(impl_->workingSpace_);
+}
+
+QString ColorManager::displayProfile() const
+{
+    return impl_->displayProfile_;
 }
 
 } // namespace Artifact

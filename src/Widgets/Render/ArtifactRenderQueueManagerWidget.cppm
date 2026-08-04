@@ -2243,6 +2243,9 @@ namespace Artifact
     auto* reveal = menu.addAction("Reveal in Explorer");
     auto* open = menu.addAction("Open File");
     auto* retry = menu.addAction("Retry Job");
+    auto* retryFailedFrames = menu.addAction("Retry Detected Failed Frames");
+    const auto detectedFailedFrames = impl_->service->detectFailedFrames(idx);
+    retryFailedFrames->setEnabled(!detectedFailedFrames.isEmpty());
     menu.addSeparator();
     auto* copyPath = menu.addAction("Copy Path");
     const QPoint origin = impl_->jobListWidget->mapToGlobal(pos);
@@ -2255,6 +2258,10 @@ namespace Artifact
     else if (act == open) QDesktopServices::openUrl(QUrl::fromLocalFile(path));
     else if (act == retry) {
       impl_->service->resetJobForRerun(idx);
+      impl_->service->startRenderQueueAt(idx);
+    }
+    else if (act == retryFailedFrames) {
+      impl_->service->rerenderAllDetectedFailedFrames(idx);
       impl_->service->startRenderQueueAt(idx);
     }
     else if (act == copyPath) QApplication::clipboard()->setText(path);

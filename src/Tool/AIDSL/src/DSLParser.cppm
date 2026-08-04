@@ -302,12 +302,16 @@ FrameTime FrameExpr::resolve(
     }
 }
 
-// Convert PropertyRef::evaluate to use actual lookup
 bool PropertyRef::evaluate(const std::unordered_map<std::string, Value>& props) const {
     auto it = props.find(path);
     if (it == props.end()) return false;
-    // In real implementation, compare with rhs value; this stub only checks existence
-    return true;
+    if (const auto* boolean = std::get_if<bool>(&it->second)) return *boolean;
+    if (const auto* integer = std::get_if<int64_t>(&it->second)) return *integer != 0;
+    if (const auto* real = std::get_if<double>(&it->second)) {
+        return std::isfinite(*real) && *real != 0.0;
+    }
+    if (const auto* text = std::get_if<std::string>(&it->second)) return !text->empty();
+    return false;
 }
 
 bool Literal::evaluate(const std::unordered_map<std::string, Value>& /*props*/) const {
@@ -684,7 +688,7 @@ ParseResult AIDSLInterpreter::parse(const std::string& input) {
     return parseImpl(input);
 }
 
-// Stub for compile (not implemented yet)
+// Command compilation and host-action preparation
 std::unique_ptr<Action> UseCompCommand::compile(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
@@ -714,13 +718,30 @@ std::unique_ptr<Action> SelectLayersCommand::compile(
     (void)compMap;
     auto action = std::make_unique<CommandAction>();
     action->kind = "select_layers";
-    action->valueText = filter ? "filtered" : "all";
-    std::size_t layerCount = 0;
+    resolvedLayerIds.clear();
     for (const auto& [name, layerIds] : layerMap) {
-        (void)name;
-        layerCount += layerIds.size();
+        for (const auto& layerId : layerIds) {
+            if (!filter) {
+                resolvedLayerIds.push_back(layerId);
+                continue;
+            }
+            std::unordered_map<std::string, Value> props;
+            props.emplace("id", layerId);
+            props.emplace("name", name);
+            props.emplace("layer.id", layerId);
+            props.emplace("layer.name", name);
+            if (filter->evaluate(props)) {
+                resolvedLayerIds.push_back(layerId);
+            }
+        }
     }
-    action->argument = std::to_string(layerCount);
+    action->valueText = filter ? "filtered" : "all";
+    std::ostringstream resolved;
+    for (std::size_t i = 0; i < resolvedLayerIds.size(); ++i) {
+        if (i > 0) resolved << ',';
+        resolved << resolvedLayerIds[i];
+    }
+    action->argument = resolved.str();
     return action;
 }
 
@@ -729,13 +750,30 @@ std::unique_ptr<Action> SetPropertyCommand::compile(
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
     (void)compMap;
-    (void)layerMap;
     if (property.empty()) {
         return nullptr;
+    }
+    if (target == Target::Specific &&
+        (!specificLayerId || specificLayerId->empty())) {
+        return nullptr;
+    }
+    if (target == Target::Specific) {
+        bool known = false;
+        for (const auto& [name, layerIds] : layerMap) {
+            (void)name;
+            if (std::find(layerIds.begin(), layerIds.end(), *specificLayerId) != layerIds.end()) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) return nullptr;
     }
     auto action = std::make_unique<CommandAction>();
     action->kind = "set_property";
     action->argument = property;
+    action->targetText = target == Target::Selected ? "selected"
+                       : target == Target::All ? "all"
+                       : *specificLayerId;
     action->valueText = std::visit([](const auto& item) -> std::string {
         using T = std::decay_t<decltype(item)>;
         if constexpr (std::is_same_v<T, bool>) {
@@ -763,13 +801,30 @@ std::unique_ptr<Action> AddKeyCommand::compile(
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
     (void)compMap;
-    (void)layerMap;
+    if (target == Target::Specific &&
+        (!specificLayerId || specificLayerId->empty())) {
+        return nullptr;
+    }
+    if (target == Target::Specific) {
+        bool known = false;
+        for (const auto& [name, layerIds] : layerMap) {
+            (void)name;
+            if (std::find(layerIds.begin(), layerIds.end(), *specificLayerId) != layerIds.end()) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) return nullptr;
+    }
     if (property.empty()) {
         return nullptr;
     }
     auto action = std::make_unique<CommandAction>();
     action->kind = "add_key";
     action->argument = property;
+    action->targetText = target == Target::Selected ? "selected"
+                       : target == Target::All ? "all"
+                       : *specificLayerId;
     if (const auto* frame = std::get_if<int64_t>(&this->frame.value)) {
         action->frameText = std::to_string(*frame);
     } else {
@@ -802,14 +857,27 @@ std::unique_ptr<Action> RenameCommand::compile(
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
     (void)compMap;
-    (void)layerMap;
     if (templateStr.empty()) {
         return nullptr;
+    }
+    if (target == RenameCommand::Target::Specific) {
+        if (!specificLayerId || specificLayerId->empty()) return nullptr;
+        bool known = false;
+        for (const auto& [name, layerIds] : layerMap) {
+            (void)name;
+            if (std::find(layerIds.begin(), layerIds.end(), *specificLayerId) != layerIds.end()) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) return nullptr;
     }
     auto action = std::make_unique<CommandAction>();
     action->kind = "rename";
     action->argument = templateStr;
-    action->valueText = target == RenameCommand::Target::Selected ? "selected" : "all";
+    action->targetText = target == RenameCommand::Target::Selected ? "selected"
+                       : target == RenameCommand::Target::All ? "all"
+                       : *specificLayerId;
     return action;
 }
 
@@ -818,10 +886,23 @@ std::unique_ptr<Action> DeleteCommand::compile(
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
     (void)compMap;
-    (void)layerMap;
+    if (target == DeleteCommand::Target::Specific) {
+        if (!specificLayerId || specificLayerId->empty()) return nullptr;
+        bool known = false;
+        for (const auto& [name, layerIds] : layerMap) {
+            (void)name;
+            if (std::find(layerIds.begin(), layerIds.end(), *specificLayerId) != layerIds.end()) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) return nullptr;
+    }
     auto action = std::make_unique<CommandAction>();
     action->kind = "delete";
-    action->valueText = target == DeleteCommand::Target::Selected ? "selected" : "all";
+    action->targetText = target == DeleteCommand::Target::Selected ? "selected"
+                       : target == DeleteCommand::Target::All ? "all"
+                       : *specificLayerId;
     return action;
 }
 
@@ -830,14 +911,27 @@ std::unique_ptr<Action> GroupCommand::compile(
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
     (void)compMap;
-    (void)layerMap;
     if (groupName.empty()) {
         return nullptr;
+    }
+    if (target == GroupCommand::Target::Specific) {
+        if (!specificLayerId || specificLayerId->empty()) return nullptr;
+        bool known = false;
+        for (const auto& [name, layerIds] : layerMap) {
+            (void)name;
+            if (std::find(layerIds.begin(), layerIds.end(), *specificLayerId) != layerIds.end()) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) return nullptr;
     }
     auto action = std::make_unique<CommandAction>();
     action->kind = "group";
     action->argument = groupName;
-    action->valueText = target == GroupCommand::Target::Selected ? "selected" : "all";
+    action->targetText = target == GroupCommand::Target::Selected ? "selected"
+                       : target == GroupCommand::Target::All ? "all"
+                       : *specificLayerId;
     return action;
 }
 
@@ -850,32 +944,27 @@ std::unique_ptr<Action> TransactionCommand::compile(
     transaction->actions.reserve(body.size());
     for (const auto& command : body) {
         if (!command) {
-            continue;
+            return nullptr;
         }
         auto action = command->compile(compMap, layerMap);
-        if (action) {
-            transaction->actions.push_back(std::move(action));
+        if (!action) {
+            return nullptr;
         }
+        transaction->actions.push_back(std::move(action));
     }
     return transaction;
 }
 
-// Query stubs
+// Query execution against the currently supplied lookup context
 std::string QuerySelectedLayers::execute(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    std::vector<std::string> ids;
-    for (const auto& [name, layerIds] : layerMap) {
-        (void)name;
-        for (const auto& layerId : layerIds) {
-            ids.push_back(layerId);
-        }
-    }
     std::ostringstream out;
-    out << "{\"status\":\"partial\",\"selectedLayerIds\":" << jsonArray(ids)
+    out << "{\"status\":\"unavailable\",\"selectedLayerIds\":[]"
         << ",\"availableCompCount\":" << compMap.size()
-        << ",\"note\":\"selection state is not tracked separately yet\"}";
+        << ",\"availableLayerGroupCount\":" << layerMap.size()
+        << ",\"reason\":\"selection state is not part of the query context\"}";
     return out.str();
 }
 
@@ -883,11 +972,11 @@ std::string QueryActiveComp::execute(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    std::string active = compMap.empty() ? std::string() : compMap.begin()->second;
     std::ostringstream out;
-    out << "{\"status\":\"partial\",\"activeCompId\":" << jsonString(active)
+    out << "{\"status\":\"unavailable\",\"activeCompId\":null"
         << ",\"availableCompCount\":" << compMap.size()
-        << ",\"availableLayerGroupCount\":" << layerMap.size() << "}";
+        << ",\"availableLayerGroupCount\":" << layerMap.size()
+        << ",\"reason\":\"active composition is not part of the query context\"}";
     return out.str();
 }
 
@@ -895,9 +984,7 @@ std::string QueryCompSize::execute(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    const CompID requestedId = this->compId.empty() && !compMap.empty()
-                                   ? compMap.begin()->second
-                                   : this->compId;
+    const CompID requestedId = this->compId;
     bool known = false;
     for (const auto& [name, knownCompId] : compMap) {
         (void)name;
@@ -907,9 +994,10 @@ std::string QueryCompSize::execute(
         }
     }
     std::ostringstream out;
-    out << "{\"status\":\"partial\",\"compId\":" << jsonString(requestedId)
+    out << "{\"status\":\"unavailable\",\"compId\":" << jsonString(requestedId)
         << ",\"knownComp\":" << jsonBool(known)
-        << ",\"availableLayerGroupCount\":" << layerMap.size() << "}";
+        << ",\"availableLayerGroupCount\":" << layerMap.size()
+        << ",\"reason\":\"composition dimensions are not part of the query context\"}";
     return out.str();
 }
 
@@ -950,15 +1038,17 @@ std::string QueryDescribeLayer::execute(
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
     bool known = false;
+    std::string groupName;
     for (const auto& [name, layerIds] : layerMap) {
-        (void)name;
         if (std::find(layerIds.begin(), layerIds.end(), layerId) != layerIds.end()) {
             known = true;
+            groupName = name;
             break;
         }
     }
     std::ostringstream out;
-    out << "{\"status\":\"partial\",\"layerId\":" << jsonString(layerId)
+    out << "{\"status\":\"ok\",\"layerId\":" << jsonString(layerId)
+        << ",\"groupName\":" << jsonString(groupName)
         << ",\"knownLayer\":" << jsonBool(known)
         << ",\"availableCompCount\":" << compMap.size() << "}";
     return out.str();
@@ -969,28 +1059,36 @@ std::string QueryListProperties::execute(
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
     bool known = false;
+    std::string groupName;
     for (const auto& [name, layerIds] : layerMap) {
-        (void)name;
         if (std::find(layerIds.begin(), layerIds.end(), layerId) != layerIds.end()) {
             known = true;
+            groupName = name;
             break;
         }
     }
     std::ostringstream out;
-    out << "{\"status\":\"partial\",\"layerId\":" << jsonString(layerId)
+    out << "{\"status\":\"ok\",\"layerId\":" << jsonString(layerId)
+        << ",\"properties\":[\"id\",\"name\",\"layer.id\",\"layer.name\"]"
+        << ",\"propertyValues\":{\"id\":" << jsonString(layerId)
+        << ",\"name\":" << jsonString(groupName)
+        << ",\"layer.id\":" << jsonString(layerId)
+        << ",\"layer.name\":" << jsonString(groupName) << "}"
         << ",\"knownLayer\":" << jsonBool(known)
-        << ",\"properties\":[]}";
+        << "}";
     return out.str();
 }
 
-// Implementation stubs for AIDSLInterpreter
 AIDSLInterpreter::AIDSLInterpreter() = default;
 AIDSLInterpreter::~AIDSLInterpreter() = default;
 
 std::string AIDSLInterpreter::dryRun(const DSLScript& script) const {
     std::size_t compiledActionCount = 0;
+    bool compileFailed = false;
     for (const auto& command : script.commands) {
-        if (command && command->compile(compNameToId_, layerNameToIds_)) {
+        if (!command || !command->compile(compNameToId_, layerNameToIds_)) {
+            compileFailed = true;
+        } else {
             ++compiledActionCount;
         }
     }
@@ -999,6 +1097,8 @@ std::string AIDSLInterpreter::dryRun(const DSLScript& script) const {
         << "\"mode\":\"dry_run\","
         << "\"script\":" << summarizeScript(script, "dry_run") << ','
         << "\"compiledActionCount\":" << compiledActionCount << ','
+        << "\"compileFailed\":" << jsonBool(compileFailed) << ','
+        << "\"status\":" << jsonString(compileFailed ? "error" : "ok") << ','
         << "\"knownCompCount\":" << compNameToId_.size() << ','
         << "\"knownLayerGroupCount\":" << layerNameToIds_.size()
         << '}';
@@ -1015,10 +1115,40 @@ std::string AIDSLInterpreter::execute(const DSLScript& script) {
     }
 
     std::size_t compiledActionCount = 0;
-    for (const auto& command : script.commands) {
-        if (command && command->compile(compNameToId_, layerNameToIds_)) {
-            ++compiledActionCount;
+    bool compileFailed = false;
+    bool executionFailed = false;
+    const auto historyStart = undoStack_.size();
+    const auto rollback = [&]() {
+        if (!actionUndoExecutor_) return false;
+        while (undoStack_.size() > historyStart) {
+            auto action = std::move(undoStack_.back());
+            undoStack_.pop_back();
+            if (!actionUndoExecutor_(*action)) return false;
         }
+        return true;
+    };
+    for (const auto& command : script.commands) {
+        if (!command) {
+            compileFailed = true;
+            executionFailed = true;
+            rollback();
+            break;
+        }
+        auto action = command->compile(compNameToId_, layerNameToIds_);
+        if (!action) {
+            compileFailed = true;
+            executionFailed = true;
+            rollback();
+            break;
+        }
+        if (!actionExecutor_ || !actionExecutor_(*action)) {
+            executionFailed = true;
+            rollback();
+            break;
+        }
+        redoStack_.clear();
+        undoStack_.push_back(std::move(action));
+        ++compiledActionCount;
     }
 
     std::ostringstream out;
@@ -1027,9 +1157,12 @@ std::string AIDSLInterpreter::execute(const DSLScript& script) {
         << "\"script\":" << summarizeScript(script, "execute") << ','
         << "\"queryResults\":" << jsonArray(queryResults) << ','
         << "\"compiledActionCount\":" << compiledActionCount << ','
+        << "\"compileFailed\":" << jsonBool(compileFailed) << ','
+        << "\"executionFailed\":" << jsonBool(executionFailed) << ','
+        << "\"status\":" << jsonString((compileFailed || executionFailed) ? "error" : "ok") << ','
         << "\"knownCompCount\":" << compNameToId_.size() << ','
         << "\"knownLayerGroupCount\":" << layerNameToIds_.size() << ','
-        << "\"note\":\"command execution remains to be wired to host actions\""
+        << "\"executorAttached\":" << jsonBool(static_cast<bool>(actionExecutor_))
         << '}';
     return out.str();
 }
@@ -1050,14 +1183,40 @@ std::string AIDSLInterpreter::executeQuery(const QueryNode& query) {
 }
 
 bool AIDSLInterpreter::undo() {
-    if (undoStack_.empty()) return false;
-    // Actions currently carry compile metadata only; without an apply/revert
-    // contract, claiming success would leave the host state unchanged.
-    return false;
+    if (undoStack_.empty() || !actionUndoExecutor_) return false;
+    auto action = std::move(undoStack_.back());
+    undoStack_.pop_back();
+    if (!actionUndoExecutor_(*action)) {
+        undoStack_.push_back(std::move(action));
+        return false;
+    }
+    redoStack_.push_back(std::move(action));
+    return true;
+}
+
+bool AIDSLInterpreter::redo() {
+    if (redoStack_.empty() || !actionExecutor_) return false;
+    auto action = std::move(redoStack_.back());
+    redoStack_.pop_back();
+    if (!actionExecutor_(*action)) {
+        redoStack_.push_back(std::move(action));
+        return false;
+    }
+    undoStack_.push_back(std::move(action));
+    return true;
 }
 
 bool AIDSLInterpreter::canUndo() const {
-    return !undoStack_.empty();
+    return !undoStack_.empty() && static_cast<bool>(actionUndoExecutor_);
+}
+
+bool AIDSLInterpreter::canRedo() const {
+    return !redoStack_.empty() && static_cast<bool>(actionExecutor_);
+}
+
+void AIDSLInterpreter::setActionUndoExecutor(
+    std::function<bool(const Action&)> executor) {
+    actionUndoExecutor_ = std::move(executor);
 }
 
 void AIDSLInterpreter::setActiveComp(const CompID& compId) {
@@ -1109,14 +1268,20 @@ std::unique_ptr<TransactionAction> AIDSLInterpreter::compileTransaction(const Tr
     // Compile each subcommand
     for (const auto& sub : cmd.body) {
         if (!sub) {
-            continue;
+            return nullptr;
         }
         auto action = sub->compile(compNameToId_, layerNameToIds_);
-        if (action) {
-            tx->actions.push_back(std::move(action));
+        if (!action) {
+            return nullptr;
         }
+        tx->actions.push_back(std::move(action));
     }
     return tx;
+}
+
+void AIDSLInterpreter::setActionExecutor(
+    std::function<bool(const Action&)> executor) {
+    actionExecutor_ = std::move(executor);
 }
 
 } // namespace AIToolDSL

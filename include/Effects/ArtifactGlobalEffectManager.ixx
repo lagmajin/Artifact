@@ -56,7 +56,7 @@ export namespace Artifact
   ~ArtifactGlobalEffectManager();
   void loadPlugin() noexcept;
   void unloadAllPlugins() noexcept;
-  void factoryByID(const EffectID& id);
+  std::unique_ptr<ArtifactAbstractEffect> factoryByID(const EffectID& id);
    
   static ArtifactGlobalEffectManager* effectManager();
  };

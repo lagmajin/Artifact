@@ -136,6 +136,28 @@ public:
             .usageCategory = ArtifactRenderUsageCategory::Web
         });
 
+        // === Audio-only Presets ===
+        standardPresets.push_back({
+            .id = "wav_pcm_s16",
+            .name = "音声(WAV PCM 16-bit)",
+            .container = "wav",
+            .codec = "pcm_s16le",
+            .description = "非圧縮 PCM 16-bit WAV",
+            .isAnimatedImage = false,
+            .isImageSequence = false,
+            .usageCategory = ArtifactRenderUsageCategory::General
+        });
+        standardPresets.push_back({
+            .id = "wav_pcm_s24",
+            .name = "音声(WAV PCM 24-bit)",
+            .container = "wav",
+            .codec = "pcm_s24le",
+            .description = "非圧縮 PCM 24-bit WAV",
+            .isAnimatedImage = false,
+            .isImageSequence = false,
+            .usageCategory = ArtifactRenderUsageCategory::Editing
+        });
+
         // === Animated Image Presets ===
 
         standardPresets.push_back({
@@ -312,6 +334,7 @@ QVector<ArtifactRenderFormatPreset> ArtifactRenderFormatPresetManager::presetsBy
                              container == QStringLiteral("m4a") ||
                              container == QStringLiteral("aac") ||
                              codec == QStringLiteral("pcm_s16le") ||
+                             codec == QStringLiteral("pcm_s24le") ||
                              codec == QStringLiteral("aac") ||
                              codec == QStringLiteral("mp3");
         const bool isVideo = container == QStringLiteral("mp4") ||
@@ -416,6 +439,11 @@ QVector<ArtifactRenderFormatPreset> ArtifactRenderFormatPreset::getImageSequence
 QVector<ArtifactRenderFormatPreset> ArtifactRenderFormatPreset::getVideoPresets() {
     return ArtifactRenderFormatPresetManager::instance().presetsByCategory(
         ArtifactRenderFormatCategory::Video);
+}
+
+QVector<ArtifactRenderFormatPreset> ArtifactRenderFormatPreset::getAudioPresets() {
+    return ArtifactRenderFormatPresetManager::instance().presetsByCategory(
+        ArtifactRenderFormatCategory::Audio);
 }
 
 } // namespace Artifact

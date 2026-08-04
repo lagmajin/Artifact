@@ -822,7 +822,14 @@ PlaneLayerSettingPage::~PlaneLayerSettingPage()
     delete impl_;
 }
 
-void PlaneLayerSettingPage::setDefaultFocus() {}
+void PlaneLayerSettingPage::setDefaultFocus()
+{
+    if (!impl_ || !impl_->widthSpinBox) {
+        return;
+    }
+    impl_->widthSpinBox->setFocus(Qt::OtherFocusReason);
+    impl_->widthSpinBox->selectAll();
+}
 
 void PlaneLayerSettingPage::spouitMode() {}
 

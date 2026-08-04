@@ -4,6 +4,7 @@
 #include <QPolygonF>
 #include <QSize>
 #include <QPainterPath>
+#include <opencv2/opencv.hpp>
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -557,6 +558,72 @@ std::vector<MaskPath> MaskPath::fromQPainterPath(
             result.push_back(std::move(maskPath));
         }
         ++subpathIndex;
+    }
+    return result;
+}
+
+std::vector<MaskPath> MaskPath::fromAlphaMask(
+    const void* outMat, const MaskConversionParams& params)
+{
+    std::vector<MaskPath> result;
+    if (!outMat) return result;
+    const auto& input = *static_cast<const cv::Mat*>(outMat);
+    if (input.empty() || input.channels() != 1 ||
+        (input.depth() != CV_8U && input.depth() != CV_32F)) {
+        return result;
+    }
+
+    cv::Mat binary;
+    if (input.depth() == CV_8U) {
+        cv::threshold(input, binary, 127, 255, cv::THRESH_BINARY);
+    } else {
+        cv::threshold(input, binary, 0.5, 255, cv::THRESH_BINARY);
+        binary.convertTo(binary, CV_8U);
+    }
+
+    std::vector<std::vector<cv::Point>> contours;
+    std::vector<cv::Vec4i> hierarchy;
+    cv::findContours(binary, contours, hierarchy, cv::RETR_CCOMP,
+                     cv::CHAIN_APPROX_NONE);
+    const double tolerance = std::max(0.0f, params.simplificationTolerance);
+    const int minimum = std::max(3, params.minPathVertices);
+    for (std::size_t index = 0; index < contours.size(); ++index) {
+        if (contours[index].size() < static_cast<std::size_t>(minimum)) continue;
+        std::vector<cv::Point> simplified;
+        cv::approxPolyDP(contours[index], simplified, tolerance,
+                         params.closedPath);
+        if (simplified.size() < static_cast<std::size_t>(minimum)) continue;
+
+        MaskPath path;
+        path.setClosed(params.closedPath);
+        path.setMode(hierarchy.empty() || hierarchy[index][3] < 0
+                         ? MaskMode::Add : MaskMode::Subtract);
+        const float scaleX = 1.0f / static_cast<float>(input.cols);
+        const float scaleY = 1.0f / static_cast<float>(input.rows);
+        for (std::size_t vertex = 0; vertex < simplified.size(); ++vertex) {
+            const auto& previous = simplified[(vertex + simplified.size() - 1) % simplified.size()];
+            const auto& current = simplified[vertex];
+            const auto& next = simplified[(vertex + 1) % simplified.size()];
+            const QPointF position(current.x * scaleX, current.y * scaleY);
+            const double inX = static_cast<double>(current.x - previous.x);
+            const double inY = static_cast<double>(current.y - previous.y);
+            const double outX = static_cast<double>(next.x - current.x);
+            const double outY = static_cast<double>(next.y - current.y);
+            const double inLength = std::hypot(inX, inY);
+            const double outLength = std::hypot(outX, outY);
+            const double cosine = (inLength > 0.0 && outLength > 0.0)
+                ? std::clamp((inX * outX + inY * outY) /
+                             (inLength * outLength), -1.0, 1.0) : 1.0;
+            constexpr double kRadiansToDegrees = 57.29577951308232;
+            const double angle = std::acos(cosine) * kRadiansToDegrees;
+            const bool corner = angle >= std::max(0.0f, params.cornerThreshold);
+            const QPointF tangent = corner
+                ? QPointF(0.0, 0.0)
+                : QPointF((next.x - previous.x) * scaleX / 6.0,
+                          (next.y - previous.y) * scaleY / 6.0);
+            path.addVertex({position, -tangent, tangent});
+        }
+        result.push_back(std::move(path));
     }
     return result;
 }

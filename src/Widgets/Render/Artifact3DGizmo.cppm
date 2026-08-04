@@ -27,6 +27,16 @@ constexpr float kMinAxisTipRadius = 5.0f;
 constexpr float kMinimumScale = 0.01f;
 constexpr float kScaleDivisionEpsilon = 1e-3f;
 constexpr float kScaleHandleLength = 0.92f;
+constexpr float kTranslationSnap = 1.0f;
+constexpr float kRotationSnapDegrees = 15.0f;
+constexpr float kScaleSnap = 0.1f;
+
+float snapInteractionValue(float value, float increment, bool enabled) {
+    if (!enabled || !(increment > 0.0f) || !std::isfinite(value)) {
+        return value;
+    }
+    return std::round(value / increment) * increment;
+}
 
 } // namespace
 
@@ -117,6 +127,23 @@ QVector3D scaleAxisDirectionFor(GizmoAxis axis) {
     default:
         return QVector3D();
     }
+}
+
+QVector3D rotationAxisDirectionFor(GizmoAxis axis) {
+    // Screen rotation is the view-facing ring, which is represented by the
+    // same Z-facing plane used by hitTest().
+    return axis == GizmoAxis::Screen ? axisDirectionFor(GizmoAxis::Z)
+                                     : axisDirectionFor(axis);
+}
+
+GizmoOperation operationForMode(GizmoMode mode) {
+    switch (mode) {
+    case GizmoMode::Move: return GizmoOperation::Translate;
+    case GizmoMode::Rotate: return GizmoOperation::Rotate;
+    case GizmoMode::Scale: return GizmoOperation::Scale;
+    case GizmoMode::Full: break;
+    }
+    return GizmoOperation::None;
 }
 
 bool isPlaneHandle(GizmoAxis axis) {
@@ -246,9 +273,28 @@ Artifact3DGizmo::Artifact3DGizmo(QObject* parent)
 
 Artifact3DGizmo::~Artifact3DGizmo() = default;
 
+void Artifact3DGizmo::setMode(GizmoMode mode) {
+    if (mode_ == mode) {
+        return;
+    }
+    mode_ = mode;
+    activeAxis_ = GizmoAxis::None;
+    hoverAxis_ = GizmoAxis::None;
+    activeOperation_ = GizmoOperation::None;
+    hoverOperation_ = GizmoOperation::None;
+    fullModeDrag_ = false;
+}
+
 void Artifact3DGizmo::setTransform(const QVector3D& position, const QVector3D& rotation) {
-    impl_->position = position;
-    impl_->rotation = rotation;
+    const auto finiteOr = [](float value, float fallback) {
+        return std::isfinite(value) ? value : fallback;
+    };
+    impl_->position = QVector3D(
+        finiteOr(position.x(), 0.0f), finiteOr(position.y(), 0.0f),
+        finiteOr(position.z(), 0.0f));
+    impl_->rotation = QVector3D(
+        finiteOr(rotation.x(), 0.0f), finiteOr(rotation.y(), 0.0f),
+        finiteOr(rotation.z(), 0.0f));
 }
 
 QVector3D Artifact3DGizmo::position() const {
@@ -260,7 +306,11 @@ QVector3D Artifact3DGizmo::rotation() const {
 }
 
 void Artifact3DGizmo::setScale(const QVector3D &scale) {
-    impl_->scale = scale;
+    const auto sanitizeScale = [](float value) {
+        return std::max(kMinimumScale, std::isfinite(value) ? std::abs(value) : 1.0f);
+    };
+    impl_->scale = QVector3D(sanitizeScale(scale.x()), sanitizeScale(scale.y()),
+                             sanitizeScale(scale.z()));
 }
 
 QVector3D Artifact3DGizmo::scale() const {
@@ -269,6 +319,27 @@ QVector3D Artifact3DGizmo::scale() const {
 
 GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const QMatrix4x4& proj) {
     (void)proj;
+    if (mode_ == GizmoMode::Full) {
+        // Rings are visually distinct and get priority, followed by scale
+        // handles and finally translation handles.
+        const GizmoMode savedMode = mode_;
+        const GizmoMode candidates[] = {GizmoMode::Rotate, GizmoMode::Scale, GizmoMode::Move};
+        for (const GizmoMode candidate : candidates) {
+            mode_ = candidate;
+            const GizmoAxis hit = hitTest(ray, view, proj);
+            if (hit != GizmoAxis::None) {
+                const GizmoOperation operation = operationForMode(candidate);
+                mode_ = savedMode;
+                hoverAxis_ = hit;
+                hoverOperation_ = operation;
+                return hit;
+            }
+        }
+        mode_ = savedMode;
+        hoverAxis_ = GizmoAxis::None;
+        hoverOperation_ = GizmoOperation::None;
+        return GizmoAxis::None;
+    }
     float threshold = 0.12f * impl_->currentScale;
     float minDistance = std::numeric_limits<float>::max();
     GizmoAxis result = GizmoAxis::None;
@@ -372,11 +443,29 @@ GizmoAxis Artifact3DGizmo::hitTest(const Ray& ray, const QMatrix4x4& view, const
     }
 
     hoverAxis_ = result;
+    hoverOperation_ = result == GizmoAxis::None ? GizmoOperation::None
+                                                : operationForMode(mode_);
     return result;
 }
 
 void Artifact3DGizmo::beginDrag(GizmoAxis axis, const Ray& ray) {
+    if (mode_ == GizmoMode::Full) {
+        fullModeDrag_ = true;
+        switch (hoverOperation_) {
+        case GizmoOperation::Rotate: mode_ = GizmoMode::Rotate; break;
+        case GizmoOperation::Scale: mode_ = GizmoMode::Scale; break;
+        case GizmoOperation::Translate: mode_ = GizmoMode::Move; break;
+        case GizmoOperation::None:
+        default:
+            mode_ = GizmoMode::Move;
+            break;
+        }
+    } else {
+        fullModeDrag_ = false;
+    }
     activeAxis_ = axis;
+    activeOperation_ = axis == GizmoAxis::None ? GizmoOperation::None
+                                               : operationForMode(mode_);
     impl_->dragStartRay = ray;
     impl_->dragStartPosition = impl_->position;
     impl_->dragStartRotation = impl_->rotation;
@@ -385,7 +474,8 @@ void Artifact3DGizmo::beginDrag(GizmoAxis axis, const Ray& ray) {
     
     const QVector3D axisDir = mode_ == GizmoMode::Scale
         ? scaleAxisDirectionFor(axis)
-        : axisDirectionFor(axis);
+        : (mode_ == GizmoMode::Rotate ? rotationAxisDirectionFor(axis)
+                                      : axisDirectionFor(axis));
     const QVector3D viewDir = (ray.origin - impl_->dragStartPosition).normalized();
 
     if (isPlaneHandle(axis)) {
@@ -451,7 +541,8 @@ void Artifact3DGizmo::updateDrag(const Ray& ray) {
     
     const QVector3D axisDir = mode_ == GizmoMode::Scale
         ? scaleAxisDirectionFor(activeAxis_)
-        : axisDirectionFor(activeAxis_);
+        : (mode_ == GizmoMode::Rotate ? rotationAxisDirectionFor(activeAxis_)
+                                      : axisDirectionFor(activeAxis_));
 
     if (isPlaneHandle(activeAxis_)) {
         const auto frame = planeHandleFrameFor(activeAxis_);
@@ -461,9 +552,15 @@ void Artifact3DGizmo::updateDrag(const Ray& ray) {
         }
 
         const QVector3D delta = hit - impl_->dragStartHitPoint;
+        const QVector3D adjustedDelta = fineAdjustment_ ? delta * 0.1f : delta;
         impl_->position = impl_->dragStartPosition
-                        + frame.u * QVector3D::dotProduct(delta, frame.u)
-                        + frame.v * QVector3D::dotProduct(delta, frame.v);
+                        + frame.u * QVector3D::dotProduct(adjustedDelta, frame.u)
+                        + frame.v * QVector3D::dotProduct(adjustedDelta, frame.v);
+        if (snapEnabled_) {
+            impl_->position.setX(snapInteractionValue(impl_->position.x(), kTranslationSnap, true));
+            impl_->position.setY(snapInteractionValue(impl_->position.y(), kTranslationSnap, true));
+            impl_->position.setZ(snapInteractionValue(impl_->position.z(), kTranslationSnap, true));
+        }
         return;
     }
 
@@ -477,7 +574,14 @@ void Artifact3DGizmo::updateDrag(const Ray& ray) {
         if (!impl_->intersectRayPlane(ray, impl_->dragStartPosition, viewDir.normalized(), hit)) {
             return;
         }
-        impl_->position = impl_->dragStartPosition + (hit - impl_->dragStartHitPoint);
+        const QVector3D delta = fineAdjustment_ ? (hit - impl_->dragStartHitPoint) * 0.1f
+                                                : (hit - impl_->dragStartHitPoint);
+        impl_->position = impl_->dragStartPosition + delta;
+        if (snapEnabled_) {
+            impl_->position.setX(snapInteractionValue(impl_->position.x(), kTranslationSnap, true));
+            impl_->position.setY(snapInteractionValue(impl_->position.y(), kTranslationSnap, true));
+            impl_->position.setZ(snapInteractionValue(impl_->position.z(), kTranslationSnap, true));
+        }
         return;
     }
 
@@ -497,7 +601,13 @@ void Artifact3DGizmo::updateDrag(const Ray& ray) {
         QVector3D hit;
         if (impl_->intersectRayPlane(ray, impl_->dragStartPosition, planeNormal, hit)) {
             float projectT = QVector3D::dotProduct(hit - impl_->dragStartHitPoint, axisDir);
+            if (fineAdjustment_) projectT *= 0.1f;
             impl_->position = impl_->dragStartPosition + axisDir * projectT;
+            if (snapEnabled_) {
+                impl_->position.setX(snapInteractionValue(impl_->position.x(), kTranslationSnap, true));
+                impl_->position.setY(snapInteractionValue(impl_->position.y(), kTranslationSnap, true));
+                impl_->position.setZ(snapInteractionValue(impl_->position.z(), kTranslationSnap, true));
+            }
         }
     } 
     else if (mode_ == GizmoMode::Rotate) {
@@ -516,11 +626,19 @@ void Artifact3DGizmo::updateDrag(const Ray& ray) {
             float y = QVector3D::dotProduct(dir, bitangent);
             float currentAngle = std::atan2(y, x) * 180.0f / M_PI;
             float delta = currentAngle - impl_->dragStartAngle;
+            if (fineAdjustment_) delta *= 0.1f;
             
             QVector3D rot = impl_->dragStartRotation;
             if (activeAxis_ == GizmoAxis::X) rot.setX(rot.x() + delta);
             else if (activeAxis_ == GizmoAxis::Y) rot.setY(rot.y() + delta);
-            else if (activeAxis_ == GizmoAxis::Z) rot.setZ(rot.z() + delta);
+            else if (activeAxis_ == GizmoAxis::Z || activeAxis_ == GizmoAxis::Screen) {
+                rot.setZ(rot.z() + delta);
+            }
+            if (snapEnabled_) {
+                rot.setX(snapInteractionValue(rot.x(), kRotationSnapDegrees, true));
+                rot.setY(snapInteractionValue(rot.y(), kRotationSnapDegrees, true));
+                rot.setZ(snapInteractionValue(rot.z(), kRotationSnapDegrees, true));
+            }
             impl_->rotation = rot;
         }
     } else if (mode_ == GizmoMode::Scale) {
@@ -546,19 +664,31 @@ void Artifact3DGizmo::updateDrag(const Ray& ray) {
         QVector3D newScale = impl_->dragStartScale;
         if (activeAxis_ == GizmoAxis::X) {
             const float delta = QVector3D::dotProduct(hit - impl_->dragStartHitPoint, axisDir);
-            const float factor = std::max(kMinimumScale, 1.0f + delta / std::max(impl_->currentScale, kScaleDivisionEpsilon));
+            const float factor = std::max(kMinimumScale, 1.0f + (fineAdjustment_ ? delta * 0.1f : delta) /
+                                           std::max(impl_->currentScale, kScaleDivisionEpsilon));
             newScale.setX(std::max(kMinimumScale, impl_->dragStartScale.x() * factor));
+            if (snapEnabled_) newScale.setX(std::max(kMinimumScale,
+                snapInteractionValue(newScale.x(), kScaleSnap, true)));
         } else if (activeAxis_ == GizmoAxis::Y) {
             const float delta = QVector3D::dotProduct(hit - impl_->dragStartHitPoint, axisDir);
-            const float factor = std::max(kMinimumScale, 1.0f + delta / std::max(impl_->currentScale, kScaleDivisionEpsilon));
+            const float factor = std::max(kMinimumScale, 1.0f + (fineAdjustment_ ? delta * 0.1f : delta) /
+                                           std::max(impl_->currentScale, kScaleDivisionEpsilon));
             newScale.setY(std::max(kMinimumScale, impl_->dragStartScale.y() * factor));
+            if (snapEnabled_) newScale.setY(std::max(kMinimumScale,
+                snapInteractionValue(newScale.y(), kScaleSnap, true)));
         } else if (activeAxis_ == GizmoAxis::Z || activeAxis_ == GizmoAxis::Screen) {
             const float startDist = std::max((impl_->dragStartHitPoint - impl_->dragStartPosition).length(),
                                               std::max(impl_->currentScale * 0.5f, kScaleDivisionEpsilon));
             const float currentDist = (hit - impl_->dragStartPosition).length();
-            const float factor = std::max(kMinimumScale, currentDist / startDist);
+            const float factor = std::max(kMinimumScale, fineAdjustment_
+                ? 1.0f + (currentDist / startDist - 1.0f) * 0.1f
+                : currentDist / startDist);
             newScale.setX(std::max(kMinimumScale, impl_->dragStartScale.x() * factor));
             newScale.setY(std::max(kMinimumScale, impl_->dragStartScale.y() * factor));
+            if (snapEnabled_) {
+                newScale.setX(std::max(kMinimumScale, snapInteractionValue(newScale.x(), kScaleSnap, true)));
+                newScale.setY(std::max(kMinimumScale, snapInteractionValue(newScale.y(), kScaleSnap, true)));
+            }
         } else {
             return;
         }
@@ -568,10 +698,26 @@ void Artifact3DGizmo::updateDrag(const Ray& ray) {
 
 void Artifact3DGizmo::endDrag() {
     activeAxis_ = GizmoAxis::None;
+    activeOperation_ = GizmoOperation::None;
+    if (fullModeDrag_) {
+        mode_ = GizmoMode::Full;
+        fullModeDrag_ = false;
+    }
 }
 
 void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, const QMatrix4x4& proj) {
     if (!renderer) return;
+
+    if (mode_ == GizmoMode::Full) {
+        const GizmoMode savedMode = mode_;
+        const GizmoMode modes[] = {GizmoMode::Move, GizmoMode::Rotate, GizmoMode::Scale};
+        for (const GizmoMode mode : modes) {
+            mode_ = mode;
+            draw(renderer, view, proj);
+        }
+        mode_ = savedMode;
+        return;
+    }
 
     QVector4D viewPos = view * QVector4D(impl_->position, 1.0f);
     const float distance = std::abs(viewPos.z());

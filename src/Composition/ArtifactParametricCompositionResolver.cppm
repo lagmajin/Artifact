@@ -12,6 +12,10 @@ module Artifact.Composition.ParametricCompositionResolver;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
+import Artifact.Layer.Text;
+import Artifact.Layer.Video;
 import Composition.ParametricComposition;
 import Image.ImageF32x4_RGBA;
 
@@ -85,7 +89,10 @@ ArtifactCore::ParametricCompositionInputResolver buildParametricCompositionInput
                     continue;
                 }
 
-                // Found the layer - render it to an image
+                // Found the layer - use the image layer's explicit CPU
+                // framebuffer bridge when available.  This keeps source
+                // image bindings functional without inventing a second
+                // renderer inside the parametric resolver.
                 // Use the output size from context, or layer's local bounds
                 const QRectF layerBounds = layer->localBounds();
                 const QSize targetSize = context.outputSize.isValid() && context.outputSize.width() > 0
@@ -93,22 +100,43 @@ ArtifactCore::ParametricCompositionInputResolver buildParametricCompositionInput
                     : QSize(static_cast<int>(std::ceil(layerBounds.width())),
                             static_cast<int>(std::ceil(layerBounds.height())));
 
-                // Render the layer to a QImage
-                QImage layerImage(targetSize, QImage::Format_ARGB32_Premultiplied);
-                layerImage.fill(Qt::transparent);
+                const auto resolveBuffer = [&targetSize](const ImageF32x4_RGBA& source)
+                    -> ArtifactCore::Optional<ImageF32x4_RGBA> {
+                    if (source.isEmpty()) {
+                        return {};
+                    }
+                    QImage image = source.toQImage();
+                    if (image.isNull()) {
+                        return {};
+                    }
+                    if (image.size() != targetSize) {
+                        image = image.scaled(targetSize, Qt::IgnoreAspectRatio,
+                                             Qt::SmoothTransformation);
+                    }
+                    const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+                    ImageF32x4_RGBA result;
+                    result.setFromRGBA8(rgba.constBits(), rgba.width(), rgba.height());
+                    return result;
+                };
 
-                // Use the layer's toQImage if available, otherwise try draw path
-                // TODO: Use proper render controller to render the layer
-                // For now, assume the layer can produce a QImage via its draw path
-                // or fall back to the composition's thumbnail path
-                
-                // Create a simple ImageF32x4_RGBA from the layer bounds
+                if (auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
+                    if (auto result = resolveBuffer(imageLayer->currentFrameBuffer())) return result;
+                }
+                if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
+                    if (auto result = resolveBuffer(videoLayer->currentFrameImageBuffer())) return result;
+                }
+                if (auto svgLayer = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(layer)) {
+                    if (auto result = resolveBuffer(svgLayer->currentFrameBuffer())) return result;
+                }
+                if (auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
+                    if (auto result = resolveBuffer(textLayer->currentFrameBuffer())) return result;
+                }
+
+                // Non-raster layers still require the composition render
+                // controller; preserve the resolver's transparent fallback.
                 ImageF32x4_RGBA result;
                 result.resize(targetSize.width(), targetSize.height());
                 result.fill(FloatRGBA(0.0f, 0.0f, 0.0f, 0.0f));
-                // Fill with transparent by default - actual rendering requires the full render pipeline
-                // In production, this would call through ArtifactCompositionRenderController
-                
                 return result;
             }
         }

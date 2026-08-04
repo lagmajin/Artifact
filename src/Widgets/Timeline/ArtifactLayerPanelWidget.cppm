@@ -1886,10 +1886,21 @@ QString maskModeToText(MaskMode mode)
  return QStringLiteral("Mask");
 }
 
-QString matteSummaryLabel(const LayerMatteReference& ref, int index)
+QString matteSummaryLabel(const ArtifactCompositionPtr& comp,
+                          const LayerMatteReference& ref, int index)
 {
  const QString base = QStringLiteral("Matte %1").arg(index + 1);
+ QString sourceName = QStringLiteral("<missing source>");
+ if (comp && !ref.sourceLayerId.isNil()) {
+  if (const auto source = comp->layerById(ref.sourceLayerId)) {
+   sourceName = source->layerName().trimmed();
+   if (sourceName.isEmpty()) {
+    sourceName = ref.sourceLayerId.toString();
+   }
+  }
+ }
  QStringList tags;
+ tags << QStringLiteral("Source: %1").arg(sourceName);
  tags << matteTypeToText(ref.type);
  tags << QStringLiteral("Blend %1").arg(matteBlendModeToText(ref.blendMode));
   if (ref.invert) {
@@ -2021,6 +2032,95 @@ bool applyMatteTypeToLayer(const ArtifactCompositionPtr& comp,
   return false;
  }
 
+ auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
+                                                   std::move(beforeRefs),
+                                                   std::move(afterRefs));
+ UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
+ return true;
+}
+
+bool toggleMatteEnabled(const ArtifactCompositionPtr& comp,
+                        const ArtifactAbstractLayerPtr& layer,
+                        int matteIndex)
+{
+ if (!comp || !layer || matteIndex < 0) {
+  return false;
+ }
+ auto beforeRefs = layer->matteReferences();
+ if (matteIndex >= static_cast<int>(beforeRefs.size())) {
+  return false;
+ }
+ auto afterRefs = beforeRefs;
+ afterRefs[matteIndex].enabled = !afterRefs[matteIndex].enabled;
+ auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
+                                                   std::move(beforeRefs),
+                                                   std::move(afterRefs));
+ UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
+ return true;
+}
+
+bool setMatteOpacity(const ArtifactCompositionPtr& comp,
+                     const ArtifactAbstractLayerPtr& layer,
+                     int matteIndex, float opacity)
+{
+ if (!comp || !layer || matteIndex < 0 || !std::isfinite(opacity)) {
+  return false;
+ }
+ auto beforeRefs = layer->matteReferences();
+ if (matteIndex >= static_cast<int>(beforeRefs.size())) {
+  return false;
+ }
+ auto afterRefs = beforeRefs;
+ afterRefs[matteIndex].opacity = std::clamp(opacity, 0.0f, 1.0f);
+ if (std::abs(afterRefs[matteIndex].opacity - beforeRefs[matteIndex].opacity) < 0.0001f) {
+  return false;
+ }
+ auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
+                                                   std::move(beforeRefs),
+                                                   std::move(afterRefs));
+ UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
+ return true;
+}
+
+bool setMatteBlendMode(const ArtifactCompositionPtr& comp,
+                       const ArtifactAbstractLayerPtr& layer,
+                       int matteIndex, MatteBlendMode blendMode)
+{
+ if (!comp || !layer || matteIndex < 0) {
+  return false;
+ }
+ auto beforeRefs = layer->matteReferences();
+ if (matteIndex >= static_cast<int>(beforeRefs.size())) {
+  return false;
+ }
+ auto afterRefs = beforeRefs;
+ if (afterRefs[matteIndex].blendMode == blendMode) {
+  return false;
+ }
+ afterRefs[matteIndex].blendMode = blendMode;
+ auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
+                                                   std::move(beforeRefs),
+                                                   std::move(afterRefs));
+ UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
+ return true;
+}
+
+bool setMatteFitMode(const ArtifactCompositionPtr& comp,
+                     const ArtifactAbstractLayerPtr& layer,
+                     int matteIndex, MatteFitMode fitMode)
+{
+ if (!comp || !layer || matteIndex < 0) {
+  return false;
+ }
+ auto beforeRefs = layer->matteReferences();
+ if (matteIndex >= static_cast<int>(beforeRefs.size())) {
+  return false;
+ }
+ auto afterRefs = beforeRefs;
+ if (afterRefs[matteIndex].fitMode == fitMode) {
+  return false;
+ }
+ afterRefs[matteIndex].fitMode = fitMode;
  auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
                                                    std::move(beforeRefs),
                                                    std::move(afterRefs));
@@ -2562,7 +2662,7 @@ public:
          false,
          false,
          RowKind::Matte,
-         matteSummaryLabel(ref, static_cast<int>(matteIndex)),
+         matteSummaryLabel(comp, ref, static_cast<int>(matteIndex)),
          QString::number(static_cast<int>(matteIndex)),
          QString(),
          QStringLiteral("Mat"),
@@ -3166,6 +3266,58 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             focusAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_focus")},
                                              {QStringLiteral("index"), matteIndex}});
 
+            QAction *toggleAction = menu.addAction(
+                matteRefs[matteIndex].enabled
+                    ? tt("layer_panel.disable_matte", "Disable matte")
+                    : tt("layer_panel.enable_matte", "Enable matte"));
+            toggleAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_toggle")},
+                                              {QStringLiteral("index"), matteIndex}});
+
+            QMenu *opacityMenu = menu.addMenu(tt("layer_panel.matte_opacity", "Matte opacity"));
+            for (const int percent : {25, 50, 75, 100}) {
+              QAction *opacityAction = opacityMenu->addAction(
+                  QStringLiteral("%1%%").arg(percent));
+              opacityAction->setData(QVariantMap{
+                  {QStringLiteral("kind"), QStringLiteral("matte_opacity")},
+                  {QStringLiteral("index"), matteIndex},
+                  {QStringLiteral("opacity"), percent / 100.0}});
+              opacityAction->setCheckable(true);
+              opacityAction->setChecked(
+                  std::abs(matteRefs[matteIndex].opacity - percent / 100.0f) < 0.005f);
+            }
+
+            QMenu *blendMenu = menu.addMenu(tt("layer_panel.matte_blend", "Matte blend"));
+            const std::array<std::pair<MatteBlendMode, const char *>, 4> blendItems{{
+                {MatteBlendMode::Add, "Add"},
+                {MatteBlendMode::Subtract, "Subtract"},
+                {MatteBlendMode::Intersect, "Intersect"},
+                {MatteBlendMode::Difference, "Difference"}}};
+            for (const auto &[mode, label] : blendItems) {
+              QAction *blendAction = blendMenu->addAction(QString::fromUtf8(label));
+              blendAction->setData(QVariantMap{
+                  {QStringLiteral("kind"), QStringLiteral("matte_blend")},
+                  {QStringLiteral("index"), matteIndex},
+                  {QStringLiteral("blend"), static_cast<int>(mode)}});
+              blendAction->setCheckable(true);
+              blendAction->setChecked(matteRefs[matteIndex].blendMode == mode);
+            }
+
+            QMenu *fitMenu = menu.addMenu(tt("layer_panel.matte_fit", "Matte fit"));
+            const std::array<std::pair<MatteFitMode, const char *>, 4> fitItems{{
+                {MatteFitMode::Stretch, "Stretch"},
+                {MatteFitMode::Fit, "Fit"},
+                {MatteFitMode::Fill, "Fill"},
+                {MatteFitMode::Original, "Original"}}};
+            for (const auto &[mode, label] : fitItems) {
+              QAction *fitAction = fitMenu->addAction(QString::fromUtf8(label));
+              fitAction->setData(QVariantMap{
+                  {QStringLiteral("kind"), QStringLiteral("matte_fit")},
+                  {QStringLiteral("index"), matteIndex},
+                  {QStringLiteral("fit"), static_cast<int>(mode)}});
+              fitAction->setCheckable(true);
+              fitAction->setChecked(matteRefs[matteIndex].fitMode == mode);
+            }
+
             QMenu *typeMenu = menu.addMenu(tt("layer_panel.set_matte_type", "Set matte type"));
             const QStringList typeLabels = {
                 tt("layer_panel.alpha", "Alpha"),
@@ -3193,6 +3345,35 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                   if (auto *service = ArtifactProjectService::instance()) {
                     service->selectLayer(chosenRef.sourceLayerId);
                   }
+                }
+              } else if (kind == QStringLiteral("matte_toggle")) {
+                if (toggleMatteEnabled(comp, layer, index)) {
+                  updateLayout();
+                }
+              } else if (kind == QStringLiteral("matte_opacity")) {
+                bool opacityOk = false;
+                const float opacity = static_cast<float>(
+                    data.value(QStringLiteral("opacity")).toDouble(&opacityOk));
+                if (opacityOk && setMatteOpacity(comp, layer, index, opacity)) {
+                  updateLayout();
+                }
+              } else if (kind == QStringLiteral("matte_blend")) {
+                bool blendOk = false;
+                const int blendIndex = data.value(QStringLiteral("blend")).toInt(&blendOk);
+                if (blendOk && blendIndex >= static_cast<int>(MatteBlendMode::Add) &&
+                    blendIndex <= static_cast<int>(MatteBlendMode::Difference) &&
+                    setMatteBlendMode(comp, layer, index,
+                                      static_cast<MatteBlendMode>(blendIndex))) {
+                  updateLayout();
+                }
+              } else if (kind == QStringLiteral("matte_fit")) {
+                bool fitOk = false;
+                const int fitIndex = data.value(QStringLiteral("fit")).toInt(&fitOk);
+                if (fitOk && fitIndex >= static_cast<int>(MatteFitMode::Stretch) &&
+                    fitIndex <= static_cast<int>(MatteFitMode::Original) &&
+                    setMatteFitMode(comp, layer, index,
+                                    static_cast<MatteFitMode>(fitIndex))) {
+                  updateLayout();
                 }
               } else if (kind == QStringLiteral("matte_type")) {
                 bool typeOk = false;
@@ -5100,12 +5281,13 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
   if (idx >= 0 && idx < impl_->visibleRows.size()) {
     const auto& row = impl_->visibleRows[idx];
     if (row.layer && row.kind == RowKind::Layer) {
+      const auto comp = safeCompositionLookup(impl_->compositionId);
       const auto mattes = row.layer->matteReferences();
       if (!mattes.empty()) {
         QStringList parts;
         parts.reserve(static_cast<int>(mattes.size()));
         for (size_t i = 0; i < mattes.size(); ++i) {
-          parts << matteSummaryLabel(mattes[i], static_cast<int>(i));
+          parts << matteSummaryLabel(comp, mattes[i], static_cast<int>(i));
         }
         toolTipText = QStringLiteral("Track Mattes: %1").arg(parts.join(QStringLiteral(" | ")));
       } else if (!impl_->dragStarted_) {

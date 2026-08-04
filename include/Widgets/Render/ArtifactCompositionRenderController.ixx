@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 
 #include <wobjectdefs.h>
@@ -382,16 +382,19 @@ void pushViewHistory();
 
   // Tracker operations (TrackPoint tool)
   void trackerInitialize();
+  void trackerUsePlanarMode();
   void trackerTrackForward();
   void trackerTrackBackward();
   void trackerTrackAll();
   void trackerApplyToPosition();
   void trackerApplyToAnchor();
   void trackerApplyAllPoints();
+  void trackerApplyPlanarCornerPin();
   void trackerDelete();
   void cancelMotionSketch();
   bool cancelBrushStroke();
   bool undoSelectedPaintStroke();
+  bool propagateRotoBrushToCurrentFrame();
   bool cancelCloneStamp();
 
 public /*slots*/:
@@ -409,5 +412,4 @@ signals:
   void videoDebugMessage(const QString& msg) W_SIGNAL(videoDebugMessage, msg);
  };
 }
-
 

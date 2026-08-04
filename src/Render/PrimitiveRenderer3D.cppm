@@ -8,6 +8,7 @@ module;
 #include <QVector3D>
 #include <QVector4D>
 #include <QDebug>
+#include <QFont>
 #include <Diagnostics/WidgetCreationDiagnostics.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
@@ -29,6 +30,8 @@ import Color.Float;
 import Artifact.Render.RenderCommandBuffer;
 import Artifact.Render.ShaderManager;
 import Frame.Debug;
+import Artifact.Grid.System;
+import Artifact.Render.PrimitiveRenderer2D;
 
 namespace Artifact {
 
@@ -1791,6 +1794,17 @@ void PrimitiveRenderer3D::draw3DLine(const QVector3D& start, const QVector3D& en
     impl_->drawGizmoLine(start, end, color);
 }
 
+void PrimitiveRenderer3D::drawGroundGrid(
+    const Artifact::Grid::GroundGridSettings& settings)
+{
+    if (!impl_) return;
+    const auto lines = Artifact::Grid::GridSystem::computeGroundGridLines(settings);
+    for (const auto& line : lines) {
+        if (line.color.a() <= 0.0f) continue;
+        draw3DLine(line.start, line.end, line.color, line.thickness);
+    }
+}
+
 void PrimitiveRenderer3D::draw3DArrow(const QVector3D& start, const QVector3D& end,
                                       const FloatColor& color, float size)
 {
@@ -1829,3 +1843,97 @@ void PrimitiveRenderer3D::flushGizmo3D()
 }
 
 } // namespace Artifact
+
+namespace Artifact::Grid {
+
+GridRenderer::GridRenderer(Artifact::PrimitiveRenderer2D* renderer)
+    : renderer_(renderer) {}
+
+void GridRenderer::setRenderer(Artifact::PrimitiveRenderer2D* renderer)
+{
+    renderer_ = renderer;
+}
+
+Artifact::PrimitiveRenderer2D* GridRenderer::renderer() const
+{
+    return renderer_;
+}
+
+void GridRenderer::draw(const GridSystem& grid, const GridSystem::GridLines& lines)
+{
+    if (!renderer_) return;
+
+    const auto& settings = grid.settings();
+    const auto drawVertical = [&](const std::vector<float>& positions,
+                                  const ArtifactCore::FloatColor& color,
+                                  const GridLineStyleDef& style) {
+        for (const float x : positions) {
+            const auto& rect = grid.viewTransform().visibleCanvasRect;
+            renderer_->drawThickLineLocal(
+                {x, static_cast<float>(rect.top())},
+                {x, static_cast<float>(rect.bottom())},
+                std::max(0.0f, style.thickness), color);
+        }
+    };
+    const auto drawHorizontal = [&](const std::vector<float>& positions,
+                                    const ArtifactCore::FloatColor& color,
+                                    const GridLineStyleDef& style) {
+        for (const float y : positions) {
+            const auto& rect = grid.viewTransform().visibleCanvasRect;
+            renderer_->drawThickLineLocal(
+                {static_cast<float>(rect.left()), y},
+                {static_cast<float>(rect.right()), y},
+                std::max(0.0f, style.thickness), color);
+        }
+    };
+
+    if (settings.showMinor) {
+        drawVertical(lines.minorVerticals, settings.minorColor, settings.minorStyle);
+        drawHorizontal(lines.minorHorizontals, settings.minorColor, settings.minorStyle);
+    }
+    if (settings.showMajor) {
+        drawVertical(lines.majorVerticals, settings.majorColor, settings.majorStyle);
+        drawHorizontal(lines.majorHorizontals, settings.majorColor, settings.majorStyle);
+    }
+    if (settings.showAxis && lines.axisLines.size() >= 2) {
+        const auto& rect = grid.viewTransform().visibleCanvasRect;
+        renderer_->drawThickLineLocal(
+            {lines.axisLines[0], static_cast<float>(rect.top())},
+            {lines.axisLines[0], static_cast<float>(rect.bottom())},
+            std::max(0.0f, settings.axisStyle.thickness), settings.axisColor);
+        renderer_->drawThickLineLocal(
+            {static_cast<float>(rect.left()), lines.axisLines[1]},
+            {static_cast<float>(rect.right()), lines.axisLines[1]},
+            std::max(0.0f, settings.axisStyle.thickness), settings.axisColor);
+    }
+    if (settings.showNumbers) drawLabels(grid, lines);
+}
+
+void GridRenderer::drawLabels(const GridSystem& grid,
+                              const GridSystem::GridLines& lines)
+{
+    if (!renderer_ || !grid.settings().showNumbers) return;
+    const auto& settings = grid.settings();
+    const auto& rect = grid.viewTransform().visibleCanvasRect;
+    const QFont font(QStringLiteral("Sans Serif"), 9);
+    const ArtifactCore::FloatColor color = settings.majorColor;
+    constexpr float kLabelWidth = 72.0f;
+    constexpr float kLabelHeight = 18.0f;
+
+    for (const float x : lines.majorVerticals) {
+        renderer_->drawText(QRectF(x + 3.0, rect.top() + 3.0,
+                                   kLabelWidth, kLabelHeight),
+                            QString::number(x, 'g', 6), font, color,
+                            Qt::AlignLeft | Qt::AlignTop, 1.0f,
+                            ArtifactCore::FloatColor(0.0f, 0.0f, 0.0f, 0.8f), 1.0f);
+    }
+    for (const float y : lines.majorHorizontals) {
+        renderer_->drawText(QRectF(rect.left() + 3.0, y + 3.0,
+                                   kLabelWidth, kLabelHeight),
+                            QString::number(y, 'g', 6), font, color,
+                            Qt::AlignLeft | Qt::AlignTop, 1.0f,
+                            ArtifactCore::FloatColor(0.0f, 0.0f, 0.0f, 0.8f), 1.0f);
+    }
+}
+
+} // namespace Artifact::Grid

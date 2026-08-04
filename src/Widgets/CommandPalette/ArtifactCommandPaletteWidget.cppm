@@ -33,6 +33,7 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Undo.UndoManager;
+import UI.StandardActions;
 
 namespace Artifact
 {
@@ -413,6 +414,7 @@ void ArtifactCommandPaletteWidget::bootDummyCommandPaletteActions()
     if (!mgr) {
         return;
     }
+    ArtifactCore::StandardActionRegistry::registerAll();
     struct Dummy {
         const char* id;
         const char* name;

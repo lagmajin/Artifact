@@ -2,12 +2,18 @@ module;
 #include <utility>
 #include <QAction>
 #include <QDebug>
+#include <QDialog>
 #include <QHash>
+#include <QHBoxLayout>
 #include <QIcon>
 #include <QMetaObject>
 #include <QMenu>
 #include <QKeySequence>
 #include <QThread>
+#include <QLabel>
+#include <QListWidget>
+#include <QPushButton>
+#include <QVBoxLayout>
 #include <QWidget>
 #include <wobjectimpl.h>
 
@@ -19,6 +25,7 @@ import Artifact.Event.Types;
 import Artifact.Service.Effect;
 import Artifact.Service.Project;
 import Artifact.Effect.Abstract;
+import Artifact.Effect.Ofx.Host;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
 import Utils.Id;
@@ -149,6 +156,7 @@ class ArtifactEffectMenu::Impl
 
   QAction* inspectorAction_ = nullptr;
   QAction* removeAllAction_ = nullptr;
+  QAction* ofxManagerAction_ = nullptr;
   std::vector<QMenu*> effectMenus_;
   std::vector<QAction*> effectActions_;
 
@@ -171,10 +179,13 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
   removeAllAction_ = new QAction(QStringLiteral("選択レイヤーのエフェクトをすべて削除"), menu);
   removeAllAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_X));
   removeAllAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_remove_all.svg")));
+  ofxManagerAction_ = new QAction(QStringLiteral("OFX Plugin Manager"), menu);
+  ofxManagerAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_ofx.svg")));
 
   menu->addAction(inspectorAction_);
   menu->addSeparator();
   menu->addAction(removeAllAction_);
+  menu->addAction(ofxManagerAction_);
   menu->addSeparator();
   buildEffectCatalog();
   forceMenuIconsVisible(menu);
@@ -185,6 +196,48 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
 
   QObject::connect(removeAllAction_, &QAction::triggered, menu, [this]() {
       handleRemoveAllEffects();
+  });
+
+  QObject::connect(ofxManagerAction_, &QAction::triggered, menu, [this]() {
+      auto& host = Artifact::Ofx::ArtifactOfxHost::instance();
+      host.initialize();
+      QDialog dialog(menu_);
+      dialog.setWindowTitle(QStringLiteral("OFX Plugin Manager"));
+      dialog.setModal(true);
+      dialog.resize(560, 360);
+      auto* layout = new QVBoxLayout(&dialog);
+      layout->addWidget(new QLabel(QStringLiteral("Loaded OFX plug-ins"), &dialog));
+      auto* list = new QListWidget(&dialog);
+      const auto populate = [&]() {
+          list->clear();
+          for (const auto& plugin : host.getLoadedPlugins()) {
+              const QString id = plugin.identifier.toQString().trimmed();
+              if (id.isEmpty()) continue;
+              const QString version = plugin.version.toQString().trimmed();
+              const QString path = plugin.pluginPath.toQString().trimmed();
+              list->addItem(version.isEmpty()
+                  ? QStringLiteral("%1\n%2").arg(id, path)
+                  : QStringLiteral("%1  (%2)\n%3").arg(id, version, path));
+          }
+          if (list->count() == 0) {
+              list->addItem(QStringLiteral("No OFX plug-ins found."));
+          }
+      };
+      populate();
+      layout->addWidget(list, 1);
+      auto* buttons = new QHBoxLayout();
+      auto* rescan = new QPushButton(QStringLiteral("Rescan"), &dialog);
+      auto* close = new QPushButton(QStringLiteral("Close"), &dialog);
+      buttons->addWidget(rescan);
+      buttons->addStretch(1);
+      buttons->addWidget(close);
+      layout->addLayout(buttons);
+      QObject::connect(rescan, &QPushButton::clicked, &dialog, [&]() {
+          host.rescan();
+          populate();
+      });
+      QObject::connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
+      dialog.exec();
   });
 
   auto& eventBus = ArtifactCore::globalEventBus();

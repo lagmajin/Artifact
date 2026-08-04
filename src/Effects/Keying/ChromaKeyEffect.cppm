@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <cmath>
 #include <QVariant>
 #include <QColor>
@@ -97,7 +97,12 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
 
             // Euclidian distance
             float dist = std::sqrt(std::pow(r - kr, 2) + std::pow(g - kg, 2) + std::pow(b - kb, 2));
-            if (!std::isfinite(dist) || !std::isfinite(a)) {
+            if (!std::isfinite(r) || !std::isfinite(g) ||
+                !std::isfinite(b) || !std::isfinite(dist) ||
+                !std::isfinite(a)) {
+                ptr[x][0] = 0.0f;
+                ptr[x][1] = 0.0f;
+                ptr[x][2] = 0.0f;
                 ptr[x][3] = 0.0f;
                 continue;
             }

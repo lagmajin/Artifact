@@ -1,4 +1,4 @@
-﻿module;
+module;
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -163,6 +163,7 @@ namespace Artifact
   void drawImage(float x, float y, const QImage& image);
   void drawImage(const Point2DF&,const QImage& image);
   void drawPoint(const Point2DF& point);
+  QImage image() const { return canvas_.copy(); }
   //void drawImageLayer(const FloatImage& image);
  };
 
@@ -211,6 +212,9 @@ namespace Artifact
   if (renderDevice_) {
    renderDevice_->CreateFence(fenceDesc, &blendFence_);
   }
+
+  // Allocate GPU targets as soon as the device is ready.
+  resize(canvasSize_.width(), canvasSize_.height());
 
   //blendFence_=device_->CreateFence()
 
@@ -490,6 +494,35 @@ namespace Artifact
   }
  }
 
+ void OffscreenRenderer2D::renderFrame(double time)
+ {
+  if (!impl_) impl_ = new Impl();
+  impl_->renderFrame(time);
+ }
+
+ void OffscreenRenderer2D::drawSolidRect(const FloatColor& color)
+ {
+  if (!impl_) impl_ = new Impl();
+  impl_->drawSolidRect(color);
+ }
+
+ void OffscreenRenderer2D::drawImage(float x, float y, const QImage& image)
+ {
+  if (!impl_) impl_ = new Impl();
+  impl_->drawImage(x, y, image);
+ }
+
+ void OffscreenRenderer2D::drawPoint(const Point2DF& point)
+ {
+  if (!impl_) impl_ = new Impl();
+  impl_->drawPoint(point);
+ }
+
+ QImage OffscreenRenderer2D::toImage() const
+ {
+  return impl_ ? impl_->image() : QImage();
+ }
+
  void OffscreenRenderer2D::setImageWriterPool()
  {
   // Placeholder hook: future writer-pool integration can be wired here.
@@ -503,6 +536,12 @@ namespace Artifact
   // Placeholder hook for future layer registration.
  }
 
+ void OffscreenRenderer2D::addLayer(float x, float y, const QImage& image)
+ {
+  if (image.isNull()) return;
+  drawImage(x, y, image);
+ }
+
  Renderer2DFactory::Renderer2DFactory()
  {
 
@@ -511,6 +550,12 @@ namespace Artifact
  Renderer2DFactory::~Renderer2DFactory()
  {
 
+ }
+
+ OffscreenRenderer2DPtr Renderer2DFactory::create(const Size_2D& size) const
+ {
+  if (size.width <= 0 || size.height <= 0) return nullptr;
+  return ArtifactCore::makeShared<OffscreenRenderer2D>(size);
  }
 
 };

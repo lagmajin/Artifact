@@ -480,12 +480,13 @@ QString ArtifactProjectManager::Impl::makeUniqueAssetPath(const QString& directo
 
  CreateCompositionResult ArtifactProjectManager::Impl::createComposition(const CompositionSettings& setting)
  {
-  auto result = CreateCompositionResult();
-
-  //auto newCompositionPtr = currentProjectPtr_->createComposition(setting.compositionName);
-
-
-  return result;
+  ArtifactCompositionInitParams params;
+  params.setCompositionName(setting.compositionName());
+  const QSize size = setting.compositionSize();
+  if (size.width() > 0 && size.height() > 0) {
+    params.setResolution(size.width(), size.height());
+  }
+  return createComposition(params);
  }
 
  CreateCompositionResult ArtifactProjectManager::Impl::createComposition(const ArtifactCompositionInitParams& params)
@@ -614,13 +615,13 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
   return instance;
  }
 
-void ArtifactProjectManager::loadFromFile(const QString& fullpath)
+bool ArtifactProjectManager::loadFromFile(const QString& fullpath)
  {
   const QString normalizedPath = fullpath.trimmed();
   if (normalizedPath.isEmpty() || !QFileInfo::exists(normalizedPath) ||
       !QFileInfo(normalizedPath).isFile()) {
    qWarning() << "[loadFromFile] Invalid project file path:" << fullpath;
-   return;
+   return false;
   }
   ArtifactProjectImporter importer;
   importer.setInputPath(normalizedPath);
@@ -633,7 +634,7 @@ void ArtifactProjectManager::loadFromFile(const QString& fullpath)
    } else {
     qWarning() << "[loadFromFile] Failed to open project file:" << normalizedPath;
    }
-   return;
+   return false;
   }
 
   const int restoredComponentBakes =
@@ -649,6 +650,9 @@ void ArtifactProjectManager::loadFromFile(const QString& fullpath)
   impl_->projectRootPath_ = QFileInfo(normalizedPath).absolutePath();
 
   if (impl_->currentProjectPtr_) {
+   // The importer owns the persisted project name; do not publish the name
+   // from the previously active project.
+   impl_->projectDisplayName_ = impl_->currentProjectPtr_->settings().projectName();
    publishProjectCreatedEvent(impl_->projectDisplayName_);
    auto report = ArtifactProjectHealthChecker::check(impl_->currentProjectPtr_.get());
    if (!report.isHealthy) {
@@ -658,12 +662,13 @@ void ArtifactProjectManager::loadFromFile(const QString& fullpath)
    QStringList validationErrors;
    appendProjectValidationDiagnostics(impl_->currentProjectPtr_, validationWarnings, validationErrors);
    if (!validationErrors.isEmpty() || !validationWarnings.isEmpty()) {
-     qWarning() << "[loadFromFile] app validation issues:"
+    qWarning() << "[loadFromFile] app validation issues:"
                 << validationErrors.size() << "errors,"
                 << validationWarnings.size() << "warnings";
    }
   }
- }
+  return impl_->currentProjectPtr_ != nullptr;
+}
 
 namespace {
   static const int kBackupGenerationCount = 3;
@@ -962,6 +967,8 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
       impl_->projectRootPath_ = QFileInfo(normalizedPath).absolutePath();
 
       if (impl_->currentProjectPtr_) {
+        // Keep the asynchronous load path consistent with the synchronous one.
+        impl_->projectDisplayName_ = impl_->currentProjectPtr_->settings().projectName();
         publishProjectCreatedEvent(impl_->projectDisplayName_);
       }
 

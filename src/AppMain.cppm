@@ -129,6 +129,7 @@ import ArtifactStatusBar;
 import Artifact.Application.Manager;
 import Artifact.PythonAPI;
 import Script.Python.Engine;
+import Script.Python.CoreAPI;
 import Diagnostics.CrashHandler;
 import Translation.Manager;
 import Artifact.Layers.Selection.Manager;
@@ -655,6 +656,27 @@ void bootstrapPythonScripts() {
   if (!py.initialize()) {
     return;
   }
+
+  ArtifactCore::CorePythonAPI::registerAll();
+  ArtifactCore::CorePythonAPI::setCompositionBridge(
+      [](const std::string &method, const std::vector<std::string> &arguments) {
+        QVariantList args;
+        for (const auto &argument : arguments) {
+          args.push_back(QString::fromStdString(argument));
+        }
+        const QVariant result = Artifact::WorkspaceAutomation::instance().invokeMethod(
+            QString::fromStdString(method), args);
+        const QJsonValue jsonValue = QJsonValue::fromVariant(result);
+        if (jsonValue.isObject() || jsonValue.isArray()) {
+          return QString::fromUtf8(
+              QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact).constData())
+              .toStdString();
+        }
+        QJsonObject wrapped;
+        wrapped.insert(QStringLiteral("value"), jsonValue);
+        return QString::fromUtf8(QJsonDocument(wrapped).toJson(QJsonDocument::Compact))
+            .toStdString();
+      });
 
   ArtifactPythonAPI::registerAll();
 
@@ -1951,7 +1973,7 @@ void test() {
 }
 
 static void configureQtPaths() {
-  // TODO: Configure Qt plugin paths and environment as needed
+  configureQtPluginPaths();
 }
 
 #if defined(_WIN32)

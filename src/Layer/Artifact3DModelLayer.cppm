@@ -813,13 +813,14 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   modelMatrix.setToIdentity();
   modelMatrix.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
   modelMatrix.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
-  modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, 1.0f);
+  modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
   modelMatrix.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
   QMatrix4x4 previousModelMatrix;
   previousModelMatrix.setToIdentity();
   previousModelMatrix.translate(previousSnapshot.positionX, previousSnapshot.positionY, previousSnapshot.positionZ);
   previousModelMatrix.rotate(previousSnapshot.rotation, 0.0f, 0.0f, 1.0f);
-  previousModelMatrix.scale(previousSnapshot.scaleX, previousSnapshot.scaleY, 1.0f);
+  previousModelMatrix.scale(previousSnapshot.scaleX, previousSnapshot.scaleY,
+                           previousSnapshot.scaleZ);
   previousModelMatrix.translate(-previousSnapshot.anchorX, -previousSnapshot.anchorY, -previousSnapshot.anchorZ);
 
   // Get mesh data

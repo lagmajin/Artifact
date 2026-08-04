@@ -1,9 +1,11 @@
 module;
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
+#include <QStringList>
 #include <QTextStream>
 #include <QVariant>
 
@@ -131,14 +133,32 @@ private:
     if (path.isEmpty())
       return false;
 
-    // Allow project directory (would need to get from app manager)
-    // For now, allow common directories
-    QString canonicalPath = QFileInfo(path).canonicalFilePath();
-    if (canonicalPath.startsWith(QDir::homePath() + "/Documents") ||
-        canonicalPath.startsWith(QDir::homePath() + "/Desktop") ||
-        canonicalPath.startsWith("/tmp") ||
-        canonicalPath.startsWith(QDir::tempPath())) {
-      return true;
+    const QFileInfo info(path);
+    QString candidate = info.canonicalFilePath();
+    if (candidate.isEmpty()) {
+      // canonicalFilePath() is empty for a not-yet-created file.  Resolve its
+      // absolute parent path so create/write operations receive the same
+      // containment check as existing files.
+      candidate = QDir::cleanPath(info.absoluteFilePath());
+    }
+
+    const QString normalizedCandidate = QDir::cleanPath(candidate);
+    const QString home = QDir::homePath();
+    const QStringList roots = {
+        QDir::cleanPath(QDir(home).filePath(QStringLiteral("Documents"))),
+        QDir::cleanPath(QDir(home).filePath(QStringLiteral("Desktop"))),
+        QDir::cleanPath(QStringLiteral("/tmp")),
+        QDir::cleanPath(QDir::tempPath())};
+
+    for (const QString &root : roots) {
+      const QString boundary = root.endsWith(QDir::separator())
+                                   ? root
+                                   : root + QDir::separator();
+      if (normalizedCandidate == root ||
+          normalizedCandidate.startsWith(boundary,
+                                         Qt::CaseInsensitive)) {
+        return true;
+      }
     }
     return false;
   }

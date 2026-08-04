@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <QVariant>
@@ -14,6 +15,7 @@ module FillEffect;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import ImageProcessing.ColorTransform.Fill;
+import ImageProcessing.ProceduralTexture;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -287,6 +289,41 @@ void main(uint3 dtid : SV_DispatchThreadID)
     }
 };
 
+class PatternOverlayCPUImpl final : public ArtifactEffectImplBase {
+public:
+    float amount = 0.5f;
+    float scale = 8.0f;
+    int seed = 0;
+    int pattern = 0;
+
+    void applyCPU(const ImageF32x4RGBAWithCache& src,
+                  ImageF32x4RGBAWithCache& dst) override {
+        dst = src;
+        const int width = dst.image().width();
+        const int height = dst.image().height();
+        if (width <= 0 || height <= 0 || !dst.image().rgba32fData()) return;
+        ArtifactCore::ProceduralTextureSettings settings;
+        settings.width = width;
+        settings.height = height;
+        settings.outputFormat = ArtifactCore::ProceduralTextureOutputFormat::Float32;
+        settings.primary.seed = static_cast<std::uint32_t>(std::max(seed, 0));
+        settings.primary.scale = {std::max(scale, 0.1f), std::max(scale, 0.1f)};
+        settings.primary.kind = static_cast<ArtifactCore::ProceduralTextureGeneratorKind>(
+            std::clamp(pattern, 0, 6));
+        const auto generated = ArtifactCore::ProceduralTextureGenerator::generate(settings);
+        if (generated.rgba32f.size() < static_cast<std::size_t>(width) * height * 4u) return;
+        float* pixels = dst.image().rgba32fData();
+        const float weight = std::clamp(amount, 0.0f, 1.0f);
+        for (std::size_t i = 0; i < static_cast<std::size_t>(width) * height; ++i) {
+            const float patternValue = std::clamp(generated.rgba32f[i * 4u], 0.0f, 1.0f);
+            const float factor = (1.0f - weight) + patternValue * weight;
+            pixels[i * 4u + 0] *= factor;
+            pixels[i * 4u + 1] *= factor;
+            pixels[i * 4u + 2] *= factor;
+        }
+    }
+};
+
 FillEffect::FillEffect() {
     setEffectID(UniString("effect.colorcorrection.fill"));
     setDisplayName(UniString("Fill"));
@@ -404,6 +441,60 @@ void FillEffect::setPropertyValue(const UniString& name, const QVariant& value) 
     } else if (key == QStringLiteral("Preserve Alpha")) {
         setPreserveAlpha(value.toBool());
     }
+}
+
+PatternOverlayEffect::PatternOverlayEffect() {
+    setEffectID(UniString("effect.layerstyle.patternoverlay"));
+    setDisplayName(UniString("Pattern Overlay"));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+    setCPUImpl(ArtifactCore::makeShared<PatternOverlayCPUImpl>());
+    setComputeMode(ComputeMode::CPU_ONLY);
+}
+
+PatternOverlayEffect::~PatternOverlayEffect() = default;
+
+void PatternOverlayEffect::setAmount(float value) {
+    amount_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.5f;
+    if (auto* impl = dynamic_cast<PatternOverlayCPUImpl*>(cpuImpl().get())) impl->amount = amount_;
+}
+
+void PatternOverlayEffect::setScale(float value) {
+    scale_ = std::isfinite(value) ? std::max(value, 0.1f) : 8.0f;
+    if (auto* impl = dynamic_cast<PatternOverlayCPUImpl*>(cpuImpl().get())) impl->scale = scale_;
+}
+
+void PatternOverlayEffect::setSeed(int value) {
+    seed_ = std::max(value, 0);
+    if (auto* impl = dynamic_cast<PatternOverlayCPUImpl*>(cpuImpl().get())) impl->seed = seed_;
+}
+
+void PatternOverlayEffect::setPattern(int value) {
+    pattern_ = std::clamp(value, 0, 6);
+    if (auto* impl = dynamic_cast<PatternOverlayCPUImpl*>(cpuImpl().get())) impl->pattern = pattern_;
+}
+
+std::vector<AbstractProperty> PatternOverlayEffect::getProperties() const {
+    std::vector<AbstractProperty> props;
+    auto add = [&props](const char* name, PropertyType type, const QVariant& value) {
+        AbstractProperty property;
+        property.setName(name);
+        property.setType(type);
+        property.setValue(value);
+        props.push_back(property);
+    };
+    add("Amount", PropertyType::Float, amount_);
+    add("Scale", PropertyType::Float, scale_);
+    add("Seed", PropertyType::Integer, seed_);
+    add("Pattern", PropertyType::Integer, pattern_);
+    return props;
+}
+
+void PatternOverlayEffect::setPropertyValue(const UniString& name, const QVariant& value) {
+    const QString key = name.toQString();
+    if (key == QStringLiteral("Amount")) setAmount(value.toFloat());
+    else if (key == QStringLiteral("Scale")) setScale(value.toFloat());
+    else if (key == QStringLiteral("Seed")) setSeed(value.toInt());
+    else if (key == QStringLiteral("Pattern")) setPattern(value.toInt());
 }
 
 } // namespace Artifact

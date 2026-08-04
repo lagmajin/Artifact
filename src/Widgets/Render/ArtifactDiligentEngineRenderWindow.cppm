@@ -980,7 +980,49 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
 
  void ArtifactDiligentEngineRenderWindow::pickingRay(int posx, int posy)
  {
+  const int viewportWidth = std::max(1, width());
+  const int viewportHeight = std::max(1, height());
+  const float aspect = static_cast<float>(viewportWidth) /
+                       static_cast<float>(viewportHeight);
+  const float ndcX = 2.0f * static_cast<float>(posx) / viewportWidth - 1.0f;
+  const float ndcY = 1.0f - 2.0f * static_cast<float>(posy) / viewportHeight;
 
+  QMatrix4x4 view;
+  view.setToIdentity();
+  view.translate(0.0f, 0.0f, -previewDistance_);
+  view.rotate(previewPitch_, 1.0f, 0.0f, 0.0f);
+  view.rotate(previewYaw_, 0.0f, 1.0f, 0.0f);
+  view.translate(-previewTarget_.x(), -previewTarget_.y(), -previewTarget_.z());
+  QMatrix4x4 projection;
+  projection.setToIdentity();
+  projection.perspective(45.0f, aspect, 0.1f, 100.0f);
+
+  bool invertible = false;
+  const QMatrix4x4 inverse = (projection * view).inverted(&invertible);
+  if (!invertible) return;
+  const QVector4D nearPoint = inverse * QVector4D(ndcX, ndcY, -1.0f, 1.0f);
+  const QVector4D farPoint = inverse * QVector4D(ndcX, ndcY, 1.0f, 1.0f);
+  if (std::abs(nearPoint.w()) < 1.0e-6f ||
+      std::abs(farPoint.w()) < 1.0e-6f) return;
+  const QVector3D nearWorld = nearPoint.toVector3D() / nearPoint.w();
+  const QVector3D farWorld = farPoint.toVector3D() / farPoint.w();
+  const QVector3D direction = farWorld - nearWorld;
+  if (!std::isfinite(direction.x()) || !std::isfinite(direction.y()) ||
+      !std::isfinite(direction.z()) || direction.lengthSquared() < 1.0e-8f) {
+   return;
+  }
+  pickingRayOrigin_ = nearWorld;
+  pickingRayDirection_ = direction.normalized();
+ }
+
+ QVector3D ArtifactDiligentEngineRenderWindow::pickingRayOrigin() const
+ {
+  return pickingRayOrigin_;
+ }
+
+ QVector3D ArtifactDiligentEngineRenderWindow::pickingRayDirection() const
+ {
+  return pickingRayDirection_;
  }
 
  void ArtifactDiligentEngineRenderWindow::render()
@@ -1220,12 +1262,16 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
 
  void ArtifactDiligentEngineRenderWindow::keyPressEvent(QKeyEvent* event)
  {
-  
+  if (!event) return;
+  QWindow::keyPressEvent(event);
  }
 
  void ArtifactDiligentEngineRenderWindow::mousePressEvent(QMouseEvent* event)
  {
-  
+  if (!event) return;
+  pickingRay(static_cast<int>(event->position().x()),
+             static_cast<int>(event->position().y()));
+  QWindow::mousePressEvent(event);
  }
 
  class DiligentViewportWidget::Impl {
@@ -1248,12 +1294,14 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
 
  void DiligentViewportWidget::keyPressEvent(QKeyEvent* event)
  {
-  //throw std::logic_error("The method or operation is not implemented.");
+  if (!event) return;
+  QWidget::keyPressEvent(event);
  }
 
  void DiligentViewportWidget::resizeEvent(QResizeEvent* event)
  {
-  //throw std::logic_error("The method or operation is not implemented.");
+  if (!event) return;
+  QWidget::resizeEvent(event);
  }
 
  DiligentViewportWidget::DiligentViewportWidget(QWidget* parent /*= nullptr*/):QWidget(parent)

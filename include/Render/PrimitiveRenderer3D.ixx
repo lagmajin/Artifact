@@ -21,6 +21,7 @@ import Color.Float;
 import Frame.Debug;
 import Artifact.Render.RenderCommandBuffer;
 import Artifact.Render.ShaderManager;
+import Artifact.Grid.System;
 
 export namespace Artifact {
 
@@ -103,6 +104,7 @@ public:
                                    bool writeDepth = true);
   void draw3DLine(const QVector3D &start, const QVector3D &end,
                   const FloatColor &color, float thickness = 1.0f);
+  void drawGroundGrid(const Artifact::Grid::GroundGridSettings& settings = {});
   void draw3DArrow(const QVector3D &start, const QVector3D &end,
                    const FloatColor &color, float size = 1.0f);
   void draw3DCircle(const QVector3D &center, const QVector3D &normal,

@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include "Define/DllExportMacro.hpp"
 #include <iostream>
@@ -75,6 +75,9 @@ export namespace Artifact
                                           double defaultValue = 0.0,
                                           double minValue = -180.0,
                                           double maxValue = 180.0);
+  bool setRigControlValue(const ArtifactCore::Id& controlId,
+                          const QVariant& value);
+  QVariant rigControlValue(const ArtifactCore::Id& controlId) const;
   bool removeRigBone(const ArtifactCore::Id& boneId);
   bool setRigBoneLocalTransform(const ArtifactCore::Id& boneId,
                                 const ArtifactCore::BoneTransform& transform);

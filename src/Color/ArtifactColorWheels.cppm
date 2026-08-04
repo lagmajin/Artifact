@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <cmath>
 #include <algorithm>
@@ -73,10 +73,12 @@ ColorWheelsProcessor::ColorWheelsProcessor(QObject* parent)
     , impl_(new Impl())
 {
 }
-{
-}
 
-ColorWheelsProcessor::~ColorWheelsProcessor() = default;
+ColorWheelsProcessor::~ColorWheelsProcessor()
+{
+    delete impl_;
+    impl_ = nullptr;
+}
 
 void ColorWheelsProcessor::setWheelType(ArtifactCore::ColorWheelType type) {
     impl_->core_.setWheelType(type);
@@ -139,7 +141,11 @@ ColorCurves::ColorCurves(QObject* parent)
 {
 }
 
-ColorCurves::~ColorCurves() = default;
+ColorCurves::~ColorCurves()
+{
+    delete impl_;
+    impl_ = nullptr;
+}
 
 void ColorCurves::setMasterCurve(const std::vector<CurvePoint>& points) {
     impl_->core_.setMasterCurve(points);
@@ -209,7 +215,11 @@ ColorGrader::ColorGrader(QObject* parent)
     curvesProcessor_ = new ColorCurves(this);
 }
 
-ColorGrader::~ColorGrader() = default;
+ColorGrader::~ColorGrader()
+{
+    delete impl_;
+    impl_ = nullptr;
+}
 
 void ColorGrader::setEnabled(bool e) {
     impl_->core_.setEnabled(e);

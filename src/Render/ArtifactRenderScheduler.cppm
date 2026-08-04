@@ -1,4 +1,4 @@
-﻿
+
 module;
 #include <QThreadPool>
 #include <QtConcurrent>
@@ -94,6 +94,7 @@ public:
     
     // Task queues
     std::vector<RenderTask*> pendingTasks_;
+    std::vector<RenderTask*> pausedTasks_;
     std::vector<RenderTask*> activeTasks_;
     std::vector<RenderTask*> completedTasks_;
     std::unordered_set<std::string> scheduledDeduplicationKeys_;
@@ -157,7 +158,11 @@ public:
             emit owner_->frameProcessed(task->range().startPosition());
         }
         // Update progress
-        const float progress = static_cast<float>(completedCount_) / totalCount_;
+        const int total = totalCount_.load(std::memory_order_acquire);
+        const float progress = total > 0
+            ? static_cast<float>(completedCount_.load(std::memory_order_acquire)) /
+              static_cast<float>(total)
+            : 0.0f;
         emit owner_->progressChanged(progress);
     }
 
@@ -284,18 +289,35 @@ void RenderScheduler::submitTasks(const QVector<RenderTask*>& tasks) {
 }
 
 void RenderScheduler::cancelTask(RenderTask* task) {
+    if (!task) return;
     task->cancel();
     
     QMutexLocker locker(&impl_->mutex_);
+    bool removed = false;
     
     // Remove from pending
     auto it = std::find(impl_->pendingTasks_.begin(), impl_->pendingTasks_.end(), task);
     if (it != impl_->pendingTasks_.end()) {
         impl_->pendingTasks_.erase(it);
+        removed = true;
         const QString key = task->deduplicationKey();
         if (!key.isEmpty()) {
             impl_->scheduledDeduplicationKeys_.erase(key.toStdString());
         }
+    } else {
+        const auto pausedIt = std::find(impl_->pausedTasks_.begin(), impl_->pausedTasks_.end(), task);
+        if (pausedIt != impl_->pausedTasks_.end()) {
+            impl_->pausedTasks_.erase(pausedIt);
+            removed = true;
+            const QString key = task->deduplicationKey();
+            if (!key.isEmpty()) {
+                impl_->scheduledDeduplicationKeys_.erase(key.toStdString());
+            }
+        }
+    }
+    if (removed) {
+        ++impl_->completedCount_;
+        ++impl_->dropCounts_[static_cast<int>(FrameDropReason::Cancelled)];
     }
 }
 
@@ -303,6 +325,8 @@ void RenderScheduler::cancelAllTasks() {
     impl_->stopRequested_ = true;
     
     QMutexLocker locker(&impl_->mutex_);
+    const int queuedCancellationCount = static_cast<int>(
+        impl_->pendingTasks_.size() + impl_->pausedTasks_.size());
     
     for (auto* task : impl_->pendingTasks_) {
         task->cancel();
@@ -312,27 +336,58 @@ void RenderScheduler::cancelAllTasks() {
     }
     
     impl_->pendingTasks_.clear();
+    impl_->pausedTasks_.clear();
     impl_->activeTasks_.clear();
     impl_->scheduledDeduplicationKeys_.clear();
+    if (queuedCancellationCount > 0) {
+        impl_->completedCount_ += queuedCancellationCount;
+        impl_->dropCounts_[static_cast<int>(FrameDropReason::Cancelled)] +=
+            queuedCancellationCount;
+    }
 }
 
 void RenderScheduler::pauseTask(RenderTask* task) {
-    // Implementation would suspend task execution
-    Q_UNUSED(task);
+    if (!task || task->isCancelled()) return;
+    task->pause();
+    QMutexLocker locker(&impl_->mutex_);
+    const auto it = std::find(impl_->pendingTasks_.begin(), impl_->pendingTasks_.end(), task);
+    if (it != impl_->pendingTasks_.end()) {
+        impl_->pausedTasks_.push_back(*it);
+        impl_->pendingTasks_.erase(it);
+    }
 }
 
 void RenderScheduler::resumeTask(RenderTask* task) {
-    // Implementation would resume task execution
-    Q_UNUSED(task);
+    if (!task || task->isCancelled()) return;
+    QMutexLocker locker(&impl_->mutex_);
+    const auto it = std::find(impl_->pausedTasks_.begin(), impl_->pausedTasks_.end(), task);
+    if (it == impl_->pausedTasks_.end()) return;
+    task->resume();
+    impl_->pendingTasks_.push_back(*it);
+    impl_->pausedTasks_.erase(it);
+    std::stable_sort(impl_->pendingTasks_.begin(), impl_->pendingTasks_.end(),
+        [](RenderTask* left, RenderTask* right) {
+            return static_cast<int>(left->priority()) < static_cast<int>(right->priority());
+        });
+    if (impl_->executing_ && !impl_->paused_) {
+        QMetaObject::invokeMethod(this, "processNextTask", Qt::QueuedConnection);
+    }
 }
 
 void RenderScheduler::setTaskPriority(RenderTask* task, TaskPriority priority) {
+    if (!task || task->isCancelled()) return;
     QMutexLocker locker(&impl_->mutex_);
-    
-    auto it = std::find(impl_->pendingTasks_.begin(), impl_->pendingTasks_.end(), task);
-    if (it != impl_->pendingTasks_.end()) {
-        // Re-sort after priority change
-    }
+    task->setPriority(priority);
+
+    auto sortByPriority = [](std::vector<RenderTask*>& tasks) {
+        std::stable_sort(tasks.begin(), tasks.end(),
+            [](RenderTask* left, RenderTask* right) {
+                return static_cast<int>(left->priority()) <
+                       static_cast<int>(right->priority());
+            });
+    };
+    sortByPriority(impl_->pendingTasks_);
+    sortByPriority(impl_->pausedTasks_);
 }
 
 void RenderScheduler::startExecution() {
@@ -433,7 +488,7 @@ void RenderScheduler::processNextTask() {
                                             .arg(task->range().start())
                                             .arg(task->range().end());
         threadPool->start([self, task, taskName]() {
-            if (!self || self->impl_->stopRequested_) {
+            if (!self) {
                 return;
             }
 
@@ -514,7 +569,7 @@ bool RenderScheduler::isPaused() const {
 
 float RenderScheduler::overallProgress() const {
     int total = impl_->totalCount_.load();
-    if (total == 0) return 0;
+    if (total <= 0) return 0.0f;
     return (float)impl_->completedCount_ / total;
 }
 

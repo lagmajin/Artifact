@@ -93,9 +93,18 @@ export namespace Artifact {
                 if (!c.enabled) continue;
                 auto srcKey = c.sourceNodeId.toString().toStdString();
                 auto tgtKey = c.targetNodeId.toString().toStdString();
-                
+                if (!pendingDependencies.contains(srcKey) ||
+                    !pendingDependencies.contains(tgtKey)) {
+                    evaluationFailed.store(true, std::memory_order_release);
+                    continue;
+                }
+                auto targetNode = graph.findNode(NodeID(c.targetNodeId.toString()));
+                if (!targetNode) {
+                    evaluationFailed.store(true, std::memory_order_release);
+                    continue;
+                }
                 pendingDependencies[tgtKey]++;
-                dependents[srcKey].push_back(graph.findNode(NodeID(c.targetNodeId.toString())));
+                dependents[srcKey].push_back(std::move(targetNode));
             }
 
             // 2. 依存がない（既に評価可能）ノードのスケジュール関数
@@ -115,16 +124,20 @@ export namespace Artifact {
                         if (node->hasImageInput()) {
                             if (!node->evaluateImageEffect()) {
                                 evaluationFailed.store(true, std::memory_order_release);
+                                return;
                             }
+                            // A successfully evaluated image node must still
+                            // publish its output and release downstream
+                            // dependencies below.  Returning here leaves
+                            // the graph permanently waiting on this node.
+                        } else {
+                            // The non-image backend is not connected yet. Do
+                            // not report a successful cache hit for an
+                            // unevaluated effect.
+                            node->markError();
+                            evaluationFailed.store(true, std::memory_order_release);
                             return;
                         }
-                        // The non-image backend is not connected yet. Do not
-                        // report a successful cache hit for an unevaluated
-                        // effect; callers must be able to distinguish this
-                        // from a real cached result.
-                        node->markError();
-                        evaluationFailed.store(true, std::memory_order_release);
-                        return;
                     }
 
                     // An earlier evaluation failure must not feed stale or

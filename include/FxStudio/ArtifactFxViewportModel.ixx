@@ -56,12 +56,16 @@ public:
 
   bool loopEnabled() const noexcept;
   void setLoopEnabled(bool enabled) noexcept;
+  std::int64_t loopFirstFrame() const noexcept;
+  std::int64_t loopLastFrame() const noexcept;
   bool setLoopRange(std::int64_t firstFrame, std::int64_t lastFrame) noexcept;
   bool useEventLoop(const EventTrack& track, EventId eventId) noexcept;
   std::int64_t resolvePlaybackFrame(std::int64_t requestedFrame) const noexcept;
 
   ArtifactCore::Optional<CueKind> soloCue() const noexcept;
   void setSoloCue(ArtifactCore::Optional<CueKind> cue) noexcept;
+  const std::vector<CueKind>& bypassedCues() const noexcept;
+  void clearBypassedCues() noexcept;
   bool isCueBypassed(CueKind cue) const noexcept;
   void setCueBypassed(CueKind cue, bool bypassed);
 

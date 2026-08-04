@@ -3,12 +3,15 @@ module;
 #include <QJsonObject>
 #include <QString>
 #include <QVariant>
+#include <QColor>
+#include <cmath>
 
 
 export module Artifact.AI.RenderAutomation;
 
 import std;
 import Core.AI.Describable;
+import Artifact.Service.Project;
 
 export namespace Artifact {
 
@@ -112,6 +115,17 @@ public:
     return QVariant();
   }
 
+  double cameraX() const { return cameraX_; }
+  double cameraY() const { return cameraY_; }
+  double cameraZ() const { return cameraZ_; }
+  double rotationX() const { return rotationX_; }
+  double rotationY() const { return rotationY_; }
+  double rotationZ() const { return rotationZ_; }
+  QString renderMode() const { return renderMode_; }
+  bool wireframeEnabled() const { return wireframe_; }
+  QColor viewportBackground() const { return viewportBackground_; }
+  QString focusedLayerId() const { return focusedLayerId_; }
+
 private:
   QVariant setCameraPosition(const QVariantList &args) {
     if (args.size() < 3)
@@ -120,7 +134,11 @@ private:
     double y = args[1].toDouble();
     double z = args[2].toDouble();
 
-    // Placeholder - would set camera position in 3D viewport
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+      return false;
+    cameraX_ = x;
+    cameraY_ = y;
+    cameraZ_ = z;
     return true;
   }
 
@@ -131,42 +149,74 @@ private:
     double ry = args[1].toDouble();
     double rz = args[2].toDouble();
 
-    // Placeholder - would set camera rotation in 3D viewport
+    if (!std::isfinite(rx) || !std::isfinite(ry) || !std::isfinite(rz))
+      return false;
+    rotationX_ = rx;
+    rotationY_ = ry;
+    rotationZ_ = rz;
     return true;
   }
 
   QVariant setRenderMode(const QVariantList &args) {
     if (args.isEmpty())
       return false;
-    QString mode = args[0].toString();
-
-    // Placeholder - would set render mode (solid/wireframe)
+    const QString mode = args[0].toString().trimmed().toLower();
+    if (mode != QStringLiteral("solid") &&
+        mode != QStringLiteral("wireframe") &&
+        mode != QStringLiteral("material") &&
+        mode != QStringLiteral("shaded"))
+      return false;
+    renderMode_ = mode;
+    wireframe_ = mode == QStringLiteral("wireframe");
     return true;
   }
 
   QVariant toggleWireframe(const QVariantList &args) {
     Q_UNUSED(args)
-    // Placeholder - would toggle wireframe mode
+    wireframe_ = !wireframe_;
+    if (wireframe_)
+      renderMode_ = QStringLiteral("wireframe");
+    else if (renderMode_ == QStringLiteral("wireframe"))
+      renderMode_ = QStringLiteral("solid");
     return true;
   }
 
   QVariant setViewportBackground(const QVariantList &args) {
     if (args.isEmpty())
       return false;
-    QString color = args[0].toString();
-
-    // Placeholder - would set viewport background
+    const QColor color(args[0].toString().trimmed());
+    if (!color.isValid())
+      return false;
+    viewportBackground_ = color;
     return true;
   }
 
   QVariant focusOnLayer(const QVariantList &args) {
     if (args.isEmpty())
       return false;
-    QString layerId = args[0].toString();
-
-    // Placeholder - would focus camera on layer
+    const QString layerId = args[0].toString().trimmed();
+    if (layerId.isEmpty())
+      return false;
+    auto *service = ArtifactProjectService::instance();
+    if (!service) return false;
+    const auto composition = service->currentComposition().lock();
+    if (!composition || !composition->layerById(ArtifactCore::LayerID(layerId))) {
+      return false;
+    }
+    focusedLayerId_ = layerId;
     return true;
   }
+
+  double cameraX_ = 0.0;
+  double cameraY_ = 0.0;
+  double cameraZ_ = 10.0;
+  double rotationX_ = 0.0;
+  double rotationY_ = 0.0;
+  double rotationZ_ = 0.0;
+  QString renderMode_ = QStringLiteral("solid");
+  bool wireframe_ = false;
+  QColor viewportBackground_ = QColor(32, 32, 32);
+  QString focusedLayerId_;
 };
 
 } // namespace Artifact

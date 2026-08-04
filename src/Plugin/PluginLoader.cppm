@@ -4,6 +4,8 @@
 #include <string_view>
 #include <vector>
 #include <memory>
+#include <algorithm>
+#include <unordered_set>
 
 #include <QDir>
 #include <QDirIterator>
@@ -14,6 +16,7 @@
 #include <QLibrary>
 #include <QCoreApplication>
 #include <QProcess>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 
@@ -23,6 +26,7 @@ module Artifact.Plugin.Loader;
 
 import ArtifactCore.Plugin.Common;
 import ArtifactCore.Plugin.Registry;
+import Artifact.Plugin.Sandbox;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -34,6 +38,8 @@ typedef const ArtifactPluginDescriptor* (*PFN_ArtifactPlugin_GetPlugin)(int);
 struct ArtifactPluginLoader::Impl {
     std::vector<LoadResult> results;
     std::vector<std::unique_ptr<QLibrary>> loadedLibs;
+    std::vector<std::unique_ptr<ArtifactPluginSandbox>> sandboxes;
+    std::vector<std::string> loadedPluginIds;
     std::function<PluginLoadedCallback> onPluginLoaded;
 
     QStringList defaultSearchPaths() {
@@ -78,7 +84,14 @@ struct ArtifactPluginLoader::Impl {
         }
 
         const int count = fnCount();
+        constexpr int kMaxPluginsPerLibrary = 1024;
+        if (count < 0 || count > kMaxPluginsPerLibrary) {
+            result.success = false;
+            result.errorMessage = "Invalid plugin count returned by DLL";
+            return result;
+        }
         bool anySucceeded = false;
+        std::unordered_set<std::string> seenPluginIds;
         void* libRaw = lib.get();
 
         for (int i = 0; i < count; ++i) {
@@ -86,6 +99,15 @@ struct ArtifactPluginLoader::Impl {
             if (!desc || !desc->id || !desc->displayName) {
                 continue;
             }
+            if (desc->apiVersion <= 0 ||
+                desc->apiVersion > ARTIFACT_PLUGIN_API_VERSION ||
+                desc->category < static_cast<int>(PluginCategory::Effect) ||
+                desc->category > static_cast<int>(PluginCategory::ImportExport)) {
+                continue;
+            }
+            const std::string pluginId = desc->id;
+            if (pluginId.empty()) continue;
+            if (!seenPluginIds.insert(pluginId).second) continue;
 
             PluginDescriptor pd;
             pd.id = desc->id;
@@ -100,6 +122,10 @@ struct ArtifactPluginLoader::Impl {
 
             auto& registry = ArtifactPluginRegistry::instance();
             registry.registerPlugin(pd);
+            if (std::find(loadedPluginIds.cbegin(), loadedPluginIds.cend(), pd.id) ==
+                loadedPluginIds.cend()) {
+                loadedPluginIds.push_back(pd.id);
+            }
 
             // Fire category-specific callback so consumers (e.g. PluginLayerFactory)
             // can resolve additional ABI functions while the library is still loaded.
@@ -133,16 +159,42 @@ struct ArtifactPluginLoader::Impl {
         LoadResult result;
         result.pluginPath = path.toStdString();
         result.loadedMode = PluginLoadMode::Subprocess;
+        const QFileInfo pluginInfo(path);
+        if (!pluginInfo.exists() || !pluginInfo.isFile()) {
+            result.errorMessage = "Plugin path is not a file";
+            return result;
+        }
 
-        result.success = false;
-        result.errorMessage =
-            "Subprocess loading requires a plugin runner executable. "
-            "See docs/PLUGIN_SUBPROCESS_PROTOCOL.md for the JSON IPC spec. "
-            "PluginSandbox is ready to manage the subprocess lifecycle.";
+        const QStringList runnerCandidates = {
+            QDir(QCoreApplication::applicationDirPath()).filePath("ArtifactPluginRunner.exe"),
+            QDir(QCoreApplication::applicationDirPath()).filePath("plugins/ArtifactPluginRunner.exe")
+        };
+        QString runnerPath;
+        for (const auto& candidate : runnerCandidates) {
+            if (QFileInfo::exists(candidate) && QFileInfo(candidate).isFile()) {
+                runnerPath = candidate;
+                break;
+            }
+        }
+        if (runnerPath.isEmpty()) {
+            result.errorMessage = "Plugin runner executable was not found";
+            return result;
+        }
+
+        const std::string sandboxId = QFileInfo(path).completeBaseName().toStdString();
+        auto sandbox = std::make_unique<ArtifactPluginSandbox>(sandboxId, runnerPath, path);
+        if (!sandbox->start()) {
+            result.errorMessage = sandbox->lastError();
+            return result;
+        }
+        result.success = true;
+        result.subprocessId = sandboxId;
+        sandboxes.push_back(std::move(sandbox));
         return result;
     }
 
-    void scanDirectory(const QString& dirPath, PluginLoadMode mode) {
+    void scanDirectory(const QString& dirPath, PluginLoadMode mode,
+                       QSet<QString>* seenPaths = nullptr) {
         QDir dir(dirPath);
         if (!dir.exists()) return;
 
@@ -152,9 +204,30 @@ struct ArtifactPluginLoader::Impl {
         const auto entries = dir.entryInfoList(nameFilters, QDir::Files);
         for (const auto& info : entries) {
             const auto filePath = info.absoluteFilePath();
-            LoadResult r = (mode == PluginLoadMode::Subprocess)
-                ? loadSubprocessPlugin(filePath)
-                : loadDllPlugin(filePath);
+            const QString identity = QFileInfo(filePath).canonicalFilePath().isEmpty()
+                ? QDir::cleanPath(filePath)
+                : QFileInfo(filePath).canonicalFilePath();
+#ifdef Q_OS_WIN
+            const QString normalizedIdentity = identity.toCaseFolded();
+#else
+            const QString& normalizedIdentity = identity;
+#endif
+            if (seenPaths && seenPaths->contains(normalizedIdentity)) continue;
+            if (seenPaths) seenPaths->insert(normalizedIdentity);
+            LoadResult r;
+            if (mode == PluginLoadMode::Subprocess) {
+                r = loadSubprocessPlugin(filePath);
+            } else {
+                r = loadDllPlugin(filePath);
+                if (mode == PluginLoadMode::Auto && !r.success) {
+                    const LoadResult fallback = loadSubprocessPlugin(filePath);
+                    if (fallback.success) {
+                        r = fallback;
+                    } else {
+                        r.errorMessage += "; Subprocess fallback: " + fallback.errorMessage;
+                    }
+                }
+            }
             results.push_back(std::move(r));
         }
     }
@@ -163,13 +236,16 @@ struct ArtifactPluginLoader::Impl {
 ArtifactPluginLoader::ArtifactPluginLoader()
     : impl_(std::make_unique<Impl>()) {}
 
-ArtifactPluginLoader::~ArtifactPluginLoader() = default;
+ArtifactPluginLoader::~ArtifactPluginLoader() {
+    unloadAll();
+}
 
 void ArtifactPluginLoader::discoverAndLoad(const QStringList& searchPaths,
                                            PluginLoadMode mode) {
     QStringList paths = searchPaths.isEmpty() ? impl_->defaultSearchPaths() : searchPaths;
+    QSet<QString> seenPaths;
     for (const auto& p : paths) {
-        impl_->scanDirectory(p, mode);
+        impl_->scanDirectory(p, mode, &seenPaths);
     }
 }
 
@@ -180,6 +256,12 @@ void ArtifactPluginLoader::setOnPluginLoaded(std::function<PluginLoadedCallback>
 LoadResult ArtifactPluginLoader::loadPlugin(const QString& path, PluginLoadMode mode) {
     LoadResult r;
     r.pluginPath = path.toStdString();
+    const QFileInfo pluginInfo(path);
+    if (path.trimmed().isEmpty() || !pluginInfo.exists() || !pluginInfo.isFile()) {
+        r.errorMessage = "Plugin path is not a file";
+        impl_->results.push_back(r);
+        return r;
+    }
 
     if (mode == PluginLoadMode::Subprocess) {
         r = impl_->loadSubprocessPlugin(path);
@@ -188,11 +270,28 @@ LoadResult ArtifactPluginLoader::loadPlugin(const QString& path, PluginLoadMode 
     }
 
     r = impl_->loadDllPlugin(path);
+    if (mode == PluginLoadMode::Auto && !r.success) {
+        const LoadResult fallback = impl_->loadSubprocessPlugin(path);
+        if (fallback.success) {
+            r = fallback;
+        } else {
+            r.errorMessage += "; Subprocess fallback: " + fallback.errorMessage;
+        }
+    }
     impl_->results.push_back(r);
     return r;
 }
 
 void ArtifactPluginLoader::unloadAll() {
+    auto& registry = ArtifactCore::ArtifactPluginRegistry::instance();
+    for (const auto& pluginId : impl_->loadedPluginIds) {
+        registry.unregisterPlugin(pluginId);
+    }
+    impl_->loadedPluginIds.clear();
+    for (auto& sandbox : impl_->sandboxes) {
+        if (sandbox) sandbox->stop();
+    }
+    impl_->sandboxes.clear();
     impl_->results.clear();
     impl_->loadedLibs.clear();
 }

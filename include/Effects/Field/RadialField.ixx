@@ -139,9 +139,14 @@ export namespace Artifact {
             return 1.0f - (t * t * (3.0f - 2.0f * t));
         }
 
-        void generateGPUData() const override {
-            // TODO: GPU バッファフォーマット生成
-            // struct { float3 center; float3 axis; float innerRadius; float outerRadius; }
+        FieldGPUData generateGPUData() const override {
+            FieldGPUData data;
+            data.type = FieldType::Radial;
+            data.values = {center_[0], center_[1], center_[2], 0.0f,
+                           axis_[0], axis_[1], axis_[2], 0.0f,
+                           innerRadius_, outerRadius_, 0.0f, 0.0f,
+                           0.0f, 0.0f, 0.0f, 0.0f};
+            return data;
         }
     };
 

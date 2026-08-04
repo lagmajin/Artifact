@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QDir>
 #include <QFile>
@@ -101,7 +101,7 @@ int ArtifactBatchRenderer::addCompositions(
     const QString& fileNamePattern)
 {
     auto* queue = impl_->queueService;
-    if (!queue) return 0;
+    if (!queue || outputDir.trimmed().isEmpty() || fileNamePattern.trimmed().isEmpty()) return 0;
 
     int added = 0;
     auto& pm = ArtifactProjectManager::getInstance();
@@ -141,6 +141,43 @@ int ArtifactBatchRenderer::addCompositions(
     if (added > 0) {
         batchJobsAdded(added);
     }
+    return added;
+}
+
+int ArtifactBatchRenderer::addAudioCompositions(
+    const QVector<ArtifactCore::CompositionID>& ids,
+    const QString& outputDir,
+    bool pcm24,
+    const QString& fileNamePattern)
+{
+    auto* queue = impl_->queueService;
+    if (!queue || outputDir.trimmed().isEmpty() || fileNamePattern.trimmed().isEmpty()) return 0;
+
+    const QString presetId = pcm24 ? QStringLiteral("wav_pcm_s24")
+                                   : QStringLiteral("wav_pcm_s16");
+    const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(presetId);
+    if (!preset) return 0;
+
+    QDir dir(outputDir);
+    if (!dir.exists()) dir.mkpath(QStringLiteral("."));
+    if (!dir.exists()) return 0;
+    auto& pm = ArtifactProjectManager::getInstance();
+    int added = 0;
+    for (const auto& id : ids) {
+        const auto found = pm.findComposition(id);
+        if (!found.success) continue;
+        const auto comp = found.ptr.lock();
+        if (!comp) continue;
+        const QString compName = comp->settings().compositionName().toQString();
+        const QString stem = resolveFileNamePattern(fileNamePattern, compName);
+        queue->addRenderQueueWithPreset(id, compName, presetId);
+        const int index = queue->jobCount() - 1;
+        if (index >= 0) {
+            queue->setJobOutputPathAt(index, dir.filePath(stem + QStringLiteral(".wav")));
+            ++added;
+        }
+    }
+    if (added > 0) batchJobsAdded(added);
     return added;
 }
 

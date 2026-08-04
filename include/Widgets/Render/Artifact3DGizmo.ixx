@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <memory>
 #include <QObject>
@@ -55,7 +55,7 @@ public:
     explicit Artifact3DGizmo(QObject* parent = nullptr);
     virtual ~Artifact3DGizmo();
 
-    void setMode(GizmoMode mode) { mode_ = mode; }
+    void setMode(GizmoMode mode);
     GizmoMode mode() const { return mode_; }
     void setSpace(GizmoSpace space) { space_ = space; }
     GizmoSpace space() const { return space_; }
@@ -101,6 +101,7 @@ private:
     bool depthEnabled_ = true;
     bool snapEnabled_ = false;
     bool fineAdjustment_ = false;
+    bool fullModeDrag_ = false;
 };
 
 } // namespace Artifact

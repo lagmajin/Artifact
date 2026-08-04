@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <chrono>
 #include <functional>
@@ -20,6 +20,7 @@ import ArtifactCore.Plugin.Common;
 static constexpr int kHeartbeatIntervalMs = 500;
 static constexpr int kHeartbeatTimeoutMs = 1000;
 static constexpr int kMaxCrashCount = 3;
+static constexpr int kMaxProtocolLineBytes = 4 * 1024 * 1024;
 
 namespace {
 
@@ -57,6 +58,7 @@ struct ArtifactPluginSandbox::Impl {
     int heartbeatId = 0;
     int crashes = 0;
     bool expectingPong = false;
+    std::chrono::steady_clock::time_point heartbeatSentAt{};
     std::string lastErrorMsg;
     QByteArray stdoutBuffer;
     QByteArray stderrBuffer;
@@ -67,9 +69,20 @@ struct ArtifactPluginSandbox::Impl {
     FailCallback failCallback;
 
     void consumeJsonLines(QByteArray* buffer, ArtifactPluginSandbox* sandbox) {
+        if (buffer->size() > kMaxProtocolLineBytes &&
+            buffer->indexOf('\n') < 0) {
+            buffer->clear();
+            lastErrorMsg = "Plugin protocol response exceeded maximum line size";
+            return;
+        }
         while (true) {
             int newline = buffer->indexOf('\n');
             if (newline < 0) break;
+            if (newline > kMaxProtocolLineBytes) {
+                buffer->remove(0, newline + 1);
+                lastErrorMsg = "Plugin protocol response exceeded maximum line size";
+                continue;
+            }
             QByteArray line = buffer->left(newline).trimmed();
             buffer->remove(0, newline + 1);
             if (line.isEmpty()) continue;
@@ -77,8 +90,13 @@ struct ArtifactPluginSandbox::Impl {
             QJsonParseError err;
             auto doc = QJsonDocument::fromJson(line, &err);
             if (err.error == QJsonParseError::NoError && doc.isObject()) {
+                const QJsonObject response = doc.object();
+                if (response.value(QStringLiteral("cmd")).toString() == QStringLiteral("pong") &&
+                    response.value(QStringLiteral("id")).toInt(-1) == heartbeatId) {
+                    expectingPong = false;
+                }
                 if (responseCallback) {
-                    responseCallback(pluginId, doc.object());
+                    responseCallback(pluginId, response);
                 }
             }
         }
@@ -106,6 +124,9 @@ void ArtifactPluginSandbox::setFailCallback(FailCallback cb) { impl_->failCallba
 bool ArtifactPluginSandbox::start() {
     if (impl_->process) return false;
 
+    impl_->stdoutBuffer.clear();
+    impl_->stderrBuffer.clear();
+    impl_->expectingPong = false;
     impl_->process = new QProcess();
     impl_->process->setProcessChannelMode(QProcess::SeparateChannels);
 
@@ -130,7 +151,14 @@ bool ArtifactPluginSandbox::start() {
         return false;
     }
 
-    sendCommand(makeLoadCommand(impl_->pluginDllPath));
+    if (!sendCommand(makeLoadCommand(impl_->pluginDllPath))) {
+        impl_->lastErrorMsg = "Failed to send plugin load command";
+        impl_->process->terminate();
+        impl_->process->waitForFinished(1000);
+        delete impl_->process;
+        impl_->process = nullptr;
+        return false;
+    }
 
     impl_->heartbeatTimer = new QTimer();
     QObject::connect(impl_->heartbeatTimer, &QTimer::timeout,
@@ -143,6 +171,7 @@ bool ArtifactPluginSandbox::start() {
 }
 
 void ArtifactPluginSandbox::stop() {
+    impl_->expectingPong = false;
     if (impl_->heartbeatTimer) {
         impl_->heartbeatTimer->stop();
         delete impl_->heartbeatTimer;
@@ -170,8 +199,8 @@ bool ArtifactPluginSandbox::sendCommand(const QJsonObject& command) {
     }
     QJsonDocument doc(command);
     QByteArray data = doc.toJson(QJsonDocument::Compact) + "\n";
-    impl_->process->write(data);
-    return true;
+    const qint64 written = impl_->process->write(data);
+    return written == data.size();
 }
 
 bool ArtifactPluginSandbox::isRunning() const {
@@ -190,6 +219,9 @@ void ArtifactPluginSandbox::onHeartbeat() {
     if (!impl_->process || impl_->process->state() != QProcess::Running) return;
 
     if (impl_->expectingPong) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - impl_->heartbeatSentAt).count();
+        if (elapsed < kHeartbeatTimeoutMs) return;
         impl_->crashes++;
         impl_->expectingPong = false;
 
@@ -215,8 +247,10 @@ void ArtifactPluginSandbox::onHeartbeat() {
     }
 
     ++impl_->heartbeatId;
-    sendCommand(makePingCommand(impl_->heartbeatId));
-    impl_->expectingPong = true;
+    if (sendCommand(makePingCommand(impl_->heartbeatId))) {
+        impl_->heartbeatSentAt = std::chrono::steady_clock::now();
+        impl_->expectingPong = true;
+    }
 }
 
 void ArtifactPluginSandbox::onReadyReadStdout() {
@@ -229,12 +263,21 @@ void ArtifactPluginSandbox::onReadyReadStdout() {
 void ArtifactPluginSandbox::onReadyReadStderr() {
     if (impl_->process) {
         impl_->stderrBuffer.append(impl_->process->readAllStandardError());
-        impl_->consumeJsonLines(&impl_->stderrBuffer, this);
+        if (impl_->stderrBuffer.size() > kMaxProtocolLineBytes) {
+            impl_->stderrBuffer.remove(0,
+                impl_->stderrBuffer.size() - kMaxProtocolLineBytes);
+        }
     }
 }
 
 void ArtifactPluginSandbox::onProcessFinished(int exitCode, int status) {
-    if (status == 1 && impl_->heartbeatTimer && impl_->heartbeatTimer->isActive()) {
+    if (impl_->heartbeatTimer && impl_->heartbeatTimer->isActive()) {
+        impl_->lastErrorMsg = "Plugin process exited unexpectedly (code=" +
+                              std::to_string(exitCode) + ", status=" +
+                              std::to_string(status) + ")";
+        QProcess* finishedProcess = impl_->process;
+        impl_->process = nullptr;
+        if (finishedProcess) finishedProcess->deleteLater();
         impl_->crashes++;
         if (impl_->crashes >= kMaxCrashCount) {
             impl_->lastErrorMsg = "Plugin process crashed " + std::to_string(impl_->crashes) + " times";
@@ -246,6 +289,11 @@ void ArtifactPluginSandbox::onProcessFinished(int exitCode, int status) {
         }
         if (impl_->crashCallback) {
             impl_->crashCallback(impl_->pluginId, impl_->crashes);
+        }
+        if (impl_->heartbeatTimer) {
+            impl_->heartbeatTimer->stop();
+            delete impl_->heartbeatTimer;
+            impl_->heartbeatTimer = nullptr;
         }
         if (start()) {
             if (impl_->restartCallback) {

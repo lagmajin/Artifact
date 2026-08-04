@@ -33,6 +33,8 @@ module;
 
 #include <QObject>
 #include <QString>
+#include <QJsonDocument>
+#include <QJsonParseError>
 
 #include <QStringList>
 #include <QTimer>
@@ -209,23 +211,65 @@ using ArtifactCore::String;
     }
 
     bool loadLatestRecoveryPoint(String* outJsonUtf8, String* outPath = nullptr) {
-      if (!outJsonUtf8) return false;
+      if (!outJsonUtf8) {
+        status_ = AutoSaveStatus::SaveFailed;
+        lastError_ = QStringLiteral("Recovery output buffer is null");
+        return false;
+      }
+      outJsonUtf8->clear();
       QDir dir(ensureAutoSaveDir());
-      if (!dir.exists()) return false;
+      if (!dir.exists()) {
+        status_ = AutoSaveStatus::SaveFailed;
+        lastError_ = QStringLiteral("Auto-save directory does not exist");
+        return false;
+      }
 
       QFileInfoList files = dir.entryInfoList(QStringList() << QStringLiteral("*.autosave.*.json"), QDir::Files, QDir::Time);
-      if (files.isEmpty()) return false;
+      if (files.isEmpty()) {
+        status_ = AutoSaveStatus::SaveFailed;
+        lastError_ = QStringLiteral("No recovery point is available");
+        return false;
+      }
 
-      const QString latest = files.first().absoluteFilePath();
-      QFile file(latest);
-      if (!file.open(QIODevice::ReadOnly)) return false;
+      QString lastFailure;
+      for (const QFileInfo& fileInfo : files) {
+        const QString candidatePath = fileInfo.absoluteFilePath();
+        QFile file(candidatePath);
+        if (!file.open(QIODevice::ReadOnly)) {
+          lastFailure = QStringLiteral("Failed to open recovery file: %1").arg(candidatePath);
+          continue;
+        }
 
-      const QByteArray contents = file.readAll();
-      *outJsonUtf8 = String(contents.constData(), static_cast<std::size_t>(contents.size()));
-      file.close();
-      if (outPath) *outPath = String(latest.toUtf8().constData(), static_cast<std::size_t>(latest.toUtf8().size()));
-      status_ = AutoSaveStatus::RecoveringFromCrash;
-      return !outJsonUtf8->isEmpty();
+        const QByteArray contents = file.readAll();
+        file.close();
+        if (contents.isEmpty()) {
+          lastFailure = QStringLiteral("Recovery file is empty: %1").arg(candidatePath);
+          continue;
+        }
+
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(contents, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+          lastFailure = QStringLiteral("Recovery file contains invalid JSON: %1")
+                            .arg(candidatePath);
+          continue;
+        }
+
+        *outJsonUtf8 = String(contents.constData(), static_cast<std::size_t>(contents.size()));
+        if (outPath) {
+          *outPath = String(candidatePath.toUtf8().constData(),
+                            static_cast<std::size_t>(candidatePath.toUtf8().size()));
+        }
+        status_ = AutoSaveStatus::RecoveringFromCrash;
+        lastError_.clear();
+        return true;
+      }
+
+      status_ = AutoSaveStatus::SaveFailed;
+      lastError_ = lastFailure.isEmpty()
+                       ? QStringLiteral("No valid recovery point is available")
+                       : lastFailure;
+      return false;
     }
   };
 

@@ -14,6 +14,7 @@ import Color.Float;
 import Color.LUT;
 import Color.ACES;
 import Color.ColorSpace;
+import Color.GamutConversion;
 
 namespace Artifact {
 
@@ -207,29 +208,49 @@ ArtifactColorScienceManager::convertColor(const ArtifactCore::FloatColor &color,
   std::function<ArtifactCore::FloatColor(const ArtifactCore::FloatColor &)>
       converter;
 
-  // For now, implement basic conversions
-  // In a full implementation, this would use the existing ColorSpace
-  // infrastructure
-  if (from == ArtifactCore::ColorSpace::sRGB &&
-      to == ArtifactCore::ColorSpace::ACES_AP0) {
-    converter =
-        [](const ArtifactCore::FloatColor &c) -> ArtifactCore::FloatColor {
-      // Simple sRGB to ACEScg approximation
-      return FloatColor(c.r() * 0.6131f, c.g() * 0.6698f, c.b() * 0.5171f,
-                        c.a());
+  const auto gamutFor = [](const ArtifactCore::ColorSpace space) {
+    switch (space) {
+      case ArtifactCore::ColorSpace::Rec709: return ArtifactCore::Gamut::Rec709;
+      case ArtifactCore::ColorSpace::Rec2020: return ArtifactCore::Gamut::Rec2020;
+      case ArtifactCore::ColorSpace::P3: return ArtifactCore::Gamut::DCI_P3;
+      case ArtifactCore::ColorSpace::ACES_AP0: return ArtifactCore::Gamut::ACES_AP0;
+      case ArtifactCore::ColorSpace::ACES_AP1: return ArtifactCore::Gamut::ACES_AP1;
+      case ArtifactCore::ColorSpace::Linear:
+      case ArtifactCore::ColorSpace::sRGB:
+      default: return ArtifactCore::Gamut::sRGB;
+    }
+  };
+  const ArtifactCore::Gamut sourceGamut = gamutFor(from);
+  const ArtifactCore::Gamut targetGamut = gamutFor(to);
+  const auto isEncoded = [](const ArtifactCore::ColorSpace space) {
+    return space == ArtifactCore::ColorSpace::sRGB ||
+           space == ArtifactCore::ColorSpace::Rec709 ||
+           space == ArtifactCore::ColorSpace::P3;
+  };
+  const bool sourceEncoded = isEncoded(from);
+  const bool targetEncoded = isEncoded(to);
+  converter = [sourceGamut, targetGamut, sourceEncoded, targetEncoded](
+                  const ArtifactCore::FloatColor &c) {
+    const auto decode = [](const float value) {
+      return ArtifactCore::ColorSpaceConverter::removeGamma(
+          value, ArtifactCore::GammaFunction::sRGB);
     };
-  } else if (from == ArtifactCore::ColorSpace::ACES_AP0 &&
-             to == ArtifactCore::ColorSpace::sRGB) {
-    converter =
-        [](const ArtifactCore::FloatColor &c) -> ArtifactCore::FloatColor {
-      // Simple ACEScg to sRGB approximation
-      return FloatColor(c.r() * 1.7047f, c.g() * 1.4927f, c.b() * 1.9325f,
-                        c.a());
+    const auto encode = [](const float value) {
+      return ArtifactCore::ColorSpaceConverter::applyGamma(
+          value, ArtifactCore::GammaFunction::sRGB);
     };
-  } else {
-    // Identity conversion for unsupported spaces
-    converter = [](const ArtifactCore::FloatColor &c) { return c; };
-  }
+    const float sourceR = sourceEncoded ? decode(c.r()) : c.r();
+    const float sourceG = sourceEncoded ? decode(c.g()) : c.g();
+    const float sourceB = sourceEncoded ? decode(c.b()) : c.b();
+    float r = 0.0f;
+    float g = 0.0f;
+    float b = 0.0f;
+    ArtifactCore::ColorGamutConversion::convert(
+        sourceR, sourceG, sourceB, sourceGamut, targetGamut, r, g, b);
+    return ArtifactCore::FloatColor(targetEncoded ? encode(r) : r,
+                                    targetEncoded ? encode(g) : g,
+                                    targetEncoded ? encode(b) : b, c.a());
+  };
 
   // Cache the converter
   impl_->conversionCache_[key] = converter;

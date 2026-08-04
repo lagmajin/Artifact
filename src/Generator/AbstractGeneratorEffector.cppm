@@ -50,6 +50,7 @@ import Utils.String.UniString;
 import Core.Parallel;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
+import Artifact.Layer.Image;
 
 namespace Artifact
 {
@@ -118,8 +119,19 @@ namespace Artifact
     if (!layer || !impl_->enabled_) {
       return;
     }
-    // TODO: レイヤーに適用
-    qDebug() << "[AbstractGeneratorEffector] Applied to layer";
+    apply();
+    if (impl_->output_.image().isEmpty()) {
+      qWarning() << "[AbstractGeneratorEffector] Generated output is empty";
+      return;
+    }
+    auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer);
+    if (!imageLayer) {
+      qWarning() << "[AbstractGeneratorEffector] Target layer is not an image layer";
+      return;
+    }
+    imageLayer->setFromImageBuffer(impl_->output_.image());
+    qDebug() << "[AbstractGeneratorEffector] Applied generated image to layer"
+             << impl_->output_.width() << "x" << impl_->output_.height();
   }
 
   void AbstractGeneratorEffector::setName(const UniString& name)

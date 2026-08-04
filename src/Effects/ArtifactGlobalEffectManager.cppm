@@ -53,13 +53,18 @@ namespace Artifact
   ~Impl();
   void loadPlugin();
   void unloadAllPlugins();
-  void factoryByID(const EffectID& id);
+  std::unique_ptr<ArtifactAbstractEffect> factoryByID(const EffectID& id);
  };
 
  ArtifactGlobalEffectManager::Impl::Impl() {}
  ArtifactGlobalEffectManager::Impl::~Impl() {}
- ArtifactGlobalEffectManager::ArtifactGlobalEffectManager() {}
- ArtifactGlobalEffectManager::~ArtifactGlobalEffectManager() {}
+ ArtifactGlobalEffectManager::ArtifactGlobalEffectManager()
+   : impl_(new Impl()) {}
+ ArtifactGlobalEffectManager::~ArtifactGlobalEffectManager()
+ {
+   delete impl_;
+   impl_ = nullptr;
+ }
 
  void ArtifactGlobalEffectManager::loadPlugin() noexcept
  {
@@ -72,6 +77,12 @@ namespace Artifact
      QDir(QCoreApplication::applicationDirPath()).filePath("plugins/effects"),
    };
    loader_.discoverAndLoad(paths, PluginLoadMode::Auto);
+   auto& registry = ArtifactCore::ArtifactPluginRegistry::instance();
+   for (const auto& descriptor :
+        registry.pluginsOfCategory(ArtifactCore::PluginCategory::Effect)) {
+     const std::string id = ArtifactCore::toStdString(descriptor.id);
+     if (!id.empty()) registry.activatePlugin(id);
+   }
  }
 
  void ArtifactGlobalEffectManager::Impl::unloadAllPlugins()
@@ -84,18 +95,24 @@ namespace Artifact
    impl_->unloadAllPlugins();
  }
 
- void ArtifactGlobalEffectManager::factoryByID(const EffectID& id)
+ std::unique_ptr<ArtifactAbstractEffect> ArtifactGlobalEffectManager::factoryByID(const EffectID& id)
  {
-   impl_->factoryByID(id);
+   return impl_->factoryByID(id);
  }
 
- void ArtifactGlobalEffectManager::Impl::factoryByID(const EffectID& id)
+ std::unique_ptr<ArtifactAbstractEffect> ArtifactGlobalEffectManager::Impl::factoryByID(const EffectID& id)
  {
    auto& registry = ArtifactPluginRegistry::instance();
    auto opt = registry.pluginById(id.toString().toStdString());
-   if (opt) {
-     return;
+   if (!opt || opt->category != ArtifactCore::PluginCategory::Effect ||
+       !registry.isActive(id.toString().toStdString())) {
+     return nullptr;
    }
+
+   auto effect = std::make_unique<ArtifactAbstractEffect>();
+   effect->setEffectID(id);
+   effect->setDisplayName(QStringLiteral("Plugin Effect: %1").arg(id.toString()));
+   return effect;
  }
 
 ArtifactGlobalEffectManager* ArtifactGlobalEffectManager::effectManager()
