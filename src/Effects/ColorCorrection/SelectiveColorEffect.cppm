@@ -58,6 +58,7 @@ public:
     std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
     std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
     mutable bool pipelineReady_ = false;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         dst = src;
@@ -92,12 +93,12 @@ public:
         };
         if (!pipelineReady_) { ArtifactCore::ComputePipelineDesc desc; desc.name="SelectiveColor/PSO"; desc.shaderSource=kSelectiveColorHlsl; desc.entryPoint="main"; desc.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL; desc.variables=vars; desc.variableCount=3; desc.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC; if (!executor_->build(desc) || !executor_->createShaderResourceBinding(true) || !executor_->setBuffer("SelectiveColorParams", paramsCB_)) { applyCPU(src,dst); return; } pipelineReady_ = true; }
         Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex; if (!createTextureFromImage(src, device_, &inputTex, "SelectiveColor/InputTexture")) { applyCPU(src,dst); return; }
-        Diligent::TextureDesc outDesc = inputTex->GetDesc(); outDesc.Usage = Diligent::USAGE_DEFAULT; outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE; outDesc.Name = "SelectiveColor/OutputTexture"; Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex; device_->CreateTexture(outDesc,nullptr,&outputTex); if (!outputTex) { applyCPU(src,dst); return; }
+        Diligent::TextureDesc outDesc = inputTex->GetDesc(); outDesc.Usage = Diligent::USAGE_DEFAULT; outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE; outDesc.Name = "SelectiveColor/OutputTexture"; if (!outputTex_ || outputTex_->GetDesc().Width != outDesc.Width || outputTex_->GetDesc().Height != outDesc.Height || outputTex_->GetDesc().Format != outDesc.Format || outputTex_->GetDesc().BindFlags != outDesc.BindFlags) { outputTex_.Release(); device_->CreateTexture(outDesc,nullptr,&outputTex_); } if (!outputTex_) { applyCPU(src,dst); return; }
         void* mapped=nullptr; context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped); if (!mapped) { applyCPU(src,dst); return; }
         ParamsCB params{}; params.strength=settings_.strength; params.relativeMode=settings_.relativeMode?1.0f:0.0f; params.preserveLuma=settings_.preserveLuma?1.0f:0.0f; for (int i=0;i<9;++i){ params.groups[i][0]=settings_.groups[i].cyan; params.groups[i][1]=settings_.groups[i].magenta; params.groups[i][2]=settings_.groups[i].yellow; params.groups[i][3]=settings_.groups[i].black; } std::memcpy(mapped,&params,sizeof(params)); context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
-        if (!executor_->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) || !executor_->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src,dst); return; }
+        if (!executor_->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) || !executor_->setTextureView("g_OutputTexture", outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src,dst); return; }
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1); executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        if (!readbackTexture(device_, context_, outputTex, dst, "SelectiveColor/StagingTexture", src.image().colorDescriptor())) { applyCPU(src,dst); return; }
+        if (!readbackTexture(device_, context_, outputTex_, dst, "SelectiveColor/StagingTexture", src.image().colorDescriptor())) { applyCPU(src,dst); return; }
     }
 
 private:

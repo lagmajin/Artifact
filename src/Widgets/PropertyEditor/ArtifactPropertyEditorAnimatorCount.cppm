@@ -17,6 +17,7 @@ module Artifact.Widgets.PropertyEditor;
 import Property.Abstract;
 import Artifact.Widgets.RelativeSpinBox;
 import Settings.Accessibility;
+import Translation.Manager;
 
 namespace Artifact {
 using namespace detail;
@@ -67,15 +68,18 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
   applyPropertyButtonPalette(addButton_, true);
   addButton_->setCallback([this]() {
         QMenu menu(this);
-        QAction *defaultAct = menu.addAction(QStringLiteral("Default Animator"));
+        auto text = [](const QString& key, const QString& fallback) {
+          return TranslationManager::instance().tr(key, fallback);
+        };
+        QAction *defaultAct = menu.addAction(text(QStringLiteral("property.animator.default"), QStringLiteral("Default Animator")));
         menu.addSeparator();
-        QAction *typewriterAct = menu.addAction(QStringLiteral("Typewriter Preset"));
-        QAction *slideUpAct = menu.addAction(QStringLiteral("Slide Up Preset"));
-        QAction *scaleInAct = menu.addAction(QStringLiteral("Scale In Preset"));
-        QAction *rotationInAct = menu.addAction(QStringLiteral("Rotation In Preset"));
-        QAction *trackingFadeAct = menu.addAction(QStringLiteral("Tracking Fade Preset"));
-        QAction *wigglyPositionAct = menu.addAction(QStringLiteral("Wiggly Position Preset"));
-        QAction *blurRevealAct = menu.addAction(QStringLiteral("Blur Reveal Preset"));
+        QAction *typewriterAct = menu.addAction(text(QStringLiteral("property.animator.typewriter"), QStringLiteral("Typewriter Preset")));
+        QAction *slideUpAct = menu.addAction(text(QStringLiteral("property.animator.slide_up"), QStringLiteral("Slide Up Preset")));
+        QAction *scaleInAct = menu.addAction(text(QStringLiteral("property.animator.scale_in"), QStringLiteral("Scale In Preset")));
+        QAction *rotationInAct = menu.addAction(text(QStringLiteral("property.animator.rotation_in"), QStringLiteral("Rotation In Preset")));
+        QAction *trackingFadeAct = menu.addAction(text(QStringLiteral("property.animator.tracking_fade"), QStringLiteral("Tracking Fade Preset")));
+        QAction *wigglyPositionAct = menu.addAction(text(QStringLiteral("property.animator.wiggly_position"), QStringLiteral("Wiggly Position Preset")));
+        QAction *blurRevealAct = menu.addAction(text(QStringLiteral("property.animator.blur_reveal"), QStringLiteral("Blur Reveal Preset")));
 
         defaultAct->setToolTip(QStringLiteral("Standard animator with blank settings"));
         typewriterAct->setToolTip(QStringLiteral("Typewriter animation: scale, opacity, tracking, blur"));

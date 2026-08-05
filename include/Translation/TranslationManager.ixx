@@ -40,6 +40,8 @@ export namespace Artifact
 
   QStringList availableLocales() const;
   QStringList loadedKeys() const;
+  QStringList missingKeys() const;
+  QStringList untranslatedKeys() const;
 
   void clear();
  };

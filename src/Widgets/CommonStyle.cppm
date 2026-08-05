@@ -28,7 +28,6 @@ module;
 #include <QListView>
 #include <QStyleOptionMenuItem>
 #include <QStyleOptionToolButton>
-#include <QStyleFactory>
 #include <QBitmap>
 #include <QEvent>
 #include <QFontMetrics>
@@ -256,7 +255,9 @@ void StudioSectionStack::updateChildGeometry() {
 }
 
 ArtifactCommonStyle::ArtifactCommonStyle(QStyle* baseStyle)
-    : QProxyStyle(baseStyle ? baseStyle : QStyleFactory::create(QStringLiteral("Fusion"))) {}
+    : QCommonStyle() {
+  (void)baseStyle;
+}
 
 ArtifactCommonStyle::~ArtifactCommonStyle() = default;
 
@@ -494,12 +495,12 @@ void ArtifactCommonStyle::polish(QWidget* widget)
     widget->installEventFilter(new RoundedWindowMaskFilter(widget, 8, true));
   }
 
-  QProxyStyle::polish(widget);
+  QCommonStyle::polish(widget);
 }
 
 void ArtifactCommonStyle::polish(QPalette& palette)
 {
-  QProxyStyle::polish(palette);
+  QCommonStyle::polish(palette);
 }
 
 int ArtifactCommonStyle::pixelMetric(PixelMetric metric, const QStyleOption* option,
@@ -525,7 +526,7 @@ int ArtifactCommonStyle::pixelMetric(PixelMetric metric, const QStyleOption* opt
   default:
     break;
   }
-  return QProxyStyle::pixelMetric(metric, option, widget);
+  return QCommonStyle::pixelMetric(metric, option, widget);
 }
 
 QSize ArtifactCommonStyle::sizeFromContents(ContentsType type,
@@ -545,14 +546,14 @@ QSize ArtifactCommonStyle::sizeFromContents(ContentsType type,
     }
   }
 
-  return QProxyStyle::sizeFromContents(type, option, contentsSize, widget);
+  return QCommonStyle::sizeFromContents(type, option, contentsSize, widget);
 }
 
 void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption* option,
                                       QPainter* painter, const QWidget* widget) const
 {
   if (!option || !painter) {
-    return QProxyStyle::drawControl(element, option, painter, widget);
+    return QCommonStyle::drawControl(element, option, painter, widget);
   }
 
   const auto& theme = ArtifactCore::currentDCCTheme();
@@ -593,7 +594,7 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
       copy.palette.setColor(QPalette::Disabled, QPalette::Text, disabledText);
       copy.palette.setColor(QPalette::Disabled, QPalette::WindowText, disabledText);
       painter->restore();
-      return QProxyStyle::drawControl(element, &copy, painter, widget);
+      return QCommonStyle::drawControl(element, &copy, painter, widget);
     }
   }
 
@@ -635,7 +636,7 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
     }
   }
 
-  QProxyStyle::drawControl(element, option, painter, widget);
+  QCommonStyle::drawControl(element, option, painter, widget);
 }
 
 void ArtifactCommonStyle::drawPrimitive(PrimitiveElement element, const QStyleOption* option,
@@ -643,7 +644,7 @@ void ArtifactCommonStyle::drawPrimitive(PrimitiveElement element, const QStyleOp
 {
   if (element == PE_PanelMenu) {
     if (!option || !painter) {
-      return QProxyStyle::drawPrimitive(element, option, painter, widget);
+      return QCommonStyle::drawPrimitive(element, option, painter, widget);
     }
     const auto& theme = ArtifactCore::currentDCCTheme();
     const QColor menuSurface(theme.secondaryBackgroundColor);
@@ -666,7 +667,7 @@ void ArtifactCommonStyle::drawPrimitive(PrimitiveElement element, const QStyleOp
   if (element == PE_Widget) {
     if (widget && widget->property("artifactDockTab").toBool()) {
       if (!option || !painter) {
-        return QProxyStyle::drawPrimitive(element, option, painter, widget);
+        return QCommonStyle::drawPrimitive(element, option, painter, widget);
       }
       painter->save();
       painter->setRenderHint(QPainter::Antialiasing, true);
@@ -696,13 +697,13 @@ void ArtifactCommonStyle::drawPrimitive(PrimitiveElement element, const QStyleOp
     drawFramedToolButtonSurface(option, painter, widget);
     return;
   }
-  QProxyStyle::drawPrimitive(element, option, painter, widget);
+  QCommonStyle::drawPrimitive(element, option, painter, widget);
 }
 
 void ArtifactCommonStyle::drawComplexControl(ComplexControl control, const QStyleOptionComplex* option,
                                              QPainter* painter, const QWidget* widget) const
 {
-  QProxyStyle::drawComplexControl(control, option, painter, widget);
+  QCommonStyle::drawComplexControl(control, option, painter, widget);
 }
 
 }

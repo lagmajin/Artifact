@@ -51,7 +51,6 @@ module;
 #include <QResizeEvent>
 #include <QRegion>
 #include <QSet>
-#include <QSettings>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QShortcut>
@@ -164,6 +163,8 @@ import ParadeScopeWidget;
 import Codec.Thumbnail.FFmpeg;
 import UI.ShortcutBindings;
 import Undo.UndoManager;
+import Configuration.LayeredConfigStore;
+import Configuration.ConfigLayer;
 
 namespace Artifact {
 
@@ -1781,16 +1782,16 @@ public:
           lastRecipeDescriptor_ = QJsonObject{};
         }
         action();
-        QSettings settings;
+        auto& config = ArtifactCore::LayeredConfigStore::instance();
         const QString usageKey = QStringLiteral("automation/commandUsage/%1")
                                      .arg(QString::number(static_cast<qulonglong>(qHash(label)), 16));
-        settings.setValue(usageKey, settings.value(usageKey, 0).toInt() + 1);
-        QStringList recent = settings.value(
+        config.setValue(usageKey, config.value(usageKey, 0).toInt() + 1);
+        QStringList recent = config.value(
             QStringLiteral("automation/recentCommands")).toStringList();
         recent.removeAll(label);
         recent.prepend(label);
         while (recent.size() > 12) recent.removeLast();
-        settings.setValue(QStringLiteral("automation/recentCommands"), recent);
+        config.setValue(QStringLiteral("automation/recentCommands"), recent);
       });
     };
     if (lastRepeatableAction_) {
@@ -1805,8 +1806,8 @@ public:
         if (!accepted || name.isEmpty()) return;
         actionRecipes_.insert(name, lastRepeatableAction_);
         if (!lastRecipeDescriptor_.isEmpty()) {
-          QSettings settings;
-          const QByteArray stored = settings.value(
+          auto& config = ArtifactCore::LayeredConfigStore::instance();
+          const QByteArray stored = config.value(
               QStringLiteral("automation/parameterRecipes")).toByteArray();
           QJsonArray recipes = QJsonDocument::fromJson(stored).array();
           QJsonObject descriptor = lastRecipeDescriptor_;
@@ -1821,8 +1822,8 @@ public:
             }
           }
           if (!replaced) recipes.append(descriptor);
-          settings.setValue(QStringLiteral("automation/parameterRecipes"),
-                            QJsonDocument(recipes).toJson(QJsonDocument::Compact));
+          config.setValue(QStringLiteral("automation/parameterRecipes"),
+                          QJsonDocument(recipes).toJson(QJsonDocument::Compact));
         }
       });
     }
@@ -1832,9 +1833,9 @@ public:
       add(QStringLiteral("Recipe: %1").arg(recipeName), recipeAction, true);
     }
     {
-      QSettings settings;
+      auto& config = ArtifactCore::LayeredConfigStore::instance();
       const QJsonArray recipes = QJsonDocument::fromJson(
-          settings.value(QStringLiteral("automation/parameterRecipes")).toByteArray()).array();
+          config.value(QStringLiteral("automation/parameterRecipes")).toByteArray()).array();
       for (const auto &value : recipes) {
         const QJsonObject descriptor = value.toObject();
         const QString name = descriptor.value(QStringLiteral("name")).toString();
@@ -2957,8 +2958,8 @@ public:
     add(QStringLiteral("Palette: Pin or Unpin Command..."),
         [this, pinnableCommands]() {
           if (pinnableCommands.isEmpty()) return;
-          QSettings settings;
-          QStringList favorites = settings.value(
+          auto& config = ArtifactCore::LayeredConfigStore::instance();
+          QStringList favorites = config.value(
               QStringLiteral("automation/favoriteCommands")).toStringList();
           QStringList choices;
           choices.reserve(pinnableCommands.size());
@@ -2978,24 +2979,30 @@ public:
           const QString command = pinnableCommands.at(index);
           if (favorites.contains(command)) favorites.removeAll(command);
           else favorites.prepend(command);
-          settings.setValue(QStringLiteral("automation/favoriteCommands"), favorites);
+          config.setValue(QStringLiteral("automation/favoriteCommands"), favorites);
         });
     add(QStringLiteral("Palette: Reset Usage Ranking"), [this]() {
       if (QMessageBox::question(
               this, QStringLiteral("Reset Command Ranking"),
               QStringLiteral("Clear command usage and recent-command history?"))
           != QMessageBox::Yes) return;
-      QSettings settings;
-      settings.beginGroup(QStringLiteral("automation/commandUsage"));
-      settings.remove(QString());
-      settings.endGroup();
-      settings.remove(QStringLiteral("automation/recentCommands"));
+      auto& config = ArtifactCore::LayeredConfigStore::instance();
+      for (const auto& key : config.allKeys()) {
+        if (key.startsWith(QStringLiteral("automation/commandUsage/"))) {
+          config.removeValue(ArtifactCore::ConfigLayer::Project, key.toStdString());
+          config.removeValue(ArtifactCore::ConfigLayer::User, key.toStdString());
+        }
+      }
+      config.removeValue(ArtifactCore::ConfigLayer::Project,
+                         "automation/recentCommands");
+      config.removeValue(ArtifactCore::ConfigLayer::User,
+                         "automation/recentCommands");
     });
 
     QVector<int> rankedIndices;
     rankedIndices.reserve(items.size());
     for (int i = 0; i < items.size(); ++i) rankedIndices.push_back(i);
-    QSettings usageSettings;
+    auto& usageSettings = ArtifactCore::LayeredConfigStore::instance();
     const QStringList recentCommands = usageSettings.value(
         QStringLiteral("automation/recentCommands")).toStringList();
     const QStringList favoriteCommands = usageSettings.value(
@@ -3815,16 +3822,16 @@ public:
           const auto rotation = layer->rotation3D();
           const auto scale = QVector3D(layer->transform3D().scaleX(),
                                        layer->transform3D().scaleY(), 1.0f);
-          QSettings settings;
-          settings.setValue(QStringLiteral("viewport/3dTransformClipboard"),
-                            QVariantList{
-                                position.x(), position.y(), position.z(),
-                                rotation.x(), rotation.y(), rotation.z(),
-                                scale.x(), scale.y(), scale.z()});
+          ArtifactCore::LayeredConfigStore::instance().setValue(
+              QStringLiteral("Viewport/3DTransformClipboard"),
+              QVariantList{
+                  position.x(), position.y(), position.z(), rotation.x(),
+                  rotation.y(), rotation.z(), scale.x(), scale.y(), scale.z()});
         });
-        const QSettings transformSettings;
-        const QVariantList transformClipboard = transformSettings.value(
-            QStringLiteral("viewport/3dTransformClipboard")).toList();
+        const QVariantList transformClipboard =
+            ArtifactCore::LayeredConfigStore::instance()
+                .value(QStringLiteral("Viewport/3DTransformClipboard"))
+                .toList();
         add(QStringLiteral("Paste 3D Transform"), [this, transformClipboard]() {
           if (!controller_ || transformClipboard.size() < 8) return;
           const auto finite = [](float value) {
@@ -3850,8 +3857,11 @@ public:
           controller_->setSelected3DTransform(position, rotation, scale);
         }, transformClipboard.size() >= 8);
         add(QStringLiteral("Clear 3D Transform Clipboard"), []() {
-          QSettings settings;
-          settings.remove(QStringLiteral("viewport/3dTransformClipboard"));
+          auto& config = ArtifactCore::LayeredConfigStore::instance();
+          config.removeValue(ArtifactCore::ConfigLayer::Project,
+                             QStringLiteral("Viewport/3DTransformClipboard"));
+          config.removeValue(ArtifactCore::ConfigLayer::User,
+                             QStringLiteral("Viewport/3DTransformClipboard"));
         }, transformClipboard.size() >= 8);
       }
       if (controller_->isShowMotionPathOverlay() && selected) {
@@ -5912,15 +5922,15 @@ protected:
                 std::max(2.0f, state.outerHalfH - 2.0f));
           }
           gizmo->setState(state);
-          QSettings trackerSettings;
-          trackerSettings.setValue(QStringLiteral("trackPoint/featureWidth"),
-                                   state.innerHalfW * 2.0f);
-          trackerSettings.setValue(QStringLiteral("trackPoint/featureHeight"),
-                                   state.innerHalfH * 2.0f);
-          trackerSettings.setValue(QStringLiteral("trackPoint/searchWidth"),
-                                   state.outerHalfW * 2.0f);
-          trackerSettings.setValue(QStringLiteral("trackPoint/searchHeight"),
-                                   state.outerHalfH * 2.0f);
+          auto &config = ArtifactCore::LayeredConfigStore::instance();
+          config.setValue(QStringLiteral("Viewport/TrackPoint/FeatureWidth"),
+                          state.innerHalfW * 2.0f);
+          config.setValue(QStringLiteral("Viewport/TrackPoint/FeatureHeight"),
+                          state.innerHalfH * 2.0f);
+          config.setValue(QStringLiteral("Viewport/TrackPoint/SearchWidth"),
+                          state.outerHalfW * 2.0f);
+          config.setValue(QStringLiteral("Viewport/TrackPoint/SearchHeight"),
+                          state.outerHalfH * 2.0f);
           controller_->markRenderDirty();
           event->accept();
           return;
@@ -5935,15 +5945,15 @@ protected:
           if (event->modifiers().testFlag(Qt::ShiftModifier)) {
             const float delta = increase ? 5.0f : -5.0f;
             motionSketch->setSampleRate(motionSketch->sampleRate() + delta);
-            QSettings motionSettings;
-            motionSettings.setValue(QStringLiteral("motionSketch/sampleRate"),
-                                    motionSketch->sampleRate());
+            ArtifactCore::LayeredConfigStore::instance().setValue(
+                QStringLiteral("Viewport/MotionSketch/SampleRate"),
+                motionSketch->sampleRate());
           } else {
             const float delta = increase ? 0.1f : -0.1f;
             motionSketch->setSmoothing(motionSketch->smoothing() + delta);
-            QSettings motionSettings;
-            motionSettings.setValue(QStringLiteral("motionSketch/smoothing"),
-                                    motionSketch->smoothing() * 100.0f);
+            ArtifactCore::LayeredConfigStore::instance().setValue(
+                QStringLiteral("Viewport/MotionSketch/Smoothing"),
+                motionSketch->smoothing() * 100.0f);
           }
           event->accept();
           return;
@@ -5977,9 +5987,9 @@ protected:
                                            ->motionSketchTool()
                                      : nullptr) {
           motionSketch->setShowWireframe(!motionSketch->showWireframe());
-          QSettings motionSettings;
-          motionSettings.setValue(QStringLiteral("motionSketch/showWireframe"),
-                                  motionSketch->showWireframe());
+          ArtifactCore::LayeredConfigStore::instance().setValue(
+              QStringLiteral("Viewport/MotionSketch/ShowWireframe"),
+              motionSketch->showWireframe());
           event->accept();
           return;
         }
@@ -5996,9 +6006,9 @@ protected:
                                            ->motionSketchTool()
                                      : nullptr) {
           motionSketch->setShowBackground(!motionSketch->showBackground());
-          QSettings motionSettings;
-          motionSettings.setValue(QStringLiteral("motionSketch/showBackground"),
-                                  motionSketch->showBackground());
+          ArtifactCore::LayeredConfigStore::instance().setValue(
+              QStringLiteral("Viewport/MotionSketch/ShowBackground"),
+              motionSketch->showBackground());
           event->accept();
           return;
         }
@@ -7193,7 +7203,7 @@ protected:
       const QRect bounds = hud_->property("artifactHudViewportBounds").toRect();
       const QPoint offset = hud_->pos() - bounds.topLeft();
       hud_->setProperty("artifactHudOffset", offset);
-      QSettings().setValue(settingsKey_, offset);
+      ArtifactCore::LayeredConfigStore::instance().setValue(settingsKey_, offset);
       event->accept();
       return;
     }
@@ -10108,8 +10118,8 @@ public:
 
   void toggleViewportToolboxes(ArtifactCompositionEditor *owner) {
     viewportToolboxesVisible_ = !viewportToolboxesVisible_;
-    QSettings().setValue(QStringLiteral("CompositionViewer/Hud/Visible"),
-                         viewportToolboxesVisible_);
+    ArtifactCore::LayeredConfigStore::instance().setValue(
+        QStringLiteral("Viewport/Hud/Visible"), viewportToolboxesVisible_);
     syncOverlayGeometry(owner);
   }
 
@@ -10201,8 +10211,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   setAutoFillBackground(true);
   impl_->viewportToolboxesVisible_ =
-      QSettings().value(QStringLiteral("CompositionViewer/Hud/Visible"), true)
-          .toBool();
+      ArtifactCore::LayeredConfigStore::instance().valueBool(
+          QStringLiteral("Viewport/Hud/Visible"), true);
 
   const auto theme = ArtifactCore::currentDCCTheme();
   QPalette editorPalette = palette();
@@ -11277,9 +11287,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   configureHud(impl_->toolHud_);
   impl_->toolHud_->setProperty(
       "artifactHudOffset",
-      QSettings().value(QStringLiteral("CompositionViewer/Hud/ToolOffset")));
+      ArtifactCore::LayeredConfigStore::instance().value(
+          QStringLiteral("Viewport/Hud/ToolOffset")));
   impl_->toolHud_->addWidget(new ViewportHudGrip(
-      impl_->toolHud_, QStringLiteral("CompositionViewer/Hud/ToolOffset")));
+      impl_->toolHud_, QStringLiteral("Viewport/Hud/ToolOffset")));
   moveToolbarWidget(impl_->topToolbar_, impl_->toolHud_, impl_->toolModeButton_);
   moveToolbarWidget(impl_->topToolbar_, impl_->toolHud_, impl_->gizmoModeButton_);
   moveToolbarWidget(impl_->topToolbar_, impl_->toolHud_, impl_->pivotModeButton_);
@@ -11301,9 +11312,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   configureHud(impl_->zoomHud_);
   impl_->zoomHud_->setProperty(
       "artifactHudOffset",
-      QSettings().value(QStringLiteral("CompositionViewer/Hud/ZoomOffset")));
+      ArtifactCore::LayeredConfigStore::instance().value(
+          QStringLiteral("Viewport/Hud/ZoomOffset")));
   impl_->zoomHud_->addWidget(new ViewportHudGrip(
-      impl_->zoomHud_, QStringLiteral("CompositionViewer/Hud/ZoomOffset")));
+      impl_->zoomHud_, QStringLiteral("Viewport/Hud/ZoomOffset")));
   impl_->resetAction_->setIcon(
       loadIconWithFallback(QStringLiteral("Studio/toolbar_home_surface.svg")));
   impl_->zoomInAction_->setIcon(

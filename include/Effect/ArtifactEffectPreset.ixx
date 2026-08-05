@@ -42,12 +42,13 @@ export module Artifact.Effect.Preset;
 
 
 import Artifact.Effect.Abstract;
+import Serialization.ISerializable;
 
 export namespace Artifact
 {
 
 // エフェクトプリセット（AfterEffectsの「エフェクトお気に入りに保存」一样的機能）
-class ArtifactEffectPreset
+class ArtifactEffectPreset : public ArtifactCore::Serialization::ISerializable
 {
 public:
     using PresetID = QString;  // UUIDベースのID
@@ -103,6 +104,10 @@ public:
     // シリアライズ
     QJsonObject toJson() const;
     static ArtifactEffectPreset fromJson(const QJsonObject& json);
+    QJsonObject serialize() const override { return toJson(); }
+    bool deserialize(const QJsonObject& json) override;
+    QString typeName() const override { return QStringLiteral("ArtifactEffectPreset"); }
+    int schemaVersion() const override { return 1; }
 
     // 適用（既存のArtifactAbstractEffectにパラメータを適用）
     void applyTo(ArtifactAbstractEffect* effect) const;

@@ -32,6 +32,7 @@ import ApplicationSettingDialog;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Utils.Path;
+import Translation.Manager;
 
 namespace Artifact {
  using namespace ArtifactCore;
@@ -91,64 +92,64 @@ private:
   parentWidget_ = mainWindow ? mainWindow : menu;
   auto& shortcuts = ShortcutBindings::instance();
   // Basic edit actions
-  undoAction = new QAction("元に戻す (&U)");
+  undoAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.undo"), QStringLiteral("元に戻す (&U)")));
   undoAction->setShortcut(shortcuts.shortcut(ShortcutId::Undo));
   undoAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_undo.svg")));
 
-  redoAction = new QAction("やり直し (&R)");
+  redoAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.redo"), QStringLiteral("やり直し (&R)")));
   redoAction->setShortcut(shortcuts.shortcut(ShortcutId::Redo));
   redoAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_redo.svg")));
 
-  duplicateAction = new QAction("複製 (&D)");
+  duplicateAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.duplicate"), QStringLiteral("複製 (&D)")));
   duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
   duplicateAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_duplicate.svg")));
 
-  splitAction = new QAction("レイヤーを分割 (&S)");
+  splitAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.split_layer"), QStringLiteral("レイヤーを分割 (&S)")));
   splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
   splitAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_split.svg")));
 
-  trimInAction = new QAction("インポイントを現在の時間にトリム");
+  trimInAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.trim_in"), QStringLiteral("インポイントを現在の時間にトリム")));
   trimInAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_trim_in.svg")));
-  trimOutAction = new QAction("アウトポイントを現在の時間にトリム");
+  trimOutAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.trim_out"), QStringLiteral("アウトポイントを現在の時間にトリム")));
   trimOutAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_trim_out.svg")));
 
-  selectAllAction = new QAction("すべて選択 (&A)");
+  selectAllAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.select_all"), QStringLiteral("すべて選択 (&A)")));
   selectAllAction->setShortcut(QKeySequence::SelectAll);
   selectAllAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_all.svg")));
 
-  selectNoneAction = new QAction("選択解除");
+  selectNoneAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.select_none"), QStringLiteral("選択解除")));
   selectNoneAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A));
   selectNoneAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_none.svg")));
 
-  invertSelectionAction = new QAction("選択を反転");
+  invertSelectionAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.invert_selection"), QStringLiteral("選択を反転")));
   invertSelectionAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_invert.svg")));
 
-  selectSameTypeAction = new QAction("同じ種類を選択");
+  selectSameTypeAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.select_same_type"), QStringLiteral("同じ種類を選択")));
   selectSameTypeAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_same_type.svg")));
 
-  findAction = new QAction("検索 (&F)...");
+  findAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.find"), QStringLiteral("検索 (&F)...")));
   findAction->setShortcut(QKeySequence::Find);
   findAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_find.svg")));
 
-  preferencesAction = new QAction("環境設定 (&P)...");
+  preferencesAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.preferences"), QStringLiteral("環境設定 (&P)...")));
   preferencesAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_preferences.svg")));
 
-  undoHistoryAction = new QAction("Undo 履歴 (&H)...");
+  undoHistoryAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.undo_history"), QStringLiteral("Undo 履歴 (&H)...")));
   undoHistoryAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_history.svg")));
 
-  copyAction_ = new QAction("コピー (&C)");
+  copyAction_ = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.copy"), QStringLiteral("コピー (&C)")));
   copyAction_->setShortcut(QKeySequence::Copy);
   copyAction_->setIcon(QIcon(resolveIconPath("Studio/editmenu_copy.svg")));
 
-  cutAction_ = new QAction("切り取り (&T)");
+  cutAction_ = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.cut"), QStringLiteral("切り取り (&T)")));
   cutAction_->setShortcut(QKeySequence::Cut);
   cutAction_->setIcon(QIcon(resolveIconPath("Studio/editmenu_cut.svg")));
 
-  pasteAction_ = new QAction("貼り付け (&P)");
+  pasteAction_ = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.paste"), QStringLiteral("貼り付け (&P)")));
   pasteAction_->setShortcut(QKeySequence::Paste);
   pasteAction_->setIcon(QIcon(resolveIconPath("Studio/editmenu_paste.svg")));
 
-  deleteAction_ = new QAction("削除 (&D)");
+  deleteAction_ = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.edit.delete"), QStringLiteral("削除 (&D)")));
   deleteAction_->setShortcut(QKeySequence::Delete);
   deleteAction_->setIcon(QIcon(resolveIconPath("Studio/editmenu_delete.svg")));
 
@@ -643,7 +644,7 @@ void ArtifactEditMenu::Impl::rebuildMenu() {
  W_OBJECT_IMPL(ArtifactEditMenu)
 
  ArtifactEditMenu::ArtifactEditMenu(QWidget* mainWindow, QWidget* parent) : QMenu(parent), impl_(new Impl(this, mainWindow)) {
-  setTitle("編集 (&E)");
+  setTitle(TranslationManager::instance().tr(QStringLiteral("menu.edit.label"), QStringLiteral("編集 (&E)")));
   setIcon(QIcon(resolveIconPath("Studio/menubar_edit.svg")));
  }
 

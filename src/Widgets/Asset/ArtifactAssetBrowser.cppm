@@ -26,7 +26,6 @@ module;
 #include <QDropEvent>
 #include <QMimeData>
 #include <QSortFilterProxyModel>
-#include <QSettings>
 #include <QDrag>
 #include <QButtonGroup>
 #include <QPixmap>
@@ -118,6 +117,8 @@ import Artifact.Service.FootageInterpret;
 import Widgets.Dialog.InterpretFootage;
 import Artifact.Event.Types;
 import Event.Bus;
+import Asset;
+import Configuration.LayeredConfigStore;
 import Artifact.Project.Manager;
 import Artifact.Project.PresetManager;
 import Artifact.Mask.LayerMask;
@@ -3305,9 +3306,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    statusGroup->addButton(favoriteBtn, 2);
    statusGroup->addButton(missingBtn, 3);
    statusGroup->addButton(unusedBtn, 4);
-   QSettings filterSettings;
-   const QString savedStatusFilter = filterSettings.value(
-       QStringLiteral("AssetBrowser/StatusFilter"), QStringLiteral("all")).toString();
+   auto& config = ArtifactCore::LayeredConfigStore::instance();
+   const QString savedStatusFilter = config.valueString(
+       QStringLiteral("AssetBrowser/StatusFilter"), QStringLiteral("all"));
    const QHash<QString, int> statusIds{{QStringLiteral("all"), 0},
                                        {QStringLiteral("imported"), 1},
                                        {QStringLiteral("favorite"), 2},
@@ -3320,8 +3321,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    if (auto* savedStatusButton = statusGroup->button(savedStatusId)) {
     savedStatusButton->setChecked(true);
    }
-   const QString savedTypeFilter = filterSettings.value(
-       QStringLiteral("AssetBrowser/FileTypeFilter"), QStringLiteral("all")).toString();
+   const QString savedTypeFilter = config.valueString(
+       QStringLiteral("AssetBrowser/FileTypeFilter"), QStringLiteral("all"));
    const QHash<QString, int> typeIds{{QStringLiteral("all"), 0},
                                      {QStringLiteral("images"), 1},
                                      {QStringLiteral("videos"), 2},
@@ -3378,9 +3379,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    sortByCombo->setToolTip(QStringLiteral("Sort visible assets"));
    assetToolBar->addWidget(sortByCombo);
 
-   QSettings sortSettings;
-   const QString savedSortKey = sortSettings.value(
-       QStringLiteral("AssetBrowser/SortKey"), QStringLiteral("date")).toString();
+   const QString savedSortKey = config.valueString(
+       QStringLiteral("AssetBrowser/SortKey"), QStringLiteral("date"));
    const int savedSortIndex = sortByCombo->findData(savedSortKey);
    if (savedSortIndex >= 0) {
     sortByCombo->setCurrentIndex(savedSortIndex);
@@ -3398,8 +3398,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    sortOrderBtn->setFixedWidth(30);
    sortOrderBtn->setToolTip("Sort Order: Ascending/Descending");
    assetToolBar->addWidget(sortOrderBtn);
-   sortOrderBtn->setChecked(sortSettings.value(
-       QStringLiteral("AssetBrowser/SortAscending"), false).toBool());
+   sortOrderBtn->setChecked(config.valueBool(
+       QStringLiteral("AssetBrowser/SortAscending"), false));
    impl_->sortAscending_ = sortOrderBtn->isChecked();
 
    connect(statusGroup, &QButtonGroup::idClicked, this, [this](int id) {
@@ -3410,23 +3410,23 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     case 3: impl_->currentStatusFilter_ = "missing"; break;
     case 4: impl_->currentStatusFilter_ = "unused"; break;
    }
-    QSettings settings;
-    settings.setValue(QStringLiteral("AssetBrowser/StatusFilter"), impl_->currentStatusFilter_);
+    ArtifactCore::LayeredConfigStore::instance().setValue(
+        QStringLiteral("AssetBrowser/StatusFilter"), impl_->currentStatusFilter_);
     impl_->applyFilters();
     impl_->refreshLeftHubSummary();
    });
 
    connect(sortByCombo, &QComboBox::currentIndexChanged, this, [this, sortByCombo](int) {
     impl_->currentSortBy_ = sortByCombo->currentData().toString();
-    QSettings settings;
-    settings.setValue(QStringLiteral("AssetBrowser/SortKey"), impl_->currentSortBy_);
+    ArtifactCore::LayeredConfigStore::instance().setValue(
+        QStringLiteral("AssetBrowser/SortKey"), impl_->currentSortBy_);
     impl_->applyFilters();
    });
 
    connect(sortOrderBtn, &QToolButton::toggled, this, [this, sortOrderBtn](bool checked) {
     impl_->sortAscending_ = checked;
-    QSettings settings;
-    settings.setValue(QStringLiteral("AssetBrowser/SortAscending"), checked);
+    ArtifactCore::LayeredConfigStore::instance().setValue(
+        QStringLiteral("AssetBrowser/SortAscending"), checked);
     sortOrderBtn->setText(checked ? "\u2191" : "\u2193");
     impl_->applyFilters();
    });
@@ -3568,8 +3568,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   fileView->setModel(assetModel);
   fileView->setItemDelegate(new AssetCardDelegate(fileView));
   impl_->currentDirectoryPath_ = desktopPath;  // Set initial directory
-  const QString savedDirectoryPath = QSettings().value(
-      QStringLiteral("AssetBrowser/CurrentDirectory")).toString();
+  const QString savedDirectoryPath = ArtifactCore::LayeredConfigStore::instance().valueString(
+      QStringLiteral("AssetBrowser/CurrentDirectory"));
   if (!savedDirectoryPath.isEmpty() && QDir(savedDirectoryPath).exists()) {
     impl_->currentDirectoryPath_ = savedDirectoryPath;
   }
@@ -3599,10 +3599,10 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
                      }
                    });
   fileView->setContentsMargins(8, 8, 8, 8);
-  QSettings viewSettings;
+  auto& config = ArtifactCore::LayeredConfigStore::instance();
   const QListView::ViewMode savedViewMode =
-      viewSettings.value(QStringLiteral("AssetBrowser/ViewMode"),
-                         static_cast<int>(QListView::IconMode)).toInt() ==
+      config.valueInt64(QStringLiteral("AssetBrowser/ViewMode"),
+                        static_cast<int>(QListView::IconMode)) ==
               static_cast<int>(QListView::ListMode)
           ? QListView::ListMode
           : QListView::IconMode;
@@ -3634,8 +3634,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   connect(viewModeGroup, &QButtonGroup::idClicked, this, [this, fileView](int id) {
     const auto mode = static_cast<QListView::ViewMode>(id);
     applyAssetBrowserViewMode(fileView, mode, impl_->thumbnailSizePx());
-    QSettings settings;
-    settings.setValue(QStringLiteral("AssetBrowser/ViewMode"), static_cast<int>(mode));
+    ArtifactCore::LayeredConfigStore::instance().setValue(
+        QStringLiteral("AssetBrowser/ViewMode"), static_cast<int>(mode));
   });
 
   // Connect search filter
@@ -3679,8 +3679,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    case 3: impl_->currentFileTypeFilter_ = "audio"; break;
    case 4: impl_->currentFileTypeFilter_ = "3d"; break;
    }
-    QSettings settings;
-    settings.setValue(QStringLiteral("AssetBrowser/FileTypeFilter"), impl_->currentFileTypeFilter_);
+   ArtifactCore::LayeredConfigStore::instance().setValue(
+       QStringLiteral("AssetBrowser/FileTypeFilter"), impl_->currentFileTypeFilter_);
    impl_->applyFilters();
   });
 
@@ -4231,8 +4231,8 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
     normalizedType = QStringLiteral("all");
    }
    impl_->currentFileTypeFilter_ = normalizedType;
-   QSettings settings;
-   settings.setValue(QStringLiteral("AssetBrowser/FileTypeFilter"), normalizedType);
+   ArtifactCore::LayeredConfigStore::instance().setValue(
+       QStringLiteral("AssetBrowser/FileTypeFilter"), normalizedType);
 
    // Update button state
    if (impl_->filterButtonGroup_) {
@@ -4257,8 +4257,8 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
     normalizedStatus = QStringLiteral("all");
    }
    impl_->currentStatusFilter_ = normalizedStatus;
-   QSettings settings;
-   settings.setValue(QStringLiteral("AssetBrowser/StatusFilter"), normalizedStatus);
+   ArtifactCore::LayeredConfigStore::instance().setValue(
+       QStringLiteral("AssetBrowser/StatusFilter"), normalizedStatus);
    impl_->applyFilters();
    impl_->refreshLeftHubSummary();
   }
@@ -4267,8 +4267,8 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   {
   if (folderPath.isEmpty() || !QDir(folderPath).exists()) return;
   impl_->currentDirectoryPath_ = folderPath;
-  QSettings settings;
-  settings.setValue(QStringLiteral("AssetBrowser/CurrentDirectory"), folderPath);
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("AssetBrowser/CurrentDirectory"), folderPath);
   if (impl_->directoryModel_) {
    impl_->directoryModel_->addRecentPath(folderPath, QFileInfo(folderPath).fileName());
   }
@@ -4326,6 +4326,37 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
 // Build information string
    QString info;
    info += QString("<b>%1</b><br>").arg(fileInfo.fileName());
+   const auto assetMeta = ArtifactCore::ArtifactAssetMetaFile::load(filePath);
+   if (assetMeta.isValid()) {
+    const QStringList tags = assetMeta.tags();
+    if (!tags.isEmpty()) {
+     info += QStringLiteral("Tags: %1<br>").arg(tags.join(QStringLiteral(", ")));
+    }
+    const QString proxy = assetMeta.proxyPath(QStringLiteral("2K"));
+    if (!proxy.isEmpty()) {
+     info += QStringLiteral("Proxy: %1<br>").arg(QFileInfo(proxy).fileName());
+    }
+    const QVariant vectorKind = assetMeta.customValue(QStringLiteral("vector/sourceKind"));
+    if (vectorKind.isValid()) {
+     info += QStringLiteral("Vector: %1 (%2)<br>")
+         .arg(vectorKind.toInt())
+         .arg(assetMeta.customValue(QStringLiteral("vector/editable")).toBool()
+                  ? QStringLiteral("editable")
+                  : QStringLiteral("preview"));
+    }
+    const QVariant imageWidth = assetMeta.customValue(QStringLiteral("image/width"));
+    const QVariant imageHeight = assetMeta.customValue(QStringLiteral("image/height"));
+    if (imageWidth.isValid() && imageHeight.isValid()) {
+     info += QStringLiteral("Image: %1 × %2, %3-bit, %4 channels%5<br>")
+         .arg(imageWidth.toInt())
+         .arg(imageHeight.toInt())
+         .arg(assetMeta.customValue(QStringLiteral("image/bitDepth")).toInt())
+         .arg(assetMeta.customValue(QStringLiteral("image/channels")).toInt())
+         .arg(assetMeta.customValue(QStringLiteral("image/hdr")).toBool()
+                  ? QStringLiteral(" (HDR)")
+                  : QString());
+    }
+   }
 
    // Check if it's a folder
   if (fileInfo.isDir()) {

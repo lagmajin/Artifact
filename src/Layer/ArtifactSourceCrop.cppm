@@ -11,7 +11,19 @@ module;
 
 module Artifact.Layer.SourceCrop;
 
+import Serialization.Registry;
+import Serialization.SchemaMigration;
+
 namespace Artifact {
+
+namespace {
+const bool registeredSourceCrop = [] {
+    ArtifactCore::Serialization::registerSerializableType<SourceCrop>();
+    ArtifactCore::Serialization::SchemaMigrationRegistry::instance().registerMigration(
+        QStringLiteral("ArtifactSourceCrop"), 0, 1,
+        [](const QJsonObject& legacy) { return legacy; });
+    return true;
+}();
 namespace {
 
 QJsonArray pointToJson(const QPointF &point) {

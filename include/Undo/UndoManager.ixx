@@ -20,6 +20,7 @@ module;
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
+#include <cstddef>
 #include <variant>
 #include <any>
 #include <atomic>
@@ -38,6 +39,7 @@ module;
 #include <QVariant>
 #include <QObject>
 #include <QFile>
+#include <QJsonObject>
 export module Undo.UndoManager;
 
 
@@ -66,6 +68,14 @@ public:
     virtual void undo() = 0;
     virtual void redo() = 0;
     virtual QString label() const { return QStringLiteral("Command"); }
+    virtual size_t estimatedMemoryBytes() const { return 1024; }
+    // Optional persistence contract. Existing commands remain in-memory until
+    // they explicitly opt in by overriding these methods.
+    virtual QString commandType() const { return {}; }
+    virtual bool canSerialize() const { return false; }
+    virtual bool isOffloaded() const { return false; }
+    virtual QJsonObject serialize() const { return {}; }
+    virtual bool deserialize(const QJsonObject&) { return false; }
 };
 
 class SetPropertyCommand : public UndoCommand {
@@ -74,8 +84,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("SetPropertyCommand"); }
+    bool canSerialize() const override { return !effectId_.isEmpty() && !name_.toQString().isEmpty() && !target_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractEffectWeakPtr target_;
+    QString effectId_;
     UniString name_;
     QVariant oldValue_;
     QVariant newValue_;
@@ -89,8 +105,13 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    QString commandType() const override { return QStringLiteral("AnimationLayerStackSnapshotCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     QJsonObject before_;
     QJsonObject after_;
 };
@@ -101,8 +122,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("MoveLayerCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     float dx_, dy_;
     int64_t frame_;
 };
@@ -113,9 +140,16 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("AddLayerCommand"); }
+    bool canSerialize() const override { return !compositionId_.isEmpty() && !layerId_.isEmpty() && !comp_.expired() && static_cast<bool>(layer_); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactCompositionWeakPtr comp_;
     ArtifactAbstractLayerPtr layer_;
+    QString compositionId_;
+    QString layerId_;
     bool atTop_;
     int savedIndex_ = -1;
 };
@@ -126,9 +160,16 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("RemoveLayerCommand"); }
+    bool canSerialize() const override { return !compositionId_.isEmpty() && !layerId_.isEmpty() && !comp_.expired() && static_cast<bool>(layer_); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactCompositionWeakPtr comp_;
     ArtifactAbstractLayerPtr layer_;
+    QString compositionId_;
+    QString layerId_;
     int originalIndex_ = -1;
 };
 
@@ -140,8 +181,13 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    QString commandType() const override { return QStringLiteral("MaskEditCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     std::vector<LayerMask> beforeMasks_;
     std::vector<LayerMask> afterMasks_;
 };
@@ -154,8 +200,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("ChangeLayerMatteReferencesCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     std::vector<LayerMatteReference> beforeRefs_;
     std::vector<LayerMatteReference> afterRefs_;
 };
@@ -170,8 +222,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("SetLayerPropertyKeyframesCommand"); }
+    bool canSerialize() const override;
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     QString propertyPath_;
     std::vector<ArtifactCore::KeyFrame> beforeKeyframes_;
     std::vector<ArtifactCore::KeyFrame> afterKeyframes_;
@@ -187,8 +245,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("SetTextLayerTextCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     QString beforeText_;
     QString afterText_;
     QString label_;
@@ -203,8 +267,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("ReplaceLayerSourceCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired() && !propertyPath_.isEmpty(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     QString propertyPath_;
     QString oldSourcePath_;
     QString newSourcePath_;
@@ -233,8 +303,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("SetEffectMaskImagesCommand"); }
+    bool canSerialize() const override { return !effectId_.isEmpty() && !effect_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractEffectWeakPtr effect_;
+    QString effectId_;
     std::vector<SharedPtr<ImageF32x4_RGBA>> beforeMasks_;
     std::vector<SharedPtr<ImageF32x4_RGBA>> afterMasks_;
     QString label_;
@@ -247,9 +323,16 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("MoveLayerIndexCommand"); }
+    bool canSerialize() const override { return !compositionId_.isEmpty() && !layerId_.isEmpty() && !comp_.expired() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactCompositionWeakPtr comp_;
     ArtifactAbstractLayerWeak layer_;
+    QString compositionId_;
+    QString layerId_;
     int oldIndex_;
     int newIndex_;
 };
@@ -261,8 +344,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("RenameLayerCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     QString oldName_;
     QString newName_;
 };
@@ -286,6 +375,11 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("InOutPointsSnapshotCommand"); }
+    bool canSerialize() const override { return points_ != nullptr; }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactInOutPoints* points_ = nullptr;
     QJsonObject before_;
@@ -297,8 +391,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("AlignLayersUndoCommand"); }
+    bool canSerialize() const override { return !compositionId_.isEmpty() && !snapshots_.empty(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     std::vector<AlignLayerSnapshot> snapshots_;
+    QString compositionId_;
     QString label_;
 };
 
@@ -309,8 +409,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("ChangeLayerOpacityCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     float oldOpacity_;
     float newOpacity_;
 };
@@ -322,8 +428,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("ChangeActiveVariantCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     size_t oldIndex_;
     size_t newIndex_;
 };
@@ -335,8 +447,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("CreateVariantCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     ArtifactCore::String name_;
     size_t index_;
     std::unique_ptr<LayerVariant> extracted_;
@@ -355,6 +473,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
 
     // レイヤー単位の transform プロパティ snapshot。
     // propertyPath → keyframe 列。非アニメーション値は空 keyframe 列 + currentValue で表現。
@@ -385,8 +504,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("SetLayerVisibilityCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     bool oldVisible_;
     bool newVisible_;
 };
@@ -397,8 +522,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("SetLayerLockCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     bool oldLocked_;
     bool newLocked_;
 };
@@ -409,8 +540,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("SetLayerSoloCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     bool oldSolo_;
     bool newSolo_;
 };
@@ -421,8 +558,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("SetLayerShyCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     bool oldShy_;
     bool newShy_;
 };
@@ -433,8 +576,14 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("ChangeLayerBlendModeCommand"); }
+    bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
     LAYER_BLEND_TYPE oldMode_;
     LAYER_BLEND_TYPE newMode_;
 };
@@ -448,6 +597,11 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("MacroUndoCommand"); }
+    bool canSerialize() const override;
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     std::vector<std::unique_ptr<UndoCommand>> children_;
     QString label_;
@@ -459,6 +613,11 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("MoveAssetFileCommand"); }
+    bool canSerialize() const override { return !oldPath_.isEmpty() && !newPath_.isEmpty(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
 private:
     QString oldPath_;
     QString newPath_;
@@ -467,6 +626,17 @@ private:
 class UndoManager : public QObject {
     W_OBJECT(UndoManager)
 public:
+    using CommandFactory = std::function<std::unique_ptr<UndoCommand>(const QJsonObject&)>;
+    using EffectResolver = std::function<ArtifactAbstractEffectPtr(const QString&)>;
+    using LayerResolver = std::function<ArtifactAbstractLayerPtr(const QString&)>;
+    using CompositionResolver = std::function<ArtifactCompositionPtr(const QString&)>;
+    using InOutPointsResolver = std::function<ArtifactInOutPoints*()>;
+    enum class OffloadPolicy { Never, OnPressure, Always };
+    struct UndoBudget {
+        size_t maxEntryCount = 100;
+        size_t maxMemoryBytes = 256u * 1024u * 1024u;
+        size_t maxSingleEntryBytes = 64u * 1024u * 1024u;
+    };
     UndoManager();
     ~UndoManager();
     void push(std::unique_ptr<UndoCommand> cmd);
@@ -487,6 +657,27 @@ public:
     QStringList redoHistoryLabels() const;
     void setMaxHistorySize(size_t maxSize);
     size_t maxHistorySize() const;
+    void setBudget(const UndoBudget& budget);
+    const UndoBudget& budget() const;
+    size_t currentMemoryBytes() const;
+    float memoryPressure() const;
+    void setOffloadPolicy(OffloadPolicy policy);
+    OffloadPolicy offloadPolicy() const;
+    void setOffloadDirectory(const QString& path);
+    QString offloadDirectory() const;
+    bool saveSessionHistory(const QString& path) const;
+    bool loadSessionHistory(const QString& path);
+    void registerCommandFactory(const QString& type, CommandFactory factory);
+    std::unique_ptr<UndoCommand> createCommand(const QString& type,
+                                               const QJsonObject& data) const;
+    void setEffectResolver(EffectResolver resolver);
+    ArtifactAbstractEffectPtr resolveEffect(const QString& effectId) const;
+    void setLayerResolver(LayerResolver resolver);
+    ArtifactAbstractLayerPtr resolveLayer(const QString& layerId) const;
+    void setCompositionResolver(CompositionResolver resolver);
+    ArtifactCompositionPtr resolveComposition(const QString& compositionId) const;
+    void setInOutPointsResolver(InOutPointsResolver resolver);
+    ArtifactInOutPoints* resolveInOutPoints() const;
 
     // === Serialization for Project Save ===
     
@@ -518,6 +709,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    size_t estimatedMemoryBytes() const override;
 private:
     QString label_;
     QByteArray beforeState_;

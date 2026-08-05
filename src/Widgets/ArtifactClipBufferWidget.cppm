@@ -13,6 +13,7 @@ module Artifact.Widgets.ClipBufferWidget;
 import std;
 import Event.Bus;
 import Artifact.Event.Types;
+import Translation.Manager;
 
 namespace Artifact {
 
@@ -57,7 +58,8 @@ ArtifactClipBufferWidget::Impl::Impl(ArtifactClipBufferWidget *parent)
     listView_->setModel(itemModel_);
     mainLayout->addWidget(listView_);
 
-    auto *hintLabel = new QLabel(QObject::tr("Double-click or select & Paste to re-apply clips."), parent);
+    auto *hintLabel = new QLabel(
+        TranslationManager::instance().tr(QStringLiteral("clip_buffer.reapply_hint")), parent);
     hintLabel->setWordWrap(true);
     mainLayout->addWidget(hintLabel);
 

@@ -63,7 +63,9 @@ export namespace Artifact {
             if (distance <= innerRadius) return 1.0f;
 
             // スムーズな減衰 (Smoothstep相当)
-            float t = (distance - innerRadius) / (radius - innerRadius);
+            const float falloffRange = radius - innerRadius;
+            if (falloffRange <= 0.0f) return 0.0f;
+            float t = (distance - innerRadius) / falloffRange;
             t = std::clamp(1.0f - t, 0.0f, 1.0f);
             return t * t * (3.0f - 2.0f * t);
         }

@@ -6,9 +6,53 @@ module;
 
 module Artifact.Project.CreationDefaults;
 
+import Serialization.Registry;
+import Serialization.SchemaMigration;
+
 import std;
 
 namespace Artifact {
+
+namespace {
+const bool registeredCreationCompositionDefaults = [] {
+    ArtifactCore::Serialization::registerSerializableType<CreationCompositionDefaults>();
+    ArtifactCore::Serialization::SchemaMigrationRegistry::instance().registerMigration(
+        QStringLiteral("CreationCompositionDefaults"), 0, 1,
+        [](const QJsonObject& legacy) { return legacy; });
+    return true;
+}();
+
+const bool registeredCreationLayerDefaults = [] {
+    ArtifactCore::Serialization::registerSerializableType<CreationLayerDefaults>();
+    ArtifactCore::Serialization::SchemaMigrationRegistry::instance().registerMigration(
+        QStringLiteral("CreationLayerDefaults"), 0, 1,
+        [](const QJsonObject& legacy) { return legacy; });
+    return true;
+}();
+
+const bool registeredCreationDefaultsBundle = [] {
+    ArtifactCore::Serialization::registerSerializableType<CreationDefaultsBundle>();
+    ArtifactCore::Serialization::SchemaMigrationRegistry::instance().registerMigration(
+        QStringLiteral("CreationDefaultsBundle"), 0, 1,
+        [](const QJsonObject& legacy) { return legacy; });
+    return true;
+}();
+
+const bool registeredCreationDefaultsState = [] {
+    ArtifactCore::Serialization::registerSerializableType<CreationDefaultsState>();
+    ArtifactCore::Serialization::SchemaMigrationRegistry::instance().registerMigration(
+        QStringLiteral("CreationDefaultsState"), 0, 1,
+        [](const QJsonObject& legacy) { return legacy; });
+    return true;
+}();
+
+const bool registeredCreationDefaultResolver = [] {
+    ArtifactCore::Serialization::registerSerializableType<CreationDefaultResolver>();
+    ArtifactCore::Serialization::SchemaMigrationRegistry::instance().registerMigration(
+        QStringLiteral("CreationDefaultResolver"), 0, 1,
+        [](const QJsonObject& legacy) { return legacy; });
+    return true;
+}();
 namespace {
 
 bool isExplicit(const CreationCompositionDefaults& value)

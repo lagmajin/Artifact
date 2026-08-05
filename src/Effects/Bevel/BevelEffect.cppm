@@ -108,13 +108,29 @@ public:
 
 class BevelEffectGPUImpl : public ArtifactEffectImplBase {
 public:
+    ~BevelEffectGPUImpl() override {
+        if (context_) {
+            context_->Flush();
+            context_->WaitForIdle();
+        }
+        executor_.reset();
+        gpuContext_.reset();
+        params_.Release();
+        context_.Release();
+        device_.Release();
+        if (usingSharedDevice_) {
+            releaseSharedRenderDevice();
+        }
+    }
+
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         cpuImpl_.applyCPU(src, dst);
     }
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;
-        Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
-        if (!acquireSharedRenderDeviceForCurrentBackend(device, context)) { applyCPU(src, dst); return; }
+        if (!device_ || !context_) {
+            if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) { applyCPU(src, dst); return; }
+            usingSharedDevice_ = true;
+        }
         const auto& image = src.image(); const float* pixels = image.rgba32fData();
         if (!pixels || image.width() <= 0 || image.height() <= 0) { applyCPU(src, dst); return; }
         Diligent::TextureDesc desc{}; desc.Name = "Bevel/Input"; desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
@@ -123,43 +139,62 @@ public:
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         Diligent::TextureSubResData sub{}; sub.pData = pixels; sub.Stride = static_cast<Diligent::Uint64>(image.width()) * sizeof(float) * 4ull;
         Diligent::TextureData init{}; init.pSubResources = &sub; init.NumSubresources = 1;
-        Diligent::RefCntAutoPtr<Diligent::ITexture> input; device->CreateTexture(desc, &init, &input);
+        Diligent::RefCntAutoPtr<Diligent::ITexture> input; device_->CreateTexture(desc, &init, &input);
         if (!input) { applyCPU(src, dst); return; }
         Diligent::TextureDesc outDesc = desc; outDesc.Name = "Bevel/Output"; outDesc.Usage = Diligent::USAGE_DEFAULT;
         outDesc.BindFlags = Diligent::BIND_SHADER_RESOURCE | Diligent::BIND_UNORDERED_ACCESS;
-        Diligent::RefCntAutoPtr<Diligent::ITexture> output; device->CreateTexture(outDesc, nullptr, &output);
+        if (!output_ || output_->GetDesc().Width != outDesc.Width || output_->GetDesc().Height != outDesc.Height || output_->GetDesc().Format != outDesc.Format || output_->GetDesc().BindFlags != outDesc.BindFlags) {
+            output_.Release();
+            device_->CreateTexture(outDesc, nullptr, &output_);
+        }
+        Diligent::ITexture* output = output_;
         if (!output) { applyCPU(src, dst); return; }
         struct Params { float strength, softness, edgeMode, pad; float highlight[3], highlightPad; float shadow[3], shadowPad; };
         Diligent::BufferDesc bd{}; bd.Name = "Bevel/Params"; bd.Size = sizeof(Params); bd.Usage = Diligent::USAGE_DYNAMIC;
         bd.BindFlags = Diligent::BIND_UNIFORM_BUFFER; bd.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
-        Diligent::RefCntAutoPtr<Diligent::IBuffer> params; device->CreateBuffer(bd, nullptr, &params);
+        if (!params_) device_->CreateBuffer(bd, nullptr, &params_);
+        Diligent::IBuffer* params = params_;
         if (!params) { applyCPU(src, dst); return; }
-        void* mapped = nullptr; context->MapBuffer(params, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
+        void* mapped = nullptr; context_->MapBuffer(params_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
         if (!mapped) { applyCPU(src, dst); return; }
         Params p{cpuImpl_.strength_, cpuImpl_.softness_, cpuImpl_.edgeMode_ ? 1.0f : 0.0f, 0.0f,
             {cpuImpl_.highlightColor_.redF(), cpuImpl_.highlightColor_.greenF(), cpuImpl_.highlightColor_.blueF()}, 0.0f,
             {cpuImpl_.shadowColor_.redF(), cpuImpl_.shadowColor_.greenF(), cpuImpl_.shadowColor_.blueF()}, 0.0f};
-        std::memcpy(mapped, &p, sizeof(p)); context->UnmapBuffer(params, Diligent::MAP_WRITE);
+        std::memcpy(mapped, &p, sizeof(p)); context_->UnmapBuffer(params_, Diligent::MAP_WRITE);
         static Diligent::ShaderResourceVariableDesc vars[] = {
             {Diligent::SHADER_TYPE_COMPUTE, "BevelParams", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
             {Diligent::SHADER_TYPE_COMPUTE, "g_InputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
             {Diligent::SHADER_TYPE_COMPUTE, "g_OutputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
-        ArtifactCore::GpuContext gpuContext{device, context}; ArtifactCore::ComputeExecutor executor{gpuContext};
+        if (!executor_) {
+            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
+            executor_ = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
+        }
         ArtifactCore::ComputePipelineDesc pd{}; pd.name = "Bevel/PSO"; pd.shaderSource = kHlsl; pd.entryPoint = "main";
         pd.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; pd.variables = vars; pd.variableCount = 3;
         pd.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-        if (!executor.build(pd) || !executor.createShaderResourceBinding(true) || !executor.setBuffer("BevelParams", params) ||
-            !executor.setTextureView("g_InputTexture", input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-            !executor.setTextureView("g_OutputTexture", output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src, dst); return; }
-        executor.dispatch(context, ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1), Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        if (!executor_ || (!pipelineReady_ && (!executor_->build(pd) || !executor_->createShaderResourceBinding(true) || !executor_->setBuffer("BevelParams", params_))) ||
+            !executor_->setTextureView("g_InputTexture", input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor_->setTextureView("g_OutputTexture", output_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src, dst); return; }
+        pipelineReady_ = true;
+        executor_->dispatch(context_, ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1), Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         Diligent::TextureDesc sd = outDesc; sd.Name = "Bevel/Readback"; sd.Usage = Diligent::USAGE_STAGING; sd.BindFlags = Diligent::BIND_NONE; sd.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
-        Diligent::RefCntAutoPtr<Diligent::ITexture> staging; device->CreateTexture(sd, nullptr, &staging); if (!staging) { applyCPU(src, dst); return; }
-        context->CopyTexture(Diligent::CopyTextureAttribs(output, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION, staging, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION)); context->Flush(); context->WaitForIdle();
-        Diligent::MappedTextureSubresource read{}; context->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, read);
+        if (!staging_ || staging_->GetDesc().Width != sd.Width || staging_->GetDesc().Height != sd.Height || staging_->GetDesc().Format != sd.Format) { staging_.Release(); device_->CreateTexture(sd, nullptr, &staging_); } if (!staging_) { applyCPU(src, dst); return; }
+        context_->CopyTexture(Diligent::CopyTextureAttribs(output_, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION, staging_, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION)); context_->Flush(); context_->WaitForIdle();
+        Diligent::MappedTextureSubresource read{}; context_->MapTextureSubresource(staging_, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, read);
         if (!read.pData || !read.Stride) { applyCPU(src, dst); return; }
-        cv::Mat result(image.height(), image.width(), CV_32FC4, read.pData, read.Stride); dst.image().setFromCVMat(result, image.colorDescriptor()); context->UnmapTextureSubresource(staging, 0, 0);
+        cv::Mat result(image.height(), image.width(), CV_32FC4, read.pData, read.Stride); dst.image().setFromCVMat(result, image.colorDescriptor()); context_->UnmapTextureSubresource(staging_, 0, 0);
     }
 private:
+    Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
+    std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
+    std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
+    Diligent::RefCntAutoPtr<Diligent::IBuffer> params_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> output_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> staging_;
+    bool pipelineReady_ = false;
+    bool usingSharedDevice_ = false;
+
     static constexpr const char* kHlsl = R"(
 Texture2D<float4> g_InputTexture:register(t0); RWTexture2D<float4> g_OutputTexture:register(u0);
 cbuffer BevelParams:register(b0){float g_Strength;float g_Softness;float g_EdgeMode;float g_Pad;float3 g_Highlight;float3 g_Shadow;}

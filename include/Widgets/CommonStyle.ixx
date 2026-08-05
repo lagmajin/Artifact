@@ -1,6 +1,6 @@
 ﻿module;
 #include <utility>
-#include <QProxyStyle>
+#include <QCommonStyle>
 #include <QPainter>
 #include <QPalette>
 #include <QSize>
@@ -13,7 +13,7 @@ export module Widgets.CommonStyle;
 
 export namespace Artifact {
 
-class ArtifactCommonStyle : public QProxyStyle {
+class ArtifactCommonStyle : public QCommonStyle {
 public:
   explicit ArtifactCommonStyle(QStyle* baseStyle = nullptr);
   ~ArtifactCommonStyle() override;

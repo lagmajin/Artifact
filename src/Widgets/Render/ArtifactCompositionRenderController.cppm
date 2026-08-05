@@ -54,7 +54,6 @@ module;
 #include <QSizeF>
 
 #include <QSet>
-#include <QSettings>
 
 #include <QStringList>
 #include <QString>
@@ -144,6 +143,8 @@ import Artifact.Preview.Pipeline;
 import Core.Camera;
 
 import Frame.Debug;
+
+import Graphics.RenderGraph;
 
 import Core.Diagnostics.Trace;
 
@@ -285,6 +286,8 @@ import Event.Bus;
 import Artifact.Event.Types;
 
 import Undo.UndoManager;
+import Configuration.LayeredConfigStore;
+import Configuration.ConfigLayer;
 
 import Frame.Position;
 
@@ -1633,11 +1636,11 @@ bool lineDebugKindVisible(
 QString lineDebugVisibilitySettingKey(LineDebugKind kind) {
   switch (kind) {
   case LineDebugKind::RigBone:
-    return QStringLiteral("ArtifactStudio/LineDebug/RigBone");
+    return QStringLiteral("Viewport/LineDebug/RigBone");
   case LineDebugKind::RigControl:
-    return QStringLiteral("ArtifactStudio/LineDebug/RigControl");
+    return QStringLiteral("Viewport/LineDebug/RigControl");
   case LineDebugKind::RigSkin:
-    return QStringLiteral("ArtifactStudio/LineDebug/RigSkin");
+    return QStringLiteral("Viewport/LineDebug/RigSkin");
   default:
     return {};
   }
@@ -4772,7 +4775,9 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
   // every frame. Image/SVG/sequence identities are encoded by their typed
   // cache-key branches below (source version and, for animated effects,
   // frame number).
-  key += QStringLiteral("|opacity=%1").arg(layer->opacity(), 0, 'f', 6);
+  // Layer opacity is applied at draw time (see baseOpacity below), after the
+  // processed surface is recovered from cache. Keep it out of this identity so
+  // opacity-only edits can reuse the rasterized surface and only re-composite.
 
   bool hasAnimatedEffectProperty = false;
   for (const auto &effect : layer->getEffects()) {
@@ -9207,6 +9212,10 @@ public:
 
   QString lastRenderPathSummary_;
 
+  std::size_t pointwiseAppliedCount_ = 0;
+
+  std::size_t giDispatchedCount_ = 0;
+
   QString lastCompositionVisibilitySummary_;
 
   QString lastBlendMaskSummary_;
@@ -9657,6 +9666,7 @@ public:
       renderer_->setPan(savedPanX, savedPanY);
 
       if (pointwiseApplied) {
+        ++pointwiseAppliedCount_;
         renderer_->flush();
         renderer_->setOverrideRTV(nullptr);
         renderer_->unbindColorTargetsForCompute();
@@ -13017,32 +13027,32 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
     : QObject(parent), impl_(new Impl()) {
 
-  impl_->showAudioWaveformOverlay_ = QSettings().value(
-      QStringLiteral("ArtifactStudio/AudioWaveformOverlay"), true).toBool();
-  impl_->showAudioSpectrumOverlay_ = QSettings().value(
-      QStringLiteral("ArtifactStudio/AudioSpectrumOverlay"), true).toBool();
-  impl_->showRigOverlay_ = QSettings().value(
-      QStringLiteral("ArtifactStudio/RigOverlayVisible"), false).toBool();
-  impl_->rigWeightRadius_ = QSettings().value(
-      QStringLiteral("ArtifactStudio/RigWeight/Radius"), 36.0).toFloat();
-  impl_->rigWeightOpacity_ = QSettings().value(
-      QStringLiteral("ArtifactStudio/RigWeight/Opacity"), 0.35).toFloat();
-  impl_->rigWeightFlow_ = QSettings().value(
-      QStringLiteral("ArtifactStudio/RigWeight/Flow"), 1.0).toFloat();
+  auto& config = ArtifactCore::LayeredConfigStore::instance();
+  impl_->showAudioWaveformOverlay_ = config.valueBool(
+      QStringLiteral("Viewport/AudioWaveformOverlay"), true);
+  impl_->showAudioSpectrumOverlay_ = config.valueBool(
+      QStringLiteral("Viewport/AudioSpectrumOverlay"), true);
+  impl_->showRigOverlay_ = config.valueBool(
+      QStringLiteral("Viewport/RigOverlayVisible"), false);
+  impl_->rigWeightRadius_ = static_cast<float>(config.valueDouble(
+      QStringLiteral("Viewport/RigWeight/Radius"), 36.0));
+  impl_->rigWeightOpacity_ = static_cast<float>(config.valueDouble(
+      QStringLiteral("Viewport/RigWeight/Opacity"), 0.35));
+  impl_->rigWeightFlow_ = static_cast<float>(config.valueDouble(
+      QStringLiteral("Viewport/RigWeight/Flow"), 1.0));
   impl_->rigWeightRadius_ = std::clamp(impl_->rigWeightRadius_, 2.0f, 500.0f);
   impl_->rigWeightOpacity_ = std::clamp(impl_->rigWeightOpacity_, 0.01f, 1.0f);
   impl_->rigWeightFlow_ = std::clamp(impl_->rigWeightFlow_, 0.01f, 1.0f);
   {
-    const QSettings settings;
+    auto& config = ArtifactCore::LayeredConfigStore::instance();
     for (const auto kind : {LineDebugKind::RigBone,
                             LineDebugKind::RigControl,
                             LineDebugKind::RigSkin}) {
       const QString key = lineDebugVisibilitySettingKey(kind);
       const size_t index = lineDebugKindIndex(kind);
-      if (!key.isEmpty() && index < impl_->lineDebugVisibility_.size() &&
-          settings.contains(key)) {
-        impl_->lineDebugVisibility_[index] = settings.value(
-            key, impl_->lineDebugVisibility_[index]).toBool();
+      if (!key.isEmpty() && index < impl_->lineDebugVisibility_.size()) {
+        impl_->lineDebugVisibility_[index] = config.valueBool(
+            key, impl_->lineDebugVisibility_[index]);
       }
     }
   }
@@ -13061,24 +13071,24 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
   impl_->trackerGizmo_ = std::make_unique<ArtifactPointTrackerGizmo>();
   {
-    QSettings trackerSettings;
+    auto& config = ArtifactCore::LayeredConfigStore::instance();
     auto trackerState = impl_->trackerGizmo_->state();
     trackerState.innerHalfW = std::clamp(
-        trackerSettings.value(QStringLiteral("trackPoint/featureWidth"),
-                              trackerState.innerHalfW * 2.0f).toFloat() * 0.5f,
+        static_cast<float>(config.valueDouble(QStringLiteral("Viewport/TrackPoint/FeatureWidth"),
+                                              trackerState.innerHalfW * 2.0) * 0.5),
         2.0f, 4096.0f);
     trackerState.innerHalfH = std::clamp(
-        trackerSettings.value(QStringLiteral("trackPoint/featureHeight"),
-                              trackerState.innerHalfH * 2.0f).toFloat() * 0.5f,
+        static_cast<float>(config.valueDouble(QStringLiteral("Viewport/TrackPoint/FeatureHeight"),
+                                              trackerState.innerHalfH * 2.0) * 0.5),
         2.0f, 4096.0f);
     trackerState.outerHalfW = std::max(
         trackerState.innerHalfW + 2.0f,
-        trackerSettings.value(QStringLiteral("trackPoint/searchWidth"),
-                              trackerState.outerHalfW * 2.0f).toFloat() * 0.5f);
+        static_cast<float>(config.valueDouble(QStringLiteral("Viewport/TrackPoint/SearchWidth"),
+                                              trackerState.outerHalfW * 2.0) * 0.5));
     trackerState.outerHalfH = std::max(
         trackerState.innerHalfH + 2.0f,
-        trackerSettings.value(QStringLiteral("trackPoint/searchHeight"),
-                              trackerState.outerHalfH * 2.0f).toFloat() * 0.5f);
+        static_cast<float>(config.valueDouble(QStringLiteral("Viewport/TrackPoint/SearchHeight"),
+                                              trackerState.outerHalfH * 2.0) * 0.5));
     impl_->trackerGizmo_->setState(trackerState);
   }
 
@@ -14654,7 +14664,7 @@ void CompositionRenderController::setLineDebugKindVisible(LineDebugKind kind,
   impl_->lineDebugVisibility_[index] = visible;
   const QString settingKey = lineDebugVisibilitySettingKey(kind);
   if (!settingKey.isEmpty()) {
-    QSettings().setValue(settingKey, visible);
+    ArtifactCore::LayeredConfigStore::instance().setValue(settingKey, visible);
   }
 
   impl_->invalidateOverlayComposite();
@@ -15091,7 +15101,8 @@ bool CompositionRenderController::isShowOnionSkin() const {
 void CompositionRenderController::setShowRigOverlay(bool show) {
   if (!impl_ || impl_->showRigOverlay_ == show) return;
   impl_->showRigOverlay_ = show;
-  QSettings().setValue(QStringLiteral("ArtifactStudio/RigOverlayVisible"), show);
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/RigOverlayVisible"), show);
   impl_->invalidateOverlayComposite();
   markRenderDirty();
 }
@@ -15183,11 +15194,11 @@ void CompositionRenderController::adjustRigWeightBrush(float radiusDelta,
       impl_->rigWeightRadius_ + radiusDelta, 2.0f, 500.0f);
   impl_->rigWeightOpacity_ = std::clamp(
       impl_->rigWeightOpacity_ + opacityDelta, 0.01f, 1.0f);
-  QSettings settings;
-  settings.setValue(QStringLiteral("ArtifactStudio/RigWeight/Radius"),
-                    impl_->rigWeightRadius_);
-  settings.setValue(QStringLiteral("ArtifactStudio/RigWeight/Opacity"),
-                    impl_->rigWeightOpacity_);
+  auto& config = ArtifactCore::LayeredConfigStore::instance();
+  config.setValue(QStringLiteral("Viewport/RigWeight/Radius"),
+                  static_cast<double>(impl_->rigWeightRadius_));
+  config.setValue(QStringLiteral("Viewport/RigWeight/Opacity"),
+                  static_cast<double>(impl_->rigWeightOpacity_));
   impl_->invalidateOverlayComposite();
   markRenderDirty();
 }
@@ -15203,8 +15214,9 @@ float CompositionRenderController::rigWeightBrushOpacity() const {
 void CompositionRenderController::adjustRigWeightBrushFlow(float delta) {
   if (!impl_) return;
   impl_->rigWeightFlow_ = std::clamp(impl_->rigWeightFlow_ + delta, 0.01f, 1.0f);
-  QSettings().setValue(QStringLiteral("ArtifactStudio/RigWeight/Flow"),
-                       impl_->rigWeightFlow_);
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/RigWeight/Flow"),
+      static_cast<double>(impl_->rigWeightFlow_));
   impl_->invalidateOverlayComposite();
   markRenderDirty();
 }
@@ -15462,27 +15474,29 @@ bool CompositionRenderController::applyCapturedRigPose(float blendWeight) {
 bool CompositionRenderController::saveRigPoseSlot(int slot) {
   if (!impl_ || slot < 1 || slot > 9) return false;
   if (!captureRigPose()) return false;
-  QSettings settings;
-  settings.setValue(QStringLiteral("ArtifactStudio/RigPose/Slot%1").arg(slot),
-                   rigPoseToVariantMap(impl_->rigPoseClipboard_));
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/RigPose/Slot%1").arg(slot),
+      rigPoseToVariantMap(impl_->rigPoseClipboard_));
   return true;
 }
 
 bool CompositionRenderController::applyRigPoseSlot(int slot, float blendWeight) {
   if (!impl_ || slot < 1 || slot > 9) return false;
-  const QSettings settings;
-  const QString key = QStringLiteral("ArtifactStudio/RigPose/Slot%1").arg(slot);
-  if (!settings.contains(key)) return false;
+  const QString key = QStringLiteral("Viewport/RigPose/Slot%1").arg(slot);
+  const QVariant stored = ArtifactCore::LayeredConfigStore::instance().value(key);
+  if (!stored.isValid() || stored.toMap().isEmpty()) return false;
   impl_->rigPoseClipboard_ = rigPoseFromVariantMap(
-      settings.value(key).toMap());
+      stored.toMap());
   impl_->rigPoseClipboardValid_ = true;
   return applyCapturedRigPose(blendWeight);
 }
 
 void CompositionRenderController::clearRigPoseSlots() {
-  QSettings settings;
+  auto& config = ArtifactCore::LayeredConfigStore::instance();
   for (int slot = 1; slot <= 9; ++slot) {
-    settings.remove(QStringLiteral("ArtifactStudio/RigPose/Slot%1").arg(slot));
+    const auto key = QStringLiteral("Viewport/RigPose/Slot%1").arg(slot);
+    config.removeValue(ArtifactCore::ConfigLayer::Project, key.toStdString());
+    config.removeValue(ArtifactCore::ConfigLayer::User, key.toStdString());
   }
   if (impl_) {
     impl_->rigPoseClipboard_ = ArtifactCore::PoseSnapshot{};
@@ -15495,7 +15509,8 @@ void CompositionRenderController::clearRigPoseSlots() {
 void CompositionRenderController::setShowAudioWaveformOverlay(bool show) {
   if (!impl_ || impl_->showAudioWaveformOverlay_ == show) return;
   impl_->showAudioWaveformOverlay_ = show;
-  QSettings().setValue(QStringLiteral("ArtifactStudio/AudioWaveformOverlay"), show);
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/AudioWaveformOverlay"), show);
   impl_->invalidateOverlayComposite();
   markRenderDirty();
 }
@@ -15507,7 +15522,8 @@ bool CompositionRenderController::isShowAudioWaveformOverlay() const {
 void CompositionRenderController::setShowAudioSpectrumOverlay(bool show) {
   if (!impl_ || impl_->showAudioSpectrumOverlay_ == show) return;
   impl_->showAudioSpectrumOverlay_ = show;
-  QSettings().setValue(QStringLiteral("ArtifactStudio/AudioSpectrumOverlay"), show);
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/AudioSpectrumOverlay"), show);
   impl_->invalidateOverlayComposite();
   markRenderDirty();
 }
@@ -17707,6 +17723,88 @@ CompositionRenderController::frameDebugSnapshot() const {
 
 
 
+  // Diagnostic-only graph. The immediate-mode render path remains unchanged.
+  const int diagnosticSlotIndex = std::clamp(
+      impl_->activePreviewRenderPipelineSlot_, 0,
+      Impl::kPreviewRenderPipelineSlotCount - 1);
+  const auto& diagnosticPipeline =
+      impl_->previewRenderPipelineSlots_[diagnosticSlotIndex].pipeline;
+  if (impl_->renderer_ && comp && diagnosticPipeline.ready()) {
+    ArtifactCore::RenderGraph diagnosticGraph;
+    const auto graphWidth = diagnosticPipeline.width();
+    const auto graphHeight = diagnosticPipeline.height();
+    const auto graphBytes = static_cast<std::uint64_t>(graphWidth) *
+                            static_cast<std::uint64_t>(graphHeight) * 8u;
+    const auto layerResource = diagnosticGraph.addResource({
+        "Composition.LayerOutput", ArtifactCore::RenderResourceKind::Texture,
+        ArtifactCore::RenderResourceLifetime::Transient, graphWidth,
+        graphHeight, 1, 0, graphBytes});
+    const auto accumulationResource = diagnosticGraph.addResource({
+        "Composition.Accumulation", ArtifactCore::RenderResourceKind::Texture,
+        ArtifactCore::RenderResourceLifetime::Transient, graphWidth,
+        graphHeight, 1, 0, graphBytes});
+    ArtifactCore::RenderResourceHandle pointwiseResource;
+    if (pointwiseAppliedCount_ > 0) {
+      pointwiseResource = diagnosticGraph.addResource({
+          "Composition.PointwiseEffects",
+          ArtifactCore::RenderResourceKind::Texture,
+          ArtifactCore::RenderResourceLifetime::Transient, graphWidth,
+          graphHeight, 1, 0, graphBytes});
+    }
+    ArtifactCore::RenderResourceHandle giResource;
+    if (giDispatchedCount_ > 0) {
+      giResource = diagnosticGraph.addResource({
+          "Composition.ScreenSpaceGI",
+          ArtifactCore::RenderResourceKind::Texture,
+          ArtifactCore::RenderResourceLifetime::Transient, graphWidth,
+          graphHeight, 1, 0, graphBytes});
+    }
+    const auto outputResource = diagnosticGraph.addResource({
+        "Composition.Output", ArtifactCore::RenderResourceKind::Texture,
+        ArtifactCore::RenderResourceLifetime::External, graphWidth,
+        graphHeight, 1, 0, graphBytes});
+    std::size_t rasterPassCount = 0;
+    const auto graphFrame = comp->framePosition();
+    for (const auto& layer : comp->allLayerRef()) {
+      if (!layer || !isLayerEffectivelyVisible(layer) ||
+          !layer->isActiveAt(graphFrame)) {
+        continue;
+      }
+      diagnosticGraph.addPass({
+          "Composition.LayerRaster", ArtifactCore::RenderPassQueue::Graphics,
+          {}, {layerResource}, true});
+      ++rasterPassCount;
+    }
+    if (rasterPassCount == 0) {
+      diagnosticGraph.addPass({
+          "Composition.LayerRaster.Empty",
+          ArtifactCore::RenderPassQueue::Graphics, {}, {layerResource}, true});
+    }
+    diagnosticGraph.addPass({
+        "Composition.LayerBlend", ArtifactCore::RenderPassQueue::Compute,
+        {layerResource}, {accumulationResource}, true});
+    auto effectsInput = accumulationResource;
+    if (pointwiseAppliedCount_ > 0) {
+      diagnosticGraph.addPass({
+          "Composition.PointwiseEffects",
+          ArtifactCore::RenderPassQueue::Compute,
+          {effectsInput}, {pointwiseResource}, true});
+      effectsInput = pointwiseResource;
+    }
+    if (giDispatchedCount_ > 0) {
+      diagnosticGraph.addPass({
+          "Composition.ScreenSpaceGI", ArtifactCore::RenderPassQueue::Compute,
+          {effectsInput}, {giResource}, true});
+      effectsInput = giResource;
+    }
+    diagnosticGraph.addPass({
+        "Composition.FinalPostProcess", ArtifactCore::RenderPassQueue::Graphics,
+        {effectsInput}, {outputResource}, true});
+    snapshot.renderGraphDiagnostic =
+        diagnosticGraph.compileDiagnosticSnapshot();
+    snapshot.hasRenderGraphDiagnostic = snapshot.renderGraphDiagnostic.valid;
+  }
+
   if (playback) {
 
     const auto playbackComp = playback->currentComposition();
@@ -17754,6 +17852,18 @@ CompositionRenderController::frameDebugSnapshot() const {
                                     std::chrono::system_clock::now().time_since_epoch())
 
                                     .count());
+
+  if (snapshot.hasRenderGraphDiagnostic) {
+    std::uint64_t executionId = 0;
+    if (impl_->renderer_ && impl_->renderer_->hasFrameGpuTiming()) {
+      executionId = impl_->renderer_->lastFrameGpuTimingExecutionId();
+    }
+    if (executionId == 0) {
+      executionId = static_cast<std::uint64_t>(
+          std::max<std::int64_t>(0, snapshot.timestampMs));
+    }
+    snapshot.renderGraphDiagnostic.executionId = executionId;
+  }
 
 
 
@@ -22713,15 +22823,15 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
     impl_->trackerGizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
     const auto &trackerState = impl_->trackerGizmo_->state();
-    QSettings trackerSettings;
-    trackerSettings.setValue(QStringLiteral("trackPoint/featureWidth"),
-                             trackerState.innerHalfW * 2.0f);
-    trackerSettings.setValue(QStringLiteral("trackPoint/featureHeight"),
-                             trackerState.innerHalfH * 2.0f);
-    trackerSettings.setValue(QStringLiteral("trackPoint/searchWidth"),
-                             trackerState.outerHalfW * 2.0f);
-    trackerSettings.setValue(QStringLiteral("trackPoint/searchHeight"),
-                             trackerState.outerHalfH * 2.0f);
+    auto& config = ArtifactCore::LayeredConfigStore::instance();
+    config.setValue(QStringLiteral("Viewport/TrackPoint/FeatureWidth"),
+                    static_cast<double>(trackerState.innerHalfW * 2.0f));
+    config.setValue(QStringLiteral("Viewport/TrackPoint/FeatureHeight"),
+                    static_cast<double>(trackerState.innerHalfH * 2.0f));
+    config.setValue(QStringLiteral("Viewport/TrackPoint/SearchWidth"),
+                    static_cast<double>(trackerState.outerHalfW * 2.0f));
+    config.setValue(QStringLiteral("Viewport/TrackPoint/SearchHeight"),
+                    static_cast<double>(trackerState.outerHalfH * 2.0f));
 
     notifyViewportInteractionActivity();
 
@@ -25968,6 +26078,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   }
 
+  pointwiseAppliedCount_ = 0;
+  giDispatchedCount_ = 0;
+
 
 
   // 変更検出器のデバッグログ (カテゴリ制御)
@@ -28637,6 +28750,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 1.0f, 0.01f,
                 globalIlluminationSettings.temporalAccumulation,
                 globalIlluminationSettings.denoise);
+        if (dispatched) {
+          ++giDispatchedCount_;
+        }
         if (!dispatched && compositionViewLog().isDebugEnabled()) {
           qCDebug(compositionViewLog)
               << "[CompositionView] SSGI dispatch skipped"

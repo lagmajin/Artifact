@@ -55,12 +55,14 @@ module;
 #include <QSettings>
 #include <QSortFilterProxyModel>
 #include <QStandardPaths>
-#include <QStyleFactory>
 #include <QMetaObject>
 #include <QObject>
 #include <QTimer>
 #include <QTimerEvent>
 #include <QThread>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QHostAddress>
 #include <QUrl>
 #include <QWidget>
 #include <QtCore/QtGlobal>
@@ -88,6 +90,8 @@ import Core.AI.Context;
 import Core.AI.McpBridge;
 
 import Application.AppSettings;
+import Configuration.ConfigLayer;
+import Configuration.LayeredConfigStore;
 import Thread.PreciseTicker;
 import Artifact.Widgets.PlaybackControlWidget;
 import Artifact.Widgets.PlaybackControlTestWidget;
@@ -905,6 +909,7 @@ QJsonObject debugMcpDefaultStateJson() {
   root.insert(QStringLiteral("nextWatchId"), 1);
   root.insert(QStringLiteral("watchDescriptors"), QJsonArray{});
   root.insert(QStringLiteral("lastBreakHit"), QJsonValue::Null);
+  root.insert(QStringLiteral("lastWatchSnapshot"), QJsonValue::Null);
   root.insert(QStringLiteral("history"), QJsonArray{});
 
   QJsonObject mockSnapshot;
@@ -965,6 +970,9 @@ QJsonObject debugMcpNormalizeStateJson(QJsonObject state) {
   }
   if (!state.contains(QStringLiteral("lastBreakHit"))) {
     state.insert(QStringLiteral("lastBreakHit"), defaults.value(QStringLiteral("lastBreakHit")));
+  }
+  if (!state.contains(QStringLiteral("lastWatchSnapshot"))) {
+    state.insert(QStringLiteral("lastWatchSnapshot"), defaults.value(QStringLiteral("lastWatchSnapshot")));
   }
   if (!state.value(QStringLiteral("mockSnapshot")).isObject()) {
     state.insert(QStringLiteral("mockSnapshot"),
@@ -1357,6 +1365,32 @@ bool debugMcpAutoSyncPlaybackState(QJsonObject& state, ArtifactPlaybackService* 
   const QJsonObject session = state.value(QStringLiteral("session")).toObject();
   const bool paused = session.value(QStringLiteral("paused")).toBool(false);
   const bool wasPlayingBeforePause = session.value(QStringLiteral("wasPlayingBeforePause")).toBool(false);
+  const QString lastAction = session.value(QStringLiteral("lastAction")).toString();
+  if (paused && lastAction == QStringLiteral("mcp.stepForward")) {
+    const qint64 steps = std::clamp<qint64>(
+        session.value(QStringLiteral("stepFrames")).toVariant().toLongLong(), 1, 1000);
+    const qint64 current = playbackService->currentFrame().framePosition();
+    const qint64 target = std::min(current + steps,
+                                   playbackService->frameRange().end());
+    playbackService->setCurrentFrame(FramePosition(target));
+    QJsonObject updatedSession = session;
+    updatedSession.insert(QStringLiteral("lastAction"), QStringLiteral("step-forward"));
+    updatedSession.insert(QStringLiteral("stepFrames"), 0);
+    state.insert(QStringLiteral("session"), updatedSession);
+    return true;
+  }
+  if (paused && lastAction == QStringLiteral("mcp.stepToFrame")) {
+    const qint64 requested = session.value(QStringLiteral("targetFrame"))
+                                .toVariant().toLongLong();
+    const qint64 target = std::clamp(requested,
+                                     playbackService->frameRange().start(),
+                                     playbackService->frameRange().end());
+    playbackService->setCurrentFrame(FramePosition(target));
+    QJsonObject updatedSession = session;
+    updatedSession.insert(QStringLiteral("lastAction"), QStringLiteral("step-to-frame"));
+    state.insert(QStringLiteral("session"), updatedSession);
+    return true;
+  }
   if (paused) {
     if (session.value(QStringLiteral("pauseReason")).toString() == QStringLiteral("breakpoint") &&
         playbackService->state() == PlaybackState::Playing) {
@@ -1408,10 +1442,11 @@ private:
     }
 
     QJsonObject state = debugMcpNormalizeStateJson(debugMcpReadStateJson());
-    const bool stateChanged = debugMcpAutoSyncPlaybackState(state, playbackService_);
+    bool stateChanged = debugMcpAutoSyncPlaybackState(state, playbackService_);
 
     const QJsonArray conditions = state.value(QStringLiteral("breakConditions")).toArray();
-    if (conditions.isEmpty()) {
+    const QJsonArray watchDescriptors = state.value(QStringLiteral("watchDescriptors")).toArray();
+    if (conditions.isEmpty() && watchDescriptors.isEmpty()) {
       if (stateChanged) {
         debugMcpWriteStateJson(state);
       }
@@ -1419,6 +1454,15 @@ private:
     }
 
     const QJsonObject snapshot = buildDebugBridgeSnapshotJson();
+    const QJsonArray watchValues = debugMcpWatchValues(state, snapshot);
+    if (!watchValues.isEmpty()) {
+      QJsonObject watchSnapshot;
+      watchSnapshot.insert(QStringLiteral("timestamp"),
+                           QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+      watchSnapshot.insert(QStringLiteral("values"), watchValues);
+      state.insert(QStringLiteral("lastWatchSnapshot"), watchSnapshot);
+      stateChanged = true;
+    }
     if (afterSamplesRemaining_ > 0 &&
         !state.value(QStringLiteral("session")).toObject()
              .value(QStringLiteral("paused")).toBool(false)) {
@@ -2016,7 +2060,47 @@ static void configureWindowsUtf8Console() {}
 static void configureWindowsBinaryConsole() {}
 #endif
 
-static int runMcpServerMode() {
+static int runMcpTcpServerMode(int argc, char *argv[], quint16 port) {
+  QCoreApplication app(argc, argv);
+  QTcpServer server;
+  if (!server.listen(QHostAddress::LocalHost, port)) {
+    qCritical() << "[MCP] Failed to listen on TCP port" << port << server.errorString();
+    return 2;
+  }
+  QObject::connect(&server, &QTcpServer::newConnection, &server, [&server]() {
+    while (server.hasPendingConnections()) {
+      QTcpSocket *socket = server.nextPendingConnection();
+      auto *buffer = new QByteArray();
+      QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket, buffer]() {
+        buffer->append(socket->readAll());
+        constexpr qsizetype kMaxMcpFrameBufferBytes = 16 * 1024 * 1024;
+        if (buffer->size() > kMaxMcpFrameBufferBytes) {
+          qWarning() << "[MCP] Disconnecting client with oversized frame buffer";
+          socket->disconnectFromHost();
+          return;
+        }
+        QJsonObject request;
+        while (ArtifactCore::McpBridge::tryPopFrame(buffer, &request)) {
+          const QByteArray response = ArtifactCore::McpBridge::encodeFrame(
+              ArtifactCore::McpBridge::handleRequest(request, ArtifactCore::AIContext()));
+          socket->write(response);
+        }
+        socket->flush();
+      });
+      QObject::connect(socket, &QTcpSocket::disconnected, socket, [socket, buffer]() {
+        delete buffer;
+        socket->deleteLater();
+      });
+    }
+  });
+  qInfo() << "[MCP] Debug TCP server listening on localhost:" << port;
+  return app.exec();
+}
+
+static int runMcpServerMode(int argc, char *argv[], quint16 tcpPort = 0) {
+  if (tcpPort > 0) {
+    return runMcpTcpServerMode(argc, argv, tcpPort);
+  }
   configureWindowsBinaryConsole();
 
   QByteArray inputBuffer;
@@ -2087,6 +2171,8 @@ int main(int argc, char *argv[]) {
     printf("  --version           Show version information and exit\n");
     printf("  --lang <code>       Set UI language (ja/en/zh/zh-tw)\n");
     printf("  --mcp-server        Run in MCP (Model Context Protocol) server mode\n");
+    printf("  --mcp-debug         Run in MCP debug server mode (stdio unless --mcp-port is set)\n");
+    printf("  --mcp-port <port>   Listen on localhost TCP for MCP debug requests\n");
     printf("  --plugin-list       List all registered plugins and exit\n");
     printf("  --plugin-info <id>  Show details for a specific plugin and exit\n");
     printf("\nEnvironment:\n");
@@ -2100,8 +2186,21 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
-  if (appArgs.contains(QStringLiteral("--mcp-server"))) {
-    return runMcpServerMode();
+  if (appArgs.contains(QStringLiteral("--mcp-server")) ||
+      appArgs.contains(QStringLiteral("--mcp-debug"))) {
+    quint16 mcpPort = 0;
+    const int portIndex = appArgs.indexOf(QStringLiteral("--mcp-port"));
+    if (portIndex >= 0 && portIndex + 1 < appArgs.size()) {
+      bool ok = false;
+      const int parsedPort = appArgs[portIndex + 1].toInt(&ok);
+      if (ok && parsedPort > 0 && parsedPort <= 65535) {
+        mcpPort = static_cast<quint16>(parsedPort);
+      } else {
+        fprintf(stderr, "Invalid --mcp-port value\n");
+        return 2;
+      }
+    }
+    return runMcpServerMode(argc, argv, mcpPort);
   }
   const QStringList launchProjectPaths = collectLaunchProjectPaths(appArgs);
 
@@ -2352,10 +2451,10 @@ int main(int argc, char *argv[]) {
   };
   applyThemeFromSettings();
   QApplication::setStyle(
-      new ArtifactCommonStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
+      new ArtifactCommonStyle());
 
   {
-    QSettings aiSettings;
+    const auto& aiSettings = ArtifactCore::LayeredConfigStore::instance();
     const bool autoInitialize =
         aiSettings.value(QStringLiteral("AI/AutoInitialize"), false).toBool();
     const QString provider =
@@ -3651,6 +3750,13 @@ int main(int argc, char *argv[]) {
                 const QString projectPath =
                     ArtifactProjectManager::getInstance().currentProjectPath();
                 if (QFileInfo(projectPath).isDir()) {
+                  auto& config = ArtifactCore::LayeredConfigStore::instance();
+                  if (config.isLoaded(ArtifactCore::ConfigLayer::Project)) {
+                    config.unloadLayer(ArtifactCore::ConfigLayer::Project);
+                  }
+                  config.loadLayer(
+                      ArtifactCore::ConfigLayer::Project,
+                      QDir(projectPath).filePath(QStringLiteral(".artifact/settings.cbor")));
                   if (mw) {
                     mw->setWorkspaceMode(workspaceModeFromSettings());
                   }

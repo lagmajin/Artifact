@@ -46,8 +46,23 @@ import Utils.String.UniString;
 import Size;
 import Frame.Rate;
 import Artifact.Composition.InitParams;
+import Serialization.Registry;
+import Serialization.SchemaMigration;
 
 namespace Artifact {
+
+namespace {
+const bool registeredProjectInitParams = [] {
+    ArtifactCore::Serialization::registerSerializableType<ArtifactProjectInitParams>();
+    ArtifactCore::Serialization::SchemaMigrationRegistry::instance().registerMigration(
+        QStringLiteral("ArtifactProjectInitParams"), 0, 1,
+        [](const QJsonObject& legacy) {
+            // Version 0 used the same field layout but had no explicit schema stamp.
+            return legacy;
+        });
+    return true;
+}();
+}
 
  namespace {
   int64_t currentTimestampMs()

@@ -197,6 +197,8 @@ DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* pare
     impl_->glowStyle_ = new DockGlowStyle(QApplication::style());
     impl_->dockManager_->setStyle(impl_->glowStyle_);
     // Clear QADS's built-in light-theme stylesheet so QPalette-based styling wins.
+    // QADS owns an internal stylesheet. Keep this one documented exception
+    // while the application surfaces themselves remain token/palette driven.
     impl_->dockManager_->setStyleSheet(QString());
 
     qApp->installEventFilter(this);

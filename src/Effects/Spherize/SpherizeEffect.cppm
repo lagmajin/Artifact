@@ -77,6 +77,10 @@ void SpherizeEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF3
     float cx = centerX_ * width;       // ピクセルの絶対座標
     float cy = centerY_ * height;
     float maxRadius = std::min(width, height) * radius;
+    if (maxRadius <= 0.0f) {
+        dst = src;
+        return;
+    }
     
     // ピクセルごとの処理 — 行単位で並列化
     ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {

@@ -20,6 +20,7 @@ import std;
 import Artifact.Script.Hooks;
 import Script.Python.Engine;
 import Utils.Path;
+import Translation.Manager;
 
 namespace Artifact {
 
@@ -254,7 +255,8 @@ void ArtifactScriptMenu::Impl::runHook(const QString& hookName)
   const auto result = QMessageBox::question(
       menu_,
       tr("Script"),
-      tr("Hook script not found: %1\nCreate a stub file and open it now?")
+      TranslationManager::instance().tr(
+          QStringLiteral("script.hook_missing_create"))
           .arg(hookName),
       QMessageBox::Yes | QMessageBox::No,
       QMessageBox::Yes);
@@ -277,7 +279,8 @@ void ArtifactScriptMenu::Impl::runHook(const QString& hookName)
   const auto result = QMessageBox::question(
       menu_,
       tr("Script"),
-      tr("Hook %1 is disabled. Enable it and run it now?").arg(hookName),
+      TranslationManager::instance().tr(
+          QStringLiteral("script.hook_disabled_enable")).arg(hookName),
       QMessageBox::Yes | QMessageBox::No,
       QMessageBox::Yes);
   if (result != QMessageBox::Yes) {
@@ -309,7 +312,8 @@ void ArtifactScriptMenu::Impl::runMacroFile(const QString& filePath)
  if (!py.isInitialized()) {
   QMessageBox::warning(
       menu_, tr("Script"),
-      tr("Python engine is not initialized. Macro execution is unavailable."));
+      TranslationManager::instance().tr(
+          QStringLiteral("script.python_unavailable")));
   return;
  }
 
@@ -337,7 +341,8 @@ void ArtifactScriptMenu::Impl::runAeUtilityFile(const QString& filePath)
  if (destructive) {
   const auto result = QMessageBox::question(
       menu_, tr("AE Utility Pack"),
-      tr("This utility changes the current composition. Continue?\n%1")
+      TranslationManager::instance().tr(
+          QStringLiteral("script.composition_change_confirmation"))
           .arg(fileName),
       QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
   if (result != QMessageBox::Yes) {
@@ -359,10 +364,12 @@ void ArtifactScriptMenu::Impl::refreshHookActions()
   action->setEnabled(true);
   action->setToolTip(
       exists
-          ? tr("Hook script exists at %1 and is %2.")
+          ? TranslationManager::instance().tr(
+                QStringLiteral("script.hook_exists"))
                 .arg(ArtifactPythonHookManager::hookScriptPath(hookName),
                      enabled ? tr("enabled") : tr("disabled"))
-          : tr("Hook script not found. Trigger to create %1.")
+          : TranslationManager::instance().tr(
+                QStringLiteral("script.hook_missing_trigger"))
                 .arg(ArtifactPythonHookManager::hookScriptPath(hookName)));
   if (exists) {
    action->setText(enabled ? hookName : QStringLiteral("%1 [disabled]").arg(hookName));
@@ -462,22 +469,27 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  openScriptsFolderAction = new QAction(tr("Open User Scripts Workspace"));
  openScriptsFolderAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_workspace.svg")));
  openScriptsFolderAction->setToolTip(
-     tr("Open the canonical user scripts root and scaffold menu.py, hooks, and macros folders."));
+     TranslationManager::instance().tr(
+         QStringLiteral("script.workspace_tooltip")));
 
- openMenuScriptAction = new QAction(tr("Open menu.py"));
+ openMenuScriptAction = new QAction(
+     TranslationManager::instance().tr(QStringLiteral("script.open_menu")));
  openMenuScriptAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_menu_py.svg")));
  openMenuScriptAction->setToolTip(
-     tr("Open the script menu entry file from the user scripts workspace."));
+     TranslationManager::instance().tr(
+         QStringLiteral("script.open_menu_tooltip")));
 
  openHooksFolderAction = new QAction(tr("Open Hook Scripts Folder"));
  openHooksFolderAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_hooks_folder.svg")));
  openHooksFolderAction->setToolTip(
-     tr("Open the hooks folder inside the user scripts workspace."));
+     TranslationManager::instance().tr(
+         QStringLiteral("script.open_hooks_tooltip")));
 
  openMacrosFolderAction = new QAction(tr("Open Macros Folder"));
  openMacrosFolderAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_macros_folder.svg")));
  openMacrosFolderAction->setToolTip(
-     tr("Open the macros folder inside the user scripts workspace."));
+     TranslationManager::instance().tr(
+         QStringLiteral("script.open_macros_tooltip")));
 
  hooksMenu = new QMenu(tr("Hook Commands"));
  hooksMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_hooks.svg")));

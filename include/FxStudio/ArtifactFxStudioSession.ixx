@@ -2,6 +2,7 @@ module;
 
 #include <cstdint>
 #include <QJsonObject>
+#include <QString>
 
 export module Artifact.FxStudio.Session;
 
@@ -11,10 +12,11 @@ import Artifact.FxStudio.Sequence;
 import Artifact.FxStudio.ViewportModel;
 import Utils.Optional;
 import Core.ArtifactString;
+import Serialization.ISerializable;
 
 export namespace Artifact::FxStudio {
 
-class Session {
+class Session : public ArtifactCore::Serialization::ISerializable {
 public:
   EventTrack& eventTrack() noexcept;
   const EventTrack& eventTrack() const noexcept;
@@ -39,6 +41,10 @@ public:
 
   QJsonObject toJson() const;
   bool fromJson(const QJsonObject& object);
+  QJsonObject serialize() const override { return toJson(); }
+  bool deserialize(const QJsonObject& object) override { return fromJson(object); }
+  QString typeName() const override { return QStringLiteral("ArtifactFxStudioSession"); }
+  int schemaVersion() const override { return 1; }
 
 private:
   EventId allocateEventId() noexcept;

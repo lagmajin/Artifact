@@ -14,10 +14,12 @@ module;
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileInfoList>
+#include <QFont>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QPalette>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
@@ -40,6 +42,7 @@ module;
 #include <QVBoxLayout>
 #include <utility>
 #include <cmath>
+#include <functional>
 
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
@@ -62,6 +65,9 @@ import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 import Artifact.Widgets.PropertyEditor;
 import Application.AppSettings;
+import Configuration.ConfigLayer;
+import Configuration.ConfigSchema;
+import Configuration.LayeredConfigStore;
 import Artifact.Workspace.Modes;
 import Artifact.Audio.ScrubController;
 import FloatColorPickerDialog;
@@ -384,7 +390,7 @@ QList<SettingItemInfo> GeneralSettingPage::searchableItems() const {
   if (impl_ && impl_->themeCombo_) {
     items.push_back({"UI Theme",
                      "Built-in application theme preset",
-                     "User Interface", impl_->themeCombo_});
+                     "User Interface", impl_->themeCombo_, "UI/ThemeName"});
   }
   return items;
 }
@@ -906,18 +912,18 @@ QList<SettingItemInfo> ProjectDefaultsSettingPage::searchableItems() const {
     return items;
   }
 
-  items.push_back({"Default Composition Size",
-                   "Default width and height for new compositions",
-                   "Project Defaults", impl_->widthSpinBox_});
+    items.push_back({"Default Composition Size",
+                     "Default width and height for new compositions",
+                   "Project Defaults", impl_->widthSpinBox_, "ProjectDefaults/CompositionWidth"});
   items.push_back({"Default Frame Rate",
                    "Default frame rate for new compositions",
-                   "Project Defaults", impl_->frameRateCombo_});
+                   "Project Defaults", impl_->frameRateCombo_, "ProjectDefaults/CompositionFrameRate"});
   items.push_back({"Default Workspace",
                    "Initial workspace mode used for new projects",
-                   "Project Defaults", impl_->workspaceModeCombo_});
+                   "Project Defaults", impl_->workspaceModeCombo_, "ProjectDefaults/WorkspaceMode"});
   items.push_back({"Default Background Color",
                    "Default background color for new compositions only",
-                   "Project Defaults", impl_->backgroundColorButton_});
+                   "Project Defaults", impl_->backgroundColorButton_, "ProjectDefaults/CompositionBackgroundColor"});
   return items;
 }
 
@@ -1289,7 +1295,10 @@ void MemoryAndCpuSettingPage::saveSettings() {
 }
 
 QList<SettingItemInfo> MemoryAndCpuSettingPage::searchableItems() const {
-  return {};
+  if (!impl_) return {};
+  return {{QStringLiteral("Render worker threads"),
+           QStringLiteral("Number of worker threads used for rendering"),
+           QStringLiteral("Memory & Performance"), impl_->workerThreadsSpinBox_}};
 }
 
 MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage() {
@@ -1330,7 +1339,19 @@ void ImportSettingPage::saveSettings() {
   settings->setImportStillImageDurationSeconds(impl_->stillDurationSpinBox_->value());
   settings->setImportCreateCompositionOnImport(impl_->createCompositionCheckBox_->isChecked());
 }
-QList<SettingItemInfo> ImportSettingPage::searchableItems() const { return {}; }
+QList<SettingItemInfo> ImportSettingPage::searchableItems() const {
+  if (!impl_) return {};
+  return {
+      {QStringLiteral("Default frame rate"), QStringLiteral("Frame rate used for imported footage"), QStringLiteral("Import"), impl_->defaultFrameRateCombo_, "Import/DefaultFrameRateText"},
+      {QStringLiteral("Import color space"), QStringLiteral("Color space assigned to imported media"), QStringLiteral("Import"), impl_->colorSpaceCombo_, "Import/ColorSpaceText"},
+      {QStringLiteral("Audio sample rate"), QStringLiteral("Sample rate used for imported audio"), QStringLiteral("Import"), impl_->audioSampleRateCombo_, "Import/AudioSampleRateText"},
+      {QStringLiteral("Detect alpha automatically"), QStringLiteral("Detect transparency in imported images"), QStringLiteral("Import"), impl_->autoDetectAlphaCheckBox_, "Import/AutoDetectAlpha"},
+      {QStringLiteral("Interpret footage"), QStringLiteral("Apply footage interpretation during import"), QStringLiteral("Import"), impl_->interpretFootageCheckBox_, "Import/InterpretFootage"},
+      {QStringLiteral("Field order"), QStringLiteral("Field order for imported footage"), QStringLiteral("Import"), impl_->fieldOrderCombo_, "Import/FieldOrderText"},
+      {QStringLiteral("Still image duration"), QStringLiteral("Default duration for imported still images"), QStringLiteral("Import"), impl_->stillDurationSpinBox_, "Import/StillImageDurationSeconds"},
+      {QStringLiteral("Create composition on import"), QStringLiteral("Create a composition when importing media"), QStringLiteral("Import"), impl_->createCompositionCheckBox_, "Import/CreateCompositionOnImport"},
+  };
+}
 void PreviewSettingPage::loadSettings() {
   auto *settings = ArtifactAppSettings::instance();
   if (!settings || !impl_) {
@@ -1363,7 +1384,18 @@ void PreviewSettingPage::saveSettings() {
   settings->setPreviewGpuDeviceText(impl_->gpuDeviceCombo_->currentText());
 }
 QList<SettingItemInfo> PreviewSettingPage::searchableItems() const {
-  return {};
+  if (!impl_) return {};
+  return {
+      {QStringLiteral("Preview quality"), QStringLiteral("Quality used for interactive previews"), QStringLiteral("Preview"), impl_->previewQualityCombo_, "Preview/QualityText"},
+      {QStringLiteral("Preview resolution"), QStringLiteral("Resolution percentage for previews"), QStringLiteral("Preview"), impl_->previewResolutionSlider_, "Preview/ResolutionPercent"},
+      {QStringLiteral("RAM preview cache"), QStringLiteral("Keep preview frames in memory"), QStringLiteral("Preview"), impl_->enableCacheCheckBox_, "Preview/EnableRamCache"},
+      {QStringLiteral("Preview cache size"), QStringLiteral("Maximum memory cache size"), QStringLiteral("Preview"), impl_->cacheSizeSpinBox_, "Preview/CacheSizeMB"},
+      {QStringLiteral("Disk preview cache"), QStringLiteral("Use a persistent disk cache for previews"), QStringLiteral("Preview"), impl_->enableDiskCacheCheckBox_, "Preview/EnableDiskCache"},
+      {QStringLiteral("Generate thumbnails"), QStringLiteral("Generate asset preview thumbnails"), QStringLiteral("Preview"), impl_->generateThumbnailsCheckBox_, "Preview/GenerateThumbnails"},
+      {QStringLiteral("Thumbnail quality"), QStringLiteral("Quality used for generated thumbnails"), QStringLiteral("Preview"), impl_->thumbnailQualityCombo_, "Preview/ThumbnailQualityText"},
+      {QStringLiteral("GPU acceleration"), QStringLiteral("Use GPU acceleration for previews"), QStringLiteral("Preview"), impl_->enableGPUCheckBox_, "Preview/EnableGpuAcceleration"},
+      {QStringLiteral("GPU device"), QStringLiteral("GPU device selected for preview rendering"), QStringLiteral("Preview"), impl_->gpuDeviceCombo_, "Preview/GpuDeviceText"},
+  };
 }
 class ShortcutSettingPage::Impl {
 public:
@@ -1664,6 +1696,9 @@ public:
   QListWidget *categoryList_;
   QStackedWidget *settingPages_;
   QDialogButtonBox *buttonBox_;
+  QLineEdit *searchBox_;
+  QLabel *overrideSummary_;
+  QPushButton *resetOverridesButton_;
 
   GeneralSettingPage *generalPage_;
   ImportSettingPage *importPage_;
@@ -1674,13 +1709,52 @@ public:
   ShortcutSettingPage *shortcutPage_;
   PluginSettingPage *pluginPage_;
   AudioScrubSettingPage *audioScrubPage_;
+  QVector<ISettingPage *> pages_;
 
   void setupUI(ApplicationSettingDialog *dialog);
   void onCategoryChanged(int index);
+  void applySearch(const QString &query);
+  void updateOverrideSummary();
+  void resetProjectOverrides();
+};
+
+class SettingSearchEdit final : public QLineEdit {
+public:
+  using ChangeHandler = std::function<void(const QString &)>;
+  explicit SettingSearchEdit(QWidget *parent = nullptr) : QLineEdit(parent) {}
+  void setChangeHandler(ChangeHandler handler) { handler_ = std::move(handler); }
+
+protected:
+  void keyReleaseEvent(QKeyEvent *event) override {
+    QLineEdit::keyReleaseEvent(event);
+    if (handler_) handler_(text());
+  }
+
+private:
+  ChangeHandler handler_;
+};
+
+class ResetButtonHandler final : public QPushButton {
+public:
+  using Handler = std::function<void()>;
+  explicit ResetButtonHandler(QWidget *parent = nullptr) : QPushButton(parent) {}
+  void setHandler(Handler handler) { handler_ = std::move(handler); }
+
+protected:
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    QPushButton::mouseReleaseEvent(event);
+    if (event->button() == Qt::LeftButton && handler_) handler_();
+  }
+
+private:
+  Handler handler_;
 };
 
 ApplicationSettingDialog::Impl::Impl()
     : categoryList_(nullptr), settingPages_(nullptr), buttonBox_(nullptr),
+      searchBox_(nullptr),
+      overrideSummary_(nullptr),
+      resetOverridesButton_(nullptr),
       generalPage_(nullptr), importPage_(nullptr), previewPage_(nullptr),
       projectPage_(nullptr), compositionPage_(nullptr), memoryPage_(nullptr),
       shortcutPage_(nullptr), pluginPage_(nullptr), audioScrubPage_(nullptr) {}
@@ -1690,6 +1764,25 @@ ApplicationSettingDialog::Impl::~Impl() {}
 void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   // Main layout
   auto *mainLayout = new QVBoxLayout(dialog);
+
+  searchBox_ = new SettingSearchEdit(dialog);
+  searchBox_->setPlaceholderText(QStringLiteral("Search settings..."));
+  searchBox_->setAccessibleName(QStringLiteral("Search settings"));
+  searchBox_->setAccessibleDescription(QStringLiteral("Filter settings by name or description"));
+  mainLayout->addWidget(searchBox_);
+
+  overrideSummary_ = new QLabel(dialog);
+  overrideSummary_->setAccessibleName(QStringLiteral("Project setting overrides"));
+  QPalette summaryPalette = overrideSummary_->palette();
+  summaryPalette.setColor(QPalette::WindowText, QColor(70, 130, 220));
+  overrideSummary_->setPalette(summaryPalette);
+  mainLayout->addWidget(overrideSummary_);
+  resetOverridesButton_ = new ResetButtonHandler(dialog);
+  resetOverridesButton_->setText(QStringLiteral("Reset Project Overrides"));
+  resetOverridesButton_->setAccessibleName(QStringLiteral("Reset project overrides"));
+  resetOverridesButton_->setAccessibleDescription(QStringLiteral("Remove all project-specific setting overrides"));
+  resetOverridesButton_->setEnabled(false);
+  mainLayout->addWidget(resetOverridesButton_);
 
   // Content area (category list + settings pages)
   auto *contentLayout = new QHBoxLayout();
@@ -1734,6 +1827,9 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   settingPages_->addWidget(audioScrubPage_ = new AudioScrubSettingPage(dialog));
   settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
 
+  pages_ = {generalPage_, importPage_, previewPage_, projectPage_, compositionPage_,
+            memoryPage_, shortcutPage_, audioScrubPage_, pluginPage_};
+
   contentLayout->addWidget(settingPages_, 1);
 
   mainLayout->addLayout(contentLayout);
@@ -1767,10 +1863,81 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   QObject::connect(buttonBox_->button(QDialogButtonBox::Apply),
                    &QPushButton::clicked, dialog,
                    &ApplicationSettingDialog::saveSettings);
+
+  static_cast<SettingSearchEdit *>(searchBox_)->setChangeHandler(
+      [this](const QString &query) { applySearch(query); });
+  static_cast<ResetButtonHandler *>(resetOverridesButton_)->setHandler(
+      [this]() { resetProjectOverrides(); });
 }
 
 void ApplicationSettingDialog::Impl::onCategoryChanged(int index) {
   settingPages_->setCurrentIndex(index);
+}
+
+void ApplicationSettingDialog::Impl::applySearch(const QString &query) {
+  const QString normalized = query.trimmed();
+  int firstVisible = -1;
+  for (int index = 0; index < pages_.size(); ++index) {
+    const auto *page = pages_.at(index);
+    const QString categoryName = index < categoryList_->count()
+        ? categoryList_->item(index)->text() : QString();
+    bool matches = normalized.isEmpty() ||
+        categoryName.contains(normalized, Qt::CaseInsensitive);
+    for (const auto &item : page->searchableItems()) {
+      const bool itemMatches = normalized.isEmpty() ||
+          item.label.contains(normalized, Qt::CaseInsensitive) ||
+          item.description.contains(normalized, Qt::CaseInsensitive) ||
+          item.category.contains(normalized, Qt::CaseInsensitive);
+      if (item.widget) item.widget->setVisible(itemMatches);
+      if (item.widget && !item.key.isEmpty()) {
+        QFont font = item.widget->font();
+        font.setBold(LayeredConfigStore::instance().sourceLayer(item.key.toStdString()) ==
+                     ConfigLayer::Project);
+        item.widget->setFont(font);
+      }
+      matches = matches || itemMatches;
+    }
+    if (normalized.isEmpty() && index < categoryList_->count()) matches = true;
+    if (index < categoryList_->count()) categoryList_->setRowHidden(index, !matches);
+    if (matches && firstVisible < 0) firstVisible = index;
+  }
+  if (firstVisible >= 0 && categoryList_->currentRow() >= 0 &&
+      categoryList_->isRowHidden(categoryList_->currentRow())) {
+    categoryList_->setCurrentRow(firstVisible);
+  }
+}
+
+void ApplicationSettingDialog::Impl::updateOverrideSummary() {
+  if (!overrideSummary_) return;
+  const auto& config = LayeredConfigStore::instance();
+  int overrideCount = 0;
+  for (const auto* property : ConfigSchema::instance().allProperties()) {
+    if (property && config.sourceLayer(property->key) == ConfigLayer::Project) {
+      ++overrideCount;
+    }
+  }
+  overrideSummary_->setText(
+      overrideCount == 0
+          ? QStringLiteral("No project setting overrides")
+          : QStringLiteral("Project overrides active: %1").arg(overrideCount));
+  if (resetOverridesButton_) resetOverridesButton_->setEnabled(overrideCount > 0);
+}
+
+void ApplicationSettingDialog::Impl::resetProjectOverrides() {
+  if (!resetOverridesButton_) return;
+  if (QMessageBox::question(nullptr, QStringLiteral("Reset Project Overrides"),
+                            QStringLiteral("Remove all project-specific setting overrides?")) !=
+      QMessageBox::Yes) return;
+  LayeredConfigStore::instance().clearLayer(ConfigLayer::Project);
+  updateOverrideSummary();
+  if (generalPage_) generalPage_->loadSettings();
+  if (importPage_) importPage_->loadSettings();
+  if (previewPage_) previewPage_->loadSettings();
+  if (projectPage_) projectPage_->loadSettings();
+  if (compositionPage_) compositionPage_->loadSettings();
+  if (memoryPage_) memoryPage_->loadSettings();
+  if (shortcutPage_) shortcutPage_->loadSettings();
+  if (audioScrubPage_) audioScrubPage_->loadSettings();
 }
 
 ApplicationSettingDialog::ApplicationSettingDialog(
@@ -1799,6 +1966,7 @@ void ApplicationSettingDialog::loadSettings() {
   if (impl_->audioScrubPage_) {
     impl_->audioScrubPage_->loadSettings();
   }
+  impl_->updateOverrideSummary();
 }
 
 void ApplicationSettingDialog::saveSettings() {
@@ -2130,7 +2298,14 @@ void AudioScrubSettingPage::saveSettings() {
   ctrl.saveSettings();
 }
 
-QList<SettingItemInfo> AudioScrubSettingPage::searchableItems() const { return {}; }
+QList<SettingItemInfo> AudioScrubSettingPage::searchableItems() const {
+  if (!impl_) return {};
+  return {
+      {QStringLiteral("Audio scrubbing"), QStringLiteral("Play audio while dragging the timeline"), QStringLiteral("Audio Scrubbing"), impl_->enabledCheckBox_},
+      {QStringLiteral("Scrubbing latency"), QStringLiteral("Latency target for audio scrubbing"), QStringLiteral("Audio Scrubbing"), impl_->latencyCombo_},
+      {QStringLiteral("Scrubbing volume"), QStringLiteral("Volume scale for audio scrubbing"), QStringLiteral("Audio Scrubbing"), impl_->volumeScaleSpinBox_},
+  };
+}
 
 void ApplicationSettingDialog::showEvent(QShowEvent *event) {
   QDialog::showEvent(event);

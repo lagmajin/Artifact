@@ -943,10 +943,59 @@ public:
     mutable std::vector<QPointF> cachedShapePoints_;
     bool shapeContentCacheDirty_ = true;
 
+    struct NativePathGeometry {
+      std::vector<ArtifactCore::PathTriangle> triangles;
+      std::vector<std::vector<ArtifactCore::BezierSegment>> subpaths;
+    };
+    std::vector<NativePathGeometry> cachedNativeGeometry_;
+    double cachedNativeTolerance_ = -1.0;
+    bool nativeGeometryCacheDirty_ = true;
+    NativePathGeometry cachedCustomGeometry_;
+    double cachedCustomTolerance_ = -1.0;
+    bool customGeometryCacheDirty_ = true;
+
    Impl() = default;
  ~Impl() = default;
    void addShape() {}
-   void markDirty() { cacheDirty_ = true; shapeContentCacheDirty_ = true; }
+   void markDirty() {
+    cacheDirty_ = true;
+    shapeContentCacheDirty_ = true;
+    nativeGeometryCacheDirty_ = true;
+    customGeometryCacheDirty_ = true;
+   }
+
+   const std::vector<NativePathGeometry>& nativeGeometry(
+       const std::vector<ArtifactCore::ShapePath>& paths, double tolerance) {
+    if (!nativeGeometryCacheDirty_ &&
+        std::abs(cachedNativeTolerance_ - tolerance) < 1.0e-9) {
+     return cachedNativeGeometry_;
+    }
+    cachedNativeGeometry_.clear();
+    cachedNativeGeometry_.reserve(paths.size());
+    for (const auto& path : paths) {
+     NativePathGeometry geometry;
+     geometry.triangles = path.triangulate(tolerance);
+     geometry.subpaths = path.flattenSubpaths(tolerance);
+     cachedNativeGeometry_.push_back(std::move(geometry));
+    }
+    cachedNativeTolerance_ = tolerance;
+    nativeGeometryCacheDirty_ = false;
+    return cachedNativeGeometry_;
+   }
+
+   const NativePathGeometry& customPathGeometry(double tolerance) {
+    if (!customGeometryCacheDirty_ &&
+        std::abs(cachedCustomTolerance_ - tolerance) < 1.0e-9) {
+     return cachedCustomGeometry_;
+    }
+    const ShapePath path = buildCustomShapePath(customPathVertices_,
+                                                customPathClosed_);
+    cachedCustomGeometry_.triangles = path.triangulate(tolerance);
+    cachedCustomGeometry_.subpaths = path.flattenSubpaths(tolerance);
+    cachedCustomTolerance_ = tolerance;
+    customGeometryCacheDirty_ = false;
+    return cachedCustomGeometry_;
+   }
   void rebuildCache() {
     if (!cacheDirty_) return;
     QImage img(width_, height_, QImage::Format_ARGB32_Premultiplied);
@@ -1617,10 +1666,11 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
         const double scaleY = std::hypot(static_cast<double>(transform(0, 1)),
                                          static_cast<double>(transform(1, 1)));
         const double renderScale = std::max({1.0, scaleX, scaleY});
-        for (const auto& path : processedPaths) {
+        const auto& geometry = impl->nativeGeometry(processedPaths,
+                                                    0.25 / renderScale);
+        for (const auto& pathGeometry : geometry) {
          if (impl->fillEnabled_) {
-          const auto triangles = path.triangulate(0.25 / renderScale);
-          for (const auto& triangle : triangles) {
+          for (const auto& triangle : pathGeometry.triangles) {
            const QPointF p0 = mapPoint(transform, triangle.p0);
            const QPointF p1 = mapPoint(transform, triangle.p1);
            const QPointF p2 = mapPoint(transform, triangle.p2);
@@ -1630,8 +1680,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
                {static_cast<float>(p2.x()), static_cast<float>(p2.y())}, drawFill);
           }
          }
-         const auto subpaths = path.flattenSubpaths(0.25 / renderScale);
-         for (const auto& segments : subpaths) {
+         for (const auto& segments : pathGeometry.subpaths) {
           if (segments.empty()) continue;
           std::vector<Detail::float2> points;
           points.reserve(segments.size() + 1);
@@ -1706,23 +1755,19 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
     }
 
     if (impl->customPathVertices_.size() >= 3) {
-     const ShapePath path = buildCustomShapePath(
-         impl->customPathVertices_, impl->customPathClosed_);
-
      const double scaleX = std::hypot(static_cast<double>(transform(0, 0)),
                                       static_cast<double>(transform(1, 0)));
      const double scaleY = std::hypot(static_cast<double>(transform(0, 1)),
                                       static_cast<double>(transform(1, 1)));
      const double renderScale = std::max({1.0, scaleX, scaleY});
-     const auto subpaths = path.flattenSubpaths(0.25 / renderScale);
-     if (subpaths.empty()) return;
+     const auto& geometry = impl->customPathGeometry(0.25 / renderScale);
+     if (geometry.subpaths.empty()) return;
 
      if (impl->fillEnabled_ && impl->customPathClosed_) {
       // Fill-rule and hole aware triangulation runs in local coordinates;
       // affine mapping keeps the triangles valid in composition space.
-      const auto triangles = path.triangulate(0.25 / renderScale);
-      if (!triangles.empty()) {
-       for (const auto& triangle : triangles) {
+      if (!geometry.triangles.empty()) {
+       for (const auto& triangle : geometry.triangles) {
         const QPointF t0 = mapPoint(transform, triangle.p0);
         const QPointF t1 = mapPoint(transform, triangle.p1);
         const QPointF t2 = mapPoint(transform, triangle.p2);
@@ -1732,13 +1777,13 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
             {static_cast<float>(t2.x()), static_cast<float>(t2.y())},
             fill);
        }
-      } else if (subpaths.size() == 1) {
+      } else if (geometry.subpaths.size() == 1) {
        // Single-contour fallback keeps the previous polygon behavior.
        // Multi-contour failures skip the fill instead of drawing each
        // contour as an unrelated polygon (holes would be lost).
        std::vector<Detail::float2> polygon;
-       polygon.reserve(subpaths.front().size());
-       for (const auto& segment : subpaths.front()) {
+       polygon.reserve(geometry.subpaths.front().size());
+       for (const auto& segment : geometry.subpaths.front()) {
         const QPointF mappedPoint = mapPoint(transform, segment.p0);
         polygon.push_back({static_cast<float>(mappedPoint.x()),
                            static_cast<float>(mappedPoint.y())});
@@ -1755,7 +1800,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
       style.join = static_cast<PolylineJoin>(impl->strokeJoin_);
       style.closed = impl->customPathClosed_;
       style.dashPattern = impl->dashPattern_;
-      for (const auto& segments : subpaths) {
+      for (const auto& segments : geometry.subpaths) {
        std::vector<Detail::float2> points;
        points.reserve(segments.size() + 1);
        for (const auto& segment : segments) {

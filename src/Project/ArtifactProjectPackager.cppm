@@ -13,6 +13,7 @@ module;
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMap>
 #include <QSet>
 #include <QDebug>
 
@@ -21,6 +22,7 @@ module Artifact.Project.Packager;
 import Artifact.Project;
 import Artifact.Project.Items;
 import Artifact.Project.Statistics;
+import Serialization.ProjectSerializer;
 
 namespace Artifact {
 
@@ -177,22 +179,34 @@ bool ArtifactProjectPackager::collectAndPackage(ArtifactProject* project, const 
     rewriteFootagePaths(rootValue, pathMap);
     projectJson = rootValue.toObject();
 
-    QSaveFile projectFile(dir.filePath(QStringLiteral("project.json")));
-    if (!projectFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        qDebug() << "Failed to open packaged project file for writing";
-        return false;
-    }
-    const QByteArray serializedProject =
-        QJsonDocument(projectJson).toJson(QJsonDocument::Indented);
-    if (projectFile.write(serializedProject) != serializedProject.size()) {
-        qWarning() << "[Packager] Failed to write packaged project file:"
-                   << projectFile.errorString();
-        projectFile.cancelWriting();
-        return false;
-    }
-    if (!projectFile.commit()) {
-        qWarning() << "[Packager] Failed to commit packaged project file:"
-                   << projectFile.errorString();
+    if (settings.splitProjectDocuments) {
+        QJsonObject manifest;
+        manifest.insert(QStringLiteral("formatVersion"), 1);
+        manifest.insert(QStringLiteral("rootDocument"), QStringLiteral("project"));
+        QMap<QString, QJsonObject> documents;
+        QJsonObject rootDocument = projectJson;
+        QJsonArray compositionReferences;
+        const QJsonArray compositions = projectJson.value(QStringLiteral("compositions")).toArray();
+        for (int index = 0; index < compositions.size(); ++index) {
+            const QString documentName = QStringLiteral("composition_%1").arg(index);
+            documents.insert(documentName, compositions.at(index).toObject());
+            compositionReferences.append(QJsonObject{
+                {QStringLiteral("$document"), documentName}});
+        }
+        if (!compositionReferences.isEmpty()) {
+            rootDocument.insert(QStringLiteral("compositions"), compositionReferences);
+        }
+        documents.insert(QStringLiteral("project"), rootDocument);
+        if (!ArtifactCore::Serialization::ProjectSerializer::saveSplit(
+                dir.absolutePath(), manifest, documents,
+                ArtifactCore::Serialization::SerializationFormat::Json)) {
+            qWarning() << "[Packager] Failed to write split project documents";
+            return false;
+        }
+    } else if (!ArtifactCore::Serialization::ProjectSerializer::save(
+                   dir.filePath(QStringLiteral("project.json")), projectJson,
+                   ArtifactCore::Serialization::SerializationFormat::Json)) {
+        qWarning() << "[Packager] Failed to write packaged project file";
         return false;
     }
     

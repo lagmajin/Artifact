@@ -11,6 +11,7 @@ import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
 import Utils.String.UniString;
 import Utils.Optional;
+import Serialization.ISerializable;
 
 export namespace Artifact {
 
@@ -28,22 +29,30 @@ enum class CreationDefaultScope {
     LastUsed
 };
 
-struct CreationCompositionDefaults {
+struct CreationCompositionDefaults : public ArtifactCore::Serialization::ISerializable {
     ArtifactCompositionInitParams composition;
 
     QJsonObject toJson() const;
     bool fromJson(const QJsonObject& json);
+    QJsonObject serialize() const override { return toJson(); }
+    bool deserialize(const QJsonObject& json) override { return fromJson(json); }
+    QString typeName() const override { return QStringLiteral("CreationCompositionDefaults"); }
+    int schemaVersion() const override { return 1; }
 };
 
-struct CreationLayerDefaults {
+struct CreationLayerDefaults : public ArtifactCore::Serialization::ISerializable {
     ArtifactCore::Optional<ArtifactLayerInitParams> layer;
     QString sourcePath;
 
     QJsonObject toJson() const;
     bool fromJson(const QJsonObject& json);
+    QJsonObject serialize() const override { return toJson(); }
+    bool deserialize(const QJsonObject& json) override { return fromJson(json); }
+    QString typeName() const override { return QStringLiteral("CreationLayerDefaults"); }
+    int schemaVersion() const override { return 1; }
 };
 
-struct CreationDefaultsBundle {
+struct CreationDefaultsBundle : public ArtifactCore::Serialization::ISerializable {
     CreationCompositionDefaults composition;
     CreationLayerDefaults shape;
     CreationLayerDefaults text;
@@ -51,9 +60,13 @@ struct CreationDefaultsBundle {
 
     QJsonObject toJson() const;
     bool fromJson(const QJsonObject& json);
+    QJsonObject serialize() const override { return toJson(); }
+    bool deserialize(const QJsonObject& json) override { return fromJson(json); }
+    QString typeName() const override { return QStringLiteral("CreationDefaultsBundle"); }
+    int schemaVersion() const override { return 1; }
 };
 
-struct CreationDefaultsState {
+struct CreationDefaultsState : public ArtifactCore::Serialization::ISerializable {
     CreationDefaultsBundle globalDefaults;
     CreationDefaultsBundle projectDefaults;
     CreationDefaultsBundle lastUsed;
@@ -61,9 +74,13 @@ struct CreationDefaultsState {
 
     QJsonObject toJson() const;
     bool fromJson(const QJsonObject& json);
+    QJsonObject serialize() const override { return toJson(); }
+    bool deserialize(const QJsonObject& json) override { return fromJson(json); }
+    QString typeName() const override { return QStringLiteral("CreationDefaultsState"); }
+    int schemaVersion() const override { return 1; }
 };
 
-class CreationDefaultResolver {
+class CreationDefaultResolver : public ArtifactCore::Serialization::ISerializable {
 public:
     CreationDefaultResolver() = default;
 
@@ -81,6 +98,11 @@ public:
 
     QJsonObject toJson() const;
     bool fromJson(const QJsonObject& json);
+
+    QJsonObject serialize() const override { return toJson(); }
+    bool deserialize(const QJsonObject& json) override { return fromJson(json); }
+    QString typeName() const override { return QStringLiteral("CreationDefaultResolver"); }
+    int schemaVersion() const override { return 1; }
 
 private:
     CreationDefaultsBundle globalDefaults_;

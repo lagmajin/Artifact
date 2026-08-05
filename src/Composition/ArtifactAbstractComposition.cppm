@@ -56,6 +56,8 @@ import Artifact.Effect.Keying.LumaKey;
 import Artifact.Effect.Keying.DifferenceKey;
 import Artifact.Effect.Rasterizer.DifferenceMatte;
 import Artifact.Effect.Keying.IBKKeyer;
+import Serialization.JsonAdapter;
+import Serialization.SchemaMigration;
 import Artifact.Render.CompositionViewDrawing;
 import Artifact.Event.Types;
 import Event.Bus;
@@ -70,6 +72,37 @@ import Physics.System;
 import Physics.Mpm2D;
 
 //import Playback.Clock;
+
+namespace {
+const bool kCompositionSerializationRegistered = [] {
+    ArtifactCore::Serialization::registerJsonSerializableType<Artifact::ResponsiveLayoutVariant>(
+        QStringLiteral("ResponsiveLayoutVariant"), 1);
+    ArtifactCore::Serialization::registerJsonSerializableType<Artifact::ResponsiveLayoutSet>(
+        QStringLiteral("ResponsiveLayoutSet"), 1);
+    ArtifactCore::Serialization::registerJsonSerializableType<Artifact::CompositionTransformField>(
+        QStringLiteral("CompositionTransformField"), 1);
+    ArtifactCore::Serialization::registerJsonSerializableType<Artifact::CompositionStatePropertyOverride>(
+        QStringLiteral("CompositionStatePropertyOverride"), 1);
+    ArtifactCore::Serialization::registerJsonSerializableType<Artifact::CompositionAudioReactiveBinding>(
+        QStringLiteral("CompositionAudioReactiveBinding"), 1);
+    ArtifactCore::Serialization::registerJsonSerializableType<Artifact::CompositionStateVariant>(
+        QStringLiteral("CompositionStateVariant"), 1);
+    auto& migrations = ArtifactCore::Serialization::SchemaMigrationRegistry::instance();
+    migrations.registerMigration(QStringLiteral("ResponsiveLayoutVariant"), 0, 1,
+                                  [](const QJsonObject& object) { return object; });
+    migrations.registerMigration(QStringLiteral("ResponsiveLayoutSet"), 0, 1,
+                                  [](const QJsonObject& object) { return object; });
+    migrations.registerMigration(QStringLiteral("CompositionTransformField"), 0, 1,
+                                  [](const QJsonObject& object) { return object; });
+    migrations.registerMigration(QStringLiteral("CompositionStatePropertyOverride"), 0, 1,
+                                  [](const QJsonObject& object) { return object; });
+    migrations.registerMigration(QStringLiteral("CompositionAudioReactiveBinding"), 0, 1,
+                                  [](const QJsonObject& object) { return object; });
+    migrations.registerMigration(QStringLiteral("CompositionStateVariant"), 0, 1,
+                                  [](const QJsonObject& object) { return object; });
+    return true;
+}();
+}
 
 namespace Artifact {
  using namespace ArtifactCore;

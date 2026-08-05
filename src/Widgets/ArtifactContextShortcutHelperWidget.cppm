@@ -10,6 +10,7 @@ module Artifact.Widgets.ContextShortcutHelperWidget;
 
 import std;
 import Artifact.Widgets.ContextShortcutProvider;
+import Translation.Manager;
 
 namespace Artifact {
 
@@ -34,7 +35,8 @@ ArtifactContextShortcutHelperWidget::Impl::Impl(ArtifactContextShortcutHelperWid
     layout->setSpacing(4);
 
     searchEdit_ = new QLineEdit(parent);
-    searchEdit_->setPlaceholderText(QObject::tr("Search shortcuts..."));
+    searchEdit_->setPlaceholderText(TranslationManager::instance().tr(
+        QStringLiteral("shortcuts.search_placeholder")));
     layout->addWidget(searchEdit_);
 
     treeWidget_ = new QTreeWidget(parent);

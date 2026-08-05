@@ -31,6 +31,7 @@
 #include <regex>
 #include <random>
 #include <QJsonObject>
+#include <QString>
 export module ArtifactProjectInitParams;
 
 
@@ -40,10 +41,11 @@ import Utils.String.UniString;
 import Size;
 import Frame.Rate;
 import Artifact.Composition.InitParams;
+import Serialization.ISerializable;
 
 export namespace Artifact {
 
- class ArtifactProjectInitParams {
+ class ArtifactProjectInitParams : public ArtifactCore::Serialization::ISerializable {
  private:
   class Impl;
   Impl* impl_;
@@ -98,6 +100,11 @@ export namespace Artifact {
   // Serialization
   QJsonObject toJson() const;
   bool fromJson(const QJsonObject& object);
+
+  QJsonObject serialize() const override { return toJson(); }
+  bool deserialize(const QJsonObject& object) override { return fromJson(object); }
+  QString typeName() const override { return QStringLiteral("ArtifactProjectInitParams"); }
+  int schemaVersion() const override { return 1; }
 
   // Reset to defaults
   void reset();

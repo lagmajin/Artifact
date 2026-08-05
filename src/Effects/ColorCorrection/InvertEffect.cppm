@@ -65,6 +65,8 @@ class InvertEffectCPUImpl : public ArtifactEffectImplBase {
 public:
     int channel_ = 0;
     float strength_ = 1.0f;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> stagingTex_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         dst = src;
@@ -146,9 +148,14 @@ public:
         outDesc.Name = "Invert/Output";
         outDesc.Usage = Diligent::USAGE_DEFAULT;
         outDesc.BindFlags = Diligent::BIND_SHADER_RESOURCE | Diligent::BIND_UNORDERED_ACCESS;
-        Diligent::RefCntAutoPtr<Diligent::ITexture> output;
-        device->CreateTexture(outDesc, nullptr, &output);
-        if (!output) { applyCPU(src, dst); return; }
+        if (!outputTex_ || outputTex_->GetDesc().Width != outDesc.Width ||
+            outputTex_->GetDesc().Height != outDesc.Height ||
+            outputTex_->GetDesc().Format != outDesc.Format ||
+            outputTex_->GetDesc().BindFlags != outDesc.BindFlags) {
+            outputTex_.Release();
+            device->CreateTexture(outDesc, nullptr, &outputTex_);
+        }
+        if (!outputTex_) { applyCPU(src, dst); return; }
 
         Diligent::BufferDesc cbDesc{};
         cbDesc.Name = "Invert/Params";
@@ -184,7 +191,7 @@ public:
         if (!executor.build(pipeline) || !executor.createShaderResourceBinding(true) ||
             !executor.setBuffer("InvertParams", params) ||
             !executor.setTextureView("g_InputTexture", input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-            !executor.setTextureView("g_OutputTexture", output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
+            !executor.setTextureView("g_OutputTexture", outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
             applyCPU(src, dst);
             return;
         }
@@ -196,20 +203,24 @@ public:
         stagingDesc.Usage = Diligent::USAGE_STAGING;
         stagingDesc.BindFlags = Diligent::BIND_NONE;
         stagingDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
-        Diligent::RefCntAutoPtr<Diligent::ITexture> staging;
-        device->CreateTexture(stagingDesc, nullptr, &staging);
-        if (!staging) { applyCPU(src, dst); return; }
-        Diligent::CopyTextureAttribs copy(output, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
-                                          staging, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        if (!stagingTex_ || stagingTex_->GetDesc().Width != stagingDesc.Width ||
+            stagingTex_->GetDesc().Height != stagingDesc.Height ||
+            stagingTex_->GetDesc().Format != stagingDesc.Format) {
+            stagingTex_.Release();
+            device->CreateTexture(stagingDesc, nullptr, &stagingTex_);
+        }
+        if (!stagingTex_) { applyCPU(src, dst); return; }
+        Diligent::CopyTextureAttribs copy(outputTex_, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                                          stagingTex_, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         context->CopyTexture(copy);
         context->Flush();
         context->WaitForIdle();
         Diligent::MappedTextureSubresource read{};
-        context->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, read);
+        context->MapTextureSubresource(stagingTex_, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, read);
         if (!read.pData || !read.Stride) { applyCPU(src, dst); return; }
         cv::Mat result(static_cast<int>(outDesc.Height), static_cast<int>(outDesc.Width), CV_32FC4, read.pData, read.Stride);
         dst.image().setFromCVMat(result, image.colorDescriptor());
-        context->UnmapTextureSubresource(staging, 0, 0);
+        context->UnmapTextureSubresource(stagingTex_, 0, 0);
     }
 
 private:

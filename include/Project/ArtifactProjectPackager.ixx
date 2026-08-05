@@ -18,6 +18,9 @@ struct PackageSettings {
     QString targetDir;
     bool includePreviewCache = false;
     bool renameAssetsToHash = false;
+    // When enabled, the root project and each composition are stored as
+    // independently replaceable documents under manifest.json.
+    bool splitProjectDocuments = false;
 };
 
 class ArtifactProjectPackager {

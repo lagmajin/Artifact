@@ -66,6 +66,13 @@ import Widgets.Utils.CSS;
 import Settings.Accessibility;
 import Artifact.Layer.Text;
 import Clipboard.ClipboardManager;
+import Translation.Manager;
+
+namespace {
+QString propertyUiText(const QString& key, const QString& fallback) {
+  return Artifact::TranslationManager::instance().tr(key, fallback);
+}
+}
 
 namespace {
 constexpr int kPropertyRowMinHeight = 34;
@@ -181,13 +188,13 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   prevKeyBtn_->setObjectName(QStringLiteral("propertyPrevKeyButton"));
   nextKeyBtn_->setObjectName(QStringLiteral("propertyNextKeyButton"));
   prevKeyBtn_->setToolTip(
-      QStringLiteral("Previous keyframe: %1").arg(propertyName));
-  prevKeyBtn_->setAccessibleName(QStringLiteral("Previous keyframe"));
+      propertyUiText(QStringLiteral("property.keyframe.previous"), QStringLiteral("Previous keyframe: %1")).arg(propertyName));
+  prevKeyBtn_->setAccessibleName(propertyUiText(QStringLiteral("property.keyframe.previous_short"), QStringLiteral("Previous keyframe")));
   prevKeyBtn_->setAccessibleDescription(
       QStringLiteral("Go to the previous keyframe for %1").arg(propertyName));
   nextKeyBtn_->setToolTip(
-      QStringLiteral("Next keyframe: %1").arg(propertyName));
-  nextKeyBtn_->setAccessibleName(QStringLiteral("Next keyframe"));
+      propertyUiText(QStringLiteral("property.keyframe.next"), QStringLiteral("Next keyframe: %1")).arg(propertyName));
+  nextKeyBtn_->setAccessibleName(propertyUiText(QStringLiteral("property.keyframe.next_short"), QStringLiteral("Next keyframe")));
   nextKeyBtn_->setAccessibleDescription(
       QStringLiteral("Go to the next keyframe for %1").arg(propertyName));
   prevKeyBtn_->setFlat(true);
@@ -201,8 +208,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
 
   keyframeButton_->setObjectName(QStringLiteral("propertyKeyButton"));
   keyframeButton_->setToolTip(
-      QStringLiteral("Toggle Keyframe: %1").arg(propertyName));
-  keyframeButton_->setAccessibleName(QStringLiteral("Keyframe"));
+      propertyUiText(QStringLiteral("property.keyframe.toggle"), QStringLiteral("Toggle Keyframe: %1")).arg(propertyName));
+  keyframeButton_->setAccessibleName(propertyUiText(QStringLiteral("property.keyframe.label"), QStringLiteral("Keyframe")));
   keyframeButton_->setAccessibleDescription(
       QStringLiteral("Toggle keyframe for %1").arg(propertyName));
   keyframeButton_->setFixedSize(kPropertyKeyButtonSize,
@@ -215,8 +222,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   updateKeyframeButtonIcon();
 
   resetButton_->setObjectName(QStringLiteral("propertyResetButton"));
-  resetButton_->setToolTip(QStringLiteral("Reset: %1").arg(propertyName));
-  resetButton_->setAccessibleName(QStringLiteral("Reset property"));
+  resetButton_->setToolTip(propertyUiText(QStringLiteral("property.reset"), QStringLiteral("Reset: %1")).arg(propertyName));
+  resetButton_->setAccessibleName(propertyUiText(QStringLiteral("property.reset_short"), QStringLiteral("Reset property")));
   resetButton_->setAccessibleDescription(
       QStringLiteral("Reset %1 to its default value").arg(propertyName));
   resetButton_->setFixedSize(kPropertyResetButtonSize,
@@ -230,8 +237,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
 
   expressionButton_->setObjectName(QStringLiteral("propertyExprButton"));
   expressionButton_->setToolTip(
-      QStringLiteral("Expression: %1").arg(propertyName));
-  expressionButton_->setAccessibleName(QStringLiteral("Expression"));
+      propertyUiText(QStringLiteral("property.expression"), QStringLiteral("Expression: %1")).arg(propertyName));
+  expressionButton_->setAccessibleName(propertyUiText(QStringLiteral("property.expression_short"), QStringLiteral("Expression")));
   expressionButton_->setAccessibleDescription(
       QStringLiteral("Edit the expression for %1").arg(propertyName));
   expressionButton_->setFixedSize(kPropertyExprButtonWidth,
@@ -246,8 +253,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   favoriteButton_ = new QPushButton(this);
   favoriteButton_->setObjectName(QStringLiteral("propertyFavButton"));
   favoriteButton_->setToolTip(
-      QStringLiteral("Favorite: %1").arg(propertyName));
-  favoriteButton_->setAccessibleName(QStringLiteral("Favorite property"));
+      propertyUiText(QStringLiteral("property.favorite"), QStringLiteral("Favorite: %1")).arg(propertyName));
+  favoriteButton_->setAccessibleName(propertyUiText(QStringLiteral("property.favorite_short"), QStringLiteral("Favorite property")));
   favoriteButton_->setAccessibleDescription(
       QStringLiteral("Toggle favorite state for %1").arg(propertyName));
   favoriteButton_->setFixedSize(kPropertyKeyButtonSize,
@@ -875,15 +882,15 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
   }
 
   QMenu menu(this);
-  QAction *copyAction = menu.addAction(QStringLiteral("Copy Value"));
-  QAction *pasteAction = menu.addAction(QStringLiteral("Paste Value"));
-  QAction *resetAction = menu.addAction(QStringLiteral("Reset Value"));
+  QAction *copyAction = menu.addAction(propertyUiText(QStringLiteral("property.menu.copy_value"), QStringLiteral("Copy Value")));
+  QAction *pasteAction = menu.addAction(propertyUiText(QStringLiteral("property.menu.paste_value"), QStringLiteral("Paste Value")));
+  QAction *resetAction = menu.addAction(propertyUiText(QStringLiteral("property.menu.reset_value"), QStringLiteral("Reset Value")));
   QAction *auxAction = nullptr;
   if (auxActionHandler_ && !auxActionLabel_.isEmpty()) {
     auxAction = menu.addAction(auxActionLabel_);
   }
   QAction *copyNameAction =
-      menu.addAction(QStringLiteral("Copy Property Name"));
+      menu.addAction(propertyUiText(QStringLiteral("property.menu.copy_name"), QStringLiteral("Copy Property Name")));
   QMenu *anchorMenu = nullptr;
   QAction *anchorAbsoluteAction = nullptr;
   QAction *anchorLockToInAction = nullptr;
@@ -898,21 +905,21 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
   QAction *colorPurpleAction = nullptr;
   QAction *colorGrayAction = nullptr;
   if (keyframeAnchorHandler_) {
-    anchorMenu = menu.addMenu(QStringLiteral("Keyframe Anchor"));
-    anchorAbsoluteAction = anchorMenu->addAction(QStringLiteral("Absolute"));
-    anchorLockToInAction = anchorMenu->addAction(QStringLiteral("Lock to In Point"));
-    anchorLockToOutAction = anchorMenu->addAction(QStringLiteral("Lock to Out Point"));
-    anchorStretchAction = anchorMenu->addAction(QStringLiteral("Stretch with Layer"));
+    anchorMenu = menu.addMenu(propertyUiText(QStringLiteral("property.menu.keyframe_anchor"), QStringLiteral("Keyframe Anchor")));
+    anchorAbsoluteAction = anchorMenu->addAction(propertyUiText(QStringLiteral("property.menu.absolute"), QStringLiteral("Absolute")));
+    anchorLockToInAction = anchorMenu->addAction(propertyUiText(QStringLiteral("property.menu.lock_in"), QStringLiteral("Lock to In Point")));
+    anchorLockToOutAction = anchorMenu->addAction(propertyUiText(QStringLiteral("property.menu.lock_out"), QStringLiteral("Lock to Out Point")));
+    anchorStretchAction = anchorMenu->addAction(propertyUiText(QStringLiteral("property.menu.stretch"), QStringLiteral("Stretch with Layer")));
   }
   if (keyframeColorLabelHandler_) {
-    colorMenu = menu.addMenu(QStringLiteral("Keyframe Color Label"));
-    colorNoneAction = colorMenu->addAction(QStringLiteral("None"));
-    colorRedAction = colorMenu->addAction(QStringLiteral("Red"));
-    colorBlueAction = colorMenu->addAction(QStringLiteral("Blue"));
-    colorYellowAction = colorMenu->addAction(QStringLiteral("Yellow"));
-    colorGreenAction = colorMenu->addAction(QStringLiteral("Green"));
-    colorPurpleAction = colorMenu->addAction(QStringLiteral("Purple"));
-    colorGrayAction = colorMenu->addAction(QStringLiteral("Gray"));
+    colorMenu = menu.addMenu(propertyUiText(QStringLiteral("property.menu.color_label"), QStringLiteral("Keyframe Color Label")));
+    colorNoneAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.none"), QStringLiteral("None")));
+    colorRedAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.red"), QStringLiteral("Red")));
+    colorBlueAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.blue"), QStringLiteral("Blue")));
+    colorYellowAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.yellow"), QStringLiteral("Yellow")));
+    colorGreenAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.green"), QStringLiteral("Green")));
+    colorPurpleAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.purple"), QStringLiteral("Purple")));
+    colorGrayAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.gray"), QStringLiteral("Gray")));
   }
 
   copyAction->setEnabled(editor_ != nullptr);

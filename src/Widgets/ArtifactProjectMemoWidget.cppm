@@ -14,6 +14,7 @@ module Artifact.Widgets.ProjectMemoWidget;
 import std;
 import Artifact.Widgets.ProjectMemoModel;
 import Localization.Localization;
+import Translation.Manager;
 
 namespace Artifact {
 
@@ -61,7 +62,8 @@ ArtifactProjectMemoWidget::Impl::Impl(ArtifactProjectMemoWidget *parent)
   listView_->setModel(itemModel_);
   mainLayout->addWidget(listView_);
 
-  auto *hintLabel = new QLabel(QObject::tr("Double-click a memo to jump to frame."), parent);
+  auto *hintLabel = new QLabel(
+      TranslationManager::instance().tr(QStringLiteral("memo.jump_hint")), parent);
   hintLabel->setWordWrap(true);
   mainLayout->addWidget(hintLabel);
 

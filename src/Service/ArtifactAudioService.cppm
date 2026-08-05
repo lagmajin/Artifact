@@ -5,10 +5,11 @@ module;
 #include <QString>
 #include <QStringList>
 #include <QSet>
-#include <QSettings>
 #include <QtMultimedia/QMediaDevices>
 #include <QtMultimedia/QAudioDevice>
 module Artifact.Service.Audio;
+
+import Configuration.LayeredConfigStore;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
@@ -44,8 +45,8 @@ public:
 
  Impl()
  {
-  QSettings settings;
-  outputDeviceName = settings.value(QStringLiteral("audio/outputDeviceName"))
+  outputDeviceName = ArtifactCore::LayeredConfigStore::instance()
+                         .value(QStringLiteral("audio/outputDeviceName"))
                          .toString().trimmed();
  }
 
@@ -177,8 +178,8 @@ void ArtifactAudioService::setOutputDeviceName(const QString& deviceName)
   return;
  }
  impl_->outputDeviceName = normalizedName;
- QSettings settings;
- settings.setValue(QStringLiteral("audio/outputDeviceName"), normalizedName);
+ ArtifactCore::LayeredConfigStore::instance().setValue(
+     QStringLiteral("audio/outputDeviceName"), normalizedName);
  if (auto* playback = ArtifactPlaybackService::instance()) {
   playback->setAudioOutputDeviceName(normalizedName);
  }

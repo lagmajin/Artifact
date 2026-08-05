@@ -15,7 +15,6 @@ module;
 #include <cmath>
 #include <memory>
 #include <QGuiApplication>
-#include <QSettings>
 #include <array>
 
 module Artifact.Widgets.TransformGizmo;
@@ -36,6 +35,7 @@ import Animation.Transform3D;
 import Artifact.Service.Project;
 import Widgets.Utils.CSS;
 import ArtifactCore.Utils.PerformanceProfiler;
+import Configuration.LayeredConfigStore;
 import Memory.SharedPtr;
 
 namespace Artifact {
@@ -46,8 +46,9 @@ Q_LOGGING_CATEGORY(transformGizmoLog, "artifact.transformgizmo")
 constexpr float kPi = 3.14159265358979323846f;
 
 float rotationSnapStepDegrees() {
- const float configured = static_cast<float>(QSettings().value(
-     QStringLiteral("ArtifactStudio/Viewport/RotationSnapDegrees"), 45.0).toDouble());
+ const float configured = static_cast<float>(
+     ArtifactCore::LayeredConfigStore::instance().valueDouble(
+         QStringLiteral("Viewport/RotationSnapDegrees"), 45.0));
  constexpr std::array<float, 4> kAllowedSteps{15.0f, 30.0f, 45.0f, 90.0f};
  float closest = kAllowedSteps.front();
  float closestDistance = std::abs(configured - closest);

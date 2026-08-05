@@ -12,9 +12,24 @@ module;
 
 module Artifact.Color.Palette;
 
+import Serialization.JsonAdapter;
+import Serialization.SchemaMigration;
+
+
 import Color.Float;
 
 namespace ArtifactCore::Color {
+
+namespace {
+const bool registeredColorPalette = [] {
+    ArtifactCore::Serialization::registerJsonSerializableType<ColorPalette>(
+        QStringLiteral("ColorPalette"), 1);
+    ArtifactCore::Serialization::SchemaMigrationRegistry::instance().registerMigration(
+        QStringLiteral("ColorPalette"), 0, 1,
+        [](const QJsonObject& legacy) { return legacy; });
+    return true;
+}();
+
 
 namespace {
 

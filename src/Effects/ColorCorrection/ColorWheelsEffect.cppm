@@ -56,6 +56,7 @@ public:
     std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
     std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
     mutable bool pipelineReady_ = false;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         dst = src;
@@ -89,9 +90,9 @@ public:
         static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"ColorWheelsParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
         if (!pipelineReady_) { ArtifactCore::ComputePipelineDesc d; d.name="ColorWheels/PSO"; d.shaderSource=kHlsl; d.entryPoint="main"; d.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL; d.variables=vars; d.variableCount=3; d.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC; if(!executor_->build(d)||!executor_->createShaderResourceBinding(true)||!executor_->setBuffer("ColorWheelsParams",paramsCB_)){applyCPU(src,dst);return;} pipelineReady_=true; }
         Diligent::RefCntAutoPtr<Diligent::ITexture> input; if(!createTexture(src,&input,"ColorWheels/Input")){applyCPU(src,dst);return;}
-        auto od=input->GetDesc(); od.Usage=Diligent::USAGE_DEFAULT; od.BindFlags=Diligent::BIND_UNORDERED_ACCESS|Diligent::BIND_SHADER_RESOURCE; od.Name="ColorWheels/Output"; Diligent::RefCntAutoPtr<Diligent::ITexture> output; device_->CreateTexture(od,nullptr,&output); if(!output){applyCPU(src,dst);return;}
+        auto od=input->GetDesc(); od.Usage=Diligent::USAGE_DEFAULT; od.BindFlags=Diligent::BIND_UNORDERED_ACCESS|Diligent::BIND_SHADER_RESOURCE; od.Name="ColorWheels/Output"; if(!outputTex_||outputTex_->GetDesc().Width!=od.Width||outputTex_->GetDesc().Height!=od.Height||outputTex_->GetDesc().Format!=od.Format||outputTex_->GetDesc().BindFlags!=od.BindFlags){outputTex_.Release();device_->CreateTexture(od,nullptr,&outputTex_);} if(!outputTex_){applyCPU(src,dst);return;}
         const auto& w=processor_.wheels(); ParamsCB p{w.liftR,w.liftG,w.liftB,w.liftMaster,w.gammaR,w.gammaG,w.gammaB,w.gammaMaster,w.gainR,w.gainG,w.gainB,w.gainMaster,w.offsetR,w.offsetG,w.offsetB,w.offsetMaster,type==ArtifactCore::ColorWheelType::OffsetGammaGain?1.0f:0.0f}; void* mapped=nullptr; context_->MapBuffer(paramsCB_,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped); if(!mapped){applyCPU(src,dst);return;} std::memcpy(mapped,&p,sizeof(p)); context_->UnmapBuffer(paramsCB_,Diligent::MAP_WRITE);
-        if(!executor_->setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor_->setTextureView("g_OutputTexture",output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;} executor_->dispatch(context_,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION); if(!readback(device_,context_,output,dst,src.image().colorDescriptor(),"ColorWheels/Readback")){applyCPU(src,dst);}
+        if(!executor_->setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor_->setTextureView("g_OutputTexture",outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;} executor_->dispatch(context_,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION); if(!readback(device_,context_,outputTex_,dst,src.image().colorDescriptor(),"ColorWheels/Readback")){applyCPU(src,dst);}
     }
 
 private:

@@ -32,6 +32,7 @@ using namespace ArtifactCore;
 class VignetteCPUImpl : public ArtifactEffectImplBase {
 public:
     float amount_=0.7f,radius_=0.8f,feather_=0.4f,cx_=0.5f,cy_=0.5f;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src,ImageF32x4RGBAWithCache& dst) override {
         const auto& si=src.image();const float* sd=si.rgba32fData();
@@ -83,7 +84,7 @@ public:
         Diligent::TextureDesc outDesc=desc; outDesc.Name="Vignette/Output";
         outDesc.Usage=Diligent::USAGE_DEFAULT;
         outDesc.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;
-        Diligent::RefCntAutoPtr<Diligent::ITexture> output; device->CreateTexture(outDesc,nullptr,&output);
+        if(!outputTex_||outputTex_->GetDesc().Width!=outDesc.Width||outputTex_->GetDesc().Height!=outDesc.Height||outputTex_->GetDesc().Format!=outDesc.Format||outputTex_->GetDesc().BindFlags!=outDesc.BindFlags){outputTex_.Release();device->CreateTexture(outDesc,nullptr,&outputTex_);} Diligent::ITexture* output=outputTex_;
         if(!output) { applyCPU(src,dst); return; }
 
         Diligent::BufferDesc cbDesc{}; cbDesc.Name="Vignette/Params"; cbDesc.Size=sizeof(Params);
@@ -109,7 +110,7 @@ public:
         if(!executor.build(pipeline)||!executor.createShaderResourceBinding(true)||
            !executor.setBuffer("VignetteParams",params)||
            !executor.setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||
-           !executor.setTextureView("g_OutputTexture",output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src,dst); return; }
+           !executor.setTextureView("g_OutputTexture",outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src,dst); return; }
         executor.dispatch(context,ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width,outDesc.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
         Diligent::TextureDesc stagingDesc=outDesc; stagingDesc.Name="Vignette/Readback";

@@ -16,7 +16,6 @@ module;
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
-#include <QSettings>
 #include <QString>
 #include <QStringList>
 #include <atomic>
@@ -27,6 +26,7 @@ module;
 #include <wobjectimpl.h>
 
 module AI.Client;
+import Configuration.LayeredConfigStore;
 import Utils.String.UniString;
 import Core.AI.PromptGenerator;
 import Core.AI.Context;
@@ -569,15 +569,15 @@ void updateRecentModelPaths(const QString &path) {
     return;
   }
 
-  QSettings settings;
+  auto& config = ArtifactCore::LayeredConfigStore::instance();
   QStringList recentPaths =
-      settings.value(QStringLiteral("AI/RecentModelPaths")).toStringList();
+      config.value(QStringLiteral("AI/RecentModelPaths")).toStringList();
   recentPaths.removeAll(trimmed);
   recentPaths.prepend(trimmed);
   while (recentPaths.size() > 10) {
     recentPaths.removeLast();
   }
-  settings.setValue(QStringLiteral("AI/RecentModelPaths"), recentPaths);
+  config.setValue(QStringLiteral("AI/RecentModelPaths"), recentPaths);
   settings.setValue(QStringLiteral("AI/ModelPath"), trimmed);
 }
 

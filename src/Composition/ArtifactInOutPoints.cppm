@@ -47,6 +47,9 @@ module;
 #include <random>
 module Artifact.Composition.InOutPoints;
 
+import Serialization.Registry;
+import Serialization.SchemaMigration;
+
 
 
 
@@ -56,6 +59,15 @@ import Event.Bus;
 import Artifact.Event.Types;
 
 namespace Artifact {
+
+namespace {
+const bool registeredInOutPoints = [] {
+    ArtifactCore::Serialization::registerSerializableType<ArtifactInOutPoints>();
+    ArtifactCore::Serialization::SchemaMigrationRegistry::instance().registerMigration(
+        QStringLiteral("ArtifactInOutPoints"), 0, 1,
+        [](const QJsonObject& legacy) { return legacy; });
+    return true;
+}();
 W_OBJECT_IMPL(ArtifactMarker)
 W_OBJECT_IMPL(ArtifactInOutPoints)
 

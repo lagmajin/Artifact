@@ -116,6 +116,7 @@ public:
 class AddNoiseEffectGPUImpl : public ArtifactEffectImplBase {
 public:
     float amount_=0.15f;
+    float size_=1.0f;
     bool colorNoise_=true;
     bool monochrome_=false;
     int seed_=0;
@@ -152,7 +153,7 @@ public:
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         AddNoiseEffectCPUImpl cpu;
-        cpu.amount_=amount_;cpu.colorNoise_=colorNoise_;cpu.monochrome_=monochrome_;cpu.seed_=seed_;
+        cpu.amount_=amount_;cpu.size_=size_;cpu.colorNoise_=colorNoise_;cpu.monochrome_=monochrome_;cpu.seed_=seed_;
         cpu.applyCPU(src,dst);
     }
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -223,6 +224,7 @@ void AddNoiseEffect::syncImpls() {
     }
     if (auto* g = dynamic_cast<AddNoiseEffectGPUImpl*>(gpuImpl().get())) {
         g->amount_ = amount_;
+        g->size_ = size_;
         g->colorNoise_ = colorNoise_;
         g->monochrome_ = monochrome_;
         g->seed_ = seed_;

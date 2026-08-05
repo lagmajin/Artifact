@@ -57,14 +57,14 @@ public:
 
     // CPUバックエンドの処理（OpenCVを使用）
     virtual void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-        // デフォルト実装: 単純なコピー
-        //dst = src;
+        // デフォルト実装: 未対応エフェクトは入力をそのまま通す。
+        dst = src;
     }
 
     // GPUバックエンドの処理（HLSLシェーダを使用）
     virtual void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-        // デフォルト実装: CPUバックエンドにフォールバック
-        //applyCPU(src, dst);
+        // GPU実装を持たないエフェクトはCPUの基準実装へフォールバックする。
+        applyCPU(src, dst);
     }
 
     // 初期化と解放

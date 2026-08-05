@@ -2,7 +2,38 @@
   "app": {
     "name": "Artifact",
     "ready": "待機中",
-    "modified": "変更あり"
+    "modified": "変更あり",
+    "about_description": "Artifact - クリエイティブツール"
+  },
+  "diagnostics": {
+    "file_write_failed": "ファイルを書き込むために開けませんでした。",
+    "app_data_open_failed": "アプリデータフォルダを開けませんでした。",
+    "text_file_filter": "テキストファイル (*.txt);;すべてのファイル (*)"
+  },
+  "shortcuts": {
+    "search_placeholder": "ショートカットを検索..."
+  },
+  "memo": {
+    "jump_hint": "メモをダブルクリックするとそのフレームへ移動します。"
+  },
+  "clip_buffer": {
+    "reapply_hint": "ダブルクリック、または選択して貼り付けるとクリップを再適用します。"
+  },
+  "script": {
+    "hook_missing_create": "フックスクリプトが見つかりません: %1\\nスタブを作成して開きますか？",
+    "hook_disabled_enable": "フック %1 は無効です。有効にして実行しますか？",
+    "python_unavailable": "Python エンジンが初期化されていないため、マクロを実行できません。",
+    "hook_exists": "フックスクリプト: %1（%2）",
+    "hook_missing_trigger": "フックスクリプトが見つかりません。実行すると %1 を作成します。",
+    "workspace_tooltip": "ユーザースクリプトのルートを開き、menu.py、hooks、macros フォルダを作成します。",
+    "open_menu": "menu.py を開く",
+    "open_menu_tooltip": "ユーザースクリプトの menu.py を開きます。",
+    "open_hooks_tooltip": "ユーザースクリプト内の hooks フォルダを開きます。",
+    "open_macros_tooltip": "ユーザースクリプト内の macros フォルダを開きます。",
+    "composition_change_confirmation": "このユーティリティは現在のコンポジションを変更します。続行しますか？\\n%1"
+  },
+  "command_palette": {
+    "search_placeholder": "コマンドを入力（例: \"exp png\"、\"key dup\"、\"ease\" のように曖昧検索）..."
   },
   "menu": {
     "file": {
@@ -11,7 +42,12 @@
       "open_project": "プロジェクトを開く",
       "save_project": "プロジェクトを保存",
       "save_as": "名前を付けて保存...",
+      "close_project": "プロジェクトを閉じる",
       "import": "インポート...",
+      "reveal_folder": "プロジェクトフォルダを開く",
+      "export_fonts": "使用フォントレポートを書き出す...",
+      "restart": "再起動",
+      "recent_projects": "最近使ったプロジェクト",
       "export": "エクスポート...",
       "quit": "終了"
     },
@@ -24,6 +60,15 @@
       "paste": "貼り付け",
       "delete": "削除",
       "select_all": "すべて選択",
+      "duplicate": "複製",
+      "split_layer": "レイヤーを分割",
+      "trim_in": "インポイントを現在の時間にトリム",
+      "trim_out": "アウトポイントを現在の時間にトリム",
+      "select_none": "選択解除",
+      "invert_selection": "選択を反転",
+      "select_same_type": "同じ種類を選択",
+      "find": "検索...",
+      "undo_history": "Undo 履歴...",
       "preferences": "環境設定"
     },
     "view": {
@@ -325,13 +370,61 @@
   "effect": {
     "blur": {
       "radius": "半径",
-      "strength": "強度"
+      "strength": "強度",
+      "gaussian": {
+        "strength": "強度"
+      }
     }
   },
   "viewer": {
     "fps_na": "FPS: N/A",
     "mem_na": "メモリ: N/A",
     "comp1": "コンポ1"
+  },
+  "property": {
+    "keyframe": {
+      "previous": "前のキーフレーム: %1",
+      "previous_short": "前のキーフレーム",
+      "next": "次のキーフレーム: %1",
+      "next_short": "次のキーフレーム",
+      "toggle": "キーフレーム切替: %1",
+      "label": "キーフレーム"
+    },
+    "reset": "リセット: %1",
+    "reset_short": "プロパティをリセット",
+    "expression": "エクスプレッション: %1",
+    "expression_short": "エクスプレッション",
+    "favorite": "お気に入り: %1",
+    "favorite_short": "お気に入りプロパティ",
+    "menu": {
+      "copy_value": "値をコピー",
+      "paste_value": "値を貼り付け",
+      "reset_value": "値をリセット",
+      "copy_name": "プロパティ名をコピー",
+      "keyframe_anchor": "キーフレームアンカー",
+      "absolute": "絶対",
+      "lock_in": "インポイントに固定",
+      "lock_out": "アウトポイントに固定",
+      "stretch": "レイヤーに合わせて伸縮",
+      "color_label": "キーフレーム色ラベル",
+      "none": "なし",
+      "red": "赤",
+      "blue": "青",
+      "yellow": "黄",
+      "green": "緑",
+      "purple": "紫",
+      "gray": "灰色"
+    },
+    "animator": {
+      "default": "標準アニメーター",
+      "typewriter": "タイプライタープリセット",
+      "slide_up": "スライドアッププリセット",
+      "scale_in": "スケールインプリセット",
+      "rotation_in": "回転インプリセット",
+      "tracking_fade": "トラッキングフェードプリセット",
+      "wiggly_position": "揺れる位置プリセット",
+      "blur_reveal": "ぼかし表示プリセット"
+    }
   },
   "file_dialog": {
     "image_filter": "画像 (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;すべてのファイル (*.*)",

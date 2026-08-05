@@ -210,6 +210,7 @@ class ArtifactAbstract2DLayer::Impl {
   control->setValue(value);
   impl_->rig2D().evaluate(rigTimeForLayer(this));
   applyRigPropertyBindings(this);
+  setDirty(LayerDirtyFlag::Property);
   return true;
  }
 
@@ -405,6 +406,7 @@ class ArtifactAbstract2DLayer::Impl {
   auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
 
   ArtifactCore::PropertyGroup rigGroup(QStringLiteral("Rig"));
+  ArtifactCore::PropertyGroup rigBoneGroup(QStringLiteral("Rig Bones"));
   ArtifactCore::PropertyGroup rigControlGroup(QStringLiteral("Rig Controls"));
   auto makeProp = [this](const QString& name, ArtifactCore::PropertyType type,
                          const QVariant& value, int priority = 0) {
@@ -452,6 +454,34 @@ class ArtifactAbstract2DLayer::Impl {
                                 ArtifactCore::PropertyType::Integer,
                                 static_cast<qint64>(rig2D().propertyBindingCount()),
                                 -51));
+
+  for (const auto* bone : rig2D().bones()) {
+   if (!bone) {
+    continue;
+   }
+   const auto& transform = bone->localTransform();
+   const QString prefix = QStringLiteral("rig.bone.%1").arg(bone->id().toString());
+   auto addBoneProperty = [&](const QString& suffix, const QString& label,
+                              double value, const QString& unit, int priority) {
+    auto property = makeProp(prefix + suffix, ArtifactCore::PropertyType::Float,
+                             value, priority);
+    property->setDisplayLabel(bone->name() + QStringLiteral(" ") + label);
+    if (!unit.isEmpty()) {
+     property->setUnit(unit);
+    }
+    rigBoneGroup.addProperty(property);
+   };
+   addBoneProperty(QStringLiteral(".positionX"), QStringLiteral("Position X"),
+                   transform.position.x(), QStringLiteral("px"), -51);
+   addBoneProperty(QStringLiteral(".positionY"), QStringLiteral("Position Y"),
+                   transform.position.y(), QStringLiteral("px"), -50);
+   addBoneProperty(QStringLiteral(".rotation"), QStringLiteral("Rotation"),
+                   transform.rotation, QStringLiteral("deg"), -49);
+   addBoneProperty(QStringLiteral(".scaleX"), QStringLiteral("Scale X"),
+                   transform.scale.x(), QStringLiteral("factor"), -48);
+   addBoneProperty(QStringLiteral(".scaleY"), QStringLiteral("Scale Y"),
+                   transform.scale.y(), QStringLiteral("factor"), -47);
+  }
 
   for (const auto* control : rig2D().controls()) {
    if (!control) {
@@ -513,6 +543,9 @@ class ArtifactAbstract2DLayer::Impl {
   }
 
   groups.push_back(rigGroup);
+  if (rigBoneGroup.propertyCount() > 0) {
+   groups.push_back(rigBoneGroup);
+  }
   if (rigControlGroup.propertyCount() > 0) {
    groups.push_back(rigControlGroup);
   }
@@ -523,6 +556,43 @@ class ArtifactAbstract2DLayer::Impl {
                                                      const QVariant& value)
  {
   if (propertyPath.startsWith(QStringLiteral("rig."))) {
+   if (propertyPath.startsWith(QStringLiteral("rig.bone."))) {
+    const QString bonePath = propertyPath.mid(QStringLiteral("rig.bone.").size());
+    const int separatorIndex = bonePath.indexOf(QLatin1Char('.'));
+    if (separatorIndex <= 0) {
+     return false;
+    }
+    const ArtifactCore::Id boneId(bonePath.left(separatorIndex));
+    const QString channel = bonePath.mid(separatorIndex + 1);
+    ArtifactCore::BoneTransform transform;
+    if (!rig2D().boneLocalTransform(boneId, &transform)) {
+     return false;
+    }
+    const float numericValue = static_cast<float>(value.toDouble());
+    if (!std::isfinite(numericValue)) {
+     return false;
+    }
+    if (channel == QStringLiteral("positionX")) {
+     transform.position.setX(numericValue);
+    } else if (channel == QStringLiteral("positionY")) {
+     transform.position.setY(numericValue);
+    } else if (channel == QStringLiteral("rotation")) {
+     transform.rotation = numericValue;
+    } else if (channel == QStringLiteral("scaleX")) {
+     transform.scale.setX(numericValue);
+    } else if (channel == QStringLiteral("scaleY")) {
+     transform.scale.setY(numericValue);
+    } else {
+     return false;
+    }
+    if (!setRigBoneLocalTransform(boneId, transform)) {
+     return false;
+    }
+    rig2D().evaluate(rigTimeForLayer(this));
+    applyRigPropertyBindings(this);
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+   }
    if (propertyPath.startsWith(QStringLiteral("rig.control."))) {
     const QString controlPath = propertyPath.mid(QStringLiteral("rig.control.").size());
     const int separatorIndex = controlPath.indexOf(QLatin1Char('.'));
@@ -547,10 +617,16 @@ class ArtifactAbstract2DLayer::Impl {
       pointValue = value.value<QVector2D>();
      }
      control->setValue(QVariant::fromValue(pointValue));
+     impl_->rig2D().evaluate(rigTimeForLayer(this));
+     applyRigPropertyBindings(this);
+     setDirty(LayerDirtyFlag::Property);
      return true;
     }
 
     control->setValue(value);
+    impl_->rig2D().evaluate(rigTimeForLayer(this));
+    applyRigPropertyBindings(this);
+    setDirty(LayerDirtyFlag::Property);
     return true;
    }
 

@@ -57,6 +57,7 @@ public:
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
     Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> lutTexture_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
     std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
     std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
     bool pipelineReady_ = false;
@@ -140,15 +141,17 @@ public:
         outDesc.Usage = Diligent::USAGE_DEFAULT;
         outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE;
         outDesc.Name = "Curves/OutputTexture";
-        Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex;
-        device_->CreateTexture(outDesc, nullptr, &outputTex);
-        if (!outputTex) {
+        if (!outputTex_ || outputTex_->GetDesc().Width != outDesc.Width || outputTex_->GetDesc().Height != outDesc.Height || outputTex_->GetDesc().Format != outDesc.Format || outputTex_->GetDesc().BindFlags != outDesc.BindFlags) {
+            outputTex_.Release();
+            device_->CreateTexture(outDesc, nullptr, &outputTex_);
+        }
+        if (!outputTex_) {
             applyCPU(src, dst);
             return;
         }
 
         if (!executor_->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-            !executor_->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS)) ||
+            !executor_->setTextureView("g_OutputTexture", outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS)) ||
             !executor_->setTextureView("g_LUTTexture", lutTexture_->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))) {
             applyCPU(src, dst);
             return;
@@ -157,7 +160,7 @@ public:
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
         executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-        if (!readbackTexture(device_, context_, outputTex, dst, src.image().colorDescriptor(), "Curves/StagingTexture")) {
+        if (!readbackTexture(device_, context_, outputTex_, dst, src.image().colorDescriptor(), "Curves/StagingTexture")) {
             applyCPU(src, dst);
         }
         dst.image().setColorDescriptor(src.image().colorDescriptor());

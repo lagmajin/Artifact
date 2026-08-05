@@ -43,6 +43,7 @@ export module Artifact.Composition.InOutPoints;
 
 import std;
 import Frame.Position;
+import Serialization.ISerializable;
 import Frame.Range;
 import Utils.Optional;
 
@@ -133,7 +134,8 @@ signals:
  * - Out point (end of playback range)  
  * - Timeline markers with comments, chapters, etc.
  */
-class ArtifactInOutPoints : public QObject {
+class ArtifactInOutPoints : public QObject,
+                            public ArtifactCore::Serialization::ISerializable {
     W_OBJECT(ArtifactInOutPoints)
 private:
     class Impl;
@@ -340,6 +342,10 @@ public:
     // Project persistence for in/out points and timeline markers.
     QJsonObject toJson() const;
     bool fromJson(const QJsonObject& object);
+    QJsonObject serialize() const override { return toJson(); }
+    bool deserialize(const QJsonObject& object) override { return fromJson(object); }
+    QString typeName() const override { return QStringLiteral("ArtifactInOutPoints"); }
+    int schemaVersion() const override { return 1; }
     
 public: // signals
     // Marker signals

@@ -34,6 +34,7 @@ import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Undo.UndoManager;
 import UI.StandardActions;
+import Translation.Manager;
 
 namespace Artifact
 {
@@ -153,7 +154,8 @@ ArtifactCommandPaletteWidget::ArtifactCommandPaletteWidget(QWidget* parent)
     filterEdit_->setAccessibleName(tr("Command search"));
     filterEdit_->setAccessibleDescription(tr("Type a command to filter the command list"));
     filterEdit_->setObjectName(QStringLiteral("ArtifactCommandPaletteFilter"));
-    filterEdit_->setPlaceholderText(tr("Type a command (fuzzy match, e.g. \"exp png\", \"key dup\", \"ease\")..."));
+    filterEdit_->setPlaceholderText(
+        TranslationManager::instance().tr(QStringLiteral("command_palette.search_placeholder")));
     filterEdit_->setClearButtonEnabled(true);
     layout->addWidget(filterEdit_);
 

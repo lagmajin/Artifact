@@ -502,10 +502,9 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
              .arg(composition
                       ? composition->colorPipelineVersion()
                       : ArtifactAbstractComposition::CanonicalColorPipelineVersion);
-  // Opacity affects the processed surface alpha. Keep it in the cache identity
-  // so an opacity-only edit cannot reuse a stale opaque surface.
-  key += QStringLiteral("|opacity=%1")
-             .arg(layer->opacity(), 0, 'f', 6);
+  // Layer opacity is applied at draw time (see baseOpacity below), after the
+  // processed surface is recovered from cache. Keep it out of this identity so
+  // an opacity-only edit can reuse the rasterized surface and only re-composite.
 
   bool hasAnimatedEffectProperty = false;
   for (const auto& effect : layer->getEffects()) {

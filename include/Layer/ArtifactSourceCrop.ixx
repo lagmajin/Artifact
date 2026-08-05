@@ -8,12 +8,15 @@ module;
 #include <QRectF>
 #include <QSizeF>
 #include <QTransform>
+#include <QString>
 
 export module Artifact.Layer.SourceCrop;
 
+import Serialization.ISerializable;
+
 export namespace Artifact {
 
-class SourceCrop {
+class SourceCrop : public ArtifactCore::Serialization::ISerializable {
 public:
   SourceCrop() = default;
 
@@ -47,6 +50,14 @@ public:
 
   QJsonObject toJson() const;
   void fromJson(const QJsonObject &obj);
+  QJsonObject serialize() const override { return toJson(); }
+  bool deserialize(const QJsonObject &obj) override
+  {
+    fromJson(obj);
+    return true;
+  }
+  QString typeName() const override { return QStringLiteral("ArtifactSourceCrop"); }
+  int schemaVersion() const override { return 1; }
 
 private:
   bool enabled_ = false;

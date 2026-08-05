@@ -27,6 +27,7 @@ import Core.FastSettingsStore;
 import Utils.Path;
 import Artifact.Service.Application;
 import Widgets.KeyboardOverlayDialog;
+import Translation.Manager;
 
 namespace Artifact {
  using namespace ArtifactCore;
@@ -107,7 +108,9 @@ namespace Artifact {
   });
 
   connect(impl_->aboutAction_, &QAction::triggered, this, [this]() {
-    QMessageBox::about(this, tr("About Artifact"), tr("Artifact - A creative tool."));
+    QMessageBox::about(this, tr("About Artifact"),
+                      TranslationManager::instance().tr(
+                          QStringLiteral("app.about_description")));
   });
 
   connect(impl_->docsAction_, &QAction::triggered, this, [this]() {
@@ -135,14 +138,17 @@ namespace Artifact {
       this,
       tr("Export Diagnostics"),
       QDir(defaultDir).filePath(defaultName),
-      tr("Text Files (*.txt);;All Files (*)"));
+      TranslationManager::instance().tr(
+          QStringLiteral("diagnostics.text_file_filter")));
     if (path.trimmed().isEmpty()) {
       return;
     }
 
     QFile out(path);
     if (!out.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-      QMessageBox::warning(this, tr("Diagnostics"), tr("Failed to open file for writing."));
+      QMessageBox::warning(this, tr("Diagnostics"),
+                           TranslationManager::instance().tr(
+                               QStringLiteral("diagnostics.file_write_failed")));
       return;
     }
 
@@ -265,7 +271,9 @@ namespace Artifact {
   connect(impl_->openAppDataAction_, &QAction::triggered, this, [this]() {
     const QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (!QDesktopServices::openUrl(QUrl::fromLocalFile(appData))) {
-      QMessageBox::warning(this, tr("App Data"), tr("Failed to open the app data folder."));
+      QMessageBox::warning(this, tr("App Data"),
+                           TranslationManager::instance().tr(
+                               QStringLiteral("diagnostics.app_data_open_failed")));
     }
   });
  }

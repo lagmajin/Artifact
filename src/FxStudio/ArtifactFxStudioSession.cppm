@@ -8,10 +8,22 @@ module;
 
 module Artifact.FxStudio.Session;
 
+import Serialization.Registry;
+import Serialization.SchemaMigration;
+
 import Core.ArtifactString;
 import Artifact.FxStudio.Serialization;
 
 namespace Artifact::FxStudio {
+
+namespace {
+const bool registeredFxStudioSession = [] {
+    ArtifactCore::Serialization::registerSerializableType<Session>();
+    ArtifactCore::Serialization::SchemaMigrationRegistry::instance().registerMigration(
+        QStringLiteral("ArtifactFxStudioSession"), 0, 1,
+        [](const QJsonObject& legacy) { return legacy; });
+    return true;
+}();
 
 EventTrack& Session::eventTrack() noexcept {
   return eventTrack_;

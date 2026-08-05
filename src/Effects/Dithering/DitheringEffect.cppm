@@ -188,6 +188,8 @@ public:
     mutable Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
     std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
     std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> stagingTex_;
     mutable bool pipelineReady_ = false;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -231,9 +233,14 @@ public:
         outDesc.Usage = Diligent::USAGE_DEFAULT;
         outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE;
         outDesc.Name = "Dithering/OutputTexture";
-        Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex;
-        device_->CreateTexture(outDesc, nullptr, &outputTex);
-        if (!outputTex) { applyCPU(src, dst); return; }
+        if (!outputTex_ || outputTex_->GetDesc().Width != outDesc.Width ||
+            outputTex_->GetDesc().Height != outDesc.Height ||
+            outputTex_->GetDesc().Format != outDesc.Format ||
+            outputTex_->GetDesc().BindFlags != outDesc.BindFlags) {
+            outputTex_.Release();
+            device_->CreateTexture(outDesc, nullptr, &outputTex_);
+        }
+        if (!outputTex_) { applyCPU(src, dst); return; }
 
         void* mapped = nullptr;
         context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
@@ -247,10 +254,10 @@ public:
         context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
 
         if (!executor_->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
-            !executor_->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src, dst); return; }
+            !executor_->setTextureView("g_OutputTexture", outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src, dst); return; }
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
         executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        if (!readbackTexture(device_, context_, outputTex, dst, src.image().colorDescriptor())) { applyCPU(src, dst); return; }
+        if (!readbackTexture(device_, context_, outputTex_, stagingTex_, dst, src.image().colorDescriptor())) { applyCPU(src, dst); return; }
         dst.image().setColorDescriptor(src.image().colorDescriptor());
     }
 
@@ -324,7 +331,7 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         return *outTex != nullptr;
     }
 
-    static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx, Diligent::ITexture* src, ImageF32x4RGBAWithCache& dst, const SurfaceColorDescriptor& colorDescriptor) {
+    static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx, Diligent::ITexture* src, Diligent::RefCntAutoPtr<Diligent::ITexture>& staging, ImageF32x4RGBAWithCache& dst, const SurfaceColorDescriptor& colorDescriptor) {
         if (!device || !ctx || !src) return false;
         const auto desc = src->GetDesc();
         Diligent::TextureDesc stagingDesc;
@@ -338,8 +345,10 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         stagingDesc.Usage = Diligent::USAGE_STAGING;
         stagingDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
         stagingDesc.Name = "Dithering/StagingTexture";
-        Diligent::RefCntAutoPtr<Diligent::ITexture> staging;
-        device->CreateTexture(stagingDesc, nullptr, &staging);
+        if (!staging || staging->GetDesc().Width != stagingDesc.Width || staging->GetDesc().Height != stagingDesc.Height || staging->GetDesc().Format != stagingDesc.Format) {
+            staging.Release();
+            device->CreateTexture(stagingDesc, nullptr, &staging);
+        }
         if (!staging) return false;
         Diligent::CopyTextureAttribs copy(src, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
                                           staging, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);

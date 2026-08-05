@@ -52,9 +52,21 @@ module Artifact.Effect.Preset;
 
 
 import Artifact.Effect.Abstract;
+import Serialization.Registry;
+import Serialization.SchemaMigration;
 
 namespace Artifact
 {
+
+namespace {
+const bool registeredArtifactEffectPreset = [] {
+    ArtifactCore::Serialization::registerSerializableType<ArtifactEffectPreset>();
+    ArtifactCore::Serialization::SchemaMigrationRegistry::instance().registerMigration(
+        QStringLiteral("ArtifactEffectPreset"), 0, 1,
+        [](const QJsonObject& legacy) { return legacy; });
+    return true;
+}();
+}
 
 namespace
 {
@@ -269,6 +281,31 @@ ArtifactEffectPreset ArtifactEffectPreset::fromJson(const QJsonObject& json)
     }
 
     return preset;
+}
+
+bool ArtifactEffectPreset::deserialize(const QJsonObject& json)
+{
+    const ArtifactEffectPreset parsed = ArtifactEffectPreset::fromJson(json);
+    setId(parsed.id());
+    setName(parsed.name());
+    setCategory(parsed.category());
+    setDescription(parsed.description());
+    setThumbnail(parsed.thumbnail());
+    impl_->parameters_.clear();
+    for (const auto& parameter : parsed.allParameters()) {
+        switch (parameter.type) {
+        case Parameter::Float:
+            addParameter(parameter.name, parameter.floatValue);
+            break;
+        case Parameter::Color:
+            addParameter(parameter.name, parameter.colorValue);
+            break;
+        case Parameter::String:
+            addParameter(parameter.name, parameter.stringValue);
+            break;
+        }
+    }
+    return !id().isEmpty();
 }
 
 void ArtifactEffectPreset::applyTo(ArtifactAbstractEffect* effect) const

@@ -13,7 +13,7 @@ module;
 #include <QStyle>
 #include <QUrl>
 #include <QApplication>
-#include <QSettings>
+#include <QVariant>
 #include <QUuid>
 #include <wobjectimpl.h>
 
@@ -51,6 +51,8 @@ module;
 #include <regex>
 #include <random>
 module AssetDirectoryModel;
+
+import Configuration.LayeredConfigStore;
 
 import Undo.UndoManager;
 import File.TypeDetector;
@@ -246,15 +248,15 @@ namespace Artifact {
 
  void AssetDirectoryModel::Impl::loadFavoritesFromSettings() {
   favorites_.clear();
-  QSettings settings;
-  settings.beginGroup(QStringLiteral("AssetBrowser/Favorites"));
-  const int count = settings.beginReadArray(QStringLiteral("items"));
-  for (int i = 0; i < count; ++i) {
-   settings.setArrayIndex(i);
+  const auto entries = ArtifactCore::LayeredConfigStore::instance()
+                           .value(QStringLiteral("AssetBrowser/Favorites"))
+                           .toList();
+  for (const auto& value : entries) {
+   const auto entryMap = value.toMap();
    FavoriteEntry entry;
-   entry.guid = settings.value(QStringLiteral("guid")).toString();
-   entry.name = settings.value(QStringLiteral("name")).toString();
-   entry.path = settings.value(QStringLiteral("path")).toString();
+   entry.guid = entryMap.value(QStringLiteral("guid")).toString();
+   entry.name = entryMap.value(QStringLiteral("name")).toString();
+   entry.path = entryMap.value(QStringLiteral("path")).toString();
    if (entry.path.trimmed().isEmpty()) {
     continue;
    }
@@ -263,21 +265,19 @@ namespace Artifact {
    }
    favorites_.append(entry);
   }
-  settings.endArray();
-  settings.endGroup();
  }
 
  void AssetDirectoryModel::Impl::loadRecentFromSettings() {
   recent_.clear();
-  QSettings settings;
-  settings.beginGroup(QStringLiteral("AssetBrowser/Recent"));
-  const int count = settings.beginReadArray(QStringLiteral("items"));
-  for (int i = 0; i < count; ++i) {
-   settings.setArrayIndex(i);
+  const auto entries = ArtifactCore::LayeredConfigStore::instance()
+                           .value(QStringLiteral("AssetBrowser/Recent"))
+                           .toList();
+  for (const auto& value : entries) {
+   const auto entryMap = value.toMap();
    RecentEntry entry;
-   entry.guid = settings.value(QStringLiteral("guid")).toString();
-   entry.name = settings.value(QStringLiteral("name")).toString();
-   entry.path = settings.value(QStringLiteral("path")).toString();
+   entry.guid = entryMap.value(QStringLiteral("guid")).toString();
+   entry.name = entryMap.value(QStringLiteral("name")).toString();
+   entry.path = entryMap.value(QStringLiteral("path")).toString();
    if (entry.path.trimmed().isEmpty()) {
     continue;
    }
@@ -286,36 +286,32 @@ namespace Artifact {
    }
    recent_.append(entry);
   }
-  settings.endArray();
-  settings.endGroup();
  }
 
  void AssetDirectoryModel::Impl::saveRecentToSettings() const {
-  QSettings settings;
-  settings.beginGroup(QStringLiteral("AssetBrowser/Recent"));
-  settings.beginWriteArray(QStringLiteral("items"));
-  for (int i = 0; i < recent_.size(); ++i) {
-   settings.setArrayIndex(i);
-   settings.setValue(QStringLiteral("guid"), recent_[i].guid);
-   settings.setValue(QStringLiteral("name"), recent_[i].name);
-   settings.setValue(QStringLiteral("path"), recent_[i].path);
+  QVariantList entries;
+  for (const auto& item : recent_) {
+   QVariantMap entry;
+   entry.insert(QStringLiteral("guid"), item.guid);
+   entry.insert(QStringLiteral("name"), item.name);
+   entry.insert(QStringLiteral("path"), item.path);
+   entries.append(entry);
   }
-  settings.endArray();
-  settings.endGroup();
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("AssetBrowser/Recent"), entries);
  }
 
  void AssetDirectoryModel::Impl::saveFavoritesToSettings() const {
-  QSettings settings;
-  settings.beginGroup(QStringLiteral("AssetBrowser/Favorites"));
-  settings.beginWriteArray(QStringLiteral("items"));
-  for (int i = 0; i < favorites_.size(); ++i) {
-   settings.setArrayIndex(i);
-   settings.setValue(QStringLiteral("guid"), favorites_[i].guid);
-   settings.setValue(QStringLiteral("name"), favorites_[i].name);
-   settings.setValue(QStringLiteral("path"), favorites_[i].path);
+  QVariantList entries;
+  for (const auto& item : favorites_) {
+   QVariantMap entry;
+   entry.insert(QStringLiteral("guid"), item.guid);
+   entry.insert(QStringLiteral("name"), item.name);
+   entry.insert(QStringLiteral("path"), item.path);
+   entries.append(entry);
   }
-  settings.endArray();
-  settings.endGroup();
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("AssetBrowser/Favorites"), entries);
  }
 
  AssetDirectoryModel::AssetDirectoryModel(QObject* parent)

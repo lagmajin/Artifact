@@ -19,6 +19,7 @@ struct SettingItemInfo {
   QString description;
   QString category;
   QWidget *widget = nullptr;
+  QString key;
 };
 
 class ISettingPage {

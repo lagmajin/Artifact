@@ -2,15 +2,14 @@ module;
 #include <utility>
 #include <QFile>
 #include <QDebug>
-#include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDateTime>
-#include <QSaveFile>
 #include <QStringList>
 module Artifact.Project.Exporter;
 
 import Artifact.Color.OCIOManager;
+import Serialization.ProjectSerializer;
 
 namespace Artifact
 {
@@ -148,24 +147,16 @@ namespace Artifact
    }
   }
 
-  QJsonDocument doc(obj);
-  QByteArray jsonData = doc.toJson(QJsonDocument::Indented);
-
-  QSaveFile file(outputPath_);
-  if (!file.open(QIODevice::WriteOnly)) {
-   result.errorStage = "file_open";
-   result.errorMessage = file.errorString();
-   return result;
-  }
-  if (file.write(jsonData) != jsonData.size()) {
-   file.cancelWriting();
+  const bool artifactOutput = outputPath_.endsWith(
+      QStringLiteral(".artifact"), Qt::CaseInsensitive);
+  const bool saved = artifactOutput
+      ? ArtifactCore::Serialization::ProjectSerializer::saveArtifact(outputPath_, obj)
+      : ArtifactCore::Serialization::ProjectSerializer::save(
+            outputPath_, obj,
+            ArtifactCore::Serialization::SerializationFormat::Json);
+  if (!saved) {
    result.errorStage = "file_write";
-   result.errorMessage = file.errorString();
-   return result;
-  }
-  if (!file.commit()) {
-   result.errorStage = "file_commit";
-   result.errorMessage = file.errorString();
+   result.errorMessage = "Failed to write project document";
    return result;
   }
 

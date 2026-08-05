@@ -2,7 +2,38 @@
   "app": {
     "name": "Artifact",
     "ready": "Ready",
-    "modified": "Modified"
+    "modified": "Modified",
+    "about_description": "Artifact - A creative tool."
+  },
+  "diagnostics": {
+    "file_write_failed": "Failed to open file for writing.",
+    "app_data_open_failed": "Failed to open the app data folder.",
+    "text_file_filter": "Text Files (*.txt);;All Files (*)"
+  },
+  "shortcuts": {
+    "search_placeholder": "Search shortcuts..."
+  },
+  "memo": {
+    "jump_hint": "Double-click a memo to jump to frame."
+  },
+  "clip_buffer": {
+    "reapply_hint": "Double-click or select & Paste to re-apply clips."
+  },
+  "script": {
+    "hook_missing_create": "Hook script not found: %1\\nCreate a stub file and open it now?",
+    "hook_disabled_enable": "Hook %1 is disabled. Enable it and run it now?",
+    "python_unavailable": "Python engine is not initialized. Macro execution is unavailable.",
+    "hook_exists": "Hook script exists at %1 and is %2.",
+    "hook_missing_trigger": "Hook script not found. Trigger to create %1.",
+    "workspace_tooltip": "Open the canonical user scripts root and scaffold menu.py, hooks, and macros folders.",
+    "open_menu": "Open menu.py",
+    "open_menu_tooltip": "Open the script menu entry file from the user scripts workspace.",
+    "open_hooks_tooltip": "Open the hooks folder inside the user scripts workspace.",
+    "open_macros_tooltip": "Open the macros folder inside the user scripts workspace.",
+    "composition_change_confirmation": "This utility changes the current composition. Continue?\\n%1"
+  },
+  "command_palette": {
+    "search_placeholder": "Type a command (fuzzy match, e.g. \"exp png\", \"key dup\", \"ease\")..."
   },
   "menu": {
     "file": {
@@ -11,7 +42,12 @@
       "open_project": "Open Project",
       "save_project": "Save Project",
       "save_as": "Save As...",
+      "close_project": "Close Project",
       "import": "Import...",
+      "reveal_folder": "Open Project Folder",
+      "export_fonts": "Export Font Usage Report...",
+      "restart": "Restart",
+      "recent_projects": "Recent Projects",
       "export": "Export...",
       "quit": "Quit"
     },
@@ -24,6 +60,15 @@
       "paste": "Paste",
       "delete": "Delete",
       "select_all": "Select All",
+      "duplicate": "Duplicate",
+      "split_layer": "Split Layer",
+      "trim_in": "Trim In Point to Current Time",
+      "trim_out": "Trim Out Point to Current Time",
+      "select_none": "Deselect",
+      "invert_selection": "Invert Selection",
+      "select_same_type": "Select Same Type",
+      "find": "Find...",
+      "undo_history": "Undo History...",
       "preferences": "Preferences"
     },
     "view": {
@@ -325,13 +370,61 @@
   "effect": {
     "blur": {
       "radius": "Radius",
-      "strength": "Strength"
+      "strength": "Strength",
+      "gaussian": {
+        "strength": "Strength"
+      }
     }
   },
   "viewer": {
     "fps_na": "FPS: N/A",
     "mem_na": "Mem: N/A",
     "comp1": "Comp1"
+  },
+  "property": {
+    "keyframe": {
+      "previous": "Previous keyframe: %1",
+      "previous_short": "Previous keyframe",
+      "next": "Next keyframe: %1",
+      "next_short": "Next keyframe",
+      "toggle": "Toggle Keyframe: %1",
+      "label": "Keyframe"
+    },
+    "reset": "Reset: %1",
+    "reset_short": "Reset property",
+    "expression": "Expression: %1",
+    "expression_short": "Expression",
+    "favorite": "Favorite: %1",
+    "favorite_short": "Favorite property",
+    "menu": {
+      "copy_value": "Copy Value",
+      "paste_value": "Paste Value",
+      "reset_value": "Reset Value",
+      "copy_name": "Copy Property Name",
+      "keyframe_anchor": "Keyframe Anchor",
+      "absolute": "Absolute",
+      "lock_in": "Lock to In Point",
+      "lock_out": "Lock to Out Point",
+      "stretch": "Stretch with Layer",
+      "color_label": "Keyframe Color Label",
+      "none": "None",
+      "red": "Red",
+      "blue": "Blue",
+      "yellow": "Yellow",
+      "green": "Green",
+      "purple": "Purple",
+      "gray": "Gray"
+    },
+    "animator": {
+      "default": "Default Animator",
+      "typewriter": "Typewriter Preset",
+      "slide_up": "Slide Up Preset",
+      "scale_in": "Scale In Preset",
+      "rotation_in": "Rotation In Preset",
+      "tracking_fade": "Tracking Fade Preset",
+      "wiggly_position": "Wiggly Position Preset",
+      "blur_reveal": "Blur Reveal Preset"
+    }
   },
   "file_dialog": {
     "image_filter": "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;All Files (*.*)",

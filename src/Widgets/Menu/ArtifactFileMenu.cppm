@@ -43,11 +43,17 @@ import Undo.UndoManager;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layers.SolidImage;
+import Translation.Manager;
 
 namespace Artifact {
 using namespace ArtifactCore;
 namespace {
 constexpr int kMaxRecentProjects = 5;
+
+QString menuText(const QString& key, const QString& fallback)
+{
+    return TranslationManager::instance().tr(key, fallback);
+}
 
 void addRecentProject(const QString& path)
 {
@@ -203,42 +209,42 @@ public:
 ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     : menu_(menu)
 {
-    createProjectAction = new QAction("新規プロジェクト(&N)...");
+    createProjectAction = new QAction(menuText(QStringLiteral("menu.file.new_project"), QStringLiteral("新規プロジェクト(&N)...")));
     createProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_N));
     createProjectAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_new_project.svg")));
 
-    openProjectAction = new QAction("プロジェクトを開く(&O)...");
+    openProjectAction = new QAction(menuText(QStringLiteral("menu.file.open_project"), QStringLiteral("プロジェクトを開く(&O)...")));
     openProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_O));
     openProjectAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_open_project.svg")));
 
-    saveProjectAction = new QAction("保存(&S)");
+    saveProjectAction = new QAction(menuText(QStringLiteral("menu.file.save_project"), QStringLiteral("保存(&S)")));
     saveProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
     saveProjectAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_save_project.svg")));
 
-    saveProjectAsAction = new QAction("名前を付けて保存(&A)...");
+    saveProjectAsAction = new QAction(menuText(QStringLiteral("menu.file.save_as"), QStringLiteral("名前を付けて保存(&A)...")));
     saveProjectAsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
     saveProjectAsAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_save_project_as.svg")));
 
-    closeProjectAction = new QAction("プロジェクトを閉じる");
+    closeProjectAction = new QAction(menuText(QStringLiteral("menu.file.close_project"), QStringLiteral("プロジェクトを閉じる")));
     closeProjectAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_close_project.svg")));
 
-    newCompositionAction = new QAction("新規コンポジション(&C)...");
+    newCompositionAction = new QAction(menuText(QStringLiteral("menu.composition.new_composition"), QStringLiteral("新規コンポジション(&C)...")));
     newCompositionAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
     newCompositionAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_new_composition.svg")));
 
-    importAssetsAction = new QAction("アセットを読み込み(&I)...");
+    importAssetsAction = new QAction(menuText(QStringLiteral("menu.file.import"), QStringLiteral("アセットを読み込み(&I)...")));
     importAssetsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     importAssetsAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_import_assets.svg")));
 
-    revealProjectFolderAction = new QAction("プロジェクトフォルダを開く");
+    revealProjectFolderAction = new QAction(menuText(QStringLiteral("menu.file.reveal_folder"), QStringLiteral("プロジェクトフォルダを開く")));
     revealProjectFolderAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_reveal_folder.svg")));
 
-    exportFontUsageAction = new QAction(QStringLiteral("使用フォントレポートを書き出す..."));
+    exportFontUsageAction = new QAction(menuText(QStringLiteral("menu.file.export_fonts"), QStringLiteral("使用フォントレポートを書き出す...")));
 
-    restartAction = new QAction("再起動");
+    restartAction = new QAction(menuText(QStringLiteral("menu.file.restart"), QStringLiteral("再起動")));
     restartAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_restart.svg")));
     
-    quitAction = new QAction("終了(&Q)");
+    quitAction = new QAction(menuText(QStringLiteral("menu.file.quit"), QStringLiteral("終了(&Q)")));
     quitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q));
     quitAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_quit.svg")));
 
@@ -254,7 +260,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     menu->addAction(closeProjectAction);
     menu->addAction(revealProjectFolderAction);
     menu->addAction(exportFontUsageAction);
-    recentProjectsMenu = menu->addMenu("最近使ったプロジェクト");
+    recentProjectsMenu = menu->addMenu(menuText(QStringLiteral("menu.file.recent_projects"), QStringLiteral("最近使ったプロジェクト")));
     recentProjectsMenu->setIcon(QIcon(resolveIconPath("Studio/filemenu_recent_projects.svg")));
     menu->addSeparator();
     menu->addAction(restartAction);
@@ -800,7 +806,7 @@ W_OBJECT_IMPL(ArtifactFileMenu)
 ArtifactFileMenu::ArtifactFileMenu(QWidget* parent)
     : QMenu(parent), Impl_(new Impl(this))
 {
-    setTitle("ファイル(&F)");
+    setTitle(menuText(QStringLiteral("menu.file.label"), QStringLiteral("ファイル(&F)")));
     setIcon(QIcon(resolveIconPath("Studio/menubar_file.svg")));
     connect(this, &QMenu::aboutToShow, this, &ArtifactFileMenu::rebuildMenu);
 }

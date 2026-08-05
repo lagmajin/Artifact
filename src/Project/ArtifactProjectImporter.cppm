@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMap>
 #include <QDebug>
 #include <iostream>
 #include <vector>
@@ -48,6 +49,7 @@ import Artifact.Composition.InitParams;
 import Asset.Manager;
 import Memory.SharedPtr;
 import Artifact.Color.OCIOManager;
+import Serialization.ProjectSerializer;
 
 namespace Artifact
 {
@@ -83,8 +85,47 @@ namespace Artifact
  QJsonDocument ArtifactProjectImporter::Impl::loadJsonDocument(const QString& path, UniString& errorMsg)
  {
   const QString normalizedPath = path.trimmed();
-  if (normalizedPath.isEmpty() || !QFileInfo::exists(normalizedPath) ||
-      !QFileInfo(normalizedPath).isFile()) {
+  if (normalizedPath.isEmpty() || !QFileInfo::exists(normalizedPath)) {
+   errorMsg = UniString("Project file path is invalid");
+   return QJsonDocument();
+  }
+  const QFileInfo pathInfo(normalizedPath);
+  if (pathInfo.isDir()) {
+   QJsonObject manifest;
+   QMap<QString, QJsonObject> documents;
+   if (!ArtifactCore::Serialization::ProjectSerializer::loadSplit(
+           normalizedPath, manifest, documents)) {
+    errorMsg = UniString("Failed to read split project documents");
+    return QJsonDocument();
+   }
+   QString rootDocument = manifest.value(QStringLiteral("rootDocument")).toString();
+   if (rootDocument.isEmpty()) {
+    rootDocument = QStringLiteral("project");
+   }
+   if (!documents.contains(rootDocument)) {
+    errorMsg = UniString("Split project root document is missing");
+    return QJsonDocument();
+   }
+   QJsonObject root = documents.value(rootDocument);
+   QJsonArray compositions = root.value(QStringLiteral("compositions")).toArray();
+   for (int index = 0; index < compositions.size(); ++index) {
+    const QJsonObject reference = compositions.at(index).toObject();
+    const QString documentName = reference.value(QStringLiteral("$document")).toString();
+    if (documentName.isEmpty()) {
+     continue;
+    }
+    if (!documents.contains(documentName)) {
+     errorMsg = UniString("Split project composition document is missing");
+     return QJsonDocument();
+    }
+    compositions[index] = documents.value(documentName);
+   }
+   if (!compositions.isEmpty()) {
+    root.insert(QStringLiteral("compositions"), compositions);
+   }
+   return QJsonDocument(root);
+  }
+  if (!pathInfo.isFile()) {
    errorMsg = UniString("Project file path is invalid");
    return QJsonDocument();
   }
@@ -102,22 +143,18 @@ namespace Artifact
    return QJsonDocument();
   }
 
-  QByteArray data = file.readAll();
   file.close();
 
-  QJsonParseError parseError;
-  QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
-  if (parseError.error != QJsonParseError::NoError) {
-   errorMsg = UniString("JSON parse error: " + parseError.errorString().toStdString());
+  QJsonObject object;
+  QString serializationError;
+  if (!ArtifactCore::Serialization::ProjectSerializer::load(
+          normalizedPath, object, &serializationError)) {
+   errorMsg = UniString("Failed to read project document: " +
+                        serializationError.toStdString());
    return QJsonDocument();
   }
 
-  if (!doc.isObject()) {
-   errorMsg = UniString("Invalid JSON: root is not an object");
-   return QJsonDocument();
-  }
-
-  return doc;
+  return QJsonDocument(object);
  }
 
  bool ArtifactProjectImporter::Impl::validateFile(const QString& path)
