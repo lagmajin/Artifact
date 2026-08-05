@@ -2691,6 +2691,15 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         static_cast<FracturePreset>(std::clamp(
             impl_->fracturePreset_, 0, static_cast<int>(FracturePreset::Dust))));
     prefractureSettings.shardCount = std::max(1, impl_->fractureShardCount_);
+    const auto& physicsLod = ArtifactCore::PhysicsSystem::instance().physicsLODSettings();
+    prefractureSettings.shardCount = std::max(
+        1, static_cast<int>(std::lround(
+            static_cast<float>(prefractureSettings.shardCount) *
+            std::clamp(physicsLod.fractureShardScale, 0.125f, 1.0f))));
+    prefractureSettings.debrisCount = std::max(
+        0, static_cast<int>(std::lround(
+            static_cast<float>(prefractureSettings.debrisCount) *
+            std::clamp(physicsLod.fractureDebrisScale, 0.0f, 1.0f))));
     FractureEffect prefracture;
     prefracture.setSourceBounds(localBounds());
     prefracture.setImpactPoint(localBounds().center());
@@ -2734,6 +2743,14 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
   settings.lifetimeMax = 2.5f;
   settings.edgeJitter = 0.12f;
   settings.shardCount = std::max(1, static_cast<int>(impl_->fractureState_.shards.size()));
+  const auto& physicsLod = ArtifactCore::PhysicsSystem::instance().physicsLODSettings();
+  settings.shardCount = std::max(
+      1, static_cast<int>(std::lround(
+          static_cast<float>(settings.shardCount) *
+          std::clamp(physicsLod.fractureShardScale, 0.125f, 1.0f))));
+  settings.debrisCount = std::max(
+      0, static_cast<int>(std::lround(
+          48.0f * std::clamp(physicsLod.fractureDebrisScale, 0.0f, 1.0f))));
   const float dt = needsReset ? 0.0f : (1.0f / std::max(1.0, effectiveLayerFrameRate(this)));
   for (auto& shard : impl_->fractureState_.shards) {
     ArtifactCore::stepFractureShardMotion(shard, dt, settings);

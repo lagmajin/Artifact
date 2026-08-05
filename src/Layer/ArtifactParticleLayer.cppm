@@ -156,6 +156,10 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
     return transformed;
 }
 
+ArtifactCore::ParticleRenderData applyParticleRenderLOD(
+    const ParticleRenderData& source,
+    float screenScale);
+
 void boostDebugParticleRenderData(ArtifactCore::ParticleRenderData& data)
 {
     ArtifactCore::Parallel::For(0, static_cast<int>(data.particles.size()),
@@ -318,11 +322,15 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     // Diligent 経路が使える場合は billboard 描画を優先し、ここではソフト描画へ落とさない
     if (rendererReady) {
         const auto sourceData = impl_->particleSystem->captureRenderData();
-        qInfo() << "[ParticleLayer] GPU path: particleCount=" << sourceData.particles.size();
-        if (!sourceData.particles.empty()) {
-            const QTransform globalTransform = getGlobalTransform();
+        const QTransform globalTransform = getGlobalTransform();
+        const float screenScale = std::max(std::hypot(globalTransform.m11(), globalTransform.m21()),
+                                           std::hypot(globalTransform.m12(), globalTransform.m22()));
+        const auto lodData = applyParticleRenderLOD(sourceData, screenScale);
+        qInfo() << "[ParticleLayer] GPU path: particleCount=" << lodData.particles.size()
+                << "sourceCount=" << sourceData.particles.size();
+        if (!lodData.particles.empty()) {
             const ArtifactCore::ParticleRenderData renderData =
-                transformParticleRenderData(sourceData, globalTransform, opacity());
+                transformParticleRenderData(lodData, globalTransform, opacity());
             renderer->drawParticles(renderData);
         } else {
             qWarning() << "[ParticleLayer] GPU path: NO PARTICLES - emitter may not generate";
@@ -2623,6 +2631,28 @@ SharedPtr<ArtifactParticleLayer> createParticleLayer()
     return ArtifactCore::makeShared<ArtifactParticleLayer>();
 }
 
+ArtifactCore::ParticleRenderData applyParticleRenderLOD(
+    const ParticleRenderData& source,
+    float screenScale)
+{
+    if (source.particles.size() < 256 || screenScale >= 0.75f) return source;
+    const float keepRatio = std::clamp(screenScale / 0.75f, 0.125f, 1.0f);
+    const std::size_t targetCount = std::max<std::size_t>(
+        64, static_cast<std::size_t>(std::ceil(source.particles.size() * keepRatio)));
+    if (targetCount >= source.particles.size()) return source;
+    ArtifactCore::ParticleRenderData reduced;
+    reduced.frameNumber = source.frameNumber;
+    reduced.options = source.options;
+    reduced.particles.reserve(targetCount);
+    const std::size_t stride = std::max<std::size_t>(1,
+        static_cast<std::size_t>(std::ceil(static_cast<float>(source.particles.size()) /
+                                           static_cast<float>(targetCount))));
+    for (std::size_t i = 0; i < source.particles.size() && reduced.particles.size() < targetCount; i += stride) {
+        reduced.particles.push_back(source.particles[i]);
+    }
+    return reduced;
+}
+
 SharedPtr<ArtifactParticleLayer> createParticleLayer(const QString& preset)
 {
     auto layer = ArtifactCore::makeShared<ArtifactParticleLayer>();
@@ -2658,11 +2688,15 @@ void ArtifactParticleDebugLayer::draw(ArtifactIRenderer* renderer)
 
     if (rendererReady) {
         const auto sourceData = particleSystem()->captureRenderData();
-        qInfo() << "[ParticleDebugLayer] GPU path: particleCount=" << sourceData.particles.size();
-        if (!sourceData.particles.empty()) {
-            const QTransform globalTransform = getGlobalTransform();
+        const QTransform globalTransform = getGlobalTransform();
+        const float screenScale = std::max(std::hypot(globalTransform.m11(), globalTransform.m21()),
+                                           std::hypot(globalTransform.m12(), globalTransform.m22()));
+        const auto lodData = applyParticleRenderLOD(sourceData, screenScale);
+        qInfo() << "[ParticleDebugLayer] GPU path: particleCount=" << lodData.particles.size()
+                << "sourceCount=" << sourceData.particles.size();
+        if (!lodData.particles.empty()) {
             ArtifactCore::ParticleRenderData renderData =
-                transformParticleRenderData(sourceData, globalTransform, opacity());
+                transformParticleRenderData(lodData, globalTransform, opacity());
             boostDebugParticleRenderData(renderData);
             renderer->drawParticles(renderData);
         } else {

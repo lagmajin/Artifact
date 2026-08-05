@@ -779,8 +779,9 @@ namespace {
                             material.occlusionStrength());
     renderer->setMetallicRoughnessTexture(
         material.metallicRoughnessTexture().toQString());
-    renderer->setNormalTexture(material.normalTexture().toQString());
-    renderer->setOcclusionTexture(material.occlusionTexture().toQString());
+    const bool lowMaterialLOD = detailLevel_ == LODManager::DetailLevel::Low;
+    renderer->setNormalTexture(lowMaterialLOD ? QString() : material.normalTexture().toQString());
+    renderer->setOcclusionTexture(lowMaterialLOD ? QString() : material.occlusionTexture().toQString());
     renderer->setSceneLights(m_sceneLights);
     ArtifactCore::InstanceData instance{};
     const float* modelData = modelMatrix.constData();
