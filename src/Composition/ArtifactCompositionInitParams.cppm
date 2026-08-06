@@ -105,7 +105,7 @@ namespace Artifact {
   impl_->pixelAspectRatio_ = other.impl_->pixelAspectRatio_;
   impl_->frameRate_ = other.impl_->frameRate_;
   impl_->duration_ = other.impl_->duration_;
-  // startTimeCode_ is not copyable
+  // TimeCode is copied explicitly to preserve the composition start frame.
   impl_->workArea_ = other.impl_->workArea_;
   impl_->backgroundColor_ = other.impl_->backgroundColor_;
   impl_->compositionAnchorPoint_ = other.impl_->compositionAnchorPoint_;
@@ -129,7 +129,7 @@ namespace Artifact {
    impl_->pixelAspectRatio_ = other.impl_->pixelAspectRatio_;
    impl_->frameRate_ = other.impl_->frameRate_;
    impl_->duration_ = other.impl_->duration_;
-   // startTimeCode_ is not copyable
+   // TimeCode is copied explicitly to preserve the composition start frame.
    impl_->workArea_ = other.impl_->workArea_;
    impl_->backgroundColor_ = other.impl_->backgroundColor_;
    impl_->compositionAnchorPoint_ = other.impl_->compositionAnchorPoint_;
