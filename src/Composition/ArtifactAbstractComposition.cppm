@@ -1065,6 +1065,7 @@ class ArtifactAbstractComposition::Impl {
   FrameRange frameRange_ = FrameRange(0, 300);
   FrameRange workAreaRange_ = FrameRange(0, 300);
   FrameRate frameRate_;
+  TimeCode startTimeCode_;
   ResponsiveLayoutSet responsiveLayout_;
   QVector<CompositionTransformField> transformFields_;
   QString activeTransformFieldId_;
@@ -2420,6 +2421,7 @@ bool CompositionStateVariant::hasOverride(const LayerID& layerId,
   // Keep init params and live composition state consistent for viewers.
   impl_->backgroundColor_ = params.backgroundColor();
   impl_->frameRate_ = params.frameRate();
+  impl_->startTimeCode_ = params.startTimeCode();
 
   const int64_t totalFrames = std::max<int64_t>(1, params.durationFrames());
   impl_->frameRange_ = FrameRange(0, totalFrames);
@@ -2919,10 +2921,21 @@ FrameRange ArtifactAbstractComposition::frameRange() const
    return impl_->frameRange_;
   }
 
-  FrameRate ArtifactAbstractComposition::frameRate() const
+FrameRate ArtifactAbstractComposition::frameRate() const
   {
    return impl_->frameRate_;
   }
+
+TimeCode ArtifactAbstractComposition::startTimeCode() const
+{
+    return impl_->startTimeCode_;
+}
+
+void ArtifactAbstractComposition::setStartTimeCode(const TimeCode& timecode)
+{
+    impl_->startTimeCode_ = timecode;
+    Q_EMIT changed();
+}
 
 bool ArtifactAbstractComposition::hasVideo() const
 {
@@ -3411,6 +3424,9 @@ void ArtifactAbstractComposition::setFrameRate(const FrameRate& rate)
         return;
     }
     impl_->frameRate_ = rate;
+    const int startFrame = impl_->startTimeCode_.frame();
+    impl_->startTimeCode_ = TimeCode(startFrame, rate.framerate());
+    impl_->startTimeCode_.setDropFrame(rate.hasDropframe());
     Q_EMIT changed();
 }
 
@@ -4440,6 +4456,8 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
     obj["currentFrame"] = impl_->position_.framePosition();
     obj["frameRate"] = impl_->frameRate_.framerate();
     obj["dropFrame"] = impl_->frameRate_.hasDropframe();
+    obj["startTimeCodeFrame"] = impl_->startTimeCode_.frame();
+    obj["startTimeCodeDropFrame"] = impl_->startTimeCode_.isDropFrame();
     obj["playbackSpeed"] = impl_->playbackSpeed_;
     obj["looping"] = impl_->looping_;
     obj["isPlaying"] = impl_->isPlaying_;
@@ -4531,6 +4549,15 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
     }
     if (obj.contains("frameRate")) {
         params.setFrameRate(obj["frameRate"].toDouble(30.0));
+    }
+    if (obj.contains("startTimeCodeFrame")) {
+        TimeCode startTimeCode(
+            obj["startTimeCodeFrame"].toInt(0),
+            obj["frameRate"].toDouble(30.0));
+        startTimeCode.setDropFrame(
+            obj["startTimeCodeDropFrame"].toBool(
+                obj["dropFrame"].toBool(false)));
+        params.setStartTimeCode(startTimeCode);
     }
     if (obj.contains("backgroundColor") && obj["backgroundColor"].isObject()) {
         const QJsonObject backgroundColorObj = obj["backgroundColor"].toObject();

@@ -25,6 +25,7 @@ import Color.Float;
 import Frame.Rate;
 import Frame.Range;
 import Frame.Position;
+import Time.Code;
 import Container.MultiIndex;
 import Composition.Context;
 import Artifact.Composition.Access;
@@ -255,6 +256,8 @@ export namespace Artifact {
   void setWorkAreaRange(const FrameRange& range);
   FrameRate frameRate() const;
   void setFrameRate(const FrameRate& rate);
+  TimeCode startTimeCode() const;
+  void setStartTimeCode(const TimeCode& timecode);
 
   ResponsiveLayoutSet responsiveLayout() const;
   void setResponsiveLayout(const ResponsiveLayoutSet& layout);
