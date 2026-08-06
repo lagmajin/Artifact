@@ -1803,10 +1803,16 @@ void ArtifactVideoLayer::decodeCurrentFrame()
 
             // Keep the decoder's sequential path warm like MLT's image-ahead
             // behavior, but never let prefetch outrank an explicit request.
+            // Decode a small window so a worker that finishes slightly late
+            // does not immediately fall behind on the next render ticks.
+            constexpr int kPrefetchFrameCount = 3;
+            for (int prefetchOffset = 1;
+                 prefetchOffset <= kPrefetchFrameCount;
+                 ++prefetchOffset) {
             std::optional<int64_t> prefetchSourceFrame;
             {
                 std::lock_guard<std::mutex> lock(impl_->decodeRequestMutex_);
-                const int64_t candidate = activeRequest.sourceFrame + 1;
+                const int64_t candidate = activeRequest.sourceFrame + prefetchOffset;
                 const bool candidateInRange =
                     candidate >= 0 &&
                     (impl_->streamInfo_.frameCount <= 0 ||
@@ -1884,6 +1890,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                         << prefetchedFrame.height()
                         << threadIdTag();
                 }
+            }
             }
 
             {
