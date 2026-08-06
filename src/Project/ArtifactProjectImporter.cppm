@@ -365,36 +365,23 @@ namespace Artifact
     if (!compObj.contains("id")) continue;
 
     QString idStr = compObj["id"].toString();
-    CompositionID compId(idStr);
-    ArtifactCompositionInitParams params;
     QString compName = compObj.contains("name") && compObj["name"].isString()
      ? compObj["name"].toString()
      : QStringLiteral("Composition");
 
-    auto compPtr = ArtifactCore::makeShared<ArtifactAbstractComposition>(compId, params);
-    int layersInComp = 0;
-
-    // レイヤーの読み込み
-    if (compObj.contains("layers") && compObj["layers"].isArray()) {
-     QJsonArray layersArray = compObj["layers"].toArray();
-     constexpr qsizetype kMaxImportedLayers = 100000;
-     qsizetype importedLayers = 0;
-     for (const auto& layerVal : layersArray) {
-      if (importedLayers++ >= kMaxImportedLayers) break;
-      if (layerVal.isObject()) {
-       auto layer = ArtifactAbstractLayer::fromJson(layerVal.toObject());
-       if (layer) {
-        compPtr->appendLayerTop(layer);
-        layersInComp++;
-        result.layersLoaded++;
-       }
-      }
-     }
+    // Use the canonical composition deserializer so dimensions, frame rate,
+    // frame/work ranges, layer factory, IDs, parenting, and masks are restored
+    // consistently with IPC and copy/paste import paths.
+    auto compPtr = ArtifactAbstractComposition::fromJson(QJsonDocument(compObj));
+    if (!compPtr) {
+      qWarning() << "[Importer] Failed to deserialize composition:" << idStr;
+      continue;
     }
-
     projectPtr->addImportedComposition(compPtr, compName);
     result.compositionsLoaded++;
-    qDebug() << "[Importer] Loaded composition:" << compName << "with" << layersInComp << "layers";
+    result.layersLoaded += compPtr->allLayer().size();
+    qDebug() << "[Importer] Loaded composition:" << compName
+             << "with" << compPtr->allLayer().size() << "layers";
    }
   }
 

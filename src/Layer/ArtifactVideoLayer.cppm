@@ -2585,7 +2585,19 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
     if (frameBuffer.isEmpty()) {
         frameBuffer = currentFrameImageBuffer();
     }
-    if (frameBuffer.isEmpty()) return;
+    if (frameBuffer.isEmpty()) {
+        // Keep the empty-first-frame case observable instead of presenting a
+        // silent black result.  Once a frame has been presented, the normal
+        // path retains it while the next decode is pending.
+        impl_->lastDecodeState_ = impl_->decoding_.load(std::memory_order_acquire)
+            ? QStringLiteral("waiting-first-frame")
+            : QStringLiteral("decode-failed-no-frame");
+        qCDebug(videoLayerLog) << "[VideoLayer] no frame available for presentation"
+                               << "state=" << impl_->lastDecodeState_
+                               << "timeline=" << timelineFrame
+                               << "source=" << sourceFrame;
+        return;
+    }
 
     // Realtime playback is wall-clock driven: never block the render thread
     // waiting for H.264/HEVC decode. Present the last good frame and record the

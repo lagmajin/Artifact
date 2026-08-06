@@ -782,6 +782,25 @@ if(WIN32)
     )
 endif()
 
+# DirectX 12 Agility SDK (retail 1.619.x / D3D12SDKVersion 619)
+# The SDK runtime is intentionally not vendored. Set ARTIFACT_AGILITY_SDK_DIR
+# to the unpacked Microsoft.Direct3D.D3D12 package directory.
+if(WIN32 AND ARTIFACT_AGILITY_SDK_DIR)
+    set(_ARTIFACT_AGILITY_D3D12CORE "${ARTIFACT_AGILITY_SDK_DIR}/build/native/bin/x64/D3D12Core.dll")
+    if(NOT EXISTS "${_ARTIFACT_AGILITY_D3D12CORE}")
+        message(FATAL_ERROR "Agility SDK D3D12Core.dll not found: ${_ARTIFACT_AGILITY_D3D12CORE}")
+    endif()
+    add_custom_command(TARGET Artifact POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${_ARTIFACT_AGILITY_D3D12CORE}"
+            "$<TARGET_FILE_DIR:Artifact>/D3D12Core.dll"
+        COMMENT "Deploying DirectX 12 Agility SDK retail runtime"
+        VERBATIM
+    )
+elseif(WIN32)
+    message(STATUS "Agility SDK runtime deployment disabled; set ARTIFACT_AGILITY_SDK_DIR to enable it")
+endif()
+
 # ---------------------------------------------------------------------------
 # Out-of-process render farm worker (Phase 4)
 # ---------------------------------------------------------------------------

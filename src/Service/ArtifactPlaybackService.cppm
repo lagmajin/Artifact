@@ -213,6 +213,10 @@ public:
     std::deque<int64_t> pendingFrames;
   };
   RamPreviewBuildQueue ramPreviewBuildQueue_;
+  // Set when the user requests playback before the selected preview range is
+  // cached.  Playback starts only after the range becomes fully playable.
+  bool ramPreviewAutoPlayPending_ = false;
+  bool ramPreviewAutoPlaybackActive_ = false;
   PlaybackRangeMode playbackRangeMode_ = PlaybackRangeMode::All;
   std::atomic<int64_t> pendingCompositionFrame_{0};
   std::atomic_bool compositionFrameSyncQueued_{false};
@@ -681,6 +685,14 @@ public:
     }
     if (ramPreviewBuildQueue_.pendingFrames.empty()) {
       ramPreviewBuildQueue_.active = false;
+      if (ramPreviewAutoPlayPending_ && ramPreviewPlaybackStartReady()) {
+        ramPreviewAutoPlayPending_ = false;
+        QMetaObject::invokeMethod(owner_, [this]() {
+          if (!shuttingDown_.load(std::memory_order_acquire)) {
+            owner_->play();
+          }
+        }, Qt::QueuedConnection);
+      }
     }
   }
 
@@ -779,6 +791,7 @@ public:
     ++ramPreviewBuildQueue_.generation;
     ramPreviewBuildQueue_.active = false;
     ramPreviewBuildQueue_.pendingFrames.clear();
+    ramPreviewAutoPlayPending_ = false;
     if (!reason.trimmed().isEmpty()) {
       ramPreviewBuildQueue_.reason = reason.trimmed();
     } else {
@@ -1835,6 +1848,30 @@ public:
            ramPreviewBuildQueue_.pendingFrames.empty();
   }
 
+  bool ramPreviewPlaybackStartReady() const {
+    if (frameCacheStates_.empty()) {
+      return false;
+    }
+    const int64_t start = std::max<int64_t>(0, ramPreviewRange_.start());
+    const int64_t end = std::min<int64_t>(
+        static_cast<int64_t>(frameCacheStates_.size()), ramPreviewRange_.end());
+    if (end <= start) {
+      return false;
+    }
+    const int64_t current = std::clamp<int64_t>(
+        engine_ ? engine_->currentFrame().framePosition() : start,
+        start, end - 1);
+    const bool reverse = owner_ && owner_->playbackSpeed() < 0.0f;
+    const int64_t leadFrames = std::min<int64_t>(8, end - start);
+    for (int64_t i = 0; i < leadFrames; ++i) {
+      const int64_t frame = current + (reverse ? -i : i);
+      if (frame < start || frame >= end || !isFrameReadyForRamPreview(frame)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   ArtifactRamPreviewFrameCacheState ramPreviewFrameState(
       const int64_t frame) const {
     if (frame < 0 || frame >= static_cast<int64_t>(frameCacheStates_.size())) {
@@ -2043,7 +2080,26 @@ void ArtifactPlaybackService::play() {
     return;
   }
 
+  // AE-like RAM preview: build the active playback range first, then start
+  // playback automatically when every frame is resident and playable.
+  if (impl_->ramPreviewEnabled_ && !impl_->ramPreviewPlaybackStartReady()) {
+    FrameRange previewRange = impl_->currentComposition_->frameRange();
+    if (impl_->playbackRangeMode_ == PlaybackRangeMode::WorkArea) {
+      previewRange = impl_->currentComposition_->workAreaRange();
+    }
+    impl_->ramPreviewAutoPlayPending_ = true;
+    impl_->ramPreviewRange_ = previewRange;
+    impl_->requestRamPreviewBuild(previewRange,
+                                  QStringLiteral("playback-auto-preview"));
+    impl_->emitRamPreviewStats();
+    Q_EMIT ramPreviewStateChanged(true, previewRange);
+    return;
+  }
+
   impl_->startAudioClock();
+  if (impl_->ramPreviewEnabled_) {
+    impl_->ramPreviewAutoPlaybackActive_ = true;
+  }
   
   // 再生開始直前に最新の範囲を適用
   impl_->applyCurrentPlaybackFrameRangeToEngine();
@@ -2077,6 +2133,7 @@ void ArtifactPlaybackService::pause() {
 
 void ArtifactPlaybackService::stop() {
   impl_->stopAudioClock();
+  impl_->ramPreviewAutoPlaybackActive_ = false;
   impl_->cancelRamPreviewBuild(QStringLiteral("playback-stopped"));
   // Composition stop invalidates media decode generations before the engine
   // emits its rewind frame. This prevents stale playback results from winning
@@ -2841,6 +2898,7 @@ bool ArtifactPlaybackService::ramPreviewPlaybackFallbackWhilePlaying() const {
     return false;
   }
   return impl_->ramPreviewPlaybackFallbackWhilePlaying_ ||
+         impl_->ramPreviewAutoPlaybackActive_ ||
          impl_->ramPreviewBuildRangeReady();
 }
 

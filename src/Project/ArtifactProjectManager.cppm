@@ -868,6 +868,7 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& 
                << normalizedPath;
    }
    impl_->currentProjectPath_ = normalizedPath;
+   projectPtr->setDirty(false);
    runProjectHookScript(QStringLiteral("after_project_export"), normalizedPath);
   } else {
    runProjectHookScript(QStringLiteral("on_project_save_failed"), normalizedPath);
@@ -1050,6 +1051,9 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
       QMetaObject::invokeMethod(this, [this, normalizedPath]() {
         impl_->currentProjectPath_ = normalizedPath;
         impl_->projectRootPath_ = QFileInfo(normalizedPath).absolutePath();
+        if (impl_->currentProjectPtr_) {
+          impl_->currentProjectPtr_->setDirty(false);
+        }
         runProjectHookScript(QStringLiteral("after_project_export"), normalizedPath);
       }, Qt::QueuedConnection);
     } else {
