@@ -10,6 +10,7 @@ export module Render.HDRMonitor;
 
 import std;
 import Color.Float;
+import Color.Luminance;
 
 export namespace Artifact {
 
@@ -40,6 +41,7 @@ struct HDRAnalysisResult {
   bool hasClipping = false;
   int clippedHighlights = 0;
   int clippedShadows = 0;
+  int broadcastSafeViolations = 0;
 };
 
 class ArtifactHDRMonitor : public QObject {

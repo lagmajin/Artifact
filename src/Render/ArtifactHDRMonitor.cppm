@@ -6,6 +6,7 @@ module;
 import std;
 
 import Color.Float;
+import Color.Luminance;
 import Core.Parallel;
 
 module Render.HDRMonitor;
@@ -57,9 +58,10 @@ ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
                               static_cast<int>(frameData.size()),
                               [&](int index) {
     const auto &color = frameData[static_cast<size_t>(index)];
-    // Rec. 709 luminance calculation
     impl_->luminanceCache_[static_cast<size_t>(index)] =
-        0.2126f * color.r() + 0.7152f * color.g() + 0.0722f * color.b();
+        ArtifactCore::ColorLuminance::calculate(
+            color.r(), color.g(), color.b(),
+            ArtifactCore::LuminanceStandard::Rec709);
   });
 
   // Calculate statistics
@@ -90,9 +92,16 @@ ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
       }
     }
 
-    // Gamut check (Rec. 709 for now)
+    // Keep the legacy full-range gamut list and expose a separate legal-range
+    // count for broadcast inspection. The latter is intentionally a lightweight
+    // encoded-RGB check; full Y'CbCr gamut mapping belongs at export time.
     if (!isColorInGamut(color)) {
       result.outOfGamutPixels.push_back(color);
+    }
+    if (ArtifactCore::ColorLuminance::inspectBroadcastSafe(
+            color.r(), color.g(), color.b(),
+            ArtifactCore::LuminanceStandard::Rec709).hasViolation()) {
+      ++result.broadcastSafeViolations;
     }
   }
 
