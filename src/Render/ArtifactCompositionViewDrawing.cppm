@@ -1541,15 +1541,39 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     if (!hasRasterizerEffectsOrMasks(layer) && imageLayer->hasCurrentFrameBuffer()) {
       const ArtifactCore::ImageF32x4_RGBA& buffer = imageLayer->currentFrameBuffer();
       const float baseOpacity = (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      GPUTextureBindingRecord cachedBinding;
+      if (gpuTextureCacheManager && imageLayer->canShareSourceGpuTexture() &&
+          imageLayer->sourceVersion() > 0) {
+        const auto sourceAssetId = imageLayer->sourceAssetId();
+        const QString ownerId = sourceAssetId.isNull()
+            ? layer->id().toString()
+            : QStringLiteral("asset:%1").arg(
+                  sourceAssetId.toString(QUuid::WithoutBraces));
+        const QString cacheKey = QStringLiteral("image-f32:v%1")
+                                     .arg(imageLayer->sourceVersion());
+        auto handle = gpuTextureCacheManager->findExisting(ownerId, cacheKey);
+        if (!handle.isValid()) {
+          handle = gpuTextureCacheManager->acquireOrCreate(ownerId, cacheKey, buffer);
+        }
+        cachedBinding = gpuTextureCacheManager->bindingRecord(handle);
+      }
       drawWithClonerEffect(layer, globalTransform4x4,
         [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
-          renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
-                               static_cast<float>(localRect.y()),
-                               static_cast<float>(localRect.width()),
-                               static_cast<float>(localRect.height()),
-                               instanceTransform,
-                               buffer,
-                               baseOpacity * instanceWeight);
+          if (cachedBinding.isValid()) {
+            renderer->drawSpriteTransformed(
+                static_cast<float>(localRect.x()),
+                static_cast<float>(localRect.y()),
+                static_cast<float>(localRect.width()),
+                static_cast<float>(localRect.height()), instanceTransform,
+                cachedBinding.srv, baseOpacity * instanceWeight);
+          } else {
+            renderer->drawSpriteTransformed(
+                static_cast<float>(localRect.x()),
+                static_cast<float>(localRect.y()),
+                static_cast<float>(localRect.width()),
+                static_cast<float>(localRect.height()), instanceTransform,
+                buffer, baseOpacity * instanceWeight);
+          }
         });
       return;
     }
@@ -1569,15 +1593,34 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
             svgLayer->currentFrameBuffer();
         const float baseOpacity =
             (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+        GPUTextureBindingRecord cachedBinding;
+        if (gpuTextureCacheManager && svgLayer->sourceVersion() > 0) {
+          const QString ownerId = layer->id().toString();
+          const QString cacheKey =
+              QStringLiteral("svg-f32:v%1").arg(svgLayer->sourceVersion());
+          auto handle = gpuTextureCacheManager->findExisting(ownerId, cacheKey);
+          if (!handle.isValid()) {
+            handle = gpuTextureCacheManager->acquireOrCreate(ownerId, cacheKey, buffer);
+          }
+          cachedBinding = gpuTextureCacheManager->bindingRecord(handle);
+        }
         drawWithClonerEffect(layer, globalTransform4x4,
           [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
-            renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
-                                 static_cast<float>(localRect.y()),
-                                 static_cast<float>(localRect.width()),
-                                 static_cast<float>(localRect.height()),
-                                 instanceTransform,
-                                 buffer,
-                                 baseOpacity * instanceWeight);
+            if (cachedBinding.isValid()) {
+              renderer->drawSpriteTransformed(
+                  static_cast<float>(localRect.x()),
+                  static_cast<float>(localRect.y()),
+                  static_cast<float>(localRect.width()),
+                  static_cast<float>(localRect.height()), instanceTransform,
+                  cachedBinding.srv, baseOpacity * instanceWeight);
+            } else {
+              renderer->drawSpriteTransformed(
+                  static_cast<float>(localRect.x()),
+                  static_cast<float>(localRect.y()),
+                  static_cast<float>(localRect.width()),
+                  static_cast<float>(localRect.height()), instanceTransform,
+                  buffer, baseOpacity * instanceWeight);
+            }
           });
       } else {
         const QImage svgImage = svgLayer->toQImage();

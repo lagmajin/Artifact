@@ -310,6 +310,25 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
     return {entry.id, entry.generation};
 }
 
+GPUTextureCacheHandle GPUTextureCacheManager::findExisting(
+    const QString& ownerId, const QString& cacheKey) const
+{
+    if (ownerId.isEmpty() || cacheKey.isEmpty()) {
+        return {};
+    }
+
+    QMutexLocker locker(&mutex_);
+    const QString prefix = makeKey(ownerId, cacheKey) + QStringLiteral("|format:");
+    for (auto it = entries_.cbegin(); it != entries_.cend(); ++it) {
+        if (it->ownerId == ownerId &&
+            it->cacheKey.startsWith(prefix) &&
+            it->generation == generation_ && it->texture) {
+            return {it->id, it->generation};
+        }
+    }
+    return {};
+}
+
 GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const QString& ownerId,
                                                                            const QString& cacheKey,
                                                                            Uint32 width,

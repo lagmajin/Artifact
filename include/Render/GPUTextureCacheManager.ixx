@@ -98,6 +98,9 @@ public:
                                           const QString& cacheKey,
                                           const ArtifactCore::GpuVideoFrame& frame);
 
+    GPUTextureCacheHandle findExisting(const QString& ownerId,
+                                       const QString& cacheKey) const;
+
     Diligent::ITextureView* textureView(const GPUTextureCacheHandle& handle) const;
     GPUTextureBindingRecord bindingRecord(const GPUTextureCacheHandle& handle) const;
     bool isValid(const GPUTextureCacheHandle& handle) const;
