@@ -210,11 +210,14 @@ namespace Artifact {
  void ArtifactCompositionInitParams::setFrameRate(const FrameRate& rate)
  {
   impl_->frameRate_ = rate;
+  const int startFrame = impl_->startTimeCode_.frame();
+  impl_->startTimeCode_ = TimeCode(startFrame, rate.framerate());
+  impl_->startTimeCode_.setDropFrame(rate.hasDropframe());
  }
 
  void ArtifactCompositionInitParams::setFrameRate(double fps)
  {
-  impl_->frameRate_ = FrameRate(fps);
+  setFrameRate(FrameRate(fps));
  }
 
  RationalTime ArtifactCompositionInitParams::duration() const
@@ -263,8 +266,7 @@ namespace Artifact {
 
  void ArtifactCompositionInitParams::setStartTimeCode(const TimeCode& tc)
  {
-  // TimeCode does not support assignment operator
-  // Keep the existing timecode
+  impl_->startTimeCode_ = tc;
  }
 
  WorkArea ArtifactCompositionInitParams::workArea() const
