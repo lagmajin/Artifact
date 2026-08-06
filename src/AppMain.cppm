@@ -2586,7 +2586,14 @@ int main(int argc, char *argv[]) {
             return;
           }
           qInfo() << "[AppMain] Opening launch project file:" << filePath;
-          ArtifactProjectManager::getInstance().loadFromFile(filePath);
+          ArtifactProjectManager::getInstance().loadFromFileAsync(
+              filePath,
+              [filePath](const ArtifactProjectImporterResult& result) {
+                if (!result.success) {
+                  qWarning() << "[AppMain] Failed to open launch project:"
+                             << filePath << result.errorMessage.toQString();
+                }
+              });
         });
       });
   for (const QString& filePath : launchProjectPaths) {

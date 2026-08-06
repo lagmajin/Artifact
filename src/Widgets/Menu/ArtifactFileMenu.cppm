@@ -19,6 +19,7 @@ module;
 #include <QCoreApplication>
 #include <QTimer>
 #include <QProgressDialog>
+#include <QPointer>
 #include <QRegularExpression>
 #include <QPainter>
 #include <QImage>
@@ -361,12 +362,21 @@ void ArtifactFileMenu::Impl::handleSaveProject()
         path = QFileDialog::getSaveFileName(menu_, "プロジェクトを保存", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
         if (path.isEmpty()) return;
     }
-    auto result = manager.saveToFile(path);
-    if (!result.success) {
-        qWarning() << "Save project failed";
-        return;
-    }
-    addRecentProject(path);
+    const QPointer<ArtifactFileMenu> menuGuard(menu_);
+    manager.saveToFileAsync(
+        path,
+        [menuGuard, path](const ArtifactProjectExporterResult& result) {
+            if (result.success) {
+                addRecentProject(path);
+                return;
+            }
+            qWarning() << "Save project failed" << result.errorMessage;
+            if (menuGuard) {
+                QMessageBox::warning(menuGuard, QStringLiteral("プロジェクトを保存"),
+                                     QStringLiteral("プロジェクトを保存できませんでした。\n%1")
+                                         .arg(result.errorMessage));
+            }
+        });
 }
 
 void ArtifactFileMenu::Impl::handleSaveProjectAs()
@@ -374,12 +384,21 @@ void ArtifactFileMenu::Impl::handleSaveProjectAs()
     if (!menu_) return;
     const QString path = QFileDialog::getSaveFileName(menu_, "名前を付けて保存", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
     if (path.isEmpty()) return;
-    auto result = ArtifactProjectManager::getInstance().saveToFile(path);
-    if (!result.success) {
-        qWarning() << "Save project as failed";
-        return;
-    }
-    addRecentProject(path);
+    const QPointer<ArtifactFileMenu> menuGuard(menu_);
+    ArtifactProjectManager::getInstance().saveToFileAsync(
+        path,
+        [menuGuard, path](const ArtifactProjectExporterResult& result) {
+            if (result.success) {
+                addRecentProject(path);
+                return;
+            }
+            qWarning() << "Save project as failed" << result.errorMessage;
+            if (menuGuard) {
+                QMessageBox::warning(menuGuard, QStringLiteral("プロジェクトを保存"),
+                                     QStringLiteral("プロジェクトを保存できませんでした。\n%1")
+                                         .arg(result.errorMessage));
+            }
+        });
 }
 
 void ArtifactFileMenu::Impl::handleNewComposition()
@@ -455,11 +474,16 @@ void ArtifactFileMenu::Impl::handleImportAssets()
     if (filtered.isEmpty()) {
       return;
     }
-    const QStringList imported = svc->importAssetsFromPaths(filtered);
-    if (imported.isEmpty()) {
-        QMessageBox::warning(menu_, QStringLiteral("アセットを読み込み"),
-                             QStringLiteral("読み込めるアセットがありませんでした。"));
-    }
+    const QPointer<ArtifactFileMenu> menuGuard(menu_);
+    svc->importAssetsFromPathsAsync(
+        filtered,
+        [menuGuard](const QStringList& imported) {
+            if (!menuGuard || !imported.isEmpty()) {
+                return;
+            }
+            QMessageBox::warning(menuGuard, QStringLiteral("アセットを読み込み"),
+                                 QStringLiteral("読み込めるアセットがありませんでした。"));
+        });
 }
 
 void ArtifactFileMenu::Impl::handleRevealProjectFolder()
@@ -488,19 +512,26 @@ void ArtifactFileMenu::Impl::openProjectPath(const QString& path, bool addToRece
         return;
     }
 
-    auto& manager = ArtifactProjectManager::getInstance();
-    const QString beforePath = manager.currentProjectPath();
-    manager.loadFromFile(path);
-    const QString afterPath = manager.currentProjectPath();
-    const bool opened = afterPath == path || (beforePath != afterPath && !afterPath.isEmpty());
-    if (!opened) {
-        QMessageBox::warning(menu_, QStringLiteral("プロジェクトを開く"),
-                             QStringLiteral("プロジェクトを開けませんでした。\n%1").arg(path));
-        return;
-    }
-    if (addToRecent) {
-        addRecentProject(afterPath.isEmpty() ? path : afterPath);
-    }
+    const QPointer<ArtifactFileMenu> menuGuard(menu_);
+    ArtifactProjectManager::getInstance().loadFromFileAsync(
+        path,
+        [menuGuard, path, addToRecent](const ArtifactProjectImporterResult& result) {
+            if (!menuGuard) {
+                return;
+            }
+            if (!result.success) {
+                const QString error = result.errorMessage.toQString();
+                QMessageBox::warning(
+                    menuGuard, QStringLiteral("プロジェクトを開く"),
+                    error.isEmpty()
+                        ? QStringLiteral("プロジェクトを開けませんでした。\n%1").arg(path)
+                        : QStringLiteral("プロジェクトを開けませんでした。\n%1").arg(error));
+                return;
+            }
+            if (addToRecent) {
+                addRecentProject(path);
+            }
+        });
 }
 
 void ArtifactFileMenu::Impl::handleExportCurrentFrame()

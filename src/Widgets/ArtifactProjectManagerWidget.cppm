@@ -2534,6 +2534,7 @@ void ArtifactProjectView::setModel(QAbstractItemModel* model)
     }
 
     impl_->model = model;
+    impl_->tilePreviewCache.clear();
 
     if (impl_->model) {
         impl_->selectionModel = new QItemSelectionModel(impl_->model, this);
@@ -2562,6 +2563,10 @@ void ArtifactProjectView::setModel(QAbstractItemModel* model)
             [this](const QModelIndex&, int, int, const QModelIndex&, int) { refreshVisibleContent(); }));
         impl_->modelConnections.push_back(QObject::connect(impl_->model, &QAbstractItemModel::dataChanged, this,
             [this](const QModelIndex&, const QModelIndex&, const QList<int>&) {
+                // Asset paths and composition contents can change without a
+                // model reset; invalidate cached previews only for this
+                // content-changing notification path.
+                impl_->tilePreviewCache.clear();
                 update();
             }));
     }
@@ -3619,7 +3624,6 @@ void ArtifactProjectView::refreshVisibleContent()
     }
     const int savedScroll = verticalScrollBar_ ? verticalScrollBar_->value() : 0;
 
-    impl_->tilePreviewCache.clear();
     impl_->rebuildVisibleRows();
     updateScrollRange();
 

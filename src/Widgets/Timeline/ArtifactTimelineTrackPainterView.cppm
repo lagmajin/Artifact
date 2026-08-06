@@ -4537,6 +4537,11 @@ public:
   QVector<int> keyframeCountsByTrack_;
   QSet<int> selectedMarkerTracks_;
   QSet<int> selectedKeyframeTracks_;
+  QVector<KeyframeAreaVisual> keyframeAreaCache_;
+  double keyframeAreaCachePpf_ = -1.0;
+  double keyframeAreaCacheXOffset_ = 0.0;
+  double keyframeAreaCacheYOffset_ = 0.0;
+  bool keyframeAreaCacheValid_ = false;
   QString hoverToolTipText_;
   bool selectionSyncDirty_ = true;
   const ArtifactAbstractComposition *lastSyncedComposition_ = nullptr;
@@ -4584,9 +4589,11 @@ void ArtifactTimelineTrackPainterView::Impl::rebuildTrackTopCache() {
     trackTops_[i] = currentY;
     currentY += trackHeights_[i] + kTrackSpacing;
   }
+  keyframeAreaCacheValid_ = false;
 }
 
 void ArtifactTimelineTrackPainterView::Impl::rebuildMarkerCaches() {
+  keyframeAreaCacheValid_ = false;
   keyframeCountsByTrack_.resize(trackHeights_.size());
   keyframeCountsByTrack_.fill(0);
   selectedMarkerFrameSortedIndices_.clear();
@@ -6596,9 +6603,19 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         impl_->proportionalEditRadius_);
   }
 
-  const QVector<KeyframeAreaVisual> keyframeAreas =
-      collectKeyframeAreas(impl_->keyframeMarkers_, impl_->trackHeights_,
-                           impl_->trackTops_, ppf, xOffset, yOffset);
+  if (!impl_->keyframeAreaCacheValid_ ||
+      impl_->keyframeAreaCachePpf_ != ppf ||
+      impl_->keyframeAreaCacheXOffset_ != xOffset ||
+      impl_->keyframeAreaCacheYOffset_ != yOffset) {
+    impl_->keyframeAreaCache_ = collectKeyframeAreas(
+        impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_, ppf,
+        xOffset, yOffset);
+    impl_->keyframeAreaCachePpf_ = ppf;
+    impl_->keyframeAreaCacheXOffset_ = xOffset;
+    impl_->keyframeAreaCacheYOffset_ = yOffset;
+    impl_->keyframeAreaCacheValid_ = true;
+  }
+  const auto &keyframeAreas = impl_->keyframeAreaCache_;
   for (int i = 0; i < keyframeAreas.size(); ++i) {
     const auto &area = keyframeAreas[i];
     if (!dirtyRect.intersects(area.bodyRect.toAlignedRect().adjusted(-2, -2, 2, 2))) {

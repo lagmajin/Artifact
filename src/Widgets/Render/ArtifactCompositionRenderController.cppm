@@ -31064,17 +31064,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       const auto previewSummary = playback->ramPreviewSummary();
 
-      const bool asyncRamPreviewReadbackEnabled =
-
-          qEnvironmentVariableIsSet("ARTIFACT_ENABLE_RAM_PREVIEW_ASYNC_READBACK");
-
       const bool shouldCaptureRamPreview =
-
-          asyncRamPreviewReadbackEnabled &&
-
           playback->isRamPreviewEnabled() && playbackPreviewStateValid &&
 
-          playbackSameComposition && !playback->isPlaying() &&
+          playbackSameComposition &&
 
           !viewportInteracting_ && !frameOutOfRange &&
 

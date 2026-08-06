@@ -1471,7 +1471,20 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   QObject::connect(impl_->welcomeWidget, &ArtifactWelcomeWidget::openRecentProject, this,
       [this](const QString& path) {
           if (!path.isEmpty()) {
-              ArtifactProjectManager::getInstance().loadFromFile(path);
+              const QPointer<ArtifactMainWindow> windowGuard(this);
+              ArtifactProjectManager::getInstance().loadFromFileAsync(
+                  path,
+                  [windowGuard, path](const ArtifactProjectImporterResult& result) {
+                      if (!windowGuard || result.success) {
+                          return;
+                      }
+                      const QString error = result.errorMessage.toQString();
+                      QMessageBox::warning(
+                          windowGuard, QStringLiteral("Open Project"),
+                          error.isEmpty()
+                              ? QStringLiteral("Failed to open project.\n%1").arg(path)
+                              : QStringLiteral("Failed to open project.\n%1").arg(error));
+                  });
           }
       });
   QObject::connect(impl_->welcomeWidget, &ArtifactWelcomeWidget::createNewComposition, this,
@@ -1498,7 +1511,17 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
                   if (dialog.exec() == QDialog::Accepted) {
                       const QStringList filtered = dialog.selectedPaths();
                       if (!filtered.isEmpty()) {
-                          svc->importAssetsFromPaths(filtered);
+                          const QPointer<ArtifactMainWindow> windowGuard(this);
+                          svc->importAssetsFromPathsAsync(
+                              filtered,
+                              [windowGuard](const QStringList& imported) {
+                                  if (!windowGuard || !imported.isEmpty()) {
+                                      return;
+                                  }
+                                  QMessageBox::warning(
+                                      windowGuard, QStringLiteral("Import Assets"),
+                                      QStringLiteral("No assets could be imported."));
+                              });
                       }
                   }
               }
@@ -1509,7 +1532,20 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
           const QString path = QFileDialog::getOpenFileName(
               this, QStringLiteral("Open Project"));
           if (!path.isEmpty()) {
-              ArtifactProjectManager::getInstance().loadFromFile(path);
+              const QPointer<ArtifactMainWindow> windowGuard(this);
+              ArtifactProjectManager::getInstance().loadFromFileAsync(
+                  path,
+                  [windowGuard, path](const ArtifactProjectImporterResult& result) {
+                      if (!windowGuard || result.success) {
+                          return;
+                      }
+                      const QString error = result.errorMessage.toQString();
+                      QMessageBox::warning(
+                          windowGuard, QStringLiteral("Open Project"),
+                          error.isEmpty()
+                              ? QStringLiteral("Failed to open project.\n%1").arg(path)
+                              : QStringLiteral("Failed to open project.\n%1").arg(error));
+                  });
           }
       });
   // Keep recent-project data fresh without covering Composition Viewer.
