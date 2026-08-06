@@ -4439,6 +4439,7 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
     obj["workAreaRange"] = impl_->workAreaRange_.toJson();
     obj["currentFrame"] = impl_->position_.framePosition();
     obj["frameRate"] = impl_->frameRate_.framerate();
+    obj["dropFrame"] = impl_->frameRate_.hasDropframe();
     obj["playbackSpeed"] = impl_->playbackSpeed_;
     obj["looping"] = impl_->looping_;
     obj["isPlaying"] = impl_->isPlaying_;
