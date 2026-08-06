@@ -18,6 +18,7 @@ module Artifact.Menu.Script;
 import std;
 
 import Artifact.Script.Hooks;
+import Script.CSharp.Engine;
 import Script.Python.Engine;
 import Utils.Path;
 import Translation.Manager;
@@ -41,9 +42,11 @@ public:
  QMenu* aeUtilityMenu = nullptr;
  QMenu* hooksMenu = nullptr;
  QMenu* macrosMenu = nullptr;
+ QMenu* csxMenu = nullptr;
  std::vector<QAction*> hookActions;
  std::vector<QAction*> macroActions;
  std::vector<QAction*> aeUtilityActions;
+ std::vector<QAction*> csxActions;
 
  QString scriptsRootPath() const;
  QString menuScriptPath() const;
@@ -59,6 +62,7 @@ public:
  void runMacroFile(const QString& filePath);
  void runAeUtilityFile(const QString& filePath);
  void refreshAeUtilityActions();
+ void refreshCsxActions();
  void refreshHookActions();
  void refreshMacroActions();
 };
@@ -327,6 +331,51 @@ void ArtifactScriptMenu::Impl::runMacroFile(const QString& filePath)
  }
 }
 
+void ArtifactScriptMenu::Impl::refreshCsxActions()
+{
+ if (!csxMenu) {
+  return;
+ }
+
+ for (QAction* action : csxActions) {
+  if (action) {
+   csxMenu->removeAction(action);
+   delete action;
+  }
+ }
+ csxActions.clear();
+
+ ensureScriptsWorkspaceScaffold();
+ const QDir dir(scriptsRootPath());
+ const QFileInfoList files =
+     dir.entryInfoList(QStringList() << "*.csx", QDir::Files, QDir::Name);
+ if (files.isEmpty()) {
+  QAction* emptyAction = csxMenu->addAction(tr("No C# Scripts Yet"));
+  emptyAction->setEnabled(false);
+  emptyAction->setToolTip(tr("Put .csx files in %1").arg(scriptsRootPath()));
+  csxActions.push_back(emptyAction);
+  return;
+ }
+
+ for (const QFileInfo& fileInfo : files) {
+  QAction* action = csxMenu->addAction(fileInfo.baseName());
+  action->setData(fileInfo.absoluteFilePath());
+  action->setToolTip(fileInfo.absoluteFilePath());
+  QObject::connect(action, &QAction::triggered, menu_,
+                   [this, path = fileInfo.absoluteFilePath()]() {
+                    auto& engine = CSharpScriptEngine::instance();
+                    const bool initialized = engine.isInitialized() || engine.initialize();
+                    if (!initialized || !engine.executeScriptFile(path.toStdString())) {
+                     QMessageBox::warning(
+                         menu_, tr("C# Script"),
+                         tr("Failed to run C# script:\n%1\n%2")
+                             .arg(path, QString::fromStdString(engine.getLastError())));
+                    }
+                   });
+  csxActions.push_back(action);
+ }
+}
+
 void ArtifactScriptMenu::Impl::runAeUtilityFile(const QString& filePath)
 {
  if (filePath.trimmed().isEmpty()) {
@@ -500,6 +549,9 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  aeUtilityMenu = new QMenu(tr("AE Utility Pack"));
  aeUtilityMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_macros.svg")));
 
+ csxMenu = new QMenu(tr("C# Scripts"));
+ csxMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_run_macro.svg")));
+
  const QStringList hookNames = ArtifactPythonHookManager::knownHooks();
  for (const QString& hookName : hookNames) {
   QAction* action = hooksMenu->addAction(hookName);
@@ -519,9 +571,11 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  menu->addSeparator();
  menu->addMenu(macrosMenu);
  menu->addMenu(aeUtilityMenu);
+ menu->addMenu(csxMenu);
  menu->addMenu(hooksMenu);
  refreshMacroActions();
  refreshAeUtilityActions();
+ refreshCsxActions();
  refreshHookActions();
 
  QObject::connect(openScriptsFolderAction, &QAction::triggered, menu, [this]() {
@@ -541,6 +595,9 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  });
  QObject::connect(aeUtilityMenu, &QMenu::aboutToShow, menu, [this]() {
   refreshAeUtilityActions();
+ });
+ QObject::connect(csxMenu, &QMenu::aboutToShow, menu, [this]() {
+  refreshCsxActions();
  });
  QObject::connect(hooksMenu, &QMenu::aboutToShow, menu, [this]() {
   refreshHookActions();
