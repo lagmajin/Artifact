@@ -39,6 +39,7 @@
 #include <QImage>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 #include <QMutex>
 #include <QWaitCondition>
 
@@ -71,6 +72,12 @@ struct FrameCacheEntry {
     int height = 0;
     FramePosition frame;
     uint64_t generation = 0;
+    // Preview-cache v2 identity and dependency metadata. Producers fill these
+    // when a completed composition frame is stored.
+    QString compositionId;
+    uint64_t compositionRevision = 0;
+    QStringList layerIds;
+    QStringList effectIds;
     uint64_t timestamp = 0;
     size_t memorySize = 0;
     bool isDirty = false;
@@ -105,6 +112,17 @@ struct FrameCacheEntry {
             memorySize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
         }
     }
+};
+
+/// Describes a safe, targeted preview-cache invalidation. With no dependency
+/// ids it affects every frame in the composition/range; fullComposition
+/// ignores the range and retains M4 v1's conservative behaviour.
+struct FrameCacheInvalidation {
+    QString compositionId;
+    FrameRange range;
+    QStringList layerIds;
+    QStringList effectIds;
+    bool fullComposition = false;
 };
 
 /**
@@ -159,6 +177,7 @@ public:
     void invalidate(const FramePosition& frame);
     void invalidateRange(const FrameRange& range);
     void invalidateStaleGenerations(uint64_t minGenerationToKeep);
+    void invalidate(const FrameCacheInvalidation& invalidation);
     void invalidateAll();
     uint64_t generation() const;
     uint64_t bumpGeneration(const QString& reason = QStringLiteral("manual"));

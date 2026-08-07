@@ -609,6 +609,45 @@ RenderQuality ProgressiveRenderer::quality() const {
     return impl_->quality_;
 }
 
+void FrameCache::invalidate(const FrameCacheInvalidation& invalidation) {
+    if (invalidation.fullComposition && invalidation.compositionId.isEmpty()) {
+        invalidateAll();
+        return;
+    }
+
+    std::vector<FramePosition> affectedFrames;
+    {
+        QMutexLocker locker(&impl_->mutex_);
+        for (const auto& [frame, entry] : impl_->entries_) {
+            if (!entry) {
+                continue;
+            }
+            if (!invalidation.compositionId.isEmpty() &&
+                entry->compositionId != invalidation.compositionId) {
+                continue;
+            }
+            const int frameNumber = static_cast<int>(frame.framePosition());
+            if (!invalidation.fullComposition &&
+                (frameNumber < invalidation.range.start ||
+                 frameNumber > invalidation.range.end)) {
+                continue;
+            }
+            const bool layerMatch = invalidation.layerIds.isEmpty() ||
+                std::any_of(invalidation.layerIds.cbegin(), invalidation.layerIds.cend(),
+                            [&entry](const QString& id) { return entry->layerIds.contains(id); });
+            const bool effectMatch = invalidation.effectIds.isEmpty() ||
+                std::any_of(invalidation.effectIds.cbegin(), invalidation.effectIds.cend(),
+                            [&entry](const QString& id) { return entry->effectIds.contains(id); });
+            if (layerMatch && effectMatch) {
+                affectedFrames.push_back(frame);
+            }
+        }
+    }
+    for (const auto& frame : affectedFrames) {
+        invalidate(frame);
+    }
+}
+
 void ProgressiveRenderer::setRenderCallback(RenderCallback callback) {
     impl_->renderCallback_ = std::move(callback);
 }

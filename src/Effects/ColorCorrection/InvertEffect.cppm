@@ -4,7 +4,10 @@ module;
 #include <cstring>
 #include <opencv2/opencv.hpp>
 #include <memory>
+#include <limits>
+#include <mutex>
 #include <QVariant>
+#include <QDebug>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
@@ -57,6 +60,32 @@ void main(uint3 dtid : SV_DispatchThreadID)
         c.a = lerp(c.a, 1.0f - c.a, strength);
     }
     g_OutputTexture[dtid.xy] = c;
+}
+
+[numthreads(256, 1, 1)]
+void main1D(uint3 dtid : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    const uint pixelCount = width * height;
+    if (dtid.x >= pixelCount || width == 0) return;
+
+    const uint2 pixel = uint2(dtid.x % width, dtid.x / width);
+    float4 c = g_InputTexture[pixel];
+    const float strength = saturate(g_Strength);
+    const int channel = (int)(g_Channel + 0.5f);
+    if (channel == 0) {
+        c.rgb = lerp(c.rgb, 1.0f - c.rgb, strength);
+    } else if (channel == 1) {
+        c.r = lerp(c.r, 1.0f - c.r, strength);
+    } else if (channel == 2) {
+        c.g = lerp(c.g, 1.0f - c.g, strength);
+    } else if (channel == 3) {
+        c.b = lerp(c.b, 1.0f - c.b, strength);
+    } else {
+        c.a = lerp(c.a, 1.0f - c.a, strength);
+    }
+    g_OutputTexture[pixel] = c;
 }
 )";
 } // namespace
@@ -121,6 +150,9 @@ public:
         Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;
         Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
         if (!acquireSharedRenderDeviceForCurrentBackend(device, context)) { applyCPU(src, dst); return; }
+        struct SharedDeviceLease {
+            ~SharedDeviceLease() { releaseSharedRenderDevice(); }
+        } sharedDeviceLease;
         const auto& image = src.image();
         const float* pixels = image.rgba32fData();
         if (!pixels || image.width() <= 0 || image.height() <= 0) { applyCPU(src, dst); return; }
@@ -182,22 +214,70 @@ public:
 
         ArtifactCore::GpuContext gpuContext{device, context};
         ArtifactCore::ComputeExecutor executor{gpuContext};
+        const D3D12AgilityCapabilitySnapshot agilityCaps =
+            sharedD3D12AgilityCapabilities();
+        constexpr Diligent::Uint64 kThreadsPer1DGroup = 256;
+        constexpr Diligent::Uint64 kLegacyMax1DGroups = 65535;
+        const Diligent::Uint64 pixelCount =
+            static_cast<Diligent::Uint64>(outDesc.Width) *
+            static_cast<Diligent::Uint64>(outDesc.Height);
+        const Diligent::Uint64 oneDimensionalGroupCount =
+            (pixelCount + kThreadsPer1DGroup - 1) / kThreadsPer1DGroup;
+        bool useExtended1DDispatch =
+            agilityCaps.options22Available &&
+            agilityCaps.deviceShaderModel69Supported &&
+            agilityCaps.dxcShaderModel69Supported &&
+            oneDimensionalGroupCount > kLegacyMax1DGroups &&
+            oneDimensionalGroupCount <= agilityCaps.max1DDispatchSize &&
+            oneDimensionalGroupCount <=
+                static_cast<Diligent::Uint64>((std::numeric_limits<Diligent::Uint32>::max)());
         ArtifactCore::ComputePipelineDesc pipeline{};
-        pipeline.name = "Invert/PSO";
+        pipeline.name = useExtended1DDispatch ? "Invert/PSO-1D-SM69"
+                                              : "Invert/PSO-2D";
         pipeline.shaderSource = kInvertHlsl;
-        pipeline.entryPoint = "main";
+        pipeline.entryPoint = useExtended1DDispatch ? "main1D" : "main";
         pipeline.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+        pipeline.shaderCompiler = useExtended1DDispatch
+            ? Diligent::SHADER_COMPILER_DXC
+            : Diligent::SHADER_COMPILER_DEFAULT;
+        pipeline.hlslVersion = useExtended1DDispatch
+            ? Diligent::ShaderVersion{6, 9}
+            : Diligent::ShaderVersion{};
         pipeline.variables = vars;
         pipeline.variableCount = 3;
         pipeline.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-        if (!executor.build(pipeline) || !executor.createShaderResourceBinding(true) ||
+        bool pipelineBuilt = executor.build(pipeline);
+        if (!pipelineBuilt && useExtended1DDispatch) {
+            useExtended1DDispatch = false;
+            pipeline.name = "Invert/PSO-2D-Fallback";
+            pipeline.entryPoint = "main";
+            pipeline.shaderCompiler = Diligent::SHADER_COMPILER_DEFAULT;
+            pipeline.hlslVersion = {};
+            pipelineBuilt = executor.build(pipeline);
+        }
+        if (!pipelineBuilt ||
+            !executor.createShaderResourceBinding(true) ||
             !executor.setBuffer("InvertParams", params) ||
             !executor.setTextureView("g_InputTexture", input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
             !executor.setTextureView("g_OutputTexture", outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
             applyCPU(src, dst);
             return;
         }
-        executor.dispatch(context, ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1),
+        const Diligent::DispatchComputeAttribs dispatch = useExtended1DDispatch
+            ? Diligent::DispatchComputeAttribs{
+                  static_cast<Diligent::Uint32>(oneDimensionalGroupCount), 1, 1}
+            : ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+                  outDesc.Width, outDesc.Height, 1, 8, 8, 1);
+        if (useExtended1DDispatch) {
+            static std::once_flag extendedDispatchLogFlag;
+            std::call_once(extendedDispatchLogFlag, [&]() {
+                qInfo() << "[InvertEffect] Agility extended 1D dispatch enabled"
+                        << "groups=" << dispatch.ThreadGroupCountX
+                        << "pixels=" << pixelCount
+                        << "limit=" << agilityCaps.max1DDispatchSize;
+            });
+        }
+        executor.dispatch(context, dispatch,
                           Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
         Diligent::TextureDesc stagingDesc = outDesc;

@@ -28,6 +28,7 @@ module Artifact.Render.GPUTextureCacheManager;
 import Image.ImageF32x4_RGBA;
 import Image.UploadConversion;
 import Video.VideoFrame;
+import Artifact.Render.DiligentDeviceManager;
 
 namespace Artifact {
 
@@ -596,6 +597,7 @@ void GPUTextureCacheManager::clearLocked()
 
 void GPUTextureCacheManager::processPendingUploadsLocked()
 {
+    applyPendingD3D12TrimLocked();
     if (!uploadCoordinator_) return;
     uploadCoordinator_->processPending(8, 64ull * 1024ull * 1024ull);
     if (pendingUploads_.isEmpty()) return;
@@ -639,6 +641,47 @@ void GPUTextureCacheManager::processPendingUploadsLocked()
         currentBytes_ += entry.memoryBytes;
     }
     pruneLocked();
+}
+
+void GPUTextureCacheManager::applyPendingD3D12TrimLocked()
+{
+    const D3D12TrimRequestSnapshot request = claimD3D12TrimRequest();
+    if (!request.pending || request.generation <= lastD3D12TrimGeneration_) {
+        return;
+    }
+    lastD3D12TrimGeneration_ = request.generation;
+
+    const size_t requestedBytes = static_cast<size_t>(std::min<Diligent::Uint64>(
+        request.requestedBytes,
+        static_cast<Diligent::Uint64>((std::numeric_limits<size_t>::max)())));
+    const size_t targetBytesToRelease = std::min(requestedBytes, currentBytes_);
+    size_t releasedBytes = 0;
+    while (releasedBytes < targetBytesToRelease && !entries_.isEmpty()) {
+        quint64 lruId = 0;
+        quint64 oldestTick = ~quint64(0);
+        size_t entryBytes = 0;
+        for (auto it = entries_.cbegin(); it != entries_.cend(); ++it) {
+            if (it->lastUsedTick < oldestTick) {
+                oldestTick = it->lastUsedTick;
+                lruId = it->id;
+                entryBytes = it->memoryBytes;
+            }
+        }
+        if (lruId == 0) {
+            break;
+        }
+        ++invalidationCount_;
+        lastInvalidationReason_ =
+            GPUTextureCacheInvalidationReason::BudgetEviction;
+        eraseEntryByIdLocked(lruId);
+        releasedBytes += entryBytes;
+    }
+
+    qInfo() << "[GPUTextureCacheManager] D3D12 trim request applied"
+            << "generation=" << request.generation
+            << "requestedBytes=" << request.requestedBytes
+            << "releasedBytes=" << releasedBytes
+            << "remainingBytes=" << currentBytes_;
 }
 
 GPUTextureCacheStats GPUTextureCacheManager::stats() const

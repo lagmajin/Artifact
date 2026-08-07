@@ -31,6 +31,9 @@ struct CompositionRemovedEvent {
 
 struct CompositionChangedEvent {
     QString compositionId;
+    // Monotonically increasing content revision. Consumers that cache a
+    // composition frame can use this directly in their cache key.
+    uint64_t revision = 0;
 };
 
 struct CompositionNoteChangedEvent {

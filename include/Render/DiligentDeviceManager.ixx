@@ -50,6 +50,47 @@ struct GpuAdapterCandidate {
     int autoScore = 0;
 };
 
+struct D3D12AgilityCapabilitySnapshot {
+    bool available = false;
+    bool agilityRuntimeLoaded = false;
+    bool deviceShaderModelKnown = false;
+    bool deviceShaderModel69Supported = false;
+    bool dxcAvailable = false;
+    bool dxcShaderModel69Supported = false;
+    bool options22Available = false;
+    bool tightAlignmentAvailable = false;
+    bool device15Available = false;
+    bool periodicTrimNotificationAvailable = false;
+    bool periodicTrimNotificationRegistered = false;
+    bool cpuTimelineQueryResolveAvailable = false;
+    bool revisedViewCreationAvailable = false;
+    Uint32 requestedSdkVersion = 619;
+    Uint32 headerSdkVersion = 0;
+    Uint32 deviceShaderModelMajor = 0;
+    Uint32 deviceShaderModelMinor = 0;
+    Uint32 dxcVersionMajor = 0;
+    Uint32 dxcVersionMinor = 0;
+    Uint32 dxcShaderModelMajor = 0;
+    Uint32 dxcShaderModelMinor = 0;
+    Uint32 max1DDispatchSize = 65535;
+    Uint32 max1DDispatchMeshSize = 65535;
+    Uint32 tightAlignmentTier = 0;
+    QString runtimePath;
+};
+
+D3D12AgilityCapabilitySnapshot queryD3D12AgilityCapabilities(
+    IRenderDevice* device);
+D3D12AgilityCapabilitySnapshot sharedD3D12AgilityCapabilities();
+
+struct D3D12TrimRequestSnapshot {
+    Uint64 generation = 0;
+    Uint64 requestedBytes = 0;
+    bool pending = false;
+};
+
+D3D12TrimRequestSnapshot currentD3D12TrimRequest();
+D3D12TrimRequestSnapshot claimD3D12TrimRequest();
+
 class DiligentDeviceManager {
 public:
     DiligentDeviceManager();
@@ -82,6 +123,8 @@ public:
     bool isRayTracingSupported() const;
     SelectedGpuAdapterInfo selectedAdapterInfo() const;
     QString selectedAdapterDebugState() const;
+    D3D12AgilityCapabilitySnapshot d3d12AgilityCapabilities() const;
+    QString d3d12AgilityDebugState() const;
     std::vector<GpuAdapterCandidate> availableAdapters() const;
     QString availableAdaptersDebugState() const;
 

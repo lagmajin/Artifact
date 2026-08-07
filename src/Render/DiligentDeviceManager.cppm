@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <algorithm>
 #include <limits>
+#include <iterator>
 #include <QWidget>
 #include <QDebug>
 #include <QSize>
@@ -23,6 +24,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/CommandQueueD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h>
+#include <DiligentCore/Graphics/ShaderTools/include/DXCompiler.hpp>
 #include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>
 #include <d3d12sdklayers.h>
 #include <windows.h>
@@ -38,6 +40,109 @@ using namespace Diligent;
 using Microsoft::WRL::ComPtr;
 
 namespace {
+    D3D12AgilityCapabilitySnapshot queryD3D12AgilityCapabilitiesInternal(
+        IRenderDevice* device)
+    {
+        D3D12AgilityCapabilitySnapshot snapshot;
+#if D3D12_SUPPORTED
+        snapshot.headerSdkVersion = D3D12_SDK_VERSION;
+        if (!device ||
+            device->GetDeviceInfo().Type != RENDER_DEVICE_TYPE_D3D12) {
+            return snapshot;
+        }
+
+        RefCntAutoPtr<IRenderDeviceD3D12> deviceD3D12{
+            device, IID_RenderDeviceD3D12};
+        if (!deviceD3D12) {
+            return snapshot;
+        }
+        ID3D12Device* nativeDevice = deviceD3D12->GetD3D12Device();
+        if (!nativeDevice) {
+            return snapshot;
+        }
+        snapshot.available = true;
+
+        HMODULE agilityModule = ::GetModuleHandleW(L"D3D12Core.dll");
+        snapshot.agilityRuntimeLoaded = agilityModule != nullptr;
+        if (agilityModule) {
+            wchar_t modulePath[MAX_PATH] = {};
+            const DWORD pathLength = ::GetModuleFileNameW(
+                agilityModule, modulePath, static_cast<DWORD>(std::size(modulePath)));
+            if (pathLength > 0 && pathLength < std::size(modulePath)) {
+                snapshot.runtimePath = QString::fromWCharArray(
+                    modulePath, static_cast<qsizetype>(pathLength));
+            }
+        }
+
+        D3D12_FEATURE_DATA_SHADER_MODEL shaderModel = {
+            D3D_SHADER_MODEL_6_9};
+        if (SUCCEEDED(nativeDevice->CheckFeatureSupport(
+                D3D12_FEATURE_SHADER_MODEL, &shaderModel,
+                sizeof(shaderModel)))) {
+            snapshot.deviceShaderModelKnown = true;
+            snapshot.deviceShaderModelMajor =
+                (static_cast<Uint32>(shaderModel.HighestShaderModel) >> 4u) & 0x0fu;
+            snapshot.deviceShaderModelMinor =
+                static_cast<Uint32>(shaderModel.HighestShaderModel) & 0x0fu;
+            snapshot.deviceShaderModel69Supported =
+                shaderModel.HighestShaderModel >= D3D_SHADER_MODEL_6_9;
+        }
+
+        if (auto* dxc = deviceD3D12->GetDXCompiler()) {
+            snapshot.dxcAvailable = dxc->IsLoaded();
+            if (snapshot.dxcAvailable) {
+                const Version compilerVersion = dxc->GetVersion();
+                const ShaderVersion shaderVersion = dxc->GetMaxShaderModel();
+                snapshot.dxcVersionMajor = compilerVersion.Major;
+                snapshot.dxcVersionMinor = compilerVersion.Minor;
+                snapshot.dxcShaderModelMajor = shaderVersion.Major;
+                snapshot.dxcShaderModelMinor = shaderVersion.Minor;
+                snapshot.dxcShaderModel69Supported =
+                    shaderVersion >= ShaderVersion{6, 9};
+            }
+        }
+
+#if D3D12_SDK_VERSION >= 619
+        D3D12_FEATURE_DATA_TIGHT_ALIGNMENT tightAlignment = {};
+        if (SUCCEEDED(nativeDevice->CheckFeatureSupport(
+                D3D12_FEATURE_D3D12_TIGHT_ALIGNMENT, &tightAlignment,
+                sizeof(tightAlignment)))) {
+            snapshot.tightAlignmentTier =
+                static_cast<Uint32>(tightAlignment.SupportTier);
+            snapshot.tightAlignmentAvailable =
+                tightAlignment.SupportTier >= D3D12_TIGHT_ALIGNMENT_TIER_1;
+        }
+
+        D3D12_FEATURE_DATA_D3D12_OPTIONS22 options22 = {};
+        if (SUCCEEDED(nativeDevice->CheckFeatureSupport(
+                D3D12_FEATURE_D3D12_OPTIONS22, &options22,
+                sizeof(options22)))) {
+            snapshot.options22Available = true;
+            if (options22.Max1DDispatchSize > 0) {
+                snapshot.max1DDispatchSize = options22.Max1DDispatchSize;
+            }
+            if (options22.Max1DDispatchMeshSize > 0) {
+                snapshot.max1DDispatchMeshSize =
+                    options22.Max1DDispatchMeshSize;
+            }
+        }
+
+        ComPtr<ID3D12Device15> device15;
+        snapshot.device15Available = SUCCEEDED(nativeDevice->QueryInterface(
+            IID_PPV_ARGS(&device15))) && device15 != nullptr;
+        snapshot.periodicTrimNotificationAvailable =
+            snapshot.device15Available;
+        snapshot.cpuTimelineQueryResolveAvailable =
+            snapshot.device15Available;
+        snapshot.revisedViewCreationAvailable =
+            snapshot.device15Available;
+#endif
+#else
+        (void)device;
+#endif
+        return snapshot;
+    }
+
     void reportLiveD3D12Objects(IRenderDevice* device)
     {
 #if D3D12_SUPPORTED
@@ -75,8 +180,94 @@ namespace {
         RefCntAutoPtr<IRenderDevice> device;
         RefCntAutoPtr<IDeviceContext> immediateContext;
         RENDER_DEVICE_TYPE type = RENDER_DEVICE_TYPE_UNDEFINED;
+        D3D12AgilityCapabilitySnapshot agilityCapabilities;
         std::atomic_uint32_t refCount{0};
+        std::atomic_uint64_t trimRequestGeneration{0};
+        std::atomic_uint64_t trimRequestedBytes{0};
+        Uint64 consumedTrimGeneration = 0;
+#if D3D12_SDK_VERSION >= 619
+        ComPtr<ID3D12Device15> trimDevice;
+        DWORD trimCallbackCookie = 0;
+        bool trimCallbackRegistered = false;
+#endif
     };
+
+#if D3D12_SDK_VERSION >= 619
+    void __stdcall onD3D12TrimNotification(
+        const D3D12_TRIM_NOTIFICATION* notification)
+    {
+        if (!notification || !notification->pContext) {
+            return;
+        }
+        auto* shared = static_cast<SharedRenderDeviceState*>(
+            notification->pContext);
+        constexpr Uint64 kDefaultPeriodicTrimBytes = 64ull * 1024ull * 1024ull;
+        const Uint64 requestedBytes = notification->NumBytesToTrim > 0
+            ? notification->NumBytesToTrim
+            : kDefaultPeriodicTrimBytes;
+        shared->trimRequestGeneration.fetch_add(1, std::memory_order_release);
+        Uint64 current = shared->trimRequestedBytes.load(
+            std::memory_order_relaxed);
+        while (current < requestedBytes &&
+               !shared->trimRequestedBytes.compare_exchange_weak(
+                   current, requestedBytes, std::memory_order_release,
+                   std::memory_order_relaxed)) {
+        }
+    }
+#endif
+
+    void unregisterSharedTrimNotification(SharedRenderDeviceState& shared)
+    {
+#if D3D12_SDK_VERSION >= 619
+        if (shared.trimDevice && shared.trimCallbackRegistered) {
+            shared.trimDevice->UnregisterTrimNotificationCallback(
+                shared.trimCallbackCookie);
+        }
+        shared.trimCallbackCookie = 0;
+        shared.trimCallbackRegistered = false;
+        shared.trimDevice.Reset();
+#else
+        (void)shared;
+#endif
+        shared.agilityCapabilities.periodicTrimNotificationRegistered = false;
+    }
+
+    void registerSharedTrimNotification(SharedRenderDeviceState& shared)
+    {
+#if D3D12_SDK_VERSION >= 619
+        unregisterSharedTrimNotification(shared);
+        if (!shared.device ||
+            shared.type != RENDER_DEVICE_TYPE_D3D12 ||
+            !shared.agilityCapabilities.periodicTrimNotificationAvailable) {
+            return;
+        }
+        RefCntAutoPtr<IRenderDeviceD3D12> diligentDevice{
+            shared.device, IID_RenderDeviceD3D12};
+        if (!diligentDevice) {
+            return;
+        }
+        ID3D12Device* nativeDevice = diligentDevice->GetD3D12Device();
+        if (!nativeDevice || FAILED(nativeDevice->QueryInterface(
+                IID_PPV_ARGS(&shared.trimDevice))) || !shared.trimDevice) {
+            shared.trimDevice.Reset();
+            return;
+        }
+        D3D12_REGISTER_TRIM_NOTIFICATION registration = {};
+        registration.pfnCallback = onD3D12TrimNotification;
+        registration.pContext = &shared;
+        if (FAILED(shared.trimDevice->RegisterTrimNotificationCallback(
+                &registration))) {
+            shared.trimDevice.Reset();
+            return;
+        }
+        shared.trimCallbackCookie = registration.CallbackCookie;
+        shared.trimCallbackRegistered = true;
+        shared.trimRequestedBytes.store(0, std::memory_order_release);
+        shared.agilityCapabilities.periodicTrimNotificationRegistered = true;
+#else
+        (void)shared;
+#endif
+    }
 
     struct VulkanValidationInfo {
         bool loaderAvailable = false;
@@ -629,6 +820,12 @@ namespace {
     }
 }
 
+D3D12AgilityCapabilitySnapshot queryD3D12AgilityCapabilities(
+    IRenderDevice* device)
+{
+    return queryD3D12AgilityCapabilitiesInternal(device);
+}
+
 bool acquireSharedRenderDeviceForCurrentBackend(
     RefCntAutoPtr<IRenderDevice>& outDevice,
     RefCntAutoPtr<IDeviceContext>& outImmediateContext)
@@ -677,10 +874,14 @@ bool acquireSharedRenderDeviceForCurrentBackend(
         shared.device.Release();
         shared.immediateContext.Release();
         shared.type = RENDER_DEVICE_TYPE_UNDEFINED;
+        shared.agilityCapabilities = {};
         return false;
     }
 
     shared.type = shared.device->GetDeviceInfo().Type;
+    shared.agilityCapabilities =
+        queryD3D12AgilityCapabilitiesInternal(shared.device);
+    registerSharedTrimNotification(shared);
     shared.refCount = 1;
     outDevice = shared.device;
     outImmediateContext = shared.immediateContext;
@@ -708,9 +909,11 @@ void releaseSharedRenderDevice()
         shared.immediateContext->Flush();
         shared.immediateContext->WaitForIdle();
     }
+    unregisterSharedTrimNotification(shared);
     shared.immediateContext.Release();
     shared.device.Release();
     shared.type = RENDER_DEVICE_TYPE_UNDEFINED;
+    shared.agilityCapabilities = {};
 }
 
 bool invalidateSharedRenderDeviceIfExclusive(IRenderDevice* expectedDevice)
@@ -724,9 +927,11 @@ bool invalidateSharedRenderDeviceIfExclusive(IRenderDevice* expectedDevice)
 
     // A lost device must not be flushed or waited. Drop the shared registry so
     // the next acquire creates a fresh backend device and context.
+    unregisterSharedTrimNotification(shared);
     shared.immediateContext.Release();
     shared.device.Release();
     shared.type = RENDER_DEVICE_TYPE_UNDEFINED;
+    shared.agilityCapabilities = {};
     shared.refCount = 0;
     return true;
 }
@@ -736,6 +941,42 @@ RENDER_DEVICE_TYPE sharedRenderDeviceType()
     auto& shared = sharedRenderDeviceState();
     std::lock_guard<std::mutex> lock(shared.mutex);
     return shared.type;
+}
+
+D3D12AgilityCapabilitySnapshot sharedD3D12AgilityCapabilities()
+{
+    auto& shared = sharedRenderDeviceState();
+    std::lock_guard<std::mutex> lock(shared.mutex);
+    return shared.agilityCapabilities;
+}
+
+D3D12TrimRequestSnapshot currentD3D12TrimRequest()
+{
+    auto& shared = sharedRenderDeviceState();
+    D3D12TrimRequestSnapshot snapshot;
+    snapshot.generation = shared.trimRequestGeneration.load(
+        std::memory_order_acquire);
+    snapshot.requestedBytes = shared.trimRequestedBytes.load(
+        std::memory_order_acquire);
+    snapshot.pending = snapshot.generation != 0 && snapshot.requestedBytes != 0;
+    return snapshot;
+}
+
+D3D12TrimRequestSnapshot claimD3D12TrimRequest()
+{
+    auto& shared = sharedRenderDeviceState();
+    std::lock_guard<std::mutex> lock(shared.mutex);
+    D3D12TrimRequestSnapshot snapshot;
+    snapshot.generation = shared.trimRequestGeneration.load(
+        std::memory_order_acquire);
+    snapshot.requestedBytes = shared.trimRequestedBytes.exchange(
+        0, std::memory_order_acq_rel);
+    snapshot.pending = snapshot.generation > shared.consumedTrimGeneration &&
+                       snapshot.requestedBytes != 0;
+    if (snapshot.pending) {
+        shared.consumedTrimGeneration = snapshot.generation;
+    }
+    return snapshot;
 }
 
 class DiligentDeviceManager::Impl {
@@ -754,6 +995,7 @@ public:
     int currentPhysicalHeight_ = 0;
     qreal currentDevicePixelRatio_ = 1.0;
     bool rtSupported_ = false;
+    D3D12AgilityCapabilitySnapshot agilityCapabilities_;
 
     Impl() = default;
 
@@ -763,6 +1005,7 @@ public:
         if (device_ && immediateContext_) {
             device_->CreateDeferredContext(&deferredContext_);
             rtSupported_ = device_->GetDeviceInfo().Features.RayTracing != DEVICE_FEATURE_STATE_DISABLED;
+            agilityCapabilities_ = queryD3D12AgilityCapabilities(device_);
         }
     }
 
@@ -846,6 +1089,7 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
 
     device_->CreateDeferredContext(&deferredContext_);
     rtSupported_ = device_->GetDeviceInfo().Features.RayTracing != DEVICE_FEATURE_STATE_DISABLED;
+    agilityCapabilities_ = sharedD3D12AgilityCapabilities();
 
     // Device is ready — mark initialized so shaders/PSOs can be created
     // even if the swapchain is deferred (widget may still be 0×0).
@@ -906,6 +1150,7 @@ void DiligentDeviceManager::Impl::initializeHeadless()
     }
 
     device_->CreateDeferredContext(&deferredContext_);
+    agilityCapabilities_ = queryD3D12AgilityCapabilities(device_);
     qDebug() << "[DiligentDeviceManager] headless device created type="
              << deviceTypeName(device_->GetDeviceInfo().Type);
     initialized_ = true;
@@ -1121,6 +1366,7 @@ void DiligentDeviceManager::Impl::destroy()
     deferredContext_.Release();
     immediateContext_.Release();
     device_.Release();
+    agilityCapabilities_ = {};
     if (usingSharedDevice_) {
         releaseSharedRenderDevice();
         usingSharedDevice_ = false;
@@ -1148,11 +1394,15 @@ DiligentDeviceManager::~DiligentDeviceManager()
 void DiligentDeviceManager::initialize(QWidget* widget)
 {
     impl_->initialize(widget);
+    qInfo().noquote() << "[DiligentDeviceManager][Agility]"
+                      << d3d12AgilityDebugState();
 }
 
 void DiligentDeviceManager::initializeHeadless()
 {
     impl_->initializeHeadless();
+    qInfo().noquote() << "[DiligentDeviceManager][Agility]"
+                      << d3d12AgilityDebugState();
 }
 
 void DiligentDeviceManager::createSwapChain(QWidget* widget)
@@ -1356,6 +1606,64 @@ QString DiligentDeviceManager::selectedAdapterDebugState() const
         .arg(info.requestedAdapter.isEmpty()
                  ? QStringLiteral("<auto>")
                  : info.requestedAdapter);
+}
+
+D3D12AgilityCapabilitySnapshot
+DiligentDeviceManager::d3d12AgilityCapabilities() const
+{
+    return impl_ ? impl_->agilityCapabilities_
+                 : D3D12AgilityCapabilitySnapshot{};
+}
+
+QString DiligentDeviceManager::d3d12AgilityDebugState() const
+{
+    const auto caps = d3d12AgilityCapabilities();
+    if (!caps.available) {
+        return QStringLiteral("agility=<not-d3d12> headerSdk=%1 requestedSdk=%2")
+            .arg(caps.headerSdkVersion)
+            .arg(caps.requestedSdkVersion);
+    }
+    const QString deviceShaderModel = caps.deviceShaderModelKnown
+        ? QStringLiteral("%1.%2")
+              .arg(caps.deviceShaderModelMajor)
+              .arg(caps.deviceShaderModelMinor)
+        : QStringLiteral("unknown");
+    const QString dxcVersion = caps.dxcAvailable
+        ? QStringLiteral("%1.%2")
+              .arg(caps.dxcVersionMajor)
+              .arg(caps.dxcVersionMinor)
+        : QStringLiteral("unavailable");
+    const QString dxcShaderModel = caps.dxcAvailable
+        ? QStringLiteral("%1.%2")
+              .arg(caps.dxcShaderModelMajor)
+              .arg(caps.dxcShaderModelMinor)
+        : QStringLiteral("unknown");
+    return QStringLiteral(
+               "agilityRuntime=%1 requestedSdk=%2 headerSdk=%3 "
+               "deviceSM=%4 deviceSM69=%5 dxc=%6 dxcSM=%7 dxcSM69=%8 "
+               "options22=%9 tightAlignment=%10 tightAlignmentTier=%11 "
+               "max1DDispatch=%12 max1DDispatchMesh=%13 device15=%14 periodicTrim=%15 "
+               "trimRegistered=%16 cpuTimelineQuery=%17 revisedViews=%18 runtimePath=%19")
+        .arg(caps.agilityRuntimeLoaded)
+        .arg(caps.requestedSdkVersion)
+        .arg(caps.headerSdkVersion)
+        .arg(deviceShaderModel)
+        .arg(caps.deviceShaderModel69Supported)
+        .arg(dxcVersion)
+        .arg(dxcShaderModel)
+        .arg(caps.dxcShaderModel69Supported)
+        .arg(caps.options22Available)
+        .arg(caps.tightAlignmentAvailable)
+        .arg(caps.tightAlignmentTier)
+        .arg(caps.max1DDispatchSize)
+        .arg(caps.max1DDispatchMeshSize)
+        .arg(caps.device15Available)
+        .arg(caps.periodicTrimNotificationAvailable)
+        .arg(caps.periodicTrimNotificationRegistered)
+        .arg(caps.cpuTimelineQueryResolveAvailable)
+        .arg(caps.revisedViewCreationAvailable)
+        .arg(caps.runtimePath.isEmpty() ? QStringLiteral("<none>")
+                                        : caps.runtimePath);
 }
 
 std::vector<GpuAdapterCandidate> DiligentDeviceManager::availableAdapters() const

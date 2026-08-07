@@ -4,6 +4,7 @@ module;
 #include <QObject>
 #include <QImage>
 #include <QString>
+#include <QStringList>
 #include <cstdint>
 #include <algorithm>
 #include <any>
@@ -64,6 +65,10 @@ struct ArtifactRamPreviewFrameCacheState {
   bool imageAvailable = false;
   bool playable = false;
   QString reason;
+  QString compositionId;
+  uint64_t compositionRevision = 0;
+  QStringList layerIds;
+  QStringList effectIds;
 };
 
 struct ArtifactRamPreviewSummary {
@@ -231,6 +236,10 @@ public:
   FrameRange ramPreviewRange() const;
   void clearRamPreviewCache();
   void invalidateRamPreviewCache(const QString &reason = {});
+  // Removes only a frame interval from the current composition preview. This
+  // is the v2 path for layer/effect edits whose temporal span is known.
+  void invalidateRamPreviewRange(const FrameRange &range,
+                                 const QString &reason = {});
   void prewarmRamPreviewAroundCurrentFrame();
   void requestRamPreviewBuild(const FrameRange &range,
                               const QString &reason = {});

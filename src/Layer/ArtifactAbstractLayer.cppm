@@ -63,6 +63,7 @@ import Physics.Mpm2D;
 import Layer.Matte;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
+import Artifact.Render.ROI;
 import Artifact.Effect.ImplBase;
 import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.Keying.LumaKey;
@@ -3453,7 +3454,23 @@ LayerBounds ArtifactAbstractLayer::contentBounds() const {
   LayerBounds bounds;
   bounds.sourceBounds = source;
   bounds.visibleBounds = visible;
-  bounds.effectBounds = visible;
+  // Effects may read pixels outside the transformed layer rectangle. Apply
+  // their shared ROI contract in stack order so bounds users (damage tracking,
+  // cache invalidation and a future tiled renderer) get the same expansion.
+  RenderROI effectROI(visible);
+  for (const auto& effect : getEffects()) {
+    if (!effect || !effect->isEnabled()) {
+      continue;
+    }
+    const EffectROIHint hint = effect->roiHint();
+    if (hint.requiresFullFrame) {
+      // A layer cannot determine the composition canvas here. Preserve its
+      // visible rectangle; the composition host promotes this to full-frame.
+      continue;
+    }
+    effectROI = effect->expandedROI(effectROI);
+  }
+  bounds.effectBounds = effectROI.rect;
   bounds.maskBounds = visible;
   bounds.layoutBounds = source.isValid() ? source : visible;
   return bounds;

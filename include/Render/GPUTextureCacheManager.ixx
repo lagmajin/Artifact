@@ -155,6 +155,7 @@ private:
                                                        size_t memoryBytes,
                                                        Diligent::TEXTURE_FORMAT format);
     void pruneLocked();
+    void applyPendingD3D12TrimLocked();
     void processPendingUploadsLocked();
     void clearLocked();
     void eraseEntryByIdLocked(quint64 id);
@@ -172,6 +173,7 @@ private:
     quint64 generation_ = 1;
     quint64 usageTick_ = 1;
     size_t budgetBytes_ = 512ull * 1024ull * 1024ull;
+    Diligent::Uint64 lastD3D12TrimGeneration_ = 0;
     int maxEntries_ = 256;
     size_t currentBytes_ = 0;
     size_t hitCount_ = 0;

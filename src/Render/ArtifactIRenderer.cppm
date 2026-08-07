@@ -3940,7 +3940,9 @@ QString ArtifactIRenderer::gpuAdapterDebugState() const
   }
   return QStringLiteral("%1 %2")
       .arg(impl_->deviceManager_.selectedAdapterDebugState())
-      .arg(impl_->gpuAdapterRecoveryDebugState());
+      .arg(QStringLiteral("%1 %2")
+               .arg(impl_->gpuAdapterRecoveryDebugState())
+               .arg(impl_->deviceManager_.d3d12AgilityDebugState()));
 }
 
 QString ArtifactIRenderer::gpuAdapterRegistryDebugState() const

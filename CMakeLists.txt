@@ -1288,7 +1288,8 @@ endif()
 # DirectStorage is an optional Windows/DX12 fast path. The reader is compiled
 # with a portable QFile fallback when the SDK is absent, so Vulkan and machines
 # without the redistributable keep the same higher-level loading contract.
-if(WIN32 AND ARTIFACT_DIRECTSTORAGE_SDK_DIR)
+if(WIN32 AND ARTIFACT_ENABLE_DIRECTSTORAGE AND
+   ARTIFACT_DIRECTSTORAGE_SDK_DIR)
     set(_ARTIFACT_DIRECTSTORAGE_INCLUDE
         "${ARTIFACT_DIRECTSTORAGE_SDK_DIR}/native/include")
     set(_ARTIFACT_DIRECTSTORAGE_DLL
@@ -1309,9 +1310,11 @@ if(WIN32 AND ARTIFACT_DIRECTSTORAGE_SDK_DIR)
         VERBATIM
     )
     message(STATUS "DirectStorage SDK selected: ${ARTIFACT_DIRECTSTORAGE_SDK_DIR}")
-else()
+elseif(WIN32 AND ARTIFACT_ENABLE_DIRECTSTORAGE)
     message(STATUS
-        "DirectStorage SDK disabled; set ARTIFACT_DIRECTSTORAGE_SDK_DIR to enable the DX12 fast path")
+        "DirectStorage SDK unavailable; portable asynchronous file I/O will be used")
+elseif(WIN32)
+    message(STATUS "DirectStorage explicitly disabled")
 endif()
 
 # ---------------------------------------------------------------------------

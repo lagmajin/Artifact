@@ -67,6 +67,8 @@ import Core.Diagnostics.Trace;
 import Image.ImageF32x4RGBAWithCache;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
+import Artifact.Effect.Abstract;
 import Artifact.Service.Project;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -1393,6 +1395,7 @@ public:
     state.ready = true;
     state.failed = false;
     state.inRam = true;
+    stampFrameDependencies(state);
     if (!reason.trimmed().isEmpty()) {
       state.reason = reason.trimmed();
     } else {
@@ -1418,6 +1421,7 @@ public:
     state.ready = true;
     state.failed = false;
     state.inRam = true;
+    stampFrameDependencies(state);
     if (!reason.trimmed().isEmpty()) {
       state.reason = reason.trimmed();
     } else {
@@ -1425,6 +1429,34 @@ public:
     }
     cacheBitmap_[static_cast<size_t>(frame)] = true;
     completeRamPreviewBuildFrame(frame);
+  }
+
+  void stampFrameDependencies(ArtifactRamPreviewFrameCacheState &state) const {
+    state.compositionId = currentComposition_
+        ? currentComposition_->id().toString() : QString();
+    state.compositionRevision = currentComposition_
+        ? currentComposition_->revision() : 0;
+    state.layerIds.clear();
+    state.effectIds.clear();
+    if (!currentComposition_) {
+      return;
+    }
+    for (const auto &layer : currentComposition_->allLayer()) {
+      if (!layer) {
+        continue;
+      }
+      state.layerIds.push_back(layer->id().toString());
+      for (const auto &effect : layer->getEffects()) {
+        if (effect) {
+          state.effectIds.push_back(effect->effectID().toQString());
+        }
+      }
+    }
+    for (const auto &effect : currentComposition_->getEffects()) {
+      if (effect) {
+        state.effectIds.push_back(effect->effectID().toQString());
+      }
+    }
   }
 
   bool storeRamPreviewFrameImage(const int64_t frame, const QImage &image,
@@ -1649,6 +1681,38 @@ public:
     cancelRamPreviewBuild(reason);
     clearPreviewDiskCacheForCurrentComposition();
     resetRamPreviewCache();
+    Q_EMIT owner_->ramPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
+  }
+
+  void invalidateRamPreviewRangeForCurrentComposition(const FrameRange &range,
+                                                       const QString &reason) {
+    if (!currentComposition_ || frameCacheStates_.empty()) {
+      return;
+    }
+    const int64_t first = std::max<int64_t>(0, range.start());
+    const int64_t last = std::min<int64_t>(
+        static_cast<int64_t>(frameCacheStates_.size()) - 1, range.end());
+    if (last < first) {
+      return;
+    }
+
+    // Reject queued disk writes from the old render contract. The generation
+    // is global on purpose: a stale writer must never recreate an invalidated
+    // frame after the file has been removed.
+    ++previewDiskGeneration_;
+    for (int64_t frame = first; frame <= last; ++frame) {
+      ramPreviewImageCache_.erase(frame);
+      eraseRamPreviewImageLru(frame);
+      auto &state = frameCacheStates_[static_cast<size_t>(frame)];
+      state = ArtifactRamPreviewFrameCacheState{};
+      state.reason = reason.trimmed().isEmpty()
+          ? QStringLiteral("range-invalidated") : reason.trimmed();
+      cacheBitmap_[static_cast<size_t>(frame)] = false;
+      if (previewDiskCacheEnabled_.load()) {
+        QFile::remove(previewDiskCacheFramePath(frame));
+      }
+    }
+    emitRamPreviewStats();
     Q_EMIT owner_->ramPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
   }
 
@@ -2852,6 +2916,16 @@ void ArtifactPlaybackService::invalidateRamPreviewCache(const QString &reason) {
   impl_->invalidateRamPreviewForCurrentComposition(
       reason.trimmed().isEmpty() ? QStringLiteral("ram-preview-invalidated")
                                  : reason.trimmed());
+}
+
+void ArtifactPlaybackService::invalidateRamPreviewRange(
+    const FrameRange &range, const QString &reason) {
+  if (!impl_) {
+    return;
+  }
+  impl_->invalidateRamPreviewRangeForCurrentComposition(
+      range, reason.trimmed().isEmpty() ? QStringLiteral("range-invalidated")
+                                        : reason.trimmed());
 }
 
 void ArtifactPlaybackService::prewarmRamPreviewAroundCurrentFrame() {

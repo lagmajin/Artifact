@@ -4003,12 +4003,8 @@ bool ArtifactProjectService::moveEffectInCurrentComposition(
     return false;
   }
 
-  std::swap(effects[currentIndex], effects[swapIndex]);
-  comp->clearEffects();
-  for (const auto &effect : effects) {
-    if (effect) {
-      comp->addEffect(effect);
-    }
+  if (!comp->moveEffect(UniString::fromQString(effectId), swapIndex)) {
+    return false;
   }
   notifyProjectMutation(impl_->projectManager());
   return true;

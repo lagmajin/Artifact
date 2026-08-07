@@ -54,6 +54,7 @@ module;
 #include <QSizeF>
 
 #include <QSet>
+#include <QSettings>
 
 #include <QStringList>
 #include <QString>
@@ -12832,6 +12833,14 @@ public:
 
                 invalidateOverlayComposite();
 
+                // Composition-level effects do not belong to a single layer
+                // range. Keep their invalidation conservative until an
+                // effect-specific temporal range is part of the model.
+                if (auto *playback = ArtifactPlaybackService::instance()) {
+                  playback->invalidateRamPreviewCache(
+                      QStringLiteral("composition-effect-or-state-changed"));
+                }
+
                 owner->markRenderDirty();
 
               });
@@ -12871,6 +12880,17 @@ public:
     region.source = LayerInvalidationRegion::Source::Content;
 
     region.layerId = ownerId;
+
+    // Effect bounds include shared Blur/Glow ROI expansion. A full-frame
+    // effect deliberately remains conservative until the composition host can
+    // supply its canvas extent to the layer-level bounds query.
+    region.region = layer->effectBounds();
+    for (const auto& effect : layer->getEffects()) {
+      if (effect && effect->isEnabled() && effect->roiHint().requiresFullFrame) {
+        region.requiresFullRedraw = true;
+        break;
+      }
+    }
 
     damageTracker_.markDirty(ownerId, region);
 
@@ -13286,6 +13306,15 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
                     impl_->invalidateLayerSurfaceCache(layer);
                     invalidatesFinalPreview = true;
+                    if (auto *playback = ArtifactPlaybackService::instance()) {
+                      playback->invalidateRamPreviewRange(
+                          FrameRange(layer->inPoint(), layer->outPoint()),
+                          QStringLiteral("layer-content-changed"));
+                      // The RAM preview entry was invalidated precisely above;
+                      // retain the conservative full-cache fallback only for
+                      // structural or otherwise unscoped changes.
+                      invalidatesFinalPreview = false;
+                    }
 
                   }
 
@@ -14176,10 +14205,9 @@ void CompositionRenderController::setGizmoMode(
   }
 
   if (impl_->gizmo3D_) {
-    // 3D has no anchor-only equivalent. Its former Full mode had no draw or
-    // hit-test implementation, so the combined 2D mode intentionally maps to
-    // the usable 3D move handles until a true unified 3D handle set exists.
-    GizmoMode gizmo3DMode = GizmoMode::Move;
+    // 3D has no anchor-only equivalent. The combined mode uses the complete
+    // 3D handle set so 2D image and plane layers get the same default controls.
+    GizmoMode gizmo3DMode = GizmoMode::Full;
     if (mode == TransformGizmo::Mode::Rotate) {
       gizmo3DMode = GizmoMode::Rotate;
     } else if (mode == TransformGizmo::Mode::Scale) {
@@ -27431,11 +27459,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                  dynamic_cast<ArtifactSolidImageLayer*>(layer.get());
         };
 
-    // Keep the composition-space cache disabled until its offscreen target
-    // presentation is reliable. It is selected specifically for ordinary
-    // solid and still-image layers, and a failed cache presentation replaces
-    // their valid direct rendering with an empty texture.
-    constexpr bool compositionSpaceCachePresentationReady = false;
+    // Keep the composition-space cache opt-in until its offscreen target
+    // presentation is verified on the active GPU/backend. It is selected only
+    // for ordinary solid and still-image layers; defaulting to false preserves
+    // the known-good direct path while allowing focused runtime validation.
+    const bool compositionSpaceCachePresentationReady = QSettings(
+        QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"))
+        .value(QStringLiteral("Render/Experimental/CompositionSpaceGpuCache"),
+               false)
+        .toBool();
     const bool compositionSpaceCacheEligible =
         compositionSpaceCachePresentationReady && !pipelineEnabled &&
         !frameOutOfRange && !has3DCamera &&
@@ -27454,8 +27486,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         std::max(1, static_cast<int>(std::ceil(cw * compositionCacheScale))),
         std::max(1, static_cast<int>(std::ceil(ch * compositionCacheScale))));
     const QString compositionCacheKey =
-        QStringLiteral("%1|base=%2|frame=%3|size=%4x%5")
+        QStringLiteral("%1|revision=%2|base=%3|frame=%4|size=%5x%6")
             .arg(comp->id().toString())
+            .arg(comp->revision())
             .arg(baseInvalidationSerial_)
             .arg(framePos)
             .arg(compositionCacheSize.width())

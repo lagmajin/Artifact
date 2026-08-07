@@ -166,6 +166,13 @@ public:
 
     // ROI hint for partial evaluation
     virtual EffectROIHint roiHint() const { return EffectROIHint{}; }
+
+    // Canonical ROI expansion entry point for effect hosts. Keeping the
+    // conversion here lets a future ROI renderer consume every effect through
+    // one API instead of knowing individual blur/glow implementations.
+    virtual RenderROI expandedROI(const RenderROI& input) const {
+        return roiHint().apply(input);
+    }
 };
 
 typedef SharedPtr<ArtifactAbstractEffect> ArtifactAbstractEffectPtr;

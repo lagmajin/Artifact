@@ -68,6 +68,7 @@ import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import ArtifactCore.Control.External;
 import Memory.SharedPtr;
+import Property.SerializationBridge;
 import Physics.System;
 import Physics.Mpm2D;
 
@@ -823,6 +824,19 @@ QJsonObject serializeEffect(const SharedPtr<ArtifactAbstractEffect>& effect)
       pobj["value"] = QJsonValue();
       break;
     }
+    if (const auto editable = effect->editableProperty(property.getName())) {
+      const auto serialized =
+          ArtifactCore::PropertySerializationBridge::serializeProperty(editable);
+      if (!serialized.expression.isEmpty()) {
+        pobj["expression"] = serialized.expression;
+      }
+      if (!serialized.keyframes.isEmpty()) {
+        pobj["keyframes"] = serialized.keyframes;
+      }
+      if (!serialized.envelopes.isEmpty()) {
+        pobj["envelopes"] = serialized.envelopes;
+      }
+    }
     propsArr.append(pobj);
   }
   eobj["properties"] = propsArr;
@@ -895,6 +909,22 @@ SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
       propertyValue = pobj.value(QStringLiteral("value")).toVariant();
     }
     effect->setPropertyValue(UniString::fromQString(name), propertyValue);
+    if (pobj.contains(QStringLiteral("keyframes")) ||
+        pobj.contains(QStringLiteral("expression")) ||
+        pobj.contains(QStringLiteral("envelopes"))) {
+      if (const auto editable = effect->editableProperty(name)) {
+        ArtifactCore::SerializedProperty serialized;
+        serialized.name = name;
+        serialized.type = static_cast<int>(type);
+        serialized.value = pobj.value(QStringLiteral("value"));
+        serialized.expression = pobj.value(QStringLiteral("expression"))
+                                  .toString().trimmed().left(16384);
+        serialized.keyframes = pobj.value(QStringLiteral("keyframes")).toArray();
+        serialized.envelopes = pobj.value(QStringLiteral("envelopes")).toArray();
+        ArtifactCore::PropertySerializationBridge::deserializeProperty(
+            editable, serialized);
+      }
+    }
   }
   if (const auto surfaceFx = ArtifactCore::dynamicPointerCast<SurfaceFXEffect>(effect);
       surfaceFx && eobj.value(QStringLiteral("surfaceFX")).isObject()) {
@@ -1038,12 +1068,6 @@ private:
   std::vector<std::vector<float>> delayBuf_;
 };
 
-void ArtifactAbstractComposition::changed()
-{
-  ArtifactCore::globalEventBus().publish<CompositionChangedEvent>(
-      CompositionChangedEvent{ id().toString() });
-}
-
 void ArtifactAbstractComposition::compositionNoteChanged(const QString& note)
 {
   ArtifactCore::globalEventBus().publish<CompositionNoteChangedEvent>(
@@ -1099,6 +1123,7 @@ class ArtifactAbstractComposition::Impl {
   QString compositionNote_;
   int colorPipelineVersion_ =
       ArtifactAbstractComposition::CanonicalColorPipelineVersion;
+  uint64_t revision_ = 1;
   FloatColor backgroundColor_ = { 0.47f, 0.47f, 0.47f, 1.0f };
   std::vector<SharedPtr<ArtifactAbstractEffect>> effects_;
   mutable QImage thumbnailCache_;
@@ -1147,6 +1172,7 @@ class ArtifactAbstractComposition::Impl {
    void addEffect(SharedPtr<ArtifactAbstractEffect> effect);
    void removeEffect(const UniString& effectID);
    void clearEffects();
+   bool moveEffect(const UniString& effectID, int newIndex);
    std::vector<SharedPtr<ArtifactAbstractEffect>> getEffects() const;
    SharedPtr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
    int effectCount() const;
@@ -1172,6 +1198,18 @@ class ArtifactAbstractComposition::Impl {
  {
 
  }
+
+void ArtifactAbstractComposition::changed()
+{
+  if (impl_) {
+    ++impl_->revision_;
+    if (impl_->revision_ == 0) {
+      impl_->revision_ = 1;
+    }
+  }
+  ArtifactCore::globalEventBus().publish<CompositionChangedEvent>(
+      CompositionChangedEvent{ id().toString(), revision() });
+}
 
 void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
 {
@@ -2512,6 +2550,30 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
   invalidateThumbnailCache();
  }
 
+ bool ArtifactAbstractComposition::Impl::moveEffect(const UniString& effectID,
+                                                     int newIndex)
+ {
+  const auto found = std::find_if(
+      effects_.begin(), effects_.end(),
+      [&effectID](const SharedPtr<ArtifactAbstractEffect>& effect) {
+       return effect && effect->effectID() == effectID;
+      });
+  if (found == effects_.end() || effects_.empty()) {
+   return false;
+  }
+  const int oldIndex = static_cast<int>(std::distance(effects_.begin(), found));
+  const int clampedIndex = std::clamp(newIndex, 0,
+                                      static_cast<int>(effects_.size()) - 1);
+  if (oldIndex == clampedIndex) {
+   return false;
+  }
+  auto effect = *found;
+  effects_.erase(found);
+  effects_.insert(effects_.begin() + clampedIndex, std::move(effect));
+  invalidateThumbnailCache();
+  return true;
+ }
+
  std::vector<SharedPtr<ArtifactAbstractEffect>>
 ArtifactAbstractComposition::Impl::getEffects() const
  {
@@ -2552,6 +2614,16 @@ ArtifactAbstractComposition::Impl::getEffect(const UniString& effectID) const
   changed();
  }
 
+ bool ArtifactAbstractComposition::moveEffect(const UniString& effectID,
+                                               int newIndex)
+ {
+  if (!impl_ || !impl_->moveEffect(effectID, newIndex)) {
+   return false;
+  }
+  changed();
+  return true;
+ }
+
  std::vector<SharedPtr<ArtifactAbstractEffect>>
 ArtifactAbstractComposition::getEffects() const
  {
@@ -2567,6 +2639,11 @@ ArtifactAbstractComposition::getEffect(const UniString& effectID) const
  int ArtifactAbstractComposition::effectCount() const
  {
   return impl_->effectCount();
+ }
+
+ uint64_t ArtifactAbstractComposition::revision() const noexcept
+ {
+  return impl_ ? impl_->revision_ : 0;
  }
  
  void ArtifactAbstractComposition::setFramePosition(const FramePosition& position)

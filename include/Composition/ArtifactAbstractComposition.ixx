@@ -227,9 +227,14 @@ export namespace Artifact {
   void addEffect(SharedPtr<ArtifactAbstractEffect> effect);
   void removeEffect(const UniString& effectID);
   void clearEffects();
+  bool moveEffect(const UniString& effectID, int newIndex);
   std::vector<SharedPtr<ArtifactAbstractEffect>> getEffects() const;
   SharedPtr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
   int effectCount() const;
+
+  // Increments for every composition change. Preview caches must include this
+  // value with composition id and frame number in their key.
+  uint64_t revision() const noexcept;
 
   void changed();
   void compositionNoteChanged(const QString& note);

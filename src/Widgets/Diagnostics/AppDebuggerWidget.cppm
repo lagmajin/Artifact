@@ -46,6 +46,7 @@ import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
 import Artifact.Render.Queue.Service;
+import Artifact.Render.DiligentDeviceManager;
 import Artifact.Widgets.CompositionRenderController;
 import Artifact.Widgets.FramePipelineViewWidget;
 import Artifact.Widgets.FrameDebugViewWidget;
@@ -2426,6 +2427,48 @@ public:
             lines << QStringLiteral("playbackState: %1")
                           .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>"));
             lines << motionTrackerSummaryText();
+            const D3D12AgilityCapabilitySnapshot agilityCaps =
+                sharedD3D12AgilityCapabilities();
+            const D3D12TrimRequestSnapshot trimRequest =
+                currentD3D12TrimRequest();
+            lines << QStringLiteral("");
+            lines << QStringLiteral("Agility SDK / D3D12");
+            lines << QStringLiteral("active: %1")
+                         .arg(agilityCaps.available ? QStringLiteral("true")
+                                                   : QStringLiteral("false"));
+            lines << QStringLiteral("runtime: loaded=%1 path=%2")
+                         .arg(agilityCaps.agilityRuntimeLoaded)
+                         .arg(agilityCaps.runtimePath.isEmpty()
+                                  ? QStringLiteral("<none>")
+                                  : agilityCaps.runtimePath);
+            lines << QStringLiteral("sdk: requested=%1 header=%2")
+                         .arg(agilityCaps.requestedSdkVersion)
+                         .arg(agilityCaps.headerSdkVersion);
+            lines << QStringLiteral("shaderModel: device=%1.%2 sm69=%3 dxc=%4.%5 dxcSM=%6.%7 dxcSM69=%8")
+                         .arg(agilityCaps.deviceShaderModelMajor)
+                         .arg(agilityCaps.deviceShaderModelMinor)
+                         .arg(agilityCaps.deviceShaderModel69Supported)
+                         .arg(agilityCaps.dxcVersionMajor)
+                         .arg(agilityCaps.dxcVersionMinor)
+                         .arg(agilityCaps.dxcShaderModelMajor)
+                         .arg(agilityCaps.dxcShaderModelMinor)
+                         .arg(agilityCaps.dxcShaderModel69Supported);
+            lines << QStringLiteral("dispatch1D: options22=%1 limit=%2 meshLimit=%3")
+                         .arg(agilityCaps.options22Available)
+                         .arg(agilityCaps.max1DDispatchSize)
+                         .arg(agilityCaps.max1DDispatchMeshSize);
+            lines << QStringLiteral("tightAlignment: available=%1 tier=%2 integration=small-default-buffers")
+                         .arg(agilityCaps.tightAlignmentAvailable)
+                         .arg(agilityCaps.tightAlignmentTier);
+            lines << QStringLiteral("periodicTrim: available=%1 registered=%2 generation=%3 pendingBytes=%4")
+                         .arg(agilityCaps.periodicTrimNotificationAvailable)
+                         .arg(agilityCaps.periodicTrimNotificationRegistered)
+                         .arg(trimRequest.generation)
+                         .arg(trimRequest.requestedBytes);
+            lines << QStringLiteral("cpuTimelineQuery: available=%1 integration=capability-only")
+                         .arg(agilityCaps.cpuTimelineQueryResolveAvailable);
+            lines << QStringLiteral("revisedViews: available=%1 integration=not-used")
+                         .arg(agilityCaps.revisedViewCreationAvailable);
             if (projectSvc) {
                 const auto projectHealth = projectSvc->currentProjectDiagnostics();
                 const int projectErrorCount = static_cast<int>(std::count_if(
