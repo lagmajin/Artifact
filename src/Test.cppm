@@ -28,6 +28,7 @@ import Artifact.Test.LayerGroup;
 import Artifact.Test.PreCompose;
 import Artifact.Test.PropertyKeyframe;
 import Artifact.Test.TimingEventView;
+import Artifact.Test.CommandLine;
 import Graphics.GPUcomputeContext;
 import Graphics.LayerBlendPipeline;
 import Layer.Blend;
@@ -278,6 +279,7 @@ int runAllTests()
     failures += runLayerGroupTests();
     failures += runPreComposeTests();
     failures += runPropertyKeyframeTests();
+    failures += runCommandLineTests();
     if (!versionedGradientCpuContractTest()) {
         qWarning().noquote() << "[Test] Versioned gradient CPU contract failed";
         ++failures;

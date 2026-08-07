@@ -136,6 +136,8 @@ import Widgets.CommonStyle;
 import IO.ImageExporter;
 import ArtifactStatusBar;
 import Artifact.Application.Manager;
+import Artifact.Application.CommandLine;
+import Artifact.Application.InteractiveShell;
 import Artifact.PythonAPI;
 import Script.Python.Engine;
 import Script.Python.CoreAPI;
@@ -2168,13 +2170,31 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < argc; ++i) {
     appArgs << QString::fromLocal8Bit(argv[i]);
   }
-  if (appArgs.contains(QStringLiteral("--help")) || appArgs.contains(QStringLiteral("-h"))) {
+  const Artifact::CommandLineResult commandLineResult =
+      Artifact::validateCommandLine(Artifact::parseCommandLine(appArgs));
+  if (!commandLineResult.isValid()) {
+    fprintf(stderr, "%s\n",
+            commandLineResult.errorMessage.toLocal8Bit().constData());
+    return 2;
+  }
+  const Artifact::CommandLine& commandLine = commandLineResult.commandLine;
+
+  if (commandLine.type == Artifact::CommandType::Help) {
     printf("ArtifactStudio v%s (%s)\n", ARTIFACT_VERSION_STRING, ARTIFACT_BUILD_GIT_HASH);
-    printf("Usage: Artifact.exe [options] [project.artifact]\n\n");
+    printf("Usage: Artifact.exe [options] [project.artifact]\n");
+    printf("       Artifact.exe render <project.artifact> [render options]\n\n");
     printf("Options:\n");
     printf("  -h, --help          Show this help message and exit\n");
     printf("  --version           Show version information and exit\n");
     printf("  --lang <code>       Set UI language (ja/en/zh/zh-tw)\n");
+    printf("  --renderer <api>    Select renderer (auto/dx12/vulkan)\n");
+    printf("  -i, --interactive   Start the interactive command shell\n");
+    printf("  --script <file>     Execute an interactive command file\n");
+    printf("  --threads <count>   Set render worker thread count\n");
+    printf("  --safe-mode         Start with optional integrations disabled\n");
+    printf("  --verbose           Enable verbose startup diagnostics\n");
+    printf("  --log-file <path>   Select a diagnostic log path\n");
+    printf("  --no-splash         Suppress the startup splash screen\n");
     printf("  --mcp-server        Run in MCP (Model Context Protocol) server mode\n");
     printf("  --mcp-debug         Run in MCP debug server mode (stdio unless --mcp-port is set)\n");
     printf("  --mcp-port <port>   Listen on localhost TCP for MCP debug requests\n");
@@ -2186,13 +2206,12 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
-  if (appArgs.contains(QStringLiteral("--version"))) {
+  if (commandLine.type == Artifact::CommandType::Version) {
     printf("ArtifactStudio v%s (%s)\n", ARTIFACT_VERSION_STRING, ARTIFACT_BUILD_GIT_HASH);
     return 0;
   }
 
-  if (appArgs.contains(QStringLiteral("--mcp-server")) ||
-      appArgs.contains(QStringLiteral("--mcp-debug"))) {
+  if (commandLine.type == Artifact::CommandType::McpServer) {
     quint16 mcpPort = 0;
     const int portIndex = appArgs.indexOf(QStringLiteral("--mcp-port"));
     if (portIndex >= 0 && portIndex + 1 < appArgs.size()) {
@@ -2207,9 +2226,21 @@ int main(int argc, char *argv[]) {
     }
     return runMcpServerMode(argc, argv, mcpPort);
   }
-  const QStringList launchProjectPaths = collectLaunchProjectPaths(appArgs);
+  const QStringList launchProjectPaths = commandLine.gui.projectPaths;
 
-  if (appArgs.contains(QStringLiteral("--plugin-list"))) {
+  if (commandLine.type == Artifact::CommandType::Interactive) {
+    const Artifact::InteractiveShellResult result = Artifact::runInteractiveShell(
+        launchProjectPaths, commandLine.gui.scriptPath);
+    return result.exitCode;
+  }
+
+  if (commandLine.type == Artifact::CommandType::Render) {
+    fprintf(stderr,
+            "The render command is valid but the headless executor is not implemented yet.\n");
+    return 3;
+  }
+
+  if (commandLine.type == Artifact::CommandType::PluginList) {
     printf("Registered Plugins:\n");
     const auto& registry = ArtifactCore::ArtifactPluginRegistry::instance();
     const auto plugins = registry.allPlugins();
@@ -2232,9 +2263,8 @@ int main(int argc, char *argv[]) {
   }
 
   {
-    int pluginInfoIndex = appArgs.indexOf(QStringLiteral("--plugin-info"));
-    if (pluginInfoIndex >= 0 && pluginInfoIndex + 1 < appArgs.size()) {
-      QString pluginId = appArgs[pluginInfoIndex + 1];
+    if (commandLine.type == Artifact::CommandType::PluginInfo) {
+      const QString pluginId = commandLine.pluginInfo.pluginId;
       const auto& registry = ArtifactCore::ArtifactPluginRegistry::instance();
       auto optDesc = registry.pluginById(pluginId.toStdString());
       if (optDesc) {
@@ -2262,9 +2292,8 @@ int main(int argc, char *argv[]) {
   // --lang ja/en/zh
   // ============================================================
   {
-    int langIndex = appArgs.indexOf(QStringLiteral("--lang"));
-    if (langIndex >= 0 && langIndex + 1 < appArgs.size()) {
-      QString langCode = appArgs[langIndex + 1].toLower();
+    if (!commandLine.global.languageCode.isEmpty()) {
+      const QString langCode = commandLine.global.languageCode;
       ArtifactCore::LocaleLanguage targetLang = ArtifactCore::LocaleLanguage::Auto;
       
       if (langCode == QStringLiteral("ja") || langCode == QStringLiteral("japanese")) {
@@ -2307,6 +2336,22 @@ int main(int argc, char *argv[]) {
       qInfo() << "[AppMain] Language inferred from system locale:" << sysLocale.name()
               << "->" << ArtifactCore::LocalizationManager::instance().languageCode();
     }
+  }
+
+  if (appArgs.contains(QStringLiteral("--renderer"))) {
+    qputenv("ARTIFACT_RENDER_BACKEND",
+            commandLine.global.rendererBackend.toUtf8());
+    qInfo() << "[AppMain] Renderer backend selected via --renderer:"
+            << commandLine.global.rendererBackend;
+  }
+  if (commandLine.global.safeMode) {
+    qputenv("ARTIFACT_SAFE_MODE", "1");
+  }
+  if (commandLine.global.verbose) {
+    qputenv("ARTIFACT_VERBOSE_LOG", "1");
+  }
+  if (!commandLine.global.logFile.isEmpty()) {
+    qputenv("ARTIFACT_LOG_FILE", commandLine.global.logFile.toUtf8());
   }
 
   QApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
@@ -2527,7 +2572,9 @@ int main(int argc, char *argv[]) {
 
   auto pool = QThreadPool::globalInstance();
   const int configuredRenderThreads =
-      std::max(1, settings ? settings->renderThreadCount() : 10);
+      commandLine.global.renderThreads > 0
+          ? commandLine.global.renderThreads
+          : std::max(1, settings ? settings->renderThreadCount() : 10);
   pool->setMaxThreadCount(configuredRenderThreads);
   // Pre-warm the thread pool to avoid burst thread creation on first render
   for (int i = 0; i < configuredRenderThreads; ++i) {
