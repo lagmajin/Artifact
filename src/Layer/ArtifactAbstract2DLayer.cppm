@@ -307,7 +307,6 @@ class ArtifactAbstract2DLayer::Impl {
      return;
     }
     QJsonArray capped;
-    capped.reserve(static_cast<int>(maximum));
     for (qsizetype i = 0; i < maximum; ++i) {
      capped.append(source.at(i));
     }

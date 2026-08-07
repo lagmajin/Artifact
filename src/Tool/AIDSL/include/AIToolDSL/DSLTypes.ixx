@@ -105,7 +105,7 @@ struct UseCompCommand : CommandNode {
 
 struct SelectLayersCommand : CommandNode {
     std::unique_ptr<ExprNode> filter;
-    std::vector<LayerID> resolvedLayerIds;  // filled at compile time
+    mutable std::vector<LayerID> resolvedLayerIds;  // filled at compile time
     std::unique_ptr<Action> compile(
         const std::unordered_map<std::string, CompID>& compMap,
         const std::unordered_map<std::string, std::vector<LayerID>>& layerMap

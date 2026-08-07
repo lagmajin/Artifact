@@ -110,7 +110,7 @@ namespace Artifact
    }
 
    auto effect = std::make_unique<ArtifactAbstractEffect>();
-   effect->setEffectID(id);
+   effect->setEffectID(ArtifactCore::UniString(id.toString()));
    effect->setDisplayName(QStringLiteral("Plugin Effect: %1").arg(id.toString()));
    return effect;
  }

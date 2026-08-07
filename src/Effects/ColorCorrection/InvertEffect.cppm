@@ -108,6 +108,8 @@ class InvertEffectGPUImpl : public ArtifactEffectImplBase {
 public:
     int channel_ = 0;
     float strength_ = 1.0f;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> stagingTex_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         cpuImpl_.channel_ = channel_;

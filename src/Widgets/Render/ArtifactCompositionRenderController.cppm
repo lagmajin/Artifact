@@ -95,6 +95,8 @@ module;
 
 #include <memory>
 
+#include <string_view>
+
 #include <opencv2/core.hpp>
 
 #include <opencv2/imgproc.hpp>
@@ -311,6 +313,12 @@ W_OBJECT_IMPL(CompositionRenderController)
 
 
 bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer);
+namespace {
+ArtifactCore::Id hitTestRigBone(ArtifactCore::Bone2D *bone,
+                                const QPointF &localPoint, float threshold);
+ArtifactCore::Id hitTestRigControl(const ArtifactCore::Rig2D &rig,
+                                   const QPointF &localPoint, float threshold);
+}
 
 struct GizmoTransformSnapshot {
   QVector3D position;
@@ -459,8 +467,8 @@ QVariantMap rigPoseToVariantMap(const ArtifactCore::PoseSnapshot &pose) {
   for (const auto &[id, transform] : pose.boneTransforms) {
     QVariantList values;
     values << transform.position.x() << transform.position.y()
-           << transform.position.z() << transform.rotation
-           << transform.scale.x() << transform.scale.y() << transform.scale.z();
+           << transform.rotation
+           << transform.scale.x() << transform.scale.y();
     bones.insert(id.toString(), values);
   }
   result.insert(QStringLiteral("bones"), bones);
@@ -490,13 +498,11 @@ ArtifactCore::PoseSnapshot rigPoseFromVariantMap(const QVariantMap &data) {
   const QVariantMap bones = data.value(QStringLiteral("bones")).toMap();
   for (auto it = bones.cbegin(); it != bones.cend(); ++it) {
     const QVariantList values = it.value().toList();
-    if (values.size() < 7) continue;
+    if (values.size() < 5) continue;
     ArtifactCore::BoneTransform transform;
-    transform.position = QVector3D(values[0].toFloat(), values[1].toFloat(),
-                                   values[2].toFloat());
-    transform.rotation = values[3].toFloat();
-    transform.scale = QVector3D(values[4].toFloat(), values[5].toFloat(),
-                                values[6].toFloat());
+    transform.position = QVector2D(values[0].toFloat(), values[1].toFloat());
+    transform.rotation = values[2].toFloat();
+    transform.scale = QVector2D(values[3].toFloat(), values[4].toFloat());
     pose.boneTransforms[ArtifactCore::Id(it.key())] = transform;
   }
   const QVariantMap controls = data.value(QStringLiteral("controls")).toMap();
@@ -679,8 +685,7 @@ class AnchorPointUndoCommand final : public UndoCommand {
     if (!layer || !layer->is3D()) return;
     const ArtifactCore::RationalTime time(frame_, 30);
     layer->transform3D().setAnchor(time, anchor.x(), anchor.y(), anchor.z());
-    layer->transform3D().setPosition(time, position.x(), position.y(),
-                                     position.z());
+    layer->transform3D().setPosition(time, position.x(), position.y());
     layer->setDirty(LayerDirtyFlag::Transform);
     layer->changed();
     if (auto *comp =
@@ -718,10 +723,9 @@ class AnchorPoint2DUndoCommand final : public UndoCommand {
     auto layer = layer_.lock();
     if (!layer || layer->is3D()) return;
     auto &transform = layer->transform2D();
-    transform.setAnchorPointX(static_cast<float>(anchor.x()));
-    transform.setAnchorPointY(static_cast<float>(anchor.y()));
-    transform.setX(static_cast<float>(position.x()));
-    transform.setY(static_cast<float>(position.y()));
+    (void)anchor;
+    transform.setPosition(static_cast<float>(position.x()),
+                          static_cast<float>(position.y()));
     layer->setDirty(LayerDirtyFlag::Transform);
     layer->changed();
     if (auto *comp =
@@ -6118,8 +6122,7 @@ TransformGizmo::HandleType hitTestProjectedFrameCorner(
     const QMatrix4x4 &view, const QMatrix4x4 &projection,
     const QRect &viewport, float hitDiameter) {
 
-  if (!layer || !layer->is3D() || viewport.width() <= 0 ||
-      viewport.height() <= 0) {
+  if (!layer || viewport.width() <= 0 || viewport.height() <= 0) {
     return TransformGizmo::HandleType::None;
   }
 
@@ -6204,8 +6207,7 @@ bool hitTestProjectedFrameInterior(const ArtifactAbstractLayerPtr &layer,
                                    const QMatrix4x4 &view,
                                    const QMatrix4x4 &projection,
                                    const QRect &viewport) {
-  if (!layer || !layer->is3D() || viewport.width() <= 0 ||
-      viewport.height() <= 0) {
+  if (!layer || viewport.width() <= 0 || viewport.height() <= 0) {
     return false;
   }
   const QRectF localBounds = layer->localBounds();
@@ -6384,21 +6386,9 @@ ArtifactCompositionPtr
 
 resolvePreferredComposition(ArtifactProjectService *service) {
 
-  // ProjectService を最優先
-
-  if (service) {
-
-    if (auto comp = service->currentComposition().lock()) {
-
-      return comp;
-
-    }
-
-  }
-
-
-
-  // フォールバック: ActiveContextService
+  // The editor is bound to ActiveContextService. Use the same authority here;
+  // otherwise the render loop can replace the editor's composition every frame
+  // with a stale ProjectService selection and render an unrelated empty comp.
 
   if (auto *app = ArtifactApplicationManager::instance()) {
 
@@ -6409,6 +6399,20 @@ resolvePreferredComposition(ArtifactProjectService *service) {
         return comp;
 
       }
+
+    }
+
+  }
+
+
+
+  // フォールバック: ProjectService
+
+  if (service) {
+
+    if (auto comp = service->currentComposition().lock()) {
+
+      return comp;
 
     }
 
@@ -6450,7 +6454,7 @@ FramePosition currentFrameForComposition(const ArtifactCompositionPtr &comp) {
 
     const auto playbackComp = playback->currentComposition();
 
-    if (!playbackComp || playbackComp->id() == comp->id()) {
+    if (playbackComp && playbackComp->id() == comp->id()) {
 
       currentFrame = playback->currentFrame();
 
@@ -9217,6 +9221,8 @@ public:
   std::size_t giDispatchedCount_ = 0;
 
   QString lastCompositionVisibilitySummary_;
+
+  quint64 lastLayerVisibilityReportSerial_ = 0;
 
   QString lastBlendMaskSummary_;
 
@@ -13035,11 +13041,11 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
   impl_->showRigOverlay_ = config.valueBool(
       QStringLiteral("Viewport/RigOverlayVisible"), false);
   impl_->rigWeightRadius_ = static_cast<float>(config.valueDouble(
-      QStringLiteral("Viewport/RigWeight/Radius"), 36.0));
+      std::string_view("Viewport/RigWeight/Radius"), 36.0));
   impl_->rigWeightOpacity_ = static_cast<float>(config.valueDouble(
-      QStringLiteral("Viewport/RigWeight/Opacity"), 0.35));
+      std::string_view("Viewport/RigWeight/Opacity"), 0.35));
   impl_->rigWeightFlow_ = static_cast<float>(config.valueDouble(
-      QStringLiteral("Viewport/RigWeight/Flow"), 1.0));
+      std::string_view("Viewport/RigWeight/Flow"), 1.0));
   impl_->rigWeightRadius_ = std::clamp(impl_->rigWeightRadius_, 2.0f, 500.0f);
   impl_->rigWeightOpacity_ = std::clamp(impl_->rigWeightOpacity_, 0.01f, 1.0f);
   impl_->rigWeightFlow_ = std::clamp(impl_->rigWeightFlow_, 0.01f, 1.0f);
@@ -13074,20 +13080,20 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
     auto& config = ArtifactCore::LayeredConfigStore::instance();
     auto trackerState = impl_->trackerGizmo_->state();
     trackerState.innerHalfW = std::clamp(
-        static_cast<float>(config.valueDouble(QStringLiteral("Viewport/TrackPoint/FeatureWidth"),
+        static_cast<float>(config.valueDouble(std::string_view("Viewport/TrackPoint/FeatureWidth"),
                                               trackerState.innerHalfW * 2.0) * 0.5),
         2.0f, 4096.0f);
     trackerState.innerHalfH = std::clamp(
-        static_cast<float>(config.valueDouble(QStringLiteral("Viewport/TrackPoint/FeatureHeight"),
+        static_cast<float>(config.valueDouble(std::string_view("Viewport/TrackPoint/FeatureHeight"),
                                               trackerState.innerHalfH * 2.0) * 0.5),
         2.0f, 4096.0f);
     trackerState.outerHalfW = std::max(
         trackerState.innerHalfW + 2.0f,
-        static_cast<float>(config.valueDouble(QStringLiteral("Viewport/TrackPoint/SearchWidth"),
+        static_cast<float>(config.valueDouble(std::string_view("Viewport/TrackPoint/SearchWidth"),
                                               trackerState.outerHalfW * 2.0) * 0.5));
     trackerState.outerHalfH = std::max(
         trackerState.innerHalfH + 2.0f,
-        static_cast<float>(config.valueDouble(QStringLiteral("Viewport/TrackPoint/SearchHeight"),
+        static_cast<float>(config.valueDouble(std::string_view("Viewport/TrackPoint/SearchHeight"),
                                               trackerState.outerHalfH * 2.0) * 0.5));
     impl_->trackerGizmo_->setState(trackerState);
   }
@@ -13751,7 +13757,8 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
   if (auto device = impl_->renderer_->device()) {
 
-    impl_->gpuTextureCacheManager_->setDevice(device);
+    impl_->gpuTextureCacheManager_->setDevice(
+        device, impl_->renderer_->immediateContext());
 
     impl_->gpuTextureCacheManager_->setBudgetBytes(512ull * 1024ull * 1024ull);
 
@@ -14298,6 +14305,23 @@ void CompositionRenderController::setComposition(
     if (sameId) {
 
       // Pointer changed but same composition — re-bind changed signals
+
+      // The render key only stores the composition ID, so a replacement
+      // instance with the same ID would otherwise be treated as an unchanged
+      // frame. Its layer objects and cached surfaces belong to the old
+      // instance and must not be reused.
+
+      impl_->surfaceCache_.clear();
+
+      impl_->surfaceGenerations_.clear();
+
+      if (impl_->gpuTextureCacheManager_) {
+
+        impl_->gpuTextureCacheManager_->clear();
+
+      }
+
+      impl_->invalidateBaseComposite();
 
       impl_->previewPipeline_.setComposition(composition);
 
@@ -17744,7 +17768,7 @@ CompositionRenderController::frameDebugSnapshot() const {
         ArtifactCore::RenderResourceLifetime::Transient, graphWidth,
         graphHeight, 1, 0, graphBytes});
     ArtifactCore::RenderResourceHandle pointwiseResource;
-    if (pointwiseAppliedCount_ > 0) {
+    if (impl_->pointwiseAppliedCount_ > 0) {
       pointwiseResource = diagnosticGraph.addResource({
           "Composition.PointwiseEffects",
           ArtifactCore::RenderResourceKind::Texture,
@@ -17752,7 +17776,7 @@ CompositionRenderController::frameDebugSnapshot() const {
           graphHeight, 1, 0, graphBytes});
     }
     ArtifactCore::RenderResourceHandle giResource;
-    if (giDispatchedCount_ > 0) {
+    if (impl_->giDispatchedCount_ > 0) {
       giResource = diagnosticGraph.addResource({
           "Composition.ScreenSpaceGI",
           ArtifactCore::RenderResourceKind::Texture,
@@ -17784,14 +17808,14 @@ CompositionRenderController::frameDebugSnapshot() const {
         "Composition.LayerBlend", ArtifactCore::RenderPassQueue::Compute,
         {layerResource}, {accumulationResource}, true});
     auto effectsInput = accumulationResource;
-    if (pointwiseAppliedCount_ > 0) {
+    if (impl_->pointwiseAppliedCount_ > 0) {
       diagnosticGraph.addPass({
           "Composition.PointwiseEffects",
           ArtifactCore::RenderPassQueue::Compute,
           {effectsInput}, {pointwiseResource}, true});
       effectsInput = pointwiseResource;
     }
-    if (giDispatchedCount_ > 0) {
+    if (impl_->giDispatchedCount_ > 0) {
       diagnosticGraph.addPass({
           "Composition.ScreenSpaceGI", ArtifactCore::RenderPassQueue::Compute,
           {effectsInput}, {giResource}, true});
@@ -19335,8 +19359,8 @@ bool CompositionRenderController::resetSelected3DAnchorToCenter() {
     return true;
   }
   transform.setAnchor(time, afterAnchor.x(), afterAnchor.y(), afterAnchor.z());
-  transform.setPosition(time, afterPosition.x(), afterPosition.y(),
-                        afterPosition.z());
+  transform.setPosition(time, afterPosition.x(), afterPosition.y());
+  transform.setPositionZ(time, afterPosition.z());
   layer->setDirty(LayerDirtyFlag::Transform);
   layer->changed();
   if (auto *manager = UndoManager::instance()) {
@@ -19440,43 +19464,9 @@ bool CompositionRenderController::resetSelected2DAnchorToCenter() {
                           : ArtifactAbstractLayerPtr{};
   if (!layer || layer->is3D()) return false;
 
-  const QRectF bounds = layer->localBounds();
-  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
-    return false;
-  }
-  auto &transform = layer->transform2D();
-  const QPointF beforeAnchor(transform.anchorPointX(), transform.anchorPointY());
-  const QPointF beforePosition(transform.x(), transform.y());
-  const QPointF afterAnchor = bounds.center();
-  const QPointF delta = afterAnchor - beforeAnchor;
-  const double radians = transform.rotation() *
-                         3.14159265358979323846 / 180.0;
-  const double cosAngle = std::cos(radians);
-  const double sinAngle = std::sin(radians);
-  const QPointF compensation(
-      delta.x() * transform.scaleX() * cosAngle -
-          delta.y() * transform.scaleY() * sinAngle,
-      delta.x() * transform.scaleX() * sinAngle +
-          delta.y() * transform.scaleY() * cosAngle);
-  const QPointF afterPosition = beforePosition + compensation;
-  if (QLineF(afterAnchor, beforeAnchor).length() < 0.001 &&
-      QLineF(afterPosition, beforePosition).length() < 0.001) {
-    return true;
-  }
-  transform.setAnchorPointX(static_cast<float>(afterAnchor.x()));
-  transform.setAnchorPointY(static_cast<float>(afterAnchor.y()));
-  transform.setX(static_cast<float>(afterPosition.x()));
-  transform.setY(static_cast<float>(afterPosition.y()));
-  layer->setDirty(LayerDirtyFlag::Transform);
-  layer->changed();
-  if (auto *manager = UndoManager::instance()) {
-    manager->push(std::make_unique<AnchorPoint2DUndoCommand>(
-        layer, beforeAnchor, beforePosition, afterAnchor, afterPosition));
-  }
-  impl_->publishLayerModified(layer, true);
-  impl_->invalidateOverlayComposite();
-  markRenderDirty();
-  return true;
+  // AnimatableTransform2D currently has no anchor-point state. Do not alter
+  // position as a substitute; that would visibly move the layer.
+  return false;
 }
 
 
@@ -19574,7 +19564,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         const QPointF localPoint = inverse.map(canvasPoint);
         const float threshold = 14.0f /
             std::max(0.001f, impl_->renderer_->getZoom());
-        const auto &rig = rigLayer->rig2D();
+        auto &rig = rigLayer->rig2D();
         if (activeTool == ToolType::RigWeight && rig.skinMesh()) {
           impl_->rigWeightBeforeVertices_ = rig.skinMesh()->vertices();
           impl_->rigWeightLayer_ = selectedLayer;
@@ -19795,7 +19785,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
     impl_->brushCursorCanvasPos_ = {canvasPos.x, canvasPos.y};
     impl_->brushLastViewportPos_ = viewportPos;
     impl_->brushCursorVisible_ = true;
-    impl_->requestRender();
+    markRenderDirty();
     return;
   }
 
@@ -20696,16 +20686,21 @@ if (event->button() == Qt::LeftButton &&
   // Keep the hit test in viewport space, but route the drag through the 3D
   // gizmo so the pointer delta is resolved with the active camera ray.
   if (event->button() == Qt::LeftButton && selectedLayer &&
-      selectedLayer->is3D() && impl_->gizmo3D_ &&
+      (selectedLayer->is3D() || impl_->viewportOrientationMatricesValid_) &&
+      impl_->gizmo3D_ &&
       activeTool != ToolType::Pen) {
 
-    const QMatrix4x4 &frameView = impl_->gizmo3DCameraMatricesValid_
-                                      ? impl_->gizmo3DViewMatrix_
-                                      : impl_->renderer_->getViewMatrix();
+    const QMatrix4x4 &frameView = impl_->viewportOrientationMatricesValid_
+                                      ? impl_->viewportOrientationViewForOverlay_
+                                      : impl_->gizmo3DCameraMatricesValid_
+                                            ? impl_->gizmo3DViewMatrix_
+                                            : impl_->renderer_->getViewMatrix();
     const QMatrix4x4 &frameProjection =
-        impl_->gizmo3DCameraMatricesValid_
-            ? impl_->gizmo3DProjectionMatrix_
-            : impl_->renderer_->getProjectionMatrix();
+        impl_->viewportOrientationMatricesValid_
+            ? impl_->viewportOrientationProjectionForOverlay_
+            : impl_->gizmo3DCameraMatricesValid_
+                  ? impl_->gizmo3DProjectionMatrix_
+                  : impl_->renderer_->getProjectionMatrix();
     const QRect frameViewport(
         0, 0, std::max(1, static_cast<int>(impl_->hostWidth_)),
         std::max(1, static_cast<int>(impl_->hostHeight_)));
@@ -21592,7 +21587,7 @@ void CompositionRenderController::handleMouseMove(
       }
     }
     impl_->invalidateOverlayComposite();
-    impl_->requestRender();
+    markRenderDirty();
     return;
   }
 
@@ -23004,11 +22999,11 @@ void CompositionRenderController::handleMouseRelease() {
                     bounds.width() <= 0.0 || bounds.height() <= 0.0) {
                   continue;
                 }
-                stroke.points.emplace_back(
+                stroke.points.push_back({
                     static_cast<int>((point.x() - bounds.left()) /
                                      bounds.width() * sourceMat.cols),
                     static_cast<int>((point.y() - bounds.top()) /
-                                     bounds.height() * sourceMat.rows));
+                                     bounds.height() * sourceMat.rows)});
               }
               if (!stroke.points.empty()) {
                 const int64_t frame = static_cast<int64_t>(layer->currentFrame());
@@ -23027,9 +23022,10 @@ void CompositionRenderController::handleMouseRelease() {
                 impl_->rotoBrushStrokes_.push_back(std::move(stroke));
                 impl_->rotoBrushSource_ = sourceMat.clone();
                 impl_->rotoBrushEngine_->updateBaseFrame(
-                    sourceMat, impl_->rotoBrushStrokes_);
+                    &sourceMat, impl_->rotoBrushStrokes_);
                 impl_->rotoBrushEngine_->refineCurrentMask(1);
-                impl_->rotoBrushMask_ = impl_->rotoBrushEngine_->getCurrentMask();
+                impl_->rotoBrushMask_ = static_cast<const cv::Mat*>(
+                    impl_->rotoBrushEngine_->currentMask())->clone();
                 impl_->rotoBrushLayerId_ = layer->id();
                 impl_->rotoBrushFrame_ = frame;
                 MaskConversionParams conversion;
@@ -23054,7 +23050,7 @@ void CompositionRenderController::handleMouseRelease() {
                     }
                     generatedMask.addMaskPath(path);
                   }
-                  beginMaskEditTransaction(layer);
+                  impl_->beginMaskEditTransaction(layer);
                   if (impl_->rotoBrushLayerId_ == layer->id() &&
                       impl_->rotoBrushMaskIndex_ >= 0 &&
                       impl_->rotoBrushMaskIndex_ < layer->maskCount()) {
@@ -23072,7 +23068,7 @@ void CompositionRenderController::handleMouseRelease() {
                            impl_->rotoBrushMaskIndex_ < layer->maskCount()) {
                   // A later prompt may eliminate all foreground pixels. Do
                   // not leave the previous generated contour visible.
-                  beginMaskEditTransaction(layer);
+                  impl_->beginMaskEditTransaction(layer);
                   layer->removeMask(impl_->rotoBrushMaskIndex_);
                   impl_->rotoBrushMaskIndex_ = -1;
                   layer->changed();
@@ -23088,7 +23084,7 @@ void CompositionRenderController::handleMouseRelease() {
     }
     impl_->brushCursorVisible_ = false;
     impl_->invalidateOverlayComposite();
-    impl_->requestRender();
+    markRenderDirty();
     return;
   }
 
@@ -23108,7 +23104,10 @@ void CompositionRenderController::handleMouseRelease() {
       // Reuse the established text edit transaction so a newly-created text
       // layer is immediately ready for input and remains undoable as one edit.
       const LayerID createdLayerId = impl_->selectedLayerId_;
-      const bool accepted = editTextAtViewport(viewportPos);
+      const auto viewport = impl_->renderer_->canvasToViewport(
+          {static_cast<float>(impl_->textToolCurrentCanvas_.x()),
+           static_cast<float>(impl_->textToolCurrentCanvas_.y())});
+      const bool accepted = editTextAtViewport(QPointF(viewport.x, viewport.y));
       if (!accepted) {
         const auto createdComposition = impl_->previewPipeline_.composition();
         if (createdComposition && !createdLayerId.isNil()) {
@@ -24514,9 +24513,11 @@ bool CompositionRenderController::propagateRotoBrushToCurrentFrame() {
   if (currentMat.empty() || currentMat.size() != impl_->rotoBrushSource_.size()) {
     return false;
   }
-  impl_->rotoBrushEngine_->propagateToNextFrame(impl_->rotoBrushSource_, currentMat);
+  impl_->rotoBrushEngine_->propagateToNextFrame(
+      &impl_->rotoBrushSource_, &currentMat);
   impl_->rotoBrushEngine_->refineCurrentMask(1);
-  impl_->rotoBrushMask_ = impl_->rotoBrushEngine_->getCurrentMask();
+  impl_->rotoBrushMask_ = static_cast<const cv::Mat*>(
+      impl_->rotoBrushEngine_->currentMask())->clone();
   const QRectF bounds = imageLayer->localBounds();
   if (bounds.width() <= 0.0 || bounds.height() <= 0.0) return false;
   LayerMask generatedMask;
@@ -24573,9 +24574,10 @@ bool CompositionRenderController::undoSelectedPaintStroke() {
       if (impl_->rotoBrushEngine_) impl_->rotoBrushEngine_->reset();
     } else if (impl_->rotoBrushEngine_) {
       impl_->rotoBrushEngine_->updateBaseFrame(
-          impl_->rotoBrushSource_, impl_->rotoBrushStrokes_);
+          &impl_->rotoBrushSource_, impl_->rotoBrushStrokes_);
       impl_->rotoBrushEngine_->refineCurrentMask(1);
-      impl_->rotoBrushMask_ = impl_->rotoBrushEngine_->getCurrentMask();
+      impl_->rotoBrushMask_ = static_cast<const cv::Mat*>(
+          impl_->rotoBrushEngine_->currentMask())->clone();
       const auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer.get());
       const QRectF bounds = imageLayer ? imageLayer->localBounds() : QRectF();
       auto paths = MaskPath::fromAlphaMask(&impl_->rotoBrushMask_);
@@ -25029,11 +25031,11 @@ void CompositionRenderController::trackerTrackForward() {
     const double timeSec = static_cast<double>(frame) * frameStep;
     ArtifactCore::FramePosition pos(frame);
 
-    QImage frame = impl_->trackerOffscreenRenderer_->renderToQImage(pos, comp.get());
+    QImage frameImage = impl_->trackerOffscreenRenderer_->renderToQImage(pos, comp.get());
 
-    if (!frame.isNull()) {
+    if (!frameImage.isNull()) {
 
-      tracker->setFrame(timeSec, frame);
+      tracker->setFrame(timeSec, frameImage);
 
     }
 
@@ -25152,11 +25154,11 @@ void CompositionRenderController::trackerTrackBackward() {
     const double timeSec = static_cast<double>(frame) * frameStep;
     ArtifactCore::FramePosition pos(frame);
 
-    QImage frame = impl_->trackerOffscreenRenderer_->renderToQImage(pos, comp.get());
+    QImage frameImage = impl_->trackerOffscreenRenderer_->renderToQImage(pos, comp.get());
 
-    if (!frame.isNull()) {
+    if (!frameImage.isNull()) {
 
-      tracker->setFrame(timeSec, frame);
+      tracker->setFrame(timeSec, frameImage);
 
     }
 
@@ -25270,11 +25272,11 @@ void CompositionRenderController::trackerTrackAll() {
 
     ArtifactCore::FramePosition pos(frame);
 
-    QImage frame = impl_->trackerOffscreenRenderer_->renderToQImage(pos, comp.get());
+    QImage frameImage = impl_->trackerOffscreenRenderer_->renderToQImage(pos, comp.get());
 
-    if (!frame.isNull()) {
+    if (!frameImage.isNull()) {
 
-      tracker->setFrame(timeSec, frame);
+      tracker->setFrame(timeSec, frameImage);
 
     }
 
@@ -25776,20 +25778,26 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
   const QPointF physPos = viewportPos * impl_->devicePixelRatio_;
 
-  if (selectedLayer && selectedLayer->is3D() && impl_->gizmo_ &&
+  if (selectedLayer &&
+      (selectedLayer->is3D() || impl_->viewportOrientationMatricesValid_) &&
+      impl_->gizmo_ &&
       !layerUsesTextGizmo(selectedLayer) &&
       (impl_->gizmoMode_ == TransformGizmo::Mode::All ||
        impl_->gizmoMode_ == TransformGizmo::Mode::Move ||
        impl_->gizmoMode_ == TransformGizmo::Mode::Scale ||
        impl_->gizmoMode_ == TransformGizmo::Mode::Rotate)) {
 
-    const QMatrix4x4 &frameView = impl_->gizmo3DCameraMatricesValid_
-                                      ? impl_->gizmo3DViewMatrix_
-                                      : impl_->renderer_->getViewMatrix();
+    const QMatrix4x4 &frameView = impl_->viewportOrientationMatricesValid_
+                                      ? impl_->viewportOrientationViewForOverlay_
+                                      : impl_->gizmo3DCameraMatricesValid_
+                                            ? impl_->gizmo3DViewMatrix_
+                                            : impl_->renderer_->getViewMatrix();
     const QMatrix4x4 &frameProjection =
-        impl_->gizmo3DCameraMatricesValid_
-            ? impl_->gizmo3DProjectionMatrix_
-            : impl_->renderer_->getProjectionMatrix();
+        impl_->viewportOrientationMatricesValid_
+            ? impl_->viewportOrientationProjectionForOverlay_
+            : impl_->gizmo3DCameraMatricesValid_
+                  ? impl_->gizmo3DProjectionMatrix_
+                  : impl_->renderer_->getProjectionMatrix();
     const QRect frameViewport(
         0, 0, std::max(1, static_cast<int>(impl_->hostWidth_)),
         std::max(1, static_cast<int>(impl_->hostHeight_)));
@@ -26285,26 +26293,21 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   auto comp = previewPipeline_.composition();
 
-  if (auto *service = ArtifactProjectService::instance()) {
-
-    const auto preferred = resolvePreferredComposition(service);
-
-    if (preferred && preferred != comp) {
-
-      comp = preferred;
-
-      previewPipeline_.setComposition(comp);
-
-      qCDebug(compositionViewLog)
-
-          << "[CompositionView] renderOneFrame resynced preferred composition"
-
-          << "id=" << comp->id().toString()
-
-          << "layers=" << comp->allLayerRef().size();
-
+  // setComposition() is the authority for an editor-bound controller. Do not
+  // replace a valid binding from inside the render loop: ProjectService and
+  // ActiveContextService can briefly point at different compositions while a
+  // layer is being added. Resolve a fallback only for an unbound controller.
+  if (!comp) {
+    if (auto *service = ArtifactProjectService::instance()) {
+      comp = resolvePreferredComposition(service);
+      if (comp) {
+        previewPipeline_.setComposition(comp);
+        qCDebug(compositionViewLog)
+            << "[CompositionView] renderOneFrame resolved missing composition"
+            << "id=" << comp->id().toString()
+            << "layers=" << comp->allLayerRef().size();
+      }
     }
-
   }
 
   if (!comp) {
@@ -26361,13 +26364,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       const QString blockedSummary =
 
-          QStringLiteral("preflight=blocked issues=%1")
+          QStringLiteral("preflight=issues issues=%1")
 
               .arg(cachedProjectDiagnosticCount_);
 
       if (blockedSummary != lastRenderPathSummary_) {
 
-        qWarning() << "[CompositionView] render preflight blocked by project health errors"
+        qWarning() << "[CompositionView] project health errors; continuing interactive render"
 
                    << "issues=" << cachedProjectDiagnosticCount_;
 
@@ -26375,19 +26378,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       lastRenderPathSummary_ = blockedSummary;
 
-      renderCrashTrace("render-preflight-blocked-present-begin", renderFrameCounter_);
-
-      renderer_->setOverrideRTV(nullptr);
-
-      renderer_->setClearColor(viewportClearColor_);
-
-      renderer_->clearRenderTarget(viewportClearColor_);
-
-      renderer_->present();
-
-      renderCrashTrace("render-preflight-blocked-present-end", renderFrameCounter_);
-
-      return;
+      // Project diagnostics are advisory for the interactive viewer. Blocking
+      // the complete render here hides otherwise valid solid/image layers and
+      // also prevents selection overlays from explaining the bad asset. Let
+      // the individual layer render paths handle unavailable resources.
 
     }
 
@@ -26607,7 +26601,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     const auto playbackComp = playback->currentComposition();
 
-    if (!playbackComp || playbackComp->id() == comp->id()) {
+    if (playbackComp && playbackComp->id() == comp->id()) {
 
       currentFrame = playback->currentFrame();
 
@@ -26963,7 +26957,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     const bool sameComposition =
 
-        !playbackComp || playbackComp->id() == comp->id();
+        playbackComp && playbackComp->id() == comp->id();
 
     playbackSameComposition = sameComposition;
 
@@ -27203,6 +27197,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   lastRenderKeyState_ = currentKey;
 
+  // A previous GPU-blend/offscreen pass may leave renderer target overrides
+  // alive even when this frame chooses the direct path. Reset both targets
+  // before clear() initializes the shared 2D command buffer; otherwise valid
+  // layer packets are submitted to an old offscreen RTV while the swap chain
+  // keeps showing only viewportClearColor_.
+  renderer_->setOverrideRTV(nullptr);
+  renderer_->setOverrideDSV(nullptr);
+
   renderer_->setClearColor(viewportClearColor_);
 
   renderer_->clear();
@@ -27429,8 +27431,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                  dynamic_cast<ArtifactSolidImageLayer*>(layer.get());
         };
 
+    // Keep the composition-space cache disabled until its offscreen target
+    // presentation is reliable. It is selected specifically for ordinary
+    // solid and still-image layers, and a failed cache presentation replaces
+    // their valid direct rendering with an empty texture.
+    constexpr bool compositionSpaceCachePresentationReady = false;
     const bool compositionSpaceCacheEligible =
-        !pipelineEnabled && !frameOutOfRange && !has3DCamera &&
+        compositionSpaceCachePresentationReady && !pipelineEnabled &&
+        !frameOutOfRange && !has3DCamera &&
         !viewportOrientationActive_ && !showIsolationOverlay_ &&
         !showXRayOverlay_ &&
         std::all_of(layers.cbegin(), layers.cend(),
@@ -29423,6 +29431,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         }
 
       }
+
+      // Materialize the direct background/layer command buffer before any
+      // immediate overlay work can change or drain its render target. Present
+      // also submits queued draws, but by then later passes may have reset the
+      // shared command buffer. Re-arm the swap-chain target for overlays after
+      // this barrier.
+      renderer_->flush();
+      renderer_->setOverrideRTV(nullptr);
 
       postPassMs = markPhaseMs();
 
@@ -31437,6 +31453,95 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                      : QStringLiteral("none"));
 
+    if (!layers.empty() &&
+        lastLayerVisibilityReportSerial_ != baseInvalidationSerial_) {
+      lastLayerVisibilityReportSerial_ = baseInvalidationSerial_;
+
+      QStringList layerReports;
+      layerReports.reserve(static_cast<qsizetype>(layers.size()));
+      for (const auto &layer : layers) {
+        if (!layer) {
+          layerReports << QStringLiteral("<null-layer>: rejected=null");
+          continue;
+        }
+
+        const QRectF localBounds = layer->localBounds();
+        const QRectF transformedBounds = layer->transformedBoundingBox();
+        const QRectF visibleBounds = transformedBounds.intersected(roiRect);
+        QString decision = QStringLiteral("submitted");
+        if (!isLayerEffectivelyVisible(layer)) {
+          decision = QStringLiteral("rejected=invisible");
+        } else if (hasSoloLayer && !layer->isSolo()) {
+          decision = QStringLiteral("rejected=non-solo");
+        } else if (!layer->isActiveAt(currentFrame)) {
+          decision = QStringLiteral("rejected=inactive-at-frame");
+        } else if (frameOutOfRange) {
+          decision = QStringLiteral("rejected=composition-frame-out-of-range");
+        } else if (visibleBounds.isEmpty()) {
+          decision = QStringLiteral("rejected=outside-roi");
+        } else if (layer->opacity() <= 0.0f) {
+          decision = QStringLiteral("rejected=zero-opacity");
+        }
+
+        QString sourceState = QStringLiteral("source=n/a");
+        if (const auto *image =
+                dynamic_cast<const ArtifactImageLayer *>(layer.get())) {
+          sourceState = QStringLiteral("imageBuffer=%1 sourcePath=%2 sequence=%3")
+                            .arg(image->hasCurrentFrameBuffer() ? 1 : 0)
+                            .arg(image->sourcePath().isEmpty() ? 0 : 1)
+                            .arg(image->isImageSequence() ? 1 : 0);
+        } else if (dynamic_cast<const ArtifactSolid2DLayer *>(layer.get()) ||
+                   dynamic_cast<const ArtifactSolidImageLayer *>(layer.get())) {
+          sourceState = QStringLiteral("source=direct-solid");
+        }
+
+        layerReports <<
+            QStringLiteral(
+                "name='%1' id=%2 class=%3 decision=%4 visible=%5 solo=%6 "
+                "active=%7 opacity=%8 local=[%9,%10 %11x%12] "
+                "world=[%13,%14 %15x%16] roiHit=%17 parentGroup=%18 %19")
+                .arg(layer->layerName(), layer->id().toString(),
+                     layer->className().toQString(), decision)
+                .arg(isLayerEffectivelyVisible(layer) ? 1 : 0)
+                .arg(layer->isSolo() ? 1 : 0)
+                .arg(layer->isActiveAt(currentFrame) ? 1 : 0)
+                .arg(layer->opacity(), 0, 'f', 3)
+                .arg(localBounds.x(), 0, 'f', 2)
+                .arg(localBounds.y(), 0, 'f', 2)
+                .arg(localBounds.width(), 0, 'f', 2)
+                .arg(localBounds.height(), 0, 'f', 2)
+                .arg(transformedBounds.x(), 0, 'f', 2)
+                .arg(transformedBounds.y(), 0, 'f', 2)
+                .arg(transformedBounds.width(), 0, 'f', 2)
+                .arg(transformedBounds.height(), 0, 'f', 2)
+                .arg(visibleBounds.isEmpty() ? 0 : 1)
+                .arg(layer->parentLayer() && layer->parentLayer()->isGroupLayer()
+                         ? 1
+                         : 0)
+                .arg(sourceState);
+      }
+
+      qWarning().noquote()
+          << QStringLiteral(
+                 "[CompositionView][LayerVisibilityReport] comp='%1' id=%2 "
+                 "frame=%3 effectiveEnd=%4 path=%5 layers=%6 drawn=%7 "
+                 "composited=%8 frameOutOfRange=%9 preflightErrors=%10 "
+                 "selectedLayer=%11\n  %12")
+                 .arg(comp->settings().compositionName().toQString(),
+                      comp->id().toString())
+                 .arg(framePos)
+                 .arg(effectiveEndFrame)
+                 .arg(pipelineEnabled ? QStringLiteral("gpu-blend")
+                                      : QStringLiteral("direct"))
+                 .arg(layers.size())
+                 .arg(drawnLayerCount)
+                 .arg(compositedLayerCount)
+                 .arg(frameOutOfRange ? 1 : 0)
+                 .arg(cachedProjectHasBlockingErrors_ ? 1 : 0)
+                 .arg(selectedLayerId_.toString())
+                 .arg(layerReports.join(QStringLiteral("\n  ")));
+    }
+
     lastBlendMaskSummary_ =
 
         QStringLiteral(
@@ -32237,9 +32342,7 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
       anchorValue = QPointF(transform3D.anchorXAt(anchorTime),
                             transform3D.anchorYAt(anchorTime));
     } else {
-      const auto &transform2D = selectedLayer->transform2D();
-      anchorValue = QPointF(transform2D.anchorPointX(),
-                            transform2D.anchorPointY());
+      anchorValue = selectedLayer->localBounds().center();
     }
     const QFont anchorFont(QStringLiteral("Consolas"), 9);
     const bool anchorIs3D = selectedLayer->is3D();
@@ -33019,9 +33122,10 @@ void CompositionRenderController::Impl::drawViewportGuideOverlay(
 
 // ── Rig2D Visualisation ──────────────────────────────────────
 
+namespace Artifact {
 namespace {
 
-ArtifactCore::Id hitTestRigBone(Bone2D *bone, const QPointF &localPoint,
+ArtifactCore::Id hitTestRigBone(ArtifactCore::Bone2D *bone, const QPointF &localPoint,
                                 float threshold) {
     if (!bone) return {};
     const QMatrix4x4 &boneMatrix = bone->globalMatrix();
@@ -33052,13 +33156,13 @@ ArtifactCore::Id hitTestRigBone(Bone2D *bone, const QPointF &localPoint,
     return {};
 }
 
-ArtifactCore::Id hitTestRigControl(const Rig2D &rig, const QPointF &localPoint,
+ArtifactCore::Id hitTestRigControl(const ArtifactCore::Rig2D &rig, const QPointF &localPoint,
                                    float threshold) {
   const double thresholdSquared = threshold * threshold;
   for (auto *control : rig.controls()) {
     if (!control || !control->enabled()) continue;
     QPointF controlPoint;
-    if (control->kind() == RigControlKind::Point) {
+    if (control->kind() == ArtifactCore::RigControlKind::Point) {
       const QVector2D value = control->value().value<QVector2D>();
       controlPoint = QPointF(value.x(), value.y());
     } else {
@@ -33072,8 +33176,9 @@ ArtifactCore::Id hitTestRigControl(const Rig2D &rig, const QPointF &localPoint,
   return {};
 }
 
-void drawRigBone(ArtifactIRenderer* renderer, Bone2D* bone, const QTransform& globalTx,
-                 const FloatColor& color, float thickness, float zoom) {
+void drawRigBone(Artifact::ArtifactIRenderer* renderer,
+                 ArtifactCore::Bone2D* bone, const QTransform& globalTx,
+                 const ArtifactCore::FloatColor& color, float thickness, float zoom) {
     if (!renderer || !bone) return;
     Q_UNUSED(zoom);
     const QMatrix4x4 &boneMatrix = bone->globalMatrix();
@@ -33091,31 +33196,34 @@ void drawRigBone(ArtifactIRenderer* renderer, Bone2D* bone, const QTransform& gl
     }
 }
 
-void drawRigControl(ArtifactIRenderer* renderer, RigControl2D* ctrl,
+void drawRigControl(Artifact::ArtifactIRenderer* renderer,
+                    ArtifactCore::RigControl2D* ctrl,
                     const QTransform& globalTx) {
     if (!renderer || !ctrl || !ctrl->enabled()) return;
     QPointF cPos;
-    if (ctrl->kind() == RigControlKind::Point) {
+    if (ctrl->kind() == ArtifactCore::RigControlKind::Point) {
         QVector2D pt = ctrl->value().value<QVector2D>();
         cPos = globalTx.map(QPointF(pt.x(), pt.y()));
     } else {
         cPos = globalTx.map(QPointF(0, 0));
     }
     float size = 8.0f;
-    FloatColor color = FloatColor(1.0f, 0.3f, 0.3f, 1.0f);
+    ArtifactCore::FloatColor color = ArtifactCore::FloatColor(1.0f, 0.3f, 0.3f, 1.0f);
     switch (ctrl->kind()) {
-    case RigControlKind::Slider: color = FloatColor(0.3f, 0.8f, 1.0f, 1.0f); break;
-    case RigControlKind::Point:  color = FloatColor(0.3f, 1.0f, 0.4f, 1.0f); break;
-    case RigControlKind::Angle:  color = FloatColor(1.0f, 0.7f, 0.2f, 1.0f); break;
+    case ArtifactCore::RigControlKind::Slider: color = ArtifactCore::FloatColor(0.3f, 0.8f, 1.0f, 1.0f); break;
+    case ArtifactCore::RigControlKind::Point:  color = ArtifactCore::FloatColor(0.3f, 1.0f, 0.4f, 1.0f); break;
+    case ArtifactCore::RigControlKind::Angle:  color = ArtifactCore::FloatColor(1.0f, 0.7f, 0.2f, 1.0f); break;
     default: break;
     }
     renderer->drawCircle((float)cPos.x(), (float)cPos.y(), size, color, 0.0f, true);
     renderer->drawCircle((float)cPos.x(), (float)cPos.y(), size + 2.0f,
-                          FloatColor(0.0f, 0.0f, 0.0f, 0.5f), 1.0f, false);
+                          ArtifactCore::FloatColor(0.0f, 0.0f, 0.0f, 0.5f), 1.0f, false);
 }
 
-void drawRigSkinWireframe(ArtifactIRenderer* renderer, SkinMesh* mesh,
-                           const QTransform& globalTx, const FloatColor& color) {
+void drawRigSkinWireframe(Artifact::ArtifactIRenderer* renderer,
+                           ArtifactCore::SkinMesh* mesh,
+                           const QTransform& globalTx,
+                           const ArtifactCore::FloatColor& color) {
     if (!renderer || !mesh) return;
     const auto& tris = mesh->triangles();
     const auto& verts = mesh->vertices();
@@ -33367,8 +33475,8 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
           }
           if (rigToolActive && toolManager->activeTool() == ToolType::RigWeight) {
             const QPointF brushPosition = layerTx.map(
-                impl_->rigWeightLastLocalPoint_);
-            const float brushRadius = impl_->rigWeightRadius_ * rigZoom;
+                rigWeightLastLocalPoint_);
+            const float brushRadius = rigWeightRadius_ * rigZoom;
             const bool subtract = QGuiApplication::keyboardModifiers().testFlag(
                 Qt::ControlModifier);
             const FloatColor brushColor = subtract
@@ -33389,9 +33497,9 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
                 QRectF(18.0f, ch - 60.0f, 234.0f, 18.0f),
                 QStringLiteral("WEIGHT %1  R:%2  O:%3  F:%4")
                     .arg(subtract ? QStringLiteral("SUB") : QStringLiteral("ADD"))
-                    .arg(QString::number(impl_->rigWeightRadius_, 'f', 0))
-                    .arg(QString::number(impl_->rigWeightOpacity_, 'f', 2))
-                    .arg(QString::number(impl_->rigWeightFlow_, 'f', 2)),
+                    .arg(QString::number(rigWeightRadius_, 'f', 0))
+                    .arg(QString::number(rigWeightOpacity_, 'f', 2))
+                    .arg(QString::number(rigWeightFlow_, 'f', 2)),
                 brushHudFont, FloatColor(0.78f, 0.92f, 1.0f, 0.96f),
                 Qt::AlignLeft | Qt::AlignVCenter);
           }
@@ -33490,10 +33598,10 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
       return std::max(1.0f, nice * scale);
     };
     const float targetViewportInterval =
-        impl_->gridAutoStepTargetViewportInterval_;
+        gridAutoStepTargetViewportInterval_;
     const float autoSpacing = niceGridInterval(
         targetViewportInterval / std::max(0.001f, zoom));
-    const float majorSpacing = impl_->gridAutoStepEnabled_
+    const float majorSpacing = gridAutoStepEnabled_
         ? autoSpacing : std::max(1.0f, gridSettings_.majorInterval);
 
     const int subdivisions = std::max(1, gridSettings_.subdivisions);
@@ -33507,7 +33615,7 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
     const FloatColor fadedMinorColor = fadedGridColor(gridSettings_.minorColor);
     const FloatColor fadedAxisColor = fadedGridColor(gridSettings_.axisColor);
 
-    if (impl_->gridPolarMode_) {
+    if (gridPolarMode_) {
       const float centerX = cw * 0.5f;
       const float centerY = ch * 0.5f;
       const float maxRadius = std::hypot(centerX, centerY);
@@ -33570,7 +33678,7 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
                             gridSettings_.axisColor, 1.0f, true);
     }
 
-    if (impl_->gridIsometricMode_) {
+    if (gridIsometricMode_) {
       const float centerX = cw * 0.5f;
       const float centerY = ch * 0.5f;
       const float extent = std::hypot(cw, ch);
@@ -33632,7 +33740,7 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
 
 
-    if (!impl_->gridPolarMode_ && !impl_->gridIsometricMode_ &&
+    if (!gridPolarMode_ && !gridIsometricMode_ &&
         gridSettings_.showMinor && subdivisions > 1 &&
 
         minorSpacing * zoom >= 4.0f) {
@@ -33645,7 +33753,7 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
     }
 
-    if (!impl_->gridPolarMode_ && !impl_->gridIsometricMode_ &&
+    if (!gridPolarMode_ && !gridIsometricMode_ &&
         gridSettings_.showMajor) {
 
       renderer_->drawGrid(0.0f, 0.0f, cw, ch, majorSpacing,
@@ -33656,7 +33764,7 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
     }
 
-    if (!impl_->gridPolarMode_ && !impl_->gridIsometricMode_ &&
+    if (!gridPolarMode_ && !gridIsometricMode_ &&
         gridSettings_.showAxis) {
 
       const auto origin = renderer_->canvasToViewport({0.0f, 0.0f});
@@ -33681,7 +33789,7 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
     }
 
-    if (!impl_->gridPolarMode_ && !impl_->gridIsometricMode_ &&
+    if (!gridPolarMode_ && !gridIsometricMode_ &&
         gridSettings_.showNumbers && majorSpacing * zoom >= 24.0f) {
       const QFont gridLabelFont(QStringLiteral("Segoe UI"), 8);
       const FloatColor gridLabelColor = {0.78f, 0.82f, 0.90f,

@@ -3,11 +3,14 @@ module;
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <variant>
 #include <vector>
 #include <utility>
+#include <QByteArray>
 #include <QHash>
 #include <QImage>
+#include <QList>
 #include <QMutex>
 #include <QSet>
 #include <QString>
@@ -18,6 +21,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/RenderDeviceVk.h>
+#include "../../include/Render/DiligentUploadCoordinator.hpp"
 
 module Artifact.Render.GPUTextureCacheManager;
 
@@ -86,13 +90,19 @@ Diligent::RESOURCE_STATE resourceStateFromVulkanLayout(std::uint32_t layout)
 } // namespace
 
 
-GPUTextureCacheManager::GPUTextureCacheManager() = default;
+GPUTextureCacheManager::GPUTextureCacheManager()
+    : uploadCoordinator_(new DiligentUploadCoordinator())
+{
+}
 GPUTextureCacheManager::~GPUTextureCacheManager()
 {
     clearDevice();
+    delete uploadCoordinator_;
+    uploadCoordinator_ = nullptr;
 }
 
 void GPUTextureCacheManager::setDevice(RefCntAutoPtr<IRenderDevice> device,
+                                       RefCntAutoPtr<IDeviceContext> context,
                                        TEXTURE_FORMAT format)
 {
     QMutexLocker locker(&mutex_);
@@ -101,6 +111,11 @@ void GPUTextureCacheManager::setDevice(RefCntAutoPtr<IRenderDevice> device,
     clearLocked();
     device_ = std::move(device);
     textureFormat_ = format;
+    if (uploadCoordinator_) {
+        uploadCoordinator_->setDevice(device_, std::move(context));
+        uploadCoordinator_->setPendingByteBudget(256ull * 1024ull * 1024ull);
+        uploadCoordinator_->setMaxPendingJobs(128);
+    }
 }
 
 void GPUTextureCacheManager::clearDevice()
@@ -109,6 +124,9 @@ void GPUTextureCacheManager::clearDevice()
     ++invalidationCount_;
     lastInvalidationReason_ = GPUTextureCacheInvalidationReason::DeviceReset;
     clearLocked();
+    if (uploadCoordinator_) {
+        uploadCoordinator_->clearDevice();
+    }
     device_.Release();
 }
 
@@ -225,6 +243,8 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
         return {};
     }
 
+    processPendingUploadsLocked();
+
     RefCntAutoPtr<IRenderDeviceVk> deviceVk{device_, IID_RenderDeviceVk};
     if (!deviceVk) {
         ++missCount_;
@@ -245,6 +265,24 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
                 entryIt->cacheKey.section(QLatin1Char(':'), 1, 1) != currentVersionToken) {
                 eraseEntryByIdLocked(id);
             }
+        }
+        QList<quint64> stalePendingIds;
+        for (auto pendingIt = pendingUploads_.cbegin();
+             pendingIt != pendingUploads_.cend(); ++pendingIt) {
+            if (pendingIt->ownerId == ownerId &&
+                pendingIt->cacheKey.section(QLatin1Char(':'), 1, 1) != currentVersionToken) {
+                stalePendingIds.push_back(pendingIt.key());
+            }
+        }
+        for (const quint64 ticketId : stalePendingIds) {
+            const auto pendingIt = pendingUploads_.find(ticketId);
+            if (pendingIt == pendingUploads_.end()) continue;
+            if (uploadCoordinator_) {
+                uploadCoordinator_->cancel(
+                    {pendingIt->ticketId, pendingIt->ticketGeneration});
+            }
+            pendingKeyToTicket_.remove(pendingIt->fullKey);
+            pendingUploads_.erase(pendingIt);
         }
     }
 
@@ -295,6 +333,7 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
     entry.generation = generation_;
     entry.ownerId = ownerId;
     entry.cacheKey = cacheKey;
+    entry.fullKey = key;
     entry.texture = texture;
     entry.srv = texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
     entry.sourceGpuFrame = frame;
@@ -318,10 +357,9 @@ GPUTextureCacheHandle GPUTextureCacheManager::findExisting(
     }
 
     QMutexLocker locker(&mutex_);
-    const QString prefix = makeKey(ownerId, cacheKey) + QStringLiteral("|format:");
     for (auto it = entries_.cbegin(); it != entries_.cend(); ++it) {
         if (it->ownerId == ownerId &&
-            it->cacheKey.startsWith(prefix) &&
+            it->cacheKey == cacheKey &&
             it->generation == generation_ && it->texture) {
             return {it->id, it->generation};
         }
@@ -351,6 +389,8 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const
         return {};
     }
 
+    processPendingUploadsLocked();
+
     const QString currentVersionToken =
         (ownerId.startsWith(QStringLiteral("asset:")) &&
          (cacheKey.startsWith(QStringLiteral("video-gpu:v")) ||
@@ -365,6 +405,24 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const
                 entryIt->cacheKey.section(QLatin1Char(':'), 1, 1) != currentVersionToken) {
                 eraseEntryByIdLocked(id);
             }
+        }
+        QList<quint64> stalePendingIds;
+        for (auto pendingIt = pendingUploads_.cbegin();
+             pendingIt != pendingUploads_.cend(); ++pendingIt) {
+            if (pendingIt->ownerId == ownerId &&
+                pendingIt->cacheKey.section(QLatin1Char(':'), 1, 1) != currentVersionToken) {
+                stalePendingIds.push_back(pendingIt.key());
+            }
+        }
+        for (const quint64 ticketId : stalePendingIds) {
+            const auto pendingIt = pendingUploads_.find(ticketId);
+            if (pendingIt == pendingUploads_.end()) continue;
+            if (uploadCoordinator_) {
+                uploadCoordinator_->cancel(
+                    {pendingIt->ticketId, pendingIt->ticketGeneration});
+            }
+            pendingKeyToTicket_.remove(pendingIt->fullKey);
+            pendingUploads_.erase(pendingIt);
         }
     }
 
@@ -385,57 +443,43 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const
         }
     }
 
-    TextureDesc texDesc;
-    texDesc.Name = "GPUTextureCacheManager.Texture";
-    texDesc.Type = RESOURCE_DIM_TEX_2D;
-    texDesc.Width = width;
-    texDesc.Height = height;
-    texDesc.MipLevels = 1;
-    texDesc.Format = format;
-    texDesc.Usage = USAGE_IMMUTABLE;
-    texDesc.BindFlags = BIND_SHADER_RESOURCE;
-    texDesc.CPUAccessFlags = CPU_ACCESS_NONE;
+    if (pendingKeyToTicket_.contains(key)) {
+        return {};
+    }
 
-    TextureSubResData subRes;
-    subRes.pData = bytes;
-    subRes.Stride = stride;
-
-    TextureData initData;
-    initData.pSubResources = &subRes;
-    initData.NumSubresources = 1;
-
-    RefCntAutoPtr<ITexture> texture;
-    device_->CreateTexture(texDesc, &initData, &texture);
-    if (!texture) {
-        qWarning() << "[GPUTextureCache] CreateTexture failed"
-                   << "owner=" << ownerId
-                   << "cacheKey=" << cacheKey
-                   << "size=" << width << "x" << height
-                   << "stride=" << stride
-                   << "format=" << static_cast<int>(format)
-                   << "bytes=" << static_cast<qulonglong>(memoryBytes);
+    if (!uploadCoordinator_ ||
+        memoryBytes > static_cast<size_t>(std::numeric_limits<qsizetype>::max())) {
         ++missCount_;
         return {};
     }
 
-    Entry entry;
-    entry.id = nextId_++;
-    entry.generation = generation_;
-    entry.ownerId = ownerId;
-    entry.cacheKey = cacheKey;
-    entry.texture = texture;
-    entry.srv = texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-    entry.memoryBytes = memoryBytes;
-    entry.lastUsedTick = usageTick_++;
+    DiligentTextureUploadRequest uploadRequest;
+    uploadRequest.key = key;
+    uploadRequest.bytes = QByteArray(
+        static_cast<const char*>(bytes), static_cast<qsizetype>(memoryBytes));
+    uploadRequest.width = width;
+    uploadRequest.height = height;
+    uploadRequest.stride = stride;
+    uploadRequest.format = format;
+    uploadRequest.generation = generation_;
+    const DiligentUploadTicket ticket =
+        uploadCoordinator_->enqueue(uploadRequest);
+    if (!ticket.isValid()) {
+        ++missCount_;
+        return {};
+    }
 
-    entries_.insert(entry.id, entry);
-    keyToId_.insert(key, entry.id);
-    ownerToIds_[ownerId].insert(entry.id);
-    currentBytes_ += entry.memoryBytes;
+    PendingUpload pending;
+    pending.ticketId = ticket.id;
+    pending.ticketGeneration = ticket.generation;
+    pending.ownerId = ownerId;
+    pending.cacheKey = cacheKey;
+    pending.fullKey = key;
+    pending.memoryBytes = memoryBytes;
+    pendingUploads_.insert(ticket.id, pending);
+    pendingKeyToTicket_.insert(key, ticket.id);
     ++missCount_;
-
-    pruneLocked();
-    return {entry.id, entry.generation};
+    return {};
 }
 
 Diligent::ITextureView* GPUTextureCacheManager::textureView(const GPUTextureCacheHandle& handle) const
@@ -496,16 +540,36 @@ void GPUTextureCacheManager::invalidateOwner(
 {
     QMutexLocker locker(&mutex_);
     auto it = ownerToIds_.find(ownerId);
-    if (it == ownerToIds_.end()) {
-        return;
+    bool invalidated = false;
+    if (it != ownerToIds_.end()) {
+        const auto ids = it.value();
+        for (quint64 id : ids) {
+            eraseEntryByIdLocked(id);
+        }
+        ownerToIds_.remove(ownerId);
+        invalidated = !ids.isEmpty();
     }
-    const auto ids = it.value();
-    ++invalidationCount_;
-    lastInvalidationReason_ = reason;
-    for (quint64 id : ids) {
-        eraseEntryByIdLocked(id);
+
+    QList<quint64> pendingIds;
+    for (auto pendingIt = pendingUploads_.cbegin();
+         pendingIt != pendingUploads_.cend(); ++pendingIt) {
+        if (pendingIt->ownerId == ownerId) pendingIds.push_back(pendingIt.key());
     }
-    ownerToIds_.remove(ownerId);
+    for (const quint64 ticketId : pendingIds) {
+        const auto pendingIt = pendingUploads_.find(ticketId);
+        if (pendingIt == pendingUploads_.end()) continue;
+        if (uploadCoordinator_) {
+            uploadCoordinator_->cancel(
+                {pendingIt->ticketId, pendingIt->ticketGeneration});
+        }
+        pendingKeyToTicket_.remove(pendingIt->fullKey);
+        pendingUploads_.erase(pendingIt);
+        invalidated = true;
+    }
+    if (invalidated) {
+        ++invalidationCount_;
+        lastInvalidationReason_ = reason;
+    }
 }
 
 void GPUTextureCacheManager::clear()
@@ -518,6 +582,11 @@ void GPUTextureCacheManager::clear()
 
 void GPUTextureCacheManager::clearLocked()
 {
+    if (uploadCoordinator_) {
+        uploadCoordinator_->clear();
+    }
+    pendingUploads_.clear();
+    pendingKeyToTicket_.clear();
     entries_.clear();
     keyToId_.clear();
     ownerToIds_.clear();
@@ -525,16 +594,68 @@ void GPUTextureCacheManager::clearLocked()
     ++generation_;
 }
 
+void GPUTextureCacheManager::processPendingUploadsLocked()
+{
+    if (!uploadCoordinator_) return;
+    uploadCoordinator_->processPending(8, 64ull * 1024ull * 1024ull);
+    if (pendingUploads_.isEmpty()) return;
+
+    const QList<quint64> ticketIds = pendingUploads_.keys();
+    for (const quint64 ticketId : ticketIds) {
+        auto pendingIt = pendingUploads_.find(ticketId);
+        if (pendingIt == pendingUploads_.end()) continue;
+        DiligentTextureUploadResult result;
+        if (!uploadCoordinator_->tryTakeResult(
+                {pendingIt->ticketId, pendingIt->ticketGeneration}, result)) {
+            continue;
+        }
+
+        const PendingUpload pending = pendingIt.value();
+        pendingKeyToTicket_.remove(pending.fullKey);
+        pendingUploads_.erase(pendingIt);
+        if (!result.succeeded() || pending.ticketGeneration != generation_) {
+            if (!result.canceled && !result.stale) {
+                qWarning() << "[GPUTextureCache] queued upload failed"
+                           << "owner=" << pending.ownerId
+                           << "cacheKey=" << pending.cacheKey
+                           << "error=" << result.error;
+            }
+            continue;
+        }
+
+        Entry entry;
+        entry.id = nextId_++;
+        entry.generation = generation_;
+        entry.ownerId = pending.ownerId;
+        entry.cacheKey = pending.cacheKey;
+        entry.fullKey = pending.fullKey;
+        entry.texture = std::move(result.texture);
+        entry.srv = std::move(result.srv);
+        entry.memoryBytes = pending.memoryBytes;
+        entry.lastUsedTick = usageTick_++;
+        entries_.insert(entry.id, entry);
+        keyToId_.insert(pending.fullKey, entry.id);
+        ownerToIds_[pending.ownerId].insert(entry.id);
+        currentBytes_ += entry.memoryBytes;
+    }
+    pruneLocked();
+}
+
 GPUTextureCacheStats GPUTextureCacheManager::stats() const
 {
     QMutexLocker locker(&mutex_);
+    const auto uploadStats = uploadCoordinator_
+        ? uploadCoordinator_->stats()
+        : DiligentUploadCoordinatorStats{};
     return GPUTextureCacheStats{
         currentBytes_,
         static_cast<int>(entries_.size()),
         hitCount_,
         missCount_,
         invalidationCount_,
-        lastInvalidationReason_
+        lastInvalidationReason_,
+        uploadStats.pendingBytes,
+        static_cast<int>(uploadStats.pendingJobs + uploadStats.gpuOperations)
     };
 }
 
@@ -571,8 +692,9 @@ void GPUTextureCacheManager::eraseEntryByIdLocked(quint64 id)
         return;
     }
 
-    const QString key = makeKey(it->ownerId, it->cacheKey);
-    keyToId_.remove(key);
+    keyToId_.remove(it->fullKey.isEmpty()
+                        ? makeKey(it->ownerId, it->cacheKey)
+                        : it->fullKey);
     auto ownerIt = ownerToIds_.find(it->ownerId);
     if (ownerIt != ownerToIds_.end()) {
         ownerIt.value().remove(id);

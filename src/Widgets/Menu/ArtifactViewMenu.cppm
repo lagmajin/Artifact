@@ -1022,8 +1022,7 @@ namespace Artifact {
                     });
 
    showRigOverlayAction = new QAction(QStringLiteral("リグオーバーレイを表示"));
-   showRigOverlayAction->setAccessibleName(QStringLiteral("Rig overlay visibility"));
-   showRigOverlayAction->setAccessibleDescription(
+   showRigOverlayAction->setStatusTip(
        QStringLiteral("Show or hide rig bones, controls and skin overlays"));
    showRigOverlayAction->setCheckable(true);
    showRigOverlayAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
@@ -1038,8 +1037,7 @@ namespace Artifact {
                     });
 
    showRigWeightMapAction = new QAction(QStringLiteral("ウェイトマップを表示"));
-   showRigWeightMapAction->setAccessibleName(QStringLiteral("Rig weight map visibility"));
-   showRigWeightMapAction->setAccessibleDescription(
+   showRigWeightMapAction->setStatusTip(
        QStringLiteral("Show or hide the selected bone weight map"));
    showRigWeightMapAction->setCheckable(true);
    showRigWeightMapAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
@@ -1055,8 +1053,7 @@ namespace Artifact {
                     });
 
    showOnionSkinAction = new QAction(QStringLiteral("オニオンスキンを表示"));
-   showOnionSkinAction->setAccessibleName(QStringLiteral("Onion skin visibility"));
-   showOnionSkinAction->setAccessibleDescription(
+   showOnionSkinAction->setStatusTip(
        QStringLiteral("Show or hide previous-frame onion skin previews"));
    showOnionSkinAction->setCheckable(true);
    showOnionSkinAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_panels.svg")));
@@ -1071,8 +1068,7 @@ namespace Artifact {
                     });
 
    showSafeMarginsAction = new QAction(QStringLiteral("セーフマージンを表示"));
-   showSafeMarginsAction->setAccessibleName(QStringLiteral("Safe margins visibility"));
-   showSafeMarginsAction->setAccessibleDescription(
+   showSafeMarginsAction->setStatusTip(
        QStringLiteral("Show or hide title and action safe margins"));
    showSafeMarginsAction->setCheckable(true);
    showSafeMarginsAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_straighten.svg")));
@@ -1087,8 +1083,7 @@ namespace Artifact {
                     });
 
    captureRigPoseAction = new QAction(QStringLiteral("現在のRigポーズをCapture"));
-   captureRigPoseAction->setAccessibleName(QStringLiteral("Capture current rig pose"));
-   captureRigPoseAction->setAccessibleDescription(
+   captureRigPoseAction->setStatusTip(
        QStringLiteral("Capture the current rig pose for later reuse"));
    captureRigPoseAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
    QObject::connect(captureRigPoseAction, &QAction::triggered, menu,
@@ -1106,8 +1101,7 @@ namespace Artifact {
                     });
 
    saveRigPoseSlotAction = new QAction(QStringLiteral("現在のRigポーズをSlot 1へ保存"));
-   saveRigPoseSlotAction->setAccessibleName(QStringLiteral("Save rig pose to slot 1"));
-   saveRigPoseSlotAction->setAccessibleDescription(
+   saveRigPoseSlotAction->setStatusTip(
        QStringLiteral("Save the current rig pose in pose slot 1"));
    saveRigPoseSlotAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
    QObject::connect(saveRigPoseSlotAction, &QAction::triggered, menu,
@@ -1125,8 +1119,7 @@ namespace Artifact {
                     });
 
    applyRigPoseSlotAction = new QAction(QStringLiteral("Rig Pose Slot 1を適用 (50%)"));
-   applyRigPoseSlotAction->setAccessibleName(QStringLiteral("Apply rig pose slot 1"));
-   applyRigPoseSlotAction->setAccessibleDescription(
+   applyRigPoseSlotAction->setStatusTip(
        QStringLiteral("Blend pose slot 1 into the current rig at 50 percent"));
    applyRigPoseSlotAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
    QObject::connect(applyRigPoseSlotAction, &QAction::triggered, menu,
@@ -1144,8 +1137,7 @@ namespace Artifact {
                     });
 
    clearRigPoseSlotsAction = new QAction(QStringLiteral("Rig Pose Slotを消去"));
-   clearRigPoseSlotsAction->setAccessibleName(QStringLiteral("Clear rig pose slots"));
-   clearRigPoseSlotsAction->setAccessibleDescription(
+   clearRigPoseSlotsAction->setStatusTip(
        QStringLiteral("Clear all saved rig pose slots and the pose clipboard"));
    clearRigPoseSlotsAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_delete.svg")));
    QObject::connect(clearRigPoseSlotsAction, &QAction::triggered, menu,
@@ -1237,7 +1229,7 @@ namespace Artifact {
                     [updateGridFlag](bool checked) {
                       updateGridFlag(checked, &Artifact::Grid::GridSettings::showNumbers);
                     });
-   auto activeController = [this]() -> ArtifactCompositionRenderController* {
+   auto activeController = [this]() {
      auto* editor = activeCompositionEditor(
          mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
      return editor ? editor->renderController() : nullptr;

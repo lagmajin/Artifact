@@ -3599,7 +3599,6 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
                      }
                    });
   fileView->setContentsMargins(8, 8, 8, 8);
-  auto& config = ArtifactCore::LayeredConfigStore::instance();
   const QListView::ViewMode savedViewMode =
       config.valueInt64(QStringLiteral("AssetBrowser/ViewMode"),
                         static_cast<int>(QListView::IconMode)) ==

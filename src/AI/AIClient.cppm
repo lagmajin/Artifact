@@ -578,7 +578,7 @@ void updateRecentModelPaths(const QString &path) {
     recentPaths.removeLast();
   }
   config.setValue(QStringLiteral("AI/RecentModelPaths"), recentPaths);
-  settings.setValue(QStringLiteral("AI/ModelPath"), trimmed);
+  config.setValue(QStringLiteral("AI/ModelPath"), trimmed);
 }
 
 } // namespace

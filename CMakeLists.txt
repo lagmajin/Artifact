@@ -505,6 +505,463 @@ endforeach()
 # ---------------------------------------------------------------------------
 # ターゲット定義
 # ---------------------------------------------------------------------------
+set(ARTIFACT_RENDER_SUPPORT_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactHDRMonitor.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactRamPreviewController.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactRenderController.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactRenderScheduler.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactRenderQueuePresets.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactRenderContext.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactRenderROI.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactRenderFoundation.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactPerformanceMonitor.ixx"
+)
+set(ARTIFACT_RENDER_SUPPORT_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactHDRMonitor.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRamPreviewController.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderController.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderScheduler.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderQueuePresets.cppm"
+)
+
+list(REMOVE_ITEM APP_MODULES ${ARTIFACT_RENDER_SUPPORT_MODULES})
+list(REMOVE_ITEM APP_IMPL ${ARTIFACT_RENDER_SUPPORT_IMPL})
+
+add_library(ArtifactRenderSupport STATIC)
+set_target_properties(ArtifactRenderSupport PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    FOLDER "Artifact/Libraries"
+)
+target_sources(ArtifactRenderSupport
+    PRIVATE ${ARTIFACT_RENDER_SUPPORT_IMPL}
+    PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_RENDER_SUPPORT_MODULES}
+)
+if(TARGET __CMAKE::CXX23)
+    set_property(TARGET ArtifactRenderSupport PROPERTY CXX_MODULE_STD ON)
+else()
+    set_property(TARGET ArtifactRenderSupport PROPERTY CXX_MODULE_STD OFF)
+endif()
+if(ARTIFACT_COMPILER_MSVC_CL)
+    target_compile_options(ArtifactRenderSupport PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
+elseif(ARTIFACT_FRONTEND_MSVC)
+    target_compile_options(ArtifactRenderSupport PRIVATE /Zc:__cplusplus /utf-8 /wd5050)
+endif()
+target_include_directories(ArtifactRenderSupport PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
+)
+target_link_libraries(ArtifactRenderSupport PUBLIC ArtifactCore)
+
+set(ARTIFACT_ASSET_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Asset/AssetMenuModel.ixx"
+)
+set(ARTIFACT_ASSET_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Asset/AssetMenuModel.cppm"
+)
+list(REMOVE_ITEM APP_MODULES ${ARTIFACT_ASSET_MODULES})
+list(REMOVE_ITEM APP_IMPL ${ARTIFACT_ASSET_IMPL})
+
+add_library(ArtifactAsset STATIC)
+set_target_properties(ArtifactAsset PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    FOLDER "Artifact/Libraries"
+)
+target_sources(ArtifactAsset
+    PRIVATE ${ARTIFACT_ASSET_IMPL}
+    PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_ASSET_MODULES}
+)
+if(TARGET __CMAKE::CXX23)
+    set_property(TARGET ArtifactAsset PROPERTY CXX_MODULE_STD ON)
+else()
+    set_property(TARGET ArtifactAsset PROPERTY CXX_MODULE_STD OFF)
+endif()
+if(ARTIFACT_COMPILER_MSVC_CL)
+    target_compile_options(ArtifactAsset PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
+elseif(ARTIFACT_FRONTEND_MSVC)
+    target_compile_options(ArtifactAsset PRIVATE /Zc:__cplusplus /utf-8 /wd5050)
+endif()
+target_include_directories(ArtifactAsset PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
+)
+target_link_libraries(ArtifactAsset PUBLIC ArtifactCore)
+
+set(ARTIFACT_RENDER_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/RenderConfig.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/DiligentDeviceManager.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ShaderManager.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/RenderCommandBuffer.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/IRenderSubmitter.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/PrimitiveRenderer2D.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/PrimitiveRenderer3D.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/DiligentImmediateSubmitter.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/DiligentBindlessSubmitter.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactFinalPostProcess.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactOffscreenRenderer2D.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactIRenderer.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactMotionBlurPass.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/GPUTextureCacheManager.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/LOD/ArtifactLODManager.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ThickLineShaders.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ViewerHelperShaders.ixx"
+)
+set(ARTIFACT_RENDER_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentDeviceManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ShaderManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/RenderCommandBuffer.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer2D.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer3D.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentImmediateSubmitter.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentBindlessSubmitter.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactFinalPostProcess.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenRenderer2D.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactIRenderer.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactMotionBlurPass.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/GPUTextureCacheManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentUploadCoordinator.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/LOD/ArtifactLODManager.cppm"
+)
+
+# Keep the first render split deliberately small.  Device and shader modules
+# are the highest fan-out units and are therefore isolated before moving the
+# renderer and widget orchestration layers.
+list(REMOVE_ITEM APP_MODULES ${ARTIFACT_RENDER_MODULES})
+list(REMOVE_ITEM APP_IMPL ${ARTIFACT_RENDER_IMPL})
+
+add_library(ArtifactRender STATIC)
+set_target_properties(ArtifactRender PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    FOLDER "Artifact/Libraries"
+)
+target_sources(ArtifactRender
+    PRIVATE ${ARTIFACT_RENDER_IMPL}
+    PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_RENDER_MODULES}
+)
+if(TARGET __CMAKE::CXX23)
+    set_property(TARGET ArtifactRender PROPERTY CXX_MODULE_STD ON)
+else()
+    set_property(TARGET ArtifactRender PROPERTY CXX_MODULE_STD OFF)
+endif()
+if(ARTIFACT_COMPILER_MSVC_CL)
+    target_compile_options(ArtifactRender PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
+    target_compile_definitions(ArtifactRender PRIVATE
+        PLATFORM_WIN32
+        _GUARDOVERFLOW_CRT_ALLOCATORS=1
+        _SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING
+        GLOG_USE_GLOG_EXPORT
+        _WIN32_WINNT=0x0A00
+    )
+elseif(ARTIFACT_FRONTEND_MSVC)
+    target_compile_options(ArtifactRender PRIVATE /Zc:__cplusplus /utf-8 /wd5050)
+    target_compile_definitions(ArtifactRender PRIVATE
+        PLATFORM_WIN32
+        _GUARDOVERFLOW_CRT_ALLOCATORS=1
+        _SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING
+        GLOG_USE_GLOG_EXPORT
+        _WIN32_WINNT=0x0A00
+    )
+endif()
+target_include_directories(ArtifactRender PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngine/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngineD3D12/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Common/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Platforms/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools"
+)
+target_link_libraries(ArtifactRender PUBLIC ArtifactCore)
+if(TARGET Diligent-GraphicsTools)
+    target_link_libraries(ArtifactRender PRIVATE Diligent-GraphicsTools)
+endif()
+
+set(ARTIFACT_EFFECT_CONTRACT_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ArtifactAbstractEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ArtifactEffectImplBase.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/EffectContext.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ArtifactAbstractField.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ArtifactEffectFrameSampler.ixx"
+)
+set(ARTIFACT_EFFECT_CONTRACT_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ArtifactAbstractEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ArtifactAbstractField.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ArtifactEffectFrameSampler.cppm"
+)
+
+list(REMOVE_ITEM APP_MODULES ${ARTIFACT_EFFECT_CONTRACT_MODULES})
+list(REMOVE_ITEM APP_IMPL ${ARTIFACT_EFFECT_CONTRACT_IMPL})
+
+add_library(ArtifactEffectContract STATIC)
+set_target_properties(ArtifactEffectContract PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    FOLDER "Artifact/Libraries"
+)
+target_sources(ArtifactEffectContract
+    PRIVATE ${ARTIFACT_EFFECT_CONTRACT_IMPL}
+    PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECT_CONTRACT_MODULES}
+)
+if(TARGET __CMAKE::CXX23)
+    set_property(TARGET ArtifactEffectContract PROPERTY CXX_MODULE_STD ON)
+else()
+    set_property(TARGET ArtifactEffectContract PROPERTY CXX_MODULE_STD OFF)
+endif()
+target_include_directories(ArtifactEffectContract PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
+)
+target_link_libraries(ArtifactEffectContract PUBLIC ArtifactCore ArtifactRender ArtifactRenderSupport)
+
+set(ARTIFACT_EFFECTS_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/AutoMosaicEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DataMoshEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/GlowEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/KaleidoscopeEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/RadialBlurEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/InvertEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/BrightnessEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/GrayscaleEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/FillEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ExposureEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/LevelsEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/HueAndSaturation.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/SelectiveColorEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ColorBalanceEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ColoramaEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/PhotoFilterEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/TritoneEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/CurvesEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/GradientRampEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/WhiteBalanceEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Kaleidoscope/KaleidoscopeEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Dithering/DitheringEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Kuwahara/KuwaharaEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ChannelMixerEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ColorWheelsEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/VignetteEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/StripesEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/HexGridEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/ChromaticAberrationEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/TemporalSmearEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/GlowEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/EdgeBloomEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/ChromaticGlowEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/ReactiveGlowEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DropShadowEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/DirectionalGlowEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/SatinEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Bevel/BevelEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Keying/LumaKeyEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Keying/ChromaKeyEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Keying/DifferenceKeyEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Keying/IBKKeyerEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/LinearWipe/LinearWipeEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Liquify/LiquifyEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Mosaic/MosaicEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Spherize/SpherizeEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Sharpen/SharpenEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/FindEdges/FindEdgesEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/OpticalFlowBlurEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/StrokeEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/VectorBlurEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/VectorFlowGlitchEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/DisplacementMapEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/TimeDisplacementEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/TurbulentDisplace/TurbulentDisplaceEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Generate/SimpleRainEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Generate/RadioWavesEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/LensDistortion/LensDistortionEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/OpticsCompensation/OpticsCompensationEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/BricksEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/EdgeEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/EchoEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/GlitchEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/HalftoneEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/PosterizeTimeEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/RadialShadow/RadialShadowEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/InnerShadowEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/LiquidGlowEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/ResidualGlowEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/LiftGammaGainEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/AddNoise/AddNoiseEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Blur/AnisotropicFlowBlurEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Blur/ApertureShapeBlurEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Blur/ReactionDiffusionBlurEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/PhysicalHalationEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/LuminescenceCausticsEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Noise/NoiseEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/ChromaticReliefEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DeflickerEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DifferenceMatteEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/FeedbackEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/FilmDamageEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/FrameBlendEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/FrameAverageEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/FrameAccumulationEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/FreezeFrameEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/TemporalDenoiseEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/TemporalMedianEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/TimeBlurEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/TimeWarpEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/TrailFadeEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/SlitScanEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/ScreenShakeEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/StrobeEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/SurfaceFX/SurfaceFXEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Wave/WaveEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/GhostEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/LightTrailsEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/MotionTrailEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/PixelSortEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/VoronoiEffect.ixx"
+)
+set(ARTIFACT_EFFECTS_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AutoMosaicEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DataMoshEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlowEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/KaleidoscopeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/RadialBlurEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/InvertEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/BrightnessEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/GrayscaleEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/FillEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ExposureEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/LevelsEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/HueAndSaturation.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/SelectiveColorEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorBalanceEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColoramaEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/PhotoFilterEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/TritoneEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/CurvesEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/GradientRampEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/WhiteBalanceEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kaleidoscope/KaleidoscopeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Dithering/DitheringEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kuwahara/KuwaharaEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ChannelMixerEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorWheelsEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VignetteEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/StripesEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HexGridEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticAberrationEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalSmearEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/GlowEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/EdgeBloomEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ChromaticGlowEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ReactiveGlowEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DropShadow/DropShadowEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DirectionalGlowEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Satin/SatinEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Bevel/BevelEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/LumaKeyEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/ChromaKeyEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/DifferenceKeyEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/IBKKeyerEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LinearWipe/LinearWipeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Liquify/LiquifyEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Mosaic/MosaicEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Spherize/SpherizeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Sharpen/SharpenEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/FindEdges/FindEdgesEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/OpticalFlowBlurEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Stroke/StrokeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorBlurEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorFlowGlitchEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DisplacementMap/DisplacementMapEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TimeDisplacement/TimeDisplacementEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TurbulentDisplace/TurbulentDisplaceEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/SimpleRainEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/RadioWavesEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LensDistortion/LensDistortionEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/OpticsCompensation/OpticsCompensationEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/BricksEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/EdgeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/EchoEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlitchEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HalftoneEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PosterizeTimeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/RadialShadow/RadialShadowEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/InnerShadow/InnerShadowEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LiquidGlowEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ResidualGlowEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LiftGammaGainEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AddNoise/AddNoiseEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/AnisotropicFlowBlurEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ApertureShapeBlurEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ReactionDiffusionBlurEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/PhysicalHalationEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LuminescenceCausticsEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/NoiseEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticReliefEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeflickerEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DifferenceMatteEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FeedbackEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FilmDamageEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameBlendEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameAverageEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameAccumulationEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FreezeFrameEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalDenoiseEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalMedianEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TimeBlurEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TimeWarpEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TrailFadeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/SlitScanEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ScreenShakeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/StrobeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/SurfaceFX/SurfaceFXEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Wave/WaveEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GhostEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/LightTrailsEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/MotionTrailEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PixelSortEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VoronoiEffect.cppm"
+)
+list(REMOVE_ITEM APP_MODULES ${ARTIFACT_EFFECTS_MODULES})
+list(REMOVE_ITEM APP_IMPL ${ARTIFACT_EFFECTS_IMPL})
+
+# ArtifactGlobalEffectManager and the OFX host/implementation remain in the
+# application target: they depend on application plugin/service modules, so
+# moving them into ArtifactEffects would reverse the dependency direction.
+
+add_library(ArtifactEffects STATIC)
+set_target_properties(ArtifactEffects PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    FOLDER "Artifact/Libraries"
+)
+target_sources(ArtifactEffects
+    PRIVATE ${ARTIFACT_EFFECTS_IMPL}
+    PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_MODULES}
+)
+if(TARGET __CMAKE::CXX23)
+    set_property(TARGET ArtifactEffects PROPERTY CXX_MODULE_STD ON)
+else()
+    set_property(TARGET ArtifactEffects PROPERTY CXX_MODULE_STD OFF)
+endif()
+target_include_directories(ArtifactEffects PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngine/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngineD3D12/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Common/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Platforms/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools"
+)
+target_link_libraries(ArtifactEffects PUBLIC ArtifactCore ArtifactRender ArtifactEffectContract)
+
 add_executable(Artifact WIN32)
 
 set_target_properties(Artifact PROPERTIES
@@ -600,7 +1057,7 @@ target_include_directories(Artifact
 # ---------------------------------------------------------------------------
 
 # 内部ライブラリ
-target_link_libraries(Artifact PRIVATE ArtifactCore ArtifactWidgets)
+target_link_libraries(Artifact PRIVATE ArtifactCore ArtifactWidgets ArtifactAsset ArtifactRenderSupport ArtifactRender ArtifactEffectContract ArtifactEffects)
 
 # DiligentEngine
 set(DILIGENT_LIBS "")
@@ -629,14 +1086,39 @@ if(TARGET Diligent-Common)
     list(APPEND DILIGENT_LIBS Diligent-Common)
 endif()
 target_link_libraries(Artifact PRIVATE ${DILIGENT_LIBS})
+target_link_libraries(ArtifactRender PRIVATE ${DILIGENT_LIBS})
 if(DILIGENT_COMPILE_DEFINITIONS)
     list(REMOVE_DUPLICATES DILIGENT_COMPILE_DEFINITIONS)
     target_compile_definitions(Artifact PRIVATE ${DILIGENT_COMPILE_DEFINITIONS})
+    target_compile_definitions(ArtifactRender PRIVATE ${DILIGENT_COMPILE_DEFINITIONS})
+    target_compile_definitions(ArtifactEffectContract PRIVATE ${DILIGENT_COMPILE_DEFINITIONS})
+    target_compile_definitions(ArtifactEffects PRIVATE ${DILIGENT_COMPILE_DEFINITIONS})
+endif()
+
+if(WIN32)
+    target_compile_definitions(ArtifactEffectContract PRIVATE
+        PLATFORM_WIN32
+        _WIN32_WINNT=0x0A00
+    )
+    target_compile_definitions(ArtifactEffects PRIVATE
+        PLATFORM_WIN32
+        _WIN32_WINNT=0x0A00
+    )
+endif()
+if(ARTIFACT_COMPILER_MSVC_CL)
+    target_compile_options(ArtifactEffectContract PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
+    target_compile_options(ArtifactEffects PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
+elseif(ARTIFACT_FRONTEND_MSVC)
+    target_compile_options(ArtifactEffectContract PRIVATE /Zc:__cplusplus /utf-8 /wd5050)
+    target_compile_options(ArtifactEffects PRIVATE /Zc:__cplusplus /utf-8 /wd5050)
 endif()
 
 # Qt6
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia MultimediaWidgets Concurrent Svg)
 target_link_libraries(Artifact PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Multimedia Qt6::MultimediaWidgets Qt6::Concurrent Qt6::Svg)
+target_link_libraries(ArtifactAsset PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(ArtifactRenderSupport PRIVATE Qt6::Core Qt6::Gui Qt6::Concurrent)
+target_link_libraries(ArtifactRender PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent)
 
 # OpenAssetIO is an optional interoperability layer for external asset
 # management systems. The local filesystem asset workflow remains the default.
@@ -790,6 +1272,8 @@ if(WIN32 AND ARTIFACT_AGILITY_SDK_DIR)
     if(NOT EXISTS "${_ARTIFACT_AGILITY_D3D12CORE}")
         message(FATAL_ERROR "Agility SDK D3D12Core.dll not found: ${_ARTIFACT_AGILITY_D3D12CORE}")
     endif()
+    message(STATUS "Agility SDK selected: ${ARTIFACT_AGILITY_SDK_DIR}")
+    message(STATUS "Agility SDK runtime: ${_ARTIFACT_AGILITY_D3D12CORE}")
     add_custom_command(TARGET Artifact POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${_ARTIFACT_AGILITY_D3D12CORE}"
@@ -799,6 +1283,35 @@ if(WIN32 AND ARTIFACT_AGILITY_SDK_DIR)
     )
 elseif(WIN32)
     message(STATUS "Agility SDK runtime deployment disabled; set ARTIFACT_AGILITY_SDK_DIR to enable it")
+endif()
+
+# DirectStorage is an optional Windows/DX12 fast path. The reader is compiled
+# with a portable QFile fallback when the SDK is absent, so Vulkan and machines
+# without the redistributable keep the same higher-level loading contract.
+if(WIN32 AND ARTIFACT_DIRECTSTORAGE_SDK_DIR)
+    set(_ARTIFACT_DIRECTSTORAGE_INCLUDE
+        "${ARTIFACT_DIRECTSTORAGE_SDK_DIR}/native/include")
+    set(_ARTIFACT_DIRECTSTORAGE_DLL
+        "${ARTIFACT_DIRECTSTORAGE_SDK_DIR}/native/bin/x64/dstorage.dll")
+    if(NOT EXISTS "${_ARTIFACT_DIRECTSTORAGE_INCLUDE}/dstorage.h")
+        message(FATAL_ERROR
+            "DirectStorage header not found: ${_ARTIFACT_DIRECTSTORAGE_INCLUDE}/dstorage.h")
+    endif()
+    if(NOT EXISTS "${_ARTIFACT_DIRECTSTORAGE_DLL}")
+        message(FATAL_ERROR "DirectStorage runtime not found: ${_ARTIFACT_DIRECTSTORAGE_DLL}")
+    endif()
+    target_include_directories(Artifact PRIVATE "${_ARTIFACT_DIRECTSTORAGE_INCLUDE}")
+    add_custom_command(TARGET Artifact POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${_ARTIFACT_DIRECTSTORAGE_DLL}"
+            "$<TARGET_FILE_DIR:Artifact>/dstorage.dll"
+        COMMENT "Deploying DirectStorage runtime"
+        VERBATIM
+    )
+    message(STATUS "DirectStorage SDK selected: ${ARTIFACT_DIRECTSTORAGE_SDK_DIR}")
+else()
+    message(STATUS
+        "DirectStorage SDK disabled; set ARTIFACT_DIRECTSTORAGE_SDK_DIR to enable the DX12 fast path")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -826,8 +1339,10 @@ if(WIN32)
     if(WINDEPLOYQT_EXECUTABLE)
         set(_ARTIFACT_DEPLOY_QT_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunWindeployqt.cmake")
         set(_ARTIFACT_VCPKG_INSTALLED "${VCPKG_INSTALLED}")
-        if(DEFINED VCPKG_INSTALLED_DIR AND EXISTS "${VCPKG_INSTALLED_DIR}")
-            set(_ARTIFACT_VCPKG_INSTALLED "${VCPKG_INSTALLED_DIR}")
+        if(NOT EXISTS "${_ARTIFACT_VCPKG_INSTALLED}/debug/bin"
+           AND DEFINED VCPKG_INSTALLED_DIR
+           AND EXISTS "${VCPKG_INSTALLED_DIR}/x64-windows")
+            set(_ARTIFACT_VCPKG_INSTALLED "${VCPKG_INSTALLED_DIR}/x64-windows")
         endif()
         if(EXISTS "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows")
             set(_ARTIFACT_VCPKG_INSTALLED "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows")
@@ -849,8 +1364,10 @@ if(WIN32)
     set(_ARTIFACT_COPY_RUNTIME_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyVcpkgRuntimeDeps.cmake")
     set(_ARTIFACT_COPY_QT_PLATFORM_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyQtPlatformPlugin.cmake")
     set(_ARTIFACT_VCPKG_INSTALLED "${VCPKG_INSTALLED}")
-    if(DEFINED VCPKG_INSTALLED_DIR AND EXISTS "${VCPKG_INSTALLED_DIR}")
-        set(_ARTIFACT_VCPKG_INSTALLED "${VCPKG_INSTALLED_DIR}")
+    if(NOT EXISTS "${_ARTIFACT_VCPKG_INSTALLED}/debug/bin"
+       AND DEFINED VCPKG_INSTALLED_DIR
+       AND EXISTS "${VCPKG_INSTALLED_DIR}/x64-windows")
+        set(_ARTIFACT_VCPKG_INSTALLED "${VCPKG_INSTALLED_DIR}/x64-windows")
     endif()
     if(EXISTS "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows")
         set(_ARTIFACT_VCPKG_INSTALLED "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows")
@@ -873,6 +1390,7 @@ if(WIN32)
         COMMENT "Deploying Qt platform plugin for Artifact"
         VERBATIM
     )
+
 endif()
 
 # ---------------------------------------------------------------------------

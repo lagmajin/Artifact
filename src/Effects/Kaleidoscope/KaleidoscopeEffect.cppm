@@ -21,6 +21,7 @@ import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
+import ImageProcessing.Distortion;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
 import Memory.SharedPtr;

@@ -57,6 +57,7 @@ Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
 class VignetteGPUImpl : public ArtifactEffectImplBase {
 public:
     float amount_=0.7f,radius_=0.8f,feather_=0.4f,cx_=0.5f,cy_=0.5f;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         VignetteCPUImpl cpu;

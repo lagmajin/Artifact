@@ -77,7 +77,7 @@ public:
   std::function<void(bool, bool, const QString &)> outputMonitorCallback_;
   QObject *owner_ = nullptr;
 
-  Impl(QObject *owner) {
+  Impl(QObject *owner) : currentFrame_(0) {
     owner_ = owner;
     timer_ = std::make_unique<ArtifactCore::PreciseTicker>();
     timer_->setCallback([this]() {

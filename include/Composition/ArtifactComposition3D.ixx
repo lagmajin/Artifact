@@ -52,6 +52,7 @@ export namespace Artifact {
  class ArtifactComposition3D :public ArtifactAbstractComposition{
  private: 
   class Impl;
+	Impl* impl_ = nullptr;
  	
   //std::unique_ptr<ArtifactCompositionPrivate> pImpl_;
  public:

@@ -12,6 +12,7 @@ module;
 #include <wobjectimpl.h>
 #include <OpenColorIO/OpenColorIO.h>
 #include <OpenColorIO/OpenColorTransforms.h>
+#include <OpenColorIO/OpenColorTypes.h>
 
 module Artifact.Color.OCIOManager;
 
@@ -22,6 +23,8 @@ import Color.GamutConversion;
 import Color.TransferFunction;
 import Core.Parallel;
 import Image.ImageF32x4_RGBA;
+
+namespace OCIO = OCIO_NAMESPACE;
 
 namespace Artifact {
 
@@ -259,8 +262,13 @@ QString ArtifactOCIOManager::workingSpace() const
 void ArtifactOCIOManager::setWorkingSpace(const QString& cs)
 {
     const QString normalized = cs.trimmed().left(4096);
-    if (impl_->config_.isValid() &&
-        !impl_->config_.colorSpaces().contains(normalized)) {
+    const auto colorSpaces = impl_->config_.colorSpaces();
+    const bool isKnownColorSpace = std::any_of(
+        colorSpaces.cbegin(), colorSpaces.cend(),
+        [&normalized](const ArtifactCore::OCIOColorSpace& colorSpace) {
+            return colorSpace.name == normalized;
+        });
+    if (impl_->config_.isValid() && !isKnownColorSpace) {
         return;
     }
     if (impl_->workingSpace_ == normalized)
@@ -648,8 +656,10 @@ QJsonObject ArtifactOCIOManager::gpuViewTransformDescriptor() const
             const char* samplerName = nullptr;
             unsigned width = 0;
             unsigned height = 0;
-            OCIO::TextureType channel = OCIO::TEXTURE_RGB_CHANNEL;
-            OCIO::TextureDimensions dimensions = OCIO::TEXTURE_2D;
+            OCIO::GpuShaderDesc::TextureType channel =
+                OCIO::GpuShaderDesc::TEXTURE_RGB_CHANNEL;
+            OCIO::GpuShaderDesc::TextureDimensions dimensions =
+                OCIO::GpuShaderDesc::TEXTURE_2D;
             OCIO::Interpolation interpolation = OCIO::INTERP_LINEAR;
             shader->getTexture(i, textureName, samplerName, width, height,
                                channel, dimensions, interpolation);
@@ -951,11 +961,16 @@ bool ArtifactOCIOManager::fromJson(const QJsonObject& obj)
     }
 
     if (impl_->config_.isValid()) {
-        const QStringList colorSpaces = impl_->config_.colorSpaces();
-        if (!colorSpaces.isEmpty() && !colorSpaces.contains(impl_->workingSpace_)) {
+        const auto colorSpaces = impl_->config_.colorSpaces();
+        const bool hasWorkingSpace = std::any_of(
+            colorSpaces.cbegin(), colorSpaces.cend(),
+            [this](const ArtifactCore::OCIOColorSpace& colorSpace) {
+                return colorSpace.name == impl_->workingSpace_;
+            });
+        if (!colorSpaces.isEmpty() && !hasWorkingSpace) {
             impl_->workingSpace_ = impl_->config_.workingSpace();
             if (impl_->workingSpace_.isEmpty()) {
-                impl_->workingSpace_ = colorSpaces.first();
+                impl_->workingSpace_ = colorSpaces.first().name;
             }
         }
         const QStringList displays = impl_->config_.displays();

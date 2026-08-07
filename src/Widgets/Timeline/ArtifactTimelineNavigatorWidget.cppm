@@ -198,11 +198,21 @@ namespace Artifact
   p.drawRoundedRect(rightHandleRect, 2, 2);
 
   if (currentFrame_ >= 0.0 && impl_->totalFrames_ > 1) {
-   const double ratio = std::clamp(currentFrame_ /
-                                       std::max(1.0, static_cast<double>(impl_->totalFrames_ - 1)),
-                                   0.0, 1.0);
-   const int currentX = kHandleHalfW + static_cast<int>(std::lround(ratio * usableWidth));
-   const int clampedCurrentX = std::clamp(currentX, trackRect.left(), trackRect.right());
+   // Keep the navigator playhead on the same visible-range mapping used by
+   // the ruler and TimelinePlayheadOverlay. Mapping against the full duration
+   // makes the two indicators diverge as soon as the navigator is zoomed.
+   const double totalFrames = static_cast<double>(impl_->totalFrames_);
+   const double visibleStart = static_cast<double>(start) * totalFrames;
+   const double visibleDuration = std::max(
+       0.01, static_cast<double>(end - start) * totalFrames);
+   const double visibleRatio = (currentFrame_ - visibleStart) / visibleDuration;
+   if (visibleRatio < 0.0 || visibleRatio > 1.0) {
+    return;
+   }
+   const int currentX = static_cast<int>(
+       std::lround(visibleRatio * static_cast<double>(width())));
+   const int clampedCurrentX =
+       std::clamp(currentX, 0, std::max(0, width() - 1));
    const qreal stemBottom = static_cast<qreal>(outer.bottom()) - 1.0;
    TimelinePlayheadDraw::drawPlayhead(
        p, static_cast<qreal>(clampedCurrentX), 0.0, stemBottom, false, 1.0,

@@ -5,6 +5,7 @@ module;
 
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 #include <wobjectdefs.h>
@@ -71,7 +72,11 @@ struct GPUTextureCacheStats {
     quint64 invalidationCount = 0;
     GPUTextureCacheInvalidationReason lastInvalidationReason =
         GPUTextureCacheInvalidationReason::Explicit;
+    size_t pendingUploadBytes = 0;
+    int pendingUploadCount = 0;
 };
+
+class DiligentUploadCoordinator;
 
 class GPUTextureCacheManager {
 public:
@@ -79,6 +84,7 @@ public:
     ~GPUTextureCacheManager();
 
     void setDevice(Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device,
+                   Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context,
                    Diligent::TEXTURE_FORMAT format = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB);
     void clearDevice();
 
@@ -122,11 +128,21 @@ private:
         quint64 generation = 0;
         QString ownerId;
         QString cacheKey;
+        QString fullKey;
         Diligent::RefCntAutoPtr<Diligent::ITexture> texture;
         Diligent::RefCntAutoPtr<Diligent::ITextureView> srv;
         ArtifactCore::GpuVideoFrame sourceGpuFrame;
         size_t memoryBytes = 0;
         quint64 lastUsedTick = 0;
+    };
+
+    struct PendingUpload {
+        quint64 ticketId = 0;
+        quint64 ticketGeneration = 0;
+        QString ownerId;
+        QString cacheKey;
+        QString fullKey;
+        size_t memoryBytes = 0;
     };
 
     QString makeKey(const QString& ownerId, const QString& cacheKey) const;
@@ -139,6 +155,7 @@ private:
                                                        size_t memoryBytes,
                                                        Diligent::TEXTURE_FORMAT format);
     void pruneLocked();
+    void processPendingUploadsLocked();
     void clearLocked();
     void eraseEntryByIdLocked(quint64 id);
 
@@ -148,6 +165,9 @@ private:
     QHash<quint64, Entry> entries_;
     QHash<QString, quint64> keyToId_;
     QHash<QString, QSet<quint64>> ownerToIds_;
+    QHash<quint64, PendingUpload> pendingUploads_;
+    QHash<QString, quint64> pendingKeyToTicket_;
+    DiligentUploadCoordinator* uploadCoordinator_ = nullptr;
     quint64 nextId_ = 1;
     quint64 generation_ = 1;
     quint64 usageTick_ = 1;

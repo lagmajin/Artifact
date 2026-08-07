@@ -575,6 +575,7 @@ namespace {
   QMatrix4x4 stereoLeftViewMatrix_;
   QMatrix4x4 stereoRightViewMatrix_;
   QMatrix4x4 stereoProjectionMatrix_;
+  QString lastSubmitDiagnosticSignature_;
 
 
   void initFrameQueries();
@@ -592,6 +593,10 @@ namespace {
    }
     submitter_.submit(cmdBuf_, ctx);
    primitiveRenderer3D_.flushGizmo3D();
+   // RenderCommandBuffer::reset() clears targetRTV. Mid-frame barriers (mesh
+   // draws, render-target changes, overlays) must leave the shared 2D command
+   // buffer armed for the target that is still active.
+   cmdBuf_.targetRTV = primitiveRenderer_.currentRTV();
   }
 
   ArtifactCore::MeshRenderer* meshRendererFor(const QString& key)
@@ -2345,7 +2350,6 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
       m_layerDepthSRV.Release();
       m_layerDepthTex.Release();
     }
-    primitiveRenderer3D_.setOverrideDSV(m_layerDepthDSV);
   }
   m_layerRTWidth = targetWidth;
   m_layerRTHeight = targetHeight;
@@ -2356,11 +2360,11 @@ Diligent::ITextureView* ArtifactIRenderer::Impl::activeDepthView() const
   if (m_overrideDepthDSV) {
    return m_overrideDepthDSV;
   }
-  if (m_layerDepthTex) {
-   return m_layerDepthDSV;
-  }
   if (auto sc = deviceManager_.swapChain()) {
    return sc->GetDepthBufferDSV();
+  }
+  if (m_layerDepthTex) {
+   return m_layerDepthDSV;
   }
   return nullptr;
 }
@@ -2402,11 +2406,11 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
   if (m_overrideColorRTV) {
    return m_overrideColorRTV;
   }
-  if (m_layerRT) {
-   return m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
-  }
   if (auto sc = deviceManager_.swapChain()) {
    return sc->GetCurrentBackBufferRTV();
+  }
+  if (m_layerRT) {
+   return m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
   }
   return nullptr;
  }
@@ -2727,6 +2731,42 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
     ++presentAttemptCount_;
     if (auto sc = deviceManager_.swapChain())
     {
+     std::size_t solidRectCount = 0;
+     std::size_t transformedSolidRectCount = 0;
+     std::size_t spriteCount = 0;
+     std::size_t transformedSpriteCount = 0;
+     for (const auto& packet : cmdBuf_.packets()) {
+      if (std::holds_alternative<SolidRectPkt>(packet)) {
+       ++solidRectCount;
+      } else if (std::holds_alternative<SolidRectXformPkt>(packet)) {
+       ++transformedSolidRectCount;
+      } else if (std::holds_alternative<SpritePkt>(packet)) {
+       ++spriteCount;
+      } else if (std::holds_alternative<SpriteXformPkt>(packet)) {
+       ++transformedSpriteCount;
+      }
+     }
+     auto* const queuedTarget = cmdBuf_.targetRTV;
+     auto* const backBufferTarget = sc->GetCurrentBackBufferRTV();
+     auto* const activeTarget = activeColorView();
+     const QString submitSignature =
+         QStringLiteral("packets=%1 targetNull=%2 targetIsBackBuffer=%3 "
+                        "targetIsActive=%4 activeIsBackBuffer=%5 "
+                        "solid=%6 solidXform=%7 sprite=%8 spriteXform=%9")
+             .arg(cmdBuf_.packets().size())
+             .arg(queuedTarget ? 0 : 1)
+             .arg(queuedTarget == backBufferTarget ? 1 : 0)
+             .arg(queuedTarget == activeTarget ? 1 : 0)
+             .arg(activeTarget == backBufferTarget ? 1 : 0)
+             .arg(solidRectCount)
+             .arg(transformedSolidRectCount)
+             .arg(spriteCount)
+             .arg(transformedSpriteCount);
+     if (submitSignature != lastSubmitDiagnosticSignature_) {
+      lastSubmitDiagnosticSignature_ = submitSignature;
+      qWarning().noquote()
+          << "[CompositionView][RendererSubmitReport]" << submitSignature;
+     }
      submitQueuedDraws(deviceManager_.immediateContext());
       try {
        sc->Present();

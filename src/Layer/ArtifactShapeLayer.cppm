@@ -2678,7 +2678,7 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
   layer->impl_->customPolygonClosed_ = obj["customPolygonClosed"].toBool(true);
   layer->impl_->customPolygonPoints_.clear();
   const QJsonArray customPolygonPoints = obj["customPolygonPoints"].toArray();
-  const int polygonPointCount = std::min(customPolygonPoints.size(), 100000);
+  const int polygonPointCount = std::min(static_cast<int>(customPolygonPoints.size()), 100000);
   layer->impl_->customPolygonPoints_.reserve(polygonPointCount);
   for (int pointIndex = 0; pointIndex < polygonPointCount; ++pointIndex) {
     const auto value = customPolygonPoints.at(pointIndex);
@@ -2694,7 +2694,7 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
   if (customPathArr.size() >= 3) {
     layer->impl_->customPathClosed_ = obj["customPathClosed"].toBool(true);
     layer->impl_->customPathVertices_.clear();
-    const int pathVertexCount = std::min(customPathArr.size(), 100000);
+    const int pathVertexCount = std::min(static_cast<int>(customPathArr.size()), 100000);
     layer->impl_->customPathVertices_.reserve(pathVertexCount);
     for (int vertexIndex = 0; vertexIndex < pathVertexCount; ++vertexIndex) {
       const auto val = customPathArr.at(vertexIndex);
@@ -2716,7 +2716,7 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
   }
   const QJsonArray operators = obj["shapeOperators"].toArray();
   layer->impl_->shapeOperators_.clear();
-  const int operatorCount = std::min(operators.size(), 128);
+  const int operatorCount = std::min(static_cast<int>(operators.size()), 128);
   layer->impl_->shapeOperators_.reserve(operatorCount);
   for (int operatorIndex = 0; operatorIndex < operatorCount; ++operatorIndex) {
     const auto val = operators.at(operatorIndex);
@@ -2740,7 +2740,7 @@ void ArtifactShapeLayer::restoreOperatorsFromJson(const QJsonArray& operators)
     return;
   }
   impl_->shapeOperators_.clear();
-  const int operatorCount = std::min(operators.size(), 128);
+  const int operatorCount = std::min(static_cast<int>(operators.size()), 128);
   impl_->shapeOperators_.reserve(operatorCount);
   for (int operatorIndex = 0; operatorIndex < operatorCount; ++operatorIndex) {
     const auto val = operators.at(operatorIndex);

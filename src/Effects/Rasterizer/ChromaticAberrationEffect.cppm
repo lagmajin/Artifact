@@ -63,6 +63,7 @@ Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
 class ChromaticAberrationGPUImpl : public ArtifactEffectImplBase {
 public:
     float redShift_=2.0f,blueShift_=2.0f,cx_=0.5f,cy_=0.5f;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
     void applyCPU(const ImageF32x4RGBAWithCache& s,ImageF32x4RGBAWithCache& d) override { cpu_.redShift_=redShift_;cpu_.blueShift_=blueShift_;cpu_.cx_=cx_;cpu_.cy_=cy_;cpu_.applyCPU(s,d); }
     void applyGPU(const ImageF32x4RGBAWithCache& src,ImageF32x4RGBAWithCache& dst) override {
         Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device; Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;

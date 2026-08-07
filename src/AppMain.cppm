@@ -24,7 +24,7 @@ module;
 // DirectX 12 Agility SDK retail runtime selection.
 // D3D12Core.dll is deployed beside the executable by CMake.
 extern "C" __declspec(dllexport) const UINT D3D12SDKVersion = 619;
-extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".";
+extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 
 // #include <pybind11/pybind11.h>
 #include <QAbstractButton>

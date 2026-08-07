@@ -462,16 +462,12 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  sendAction = new QAction("メインプロジェクトへ送信(&T)...", menu);
  sendAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_send_project.svg")));
  addToRenderQueueAction = new QAction(QStringLiteral("レンダーキューに追加(&Q)"), menu);
- addToRenderQueueAction->setAccessibleName(
-     QStringLiteral("Queue composition for rendering"));
- addToRenderQueueAction->setAccessibleDescription(
+ addToRenderQueueAction->setStatusTip(
      QStringLiteral("Queue the full composition range for rendering"));
  addToRenderQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
  addCurrentFrameToRenderQueueAction = new QAction(
      QStringLiteral("現在フレームをレンダーキューに追加"), menu);
- addCurrentFrameToRenderQueueAction->setAccessibleName(
-     QStringLiteral("Queue current frame for rendering"));
- addCurrentFrameToRenderQueueAction->setAccessibleDescription(
+ addCurrentFrameToRenderQueueAction->setStatusTip(
      QStringLiteral("Queue only the active composition frame for rendering"));
  addCurrentFrameToRenderQueueAction->setStatusTip(
      QStringLiteral("Queue only the active frame for rendering"));
@@ -479,9 +475,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
      QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
  addWorkAreaToRenderQueueAction = new QAction(
      QStringLiteral("ワークエリアをレンダーキューに追加"), menu);
- addWorkAreaToRenderQueueAction->setAccessibleName(
-     QStringLiteral("Queue work area for rendering"));
- addWorkAreaToRenderQueueAction->setAccessibleDescription(
+ addWorkAreaToRenderQueueAction->setStatusTip(
      QStringLiteral("Queue only the current work area for rendering"));
  addWorkAreaToRenderQueueAction->setStatusTip(
      QStringLiteral("Queue the current work area for rendering"));
@@ -489,9 +483,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
      QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));
  addSelectedLayersToRenderQueueAction = new QAction(
      QStringLiteral("選択レイヤーのみをレンダーキューに追加"), menu);
- addSelectedLayersToRenderQueueAction->setAccessibleName(
-     QStringLiteral("Queue selected layers for rendering"));
- addSelectedLayersToRenderQueueAction->setAccessibleDescription(
+ addSelectedLayersToRenderQueueAction->setStatusTip(
      QStringLiteral("Queue the selected layers for the full composition range"));
  addSelectedLayersToRenderQueueAction->setStatusTip(
      QStringLiteral("Queue only the currently selected layers"));
@@ -499,21 +491,15 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
      QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
  addSelectedCurrentFrameToRenderQueueAction = new QAction(
      QStringLiteral("選択レイヤーを現在フレームだけレンダー"), menu);
- addSelectedCurrentFrameToRenderQueueAction->setAccessibleName(
-     QStringLiteral("Queue selected layers at current frame"));
  addSelectedCurrentFrameToRenderQueueAction->setIcon(
      QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
  addSelectedWorkAreaToRenderQueueAction = new QAction(
      QStringLiteral("選択レイヤーをワークエリアだけレンダー"), menu);
- addSelectedWorkAreaToRenderQueueAction->setAccessibleName(
-     QStringLiteral("Queue selected layers for work area"));
  addSelectedWorkAreaToRenderQueueAction->setIcon(
      QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));
  advancedRenderQueueAction = new QAction(
      QStringLiteral("高度なレンダー設定を開く…"), menu);
- advancedRenderQueueAction->setAccessibleName(
-     QStringLiteral("Open advanced render queue settings"));
- advancedRenderQueueAction->setAccessibleDescription(
+ advancedRenderQueueAction->setStatusTip(
      QStringLiteral("Open the render manager to configure range, layers, region, and output settings"));
  advancedRenderQueueAction->setStatusTip(
      QStringLiteral("Open the render manager for detailed queue settings"));

@@ -915,6 +915,6 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
    return;
   }
   impl_->compositionNameEdit_->setFocus(Qt::OtherFocusReason);
-  impl_->compositionNameEdit_->selectAll();
+  impl_->compositionNameEdit_->startEdit();
  }
 }

@@ -505,7 +505,7 @@ public:
             sz = QSize(compSz.width(), compSz.height());
         }
 
-        FramePosition previousPosition;
+        FramePosition previousPosition(0);
         const bool restorePosition = composition_ &&
                                      composition_->framePosition() != position;
         if (restorePosition) {

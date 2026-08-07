@@ -116,6 +116,8 @@ QRectF clampRectToSource(const QRectF &rect, const QRectF &sourceBounds) {
 
 } // namespace
 
+} // namespace
+
 bool SourceCrop::enabled() const {
   return enabled_;
 }

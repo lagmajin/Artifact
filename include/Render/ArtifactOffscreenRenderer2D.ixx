@@ -46,6 +46,7 @@ export module Artifact.Render.Offscreen;
 
 
 import Size;
+import Core.Point2D;
 import Image.Raw;
 import Color.Float;
 import Transform._2D;

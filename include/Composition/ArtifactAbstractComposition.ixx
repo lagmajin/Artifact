@@ -347,6 +347,7 @@ export namespace Artifact {
   static ArtifactCompositionPtr fromJson(const QJsonDocument& doc);
 
   QList<ArtifactAbstractLayerPtr> allLayer();
+  QList<ArtifactAbstractLayerPtr> allLayer() const;
   const QList<ArtifactAbstractLayerPtr>& allLayerRef() const;
   QList<ArtifactAbstractLayerPtr> childLayersOf(const LayerID& parentId) const;
   bool shouldEvaluateLayer(const LayerID& layerId) const;

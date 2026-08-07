@@ -3,6 +3,7 @@ module;
 #include <array>
 #include <algorithm>
 #include <cstring>
+#include <cstdint>
 #include <limits>
 #include <cmath>
 
@@ -22,11 +23,19 @@ module;
 #include <QSizeF>
 #include <QFont>
 #include <QFutureWatcher>
+#include <QFileInfo>
 #include <QThread>
 #include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QDataStream>
+#include <QDir>
+#include <QFile>
 #include <QtConcurrent>
+#include <QSaveFile>
+#include <QStandardPaths>
 #include <OpenImageIO/imagebuf.h>
 #include <OpenImageIO/imagebufalgo.h>
+#include <OpenImageIO/filesystem.h>
 #include <OpenImageIO/imageio.h>
 #include <opencv2/opencv.hpp>
 #include <wobjectimpl.h>
@@ -36,6 +45,7 @@ module Artifact.Layer.Image;
 import Artifact.Layer.CloneEffectSupport;
 import Media.ImageSequenceSource;
 import Artifact.Color.OCIOManager;
+import Artifact.IO.AsyncAssetReadScheduler;
 
 import std;
 import Artifact.Layers.Abstract._2D;
@@ -219,6 +229,199 @@ ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> loadFloatImageViaOIIO(
     return image;
 }
 
+struct LoadedImagePair {
+    QImage image;
+    ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> floatImage;
+};
+
+constexpr quint32 kDerivedImageMagic = 0x41534449u; // ASDI
+constexpr quint32 kDerivedImageVersion = 1u;
+
+QString derivedImageCachePath(const QFileInfo& sourceInfo, int subimageIndex)
+{
+    const QByteArray identity =
+        sourceInfo.absoluteFilePath().toUtf8() + '\n' +
+        QByteArray::number(sourceInfo.lastModified().toMSecsSinceEpoch()) + '\n' +
+        QByteArray::number(sourceInfo.size()) + '\n' +
+        QByteArray::number(subimageIndex) + '\n' +
+        QByteArrayLiteral("f32x4-linear-v1");
+    const QString digest = QString::fromLatin1(
+        QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
+    QDir root(QStandardPaths::writableLocation(QStandardPaths::CacheLocation));
+    root.mkpath(QStringLiteral("derived-images"));
+    return root.filePath(QStringLiteral("derived-images/%1.asdi").arg(digest));
+}
+
+LoadedImagePair decodeDerivedImage(const QByteArray& bytes,
+                                   std::uint64_t expectedRevision)
+{
+    QByteArray storage = bytes;
+    QDataStream stream(&storage, QIODevice::ReadOnly);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    quint32 magic = 0;
+    quint32 version = 0;
+    quint64 revision = 0;
+    qint32 width = 0;
+    qint32 height = 0;
+    quint64 payloadBytes = 0;
+    stream >> magic >> version >> revision >> width >> height >> payloadBytes;
+    const quint64 expectedBytes = width > 0 && height > 0
+        ? static_cast<quint64>(width) * static_cast<quint64>(height) *
+              4ull * sizeof(float)
+        : 0;
+    if (stream.status() != QDataStream::Ok || magic != kDerivedImageMagic ||
+        version != kDerivedImageVersion || revision != expectedRevision ||
+        width <= 0 || height <= 0 || width > 16384 || height > 16384 ||
+        payloadBytes != expectedBytes ||
+        payloadBytes > static_cast<quint64>(storage.size())) {
+        return {};
+    }
+    const qint64 payloadOffset = stream.device()->pos();
+    if (payloadOffset < 0 || payloadOffset > storage.size() || payloadBytes >
+            static_cast<quint64>(storage.size() - payloadOffset)) return {};
+    std::vector<float> pixels(static_cast<size_t>(width) *
+                              static_cast<size_t>(height) * 4u);
+    std::memcpy(pixels.data(), storage.constData() + payloadOffset,
+                static_cast<size_t>(payloadBytes));
+    LoadedImagePair result;
+    result.floatImage = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>();
+    result.floatImage->setFromRGBA32F(
+        pixels.data(), width, height);
+    if (result.floatImage->isEmpty()) return {};
+    result.image = result.floatImage->toQImage();
+    return result;
+}
+
+void writeDerivedImage(const QString& cachePath,
+                       std::uint64_t sourceRevision,
+                       const ArtifactCore::ImageF32x4_RGBA& image)
+{
+    if (image.isEmpty() || !image.rgba32fData()) return;
+    const quint64 payloadBytes = static_cast<quint64>(image.width()) *
+        static_cast<quint64>(image.height()) * 4ull * sizeof(float);
+    if (payloadBytes > static_cast<quint64>(std::numeric_limits<qsizetype>::max())) return;
+    QSaveFile file(cachePath);
+    if (!file.open(QIODevice::WriteOnly)) return;
+    QDataStream stream(&file);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    stream << kDerivedImageMagic << kDerivedImageVersion
+           << static_cast<quint64>(sourceRevision)
+           << static_cast<qint32>(image.width())
+           << static_cast<qint32>(image.height()) << payloadBytes;
+    if (stream.status() != QDataStream::Ok ||
+        file.write(reinterpret_cast<const char*>(image.rgba32fData()),
+                   static_cast<qint64>(payloadBytes)) !=
+            static_cast<qint64>(payloadBytes) ||
+        !file.commit()) {
+        file.cancelWriting();
+    }
+}
+
+LoadedImagePair loadImagePairViaAsyncReader(const QString& path,
+                                            std::uint64_t generation,
+                                            int subimageIndex = -1)
+{
+    static AsyncAssetReadScheduler scheduler(3);
+    const QFileInfo sourceInfo(path);
+    AsyncAssetReadRequest request;
+    request.key = QStringLiteral("still:%1:subimage:%2")
+                      .arg(sourceInfo.absoluteFilePath())
+                      .arg(subimageIndex);
+    request.path = sourceInfo.absoluteFilePath();
+    request.generation = generation;
+    request.sourceRevision =
+        static_cast<std::uint64_t>(sourceInfo.lastModified().toMSecsSinceEpoch()) ^
+        static_cast<std::uint64_t>(std::max<qint64>(0, sourceInfo.size()));
+    request.priority = AsyncAssetReadPriority::PlaybackNext;
+    const QString cachePath = derivedImageCachePath(sourceInfo, subimageIndex);
+    if (QFileInfo::exists(cachePath)) {
+        AsyncAssetReadRequest cacheRequest = request;
+        cacheRequest.key.prepend(QStringLiteral("derived:"));
+        cacheRequest.path = cachePath;
+        const AsyncAssetReadTicket cacheTicket = scheduler.enqueue(cacheRequest);
+        if (cacheTicket.isValid()) {
+            AsyncAssetReadResult cacheRead;
+            const bool cacheCompleted =
+                scheduler.waitForResult(cacheTicket, cacheRead);
+            scheduler.release(cacheTicket);
+            if (cacheCompleted && cacheRead.succeeded()) {
+                LoadedImagePair cached =
+                    decodeDerivedImage(cacheRead.bytes, request.sourceRevision);
+                if (cached.floatImage) return cached;
+            }
+        }
+    }
+    const AsyncAssetReadTicket ticket = scheduler.enqueue(request);
+    if (!ticket.isValid()) {
+        return {};
+    }
+    AsyncAssetReadResult readResult;
+    const bool completed = scheduler.waitForResult(ticket, readResult);
+    scheduler.release(ticket);
+    if (!completed || !readResult.succeeded() || readResult.bytes.isEmpty()) {
+        return {};
+    }
+
+    OIIO::Filesystem::IOMemReader memoryReader(
+        readResult.bytes.constData(),
+        static_cast<size_t>(readResult.bytes.size()));
+    const std::string utf8Path = path.toUtf8().toStdString();
+    const int readSubimage = std::max(0, subimageIndex);
+    OIIO::ImageBuf source(utf8Path, readSubimage, 0, {}, nullptr,
+                          &memoryReader);
+    if (!source.read(readSubimage, 0, true, OIIO::TypeDesc::FLOAT)) {
+        return {};
+    }
+
+    OIIO::ImageBuf oriented = OIIO::ImageBufAlgo::reorient(source);
+    const OIIO::ImageSpec& spec = oriented.spec();
+    if (spec.width <= 0 || spec.height <= 0 || spec.nchannels <= 0 ||
+        spec.width > 16384 || spec.height > 16384) {
+        return {};
+    }
+
+    OIIO::ImageBuf rgba;
+    if (spec.nchannels >= 4) {
+        const std::array<int, 4> order{0, 1, 2, 3};
+        rgba = OIIO::ImageBufAlgo::channels(oriented, 4, order);
+    } else if (spec.nchannels == 3) {
+        const std::array<int, 4> order{0, 1, 2, -1};
+        const std::array<float, 4> values{0.0f, 0.0f, 0.0f, 1.0f};
+        rgba = OIIO::ImageBufAlgo::channels(oriented, 4, order, values);
+    } else if (spec.nchannels == 2) {
+        const std::array<int, 4> order{0, 0, 0, 1};
+        const std::array<float, 4> values{0.0f, 0.0f, 0.0f, 1.0f};
+        rgba = OIIO::ImageBufAlgo::channels(oriented, 4, order, values);
+    } else {
+        const std::array<int, 4> order{0, 0, 0, -1};
+        const std::array<float, 4> values{0.0f, 0.0f, 0.0f, 1.0f};
+        rgba = OIIO::ImageBufAlgo::channels(oriented, 4, order, values);
+    }
+
+    LoadedImagePair result;
+    result.image = QImage(spec.width, spec.height, QImage::Format_RGBA8888);
+    if (result.image.isNull() ||
+        !rgba.get_pixels(OIIO::ROI::All(), OIIO::TypeDesc::UINT8,
+                         result.image.bits())) {
+        return {};
+    }
+
+    std::vector<float> pixels(static_cast<size_t>(spec.width) *
+                              static_cast<size_t>(spec.height) * 4u);
+    if (!rgba.get_pixels(OIIO::ROI::All(), OIIO::TypeDesc::FLOAT,
+                         pixels.data())) {
+        return {};
+    }
+    result.floatImage =
+        ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>();
+    result.floatImage->setFromRGBA32F(pixels.data(), spec.width, spec.height);
+    if (result.floatImage->isEmpty()) {
+        return {};
+    }
+    writeDerivedImage(cachePath, request.sourceRevision, *result.floatImage);
+    return result;
+}
+
 QImage makeMissingImagePlaceholder(const QSize& size = QSize(256, 256), const QString& label = QStringLiteral("Image unavailable"))
 {
     const QSize safeSize = size.isValid() ? size.expandedTo(QSize(64, 64)) : QSize(256, 256);
@@ -349,10 +552,12 @@ public:
         if (sequenceCachedIndex_ == resolvedFrame && cache_) {
             return true;
         }
-        const QImage frame = sequenceSource_->frameAt(resolvedFrame);
-        if (frame.isNull()) {
-            clearSequenceFrameCache();
-            return false;
+        QImage frame;
+        if (!sequenceSource_->tryFrameAt(resolvedFrame, frame)) {
+            if (resolvedFrame + 1 < frameCount) {
+                sequenceSource_->prefetchFrame(resolvedFrame + 1);
+            }
+            return cache_ != nullptr;
         }
         if (frame.width() <= 0 || frame.height() <= 0 ||
             frame.width() > 16384 || frame.height() > 16384) {
@@ -382,9 +587,11 @@ public:
             [path, generation, subimageIndex]() -> PrefetchResult {
                 ArtifactCore::ScopedThreadName threadName(
                     QStringLiteral("ImageLayer/prefetch:%1").arg(QFileInfo(path).fileName()));
-                return PrefetchResult{generation, loadImageViaOIIO(path, nullptr, nullptr,
-                                                                    subimageIndex),
-                                      loadFloatImageViaOIIO(path, subimageIndex)};
+                LoadedImagePair loaded =
+                    loadImagePairViaAsyncReader(path, generation,
+                                                subimageIndex);
+                return PrefetchResult{generation, std::move(loaded.image),
+                                      std::move(loaded.floatImage)};
             });
         prefetchWatcher_.setFuture(prefetchFuture_);
     }

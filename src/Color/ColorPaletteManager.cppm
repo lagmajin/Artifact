@@ -30,6 +30,8 @@ const bool registeredColorPalette = [] {
     return true;
 }();
 
+} // namespace
+
 
 namespace {
 

@@ -451,7 +451,7 @@ PatternOverlayEffect::PatternOverlayEffect() {
     setDisplayName(UniString("Pattern Overlay"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(ArtifactCore::makeShared<PatternOverlayCPUImpl>());
-    setComputeMode(ComputeMode::CPU_ONLY);
+    setComputeMode(ComputeMode::CPU);
 }
 
 PatternOverlayEffect::~PatternOverlayEffect() = default;

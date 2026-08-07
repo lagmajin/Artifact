@@ -2046,7 +2046,7 @@ namespace Artifact
                                         ext == QLatin1String("png") || ext == QLatin1String("exr") ||
                                         ext == QLatin1String("tiff") || ext == QLatin1String("tif") ||
                                         ext == QLatin1String("jpg") || ext == QLatin1String("jpeg") ||
-                                        ext == QLatin1String("bmp"));
+                                        ext == QLatin1String("bmp");
                 
                 if (isSequence) {
                     // シーケンスの場合、各フレームの存在をチェック
@@ -2096,7 +2096,7 @@ namespace Artifact
                 QString baseName = fi.completeBaseName();
                         QString ext = fi.suffix();
                         if (ext.isEmpty()) {
-                            ext = Artifact::sequenceExtension(job.outputFormat, job.codec);
+                            ext = Artifact::sequenceExtension(QString(), QString());
                         }
                 
                 // アンダースコア区切りのフレーム番号を想定 (e.g., render_0001.png)
@@ -2234,8 +2234,6 @@ namespace Artifact
             if (index < 0 || index >= jobs.size()) return;
             jobs[index].progress = 100;
             jobs[index].status = ArtifactRenderJob::Status::Completed;
-            completedHistory.append(jobs[index]);
-            while (completedHistory.size() > 256) completedHistory.removeFirst();
             if (jobProgressChanged) jobProgressChanged(index, jobs[index].progress);
             if (jobStatusChanged) jobStatusChanged(index, jobs[index].status);
             if (jobUpdated) jobUpdated(index);
@@ -2892,6 +2890,8 @@ namespace Artifact
 
         ArtifactRenderQueueManager queueManager;
         QList<ArtifactRenderJob> completedHistory;
+        void expandEnabledRenderPasses();
+        void expandSelectedFrameRanges();
         void* ffmpegEncoder = nullptr; // Temporarily void* to bypass build error
         std::unordered_map<int, ArtifactCore::ImageF32x4_RGBA> frameBuffer;
         int nextFrameToEncode = 0;
@@ -3899,8 +3899,8 @@ namespace Artifact
             const QSize compSize = comp->effectiveCompositionSize();
             const bool hasCrop = job.regionMode != ArtifactRenderJob::RegionMode::Full &&
                 job.cropW > 0 && job.cropH > 0;
-                const int baseW = hasCrop ? output.beauty.width() : compSize.width();
-                const int baseH = hasCrop ? output.beauty.height() : compSize.height();
+                const int baseW = hasCrop ? job.cropW : compSize.width();
+                const int baseH = hasCrop ? job.cropH : compSize.height();
             int width = std::max(16, job.resolutionWidth);
             int height = std::max(16, job.resolutionHeight);
             switch (job.resolutionPreset) {
@@ -3949,7 +3949,8 @@ namespace Artifact
 
             QHash<QString, LayerSurfaceCacheEntry> surfaceCache;
             GPUTextureCacheManager gpuTextureCacheManager;
-            gpuTextureCacheManager.setDevice(gpuRenderer_->device());
+            gpuTextureCacheManager.setDevice(
+                gpuRenderer_->device(), gpuRenderer_->immediateContext());
 
             gpuRenderer_->setClearColor(comp->backgroundColor());
             gpuRenderer_->clear();
@@ -5012,7 +5013,12 @@ namespace Artifact
             }
         }
 
-        void expandEnabledRenderPasses() {
+        impl_->queueManager.updateJob(index, job);
+        impl_->syncCoreQueueModel();
+        return true;
+    }
+
+    void ArtifactRenderQueueService::Impl::expandEnabledRenderPasses() {
             const int count = queueManager.jobCount();
             QList<ArtifactRenderJob> expanded;
             expanded.reserve(count);
@@ -5087,7 +5093,7 @@ namespace Artifact
             for (const auto& job : expanded) queueManager.addJob(job);
         }
 
-        void expandSelectedFrameRanges() {
+    void ArtifactRenderQueueService::Impl::expandSelectedFrameRanges() {
             const int count = queueManager.jobCount();
             QList<ArtifactRenderJob> expanded;
             expanded.reserve(count);
@@ -5163,11 +5169,6 @@ namespace Artifact
             queueManager.removeAllJobs();
             for (const auto& job : expanded) queueManager.addJob(job);
         }
-        impl_->queueManager.updateJob(index, job);
-        impl_->syncCoreQueueModel();
-        return true;
-    }
-
     bool ArtifactRenderQueueService::jobOutputSettingsAt(
         int index,
         QString* outputFormat,
@@ -6877,7 +6878,9 @@ namespace Artifact
                 std::unique_ptr<GPUTextureCacheManager> gpuTextureCacheManager;
                 if (useGpuBackend && success.load(std::memory_order_relaxed)) {
                     gpuTextureCacheManager = std::make_unique<GPUTextureCacheManager>();
-                    gpuTextureCacheManager->setDevice(impl_->gpuRenderer_->device());
+                    gpuTextureCacheManager->setDevice(
+                        impl_->gpuRenderer_->device(),
+                        impl_->gpuRenderer_->immediateContext());
                 }
 
                 if (wantsIntegratedRender && hasCompositionAudio) {

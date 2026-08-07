@@ -421,11 +421,9 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                          QStringLiteral("MaterialVS/neutral/colorize.svg"),
                          QStringLiteral("Material/colorize.svg")},
              "ウェイト", "リグのウェイトをペイント", QKeySequence());
-  impl_->rigSelectTool_->setAccessibleName(QStringLiteral("Rig Select Tool"));
-  impl_->rigSelectTool_->setAccessibleDescription(
+  impl_->rigSelectTool_->setStatusTip(
       QStringLiteral("Select rig bones and controls, then drag bones to pose them."));
-  impl_->rigWeightTool_->setAccessibleName(QStringLiteral("Rig Weight Tool"));
-  impl_->rigWeightTool_->setAccessibleDescription(
+  impl_->rigWeightTool_->setStatusTip(
       QStringLiteral("Inspect the selected bone's mesh weight heatmap."));
   createTool(impl_->trackPointTool_,
              QStringList{QString::fromLatin1(kToolbarIconCamera),
@@ -433,8 +431,7 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                          QStringLiteral("Material/track_changes.svg")},
              "トラックポイント", "ポイントトラッキングツール (T)",
              QKeySequence(Qt::Key_T));
-  impl_->trackPointTool_->setAccessibleName(QStringLiteral("Track Point Tool"));
-  impl_->trackPointTool_->setAccessibleDescription(
+  impl_->trackPointTool_->setStatusTip(
       QStringLiteral("Place a tracking point in the composition viewer and track it across frames."));
   createTool(impl_->scrubPreviewTool_,
              QStringList{QString::fromLatin1(kToolbarIconScrubPreview),

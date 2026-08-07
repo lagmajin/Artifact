@@ -2,6 +2,7 @@
 #include <utility>
 
 #include <wobjectdefs.h>
+#include <QEvent>
 #include <QWidget>
 #include <QScrollBar>
 export module Artifact.Widgets.Test.ScrollPoC;

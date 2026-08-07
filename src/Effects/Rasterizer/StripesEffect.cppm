@@ -54,6 +54,7 @@ Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
 class StripesGPUImpl : public ArtifactEffectImplBase {
 public:
     float frequency_=10,angle_=0,thickness_=0.5f,offset_=0;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
     void applyCPU(const ImageF32x4RGBAWithCache& src,ImageF32x4RGBAWithCache& dst) override {
         StripesCPUImpl cpu; cpu.frequency_=frequency_;cpu.angle_=angle_;cpu.thickness_=thickness_;cpu.offset_=offset_;cpu.applyCPU(src,dst);
     }

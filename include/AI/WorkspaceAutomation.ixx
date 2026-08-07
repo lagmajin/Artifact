@@ -616,7 +616,7 @@ public:
             QStringList layerIds;
             if (!args.isEmpty()) {
                 const QVariant first = args.value(0);
-                if (first.canConvert<QStringList>()) {
+                if (first.typeId() == QMetaType::QStringList) {
                     layerIds = first.toStringList();
                 } else {
                     for (const QVariant& value : first.toList()) {
@@ -2940,7 +2940,7 @@ private:
         if (!property || !property->isAnimatable()) {
             return false;
         }
-        const auto rate = std::max(1.0, playback->frameRate().framerate());
+        const auto rate = std::max<double>(1.0, playback->frameRate().framerate());
         property->addKeyFrame(RationalTime(frame, rate), value);
         ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
             comp->id().toString(), layer->id().toString(),
@@ -3381,7 +3381,7 @@ private:
 
         // Use KeyframeModel to handle the operation
         static ArtifactTimelineKeyframeModel keyframeModel;
-        const auto frameRate = std::max(1.0, currentComp->frameRate().framerate());
+        const auto frameRate = std::max<double>(1.0, currentComp->frameRate().framerate());
         RationalTime time(frameNumber, frameRate);
         bool added = keyframeModel.addKeyframe(
             currentComp->id(),
@@ -3426,7 +3426,7 @@ private:
         );
 
         QVariantList result;
-        const auto frameRate = std::max(1.0, currentComp->frameRate().framerate());
+        const auto frameRate = std::max<double>(1.0, currentComp->frameRate().framerate());
         for (const auto& kf : keyframes) {
             QString interpolationStr = QStringLiteral("Linear");
             if (kf.interpolation == InterpolationType::Constant) {
@@ -5199,7 +5199,7 @@ private:
         plan.confirmation.targetIds = plan.dryRun.targetIds;
         plan.confirmation.required = true;
         plan.confirmation.undoAvailable = false;
-        const auto job = renderQueueJobByIndex(jobIndex).toMap();
+        const auto job = renderQueueJobByIndex(jobIndex);
         const bool exists = !job.isEmpty();
         plan.dryRun.wouldChange = exists;
         plan.dryRun.wouldFail = !exists;
@@ -5227,7 +5227,7 @@ private:
         dryRun.operationName = QStringLiteral("removeRenderQueueAt");
         dryRun.targetIds = {QString::number(jobIndex)};
         dryRun.riskLevel = ArtifactCore::SafeWriteRiskLevel::High;
-        const bool exists = !renderQueueJobByIndex(jobIndex).toMap().isEmpty();
+        const bool exists = !renderQueueJobByIndex(jobIndex).isEmpty();
         dryRun.wouldChange = exists;
         dryRun.wouldFail = !exists;
         dryRun.warnings << (exists ? QStringLiteral("Render queue removal cannot be undone automatically.")
@@ -5778,8 +5778,8 @@ private:
             const auto yResult = setKeyframe(
                 layerId, QStringLiteral("transform.position.y"), frame, y,
                 QStringLiteral("Linear"));
-            if (xResult.value(QStringLiteral("success")).toBool() &&
-                yResult.value(QStringLiteral("success")).toBool()) {
+            if (xResult.toMap().value(QStringLiteral("success")).toBool() &&
+                yResult.toMap().value(QStringLiteral("success")).toBool()) {
                 ++added;
                 previousFrame = frame;
             } else {
@@ -5821,7 +5821,7 @@ private:
                     const auto result = setKeyframe(
                         layerId, QStringLiteral("transform.rotation"), frame, degrees,
                         QStringLiteral("Linear"));
-                    if (result.value(QStringLiteral("success")).toBool()) {
+                    if (result.toMap().value(QStringLiteral("success")).toBool()) {
                         ++added;
                     } else {
                         ++rejected;

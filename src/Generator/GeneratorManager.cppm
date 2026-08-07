@@ -42,7 +42,7 @@ bool GeneratorManager::add(const QString& id, std::shared_ptr<CloneGenerator> ge
 
 bool GeneratorManager::remove(const QString& id) {
     std::lock_guard lock(state().mutex);
-    return state().generators.erase(id.trimmed()) != 0;
+    return state().generators.remove(id.trimmed()) != 0;
 }
 
 std::shared_ptr<CloneGenerator> GeneratorManager::get(const QString& id) const {

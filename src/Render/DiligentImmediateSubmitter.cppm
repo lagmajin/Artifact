@@ -664,7 +664,12 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     recordCtx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION); // H2
     m_currentPSO_ = nullptr; // H3: reset PSO dedup state per submit
     m_batchSolidRectCount_ = 0;
-    const bool batchReady = m_batch_solid_rect_vb_ && m_batch_solid_rect_ib_
+    // The transformed-rectangle batch currently produces a clear-only frame
+    // on the swap-chain path. Keep its resources intact, but use the proven
+    // per-packet submitters until the batched shader/input layout is validated.
+    constexpr bool kSolidRectBatchValidated = false;
+    const bool batchReady = kSolidRectBatchValidated
+                         && m_batch_solid_rect_vb_ && m_batch_solid_rect_ib_
                          && m_draw_batch_solid_rect_pso_and_srb.pPSO
                          && !m_batch_solid_rect_cpu_.empty();
 

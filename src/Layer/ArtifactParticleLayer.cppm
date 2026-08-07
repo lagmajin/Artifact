@@ -82,7 +82,7 @@ ParticleEmitter* firstEmitterOrCreate(ParticleSystem* system)
 }
 
 ArtifactCore::ParticleRenderData transformParticleRenderData(
-    const ParticleRenderData& source,
+    const ArtifactCore::ParticleRenderData& source,
     const QTransform& transform,
     float opacity)
 {
@@ -156,9 +156,36 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
     return transformed;
 }
 
-ArtifactCore::ParticleRenderData applyParticleRenderLOD(
-    const ParticleRenderData& source,
-    float screenScale);
+ArtifactCore::ParticleRenderData toCoreParticleRenderData(
+    const ParticleRenderData& source)
+{
+    ArtifactCore::ParticleRenderData converted;
+    converted.frameNumber = source.frameNumber;
+    converted.particles.reserve(source.particles.size());
+    for (const auto& particle : source.particles) {
+        ArtifactCore::ParticleVertex vertex;
+        vertex.px = particle.px;
+        vertex.py = particle.py;
+        vertex.pz = particle.pz;
+        vertex.vx = particle.vx;
+        vertex.vy = particle.vy;
+        vertex.vz = particle.vz;
+        vertex.r = particle.r;
+        vertex.g = particle.g;
+        vertex.b = particle.b;
+        vertex.a = particle.a;
+        vertex.size = particle.size;
+        vertex.stretch = particle.stretch;
+        vertex.rotation = particle.rotation;
+        vertex.age = particle.age;
+        vertex.lifetime = particle.lifetime;
+        vertex.spriteFrame = particle.spriteFrame;
+        vertex.spriteRows = particle.spriteRows;
+        vertex.spriteCols = particle.spriteCols;
+        converted.particles.push_back(vertex);
+    }
+    return converted;
+}
 
 void boostDebugParticleRenderData(ArtifactCore::ParticleRenderData& data)
 {
@@ -195,6 +222,10 @@ QVector3D defaultEmitterPositionForPreset(const QString& presetName,
 }
 
 } // namespace
+
+ArtifactCore::ParticleRenderData applyParticleRenderLOD(
+    const ArtifactCore::ParticleRenderData& source,
+    float screenScale);
 
 // ==================== ArtifactParticleLayer::Impl ====================
 
@@ -325,7 +356,8 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
         const QTransform globalTransform = getGlobalTransform();
         const float screenScale = std::max(std::hypot(globalTransform.m11(), globalTransform.m21()),
                                            std::hypot(globalTransform.m12(), globalTransform.m22()));
-        const auto lodData = applyParticleRenderLOD(sourceData, screenScale);
+        const auto lodData = applyParticleRenderLOD(
+            toCoreParticleRenderData(sourceData), screenScale);
         qInfo() << "[ParticleLayer] GPU path: particleCount=" << lodData.particles.size()
                 << "sourceCount=" << sourceData.particles.size();
         if (!lodData.particles.empty()) {
@@ -2632,7 +2664,7 @@ SharedPtr<ArtifactParticleLayer> createParticleLayer()
 }
 
 ArtifactCore::ParticleRenderData applyParticleRenderLOD(
-    const ParticleRenderData& source,
+    const ArtifactCore::ParticleRenderData& source,
     float screenScale)
 {
     if (source.particles.size() < 256 || screenScale >= 0.75f) return source;
@@ -2691,7 +2723,8 @@ void ArtifactParticleDebugLayer::draw(ArtifactIRenderer* renderer)
         const QTransform globalTransform = getGlobalTransform();
         const float screenScale = std::max(std::hypot(globalTransform.m11(), globalTransform.m21()),
                                            std::hypot(globalTransform.m12(), globalTransform.m22()));
-        const auto lodData = applyParticleRenderLOD(sourceData, screenScale);
+        const auto lodData = applyParticleRenderLOD(
+            toCoreParticleRenderData(sourceData), screenScale);
         qInfo() << "[ParticleDebugLayer] GPU path: particleCount=" << lodData.particles.size()
                 << "sourceCount=" << sourceData.particles.size();
         if (!lodData.particles.empty()) {

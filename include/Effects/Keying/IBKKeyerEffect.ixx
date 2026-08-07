@@ -13,7 +13,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;
-import ImageProcessing:IBKKeyer;
+import ImageProcessing;
 import Memory.SharedPtr;
 
 export namespace Artifact {

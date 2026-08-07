@@ -26,19 +26,13 @@ file(MAKE_DIRECTORY "${_plugins_iconengines_dst}")
 set(_candidates "")
 if(CONFIG STREQUAL "Debug")
     list(APPEND _candidates
-        "${VCPKG_INSTALLED}/x64-windows/debug/Qt6/plugins/platforms/qwindowsd.dll"
-        "${VCPKG_INSTALLED}/x64-windows/Qt6/plugins/platforms/qwindowsd.dll"
         "${VCPKG_INSTALLED}/debug/Qt6/plugins/platforms/qwindowsd.dll"
         "${VCPKG_INSTALLED}/Qt6/plugins/platforms/qwindowsd.dll"
-        "${VCPKG_INSTALLED}/x64-windows/debug/Qt6/plugins/platforms/qwindows.dll"
-        "${VCPKG_INSTALLED}/x64-windows/Qt6/plugins/platforms/qwindows.dll"
         "${VCPKG_INSTALLED}/debug/Qt6/plugins/platforms/qwindows.dll"
         "${VCPKG_INSTALLED}/Qt6/plugins/platforms/qwindows.dll"
     )
 else()
     list(APPEND _candidates
-        "${VCPKG_INSTALLED}/x64-windows/Qt6/plugins/platforms/qwindows.dll"
-        "${VCPKG_INSTALLED}/x64-windows/debug/Qt6/plugins/platforms/qwindows.dll"
         "${VCPKG_INSTALLED}/Qt6/plugins/platforms/qwindows.dll"
         "${VCPKG_INSTALLED}/debug/Qt6/plugins/platforms/qwindows.dll"
     )
@@ -69,16 +63,12 @@ endif()
 set(_svg_icon_candidates "")
 if(CONFIG STREQUAL "Debug")
     list(APPEND _svg_icon_candidates
-        "${VCPKG_INSTALLED}/x64-windows/debug/Qt6/plugins/iconengines/qsvgicond.dll"
         "${VCPKG_INSTALLED}/debug/Qt6/plugins/iconengines/qsvgicond.dll"
-        "${VCPKG_INSTALLED}/x64-windows/Qt6/plugins/iconengines/qsvgicond.dll"
         "${VCPKG_INSTALLED}/Qt6/plugins/iconengines/qsvgicond.dll"
     )
 else()
     list(APPEND _svg_icon_candidates
-        "${VCPKG_INSTALLED}/x64-windows/Qt6/plugins/iconengines/qsvgicon.dll"
         "${VCPKG_INSTALLED}/Qt6/plugins/iconengines/qsvgicon.dll"
-        "${VCPKG_INSTALLED}/x64-windows/debug/Qt6/plugins/iconengines/qsvgicon.dll"
         "${VCPKG_INSTALLED}/debug/Qt6/plugins/iconengines/qsvgicon.dll"
     )
 endif()
@@ -112,23 +102,15 @@ endif()
 set(_tls_candidates "")
 if(CONFIG STREQUAL "Debug")
     list(APPEND _tls_candidates
-        "${VCPKG_INSTALLED}/x64-windows/debug/Qt6/plugins/tls/qopensslbackendd.dll"
-        "${VCPKG_INSTALLED}/x64-windows/Qt6/plugins/tls/qopensslbackendd.dll"
         "${VCPKG_INSTALLED}/debug/Qt6/plugins/tls/qopensslbackendd.dll"
         "${VCPKG_INSTALLED}/Qt6/plugins/tls/qopensslbackendd.dll"
-        "${VCPKG_INSTALLED}/x64-windows/debug/Qt6/plugins/tls/qopensslbackend.dll"
-        "${VCPKG_INSTALLED}/x64-windows/Qt6/plugins/tls/qopensslbackend.dll"
         "${VCPKG_INSTALLED}/debug/Qt6/plugins/tls/qopensslbackend.dll"
         "${VCPKG_INSTALLED}/Qt6/plugins/tls/qopensslbackend.dll"
     )
 else()
     list(APPEND _tls_candidates
-        "${VCPKG_INSTALLED}/x64-windows/Qt6/plugins/tls/qopensslbackend.dll"
-        "${VCPKG_INSTALLED}/x64-windows/debug/Qt6/plugins/tls/qopensslbackend.dll"
         "${VCPKG_INSTALLED}/Qt6/plugins/tls/qopensslbackend.dll"
         "${VCPKG_INSTALLED}/debug/Qt6/plugins/tls/qopensslbackend.dll"
-        "${VCPKG_INSTALLED}/x64-windows/Qt6/plugins/tls/qopensslbackendd.dll"
-        "${VCPKG_INSTALLED}/x64-windows/debug/Qt6/plugins/tls/qopensslbackendd.dll"
         "${VCPKG_INSTALLED}/Qt6/plugins/tls/qopensslbackendd.dll"
         "${VCPKG_INSTALLED}/debug/Qt6/plugins/tls/qopensslbackendd.dll"
     )

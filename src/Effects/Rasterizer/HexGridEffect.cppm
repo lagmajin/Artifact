@@ -65,6 +65,7 @@ Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
 class HexGridGPUImpl : public ArtifactEffectImplBase {
 public:
     float cellSize_=32,lineWidth_=2,angle_=0;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
     void applyCPU(const ImageF32x4RGBAWithCache& src,ImageF32x4RGBAWithCache& dst) override { cpuFallback(src,dst); }
     void applyGPU(const ImageF32x4RGBAWithCache& src,ImageF32x4RGBAWithCache& dst) override {
         Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;if(!acquireSharedRenderDeviceForCurrentBackend(device,context)){cpuFallback(src,dst);return;}

@@ -167,8 +167,6 @@ std::vector<AudioEffectParameter> VSTEffect::getUiParameters() const {
         effectParam.maxValue = param.maxValue;
         effectParam.defaultValue = param.defaultValue;
 
-        effectParam.value = host.getParameter(impl_->pluginId, param.index);
-
         params.push_back(effectParam);
     }
     

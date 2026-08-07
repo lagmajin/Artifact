@@ -58,6 +58,15 @@ namespace Artifact {
             ArtifactProjectService::instance()->selectLayer(layerId);
             QGraphicsRectItem::mouseDoubleClickEvent(event);
         }
+
+        QVariant itemChange(QGraphicsItem::GraphicsItemChange change,
+                            const QVariant &value) override {
+            const QVariant result = QGraphicsRectItem::itemChange(change, value);
+            if (change == QGraphicsItem::ItemPositionHasChanged && positionChanged) {
+                positionChanged(layerId, pos());
+            }
+            return result;
+        }
     };
 
     class EffectNodeItem : public QGraphicsRectItem {
@@ -91,7 +100,7 @@ namespace Artifact {
             const auto effects = layer->getEffects();
             const auto effectIt = std::find_if(
                 effects.begin(), effects.end(),
-                [&effectId](const auto &candidate) {
+                [this](const auto &candidate) {
                     return candidate && candidate->effectID().toQString() == effectId;
                 });
             const int effectIndex = effectIt == effects.end()
@@ -584,11 +593,8 @@ namespace Artifact {
                                               ? QStringLiteral("none")
                                               : effectNames.join(QStringLiteral(", "))) +
                                      QStringLiteral("\nEffect DAG: %1")
-                                         .arg(effects.empty()
-                                                  ? QStringLiteral("n/a")
-                                                  : (effectGraph.isValid()
-                                                         ? QStringLiteral("valid")
-                                                         : QStringLiteral("invalid"))) +
+                                         .arg(effects.empty() ? QStringLiteral("n/a")
+                                                               : QStringLiteral("available")) +
                                      QStringLiteral("\nNodes: %1  Connections: %2")
                                          .arg(static_cast<int>(effectGraph.nodes().size()))
                                          .arg(static_cast<int>(effectGraph.connections().size())));
@@ -681,14 +687,6 @@ namespace Artifact {
             pathItem->setPen(QPen(QColor(255, 255, 255, 120), 1.5, Qt::DashLine));
             pathItem->setZValue(-1);
             scene->addItem(pathItem);
-        }
-
-        QVariant itemChange(GraphicsItemChange change, const QVariant &value) override {
-            const QVariant result = QGraphicsRectItem::itemChange(change, value);
-            if (change == ItemPositionHasChanged && positionChanged) {
-                positionChanged(layerId, pos());
-            }
-            return result;
         }
 
         void drawEffectNodes(LayerNodeItem *layerNode, const auto &effects,

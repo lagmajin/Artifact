@@ -28,6 +28,7 @@ module;
 #include <QListView>
 #include <QStyleOptionMenuItem>
 #include <QStyleOptionToolButton>
+#include <QStringList>
 #include <QBitmap>
 #include <QEvent>
 #include <QFontMetrics>
@@ -534,6 +535,27 @@ QSize ArtifactCommonStyle::sizeFromContents(ContentsType type,
                                             const QSize& contentsSize,
                                             const QWidget* widget) const
 {
+  if (type == CT_MenuItem) {
+    if (const auto* menuItem = qstyleoption_cast<const QStyleOptionMenuItem*>(option)) {
+      if (menuItem->menuItemType == QStyleOptionMenuItem::Separator) {
+        return QSize(std::max(contentsSize.width(), 12), 9);
+      }
+      const QStringList textParts = menuItem->text.split(QLatin1Char('\t'));
+      const QString label = textParts.value(0);
+      const QString shortcut = textParts.value(1);
+      const QFontMetrics& fm = menuItem->fontMetrics;
+      const int labelWidth = fm.horizontalAdvance(label);
+      const int shortcutWidth = shortcut.isEmpty() ? 0 : fm.horizontalAdvance(shortcut) + 24;
+      const int checkAndIconWidth = 34;
+      const int submenuWidth =
+          menuItem->menuItemType == QStyleOptionMenuItem::SubMenu ? 18 : 8;
+      return QSize(std::max(contentsSize.width(),
+                            labelWidth + shortcutWidth + checkAndIconWidth +
+                                submenuWidth + 16),
+                   std::max(contentsSize.height(), fm.height() + 10));
+    }
+  }
+
   if (type == CT_MenuBarItem) {
     if (const auto* menuItem = qstyleoption_cast<const QStyleOptionMenuItem*>(option)) {
       const QFontMetrics& fm = menuItem->fontMetrics;
@@ -582,19 +604,65 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
         painter->drawRoundedRect(itemRect, 4.0, 4.0);
       }
 
-      QStyleOptionMenuItem copy(*menuItem);
       const bool enabled = menuItem->state.testFlag(State_Enabled);
       const QColor disabledText = menuText.darker(155);
-      copy.palette.setColor(QPalette::ButtonText, enabled ? menuText : disabledText);
-      copy.palette.setColor(QPalette::Text, enabled ? menuText : disabledText);
-      copy.palette.setColor(QPalette::WindowText, enabled ? menuText : disabledText);
-      copy.palette.setColor(QPalette::HighlightedText, enabled ? menuText : disabledText);
-      copy.palette.setColor(QPalette::Highlight, enabled ? menuHover : menuSurface);
-      copy.palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabledText);
-      copy.palette.setColor(QPalette::Disabled, QPalette::Text, disabledText);
-      copy.palette.setColor(QPalette::Disabled, QPalette::WindowText, disabledText);
+
+      const QRect visualItemRect = QStyle::visualRect(
+          menuItem->direction, menuItem->rect, itemRect);
+      const int checkColumnWidth = 24;
+      const int iconSize = std::min(18, std::max(12, visualItemRect.height() - 8));
+      const int left = visualItemRect.left() + 8;
+      const int centerY = visualItemRect.center().y();
+
+      if (menuItem->checkType != QStyleOptionMenuItem::NotCheckable &&
+          menuItem->checked) {
+        const QRect checkRect(left, centerY - 6, 12, 12);
+        painter->setPen(QPen(enabled ? menuText : disabledText, 1.6));
+        painter->setBrush(Qt::NoBrush);
+        painter->drawLine(checkRect.left() + 2, checkRect.center().y(),
+                          checkRect.left() + 5, checkRect.bottom() - 2);
+        painter->drawLine(checkRect.left() + 5, checkRect.bottom() - 2,
+                          checkRect.right() - 1, checkRect.top() + 2);
+      }
+
+      if (!menuItem->icon.isNull()) {
+        const QRect iconRect(left + checkColumnWidth, centerY - iconSize / 2,
+                             iconSize, iconSize);
+        menuItem->icon.paint(painter, iconRect, Qt::AlignCenter,
+                             enabled ? QIcon::Normal : QIcon::Disabled);
+      }
+
+      const QStringList textParts = menuItem->text.split(QLatin1Char('\t'));
+      const QString label = textParts.value(0);
+      const QString shortcut = textParts.value(1);
+      const int textLeft = left + checkColumnWidth + iconSize + 8;
+      const int arrowWidth =
+          menuItem->menuItemType == QStyleOptionMenuItem::SubMenu ? 18 : 6;
+      const QRect textRect(textLeft, visualItemRect.top(),
+                           std::max(0, visualItemRect.right() - textLeft -
+                                           arrowWidth - 8),
+                           visualItemRect.height());
+      painter->setFont(menuItem->font);
+      painter->setPen(enabled ? menuText : disabledText);
+      painter->drawText(textRect,
+                        Qt::AlignLeft | Qt::AlignVCenter |
+                            Qt::TextShowMnemonic | Qt::TextSingleLine,
+                        label);
+      if (!shortcut.isEmpty()) {
+        painter->drawText(textRect,
+                          Qt::AlignRight | Qt::AlignVCenter |
+                              Qt::TextSingleLine,
+                          shortcut);
+      }
+
+      if (menuItem->menuItemType == QStyleOptionMenuItem::SubMenu) {
+        const int arrowX = visualItemRect.right() - 10;
+        painter->setPen(QPen(enabled ? menuText : disabledText, 1.4));
+        painter->drawLine(arrowX - 3, centerY - 4, arrowX + 1, centerY);
+        painter->drawLine(arrowX + 1, centerY, arrowX - 3, centerY + 4);
+      }
       painter->restore();
-      return QCommonStyle::drawControl(element, &copy, painter, widget);
+      return;
     }
   }
 

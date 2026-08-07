@@ -30,8 +30,8 @@ import Color.Float;
 import Artifact.Render.RenderCommandBuffer;
 import Artifact.Render.ShaderManager;
 import Frame.Debug;
-import Artifact.Grid.System;
 import Artifact.Render.PrimitiveRenderer2D;
+import Artifact.Grid.System;
 
 namespace Artifact {
 

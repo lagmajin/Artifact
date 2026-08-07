@@ -209,7 +209,8 @@ private:
       return false;
     const QString preset = args[0].toString().trimmed();
     const QString layerId = args[1].toString().trimmed();
-    if (layerId.isEmpty() || !listMaterialPresets({}).contains(preset) ||
+    if (layerId.isEmpty() ||
+        !listMaterialPresets({}).toList().contains(QVariant(preset)) ||
         !layerExistsInCurrentComposition(layerId)) return false;
     if (!materials_.contains(preset)) {
       QVariantMap presetProperties;

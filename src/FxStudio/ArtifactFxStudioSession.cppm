@@ -25,6 +25,8 @@ const bool registeredFxStudioSession = [] {
     return true;
 }();
 
+} // namespace
+
 EventTrack& Session::eventTrack() noexcept {
   return eventTrack_;
 }

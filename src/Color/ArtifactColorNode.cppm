@@ -50,6 +50,8 @@ import Color.ColorSpace;
 import Color.GamutConversion;
 import Core.Parallel;
 
+using ArtifactCore::ColorSpace;
+
 
 
 

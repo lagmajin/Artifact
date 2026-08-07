@@ -192,7 +192,7 @@ FramePosition currentLayerViewFrame()
       return composition->framePosition();
     }
   }
-  return FramePosition{};
+  return FramePosition(0);
 }
 
 QRectF viewportSurfaceModeRect(float viewportWidth, float viewportHeight)

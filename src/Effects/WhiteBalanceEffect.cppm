@@ -88,6 +88,8 @@ public:
 
 class WhiteBalanceGPUImpl : public ArtifactEffectImplBase {
 public:
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> stagingTex_;
     float temperature_ = 6500.0f;
     float tint_ = 0.0f;
     float brightness_ = 0.0f;

@@ -48,7 +48,7 @@ constexpr float kPi = 3.14159265358979323846f;
 float rotationSnapStepDegrees() {
  const float configured = static_cast<float>(
      ArtifactCore::LayeredConfigStore::instance().valueDouble(
-         QStringLiteral("Viewport/RotationSnapDegrees"), 45.0));
+         std::string_view("Viewport/RotationSnapDegrees"), 45.0));
  constexpr std::array<float, 4> kAllowedSteps{15.0f, 30.0f, 45.0f, 90.0f};
  float closest = kAllowedSteps.front();
  float closestDistance = std::abs(configured - closest);

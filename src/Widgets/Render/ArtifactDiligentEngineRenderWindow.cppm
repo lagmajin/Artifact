@@ -13,6 +13,7 @@
 
 #include <QSize>
 #include <QEvent>
+#include <QMouseEvent>
 #include <cstring>
 #include <QMatrix4x4>
 #include <QVector2D>

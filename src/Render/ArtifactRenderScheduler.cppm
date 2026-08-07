@@ -186,7 +186,7 @@ public:
     }
     
     Impl()
-        : requestedThreadCount_(1)
+        : requestedThreadCount_(1), currentFrame_(0)
     {
     }
 

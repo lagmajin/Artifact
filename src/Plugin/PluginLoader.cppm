@@ -122,9 +122,10 @@ struct ArtifactPluginLoader::Impl {
 
             auto& registry = ArtifactPluginRegistry::instance();
             registry.registerPlugin(pd);
-            if (std::find(loadedPluginIds.cbegin(), loadedPluginIds.cend(), pd.id) ==
+            const std::string loadedPluginId = toStdString(pd.id);
+            if (std::find(loadedPluginIds.cbegin(), loadedPluginIds.cend(), loadedPluginId) ==
                 loadedPluginIds.cend()) {
-                loadedPluginIds.push_back(pd.id);
+                loadedPluginIds.push_back(loadedPluginId);
             }
 
             // Fire category-specific callback so consumers (e.g. PluginLayerFactory)

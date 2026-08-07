@@ -67,6 +67,8 @@ bool isExplicit(const CreationLayerDefaults& value)
 
 }
 
+} // namespace
+
 QJsonObject CreationCompositionDefaults::toJson() const
 {
     QJsonObject json;

@@ -119,7 +119,7 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  : menu_(menu), mainWindow_(mainWindow)
 {
  addCurrentToQueueAction = new QAction("現在のコンポジションをレンダーキューに追加(&A)");
- addCurrentToQueueAction->setAccessibleDescription(
+ addCurrentToQueueAction->setStatusTip(
      QStringLiteral("Add the active composition to the render queue"));
  addCurrentToQueueAction->setStatusTip(
      QStringLiteral("Add the active composition to the render queue"));
@@ -128,7 +128,7 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  addCurrentToQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
 
 showQueueAction = new QAction("レンダーキューを表示(&Q)...");
- showQueueAction->setAccessibleDescription(
+ showQueueAction->setStatusTip(
      QStringLiteral("Open the render queue window"));
  showQueueAction->setStatusTip(QStringLiteral("Open the render queue window"));
  showQueueAction->setShortcut(
@@ -136,7 +136,7 @@ showQueueAction = new QAction("レンダーキューを表示(&Q)...");
  showQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_queue.svg")));
 
 showRenderManagerAction = new QAction("レンダーマネージャーを表示(&M)...");
- showRenderManagerAction->setAccessibleDescription(
+ showRenderManagerAction->setStatusTip(
      QStringLiteral("Open the render queue manager"));
  showRenderManagerAction->setStatusTip(
      QStringLiteral("Open the render queue manager"));
@@ -145,7 +145,7 @@ showRenderManagerAction = new QAction("レンダーマネージャーを表示(&
  showRenderManagerAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_manager.svg")));
 
 renderSettingsAction = new QAction("レンダー出力設定(&S)...");
- renderSettingsAction->setAccessibleDescription(
+ renderSettingsAction->setStatusTip(
      QStringLiteral("Configure render output and preflight settings"));
  renderSettingsAction->setStatusTip(
      QStringLiteral("Configure render output and preflight settings"));
@@ -154,25 +154,21 @@ renderSettingsAction = new QAction("レンダー出力設定(&S)...");
  renderSettingsAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_settings.svg")));
 
  startRenderAction = new QAction("レンダリングを開始／再開(&S)");
- startRenderAction->setAccessibleDescription(
-     QStringLiteral("Start or resume all pending render queue jobs"));
  startRenderAction->setStatusTip(
      QStringLiteral("Start all pending render queue jobs"));
  startRenderAction->setShortcut(
      ShortcutBindings::instance().shortcut(ShortcutId::RenderStart));
  startRenderAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_start.svg")));
  pauseRenderAction = new QAction(QStringLiteral("レンダリングを一時停止"));
- pauseRenderAction->setAccessibleDescription(
+ pauseRenderAction->setStatusTip(
      QStringLiteral("Pause all active render queue jobs"));
  pauseRenderAction->setIcon(QIcon(resolveIconPath("Studio/timemenu_stop.svg")));
  cancelRenderAction = new QAction(QStringLiteral("全ジョブをキャンセル"));
- cancelRenderAction->setAccessibleDescription(
+ cancelRenderAction->setStatusTip(
      QStringLiteral("Cancel all active render queue jobs"));
  cancelRenderAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_clear_all.svg")));
 
  clearAllAction = new QAction("すべてのジョブをクリア(&C)");
- clearAllAction->setAccessibleDescription(
-     QStringLiteral("Remove all render queue jobs"));
  clearAllAction->setStatusTip(QStringLiteral("Remove all render queue jobs"));
  clearAllAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_clear_all.svg")));
 
@@ -181,8 +177,6 @@ renderSettingsAction = new QAction("レンダー出力設定(&S)...");
 
  menu->addAction(addCurrentToQueueAction);
  addAllCompositionsAction = new QAction("全コンポジションをキューに追加(&A)", menu);
- addAllCompositionsAction->setAccessibleDescription(
-     QStringLiteral("Add every composition to the render queue"));
  addAllCompositionsAction->setStatusTip(
      QStringLiteral("Add every composition to the render queue"));
  addAllCompositionsAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));

@@ -1162,7 +1162,8 @@ class ArtifactAbstractComposition::Impl {
   void resetLayerComponentSimulation();
   };
 
- ArtifactAbstractComposition::Impl::Impl(ArtifactAbstractComposition* owner) : owner_(owner)
+ ArtifactAbstractComposition::Impl::Impl(ArtifactAbstractComposition* owner)
+     : owner_(owner), position_(0)
  {
   inOutPoints_ = std::make_unique<ArtifactInOutPoints>(owner);
  }
@@ -3125,6 +3126,12 @@ ArtifactInOutPoints* ArtifactAbstractComposition::inOutPoints() const
 }
 
 QList<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer()
+{
+  QList<ArtifactAbstractLayerPtr> layers = impl_->layerMultiIndex_.all();
+  return layers;
+}
+
+QList<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer() const
 {
   QList<ArtifactAbstractLayerPtr> layers = impl_->layerMultiIndex_.all();
   return layers;

@@ -2238,7 +2238,7 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
   impl_->animators_.clear();
   if (obj.contains("text.animators") && obj.value("text.animators").isArray()) {
     const QJsonArray animatorArray = obj.value("text.animators").toArray();
-    const int animatorCount = std::min(animatorArray.size(), 16);
+    const int animatorCount = std::min(static_cast<int>(animatorArray.size()), 16);
     impl_->animators_.reserve(animatorCount);
     for (int i = 0; i < animatorCount; ++i) {
       if (!animatorArray.at(i).isObject()) {

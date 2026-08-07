@@ -330,7 +330,7 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
         ? sourceLayer->frameBuffer(resolvedSourceFrame)
         : nullptr;
     if (!sourceBuffer) return;
-    auto& sourceImage = sourceBuffer->image();
+    const auto& sourceImage = *sourceBuffer;
     const int sourceWidth = sourceImage.width();
     const int sourceHeight = sourceImage.height();
     if (sourceWidth <= 0 || sourceHeight <= 0) return;
@@ -453,7 +453,7 @@ void ArtifactPaintLayer::fromJsonProperties(const QJsonObject& obj) {
     impl_->defaultSize_.setHeight(std::clamp(obj.value("defaultHeight").toInt(100), 1, 100000));
 
     const QJsonArray framesArr = obj.value("frames").toArray();
-    const int frameCount = std::min(framesArr.size(), 10000);
+    const int frameCount = std::min(static_cast<int>(framesArr.size()), 10000);
     for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
         const auto val = framesArr.at(frameIndex);
         const QJsonObject fObj = val.toObject();

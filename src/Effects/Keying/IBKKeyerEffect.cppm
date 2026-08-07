@@ -15,7 +15,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;
-import ImageProcessing:IBKKeyer;
+import ImageProcessing;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -337,7 +337,7 @@ std::vector<AbstractProperty> IBKKeyerEffect::getProperties() const {
     cleanPlate.setValue(cleanPlatePath_);
     auto& cleanPlateLoaded = result.emplace_back();
     cleanPlateLoaded.setName("cleanPlateLoaded");
-    cleanPlateLoaded.setType(PropertyType::Bool);
+    cleanPlateLoaded.setType(PropertyType::Boolean);
     cleanPlateLoaded.setDefaultValue(QVariant(false));
     cleanPlateLoaded.setValue(QVariant(typedCpuImpl_->hasCleanPlate()));
     return result;

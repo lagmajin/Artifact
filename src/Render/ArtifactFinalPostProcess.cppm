@@ -104,6 +104,11 @@ void ArtifactFinalPostProcess::updateFromColorLUT(const float* data, int size)
     impl_->updateFromColorLUT(data, size);
 }
 
+void ArtifactFinalPostProcess::clearLUT()
+{
+    impl_->clearLUT();
+}
+
 void ArtifactFinalPostProcess::setLUTInputDomain(float minValue,
                                                   float maxValue)
 {

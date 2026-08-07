@@ -3,6 +3,7 @@ module;
 #include <stack>
 #include <memory>
 #include <utility>
+#include <QMap>
 
 #include <iostream>
 #include <vector>
@@ -69,12 +70,14 @@ namespace Artifact {
 
 W_OBJECT_IMPL(UndoManager)
 
+LayerMask decodeMask(const QJsonObject& object);
+
 namespace {
 constexpr qint64 kMaxUndoPayloadBytes = 64ll * 1024ll * 1024ll;
 
 class OffloadedUndoCommand final : public UndoCommand {
 public:
-    using FactoryMap = std::map<QString, UndoManager::CommandFactory>;
+    using FactoryMap = QMap<QString, UndoManager::CommandFactory>;
 
     OffloadedUndoCommand(QString path, QString type, QString label,
                          FactoryMap* factories, size_t bytes)
@@ -114,7 +117,7 @@ private:
             !entry.value(QStringLiteral("data")).isObject()) return nullptr;
         const auto factory = factories_->find(type_);
         if (factory == factories_->end()) return nullptr;
-        auto command = factory->second(entry.value(QStringLiteral("data")).toObject());
+        auto command = factory.value()(entry.value(QStringLiteral("data")).toObject());
         if (!command ||
             !command->deserialize(entry.value(QStringLiteral("data")).toObject()) ||
             !command->canSerialize()) return nullptr;
@@ -173,7 +176,7 @@ public:
     UndoManager::UndoBudget budget_;
     UndoManager::OffloadPolicy offloadPolicy_ = UndoManager::OffloadPolicy::Never;
     QString offloadDirectory_;
-    std::map<QString, UndoManager::CommandFactory> commandFactories_;
+    QMap<QString, UndoManager::CommandFactory> commandFactories_;
     UndoManager::EffectResolver effectResolver_;
     UndoManager::LayerResolver layerResolver_;
     UndoManager::CompositionResolver compositionResolver_;
@@ -706,6 +709,8 @@ SharedPtr<ImageF32x4_RGBA> decodeEffectMaskImage(const QJsonObject& object) {
     return image;
 }
 
+QJsonObject encodeMask(const LayerMask& mask);
+
 QJsonObject MaskEditCommand::serialize() const {
     const auto encode = [](const auto& masks) {
         QJsonArray values;
@@ -869,7 +874,8 @@ bool decodeKeyframes(const QJsonArray& encoded, std::vector<ArtifactCore::KeyFra
         const auto object = item.toObject();
         if (!object.contains(QStringLiteral("frame")) || !object.contains(QStringLiteral("value"))) return false;
         ArtifactCore::KeyFrame keyframe;
-        keyframe.frame = static_cast<int64_t>(object.value(QStringLiteral("frame")).toDouble());
+        keyframe.time = ArtifactCore::RationalTime(
+            static_cast<int64_t>(object.value(QStringLiteral("frame")).toDouble()), 30);
         keyframe.value = QVariant(object.value(QStringLiteral("value")).toVariant());
         keyframe.interpolation = static_cast<ArtifactCore::InterpolationType>(object.value(QStringLiteral("interpolation")).toInt());
         keyframe.cp1_x = static_cast<float>(object.value(QStringLiteral("cp1_x")).toDouble());
@@ -933,7 +939,7 @@ QJsonObject SetLayerPropertyKeyframesCommand::serialize() const {
             bool supported = false;
             const auto value = encodeKeyframeValue(keyframe.value, supported);
             if (!supported) continue;
-            result.append(QJsonObject{{QStringLiteral("frame"), static_cast<qint64>(keyframe.frame.framePosition())}, {QStringLiteral("value"), value}, {QStringLiteral("interpolation"), static_cast<int>(keyframe.interpolation)}, {QStringLiteral("cp1_x"), keyframe.cp1_x}, {QStringLiteral("cp1_y"), keyframe.cp1_y}, {QStringLiteral("cp2_x"), keyframe.cp2_x}, {QStringLiteral("cp2_y"), keyframe.cp2_y}});
+            result.append(QJsonObject{{QStringLiteral("frame"), static_cast<qint64>(keyframe.time.rescaledTo(30))}, {QStringLiteral("value"), value}, {QStringLiteral("interpolation"), static_cast<int>(keyframe.interpolation)}, {QStringLiteral("cp1_x"), keyframe.cp1_x}, {QStringLiteral("cp1_y"), keyframe.cp1_y}, {QStringLiteral("cp2_x"), keyframe.cp2_x}, {QStringLiteral("cp2_y"), keyframe.cp2_y}});
         }
         return result;
     };
@@ -1882,7 +1888,7 @@ std::unique_ptr<UndoCommand> UndoManager::createCommand(
     const QString& type, const QJsonObject& data) const {
     const auto factory = impl_->commandFactories_.find(type);
     if (factory == impl_->commandFactories_.end()) return nullptr;
-    auto command = factory->second(data);
+    auto command = factory.value()(data);
     if (!command || !command->deserialize(data) || !command->canSerialize() ||
         command->estimatedMemoryBytes() > impl_->budget_.maxSingleEntryBytes) return nullptr;
     return command;
@@ -2172,13 +2178,14 @@ QString CreateVariantCommand::label() const {
 }
 
 size_t CreateVariantCommand::estimatedMemoryBytes() const {
-    return sizeof(*this) + static_cast<size_t>(name_.toQString().size()) * sizeof(QChar);
+        return sizeof(*this) + static_cast<size_t>(name_.length()) * sizeof(QChar);
 }
 
 QJsonObject CreateVariantCommand::serialize() const {
     return {
         {QStringLiteral("layerId"), layerId_},
-        {QStringLiteral("name"), name_.toQString()},
+        {QStringLiteral("name"), QString::fromUtf8(name_.data(),
+                                                     static_cast<int>(name_.length()))},
         {QStringLiteral("index"), static_cast<qint64>(index_)},
         {QStringLiteral("label"), label()}
     };

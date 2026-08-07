@@ -1004,13 +1004,12 @@ private:
     if (allCapsCheck_ && allCapsCheck_->isChecked()) {
       title = title.toUpper();
     }
-    Qt::Alignment titleAlignment = Qt::AlignLeft | Qt::AlignTop |
-                                   Qt::TextWordWrap;
+    Qt::Alignment titleAlignment = Qt::AlignLeft | Qt::AlignTop;
     if (alignmentCombo_) {
       switch (alignmentCombo_->currentData().toInt()) {
-      case 1: titleAlignment = Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap; break;
-      case 2: titleAlignment = Qt::AlignRight | Qt::AlignTop | Qt::TextWordWrap; break;
-      case 3: titleAlignment = Qt::AlignJustify | Qt::AlignTop | Qt::TextWordWrap; break;
+      case 1: titleAlignment = Qt::AlignHCenter | Qt::AlignTop; break;
+      case 2: titleAlignment = Qt::AlignRight | Qt::AlignTop; break;
+      case 3: titleAlignment = Qt::AlignJustify | Qt::AlignTop; break;
       default: break;
       }
     }
@@ -3859,9 +3858,9 @@ public:
         add(QStringLiteral("Clear 3D Transform Clipboard"), []() {
           auto& config = ArtifactCore::LayeredConfigStore::instance();
           config.removeValue(ArtifactCore::ConfigLayer::Project,
-                             QStringLiteral("Viewport/3DTransformClipboard"));
+                             std::string_view("Viewport/3DTransformClipboard"));
           config.removeValue(ArtifactCore::ConfigLayer::User,
-                             QStringLiteral("Viewport/3DTransformClipboard"));
+                             std::string_view("Viewport/3DTransformClipboard"));
         }, transformClipboard.size() >= 8);
       }
       if (controller_->isShowMotionPathOverlay() && selected) {
@@ -5680,6 +5679,9 @@ protected:
       event->accept();
       return;
     }
+    auto *toolManager = ArtifactApplicationManager::instance()
+                            ? ArtifactApplicationManager::instance()->toolManager()
+                            : nullptr;
     if (!event->isAutoRepeat() && controller_ &&
         (event->modifiers() == Qt::ShiftModifier ||
          event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) &&
@@ -5849,10 +5851,7 @@ protected:
     if (!event->isAutoRepeat() && controller_ &&
         (event->key() == Qt::Key_BracketLeft ||
          event->key() == Qt::Key_BracketRight)) {
-      if (auto *toolManager = ArtifactApplicationManager::instance()
-                                  ? ArtifactApplicationManager::instance()->toolManager()
-                                  : nullptr;
-          toolManager && toolManager->activeTool() == ToolType::Pen) {
+      if (toolManager && toolManager->activeTool() == ToolType::Pen) {
         const float delta = event->key() == Qt::Key_BracketRight ? 0.1f : -0.1f;
         if (controller_->adjustHoveredMaskOpacity(delta)) {
           event->accept();

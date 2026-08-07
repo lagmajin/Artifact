@@ -68,6 +68,8 @@ const bool registeredInOutPoints = [] {
         [](const QJsonObject& legacy) { return legacy; });
     return true;
 }();
+}
+
 W_OBJECT_IMPL(ArtifactMarker)
 W_OBJECT_IMPL(ArtifactInOutPoints)
 

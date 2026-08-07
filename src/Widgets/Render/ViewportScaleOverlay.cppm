@@ -2,6 +2,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <QString>
 
 module Artifact.Widgets.Render.ViewportScaleOverlay;
 

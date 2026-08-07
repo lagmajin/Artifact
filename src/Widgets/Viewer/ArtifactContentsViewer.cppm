@@ -27,6 +27,7 @@ module;
 #include <QStyle>
 #include <QSizePolicy>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPaintEvent>
 #include <QWheelEvent>
 #include <QMouseEvent>
