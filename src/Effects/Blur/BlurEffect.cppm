@@ -191,6 +191,14 @@ public:
     void setPremultiplied(bool p) { premultiplied_ = p; }
     void setEdgeThreshold(float t) { edgeThreshold_ = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.1f; }
 
+    float evaluationRadius() const {
+        if (!context_.isInteractive) {
+            return radius_;
+        }
+        return std::max(0.1f, radius_ *
+            std::clamp(context_.resolutionScale, 0.125f, 1.0f));
+    }
+
     void mixWithSource(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) const {
         const float mix = std::clamp(strength_, 0.0f, 1.0f);
         if (mix >= 0.999f) {
@@ -236,7 +244,7 @@ public:
         cv::merge(std::vector<cv::Mat>{channels[0], channels[1], channels[2]}, color);
         cv::Mat alpha = channels[3];
 
-        const float sigma = std::max(0.1f, radius_ * 0.5f);
+        const float sigma = std::max(0.1f, evaluationRadius() * 0.5f);
         const int ksize = std::max(3, static_cast<int>(sigma * 6.0f) | 1);
         for (int i = 0; i < iterations_; ++i) {
             cv::GaussianBlur(color, color, cv::Size(ksize, ksize),
@@ -396,10 +404,12 @@ public:
     }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
+        cpuImpl_.setContext(ArtifactEffectImplBase::context_);
         cpuImpl_.applyCPU(src, dst);
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
+        cpuImpl_.setContext(ArtifactEffectImplBase::context_);
         if (cpuImpl_.strength_ <= 0.001f) {
             dst = src;
             return;
@@ -477,7 +487,7 @@ public:
                 return false;
             }
             BlurParamsCB params{};
-            params.radius = cpuImpl_.radius_;
+            params.radius = cpuImpl_.evaluationRadius();
             params.horizontal = horizontal ? 1.0f : 0.0f;
             std::memcpy(mapped, &params, sizeof(params));
             ctx->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
@@ -504,7 +514,13 @@ public:
             iterationInput = outputTex_;
         }
 
-        if (!readbackTexture(ctx, outputTex_, stagingTex_, dst, src.image().colorDescriptor())) {
+        // Compute textures are always written in canonical RGBA order.  The
+        // source image may use BGRA backing storage, so passing its descriptor
+        // here would swap red and blue on the GPU path (e.g. orange becomes
+        // blue after applying blur).
+        auto outputDescriptor = src.image().colorDescriptor();
+        outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::RGBA;
+        if (!readbackTexture(ctx, outputTex_, stagingTex_, dst, outputDescriptor)) {
             applyCPU(src, dst);
             return;
         }

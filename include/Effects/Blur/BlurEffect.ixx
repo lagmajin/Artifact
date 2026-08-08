@@ -75,6 +75,14 @@ public:
         strengthProp.setValue(strength_);
         props.push_back(strengthProp);
 
+        AbstractProperty overscanProp;
+        overscanProp.setName(QStringLiteral("effect.allowOverscan"));
+        overscanProp.setDisplayLabel(QStringLiteral("Allow Overscan"));
+        overscanProp.setTooltip(QStringLiteral("Allow blur to extend outside the source layer bounds."));
+        overscanProp.setType(PropertyType::Boolean);
+        overscanProp.setValue(allowOverscan());
+        props.push_back(overscanProp);
+
         return props;
     }
 
@@ -94,6 +102,9 @@ public:
             setPremultiplied(value.toBool());
         } else if (key == QStringLiteral("Edge Threshold")) {
             setEdgeThreshold(value.toFloat());
+        } else if (key == QStringLiteral("effect.allowOverscan") ||
+                   key == QStringLiteral("Allow Overscan")) {
+            setAllowOverscan(value.toBool());
         }
     }
 
@@ -106,6 +117,9 @@ public:
      * 広い入力領域が必要になる（3σ でガウス寄与がほぼゼロになる）。
      */
     EffectROIHint roiHint() const override {
+        if (!allowOverscan()) {
+            return EffectROIHint{};
+        }
         // iterations が増えるほど実効半径が大きくなる。
         const float effectiveRadius = radius_ * static_cast<float>(iterations_);
         return EffectROIHint{

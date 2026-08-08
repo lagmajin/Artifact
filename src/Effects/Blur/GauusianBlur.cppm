@@ -264,8 +264,17 @@ void GaussianBlurCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x
         }
     }
 
+    const float appliedSigma = context_.isInteractive
+        ? std::max(0.0f, sigma_ *
+              std::clamp(context_.resolutionScale, 0.125f, 1.0f))
+        : sigma_;
+    int appliedKernelSize = std::max(1, static_cast<int>(6.0f * appliedSigma + 1.0f));
+    if (appliedKernelSize % 2 == 0) {
+        ++appliedKernelSize;
+    }
     cv::GaussianBlur(premultiplied, dstMat,
-                     cv::Size(kernelSize_, kernelSize_), sigma_);
+                     cv::Size(appliedKernelSize, appliedKernelSize),
+                     appliedSigma);
     for (int y = 0; y < dstMat.rows; ++y) {
         auto* row = dstMat.ptr<cv::Vec4f>(y);
         for (int x = 0; x < dstMat.cols; ++x) {
@@ -326,7 +335,11 @@ GaussianBlurGPUImpl::GaussianBlurGPUImpl(const float sigma)
 GaussianBlurGPUImpl::~GaussianBlurGPUImpl() = default;
 
 void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-    if (sigma_ <= 0.0f) {
+    const float appliedSigma = context_.isInteractive
+        ? std::max(0.0f, sigma_ *
+              std::clamp(context_.resolutionScale, 0.125f, 1.0f))
+        : sigma_;
+    if (appliedSigma <= 0.0f) {
         dst = src;
         return;
     }
@@ -338,7 +351,7 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
     if (!resources.device || !resources.context) {
         if (!acquireSharedRenderDeviceForCurrentBackend(resources.device,
                                                         resources.context)) {
-            applyGaussianBlurCPUFallback(sigma_, src, dst);
+            applyGaussianBlurCPUFallback(appliedSigma, src, dst);
             return;
         }
         resources.usingSharedDevice = true;
@@ -359,7 +372,7 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
         resources.device->CreateBuffer(cbDesc, nullptr, &resources.paramsCB);
     }
     if (!resources.paramsCB) {
-        applyGaussianBlurCPUFallback(sigma_, src, dst);
+        applyGaussianBlurCPUFallback(appliedSigma, src, dst);
         return;
     }
 
@@ -382,7 +395,7 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
             !resources.executor->createShaderResourceBinding(true) ||
             !resources.executor->setBuffer("GaussianBlurParams",
                                            resources.paramsCB)) {
-            applyGaussianBlurCPUFallback(sigma_, src, dst);
+            applyGaussianBlurCPUFallback(appliedSigma, src, dst);
             return;
         }
         resources.pipelineReady = true;
@@ -391,7 +404,7 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
     Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex;
     if (!createTextureFromImage(src, resources.device, &inputTex,
                                 "GaussianBlur/InputTexture")) {
-        applyGaussianBlurCPUFallback(sigma_, src, dst);
+        applyGaussianBlurCPUFallback(appliedSigma, src, dst);
         return;
     }
 
@@ -415,24 +428,24 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
         resources.device->CreateTexture(outDesc, nullptr, &resources.outputTex);
     }
     if (!resources.tempTex || !resources.outputTex) {
-        applyGaussianBlurCPUFallback(sigma_, src, dst);
+        applyGaussianBlurCPUFallback(appliedSigma, src, dst);
         return;
     }
     void* mapped = nullptr;
     resources.context->MapBuffer(resources.paramsCB, Diligent::MAP_WRITE,
                                  Diligent::MAP_FLAG_DISCARD, mapped);
     if (!mapped) {
-        applyGaussianBlurCPUFallback(sigma_, src, dst);
+        applyGaussianBlurCPUFallback(appliedSigma, src, dst);
         return;
     }
     GaussianBlurParamsCB params{};
-    params.sigma = sigma_;
+    params.sigma = appliedSigma;
     params.horizontal = 1.0f;
     std::memcpy(mapped, &params, sizeof(params));
     resources.context->UnmapBuffer(resources.paramsCB, Diligent::MAP_WRITE);
     if (!resources.executor->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
         !resources.executor->setTextureView("g_OutputTexture", resources.tempTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
-        applyGaussianBlurCPUFallback(sigma_, src, dst);
+        applyGaussianBlurCPUFallback(appliedSigma, src, dst);
         return;
     }
     auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
@@ -442,17 +455,17 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
     resources.context->MapBuffer(resources.paramsCB, Diligent::MAP_WRITE,
                                  Diligent::MAP_FLAG_DISCARD, mapped);
     if (!mapped) {
-        applyGaussianBlurCPUFallback(sigma_, src, dst);
+        applyGaussianBlurCPUFallback(appliedSigma, src, dst);
         return;
     }
     params = {};
-    params.sigma = sigma_;
+    params.sigma = appliedSigma;
     params.horizontal = 0.0f;
     std::memcpy(mapped, &params, sizeof(params));
     resources.context->UnmapBuffer(resources.paramsCB, Diligent::MAP_WRITE);
     if (!resources.executor->setTextureView("g_InputTexture", resources.tempTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
         !resources.executor->setTextureView("g_OutputTexture", resources.outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
-        applyGaussianBlurCPUFallback(sigma_, src, dst);
+        applyGaussianBlurCPUFallback(appliedSigma, src, dst);
         return;
     }
     resources.executor->dispatch(resources.context, attribs,
@@ -464,11 +477,11 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
                          resources.stagingTex, dst,
                          outputDescriptor,
                          "GaussianBlur/StagingTexture")) {
-        applyGaussianBlurCPUFallback(sigma_, src, dst);
+        applyGaussianBlurCPUFallback(appliedSigma, src, dst);
         return;
     }
-    if (sigma_ >= 0.5f && !imageBuffersDiffer(src, dst)) {
-        applyGaussianBlurCPUFallback(sigma_, src, dst);
+    if (appliedSigma >= 0.5f && !imageBuffersDiffer(src, dst)) {
+        applyGaussianBlurCPUFallback(appliedSigma, src, dst);
     }
 }
 

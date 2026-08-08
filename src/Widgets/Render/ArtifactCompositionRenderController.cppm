@@ -328,6 +328,43 @@ struct GizmoTransformSnapshot {
   bool is3D = false;
 };
 
+namespace {
+void applyPlanarGizmoTransform(const ArtifactAbstractLayerPtr &layer,
+                               int64_t frame,
+                               const GizmoTransformSnapshot &snapshot) {
+  if (!layer) {
+    return;
+  }
+
+  auto &transform = layer->transform3D();
+  const ArtifactCore::RationalTime time(frame, 30);
+  if (transform.getPositionKeyFrameCount() > 0) {
+    const float initialX = transform.positionX() - transform.positionXAt(time);
+    const float initialY = transform.positionY() - transform.positionYAt(time);
+    transform.setPosition(time, snapshot.position.x() - initialX,
+                          snapshot.position.y() - initialY);
+  } else {
+    transform.removePositionKeyFrameAt(time);
+    transform.setInitialPosition(time, snapshot.position.x(),
+                                 snapshot.position.y());
+  }
+
+  if (transform.getRotationKeyFrameCount() > 0) {
+    transform.setRotation(time, snapshot.rotation.z());
+  } else {
+    transform.removeRotationKeyFrameAt(time);
+    transform.setInitialRotation(time, snapshot.rotation.z());
+  }
+
+  if (transform.getScaleKeyFrameCount() > 0) {
+    transform.setScale(time, snapshot.scale.x(), snapshot.scale.y());
+  } else {
+    transform.removeScaleKeyFrameAt(time);
+    transform.setInitialScale(time, snapshot.scale.x(), snapshot.scale.y());
+  }
+}
+}
+
 class RigBoneTransformUndoCommand final : public UndoCommand {
  public:
   RigBoneTransformUndoCommand(ArtifactAbstractLayerPtr layer,
@@ -542,12 +579,9 @@ class GizmoTransformUndoCommand final : public UndoCommand {
       layer->setRotation3D(snapshot.rotation);
       const ArtifactCore::RationalTime time(frame_, 30);
       layer->transform3D().setScale(time, snapshot.scale.x(),
-                                    snapshot.scale.y());
+                                    snapshot.scale.y(), snapshot.scale.z());
     } else {
-      auto& transform = layer->transform2D();
-      transform.setPosition(snapshot.position.x(), snapshot.position.y());
-      transform.setRotation(snapshot.rotation.z());
-      transform.setScale(snapshot.scale.x(), snapshot.scale.y());
+      applyPlanarGizmoTransform(layer, frame_, snapshot);
     }
     layer->setDirty(LayerDirtyFlag::Transform);
     layer->changed();
@@ -976,13 +1010,18 @@ ArtifactVideoLayer* readyVideo3DCardLayer(ArtifactAbstractLayer* layer,
 }
 
 
-EffectContext makeControllerEffectContext(ArtifactAbstractLayer* layer, const QRectF& roi = QRectF()) {
+EffectContext makeControllerEffectContext(
+    ArtifactAbstractLayer* layer, const QRectF& roi = QRectF(),
+    const bool interactivePreview = false,
+    const float resolutionScale = 1.0f) {
 
   EffectContext ctx;
 
   ctx.roi = roi;
 
-  ctx.isInteractive = true;
+  ctx.isInteractive = interactivePreview;
+
+  ctx.resolutionScale = std::clamp(resolutionScale, 0.125f, 1.0f);
 
   if (!layer) {
 
@@ -3608,11 +3647,50 @@ int compositionRenderDispatchIntervalMs(const ArtifactCompositionPtr &comp) {
 
 
 
+float layerOverscanPixels(const ArtifactAbstractLayer *layer) {
+  if (!layer || layer->isAdjustmentLayer()) {
+    return 0.0f;
+  }
+  float expansion = 0.0f;
+  for (const auto &effect : layer->getEffects()) {
+    if (!effect || !effect->isEnabled() || !effect->allowOverscan() ||
+        effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
+      continue;
+    }
+    const EffectROIHint hint = effect->roiHint();
+    if (!hint.requiresFullFrame) {
+      expansion += std::max(0.0f, hint.expansionPixels);
+    }
+  }
+  return expansion;
+}
+
+QRectF effectExpandedLayerBounds(const ArtifactAbstractLayer *layer) {
+  if (!layer) {
+    return {};
+  }
+  const QRectF bounds = layer->transformedBoundingBox();
+  const QRectF localBounds = layer->localBounds();
+  const float overscan = layerOverscanPixels(layer);
+  if (overscan <= 0.0f || !bounds.isValid() || !localBounds.isValid() ||
+      localBounds.width() <= 0.0 || localBounds.height() <= 0.0) {
+    return bounds;
+  }
+  const qreal scale = std::max(std::abs(bounds.width() / localBounds.width()),
+                               std::abs(bounds.height() / localBounds.height()));
+  const qreal expansion = static_cast<qreal>(overscan) * scale;
+  return bounds.adjusted(-expansion, -expansion, expansion, expansion);
+}
+
 bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
                                   const QImage &surface,
 
-                                  ArtifactCore::ImageF32x4_RGBA *outBuffer) {
+                                  ArtifactCore::ImageF32x4_RGBA *outBuffer,
+
+                                  const bool interactivePreview = false,
+
+                                  const float resolutionScale = 1.0f) {
 
   if (!targetLayer || surface.isNull() || !outBuffer) {
 
@@ -3758,6 +3836,21 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
   }
 
   if (hasRasterizerEffect) {
+    const float overscanPixels = layerOverscanPixels(targetLayer) *
+        (interactivePreview
+             ? std::clamp(resolutionScale, 0.125f, 1.0f)
+             : 1.0f);
+    if (overscanPixels > 0.0f) {
+      const QRectF localBounds = targetLayer->localBounds();
+      const float scaleX = static_cast<float>(mat.cols) /
+          std::max(1.0f, static_cast<float>(localBounds.width()));
+      const float scaleY = static_cast<float>(mat.rows) /
+          std::max(1.0f, static_cast<float>(localBounds.height()));
+      const int paddingX = std::max(1, static_cast<int>(std::ceil(overscanPixels * scaleX)));
+      const int paddingY = std::max(1, static_cast<int>(std::ceil(overscanPixels * scaleY)));
+      cv::copyMakeBorder(mat, mat, paddingY, paddingY, paddingX, paddingX,
+                         cv::BORDER_CONSTANT, cv::Scalar(0.0, 0.0, 0.0, 0.0));
+    }
     ArtifactCore::ImageF32x4_RGBA cpuImage;
 
     cpuImage.setFromCVMat(mat);
@@ -3786,7 +3879,9 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
           QRectF(0.0, 0.0, static_cast<qreal>(current.width()),
 
-                 static_cast<qreal>(current.height()))));
+                 static_cast<qreal>(current.height())),
+
+          interactivePreview, resolutionScale));
 
       effect->applyConfigured(current, next);
 
@@ -4254,6 +4349,12 @@ bool layerUsesTextGizmo(const ArtifactAbstractLayerPtr &layer) {
 
   return layer && dynamic_cast<ArtifactTextLayer *>(layer.get()) != nullptr;
 
+}
+
+bool layerUsesProjectedFrameGizmo(const ArtifactAbstractLayerPtr &layer) {
+  return layer &&
+         (layer->is3D() ||
+          dynamic_cast<ArtifactImageLayer *>(layer.get()) != nullptr);
 }
 
 
@@ -4861,15 +4962,22 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
   if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer)) {
 
-    key += QStringLiteral("|image|src=%1|fit=%2|size=%3x%4")
+    key += QStringLiteral(
+               "|image|src=%1|rev=%2|fit=%3|size=%4x%5|cs=%6|tf=%7")
 
                .arg(imageLayer->sourcePath())
+
+               .arg(imageLayer->sourceVersion())
 
                .arg(imageLayer->fitToLayer() ? 1 : 0)
 
                .arg(surface.width())
 
-               .arg(surface.height());
+               .arg(surface.height())
+
+               .arg(imageLayer->inputColorSpace())
+
+               .arg(imageLayer->inputTransferFunction());
 
     return key;
 
@@ -7071,9 +7179,13 @@ void drawLayerForCompositionView(
 
           imageCard->sourceAssetId().toString(QUuid::WithoutBraces));
 
-      textureKey = QStringLiteral("image-f32:v%1|3d-card")
+      textureKey = QStringLiteral("image-f32:v%1|cs=%2|tf=%3|3d-card")
 
-                       .arg(imageCard->sourceVersion());
+                       .arg(imageCard->sourceVersion())
+
+                       .arg(imageCard->inputColorSpace())
+
+                       .arg(imageCard->inputTransferFunction());
 
     }
 
@@ -7252,6 +7364,11 @@ void drawLayerForCompositionView(
 
 
 
+    const float overscanPixels = layerOverscanPixels(layer);
+    const QRectF outputRect = overscanPixels > 0.0f
+        ? rect.adjusted(-overscanPixels, -overscanPixels, overscanPixels, overscanPixels)
+        : rect;
+
     QHash<ArtifactCore::Id, QImage> resolvedMatteSources;
 
     QString matteSourceSignature;
@@ -7310,6 +7427,17 @@ void drawLayerForCompositionView(
 
         QStringLiteral("|interactiveDraft=%1").arg(interactiveDraft ? 1 : 0);
 
+    const float effectResolutionScale = interactiveDraft
+        ? 0.25f
+        : lod == DetailLevel::Low
+              ? 0.25f
+              : lod == DetailLevel::Medium ? 0.5f : 1.0f;
+
+    cacheSignature += QStringLiteral("|effectScale=%1")
+                          .arg(effectResolutionScale, 0, 'f', 2);
+
+    cacheSignature += QStringLiteral("|overscan=%1").arg(overscanPixels, 0, 'f', 3);
+
     cacheSignature += matteSourceSignature;
 
     QString gpuOwnerId = ownerId;
@@ -7321,7 +7449,11 @@ void drawLayerForCompositionView(
         if (version > 0) {
           gpuOwnerId = QStringLiteral("asset:%1").arg(
               imageLayer->sourceAssetId().toString(QUuid::WithoutBraces));
-          gpuCacheSignature = QStringLiteral("image-f32:v%1").arg(version);
+          gpuCacheSignature =
+              QStringLiteral("image-f32:v%1|cs=%2|tf=%3")
+                  .arg(version)
+                  .arg(imageLayer->inputColorSpace())
+                  .arg(imageLayer->inputTransferFunction());
         }
       }
     }
@@ -7395,7 +7527,9 @@ void drawLayerForCompositionView(
 
           // Downsampling already controls preview cost. Skipping the rasterizer
           // here makes Blur and Gaussian Blur disappear in Draft/interactive views.
-          if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
+          if (buildRasterizedSurfaceBuffer(
+                  layer, surface, &processed, interactiveDraft,
+                  effectResolutionScale)) {
 
             processedBuffer =
                 ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(processed);
@@ -7457,7 +7591,9 @@ void drawLayerForCompositionView(
 
       ArtifactCore::ImageF32x4_RGBA processed;
 
-      if (buildRasterizedSurfaceBuffer(layer, surface, &processed) &&
+      if (buildRasterizedSurfaceBuffer(
+              layer, surface, &processed, interactiveDraft,
+              effectResolutionScale) &&
 
           !processed.isEmpty()) {
         directProcessedBuffer =
@@ -7535,11 +7671,11 @@ void drawLayerForCompositionView(
 
               renderer->drawSpriteTransformed(
 
-                  static_cast<float>(rect.x()), static_cast<float>(rect.y()),
+                  static_cast<float>(outputRect.x()), static_cast<float>(outputRect.y()),
 
-                  static_cast<float>(rect.width()),
+                  static_cast<float>(outputRect.width()),
 
-                  static_cast<float>(rect.height()), instanceTransform, binding.srv,
+                  static_cast<float>(outputRect.height()), instanceTransform, binding.srv,
 
                   finalOpacity);
 
@@ -7555,15 +7691,15 @@ void drawLayerForCompositionView(
 
           if (directProcessedBuffer && !directProcessedBuffer->isEmpty()) {
             renderer->drawSpriteTransformed(
-                static_cast<float>(rect.x()), static_cast<float>(rect.y()),
-                static_cast<float>(rect.width()),
-                static_cast<float>(rect.height()), instanceTransform,
+                static_cast<float>(outputRect.x()), static_cast<float>(outputRect.y()),
+                static_cast<float>(outputRect.width()),
+                static_cast<float>(outputRect.height()), instanceTransform,
                 *directProcessedBuffer, finalOpacity);
           } else {
             renderer->drawSpriteTransformed(
-                static_cast<float>(rect.x()), static_cast<float>(rect.y()),
-                static_cast<float>(rect.width()),
-                static_cast<float>(rect.height()), instanceTransform, surface,
+                static_cast<float>(outputRect.x()), static_cast<float>(outputRect.y()),
+                static_cast<float>(outputRect.width()),
+                static_cast<float>(outputRect.height()), instanceTransform, surface,
                 finalOpacity);
           }
 
@@ -10305,15 +10441,35 @@ public:
       channelComponentSource = renderPipeline.velocitySRV();
       channelComponent = 1;
       break;
+    case ViewportChannelDisplayMode::Albedo:
+      channelComponentSource = renderPipeline.albedoSRV();
+      channelComponent = 4;
+      break;
+    case ViewportChannelDisplayMode::Normal:
+      channelComponentSource = renderPipeline.normalSRV();
+      channelComponent = 5;
+      break;
+    case ViewportChannelDisplayMode::Velocity:
+      channelComponentSource = renderPipeline.velocitySRV();
+      channelComponent = 6;
+      break;
     default:
       break;
     }
     if (channelComponentSource && blendPipeline_) {
       auto context = renderer_->immediateContext();
-      if (context && blendPipeline_->displayComponent(
-                         context.RawPtr(), channelComponentSource,
-                         renderPipeline.tempUAV(), channelComponent,
-                         renderPipeline.width(), renderPipeline.height())) {
+      bool displayed = false;
+      if (channelComponent <= 3) {
+        displayed = blendPipeline_->displayComponent(
+            context.RawPtr(), channelComponentSource, renderPipeline.tempUAV(),
+            channelComponent, renderPipeline.width(), renderPipeline.height());
+      } else {
+        const Diligent::Uint32 mode = channelComponent == 4 ? 1u : channelComponent == 5 ? 2u : 3u;
+        displayed = blendPipeline_->displayComposite(
+            context.RawPtr(), channelComponentSource, renderPipeline.tempUAV(),
+            mode, 0u, 1u, renderPipeline.width(), renderPipeline.height());
+      }
+      if (displayed) {
         viewportChannelDisplaySRV_ = renderPipeline.tempSRV();
       }
     }
@@ -10460,6 +10616,8 @@ public:
   ArtifactAbstractLayerWeak gizmoUndoLayer_;
 
   GizmoTransformSnapshot gizmoUndoBefore_;
+
+  GizmoTransformSnapshot gizmoLayerTransformBefore_;
 
   int64_t gizmoUndoFrame_ = 0;
 
@@ -10644,7 +10802,10 @@ public:
 
   ViewportChannelDisplayMode viewportChannelDisplayMode_ =
       ViewportChannelDisplayMode::Color;
-  Diligent::ITextureView* viewportChannelDisplaySRV_ = nullptr;
+  // Retain auxiliary channel views across the render pass.  These views often
+  // point at ping-pong AOV textures and must remain valid until the overlay is
+  // drawn after the main composition pass.
+  Diligent::RefCntAutoPtr<Diligent::ITextureView> viewportChannelDisplaySRV_;
 
   bool showReferenceOverlay_ = false;
 
@@ -11719,7 +11880,10 @@ public:
 
   QString lastAccumRtPixelStats_;
 
-  Diligent::ITextureView* lastPresentedReadbackSRV_ = nullptr;
+  // Keep the presented source view alive until the next frame.  The view may
+  // refer to a ping-pong texture owned by RenderPipeline; retaining it avoids
+  // a stale raw pointer when a screenshot is requested between render passes.
+  Diligent::RefCntAutoPtr<Diligent::ITextureView> lastPresentedReadbackSRV_;
 
   FloatColor lastBgColorCache_ = {-1.f, -1.f, -1.f, -1.f};
 
@@ -12514,7 +12678,7 @@ public:
 
       gizmo3D_->setTransform(layer->position3D(), layer->rotation3D());
 
-      gizmo3D_->setScale(QVector3D(t3.scaleX(), t3.scaleY(), 1.0f));
+      gizmo3D_->setScale(QVector3D(t3.scaleX(), t3.scaleY(), t3.scaleZ()));
 
       return;
 
@@ -13257,6 +13421,15 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                 // transform だけの更新では重いサーフェス再生成を避ける。
 
                 if (auto layer = comp->layerById(layerId)) {
+
+                  // Property drags arrive through LayerChanged rather than a
+                  // viewport mouse event. Treat effect edits as a short
+                  // interaction window so large Blur radii use preview LOD,
+                  // then let the existing idle transition request Full again.
+                  if (layerId == impl_->selectedLayerId_ &&
+                      layer->isDirty(LayerDirtyFlag::Effect)) {
+                    notifyViewportInteractionActivity();
+                  }
 
                   const bool directDragTarget =
 
@@ -14208,7 +14381,9 @@ void CompositionRenderController::setGizmoMode(
     // 3D has no anchor-only equivalent. The combined mode uses the complete
     // 3D handle set so 2D image and plane layers get the same default controls.
     GizmoMode gizmo3DMode = GizmoMode::Full;
-    if (mode == TransformGizmo::Mode::Rotate) {
+    if (mode == TransformGizmo::Mode::Translation) {
+      gizmo3DMode = GizmoMode::Move;
+    } else if (mode == TransformGizmo::Mode::Rotate) {
       gizmo3DMode = GizmoMode::Rotate;
     } else if (mode == TransformGizmo::Mode::Scale) {
       gizmo3DMode = GizmoMode::Scale;
@@ -14575,7 +14750,9 @@ int CompositionRenderController::referenceFrame() const {
 void CompositionRenderController::setSelectedLayerId(const LayerID &id) {
 
   if (impl_->selectedLayerId_ == id) {
-
+    impl_->invalidateOverlayComposite();
+    impl_->syncSelectedLayerOverlayState(impl_->previewPipeline_.composition());
+    markRenderDirty();
     return;
 
   }
@@ -19295,7 +19472,7 @@ bool CompositionRenderController::resetProjectedFrameHandleAt(
       std::max(1, static_cast<int>(impl_->hostHeight_)));
   const auto handle = hitTestProjectedFrameCorner(
       layer, physicalPos, view, projection, viewport,
-      24.0f * std::max(1.0f, impl_->devicePixelRatio_));
+      32.0f * std::max(1.0f, impl_->devicePixelRatio_));
   if (handle == TransformGizmo::HandleType::None) {
     return false;
   }
@@ -19305,8 +19482,9 @@ bool CompositionRenderController::resetProjectedFrameHandleAt(
   GizmoTransformSnapshot before;
   before.position = layer->position3D();
   before.rotation = layer->rotation3D();
+  const float scaleZ = transform.snapshotAt(time).scaleZ;
   before.scale = QVector3D(transform.scaleXAt(time), transform.scaleYAt(time),
-                           1.0f);
+                           scaleZ);
   before.is3D = true;
   GizmoTransformSnapshot after = before;
 
@@ -19328,7 +19506,8 @@ bool CompositionRenderController::resetProjectedFrameHandleAt(
   }
 
   layer->setRotation3D(after.rotation);
-  layer->transform3D().setScale(time, after.scale.x(), after.scale.y());
+  layer->transform3D().setScale(time, after.scale.x(), after.scale.y(),
+                                after.scale.z());
   layer->setDirty(LayerDirtyFlag::Transform);
   layer->changed();
   if (auto *manager = UndoManager::instance()) {
@@ -19417,13 +19596,15 @@ bool CompositionRenderController::setSelected3DTransform(
   before.position = layer->position3D();
   before.rotation = layer->rotation3D();
   before.scale = QVector3D(layer->transform3D().scaleX(),
-                           layer->transform3D().scaleY(), 1.0f);
+                           layer->transform3D().scaleY(),
+                           layer->transform3D().scaleZ());
   before.is3D = true;
   GizmoTransformSnapshot after;
   after.position = position;
   after.rotation = rotation;
   after.scale = QVector3D(std::max(0.001f, scale.x()),
-                          std::max(0.001f, scale.y()), 1.0f);
+                           std::max(0.001f, scale.y()),
+                           std::max(0.001f, scale.z()));
   after.is3D = true;
   if (before.position == after.position && before.rotation == after.rotation &&
       before.scale == after.scale) {
@@ -19431,7 +19612,8 @@ bool CompositionRenderController::setSelected3DTransform(
   }
   layer->setPosition3D(after.position);
   layer->setRotation3D(after.rotation);
-  layer->transform3D().setScale(time, after.scale.x(), after.scale.y());
+  layer->transform3D().setScale(time, after.scale.x(), after.scale.y(),
+                                after.scale.z());
   layer->setDirty(LayerDirtyFlag::Transform);
   layer->changed();
   if (auto* manager = UndoManager::instance()) {
@@ -19458,7 +19640,8 @@ bool CompositionRenderController::resetSelected3DTransform() {
   before.position = layer->position3D();
   before.rotation = layer->rotation3D();
   before.scale = QVector3D(layer->transform3D().scaleX(),
-                           layer->transform3D().scaleY(), 1.0f);
+                           layer->transform3D().scaleY(),
+                           layer->transform3D().scaleZ());
   before.is3D = true;
   GizmoTransformSnapshot after;
   after.position = QVector3D(0.0f, 0.0f, before.position.z());
@@ -19471,7 +19654,8 @@ bool CompositionRenderController::resetSelected3DTransform() {
   }
   layer->setPosition3D(after.position);
   layer->setRotation3D(after.rotation);
-  layer->transform3D().setScale(time, after.scale.x(), after.scale.y());
+  layer->transform3D().setScale(time, after.scale.x(), after.scale.y(),
+                                after.scale.z());
   layer->setDirty(LayerDirtyFlag::Transform);
   layer->changed();
   if (auto *manager = UndoManager::instance()) {
@@ -19672,6 +19856,19 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         impl_->gizmoUndoBefore_.rotation = impl_->gizmo3D_->rotation();
         impl_->gizmoUndoBefore_.scale = impl_->gizmo3D_->scale();
         impl_->gizmoUndoBefore_.is3D = selectedLayer->is3D();
+        const auto &layerTransform = selectedLayer->transform3D();
+        const ArtifactCore::RationalTime layerTime(
+            selectedLayer->currentFrame(), 30);
+        impl_->gizmoLayerTransformBefore_.position = QVector3D(
+            layerTransform.positionXAt(layerTime),
+            layerTransform.positionYAt(layerTime),
+            layerTransform.positionZAt(layerTime));
+        impl_->gizmoLayerTransformBefore_.rotation = QVector3D(
+            0.0f, 0.0f, layerTransform.rotationAt(layerTime));
+        impl_->gizmoLayerTransformBefore_.scale = QVector3D(
+            layerTransform.scaleXAt(layerTime),
+            layerTransform.scaleYAt(layerTime), 1.0f);
+        impl_->gizmoLayerTransformBefore_.is3D = selectedLayer->is3D();
         impl_->gizmoUndoSnapshotValid_ = true;
       };
 
@@ -20714,7 +20911,8 @@ if (event->button() == Qt::LeftButton &&
   // Keep the hit test in viewport space, but route the drag through the 3D
   // gizmo so the pointer delta is resolved with the active camera ray.
   if (event->button() == Qt::LeftButton && selectedLayer &&
-      (selectedLayer->is3D() || impl_->viewportOrientationMatricesValid_) &&
+      (layerUsesProjectedFrameGizmo(selectedLayer) ||
+       impl_->viewportOrientationMatricesValid_) &&
       impl_->gizmo3D_ &&
       activeTool != ToolType::Pen) {
 
@@ -20732,14 +20930,35 @@ if (event->button() == Qt::LeftButton &&
     const QRect frameViewport(
         0, 0, std::max(1, static_cast<int>(impl_->hostWidth_)),
         std::max(1, static_cast<int>(impl_->hostHeight_)));
+
     const auto frameHandle = hitTestProjectedFrameCorner(
         selectedLayer, viewportPos, frameView, frameProjection, frameViewport,
-        24.0f * std::max(1.0f, impl_->devicePixelRatio_));
+        32.0f * std::max(1.0f, impl_->devicePixelRatio_));
+
+    // Corner and edge handles are the most explicit targets. Axis/ring handles
+    // still take priority over the broad frame-interior move target.
+    const Ray priorityRay = createPickingRay(viewportPos);
+    const GizmoAxis priorityAxis =
+        impl_->gizmo3D_->hitTest(priorityRay, frameView, frameProjection);
+    if (frameHandle == TransformGizmo::HandleType::None &&
+        priorityAxis != GizmoAxis::None) {
+      beginGizmoUndoSnapshot();
+      impl_->gizmo3D_->beginDrag(priorityAxis, priorityRay);
+      impl_->projectedFrameHandle_ = TransformGizmo::HandleType::None;
+      impl_->projectedFrameMove_ = false;
+      impl_->gizmoDragActive_ = true;
+      notifyViewportInteractionActivity();
+      impl_->gizmoDragRenderTimer_.restart();
+      impl_->invalidateOverlayComposite();
+      markRenderDirty();
+      event->accept();
+      return;
+    }
 
     if (frameHandle != TransformGizmo::HandleType::None) {
       beginGizmoUndoSnapshot();
       impl_->gizmo3D_->setMode(GizmoMode::Scale);
-      impl_->gizmo3D_->setDepthEnabled(true);
+      impl_->gizmo3D_->setDepthEnabled(selectedLayer->is3D());
       // Projected frame edges represent one local axis, while corners keep
       // the screen-plane/uniform behavior of the frame resize path.  Routing
       // the edge handles to the matching 3D axis prevents a vertical edge
@@ -20782,7 +21001,7 @@ if (event->button() == Qt::LeftButton &&
                                       frameProjection, frameViewport)) {
       beginGizmoUndoSnapshot();
       impl_->gizmo3D_->setMode(GizmoMode::Move);
-      impl_->gizmo3D_->setDepthEnabled(true);
+      impl_->gizmo3D_->setDepthEnabled(selectedLayer->is3D());
       impl_->gizmo3D_->beginDrag(GizmoAxis::Screen,
                                  createPickingRay(viewportPos));
       impl_->projectedFrameHandle_ = TransformGizmo::HandleType::None;
@@ -22715,18 +22934,28 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
           if (auto layer = comp->layerById(impl_->selectedLayerId_)) {
 
             if (!layer->is3D()) {
-              auto &t2 = layer->transform2D();
               const QVector3D gizmoScale = impl_->gizmo3D_->scale();
               const QVector3D gizmoRotation = impl_->gizmo3D_->rotation();
               const QVector3D gizmoPosition = impl_->gizmo3D_->position();
-              t2.setPosition(gizmoPosition.x(), gizmoPosition.y());
-              t2.setRotation(gizmoRotation.z());
               const auto clampScale = [](float value) {
                 const float sign = value < 0.0f ? -1.0f : 1.0f;
                 return sign * std::max(0.001f, std::abs(value));
               };
-              t2.setScale(clampScale(gizmoScale.x()),
-                          clampScale(gizmoScale.y()));
+              const QVector3D visualBefore = impl_->gizmoUndoBefore_.scale;
+              const QVector3D layerBefore =
+                  impl_->gizmoLayerTransformBefore_.scale;
+              GizmoTransformSnapshot current =
+                  impl_->gizmoLayerTransformBefore_;
+              current.position +=
+                  gizmoPosition - impl_->gizmoUndoBefore_.position;
+              current.rotation.setZ(gizmoRotation.z());
+              current.scale.setX(clampScale(
+                  layerBefore.x() * gizmoScale.x() /
+                  std::max(0.001f, std::abs(visualBefore.x()))));
+              current.scale.setY(clampScale(
+                  layerBefore.y() * gizmoScale.y() /
+                  std::max(0.001f, std::abs(visualBefore.y()))));
+              applyPlanarGizmoTransform(layer, layer->currentFrame(), current);
             } else if (impl_->gizmo3D_->mode() == GizmoMode::Scale) {
 
               auto &t3 = layer->transform3D();
@@ -22740,7 +22969,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
                 return sign * std::max(0.001f, std::abs(value));
               };
               t3.setScale(time, clampScale(scale.x()),
-                          clampScale(scale.y()));
+                           clampScale(scale.y()), clampScale(scale.z()));
 
             } else {
 
@@ -22763,6 +22992,12 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
               layer->setRotation3D(impl_->gizmo3D_->rotation());
 
             }
+
+            layer->setDirty(LayerDirtyFlag::Transform);
+            layer->changed();
+            impl_->invalidateBaseComposite();
+            impl_->invalidateOverlayComposite();
+            markRenderDirty();
 
             ArtifactCore::globalEventBus().publish(
 
@@ -23739,6 +23974,21 @@ void CompositionRenderController::handleMouseRelease() {
       after.rotation = impl_->gizmo3D_->rotation();
       after.scale = impl_->gizmo3D_->scale();
       after.is3D = impl_->gizmoUndoBefore_.is3D;
+      GizmoTransformSnapshot before = impl_->gizmoUndoBefore_;
+      if (!after.is3D) {
+        before = impl_->gizmoLayerTransformBefore_;
+        if (const auto layer = impl_->gizmoUndoLayer_.lock()) {
+          const auto &transform = layer->transform3D();
+          const ArtifactCore::RationalTime time(layer->currentFrame(), 30);
+          after.position = QVector3D(transform.positionXAt(time),
+                                     transform.positionYAt(time),
+                                     transform.positionZAt(time));
+          after.rotation =
+              QVector3D(0.0f, 0.0f, transform.rotationAt(time));
+          after.scale = QVector3D(transform.scaleXAt(time),
+                                  transform.scaleYAt(time), 1.0f);
+        }
+      }
       const auto changed = [](const GizmoTransformSnapshot& lhs,
                               const GizmoTransformSnapshot& rhs) {
         return lhs.is3D != rhs.is3D ||
@@ -23746,11 +23996,11 @@ void CompositionRenderController::handleMouseRelease() {
                (lhs.rotation - rhs.rotation).lengthSquared() > 0.000001f ||
                (lhs.scale - rhs.scale).lengthSquared() > 0.000001f;
       };
-      if (changed(impl_->gizmoUndoBefore_, after)) {
+      if (changed(before, after)) {
         if (auto* mgr = UndoManager::instance()) {
           mgr->push(std::make_unique<GizmoTransformUndoCommand>(
               impl_->gizmoUndoLayer_.lock(), impl_->gizmoUndoFrame_,
-              impl_->gizmoUndoBefore_, after));
+              before, after));
         }
       }
       impl_->gizmoUndoLayer_.reset();
@@ -25807,7 +26057,8 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
   const QPointF physPos = viewportPos * impl_->devicePixelRatio_;
 
   if (selectedLayer &&
-      (selectedLayer->is3D() || impl_->viewportOrientationMatricesValid_) &&
+      (layerUsesProjectedFrameGizmo(selectedLayer) ||
+       impl_->viewportOrientationMatricesValid_) &&
       impl_->gizmo_ &&
       !layerUsesTextGizmo(selectedLayer) &&
       (impl_->gizmoMode_ == TransformGizmo::Mode::All ||
@@ -25831,9 +26082,17 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
         std::max(1, static_cast<int>(impl_->hostHeight_)));
     const auto frameHandle = hitTestProjectedFrameCorner(
         selectedLayer, physPos, frameView, frameProjection, frameViewport,
-        24.0f * std::max(1.0f, impl_->devicePixelRatio_));
+        32.0f * std::max(1.0f, impl_->devicePixelRatio_));
     if (frameHandle != TransformGizmo::HandleType::None) {
       return cursorForProjectedFrameCorner(frameHandle);
+    }
+    if (impl_->gizmo3D_) {
+      const GizmoAxis axis = impl_->gizmo3D_->hitTest(
+          createPickingRay(physPos), frameView, frameProjection);
+      if (axis != GizmoAxis::None) {
+        return impl_->gizmoDragActive_ ? Qt::ClosedHandCursor
+                                      : Qt::OpenHandCursor;
+      }
     }
     if (hitTestProjectedFrameInterior(selectedLayer, physPos, frameView,
                                       frameProjection, frameViewport)) {
@@ -27634,15 +27893,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       case ViewportChannelDisplayMode::MaterialId:
         viewportChannelDisplaySRV_ = renderPipeline.materialIdSRV();
         break;
-      case ViewportChannelDisplayMode::Albedo:
-        viewportChannelDisplaySRV_ = renderPipeline.albedoSRV();
-        break;
-      case ViewportChannelDisplayMode::Normal:
-        viewportChannelDisplaySRV_ = renderPipeline.normalSRV();
-        break;
-      case ViewportChannelDisplayMode::Velocity:
-        viewportChannelDisplaySRV_ = renderPipeline.velocitySRV();
-        break;
+      // Composite AOV modes need channel remapping (normal [-1,1] -> RGB and
+      // velocity X/Y -> RGB).  Leave these to the CPU composition fallback;
+      // drawing the raw float SRV makes them appear black or incorrectly
+      // colored because the viewport shader expects display-ready RGBA.
       default:
         break;
       }
@@ -28366,7 +28620,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           }
 
-          const QRectF layerBounds = layer->transformedBoundingBox();
+          const QRectF layerBounds = effectExpandedLayerBounds(layer.get());
 
           if (layerBounds.isValid() &&
 
@@ -29137,7 +29391,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           // === 段階 2: ROI 計算 ===
 
-          const QRectF layerBounds = layer->transformedBoundingBox();
+          const QRectF layerBounds = effectExpandedLayerBounds(layer.get());
 
           const QRectF intersected = layerBounds.intersected(renderRoi);
 
@@ -33886,23 +34140,23 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
     }
     const FloatColor tickColor = {0.65f, 0.70f, 0.78f, 0.72f};
     const FloatColor labelColor = {0.86f, 0.89f, 0.95f, 0.9f};
-    const QFont rulerFont(QStringLiteral("Segoe UI"), 8);
+    const QFont rulerFont(QStringLiteral("Segoe UI"), 10);
     // The ruler belongs to the viewport edge, not to the transformed canvas
     // edge. This keeps it visible while the canvas is panned or zoomed out.
-    const float left = 0.0f;
-    const float right = std::max(1.0f, hostWidth_);
-    const float top = 0.0f;
-    const float bottom = std::max(1.0f, hostHeight_);
+    const float left = 12.0f;
+    const float right = std::max(1.0f, hostWidth_ - 12.0f);
+    const float top = 12.0f;
+    const float bottom = std::max(1.0f, hostHeight_ - 12.0f);
     for (const auto& tick : viewportRulerHorizontalTicks_) {
       const auto point = renderer_->canvasToViewport({tick.canvasPos, ch});
       const float length = tick.level == ViewportRulerTickLevel::Major
-                               ? 10.0f
-                               : tick.level == ViewportRulerTickLevel::Minor ? 6.0f
-                                                                             : 3.0f;
-      renderer_->drawSolidLine({point.x, bottom}, {point.x, bottom - length},
-                               tickColor, tick.level == ViewportRulerTickLevel::Major ? 1.5f : 1.0f);
+                               ? 14.0f
+                               : tick.level == ViewportRulerTickLevel::Minor ? 9.0f
+                                                                             : 5.0f;
+      renderer_->drawSolidLine({point.x, top}, {point.x, top + length},
+                               tickColor, tick.level == ViewportRulerTickLevel::Major ? 2.0f : 1.25f);
       if (!tick.label.isEmpty()) {
-        renderer_->drawText(QRectF(point.x + 3.0f, bottom - 18.0f, 72.0f, 14.0f),
+        renderer_->drawText(QRectF(point.x + 4.0f, top + 16.0f, 90.0f, 18.0f),
                             tick.label, rulerFont, labelColor,
                             Qt::AlignLeft | Qt::AlignVCenter);
       }
@@ -33910,24 +34164,25 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
     for (const auto& tick : viewportRulerVerticalTicks_) {
       const auto point = renderer_->canvasToViewport({0.0f, tick.canvasPos});
       const float length = tick.level == ViewportRulerTickLevel::Major
-                               ? 10.0f
-                               : tick.level == ViewportRulerTickLevel::Minor ? 6.0f
-                                                                             : 3.0f;
-      renderer_->drawSolidLine({left, point.y}, {left + length, point.y},
-                               tickColor, tick.level == ViewportRulerTickLevel::Major ? 1.5f : 1.0f);
+                               ? 14.0f
+                               : tick.level == ViewportRulerTickLevel::Minor ? 9.0f
+                                                                             : 5.0f;
+      renderer_->drawSolidLine({right, point.y}, {right - length, point.y},
+                               tickColor, tick.level == ViewportRulerTickLevel::Major ? 2.0f : 1.25f);
       if (!tick.label.isEmpty()) {
-        renderer_->drawText(QRectF(left + 12.0f, point.y + 2.0f, 72.0f, 14.0f),
+        renderer_->drawText(QRectF(right - 104.0f, point.y + 2.0f, 92.0f, 18.0f),
                             tick.label, rulerFont, labelColor,
                             Qt::AlignLeft | Qt::AlignVCenter);
       }
     }
     const auto scaleBar = ViewportScaleBarDataFactory::generate(
         safeZoom, QSizeF(std::max(1.0f, right - left), std::max(1.0f, bottom - top)));
-    renderer_->drawSolidLine({left + scaleBar.barViewportX, bottom - 8.0f},
-                             {left + scaleBar.barViewportX + scaleBar.barWidthPx,
-                              bottom - 8.0f}, tickColor, 3.0f);
-    renderer_->drawText(QRectF(left + scaleBar.barViewportX,
-                               bottom - 25.0f, 90.0f, 14.0f),
+    const float scaleBarX = right - scaleBar.barWidthPx - 96.0f;
+    renderer_->drawSolidLine({scaleBarX, bottom},
+                             {scaleBarX + scaleBar.barWidthPx, bottom},
+                             tickColor, 4.0f);
+    renderer_->drawText(QRectF(scaleBarX,
+                               bottom - 29.0f, 104.0f, 18.0f),
                         scaleBar.label, rulerFont, labelColor,
                         Qt::AlignLeft | Qt::AlignVCenter);
   }
@@ -34836,7 +35091,9 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
               dynamic_cast<ArtifactVideoLayer *>(layer.get()) ||
 
-              !isLayerSelected(selectedIds, layer)) {
+              (!isLayerSelected(selectedIds, layer) &&
+               (selectedLayerId_.isNil() ||
+                layer->id() != selectedLayerId_))) {
 
             continue;
 
@@ -34856,10 +35113,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
               !selectedLayerId_.isNil() && layer->id() == selectedLayerId_;
 
-          // The normal 2D transform gizmo already owns the primary frame in
-          // canvas view, so avoid drawing it twice. A 3D layer always needs
-          // this camera-projected frame alongside its axis gizmo.
-          if (primary && !layer->is3D() &&
+          if (primary && !layerUsesProjectedFrameGizmo(layer) &&
               !viewportOrientationMatricesValid_) {
             continue;
           }

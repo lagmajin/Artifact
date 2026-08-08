@@ -2,6 +2,8 @@ module;
 #include <utility>
 #include <QProxyStyle>
 #include <QPainter>
+#include <QPoint>
+#include <QRect>
 #include <QStyleOption>
 #include <wobjectimpl.h>
 #include "DockWidget.h"
@@ -104,7 +106,32 @@ void DockGlowStyle::drawDockWidgetGlow(const QStyleOption* option, QPainter* pai
     QColor glowColor = impl_->glowColor_;
     glowColor.setAlphaF(impl_->glowIntensity_);
 
-    // グラデーションの代わりに、フラットなアクセント枠だけにする。
+    // Continue the content outline around the active tab. Leaving the top edge
+    // open beneath that tab makes the two independently painted widgets read
+    // as one continuous, raised-tab silhouette.
+    QRect activeTabRect;
+    if (const auto* dock = qobject_cast<const ads::CDockWidget*>(widget)) {
+        if (const auto* tab = dock->tabWidget();
+            tab && tab->property("artifactActiveTab").toBool()) {
+            activeTabRect = QRect(tab->mapTo(widget, QPoint(0, 0)), tab->size());
+        }
+    }
+    if (activeTabRect.isValid()) {
+        const int gapLeft = qBound(rect.left(), activeTabRect.left(), rect.right() + 1);
+        const int gapRight = qBound(rect.left(), activeTabRect.right() + 1,
+                                    rect.right() + 1);
+        if (gapLeft > rect.left()) {
+            painter->fillRect(QRect(rect.left(), rect.top(),
+                                    gapLeft - rect.left(), w), glowColor);
+        }
+        if (gapRight <= rect.right()) {
+            painter->fillRect(QRect(gapRight, rect.top(),
+                                    rect.right() - gapRight + 1, w), glowColor);
+        }
+    } else {
+        painter->fillRect(QRect(rect.left(), rect.top(), rect.width(), w), glowColor);
+    }
+
     painter->fillRect(QRect(rect.left(), rect.top() + w, w, rect.height() - w), glowColor);
     painter->fillRect(QRect(rect.right() - w + 1, rect.top() + w, w, rect.height() - w), glowColor);
     painter->fillRect(QRect(rect.left(), rect.bottom() - w + 1, rect.width(), w), glowColor);
@@ -124,11 +151,11 @@ void DockGlowStyle::drawDockTabGlow(const QStyleOption* option, QPainter* painte
     QColor glowColor = impl_->glowColor_;
     glowColor.setAlphaF(impl_->glowIntensity_ * 0.9f);
 
-    // タブ上部だけを少し強調し、それ以外はフラットな枠線にする。
+    // The content frame supplies the baseline. Omitting the tab's bottom edge
+    // avoids a seam and completes the single-stroke raised-tab silhouette.
     painter->fillRect(QRect(rect.left(), rect.top(), rect.width(), w), glowColor);
     painter->fillRect(QRect(rect.left(), rect.top(), w, rect.height()), glowColor);
     painter->fillRect(QRect(rect.right() - w + 1, rect.top(), w, rect.height()), glowColor);
-    painter->fillRect(QRect(rect.left(), rect.bottom() - w + 1, rect.width(), w), glowColor);
 
     painter->restore();
 }

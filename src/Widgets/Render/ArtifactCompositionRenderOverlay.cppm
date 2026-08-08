@@ -1100,9 +1100,12 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
     if (cameraView && cameraProj) {
       renderer->set3DCameraMatrices(*cameraView, *cameraProj);
     }
-    const auto edge = [&](const Detail::float3 &a, const Detail::float3 &b) {
-      renderer->draw3DLine(a, b, shadow, safeThickness + 1.8f);
-      renderer->draw3DLine(a, b, clippedFrameColor, safeThickness);
+    // Thick 3D lines are expanded as world-space quads and become uneven at
+    // low zoom or oblique angles. Native one-pixel lines stay aligned with the
+    // 3D handle quads and keep stable coverage across camera orientations.
+    const auto edge = [&](const Detail::float3 &a,
+                          const Detail::float3 &b) {
+      renderer->draw3DLine(a, b, clippedFrameColor, 1.0f);
     };
     edge(tl, tr);
     edge(tr, br);
@@ -1113,16 +1116,14 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
     // リファレンスマーク。枠線より薄く描き、通常の選択表示を圧迫しない。
     const FloatColor diagonalColor{color.r(), color.g(), color.b(),
                                    color.a() * 0.28f};
-    renderer->draw3DLine(tl, br, diagonalColor,
-                         std::max(0.75f, safeThickness * 0.55f));
-    renderer->draw3DLine(tr, bl, diagonalColor,
-                         std::max(0.75f, safeThickness * 0.55f));
+    renderer->draw3DLine(tl, br, diagonalColor, 1.0f);
+    renderer->draw3DLine(tr, bl, diagonalColor, 1.0f);
 
     // A projected border alone is easy to confuse with the composition outline.
     // Add plane-aligned corner handles so the 3D frame remains identifiable and
     // readable at oblique view angles.
     const qreal handleSize = std::clamp(
-        std::min(localBounds.width(), localBounds.height()) * 0.025, 14.0, 36.0);
+        std::min(localBounds.width(), localBounds.height()) * 0.035, 20.0, 48.0);
     const qreal handleHalf = handleSize * 0.5;
     const qreal shadowHalf = handleHalf + std::max<qreal>(2.0, handleSize * 0.12);
     const auto handle = [&](qreal x, qreal y) {
@@ -1144,7 +1145,7 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
     handle(bounds.right(), bounds.top());
     handle(bounds.right(), bounds.bottom());
     handle(bounds.left(), bounds.bottom());
-    const qreal edgeHandleHalf = handleHalf * 0.8;
+    const qreal edgeHandleHalf = handleHalf * 0.85;
     const auto edgeHandle = [&](qreal x, qreal y) {
       if (!isVisibleInCamera(x, y)) {
         return;
@@ -1175,7 +1176,7 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
       if (!isVisibleInCamera(x, y)) {
         return;
       }
-      const qreal rotationHalf = std::max<qreal>(6.0, edgeHandleHalf * 0.9);
+      const qreal rotationHalf = std::max<qreal>(8.0, edgeHandleHalf * 0.9);
       const auto quad = [&](qreal half, const FloatColor &fill) {
         renderer->draw3DQuad(
             point(static_cast<float>(x - half), static_cast<float>(y - half)),
