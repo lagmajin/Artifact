@@ -52,8 +52,8 @@ export namespace Artifact {
  public:
   ArtifactLayerFactory();
   ~ArtifactLayerFactory();
-  ArtifactAbstractLayerPtr createNewLayer(ArtifactLayerInitParams params) noexcept;
-  ArtifactLayerResult createLayer(ArtifactLayerInitParams& params) noexcept;
+  ArtifactAbstractLayerPtr createNewLayer(const ArtifactLayerInitParams& params) noexcept;
+  ArtifactLayerResult createLayer(const ArtifactLayerInitParams& params) noexcept;
   static ArtifactAbstractLayerPtr createFromJson(const QJsonObject& json) noexcept;
  };
 

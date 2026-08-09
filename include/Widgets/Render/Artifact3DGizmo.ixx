@@ -30,7 +30,8 @@ enum class GizmoOperation {
 
 enum class GizmoSpace {
     World,
-    Local
+    Local,
+    View
 };
 
 enum class GizmoAxis {
@@ -59,6 +60,8 @@ public:
     GizmoMode mode() const { return mode_; }
     void setSpace(GizmoSpace space) { space_ = space; }
     GizmoSpace space() const { return space_; }
+    void setViewBasis(const QVector3D& xAxis, const QVector3D& yAxis,
+                      const QVector3D& zAxis);
 
     void setTransform(const QVector3D& position, const QVector3D& rotation);
     void setLocalBasis(const QVector3D& xAxis, const QVector3D& yAxis,
@@ -67,6 +70,10 @@ public:
     QVector3D rotation() const;
     void setScale(const QVector3D& scale);
     QVector3D scale() const;
+    void setBoundingBox(const QVector3D& minBounds,
+                        const QVector3D& maxBounds);
+    void clearBoundingBox();
+    bool hasBoundingBox() const { return boundingBoxEnabled_; }
     void setDepthEnabled(bool enabled) { depthEnabled_ = enabled; }
     bool depthEnabled() const { return depthEnabled_; }
     void setInteractionModifiers(bool snapEnabled, bool fineAdjustment) {
@@ -79,6 +86,8 @@ public:
     
     // Interaction
     void beginDrag(GizmoAxis axis, const Ray& ray, float axisDirectionSign = 1.0f);
+    void beginDrag(GizmoAxis axis, const Ray& ray,
+                   const QVector3D& scaleSigns);
     void constrainDrag(GizmoAxis axis, const Ray& currentRay);
     void setNumericInput(float value);
     void setNumericPlanarScaleInput(float factor);
@@ -88,6 +97,10 @@ public:
     bool isDragging() const { return activeAxis_ != GizmoAxis::None; }
     GizmoAxis activeAxis() const { return activeAxis_; }
     GizmoAxis hoverAxis() const { return hoverAxis_; }
+    float hoverAxisDirectionSign() const { return hoverAxisDirectionSign_; }
+    QVector3D hoverScaleAxes() const { return hoverScaleAxes_; }
+    QVector3D hoverScaleSigns() const { return hoverScaleSigns_; }
+    bool isBoundingBoxDragging() const;
     GizmoOperation activeOperation() const { return activeOperation_; }
     GizmoOperation hoverOperation() const { return hoverOperation_; }
 
@@ -102,9 +115,15 @@ private:
     GizmoSpace space_ = GizmoSpace::World;
     GizmoAxis activeAxis_ = GizmoAxis::None;
     GizmoAxis hoverAxis_ = GizmoAxis::None;
+    float hoverAxisDirectionSign_ = 1.0f;
+    QVector3D hoverScaleAxes_;
+    QVector3D hoverScaleSigns_{1.0f, 1.0f, 1.0f};
     GizmoOperation activeOperation_ = GizmoOperation::None;
     GizmoOperation hoverOperation_ = GizmoOperation::None;
     bool depthEnabled_ = true;
+    bool boundingBoxEnabled_ = false;
+    QVector3D boundingBoxMin_;
+    QVector3D boundingBoxMax_;
     bool snapEnabled_ = false;
     bool fineAdjustment_ = false;
     bool fullModeDrag_ = false;

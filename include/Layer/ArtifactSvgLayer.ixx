@@ -65,8 +65,8 @@ public:
   void setFitToLayer(bool fit);
   bool fitToLayer() const;
 
-  QJsonObject toJson() const;
-  void fromJsonProperties(const QJsonObject& obj);
+  QJsonObject toJson() const override;
+  void fromJsonProperties(const QJsonObject& obj) override;
 
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;

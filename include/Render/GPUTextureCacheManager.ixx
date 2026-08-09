@@ -76,6 +76,13 @@ struct GPUTextureCacheStats {
     int pendingUploadCount = 0;
 };
 
+struct GPUTextureOwnerStats {
+    int entryCount = 0;
+    size_t memoryBytes = 0;
+    int pendingUploadCount = 0;
+    size_t pendingUploadBytes = 0;
+};
+
 class DiligentUploadCoordinator;
 
 class GPUTextureCacheManager {
@@ -119,6 +126,7 @@ public:
     void clear();
 
     GPUTextureCacheStats stats() const;
+    GPUTextureOwnerStats ownerStats(const QString& ownerId) const;
     int ownerEntryCount(const QString& ownerId) const;
     size_t ownerMemoryBytes(const QString& ownerId) const;
 

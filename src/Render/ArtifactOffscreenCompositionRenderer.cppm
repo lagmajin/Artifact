@@ -39,6 +39,9 @@ namespace Artifact
         // 指定された時刻のフレームをレンダリング
         void renderFrame(const FramePosition& position, ArtifactAbstractComposition* composition);
 
+        // 指定されたレイヤーだけを透明背景へレンダリング
+        void renderLayerFrame(const FramePosition& position, ArtifactAbstractLayer* layer);
+
         // レンダリング結果をImageF32x4_RGBAとして取得（エンコーダ用）
         ArtifactCore::ImageF32x4_RGBA captureImage();
 
@@ -100,6 +103,7 @@ namespace Artifact
         if (!composition) return;
 
         ITextureView* pRTV = pRenderTarget_->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
+        renderer_->setOverrideRTV(pRTV);
         const auto bgColor = composition->backgroundColor();
         float ClearColor[] = { bgColor.r(), bgColor.g(), bgColor.b(), bgColor.a() };
         
@@ -121,6 +125,23 @@ namespace Artifact
         }
         
         // コマンドの完了を待機
+        pContext_->Flush();
+    }
+
+    void OffscreenCompositionRenderer::renderLayerFrame(const FramePosition& position,
+                                                        ArtifactAbstractLayer* layer)
+    {
+        if (!layer || !pRenderTarget_ || !renderer_) return;
+
+        ITextureView* pRTV = pRenderTarget_->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
+        renderer_->setOverrideRTV(pRTV);
+        pContext_->SetRenderTargets(1, &pRTV, nullptr,
+                                    RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
+        pContext_->ClearRenderTarget(pRTV, clearColor,
+                                     RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        layer->goToFrame(position.framePosition());
+        layer->draw(renderer_.get());
         pContext_->Flush();
     }
 

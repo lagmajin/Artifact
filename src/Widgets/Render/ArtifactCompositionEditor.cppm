@@ -115,6 +115,7 @@ import Color.Float;
 import Artifact.Render.Config;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Factory;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Layer.Paint;
 import Artifact.Render.Queue.Service;
@@ -1258,6 +1259,7 @@ public:
         filesDropped_(std::move(filesDropped)) {
     setAutoFillBackground(false);
     setAttribute(Qt::WA_NoSystemBackground);
+    setAttribute(Qt::WA_TranslucentBackground);
     setFocusPolicy(Qt::NoFocus);
     setAcceptDrops(true);
 
@@ -2499,7 +2501,8 @@ public:
                                            .arg(candidate->layerName()));
               }
               for (const auto &matte : candidate->matteReferences()) {
-                if (selectedIds.contains(LayerID(matte.sourceLayerId.toString()))) {
+                if (!matte.enabled || matte.sourceLayerId.isNil()) continue;
+                if (selectedIds.contains(matte.sourceLayerId)) {
                   dependencies.push_back(QStringLiteral("Matte: %1 uses a selected layer")
                                              .arg(candidate->layerName()));
                   break;
@@ -3453,11 +3456,17 @@ public:
       }
       int pasted = 0;
       QVector<ArtifactAbstractLayerPtr> pastedLayers;
+      QHash<QString, LayerID> pastedLayerIdMap;
       for (const auto &val : layersArray) {
         if (!val.isObject()) {
           continue;
         }
-        auto pastedLayer = ArtifactAbstractLayer::fromJson(val.toObject());
+        const QJsonObject sourceLayerObject = val.toObject();
+        const QString sourceLayerId =
+            sourceLayerObject.value(QStringLiteral("id")).toString().trimmed();
+        QJsonObject layerObject = sourceLayerObject;
+        layerObject.remove(QStringLiteral("id"));
+        auto pastedLayer = ArtifactLayerFactory::createFromJson(layerObject);
         if (!pastedLayer) {
           continue;
         }
@@ -3487,6 +3496,9 @@ public:
           selectionManager->addToSelection(pastedLayer);
         }
         pastedLayers.push_back(pastedLayer);
+        if (!sourceLayerId.isEmpty() && !LayerID(sourceLayerId).isNil()) {
+          pastedLayerIdMap.insert(sourceLayerId, pastedLayer->id());
+        }
         ++pasted;
       }
       if (pasted == 0) {
@@ -3495,21 +3507,66 @@ public:
         return;
       }
 
+      for (const auto &pastedLayer : pastedLayers) {
+        if (!pastedLayer) {
+          continue;
+        }
+        const auto parentId = pastedLayer->parentLayerId();
+        const auto parentIt = pastedLayerIdMap.constFind(parentId.toString());
+        if (parentIt != pastedLayerIdMap.constEnd()) {
+          pastedLayer->setParentById(parentIt.value());
+        }
+        if (auto *cloneLayer = dynamic_cast<ArtifactCloneLayer *>(
+                pastedLayer.get())) {
+          auto cloneSettings = cloneLayer->cloneSettings();
+          const auto sourceIt = pastedLayerIdMap.constFind(
+              cloneSettings.sourceLayerId.toString());
+          if (sourceIt != pastedLayerIdMap.constEnd()) {
+            cloneSettings.sourceLayerId = sourceIt.value();
+            cloneLayer->setCloneSettings(cloneSettings);
+          }
+        }
+        auto matteReferences = pastedLayer->matteReferences();
+        bool matteReferencesChanged = false;
+        for (auto &matteReference : matteReferences) {
+          const auto sourceIt = pastedLayerIdMap.constFind(
+              matteReference.sourceLayerId.toString());
+          if (sourceIt != pastedLayerIdMap.constEnd()) {
+            matteReference.sourceLayerId = sourceIt.value();
+            matteReferencesChanged = true;
+          }
+        }
+        if (matteReferencesChanged) {
+          pastedLayer->setMatteReferences(matteReferences);
+        }
+      }
+
       // Repackage the already-created layers as one undoable operation. The
       // layers are temporarily removed so the existing Add/Move commands can
       // replay the exact insertion order without introducing a new command type.
       auto transaction = std::make_unique<MacroUndoCommand>(
           QStringLiteral("Paste Layers"));
+      struct PastedUndoEntry {
+        ArtifactAbstractLayerPtr layer;
+        int index = -1;
+        std::unique_ptr<AddLayerCommand> addCommand;
+      };
+      std::vector<PastedUndoEntry> undoEntries;
       for (const auto &pastedLayer : pastedLayers) {
         if (!pastedLayer) continue;
         const auto currentLayers = compNow->allLayerRef();
         const int currentIndex = currentLayers.indexOf(pastedLayer);
         if (currentIndex < 0) continue;
-        compNow->removeLayer(pastedLayer->id());
-        transaction->addChild(std::make_unique<AddLayerCommand>(
-            compNow, pastedLayer));
+        undoEntries.push_back(PastedUndoEntry{
+            pastedLayer, currentIndex,
+            std::make_unique<AddLayerCommand>(compNow, pastedLayer)});
+      }
+      for (auto &entry : undoEntries) {
+        if (!entry.layer) continue;
+        compNow->removeLayer(entry.layer->id());
+        transaction->addChild(std::move(entry.addCommand));
         transaction->addChild(std::make_unique<MoveLayerIndexCommand>(
-            compNow, pastedLayer, 0, currentIndex));
+            compNow, entry.layer, 0, entry.index));
       }
       UndoManager::instance()->push(std::move(transaction));
     };
@@ -4920,12 +4977,23 @@ protected:
       const std::array<std::pair<const char *, int>, 4> modes = {{
           {"Add", 0}, {"Subtract", 1}, {"Intersect", 2}, {"Difference", 3}}};
       bool added = controller_->hasHoveredMaskPath();
+      const bool hasVertex = controller_->hasHoveredMaskVertex();
       if (added) for (const auto &[label, mode] : modes) {
         QAction *action = maskMenu.addAction(QString::fromUtf8(label));
         action->setProperty("artifactMaskMode", mode);
       }
       if (added) {
         maskMenu.addSeparator();
+        if (hasVertex) {
+          QMenu *vertexMenu = maskMenu.addMenu(QStringLiteral("Vertex Type"));
+          const std::array<std::pair<const char *, int>, 4> vertexTypes = {{
+              {"Corner", 0}, {"Smooth", 1}, {"Continuous", 2},
+              {"Broken", 3}}};
+          for (const auto &[label, type] : vertexTypes) {
+            QAction *action = vertexMenu->addAction(QString::fromUtf8(label));
+            action->setProperty("artifactMaskVertexType", type);
+          }
+        }
         QAction *toggle = maskMenu.addAction(QStringLiteral("Toggle Enabled"));
         toggle->setProperty("artifactMaskAction", QStringLiteral("toggle"));
         QAction *remove = maskMenu.addAction(QStringLiteral("Delete Mask"));
@@ -4963,6 +5031,9 @@ protected:
           if (chosen->property("artifactMaskMode").isValid()) {
             controller_->setHoveredMaskMode(
                 chosen->property("artifactMaskMode").toInt());
+          } else if (chosen->property("artifactMaskVertexType").isValid()) {
+            controller_->setHoveredMaskVertexType(
+                chosen->property("artifactMaskVertexType").toInt());
           } else {
             const QString action =
                 chosen->property("artifactMaskAction").toString();
@@ -5097,6 +5168,7 @@ protected:
     if (event->button() == Qt::LeftButton &&
         event->modifiers().testFlag(Qt::AltModifier) &&
         !event->modifiers().testFlag(Qt::ControlModifier) && controller_ &&
+        !maskNavigationLocked() &&
         !(ArtifactApplicationManager::instance() &&
           ArtifactApplicationManager::instance()->toolManager() &&
           ArtifactApplicationManager::instance()->toolManager()->activeTool() ==
@@ -5499,7 +5571,7 @@ protected:
         if (controller_)
           controller_->notifyViewportInteractionActivity();
       } else if (altDown && (GetKeyState(VK_CONTROL) & 0x8000) == 0 &&
-                 controller_) {
+                 controller_ && !maskNavigationLocked()) {
         isAltOrbiting_ = true;
         setNavigationFeedback(NavigationFeedbackMode::Orbit);
         orbitDragStartPos_ = logPos;
@@ -5876,6 +5948,17 @@ protected:
             ToolType::Puppet && controller_->deleteSelectedPuppetPin()) {
       event->accept();
       return;
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_Backspace &&
+        event->modifiers() == Qt::NoModifier && controller_) {
+      if (auto *toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr;
+          toolManager && toolManager->activeTool() == ToolType::Pen &&
+          controller_->removeLastPendingMaskVertex()) {
+        event->accept();
+        return;
+      }
     }
     if (!event->isAutoRepeat() &&
         (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) &&
@@ -7027,9 +7110,15 @@ protected:
                                controller_->markRenderDirty();
                              }});
       model.items.push_back({"3D Local", QIcon(), "gizmo3d.local", true,
-                             gizmo3D->space() == GizmoSpace::Local,
+                              gizmo3D->space() == GizmoSpace::Local,
+                              [this, gizmo3D]() {
+                                gizmo3D->setSpace(GizmoSpace::Local);
+                                controller_->markRenderDirty();
+                              }});
+      model.items.push_back({"3D View", QIcon(), "gizmo3d.view", true,
+                             gizmo3D->space() == GizmoSpace::View,
                              [this, gizmo3D]() {
-                               gizmo3D->setSpace(GizmoSpace::Local);
+                               gizmo3D->setSpace(GizmoSpace::View);
                                controller_->markRenderDirty();
                              }});
     }
@@ -7107,6 +7196,15 @@ protected:
     } else {
       qWarning() << "Failed to save image to:" << path;
     }
+  }
+
+  bool maskNavigationLocked() const {
+    const auto *app = ArtifactApplicationManager::instance();
+    const auto *toolManager = app ? app->toolManager() : nullptr;
+    if (toolManager && toolManager->activeTool() == ToolType::Pen) {
+      return true;
+    }
+    return controller_ && controller_->hasPendingMaskEdit();
   }
 
   CompositionRenderController *controller_ = nullptr;
@@ -9083,6 +9181,14 @@ public:
       return;
     }
     activePaneId_ = clampedPaneId;
+    if (const auto *toolManager =
+            ArtifactApplicationManager::instance()
+                ? ArtifactApplicationManager::instance()->toolManager()
+                : nullptr;
+        toolManager && (toolManager->activeTool() == ToolType::Pen ||
+                        toolManager->activeTool() == ToolType::Shape)) {
+      forceFrontForPlanarEditingTool(toolManager->activeTool());
+    }
     syncOverlayGeometry(owner);
     if (overlayView_) {
       overlayView_->update();
@@ -9404,6 +9510,35 @@ public:
                 ? ArtifactApplicationManager::instance()->toolManager()
                 : nullptr) {
       toolManager->setActiveTool(ToolType::Pen);
+    }
+  }
+
+  bool isMaskNavigationLocked() const {
+    const auto *app = ArtifactApplicationManager::instance();
+    const auto *toolManager = app ? app->toolManager() : nullptr;
+    if (toolManager && toolManager->activeTool() == ToolType::Pen) {
+      return true;
+    }
+    const auto *controller = activeRenderController();
+    return controller && controller->hasPendingMaskEdit();
+  }
+
+  void forceFrontForPlanarEditingTool(ToolType toolType) {
+    if (toolType != ToolType::Pen && toolType != ToolType::Shape) {
+      return;
+    }
+    auto *controller = activeRenderController();
+    if (!controller) {
+      return;
+    }
+    controller->setViewportOrientation(
+        ArtifactCore::ViewOrientationHotspot::Front);
+    if (viewOrientationWidget_) {
+      viewOrientationWidget_->setOrientationQuaternion(
+          controller->viewportOrientationQuaternion());
+    }
+    if (overlayView_) {
+      overlayView_->update();
     }
   }
 
@@ -9773,6 +9908,7 @@ public:
     auto *toolManager = app ? app->toolManager() : nullptr;
     const auto type =
         toolManager ? toolManager->activeTool() : ToolType::Selection;
+    forceFrontForPlanarEditingTool(type);
     switch (type) {
     case ToolType::Selection:
       toolModeButton_->setText(QStringLiteral("Select"));
@@ -9999,7 +10135,8 @@ public:
       if (viewOrientationWidget_->isVisible() != showNavigator) {
         viewOrientationWidget_->setVisible(showNavigator);
       }
-      viewOrientationWidget_->setEnabledState(showNavigator);
+      viewOrientationWidget_->setEnabledState(
+          showNavigator && !isMaskNavigationLocked());
       if (viewOrientationWidget_->isVisible()) {
         viewOrientationWidget_->raise();
       }
@@ -10246,6 +10383,13 @@ public:
 
   void setPreviewOrbitMode(ArtifactCompositionEditor *owner, bool enabled) {
     Q_UNUSED(owner);
+    if (enabled && isMaskNavigationLocked()) {
+      if (previewOrbitAction_ && previewOrbitAction_->isChecked()) {
+        const QSignalBlocker blocker(previewOrbitAction_);
+        previewOrbitAction_->setChecked(false);
+      }
+      return;
+    }
     if (previewOrbitMode_ == enabled) {
       return;
     }
@@ -10842,6 +10986,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
             return;
           }
           if (auto *controller = impl_->activeRenderController()) {
+            if (impl_->isMaskNavigationLocked()) {
+              impl_->viewOrientationWidget_->setOrientationQuaternion(
+                  controller->viewportOrientationQuaternion());
+              return;
+            }
             controller->setViewportOrientationQuaternion(*pending);
             if (impl_->overlayView_) {
               impl_->overlayView_->update();
@@ -11391,6 +11540,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                   : nullptr) {
         toolManager->setActiveTool(toolType);
       }
+      impl_->forceFrontForPlanarEditingTool(toolType);
       if (toolType == ToolType::Pen && impl_->renderController_) {
         impl_->showMaskEditingGuides();
         impl_->renderController_->markRenderDirty();
@@ -12973,8 +13123,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   if (auto *app = ArtifactApplicationManager::instance()) {
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<ToolChangedEvent>(
-            [this](const ToolChangedEvent &) {
+            [this](const ToolChangedEvent &event) {
               if (impl_) {
+                impl_->forceFrontForPlanarEditingTool(event.toolType);
                 impl_->queueToolLabelSync(this);
               }
             }));

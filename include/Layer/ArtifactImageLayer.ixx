@@ -45,10 +45,12 @@ export namespace Artifact {
   QUuid sourceAssetId() const;
   std::uint64_t sourceVersion() const;
   bool canShareSourceGpuTexture() const;
+  bool sourceCropEnabled() const;
+  QString sourceCropSignature() const;
   bool localizeSourceIdentity();
   bool relinkSourceIdentityToShared();
   bool isSourceIdentityLocalized() const;
-  QJsonObject toJson() const;
+  QJsonObject toJson() const override;
   void fromJsonProperties(const QJsonObject& obj) override;
   void setFromQImage(const QImage& image);
   void setFromImageBuffer(const ArtifactCore::ImageF32x4_RGBA& image);

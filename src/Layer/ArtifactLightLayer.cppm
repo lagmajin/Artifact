@@ -3,6 +3,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <QColor>
+#include <QJsonObject>
 #include <QVariant>
 #include <QStringList>
 #include <wobjectimpl.h>
@@ -75,6 +76,80 @@ ArtifactLightLayer::ArtifactLightLayer()
 ArtifactLightLayer::~ArtifactLightLayer()
 {
     delete lightImpl_;
+}
+
+QJsonObject ArtifactLightLayer::toJson() const
+{
+  QJsonObject obj = ArtifactAbstractLayer::toJson();
+  obj[QStringLiteral("type")] = static_cast<int>(LayerType::Light);
+  obj[QStringLiteral("light.type")] = static_cast<int>(lightImpl_->type_);
+  obj[QStringLiteral("light.color.r")] = lightImpl_->color_.r();
+  obj[QStringLiteral("light.color.g")] = lightImpl_->color_.g();
+  obj[QStringLiteral("light.color.b")] = lightImpl_->color_.b();
+  obj[QStringLiteral("light.color.a")] = lightImpl_->color_.a();
+  obj[QStringLiteral("light.intensity")] = lightImpl_->intensity_;
+  obj[QStringLiteral("light.range")] = lightImpl_->range_;
+  obj[QStringLiteral("light.areaWidth")] = lightImpl_->areaWidth_;
+  obj[QStringLiteral("light.areaHeight")] = lightImpl_->areaHeight_;
+  obj[QStringLiteral("light.areaShape")] = static_cast<int>(lightImpl_->areaShape_);
+  obj[QStringLiteral("light.coneAngle")] = lightImpl_->coneAngle_;
+  obj[QStringLiteral("light.coneFeather")] = lightImpl_->coneFeather_;
+  obj[QStringLiteral("light.coneLength")] = lightImpl_->coneLength_;
+  obj[QStringLiteral("light.shadowRadius")] = lightImpl_->shadowRadius_;
+  obj[QStringLiteral("light.castsShadows")] = lightImpl_->castsShadows_;
+  obj[QStringLiteral("light.linkMode")] = static_cast<int>(lightImpl_->linkMode_);
+  obj[QStringLiteral("light.linkedLayerIds")] = lightImpl_->linkedLayerIdsText_;
+  obj[QStringLiteral("light.excludedLayerIds")] = lightImpl_->excludedLayerIdsText_;
+  return obj;
+}
+
+void ArtifactLightLayer::fromJsonProperties(const QJsonObject& obj)
+{
+  ArtifactAbstractLayer::fromJsonProperties(obj);
+  if (obj.contains(QStringLiteral("light.type"))) {
+    setLightType(static_cast<LightType>(std::clamp(
+        obj.value(QStringLiteral("light.type")).toInt(), 0, 4)));
+  }
+  if (obj.contains(QStringLiteral("light.color.r")) ||
+      obj.contains(QStringLiteral("light.color.g")) ||
+      obj.contains(QStringLiteral("light.color.b")) ||
+      obj.contains(QStringLiteral("light.color.a"))) {
+    setColor(ArtifactCore::FloatColor(
+        static_cast<float>(obj.value(QStringLiteral("light.color.r")).toDouble(1.0)),
+        static_cast<float>(obj.value(QStringLiteral("light.color.g")).toDouble(1.0)),
+        static_cast<float>(obj.value(QStringLiteral("light.color.b")).toDouble(1.0)),
+        static_cast<float>(obj.value(QStringLiteral("light.color.a")).toDouble(1.0))));
+  }
+  if (obj.contains(QStringLiteral("light.intensity"))) setIntensity(
+      static_cast<float>(obj.value(QStringLiteral("light.intensity")).toDouble()));
+  if (obj.contains(QStringLiteral("light.range"))) setRange(
+      static_cast<float>(obj.value(QStringLiteral("light.range")).toDouble()));
+  if (obj.contains(QStringLiteral("light.areaWidth")) ||
+      obj.contains(QStringLiteral("light.areaHeight"))) {
+    setAreaSize(
+        static_cast<float>(obj.value(QStringLiteral("light.areaWidth")).toDouble(areaWidth())),
+        static_cast<float>(obj.value(QStringLiteral("light.areaHeight")).toDouble(areaHeight())));
+  }
+  if (obj.contains(QStringLiteral("light.areaShape"))) setAreaShape(
+      static_cast<AreaLightShape>(std::clamp(
+          obj.value(QStringLiteral("light.areaShape")).toInt(), 0, 1)));
+  if (obj.contains(QStringLiteral("light.coneAngle"))) setConeAngle(
+      static_cast<float>(obj.value(QStringLiteral("light.coneAngle")).toDouble()));
+  if (obj.contains(QStringLiteral("light.coneFeather"))) setConeFeather(
+      static_cast<float>(obj.value(QStringLiteral("light.coneFeather")).toDouble()));
+  if (obj.contains(QStringLiteral("light.coneLength"))) setConeLength(
+      static_cast<float>(obj.value(QStringLiteral("light.coneLength")).toDouble()));
+  if (obj.contains(QStringLiteral("light.shadowRadius"))) setShadowRadius(
+      static_cast<float>(obj.value(QStringLiteral("light.shadowRadius")).toDouble()));
+  if (obj.contains(QStringLiteral("light.castsShadows"))) setCastsShadows(
+      obj.value(QStringLiteral("light.castsShadows")).toBool());
+  if (obj.contains(QStringLiteral("light.linkMode"))) setLightLinkMode(
+      static_cast<LightLinkMode>(std::clamp(
+          obj.value(QStringLiteral("light.linkMode")).toInt(), 0, 2)));
+  if (obj.contains(QStringLiteral("light.linkedLayerIds"))) setLinkedLayerIdsText(
+      obj.value(QStringLiteral("light.linkedLayerIds")).toString());
+  if (obj.contains(QStringLiteral("light.excludedLayerIds"))) setExcludedLayerIdsText(
+      obj.value(QStringLiteral("light.excludedLayerIds")).toString());
 }
 
 void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
@@ -223,7 +298,11 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
 }
 
 LightType ArtifactLightLayer::lightType() const { return lightImpl_->type_; }
-void ArtifactLightLayer::setLightType(LightType t) { lightImpl_->type_ = t; changed(); }
+void ArtifactLightLayer::setLightType(LightType t) {
+  lightImpl_->type_ = static_cast<LightType>(std::clamp(
+      static_cast<int>(t), 0, 4));
+  changed();
+}
 
 ArtifactCore::FloatColor ArtifactLightLayer::color() const { return lightImpl_->color_; }
 void ArtifactLightLayer::setColor(const ArtifactCore::FloatColor& c) { lightImpl_->color_ = c; changed(); }
@@ -250,7 +329,8 @@ void ArtifactLightLayer::setAreaSize(float width, float height)
 AreaLightShape ArtifactLightLayer::areaShape() const { return lightImpl_->areaShape_; }
 void ArtifactLightLayer::setAreaShape(AreaLightShape shape)
 {
-  lightImpl_->areaShape_ = shape;
+  lightImpl_->areaShape_ = static_cast<AreaLightShape>(std::clamp(
+      static_cast<int>(shape), 0, 1));
   changed();
 }
 
@@ -285,7 +365,8 @@ void ArtifactLightLayer::setCastsShadows(bool e) { lightImpl_->castsShadows_ = e
 LightLinkMode ArtifactLightLayer::lightLinkMode() const { return lightImpl_->linkMode_; }
 void ArtifactLightLayer::setLightLinkMode(LightLinkMode mode)
 {
-  lightImpl_->linkMode_ = mode;
+  lightImpl_->linkMode_ = static_cast<LightLinkMode>(std::clamp(
+      static_cast<int>(mode), 0, 2));
   changed();
 }
 

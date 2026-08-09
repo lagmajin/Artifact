@@ -81,6 +81,45 @@ ParticleEmitter* firstEmitterOrCreate(ParticleSystem* system)
     return system->createEmitter();
 }
 
+float safeParticleFps(float value)
+{
+    return std::isfinite(value)
+        ? std::clamp(value, 0.001f, 1000.0f)
+        : 30.0f;
+}
+
+float safeParticleFrameTime(const int64_t frame, float fps)
+{
+    const double rawTime = static_cast<double>(frame) /
+                           static_cast<double>(safeParticleFps(fps));
+    return std::isfinite(rawTime)
+        ? std::clamp(static_cast<float>(rawTime), -1000000.0f, 1000000.0f)
+        : 0.0f;
+}
+
+int safeParticleDimension(double value)
+{
+    return std::isfinite(value)
+        ? static_cast<int>(std::clamp(value, 1.0, 16384.0))
+        : 1;
+}
+
+float safeEffectorValue(float value, float fallback,
+                        float minimum, float maximum)
+{
+    return std::isfinite(value)
+        ? std::clamp(value, minimum, maximum)
+        : fallback;
+}
+
+QVector3D safeEffectorVector(const QVector3D& value)
+{
+    return QVector3D(
+        safeEffectorValue(value.x(), 0.0f, -1000000.0f, 1000000.0f),
+        safeEffectorValue(value.y(), 0.0f, -1000000.0f, 1000000.0f),
+        safeEffectorValue(value.z(), 0.0f, -1000000.0f, 1000000.0f));
+}
+
 ArtifactCore::ParticleRenderData transformParticleRenderData(
     const ArtifactCore::ParticleRenderData& source,
     const QTransform& transform,
@@ -90,9 +129,32 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
     transformed.frameNumber = source.frameNumber;
     transformed.particles.resize(source.particles.size());
 
-    const float scaleX = std::hypot(transform.m11(), transform.m21());
-    const float scaleY = std::hypot(transform.m12(), transform.m22());
-    const float scale = std::max(0.001f, std::max(scaleX, scaleY));
+    const auto finite = [](double value) { return std::isfinite(value); };
+    const bool transformFinite =
+        finite(transform.m11()) && finite(transform.m12()) &&
+        finite(transform.m13()) && finite(transform.m21()) &&
+        finite(transform.m22()) && finite(transform.m23()) &&
+        finite(transform.m31()) && finite(transform.m32()) &&
+        finite(transform.m33()) && finite(transform.dx()) && finite(transform.dy());
+    const QTransform safeTransform = transformFinite ? transform : QTransform();
+    const float scaleX = std::isfinite(std::hypot(safeTransform.m11(), safeTransform.m21()))
+        ? static_cast<float>(std::hypot(safeTransform.m11(), safeTransform.m21()))
+        : 1.0f;
+    const float scaleY = std::isfinite(std::hypot(safeTransform.m12(), safeTransform.m22()))
+        ? static_cast<float>(std::hypot(safeTransform.m12(), safeTransform.m22()))
+        : 1.0f;
+    const float scale = std::clamp(std::max(scaleX, scaleY), 0.001f, 1000000.0f);
+    const float safeOpacity = std::isfinite(opacity)
+        ? std::clamp(opacity, 0.0f, 1.0f)
+        : 0.0f;
+    const auto safeColor = [](float value) {
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
+    };
+    const auto safeCoordinate = [](double value, float fallback) {
+        return std::isfinite(value)
+            ? static_cast<float>(std::clamp(value, -10000000.0, 10000000.0))
+            : fallback;
+    };
 
     qInfo() << "[ParticleLayer] transform"
             << "m11=" << transform.m11()
@@ -104,7 +166,7 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
             << "scaleX=" << scaleX
             << "scaleY=" << scaleY
             << "scale=" << scale
-            << "opacity=" << opacity
+            << "opacity=" << safeOpacity
             << "sourceCount=" << source.particles.size();
 
     ArtifactCore::Parallel::For(0, static_cast<int>(source.particles.size()),
@@ -118,9 +180,9 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         v.vx = src.vx;
         v.vy = src.vy;
         v.vz = src.vz;
-        v.r = src.r;
-        v.g = src.g;
-        v.b = src.b;
+        v.r = safeColor(src.r);
+        v.g = safeColor(src.g);
+        v.b = safeColor(src.b);
         v.a = src.a;
         v.size = src.size;
         v.stretch = src.stretch;
@@ -130,21 +192,32 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         v.spriteFrame = src.spriteFrame;
         v.spriteRows = src.spriteRows;
         v.spriteCols = src.spriteCols;
-        const QPointF mapped = transform.map(QPointF(src.px, src.py));
-        v.px = static_cast<float>(mapped.x());
-        v.py = static_cast<float>(mapped.y());
-        v.a = std::clamp(v.a * opacity, 0.0f, 1.0f);
-        v.size = std::max(4.0f, src.size * scale);
-        if (v.stretch <= 0.0f) {
-            const float speed = std::hypot(src.vx, src.vy);
+        const QPointF mapped = safeTransform.map(QPointF(src.px, src.py));
+        const float safeSourceX = std::isfinite(src.px) ? src.px : 0.0f;
+        const float safeSourceY = std::isfinite(src.py) ? src.py : 0.0f;
+        v.px = safeCoordinate(mapped.x(), safeSourceX);
+        v.py = safeCoordinate(mapped.y(), safeSourceY);
+        v.a = std::isfinite(v.a)
+            ? std::clamp(v.a * safeOpacity, 0.0f, 1.0f)
+            : 0.0f;
+        const float sourceSize = std::isfinite(src.size)
+            ? std::clamp(src.size, 0.0f, 1000000.0f)
+            : 0.0f;
+        v.size = std::clamp(std::max(4.0f, sourceSize * scale), 4.0f, 1000000.0f);
+        if (!std::isfinite(v.stretch) || v.stretch <= 0.0f) {
+            const float speed = std::isfinite(std::hypot(src.vx, src.vy))
+                ? static_cast<float>(std::hypot(src.vx, src.vy))
+                : 0.0f;
             v.stretch = std::clamp(1.0f + speed * 0.004f, 1.0f, 6.0f);
+        } else {
+            v.stretch = std::clamp(v.stretch, 1.0f, 1000000.0f);
         }
     });
 
     if (!source.particles.empty()) {
         const auto& src = source.particles.front();
         const auto& v = transformed.particles.front();
-        const QPointF mapped = transform.map(QPointF(src.px, src.py));
+        const QPointF mapped = safeTransform.map(QPointF(src.px, src.py));
         qInfo() << "[ParticleLayer] particle0"
                 << "src=(" << src.px << "," << src.py << ")"
                 << "mapped=(" << mapped.x() << "," << mapped.y() << ")"
@@ -162,26 +235,33 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
     ArtifactCore::ParticleRenderData converted;
     converted.frameNumber = source.frameNumber;
     converted.particles.reserve(source.particles.size());
+    const auto finiteClamped = [](float value, float fallback,
+                                  float minimum, float maximum) {
+        return std::isfinite(value)
+            ? std::clamp(value, minimum, maximum)
+            : fallback;
+    };
     for (const auto& particle : source.particles) {
         ArtifactCore::ParticleVertex vertex;
-        vertex.px = particle.px;
-        vertex.py = particle.py;
-        vertex.pz = particle.pz;
-        vertex.vx = particle.vx;
-        vertex.vy = particle.vy;
-        vertex.vz = particle.vz;
-        vertex.r = particle.r;
-        vertex.g = particle.g;
-        vertex.b = particle.b;
-        vertex.a = particle.a;
-        vertex.size = particle.size;
-        vertex.stretch = particle.stretch;
-        vertex.rotation = particle.rotation;
-        vertex.age = particle.age;
-        vertex.lifetime = particle.lifetime;
-        vertex.spriteFrame = particle.spriteFrame;
-        vertex.spriteRows = particle.spriteRows;
-        vertex.spriteCols = particle.spriteCols;
+        vertex.px = finiteClamped(particle.px, 0.0f, -10000000.0f, 10000000.0f);
+        vertex.py = finiteClamped(particle.py, 0.0f, -10000000.0f, 10000000.0f);
+        vertex.pz = finiteClamped(particle.pz, 0.0f, -10000000.0f, 10000000.0f);
+        vertex.vx = finiteClamped(particle.vx, 0.0f, -1000000.0f, 1000000.0f);
+        vertex.vy = finiteClamped(particle.vy, 0.0f, -1000000.0f, 1000000.0f);
+        vertex.vz = finiteClamped(particle.vz, 0.0f, -1000000.0f, 1000000.0f);
+        vertex.r = finiteClamped(particle.r, 0.0f, 0.0f, 1.0f);
+        vertex.g = finiteClamped(particle.g, 0.0f, 0.0f, 1.0f);
+        vertex.b = finiteClamped(particle.b, 0.0f, 0.0f, 1.0f);
+        vertex.a = finiteClamped(particle.a, 0.0f, 0.0f, 1.0f);
+        vertex.size = finiteClamped(particle.size, 0.0f, 0.0f, 1000000.0f);
+        vertex.stretch = finiteClamped(particle.stretch, 1.0f, 1.0f, 1000000.0f);
+        vertex.rotation = finiteClamped(particle.rotation, 0.0f, -1000000.0f, 1000000.0f);
+        vertex.age = finiteClamped(particle.age, 0.0f, 0.0f, 1000000.0f);
+        vertex.lifetime = finiteClamped(particle.lifetime, 1.0f, 0.001f, 1000000.0f);
+        vertex.spriteRows = std::clamp(particle.spriteRows, 1, 1024);
+        vertex.spriteCols = std::clamp(particle.spriteCols, 1, 1024);
+        vertex.spriteFrame = std::clamp(
+            particle.spriteFrame, 0, vertex.spriteRows * vertex.spriteCols - 1);
         converted.particles.push_back(vertex);
     }
     return converted;
@@ -189,15 +269,21 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
 
 void boostDebugParticleRenderData(ArtifactCore::ParticleRenderData& data)
 {
+    const auto safeColor = [](float value) {
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
+    };
     ArtifactCore::Parallel::For(0, static_cast<int>(data.particles.size()),
                                 static_cast<int>(data.particles.size()),
                                 [&](int index) {
         auto& particle = data.particles[static_cast<size_t>(index)];
-        particle.size = std::max(18.0f, particle.size * 4.0f);
+        const float safeSize = std::isfinite(particle.size)
+            ? std::clamp(particle.size, 0.0f, 1000000.0f)
+            : 0.0f;
+        particle.size = std::clamp(std::max(18.0f, safeSize * 4.0f), 18.0f, 1000000.0f);
         particle.a = 1.0f;
-        particle.r = std::clamp(particle.r * 1.15f + 0.20f, 0.0f, 1.0f);
-        particle.g = std::clamp(particle.g * 1.15f + 0.20f, 0.0f, 1.0f);
-        particle.b = std::clamp(particle.b * 1.15f + 0.20f, 0.0f, 1.0f);
+        particle.r = std::clamp(safeColor(particle.r) * 1.15f + 0.20f, 0.0f, 1.0f);
+        particle.g = std::clamp(safeColor(particle.g) * 1.15f + 0.20f, 0.0f, 1.0f);
+        particle.b = std::clamp(safeColor(particle.b) * 1.15f + 0.20f, 0.0f, 1.0f);
     });
 }
 
@@ -261,9 +347,7 @@ public:
 
     void scaleEmitterPositions(float scaleX, float scaleY)
     {
-        auto& emitters = const_cast<std::vector<std::unique_ptr<ParticleEmitter>>&>(
-            particleSystem->emitters());
-        for (auto& emitter : emitters) {
+        for (const auto& emitter : particleSystem->emitters()) {
             if (!emitter) {
                 continue;
             }
@@ -344,7 +428,7 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     // ※ goToFrame は内部で reset() と forward simulation を行う
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
-        fps = comp->frameRate().framerate();
+        fps = safeParticleFps(comp->frameRate().framerate());
     }
     // フレーム0でも最低1フレーム分のシミュレーションを走らせて初期パーティクルを生成する
     impl_->particleSystem->goToFrame(std::max(int64_t{1}, frameNumber), fps);
@@ -381,9 +465,9 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     if (frameNumber != impl_->cachedFrameNumber || impl_->cachedFrame.isNull()) {
         float fallbackFps = 30.0f;
         if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
-            fallbackFps = comp->frameRate().framerate();
+            fallbackFps = safeParticleFps(comp->frameRate().framerate());
         }
-        const float time = static_cast<float>(frameNumber) / fallbackFps;
+        const float time = safeParticleFrameTime(frameNumber, fallbackFps);
         impl_->cachedFrame = renderFrame(std::max(1, impl_->width),
                                          std::max(1, impl_->height),
                                          time);
@@ -454,174 +538,292 @@ QJsonObject ArtifactParticleLayer::toJson() const
     
     // Save render settings
     const auto& rs = renderSettings();
+    const auto safeRenderValue = [](double value, double fallback,
+                                    double minimum, double maximum) {
+        return std::isfinite(value) ? std::clamp(value, minimum, maximum)
+                                    : fallback;
+    };
+    const int safeBlendMode = std::clamp(static_cast<int>(rs.blendMode), 0, 4);
+    const int safeBillboardMode =
+        std::clamp(static_cast<int>(rs.billboardMode), 0, 3);
+    const int safeSortMode = std::clamp(static_cast<int>(rs.sortMode), 0, 3);
     QJsonObject renderJson;
-    renderJson["blendMode"] = static_cast<int>(rs.blendMode);
-    renderJson["billboardMode"] = static_cast<int>(rs.billboardMode);
-    renderJson["sortMode"] = static_cast<int>(rs.sortMode);
+    renderJson["blendMode"] = safeBlendMode;
+    renderJson["billboardMode"] = safeBillboardMode;
+    renderJson["sortMode"] = safeSortMode;
     renderJson["depthTest"] = rs.depthTest;
     renderJson["depthWrite"] = rs.depthWrite;
     renderJson["softParticles"] = rs.softParticles;
-    renderJson["softParticleDistance"] = rs.softParticleDistance;
+    renderJson["softParticleDistance"] = safeRenderValue(
+        rs.softParticleDistance, 0.0, 0.0, 1000000.0);
     renderJson["stretchEnabled"] = rs.stretchEnabled;
-    renderJson["stretchFactor"] = rs.stretchFactor;
+    renderJson["stretchFactor"] = safeRenderValue(
+        rs.stretchFactor, 0.0, 0.0, 1000000.0);
     json["renderSettings"] = renderJson;
     
     // Save emitters
+    const auto safeEmitterColor = [](const QColor& color) {
+        return color.isValid() ? color : QColor(255, 255, 255);
+    };
+    const auto safeEmitterValue = [](double value, double fallback,
+                                     double minimum, double maximum) {
+        return std::isfinite(value) ? std::clamp(value, minimum, maximum)
+                                    : fallback;
+    };
+    const auto safeEmitterInt = [](int value, int minimum, int maximum) {
+        return std::clamp(value, minimum, maximum);
+    };
+    struct SerializableEmitter {
+        const ParticleEmitter* emitter = nullptr;
+        EmitterParams params;
+    };
+    std::vector<SerializableEmitter> serializableEmitters;
+    if (impl_->particleSystem) {
+        const auto& liveEmitters = impl_->particleSystem->emitters();
+        serializableEmitters.reserve(liveEmitters.size());
+        for (const auto& emitter : liveEmitters) {
+            if (emitter) {
+                serializableEmitters.push_back({emitter.get(), emitter->params()});
+            }
+        }
+    } else {
+        serializableEmitters.reserve(impl_->savedEmitterParams.size());
+        for (const auto& params : impl_->savedEmitterParams) {
+            serializableEmitters.push_back({nullptr, params});
+        }
+    }
     QJsonArray emittersArray;
-    for (size_t emitterIndex = 0; emitterIndex < impl_->savedEmitterParams.size(); ++emitterIndex) {
-        const auto& params = impl_->savedEmitterParams[emitterIndex];
+    for (size_t emitterIndex = 0;
+         emitterIndex < serializableEmitters.size();
+         ++emitterIndex) {
+        const auto& serializableEmitter = serializableEmitters[emitterIndex];
+        const auto& params = serializableEmitter.params;
         QJsonObject emitterJson;
-        emitterJson["shape"] = static_cast<int>(params.shape);
-        emitterJson["mode"] = static_cast<int>(params.mode);
-        emitterJson["rate"] = params.rate;
-        emitterJson["burstCount"] = params.burstCount;
-        emitterJson["burstInterval"] = params.burstInterval;
+        emitterJson["shape"] = safeEmitterInt(static_cast<int>(params.shape), 0, 7);
+        emitterJson["mode"] = safeEmitterInt(static_cast<int>(params.mode), 0, 2);
+        emitterJson["rate"] = safeEmitterValue(params.rate, 10.0, 0.0, 1000000.0);
+        emitterJson["burstCount"] = safeEmitterInt(params.burstCount, 0, 10000000);
+        emitterJson["burstInterval"] = safeEmitterValue(
+            params.burstInterval, 1.0, 0.0, 1000000.0);
         
-        emitterJson["lifeMin"] = params.lifeMin;
-        emitterJson["lifeMax"] = params.lifeMax;
-        emitterJson["speedMin"] = params.speedMin;
-        emitterJson["speedMax"] = params.speedMax;
-        emitterJson["directionSpread"] = params.directionSpread;
-        emitterJson["velocityRandomX"] = params.velocityRandom.x();
-        emitterJson["velocityRandomY"] = params.velocityRandom.y();
-        emitterJson["velocityRandomZ"] = params.velocityRandom.z();
+        emitterJson["lifeMin"] = safeEmitterValue(params.lifeMin, 1.0, 0.001, 1000000.0);
+        emitterJson["lifeMax"] = safeEmitterValue(params.lifeMax, 1.0, 0.001, 1000000.0);
+        emitterJson["speedMin"] = safeEmitterValue(params.speedMin, 0.0, 0.0, 1000000.0);
+        emitterJson["speedMax"] = safeEmitterValue(params.speedMax, 0.0, 0.0, 1000000.0);
+        emitterJson["directionSpread"] = safeEmitterValue(
+            params.directionSpread, 0.0, 0.0, 360.0);
+        emitterJson["velocityRandomX"] = safeEmitterValue(
+            params.velocityRandom.x(), 0.0, 0.0, 1000000.0);
+        emitterJson["velocityRandomY"] = safeEmitterValue(
+            params.velocityRandom.y(), 0.0, 0.0, 1000000.0);
+        emitterJson["velocityRandomZ"] = safeEmitterValue(
+            params.velocityRandom.z(), 0.0, 0.0, 1000000.0);
         
-        emitterJson["positionX"] = params.position.x();
-        emitterJson["positionY"] = params.position.y();
-        emitterJson["positionZ"] = params.position.z();
-        emitterJson["rotationX"] = params.rotation.x();
-        emitterJson["rotationY"] = params.rotation.y();
-        emitterJson["rotationZ"] = params.rotation.z();
-        emitterJson["rotationSpeedMin"] = params.rotationSpeedMin;
-        emitterJson["rotationSpeedMax"] = params.rotationSpeedMax;
+        emitterJson["positionX"] = safeEmitterValue(
+            params.position.x(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["positionY"] = safeEmitterValue(
+            params.position.y(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["positionZ"] = safeEmitterValue(
+            params.position.z(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["rotationX"] = safeEmitterValue(
+            params.rotation.x(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["rotationY"] = safeEmitterValue(
+            params.rotation.y(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["rotationZ"] = safeEmitterValue(
+            params.rotation.z(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["rotationSpeedMin"] = safeEmitterValue(
+            params.rotationSpeedMin, 0.0, -1000000.0, 1000000.0);
+        emitterJson["rotationSpeedMax"] = safeEmitterValue(
+            params.rotationSpeedMax, 0.0, -1000000.0, 1000000.0);
         
-        emitterJson["directionX"] = params.direction.x();
-        emitterJson["directionY"] = params.direction.y();
-        emitterJson["directionZ"] = params.direction.z();
+        emitterJson["directionX"] = safeEmitterValue(
+            params.direction.x(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["directionY"] = safeEmitterValue(
+            params.direction.y(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["directionZ"] = safeEmitterValue(
+            params.direction.z(), 0.0, -1000000.0, 1000000.0);
         
-        emitterJson["radius"] = params.radius;
-        emitterJson["width"] = params.width;
-        emitterJson["height"] = params.height;
-        emitterJson["depth"] = params.depth;
-        emitterJson["lineLength"] = params.lineLength;
+        emitterJson["radius"] = safeEmitterValue(params.radius, 0.0, 0.0, 1000000.0);
+        emitterJson["width"] = safeEmitterValue(params.width, 0.0, 0.0, 1000000.0);
+        emitterJson["height"] = safeEmitterValue(params.height, 0.0, 0.0, 1000000.0);
+        emitterJson["depth"] = safeEmitterValue(params.depth, 0.0, 0.0, 1000000.0);
+        emitterJson["lineLength"] = safeEmitterValue(
+            params.lineLength, 0.0, 0.0, 1000000.0);
         
-        emitterJson["scaleMin"] = params.scaleMin;
-        emitterJson["scaleMax"] = params.scaleMax;
-        emitterJson["scaleMidMin"] = params.scaleMidMin;
-        emitterJson["scaleMidMax"] = params.scaleMidMax;
-        emitterJson["scaleMidPosition"] = params.scaleMidPosition;
-        emitterJson["scaleEndMin"] = params.scaleEndMin;
-        emitterJson["scaleEndMax"] = params.scaleEndMax;
+        emitterJson["scaleMin"] = safeEmitterValue(params.scaleMin, 1.0, 0.0, 1000.0);
+        emitterJson["scaleMax"] = safeEmitterValue(params.scaleMax, 1.0, 0.0, 1000.0);
+        emitterJson["scaleMidMin"] = safeEmitterValue(params.scaleMidMin, 1.0, 0.0, 1000.0);
+        emitterJson["scaleMidMax"] = safeEmitterValue(params.scaleMidMax, 1.0, 0.0, 1000.0);
+        emitterJson["scaleMidPosition"] = safeEmitterValue(
+            params.scaleMidPosition, 0.5, 0.0, 1.0);
+        emitterJson["scaleEndMin"] = safeEmitterValue(params.scaleEndMin, 1.0, 0.0, 1000.0);
+        emitterJson["scaleEndMax"] = safeEmitterValue(params.scaleEndMax, 1.0, 0.0, 1000.0);
         
-        emitterJson["colorStart"] = params.colorStart.name(QColor::HexArgb);
-        emitterJson["colorMid"] = params.colorMid.name(QColor::HexArgb);
-        emitterJson["colorEnd"] = params.colorEnd.name(QColor::HexArgb);
-        emitterJson["colorMidPosition"] = params.colorMidPosition;
-        emitterJson["colorVariation"] = params.colorVariation;
+        emitterJson["colorStart"] =
+            safeEmitterColor(params.colorStart).name(QColor::HexArgb);
+        emitterJson["colorMid"] =
+            safeEmitterColor(params.colorMid).name(QColor::HexArgb);
+        emitterJson["colorEnd"] =
+            safeEmitterColor(params.colorEnd).name(QColor::HexArgb);
+        emitterJson["colorMidPosition"] = safeEmitterValue(
+            params.colorMidPosition, 0.5, 0.0, 1.0);
+        emitterJson["colorVariation"] = safeEmitterValue(
+            params.colorVariation, 0.0, 0.0, 1.0);
         
-        emitterJson["opacityMin"] = params.opacityMin;
-        emitterJson["opacityMax"] = params.opacityMax;
-        emitterJson["opacityMidMin"] = params.opacityMidMin;
-        emitterJson["opacityMidMax"] = params.opacityMidMax;
-        emitterJson["opacityMidPosition"] = params.opacityMidPosition;
-        emitterJson["opacityEndMin"] = params.opacityEndMin;
-        emitterJson["opacityEndMax"] = params.opacityEndMax;
+        emitterJson["opacityMin"] = safeEmitterValue(params.opacityMin, 1.0, 0.0, 1.0);
+        emitterJson["opacityMax"] = safeEmitterValue(params.opacityMax, 1.0, 0.0, 1.0);
+        emitterJson["opacityMidMin"] = safeEmitterValue(params.opacityMidMin, 1.0, 0.0, 1.0);
+        emitterJson["opacityMidMax"] = safeEmitterValue(params.opacityMidMax, 1.0, 0.0, 1.0);
+        emitterJson["opacityMidPosition"] = safeEmitterValue(
+            params.opacityMidPosition, 0.5, 0.0, 1.0);
+        emitterJson["opacityEndMin"] = safeEmitterValue(params.opacityEndMin, 0.0, 0.0, 1.0);
+        emitterJson["opacityEndMax"] = safeEmitterValue(params.opacityEndMax, 0.0, 0.0, 1.0);
         
-        emitterJson["drag"] = params.drag;
-        emitterJson["gravityX"] = params.gravity.x();
-        emitterJson["gravityY"] = params.gravity.y();
-        emitterJson["gravityZ"] = params.gravity.z();
-        emitterJson["windDirectionX"] = params.windDirection.x();
-        emitterJson["windDirectionY"] = params.windDirection.y();
-        emitterJson["windDirectionZ"] = params.windDirection.z();
-        emitterJson["windStrength"] = params.windStrength;
-        emitterJson["turbulenceFrequency"] = params.turbulenceFrequency;
-        emitterJson["turbulenceAmplitude"] = params.turbulenceAmplitude;
-        emitterJson["turbulenceEvolution"] = params.turbulenceEvolution;
+        emitterJson["drag"] = safeEmitterValue(params.drag, 0.0, 0.0, 1000000.0);
+        emitterJson["gravityX"] = safeEmitterValue(
+            params.gravity.x(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["gravityY"] = safeEmitterValue(
+            params.gravity.y(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["gravityZ"] = safeEmitterValue(
+            params.gravity.z(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["windDirectionX"] = safeEmitterValue(
+            params.windDirection.x(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["windDirectionY"] = safeEmitterValue(
+            params.windDirection.y(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["windDirectionZ"] = safeEmitterValue(
+            params.windDirection.z(), 0.0, -1000000.0, 1000000.0);
+        emitterJson["windStrength"] = safeEmitterValue(
+            params.windStrength, 0.0, 0.0, 1000000.0);
+        emitterJson["turbulenceFrequency"] = safeEmitterValue(
+            params.turbulenceFrequency, 0.0, 0.0, 1000000.0);
+        emitterJson["turbulenceAmplitude"] = safeEmitterValue(
+            params.turbulenceAmplitude, 0.0, 0.0, 1000000.0);
+        emitterJson["turbulenceEvolution"] = safeEmitterValue(
+            params.turbulenceEvolution, 0.0, -1000000.0, 1000000.0);
         emitterJson["texturePath"] = params.texturePath;
-        emitterJson["textureRows"] = params.textureRows;
-        emitterJson["textureCols"] = params.textureCols;
+        emitterJson["textureRows"] = safeEmitterInt(params.textureRows, 1, 1024);
+        emitterJson["textureCols"] = safeEmitterInt(params.textureCols, 1, 1024);
         emitterJson["randomFrame"] = params.randomFrame;
-        emitterJson["startFrame"] = params.startFrame;
-        emitterJson["frameCount"] = params.frameCount;
-        emitterJson["frameRate"] = params.frameRate;
-        emitterJson["mass"] = params.mass;
+        emitterJson["startFrame"] = safeEmitterInt(params.startFrame, 0, 1000000000);
+        emitterJson["frameCount"] = safeEmitterInt(params.frameCount, 1, 1000000);
+        emitterJson["frameRate"] = safeEmitterValue(params.frameRate, 30.0, 0.001, 1000.0);
+        emitterJson["mass"] = safeEmitterValue(params.mass, 1.0, 0.0, 1000000.0);
         emitterJson["inheritVelocity"] = params.inheritVelocity;
         emitterJson["worldSpace"] = params.worldSpace;
         emitterJson["preWarm"] = params.preWarm;
-        emitterJson["maxParticles"] = params.maxParticles;
+        emitterJson["maxParticles"] = safeEmitterInt(params.maxParticles, 1, 10000000);
         emitterJson["auxEnabled"] = params.auxEnabled;
-        emitterJson["auxTrigger"] = static_cast<int>(params.auxTrigger);
-        emitterJson["auxCount"] = params.auxCount;
-        emitterJson["auxInterval"] = params.auxInterval;
-        emitterJson["auxLifeScale"] = params.auxLifeScale;
-        emitterJson["auxSizeScale"] = params.auxSizeScale;
-        emitterJson["auxOpacityScale"] = params.auxOpacityScale;
-        emitterJson["auxVelocityScale"] = params.auxVelocityScale;
+        emitterJson["auxTrigger"] = safeEmitterInt(
+            static_cast<int>(params.auxTrigger), 0, 2);
+        emitterJson["auxCount"] = safeEmitterInt(params.auxCount, 0, 1000000);
+        emitterJson["auxInterval"] = safeEmitterValue(params.auxInterval, 0.1, 0.0, 1000000.0);
+        emitterJson["auxLifeScale"] = safeEmitterValue(params.auxLifeScale, 0.3, 0.0, 1000000.0);
+        emitterJson["auxSizeScale"] = safeEmitterValue(params.auxSizeScale, 0.65, 0.0, 1000000.0);
+        emitterJson["auxOpacityScale"] = safeEmitterValue(params.auxOpacityScale, 0.85, 0.0, 1.0);
+        emitterJson["auxVelocityScale"] = safeEmitterValue(params.auxVelocityScale, 0.35, 0.0, 1000000.0);
         QJsonArray effectorsArray;
-        if (emitterIndex < impl_->particleSystem->emitters().size()) {
-            const auto& emitter = impl_->particleSystem->emitters()[emitterIndex];
-            if (emitter) {
+        if (const auto* emitter = serializableEmitter.emitter) {
                 for (const auto& effector : emitter->effectors()) {
                     if (!effector) {
                         continue;
                     }
                     QJsonObject effectorJson;
-                    effectorJson["type"] = static_cast<int>(effector->type);
+                    effectorJson["type"] = safeEmitterInt(
+                        static_cast<int>(effector->type), 0, 10);
                     effectorJson["enabled"] = effector->enabled;
-                    effectorJson["strength"] = effector->strength;
-                    effectorJson["positionX"] = effector->position.x();
-                    effectorJson["positionY"] = effector->position.y();
-                    effectorJson["positionZ"] = effector->position.z();
-                    effectorJson["directionX"] = effector->direction.x();
-                    effectorJson["directionY"] = effector->direction.y();
-                    effectorJson["directionZ"] = effector->direction.z();
+                    effectorJson["strength"] = safeEmitterValue(
+                        effector->strength, 1.0, -100000.0, 100000.0);
+                    effectorJson["positionX"] = safeEmitterValue(
+                        effector->position.x(), 0.0, -1000000.0, 1000000.0);
+                    effectorJson["positionY"] = safeEmitterValue(
+                        effector->position.y(), 0.0, -1000000.0, 1000000.0);
+                    effectorJson["positionZ"] = safeEmitterValue(
+                        effector->position.z(), 0.0, -1000000.0, 1000000.0);
+                    effectorJson["directionX"] = safeEmitterValue(
+                        effector->direction.x(), 0.0, -1000000.0, 1000000.0);
+                    effectorJson["directionY"] = safeEmitterValue(
+                        effector->direction.y(), 0.0, -1000000.0, 1000000.0);
+                    effectorJson["directionZ"] = safeEmitterValue(
+                        effector->direction.z(), 0.0, -1000000.0, 1000000.0);
                     if (const auto* typed = dynamic_cast<const ForceEffector*>(effector.get())) {
-                        effectorJson["forceX"] = typed->force.x();
-                        effectorJson["forceY"] = typed->force.y();
-                        effectorJson["forceZ"] = typed->force.z();
+                        effectorJson["forceX"] = safeEmitterValue(
+                            typed->force.x(), 0.0, -1000000.0, 1000000.0);
+                        effectorJson["forceY"] = safeEmitterValue(
+                            typed->force.y(), 0.0, -1000000.0, 1000000.0);
+                        effectorJson["forceZ"] = safeEmitterValue(
+                            typed->force.z(), 0.0, -1000000.0, 1000000.0);
                     } else if (const auto* typed = dynamic_cast<const VortexEffector*>(effector.get())) {
-                        effectorJson["radius"] = typed->radius;
-                        effectorJson["angularVelocity"] = typed->angularVelocity;
-                        effectorJson["tightness"] = typed->tightness;
+                        effectorJson["radius"] = safeEmitterValue(
+                            typed->radius, 100.0, 0.0, 100000.0);
+                        effectorJson["angularVelocity"] = safeEmitterValue(
+                            typed->angularVelocity, 0.0, -100000.0, 100000.0);
+                        effectorJson["tightness"] = safeEmitterValue(
+                            typed->tightness, 1.0, 0.0, 100000.0);
                     } else if (const auto* typed = dynamic_cast<const TurbulenceEffector*>(effector.get())) {
-                        effectorJson["frequency"] = typed->frequency;
-                        effectorJson["amplitude"] = typed->amplitude;
-                        effectorJson["octaves"] = typed->octaves;
-                        effectorJson["evolution"] = typed->evolution;
+                        effectorJson["frequency"] = safeEmitterValue(
+                            typed->frequency, 1.0, 0.0, 10000.0);
+                        effectorJson["amplitude"] = safeEmitterValue(
+                            typed->amplitude, 1.0, 0.0, 100000.0);
+                        const int safeOctaves = std::isfinite(typed->octaves)
+                            ? static_cast<int>(std::clamp(
+                                static_cast<double>(typed->octaves), 1.0, 12.0))
+                            : 3;
+                        effectorJson["octaves"] = safeOctaves;
+                        effectorJson["evolution"] = safeEmitterValue(
+                            typed->evolution, 0.0, -100000.0, 100000.0);
                         effectorJson["seed"] = typed->seed;
                     } else if (const auto* typed = dynamic_cast<const AttractorEffector*>(effector.get())) {
-                        effectorJson["radius"] = typed->radius;
-                        effectorJson["falloff"] = typed->falloff;
+                        effectorJson["radius"] = safeEmitterValue(
+                            typed->radius, 100.0, 0.0, 100000.0);
+                        effectorJson["falloff"] = safeEmitterValue(
+                            typed->falloff, 1.0, 0.0, 100000.0);
                         effectorJson["killOnReach"] = typed->killOnReach;
-                        effectorJson["killRadius"] = typed->killRadius;
+                        effectorJson["killRadius"] = safeEmitterValue(
+                            typed->killRadius, 10.0, 0.0, 100000.0);
                     } else if (const auto* typed = dynamic_cast<const RepellerEffector*>(effector.get())) {
-                        effectorJson["radius"] = typed->radius;
-                        effectorJson["falloff"] = typed->falloff;
+                        effectorJson["radius"] = safeEmitterValue(
+                            typed->radius, 100.0, 0.0, 100000.0);
+                        effectorJson["falloff"] = safeEmitterValue(
+                            typed->falloff, 1.0, 0.0, 100000.0);
                     } else if (const auto* typed = dynamic_cast<const WindEffector*>(effector.get())) {
-                        effectorJson["windDirectionX"] = typed->windDirection.x();
-                        effectorJson["windDirectionY"] = typed->windDirection.y();
-                        effectorJson["windDirectionZ"] = typed->windDirection.z();
-                        effectorJson["windStrength"] = typed->windStrength;
-                        effectorJson["turbulence"] = typed->turbulence;
-                        effectorJson["turbulenceFrequency"] = typed->turbulenceFrequency;
-                        effectorJson["evolution"] = typed->evolution;
+                        effectorJson["windDirectionX"] = safeEmitterValue(
+                            typed->windDirection.x(), 0.0, -1000000.0, 1000000.0);
+                        effectorJson["windDirectionY"] = safeEmitterValue(
+                            typed->windDirection.y(), 0.0, -1000000.0, 1000000.0);
+                        effectorJson["windDirectionZ"] = safeEmitterValue(
+                            typed->windDirection.z(), 0.0, -1000000.0, 1000000.0);
+                        effectorJson["windStrength"] = safeEmitterValue(
+                            typed->windStrength, 0.0, 0.0, 100000.0);
+                        effectorJson["turbulence"] = safeEmitterValue(
+                            typed->turbulence, 0.0, 0.0, 100000.0);
+                        effectorJson["turbulenceFrequency"] = safeEmitterValue(
+                            typed->turbulenceFrequency, 1.0, 0.0, 10000.0);
+                        effectorJson["evolution"] = safeEmitterValue(
+                            typed->evolution, 0.0, -100000.0, 100000.0);
                     } else if (const auto* typed = dynamic_cast<const FlockingEffector*>(effector.get())) {
-                        effectorJson["neighborhoodRadius"] = typed->neighborhoodRadius;
-                        effectorJson["separationWeight"] = typed->separationWeight;
-                        effectorJson["alignmentWeight"] = typed->alignmentWeight;
-                        effectorJson["cohesionWeight"] = typed->cohesionWeight;
-                        effectorJson["maxAcceleration"] = typed->maxAcceleration;
+                        effectorJson["neighborhoodRadius"] = safeEmitterValue(
+                            typed->neighborhoodRadius, 100.0, 0.0, 100000.0);
+                        effectorJson["separationWeight"] = safeEmitterValue(
+                            typed->separationWeight, 1.0, 0.0, 100000.0);
+                        effectorJson["alignmentWeight"] = safeEmitterValue(
+                            typed->alignmentWeight, 1.0, 0.0, 100000.0);
+                        effectorJson["cohesionWeight"] = safeEmitterValue(
+                            typed->cohesionWeight, 1.0, 0.0, 100000.0);
+                        effectorJson["maxAcceleration"] = safeEmitterValue(
+                            typed->maxAcceleration, 100.0, 0.0, 100000.0);
                     } else if (const auto* typed = dynamic_cast<const KillZoneEffector*>(effector.get())) {
-                        effectorJson["zoneType"] = static_cast<int>(typed->zoneType);
-                        effectorJson["sizeX"] = typed->size.x();
-                        effectorJson["sizeY"] = typed->size.y();
-                        effectorJson["sizeZ"] = typed->size.z();
+                        effectorJson["zoneType"] = safeEmitterInt(
+                            static_cast<int>(typed->zoneType), 0, 2);
+                        effectorJson["sizeX"] = safeEmitterValue(
+                            typed->size.x(), 0.0, 0.0, 100000.0);
+                        effectorJson["sizeY"] = safeEmitterValue(
+                            typed->size.y(), 0.0, 0.0, 100000.0);
+                        effectorJson["sizeZ"] = safeEmitterValue(
+                            typed->size.z(), 0.0, 0.0, 100000.0);
                         effectorJson["invert"] = typed->invert;
                     }
                     effectorsArray.append(effectorJson);
                 }
-            }
         }
         emitterJson["effectors"] = effectorsArray;
         
@@ -640,6 +842,12 @@ ArtifactAbstractLayerPtr ArtifactParticleLayer::fromJson(const QJsonObject& obj)
     return layer;
 }
 
+void ArtifactParticleLayer::fromJsonProperties(const QJsonObject& obj)
+{
+    ArtifactAbstractLayer::fromJsonProperties(obj);
+    applyPropertiesFromJson(obj);
+}
+
 void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
 {
     if (obj.contains("name")) {
@@ -655,7 +863,7 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
     // Load render settings
     if (obj.contains("renderSettings")) {
         QJsonObject renderJson = obj["renderSettings"].toObject();
-        auto& rs = renderSettings();
+        auto rs = renderSettings();
         if (renderJson.contains("blendMode")) {
             rs.blendMode = static_cast<ParticleBlendMode>(
                 std::clamp(renderJson["blendMode"].toInt(), 0, 4));
@@ -690,21 +898,27 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             rs.stretchFactor = std::isfinite(value)
                 ? std::clamp(value, 0.0, 1000000.0) : 0.0;
         }
+        setRenderSettings(rs);
     }
     
     // Load emitters
     if (obj.contains("emitters")) {
-        clearEmitters();
+        // Loading is a state replacement, not an interactive edit. Avoid the
+        // public clear path here so restoring a document does not mark it dirty.
+        impl_->particleSystem->clearEmitters();
+        impl_->savedEmitterParams.clear();
+        clearFrameCache();
         QJsonArray emittersArray = obj["emitters"].toArray();
         constexpr qsizetype kMaxRestoredEmitters = 1024;
         qsizetype restoredEmitterCount = 0;
         for (const auto& emitterVal : emittersArray) {
-            if (restoredEmitterCount++ >= kMaxRestoredEmitters) {
-                break;
-            }
             if (!emitterVal.isObject()) {
                 continue;
             }
+            if (restoredEmitterCount >= kMaxRestoredEmitters) {
+                break;
+            }
+            ++restoredEmitterCount;
             QJsonObject emitterJson = emitterVal.toObject();
             EmitterParams params;
             
@@ -825,13 +1039,16 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             }
             
             if (emitterJson.contains("colorStart")) {
-                params.colorStart = QColor(emitterJson["colorStart"].toString());
+                const QColor color(emitterJson["colorStart"].toString());
+                if (color.isValid()) params.colorStart = color;
             }
             if (emitterJson.contains("colorMid")) {
-                params.colorMid = QColor(emitterJson["colorMid"].toString());
+                const QColor color(emitterJson["colorMid"].toString());
+                if (color.isValid()) params.colorMid = color;
             }
             if (emitterJson.contains("colorEnd")) {
-                params.colorEnd = QColor(emitterJson["colorEnd"].toString());
+                const QColor color(emitterJson["colorEnd"].toString());
+                if (color.isValid()) params.colorEnd = color;
             }
             if (emitterJson.contains("colorMidPosition")) {
                 params.colorMidPosition = emitterJson["colorMidPosition"].toDouble();
@@ -935,7 +1152,8 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
                 params.auxEnabled = emitterJson["auxEnabled"].toBool();
             }
             if (emitterJson.contains("auxTrigger")) {
-                params.auxTrigger = static_cast<AuxTriggerMode>(emitterJson["auxTrigger"].toInt());
+                params.auxTrigger = static_cast<AuxTriggerMode>(std::clamp(
+                    emitterJson["auxTrigger"].toInt(), 0, 2));
             }
             if (emitterJson.contains("auxCount")) {
                 params.auxCount = emitterJson["auxCount"].toInt();
@@ -1023,11 +1241,11 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
                 constexpr qsizetype kMaxRestoredEffectors = 1024;
                 qsizetype restoredEffectorCount = 0;
                 for (const auto& effectorVal : effectorsArray) {
-                    if (restoredEffectorCount++ >= kMaxRestoredEffectors) {
-                        break;
-                    }
                     if (!effectorVal.isObject()) {
                         continue;
+                    }
+                    if (restoredEffectorCount >= kMaxRestoredEffectors) {
+                        break;
                     }
                     const QJsonObject effectorJson = effectorVal.toObject();
                     const int typeValue = effectorJson["type"].toInt(-1);
@@ -1049,6 +1267,7 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
                     if (!effector) {
                         continue;
                     }
+                    ++restoredEffectorCount;
 
                     effector->enabled = effectorJson["enabled"].toBool(true);
                     const float strength = static_cast<float>(effectorJson["strength"].toDouble(1.0));
@@ -1207,7 +1426,8 @@ void ArtifactParticleLayer::createParticleSystem()
     }
     impl_->rebuildSavedEmitterParamsFromSystem();
     clearFrameCache();
-    emit particleSystemChanged();
+    Q_EMIT particleSystemChanged();
+    Q_EMIT changed();
 }
 
 void ArtifactParticleLayer::resetParticleSystem()
@@ -1240,6 +1460,10 @@ ParticleEmitter* ArtifactParticleLayer::addEmitter(const EmitterParams& params)
 
 void ArtifactParticleLayer::removeEmitter(int index)
 {
+    const int previousCount = impl_->particleSystem->emitterCount();
+    if (index < 0 || index >= previousCount) {
+        return;
+    }
     impl_->particleSystem->removeEmitter(index);
     impl_->rebuildSavedEmitterParamsFromSystem();
     clearFrameCache();
@@ -1251,6 +1475,8 @@ void ArtifactParticleLayer::clearEmitters()
     impl_->particleSystem->clearEmitters();
     impl_->savedEmitterParams.clear();
     clearFrameCache();
+    Q_EMIT particleSystemChanged();
+    Q_EMIT changed();
 }
 
 int ArtifactParticleLayer::emitterCount() const
@@ -1263,8 +1489,10 @@ void ArtifactParticleLayer::addForceEffector(const QVector3D& force)
     auto* emitter = firstEmitterOrCreate(impl_->particleSystem.get());
     if (emitter) {
         auto effector = std::make_unique<ForceEffector>();
-        effector->force = force;
+        effector->force = safeEffectorVector(force);
         emitter->addEffector(std::move(effector));
+        impl_->rebuildSavedEmitterParamsFromSystem();
+        clearFrameCache();
     }
 }
 
@@ -1273,10 +1501,13 @@ void ArtifactParticleLayer::addVortexEffector(const QVector3D& position, float r
     auto* emitter = firstEmitterOrCreate(impl_->particleSystem.get());
     if (emitter) {
         auto effector = std::make_unique<VortexEffector>();
-        effector->position = position;
-        effector->radius = radius;
-        effector->angularVelocity = angularVelocity;
+        effector->position = safeEffectorVector(position);
+        effector->radius = safeEffectorValue(radius, 100.0f, 0.0f, 100000.0f);
+        effector->angularVelocity = safeEffectorValue(
+            angularVelocity, 0.0f, -100000.0f, 100000.0f);
         emitter->addEffector(std::move(effector));
+        impl_->rebuildSavedEmitterParamsFromSystem();
+        clearFrameCache();
     }
 }
 
@@ -1290,6 +1521,8 @@ void ArtifactParticleLayer::addTurbulenceEffector(float frequency, float amplitu
         effector->amplitude = std::isfinite(amplitude)
             ? std::clamp(amplitude, 0.0f, 100000.0f) : 1.0f;
         emitter->addEffector(std::move(effector));
+        impl_->rebuildSavedEmitterParamsFromSystem();
+        clearFrameCache();
     }
 }
 
@@ -1298,10 +1531,13 @@ void ArtifactParticleLayer::addAttractorEffector(const QVector3D& position, floa
     auto* emitter = firstEmitterOrCreate(impl_->particleSystem.get());
     if (emitter) {
         auto effector = std::make_unique<AttractorEffector>();
-        effector->position = position;
-        effector->radius = radius;
-        effector->strength = strength;
+        effector->position = safeEffectorVector(position);
+        effector->radius = safeEffectorValue(radius, 100.0f, 0.0f, 100000.0f);
+        effector->strength = safeEffectorValue(
+            strength, 1.0f, -100000.0f, 100000.0f);
         emitter->addEffector(std::move(effector));
+        impl_->rebuildSavedEmitterParamsFromSystem();
+        clearFrameCache();
     }
 }
 
@@ -1310,18 +1546,24 @@ void ArtifactParticleLayer::addWindEffector(const QVector3D& direction, float st
     auto* emitter = firstEmitterOrCreate(impl_->particleSystem.get());
     if (emitter) {
         auto effector = std::make_unique<WindEffector>();
-        effector->windDirection = direction;
-        effector->windStrength = strength;
+        effector->windDirection = safeEffectorVector(direction);
+        effector->windStrength = safeEffectorValue(
+            strength, 0.0f, 0.0f, 100000.0f);
         emitter->addEffector(std::move(effector));
+        impl_->rebuildSavedEmitterParamsFromSystem();
+        clearFrameCache();
     }
 }
 
 void ArtifactParticleLayer::clearEffectors()
 {
-    for (auto& emitter : const_cast<std::vector<std::unique_ptr<ParticleEmitter>>&>(impl_->particleSystem->emitters())) {
-        emitter->clearEffectors();
+    for (const auto& emitter : impl_->particleSystem->emitters()) {
+        if (emitter) emitter->clearEffectors();
     }
+    impl_->rebuildSavedEmitterParamsFromSystem();
     clearFrameCache();
+    Q_EMIT particleSystemChanged();
+    Q_EMIT changed();
 }
 
 ParticleRenderSettings& ArtifactParticleLayer::renderSettings()
@@ -1342,7 +1584,8 @@ void ArtifactParticleLayer::setRenderSettings(const ParticleRenderSettings& sett
 
 void ArtifactParticleLayer::setParticleBlendMode(ParticleBlendMode mode)
 {
-    impl_->particleSystem->renderSettings().blendMode = mode;
+    impl_->particleSystem->renderSettings().blendMode =
+        static_cast<ParticleBlendMode>(std::clamp(static_cast<int>(mode), 0, 4));
     clearFrameCache();
 }
 
@@ -1408,9 +1651,9 @@ void ArtifactParticleLayer::goToFrame(int64_t frameNumber)
     // Calculate time from frame
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
-        fps = comp->frameRate().framerate();
+        fps = safeParticleFps(comp->frameRate().framerate());
     }
-    float time = frameNumber / fps;
+    float time = safeParticleFrameTime(frameNumber, fps);
     
     // Check cache
     if (frameNumber == impl_->cachedFrameNumber) {
@@ -1438,23 +1681,38 @@ void ArtifactParticleLayer::goToFrame(int64_t frameNumber)
 
 QImage ArtifactParticleLayer::renderFrame(int width, int height, float time)
 {
-    QImage image(width, height, QImage::Format_ARGB32);
+    const int safeWidth = std::clamp(width, 1, 16384);
+    const int safeHeight = std::clamp(height, 1, 16384);
+    const float safeTime = std::isfinite(time)
+        ? std::clamp(time, -1000000.0f, 1000000.0f)
+        : 0.0f;
+    QImage image(safeWidth, safeHeight, QImage::Format_ARGB32);
     image.fill(Qt::transparent);
-    renderToImage(image, time);
+    renderToImage(image, safeTime);
     impl_->cachedFrame = image;
 
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
-        fps = comp->frameRate().framerate();
+        fps = safeParticleFps(comp->frameRate().framerate());
     }
-    impl_->cachedFrameNumber = static_cast<int64_t>(time * fps);
+    impl_->cachedFrameNumber = static_cast<int64_t>(safeTime * fps);
     return image;
 }
 
 void ArtifactParticleLayer::renderToImage(QImage& target, float time)
 {
+    if (!std::isfinite(time)) {
+        time = 0.0f;
+    } else {
+        time = std::clamp(time, -1000000.0f, 1000000.0f);
+    }
     // Update particle system to this time
-    float deltaTime = time - impl_->lastTime;
+    const float currentTime = std::isfinite(impl_->lastTime) ? impl_->lastTime : 0.0f;
+    if (impl_->playing && time < currentTime) {
+        reset();
+    }
+    const float baseTime = std::isfinite(impl_->lastTime) ? impl_->lastTime : 0.0f;
+    const float deltaTime = time - baseTime;
     if (deltaTime > 0 && impl_->playing) {
         impl_->particleSystem->update(deltaTime);
         impl_->lastTime = time;
@@ -1471,7 +1729,7 @@ void ArtifactParticleLayer::renderToImage(QImage& target, float time)
     
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
-        fps = comp->frameRate().framerate();
+        fps = safeParticleFps(comp->frameRate().framerate());
     }
     emit frameRendered(static_cast<int64_t>(time * fps));
 }
@@ -1480,9 +1738,9 @@ void ArtifactParticleLayer::renderToImage(QImage& target, int64_t frameNumber)
 {
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
-        fps = comp->frameRate().framerate();
+        fps = safeParticleFps(comp->frameRate().framerate());
     }
-    float time = static_cast<float>(frameNumber) / fps;
+    float time = safeParticleFrameTime(frameNumber, fps);
     renderToImage(target, time);
 }
 
@@ -1595,23 +1853,32 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     };
 
     particleGroup.addProperty(makeProp(QStringLiteral("particle.playing"), ArtifactCore::PropertyType::Boolean, isPlaying(), -140));
-    particleGroup.addProperty(makeProp(QStringLiteral("particle.timeScale"), ArtifactCore::PropertyType::Float, timeScale(), -130));
+    auto timeScaleProp = makeProp(QStringLiteral("particle.timeScale"), ArtifactCore::PropertyType::Float, timeScale(), -130);
+    timeScaleProp->setHardRange(0.0, 1000000.0);
+    particleGroup.addProperty(timeScaleProp);
     // Keep both the editor and the property cache non-negative.
     auto emitterCountProp = makeProp(QStringLiteral("particle.emitterCount"), ArtifactCore::PropertyType::Integer, emitterCount(), -120);
     emitterCountProp->setMinValue(0);
-    emitterCountProp->setHardRange(0, QVariant());
+    emitterCountProp->setHardRange(0, 1024);
     particleGroup.addProperty(emitterCountProp);
-    particleGroup.addProperty(makeProp(QStringLiteral("particle.previewWidth"), ArtifactCore::PropertyType::Integer, impl_->width, -110));
-    particleGroup.addProperty(makeProp(QStringLiteral("particle.previewHeight"), ArtifactCore::PropertyType::Integer, impl_->height, -100));
+    auto previewWidthProp = makeProp(QStringLiteral("particle.previewWidth"), ArtifactCore::PropertyType::Integer, impl_->width, -110);
+    previewWidthProp->setHardRange(1, 16384);
+    particleGroup.addProperty(previewWidthProp);
+    auto previewHeightProp = makeProp(QStringLiteral("particle.previewHeight"), ArtifactCore::PropertyType::Integer, impl_->height, -100);
+    previewHeightProp->setHardRange(1, 16384);
+    particleGroup.addProperty(previewHeightProp);
 
     const auto& rs = renderSettings();
     auto blendModeProp = makeProp(QStringLiteral("particle.render.blendMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.blendMode), -90);
+    blendModeProp->setHardRange(0, 4);
     blendModeProp->setTooltip(QStringLiteral("0=Additive, 1=Subtractive, 2=Normal, 3=Screen, 4=Multiply"));
     particleGroup.addProperty(blendModeProp);
     auto billboardModeProp = makeProp(QStringLiteral("particle.render.billboardMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.billboardMode), -80);
+    billboardModeProp->setHardRange(0, 3);
     billboardModeProp->setTooltip(QStringLiteral("0=None, 1=ScreenAligned, 2=ViewPlane, 3=VelocityAligned"));
     particleGroup.addProperty(billboardModeProp);
     auto sortModeProp = makeProp(QStringLiteral("particle.render.sortMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.sortMode), -70);
+    sortModeProp->setHardRange(0, 3);
     sortModeProp->setTooltip(QStringLiteral("0=None, 1=Distance, 2=OldestFirst, 3=YoungestFirst"));
     particleGroup.addProperty(sortModeProp);
     particleGroup.addProperty(makeProp(QStringLiteral("particle.render.depthTest"), ArtifactCore::PropertyType::Boolean, rs.depthTest, -60));
@@ -1623,6 +1890,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     auto softParticleDistanceProp = makeProp(QStringLiteral("particle.render.softParticleDistance"), ArtifactCore::PropertyType::Float, rs.softParticleDistance, -39);
     softParticleDistanceProp->setDisplayLabel(QStringLiteral("Soft Particle Distance"));
     softParticleDistanceProp->setUnit(QStringLiteral("px"));
+    softParticleDistanceProp->setHardRange(0.0, 1000000.0);
     softParticleDistanceProp->setSoftRange(0.0, 200.0);
     softParticleDistanceProp->setStep(0.1);
     particleGroup.addProperty(softParticleDistanceProp);
@@ -1633,6 +1901,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
 
     auto stretchFactorProp = makeProp(QStringLiteral("particle.render.stretchFactor"), ArtifactCore::PropertyType::Float, rs.stretchFactor, -37);
     stretchFactorProp->setDisplayLabel(QStringLiteral("Stretch Factor"));
+    stretchFactorProp->setHardRange(0.0, 1000000.0);
     stretchFactorProp->setSoftRange(0.0, 20.0);
     stretchFactorProp->setStep(0.1);
     particleGroup.addProperty(stretchFactorProp);
@@ -1643,11 +1912,13 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     const EmitterParams emitter = impl_->primaryEmitterParams().value_or(EmitterParams{});
 
     auto emitterShapeProp = makeProp(QStringLiteral("particle.emitter.shape"), ArtifactCore::PropertyType::Integer, static_cast<int>(emitter.shape), -240);
+    emitterShapeProp->setHardRange(0, 7);
     emitterShapeProp->setDisplayLabel(QStringLiteral("Shape"));
     emitterShapeProp->setTooltip(QStringLiteral("0=Point, 1=Sphere, 2=Box, 3=Circle, 4=Rectangle, 5=Line, 6=Mesh, 7=Surface"));
     emitterGroup.addProperty(emitterShapeProp);
 
     auto emitterModeProp = makeProp(QStringLiteral("particle.emitter.mode"), ArtifactCore::PropertyType::Integer, static_cast<int>(emitter.mode), -239);
+    emitterModeProp->setHardRange(0, 2);
     emitterModeProp->setDisplayLabel(QStringLiteral("Emission Mode"));
     emitterModeProp->setTooltip(QStringLiteral("0=Continuous, 1=Burst, 2=Triggered"));
     emitterGroup.addProperty(emitterModeProp);
@@ -1655,36 +1926,42 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     auto positionXProp = makeProp(QStringLiteral("particle.emitter.positionX"), ArtifactCore::PropertyType::Float, emitter.position.x(), -238);
     positionXProp->setDisplayLabel(QStringLiteral("Position X"));
     positionXProp->setUnit(QStringLiteral("px"));
+    positionXProp->setHardRange(-1000000.0, 1000000.0);
     positionXProp->setSoftRange(-20000.0, 20000.0);
     emitterGroup.addProperty(positionXProp);
 
     auto positionYProp = makeProp(QStringLiteral("particle.emitter.positionY"), ArtifactCore::PropertyType::Float, emitter.position.y(), -237);
     positionYProp->setDisplayLabel(QStringLiteral("Position Y"));
     positionYProp->setUnit(QStringLiteral("px"));
+    positionYProp->setHardRange(-1000000.0, 1000000.0);
     positionYProp->setSoftRange(-20000.0, 20000.0);
     emitterGroup.addProperty(positionYProp);
 
     auto rotationXProp = makeProp(QStringLiteral("particle.emitter.rotationX"), ArtifactCore::PropertyType::Float, emitter.rotation.x(), -236);
     rotationXProp->setDisplayLabel(QStringLiteral("Rotation X"));
     rotationXProp->setUnit(QStringLiteral("deg"));
+    rotationXProp->setHardRange(-1000000.0, 1000000.0);
     rotationXProp->setSoftRange(-360.0, 360.0);
     emitterGroup.addProperty(rotationXProp);
 
     auto rotationYProp = makeProp(QStringLiteral("particle.emitter.rotationY"), ArtifactCore::PropertyType::Float, emitter.rotation.y(), -235);
     rotationYProp->setDisplayLabel(QStringLiteral("Rotation Y"));
     rotationYProp->setUnit(QStringLiteral("deg"));
+    rotationYProp->setHardRange(-1000000.0, 1000000.0);
     rotationYProp->setSoftRange(-360.0, 360.0);
     emitterGroup.addProperty(rotationYProp);
 
     auto rotationZProp = makeProp(QStringLiteral("particle.emitter.rotationZ"), ArtifactCore::PropertyType::Float, emitter.rotation.z(), -234);
     rotationZProp->setDisplayLabel(QStringLiteral("Rotation Z"));
     rotationZProp->setUnit(QStringLiteral("deg"));
+    rotationZProp->setHardRange(-1000000.0, 1000000.0);
     rotationZProp->setSoftRange(-360.0, 360.0);
     emitterGroup.addProperty(rotationZProp);
 
     auto rotationSpeedMinProp = makeProp(QStringLiteral("particle.emitter.rotationSpeedMin"), ArtifactCore::PropertyType::Float, emitter.rotationSpeedMin, -233);
     rotationSpeedMinProp->setDisplayLabel(QStringLiteral("Spin Min"));
     rotationSpeedMinProp->setUnit(QStringLiteral("deg/s"));
+    rotationSpeedMinProp->setHardRange(-1000000.0, 1000000.0);
     rotationSpeedMinProp->setSoftRange(-720.0, 720.0);
     rotationSpeedMinProp->setStep(1.0);
     emitterGroup.addProperty(rotationSpeedMinProp);
@@ -1692,24 +1969,28 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     auto rotationSpeedMaxProp = makeProp(QStringLiteral("particle.emitter.rotationSpeedMax"), ArtifactCore::PropertyType::Float, emitter.rotationSpeedMax, -232);
     rotationSpeedMaxProp->setDisplayLabel(QStringLiteral("Spin Max"));
     rotationSpeedMaxProp->setUnit(QStringLiteral("deg/s"));
+    rotationSpeedMaxProp->setHardRange(-1000000.0, 1000000.0);
     rotationSpeedMaxProp->setSoftRange(-720.0, 720.0);
     rotationSpeedMaxProp->setStep(1.0);
     emitterGroup.addProperty(rotationSpeedMaxProp);
 
     auto directionXProp = makeProp(QStringLiteral("particle.emitter.directionX"), ArtifactCore::PropertyType::Float, emitter.direction.x(), -233);
     directionXProp->setDisplayLabel(QStringLiteral("Direction X"));
+    directionXProp->setHardRange(-1000000.0, 1000000.0);
     directionXProp->setSoftRange(-1.0, 1.0);
     directionXProp->setStep(0.01);
     emitterGroup.addProperty(directionXProp);
 
     auto directionYProp = makeProp(QStringLiteral("particle.emitter.directionY"), ArtifactCore::PropertyType::Float, emitter.direction.y(), -232);
     directionYProp->setDisplayLabel(QStringLiteral("Direction Y"));
+    directionYProp->setHardRange(-1000000.0, 1000000.0);
     directionYProp->setSoftRange(-1.0, 1.0);
     directionYProp->setStep(0.01);
     emitterGroup.addProperty(directionYProp);
 
     auto directionZProp = makeProp(QStringLiteral("particle.emitter.directionZ"), ArtifactCore::PropertyType::Float, emitter.direction.z(), -231);
     directionZProp->setDisplayLabel(QStringLiteral("Direction Z"));
+    directionZProp->setHardRange(-1000000.0, 1000000.0);
     directionZProp->setSoftRange(-1.0, 1.0);
     directionZProp->setStep(0.01);
     emitterGroup.addProperty(directionZProp);
@@ -1717,61 +1998,69 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     auto radiusProp = makeProp(QStringLiteral("particle.emitter.radius"), ArtifactCore::PropertyType::Float, emitter.radius, -230);
     radiusProp->setDisplayLabel(QStringLiteral("Radius"));
     radiusProp->setUnit(QStringLiteral("px"));
+    radiusProp->setHardRange(0.0, 1000000.0);
     radiusProp->setSoftRange(0.0, 5000.0);
     emitterGroup.addProperty(radiusProp);
 
     auto widthProp = makeProp(QStringLiteral("particle.emitter.width"), ArtifactCore::PropertyType::Float, emitter.width, -229);
     widthProp->setDisplayLabel(QStringLiteral("Width"));
     widthProp->setUnit(QStringLiteral("px"));
+    widthProp->setHardRange(0.0, 1000000.0);
     widthProp->setSoftRange(0.0, 10000.0);
     emitterGroup.addProperty(widthProp);
 
     auto heightProp = makeProp(QStringLiteral("particle.emitter.height"), ArtifactCore::PropertyType::Float, emitter.height, -228);
     heightProp->setDisplayLabel(QStringLiteral("Height"));
     heightProp->setUnit(QStringLiteral("px"));
+    heightProp->setHardRange(0.0, 1000000.0);
     heightProp->setSoftRange(0.0, 10000.0);
     emitterGroup.addProperty(heightProp);
 
     auto depthProp = makeProp(QStringLiteral("particle.emitter.depth"), ArtifactCore::PropertyType::Float, emitter.depth, -227);
     depthProp->setDisplayLabel(QStringLiteral("Depth"));
     depthProp->setUnit(QStringLiteral("px"));
+    depthProp->setHardRange(0.0, 1000000.0);
     depthProp->setSoftRange(0.0, 10000.0);
     emitterGroup.addProperty(depthProp);
 
     auto lineLengthProp = makeProp(QStringLiteral("particle.emitter.lineLength"), ArtifactCore::PropertyType::Float, emitter.lineLength, -226);
     lineLengthProp->setDisplayLabel(QStringLiteral("Line Length"));
     lineLengthProp->setUnit(QStringLiteral("px"));
+    lineLengthProp->setHardRange(0.0, 1000000.0);
     lineLengthProp->setSoftRange(0.0, 10000.0);
     emitterGroup.addProperty(lineLengthProp);
 
     auto directionSpreadProp = makeProp(QStringLiteral("particle.emitter.directionSpread"), ArtifactCore::PropertyType::Float, emitter.directionSpread, -225);
     directionSpreadProp->setDisplayLabel(QStringLiteral("Direction Spread"));
     directionSpreadProp->setUnit(QStringLiteral("deg"));
+    directionSpreadProp->setHardRange(0.0, 360.0);
     directionSpreadProp->setSoftRange(0.0, 360.0);
     emitterGroup.addProperty(directionSpreadProp);
 
     auto rateProp = makeProp(QStringLiteral("particle.emitter.rate"), ArtifactCore::PropertyType::Float, emitter.rate, -224);
     rateProp->setDisplayLabel(QStringLiteral("Rate"));
     rateProp->setUnit(QStringLiteral("/s"));
+    rateProp->setHardRange(0.0, 1000000.0);
     rateProp->setSoftRange(0.0, 2000.0);
     emitterGroup.addProperty(rateProp);
 
     auto burstCountProp = makeProp(QStringLiteral("particle.emitter.burstCount"), ArtifactCore::PropertyType::Integer, emitter.burstCount, -223);
     burstCountProp->setDisplayLabel(QStringLiteral("Burst Count"));
-    burstCountProp->setHardRange(1, 100000);
+    burstCountProp->setHardRange(0, 10000000);
     burstCountProp->setSoftRange(1, 5000);
     emitterGroup.addProperty(burstCountProp);
 
     auto burstIntervalProp = makeProp(QStringLiteral("particle.emitter.burstInterval"), ArtifactCore::PropertyType::Float, emitter.burstInterval, -222);
     burstIntervalProp->setDisplayLabel(QStringLiteral("Burst Interval"));
     burstIntervalProp->setUnit(QStringLiteral("s"));
+    burstIntervalProp->setHardRange(0.0, 1000000.0);
     burstIntervalProp->setSoftRange(0.0, 10.0);
     burstIntervalProp->setStep(0.01);
     emitterGroup.addProperty(burstIntervalProp);
 
     auto maxParticlesProp = makeProp(QStringLiteral("particle.emitter.maxParticles"), ArtifactCore::PropertyType::Integer, emitter.maxParticles, -221);
     maxParticlesProp->setDisplayLabel(QStringLiteral("Max Particles"));
-    maxParticlesProp->setHardRange(1, 100000);
+    maxParticlesProp->setHardRange(1, 10000000);
     maxParticlesProp->setSoftRange(1, 20000);
     emitterGroup.addProperty(maxParticlesProp);
 
@@ -1781,13 +2070,13 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
 
     auto textureRowsProp = makeProp(QStringLiteral("particle.emitter.textureRows"), ArtifactCore::PropertyType::Integer, emitter.textureRows, -219);
     textureRowsProp->setDisplayLabel(QStringLiteral("Texture Rows"));
-    textureRowsProp->setHardRange(1, 128);
+    textureRowsProp->setHardRange(1, 1024);
     textureRowsProp->setSoftRange(1, 16);
     emitterGroup.addProperty(textureRowsProp);
 
     auto textureColsProp = makeProp(QStringLiteral("particle.emitter.textureCols"), ArtifactCore::PropertyType::Integer, emitter.textureCols, -218);
     textureColsProp->setDisplayLabel(QStringLiteral("Texture Cols"));
-    textureColsProp->setHardRange(1, 128);
+    textureColsProp->setHardRange(1, 1024);
     textureColsProp->setSoftRange(1, 16);
     emitterGroup.addProperty(textureColsProp);
 
@@ -1797,17 +2086,18 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
 
     auto startFrameProp = makeProp(QStringLiteral("particle.emitter.startFrame"), ArtifactCore::PropertyType::Integer, emitter.startFrame, -216);
     startFrameProp->setDisplayLabel(QStringLiteral("Start Frame"));
-    startFrameProp->setHardRange(0, 4096);
+    startFrameProp->setHardRange(0, 1000000000);
     startFrameProp->setSoftRange(0, 256);
     emitterGroup.addProperty(startFrameProp);
 
     auto frameCountProp = makeProp(QStringLiteral("particle.emitter.frameCount"), ArtifactCore::PropertyType::Integer, emitter.frameCount, -215);
     frameCountProp->setDisplayLabel(QStringLiteral("Frame Count"));
-    frameCountProp->setHardRange(1, 4096);
+    frameCountProp->setHardRange(1, 1000000);
     frameCountProp->setSoftRange(1, 256);
     emitterGroup.addProperty(frameCountProp);
 
     auto frameRateProp = makeProp(QStringLiteral("particle.emitter.frameRate"), ArtifactCore::PropertyType::Float, emitter.frameRate, -214);
+    frameRateProp->setHardRange(0.001, 1000.0);
     frameRateProp->setDisplayLabel(QStringLiteral("Frame Rate"));
     frameRateProp->setUnit(QStringLiteral("fps"));
     frameRateProp->setSoftRange(0.0, 240.0);
@@ -1816,6 +2106,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
 
     auto massProp = makeProp(QStringLiteral("particle.emitter.mass"), ArtifactCore::PropertyType::Float, emitter.mass, -213);
     massProp->setDisplayLabel(QStringLiteral("Mass"));
+    massProp->setHardRange(0.0, 1000000.0);
     massProp->setSoftRange(0.01, 100.0);
     massProp->setStep(0.01);
     emitterGroup.addProperty(massProp);
@@ -1839,71 +2130,83 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     auto lifeMinProp = makeProp(QStringLiteral("particle.particle.lifeMin"), ArtifactCore::PropertyType::Float, emitter.lifeMin, -232);
     lifeMinProp->setDisplayLabel(QStringLiteral("Life Min"));
     lifeMinProp->setUnit(QStringLiteral("s"));
+    lifeMinProp->setHardRange(0.001, 1000000.0);
     lifeMinProp->setSoftRange(0.01, 60.0);
     particleLookGroup.addProperty(lifeMinProp);
 
     auto lifeMaxProp = makeProp(QStringLiteral("particle.particle.lifeMax"), ArtifactCore::PropertyType::Float, emitter.lifeMax, -231);
     lifeMaxProp->setDisplayLabel(QStringLiteral("Life Max"));
     lifeMaxProp->setUnit(QStringLiteral("s"));
+    lifeMaxProp->setHardRange(0.001, 1000000.0);
     lifeMaxProp->setSoftRange(0.01, 60.0);
     particleLookGroup.addProperty(lifeMaxProp);
 
     auto speedMinProp = makeProp(QStringLiteral("particle.particle.speedMin"), ArtifactCore::PropertyType::Float, emitter.speedMin, -230);
     speedMinProp->setDisplayLabel(QStringLiteral("Speed Min"));
     speedMinProp->setUnit(QStringLiteral("px/s"));
+    speedMinProp->setHardRange(0.0, 1000000.0);
     speedMinProp->setSoftRange(0.0, 5000.0);
     particleLookGroup.addProperty(speedMinProp);
 
     auto speedMaxProp = makeProp(QStringLiteral("particle.particle.speedMax"), ArtifactCore::PropertyType::Float, emitter.speedMax, -229);
     speedMaxProp->setDisplayLabel(QStringLiteral("Speed Max"));
     speedMaxProp->setUnit(QStringLiteral("px/s"));
+    speedMaxProp->setHardRange(0.0, 1000000.0);
     speedMaxProp->setSoftRange(0.0, 5000.0);
     particleLookGroup.addProperty(speedMaxProp);
 
     auto velocityRandomXProp = makeProp(QStringLiteral("particle.particle.velocityRandomX"), ArtifactCore::PropertyType::Float, emitter.velocityRandom.x(), -228);
     velocityRandomXProp->setDisplayLabel(QStringLiteral("Velocity Random X"));
     velocityRandomXProp->setUnit(QStringLiteral("px/s"));
+    velocityRandomXProp->setHardRange(0.0, 1000000.0);
     velocityRandomXProp->setSoftRange(0.0, 5000.0);
     particleLookGroup.addProperty(velocityRandomXProp);
 
     auto velocityRandomYProp = makeProp(QStringLiteral("particle.particle.velocityRandomY"), ArtifactCore::PropertyType::Float, emitter.velocityRandom.y(), -227);
     velocityRandomYProp->setDisplayLabel(QStringLiteral("Velocity Random Y"));
     velocityRandomYProp->setUnit(QStringLiteral("px/s"));
+    velocityRandomYProp->setHardRange(0.0, 1000000.0);
     velocityRandomYProp->setSoftRange(0.0, 5000.0);
     particleLookGroup.addProperty(velocityRandomYProp);
 
     auto velocityRandomZProp = makeProp(QStringLiteral("particle.particle.velocityRandomZ"), ArtifactCore::PropertyType::Float, emitter.velocityRandom.z(), -226);
     velocityRandomZProp->setDisplayLabel(QStringLiteral("Velocity Random Z"));
     velocityRandomZProp->setUnit(QStringLiteral("px/s"));
+    velocityRandomZProp->setHardRange(0.0, 1000000.0);
     velocityRandomZProp->setSoftRange(0.0, 5000.0);
     particleLookGroup.addProperty(velocityRandomZProp);
 
     auto scaleMinProp = makeProp(QStringLiteral("particle.particle.scaleMin"), ArtifactCore::PropertyType::Float, emitter.scaleMin, -225);
     scaleMinProp->setDisplayLabel(QStringLiteral("Size Min"));
     scaleMinProp->setUnit(QStringLiteral("px"));
+    scaleMinProp->setHardRange(0.0, 1000.0);
     scaleMinProp->setSoftRange(0.1, 512.0);
     particleLookGroup.addProperty(scaleMinProp);
 
     auto scaleMaxProp = makeProp(QStringLiteral("particle.particle.scaleMax"), ArtifactCore::PropertyType::Float, emitter.scaleMax, -227);
     scaleMaxProp->setDisplayLabel(QStringLiteral("Size Max"));
     scaleMaxProp->setUnit(QStringLiteral("px"));
+    scaleMaxProp->setHardRange(0.0, 1000.0);
     scaleMaxProp->setSoftRange(0.1, 512.0);
     particleLookGroup.addProperty(scaleMaxProp);
 
     auto scaleMidMinProp = makeProp(QStringLiteral("particle.particle.scaleMidMin"), ArtifactCore::PropertyType::Float, emitter.scaleMidMin, -226);
     scaleMidMinProp->setDisplayLabel(QStringLiteral("Size Mid Min"));
     scaleMidMinProp->setUnit(QStringLiteral("px"));
+    scaleMidMinProp->setHardRange(0.0, 1000.0);
     scaleMidMinProp->setSoftRange(0.0, 512.0);
     particleLookGroup.addProperty(scaleMidMinProp);
 
     auto scaleMidMaxProp = makeProp(QStringLiteral("particle.particle.scaleMidMax"), ArtifactCore::PropertyType::Float, emitter.scaleMidMax, -225);
     scaleMidMaxProp->setDisplayLabel(QStringLiteral("Size Mid Max"));
     scaleMidMaxProp->setUnit(QStringLiteral("px"));
+    scaleMidMaxProp->setHardRange(0.0, 1000.0);
     scaleMidMaxProp->setSoftRange(0.0, 512.0);
     particleLookGroup.addProperty(scaleMidMaxProp);
 
     auto scaleMidPosProp = makeProp(QStringLiteral("particle.particle.scaleMidPosition"), ArtifactCore::PropertyType::Float, emitter.scaleMidPosition, -224);
     scaleMidPosProp->setDisplayLabel(QStringLiteral("Size Mid Pos"));
+    scaleMidPosProp->setHardRange(0.0, 1.0);
     scaleMidPosProp->setSoftRange(0.0, 1.0);
     scaleMidPosProp->setStep(0.01);
     particleLookGroup.addProperty(scaleMidPosProp);
@@ -1911,53 +2214,62 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     auto scaleEndMinProp = makeProp(QStringLiteral("particle.particle.scaleEndMin"), ArtifactCore::PropertyType::Float, emitter.scaleEndMin, -223);
     scaleEndMinProp->setDisplayLabel(QStringLiteral("End Size Min"));
     scaleEndMinProp->setUnit(QStringLiteral("px"));
+    scaleEndMinProp->setHardRange(0.0, 1000.0);
     scaleEndMinProp->setSoftRange(0.0, 512.0);
     particleLookGroup.addProperty(scaleEndMinProp);
 
     auto scaleEndMaxProp = makeProp(QStringLiteral("particle.particle.scaleEndMax"), ArtifactCore::PropertyType::Float, emitter.scaleEndMax, -222);
     scaleEndMaxProp->setDisplayLabel(QStringLiteral("End Size Max"));
     scaleEndMaxProp->setUnit(QStringLiteral("px"));
+    scaleEndMaxProp->setHardRange(0.0, 1000.0);
     scaleEndMaxProp->setSoftRange(0.0, 512.0);
     particleLookGroup.addProperty(scaleEndMaxProp);
 
     auto opacityMinProp = makeProp(QStringLiteral("particle.particle.opacityMin"), ArtifactCore::PropertyType::Float, emitter.opacityMin, -221);
     opacityMinProp->setDisplayLabel(QStringLiteral("Opacity Min"));
+    opacityMinProp->setHardRange(0.0, 1.0);
     opacityMinProp->setSoftRange(0.0, 1.0);
     opacityMinProp->setStep(0.01);
     particleLookGroup.addProperty(opacityMinProp);
 
     auto opacityMaxProp = makeProp(QStringLiteral("particle.particle.opacityMax"), ArtifactCore::PropertyType::Float, emitter.opacityMax, -220);
     opacityMaxProp->setDisplayLabel(QStringLiteral("Opacity Max"));
+    opacityMaxProp->setHardRange(0.0, 1.0);
     opacityMaxProp->setSoftRange(0.0, 1.0);
     opacityMaxProp->setStep(0.01);
     particleLookGroup.addProperty(opacityMaxProp);
 
     auto opacityMidMinProp = makeProp(QStringLiteral("particle.particle.opacityMidMin"), ArtifactCore::PropertyType::Float, emitter.opacityMidMin, -219);
     opacityMidMinProp->setDisplayLabel(QStringLiteral("Opacity Mid Min"));
+    opacityMidMinProp->setHardRange(0.0, 1.0);
     opacityMidMinProp->setSoftRange(0.0, 1.0);
     opacityMidMinProp->setStep(0.01);
     particleLookGroup.addProperty(opacityMidMinProp);
 
     auto opacityMidMaxProp = makeProp(QStringLiteral("particle.particle.opacityMidMax"), ArtifactCore::PropertyType::Float, emitter.opacityMidMax, -218);
     opacityMidMaxProp->setDisplayLabel(QStringLiteral("Opacity Mid Max"));
+    opacityMidMaxProp->setHardRange(0.0, 1.0);
     opacityMidMaxProp->setSoftRange(0.0, 1.0);
     opacityMidMaxProp->setStep(0.01);
     particleLookGroup.addProperty(opacityMidMaxProp);
 
     auto opacityMidPosProp = makeProp(QStringLiteral("particle.particle.opacityMidPosition"), ArtifactCore::PropertyType::Float, emitter.opacityMidPosition, -217);
     opacityMidPosProp->setDisplayLabel(QStringLiteral("Opacity Mid Pos"));
+    opacityMidPosProp->setHardRange(0.0, 1.0);
     opacityMidPosProp->setSoftRange(0.0, 1.0);
     opacityMidPosProp->setStep(0.01);
     particleLookGroup.addProperty(opacityMidPosProp);
 
     auto opacityEndMinProp = makeProp(QStringLiteral("particle.particle.opacityEndMin"), ArtifactCore::PropertyType::Float, emitter.opacityEndMin, -216);
     opacityEndMinProp->setDisplayLabel(QStringLiteral("Opacity End Min"));
+    opacityEndMinProp->setHardRange(0.0, 1.0);
     opacityEndMinProp->setSoftRange(0.0, 1.0);
     opacityEndMinProp->setStep(0.01);
     particleLookGroup.addProperty(opacityEndMinProp);
 
     auto opacityEndMaxProp = makeProp(QStringLiteral("particle.particle.opacityEndMax"), ArtifactCore::PropertyType::Float, emitter.opacityEndMax, -215);
     opacityEndMaxProp->setDisplayLabel(QStringLiteral("Opacity End Max"));
+    opacityEndMaxProp->setHardRange(0.0, 1.0);
     opacityEndMaxProp->setSoftRange(0.0, 1.0);
     opacityEndMaxProp->setStep(0.01);
     particleLookGroup.addProperty(opacityEndMaxProp);
@@ -1972,6 +2284,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
 
     auto colorMidPosProp = makeProp(QStringLiteral("particle.particle.colorMidPosition"), ArtifactCore::PropertyType::Float, emitter.colorMidPosition, -212);
     colorMidPosProp->setDisplayLabel(QStringLiteral("Color Mid Pos"));
+    colorMidPosProp->setHardRange(0.0, 1.0);
     colorMidPosProp->setSoftRange(0.0, 1.0);
     colorMidPosProp->setStep(0.01);
     particleLookGroup.addProperty(colorMidPosProp);
@@ -1985,6 +2298,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     ArtifactCore::PropertyGroup physicsGroup(QStringLiteral("Physics"));
     auto dragProp = makeProp(QStringLiteral("particle.physics.drag"), ArtifactCore::PropertyType::Float, emitter.drag, -212);
     dragProp->setDisplayLabel(QStringLiteral("Air"));
+    dragProp->setHardRange(0.0, 1000000.0);
     dragProp->setSoftRange(0.0, 10.0);
     dragProp->setStep(0.01);
     physicsGroup.addProperty(dragProp);
@@ -1992,35 +2306,41 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     auto gravityXProp = makeProp(QStringLiteral("particle.physics.gravityX"), ArtifactCore::PropertyType::Float, emitter.gravity.x(), -211);
     gravityXProp->setDisplayLabel(QStringLiteral("Gravity X"));
     gravityXProp->setUnit(QStringLiteral("px/s2"));
+    gravityXProp->setHardRange(-1000000.0, 1000000.0);
     gravityXProp->setSoftRange(-5000.0, 5000.0);
     physicsGroup.addProperty(gravityXProp);
 
     auto gravityYProp = makeProp(QStringLiteral("particle.physics.gravityY"), ArtifactCore::PropertyType::Float, emitter.gravity.y(), -210);
     gravityYProp->setDisplayLabel(QStringLiteral("Gravity Y"));
     gravityYProp->setUnit(QStringLiteral("px/s2"));
+    gravityYProp->setHardRange(-1000000.0, 1000000.0);
     gravityYProp->setSoftRange(-5000.0, 5000.0);
     physicsGroup.addProperty(gravityYProp);
 
     auto gravityZProp = makeProp(QStringLiteral("particle.physics.gravityZ"), ArtifactCore::PropertyType::Float, emitter.gravity.z(), -209);
     gravityZProp->setDisplayLabel(QStringLiteral("Gravity Z"));
     gravityZProp->setUnit(QStringLiteral("px/s2"));
+    gravityZProp->setHardRange(-1000000.0, 1000000.0);
     gravityZProp->setSoftRange(-5000.0, 5000.0);
     physicsGroup.addProperty(gravityZProp);
 
     auto windDirectionXProp = makeProp(QStringLiteral("particle.physics.windDirectionX"), ArtifactCore::PropertyType::Float, emitter.windDirection.x(), -208);
     windDirectionXProp->setDisplayLabel(QStringLiteral("Wind Dir X"));
+    windDirectionXProp->setHardRange(-1000000.0, 1000000.0);
     windDirectionXProp->setSoftRange(-1.0, 1.0);
     windDirectionXProp->setStep(0.01);
     physicsGroup.addProperty(windDirectionXProp);
 
     auto windDirectionYProp = makeProp(QStringLiteral("particle.physics.windDirectionY"), ArtifactCore::PropertyType::Float, emitter.windDirection.y(), -207);
     windDirectionYProp->setDisplayLabel(QStringLiteral("Wind Dir Y"));
+    windDirectionYProp->setHardRange(-1000000.0, 1000000.0);
     windDirectionYProp->setSoftRange(-1.0, 1.0);
     windDirectionYProp->setStep(0.01);
     physicsGroup.addProperty(windDirectionYProp);
 
     auto windDirectionZProp = makeProp(QStringLiteral("particle.physics.windDirectionZ"), ArtifactCore::PropertyType::Float, emitter.windDirection.z(), -206);
     windDirectionZProp->setDisplayLabel(QStringLiteral("Wind Dir Z"));
+    windDirectionZProp->setHardRange(-1000000.0, 1000000.0);
     windDirectionZProp->setSoftRange(-1.0, 1.0);
     windDirectionZProp->setStep(0.01);
     physicsGroup.addProperty(windDirectionZProp);
@@ -2028,11 +2348,13 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     auto windStrengthProp = makeProp(QStringLiteral("particle.physics.windStrength"), ArtifactCore::PropertyType::Float, emitter.windStrength, -205);
     windStrengthProp->setDisplayLabel(QStringLiteral("Wind Strength"));
     windStrengthProp->setUnit(QStringLiteral("px/s2"));
+    windStrengthProp->setHardRange(0.0, 1000000.0);
     windStrengthProp->setSoftRange(0.0, 5000.0);
     physicsGroup.addProperty(windStrengthProp);
 
     auto turbulenceFrequencyProp = makeProp(QStringLiteral("particle.physics.turbulenceFrequency"), ArtifactCore::PropertyType::Float, emitter.turbulenceFrequency, -204);
     turbulenceFrequencyProp->setDisplayLabel(QStringLiteral("Turbulence Freq"));
+    turbulenceFrequencyProp->setHardRange(0.0, 1000.0);
     turbulenceFrequencyProp->setSoftRange(0.0, 1.0);
     turbulenceFrequencyProp->setStep(0.001);
     physicsGroup.addProperty(turbulenceFrequencyProp);
@@ -2040,12 +2362,14 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     auto turbulenceAmplitudeProp = makeProp(QStringLiteral("particle.physics.turbulenceAmplitude"), ArtifactCore::PropertyType::Float, emitter.turbulenceAmplitude, -203);
     turbulenceAmplitudeProp->setDisplayLabel(QStringLiteral("Turbulence Amp"));
     turbulenceAmplitudeProp->setUnit(QStringLiteral("px/s2"));
+    turbulenceAmplitudeProp->setHardRange(0.0, 1000000.0);
     turbulenceAmplitudeProp->setSoftRange(0.0, 5000.0);
     turbulenceAmplitudeProp->setStep(0.1);
     physicsGroup.addProperty(turbulenceAmplitudeProp);
 
     auto turbulenceEvolutionProp = makeProp(QStringLiteral("particle.physics.turbulenceEvolution"), ArtifactCore::PropertyType::Float, emitter.turbulenceEvolution, -202);
     turbulenceEvolutionProp->setDisplayLabel(QStringLiteral("Turbulence Evol"));
+    turbulenceEvolutionProp->setHardRange(-1000000.0, 1000000.0);
     turbulenceEvolutionProp->setSoftRange(-1000.0, 1000.0);
     turbulenceEvolutionProp->setStep(0.1);
     physicsGroup.addProperty(turbulenceEvolutionProp);
@@ -2058,42 +2382,48 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
 
     auto auxTriggerProp = makeProp(QStringLiteral("particle.aux.trigger"), ArtifactCore::PropertyType::Integer, static_cast<int>(emitter.auxTrigger), -210);
     auxTriggerProp->setDisplayLabel(QStringLiteral("Trigger"));
+    auxTriggerProp->setHardRange(0, 2);
     auxTriggerProp->setTooltip(QStringLiteral("0=Trails, 1=Birth, 2=Death"));
     auxGroup.addProperty(auxTriggerProp);
 
     auto auxCountProp = makeProp(QStringLiteral("particle.aux.count"), ArtifactCore::PropertyType::Integer, emitter.auxCount, -209);
     auxCountProp->setDisplayLabel(QStringLiteral("Count"));
-    auxCountProp->setHardRange(0, 256);
+    auxCountProp->setHardRange(0, 1000000);
     auxCountProp->setSoftRange(0, 32);
     auxGroup.addProperty(auxCountProp);
 
     auto auxIntervalProp = makeProp(QStringLiteral("particle.aux.interval"), ArtifactCore::PropertyType::Float, emitter.auxInterval, -208);
     auxIntervalProp->setDisplayLabel(QStringLiteral("Interval"));
     auxIntervalProp->setUnit(QStringLiteral("s"));
+    auxIntervalProp->setHardRange(0.0, 1000000.0);
     auxIntervalProp->setSoftRange(0.01, 2.0);
     auxIntervalProp->setStep(0.01);
     auxGroup.addProperty(auxIntervalProp);
 
     auto auxLifeScaleProp = makeProp(QStringLiteral("particle.aux.lifeScale"), ArtifactCore::PropertyType::Float, emitter.auxLifeScale, -207);
     auxLifeScaleProp->setDisplayLabel(QStringLiteral("Life Scale"));
+    auxLifeScaleProp->setHardRange(0.0, 1000000.0);
     auxLifeScaleProp->setSoftRange(0.05, 4.0);
     auxLifeScaleProp->setStep(0.01);
     auxGroup.addProperty(auxLifeScaleProp);
 
     auto auxSizeScaleProp = makeProp(QStringLiteral("particle.aux.sizeScale"), ArtifactCore::PropertyType::Float, emitter.auxSizeScale, -206);
     auxSizeScaleProp->setDisplayLabel(QStringLiteral("Size Scale"));
+    auxSizeScaleProp->setHardRange(0.0, 1000000.0);
     auxSizeScaleProp->setSoftRange(0.05, 4.0);
     auxSizeScaleProp->setStep(0.01);
     auxGroup.addProperty(auxSizeScaleProp);
 
     auto auxOpacityScaleProp = makeProp(QStringLiteral("particle.aux.opacityScale"), ArtifactCore::PropertyType::Float, emitter.auxOpacityScale, -205);
     auxOpacityScaleProp->setDisplayLabel(QStringLiteral("Opacity Scale"));
-    auxOpacityScaleProp->setSoftRange(0.0, 2.0);
+    auxOpacityScaleProp->setHardRange(0.0, 1.0);
+    auxOpacityScaleProp->setSoftRange(0.0, 1.0);
     auxOpacityScaleProp->setStep(0.01);
     auxGroup.addProperty(auxOpacityScaleProp);
 
     auto auxVelocityScaleProp = makeProp(QStringLiteral("particle.aux.velocityScale"), ArtifactCore::PropertyType::Float, emitter.auxVelocityScale, -204);
     auxVelocityScaleProp->setDisplayLabel(QStringLiteral("Velocity Scale"));
+    auxVelocityScaleProp->setHardRange(0.0, 1000000.0);
     auxVelocityScaleProp->setSoftRange(0.0, 4.0);
     auxVelocityScaleProp->setStep(0.01);
     auxGroup.addProperty(auxVelocityScaleProp);
@@ -2131,7 +2461,8 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
         return true;
     }
     if (propertyPath == QStringLiteral("particle.emitterCount")) {
-        const int targetCount = std::max(0, value.toInt());
+        constexpr int kMaxEmitterCount = 1024;
+        const int targetCount = std::clamp(value.toInt(), 0, kMaxEmitterCount);
         const int currentCount = emitterCount();
         if (targetCount == currentCount) {
             return true;
@@ -2159,7 +2490,7 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     }
     if (propertyPath == QStringLiteral("particle.previewWidth")) {
         const int oldWidth = std::max(1, impl_->width);
-        impl_->width = std::max(1, value.toInt());
+        impl_->width = std::clamp(value.toInt(), 1, 16384);
         impl_->scaleEmitterPositions(
             static_cast<float>(impl_->width) / static_cast<float>(oldWidth), 1.0f);
         clearFrameCache();
@@ -2168,7 +2499,7 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     }
     if (propertyPath == QStringLiteral("particle.previewHeight")) {
         const int oldHeight = std::max(1, impl_->height);
-        impl_->height = std::max(1, value.toInt());
+        impl_->height = std::clamp(value.toInt(), 1, 16384);
         impl_->scaleEmitterPositions(
             1.0f, static_cast<float>(impl_->height) / static_cast<float>(oldHeight));
         clearFrameCache();
@@ -2277,12 +2608,12 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     }
     if (propertyPath == QStringLiteral("particle.emitter.rotationSpeedMin")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.rotationSpeedMin = static_cast<float>(value.toDouble());
+            params.rotationSpeedMin = safeParticleFloat(value, params.rotationSpeedMin);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.rotationSpeedMax")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.rotationSpeedMax = static_cast<float>(value.toDouble());
+            params.rotationSpeedMax = safeParticleFloat(value, params.rotationSpeedMax);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.directionX")) {
@@ -2302,27 +2633,27 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     }
     if (propertyPath == QStringLiteral("particle.emitter.radius")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.radius = std::max(0.0f, static_cast<float>(value.toDouble()));
+            params.radius = safeParticleFloat(value, params.radius, 0.0f, 1000000.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.width")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.width = std::max(0.0f, static_cast<float>(value.toDouble()));
+            params.width = safeParticleFloat(value, params.width, 0.0f, 1000000.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.height")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.height = std::max(0.0f, static_cast<float>(value.toDouble()));
+            params.height = safeParticleFloat(value, params.height, 0.0f, 1000000.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.depth")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.depth = std::max(0.0f, static_cast<float>(value.toDouble()));
+            params.depth = safeParticleFloat(value, params.depth, 0.0f, 1000000.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.lineLength")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.lineLength = std::max(0.0f, static_cast<float>(value.toDouble()));
+            params.lineLength = safeParticleFloat(value, params.lineLength, 0.0f, 1000000.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.rate")) {
@@ -2332,7 +2663,7 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     }
     if (propertyPath == QStringLiteral("particle.emitter.burstCount")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.burstCount = std::clamp(value.toInt(), 1, 10000000);
+            params.burstCount = std::clamp(value.toInt(), 0, 10000000);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.burstInterval")) {
@@ -2362,12 +2693,12 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     }
     if (propertyPath == QStringLiteral("particle.emitter.startFrame")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.startFrame = std::max(0, value.toInt());
+            params.startFrame = std::clamp(value.toInt(), 0, 1000000000);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.frameCount")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.frameCount = std::max(1, value.toInt());
+            params.frameCount = std::clamp(value.toInt(), 1, 1000000);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.frameRate")) {
@@ -2504,27 +2835,27 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     }
     if (propertyPath == QStringLiteral("particle.particle.opacityMidMin")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.opacityMidMin = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+            params.opacityMidMin = safeParticleFloat(value, params.opacityMidMin, 0.0f, 1.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.particle.opacityMidMax")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.opacityMidMax = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+            params.opacityMidMax = safeParticleFloat(value, params.opacityMidMax, 0.0f, 1.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.particle.opacityMidPosition")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.opacityMidPosition = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+            params.opacityMidPosition = safeParticleFloat(value, params.opacityMidPosition, 0.0f, 1.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.particle.opacityEndMin")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.opacityEndMin = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+            params.opacityEndMin = safeParticleFloat(value, params.opacityEndMin, 0.0f, 1.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.particle.opacityEndMax")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.opacityEndMax = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+            params.opacityEndMax = safeParticleFloat(value, params.opacityEndMax, 0.0f, 1.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.drag") ||
@@ -2667,8 +2998,10 @@ ArtifactCore::ParticleRenderData applyParticleRenderLOD(
     const ArtifactCore::ParticleRenderData& source,
     float screenScale)
 {
-    if (source.particles.size() < 256 || screenScale >= 0.75f) return source;
-    const float keepRatio = std::clamp(screenScale / 0.75f, 0.125f, 1.0f);
+    if (source.particles.size() < 256 || !std::isfinite(screenScale)) return source;
+    const float safeScreenScale = std::clamp(screenScale, 0.0f, 1000000.0f);
+    if (safeScreenScale >= 0.75f) return source;
+    const float keepRatio = std::clamp(safeScreenScale / 0.75f, 0.125f, 1.0f);
     const std::size_t targetCount = std::max<std::size_t>(
         64, static_cast<std::size_t>(std::ceil(source.particles.size() * keepRatio)));
     if (targetCount >= source.particles.size()) return source;
@@ -2714,7 +3047,7 @@ void ArtifactParticleDebugLayer::draw(ArtifactIRenderer* renderer)
 
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
-        fps = comp->frameRate().framerate();
+        fps = safeParticleFps(comp->frameRate().framerate());
     }
     particleSystem()->goToFrame(std::max<int64_t>(1, frameNumber), fps);
 
@@ -2739,10 +3072,10 @@ void ArtifactParticleDebugLayer::draw(ArtifactIRenderer* renderer)
     }
 
     const QRectF bounds = localBounds();
-    const int fallbackWidth = std::max(1, static_cast<int>(std::ceil(bounds.width())));
-    const int fallbackHeight = std::max(1, static_cast<int>(std::ceil(bounds.height())));
+    const int fallbackWidth = safeParticleDimension(std::ceil(bounds.width()));
+    const int fallbackHeight = safeParticleDimension(std::ceil(bounds.height()));
     QImage fallbackFrame =
-        renderFrame(fallbackWidth, fallbackHeight, static_cast<float>(frameNumber) / fps);
+        renderFrame(fallbackWidth, fallbackHeight, safeParticleFrameTime(frameNumber, fps));
     if (fallbackFrame.isNull()) {
         qWarning() << "[ParticleDebugLayer] Fallback draw skipped: frame is null";
         return;

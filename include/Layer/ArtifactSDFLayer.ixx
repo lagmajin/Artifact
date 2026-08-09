@@ -6,6 +6,7 @@ module;
 #include <QString>
 #include <QVariant>
 #include <QImage>
+#include <QJsonObject>
 
 export module Artifact.Layer.SDF;
 
@@ -87,6 +88,9 @@ public:
     int renderWidth() const;
     int renderHeight() const;
     void setRenderSize(int w, int h);
+
+    QJsonObject toJson() const override;
+    void fromJsonProperties(const QJsonObject& obj) override;
 
     // CPU-side SDF evaluation → QImage (ARGB32_Premultiplied)
     QImage toQImage() const;

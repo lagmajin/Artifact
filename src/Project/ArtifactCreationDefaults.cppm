@@ -128,7 +128,12 @@ QJsonObject CreationLayerDefaults::toJson() const
 
 bool CreationLayerDefaults::fromJson(const QJsonObject& json)
 {
-    const auto layerType = static_cast<LayerType>(json.value(QStringLiteral("layerType")).toInt(static_cast<int>(LayerType::Null)));
+    const int rawLayerType = json.value(QStringLiteral("layerType")).toInt(
+        static_cast<int>(LayerType::Null));
+    const auto layerType = rawLayerType >= static_cast<int>(LayerType::Unknown) &&
+            rawLayerType <= static_cast<int>(LayerType::Paint)
+        ? static_cast<LayerType>(rawLayerType)
+        : LayerType::Null;
     const QString name = json.value(QStringLiteral("name")).toString();
     layer = ArtifactLayerInitParams(name, layerType);
     sourcePath = json.value(QStringLiteral("sourcePath")).toString();

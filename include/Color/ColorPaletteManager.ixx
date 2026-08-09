@@ -1,5 +1,6 @@
 ﻿module;
 
+#include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
 #include <iostream>
 #include <vector>
 #include <string>
@@ -64,7 +65,7 @@ public:
     static ColorPalette fromJson(const QJsonObject& json);
 };
 
-class ColorPaletteManager {
+class LIBRARY_DLL_API ColorPaletteManager {
 private:
     QMap<QString, ColorPalette> palettes_;
     QString lastError_;

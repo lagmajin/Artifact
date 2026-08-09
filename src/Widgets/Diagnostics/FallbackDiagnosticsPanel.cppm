@@ -90,14 +90,15 @@ void FallbackDiagnosticsPanel::setupUi()
 
     tree_ = new QTreeWidget;
     tree_->setAccessibleName(QStringLiteral("Fallback events table"));
-    tree_->setAccessibleDescription(QStringLiteral("List of fallback events, actions, and resolved resources"));
-    tree_->setColumnCount(5);
+    tree_->setAccessibleDescription(QStringLiteral("List of fallback events, actions, resolved resources, and diagnostic messages"));
+    tree_->setColumnCount(6);
     tree_->setHeaderLabels({
         QStringLiteral("Time"),
         QStringLiteral("Category"),
         QStringLiteral("Action"),
         QStringLiteral("Original"),
-        QStringLiteral("Resolved")
+        QStringLiteral("Resolved"),
+        QStringLiteral("Message")
     });
     tree_->setRootIsDecorated(false);
     tree_->setAlternatingRowColors(true);
@@ -145,8 +146,9 @@ void FallbackDiagnosticsPanel::populateTree()
         item->setText(2, fallbackActionText(e.action));
         item->setText(3, e.originalId);
         item->setText(4, e.resolvedId);
+        item->setText(5, e.message);
         if (e.isWarning) {
-            for (int i = 0; i < 5; ++i) {
+            for (int i = 0; i < 6; ++i) {
                 item->setForeground(i, QColor(255, 200, 100));
             }
             ++warnCount;

@@ -153,51 +153,51 @@ const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
   static const WorkspaceVisibilityRule rules[] = {
       {WorkspaceMode::Default,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Properties"},
+        "Effects", "Properties"},
 
 
        {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition View (Software)",
         "Layer Solo View", "Layer View (Software)"}},
       {WorkspaceMode::Import,
-       {"Project", "Asset Browser", "Inspector", "Properties"},
+       {"Project", "Asset Browser", "Inspector", "Effects", "Properties"},
        {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Viewer"}},
       {WorkspaceMode::Layout,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Properties"},
+        "Effects", "Properties"},
        {"Audio Mixer", "Contents Viewer", "AI Chat"}},
       {WorkspaceMode::Animation,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Properties", "Composition View (Software)",
+        "Effects", "Properties", "Composition View (Software)",
         "Layer Solo View", "Layer View (Software)"},
        {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
         "Playback Control"}},
       {WorkspaceMode::VFX,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Properties", "Composition View (Software)",
+        "Effects", "Properties", "Composition View (Software)",
         "Layer Solo View", "Layer View (Software)"},
        {"Audio Mixer", "Contents Viewer", "AI Chat", "Playback Control"}},
       {WorkspaceMode::Compositing,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Properties", "Layer Solo View"},
+        "Effects", "Properties", "Layer Solo View"},
        {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
         "Playback Control", "Composition View (Software)",
         "Layer View (Software)"}},
       {WorkspaceMode::Text,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Properties", "Contents Viewer"},
+        "Effects", "Properties", "Contents Viewer"},
        {"Audio Mixer", "AI Cloud", "AI Chat", "Playback Control"}},
       {WorkspaceMode::Export,
-       {"Project", "Asset Browser", "Inspector", "Properties",
+       {"Project", "Asset Browser", "Inspector", "Effects", "Properties",
         "Composition Viewer"},
        {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
         "Playback Control"}},
       {WorkspaceMode::Debug,
-       {"Project", "Asset Browser", "Inspector", "Properties",
+       {"Project", "Asset Browser", "Inspector", "Effects", "Properties",
         "Contents Viewer", "AI Chat", "Playback Control"},
        {"Audio Mixer"}},
       {WorkspaceMode::Audio,
        {"Contents Viewer", "Audio Mixer", "Project", "Asset Browser",
-        "Inspector", "Properties"},
+        "Inspector", "Effects", "Properties"},
        {"AI Cloud", "AI Chat", "Composition Viewer",
         "Composition View (Software)", "Layer Solo View",
         "Layer View (Software)"}},
@@ -608,6 +608,9 @@ public:
   Qt::WindowStates immersivePreviousWindowState_ = Qt::WindowNoState;
   QHash<CDockWidget *, bool> immersiveDockVisibility_;
   QPointer<CDockWidget> immersiveTargetDock_;
+  bool focusMode_ = false;
+  QHash<QWidget *, bool> focusChromeVisibility_;
+  QHash<CDockWidget *, bool> focusDockVisibility_;
   ArtifactWelcomeWidget* welcomeWidget = nullptr;
   bool menuBarInitialized = false;
   bool initialLayoutApplied = false;
@@ -860,6 +863,10 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
     }
 
     impl_->menuBarInitialized = true;
+    if (impl_->focusMode_) {
+      impl_->focusChromeVisibility_.insert(menuBar, true);
+      menuBar->hide();
+    }
   });
 
   auto *toolBar = new ArtifactToolBar(this);
@@ -2329,6 +2336,80 @@ void ArtifactMainWindow::togglePanelsVisible(bool visible) {
   }
 }
 
+void ArtifactMainWindow::enterFocusMode() {
+  if (!impl_ || impl_->focusMode_) {
+    return;
+  }
+
+  impl_->focusMode_ = true;
+  impl_->focusChromeVisibility_.clear();
+  impl_->focusDockVisibility_.clear();
+
+  const auto hideChrome = [this](QWidget *widget) {
+    if (!impl_ || !widget) {
+      return;
+    }
+    impl_->focusChromeVisibility_.insert(widget, widget->isVisible());
+    widget->hide();
+  };
+  hideChrome(impl_->menuBar);
+  hideChrome(impl_->toolBar);
+  hideChrome(impl_->toolOptionsHost);
+  hideChrome(impl_->statusBar);
+
+  for (auto *dock : impl_->dockWidgets) {
+    if (!dock || dock == impl_->primaryCenterDock) {
+      continue;
+    }
+    impl_->focusDockVisibility_.insert(
+        dock, dock->isVisible() && !dock->isClosed());
+    dock->toggleView(false);
+  }
+
+  if (impl_->primaryCenterDock) {
+    impl_->primaryCenterDock->toggleView(true);
+  }
+  if (impl_->centralWorkspaceWidget) {
+    impl_->centralWorkspaceWidget->show();
+  }
+  showStatusMessage(QStringLiteral("Focus mode enabled — Ctrl+Shift+F to restore"),
+                    2500);
+}
+
+void ArtifactMainWindow::exitFocusMode() {
+  if (!impl_ || !impl_->focusMode_) {
+    return;
+  }
+
+  impl_->focusMode_ = false;
+  for (auto it = impl_->focusDockVisibility_.cbegin();
+       it != impl_->focusDockVisibility_.cend(); ++it) {
+    if (it.key()) {
+      it.key()->toggleView(it.value());
+    }
+  }
+  for (auto it = impl_->focusChromeVisibility_.cbegin();
+       it != impl_->focusChromeVisibility_.cend(); ++it) {
+    if (it.key()) {
+      it.key()->setVisible(it.value());
+    }
+  }
+  impl_->focusDockVisibility_.clear();
+  impl_->focusChromeVisibility_.clear();
+  showStatusMessage(QStringLiteral("Focus mode disabled"), 1500);
+}
+
+void ArtifactMainWindow::toggleFocusMode() {
+  if (!impl_) {
+    return;
+  }
+  if (impl_->focusMode_) {
+    exitFocusMode();
+  } else {
+    enterFocusMode();
+  }
+}
+
 void ArtifactMainWindow::setWorkspaceMode(WorkspaceMode mode) {
   if (!impl_) {
     return;
@@ -2739,6 +2820,12 @@ void ArtifactMainWindow::keyPressEvent(QKeyEvent *event) {
       return;
     }
   }
+  if (event && event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) &&
+      event->key() == Qt::Key_F) {
+    toggleFocusMode();
+    event->accept();
+    return;
+  }
   if (event && event->modifiers() == Qt::ControlModifier) {
     WorkspaceMode quickMode;
     bool handled = true;
@@ -2868,9 +2955,20 @@ bool ArtifactMainWindow::eventFilter(QObject *watched, QEvent *event) {
     case QEvent::WindowDeactivate:
     case QEvent::WindowStateChange:
     case QEvent::ZOrderChange:
+    case QEvent::KeyPress:
       break;
     default:
       return QWidget::eventFilter(watched, event);
+    }
+  }
+
+  if (event && event->type() == QEvent::KeyPress) {
+    auto *keyEvent = static_cast<QKeyEvent *>(event);
+    if (keyEvent->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) &&
+        keyEvent->key() == Qt::Key_F) {
+      toggleFocusMode();
+      keyEvent->accept();
+      return true;
     }
   }
 

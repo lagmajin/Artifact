@@ -3362,6 +3362,14 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    unusedBtn->setToolTip(QStringLiteral("Show assets with no project references"));
    assetToolBar->addWidget(unusedBtn);
 
+   // Missing uses the same status aggregation as row markers and relink
+   // actions; keep it visible beside Unused so the existing filter is
+   // reachable without requiring an external setStatusFilter() call.
+   missingBtn->show();
+   missingBtn->setText(QStringLiteral("Missing"));
+   missingBtn->setToolTip(QStringLiteral("Show assets whose source is missing"));
+   assetToolBar->addWidget(missingBtn);
+
    // Sort by combo box
    auto* sortByCombo = new QComboBox();
    sortByCombo->setAccessibleName(QStringLiteral("Asset sort order"));

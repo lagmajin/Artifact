@@ -5,6 +5,8 @@ module;
 #include <vector>
 #include <wobjectimpl.h>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QPainter>
 #include <QMatrix4x4>
 #include <QVariant>
@@ -250,7 +252,10 @@ void ArtifactSDFLayer::removeObjectAt(int i) {
 int ArtifactSDFLayer::objectCount() const { return static_cast<int>(sdfImpl_->objects.size()); }
 const SDFObject& ArtifactSDFLayer::objectAt(int i) const { return sdfImpl_->objects[i]; }
 SDFOp ArtifactSDFLayer::combineOp() const { return sdfImpl_->op; }
-void ArtifactSDFLayer::setCombineOp(SDFOp op) { sdfImpl_->op = op; Q_EMIT changed(); }
+void ArtifactSDFLayer::setCombineOp(SDFOp op) {
+    sdfImpl_->op = static_cast<SDFOp>(std::clamp(static_cast<int>(op), 0, 1));
+    Q_EMIT changed();
+}
 float ArtifactSDFLayer::smoothK() const { return sdfImpl_->smoothK; }
 void ArtifactSDFLayer::setSmoothing(float k) { sdfImpl_->smoothK = std::max(0.0f, k); Q_EMIT changed(); }
 int ArtifactSDFLayer::renderWidth() const { return sdfImpl_->renderW; }
@@ -258,6 +263,88 @@ int ArtifactSDFLayer::renderHeight() const { return sdfImpl_->renderH; }
 void ArtifactSDFLayer::setRenderSize(int w, int h) {
     sdfImpl_->renderW = std::max(1, w);
     sdfImpl_->renderH = std::max(1, h);
+    Q_EMIT changed();
+}
+
+QJsonObject ArtifactSDFLayer::toJson() const
+{
+    QJsonObject obj = ArtifactAbstractLayer::toJson();
+    obj[QStringLiteral("type")] = static_cast<int>(LayerType::SDF);
+    obj[QStringLiteral("sdf.combineOp")] = static_cast<int>(sdfImpl_->op);
+    obj[QStringLiteral("sdf.smoothK")] = sdfImpl_->smoothK;
+    obj[QStringLiteral("sdf.renderWidth")] = sdfImpl_->renderW;
+    obj[QStringLiteral("sdf.renderHeight")] = sdfImpl_->renderH;
+
+    QJsonArray objects;
+    for (const auto& item : sdfImpl_->objects) {
+        QJsonObject entry;
+        entry[QStringLiteral("shapeType")] = static_cast<int>(item.shapeType);
+        entry[QStringLiteral("posX")] = item.posX;
+        entry[QStringLiteral("posY")] = item.posY;
+        entry[QStringLiteral("posZ")] = item.posZ;
+        entry[QStringLiteral("rotX")] = item.rotX;
+        entry[QStringLiteral("rotY")] = item.rotY;
+        entry[QStringLiteral("rotZ")] = item.rotZ;
+        entry[QStringLiteral("scaleX")] = item.scaleX;
+        entry[QStringLiteral("scaleY")] = item.scaleY;
+        entry[QStringLiteral("scaleZ")] = item.scaleZ;
+        entry[QStringLiteral("color.r")] = item.color.r();
+        entry[QStringLiteral("color.g")] = item.color.g();
+        entry[QStringLiteral("color.b")] = item.color.b();
+        entry[QStringLiteral("color.a")] = item.color.a();
+        entry[QStringLiteral("param0")] = item.param0;
+        objects.append(entry);
+    }
+    obj[QStringLiteral("sdf.objects")] = objects;
+    return obj;
+}
+
+void ArtifactSDFLayer::fromJsonProperties(const QJsonObject& obj)
+{
+    ArtifactAbstractLayer::fromJsonProperties(obj);
+    if (obj.contains(QStringLiteral("sdf.combineOp"))) {
+        setCombineOp(static_cast<SDFOp>(std::clamp(
+            obj.value(QStringLiteral("sdf.combineOp")).toInt(), 0, 1)));
+    }
+    if (obj.contains(QStringLiteral("sdf.smoothK"))) {
+        setSmoothing(static_cast<float>(obj.value(QStringLiteral("sdf.smoothK")).toDouble()));
+    }
+    if (obj.contains(QStringLiteral("sdf.renderWidth")) ||
+        obj.contains(QStringLiteral("sdf.renderHeight"))) {
+        setRenderSize(
+            obj.value(QStringLiteral("sdf.renderWidth")).toInt(sdfImpl_->renderW),
+            obj.value(QStringLiteral("sdf.renderHeight")).toInt(sdfImpl_->renderH));
+    }
+    if (!obj.contains(QStringLiteral("sdf.objects")) ||
+        !obj.value(QStringLiteral("sdf.objects")).isArray()) {
+        return;
+    }
+
+    sdfImpl_->objects.clear();
+    const QJsonArray objects = obj.value(QStringLiteral("sdf.objects")).toArray();
+    for (const auto& value : objects) {
+        if (!value.isObject()) continue;
+        const QJsonObject entry = value.toObject();
+        SDFObject item;
+        item.shapeType = static_cast<SDFShapeType>(std::clamp(
+            entry.value(QStringLiteral("shapeType")).toInt(0), 0, 2));
+        item.posX = static_cast<float>(entry.value(QStringLiteral("posX")).toDouble(0.0));
+        item.posY = static_cast<float>(entry.value(QStringLiteral("posY")).toDouble(0.0));
+        item.posZ = static_cast<float>(entry.value(QStringLiteral("posZ")).toDouble(0.0));
+        item.rotX = static_cast<float>(entry.value(QStringLiteral("rotX")).toDouble(0.0));
+        item.rotY = static_cast<float>(entry.value(QStringLiteral("rotY")).toDouble(0.0));
+        item.rotZ = static_cast<float>(entry.value(QStringLiteral("rotZ")).toDouble(0.0));
+        item.scaleX = static_cast<float>(entry.value(QStringLiteral("scaleX")).toDouble(50.0));
+        item.scaleY = static_cast<float>(entry.value(QStringLiteral("scaleY")).toDouble(50.0));
+        item.scaleZ = static_cast<float>(entry.value(QStringLiteral("scaleZ")).toDouble(50.0));
+        item.color = ArtifactCore::FloatColor(
+            static_cast<float>(entry.value(QStringLiteral("color.r")).toDouble(0.8)),
+            static_cast<float>(entry.value(QStringLiteral("color.g")).toDouble(0.5)),
+            static_cast<float>(entry.value(QStringLiteral("color.b")).toDouble(0.2)),
+            static_cast<float>(entry.value(QStringLiteral("color.a")).toDouble(1.0)));
+        item.param0 = static_cast<float>(entry.value(QStringLiteral("param0")).toDouble(0.0));
+        sdfImpl_->objects.push_back(item);
+    }
     Q_EMIT changed();
 }
 

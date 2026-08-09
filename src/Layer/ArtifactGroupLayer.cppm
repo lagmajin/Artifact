@@ -5,6 +5,7 @@ module;
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QObject>
 #include <QSize>
 
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
@@ -580,8 +581,10 @@ GroupOutputMode ArtifactGroupLayer::outputMode() const {
 }
 
 void ArtifactGroupLayer::setOutputMode(const GroupOutputMode mode) {
-    if (groupImpl_->outputMode == mode) return;
-    groupImpl_->outputMode = mode;
+    const auto normalized = static_cast<GroupOutputMode>(
+        std::clamp(static_cast<int>(mode), 0, 2));
+    if (groupImpl_->outputMode == normalized) return;
+    groupImpl_->outputMode = normalized;
     groupImpl_->cachedTexture = nullptr;
     Q_EMIT changed();
 }

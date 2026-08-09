@@ -61,7 +61,8 @@ QRectF rectFromJson(const QJsonArray &array, const QRectF &fallback) {
 }
 
 bool hasSourceSize(const QSizeF &size) {
-  return size.width() > 0.0 && size.height() > 0.0;
+  return std::isfinite(size.width()) && std::isfinite(size.height()) &&
+         size.width() > 0.0 && size.height() > 0.0;
 }
 
 QRectF fullSourceRect(const QSizeF &size) {
@@ -246,10 +247,12 @@ QTransform SourceCrop::sourceToOutputTransform(const QSizeF &sourceSize,
   if (!enabled_) {
     return QTransform();
   }
+  if (!hasSourceSize(sourceSize) || !hasSourceSize(outputSize)) {
+    return QTransform();
+  }
 
   const QRectF crop = effectiveCropRect(sourceSize);
-  if (!crop.isValid() || crop.width() <= 0.0 || crop.height() <= 0.0 ||
-      outputSize.width() <= 0.0 || outputSize.height() <= 0.0) {
+  if (!crop.isValid() || crop.width() <= 0.0 || crop.height() <= 0.0) {
     return QTransform();
   }
 

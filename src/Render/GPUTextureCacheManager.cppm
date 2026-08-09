@@ -711,6 +711,31 @@ int GPUTextureCacheManager::ownerEntryCount(const QString& ownerId) const
     return ownerToIds_.value(ownerId).size();
 }
 
+GPUTextureOwnerStats GPUTextureCacheManager::ownerStats(
+    const QString& ownerId) const
+{
+    GPUTextureOwnerStats result;
+    if (ownerId.isEmpty()) {
+        return result;
+    }
+    QMutexLocker locker(&mutex_);
+    const auto ids = ownerToIds_.value(ownerId);
+    result.entryCount = ids.size();
+    for (const quint64 id : ids) {
+        const auto it = entries_.constFind(id);
+        if (it != entries_.cend()) {
+            result.memoryBytes += it->memoryBytes;
+        }
+    }
+    for (auto it = pendingUploads_.cbegin(); it != pendingUploads_.cend(); ++it) {
+        if (it->ownerId == ownerId) {
+            ++result.pendingUploadCount;
+            result.pendingUploadBytes += it->memoryBytes;
+        }
+    }
+    return result;
+}
+
 size_t GPUTextureCacheManager::ownerMemoryBytes(const QString& ownerId) const
 {
     if (ownerId.isEmpty()) {

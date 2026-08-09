@@ -1,5 +1,6 @@
 ﻿module;
 #include <iostream>
+#include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
 #include <vector>
 #include <string>
 #include <map>
@@ -58,7 +59,7 @@ export namespace Artifact {
         std::array<float, 16> values{};
     };
 
-    class ArtifactAbstractField {
+    class LIBRARY_DLL_API ArtifactAbstractField {
     protected:
         FieldType type_;
         UniString name_;

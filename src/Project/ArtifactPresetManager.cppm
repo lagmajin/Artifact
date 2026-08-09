@@ -252,7 +252,8 @@ MaskPathKeyframeSnapshot maskPathSnapshotFromJson(const QJsonObject& obj)
     snapshot.featherOuter = static_cast<float>(obj.value("featherOuter").toDouble(0.0));
     snapshot.expansion = static_cast<float>(obj.value("expansion").toDouble(0.0));
     snapshot.inverted = obj.value("inverted").toBool(false);
-    snapshot.mode = static_cast<MaskMode>(obj.value("mode").toInt(static_cast<int>(MaskMode::Add)));
+    snapshot.mode = static_cast<MaskMode>(std::clamp(
+        obj.value("mode").toInt(static_cast<int>(MaskMode::Add)), 0, 3));
     snapshot.name = UniString(obj.value("name").toString().toStdString());
 
     const auto vertsArray = obj.value("vertices").toArray();
@@ -313,7 +314,8 @@ MaskPath maskPathFromJson(const QJsonObject& obj)
     path.setFeatherOuter(static_cast<float>(obj.value("featherOuter").toDouble(0.0)));
     path.setExpansion(static_cast<float>(obj.value("expansion").toDouble(0.0)));
     path.setInverted(obj.value("inverted").toBool(false));
-    path.setMode(static_cast<MaskMode>(obj.value("mode").toInt(static_cast<int>(MaskMode::Add))));
+    path.setMode(static_cast<MaskMode>(std::clamp(
+        obj.value("mode").toInt(static_cast<int>(MaskMode::Add)), 0, 3)));
     path.setName(UniString(obj.value("name").toString().toStdString()));
 
     const auto kfArray = obj.value("animationKeyframes").toArray();

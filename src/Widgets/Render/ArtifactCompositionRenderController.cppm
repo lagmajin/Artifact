@@ -213,6 +213,8 @@ import Artifact.Widgets.TextGizmo;
 
 import Artifact.Widgets.Gizmo3D;
 
+import Artifact.Widgets.ViewportMath;
+
 import Artifact.Widgets.PointTrackerGizmo;
 
 import Artifact.Tool.PointTracker;
@@ -1212,12 +1214,40 @@ bool layerHasRasterizerEffectsOrMasks(ArtifactAbstractLayer* targetLayer) {
   return false;
 }
 
+bool layerHasEnabledMatteReferences(ArtifactAbstractLayer* targetLayer) {
+  if (!targetLayer) {
+    return false;
+  }
+  const auto references = targetLayer->matteReferences();
+  const auto targetId = targetLayer->id();
+  return std::any_of(references.cbegin(), references.cend(),
+                     [targetId](const LayerMatteReference& ref) {
+                       return ref.enabled && !ref.sourceLayerId.isNil() &&
+                              ref.sourceLayerId != targetId;
+                     });
+}
+
+int layerActiveMatteReferenceCount(ArtifactAbstractLayer* targetLayer) {
+  if (!targetLayer) {
+    return 0;
+  }
+  int count = 0;
+  const auto targetId = targetLayer->id();
+  for (const auto& ref : targetLayer->matteReferences()) {
+    if (ref.enabled && !ref.sourceLayerId.isNil() &&
+        ref.sourceLayerId != targetId) {
+      ++count;
+    }
+  }
+  return count;
+}
+
 bool solid3DCardColor(ArtifactAbstractLayer* layer, FloatColor& color) {
   if (!layer || !layer->is3D() || layer->isAdjustmentLayer() ||
       layer->layerBlendType() !=
           ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL ||
       layerHasRasterizerEffectsOrMasks(layer) || layer->hasModifiers() ||
-      !layer->matteReferences().empty()) {
+      layerHasEnabledMatteReferences(layer)) {
     return false;
   }
 
@@ -1258,7 +1288,7 @@ bool directShape3DCard(ArtifactAbstractLayer* layer,
       layer->layerBlendType() !=
           ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL ||
       layerHasRasterizerEffectsOrMasks(layer) || layer->hasModifiers() ||
-      !layer->matteReferences().empty()) {
+      layerHasEnabledMatteReferences(layer)) {
     return false;
   }
   auto* shapeLayer = dynamic_cast<ArtifactShapeLayer*>(layer);
@@ -1304,11 +1334,12 @@ const ArtifactCore::ImageF32x4_RGBA* textured3DCardBuffer(
       layer->layerBlendType() !=
           ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL ||
       layerHasRasterizerEffectsOrMasks(layer) || layer->hasModifiers() ||
-      !layer->matteReferences().empty()) {
+      layerHasEnabledMatteReferences(layer)) {
     return nullptr;
   }
   if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer);
-      imageLayer && imageLayer->hasCurrentFrameBuffer()) {
+      imageLayer && !imageLayer->sourceCropEnabled() &&
+          imageLayer->hasCurrentFrameBuffer()) {
     if (sourceKind) *sourceKind = QStringLiteral("image");
     return &imageLayer->currentFrameBuffer();
   }
@@ -1331,7 +1362,7 @@ ArtifactVideoLayer* readyVideo3DCardLayer(ArtifactAbstractLayer* layer,
       layer->layerBlendType() !=
           ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL ||
       layerHasRasterizerEffectsOrMasks(layer) || layer->hasModifiers() ||
-      !layer->matteReferences().empty()) {
+      layerHasEnabledMatteReferences(layer)) {
     return nullptr;
   }
   auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer);
@@ -2357,7 +2388,8 @@ void drawEffectHitboxOverlay(ArtifactIRenderer *renderer,
 
   for (const auto &matteRef : matteRefs) {
 
-    if (!matteRef.enabled || matteRef.sourceLayerId.isNil()) {
+    if (!matteRef.enabled || matteRef.sourceLayerId.isNil() ||
+        matteRef.sourceLayerId == selectedLayer->id()) {
 
       continue;
 
@@ -2543,6 +2575,10 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
 
   }
 
+  const auto activeMatteCount = [](const ArtifactAbstractLayerPtr& layer) {
+    return layerActiveMatteReferenceCount(layer.get());
+  };
+
 
 
   const QSize compSize = comp->settings().compositionSize();
@@ -2658,8 +2694,7 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
     weight += std::min(0.70f, static_cast<float>(layer->effectCount()) * 0.08f);
 
     weight += std::min(0.45f,
-
-                       static_cast<float>(layer->matteReferences().size()) * 0.12f);
+                       static_cast<float>(activeMatteCount(layer)) * 0.12f);
 
     if (selectedLayer && selectedLayer->id() == layer->id()) {
 
@@ -2743,7 +2778,7 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
 
                              : 0.0) +
 
-              (selectedLayer ? static_cast<double>(selectedLayer->matteReferences().size()) * 0.05
+              (selectedLayer ? static_cast<double>(activeMatteCount(selectedLayer)) * 0.05
 
                              : 0.0));
 
@@ -2885,7 +2920,7 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
 
             .arg(selectedLayer->effectCount())
 
-            .arg(static_cast<int>(selectedLayer->matteReferences().size())),
+            .arg(activeMatteCount(selectedLayer)),
 
         detailFont, FloatColor{0.62f, 0.72f, 0.82f, 1.0f},
 
@@ -4687,7 +4722,9 @@ bool layerUsesProjectedFrameGizmo(const ArtifactAbstractLayerPtr &layer) {
   if (!layer) {
     return false;
   }
-  if (dynamic_cast<ArtifactImageLayer *>(layer.get()) != nullptr) {
+  if (dynamic_cast<ArtifactImageLayer *>(layer.get()) != nullptr ||
+      dynamic_cast<ArtifactSolidImageLayer *>(layer.get()) != nullptr ||
+      dynamic_cast<ArtifactSolid2DLayer *>(layer.get()) != nullptr) {
     return true;
   }
   if (const auto *model = dynamic_cast<const Artifact3DLayer *>(layer.get())) {
@@ -5266,6 +5303,7 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
                       : ArtifactAbstractComposition::CanonicalColorPipelineVersion);
 
   key += QStringLiteral("|generation=%1").arg(surfaceGeneration);
+  key += QStringLiteral("|maskRevision=%1").arg(layer->maskRevision());
   // Do not use QImage::cacheKey() as a generic layer identity here. Solid and
   // gradient layers create a fresh temporary QImage on every draw, even when
   // their content is unchanged, which would force a surface/GPU-cache miss on
@@ -5354,7 +5392,7 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
   if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer)) {
 
     key += QStringLiteral(
-               "|image|src=%1|rev=%2|fit=%3|size=%4x%5|cs=%6|tf=%7")
+               "|image|src=%1|rev=%2|fit=%3|size=%4x%5|cs=%6|tf=%7|crop=%8")
 
                .arg(imageLayer->sourcePath())
 
@@ -5368,7 +5406,8 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
                .arg(imageLayer->inputColorSpace())
 
-               .arg(imageLayer->inputTransferFunction());
+               .arg(imageLayer->inputTransferFunction())
+               .arg(imageLayer->sourceCropSignature());
 
     return key;
 
@@ -6662,7 +6701,7 @@ TransformGizmo::HandleType hitTestProjectedFrameCorner(
         QVector3D(static_cast<float>(corner.x()),
                   static_cast<float>(corner.y()), 0.0f));
     const QVector3D projected =
-        worldPoint.project(view, projection, viewport);
+        ViewportMath::projectToTopDown(worldPoint, view, projection, viewport);
     if (!std::isfinite(projected.x()) || !std::isfinite(projected.y()) ||
         projected.z() < 0.0f || projected.z() > 1.0f) {
       continue;
@@ -6684,8 +6723,8 @@ TransformGizmo::HandleType hitTestProjectedFrameCorner(
   const QVector3D rotationWorld = world.map(
       QVector3D(static_cast<float>(rotationPoint.x()),
                 static_cast<float>(rotationPoint.y()), 0.0f));
-  const QVector3D rotationProjected =
-      rotationWorld.project(view, projection, viewport);
+  const QVector3D rotationProjected = ViewportMath::projectToTopDown(
+      rotationWorld, view, projection, viewport);
   if (std::isfinite(rotationProjected.x()) &&
       std::isfinite(rotationProjected.y()) && rotationProjected.z() >= 0.0f &&
       rotationProjected.z() <= 1.0f) {
@@ -6725,9 +6764,10 @@ bool hitTestProjectedFrameInterior(const ArtifactAbstractLayerPtr &layer,
   std::array<QPointF, 4> projectedPoints{};
   for (size_t i = 0; i < localPoints.size(); ++i) {
     const QPointF &p = localPoints[i];
-    const QVector3D projected = world.map(QVector3D(
-        static_cast<float>(p.x()), static_cast<float>(p.y()), 0.0f))
-                                    .project(view, projection, viewport);
+    const QVector3D projected = ViewportMath::projectToTopDown(
+        world.map(QVector3D(static_cast<float>(p.x()),
+                            static_cast<float>(p.y()), 0.0f)),
+        view, projection, viewport);
     if (!std::isfinite(projected.x()) || !std::isfinite(projected.y()) ||
         projected.z() < 0.0f || projected.z() > 1.0f) {
       return false;
@@ -6765,10 +6805,10 @@ QRectF projectedSelectionFrameBounds(
         localBounds.topLeft(), localBounds.topRight(),
         localBounds.bottomRight(), localBounds.bottomLeft()};
     for (const QPointF &point : points) {
-      const QVector3D projected = world
-          .map(QVector3D(static_cast<float>(point.x()),
-                         static_cast<float>(point.y()), 0.0f))
-          .project(view, projection, viewport);
+      const QVector3D projected = ViewportMath::projectToTopDown(
+          world.map(QVector3D(static_cast<float>(point.x()),
+                              static_cast<float>(point.y()), 0.0f)),
+          view, projection, viewport);
       if (!std::isfinite(projected.x()) || !std::isfinite(projected.y()) ||
           projected.z() < 0.0f || projected.z() > 1.0f) continue;
       left = std::min(left, static_cast<double>(projected.x()));
@@ -6807,10 +6847,10 @@ bool projectedLayerFrameCorners(
     if (!std::isfinite(clip.w()) || clip.w() <= 0.0f) {
       return false;
     }
-    const QVector3D projected = world
-        .map(QVector3D(static_cast<float>(point.x()),
-                       static_cast<float>(point.y()), 0.0f))
-        .project(view, projection, viewport);
+    const QVector3D projected = ViewportMath::projectToTopDown(
+        world.map(QVector3D(static_cast<float>(point.x()),
+                            static_cast<float>(point.y()), 0.0f)),
+        view, projection, viewport);
     if (!std::isfinite(projected.x()) || !std::isfinite(projected.y())) {
       return false;
     }
@@ -7026,10 +7066,10 @@ ProjectedFrameSnapResult snapProjectedFramePointer(
     left = top = std::numeric_limits<double>::max();
     right = bottom = std::numeric_limits<double>::lowest();
     for (const QPointF &point : points) {
-      const QVector3D projected = world
-          .map(QVector3D(static_cast<float>(point.x()),
-                         static_cast<float>(point.y()), 0.0f))
-          .project(view, projection, viewport);
+      const QVector3D projected = ViewportMath::projectToTopDown(
+          world.map(QVector3D(static_cast<float>(point.x()),
+                              static_cast<float>(point.y()), 0.0f)),
+          view, projection, viewport);
       if (!std::isfinite(projected.x()) || !std::isfinite(projected.y()) ||
           projected.z() < 0.0f || projected.z() > 1.0f) {
         return false;
@@ -7161,10 +7201,11 @@ ProjectedFrameSnapResult snapProjectedFramePointer(
       break;
     }
     if (hasHandlePoint) {
-      const QVector3D projected = selectedLayer->getGlobalTransform4x4()
-          .map(QVector3D(static_cast<float>(handleLocal.x()),
-                         static_cast<float>(handleLocal.y()), 0.0f))
-          .project(view, projection, viewport);
+      const QVector3D projected = ViewportMath::projectToTopDown(
+          selectedLayer->getGlobalTransform4x4().map(
+              QVector3D(static_cast<float>(handleLocal.x()),
+                        static_cast<float>(handleLocal.y()), 0.0f)),
+          view, projection, viewport);
       if (std::isfinite(projected.x()) && std::isfinite(projected.y())) {
         const QPointF pointerDelta = viewportPos - previousViewportPos;
         xCandidates = {projected.x() + pointerDelta.x()};
@@ -7268,10 +7309,10 @@ Qt::CursorShape cursorForProjectedFrameCorner(
 
   const QMatrix4x4 world = layer->getGlobalTransform4x4();
   const auto projectLocal = [&](const QPointF &point) {
-    return world
-        .map(QVector3D(static_cast<float>(point.x()),
-                       static_cast<float>(point.y()), 0.0f))
-        .project(view, projection, viewport);
+    return ViewportMath::projectToTopDown(
+        world.map(QVector3D(static_cast<float>(point.x()),
+                            static_cast<float>(point.y()), 0.0f)),
+        view, projection, viewport);
   };
   const QVector3D handleProjected = projectLocal(handleLocal);
   const QVector3D oppositeProjected = projectLocal(oppositeLocal);
@@ -7579,7 +7620,110 @@ hitTopmostLayerAtViewportPos(const ArtifactCompositionPtr &comp,
 
 
 
-/// Apply track matte to a layer surface by evaluating its MatteStack.
+static QImage fitMatteSourceToTarget(const QImage& source,
+                                     const QSize& targetSize,
+                                     MatteFitMode fitMode)
+{
+  if (source.isNull() || targetSize.width() <= 0 || targetSize.height() <= 0) {
+    return {};
+  }
+
+  const QImage rgbaSource = source.convertToFormat(QImage::Format_RGBA8888);
+  if (fitMode == MatteFitMode::Stretch) {
+    return rgbaSource.scaled(targetSize, Qt::IgnoreAspectRatio,
+                             Qt::SmoothTransformation);
+  }
+
+  const float sourceAspect = static_cast<float>(rgbaSource.width()) /
+                             static_cast<float>(std::max(1, rgbaSource.height()));
+  const float targetAspect = static_cast<float>(targetSize.width()) /
+                             static_cast<float>(std::max(1, targetSize.height()));
+  int scaledWidth = rgbaSource.width();
+  int scaledHeight = rgbaSource.height();
+  if (fitMode == MatteFitMode::Fit || fitMode == MatteFitMode::Fill) {
+    const bool fitInside = fitMode == MatteFitMode::Fit;
+    const float scale = fitInside
+        ? (sourceAspect > targetAspect
+               ? static_cast<float>(targetSize.width()) / rgbaSource.width()
+               : static_cast<float>(targetSize.height()) / rgbaSource.height())
+        : (sourceAspect > targetAspect
+               ? static_cast<float>(targetSize.height()) / rgbaSource.height()
+               : static_cast<float>(targetSize.width()) / rgbaSource.width());
+    scaledWidth = std::max(1, qRound(rgbaSource.width() * scale));
+    scaledHeight = std::max(1, qRound(rgbaSource.height() * scale));
+  }
+
+  const QImage scaled = rgbaSource.scaled(scaledWidth, scaledHeight,
+                                          Qt::IgnoreAspectRatio,
+                                          Qt::SmoothTransformation);
+  QImage result(targetSize, QImage::Format_RGBA8888);
+  result.fill(Qt::transparent);
+  const int copyWidth = std::min(targetSize.width(), scaled.width());
+  const int copyHeight = std::min(targetSize.height(), scaled.height());
+  const int sourceX = std::max(0, (scaled.width() - copyWidth) / 2);
+  const int sourceY = std::max(0, (scaled.height() - copyHeight) / 2);
+  const int targetX = std::max(0, (targetSize.width() - copyWidth) / 2);
+  const int targetY = std::max(0, (targetSize.height() - copyHeight) / 2);
+  for (int y = 0; y < copyHeight; ++y) {
+    const auto* sourceBits = scaled.constScanLine(sourceY + y) + sourceX * 4;
+    auto* targetBits = result.scanLine(targetY + y) + targetX * 4;
+    std::memcpy(targetBits, sourceBits, static_cast<size_t>(copyWidth) * 4u);
+  }
+  return result;
+}
+
+static float combineLayerMatteValue(float current, float next,
+                                    MatteBlendMode blendMode,
+                                    bool hasCurrent)
+{
+  if (!hasCurrent) {
+    return std::clamp(next, 0.0f, 1.0f);
+  }
+  switch (blendMode) {
+  case MatteBlendMode::Add:
+    return std::min(1.0f, current + next);
+  case MatteBlendMode::Subtract:
+    return std::max(0.0f, current - next);
+  case MatteBlendMode::Intersect:
+    return std::min(current, next);
+  case MatteBlendMode::Difference:
+    return std::abs(current - next);
+  }
+  return current;
+}
+
+static std::vector<float> evaluateLayerMatteReferences(
+    const std::vector<std::vector<float>>& sources,
+    const std::vector<LayerMatteReference>& references,
+    int width, int height)
+{
+  std::vector<float> result(static_cast<size_t>(std::max(0, width)) *
+                            static_cast<size_t>(std::max(0, height)), 0.0f);
+  if (width <= 0 || height <= 0) {
+    return result;
+  }
+
+  size_t sourceIndex = 0;
+  bool hasCurrent = false;
+  for (const auto& ref : references) {
+    if (!ref.enabled || ref.sourceLayerId.isNil()) {
+      continue;
+    }
+    if (sourceIndex >= sources.size()) {
+      break;
+    }
+    const auto& source = sources[sourceIndex++];
+    for (size_t pixel = 0; pixel < result.size(); ++pixel) {
+      const float next = pixel < source.size() ? source[pixel] : 0.0f;
+      result[pixel] = combineLayerMatteValue(
+          result[pixel], next, ref.blendMode, hasCurrent);
+    }
+    hasCurrent = true;
+  }
+  return result;
+}
+
+/// Apply track matte to a layer surface by evaluating its matte references.
 
 /// Modifies the surface's alpha channel in-place.
 
@@ -7603,39 +7747,38 @@ static void applyLayerMatteToSurface(
 
     if (w <= 0 || h <= 0) return;
 
+    QHash<ArtifactCore::Id, QImage> resolvedSources;
+    for (const auto& ref : mattes) {
+        if (!ref.enabled || ref.sourceLayerId.isNil() ||
+            ref.sourceLayerId == layer->id()) {
+          continue;
+        }
+        const QImage source = sourceResolver(ref.sourceLayerId);
+        if (source.isNull() ||
+            fitMatteSourceToTarget(source, surface.size(), ref.fitMode).isNull()) {
+            return;
+        }
+        resolvedSources.insert(ref.sourceLayerId, source);
+    }
+
 
 
     // Build source alpha buffers from matte source layers
 
     std::vector<std::vector<float>> sources;
+    std::vector<LayerMatteReference> activeMatteRefs;
 
     for (const auto &ref : mattes) {
 
-        if (!ref.enabled || ref.sourceLayerId.isNil()) continue;
-
-
-
-        QImage srcImage = sourceResolver(ref.sourceLayerId);
-
-        if (srcImage.isNull()) continue;
-
-
-
-        // Resize to match target surface
-
-        if (srcImage.size() != surface.size()) {
-
-            srcImage = srcImage.scaled(w, h, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-
+        if (!ref.enabled || ref.sourceLayerId.isNil() ||
+            ref.sourceLayerId == layer->id()) {
+          continue;
         }
 
-        srcImage = srcImage.convertToFormat(QImage::Format_ARGB32_Premultiplied);
 
 
-
-        const int srcW = srcImage.width();
-
-        const int srcH = srcImage.height();
+        QImage srcImage = fitMatteSourceToTarget(
+            resolvedSources.value(ref.sourceLayerId), surface.size(), ref.fitMode);
 
 
 
@@ -7645,27 +7788,23 @@ static void applyLayerMatteToSurface(
 
 
 
-        const auto *sourceBits = srcImage.constBits();
-        const int sourceStride = srcImage.bytesPerLine();
         const auto buildAlphaRows = [&](int yBegin, int yEnd) {
-          for (int y = yBegin; y < yEnd && y < srcH; ++y) {
-            const QRgb *srcLine = reinterpret_cast<const QRgb *>(
-                sourceBits + y * sourceStride);
-            for (int x = 0; x < w && x < srcW; ++x) {
-
-                QRgb px = srcLine[x];
+          for (int y = yBegin; y < yEnd; ++y) {
+            const auto* srcLine = srcImage.constScanLine(y);
+            for (int x = 0; x < w; ++x) {
+                const auto* px = srcLine + x * 4;
 
                 if (useLuma) {
 
                     // ITU-R BT.601 luma
 
-                    float luma = 0.299f * qRed(px) + 0.587f * qGreen(px) + 0.114f * qBlue(px);
+                    float luma = 0.299f * px[0] + 0.587f * px[1] + 0.114f * px[2];
 
                     alpha[static_cast<size_t>(y) * w + x] = luma / 255.0f;
 
                 } else {
 
-                    alpha[static_cast<size_t>(y) * w + x] = qAlpha(px) / 255.0f;
+                    alpha[static_cast<size_t>(y) * w + x] = px[3] / 255.0f;
 
                 }
 
@@ -7695,9 +7834,15 @@ static void applyLayerMatteToSurface(
             }
         }
 
+        const float matteOpacity = std::clamp(ref.opacity, 0.0f, 1.0f);
+        for (float& value : alpha) {
+            value *= matteOpacity;
+        }
+
 
 
         sources.push_back(std::move(alpha));
+        activeMatteRefs.push_back(ref);
 
     }
 
@@ -7707,25 +7852,9 @@ static void applyLayerMatteToSurface(
 
 
 
-    // Use Core's evaluateMatteStack to combine sources
-
-    MatteStack stack;
-
-    for (const auto &ref : mattes) {
-
-        if (ref.enabled && !ref.sourceLayerId.isNil()) {
-
-            stack.addNode(ref.toCoreMatteNode());
-
-        }
-
-    }
-
-
-
-    auto result = evaluateMatteStack(sources, stack, w, h);
-
-    if (!result.isValid()) return;
+    const auto matteValues = evaluateLayerMatteReferences(
+        sources, activeMatteRefs, w, h);
+    if (matteValues.empty()) return;
 
 
 
@@ -7740,7 +7869,7 @@ static void applyLayerMatteToSurface(
         QRgb *line = reinterpret_cast<QRgb *>(surfaceBits + y * surfaceStride);
         for (int x = 0; x < w; ++x) {
 
-            float maskAlpha = result.sampleAlpha(x, y);
+            float maskAlpha = matteValues[static_cast<size_t>(y) * w + x];
 
             int currentAlpha = qAlpha(line[x]);
 
@@ -7794,37 +7923,43 @@ static void applyLayerMatteToSurface(
     return;
   }
 
-  std::vector<std::vector<float>> sources;
+  QHash<ArtifactCore::Id, QImage> resolvedSources;
   for (const auto& ref : mattes) {
-    if (!ref.enabled || ref.sourceLayerId.isNil()) {
+    if (!ref.enabled || ref.sourceLayerId.isNil() ||
+        ref.sourceLayerId == layer->id()) {
+      continue;
+    }
+    const QImage source = sourceResolver(ref.sourceLayerId);
+    if (source.isNull() ||
+        fitMatteSourceToTarget(source, QSize(w, h), ref.fitMode).isNull()) {
+      return;
+    }
+    resolvedSources.insert(ref.sourceLayerId, source);
+  }
+
+  std::vector<std::vector<float>> sources;
+  std::vector<LayerMatteReference> activeMatteRefs;
+  for (const auto& ref : mattes) {
+    if (!ref.enabled || ref.sourceLayerId.isNil() ||
+        ref.sourceLayerId == layer->id()) {
       continue;
     }
 
-    QImage source = sourceResolver(ref.sourceLayerId);
-    if (source.isNull()) {
-      continue;
-    }
-    if (source.size() != QSize(w, h)) {
-      source = source.scaled(w, h, Qt::IgnoreAspectRatio,
-                             Qt::SmoothTransformation);
-    }
-    source = source.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    QImage source = fitMatteSourceToTarget(
+        resolvedSources.value(ref.sourceLayerId), QSize(w, h), ref.fitMode);
 
     std::vector<float> matteValues(static_cast<size_t>(w) * h, 0.0f);
     const bool useLuma =
         ref.type == MatteType::Luma || ref.type == MatteType::InverseLuma;
-    const auto* sourceBits = source.constBits();
-    const int sourceStride = source.bytesPerLine();
     const auto buildMatteRows = [&](int yBegin, int yEnd) {
       for (int y = yBegin; y < yEnd; ++y) {
-        const auto* row = reinterpret_cast<const QRgb*>(
-            sourceBits + y * sourceStride);
+        const auto* row = source.constScanLine(y);
         for (int x = 0; x < w; ++x) {
-        const QRgb pixel = row[x];
+        const auto* pixel = row + x * 4;
         matteValues[static_cast<size_t>(y) * w + x] = useLuma
-            ? (0.299f * qRed(pixel) + 0.587f * qGreen(pixel) +
-               0.114f * qBlue(pixel)) / 255.0f
-            : qAlpha(pixel) / 255.0f;
+            ? (0.299f * pixel[0] + 0.587f * pixel[1] +
+               0.114f * pixel[2]) / 255.0f
+            : pixel[3] / 255.0f;
         }
       }
     };
@@ -7837,20 +7972,20 @@ static void applyLayerMatteToSurface(
       };
       invertMatte(0, matteValues.size());
     }
+    const float matteOpacity = std::clamp(ref.opacity, 0.0f, 1.0f);
+    for (float& value : matteValues) {
+      value *= matteOpacity;
+    }
     sources.push_back(std::move(matteValues));
+    activeMatteRefs.push_back(ref);
   }
   if (sources.empty()) {
     return;
   }
 
-  MatteStack stack;
-  for (const auto& ref : mattes) {
-    if (ref.enabled && !ref.sourceLayerId.isNil()) {
-      stack.addNode(ref.toCoreMatteNode());
-    }
-  }
-  const auto mask = evaluateMatteStack(sources, stack, w, h);
-  if (!mask.isValid()) {
+  const auto matteValues = evaluateLayerMatteReferences(
+      sources, activeMatteRefs, w, h);
+  if (matteValues.empty()) {
     return;
   }
 
@@ -7859,7 +7994,7 @@ static void applyLayerMatteToSurface(
       for (int y = yBegin; y < yEnd; ++y) {
         float* pixel = pixels + static_cast<size_t>(y) * w * 4;
         for (int x = 0; x < w; ++x, pixel += 4) {
-        const float factor = mask.sampleAlpha(x, y);
+        const float factor = matteValues[static_cast<size_t>(y) * w + x];
         pixel[0] *= factor;
         pixel[1] *= factor;
         pixel[2] *= factor;
@@ -7874,7 +8009,7 @@ static void applyLayerMatteToSurface(
   const auto applyFallbackRows = [&](int yBegin, int yEnd) {
     for (int y = yBegin; y < yEnd; ++y) {
       for (int x = 0; x < w; ++x) {
-        const float factor = mask.sampleAlpha(x, y);
+        const float factor = matteValues[static_cast<size_t>(y) * w + x];
         const ArtifactCore::FloatRGBA pixel = surface.getPixel(x, y);
         surface.setPixel(x, y, ArtifactCore::FloatRGBA(
                                    pixel.r() * factor, pixel.g() * factor,
@@ -8295,11 +8430,12 @@ void drawLayerForCompositionView(
 
     QString matteSourceSignature;
 
-    if (matteSourceResolver && layer->matteReferences().size() > 0) {
+    if (matteSourceResolver && layerHasEnabledMatteReferences(layer)) {
 
       for (const auto &ref : layer->matteReferences()) {
 
-        if (!ref.enabled || ref.sourceLayerId.isNil()) {
+        if (!ref.enabled || ref.sourceLayerId.isNil() ||
+            ref.sourceLayerId == layer->id()) {
 
           continue;
 
@@ -8319,7 +8455,7 @@ void drawLayerForCompositionView(
 
         matteSourceSignature +=
 
-            QStringLiteral("|matte=%1:%2:%3x%4")
+            QStringLiteral("|matte=%1:%2:%3x%4:type=%5:blend=%6:fit=%7:opacity=%8:invert=%9")
 
                 .arg(ref.sourceLayerId.toString())
 
@@ -8327,7 +8463,12 @@ void drawLayerForCompositionView(
 
                 .arg(source.width())
 
-                .arg(source.height());
+                .arg(source.height())
+                .arg(static_cast<int>(ref.type))
+                .arg(static_cast<int>(ref.blendMode))
+                .arg(static_cast<int>(ref.fitMode))
+                .arg(ref.opacity, 0, 'g', 9)
+                .arg(ref.invert ? 1 : 0);
 
         resolvedMatteSources.insert(ref.sourceLayerId, std::move(source));
 
@@ -8782,6 +8923,7 @@ void drawLayerForCompositionView(
   if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer)) {
 
     if (!layerHasRasterizerEffectsOrMasks(layer) &&
+        !imageLayer->sourceCropEnabled() &&
         imageLayer->hasCurrentFrameBuffer()) {
 
       const ArtifactCore::ImageF32x4_RGBA &buffer =
@@ -9098,7 +9240,7 @@ void drawLayerForCompositionView(
 
     if (!frameBuffer.isEmpty() && !hasRasterizer &&
 
-        layer->matteReferences().empty()) {
+        !layerHasEnabledMatteReferences(layer)) {
 
       const float baseOpacity =
 
@@ -11016,10 +11158,116 @@ public:
     auto devCtx = renderer_->immediateContext();
 
     bool allMatted = true;
+    bool missingMatteSource = false;
+
+    std::vector<LayerMatteReference> batchRefs;
+    batchRefs.reserve(mattes.size());
+    for (const auto& matteRef : mattes) {
+      if (!matteRef.enabled || matteRef.sourceLayerId.isNil() ||
+          matteRef.sourceLayerId == layer->id()) {
+        continue;
+      }
+      const auto matteIt = matteSourceImages.constFind(matteRef.sourceLayerId);
+      if (matteIt == matteSourceImages.constEnd() || matteIt.value().isNull()) {
+        allMatted = false;
+        missingMatteSource = true;
+        continue;
+      }
+      batchRefs.push_back(matteRef);
+    }
+
+    if (!missingMatteSource && batchRefs.size() > 3) {
+      qWarning() << "[CompositionView] GPU track matte supports at most three"
+                 << "sources per layer; using unmasked layer"
+                 << "layer=" << layer->id().toString()
+                 << "sourceCount=" << batchRefs.size();
+      return layerFloatSRV;
+    }
+
+    const auto shaderModeFor = [](const LayerMatteReference& matteRef) {
+      switch (matteRef.type) {
+      case MatteType::Alpha: return matteRef.invert ? 2u : 0u;
+      case MatteType::Luma: return matteRef.invert ? 3u : 1u;
+      case MatteType::InverseAlpha: return matteRef.invert ? 0u : 2u;
+      case MatteType::InverseLuma: return matteRef.invert ? 1u : 3u;
+      }
+      return 0u;
+    };
+
+    const auto shaderBlendModeFor = [](const LayerMatteReference& matteRef) {
+      switch (matteRef.blendMode) {
+      case MatteBlendMode::Add: return 0u;
+      case MatteBlendMode::Intersect: return 1u;
+      case MatteBlendMode::Subtract: return 2u;
+      case MatteBlendMode::Difference: return 3u;
+      }
+      return 0u;
+    };
+
+    const bool batchSizeSupported = !batchRefs.empty() && batchRefs.size() <= 3;
+    const bool canBatch = batchSizeSupported && allMatted;
+    if (canBatch) {
+      bool uploadedAll = true;
+      for (size_t index = 0; index < batchRefs.size(); ++index) {
+        const auto& matteRef = batchRefs[index];
+        const QImage matteSrc = fitMatteSourceToTarget(
+            matteSourceImages.value(matteRef.sourceLayerId),
+            QSize(static_cast<int>(renderPipeline.width()),
+                  static_cast<int>(renderPipeline.height())),
+            matteRef.fitMode);
+        uploadedAll = uploadedAll && !matteSrc.isNull() &&
+            renderPipeline.updateMatteSourceFromData(
+                devCtx.RawPtr(), static_cast<int>(index), matteSrc.constBits(),
+                static_cast<Diligent::Uint32>(matteSrc.width()),
+                static_cast<Diligent::Uint32>(matteSrc.height()),
+                static_cast<Diligent::Uint32>(matteSrc.bytesPerLine()));
+      }
+      if (uploadedAll) {
+        ArtifactCore::MatteTrackParams params;
+        params.matteCount = static_cast<Diligent::Uint32>(batchRefs.size());
+        params.matteMode0 = shaderModeFor(batchRefs[0]);
+        if (batchRefs.size() > 1) {
+          params.matteMode1 = shaderModeFor(batchRefs[1]);
+        }
+        if (batchRefs.size() > 2) {
+          params.matteMode2 = shaderModeFor(batchRefs[2]);
+        }
+        params.matteBlendMode0 = shaderBlendModeFor(batchRefs[0]);
+        params.matteOpacity0 = std::clamp(batchRefs[0].opacity, 0.0f, 1.0f);
+        if (batchRefs.size() > 1) {
+          params.matteBlendMode1 = shaderBlendModeFor(batchRefs[1]);
+          params.matteOpacity1 =
+              std::clamp(batchRefs[1].opacity, 0.0f, 1.0f);
+        }
+        if (batchRefs.size() > 2) {
+          params.matteBlendMode2 = shaderBlendModeFor(batchRefs[2]);
+          params.matteOpacity2 =
+              std::clamp(batchRefs[2].opacity, 0.0f, 1.0f);
+        }
+        params.lumaMode = 0;
+        if (renderer_->applyTrackMatte(
+                blendPipeline_.get(), layerFloatSRV,
+                renderPipeline.matteSourceSRV(0),
+                batchRefs.size() > 1 ? renderPipeline.matteSourceSRV(1) : nullptr,
+                batchRefs.size() > 2 ? renderPipeline.matteSourceSRV(2) : nullptr,
+                tempUAV, params, renderPipeline.width(), renderPipeline.height())) {
+          Diligent::CopyTextureAttribs copyAttrs = {};
+          copyAttrs.pSrcTexture = tempUAV->GetTexture();
+          copyAttrs.SrcTextureTransitionMode =
+              Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+          copyAttrs.pDstTexture = layerFloatUAV->GetTexture();
+          copyAttrs.DstTextureTransitionMode =
+              Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+          devCtx->CopyTexture(copyAttrs);
+          return layerFloatSRV;
+        }
+      }
+    }
 
     for (const auto& matteRef : mattes) {
 
-      if (!matteRef.enabled || matteRef.sourceLayerId.isNil()) {
+      if (!matteRef.enabled || matteRef.sourceLayerId.isNil() ||
+          matteRef.sourceLayerId == layer->id()) {
 
         continue;
 
@@ -11031,11 +11279,21 @@ public:
 
         allMatted = false;
 
+        missingMatteSource = true;
+
         continue;
 
       }
 
-      const QImage& matteSrc = matteIt.value();
+      const QImage matteSrc = fitMatteSourceToTarget(
+          matteIt.value(),
+          QSize(static_cast<int>(renderPipeline.width()),
+                static_cast<int>(renderPipeline.height())),
+          matteRef.fitMode);
+      if (matteSrc.isNull()) {
+        allMatted = false;
+        continue;
+      }
 
       const bool uploaded = renderPipeline.updateMatteSourceFromData(
 
@@ -11057,35 +11315,7 @@ public:
 
 
 
-      Diligent::Uint32 shaderMode = 0;
-
-      switch (matteRef.type) {
-
-      case MatteType::Alpha:
-
-        shaderMode = matteRef.invert ? 2u : 0u;
-
-        break;
-
-      case MatteType::Luma:
-
-        shaderMode = matteRef.invert ? 3u : 1u;
-
-        break;
-
-      case MatteType::InverseAlpha:
-
-        shaderMode = matteRef.invert ? 0u : 2u;
-
-        break;
-
-      case MatteType::InverseLuma:
-
-        shaderMode = matteRef.invert ? 1u : 3u;
-
-        break;
-
-      }
+      const Diligent::Uint32 shaderMode = shaderModeFor(matteRef);
 
 
 
@@ -11095,11 +11325,11 @@ public:
 
       params.matteMode0 = shaderMode;
 
-      params.stackMode = 0;
+      params.matteBlendMode0 = shaderBlendModeFor(matteRef);
 
       params.lumaMode = 0;
 
-      params.opacity = 1.0f;
+      params.matteOpacity0 = std::clamp(matteRef.opacity, 0.0f, 1.0f);
 
       if (!renderer_->applyTrackMatte(
 
@@ -11136,6 +11366,16 @@ public:
     }
 
     if (!allMatted) {
+
+      if (missingMatteSource) {
+
+        qWarning() << "[CompositionView] GPU track matte source unavailable; using unmasked layer"
+                   << "layer=" << layer->id().toString()
+                   << "layerName=" << layer->layerName();
+
+        return layerFloatSRV;
+
+      }
 
       qCritical() << "[CompositionView] GPU track matte failed; layer blend skipped for"
 
@@ -11774,7 +12014,7 @@ public:
 
   bool showSafeMargins_ = false;
 
-  bool showMotionPathOverlay_ = false;
+  bool showMotionPathOverlay_ = true;
 
   bool showEffectHitboxOverlay_ = false;
 
@@ -13026,6 +13266,16 @@ public:
 
   bool isDraggingMaskHandle_ = false;
 
+  bool isDraggingMaskGeometry_ = false;
+
+  QPointF draggingMaskGeometryStartLocal_;
+
+  float draggingMaskGeometryStartFeather_ = 0.0f;
+
+  float draggingMaskGeometryStartExpansion_ = 0.0f;
+
+  bool draggingMaskGeometryExpansion_ = false;
+
   bool maskEditPending_ = false;
 
   bool maskEditDirty_ = false;
@@ -13035,6 +13285,17 @@ public:
   std::vector<LayerMask> maskEditBefore_;
 
   std::chrono::steady_clock::time_point lastLayerMutationNotify_{};
+
+  bool maskViewNavigationLocked() const {
+    const auto *app = ArtifactApplicationManager::instance();
+    const auto *toolManager = app ? app->toolManager() : nullptr;
+    if (toolManager && toolManager->activeTool() == ToolType::Pen) {
+      return true;
+    }
+    return maskEditPending_ ||
+           rectangleToolMode_ == RectangleToolMode::Mask ||
+           rectangleToolMode_ == RectangleToolMode::EllipseMask;
+  }
 
 
 
@@ -13716,6 +13977,7 @@ public:
                       static_cast<float>(center.y()), centerZ),
             QVector3D(0.0f, 0.0f, 0.0f));
         gizmo3D_->setScale(QVector3D(1.0f, 1.0f, 1.0f));
+        gizmo3D_->clearBoundingBox();
         return;
       }
     }
@@ -13739,6 +14001,14 @@ public:
       gizmo3D_->setTransform(layer->position3D(), layer->rotation3D());
 
       gizmo3D_->setScale(QVector3D(t3.scaleX(), t3.scaleY(), t3.scaleZ()));
+
+      const auto *modelLayer = dynamic_cast<const Artifact3DLayer *>(layer.get());
+      if (modelLayer && modelLayer->fixedGeometry() != FixedGeometry3D::Plane) {
+        const auto &mesh = modelLayer->mesh();
+        gizmo3D_->setBoundingBox(mesh.boundingBoxMin(), mesh.boundingBoxMax());
+      } else {
+        gizmo3D_->clearBoundingBox();
+      }
 
       return;
 
@@ -13787,6 +14057,7 @@ public:
                            QVector3D(0.0f, 0.0f, rotationZ));
 
     gizmo3D_->setScale(QVector3D(scaleX, scaleY, 1.0f));
+    gizmo3D_->clearBoundingBox();
 
   }
 
@@ -14215,6 +14486,8 @@ public:
   void drawOnionSkinOverlay(const ArtifactCompositionPtr &composition,
                             const FramePosition &currentFrame,
                             float canvasWidth, float canvasHeight);
+  bool hasCalculatedOnionSkinSource(
+      const ArtifactCompositionPtr &composition) const;
   void queueOnionSkinCapture(CompositionRenderController *owner,
                              const ArtifactCompositionPtr &composition,
                              const FramePosition &currentFrame);
@@ -19224,7 +19497,8 @@ CompositionRenderController::frameDebugSnapshot() const {
 
       snapshot.selectedLayerEffectCount = layer->effectCount();
 
-      snapshot.selectedLayerMatteCount = static_cast<int>(layer->matteReferences().size());
+      snapshot.selectedLayerMatteCount =
+          layerActiveMatteReferenceCount(layer.get());
 
     }
 
@@ -19316,7 +19590,80 @@ CompositionRenderController::frameDebugSnapshot() const {
 
   }
 
-
+  if (comp && !selectedLayerId.isNil()) {
+    const auto selectedLayer = comp->layerById(selectedLayerId);
+    if (const auto* imageLayer =
+            dynamic_cast<const ArtifactImageLayer*>(selectedLayer.get())) {
+      const QString sourcePath = imageLayer->sourcePath().trimmed();
+      const bool hasSourcePath = !sourcePath.isEmpty();
+      const bool sourceExists = hasSourcePath && QFileInfo::exists(sourcePath);
+      const bool hasBuffer = imageLayer->hasCurrentFrameBuffer();
+      GPUTextureOwnerStats layerGpuStats;
+      GPUTextureOwnerStats assetGpuStats;
+      if (impl_->gpuTextureCacheManager_) {
+        layerGpuStats = impl_->gpuTextureCacheManager_->ownerStats(
+            imageLayer->id().toString());
+        if (!imageLayer->sourceAssetId().isNull()) {
+          assetGpuStats = impl_->gpuTextureCacheManager_->ownerStats(
+              QStringLiteral("asset:%1").arg(
+                  imageLayer->sourceAssetId().toString(QUuid::WithoutBraces)));
+        }
+      }
+      const int gpuPendingCount = layerGpuStats.pendingUploadCount +
+                                  assetGpuStats.pendingUploadCount;
+      const auto gpuPendingBytes = layerGpuStats.pendingUploadBytes +
+                                   assetGpuStats.pendingUploadBytes;
+      QString gpuSourceBindingState = QStringLiteral("n/a");
+      if (impl_->gpuTextureCacheManager_ &&
+          imageLayer->canShareSourceGpuTexture() &&
+          !imageLayer->sourceAssetId().isNull() &&
+          imageLayer->sourceVersion() > 0) {
+        const QString gpuOwner = QStringLiteral("asset:%1").arg(
+            imageLayer->sourceAssetId().toString(QUuid::WithoutBraces));
+        const QString gpuKey =
+            QStringLiteral("image-f32:v%1|cs=%2|tf=%3")
+                .arg(imageLayer->sourceVersion())
+                .arg(imageLayer->inputColorSpace())
+                .arg(imageLayer->inputTransferFunction());
+        const auto handle = impl_->gpuTextureCacheManager_->findExisting(
+            gpuOwner, gpuKey);
+        gpuSourceBindingState =
+            impl_->gpuTextureCacheManager_->bindingRecord(handle).isValid()
+                ? QStringLiteral("ready")
+                : QStringLiteral("candidate-missing");
+      }
+      ArtifactCore::FrameDebugResourceRecord imageSourceResource;
+      imageSourceResource.label = QStringLiteral("Selected Image Source");
+      imageSourceResource.type = QStringLiteral("image");
+      imageSourceResource.relation = QStringLiteral("source");
+      imageSourceResource.cacheHit = hasBuffer;
+      imageSourceResource.stale =
+          (hasSourcePath && !sourceExists) || gpuPendingCount > 0;
+      imageSourceResource.note =
+          QStringLiteral("sourcePath=%1 exists=%2 sourceVersion=%3 "
+                         "buffer=%4 sequence=%5 colorSpace=%6 transfer=%7 "
+                         "gpuLayerEntries=%8 gpuAssetEntries=%9 "
+                         "gpuPending=%10 gpuPendingBytes=%11 "
+                         "gpuSourceBinding=%12")
+              .arg(hasSourcePath ? sourcePath : QStringLiteral("<in-memory>"))
+              .arg(sourceExists ? 1 : (hasSourcePath ? 0 : 1))
+              .arg(QString::number(imageLayer->sourceVersion()))
+              .arg(hasBuffer ? 1 : 0)
+              .arg(imageLayer->isImageSequence() ? 1 : 0)
+              .arg(imageLayer->inputColorSpace().isEmpty()
+                       ? QStringLiteral("<auto>")
+                       : imageLayer->inputColorSpace())
+              .arg(imageLayer->inputTransferFunction().isEmpty()
+                       ? QStringLiteral("<auto>")
+                       : imageLayer->inputTransferFunction())
+              .arg(layerGpuStats.entryCount)
+              .arg(assetGpuStats.entryCount)
+              .arg(gpuPendingCount)
+              .arg(static_cast<qulonglong>(gpuPendingBytes))
+              .arg(gpuSourceBindingState);
+      snapshot.resources.push_back(imageSourceResource);
+    }
+  }
 
   if (!impl_->lastCompositionVisibilitySummary_.isEmpty()) {
 
@@ -19502,16 +19849,21 @@ CompositionRenderController::frameDebugSnapshot() const {
 
     textureCacheResource.relation = QStringLiteral("upload");
 
-    textureCacheResource.cacheHit = stats.hitCount >= stats.missCount;
+    textureCacheResource.cacheHit =
+        stats.pendingUploadCount == 0 &&
+        (stats.entryCount == 0 || stats.hitCount >= stats.missCount);
 
-    textureCacheResource.stale = false;
+    textureCacheResource.stale = stats.pendingUploadCount > 0;
 
     textureCacheResource.note = QStringLiteral(
-        "entries=%1 bytes=%2 hits=%3 misses=%4 invalidations=%5 lastReason=%6")
+        "entries=%1 bytes=%2 hits=%3 misses=%4 pendingUploads=%5 "
+        "pendingBytes=%6 invalidations=%7 lastReason=%8")
         .arg(stats.entryCount)
         .arg(static_cast<qulonglong>(stats.memoryBytes))
         .arg(static_cast<qulonglong>(stats.hitCount))
         .arg(static_cast<qulonglong>(stats.missCount))
+        .arg(stats.pendingUploadCount)
+        .arg(static_cast<qulonglong>(stats.pendingUploadBytes))
         .arg(static_cast<qulonglong>(stats.invalidationCount))
         .arg(gpuTextureCacheInvalidationReasonText(stats.lastInvalidationReason));
 
@@ -20910,13 +21262,15 @@ Ray CompositionRenderController::createPickingRay(
 
 
 
-  QVector3D nearPos = QVector3D(viewportPos.x(), viewportPos.y(), 0.0f)
+  const QVector3D nearPos = ViewportMath::unprojectFromTopDown(
+      QVector3D(static_cast<float>(viewportPos.x()),
+                static_cast<float>(viewportPos.y()), 0.0f),
+      view, proj, viewport);
 
-                          .unproject(view, proj, viewport);
-
-  QVector3D farPos = QVector3D(viewportPos.x(), viewportPos.y(), 1.0f)
-
-                         .unproject(view, proj, viewport);
+  const QVector3D farPos = ViewportMath::unprojectFromTopDown(
+      QVector3D(static_cast<float>(viewportPos.x()),
+                static_cast<float>(viewportPos.y()), 1.0f),
+      view, proj, viewport);
 
 
 
@@ -21094,7 +21448,13 @@ bool CompositionRenderController::beginModalGizmoInteraction(
       ? GizmoAxis::Z
       : GizmoAxis::Screen;
   const QPointF physicalPos = viewportPos * impl_->devicePixelRatio_;
-  impl_->gizmo3D_->beginDrag(startAxis, createPickingRay(physicalPos));
+  const Ray modalRay = createPickingRay(physicalPos);
+  if (mode == TransformGizmo::Mode::Scale) {
+    impl_->gizmo3D_->beginDrag(
+        startAxis, modalRay, QVector3D(1.0f, 1.0f, 1.0f));
+  } else {
+    impl_->gizmo3D_->beginDrag(startAxis, modalRay);
+  }
   impl_->gizmoModalTransformActive_ = true;
   impl_->gizmoDragActive_ = true;
   impl_->projectedFrameHandle_ = TransformGizmo::HandleType::None;
@@ -21846,6 +22206,8 @@ if (event->button() == Qt::LeftButton &&
 
     if (effectiveSelectedLayer) {
 
+      setViewportOrientation(ArtifactCore::ViewOrientationHotspot::Front);
+
       impl_->beginRectangleToolSession(activeTool == ToolType::Ellipse
                                            ? RectangleToolMode::EllipseMask
                                            : RectangleToolMode::Mask,
@@ -22193,6 +22555,28 @@ if (event->button() == Qt::LeftButton &&
 
         if (segmentMaskIndex >= 0 &&
             selectedLayer->mask(segmentMaskIndex).isLocked()) {
+          event->accept();
+          return;
+        }
+
+        // Modifier-dragging a path edits its geometry parameters instead of
+        // inserting a vertex. Shift controls feather; Alt controls expansion.
+        // Handle hits are resolved earlier, so Alt remains available for
+        // breaking tangents when the pointer is over a handle.
+        if (event->modifiers().testFlag(Qt::ShiftModifier) ||
+            event->modifiers().testFlag(Qt::AltModifier)) {
+          const LayerMask geometryMask = selectedLayer->mask(segmentMaskIndex);
+          const MaskPath geometryPath =
+              geometryMask.maskPath(segmentPathIndex);
+          impl_->beginMaskEditTransaction(selectedLayer);
+          impl_->isDraggingMaskGeometry_ = true;
+          impl_->draggingMaskIndex_ = segmentMaskIndex;
+          impl_->draggingPathIndex_ = segmentPathIndex;
+          impl_->draggingMaskGeometryStartLocal_ = localPos;
+          impl_->draggingMaskGeometryStartFeather_ = geometryPath.feather();
+          impl_->draggingMaskGeometryStartExpansion_ = geometryPath.expansion();
+          impl_->draggingMaskGeometryExpansion_ =
+              event->modifiers().testFlag(Qt::AltModifier);
           event->accept();
           return;
         }
@@ -22634,14 +23018,15 @@ if (event->button() == Qt::LeftButton &&
       const QVector3D anchorWorld = selectedLayer->getGlobalTransform4x4().map(
           QVector3D(transform.anchorXAt(time), transform.anchorYAt(time),
                     transform.anchorZAt(time)));
-      const QVector3D anchorProjected =
-          anchorWorld.project(frameView, frameProjection, frameViewport);
+      const QVector3D anchorProjected = ViewportMath::projectToTopDown(
+          anchorWorld, frameView, frameProjection, frameViewport);
       if (!std::isfinite(anchorProjected.z())) {
         return fallback;
       }
-      return QVector3D(static_cast<float>(pivot.x()),
-                       static_cast<float>(pivot.y()), anchorProjected.z())
-          .unproject(frameView, frameProjection, frameViewport);
+      return ViewportMath::unprojectFromTopDown(
+          QVector3D(static_cast<float>(pivot.x()),
+                    static_cast<float>(pivot.y()), anchorProjected.z()),
+          frameView, frameProjection, frameViewport);
     };
     const auto configureCombinedGroupBasis = [&]() {
       if (!combinedProjectedFrame || !impl_->gizmoGroupTransformActive_) {
@@ -22673,7 +23058,9 @@ if (event->button() == Qt::LeftButton &&
         priorityAxis != GizmoAxis::None) {
       beginGizmoUndoSnapshot();
       configureCombinedGroupBasis();
-      impl_->gizmo3D_->beginDrag(priorityAxis, priorityRay);
+      impl_->gizmo3D_->beginDrag(
+          priorityAxis, priorityRay,
+          impl_->gizmo3D_->hoverScaleSigns());
       impl_->projectedFrameHandle_ = TransformGizmo::HandleType::None;
       impl_->projectedFrameMove_ = false;
       impl_->projectedFrameScalePointerBasisValid_ = false;
@@ -22713,8 +23100,8 @@ if (event->button() == Qt::LeftButton &&
             const QVector3D fixedWorld = selectedLayer->getGlobalTransform4x4().map(
                 QVector3D(static_cast<float>(fixedLocal.x()),
                           static_cast<float>(fixedLocal.y()), 0.0f));
-            const QVector3D fixedProjected =
-                fixedWorld.project(frameView, frameProjection, frameViewport);
+            const QVector3D fixedProjected = ViewportMath::projectToTopDown(
+                fixedWorld, frameView, frameProjection, frameViewport);
             if (std::isfinite(fixedProjected.x()) &&
                 std::isfinite(fixedProjected.y()) && fixedProjected.z() >= 0.0f &&
                 fixedProjected.z() <= 1.0f) {
@@ -22856,7 +23243,8 @@ if (event->button() == Qt::LeftButton &&
     if (axis != GizmoAxis::None) {
 
       beginGizmoUndoSnapshot();
-      impl_->gizmo3D_->beginDrag(axis, ray);
+      impl_->gizmo3D_->beginDrag(
+          axis, ray, impl_->gizmo3D_->hoverScaleSigns());
 
       impl_->gizmoDragActive_ = true;
 
@@ -24015,6 +24403,43 @@ if (activeTool == ToolType::Pen && impl_->maskRubberBandCandidate_ &&
     }
 }
 
+if (activeTool == ToolType::Pen && impl_->isDraggingMaskGeometry_ &&
+    impl_->renderer_) {
+  auto comp = impl_->previewPipeline_.composition();
+  auto selectedLayer = comp ? comp->layerById(impl_->selectedLayerId_) : nullptr;
+  if (selectedLayer && impl_->draggingMaskIndex_ >= 0 &&
+      impl_->draggingMaskIndex_ < selectedLayer->maskCount() &&
+      impl_->draggingPathIndex_ >= 0) {
+    const auto cPos = impl_->renderer_->viewportToCanvas(
+        {(float)viewportPos.x(), (float)viewportPos.y()});
+    const QTransform globalTransform = selectedLayer->getGlobalTransform();
+    bool invertible = false;
+    const QPointF localPos = globalTransform.inverted(&invertible).map(
+        QPointF(cPos.x, cPos.y));
+    if (invertible) {
+      LayerMask mask = selectedLayer->mask(impl_->draggingMaskIndex_);
+      if (impl_->draggingPathIndex_ < mask.maskPathCount()) {
+        MaskPath path = mask.maskPath(impl_->draggingPathIndex_);
+        const float delta = static_cast<float>(
+            -(localPos.y() - impl_->draggingMaskGeometryStartLocal_.y()));
+        if (impl_->draggingMaskGeometryExpansion_) {
+          path.setExpansion(impl_->draggingMaskGeometryStartExpansion_ + delta);
+        } else {
+          path.setFeather(std::max(
+              0.0f, impl_->draggingMaskGeometryStartFeather_ + delta));
+        }
+        mask.setMaskPath(impl_->draggingPathIndex_, path);
+        selectedLayer->setMask(impl_->draggingMaskIndex_, mask);
+        impl_->markMaskEditDirty();
+        impl_->publishLayerModified(selectedLayer);
+        impl_->invalidateOverlayComposite();
+        markRenderDirty();
+        return;
+      }
+    }
+  }
+}
+
 if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
     auto comp = impl_->previewPipeline_.composition();
@@ -24546,13 +24971,11 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
         notifyViewportInteractionActivity();
 
-        if (impl_->gizmoModalTransformActive_) {
-          const auto modifiers = QGuiApplication::keyboardModifiers();
-          impl_->gizmo3D_->setInteractionModifiers(
-              modifiers.testFlag(Qt::ControlModifier) &&
-                  !modifiers.testFlag(Qt::AltModifier),
-              modifiers.testFlag(Qt::ShiftModifier));
-        }
+        const auto modifiers = QGuiApplication::keyboardModifiers();
+        impl_->gizmo3D_->setInteractionModifiers(
+            modifiers.testFlag(Qt::ControlModifier) &&
+                !modifiers.testFlag(Qt::AltModifier),
+            modifiers.testFlag(Qt::ShiftModifier));
 
         impl_->gizmo3D_->updateDrag(ray);
         if (projectedFrameDrag || impl_->gizmoModalTransformActive_) {
@@ -26141,6 +26564,8 @@ void CompositionRenderController::handleMouseRelease() {
 
   impl_->isDraggingMaskHandle_ = false;
 
+  impl_->isDraggingMaskGeometry_ = false;
+
   impl_->draggingMaskIndex_ = -1;
 
   impl_->draggingPathIndex_ = -1;
@@ -26417,6 +26842,7 @@ void CompositionRenderController::cancelMaskInteraction() {
   impl_->isMaskRubberBandSelecting_ = false;
   impl_->isDraggingVertex_ = false;
   impl_->isDraggingMaskHandle_ = false;
+  impl_->isDraggingMaskGeometry_ = false;
   impl_->draggingMaskIndex_ = -1;
   impl_->draggingPathIndex_ = -1;
   impl_->draggingVertexIndex_ = -1;
@@ -26435,6 +26861,27 @@ void CompositionRenderController::cancelMaskInteraction() {
   }
   impl_->invalidateOverlayComposite();
   markRenderDirty();
+}
+
+bool CompositionRenderController::removeLastPendingMaskVertex() {
+  if (!impl_ || !impl_->pendingMaskCreation_ ||
+      impl_->pendingMaskPath_.vertexCount() <= 0) {
+    return false;
+  }
+  impl_->pendingMaskPath_.removeVertex(
+      impl_->pendingMaskPath_.vertexCount() - 1);
+  impl_->isDraggingMaskHandle_ = false;
+  impl_->draggingMaskIndex_ = -1;
+  impl_->draggingPathIndex_ = -1;
+  impl_->draggingVertexIndex_ = -1;
+  impl_->draggingMaskHandleType_ = -1;
+  impl_->penMaskPreviewValid_ = false;
+  if (impl_->pendingMaskPath_.vertexCount() == 0) {
+    impl_->clearPendingMaskCreation();
+  }
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
 }
 
 bool CompositionRenderController::deleteHoveredMaskVertex() {
@@ -26547,6 +26994,89 @@ bool CompositionRenderController::resetHoveredMaskVertexTangents() {
   vertex.outTangent = QPointF(0.0, 0.0);
   impl_->beginMaskEditTransaction(layer);
   path.setVertex(impl_->hoveredVertexIndex_, vertex);
+  mask.setMaskPath(impl_->hoveredPathIndex_, path);
+  layer->setMask(impl_->hoveredMaskIndex_, mask);
+  impl_->markMaskEditDirty();
+  impl_->publishLayerModified(layer, true);
+  impl_->commitMaskEditTransaction();
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+bool CompositionRenderController::hasHoveredMaskVertex() const {
+  return impl_ && impl_->hoveredMaskIndex_ >= 0 &&
+         impl_->hoveredPathIndex_ >= 0 && impl_->hoveredVertexIndex_ >= 0;
+}
+
+bool CompositionRenderController::setHoveredMaskVertexType(int type) {
+  if (!impl_ || type < 0 || type > 3 ||
+      impl_->hoveredMaskIndex_ < 0 || impl_->hoveredPathIndex_ < 0 ||
+      impl_->hoveredVertexIndex_ < 0) {
+    return false;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  auto layer = comp ? comp->layerById(impl_->selectedLayerId_) : nullptr;
+  if (!layer || impl_->hoveredMaskIndex_ >= layer->maskCount()) {
+    return false;
+  }
+  LayerMask mask = layer->mask(impl_->hoveredMaskIndex_);
+  if (mask.isLocked() || impl_->hoveredPathIndex_ >= mask.maskPathCount()) {
+    return false;
+  }
+  MaskPath path = mask.maskPath(impl_->hoveredPathIndex_);
+  const int vertexIndex = impl_->hoveredVertexIndex_;
+  if (vertexIndex >= path.vertexCount()) {
+    return false;
+  }
+
+  MaskVertex vertex = path.vertex(vertexIndex);
+  if (type == 0) { // Corner
+    vertex.inTangent = QPointF(0.0, 0.0);
+    vertex.outTangent = QPointF(0.0, 0.0);
+  } else if (type == 1 || type == 2) { // Smooth / Continuous
+    const int count = path.vertexCount();
+    const bool closed = path.isClosed() && count > 2;
+    const int prevIndex = vertexIndex > 0 ? vertexIndex - 1
+                                          : (closed ? count - 1 : -1);
+    const int nextIndex = vertexIndex + 1 < count ? vertexIndex + 1
+                                                   : (closed ? 0 : -1);
+    QPointF direction(1.0, 0.0);
+    if (prevIndex >= 0 && nextIndex >= 0) {
+      direction = path.vertex(nextIndex).position -
+                  path.vertex(prevIndex).position;
+    } else if (nextIndex >= 0) {
+      direction = path.vertex(nextIndex).position - vertex.position;
+    } else if (prevIndex >= 0) {
+      direction = vertex.position - path.vertex(prevIndex).position;
+    }
+    const double length = std::hypot(direction.x(), direction.y());
+    if (length > 0.0001) {
+      direction /= length;
+    }
+    const double inLength = std::hypot(vertex.inTangent.x(),
+                                       vertex.inTangent.y());
+    const double outLength = std::hypot(vertex.outTangent.x(),
+                                        vertex.outTangent.y());
+    const double fallback =
+        length > 0.0001 ? length / 3.0 : 24.0;
+    const double useInLength = inLength > 0.0001 ? inLength : fallback;
+    const double useOutLength = outLength > 0.0001 ? outLength : fallback;
+    vertex.inTangent = -direction * useInLength;
+    vertex.outTangent = direction * useOutLength;
+    if (type == 2) { // Continuous keeps both handles equal in magnitude.
+      const double continuousLength =
+          std::max(useInLength, useOutLength);
+      vertex.inTangent = -direction * continuousLength;
+      vertex.outTangent = direction * continuousLength;
+    }
+  } else {
+    // Broken preserves the two current handles.  Future drags will not mirror
+    // them when Alt is held, so the existing tangent values remain independent.
+  }
+
+  impl_->beginMaskEditTransaction(layer);
+  path.setVertex(vertexIndex, vertex);
   mask.setMaskPath(impl_->hoveredPathIndex_, path);
   layer->setMask(impl_->hoveredMaskIndex_, mask);
   impl_->markMaskEditDirty();
@@ -28065,6 +28595,11 @@ void CompositionRenderController::setViewportOrientation(
 
   }
 
+  if (impl_->maskViewNavigationLocked() &&
+      hotspot != ArtifactCore::ViewOrientationHotspot::Front) {
+    return;
+  }
+
   if (impl_->viewportOrientationActive_ &&
 
       impl_->viewportOrientationNavigator_.activeHotspot() == hotspot) {
@@ -28120,6 +28655,10 @@ void CompositionRenderController::setViewportOrientationQuaternion(
 
     return;
 
+  }
+
+  if (impl_->maskViewNavigationLocked()) {
+    return;
   }
 
   const QQuaternion normalized = orientation.normalized();
@@ -29290,7 +29829,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   auto matteResolverLambda =
 
-      [&layers, &matteSourceFrameCache](const ArtifactCore::Id &layerId)
+      [&layers, &matteSourceFrameCache, currentFrame](const ArtifactCore::Id &layerId)
 
       -> QImage {
 
@@ -29308,7 +29847,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           if (l && l->id() == layerId) {
 
+              l->goToFrame(currentFrame);
+
               if (auto *imgLayer = dynamic_cast<ArtifactImageLayer *>(l.get())) {
+
+                  if (!imgLayer->sourcePath().trimmed().isEmpty() &&
+                      (imgLayer->sourceAssetId().isNull() ||
+                       imgLayer->sourceVersion() == 0)) {
+                      break;
+                  }
 
                   resolved = imgLayer->toQImage();
 
@@ -30759,15 +31306,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       {
 
-        const int matteTW = static_cast<int>(std::ceil(rcw));
-
-        const int matteTH = static_cast<int>(std::ceil(rch));
-
         for (const auto &layerForMatte : layers) {
 
-          if (!layerForMatte || !isLayerEffectivelyVisible(layerForMatte) ||
-
-              !layerForMatte->isActiveAt(currentFrame))
+          if (!layerForMatte || !layerForMatte->isActiveAt(currentFrame))
 
             continue;
 
@@ -30777,7 +31318,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           for (const auto &matteRef : mattes) {
 
-            if (!matteRef.enabled || matteRef.sourceLayerId.isNil()) continue;
+            if (!matteRef.enabled || matteRef.sourceLayerId.isNil() ||
+                matteRef.sourceLayerId == layerForMatte->id())
+              continue;
 
             if (matteSourceImages.contains(matteRef.sourceLayerId)) continue;
 
@@ -30785,16 +31328,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             if (matteImg.isNull()) continue;
 
-            if (matteImg.size() != QSize(matteTW, matteTH)) {
-
-              matteImg = matteImg.scaled(matteTW, matteTH,
-
-                  Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-
-            }
-
-            matteSourceImages.insert(matteRef.sourceLayerId,
-
+            matteSourceImages.insert(
+                matteRef.sourceLayerId,
                 matteImg.convertToFormat(QImage::Format_RGBA8888));
 
           }
@@ -31024,8 +31559,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               float maxX = std::numeric_limits<float>::lowest();
               float maxY = std::numeric_limits<float>::lowest();
               for (const auto &corner : corners) {
-                const QVector3D projected = transform.map(corner).project(
-                    cameraViewMatrix, cameraProjMatrix, viewport);
+                const QVector3D projected = ViewportMath::projectToTopDown(
+                    transform.map(corner), cameraViewMatrix, cameraProjMatrix,
+                    viewport);
                 minX = std::min(minX, projected.x());
                 minY = std::min(minY, projected.y());
                 maxX = std::max(maxX, projected.x());
@@ -31171,7 +31707,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               !layer->isAdjustmentLayer() &&
               blendMode == ArtifactCore::BlendMode::Normal &&
               opacity >= 0.9999f && layerMaskCount == 0 &&
-              layer->matteReferences().empty();
+              !layerHasEnabledMatteReferences(layer);
           const bool preserveSceneDepth =
               shared3DSceneDepthMember && shared3DSceneDepthOpen;
           if (!shared3DSceneDepthMember) {
@@ -33029,6 +33565,123 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         }
 
+        // Keep the active Bezier handle and its tangent relationship explicit
+        // while editing.  The handle colors communicate hover/drag state, but
+        // the mode itself is otherwise easy to miss when several handles are
+        // close together.  This compact viewport HUD mirrors AE's contextual
+        // affordance without adding another global event or toolbar state.
+        const bool handleInteraction =
+            (isDraggingMaskHandle_ && draggingMaskIndex_ >= 0 &&
+             draggingPathIndex_ >= 0 && draggingVertexIndex_ >= 0) ||
+            (hoveredMaskHandleType_ >= 0 && hoveredMaskIndex_ >= 0 &&
+             hoveredPathIndex_ >= 0 && hoveredVertexIndex_ >= 0);
+        if (handleInteraction) {
+          const int hudMaskIndex = isDraggingMaskHandle_
+                                       ? draggingMaskIndex_
+                                       : hoveredMaskIndex_;
+          const int hudPathIndex = isDraggingMaskHandle_
+                                       ? draggingPathIndex_
+                                       : hoveredPathIndex_;
+          const int hudVertexIndex = isDraggingMaskHandle_
+                                         ? draggingVertexIndex_
+                                         : hoveredVertexIndex_;
+          const MaskHandleType hudHandleType = static_cast<MaskHandleType>(
+              isDraggingMaskHandle_ ? draggingMaskHandleType_
+                                    : hoveredMaskHandleType_);
+
+          if (hudMaskIndex >= 0 && hudPathIndex >= 0 && hudVertexIndex >= 0 &&
+              hudMaskIndex < selectedLayer->maskCount()) {
+            const LayerMask hudMask = selectedLayer->mask(hudMaskIndex);
+            if (hudPathIndex < hudMask.maskPathCount()) {
+              const MaskPath hudPath = hudMask.maskPath(hudPathIndex);
+              if (hudVertexIndex < hudPath.vertexCount() &&
+                  hudHandleType != MaskHandleType::None) {
+                const MaskVertex hudVertex = hudPath.vertex(hudVertexIndex);
+                const QPointF handleCanvas = globalTransform.map(
+                    maskHandlePosition(hudPath, hudVertexIndex, hudHandleType));
+                const bool linked =
+                    std::abs(hudVertex.inTangent.x() +
+                             hudVertex.outTangent.x()) < 0.001 &&
+                    std::abs(hudVertex.inTangent.y() +
+                             hudVertex.outTangent.y()) < 0.001;
+                const QString handleName =
+                    hudHandleType == MaskHandleType::InTangent
+                        ? QStringLiteral("In handle")
+                        : QStringLiteral("Out handle");
+                const QString relation = linked
+                                             ? QStringLiteral("Linked")
+                                             : QStringLiteral("Broken");
+                const float zoom = std::max(0.001f, renderer_->getZoom());
+                const float hudX = static_cast<float>(handleCanvas.x()) +
+                                   12.0f / zoom;
+                const float hudY = static_cast<float>(handleCanvas.y()) -
+                                   38.0f / zoom;
+                const float hudWidth = 172.0f / zoom;
+                const float hudHeight = 32.0f / zoom;
+                const QFont hudFont(QStringLiteral("Consolas"), 8);
+                renderer_->drawSolidRect(
+                    hudX, hudY, hudWidth, hudHeight,
+                    FloatColor{0.03f, 0.04f, 0.06f, 0.82f}, 0.8f);
+                renderer_->drawText(
+                    QRectF(hudX + 5.0f / zoom, hudY + 2.0f / zoom,
+                           hudWidth - 10.0f / zoom, 13.0f / zoom),
+                    QStringLiteral("Bezier %1  •  %2")
+                        .arg(handleName, relation),
+                    hudFont, FloatColor{0.92f, 0.97f, 1.0f, 0.98f},
+                    Qt::AlignLeft | Qt::AlignVCenter);
+                renderer_->drawText(
+                    QRectF(hudX + 5.0f / zoom, hudY + 16.0f / zoom,
+                           hudWidth - 10.0f / zoom, 12.0f / zoom),
+                    QStringLiteral("Alt: break  •  Ctrl: reset"), hudFont,
+                    FloatColor{0.70f, 0.82f, 0.92f, 0.94f},
+                    Qt::AlignLeft | Qt::AlignVCenter);
+              }
+            }
+          }
+        }
+
+        if (!handleInteraction && hoveredMaskIndex_ >= 0 &&
+            hoveredPathIndex_ >= 0 && hoveredMaskIndex_ < selectedLayer->maskCount()) {
+          const LayerMask hudMask = selectedLayer->mask(hoveredMaskIndex_);
+          if (hoveredPathIndex_ < hudMask.maskPathCount()) {
+            const MaskPath hudPath = hudMask.maskPath(hoveredPathIndex_);
+            const QPointF anchor = hudPath.vertexCount() > 0
+                                       ? globalTransform.map(hudPath.vertex(0).position)
+                                       : QPointF(12.0, 12.0);
+            const QString modeName =
+                hudPath.mode() == MaskMode::Add
+                    ? QStringLiteral("Add")
+                    : hudPath.mode() == MaskMode::Subtract
+                          ? QStringLiteral("Subtract")
+                          : hudPath.mode() == MaskMode::Intersect
+                                ? QStringLiteral("Intersect")
+                                : QStringLiteral("Difference");
+            const float zoom = std::max(0.001f, renderer_->getZoom());
+            const float hudX = static_cast<float>(anchor.x()) + 12.0f / zoom;
+            const float hudY = static_cast<float>(anchor.y()) + 12.0f / zoom;
+            const QFont hudFont(QStringLiteral("Consolas"), 8);
+            renderer_->drawSolidRect(
+                hudX, hudY, 186.0f / zoom, 32.0f / zoom,
+                FloatColor{0.03f, 0.04f, 0.06f, 0.74f}, 0.8f);
+            renderer_->drawText(
+                QRectF(hudX + 5.0f / zoom, hudY + 1.0f / zoom,
+                       176.0f / zoom, 16.0f / zoom),
+                QStringLiteral("%1  F %2  E %3  O %4%")
+                    .arg(modeName)
+                    .arg(hudPath.feather(), 0, 'f', 1)
+                    .arg(hudPath.expansion(), 0, 'f', 1)
+                    .arg(hudPath.opacity() * 100.0f, 0, 'f', 0),
+                hudFont, FloatColor{0.86f, 0.94f, 1.0f, 0.94f},
+                Qt::AlignLeft | Qt::AlignVCenter);
+            renderer_->drawText(
+                QRectF(hudX + 5.0f / zoom, hudY + 16.0f / zoom,
+                       176.0f / zoom, 14.0f / zoom),
+                QStringLiteral("Shift: Feather  •  Alt: Expansion"),
+                hudFont, FloatColor{0.68f, 0.80f, 0.90f, 0.92f},
+                Qt::AlignLeft | Qt::AlignVCenter);
+          }
+        }
+
       }
 
 
@@ -33696,7 +34349,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       }
 
-      if (showOnionSkin_) {
+      if (showOnionSkin_ && !hasCalculatedOnionSkinSource(comp)) {
         queueOnionSkinCapture(owner, comp, currentFrame);
       }
 
@@ -34916,6 +35569,8 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
     if (auto *selectedModel = dynamic_cast<Artifact3DLayer *>(selectedLayer.get());
         selectedModel && has3DCamera) {
+      ::Artifact::draw3DSelectionWireframeOverlay(
+          renderer_.get(), selectedLayer, &cameraViewMatrix, &cameraProjMatrix);
       if (layerUsesVolumeBoundingBoxGizmo(selectedLayer)) {
         ::Artifact::draw3DSelectionBoundsOverlay(
             renderer_.get(), selectedLayer, &cameraViewMatrix, &cameraProjMatrix);
@@ -35360,12 +36015,31 @@ void CompositionRenderController::Impl::drawOnionSkinOverlay(
   }
 }
 
+bool CompositionRenderController::Impl::hasCalculatedOnionSkinSource(
+    const ArtifactCompositionPtr &composition) const {
+  if (!composition || selectedLayerId_.isNil()) {
+    return false;
+  }
+
+  const auto selectedLayer = composition->layerById(selectedLayerId_);
+  return selectedLayer &&
+         dynamic_cast<ArtifactPaintLayer *>(selectedLayer.get()) != nullptr;
+}
+
 void CompositionRenderController::Impl::queueOnionSkinCapture(
     CompositionRenderController *owner,
     const ArtifactCompositionPtr &composition,
     const FramePosition &currentFrame) {
 
   if (!renderer_ || !showOnionSkin_ || !owner || !composition) {
+    return;
+  }
+
+  if (hasCalculatedOnionSkinSource(composition)) {
+    const auto paintLayer = composition->layerById(selectedLayerId_);
+    ::Artifact::drawPaintLayerOnionSkinOverlay(
+        renderer_.get(), paintLayer, composition, canvasWidth, canvasHeight,
+        onionSkinFrameCount_, onionSkinOpacity_);
     return;
   }
 
@@ -35944,12 +36618,15 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
     const QRect viewport(0, 0,
                          std::max(1, static_cast<int>(hostWidth_)),
                          std::max(1, static_cast<int>(hostHeight_)));
-    const QVector3D origin = QVector3D(0.0f, 0.0f, 0.0f).project(
-        gizmo3DViewMatrix_, gizmo3DProjectionMatrix_, viewport);
-    const QVector3D unitX = QVector3D(1.0f, 0.0f, 0.0f).project(
-        gizmo3DViewMatrix_, gizmo3DProjectionMatrix_, viewport);
-    const QVector3D unitZ = QVector3D(0.0f, 0.0f, 1.0f).project(
-        gizmo3DViewMatrix_, gizmo3DProjectionMatrix_, viewport);
+    const QVector3D origin = ViewportMath::projectToTopDown(
+        QVector3D(0.0f, 0.0f, 0.0f), gizmo3DViewMatrix_,
+        gizmo3DProjectionMatrix_, viewport);
+    const QVector3D unitX = ViewportMath::projectToTopDown(
+        QVector3D(1.0f, 0.0f, 0.0f), gizmo3DViewMatrix_,
+        gizmo3DProjectionMatrix_, viewport);
+    const QVector3D unitZ = ViewportMath::projectToTopDown(
+        QVector3D(0.0f, 0.0f, 1.0f), gizmo3DViewMatrix_,
+        gizmo3DProjectionMatrix_, viewport);
     const float xPixels = std::hypot(unitX.x() - origin.x(),
                                      unitX.y() - origin.y());
     const float zPixels = std::hypot(unitZ.x() - origin.x(),
@@ -37119,7 +37796,7 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
                                    : (gizmo3D_->mode() == GizmoMode::Scale
                                           ? QStringLiteral("SCALE")
                                           : QStringLiteral("MOVE")))));
-      const QString gizmoAxisLabel =
+      const QString baseGizmoAxisLabel =
           gizmo3D_->activeAxis() == GizmoAxis::X
               ? QStringLiteral("X")
               : (gizmo3D_->activeAxis() == GizmoAxis::Y
@@ -37135,6 +37812,18 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
                                                  : (gizmo3D_->activeAxis() == GizmoAxis::Screen
                                                         ? QStringLiteral("SCREEN")
                                                         : QString()))))));
+      const QString gizmoAxisLabel = gizmo3D_->isBoundingBoxDragging()
+          ? (gizmo3D_->activeAxis() == GizmoAxis::Screen
+                 ? QStringLiteral("BB CORNER")
+                 : (gizmo3D_->activeAxis() == GizmoAxis::XY
+                        ? QStringLiteral("BB EDGE XY")
+                        : (gizmo3D_->activeAxis() == GizmoAxis::YZ
+                               ? QStringLiteral("BB EDGE YZ")
+                               : (gizmo3D_->activeAxis() == GizmoAxis::XZ
+                                      ? QStringLiteral("BB EDGE XZ")
+                                      : QStringLiteral("BB FACE ") +
+                                            baseGizmoAxisLabel))))
+          : baseGizmoAxisLabel;
       QString detail =
           QStringLiteral("W %1  H %2\nX %3  Y %4  Z %5\n"
                          "dX %6  dY %7  dZ %8\n"
@@ -37197,8 +37886,8 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
         const QVector3D worldCenter = layer->getGlobalTransform4x4().map(
             QVector3D(static_cast<float>(bounds.center().x()),
                       static_cast<float>(bounds.center().y()), 0.0f));
-        const QVector3D projectedCenter = worldCenter.project(
-            gizmo3DViewMatrix_, gizmo3DProjectionMatrix_,
+        const QVector3D projectedCenter = ViewportMath::projectToTopDown(
+            worldCenter, gizmo3DViewMatrix_, gizmo3DProjectionMatrix_,
             QRect(0, 0, static_cast<int>(viewportWidth),
                   static_cast<int>(viewportHeight)));
         if (std::isfinite(projectedCenter.x()) &&
@@ -37366,6 +38055,18 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
         ArtifactCore::ProfileScope _profG3D(
 
             "Gizmo3D", ArtifactCore::ProfileCategory::Render);
+
+        const QMatrix4x4& viewForGizmoSpace =
+            gizmo3DCameraMatricesValid_ ? gizmo3DViewMatrix_ : cameraViewMatrix;
+        bool viewBasisInvertible = false;
+        const QMatrix4x4 inverseGizmoView =
+            viewForGizmoSpace.inverted(&viewBasisInvertible);
+        if (viewBasisInvertible) {
+          gizmo3D_->setViewBasis(
+              inverseGizmoView.mapVector(QVector3D(1.0f, 0.0f, 0.0f)),
+              inverseGizmoView.mapVector(QVector3D(0.0f, -1.0f, 0.0f)),
+              inverseGizmoView.mapVector(QVector3D(0.0f, 0.0f, 1.0f)));
+        }
 
         syncGizmo3DFromLayer(selectedLayer);
 
@@ -37703,18 +38404,19 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
                 std::max(1, static_cast<int>(hostHeight_)));
             const QPointF localCenter = localBounds.center();
             const QMatrix4x4 world = layer->getGlobalTransform4x4();
-            const QVector3D centerProjected = world
-                .map(QVector3D(static_cast<float>(localCenter.x()),
-                               static_cast<float>(localCenter.y()), 0.0f))
-                .project(frameView, frameProjection, frameViewport);
-            const QVector3D xProjected = world
-                .map(QVector3D(static_cast<float>(localCenter.x() + 1.0),
-                               static_cast<float>(localCenter.y()), 0.0f))
-                .project(frameView, frameProjection, frameViewport);
-            const QVector3D yProjected = world
-                .map(QVector3D(static_cast<float>(localCenter.x()),
-                               static_cast<float>(localCenter.y() + 1.0), 0.0f))
-                .project(frameView, frameProjection, frameViewport);
+            const QVector3D centerProjected = ViewportMath::projectToTopDown(
+                world.map(QVector3D(static_cast<float>(localCenter.x()),
+                                    static_cast<float>(localCenter.y()), 0.0f)),
+                frameView, frameProjection, frameViewport);
+            const QVector3D xProjected = ViewportMath::projectToTopDown(
+                world.map(QVector3D(static_cast<float>(localCenter.x() + 1.0),
+                                    static_cast<float>(localCenter.y()), 0.0f)),
+                frameView, frameProjection, frameViewport);
+            const QVector3D yProjected = ViewportMath::projectToTopDown(
+                world.map(QVector3D(static_cast<float>(localCenter.x()),
+                                    static_cast<float>(localCenter.y() + 1.0),
+                                    0.0f)),
+                frameView, frameProjection, frameViewport);
             const float pixelsPerUnit = 0.5f * static_cast<float>(
                 QLineF(QPointF(centerProjected.x(), centerProjected.y()),
                        QPointF(xProjected.x(), xProjected.y())).length() +
@@ -37897,7 +38599,8 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
       const QVector3D worldCenter = layer->getGlobalTransform4x4().map(
           QVector3D(static_cast<float>(bounds.center().x()),
                     static_cast<float>(bounds.center().y()), 0.0f));
-      const QVector3D center = worldCenter.project(view, projection, viewport);
+      const QVector3D center = ViewportMath::projectToTopDown(
+          worldCenter, view, projection, viewport);
       if (bounds.isValid() && std::isfinite(center.x()) &&
           std::isfinite(center.y()) && center.z() >= 0.0f &&
           center.z() <= 1.0f) {

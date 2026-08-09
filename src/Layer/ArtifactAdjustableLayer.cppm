@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <QObject>
 
 module Artifact.Layer.AdjustableLayer;
 
@@ -16,8 +17,11 @@ ArtifactAdjustableLayer::ArtifactAdjustableLayer()
     setAdjustmentLayer(true);
 }
 
-ArtifactAdjustableLayer::~ArtifactAdjustableLayer()
+ArtifactAdjustableLayer::~ArtifactAdjustableLayer() = default;
+
+void ArtifactAdjustableLayer::setComposition(QObject* comp)
 {
+    setComposition(static_cast<void*>(comp));
 }
 
 void ArtifactAdjustableLayer::setComposition(void *comp)
@@ -41,6 +45,18 @@ void ArtifactAdjustableLayer::draw(ArtifactIRenderer* renderer)
 bool ArtifactAdjustableLayer::isAdjustmentLayer() const
 {
     return true;
+}
+
+QJsonObject ArtifactAdjustableLayer::toJson() const
+{
+    QJsonObject obj = ArtifactAbstract2DLayer::toJson();
+    obj[QStringLiteral("type")] = static_cast<int>(LayerType::Adjustment);
+    return obj;
+}
+
+void ArtifactAdjustableLayer::fromJsonProperties(const QJsonObject& obj)
+{
+    ArtifactAbstract2DLayer::fromJsonProperties(obj);
 }
 
 bool ArtifactAdjustableLayer::isNullLayer() const

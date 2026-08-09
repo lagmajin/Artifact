@@ -1,4 +1,5 @@
 module;
+#include <algorithm>
 #include <vector>
 #include <QString>
 #include <QFileInfo>
@@ -116,6 +117,7 @@ auto ArtifactMatteReferenceRule::validate(const void* project) -> std::vector<Ar
             layerMap[layer->id().toString()] = layer;
         }
     }
+    QSet<QString> reportedCycleKeys;
 
     // Check each layer's matte references
     for (const auto& layer : layers) {
@@ -129,6 +131,7 @@ auto ArtifactMatteReferenceRule::validate(const void* project) -> std::vector<Ar
 
         for (const auto& ref : matteRefs) {
             if (!ref.enabled) continue;
+            if (ref.sourceLayerId.isNil()) continue;
 
             const QString sourceId = ref.sourceLayerId.toString();
 
@@ -171,55 +174,61 @@ auto ArtifactMatteReferenceRule::validate(const void* project) -> std::vector<Ar
             }
         }
 
-        // Check 4: cycle detection via matte chain
-        QSet<QString> visited;
-        QString currentId = layerId;
-        std::vector<QString> chain;
-        bool hasCycle = false;
+        // Check 4: cycle detection across every enabled matte edge.
+        const auto reportCycle = [&](const QString& cycleId,
+                                     const QStringList& chain) {
+            const int cycleStart = chain.indexOf(cycleId);
+            if (cycleStart < 0) return;
 
-        while (!currentId.isEmpty()) {
-            if (visited.contains(currentId)) {
-                hasCycle = true;
-                break;
+            QStringList cycleIds;
+            for (int i = cycleStart; i < chain.size(); ++i) {
+                cycleIds.push_back(chain.at(i));
             }
-            visited.insert(currentId);
-            chain.push_back(currentId);
+            QStringList sortedCycleIds = cycleIds;
+            std::sort(sortedCycleIds.begin(), sortedCycleIds.end());
+            const QString cycleKey = sortedCycleIds.join(QStringLiteral("|"));
+            if (reportedCycleKeys.contains(cycleKey)) return;
+            reportedCycleKeys.insert(cycleKey);
 
-            auto currentLayer = layerMap.value(currentId);
-            if (!currentLayer) break;
-
-            const auto refs = currentLayer->matteReferences();
-            bool foundNext = false;
-            for (const auto& r : refs) {
-                if (r.enabled && !r.sourceLayerId.isNil()) {
-                    currentId = r.sourceLayerId.toString();
-                    foundNext = true;
-                    break;
-                }
-            }
-            if (!foundNext) break;
-        }
-
-        if (hasCycle) {
             QString cycleStr;
-            bool recording = false;
-            for (const auto& id : chain) {
-                if (id == currentId) recording = true;
-                if (recording) {
-                    if (!cycleStr.isEmpty()) cycleStr += QStringLiteral(" → ");
-                    auto l = layerMap.value(id);
-                    cycleStr += (l ? l->layerName() : id);
-                }
+            for (const auto& id : cycleIds) {
+                if (!cycleStr.isEmpty()) cycleStr += QStringLiteral(" → ");
+                const auto cycleLayer = layerMap.value(id);
+                cycleStr += cycleLayer ? cycleLayer->layerName() : id;
             }
-            cycleStr += QStringLiteral(" → ");
-            auto firstInCycle = layerMap.value(currentId);
-            cycleStr += (firstInCycle ? firstInCycle->layerName() : currentId);
+            if (!cycleStr.isEmpty()) cycleStr += QStringLiteral(" → ");
+            const auto firstInCycle = layerMap.value(cycleId);
+            cycleStr += firstInCycle ? firstInCycle->layerName() : cycleId;
 
             diagnostics.push_back(
                 ArtifactCore::ProjectDiagnostic::createCircularDependency(
                     cycleStr, comp->id().toString()));
-            diagnostics.back().setSourceLayerId(layerId);
-        }
+            diagnostics.back().setSourceLayerId(cycleId);
+        };
+
+        QSet<QString> path;
+        QStringList chain;
+        const auto visit = [&](const QString& currentId,
+                               const auto& self) -> void {
+            if (path.contains(currentId)) {
+                reportCycle(currentId, chain);
+                return;
+            }
+            const auto currentLayer = layerMap.value(currentId);
+            if (!currentLayer) return;
+
+            path.insert(currentId);
+            chain.push_back(currentId);
+            for (const auto& ref : currentLayer->matteReferences()) {
+                if (!ref.enabled || ref.sourceLayerId.isNil()) continue;
+                const QString nextId = ref.sourceLayerId.toString();
+                if (!layerMap.contains(nextId) || nextId == currentId) continue;
+                self(nextId, self);
+            }
+            chain.removeLast();
+            path.remove(currentId);
+        };
+        visit(layerId, visit);
     }
 
     return diagnostics;

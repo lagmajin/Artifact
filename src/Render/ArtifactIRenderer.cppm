@@ -2094,9 +2094,11 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   }
 
   const TEXTURE_FORMAT srcFormat = srcTexPtr->GetDesc().Format;
-  const bool useFloatReadback = (srcFormat == TEX_FORMAT_RGBA16_FLOAT);
+  const bool useFloat16Readback = (srcFormat == TEX_FORMAT_RGBA16_FLOAT);
+  const bool useFloat32Readback = (srcFormat == TEX_FORMAT_RGBA32_FLOAT);
+  const bool useFloatReadback = useFloat16Readback || useFloat32Readback;
   const TEXTURE_FORMAT stagingFormat =
-      useFloatReadback ? TEX_FORMAT_RGBA16_FLOAT : TEX_FORMAT_RGBA8_UNORM;
+      useFloatReadback ? srcFormat : TEX_FORMAT_RGBA8_UNORM;
 
   RefCntAutoPtr<ITexture> stagingTex;
   RefCntAutoPtr<IFence> fence;
@@ -2220,10 +2222,12 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   // Capture data for background thread
   const Uint32 w = srcWidth;
   const Uint32 h = srcHeight;
-  const bool floatReadback = useFloatReadback;
+  const bool float16Readback = useFloat16Readback;
+  const bool float32Readback = useFloat32Readback;
 
   // Run fence wait + pixel conversion in background thread
-    [[maybe_unused]] auto future = QtConcurrent::run([fence, stagingTex, ctx, w, h, floatReadback,
+    [[maybe_unused]] auto future = QtConcurrent::run([fence, stagingTex, ctx, w, h,
+                                                       float16Readback, float32Readback,
                                                        waitValue, busyFlag, cachedSlot,
                                                        cb = std::move(callback)]() mutable {
     auto releaseSlot = [&]() {
@@ -2249,7 +2253,9 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     const size_t resultStride = static_cast<size_t>(result.bytesPerLine());
     const size_t copyRowBytes = static_cast<size_t>(w) * 4u;
     const size_t sourceRowBytes =
-        floatReadback ? static_cast<size_t>(w) * 8u : copyRowBytes;
+        float16Readback ? static_cast<size_t>(w) * 8u
+                        : (float32Readback ? static_cast<size_t>(w) * 16u
+                                           : copyRowBytes);
 
     if (mapped.Stride < sourceRowBytes) {
       ctx->UnmapTextureSubresource(stagingTex, 0, 0);
@@ -2258,15 +2264,14 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
       return;
     }
 
-    if (!floatReadback) {
-      const auto* srcRow = static_cast<const uint8_t*>(mapped.pData);
+    if (!float16Readback && !float32Readback) {
       ArtifactCore::Parallel::For(0, static_cast<int>(h), static_cast<int>(w * h), [&](int row) {
         const auto* source = static_cast<const uint8_t*>(mapped.pData) +
                              static_cast<size_t>(row) * mapped.Stride;
         std::memcpy(resultBits + static_cast<size_t>(row) * resultStride,
                     source, copyRowBytes);
       });
-    } else {
+    } else if (float16Readback) {
       ArtifactCore::Parallel::For(0, static_cast<int>(h), static_cast<int>(w * h), [&](int row) {
         const auto* srcRow = reinterpret_cast<const uint16_t*>(
             static_cast<const uint8_t*>(mapped.pData) +
@@ -2277,6 +2282,31 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
           const float g = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + 1]), 0.0f, 1.0f);
           const float b = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + 2]), 0.0f, 1.0f);
           const float a = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + 3]), 0.0f, 1.0f);
+          dst[x * 4 + 0] = linearToSrgb8(r);
+          dst[x * 4 + 1] = linearToSrgb8(g);
+          dst[x * 4 + 2] = linearToSrgb8(b);
+          dst[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
+        }
+      });
+    } else {
+      ArtifactCore::Parallel::For(0, static_cast<int>(h), static_cast<int>(w * h), [&](int row) {
+        const auto* srcFloat = reinterpret_cast<const float*>(
+            static_cast<const uint8_t*>(mapped.pData) +
+            static_cast<size_t>(row) * mapped.Stride);
+        auto* dst = resultBits + static_cast<size_t>(row) * resultStride;
+        for (Uint32 x = 0; x < w; ++x) {
+          const float r = std::isfinite(srcFloat[x * 4 + 0])
+                              ? std::clamp(srcFloat[x * 4 + 0], 0.0f, 1.0f)
+                              : 0.0f;
+          const float g = std::isfinite(srcFloat[x * 4 + 1])
+                              ? std::clamp(srcFloat[x * 4 + 1], 0.0f, 1.0f)
+                              : 0.0f;
+          const float b = std::isfinite(srcFloat[x * 4 + 2])
+                              ? std::clamp(srcFloat[x * 4 + 2], 0.0f, 1.0f)
+                              : 0.0f;
+          const float a = std::isfinite(srcFloat[x * 4 + 3])
+                              ? std::clamp(srcFloat[x * 4 + 3], 0.0f, 1.0f)
+                              : 0.0f;
           dst[x * 4 + 0] = linearToSrgb8(r);
           dst[x * 4 + 1] = linearToSrgb8(g);
           dst[x * 4 + 2] = linearToSrgb8(b);

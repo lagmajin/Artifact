@@ -1,10 +1,13 @@
 ﻿module;
 #include <QFile>
 #include <QFileInfo>
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QMap>
+#include <QStringList>
 #include <QDebug>
 #include <iostream>
 #include <vector>
@@ -330,10 +333,37 @@ namespace Artifact
   // early parse failure does not discard the currently loaded project's leases.
   ArtifactCore::AssetManager::instance().resetSourceRegistry();
   if (root.contains("assets") && root["assets"].isObject()) {
-   const QJsonObject assets = root["assets"].toObject();
+   QJsonObject assets = root["assets"].toObject();
    if (assets.contains("sourceRegistry") && assets["sourceRegistry"].isObject()) {
+    QJsonObject sourceRegistry = assets["sourceRegistry"].toObject();
+    QJsonArray sources = sourceRegistry.value(QStringLiteral("sources")).toArray();
+    const QString sourceProjectDirectory = QFileInfo(inputPath_).isDir()
+        ? QFileInfo(inputPath_).absoluteFilePath()
+        : QFileInfo(inputPath_).absolutePath();
+    for (int i = 0; i < sources.size(); ++i) {
+     if (!sources.at(i).isObject()) {
+      continue;
+     }
+     QJsonObject source = sources.at(i).toObject();
+     const QString relative = source.value(QStringLiteral("pathRelative"))
+                                  .toString().trimmed();
+     const QString original = source.value(QStringLiteral("path")).toString();
+     if (!relative.isEmpty()) {
+      const QString candidate =
+          QDir(sourceProjectDirectory).absoluteFilePath(relative);
+      if (QFileInfo::exists(candidate) || original.trimmed().isEmpty()) {
+       source.insert(QStringLiteral("path"), QDir::cleanPath(candidate));
+      }
+     }
+     sources[i] = source;
+    }
+    if (!sources.isEmpty()) {
+     sourceRegistry.insert(QStringLiteral("sources"), sources);
+     assets.insert(QStringLiteral("sourceRegistry"), sourceRegistry);
+     root.insert(QStringLiteral("assets"), assets);
+    }
     if (!ArtifactCore::AssetManager::instance().restoreSourceRegistrySnapshot(
-            assets["sourceRegistry"].toObject())) {
+            sourceRegistry)) {
      qWarning() << "[Importer] Source registry snapshot contained invalid entries";
     }
    }
@@ -353,6 +383,74 @@ namespace Artifact
    }
   }
 
+  const QString layerSourceProjectDirectory = QFileInfo(inputPath_).isDir()
+      ? QFileInfo(inputPath_).absoluteFilePath()
+      : QFileInfo(inputPath_).absolutePath();
+  std::function<void(QJsonObject&)> resolveLayerSourcePaths =
+      [&](QJsonObject& object) {
+       const QStringList keys = object.keys();
+       for (const QString& key : keys) {
+        const QJsonValue value = object.value(key);
+        const bool isSourcePath =
+            key == QStringLiteral("sourcePath") ||
+            key.endsWith(QStringLiteral(".sourcePath"));
+        const bool isSequencePaths =
+            key == QStringLiteral("sequencePaths") ||
+            key.endsWith(QStringLiteral(".sequencePaths"));
+        if (isSourcePath && value.isString()) {
+         const QString relative =
+             object.value(key + QStringLiteral("Relative")).toString().trimmed();
+         if (!relative.isEmpty()) {
+          const QString candidate =
+              QDir(layerSourceProjectDirectory).absoluteFilePath(relative);
+          if (QFileInfo::exists(candidate) || value.toString().isEmpty()) {
+           object.insert(key, QDir::cleanPath(candidate));
+          }
+         }
+        } else if (isSequencePaths && value.isArray()) {
+         const QJsonArray relativePaths =
+             object.value(key + QStringLiteral("Relative")).toArray();
+         if (!relativePaths.isEmpty()) {
+          QJsonArray resolvedPaths;
+          const QJsonArray originalPaths = value.toArray();
+          for (int i = 0; i < relativePaths.size(); ++i) {
+           const QString relative = relativePaths.at(i).toString().trimmed();
+           const QString original = i < originalPaths.size()
+               ? originalPaths.at(i).toString()
+               : QString();
+           const QString candidate = relative.isEmpty()
+               ? original
+               : QDir(layerSourceProjectDirectory).absoluteFilePath(relative);
+           resolvedPaths.append(
+               (!relative.isEmpty() && QFileInfo::exists(candidate))
+                   ? QDir::cleanPath(candidate)
+                   : original);
+          }
+          if (!resolvedPaths.isEmpty()) {
+           object.insert(key, resolvedPaths);
+          }
+         }
+        }
+
+        if (value.isObject()) {
+         QJsonObject child = value.toObject();
+         resolveLayerSourcePaths(child);
+         object.insert(key, child);
+        } else if (value.isArray()) {
+         QJsonArray children = value.toArray();
+         for (int i = 0; i < children.size(); ++i) {
+          if (!children.at(i).isObject()) {
+           continue;
+          }
+          QJsonObject child = children.at(i).toObject();
+          resolveLayerSourcePaths(child);
+          children[i] = child;
+         }
+         object.insert(key, children);
+        }
+       }
+      };
+
   // コンポジションの読み込み
   if (root.contains("compositions") && root["compositions"].isArray()) {
    QJsonArray compsArray = root["compositions"].toArray();
@@ -362,6 +460,7 @@ namespace Artifact
     if (importedCompositions++ >= kMaxImportedCompositions) break;
     if (!compVal.isObject()) continue;
     QJsonObject compObj = compVal.toObject();
+    resolveLayerSourcePaths(compObj);
     if (!compObj.contains("id")) continue;
 
     QString idStr = compObj["id"].toString();
@@ -387,13 +486,77 @@ namespace Artifact
 
   // Project items (Footage, Folder, etc.) restoration
   if (root.contains("projectItems") && root["projectItems"].isArray()) {
+   const QString projectDirectory = QFileInfo(inputPath_).isDir()
+       ? QFileInfo(inputPath_).absoluteFilePath()
+       : QFileInfo(inputPath_).absolutePath();
+   const auto resolveRelativeIfPresent =
+       [&projectDirectory](QJsonObject& item) {
+        const QString absolutePath = item.value(QStringLiteral("filePath")).toString();
+        const QString relativePath =
+            item.value(QStringLiteral("filePathRelative")).toString().trimmed();
+        if (!relativePath.isEmpty()) {
+         const QString candidate = QDir(projectDirectory).absoluteFilePath(relativePath);
+         if (QFileInfo::exists(candidate)) {
+          item.insert(QStringLiteral("filePath"), QDir::cleanPath(candidate));
+         } else if (absolutePath.isEmpty()) {
+          item.insert(QStringLiteral("filePath"), QDir::cleanPath(candidate));
+         }
+        }
+        const QJsonArray sequencePaths =
+            item.value(QStringLiteral("sequencePaths")).toArray();
+        const QJsonArray relativeSequencePaths =
+            item.value(QStringLiteral("sequencePathsRelative")).toArray();
+        if (!relativeSequencePaths.isEmpty()) {
+         QJsonArray resolvedSequencePaths;
+         for (int i = 0; i < relativeSequencePaths.size(); ++i) {
+          const QString relative = relativeSequencePaths.at(i).toString().trimmed();
+          const QString original = i < sequencePaths.size()
+              ? sequencePaths.at(i).toString()
+              : QString();
+          const QString candidate = relative.isEmpty()
+              ? original
+              : QDir(projectDirectory).absoluteFilePath(relative);
+          resolvedSequencePaths.append(
+              (!relative.isEmpty() && QFileInfo::exists(candidate))
+                  ? QDir::cleanPath(candidate)
+                  : original);
+         }
+         if (!resolvedSequencePaths.isEmpty()) {
+          item.insert(QStringLiteral("sequencePaths"), resolvedSequencePaths);
+         }
+        }
+       };
    const QJsonArray sourceProjectItems = root["projectItems"].toArray();
    QJsonArray projectItemsArray;
    constexpr qsizetype kMaxImportedProjectItems = 100000;
    const qsizetype projectItemCount = std::min(
        sourceProjectItems.size(), kMaxImportedProjectItems);
+   std::function<void(QJsonObject&)> resolveProjectItem =
+       [&](QJsonObject& item) {
+        if (item.value(QStringLiteral("type")).toString() ==
+            QStringLiteral("footage")) {
+         resolveRelativeIfPresent(item);
+        }
+        QJsonArray children = item.value(QStringLiteral("children")).toArray();
+        for (int i = 0; i < children.size(); ++i) {
+         if (!children.at(i).isObject()) {
+          continue;
+         }
+         QJsonObject child = children.at(i).toObject();
+         resolveProjectItem(child);
+         children[i] = child;
+        }
+        if (!children.isEmpty()) {
+         item.insert(QStringLiteral("children"), children);
+        }
+       };
    for (qsizetype i = 0; i < projectItemCount; ++i) {
-    projectItemsArray.append(sourceProjectItems.at(i));
+    if (!sourceProjectItems.at(i).isObject()) {
+     continue;
+    }
+    QJsonObject item = sourceProjectItems.at(i).toObject();
+    resolveProjectItem(item);
+    projectItemsArray.append(item);
    }
    projectPtr->restoreProjectItems(projectItemsArray);
    qDebug() << "[Importer] Project items restored:" << projectItemsArray.size() << "top-level items";

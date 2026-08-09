@@ -76,6 +76,9 @@ public /*slots*/:
   void activateDock(const QString &title);
   bool closeDock(const QString &title);
   void setDockImmersive(QWidget *widget, bool immersive);
+  void enterFocusMode();
+  void exitFocusMode();
+  void toggleFocusMode();
   void setStartupLayoutFrozen(bool frozen);
 
   void closeAllDocks();

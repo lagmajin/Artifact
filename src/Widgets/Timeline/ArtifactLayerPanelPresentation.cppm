@@ -50,7 +50,14 @@ LayerPresentationDescriptor applyMatteSummary(const ArtifactAbstractLayerPtr& la
     return descriptor;
   }
 
-  const int matteCount = static_cast<int>(layer->matteReferences().size());
+  const auto layerId = layer->id();
+  int matteCount = 0;
+  for (const auto& ref : layer->matteReferences()) {
+    if (ref.enabled && !ref.sourceLayerId.isNil() &&
+        ref.sourceLayerId != layerId) {
+      ++matteCount;
+    }
+  }
   if (matteCount > 0) {
     descriptor.capabilitySummaryText = QStringLiteral("Matte x%1").arg(matteCount);
     descriptor.timelineBadgeText = QStringLiteral("%1 + Matte")

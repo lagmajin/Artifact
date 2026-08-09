@@ -7788,7 +7788,15 @@ void ArtifactTimelineWidget::refreshTracks() {
         if (layer->isSolo()) return QStringLiteral("Solo");
         if (layer->isShy()) return QStringLiteral("Shy");
         const bool hasMasks = layer->hasMasks();
-        const bool hasMattes = !layer->matteReferences().empty();
+        const auto layerId = layer->id();
+        bool hasMattes = false;
+        for (const auto& ref : layer->matteReferences()) {
+          if (ref.enabled && !ref.sourceLayerId.isNil() &&
+              ref.sourceLayerId != layerId) {
+            hasMattes = true;
+            break;
+          }
+        }
         if (hasMasks && hasMattes) return QStringLiteral("Mask + Matte");
         if (hasMasks) return QStringLiteral("Masked");
         if (hasMattes) return QStringLiteral("Matted");
@@ -7802,7 +7810,16 @@ void ArtifactTimelineWidget::refreshTracks() {
         if (!layer->isVisible()) return LayerPresentationBadgeTone::Neutral;
         if (layer->isLocked() || layer->isShy()) return LayerPresentationBadgeTone::Special;
         if (layer->isSolo()) return LayerPresentationBadgeTone::Motion;
-        if (layer->hasMasks() || !layer->matteReferences().empty()) return LayerPresentationBadgeTone::Special;
+        const auto layerId = layer->id();
+        bool hasMattes = false;
+        for (const auto& ref : layer->matteReferences()) {
+          if (ref.enabled && !ref.sourceLayerId.isNil() &&
+              ref.sourceLayerId != layerId) {
+            hasMattes = true;
+            break;
+          }
+        }
+        if (layer->hasMasks() || hasMattes) return LayerPresentationBadgeTone::Special;
         if (layer->hasParent()) return LayerPresentationBadgeTone::Container;
         return LayerPresentationBadgeTone::Neutral;
       };

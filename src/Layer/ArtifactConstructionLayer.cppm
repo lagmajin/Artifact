@@ -166,13 +166,32 @@ QJsonObject ArtifactConstructionLayer::toJson() const {
 
 void ArtifactConstructionLayer::fromJsonProperties(const QJsonObject& obj) {
   ArtifactAbstract2DLayer::fromJsonProperties(obj);
-  impl_->width = static_cast<float>(obj.value(QStringLiteral("construction.width")).toDouble(impl_->width));
-  impl_->height = static_cast<float>(obj.value(QStringLiteral("construction.height")).toDouble(impl_->height));
-  impl_->gridSpacing = static_cast<float>(obj.value(QStringLiteral("construction.gridSpacing")).toDouble(impl_->gridSpacing));
-  impl_->majorEvery = static_cast<float>(obj.value(QStringLiteral("construction.majorEvery")).toDouble(impl_->majorEvery));
-  impl_->safeMargin = static_cast<float>(obj.value(QStringLiteral("construction.safeMargin")).toDouble(impl_->safeMargin));
-  impl_->baselineY = static_cast<float>(obj.value(QStringLiteral("construction.baselineY")).toDouble(impl_->baselineY));
-  impl_->opacity = static_cast<float>(obj.value(QStringLiteral("construction.opacity")).toDouble(impl_->opacity));
+  const auto readFinite = [&obj](const QString& key, float fallback,
+                                 float minimum, float maximum) {
+    const double raw = obj.value(key).toDouble(fallback);
+    return std::isfinite(raw)
+        ? std::clamp(static_cast<float>(raw), minimum, maximum)
+        : fallback;
+  };
+  impl_->width = readFinite(QStringLiteral("construction.width"), impl_->width,
+                            1.0f, 100000.0f);
+  impl_->height = readFinite(QStringLiteral("construction.height"), impl_->height,
+                             1.0f, 100000.0f);
+  impl_->gridSpacing = readFinite(
+      QStringLiteral("construction.gridSpacing"), impl_->gridSpacing,
+      2.0f, 100000.0f);
+  impl_->majorEvery = readFinite(
+      QStringLiteral("construction.majorEvery"), impl_->majorEvery,
+      1.0f, 64.0f);
+  impl_->safeMargin = readFinite(
+      QStringLiteral("construction.safeMargin"), impl_->safeMargin,
+      0.0f, 0.45f);
+  impl_->baselineY = readFinite(
+      QStringLiteral("construction.baselineY"), impl_->baselineY,
+      0.0f, 1.0f);
+  impl_->opacity = readFinite(
+      QStringLiteral("construction.opacity"), impl_->opacity,
+      0.0f, 1.0f);
   impl_->showGrid = obj.value(QStringLiteral("construction.showGrid")).toBool(impl_->showGrid);
   impl_->showThirds = obj.value(QStringLiteral("construction.showThirds")).toBool(impl_->showThirds);
   impl_->showCenter = obj.value(QStringLiteral("construction.showCenter")).toBool(impl_->showCenter);

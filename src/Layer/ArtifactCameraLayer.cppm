@@ -234,13 +234,15 @@ CameraDOFParameters ArtifactCameraLayer::depthOfFieldParameters() const {
 
 ProjectionMode ArtifactCameraLayer::projectionMode() const { return camImpl_->projectionMode_; }
 void ArtifactCameraLayer::setProjectionMode(ProjectionMode mode) {
-    camImpl_->projectionMode_ = mode;
+    camImpl_->projectionMode_ = static_cast<ProjectionMode>(
+        std::clamp(static_cast<int>(mode), 0, 1));
     changed();
 }
 
 StereoMode ArtifactCameraLayer::stereoMode() const { return camImpl_->stereoMode_; }
 void ArtifactCameraLayer::setStereoMode(StereoMode mode) {
-    camImpl_->stereoMode_ = mode;
+    camImpl_->stereoMode_ = static_cast<StereoMode>(
+        std::clamp(static_cast<int>(mode), 0, 2));
     changed();
 }
 
@@ -726,6 +728,7 @@ bool ArtifactCameraLayer::setLayerPropertyValue(const QString& propertyPath, con
 QJsonObject ArtifactCameraLayer::toJson() const
 {
     QJsonObject obj = ArtifactAbstractLayer::toJson();
+    obj["type"] = static_cast<int>(LayerType::Camera);
     obj["cameraProjectionMode"] = static_cast<int>(camImpl_->projectionMode_);
     obj["cameraStereoMode"] = static_cast<int>(camImpl_->stereoMode_);
     obj["cameraUseManualFov"] = camImpl_->useManualFov_;

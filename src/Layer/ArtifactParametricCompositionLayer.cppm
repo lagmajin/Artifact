@@ -402,4 +402,14 @@ QJsonObject ArtifactParametricCompositionLayer::toJson() const
     return obj;
 }
 
+void ArtifactParametricCompositionLayer::fromJsonProperties(const QJsonObject& obj)
+{
+    ArtifactAbstractLayer::fromJsonProperties(obj);
+    const QJsonObject instanceObject =
+        obj.value(QStringLiteral("parametric.instance")).toObject();
+    if (!instanceObject.isEmpty()) {
+        impl_->instance_ = ParametricCompositionInstance::fromJson(instanceObject);
+    }
+}
+
 } // namespace Artifact

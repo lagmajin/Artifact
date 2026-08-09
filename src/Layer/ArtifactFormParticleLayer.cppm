@@ -44,7 +44,22 @@ namespace {
 template <typename T>
 T clampValue(T value, T minValue, T maxValue)
 {
+    if constexpr (std::is_floating_point_v<T>) {
+        if (!std::isfinite(value)) {
+            return std::isnan(value) || value < 0.0 ? minValue : maxValue;
+        }
+    }
     return std::max(minValue, std::min(maxValue, value));
+}
+
+static float finiteAtLeast(float value, float minimum, float fallback)
+{
+    return std::isfinite(value) ? std::max(minimum, value) : fallback;
+}
+
+static float finiteClamped(float value, float fallback, float minimum, float maximum)
+{
+    return std::isfinite(value) ? std::clamp(value, minimum, maximum) : fallback;
 }
 
 static float hashToUnit(std::uint32_t value)
@@ -68,6 +83,11 @@ static QColor lerpColor(const QColor& a, const QColor& b, float t)
     result.setBlueF(a.blueF() + (b.blueF() - a.blueF()) * clamped);
     result.setAlphaF(a.alphaF() + (b.alphaF() - a.alphaF()) * clamped);
     return result;
+}
+
+static QColor validColorOr(const QColor& value, const QColor& fallback)
+{
+    return value.isValid() ? value : fallback;
 }
 
 static quint64 mixSignature(quint64 seed, quint64 value)
@@ -113,38 +133,77 @@ FormParticleSettings::FormParticleSettings()
 
 QJsonObject FormParticleSettings::toJson() const
 {
+    const QColor safeSolidColor = validColorOr(solidColor, QColor(255, 255, 255));
+    const QColor safeGradientStartColor =
+        validColorOr(gradientStartColor, safeSolidColor);
+    const QColor safeGradientEndColor =
+        validColorOr(gradientEndColor, safeSolidColor);
+    const float safeSpacingX = finiteAtLeast(spacingX, 0.01f, 0.01f);
+    const float safeSpacingY = finiteAtLeast(spacingY, 0.01f, 0.01f);
+    const float safeSpacingZ = finiteAtLeast(spacingZ, 0.01f, 0.01f);
+    const float safeParticleSize = finiteAtLeast(particleSize, 0.1f, 0.1f);
+    const float safeParticleOpacity =
+        finiteClamped(particleOpacity, 1.0f, 0.0f, 1.0f);
+    const float safeNoiseAmount =
+        finiteClamped(noiseAmount, 0.0f, 0.0f, 100000.0f);
+    const float safeNoiseScale =
+        finiteClamped(noiseScale, 0.0f, 0.0f, 100000.0f);
+    const float safeNoiseSpeed =
+        finiteClamped(noiseSpeed, 0.0f, -10000.0f, 10000.0f);
+    const float safeNoisePhase =
+        finiteClamped(noisePhase, 0.0f, -100000.0f, 100000.0f);
+    const float safeTwistAmount = std::isfinite(twistAmount) ? twistAmount : 0.0f;
+    const float safeFalloff = finiteAtLeast(falloff, 0.0f, 0.0f);
+    const float safeSourceAlphaThreshold =
+        finiteClamped(sourceAlphaThreshold, 0.05f, 0.0f, 1.0f);
+    const float safeSourceLumaThreshold =
+        finiteClamped(sourceLumaThreshold, 0.05f, 0.0f, 1.0f);
+    const int safeGeneratorMode =
+        clampValue(static_cast<int>(generatorMode), 0, 2);
+    const int safeColorMode = clampValue(static_cast<int>(colorMode), 0, 2);
+    const int safeOriginMode = clampValue(static_cast<int>(originMode), 0, 2);
+    const int safeColumns = clampValue(columns, 1, 512);
+    const int safeRows = clampValue(rows, 1, 512);
+    const int safeDepth = clampValue(depth, 1, 128);
+    const int safeMaxParticles = clampValue(maxParticles, 1, 100000);
+    const int safeBlendMode =
+        clampValue(static_cast<int>(renderSettings.blendMode), 0, 4);
+    const int safeBillboardMode =
+        clampValue(static_cast<int>(renderSettings.billboardMode), 0, 3);
+    const int safeSortMode =
+        clampValue(static_cast<int>(renderSettings.sortMode), 0, 3);
     QJsonObject obj;
     obj["version"] = 1;
-    obj["generatorMode"] = static_cast<int>(generatorMode);
-    obj["colorMode"] = static_cast<int>(colorMode);
-    obj["originMode"] = static_cast<int>(originMode);
-    obj["columns"] = columns;
-    obj["rows"] = rows;
-    obj["depth"] = depth;
-    obj["maxParticles"] = maxParticles;
-    obj["spacingX"] = spacingX;
-    obj["spacingY"] = spacingY;
-    obj["spacingZ"] = spacingZ;
-    obj["particleSize"] = particleSize;
-    obj["particleOpacity"] = particleOpacity;
-    obj["noiseAmount"] = noiseAmount;
-    obj["noiseScale"] = noiseScale;
-    obj["noiseSpeed"] = noiseSpeed;
-    obj["noisePhase"] = noisePhase;
-    obj["twistAmount"] = twistAmount;
-    obj["falloff"] = falloff;
+    obj["generatorMode"] = safeGeneratorMode;
+    obj["colorMode"] = safeColorMode;
+    obj["originMode"] = safeOriginMode;
+    obj["columns"] = safeColumns;
+    obj["rows"] = safeRows;
+    obj["depth"] = safeDepth;
+    obj["maxParticles"] = safeMaxParticles;
+    obj["spacingX"] = safeSpacingX;
+    obj["spacingY"] = safeSpacingY;
+    obj["spacingZ"] = safeSpacingZ;
+    obj["particleSize"] = safeParticleSize;
+    obj["particleOpacity"] = safeParticleOpacity;
+    obj["noiseAmount"] = safeNoiseAmount;
+    obj["noiseScale"] = safeNoiseScale;
+    obj["noiseSpeed"] = safeNoiseSpeed;
+    obj["noisePhase"] = safeNoisePhase;
+    obj["twistAmount"] = safeTwistAmount;
+    obj["falloff"] = safeFalloff;
     obj["seed"] = static_cast<double>(seed);
     obj["sourcePath"] = sourcePath;
-    obj["sourceAlphaThreshold"] = sourceAlphaThreshold;
-    obj["sourceLumaThreshold"] = sourceLumaThreshold;
-    obj["solidColor"] = solidColor.name(QColor::HexArgb);
-    obj["gradientStartColor"] = gradientStartColor.name(QColor::HexArgb);
-    obj["gradientEndColor"] = gradientEndColor.name(QColor::HexArgb);
+    obj["sourceAlphaThreshold"] = safeSourceAlphaThreshold;
+    obj["sourceLumaThreshold"] = safeSourceLumaThreshold;
+    obj["solidColor"] = safeSolidColor.name(QColor::HexArgb);
+    obj["gradientStartColor"] = safeGradientStartColor.name(QColor::HexArgb);
+    obj["gradientEndColor"] = safeGradientEndColor.name(QColor::HexArgb);
 
     QJsonObject render;
-    render["blendMode"] = static_cast<int>(renderSettings.blendMode);
-    render["billboardMode"] = static_cast<int>(renderSettings.billboardMode);
-    render["sortMode"] = static_cast<int>(renderSettings.sortMode);
+    render["blendMode"] = safeBlendMode;
+    render["billboardMode"] = safeBillboardMode;
+    render["sortMode"] = safeSortMode;
     render["depthTest"] = renderSettings.depthTest;
     render["depthWrite"] = renderSettings.depthWrite;
     render["softParticles"] = renderSettings.softParticles;
@@ -179,19 +238,29 @@ void FormParticleSettings::fromJson(const QJsonObject& obj)
         maxParticles = clampValue(obj.value("maxParticles").toInt(maxParticles), 1, 100000);
     }
     if (obj.contains("spacingX")) {
-        spacingX = std::max(0.01f, static_cast<float>(obj.value("spacingX").toDouble(spacingX)));
+        spacingX = finiteAtLeast(
+            static_cast<float>(obj.value("spacingX").toDouble(spacingX)),
+            0.01f, 0.01f);
     }
     if (obj.contains("spacingY")) {
-        spacingY = std::max(0.01f, static_cast<float>(obj.value("spacingY").toDouble(spacingY)));
+        spacingY = finiteAtLeast(
+            static_cast<float>(obj.value("spacingY").toDouble(spacingY)),
+            0.01f, 0.01f);
     }
     if (obj.contains("spacingZ")) {
-        spacingZ = std::max(0.01f, static_cast<float>(obj.value("spacingZ").toDouble(spacingZ)));
+        spacingZ = finiteAtLeast(
+            static_cast<float>(obj.value("spacingZ").toDouble(spacingZ)),
+            0.01f, 0.01f);
     }
     if (obj.contains("particleSize")) {
-        particleSize = std::max(0.1f, static_cast<float>(obj.value("particleSize").toDouble(particleSize)));
+        particleSize = finiteAtLeast(
+            static_cast<float>(obj.value("particleSize").toDouble(particleSize)),
+            0.1f, 0.1f);
     }
     if (obj.contains("particleOpacity")) {
-        particleOpacity = clampValue(static_cast<float>(obj.value("particleOpacity").toDouble(particleOpacity)), 0.0f, 1.0f);
+        particleOpacity = finiteClamped(
+            static_cast<float>(obj.value("particleOpacity").toDouble(particleOpacity)),
+            particleOpacity, 0.0f, 1.0f);
     }
     if (obj.contains("noiseAmount")) {
         const float value = static_cast<float>(obj.value("noiseAmount").toDouble(noiseAmount));
@@ -213,34 +282,43 @@ void FormParticleSettings::fromJson(const QJsonObject& obj)
         sourcePath = obj.value("sourcePath").toString();
     }
     if (obj.contains("sourceAlphaThreshold")) {
-        sourceAlphaThreshold = clampValue(
+        sourceAlphaThreshold = finiteClamped(
             static_cast<float>(obj.value("sourceAlphaThreshold").toDouble(sourceAlphaThreshold)),
+            sourceAlphaThreshold,
             0.0f,
             1.0f);
     }
     if (obj.contains("sourceLumaThreshold")) {
-        sourceLumaThreshold = clampValue(
+        sourceLumaThreshold = finiteClamped(
             static_cast<float>(obj.value("sourceLumaThreshold").toDouble(sourceLumaThreshold)),
+            sourceLumaThreshold,
             0.0f,
             1.0f);
     }
     if (obj.contains("twistAmount")) {
-        twistAmount = static_cast<float>(obj.value("twistAmount").toDouble(twistAmount));
+        const float value = static_cast<float>(obj.value("twistAmount").toDouble(twistAmount));
+        twistAmount = std::isfinite(value) ? value : 0.0f;
     }
     if (obj.contains("falloff")) {
-        falloff = std::max(0.0f, static_cast<float>(obj.value("falloff").toDouble(falloff)));
+        falloff = finiteAtLeast(
+            static_cast<float>(obj.value("falloff").toDouble(falloff)),
+            0.0f, 0.0f);
     }
     if (obj.contains("seed")) {
         seed = static_cast<std::uint32_t>(std::max<qint64>(0, obj.value("seed").toVariant().toLongLong()));
     }
     if (obj.contains("solidColor")) {
-        solidColor = QColor(obj.value("solidColor").toString());
+        solidColor = validColorOr(QColor(obj.value("solidColor").toString()),
+                                 solidColor);
     }
     if (obj.contains("gradientStartColor")) {
-        gradientStartColor = QColor(obj.value("gradientStartColor").toString());
+        gradientStartColor = validColorOr(
+            QColor(obj.value("gradientStartColor").toString()),
+            gradientStartColor);
     }
     if (obj.contains("gradientEndColor")) {
-        gradientEndColor = QColor(obj.value("gradientEndColor").toString());
+        gradientEndColor = validColorOr(
+            QColor(obj.value("gradientEndColor").toString()), gradientEndColor);
     }
     if (obj.contains("renderSettings") && obj.value("renderSettings").isObject()) {
         const QJsonObject render = obj.value("renderSettings").toObject();
@@ -490,16 +568,21 @@ static QColor colorForPoint(const FormParticleSettings& settings,
                             int rows,
                             int depthCount)
 {
+    const QColor solidColor = validColorOr(settings.solidColor, QColor(255, 255, 255));
+    const QColor gradientStartColor =
+        validColorOr(settings.gradientStartColor, solidColor);
+    const QColor gradientEndColor =
+        validColorOr(settings.gradientEndColor, solidColor);
     switch (settings.colorMode) {
     case FormParticleSettings::ColorMode::AxisGradient: {
         const float t = clampValue((normalizedIndex(column, columns) + normalizedIndex(row, rows) + normalizedIndex(depth, depthCount)) / 3.0f, 0.0f, 1.0f);
-        return lerpColor(settings.gradientStartColor, settings.gradientEndColor, t);
+        return lerpColor(gradientStartColor, gradientEndColor, t);
     }
     case FormParticleSettings::ColorMode::SourceColor:
-        return settings.solidColor;
+        return solidColor;
     case FormParticleSettings::ColorMode::Solid:
     default:
-        return settings.solidColor;
+        return solidColor;
     }
 }
 
@@ -942,15 +1025,18 @@ bool ArtifactFormParticleLayer::setLayerPropertyValue(const QString& propertyPat
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("form.spacingX")) {
-        impl_->settings.spacingX = std::max(0.01f, static_cast<float>(value.toDouble()));
+        impl_->settings.spacingX = finiteAtLeast(
+            static_cast<float>(value.toDouble()), 0.01f, 0.01f);
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("form.spacingY")) {
-        impl_->settings.spacingY = std::max(0.01f, static_cast<float>(value.toDouble()));
+        impl_->settings.spacingY = finiteAtLeast(
+            static_cast<float>(value.toDouble()), 0.01f, 0.01f);
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("form.spacingZ")) {
-        impl_->settings.spacingZ = std::max(0.01f, static_cast<float>(value.toDouble()));
+        impl_->settings.spacingZ = finiteAtLeast(
+            static_cast<float>(value.toDouble()), 0.01f, 0.01f);
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("form.maxParticles")) {
@@ -970,20 +1056,25 @@ bool ArtifactFormParticleLayer::setLayerPropertyValue(const QString& propertyPat
     }
     if (propertyPath == QStringLiteral("source.alphaThreshold")) {
         impl_->settings.sourceAlphaThreshold =
-            clampValue(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+            finiteClamped(static_cast<float>(value.toDouble()),
+                          impl_->settings.sourceAlphaThreshold, 0.0f, 1.0f);
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("source.lumaThreshold")) {
         impl_->settings.sourceLumaThreshold =
-            clampValue(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+            finiteClamped(static_cast<float>(value.toDouble()),
+                          impl_->settings.sourceLumaThreshold, 0.0f, 1.0f);
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("particle.size")) {
-        impl_->settings.particleSize = std::max(0.1f, static_cast<float>(value.toDouble()));
+        impl_->settings.particleSize = finiteAtLeast(
+            static_cast<float>(value.toDouble()), 0.1f, 0.1f);
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("particle.opacity")) {
-        impl_->settings.particleOpacity = clampValue(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+        impl_->settings.particleOpacity = finiteClamped(
+            static_cast<float>(value.toDouble()),
+            impl_->settings.particleOpacity, 0.0f, 1.0f);
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("particle.colorMode")) {
@@ -992,15 +1083,18 @@ bool ArtifactFormParticleLayer::setLayerPropertyValue(const QString& propertyPat
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("particle.solidColor")) {
-        impl_->settings.solidColor = value.value<QColor>();
+        impl_->settings.solidColor = validColorOr(
+            value.value<QColor>(), impl_->settings.solidColor);
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("particle.gradientStartColor")) {
-        impl_->settings.gradientStartColor = value.value<QColor>();
+        impl_->settings.gradientStartColor = validColorOr(
+            value.value<QColor>(), impl_->settings.gradientStartColor);
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("particle.gradientEndColor")) {
-        impl_->settings.gradientEndColor = value.value<QColor>();
+        impl_->settings.gradientEndColor = validColorOr(
+            value.value<QColor>(), impl_->settings.gradientEndColor);
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("field.noiseAmount")) {
@@ -1024,11 +1118,13 @@ bool ArtifactFormParticleLayer::setLayerPropertyValue(const QString& propertyPat
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("field.twistAmount")) {
-        impl_->settings.twistAmount = static_cast<float>(value.toDouble());
+        const float input = static_cast<float>(value.toDouble());
+        impl_->settings.twistAmount = std::isfinite(input) ? input : 0.0f;
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("field.falloff")) {
-        impl_->settings.falloff = std::max(0.0f, static_cast<float>(value.toDouble()));
+        impl_->settings.falloff = finiteAtLeast(
+            static_cast<float>(value.toDouble()), 0.0f, 0.0f);
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("field.seed")) {

@@ -6,6 +6,7 @@ module;
 #include <limits>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QObject>
 #include <QMatrix4x4>
 #include <QRectF>
 
@@ -36,11 +37,18 @@ ArtifactSwitchLayer::ArtifactSwitchLayer()
 }
 ArtifactSwitchLayer::~ArtifactSwitchLayer() { delete impl_; }
 
+void ArtifactSwitchLayer::setComposition(QObject* comp) {
+    setComposition(static_cast<void*>(comp));
+}
+
 void ArtifactSwitchLayer::setComposition(void* comp) {
     ArtifactAbstractLayer::setComposition(comp);
     impl_->composition_ = static_cast<ArtifactAbstractComposition*>(comp);
     for (auto& child : impl_->children_) {
-        if (child) child->setComposition(comp);
+        if (child) {
+            child->clearParent();
+            child->setComposition(comp);
+        }
     }
 }
 
@@ -85,6 +93,7 @@ void ArtifactSwitchLayer::draw(ArtifactIRenderer* renderer) {
 int ArtifactSwitchLayer::addChildLayer(const ArtifactAbstractLayerPtr& layer) {
     if (!layer) return -1;
     layer->setComposition(impl_->composition_);
+    layer->clearParent();
     impl_->children_.push_back(layer);
     if (impl_->timelineFrames_.size() < impl_->children_.size()) {
         impl_->timelineFrames_.push_back(static_cast<int>(impl_->children_.size()) - 1);
@@ -94,9 +103,15 @@ int ArtifactSwitchLayer::addChildLayer(const ArtifactAbstractLayerPtr& layer) {
 
 bool ArtifactSwitchLayer::removeChildLayer(int index) {
     if (index < 0 || index >= static_cast<int>(impl_->children_.size())) return false;
+    if (impl_->children_[index]) {
+        impl_->children_[index]->clearParent();
+        impl_->children_[index]->setComposition(static_cast<void *>(nullptr));
+    }
     impl_->children_.erase(impl_->children_.begin() + index);
     if (index < static_cast<int>(impl_->timelineFrames_.size()))
         impl_->timelineFrames_.erase(impl_->timelineFrames_.begin() + index);
+    if (impl_->activeIndex_ > index)
+        --impl_->activeIndex_;
     if (impl_->activeIndex_ >= static_cast<int>(impl_->children_.size()))
         impl_->activeIndex_ = std::max(0, static_cast<int>(impl_->children_.size()) - 1);
     return true;
@@ -238,13 +253,16 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactSwitchLayer::getLayerPropertyGr
 }
 
 QJsonObject ArtifactSwitchLayer::toJson() const {
-    QJsonObject obj;
+    QJsonObject obj = ArtifactAbstract2DLayer::toJson();
+    obj["type"] = static_cast<int>(LayerType::Switch);
+    obj["layerType"] = QStringLiteral("Switch");
     QJsonArray children;
     for (size_t i = 0; i < impl_->children_.size(); ++i) {
         QJsonObject childObj;
         if (impl_->children_[i]) {
             childObj["id"] = impl_->children_[i]->id().toString();
             childObj["layerName"] = impl_->children_[i]->layerName();
+            childObj["layer"] = impl_->children_[i]->toJson();
         }
         childObj["index"] = static_cast<int>(i);
         children.append(childObj);
@@ -260,14 +278,59 @@ QJsonObject ArtifactSwitchLayer::toJson() const {
     return obj;
 }
 
+void ArtifactSwitchLayer::fromJsonProperties(const QJsonObject& obj) {
+    ArtifactAbstract2DLayer::fromJsonProperties(obj);
+    fromJson(obj);
+}
+
 void ArtifactSwitchLayer::fromJson(const QJsonObject& obj) {
-    impl_->activeIndex_ = obj.value("activeIndex").toInt(0);
     impl_->syncToTimeline_ = obj.value("syncToTimeline").toBool(false);
     impl_->timelineFrames_.clear();
     const QJsonArray frames = obj.value("timelineFrames").toArray();
     impl_->timelineFrames_.reserve(frames.size());
     for (const auto& val : frames) {
         impl_->timelineFrames_.push_back(val.toInt());
+    }
+
+    if (obj.contains("children") && obj.value("children").isArray()) {
+        for (auto& child : impl_->children_) {
+            if (child) {
+                child->setComposition(static_cast<void *>(nullptr));
+            }
+        }
+        impl_->children_.clear();
+
+        const QJsonArray children = obj.value("children").toArray();
+        for (const auto& value : children) {
+            if (!value.isObject()) {
+                continue;
+            }
+            const QJsonObject childObj = value.toObject();
+            if (!childObj.contains("layer") || !childObj.value("layer").isObject()) {
+                continue;
+            }
+            const auto child = ArtifactAbstractLayer::fromJson(
+                childObj.value("layer").toObject());
+            if (child) {
+                if (!obj.contains("id")) {
+                    child->setId(LayerID());
+                }
+                addChildLayer(child);
+            }
+        }
+    }
+
+    impl_->activeIndex_ = std::clamp(
+        obj.value("activeIndex").toInt(0), 0,
+        std::max(0, static_cast<int>(impl_->children_.size()) - 1));
+    if (impl_->timelineFrames_.size() < impl_->children_.size()) {
+        const size_t start = impl_->timelineFrames_.size();
+        impl_->timelineFrames_.resize(impl_->children_.size());
+        for (size_t i = start; i < impl_->timelineFrames_.size(); ++i) {
+            impl_->timelineFrames_[i] = static_cast<int>(i);
+        }
+    } else if (impl_->timelineFrames_.size() > impl_->children_.size()) {
+        impl_->timelineFrames_.resize(impl_->children_.size());
     }
 }
 

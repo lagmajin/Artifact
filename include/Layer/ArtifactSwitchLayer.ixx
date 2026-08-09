@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <QString>
+#include <QObject>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <wobjectdefs.h>
@@ -29,6 +30,7 @@ public:
     ArtifactSwitchLayer(const ArtifactSwitchLayer&) = delete;
     ArtifactSwitchLayer& operator=(const ArtifactSwitchLayer&) = delete;
 
+    void setComposition(QObject* comp) override;
     void setComposition(void* comp) override;
     void draw(ArtifactIRenderer* renderer) override;
     bool isSwitchLayer() const { return true; }
@@ -56,10 +58,11 @@ public:
     void applyLipSyncTrack(const ArtifactCore::LipSyncTrack& track);
 
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+    void fromJsonProperties(const QJsonObject& obj) override;
     bool hasChildren() const { return childrenCount() > 0; }
     int childrenCount() const;
 
-    QJsonObject toJson() const;
+    QJsonObject toJson() const override;
     void fromJson(const QJsonObject& obj);
 };
 

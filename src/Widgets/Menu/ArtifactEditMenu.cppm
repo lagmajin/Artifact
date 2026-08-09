@@ -7,6 +7,9 @@ module;
 #include <QDebug>
 #include <QStatusBar>
 #include <QJsonArray>
+#include <QJsonObject>
+#include <QHash>
+#include <vector>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QVBoxLayout>
@@ -23,6 +26,8 @@ import Artifact.Service.ActiveContext;
 import Artifact.Service.Application;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Factory;
+import Artifact.Layer.Clone;
 import Artifact.Composition.Abstract;
 import Clipboard.ClipboardManager;
 import Artifact.Widgets.UndoHistoryWidget;
@@ -349,10 +354,17 @@ private:
 
   if (selMgr) selMgr->clearSelection();
   int pasted = 0;
+  QHash<QString, LayerID> pastedLayerIdMap;
+  std::vector<ArtifactAbstractLayerPtr> pastedLayers;
 
   for (const auto& val : layersArray) {
    if (!val.isObject()) continue;
-   auto layer = ArtifactAbstractLayer::fromJson(val.toObject());
+   const QJsonObject sourceLayerObject = val.toObject();
+   const QString sourceLayerId =
+       sourceLayerObject.value(QStringLiteral("id")).toString().trimmed();
+   QJsonObject layerObject = sourceLayerObject;
+   layerObject.remove(QStringLiteral("id"));
+   auto layer = ArtifactLayerFactory::createFromJson(layerObject);
    if (!layer) continue;
 
    layer->setLayerName(layer->layerName() + " (Copy)");
@@ -375,7 +387,43 @@ private:
      }
     }
     if (selMgr) selMgr->addToSelection(layer);
+    pastedLayers.push_back(layer);
+    if (!sourceLayerId.isEmpty() && !LayerID(sourceLayerId).isNil()) {
+     pastedLayerIdMap.insert(sourceLayerId, layer->id());
+    }
     ++pasted;
+   }
+  }
+
+  for (const auto &pastedLayer : pastedLayers) {
+   if (!pastedLayer) continue;
+   const auto parentIt = pastedLayerIdMap.constFind(
+       pastedLayer->parentLayerId().toString());
+   if (parentIt != pastedLayerIdMap.constEnd()) {
+    pastedLayer->setParentById(parentIt.value());
+   }
+   if (auto *cloneLayer = dynamic_cast<ArtifactCloneLayer *>(
+           pastedLayer.get())) {
+    auto cloneSettings = cloneLayer->cloneSettings();
+    const auto sourceIt = pastedLayerIdMap.constFind(
+        cloneSettings.sourceLayerId.toString());
+    if (sourceIt != pastedLayerIdMap.constEnd()) {
+     cloneSettings.sourceLayerId = sourceIt.value();
+     cloneLayer->setCloneSettings(cloneSettings);
+    }
+   }
+   auto matteReferences = pastedLayer->matteReferences();
+   bool matteReferencesChanged = false;
+   for (auto &matteReference : matteReferences) {
+    const auto sourceIt = pastedLayerIdMap.constFind(
+        matteReference.sourceLayerId.toString());
+    if (sourceIt != pastedLayerIdMap.constEnd()) {
+     matteReference.sourceLayerId = sourceIt.value();
+     matteReferencesChanged = true;
+    }
+   }
+   if (matteReferencesChanged) {
+    pastedLayer->setMatteReferences(matteReferences);
    }
   }
 

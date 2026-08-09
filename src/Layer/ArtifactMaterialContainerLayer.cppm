@@ -3,6 +3,7 @@ module;
 #include <algorithm>
 #include <QPointF>
 #include <QTransform>
+#include <QObject>
 #include <QJsonArray>
 #include <QJsonObject>
 
@@ -33,10 +34,21 @@ QJsonObject MaterialContainerSlot::toJson() const {
 MaterialContainerSlot MaterialContainerSlot::fromJson(const QJsonObject& obj) {
     MaterialContainerSlot slot;
     slot.slotId = obj.value("slotId").toString();
+    if (slot.slotId.isEmpty()) {
+        slot.slotId = obj.value("id").toString();
+    }
     slot.name = obj.value("name").toString();
     slot.enabled = obj.value("enabled").toBool(true);
     if (obj.contains("layer") && obj.value("layer").isObject()) {
         slot.layer = ArtifactAbstractLayer::fromJson(obj.value("layer").toObject());
+    } else if (obj.contains("payload") && obj.value("payload").isObject()) {
+        QJsonObject layerObject = obj.value("payload").toObject();
+        const QString layerType = obj.value("layerType").toString().trimmed();
+        if (!layerType.isEmpty() && !layerObject.contains("type") &&
+            !layerObject.contains("layerType")) {
+            layerObject.insert("layerType", layerType);
+        }
+        slot.layer = ArtifactAbstractLayer::fromJson(layerObject);
     }
     return slot;
 }
@@ -62,6 +74,7 @@ void ArtifactMaterialContainerLayer::setComposition(QObject* comp) {
     ArtifactAbstractLayer::setComposition(comp);
     for (auto& slot : impl_->materials) {
         if (slot.layer) {
+            slot.layer->clearParent();
             slot.layer->setComposition(comp);
         }
     }
@@ -72,6 +85,7 @@ void ArtifactMaterialContainerLayer::setComposition(void* comp) {
     auto* composition = compositionObject();
     for (auto& slot : impl_->materials) {
         if (slot.layer) {
+            slot.layer->clearParent();
             slot.layer->setComposition(composition);
         }
     }
@@ -138,7 +152,12 @@ ArtifactAbstractLayerPtr ArtifactMaterialContainerLayer::materialAt(int index) c
 }
 
 ArtifactAbstractLayerPtr ArtifactMaterialContainerLayer::exposedLayer() const {
-    return materialAt(impl_->exposedIndex);
+    if (impl_->exposedIndex < 0 ||
+        impl_->exposedIndex >= static_cast<int>(impl_->materials.size())) {
+        return {};
+    }
+    const auto& slot = impl_->materials[static_cast<size_t>(impl_->exposedIndex)];
+    return slot.enabled ? slot.layer : ArtifactAbstractLayerPtr{};
 }
 
 void ArtifactMaterialContainerLayer::addMaterial(ArtifactAbstractLayerPtr layer, const QString& name) {
@@ -155,6 +174,7 @@ void ArtifactMaterialContainerLayer::insertMaterialAt(int index, ArtifactAbstrac
     if (index > static_cast<int>(impl_->materials.size())) {
         index = static_cast<int>(impl_->materials.size());
     }
+    const bool hadMaterials = !impl_->materials.empty();
     MaterialContainerSlot slot;
     slot.slotId = QStringLiteral("slot-%1").arg(layer->id().toQString());
     slot.name = name.isEmpty() ? layer->layerName() : name;
@@ -162,7 +182,7 @@ void ArtifactMaterialContainerLayer::insertMaterialAt(int index, ArtifactAbstrac
     slot.layer->setComposition(compositionObject());
     slot.layer->clearParent();
     impl_->materials.insert(impl_->materials.begin() + index, std::move(slot));
-    if (impl_->exposedIndex >= index) {
+    if (hadMaterials && impl_->exposedIndex >= index) {
         ++impl_->exposedIndex;
     }
     Q_EMIT changed();
@@ -172,17 +192,33 @@ bool ArtifactMaterialContainerLayer::removeMaterialAt(int index) {
     if (index < 0 || index >= static_cast<int>(impl_->materials.size())) {
         return false;
     }
+    if (impl_->materials[index].layer) {
+        impl_->materials[index].layer->clearParent();
+        impl_->materials[index].layer->setComposition(
+            static_cast<QObject *>(nullptr));
+    }
     impl_->materials.erase(impl_->materials.begin() + index);
     if (impl_->materials.empty()) {
         impl_->exposedIndex = 0;
-    } else if (impl_->exposedIndex >= static_cast<int>(impl_->materials.size())) {
-        impl_->exposedIndex = static_cast<int>(impl_->materials.size()) - 1;
+    } else {
+        if (impl_->exposedIndex > index) {
+            --impl_->exposedIndex;
+        }
+        if (impl_->exposedIndex >= static_cast<int>(impl_->materials.size())) {
+            impl_->exposedIndex = static_cast<int>(impl_->materials.size()) - 1;
+        }
     }
     Q_EMIT changed();
     return true;
 }
 
 void ArtifactMaterialContainerLayer::clearMaterials() {
+    for (auto& slot : impl_->materials) {
+        if (slot.layer) {
+            slot.layer->clearParent();
+            slot.layer->setComposition(static_cast<QObject *>(nullptr));
+        }
+    }
     impl_->materials.clear();
     impl_->exposedIndex = 0;
     Q_EMIT changed();
@@ -232,7 +268,11 @@ void ArtifactMaterialContainerLayer::fromJsonProperties(const QJsonObject& obj) 
         for (const auto& v : arr) {
             auto slot = MaterialContainerSlot::fromJson(v.toObject());
             if (slot.layer) {
+                if (!obj.contains("id")) {
+                    slot.layer->setId(LayerID());
+                }
                 slot.layer->setComposition(compositionObject());
+                slot.layer->clearParent();
             }
             impl_->materials.push_back(slot);
         }

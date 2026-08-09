@@ -120,9 +120,9 @@ QString tabTextColor(const bool isCurrentTab)
 
 // isCurrentTab  — this tab is the front (visible) tab in its dock area.
 // emphasize      — this tab is also in the active (focused) dock.
-// Tab background uses a "recessed pocket" design:
-//   selected tab  → backgroundColor (#24272D) matches the content area surface
-//   background tabs → secondaryBackgroundColor (#30343B) appear raised/inactive
+// Tab background uses the theme selection token for the visible tab so the
+// selected document remains legible even when the dock content has the same
+// base background as the tab strip.
 void applyTabLabelColors(ads::CDockWidgetTab* tab,
                          const QString& color,
                          const bool emphasize,
@@ -134,10 +134,10 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab,
 
     const QColor textColor(color);
     const QColor themeBorder = QColor(ArtifactCore::currentDCCTheme().borderColor);
-    // Selected tab blends with the content area; inactive tabs stand out slightly.
+    const auto& theme = ArtifactCore::currentDCCTheme();
     const QColor tabBg = isCurrentTab
-        ? QColor(ArtifactCore::currentDCCTheme().backgroundColor)
-        : QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
+        ? QColor(theme.selectionColor)
+        : QColor(theme.secondaryBackgroundColor);
 
     // Tab frame itself
     tab->setAttribute(Qt::WA_StyledBackground, true);

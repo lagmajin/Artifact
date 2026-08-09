@@ -37,6 +37,7 @@ import Artifact.Project.Statistics;
 import Artifact.Composition.InitParams;
 import Artifact.Service.Project;
 import Artifact.Widgets.ImportAssetsDialog;
+import Artifact.Export.Dialog;
 import Application.AppSettings;
 import Utils.Path;
 import Artifact.Widgets.AppDialogs;
@@ -188,6 +189,7 @@ public:
     QAction* exportCurrentFrameAction = nullptr;
     QAction* exportWorkAreaAction = nullptr;
     QAction* exportProjectPackageAction = nullptr;
+    QAction* exportCompositionAction = nullptr;
     QMenu* recentProjectsMenu = nullptr;
     QStringList cachedRecentProjects_; // 変更がない場合にメニューを再構築しないためのキャッシュ
     ArtifactFileMenu* menu_ = nullptr;
@@ -203,6 +205,7 @@ public:
     void handleExportCurrentFrame();
     void handleExportWorkArea();
     void handleExportProjectPackage();
+    void handleExportComposition();
     void handleExportFontUsage();
     void openProjectPath(const QString& path, bool addToRecent);
 };
@@ -242,6 +245,11 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
 
     exportFontUsageAction = new QAction(menuText(QStringLiteral("menu.file.export_fonts"), QStringLiteral("使用フォントレポートを書き出す...")));
 
+    exportCompositionAction = new QAction(QStringLiteral("CompositionをゲームUI形式で書き出す..."), menu);
+    exportCurrentFrameAction = new QAction(QStringLiteral("現在のフレームを書き出す..."), menu);
+    exportWorkAreaAction = new QAction(QStringLiteral("ワークエリアを書き出す..."), menu);
+    exportProjectPackageAction = new QAction(QStringLiteral("プロジェクトをパッケージ化..."), menu);
+
     restartAction = new QAction(menuText(QStringLiteral("menu.file.restart"), QStringLiteral("再起動")));
     restartAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_restart.svg")));
     
@@ -261,6 +269,13 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     menu->addAction(closeProjectAction);
     menu->addAction(revealProjectFolderAction);
     menu->addAction(exportFontUsageAction);
+    exportMenu = menu->addMenu(QStringLiteral("エクスポート"));
+    exportMenu->addAction(exportCompositionAction);
+    exportMenu->addSeparator();
+    exportMenu->addAction(exportCurrentFrameAction);
+    exportMenu->addAction(exportWorkAreaAction);
+    exportMenu->addSeparator();
+    exportMenu->addAction(exportProjectPackageAction);
     recentProjectsMenu = menu->addMenu(menuText(QStringLiteral("menu.file.recent_projects"), QStringLiteral("最近使ったプロジェクト")));
     recentProjectsMenu->setIcon(QIcon(resolveIconPath("Studio/filemenu_recent_projects.svg")));
     menu->addSeparator();
@@ -276,6 +291,14 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     QObject::connect(revealProjectFolderAction, &QAction::triggered, menu, [this]() { handleRevealProjectFolder(); });
     QObject::connect(exportFontUsageAction, &QAction::triggered, menu,
                      [this]() { handleExportFontUsage(); });
+    QObject::connect(exportCompositionAction, &QAction::triggered, menu,
+                     [this]() { handleExportComposition(); });
+    QObject::connect(exportCurrentFrameAction, &QAction::triggered, menu,
+                     [this]() { handleExportCurrentFrame(); });
+    QObject::connect(exportWorkAreaAction, &QAction::triggered, menu,
+                     [this]() { handleExportWorkArea(); });
+    QObject::connect(exportProjectPackageAction, &QAction::triggered, menu,
+                     [this]() { handleExportProjectPackage(); });
     QObject::connect(closeProjectAction, &QAction::triggered, menu, &ArtifactFileMenu::projectClosed);
     QObject::connect(restartAction, &QAction::triggered, menu, &ArtifactFileMenu::restartApplication);
     QObject::connect(quitAction, &QAction::triggered, menu, &ArtifactFileMenu::quitApplication);
@@ -755,6 +778,28 @@ void ArtifactFileMenu::Impl::handleExportProjectPackage()
                              QStringLiteral("プロジェクトをパッケージ化しました。\n%1").arg(dirPath));
 }
 
+void ArtifactFileMenu::Impl::handleExportComposition()
+{
+    if (!menu_) return;
+    auto* service = ArtifactProjectService::instance();
+    if (!service || !service->hasProject()) {
+        QMessageBox::warning(menu_, QStringLiteral("Composition Export"),
+                             QStringLiteral("プロジェクトが開かれていません。"));
+        return;
+    }
+    const auto composition = service->currentComposition().lock();
+    if (!composition) {
+        QMessageBox::warning(menu_, QStringLiteral("Composition Export"),
+                             QStringLiteral("コンポジションが選択されていません。"));
+        return;
+    }
+    QString errorMessage;
+    if (ArtifactExportDialog::run(menu_, composition, &errorMessage)) {
+        QMessageBox::information(menu_, QStringLiteral("Composition Export"),
+                                 QStringLiteral("コンポジションを書き出しました。"));
+    }
+}
+
 void ArtifactFileMenu::Impl::handleExportFontUsage()
 {
     if (!menu_) return;
@@ -792,6 +837,13 @@ void ArtifactFileMenu::Impl::rebuildMenu()
     importAssetsAction->setEnabled(hasProject);
     revealProjectFolderAction->setEnabled(hasProject);
     exportFontUsageAction->setEnabled(hasProject);
+    const bool hasComposition = hasProject && service &&
+                                 static_cast<bool>(service->currentComposition().lock());
+    if (exportMenu) exportMenu->setEnabled(hasProject);
+    if (exportCompositionAction) exportCompositionAction->setEnabled(hasComposition);
+    if (exportCurrentFrameAction) exportCurrentFrameAction->setEnabled(hasComposition);
+    if (exportWorkAreaAction) exportWorkAreaAction->setEnabled(hasComposition);
+    if (exportProjectPackageAction) exportProjectPackageAction->setEnabled(hasProject);
 
     // 最近使ったプロジェクトメニューを更新
     if (recentProjectsMenu) {

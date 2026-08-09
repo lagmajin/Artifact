@@ -1744,7 +1744,8 @@ bool ArtifactTextLayer::isStrikethrough() const {
 
 void ArtifactTextLayer::setHorizontalAlignment(
     TextHorizontalAlignment alignment) {
-  impl_->paragraphStyle_.horizontalAlignment = alignment;
+  impl_->paragraphStyle_.horizontalAlignment = static_cast<TextHorizontalAlignment>(
+      std::clamp(static_cast<int>(alignment), 0, 3));
   markDirty();
 }
 
@@ -1753,7 +1754,8 @@ TextHorizontalAlignment ArtifactTextLayer::horizontalAlignment() const {
 }
 
 void ArtifactTextLayer::setVerticalAlignment(TextVerticalAlignment alignment) {
-  impl_->paragraphStyle_.verticalAlignment = alignment;
+  impl_->paragraphStyle_.verticalAlignment = static_cast<TextVerticalAlignment>(
+      std::clamp(static_cast<int>(alignment), 0, 2));
   markDirty();
 }
 
@@ -1762,7 +1764,8 @@ TextVerticalAlignment ArtifactTextLayer::verticalAlignment() const {
 }
 
 void ArtifactTextLayer::setWrapMode(TextWrapMode wrapMode) {
-  impl_->paragraphStyle_.wrapMode = wrapMode;
+  impl_->paragraphStyle_.wrapMode = static_cast<TextWrapMode>(
+      std::clamp(static_cast<int>(wrapMode), 0, 3));
   markDirty();
 }
 
@@ -1771,7 +1774,8 @@ TextWrapMode ArtifactTextLayer::wrapMode() const {
 }
 
 void ArtifactTextLayer::setLayoutMode(TextLayoutMode mode) {
-  impl_->layoutMode_ = mode;
+  impl_->layoutMode_ = static_cast<TextLayoutMode>(
+      std::clamp(static_cast<int>(mode), 0, 2));
   markDirty();
 }
 
@@ -1784,7 +1788,8 @@ bool ArtifactTextLayer::isBoxText() const {
 }
 
 void ArtifactTextLayer::setWritingMode(TextWritingMode mode) {
-  impl_->writingMode_ = mode;
+  impl_->writingMode_ = static_cast<TextWritingMode>(
+      std::clamp(static_cast<int>(mode), 0, 1));
   markDirty();
 }
 

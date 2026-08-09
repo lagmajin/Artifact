@@ -1,9 +1,13 @@
 module;
 #include <utility>
+#include <functional>
 #include <QFile>
+#include <QFileInfo>
+#include <QDir>
 #include <QDebug>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonValue>
 #include <QDateTime>
 #include <QStringList>
 module Artifact.Project.Exporter;
@@ -97,6 +101,137 @@ namespace Artifact
   }
 
   QJsonObject obj = projectPtr_->toJson();
+
+  // Keep the existing absolute path as a fallback while recording a project-
+  // relative candidate for relocation. Older importers ignore the extra keys.
+  const QString projectDirectory = QFileInfo(outputPath_).absolutePath();
+  const auto relativePathFor = [&projectDirectory](const QString& path) {
+   const QFileInfo info(path);
+   if (path.trimmed().isEmpty() || !info.isAbsolute()) {
+    return QString();
+   }
+   return QDir(projectDirectory).relativeFilePath(info.absoluteFilePath());
+  };
+  QJsonObject assets = obj.value(QStringLiteral("assets")).toObject();
+  QJsonObject sourceRegistry = assets.value(QStringLiteral("sourceRegistry")).toObject();
+  QJsonArray sources = sourceRegistry.value(QStringLiteral("sources")).toArray();
+  for (int i = 0; i < sources.size(); ++i) {
+   if (!sources.at(i).isObject()) {
+    continue;
+   }
+   QJsonObject source = sources.at(i).toObject();
+   const QString relative = relativePathFor(
+       source.value(QStringLiteral("path")).toString());
+   if (!relative.isEmpty()) {
+    source.insert(QStringLiteral("pathRelative"), relative);
+   }
+   sources[i] = source;
+  }
+  if (!sources.isEmpty()) {
+   sourceRegistry.insert(QStringLiteral("sources"), sources);
+   assets.insert(QStringLiteral("sourceRegistry"), sourceRegistry);
+   obj.insert(QStringLiteral("assets"), assets);
+  }
+  std::function<void(QJsonObject&)> annotateProjectItem =
+      [&](QJsonObject& item) {
+       if (item.value(QStringLiteral("type")).toString() ==
+           QStringLiteral("footage")) {
+        const QString filePath = item.value(QStringLiteral("filePath")).toString();
+        const QString relativePath = relativePathFor(filePath);
+        if (!relativePath.isEmpty()) {
+         item.insert(QStringLiteral("filePathRelative"), relativePath);
+        }
+        const QJsonArray sequencePaths =
+            item.value(QStringLiteral("sequencePaths")).toArray();
+        if (!sequencePaths.isEmpty()) {
+         QJsonArray relativeSequencePaths;
+         for (const auto& value : sequencePaths) {
+          const QString relative = relativePathFor(value.toString());
+          relativeSequencePaths.append(relative.isEmpty() ? value : relative);
+         }
+         item.insert(QStringLiteral("sequencePathsRelative"),
+                     relativeSequencePaths);
+        }
+       }
+       QJsonArray children = item.value(QStringLiteral("children")).toArray();
+       for (int i = 0; i < children.size(); ++i) {
+        if (!children.at(i).isObject()) {
+         continue;
+        }
+        QJsonObject child = children.at(i).toObject();
+        annotateProjectItem(child);
+        children[i] = child;
+       }
+       if (!children.isEmpty()) {
+        item.insert(QStringLiteral("children"), children);
+       }
+      };
+  QJsonArray projectItems = obj.value(QStringLiteral("projectItems")).toArray();
+  for (int i = 0; i < projectItems.size(); ++i) {
+   if (!projectItems.at(i).isObject()) {
+    continue;
+   }
+   QJsonObject item = projectItems.at(i).toObject();
+   annotateProjectItem(item);
+   projectItems[i] = item;
+  }
+  obj.insert(QStringLiteral("projectItems"), projectItems);
+
+  std::function<void(QJsonObject&)> annotateLayerSourcePaths =
+      [&](QJsonObject& object) {
+       const QStringList keys = object.keys();
+       for (const QString& key : keys) {
+        const QJsonValue value = object.value(key);
+        const bool isSourcePath =
+            key == QStringLiteral("sourcePath") ||
+            key.endsWith(QStringLiteral(".sourcePath"));
+        const bool isSequencePaths =
+            key == QStringLiteral("sequencePaths") ||
+            key.endsWith(QStringLiteral(".sequencePaths"));
+        if (isSourcePath && value.isString()) {
+         const QString relative = relativePathFor(value.toString());
+         if (!relative.isEmpty()) {
+          object.insert(key + QStringLiteral("Relative"), relative);
+         }
+        } else if (isSequencePaths && value.isArray()) {
+         QJsonArray relativePaths;
+         for (const auto& entry : value.toArray()) {
+          const QString relative = relativePathFor(entry.toString());
+          relativePaths.append(relative.isEmpty() ? entry : relative);
+         }
+         if (!relativePaths.isEmpty()) {
+          object.insert(key + QStringLiteral("Relative"), relativePaths);
+         }
+        }
+
+        if (value.isObject()) {
+         QJsonObject child = value.toObject();
+         annotateLayerSourcePaths(child);
+         object.insert(key, child);
+        } else if (value.isArray()) {
+         QJsonArray children = value.toArray();
+         for (int i = 0; i < children.size(); ++i) {
+          if (!children.at(i).isObject()) {
+           continue;
+          }
+          QJsonObject child = children.at(i).toObject();
+          annotateLayerSourcePaths(child);
+          children[i] = child;
+         }
+         object.insert(key, children);
+        }
+       }
+      };
+  QJsonArray compositions = obj.value(QStringLiteral("compositions")).toArray();
+  for (int i = 0; i < compositions.size(); ++i) {
+   if (!compositions.at(i).isObject()) {
+    continue;
+   }
+   QJsonObject composition = compositions.at(i).toObject();
+   annotateLayerSourcePaths(composition);
+   compositions[i] = composition;
+  }
+  obj.insert(QStringLiteral("compositions"), compositions);
 
   // Project-scoped OCIO selection. Keep this at the project root so older
   // importers can ignore it without affecting composition/layer data.

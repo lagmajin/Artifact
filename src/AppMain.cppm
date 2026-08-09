@@ -88,6 +88,7 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QSaveFile>
 #include <QScopeGuard>
 #include <QSet>
+#include <QHash>
 #include <QStringList>
 #include <QVariant>
 #include <Diagnostics/WidgetCreationDiagnostics.hpp>
@@ -109,6 +110,7 @@ import Thread.PreciseTicker;
 import Artifact.Widgets.PlaybackControlWidget;
 import Artifact.Widgets.PlaybackControlTestWidget;
 import Artifact.Layer.Factory;
+import Artifact.Layer.Clone;
 import Transform;
 import Draw;
 import Glow;
@@ -3302,17 +3304,63 @@ int main(int argc, char *argv[]) {
         if (!svc) return;
         auto comp = svc->currentComposition().lock();
         if (!comp) return;
+        QHash<QString, LayerID> pastedLayerIdMap;
+        std::vector<ArtifactAbstractLayerPtr> pastedLayers;
         for (const auto &layerVal : layersArray) {
             if (!layerVal.isObject()) continue;
-            const QJsonObject layerObj = layerVal.toObject();
+            const QJsonObject sourceLayerObject = layerVal.toObject();
+            const QString sourceLayerId =
+                sourceLayerObject.value(QStringLiteral("id")).toString().trimmed();
+            QJsonObject layerObj = sourceLayerObject;
+            // Pasting creates a new layer; preserve source references but never
+            // reuse the copied layer's own composition ID.
+            layerObj.remove(QStringLiteral("id"));
             auto layer = ArtifactLayerFactory::createFromJson(layerObj);
             if (layer) {
-                comp->appendLayerTop(layer);
+                const auto appendResult = comp->appendLayerTop(layer);
+                if (!appendResult.success) {
+                  continue;
+                }
+                pastedLayers.push_back(layer);
+                if (!sourceLayerId.isEmpty() && !LayerID(sourceLayerId).isNil()) {
+                  pastedLayerIdMap.insert(sourceLayerId, layer->id());
+                }
                 if (auto *app = ArtifactApplicationManager::instance()) {
                   if (auto *selectionManager = app->layerSelectionManager()) {
                     selectionManager->selectLayer(layer);
                   }
                 }
+            }
+        }
+        for (const auto &pastedLayer : pastedLayers) {
+            if (!pastedLayer) continue;
+            const auto parentIt = pastedLayerIdMap.constFind(
+                pastedLayer->parentLayerId().toString());
+            if (parentIt != pastedLayerIdMap.constEnd()) {
+                pastedLayer->setParentById(parentIt.value());
+            }
+            if (auto *cloneLayer = dynamic_cast<ArtifactCloneLayer *>(
+                    pastedLayer.get())) {
+                auto cloneSettings = cloneLayer->cloneSettings();
+                const auto sourceIt = pastedLayerIdMap.constFind(
+                    cloneSettings.sourceLayerId.toString());
+                if (sourceIt != pastedLayerIdMap.constEnd()) {
+                    cloneSettings.sourceLayerId = sourceIt.value();
+                    cloneLayer->setCloneSettings(cloneSettings);
+                }
+            }
+            auto matteReferences = pastedLayer->matteReferences();
+            bool matteReferencesChanged = false;
+            for (auto &matteReference : matteReferences) {
+                const auto sourceIt = pastedLayerIdMap.constFind(
+                    matteReference.sourceLayerId.toString());
+                if (sourceIt != pastedLayerIdMap.constEnd()) {
+                    matteReference.sourceLayerId = sourceIt.value();
+                    matteReferencesChanged = true;
+                }
+            }
+            if (matteReferencesChanged) {
+                pastedLayer->setMatteReferences(matteReferences);
             }
         }
     });
@@ -3413,9 +3461,12 @@ int main(int argc, char *argv[]) {
         QStringLiteral("inspectorEffectsScrollArea"),
         Qt::FindDirectChildrenOnly);
     if (effectsPanel) {
-      mw->addDockedWidgetTabbed(QStringLiteral("Effects"),
-                                ads::RightDockWidgetArea, effectsPanel,
-                                QStringLiteral("Inspector"));
+      effectsPanel->setMinimumWidth(280);
+      // Effects is a peer editing surface to Inspector. Keep it in its own
+      // dock so the effect rack and layer properties can remain visible
+      // together instead of competing for one tab strip.
+      mw->addDockedWidget(QStringLiteral("Effects"),
+                          ads::RightDockWidgetArea, effectsPanel);
     }
     auto *propertyPanel = WidgetCreationDiagnostics::createMeasured(
         QStringLiteral("Properties"), QStringLiteral("eager-widget"),

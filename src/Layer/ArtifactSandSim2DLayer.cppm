@@ -228,6 +228,7 @@ QImage ArtifactSandSim2DLayer::getThumbnail(int width, int height) const
 QJsonObject ArtifactSandSim2DLayer::toJson() const
 {
     QJsonObject obj = ArtifactAbstractLayer::toJson();
+    obj["type"] = static_cast<int>(LayerType::SandSim2D);
     obj["simResolution"] = impl_->simRes_;
     obj["toolMaterial"] = static_cast<int>(impl_->toolMat_);
     obj["toolRadius"] = impl_->toolRadius_;
@@ -241,7 +242,7 @@ void ArtifactSandSim2DLayer::fromJsonProperties(const QJsonObject& obj)
         setSimResolution(obj["simResolution"].toInt());
     }
     if (obj.contains("toolMaterial")) {
-        impl_->toolMat_ = static_cast<SandMaterial>(obj["toolMaterial"].toInt());
+        setToolMaterial(static_cast<SandMaterial>(obj["toolMaterial"].toInt()));
     }
     if (obj.contains("toolRadius")) {
         impl_->toolRadius_ = obj["toolRadius"].toInt();
@@ -294,7 +295,7 @@ bool ArtifactSandSim2DLayer::setLayerPropertyValue(const QString& propertyPath, 
         return true;
     }
     if (propertyPath == QStringLiteral("sandSim.toolMaterial")) {
-        impl_->toolMat_ = static_cast<SandMaterial>(value.toInt());
+        setToolMaterial(static_cast<SandMaterial>(value.toInt()));
         return true;
     }
     if (propertyPath == QStringLiteral("sandSim.toolRadius")) {
@@ -332,7 +333,8 @@ int ArtifactSandSim2DLayer::simResolution() const
 
 void ArtifactSandSim2DLayer::setToolMaterial(ArtifactCore::SandMaterial mat)
 {
-    impl_->toolMat_ = mat;
+    impl_->toolMat_ = static_cast<SandMaterial>(
+        std::clamp(static_cast<int>(mat), 0, 7));
 }
 
 ArtifactCore::SandMaterial ArtifactSandSim2DLayer::toolMaterial() const

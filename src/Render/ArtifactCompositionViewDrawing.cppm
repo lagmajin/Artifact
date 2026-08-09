@@ -14,6 +14,7 @@ module;
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <opencv2/opencv.hpp>
@@ -28,6 +29,7 @@ import Artifact.Render.IRenderer;
 import Artifact.Render.Context;
 import Artifact.Render.GPUTextureCacheManager;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Matte;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
@@ -110,7 +112,8 @@ export void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                         int64_t cacheFrameNumber = std::numeric_limits<int64_t>::min(),
                                         bool offlineRender = false,
                                         DetailLevel lod = DetailLevel::High,
-                                        const std::vector<ArtifactCore::Light>* sceneLights = nullptr);
+                                        const std::vector<ArtifactCore::Light>* sceneLights = nullptr,
+                                        const QHash<ArtifactCore::Id, QImage>* matteSourceImages = nullptr);
 
 export ArtifactCore::SurfaceColorDescriptor qImageCvMatSurfaceDescriptor(
     const QImage& image)
@@ -163,10 +166,27 @@ export QImage makeVersionedSolidGradientImage(
   const float width = static_cast<float>(size.width());
   const float height = static_cast<float>(size.height());
   const float aspect = std::max(width / std::max(height, 1.0f), 0.0001f);
-  const float radians = angleDegrees * 3.14159265358979323846f / 180.0f;
+  const float safeAngle = std::isfinite(angleDegrees) ? angleDegrees : 90.0f;
+  const float safeCenterX = std::isfinite(centerX) ? centerX : 0.5f;
+  const float safeCenterY = std::isfinite(centerY) ? centerY : 0.5f;
+  const float safeScale = std::isfinite(scale) ? std::max(scale, 0.0001f)
+                                                : 1.0f;
+  const float safeOffset = std::isfinite(offset) ? offset : 0.0f;
+  const float normalizedAngle = std::fmod(safeAngle, 360.0f);
+  const auto safeColorChannel = [](float value, float fallback) {
+    return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+  };
+  const float safeStartR = safeColorChannel(startColor.r(), 0.0f);
+  const float safeStartG = safeColorChannel(startColor.g(), 0.0f);
+  const float safeStartB = safeColorChannel(startColor.b(), 0.0f);
+  const float safeStartA = safeColorChannel(startColor.a(), 1.0f);
+  const float safeEndR = safeColorChannel(endColor.r(), 0.0f);
+  const float safeEndG = safeColorChannel(endColor.g(), 0.0f);
+  const float safeEndB = safeColorChannel(endColor.b(), 0.0f);
+  const float safeEndA = safeColorChannel(endColor.a(), 1.0f);
+  const float radians = normalizedAngle * 3.14159265358979323846f / 180.0f;
   const float directionX = std::cos(radians);
   const float directionY = -std::sin(radians);
-  const float safeScale = std::max(scale, 0.0001f);
   const bool linearColorInterpolation =
       colorPipelineVersion >=
       ArtifactAbstractComposition::CanonicalColorPipelineVersion;
@@ -176,15 +196,18 @@ export QImage makeVersionedSolidGradientImage(
         std::clamp(value, 0.0f, 1.0f));
   };
   const float startLinear[3] = {
-      startColor.a() <= 1.0e-6f ? 0.0f : decode(startColor.r()),
-      startColor.a() <= 1.0e-6f ? 0.0f : decode(startColor.g()),
-      startColor.a() <= 1.0e-6f ? 0.0f : decode(startColor.b())};
+      safeStartA <= 1.0e-6f ? 0.0f : decode(safeStartR),
+      safeStartA <= 1.0e-6f ? 0.0f : decode(safeStartG),
+      safeStartA <= 1.0e-6f ? 0.0f : decode(safeStartB)};
   const float endLinear[3] = {
-      endColor.a() <= 1.0e-6f ? 0.0f : decode(endColor.r()),
-      endColor.a() <= 1.0e-6f ? 0.0f : decode(endColor.g()),
-      endColor.a() <= 1.0e-6f ? 0.0f : decode(endColor.b())};
+      safeEndA <= 1.0e-6f ? 0.0f : decode(safeEndR),
+      safeEndA <= 1.0e-6f ? 0.0f : decode(safeEndG),
+      safeEndA <= 1.0e-6f ? 0.0f : decode(safeEndB)};
 
   const auto spreadGradient = [fillType](float value) {
+    if (!std::isfinite(value)) {
+      return std::isnan(value) ? 0.5f : (value > 0.0f ? 1.0f : 0.0f);
+    }
     if (fillType == 4) {
       return value - std::floor(value);
     }
@@ -203,8 +226,8 @@ export QImage makeVersionedSolidGradientImage(
       const float v = (static_cast<float>(y) + 0.5f) / height;
       for (int x = 0; x < size.width(); ++x) {
         const float u = (static_cast<float>(x) + 0.5f) / width;
-        const float localX = (u - centerX) * aspect;
-        const float localY = v - centerY;
+        const float localX = (u - safeCenterX) * aspect;
+        const float localY = v - safeCenterY;
         float t = 0.0f;
         if (fillType == 2) {
           const float radius =
@@ -212,16 +235,16 @@ export QImage makeVersionedSolidGradientImage(
                        0.5f * std::sqrt(aspect * aspect + 1.0f) * safeScale);
           t = std::sqrt(localX * localX + localY * localY) / radius;
         } else if (fillType == 3) {
-          t = std::atan2(v - centerY, u - centerX) /
+          t = std::atan2(v - safeCenterY, u - safeCenterX) /
                   (2.0f * 3.14159265358979323846f) +
-              0.5f + angleDegrees / 360.0f;
+              0.5f + normalizedAngle / 360.0f;
         } else {
           const float halfSpan =
               std::max(0.0001f,
                        0.5f * std::sqrt(aspect * aspect + 1.0f) * safeScale);
           t = (localX * directionX + localY * directionY) /
                   (2.0f * halfSpan) +
-              0.5f + offset;
+              0.5f + safeOffset;
         }
         t = spreadGradient(t);
         if (reverse) {
@@ -229,7 +252,7 @@ export QImage makeVersionedSolidGradientImage(
         }
 
         const float alpha = std::clamp(
-            startColor.a() + (endColor.a() - startColor.a()) * t, 0.0f, 1.0f);
+            safeStartA + (safeEndA - safeStartA) * t, 0.0f, 1.0f);
         float encoded[3]{};
         for (int channel = 0; channel < 3; ++channel) {
           if (linearColorInterpolation) {
@@ -238,12 +261,12 @@ export QImage makeVersionedSolidGradientImage(
             encoded[channel] =
                 ArtifactCore::ColorTransferFunction::linearToSRGB(linear);
           } else {
-            const float start = channel == 0 ? startColor.r()
-                                : channel == 1 ? startColor.g()
-                                               : startColor.b();
-            const float end = channel == 0 ? endColor.r()
-                              : channel == 1 ? endColor.g()
-                                             : endColor.b();
+            const float start = channel == 0 ? safeStartR
+                                : channel == 1 ? safeStartG
+                                               : safeStartB;
+            const float end = channel == 0 ? safeEndR
+                              : channel == 1 ? safeEndG
+                                             : safeEndB;
             encoded[channel] = start + (end - start) * t;
           }
           encoded[channel] = std::clamp(encoded[channel], 0.0f, 1.0f) * alpha;
@@ -569,14 +592,15 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
 
   if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
     key += QStringLiteral(
-               "|image|src=%1|rev=%2|fit=%3|size=%4x%5|cs=%6|tf=%7")
+               "|image|src=%1|rev=%2|fit=%3|size=%4x%5|cs=%6|tf=%7|crop=%8")
                .arg(imageLayer->sourcePath())
                .arg(imageLayer->sourceVersion())
                .arg(imageLayer->fitToLayer() ? 1 : 0)
                .arg(surface.width())
                .arg(surface.height())
                .arg(imageLayer->inputColorSpace())
-               .arg(imageLayer->inputTransferFunction());
+               .arg(imageLayer->inputTransferFunction())
+               .arg(imageLayer->sourceCropSignature());
     return key;
   }
 
@@ -642,6 +666,20 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
   return QString();
 }
 
+bool hasEnabledMatteReferences(ArtifactAbstractLayer* targetLayer)
+{
+  if (!targetLayer) {
+    return false;
+  }
+  const auto references = targetLayer->matteReferences();
+  const auto targetId = targetLayer->id();
+  return std::any_of(references.cbegin(), references.cend(),
+                     [targetId](const LayerMatteReference& ref) {
+                       return ref.enabled && !ref.sourceLayerId.isNil() &&
+                              ref.sourceLayerId != targetId;
+                     });
+}
+
 bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
                                   const QImage& surface,
                                   ArtifactCore::ImageF32x4_RGBA* outBuffer)
@@ -651,7 +689,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
   }
 
   const bool hasMasks = targetLayer->hasMasks();
-  const bool hasMattes = !targetLayer->matteReferences().empty();
+  const bool hasMattes = hasEnabledMatteReferences(targetLayer);
   const auto effects = targetLayer->getEffects();
   bool hasRasterizerEffect = false;
   for (const auto& effect : effects) {
@@ -741,7 +779,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
   }
 
   const bool hasMasks = targetLayer->hasMasks();
-  const bool hasMattes = !targetLayer->matteReferences().empty();
+  const bool hasMattes = hasEnabledMatteReferences(targetLayer);
   const auto effects = targetLayer->getEffects();
   bool hasRasterizerEffect = false;
   for (const auto& effect : effects) {
@@ -866,9 +904,10 @@ bool hasRasterizerEffectsOrMasks(ArtifactAbstractLayer* targetLayer)
   return false;
 }
 
-QImage applyMatteStackToSurface(const QImage& surface,
-                                const ArtifactCore::MatteStack& matteStack,
-                                const std::vector<QImage>& sourceImages)
+QImage applyMatteStackToSurface(
+    const QImage& surface,
+    const ArtifactCore::MatteStack& matteStack,
+    const std::vector<QImage>& sourceImages)
 {
   if (matteStack.isEmpty() || surface.isNull()) {
     return surface;
@@ -885,10 +924,11 @@ QImage applyMatteStackToSurface(const QImage& surface,
 
   const auto& nodes = matteStack.nodes();
   int sourceIndex = 0;
+  bool hasCurrent = false;
 
   for (const auto& node : nodes) {
-    if (!node.isEnabled()) {
-      continue;
+    if (!node.isEnabled() || node.sourceLayerId().isNil()) {
+        continue;
     }
     if (sourceIndex >= static_cast<int>(sourceImages.size())) {
       break;
@@ -939,6 +979,12 @@ QImage applyMatteStackToSurface(const QImage& surface,
     };
     buildMatteRows(0, h);
 
+    if (!hasCurrent) {
+      combinedMask = std::move(matteMask);
+      hasCurrent = true;
+      continue;
+    }
+
     const ArtifactCore::MatteStackMode stackMode = matteStack.stackMode();
     for (size_t i = 0; i < pixelCount; ++i) {
         switch (stackMode) {
@@ -980,7 +1026,177 @@ QImage applyMatteStackToSurface(const QImage& surface,
   return result;
 }
 
+static QImage fitMatteSourceToTarget(const QImage& source,
+                                     const QSize& targetSize,
+                                     MatteFitMode fitMode)
+{
+  if (source.isNull() || targetSize.width() <= 0 || targetSize.height() <= 0) {
+    return {};
+  }
+  const QImage rgbaSource = source.convertToFormat(QImage::Format_RGBA8888);
+  if (fitMode == MatteFitMode::Stretch) {
+    return rgbaSource.scaled(targetSize, Qt::IgnoreAspectRatio,
+                             Qt::SmoothTransformation);
+  }
+
+  const float sourceAspect = static_cast<float>(rgbaSource.width()) /
+                             static_cast<float>(std::max(1, rgbaSource.height()));
+  const float targetAspect = static_cast<float>(targetSize.width()) /
+                             static_cast<float>(std::max(1, targetSize.height()));
+  int scaledWidth = rgbaSource.width();
+  int scaledHeight = rgbaSource.height();
+  if (fitMode == MatteFitMode::Fit || fitMode == MatteFitMode::Fill) {
+    const bool fitInside = fitMode == MatteFitMode::Fit;
+    const float scale = fitInside
+        ? (sourceAspect > targetAspect
+               ? static_cast<float>(targetSize.width()) / rgbaSource.width()
+               : static_cast<float>(targetSize.height()) / rgbaSource.height())
+        : (sourceAspect > targetAspect
+               ? static_cast<float>(targetSize.height()) / rgbaSource.height()
+               : static_cast<float>(targetSize.width()) / rgbaSource.width());
+    scaledWidth = std::max(1, qRound(rgbaSource.width() * scale));
+    scaledHeight = std::max(1, qRound(rgbaSource.height() * scale));
+  }
+
+  const QImage scaled = rgbaSource.scaled(scaledWidth, scaledHeight,
+                                          Qt::IgnoreAspectRatio,
+                                          Qt::SmoothTransformation);
+  QImage result(targetSize, QImage::Format_RGBA8888);
+  result.fill(Qt::transparent);
+  const int copyWidth = std::min(targetSize.width(), scaled.width());
+  const int copyHeight = std::min(targetSize.height(), scaled.height());
+  const int sourceX = std::max(0, (scaled.width() - copyWidth) / 2);
+  const int sourceY = std::max(0, (scaled.height() - copyHeight) / 2);
+  const int targetX = std::max(0, (targetSize.width() - copyWidth) / 2);
+  const int targetY = std::max(0, (targetSize.height() - copyHeight) / 2);
+  for (int y = 0; y < copyHeight; ++y) {
+    const auto* sourceBits = scaled.constScanLine(sourceY + y) + sourceX * 4;
+    auto* targetBits = result.scanLine(targetY + y) + targetX * 4;
+    std::memcpy(targetBits, sourceBits, static_cast<size_t>(copyWidth) * 4u);
+  }
+  return result;
+}
+
+static QImage applyLayerMatteReferencesToSurfaceImpl(
+    const QImage& surface,
+    const std::vector<LayerMatteReference>& references,
+    const QHash<ArtifactCore::Id, QImage>& sourceImages)
+{
+  if (surface.isNull() || references.empty()) {
+    return surface;
+  }
+  const int width = surface.width();
+  const int height = surface.height();
+  if (width <= 0 || height <= 0) {
+    return surface;
+  }
+
+  // Keep the software path aligned with the GPU path: an incomplete matte
+  // stack must not partially mask the layer with only the sources that happen
+  // to be available in this frame.
+  for (const auto& ref : references) {
+    if (!ref.enabled || ref.sourceLayerId.isNil()) {
+      continue;
+    }
+    const auto sourceIt = sourceImages.constFind(ref.sourceLayerId);
+    if (sourceIt == sourceImages.constEnd() || sourceIt.value().isNull() ||
+        fitMatteSourceToTarget(sourceIt.value(), QSize(width, height),
+                               ref.fitMode)
+            .isNull()) {
+      return surface;
+    }
+  }
+
+  std::vector<float> combined(static_cast<size_t>(width) * height, 0.0f);
+  bool hasCombined = false;
+  bool hasSource = false;
+  for (const auto& ref : references) {
+    if (!ref.enabled || ref.sourceLayerId.isNil()) {
+      continue;
+    }
+    const auto sourceIt = sourceImages.constFind(ref.sourceLayerId);
+    if (sourceIt == sourceImages.constEnd() || sourceIt.value().isNull()) {
+      continue;
+    }
+    // Keep the source in straight-alpha RGBA while extracting Luma.  The GPU
+    // matte shader reads RGB independently from alpha; premultiplying here
+    // would make translucent colored matte pixels dimmer on the CPU path.
+    const QImage fitted = fitMatteSourceToTarget(
+        sourceIt.value(), QSize(width, height), ref.fitMode);
+    if (fitted.isNull()) {
+      continue;
+    }
+    const bool useLuma = ref.type == MatteType::Luma ||
+                         ref.type == MatteType::InverseLuma;
+    const float opacity = std::clamp(ref.opacity, 0.0f, 1.0f);
+    for (int y = 0; y < height; ++y) {
+      const auto* row = fitted.constScanLine(y);
+      for (int x = 0; x < width; ++x) {
+        const auto* pixel = row + x * 4;
+        float value = useLuma
+            ? (0.299f * pixel[0] + 0.587f * pixel[1] +
+               0.114f * pixel[2]) / 255.0f
+            : pixel[3] / 255.0f;
+        if (ref.invert) {
+          value = 1.0f - value;
+        }
+        value = std::clamp(value * opacity, 0.0f, 1.0f);
+        const size_t index = static_cast<size_t>(y) * width + x;
+        if (!hasCombined) {
+          combined[index] = value;
+        } else {
+          switch (ref.blendMode) {
+          case MatteBlendMode::Add:
+            combined[index] = std::min(1.0f, combined[index] + value);
+            break;
+          case MatteBlendMode::Subtract:
+            combined[index] = std::max(0.0f, combined[index] - value);
+            break;
+          case MatteBlendMode::Intersect:
+            combined[index] = std::min(combined[index], value);
+            break;
+          case MatteBlendMode::Difference:
+            combined[index] = std::abs(combined[index] - value);
+            break;
+          }
+        }
+      }
+    }
+    hasCombined = true;
+    hasSource = true;
+  }
+  if (!hasSource) {
+    return surface;
+  }
+
+  QImage result = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  auto* resultBits = result.bits();
+  const int resultStride = result.bytesPerLine();
+  for (int y = 0; y < height; ++y) {
+    auto* row = reinterpret_cast<QRgb*>(resultBits + y * resultStride);
+    for (int x = 0; x < width; ++x) {
+      const float factor = combined[static_cast<size_t>(y) * width + x];
+      const QRgb pixel = row[x];
+      row[x] = qRgba(
+          std::clamp(static_cast<int>(qRed(pixel) * factor + 0.5f), 0, 255),
+          std::clamp(static_cast<int>(qGreen(pixel) * factor + 0.5f), 0, 255),
+          std::clamp(static_cast<int>(qBlue(pixel) * factor + 0.5f), 0, 255),
+          std::clamp(static_cast<int>(qAlpha(pixel) * factor + 0.5f), 0, 255));
+    }
+  }
+  return result;
+}
+
 } // namespace
+
+export QImage applyLayerMatteReferencesToSurface(
+    const QImage& surface,
+    const std::vector<LayerMatteReference>& references,
+    const QHash<ArtifactCore::Id, QImage>& sourceImages)
+{
+  return applyLayerMatteReferencesToSurfaceImpl(surface, references,
+                                                sourceImages);
+}
 
 StaticLayerGpuCacheDiagnostics staticLayerGpuCacheDiagnostics()
 {
@@ -1155,7 +1371,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                  int64_t cacheFrameNumber,
                                  bool offlineRender,
                                  DetailLevel lod,
-                                 const std::vector<ArtifactCore::Light>* sceneLights)
+                                 const std::vector<ArtifactCore::Light>* sceneLights,
+                                 const QHash<ArtifactCore::Id, QImage>* matteSourceImages)
 {
   if (!layer || !renderer) {
     return;
@@ -1187,12 +1404,33 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
 
     trimStaticLayerGpuCache();
 
+    const auto matteReferences = layer->matteReferences();
+    const auto targetLayerId = layer->id();
+    std::vector<LayerMatteReference> effectiveMatteReferences;
+    effectiveMatteReferences.reserve(matteReferences.size());
+    for (const auto& ref : matteReferences) {
+      if (ref.sourceLayerId != targetLayerId) {
+        effectiveMatteReferences.push_back(ref);
+      }
+    }
+    const bool hasResolvedMattes = matteSourceImages &&
+        std::any_of(effectiveMatteReferences.cbegin(),
+                    effectiveMatteReferences.cend(),
+                    [targetLayerId](const LayerMatteReference& ref) {
+                      return ref.enabled && !ref.sourceLayerId.isNil() &&
+                             ref.sourceLayerId != targetLayerId;
+                    });
+    if (hasResolvedMattes) {
+      surface = applyLayerMatteReferencesToSurface(
+          surface, effectiveMatteReferences, *matteSourceImages);
+    }
+
     const bool usesGpuTextureCache =
-        layerCacheEnabled && gpuTextureCacheManager &&
+        !hasResolvedMattes && layerCacheEnabled && gpuTextureCacheManager &&
         layerUsesGpuTextureCacheForCompositionView(layer);
-    const bool usesStaticGpuCache =
+    const bool usesStaticGpuCache = !hasResolvedMattes &&
         layerUsesStaticLayerGpuCacheForCompositionView(layer);
-    const bool usesSurfaceCache =
+    const bool usesSurfaceCache = !hasResolvedMattes &&
         surfaceCache && (allowSurfaceCache || usesGpuTextureCache ||
                          usesStaticGpuCache);
     const QString ownerId = usesSurfaceCache || usesStaticGpuCache
@@ -1545,7 +1783,9 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
-    if (!hasRasterizerEffectsOrMasks(layer) && imageLayer->hasCurrentFrameBuffer()) {
+    if (!hasRasterizerEffectsOrMasks(layer) &&
+        !imageLayer->sourceCropEnabled() &&
+        imageLayer->hasCurrentFrameBuffer()) {
       const ArtifactCore::ImageF32x4_RGBA& buffer = imageLayer->currentFrameBuffer();
       const float baseOpacity = (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
       GPUTextureBindingRecord cachedBinding;

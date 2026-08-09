@@ -1,5 +1,7 @@
 ﻿module;
 #include <utility>
+#include <algorithm>
+#include <cmath>
 
 
 module Artifact.Layer.InitParams;
@@ -9,6 +11,24 @@ import Color.Float;
 
 
 namespace Artifact {
+
+namespace {
+
+FloatColor normalizedColor(const FloatColor& color)
+{
+  const auto safe = [](float value, float fallback) {
+    return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+  };
+  return FloatColor(safe(color.r(), 0.0f), safe(color.g(), 0.0f),
+                    safe(color.b(), 0.0f), safe(color.a(), 1.0f));
+}
+
+float finiteOr(float value, float fallback)
+{
+  return std::isfinite(value) ? value : fallback;
+}
+
+} // namespace
 
  class ArtifactLayerInitParams::Impl {
  private:
@@ -161,29 +181,60 @@ LayerType ArtifactLayerInitParams::layerType() const
  }
 
  int ArtifactSolidLayerInitParams::width() const { return impl_->width_; }
- void ArtifactSolidLayerInitParams::setWidth(int width) { impl_->width_ = width; }
+ void ArtifactSolidLayerInitParams::setWidth(int width) {
+  impl_->width_ = std::clamp(width, 1, 16384);
+ }
  int ArtifactSolidLayerInitParams::height() const { return impl_->height_; }
- void ArtifactSolidLayerInitParams::setHeight(int height) { impl_->height_ = height; }
+ void ArtifactSolidLayerInitParams::setHeight(int height) {
+  impl_->height_ = std::clamp(height, 1, 16384);
+ }
  FloatColor ArtifactSolidLayerInitParams::color() const { return impl_->color_; }
- void ArtifactSolidLayerInitParams::setColor(const FloatColor& color) { impl_->color_ = color; }
+ void ArtifactSolidLayerInitParams::setColor(const FloatColor& color) {
+  impl_->color_ = normalizedColor(color);
+ }
  ArtifactSolidFillType ArtifactSolidLayerInitParams::fillType() const { return impl_->fillType_; }
- void ArtifactSolidLayerInitParams::setFillType(ArtifactSolidFillType fillType) { impl_->fillType_ = fillType; }
+ void ArtifactSolidLayerInitParams::setFillType(ArtifactSolidFillType fillType) {
+  impl_->fillType_ = static_cast<ArtifactSolidFillType>(std::clamp(
+      static_cast<int>(fillType), 0, 5));
+ }
  FloatColor ArtifactSolidLayerInitParams::gradientStartColor() const { return impl_->gradientStartColor_; }
- void ArtifactSolidLayerInitParams::setGradientStartColor(const FloatColor& color) { impl_->gradientStartColor_ = color; }
+ void ArtifactSolidLayerInitParams::setGradientStartColor(const FloatColor& color) {
+  impl_->gradientStartColor_ = normalizedColor(color);
+ }
  FloatColor ArtifactSolidLayerInitParams::gradientEndColor() const { return impl_->gradientEndColor_; }
- void ArtifactSolidLayerInitParams::setGradientEndColor(const FloatColor& color) { impl_->gradientEndColor_ = color; }
+ void ArtifactSolidLayerInitParams::setGradientEndColor(const FloatColor& color) {
+  impl_->gradientEndColor_ = normalizedColor(color);
+ }
  float ArtifactSolidLayerInitParams::gradientAngleDegrees() const { return impl_->gradientAngleDegrees_; }
- void ArtifactSolidLayerInitParams::setGradientAngleDegrees(float degrees) { impl_->gradientAngleDegrees_ = degrees; }
+ void ArtifactSolidLayerInitParams::setGradientAngleDegrees(float degrees) {
+  impl_->gradientAngleDegrees_ = finiteOr(degrees, 90.0f);
+ }
  bool ArtifactSolidLayerInitParams::gradientReverse() const { return impl_->gradientReverse_; }
  void ArtifactSolidLayerInitParams::setGradientReverse(bool reverse) { impl_->gradientReverse_ = reverse; }
  float ArtifactSolidLayerInitParams::gradientCenterX() const { return impl_->gradientCenterX_; }
- void ArtifactSolidLayerInitParams::setGradientCenterX(float value) { impl_->gradientCenterX_ = value; }
+ void ArtifactSolidLayerInitParams::setGradientCenterX(float value) {
+  impl_->gradientCenterX_ = std::isfinite(value)
+      ? std::clamp(value, 0.0f, 1.0f)
+      : 0.5f;
+ }
  float ArtifactSolidLayerInitParams::gradientCenterY() const { return impl_->gradientCenterY_; }
- void ArtifactSolidLayerInitParams::setGradientCenterY(float value) { impl_->gradientCenterY_ = value; }
+ void ArtifactSolidLayerInitParams::setGradientCenterY(float value) {
+  impl_->gradientCenterY_ = std::isfinite(value)
+      ? std::clamp(value, 0.0f, 1.0f)
+      : 0.5f;
+ }
  float ArtifactSolidLayerInitParams::gradientScale() const { return impl_->gradientScale_; }
- void ArtifactSolidLayerInitParams::setGradientScale(float value) { impl_->gradientScale_ = value; }
+ void ArtifactSolidLayerInitParams::setGradientScale(float value) {
+  impl_->gradientScale_ = std::isfinite(value)
+      ? std::clamp(value, 0.0001f, 1000000.0f)
+      : 1.0f;
+ }
  float ArtifactSolidLayerInitParams::gradientOffset() const { return impl_->gradientOffset_; }
- void ArtifactSolidLayerInitParams::setGradientOffset(float value) { impl_->gradientOffset_ = value; }
+ void ArtifactSolidLayerInitParams::setGradientOffset(float value) {
+  impl_->gradientOffset_ = std::isfinite(value)
+      ? std::clamp(value, -1000000.0f, 1000000.0f)
+      : 0.0f;
+ }
 
  ArtifactTextLayerInitParams::ArtifactTextLayerInitParams(const QString& name) :ArtifactLayerInitParams(name, LayerType::Text)
  {

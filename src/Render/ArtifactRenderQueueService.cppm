@@ -4,6 +4,8 @@ module;
 #include <QThread>
 #include <QDir>
 #include <QImage>
+#include <QHash>
+#include <QSet>
 #include <QColor>
 #include <QPainter>
 #include <QFont>
@@ -459,6 +461,133 @@ namespace Artifact
                         layer->id().toString());
                     diag.setSourceCompId(compId);
                     result.addDiagnostic(diag);
+                }
+            }
+        }
+
+        void appendMatteReferenceDiagnostics(const ArtifactCompositionPtr& composition,
+                                             const QString& compId,
+                                             ArtifactCore::DiagnosticResult& result)
+        {
+            if (!composition) {
+                return;
+            }
+
+            const auto layers = composition->allLayer();
+            QHash<QString, ArtifactAbstractLayerPtr> layerMap;
+            for (const auto& layer : layers) {
+                if (layer) {
+                    layerMap.insert(layer->id().toString(), layer);
+                }
+            }
+
+            QSet<QString> reportedCycleKeys;
+            for (const auto& layer : layers) {
+                if (!layer) {
+                    continue;
+                }
+
+                const QString layerId = layer->id().toString();
+                const QString layerName = layer->layerName();
+                for (const auto& ref : layer->matteReferences()) {
+                    if (!ref.enabled || ref.sourceLayerId.isNil()) {
+                        continue;
+                    }
+
+                    const QString sourceId = ref.sourceLayerId.toString();
+                    if (!layerMap.contains(sourceId)) {
+                        result.addDiagnostic(makePreflightDiagnostic(
+                            ArtifactCore::DiagnosticSeverity::Error,
+                            ArtifactCore::DiagnosticCategory::Matte,
+                            QStringLiteral("Matte source is missing for layer '%1'")
+                                .arg(layerName),
+                            QStringLiteral("Layer '%1' references source layer '%2', which is not present in the composition.")
+                                .arg(layerName, sourceId),
+                            QStringLiteral("Select a different layer as the matte source"),
+                            compId, layerId));
+                        continue;
+                    }
+
+                    if (sourceId == layerId) {
+                        result.addDiagnostic(makePreflightDiagnostic(
+                            ArtifactCore::DiagnosticSeverity::Error,
+                            ArtifactCore::DiagnosticCategory::Matte,
+                            QStringLiteral("Layer '%1' references itself as matte source")
+                                .arg(layerName),
+                            QStringLiteral("A layer cannot use its own rendered surface as a track matte source."),
+                            QStringLiteral("Select a different layer as the matte source"),
+                            compId, layerId));
+                    } else if (const auto sourceLayer = layerMap.value(sourceId);
+                               sourceLayer && !sourceLayer->isVisible()) {
+                        result.addDiagnostic(makePreflightDiagnostic(
+                            ArtifactCore::DiagnosticSeverity::Warning,
+                            ArtifactCore::DiagnosticCategory::Matte,
+                            QStringLiteral("Matte source '%1' is hidden")
+                                .arg(sourceLayer->layerName()),
+                            QStringLiteral("Layer '%1' uses a hidden layer as its track matte source; the matte will still be evaluated.")
+                                .arg(layerName),
+                            QStringLiteral("Show the matte source layer if this is unintended"),
+                            compId, sourceId));
+                    }
+                }
+
+                const auto hasCycleFrom = [&layerMap](
+                        const QString& currentId, QSet<QString>& path,
+                        QStringList& chain, QString& cycleKey,
+                        const auto& self) -> bool {
+                    if (path.contains(currentId)) {
+                        const int cycleStart = chain.indexOf(currentId);
+                        if (cycleStart >= 0) {
+                            QStringList cycleIds;
+                            for (int i = cycleStart; i < chain.size(); ++i) {
+                                cycleIds.push_back(chain.at(i));
+                            }
+                            std::sort(cycleIds.begin(), cycleIds.end());
+                            cycleKey = cycleIds.join(QStringLiteral("|"));
+                        }
+                        return true;
+                    }
+                    const auto currentLayer = layerMap.value(currentId);
+                    if (!currentLayer) {
+                        return false;
+                    }
+
+                    path.insert(currentId);
+                    chain.push_back(currentId);
+                    for (const auto& ref : currentLayer->matteReferences()) {
+                        if (!ref.enabled || ref.sourceLayerId.isNil() ||
+                            !layerMap.contains(ref.sourceLayerId.toString())) {
+                            continue;
+                        }
+                        if (ref.sourceLayerId.toString() == currentId) {
+                            continue;
+                        }
+                        if (self(ref.sourceLayerId.toString(), path, chain,
+                                 cycleKey, self)) {
+                            chain.removeLast();
+                            path.remove(currentId);
+                            return true;
+                        }
+                    }
+                    chain.removeLast();
+                    path.remove(currentId);
+                    return false;
+                };
+
+                QSet<QString> path;
+                QStringList chain;
+                QString cycleKey;
+                if (hasCycleFrom(layerId, path, chain, cycleKey, hasCycleFrom) &&
+                    !reportedCycleKeys.contains(cycleKey)) {
+                    reportedCycleKeys.insert(cycleKey);
+                    result.addDiagnostic(makePreflightDiagnostic(
+                        ArtifactCore::DiagnosticSeverity::Error,
+                        ArtifactCore::DiagnosticCategory::CircularDep,
+                        QStringLiteral("Matte reference cycle detected"),
+                        QStringLiteral("Layer '%1' participates in a circular track matte chain.")
+                            .arg(layerName),
+                        QStringLiteral("Break the matte chain by selecting a different source"),
+                        compId, layerId));
                 }
             }
         }
@@ -4098,16 +4227,59 @@ namespace Artifact
                 }
                 return true;
             };
+            QHash<ArtifactCore::Id, QImage> softwareMatteSources;
+            for (const auto& layer : layers) {
+                if (!layer) {
+                    continue;
+                }
+                for (const auto& matteRef : layer->matteReferences()) {
+                    if (!matteRef.enabled || matteRef.sourceLayerId.isNil() ||
+                        matteRef.sourceLayerId == layer->id() ||
+                        softwareMatteSources.contains(matteRef.sourceLayerId)) {
+                        continue;
+                    }
+                    const auto sourceLayer = composition->layerById(
+                        matteRef.sourceLayerId);
+                    if (sourceLayer) {
+                        if (const auto imageLayer =
+                                ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(sourceLayer);
+                            imageLayer && !imageLayer->sourcePath().trimmed().isEmpty() &&
+                            (imageLayer->sourceAssetId().isNull() ||
+                             imageLayer->sourceVersion() == 0)) {
+                            continue;
+                        }
+                        sourceLayer->goToFrame(frameNumber);
+                        const QImage source = renderLayerSurface(sourceLayer);
+                        if (!source.isNull()) {
+                            softwareMatteSources.insert(matteRef.sourceLayerId, source);
+                        }
+                    }
+                }
+            }
+
             for (const auto& layer : layers) {
                 if (!shouldRenderLayer(layer) || !layer->isVisible() ||
                     !layer->isActiveAt(currentPos)) {
                     continue;
                 }
 
-                const QImage surface = renderLayerSurface(layer);
+                QImage surface = renderLayerSurface(layer);
                 if (surface.isNull()) {
                     continue;
                 }
+
+                applyRasterizerEffectsAndMasksToSurface(
+                    layer.get(), surface, DetailLevel::High);
+                auto matteReferences = layer->matteReferences();
+                matteReferences.erase(
+                    std::remove_if(
+                        matteReferences.begin(), matteReferences.end(),
+                        [&layer](const LayerMatteReference& ref) {
+                            return ref.sourceLayerId == layer->id();
+                        }),
+                    matteReferences.end());
+                surface = applyLayerMatteReferencesToSurface(
+                    surface, matteReferences, softwareMatteSources);
 
                 const QSize layerSize(surface.size());
                 const qreal opacity = std::clamp(static_cast<qreal>(layer->opacity()), 0.0, 1.0);
@@ -4259,6 +4431,35 @@ namespace Artifact
                 return true;
             };
 
+            QHash<ArtifactCore::Id, QImage> matteSourceImages;
+            for (const auto& layer : layers) {
+                if (!layer) {
+                    continue;
+                }
+                for (const auto& matteRef : layer->matteReferences()) {
+                    if (!matteRef.enabled || matteRef.sourceLayerId.isNil() ||
+                        matteRef.sourceLayerId == layer->id() ||
+                        matteSourceImages.contains(matteRef.sourceLayerId)) {
+                        continue;
+                    }
+                    const auto sourceLayer = comp->layerById(matteRef.sourceLayerId);
+                    if (sourceLayer) {
+                        if (const auto imageLayer =
+                                ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(sourceLayer);
+                            imageLayer && !imageLayer->sourcePath().trimmed().isEmpty() &&
+                            (imageLayer->sourceAssetId().isNull() ||
+                             imageLayer->sourceVersion() == 0)) {
+                            continue;
+                        }
+                        sourceLayer->goToFrame(job.startFrame);
+                        const QImage source = renderLayerSurface(sourceLayer);
+                        if (!source.isNull()) {
+                            matteSourceImages.insert(matteRef.sourceLayerId, source);
+                        }
+                    }
+                }
+            }
+
             for (const auto& layer : layers) {
                     if (!shouldRenderLayer(layer) || !layer->isVisible() ||
                         !layer->isActiveAt(currentPos)) {
@@ -4267,7 +4468,8 @@ namespace Artifact
                     layer->goToFrame(job.startFrame);
                     drawLayerForCompositionView(layer.get(), gpuRenderer_.get(), 1.0f, nullptr,
                                             &surfaceCache, &gpuTextureCacheManager,
-                                            job.startFrame, true);
+                                            job.startFrame, true, DetailLevel::High,
+                                            nullptr, &matteSourceImages);
                 }
             gpuRenderer_->flush();
 
@@ -5915,6 +6117,7 @@ namespace Artifact
         }
 
         appendMissingAssetDiagnostics(composition, compId, result);
+        appendMatteReferenceDiagnostics(composition, compId, result);
         appendCompositionMismatchWarnings(job, composition, compId, result);
         appendTemplateLockDiagnostics(composition, compId, result);
         appendUnsupportedAovWarnings(job, compId, result);
@@ -5924,9 +6127,35 @@ namespace Artifact
     ArtifactCore::DiagnosticResult ArtifactRenderQueueService::preflightAllRenderQueues() const
     {
         ArtifactCore::DiagnosticResult result;
+        QSet<QString> seenMatteDiagnostics;
         const int count = impl_->queueManager.jobCount();
         for (int i = 0; i < count; ++i) {
-            result.merge(preflightRenderQueueAt(i));
+            const auto jobResult = preflightRenderQueueAt(i);
+            for (const auto& diagnostic : jobResult.diagnostics()) {
+                const auto category = diagnostic.getCategory();
+                const bool isMatteDiagnostic =
+                    category == ArtifactCore::DiagnosticCategory::Matte ||
+                    category == ArtifactCore::DiagnosticCategory::CircularDep;
+                if (!isMatteDiagnostic) {
+                    result.addDiagnostic(diagnostic);
+                    continue;
+                }
+
+                const auto encodeKeyField = [](const QString& value) {
+                    return QString::number(value.size()) + QStringLiteral(":") + value;
+                };
+                const QString key =
+                    encodeKeyField(QString::number(static_cast<int>(diagnostic.getSeverity()))) +
+                    encodeKeyField(QString::number(static_cast<int>(category))) +
+                    encodeKeyField(diagnostic.getSourceCompId()) +
+                    encodeKeyField(diagnostic.getSourceLayerId()) +
+                    encodeKeyField(diagnostic.getMessage());
+                if (seenMatteDiagnostics.contains(key)) {
+                    continue;
+                }
+                seenMatteDiagnostics.insert(key);
+                result.addDiagnostic(diagnostic);
+            }
         }
         return result;
     }
@@ -6130,12 +6359,44 @@ namespace Artifact
                 }
                 return true;
             };
+            QHash<ArtifactCore::Id, QImage> matteSourceImages;
+            for (const auto& layer : gpuLayers) {
+                if (!layer) {
+                    continue;
+                }
+                for (const auto& matteRef : layer->matteReferences()) {
+                    if (!matteRef.enabled || matteRef.sourceLayerId.isNil() ||
+                        matteRef.sourceLayerId == layer->id() ||
+                        matteSourceImages.contains(matteRef.sourceLayerId)) {
+                        continue;
+                    }
+                    const auto sourceLayer = snap.composition->layerById(
+                        matteRef.sourceLayerId);
+                    if (sourceLayer) {
+                        if (const auto imageLayer =
+                                ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(sourceLayer);
+                            imageLayer && !imageLayer->sourcePath().trimmed().isEmpty() &&
+                            (imageLayer->sourceAssetId().isNull() ||
+                             imageLayer->sourceVersion() == 0)) {
+                            continue;
+                        }
+                        sourceLayer->goToFrame(snap.frameNumber);
+                        const QImage source = renderLayerSurface(sourceLayer);
+                        if (!source.isNull()) {
+                            matteSourceImages.insert(matteRef.sourceLayerId, source);
+                        }
+                    }
+                }
+            }
+
             for (const auto& layer : gpuLayers) {
                 if (!shouldRenderGpuLayer(layer) || !layer->isVisible() ||
                     !layer->isActiveAt(gpuPos)) continue;
                 layer->goToFrame(snap.frameNumber);
                 drawLayerForCompositionView(layer.get(), gpuRenderer_.get(), 1.0f, nullptr,
-                                            snap.gpuSurfaceCache, snap.gpuTextureCacheManager, snap.frameNumber, true);
+                                            snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
+                                            snap.frameNumber, true, DetailLevel::High, nullptr,
+                                            &matteSourceImages);
             }
             gpuRenderer_->flush();
             if (snap.job.multiChannelExportEnabled) {

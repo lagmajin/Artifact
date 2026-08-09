@@ -177,6 +177,7 @@ QImage makeTransparentCropCanvas(const QImage& source, const QRect& cropRect)
 constexpr int kMaxImageDimension = 16384;
 constexpr quint64 kMaxDecodedImagePixels = 64ull * 1024ull * 1024ull;
 constexpr int kMaxImageChannels = 64;
+constexpr int kMaxIccProfileBytes = 256 * 1024 * 1024;
 
 bool hasSupportedImageDimensions(const int width, const int height)
 {
@@ -189,6 +190,21 @@ bool hasSupportedImageDimensions(const int width, const int height)
 bool hasSupportedImageChannelCount(const int channels)
 {
     return channels > 0 && channels <= kMaxImageChannels;
+}
+
+void normalizeNonFiniteRgba32F(float* data, const std::size_t pixelCount)
+{
+    if (!data) {
+        return;
+    }
+    for (std::size_t pixel = 0; pixel < pixelCount; ++pixel) {
+        for (std::size_t channel = 0; channel < 4; ++channel) {
+            float& value = data[pixel * 4u + channel];
+            if (!std::isfinite(value)) {
+                value = channel == 3u ? 1.0f : 0.0f;
+            }
+        }
+    }
 }
 
 std::array<int, 4> standardCmykChannelOrder(const OIIO::ImageSpec& spec)
@@ -371,9 +387,11 @@ struct SourceImageMetadata {
     static SourceImageMetadata fromSpec(const OIIO::ImageSpec& spec)
     {
         SourceImageMetadata metadata;
-        metadata.channelCount = std::max(0, spec.nchannels);
+        metadata.channelCount = std::clamp(spec.nchannels, 0,
+                                           kMaxImageChannels);
         metadata.alphaChannel =
-            spec.alpha_channel >= 0 && spec.alpha_channel < spec.nchannels
+            spec.alpha_channel >= 0 &&
+                spec.alpha_channel < metadata.channelCount
             ? spec.alpha_channel
             : -1;
         metadata.alphaAssociated = metadata.alphaChannel >= 0 &&
@@ -385,9 +403,14 @@ struct SourceImageMetadata {
         metadata.pixelAspect = std::isfinite(aspect) && aspect > 0.0f
             ? std::clamp(static_cast<double>(aspect), 0.001, 1000.0)
             : 1.0;
+        const size_t formatBytes = spec.format.size();
+        const size_t bitsPerChannel = formatBytes >
+                static_cast<size_t>(std::numeric_limits<int>::max() / 8)
+            ? static_cast<size_t>(std::numeric_limits<int>::max())
+            : formatBytes * 8u;
         metadata.bitsPerChannel = spec.format == OIIO::TypeDesc::FLOAT
             ? 32
-            : std::max(0, static_cast<int>(spec.format.size()) * 8);
+            : std::clamp(static_cast<int>(bitsPerChannel), 0, 1024);
         metadata.colorSpace =
             imageSpecStringAttribute(spec, "oiio:ColorSpace");
         if (metadata.colorSpace.isEmpty()) {
@@ -404,8 +427,8 @@ struct SourceImageMetadata {
         }
         if (const OIIO::ParamValue* icc = spec.find_attribute(
                 "ICCProfile", OIIO::TypeDesc::UINT8)) {
-            metadata.iccProfileBytes =
-                std::max(0, static_cast<int>(icc->datasize()));
+            metadata.iccProfileBytes = static_cast<int>(std::min<size_t>(
+                icc->datasize(), static_cast<size_t>(kMaxIccProfileBytes)));
         }
         return metadata;
     }
@@ -413,18 +436,31 @@ struct SourceImageMetadata {
     QJsonObject toJson() const
     {
         QJsonObject object;
-        object["channelCount"] = channelCount;
-        object["alphaChannel"] = alphaChannel;
+        const int safeChannelCount =
+            std::clamp(channelCount, 0, kMaxImageChannels);
+        const int safeAlphaChannel =
+            alphaChannel >= 0 && alphaChannel < safeChannelCount
+            ? alphaChannel
+            : -1;
+        const double safePixelAspect =
+            std::isfinite(pixelAspect) && pixelAspect > 0.0
+            ? std::clamp(pixelAspect, 0.001, 1000.0)
+            : 1.0;
+        object["channelCount"] = safeChannelCount;
+        object["alphaChannel"] = safeAlphaChannel;
         object["alphaAssociated"] = alphaAssociated;
-        object["orientation"] = orientation;
-        object["pixelAspect"] = pixelAspect;
-        object["bitsPerChannel"] = bitsPerChannel;
-        object["iccProfileBytes"] = iccProfileBytes;
-        object["colorSpace"] = colorSpace;
-        object["transferFunction"] = transferFunction;
-        object["primaries"] = primaries;
+        object["orientation"] = std::clamp(orientation, 1, 8);
+        object["pixelAspect"] = safePixelAspect;
+        object["bitsPerChannel"] = std::clamp(bitsPerChannel, 0, 1024);
+        object["iccProfileBytes"] = std::clamp(iccProfileBytes, 0,
+                                                kMaxIccProfileBytes);
+        object["colorSpace"] = colorSpace.left(4096);
+        object["transferFunction"] = transferFunction.left(4096);
+        object["primaries"] = primaries.left(4096);
         QJsonArray names;
-        for (const QString& name : channelNames) names.append(name);
+        for (qsizetype i = 0; i < channelNames.size() && i < 64; ++i) {
+            names.append(channelNames.at(i).left(256));
+        }
         object["channelNames"] = names;
         return object;
     }
@@ -433,7 +469,8 @@ struct SourceImageMetadata {
     {
         SourceImageMetadata metadata;
         metadata.channelCount =
-            std::clamp(object.value("channelCount").toInt(), 0, 1024);
+            std::clamp(object.value("channelCount").toInt(), 0,
+                       kMaxImageChannels);
         metadata.alphaChannel = object.value("alphaChannel").toInt(-1);
         if (metadata.alphaChannel < 0 ||
             metadata.alphaChannel >= metadata.channelCount) {
@@ -451,7 +488,7 @@ struct SourceImageMetadata {
             std::clamp(object.value("bitsPerChannel").toInt(), 0, 1024);
         metadata.iccProfileBytes =
             std::clamp(object.value("iccProfileBytes").toInt(), 0,
-                       256 * 1024 * 1024);
+                       kMaxIccProfileBytes);
         metadata.colorSpace =
             object.value("colorSpace").toString().left(4096);
         metadata.transferFunction =
@@ -552,6 +589,9 @@ ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> loadFloatImageViaOIIO(
     std::vector<float> pixels(static_cast<size_t>(spec.width) *
                               static_cast<size_t>(spec.height) * 4u);
     if (!rgba.get_pixels(OIIO::ROI::All(), OIIO::TypeDesc::FLOAT, pixels.data())) return {};
+    normalizeNonFiniteRgba32F(
+        pixels.data(), static_cast<std::size_t>(spec.width) *
+                           static_cast<std::size_t>(spec.height));
     if (isCmyk) {
         convertCmykPixelsToRgba(pixels.data(),
                                 static_cast<size_t>(spec.width) *
@@ -617,6 +657,9 @@ LoadedImagePair decodeDerivedImage(const QByteArray& bytes,
                               static_cast<size_t>(height) * 4u);
     std::memcpy(pixels.data(), storage.constData() + payloadOffset,
                 static_cast<size_t>(payloadBytes));
+    normalizeNonFiniteRgba32F(
+        pixels.data(), static_cast<std::size_t>(width) *
+                           static_cast<std::size_t>(height));
     LoadedImagePair result;
     result.floatImage = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>();
     result.floatImage->setFromRGBA32F(
@@ -742,6 +785,9 @@ LoadedImagePair loadImagePairViaAsyncReader(const QString& path,
                          pixels.data())) {
         return {};
     }
+    normalizeNonFiniteRgba32F(
+        pixels.data(), static_cast<std::size_t>(spec.width) *
+                           static_cast<std::size_t>(spec.height));
     if (isCmyk) {
         convertCmykPixelsToRgba(pixels.data(),
                                 static_cast<size_t>(spec.width) *
@@ -1455,6 +1501,31 @@ bool ArtifactImageLayer::canShareSourceGpuTexture() const
            !hasMasks() && getEffects().empty();
 }
 
+bool ArtifactImageLayer::sourceCropEnabled() const
+{
+    return impl_->sourceCrop_.enabled();
+}
+
+QString ArtifactImageLayer::sourceCropSignature() const
+{
+    const QRectF rect = impl_->sourceCrop_.cropRect();
+    const QPointF pan = impl_->sourceCrop_.pan();
+    const QPointF anchor = impl_->sourceCrop_.anchor();
+    return QStringLiteral("enabled=%1|rect=%2,%3,%4,%5|pan=%6,%7|zoom=%8|rotation=%9|anchor=%10,%11|preserve=%12")
+        .arg(impl_->sourceCrop_.enabled() ? 1 : 0)
+        .arg(rect.x(), 0, 'g', 12)
+        .arg(rect.y(), 0, 'g', 12)
+        .arg(rect.width(), 0, 'g', 12)
+        .arg(rect.height(), 0, 'g', 12)
+        .arg(pan.x(), 0, 'g', 12)
+        .arg(pan.y(), 0, 'g', 12)
+        .arg(impl_->sourceCrop_.zoom(), 0, 'g', 12)
+        .arg(impl_->sourceCrop_.rotation(), 0, 'g', 12)
+        .arg(anchor.x(), 0, 'g', 12)
+        .arg(anchor.y(), 0, 'g', 12)
+        .arg(impl_->sourceCrop_.preserveAspect() ? 1 : 0);
+}
+
 bool ArtifactImageLayer::localizeSourceIdentity()
 {
     if (impl_->sourceAssetId_.isNull() || isSourceIdentityLocalized()) {
@@ -1515,8 +1586,8 @@ QJsonObject ArtifactImageLayer::toJson() const
     obj["image.sourceAssetId"] = impl_->sourceAssetId_.toString(QUuid::WithoutBraces);
     obj["image.sourceLocalized"] = isSourceIdentityLocalized();
     obj["image.fitToLayer"] = impl_->fitToLayer_;
-    obj["image.width"] = impl_->width_;
-    obj["image.height"] = impl_->height_;
+    obj["image.width"] = std::clamp(impl_->width_, 0, kMaxImageDimension);
+    obj["image.height"] = std::clamp(impl_->height_, 0, kMaxImageDimension);
     obj["image.sourceMetadata"] = impl_->sourceMetadata_.toJson();
     if (!impl_->sequencePaths_.isEmpty()) {
         QJsonArray sequenceArray;
@@ -1615,6 +1686,10 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
         impl_->sourceAssetId_ = QUuid();
         impl_->cachedSourceVersion_ = 0;
         impl_->sourcePath_.clear();
+        impl_->sequencePaths_.clear();
+        impl_->sequenceFrameRate_ = 0.0;
+        impl_->sequenceSource_.reset();
+        impl_->sequenceCachedIndex_ = -1;
         impl_->hasImage_ = false;
         impl_->prefetchDone_ = true;
         impl_->width_ = 0;
@@ -1632,6 +1707,41 @@ void ArtifactImageLayer::fromJsonProperties(const QJsonObject& obj)
                             .toBool(impl_->fitToLayer_);
     if (obj.value(QStringLiteral("sourceCrop")).isObject()) {
         impl_->sourceCrop_.fromJson(obj.value(QStringLiteral("sourceCrop")).toObject());
+        impl_->sourceCrop_.clampToSource(
+            QSizeF(impl_->width_, impl_->height_));
+    } else if (obj.contains(QStringLiteral("sourceCrop.enabled")) ||
+               obj.contains(QStringLiteral("sourceCrop.cropX")) ||
+               obj.contains(QStringLiteral("sourceCrop.cropY")) ||
+               obj.contains(QStringLiteral("sourceCrop.cropWidth")) ||
+               obj.contains(QStringLiteral("sourceCrop.cropHeight")) ||
+               obj.contains(QStringLiteral("sourceCrop.panX")) ||
+               obj.contains(QStringLiteral("sourceCrop.panY")) ||
+               obj.contains(QStringLiteral("sourceCrop.zoom")) ||
+               obj.contains(QStringLiteral("sourceCrop.rotation")) ||
+               obj.contains(QStringLiteral("sourceCrop.anchorX")) ||
+               obj.contains(QStringLiteral("sourceCrop.anchorY")) ||
+               obj.contains(QStringLiteral("sourceCrop.preserveAspect"))) {
+        QJsonObject legacyCrop;
+        legacyCrop[QStringLiteral("enabled")] =
+            obj.value(QStringLiteral("sourceCrop.enabled")).toBool(false);
+        legacyCrop[QStringLiteral("cropRect")] = QJsonArray{
+            obj.value(QStringLiteral("sourceCrop.cropX")).toDouble(0.0),
+            obj.value(QStringLiteral("sourceCrop.cropY")).toDouble(0.0),
+            obj.value(QStringLiteral("sourceCrop.cropWidth")).toDouble(0.0),
+            obj.value(QStringLiteral("sourceCrop.cropHeight")).toDouble(0.0)};
+        legacyCrop[QStringLiteral("pan")] = QJsonArray{
+            obj.value(QStringLiteral("sourceCrop.panX")).toDouble(0.0),
+            obj.value(QStringLiteral("sourceCrop.panY")).toDouble(0.0)};
+        legacyCrop[QStringLiteral("zoom")] =
+            obj.value(QStringLiteral("sourceCrop.zoom")).toDouble(1.0);
+        legacyCrop[QStringLiteral("rotation")] =
+            obj.value(QStringLiteral("sourceCrop.rotation")).toDouble(0.0);
+        legacyCrop[QStringLiteral("anchor")] = QJsonArray{
+            obj.value(QStringLiteral("sourceCrop.anchorX")).toDouble(0.5),
+            obj.value(QStringLiteral("sourceCrop.anchorY")).toDouble(0.5)};
+        legacyCrop[QStringLiteral("preserveAspect")] =
+            obj.value(QStringLiteral("sourceCrop.preserveAspect")).toBool(true);
+        impl_->sourceCrop_.fromJson(legacyCrop);
         impl_->sourceCrop_.clampToSource(
             QSizeF(impl_->width_, impl_->height_));
     }
@@ -2030,12 +2140,10 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
 
     QImage img = toQImage();
     if (img.isNull()) return;
-    const QRectF uvRect = useCrop
-        ? QRectF(static_cast<qreal>(cropRect.x()) / img.width(),
-                 static_cast<qreal>(cropRect.y()) / img.height(),
-                 static_cast<qreal>(cropRect.width()) / img.width(),
-                 static_cast<qreal>(cropRect.height()) / img.height())
-        : QRectF(0.0, 0.0, 1.0, 1.0);
+    // toQImage() returns the crop canvas for this fallback path. Keep the
+    // draw rectangle in layer pixel space, but sample the already-cropped
+    // image as a whole to avoid applying the source crop twice.
+    const QRectF uvRect(0.0, 0.0, 1.0, 1.0);
     const QRectF pixelDrawRect = useCrop
         ? QRectF(cropRect)
         : QRectF(0.0, 0.0, size.width, size.height);
@@ -2089,9 +2197,17 @@ QImage ArtifactImageLayer::toQImage() const
         (void)impl_->adoptPrefetchResult(result);
     }
 
-    // キャッシュが既にある場合はそのまま返す
+    // Cached source data still needs the same crop boundary as the draw path.
+    // Render Queue and thumbnail consumers use toQImage() directly, so an
+    // early raw-cache return would make them disagree with viewport rendering.
     if (impl_->cache_) {
-        return *impl_->cache_;
+        const QImage& base = *impl_->cache_;
+        const QRect cropRect =
+            sourceCropToRect(impl_->sourceCrop_, QSize(base.width(), base.height()));
+        if (cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0) {
+            return makeTransparentCropCanvas(base, cropRect);
+        }
+        return base;
     }
 
     // プリフェッチがまだ完了していない場合も、UI threadでは同期decodeしない。
@@ -2164,7 +2280,8 @@ QImage ArtifactImageLayer::toQImage() const
 
 QImage ArtifactImageLayer::getThumbnail(int width, int height) const
 {
-    const QSize targetSize(std::max(1, width), std::max(1, height));
+    const QSize targetSize(std::clamp(width, 1, 16384),
+                           std::clamp(height, 1, 16384));
     QImage image = toQImage();
     if (image.isNull()) {
         return ArtifactAbstractLayer::getThumbnail(targetSize.width(), targetSize.height());

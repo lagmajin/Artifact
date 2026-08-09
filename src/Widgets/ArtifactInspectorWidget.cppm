@@ -40,6 +40,7 @@ module;
 #include <QProxyStyle>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSet>
 #include <QSettings>
 #include <QKeyEvent>
 #include <QRadioButton>
@@ -57,6 +58,7 @@ module;
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QVariant>
+#include <QVector>
 #include <QUrl>
 #include <QWidget>
 #include <Diagnostics/WidgetCreationDiagnostics.hpp>
@@ -1836,14 +1838,14 @@ QString matteReferenceSummary(const ArtifactCompositionPtr &comp,
         sourceName = source->layerName().trimmed().isEmpty()
                          ? ref.sourceLayerId.toString()
                          : source->layerName();
-      } else if (hasInvalid) {
+      } else if (ref.enabled && hasInvalid) {
         *hasInvalid = true;
       }
-    } else if (hasInvalid) {
+    } else if (ref.enabled && hasInvalid) {
       *hasInvalid = true;
     }
 
-    if (ref.sourceLayerId == layer->id() || ref.sourceLayerId.isNil()) {
+    if (ref.enabled && (ref.sourceLayerId == layer->id() || ref.sourceLayerId.isNil())) {
       if (hasInvalid) {
         *hasInvalid = true;
       }
@@ -1919,6 +1921,46 @@ ArtifactCompositionPtr resolveCompositionForId(const CompositionID &compositionI
   return result.ptr.lock();
 }
 
+bool matteSourceWouldCreateCycle(const ArtifactCompositionPtr& comp,
+                                 const ArtifactAbstractLayerPtr& targetLayer,
+                                 const LayerID& sourceLayerId) {
+  if (!comp || !targetLayer || sourceLayerId.isNil() ||
+      targetLayer->id() == sourceLayerId) {
+    return true;
+  }
+
+  const LayerID targetLayerId = targetLayer->id();
+  QSet<QString> visited;
+  QVector<LayerID> pending{sourceLayerId};
+  while (!pending.isEmpty()) {
+    const LayerID currentId = pending.back();
+    pending.pop_back();
+    if (currentId.isNil()) {
+      continue;
+    }
+
+    const QString key = currentId.toString();
+    if (visited.contains(key)) {
+      continue;
+    }
+    visited.insert(key);
+    if (currentId == targetLayerId) {
+      return true;
+    }
+
+    const auto currentLayer = comp->layerById(currentId);
+    if (!currentLayer) {
+      continue;
+    }
+    for (const auto& ref : currentLayer->matteReferences()) {
+      if (ref.enabled && !ref.sourceLayerId.isNil()) {
+        pending.push_back(ref.sourceLayerId);
+      }
+    }
+  }
+  return false;
+}
+
 bool applyMatteTypeToLayer(const CompositionID &compositionId,
                            const LayerID &layerId,
                            int matteIndex,
@@ -1969,6 +2011,9 @@ bool setMatteSourceToLayer(const CompositionID &compositionId,
   if (!layer || !comp->containsLayerById(sourceLayerId)) {
     return false;
   }
+  if (matteSourceWouldCreateCycle(comp, layer, sourceLayerId)) {
+    return false;
+  }
 
   auto beforeRefs = layer->matteReferences();
   if (matteIndex >= static_cast<int>(beforeRefs.size())) {
@@ -2002,6 +2047,9 @@ bool addMatteSourceToLayer(const CompositionID &compositionId,
 
   auto layer = comp->layerById(layerId);
   if (!layer || !comp->containsLayerById(sourceLayerId)) {
+    return false;
+  }
+  if (matteSourceWouldCreateCycle(comp, layer, sourceLayerId)) {
     return false;
   }
 

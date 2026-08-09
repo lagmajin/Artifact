@@ -1,5 +1,6 @@
 ﻿module;
 #include <iostream>
+#include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
 #include <vector>
 #include <string>
 #include <map>
@@ -42,7 +43,7 @@ export namespace Artifact {
 
  using namespace ArtifactCore;
 
-class ArtifactEffectImplBase {
+class LIBRARY_DLL_API ArtifactEffectImplBase {
 protected:
     EffectContext context_;
 

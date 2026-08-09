@@ -1,5 +1,6 @@
 ﻿module;
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -311,7 +312,7 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   TextureBundle temp_;
  TextureBundle layer_;
  TextureBundle layerFloat_;
-  TextureBundle matteSource_;
+  std::array<TextureBundle, 3> matteSources_;
   TextureBundle emission_;
   TextureBundle normal_;
   TextureBundle velocity_;
@@ -413,7 +414,9 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->temp_ = {};
   impl_->layer_ = {};
   impl_->layerFloat_ = {};
-  impl_->matteSource_ = {};
+  for (auto& matteSource : impl_->matteSources_) {
+   matteSource = {};
+  }
   impl_->emission_ = {};
   impl_->normal_ = {};
   impl_->velocity_ = {};
@@ -500,12 +503,15 @@ bool RenderPipeline::initialize(IRenderDevice* device,
  {
  return impl_->device_ != nullptr && impl_->width_ > 0 && impl_->height_ > 0 &&
          impl_->accum_.texture && impl_->temp_.texture && impl_->layer_.texture &&
-         impl_->layerFloat_.texture && impl_->matteSource_.texture &&
+         impl_->layerFloat_.texture && impl_->matteSources_[0].texture &&
+         impl_->matteSources_[1].texture && impl_->matteSources_[2].texture &&
          impl_->accum_.srv && impl_->accum_.uav && impl_->accum_.rtv &&
          impl_->temp_.srv && impl_->temp_.uav && impl_->temp_.rtv &&
          impl_->layer_.srv && impl_->layer_.rtv &&
          impl_->layerFloat_.srv && impl_->layerFloat_.uav &&
-         impl_->matteSource_.srv &&
+         impl_->matteSources_[0].srv &&
+         impl_->matteSources_[1].srv &&
+         impl_->matteSources_[2].srv &&
          (!impl_->emissionEnabled_ ||
           (impl_->emission_.texture && impl_->emission_.srv &&
            impl_->emission_.rtv &&
@@ -554,7 +560,15 @@ bool RenderPipeline::initialize(IRenderDevice* device,
  ITextureView* RenderPipeline::layerRTV() const { return impl_->layer_.rtv; }
 ITextureView* RenderPipeline::layerFloatSRV() const { return impl_->layerFloat_.srv; }
 ITextureView* RenderPipeline::layerFloatUAV() const { return impl_->layerFloat_.uav; }
-ITextureView* RenderPipeline::matteSourceSRV() const { return impl_->matteSource_.srv; }
+ITextureView* RenderPipeline::matteSourceSRV() const {
+ return impl_->matteSources_[0].srv;
+}
+ITextureView* RenderPipeline::matteSourceSRV(int index) const {
+ if (index < 0 || index >= static_cast<int>(impl_->matteSources_.size())) {
+  return nullptr;
+ }
+ return impl_->matteSources_[static_cast<size_t>(index)].srv;
+}
 ITextureView* RenderPipeline::emissionSRV() const { return impl_->emission_.srv; }
 ITextureView* RenderPipeline::emissionRTV() const { return impl_->emission_.rtv; }
 bool RenderPipeline::hasEmissionTarget() const { return impl_->emissionEnabled_ && impl_->emission_.texture; }
@@ -819,21 +833,34 @@ Uint32 RenderPipeline::screenSpaceGlobalIlluminationHeight() const
             ? impl_->screenSpaceGI_.texture->GetDesc().Height
             : 0;
 }
- bool RenderPipeline::updateMatteSourceFromData(IDeviceContext* ctx,
-                                                 const void* data,
-                                                 Uint32 width,
-                                                 Uint32 height,
-                                                 Uint32 rowStride)
+bool RenderPipeline::updateMatteSourceFromData(IDeviceContext* ctx,
+                                               const void* data,
+                                               Uint32 width,
+                                               Uint32 height,
+                                               Uint32 rowStride)
+{
+ return updateMatteSourceFromData(ctx, 0, data, width, height, rowStride);
+}
+
+bool RenderPipeline::updateMatteSourceFromData(IDeviceContext* ctx,
+                                               int index,
+                                               const void* data,
+                                               Uint32 width,
+                                               Uint32 height,
+                                               Uint32 rowStride)
  {
-  if (!ctx || !data || !impl_->matteSource_.texture) return false;
+  if (!ctx || !data || index < 0 ||
+      index >= static_cast<int>(impl_->matteSources_.size())) return false;
+  auto& matteSource = impl_->matteSources_[static_cast<size_t>(index)];
+  if (!matteSource.texture) return false;
   if (width == 0 || height == 0) return false;
 
-  const auto& texDesc = impl_->matteSource_.texture->GetDesc();
+  const auto& texDesc = matteSource.texture->GetDesc();
   if (texDesc.Width != width || texDesc.Height != height) {
    if (!createTextureBundle(impl_->device_, width, height,
-                            RenderConfig::MainRTVFormat,
+                            TEX_FORMAT_RGBA8_UNORM,
                             BIND_SHADER_RESOURCE,
-                            "RenderPipeline.MatteSource", impl_->matteSource_))
+                            "RenderPipeline.MatteSource", matteSource))
    {
     qWarning() << "[RenderPipeline] Matte source reallocation failed";
     return false;
@@ -849,7 +876,7 @@ Uint32 RenderPipeline::screenSpaceGlobalIlluminationHeight() const
   subRes.pData = data;
   subRes.Stride = rowStride;
 
-  ctx->UpdateTexture(impl_->matteSource_.texture, 0, 0, dstBox, subRes,
+  ctx->UpdateTexture(matteSource.texture, 0, 0, dstBox, subRes,
                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   return true;
@@ -895,11 +922,14 @@ bool RenderPipeline::createTextures(IRenderDevice* device,
 
   // Matte source: 8-bit RGBA (non-sRGB) for CPU-uploaded matte source layer content.
   // Non-sRGB format preserves QImage byte values as-is for correct luma calculation.
-  if (!createTextureBundle(device, width, height, TEX_FORMAT_RGBA8_UNORM,
-                           BIND_SHADER_RESOURCE,
-                           "RenderPipeline.MatteSource", impl_->matteSource_))
-  {
-   return false;
+  for (size_t matteIndex = 0; matteIndex < impl_->matteSources_.size();
+       ++matteIndex) {
+   if (!createTextureBundle(device, width, height, TEX_FORMAT_RGBA8_UNORM,
+                            BIND_SHADER_RESOURCE,
+                            "RenderPipeline.MatteSource",
+                            impl_->matteSources_[matteIndex])) {
+    return false;
+   }
   }
 
   if (enableEmission &&

@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
 #include <cstdint>
 #include <QRectF>
 #include <QString>
@@ -15,7 +16,7 @@ export namespace Artifact
 {
  using namespace Diligent;
 
- class IEffectFrameSampler
+ class LIBRARY_DLL_API IEffectFrameSampler
  {
  public:
   virtual ~IEffectFrameSampler() = default;

@@ -73,7 +73,8 @@ public:
     QRectF localBounds() const override;
     bool isParticleLayer() const override { return true; }
     QString debugState() const;
-    QJsonObject toJson() const;
+    QJsonObject toJson() const override;
+    void fromJsonProperties(const QJsonObject& obj) override;
     static ArtifactAbstractLayerPtr fromJson(const QJsonObject& obj);
     
     // Layer identification

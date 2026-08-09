@@ -7,6 +7,7 @@ module;
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QHash>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QPointer>
@@ -19,6 +20,8 @@ export module Artifact.Application.ProjectBundleIpc;
 
 import Artifact.Application.Manager;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Factory;
+import Artifact.Layer.Clone;
 import Artifact.Service.Project;
 import Artifact.Layers.Selection.Manager;
 import Clipboard.ClipboardManager;
@@ -102,11 +105,18 @@ bool pasteLayerBundle(const QJsonObject& bundle) {
     }
 
     int pasted = 0;
+    QHash<QString, LayerID> pastedLayerIdMap;
+    QVector<ArtifactAbstractLayerPtr> pastedLayers;
     for (const auto& val : layersArray) {
         if (!val.isObject()) {
             continue;
         }
-        auto layer = ArtifactAbstractLayer::fromJson(val.toObject());
+        const QJsonObject sourceLayerObject = val.toObject();
+        const QString sourceLayerId =
+            sourceLayerObject.value(QStringLiteral("id")).toString().trimmed();
+        QJsonObject layerObject = sourceLayerObject;
+        layerObject.remove(QStringLiteral("id"));
+        auto layer = ArtifactLayerFactory::createFromJson(layerObject);
         if (!layer) {
             continue;
         }
@@ -137,11 +147,49 @@ bool pasteLayerBundle(const QJsonObject& bundle) {
         if (selectionManager) {
             selectionManager->addToSelection(layer);
         }
+        pastedLayers.push_back(layer);
+        if (!sourceLayerId.isEmpty() && !LayerID(sourceLayerId).isNil()) {
+            pastedLayerIdMap.insert(sourceLayerId, layer->id());
+        }
         ++pasted;
     }
 
     if (pasted == 0) {
         return false;
+    }
+
+    for (const auto &pastedLayer : pastedLayers) {
+        if (!pastedLayer) {
+            continue;
+        }
+        const auto parentId = pastedLayer->parentLayerId();
+        const auto parentIt = pastedLayerIdMap.constFind(parentId.toString());
+        if (parentIt != pastedLayerIdMap.constEnd()) {
+            pastedLayer->setParentById(parentIt.value());
+        }
+        if (auto *cloneLayer = dynamic_cast<ArtifactCloneLayer *>(
+                pastedLayer.get())) {
+            auto cloneSettings = cloneLayer->cloneSettings();
+            const auto sourceIt = pastedLayerIdMap.constFind(
+                cloneSettings.sourceLayerId.toString());
+            if (sourceIt != pastedLayerIdMap.constEnd()) {
+                cloneSettings.sourceLayerId = sourceIt.value();
+                cloneLayer->setCloneSettings(cloneSettings);
+            }
+        }
+        auto matteReferences = pastedLayer->matteReferences();
+        bool matteReferencesChanged = false;
+        for (auto &matteReference : matteReferences) {
+            const auto sourceIt = pastedLayerIdMap.constFind(
+                matteReference.sourceLayerId.toString());
+            if (sourceIt != pastedLayerIdMap.constEnd()) {
+                matteReference.sourceLayerId = sourceIt.value();
+                matteReferencesChanged = true;
+            }
+        }
+        if (matteReferencesChanged) {
+            pastedLayer->setMatteReferences(matteReferences);
+        }
     }
 
     comp->changed();

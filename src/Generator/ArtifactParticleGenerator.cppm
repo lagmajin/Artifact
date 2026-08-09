@@ -11,6 +11,7 @@
 #include <QtMath>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <tuple>
 #ifdef emit
@@ -123,7 +124,9 @@ float particleStretchFactor(const QVector3D& velocity)
 
 int clampFlipbookFrame(int frame, int startFrame, int frameCount, int rows, int cols)
 {
-    const int atlasFrames = std::max(1, rows * cols);
+    const int safeRows = std::clamp(rows, 1, 1024);
+    const int safeCols = std::clamp(cols, 1, 1024);
+    const int atlasFrames = safeRows * safeCols;
     const int safeStart = std::clamp(startFrame, 0, atlasFrames - 1);
     const int available = std::max(1, std::min(frameCount, atlasFrames - safeStart));
     return safeStart + std::clamp(frame, 0, available - 1);
@@ -131,7 +134,9 @@ int clampFlipbookFrame(int frame, int startFrame, int frameCount, int rows, int 
 
 int flipbookFrameCount(int startFrame, int frameCount, int rows, int cols)
 {
-    const int atlasFrames = std::max(1, rows * cols);
+    const int safeRows = std::clamp(rows, 1, 1024);
+    const int safeCols = std::clamp(cols, 1, 1024);
+    const int atlasFrames = safeRows * safeCols;
     const int safeStart = std::clamp(startFrame, 0, atlasFrames - 1);
     return std::max(1, std::min(frameCount, atlasFrames - safeStart));
 }
@@ -170,17 +175,35 @@ void FlockingEffector::apply(Particle& particle, float deltaTime)
 
 void FlockingEffector::apply(std::vector<Particle>& particles, float deltaTime)
 {
-    if (particles.size() < 2 || neighborhoodRadius <= 0.0f || deltaTime <= 0.0f) return;
-    const float radius2 = neighborhoodRadius * neighborhoodRadius;
-    const float limit = std::max(0.0f, maxAcceleration);
+    if (particles.size() < 2 || !std::isfinite(deltaTime) || deltaTime <= 0.0f) return;
+    const auto isFiniteVector = [](const QVector3D& value) {
+        return std::isfinite(value.x()) && std::isfinite(value.y()) && std::isfinite(value.z());
+    };
+    const float radius = std::isfinite(neighborhoodRadius)
+        ? std::clamp(neighborhoodRadius, 0.001f, 1000000.0f)
+        : 0.0f;
+    if (radius <= 0.0f) return;
+    const float radius2 = radius * radius;
+    const auto safeWeight = [](float value) {
+        return std::isfinite(value)
+            ? std::clamp(value, -1000000.0f, 1000000.0f)
+            : 0.0f;
+    };
+    const float safeSeparationWeight = safeWeight(separationWeight);
+    const float safeAlignmentWeight = safeWeight(alignmentWeight);
+    const float safeCohesionWeight = safeWeight(cohesionWeight);
+    const float limit = std::isfinite(maxAcceleration)
+        ? std::clamp(maxAcceleration, 0.0f, 1000000.0f)
+        : 0.0f;
     std::vector<QVector3D> accelerations(particles.size());
     for (std::size_t i = 0; i < particles.size(); ++i) {
         const Particle& source = particles[i];
-        if (!source.alive) continue;
+        if (!source.alive || !isFiniteVector(source.position) || !isFiniteVector(source.velocity)) continue;
         QVector3D separation, averageVelocity, center;
         int neighbors = 0;
         for (std::size_t j = 0; j < particles.size(); ++j) {
             if (i == j || !particles[j].alive) continue;
+            if (!isFiniteVector(particles[j].position) || !isFiniteVector(particles[j].velocity)) continue;
             const QVector3D offset = particles[j].position - source.position;
             const float distance2 = offset.lengthSquared();
             if (distance2 <= 1.0e-6f || distance2 > radius2) continue;
@@ -193,11 +216,14 @@ void FlockingEffector::apply(std::vector<Particle>& particles, float deltaTime)
         if (neighbors == 0) continue;
         const float inverseCount = 1.0f / static_cast<float>(neighbors);
         QVector3D acceleration =
-            separation * separationWeight +
-            (averageVelocity * inverseCount - source.velocity) * alignmentWeight +
-            (center * inverseCount - source.position) * cohesionWeight;
-        if (limit > 0.0f && acceleration.lengthSquared() > limit * limit)
+            separation * safeSeparationWeight +
+            (averageVelocity * inverseCount - source.velocity) * safeAlignmentWeight +
+            (center * inverseCount - source.position) * safeCohesionWeight;
+        if (!isFiniteVector(acceleration)) {
+            acceleration = QVector3D();
+        } else if (limit > 0.0f && acceleration.lengthSquared() > limit * limit) {
             acceleration = acceleration.normalized() * limit;
+        }
         accelerations[i] = acceleration;
     }
     for (std::size_t i = 0; i < particles.size(); ++i) {
@@ -209,27 +235,48 @@ void FlockingEffector::apply(std::vector<Particle>& particles, float deltaTime)
 
 void ForceEffector::apply(Particle& particle, float deltaTime)
 {
-    if (!enabled) return;
-    
-    particle.acceleration += force * strength * deltaTime;
+    if (!enabled || !std::isfinite(deltaTime) || deltaTime <= 0.0f) return;
+    const auto safeComponent = [](float value) {
+        return std::isfinite(value)
+            ? std::clamp(value, -1000000.0f, 1000000.0f)
+            : 0.0f;
+    };
+    const QVector3D safeForce(
+        safeComponent(force.x()), safeComponent(force.y()), safeComponent(force.z()));
+    const float safeStrength = std::isfinite(strength)
+        ? std::clamp(strength, -1000000.0f, 1000000.0f)
+        : 0.0f;
+    particle.acceleration += safeForce * safeStrength * deltaTime;
 }
 
 // ==================== VortexEffector ====================
 
 void VortexEffector::apply(Particle& particle, float deltaTime)
 {
-    if (!enabled) return;
+    if (!enabled || !std::isfinite(deltaTime) || deltaTime <= 0.0f) return;
     
     QVector3D toParticle = particle.position - position;
-    float dist = toParticle.length();
+    const float dist = toParticle.length();
+    const float safeRadius = std::isfinite(radius)
+        ? std::clamp(radius, 0.001f, 1000000.0f)
+        : 0.0f;
+    const float safeTightness = std::isfinite(tightness)
+        ? std::clamp(tightness, 0.0f, 1000000.0f)
+        : 0.0f;
+    const float safeAngularVelocity = std::isfinite(angularVelocity)
+        ? std::clamp(angularVelocity, -1000000.0f, 1000000.0f)
+        : 0.0f;
+    const float safeStrength = std::isfinite(strength)
+        ? std::clamp(strength, -1000000.0f, 1000000.0f)
+        : 0.0f;
     
-    if (dist < radius && dist > 0.1f) {
+    if (std::isfinite(dist) && dist < safeRadius && dist > 0.1f) {
         // Calculate tangential force
         QVector3D tangent = QVector3D(-toParticle.y(), toParticle.x(), 0).normalized();
-        float factor = 1.0f - (dist / radius);
-        factor = std::pow(factor, tightness);
+        float factor = 1.0f - (dist / safeRadius);
+        factor = std::pow(factor, safeTightness);
         
-        float angularVelRad = qDegreesToRadians(angularVelocity * strength);
+        const float angularVelRad = qDegreesToRadians(safeAngularVelocity * safeStrength);
         particle.velocity += tangent * angularVelRad * factor * deltaTime * 50.0f;
     }
 }
@@ -238,17 +285,29 @@ void VortexEffector::apply(Particle& particle, float deltaTime)
 
 void TurbulenceEffector::apply(Particle& particle, float deltaTime)
 {
-    if (!enabled) return;
+    if (!enabled || !std::isfinite(deltaTime) || deltaTime <= 0.0f) return;
+    const float safeFrequency = std::isfinite(frequency)
+        ? std::clamp(frequency, 0.0f, 10000.0f)
+        : 0.0f;
+    const float safeAmplitude = std::isfinite(amplitude)
+        ? std::clamp(amplitude, 0.0f, 100000.0f)
+        : 0.0f;
+    const float safeEvolution = std::isfinite(evolution)
+        ? std::clamp(evolution, -1000000.0f, 1000000.0f)
+        : 0.0f;
+    const float safeStrength = std::isfinite(strength)
+        ? std::clamp(strength, -1000000.0f, 1000000.0f)
+        : 0.0f;
     
     // Simple noise-based turbulence
-    float noiseX = std::sin(particle.position.x() * frequency + evolution + seed) *
-                   std::cos(particle.position.y() * frequency * 0.7f);
-    float noiseY = std::cos(particle.position.x() * frequency * 0.8f + evolution * 1.3f + seed) *
-                   std::sin(particle.position.y() * frequency * 0.9f);
-    float noiseZ = std::sin(particle.position.z() * frequency * 0.5f + evolution * 0.7f + seed);
+    float noiseX = std::sin(particle.position.x() * safeFrequency + safeEvolution + seed) *
+                   std::cos(particle.position.y() * safeFrequency * 0.7f);
+    float noiseY = std::cos(particle.position.x() * safeFrequency * 0.8f + safeEvolution * 1.3f + seed) *
+                   std::sin(particle.position.y() * safeFrequency * 0.9f);
+    float noiseZ = std::sin(particle.position.z() * safeFrequency * 0.5f + safeEvolution * 0.7f + seed);
     
     QVector3D turbulenceForce(noiseX, noiseY, noiseZ);
-    turbulenceForce *= amplitude * strength;
+    turbulenceForce *= safeAmplitude * safeStrength;
     
     particle.velocity += turbulenceForce * deltaTime;
 }
@@ -257,16 +316,28 @@ void TurbulenceEffector::apply(Particle& particle, float deltaTime)
 
 void AttractorEffector::apply(Particle& particle, float deltaTime)
 {
-    if (!enabled) return;
+    if (!enabled || !std::isfinite(deltaTime) || deltaTime <= 0.0f) return;
     
     QVector3D toAttractor = position - particle.position;
-    float dist = toAttractor.length();
+    const float dist = toAttractor.length();
+    const float safeRadius = std::isfinite(radius)
+        ? std::clamp(radius, 0.001f, 1000000.0f)
+        : 0.0f;
+    const float safeFalloff = std::isfinite(falloff)
+        ? std::clamp(falloff, 0.0f, 1000000.0f)
+        : 0.0f;
+    const float safeKillRadius = std::isfinite(killRadius)
+        ? std::clamp(killRadius, 0.0f, 1000000.0f)
+        : 0.0f;
+    const float safeStrength = std::isfinite(strength)
+        ? std::clamp(strength, -1000000.0f, 1000000.0f)
+        : 0.0f;
     
-    if (dist > killRadius && dist < radius) {
-        float factor = 1.0f - std::pow(dist / radius, falloff);
+    if (std::isfinite(dist) && dist > safeKillRadius && dist < safeRadius) {
+        const float factor = 1.0f - std::pow(dist / safeRadius, safeFalloff);
         toAttractor.normalize();
-        particle.velocity += toAttractor * strength * factor * 100.0f * deltaTime;
-    } else if (dist <= killRadius && killOnReach) {
+        particle.velocity += toAttractor * safeStrength * factor * 100.0f * deltaTime;
+    } else if (std::isfinite(dist) && dist <= safeKillRadius && killOnReach) {
         particle.alive = false;
     }
 }
@@ -275,15 +346,24 @@ void AttractorEffector::apply(Particle& particle, float deltaTime)
 
 void RepellerEffector::apply(Particle& particle, float deltaTime)
 {
-    if (!enabled) return;
+    if (!enabled || !std::isfinite(deltaTime) || deltaTime <= 0.0f) return;
     
     QVector3D fromRepeller = particle.position - position;
-    float dist = fromRepeller.length();
+    const float dist = fromRepeller.length();
+    const float safeRadius = std::isfinite(radius)
+        ? std::clamp(radius, 0.001f, 1000000.0f)
+        : 0.0f;
+    const float safeFalloff = std::isfinite(falloff)
+        ? std::clamp(falloff, 0.0f, 1000000.0f)
+        : 0.0f;
+    const float safeStrength = std::isfinite(strength)
+        ? std::clamp(strength, -1000000.0f, 1000000.0f)
+        : 0.0f;
     
-    if (dist < radius && dist > 0.1f) {
-        float factor = 1.0f - std::pow(dist / radius, falloff);
+    if (std::isfinite(dist) && dist < safeRadius && dist > 0.1f) {
+        const float factor = 1.0f - std::pow(dist / safeRadius, safeFalloff);
         fromRepeller.normalize();
-        particle.velocity += fromRepeller * strength * factor * 100.0f * deltaTime;
+        particle.velocity += fromRepeller * safeStrength * factor * 100.0f * deltaTime;
     }
 }
 
@@ -291,15 +371,39 @@ void RepellerEffector::apply(Particle& particle, float deltaTime)
 
 void WindEffector::apply(Particle& particle, float deltaTime)
 {
-    if (!enabled) return;
+    if (!enabled || !std::isfinite(deltaTime) || deltaTime <= 0.0f) return;
+    const auto safeComponent = [](float value) {
+        return std::isfinite(value)
+            ? std::clamp(value, -1000000.0f, 1000000.0f)
+            : 0.0f;
+    };
+    const QVector3D safeDirection(
+        safeComponent(windDirection.x()),
+        safeComponent(windDirection.y()),
+        safeComponent(windDirection.z()));
+    const float safeStrength = std::isfinite(strength)
+        ? std::clamp(strength, -1000000.0f, 1000000.0f)
+        : 0.0f;
+    const float safeWindStrength = std::isfinite(windStrength)
+        ? std::clamp(windStrength, -1000000.0f, 1000000.0f)
+        : 0.0f;
+    const float safeTurbulence = std::isfinite(turbulence)
+        ? std::clamp(turbulence, -1000000.0f, 1000000.0f)
+        : 0.0f;
+    const float safeFrequency = std::isfinite(turbulenceFrequency)
+        ? std::clamp(turbulenceFrequency, 0.0f, 10000.0f)
+        : 0.0f;
+    const float safeEvolution = std::isfinite(evolution)
+        ? std::clamp(evolution, -1000000.0f, 1000000.0f)
+        : 0.0f;
     
     // Base wind
-    QVector3D windForce = windDirection.normalized() * windStrength * strength;
+    QVector3D windForce = safeDirection.normalized() * safeWindStrength * safeStrength;
     
     // Add turbulence
-    float noise = std::sin(particle.position.x() * turbulenceFrequency + evolution) *
-                  std::cos(particle.position.y() * turbulenceFrequency + evolution * 0.7f);
-    windForce += windDirection * noise * turbulence;
+    float noise = std::sin(particle.position.x() * safeFrequency + safeEvolution) *
+                  std::cos(particle.position.y() * safeFrequency + safeEvolution * 0.7f);
+    windForce += safeDirection * noise * safeTurbulence;
     
     particle.velocity += windForce * deltaTime;
 }
@@ -311,28 +415,44 @@ void KillZoneEffector::apply(Particle& particle, float deltaTime)
     Q_UNUSED(deltaTime);
     
     if (!enabled) return;
-    
+    const auto finiteComponent = [](float value) {
+        return std::isfinite(value)
+            ? std::clamp(value, 0.0f, 1000000.0f)
+            : 0.0f;
+    };
+    const auto finiteVector = [](const QVector3D& value) {
+        return std::isfinite(value.x()) &&
+               std::isfinite(value.y()) &&
+               std::isfinite(value.z());
+    };
+    if (!finiteVector(particle.position) || !finiteVector(position)) return;
+    const QVector3D safeSize(
+        finiteComponent(size.x()), finiteComponent(size.y()), finiteComponent(size.z()));
     bool inside = false;
     
     switch (zoneType) {
         case ZoneType::Sphere: {
-            float dist = (particle.position - position).length();
-            inside = dist < size.x();
+            const float dist = (particle.position - position).length();
+            inside = std::isfinite(dist) && dist < safeSize.x();
             break;
         }
         case ZoneType::Box: {
             QVector3D rel = particle.position - position;
-            inside = std::abs(rel.x()) < size.x() * 0.5f &&
-                    std::abs(rel.y()) < size.y() * 0.5f &&
-                    std::abs(rel.z()) < size.z() * 0.5f;
+            inside = std::abs(rel.x()) < safeSize.x() * 0.5f &&
+                    std::abs(rel.y()) < safeSize.y() * 0.5f &&
+                    std::abs(rel.z()) < safeSize.z() * 0.5f;
             break;
         }
         case ZoneType::Plane: {
             // Plane defined by position and direction (normal)
-            float dist = QVector3D::dotProduct(particle.position - position, direction.normalized());
-            inside = dist < 0;
+            if (!finiteVector(direction) || direction.lengthSquared() <= 1.0e-6f) return;
+            const float dist = QVector3D::dotProduct(
+                particle.position - position, direction.normalized());
+            inside = std::isfinite(dist) && dist < 0.0f;
             break;
         }
+        default:
+            return;
     }
     
     // Kill if inside and not inverted, or outside and inverted
@@ -372,6 +492,7 @@ ParticleEmitter::~ParticleEmitter()
 
 void ParticleEmitter::addEffector(std::unique_ptr<ParticleEffector> effector)
 {
+    if (!effector) return;
     effectors_.push_back(std::move(effector));
 }
 
@@ -408,6 +529,24 @@ QVector3D rotateByEulerDegrees(const QVector3D& value, const QVector3D& eulerDeg
 
 QVector3D ParticleEmitter::getEmissionPosition() const
 {
+    const auto safeComponent = [](float value) {
+        return std::isfinite(value)
+            ? std::clamp(value, -1000000.0f, 1000000.0f)
+            : 0.0f;
+    };
+    const auto safeVector = [&](const QVector3D& value) {
+        return QVector3D(
+            safeComponent(value.x()),
+            safeComponent(value.y()),
+            safeComponent(value.z()));
+    };
+    const auto safeNonNegative = [&](float value) {
+        return std::isfinite(value)
+            ? std::clamp(value, 0.0f, 1000000.0f)
+            : 0.0f;
+    };
+    const QVector3D safePosition = safeVector(params_.position);
+    const QVector3D safeRotation = safeVector(params_.rotation);
     QVector3D localOffset;
     
     switch (params_.shape) {
@@ -419,7 +558,7 @@ QVector3D ParticleEmitter::getEmissionPosition() const
             float theta = impl_->rng.bounded(360.0f) * M_PI / 180.0f;
             const float cosPhi = impl_->rng.bounded(2.0f) - 1.0f;
             const float sinPhi = std::sqrt(std::max(0.0f, 1.0f - cosPhi * cosPhi));
-            const float radius = std::max(0.0f, params_.radius);
+            const float radius = safeNonNegative(params_.radius);
             float r = radius * std::cbrt(impl_->rng.bounded(1.0f));  // Uniform distribution
             
             localOffset = QVector3D(
@@ -431,9 +570,9 @@ QVector3D ParticleEmitter::getEmissionPosition() const
         }
             
         case EmitterShape::Box: {
-            const float width = std::max(0.0f, params_.width);
-            const float height = std::max(0.0f, params_.height);
-            const float depth = std::max(0.0f, params_.depth);
+            const float width = safeNonNegative(params_.width);
+            const float height = safeNonNegative(params_.height);
+            const float depth = safeNonNegative(params_.depth);
             localOffset = QVector3D(
                 (impl_->rng.bounded(1.0f) - 0.5f) * width,
                 (impl_->rng.bounded(1.0f) - 0.5f) * height,
@@ -444,7 +583,7 @@ QVector3D ParticleEmitter::getEmissionPosition() const
             
         case EmitterShape::Circle: {
             float angle = impl_->rng.bounded(360.0f) * M_PI / 180.0f;
-            const float radius = std::max(0.0f, params_.radius);
+            const float radius = safeNonNegative(params_.radius);
             float r = radius * std::sqrt(impl_->rng.bounded(1.0f));
             
             localOffset = QVector3D(
@@ -456,8 +595,8 @@ QVector3D ParticleEmitter::getEmissionPosition() const
         }
             
         case EmitterShape::Rectangle: {
-            const float width = std::max(0.0f, params_.width);
-            const float height = std::max(0.0f, params_.height);
+            const float width = safeNonNegative(params_.width);
+            const float height = safeNonNegative(params_.height);
             localOffset = QVector3D(
                 (impl_->rng.bounded(1.0f) - 0.5f) * width,
                 (impl_->rng.bounded(1.0f) - 0.5f) * height,
@@ -467,7 +606,7 @@ QVector3D ParticleEmitter::getEmissionPosition() const
         }
             
         case EmitterShape::Line: {
-            const float lineLength = std::max(0.0f, params_.lineLength);
+            const float lineLength = safeNonNegative(params_.lineLength);
             localOffset = QVector3D(
                 (impl_->rng.bounded(1.0f) - 0.5f) * lineLength,
                 0,
@@ -480,12 +619,24 @@ QVector3D ParticleEmitter::getEmissionPosition() const
             break;
     }
     
-    return params_.position + rotateByEulerDegrees(localOffset, params_.rotation);
+    return safePosition + rotateByEulerDegrees(localOffset, safeRotation);
 }
 
 QVector3D ParticleEmitter::getEmissionDirection() const
 {
-    QVector3D dir = rotateByEulerDegrees(params_.direction, params_.rotation).normalized();
+    const auto safeComponent = [](float value) {
+        return std::isfinite(value)
+            ? std::clamp(value, -1000000.0f, 1000000.0f)
+            : 0.0f;
+    };
+    const auto safeVector = [&](const QVector3D& value) {
+        return QVector3D(
+            safeComponent(value.x()),
+            safeComponent(value.y()),
+            safeComponent(value.z()));
+    };
+    QVector3D dir = rotateByEulerDegrees(
+        safeVector(params_.direction), safeVector(params_.rotation)).normalized();
     if (dir.lengthSquared() < 1.0e-6f) {
         dir = QVector3D(0.0f, 1.0f, 0.0f);
     }
@@ -573,12 +724,23 @@ void ParticleEmitter::initializeParticle(Particle& p)
         impl_->currentSeed = params_.randomSeed;
     }
 
+    const auto randomInRange = [&](float minimum, float maximum,
+                                   float fallback = 0.0f) {
+        if (!std::isfinite(minimum) || !std::isfinite(maximum)) {
+            return std::isfinite(fallback) ? fallback : 0.0f;
+        }
+        const float safeMinimum = std::clamp(minimum, -1000000.0f, 1000000.0f);
+        const float safeMaximum = std::clamp(maximum, safeMinimum, 1000000.0f);
+        if (safeMaximum <= safeMinimum) return safeMinimum;
+        return safeMinimum + impl_->rng.bounded(safeMaximum - safeMinimum);
+    };
+
     // Position
     p.position = getEmissionPosition();
     p.prevPosition = p.position;
     
     // Velocity
-    float speed = params_.speedMin + impl_->rng.bounded(params_.speedMax - params_.speedMin);
+    const float speed = randomInRange(params_.speedMin, params_.speedMax);
     QVector3D dir = getEmissionDirection();
     p.velocity = dir * speed;
     p.velocity += QVector3D(
@@ -591,14 +753,15 @@ void ParticleEmitter::initializeParticle(Particle& p)
     p.acceleration = QVector3D(0, 0, 0);
     
     // Rotation
-    p.rotation = params_.rotationMin + impl_->rng.bounded(params_.rotationMax - params_.rotationMin);
-    p.rotationSpeed = params_.rotationSpeedMin + 
-                      impl_->rng.bounded(params_.rotationSpeedMax - params_.rotationSpeedMin);
+    p.rotation = randomInRange(params_.rotationMin, params_.rotationMax);
+    p.rotationSpeed = randomInRange(
+        params_.rotationSpeedMin, params_.rotationSpeedMax);
     
     // Scale
-    p.scaleStart = params_.scaleMin + impl_->rng.bounded(params_.scaleMax - params_.scaleMin);
-    p.customData[0] = params_.scaleMidMin + impl_->rng.bounded(params_.scaleMidMax - params_.scaleMidMin);
-    p.scaleEnd = params_.scaleEndMin + impl_->rng.bounded(params_.scaleEndMax - params_.scaleEndMin);
+    p.scaleStart = randomInRange(params_.scaleMin, params_.scaleMax, 1.0f);
+    p.customData[0] = randomInRange(
+        params_.scaleMidMin, params_.scaleMidMax, 1.0f);
+    p.scaleEnd = randomInRange(params_.scaleEndMin, params_.scaleEndMax, 1.0f);
     p.scale = p.scaleStart;
     
     // Color
@@ -607,8 +770,11 @@ void ParticleEmitter::initializeParticle(Particle& p)
     p.colorEnd = params_.colorEnd;
     
     // Apply color variation
-    if (params_.colorVariation > 0.0f) {
-        float var = params_.colorVariation;
+    const float safeColorVariation = std::isfinite(params_.colorVariation)
+        ? std::clamp(params_.colorVariation, 0.0f, 1.0f)
+        : 0.0f;
+    if (safeColorVariation > 0.0f) {
+        const float var = safeColorVariation;
         auto variation = [&]() -> float {
             return static_cast<float>(impl_->rng.generateDouble() * (2.0 * var) - var);
         };
@@ -626,13 +792,15 @@ void ParticleEmitter::initializeParticle(Particle& p)
     p.color = p.colorStart;
     
     // Opacity
-    p.opacityStart = params_.opacityMin + impl_->rng.bounded(params_.opacityMax - params_.opacityMin);
-    p.customData[1] = params_.opacityMidMin + impl_->rng.bounded(params_.opacityMidMax - params_.opacityMidMin);
-    p.opacityEnd = params_.opacityEndMin + impl_->rng.bounded(params_.opacityEndMax - params_.opacityEndMin);
+    p.opacityStart = randomInRange(params_.opacityMin, params_.opacityMax, 1.0f);
+    p.customData[1] = randomInRange(
+        params_.opacityMidMin, params_.opacityMidMax, 1.0f);
+    p.opacityEnd = randomInRange(
+        params_.opacityEndMin, params_.opacityEndMax);
     p.opacity = p.opacityStart;
     
     // Lifetime
-    p.maxLife = params_.lifeMin + impl_->rng.bounded(params_.lifeMax - params_.lifeMin);
+    p.maxLife = randomInRange(params_.lifeMin, params_.lifeMax, 1.0f);
     p.life = 1.0f;
     p.age = 0.0f;
 
@@ -676,7 +844,8 @@ void ParticleEmitter::emitParticles(int count)
         initializeParticle(p);
         particles_.push_back(p);
         if (params_.auxEnabled && params_.auxTrigger == AuxTriggerMode::Birth) {
-            emitAuxParticlesFromParticle(particles_.back(), std::max(0, params_.auxCount));
+            const Particle source = particles_.back();
+            emitAuxParticlesFromParticle(source, std::max(0, params_.auxCount));
         }
     }
     
@@ -735,11 +904,24 @@ void ParticleEmitter::emitBurst()
 
 void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
 {
+    const auto discardInvalidParticle = [&]() {
+        p.alive = false;
+        Q_EMIT particleDied(p.id);
+    };
+    const auto finiteVector = [](const QVector3D& value) {
+        return std::isfinite(value.x()) &&
+               std::isfinite(value.y()) &&
+               std::isfinite(value.z());
+    };
     // Store previous position
     p.prevPosition = p.position;
     
     // Update age and life
     p.age += deltaTime;
+    if (!std::isfinite(p.age)) {
+        discardInvalidParticle();
+        return;
+    }
     const float safeMaxLife = std::isfinite(p.maxLife)
                                   ? std::max(0.001f, p.maxLife)
                                   : 0.001f;
@@ -747,13 +929,14 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
     p.life = 1.0f - (p.age / safeMaxLife);
     
     if (p.life <= 0.0f) {
+        const Particle source = p;
+        p.alive = false;
         if (params_.auxEnabled &&
             params_.auxTrigger == AuxTriggerMode::Death &&
             p.customData[3] < 0.5f) {
-            emitAuxParticlesFromParticle(p, std::max(0, params_.auxCount));
+            emitAuxParticlesFromParticle(source, std::max(0, params_.auxCount));
         }
-        p.alive = false;
-        Q_EMIT particleDied(p.id);
+        Q_EMIT particleDied(source.id);
         return;
     }
     
@@ -789,6 +972,11 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
     
     // Update rotation
     p.rotation += p.rotationSpeed * deltaTime;
+    if (!finiteVector(p.position) || !finiteVector(p.velocity) ||
+        !std::isfinite(p.rotation)) {
+        discardInvalidParticle();
+        return;
+    }
     
     // Interpolate properties based on life
     float t = 1.0f - p.life;  // 0 = just born, 1 = about to die
@@ -816,15 +1004,28 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
         p.opacityEnd,
         params_.opacityMidPosition,
         t);
+    p.scale = std::isfinite(p.scale)
+        ? std::clamp(p.scale, 0.0f, 1000000.0f)
+        : 0.0f;
+    p.opacity = std::isfinite(p.opacity)
+        ? std::clamp(p.opacity, 0.0f, 1.0f)
+        : 0.0f;
 
-    if (!params_.randomFrame && params_.frameRate > 0.0f) {
+    const float safeFrameRate = std::isfinite(params_.frameRate)
+        ? std::clamp(params_.frameRate, 0.0f, 1000.0f)
+        : 0.0f;
+    if (!params_.randomFrame && safeFrameRate > 0.0f) {
         const int availableFrames = flipbookFrameCount(
             params_.startFrame,
             params_.frameCount,
             p.spriteRows,
             p.spriteCols);
-        const int frameOffset =
-            static_cast<int>(std::floor(p.age * params_.frameRate)) % availableFrames;
+        const double frameProgress = std::floor(
+            static_cast<double>(p.age) * static_cast<double>(safeFrameRate));
+        const double wrappedFrame = std::fmod(
+            frameProgress, static_cast<double>(availableFrames));
+        const int frameOffset = static_cast<int>(std::clamp(
+            wrappedFrame, 0.0, static_cast<double>(availableFrames - 1)));
         p.spriteFrame = clampFlipbookFrame(
             frameOffset,
             params_.startFrame,
@@ -838,8 +1039,9 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
         p.customData[3] < 0.5f) {
         const float interval = std::max(0.001f, params_.auxInterval);
         if (p.age >= p.customData[2]) {
-            emitAuxParticlesFromParticle(p, std::max(0, params_.auxCount));
+            const Particle source = p;
             p.customData[2] += interval;
+            emitAuxParticlesFromParticle(source, std::max(0, params_.auxCount));
         }
     }
 }
@@ -847,7 +1049,7 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
 void ParticleEmitter::applyEffectors(Particle& p, float deltaTime)
 {
     for (const auto& effector : effectors_) {
-        if (effector->enabled) {
+        if (effector && effector->enabled) {
             effector->apply(p, deltaTime);
         }
     }
@@ -868,10 +1070,14 @@ void ParticleEmitter::applySelfCollisionBroadPhase(float deltaTime)
         return;
     }
 
-    const float radius = std::max(0.001f, params_.selfCollisionRadius);
+    const float radius = std::isfinite(params_.selfCollisionRadius)
+        ? std::clamp(params_.selfCollisionRadius, 0.001f, 1000000.0f)
+        : 0.001f;
     const float radius2 = radius * radius;
     const float cellSize = radius * 2.0f;
-    const float response = std::clamp(params_.selfCollisionResponse, 0.0f, 1.0f);
+    const float response = std::isfinite(params_.selfCollisionResponse)
+        ? std::clamp(params_.selfCollisionResponse, 0.0f, 1.0f)
+        : 0.0f;
 
     struct CellKey {
         int x = 0;
@@ -885,13 +1091,24 @@ void ParticleEmitter::applySelfCollisionBroadPhase(float deltaTime)
     };
 
     std::map<CellKey, std::vector<int>> grid;
+    const auto safeCellCoordinate = [cellSize](float value) {
+        if (!std::isfinite(value)) return 0;
+        const double coordinate = std::floor(
+            static_cast<double>(value) / static_cast<double>(cellSize));
+        const double minimum = static_cast<double>(std::numeric_limits<int>::min() + 1);
+        const double maximum = static_cast<double>(std::numeric_limits<int>::max() - 1);
+        return static_cast<int>(std::clamp(coordinate, minimum, maximum));
+    };
     for (int i = 0; i < static_cast<int>(particles_.size()); ++i) {
         if (!particles_[i].alive) continue;
         const QVector3D& pos = particles_[i].position;
+        if (!std::isfinite(pos.x()) || !std::isfinite(pos.y()) || !std::isfinite(pos.z())) {
+            continue;
+        }
         CellKey key{
-            static_cast<int>(std::floor(pos.x() / cellSize)),
-            static_cast<int>(std::floor(pos.y() / cellSize)),
-            static_cast<int>(std::floor(pos.z() / cellSize))
+            safeCellCoordinate(pos.x()),
+            safeCellCoordinate(pos.y()),
+            safeCellCoordinate(pos.z())
         };
         grid[key].push_back(i);
     }
@@ -926,7 +1143,7 @@ void ParticleEmitter::applySelfCollisionBroadPhase(float deltaTime)
 
                             QVector3D delta = particles_[i].position - particles_[j].position;
                             float dist2 = delta.lengthSquared();
-                            if (dist2 <= 0.0f || dist2 >= radius2) {
+                            if (!std::isfinite(dist2) || dist2 <= 0.0f || dist2 >= radius2) {
                                 continue;
                             }
 
@@ -964,10 +1181,19 @@ void ParticleEmitter::simulateStep(float deltaTime)
             if (!std::isfinite(emitAccumulator_)) {
                 emitAccumulator_ = 0.0f;
             }
-            int toEmit = static_cast<int>(emitAccumulator_);
+            int toEmit = 0;
+            constexpr float kSafeIntCastLimit = 2147483000.0f;
+            if (emitAccumulator_ >= kSafeIntCastLimit) {
+                toEmit = std::max(0, params_.maxParticles);
+                emitAccumulator_ = 0.0f;
+            } else {
+                toEmit = static_cast<int>(emitAccumulator_);
+            }
             if (toEmit > 0) {
                 emitParticles(toEmit);
-                emitAccumulator_ -= toEmit;
+                if (emitAccumulator_ > 0.0f) {
+                    emitAccumulator_ -= toEmit;
+                }
             }
             break;
         }
@@ -993,7 +1219,16 @@ void ParticleEmitter::simulateStep(float deltaTime)
     }
 
     // Phase 1b: effectors + integration (particle-local)
-    for (auto& p : particles_) {
+    // updateParticle() may append auxiliary particles. Process only the
+    // particles that existed at the start of this phase so vector reallocation
+    // cannot invalidate the range-for reference, and new aux particles start
+    // on the next simulation step.
+    const std::size_t particleCountAtPhaseStart = particles_.size();
+    for (std::size_t particleIndex = 0;
+         particleIndex < particleCountAtPhaseStart &&
+         particleIndex < particles_.size();
+         ++particleIndex) {
+        auto& p = particles_[particleIndex];
         if (!p.alive) continue;
         applyEffectors(p, deltaTime);
         updateParticle(p, deltaTime);
@@ -1011,40 +1246,82 @@ void ParticleEmitter::update(float deltaTime)
     if (!active_) return;
     if (!std::isfinite(deltaTime) || deltaTime <= 0.0f) return;
 
+    const auto finiteVector = [](const QVector3D& value) {
+        return std::isfinite(value.x()) &&
+               std::isfinite(value.y()) &&
+               std::isfinite(value.z());
+    };
+    const bool validPosition = finiteVector(params_.position);
+    const bool validRotation = finiteVector(params_.rotation);
+    const QVector3D currentPosition = validPosition
+        ? params_.position
+        : impl_->lastEmitterPosition;
+    const QVector3D currentRotation = validRotation
+        ? params_.rotation
+        : impl_->lastEmitterRotation;
+
     if (!impl_->hasEmitterTransform) {
-        impl_->lastEmitterPosition = params_.position;
-        impl_->lastEmitterRotation = params_.rotation;
+        impl_->lastEmitterPosition = currentPosition;
+        impl_->lastEmitterRotation = currentRotation;
         impl_->hasEmitterTransform = true;
     }
 
-    impl_->inheritedVelocity =
-        (params_.position - impl_->lastEmitterPosition) / deltaTime;
-
-    if (!params_.worldSpace) {
-        applyEmitterLocalSpaceDelta();
-    } else if (impl_->lastEmitterPosition != params_.position ||
-               impl_->lastEmitterRotation != params_.rotation) {
-        impl_->lastEmitterPosition = params_.position;
-        impl_->lastEmitterRotation = params_.rotation;
+    if (validPosition) {
+        const QVector3D deltaPosition = currentPosition - impl_->lastEmitterPosition;
+        const auto safeVelocityComponent = [deltaTime](float value) {
+            const float raw = value / deltaTime;
+            return std::isfinite(raw)
+                ? std::clamp(raw, -1000000.0f, 1000000.0f)
+                : 0.0f;
+        };
+        impl_->inheritedVelocity = QVector3D(
+            safeVelocityComponent(deltaPosition.x()),
+            safeVelocityComponent(deltaPosition.y()),
+            safeVelocityComponent(deltaPosition.z()));
+    } else {
+        impl_->inheritedVelocity = QVector3D(0.0f, 0.0f, 0.0f);
     }
 
-    time_ += deltaTime;
+    if (!validPosition || !validRotation) {
+        impl_->lastEmitterPosition = currentPosition;
+        impl_->lastEmitterRotation = currentRotation;
+    } else if (!params_.worldSpace) {
+        applyEmitterLocalSpaceDelta();
+    } else if (impl_->lastEmitterPosition != currentPosition ||
+               impl_->lastEmitterRotation != currentRotation) {
+        impl_->lastEmitterPosition = currentPosition;
+        impl_->lastEmitterRotation = currentRotation;
+    }
 
-    if (params_.deterministic && params_.fixedTimeStep > 0.0f) {
-        const float fixedDt = params_.fixedTimeStep;
+    if (!std::isfinite(time_) || time_ < 0.0f) time_ = 0.0f;
+    time_ = std::min(
+        time_ + deltaTime,
+        std::numeric_limits<float>::max());
+    if (!std::isfinite(time_)) time_ = std::numeric_limits<float>::max();
+
+    const float fixedDt = std::isfinite(params_.fixedTimeStep)
+        ? std::clamp(params_.fixedTimeStep, 0.000001f, 1.0f)
+        : (1.0f / 120.0f);
+    const int maxSubSteps = std::clamp(params_.maxSubSteps, 1, 256);
+    if (params_.deterministic && fixedDt > 0.0f) {
         impl_->fixedStepAccumulator += deltaTime;
+        if (!std::isfinite(impl_->fixedStepAccumulator) ||
+            impl_->fixedStepAccumulator < 0.0f) {
+            impl_->fixedStepAccumulator = 0.0f;
+        }
 
-        int steps = std::min(
-            static_cast<int>(impl_->fixedStepAccumulator / fixedDt),
-            std::max(1, params_.maxSubSteps)
-        );
+        const double availableSteps = std::floor(
+            static_cast<double>(impl_->fixedStepAccumulator) /
+            static_cast<double>(fixedDt));
+        const int steps = static_cast<int>(std::clamp(
+            availableSteps, 0.0, static_cast<double>(maxSubSteps)));
 
         for (int i = 0; i < steps; ++i) {
             simulateStep(fixedDt);
         }
 
         impl_->fixedStepAccumulator -= steps * fixedDt;
-        const float maxCarry = fixedDt * std::max(1, params_.maxSubSteps);
+        const float maxCarry = fixedDt * maxSubSteps;
         if (impl_->fixedStepAccumulator > maxCarry) {
             impl_->fixedStepAccumulator = maxCarry;
         }
@@ -1057,6 +1334,7 @@ void ParticleEmitter::update(float deltaTime)
 void ParticleEmitter::clear()
 {
     particles_.clear();
+    nextParticleId_ = 0;
     time_ = 0.0f;
     emitAccumulator_ = 0.0f;
     burstTimer_ = 0.0f;
@@ -1072,12 +1350,22 @@ void ParticleEmitter::clear()
 
 void ParticleEmitter::preWarm(float duration, float stepSize)
 {
+    if (!std::isfinite(duration) || duration <= 0.0f ||
+        !std::isfinite(stepSize) || stepSize <= 0.0f) {
+        return;
+    }
+    const float safeDuration = std::min(duration, 1000000.0f);
+    const float safeStepSize = std::clamp(stepSize, 0.000001f, 1.0f);
     clear();
     
-    float time = 0.0f;
-    while (time < duration) {
-        update(stepSize);
-        time += stepSize;
+    double time = 0.0;
+    while (time < static_cast<double>(safeDuration)) {
+        const float dt = static_cast<float>(std::min(
+            static_cast<double>(safeStepSize),
+            static_cast<double>(safeDuration) - time));
+        if (!std::isfinite(dt) || dt <= 0.0f) break;
+        update(dt);
+        time += dt;
     }
 }
 
@@ -1112,18 +1400,24 @@ ParticleEmitter* ParticleSystem::createEmitter()
 
 void ParticleSystem::removeEmitter(ParticleEmitter* emitter)
 {
-    emitters_.erase(
-        std::remove_if(emitters_.begin(), emitters_.end(),
-            [emitter](const std::unique_ptr<ParticleEmitter>& e) { return e.get() == emitter; }),
-        emitters_.end()
-    );
-    Q_EMIT emitterRemoved(emitter);
+    if (!emitter) return;
+    const auto found = std::find_if(
+        emitters_.begin(), emitters_.end(),
+        [emitter](const std::unique_ptr<ParticleEmitter>& candidate) {
+            return candidate && candidate.get() == emitter;
+        });
+    if (found == emitters_.end()) return;
+    auto removed = std::move(*found);
+    emitters_.erase(found);
+    Q_EMIT emitterRemoved(removed.get());
 }
 
 void ParticleSystem::removeEmitter(int index)
 {
     if (index >= 0 && index < static_cast<int>(emitters_.size())) {
-        ParticleEmitter* ptr = emitters_[index].get();
+        auto removed = std::move(emitters_[index]);
+        if (!removed) return;
+        ParticleEmitter* ptr = removed.get();
         emitters_.erase(emitters_.begin() + index);
         Q_EMIT emitterRemoved(ptr);
     }
@@ -1138,20 +1432,30 @@ int ParticleSystem::totalParticleCount() const
 {
     int count = 0;
     for (const auto& emitter : emitters_) {
-        count += emitter->particleCount();
+        if (!emitter) continue;
+        const int emitterCount = std::max(0, emitter->particleCount());
+        if (emitterCount > std::numeric_limits<int>::max() - count) {
+            return std::numeric_limits<int>::max();
+        }
+        count += emitterCount;
     }
     return count;
 }
 
 void ParticleSystem::update(float deltaTime)
 {
-    if (paused_) return;
+    if (paused_ || !std::isfinite(deltaTime) || deltaTime <= 0.0f) return;
     
-    float scaledDelta = deltaTime * timeScale_;
-    time_ += scaledDelta;
+    const float scaledDelta = deltaTime * timeScale_;
+    if (!std::isfinite(scaledDelta) || scaledDelta <= 0.0f) return;
+    if (!std::isfinite(time_) || time_ < 0.0f) time_ = 0.0f;
+    time_ = std::min(
+        time_ + scaledDelta,
+        std::numeric_limits<float>::max());
+    if (!std::isfinite(time_)) time_ = std::numeric_limits<float>::max();
     
     for (auto& emitter : emitters_) {
-        emitter->update(scaledDelta);
+        if (emitter) emitter->update(scaledDelta);
     }
     
     Q_EMIT updated(deltaTime);
@@ -1161,14 +1465,14 @@ void ParticleSystem::reset()
 {
     time_ = 0.0f;
     for (auto& emitter : emitters_) {
-        emitter->clear();
+        if (emitter) emitter->clear();
     }
 }
 
 void ParticleSystem::goToFrame(int64_t frame, double fps)
 {
     reset();
-    if (frame < 0 || fps <= 0.0) return;
+    if (frame < 0 || !std::isfinite(fps) || fps <= 0.0) return;
 
     // 冒頭フレーム（frame <= 1）で preWarm を要求するエミッタがある場合だけ、
     // 本来のシミュレーションに先立って短時間のプリウォームを行う。
@@ -1204,30 +1508,56 @@ void ParticleSystem::goToFrame(int64_t frame, double fps)
     }
 
     // 固定ステップでシミュレートしてターゲット時間に到達させる
-    const double targetTime = static_cast<double>(frame) / fps;
+    const double rawTargetTime = static_cast<double>(frame) / fps;
+    if (!std::isfinite(rawTargetTime) || rawTargetTime <= 0.0) {
+        return;
+    }
+    constexpr double kMaxSimulationTime = 1000000.0;
+    const double targetTime = std::min(rawTargetTime, kMaxSimulationTime);
     const float stepSize = 1.0f / 120.0f; // 決定論的な基本刻み
 
-    float currentTime = 0.0f;
+    double currentTime = 0.0;
     while (currentTime < targetTime) {
-        float dt = std::min(stepSize, static_cast<float>(targetTime - currentTime));
+        const float dt = static_cast<float>(std::min(
+            static_cast<double>(stepSize), targetTime - currentTime));
+        if (!std::isfinite(dt) || dt <= 0.0f) {
+            break;
+        }
         // Emitter 内の update ロジックをそのまま呼ぶ
         for (auto& emitter : emitters_) {
-            emitter->update(dt);
+            if (emitter) emitter->update(dt);
         }
         currentTime += dt;
     }
-    time_ = currentTime;
+    time_ = std::isfinite(currentTime)
+        ? static_cast<float>(std::min(
+            currentTime,
+            static_cast<double>(std::numeric_limits<float>::max())))
+        : 0.0f;
 }
 
 ParticleRenderData ParticleSystem::captureRenderData() const
 {
     ParticleRenderData data;
-    data.particles.reserve(totalParticleCount());
+    constexpr int kCaptureReserveLimit = 1000000;
+    data.particles.reserve(static_cast<std::size_t>(std::min(
+        totalParticleCount(), kCaptureReserveLimit)));
     
     for (const auto& emitter : emitters_) {
         if (!emitter) continue;
         for (const auto& p : emitter->particles()) {
             if (p.alive) {
+                const auto finiteVector = [](const QVector3D& value) {
+                    return std::isfinite(value.x()) &&
+                           std::isfinite(value.y()) &&
+                           std::isfinite(value.z());
+                };
+                if (!finiteVector(p.position) || !finiteVector(p.velocity)) continue;
+                const auto safeNonNegative = [](float value, float fallback = 0.0f) {
+                    return std::isfinite(value)
+                        ? std::clamp(value, 0.0f, 1000000.0f)
+                        : fallback;
+                };
                 ParticleRenderData::Vertex v;
                 v.px = p.position.x();
                 v.py = p.position.y();
@@ -1238,18 +1568,19 @@ ParticleRenderData ParticleSystem::captureRenderData() const
                 v.r  = p.color.redF();
                 v.g  = p.color.greenF();
                 v.b  = p.color.blueF();
-                v.a  = p.color.alphaF() * p.opacity;
-                v.size = p.scale;
+                v.a  = std::clamp(p.color.alphaF() * safeNonNegative(p.opacity), 0.0f, 1.0f);
+                v.size = safeNonNegative(p.scale);
                 const float velocityStretch = particleStretchFactor(p.velocity);
                 v.stretch = renderSettings_.stretchEnabled
-                    ? std::max(1.0f, velocityStretch * std::max(0.0f, renderSettings_.stretchFactor))
+                    ? std::max(1.0f, velocityStretch * safeNonNegative(renderSettings_.stretchFactor))
                     : 1.0f;
-                v.rotation = p.rotation;
-                v.age = p.age;
-                v.lifetime = p.maxLife;
-                v.spriteFrame = p.spriteFrame;
-                v.spriteRows = p.spriteRows;
-                v.spriteCols = p.spriteCols;
+                v.rotation = std::isfinite(p.rotation) ? p.rotation : 0.0f;
+                v.age = safeNonNegative(p.age);
+                v.lifetime = std::max(0.001f, safeNonNegative(p.maxLife, 0.001f));
+                v.spriteRows = std::clamp(p.spriteRows, 1, 1024);
+                v.spriteCols = std::clamp(p.spriteCols, 1, 1024);
+                v.spriteFrame = std::clamp(
+                    p.spriteFrame, 0, v.spriteRows * v.spriteCols - 1);
                 data.particles.push_back(v);
             }
         }
@@ -1263,6 +1594,8 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
     if (width <= 0 || height <= 0) {
         return QImage();
     }
+    width = std::clamp(width, 1, 16384);
+    height = std::clamp(height, 1, 16384);
 
     update(deltaTime);
 
@@ -1276,8 +1609,16 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
 
     std::vector<SoftwareParticle> allParticles;
     for (const auto& emitter : emitters_) {
+        if (!emitter) continue;
         for (const auto& p : emitter->particles()) {
-            if (p.alive) {
+            const auto finiteVector = [](const QVector3D& value) {
+                return std::isfinite(value.x()) &&
+                       std::isfinite(value.y()) &&
+                       std::isfinite(value.z());
+            };
+            if (p.alive && finiteVector(p.position) &&
+                finiteVector(p.velocity) && finiteVector(p.prevPosition) &&
+                std::isfinite(p.scale) && std::isfinite(p.opacity)) {
                 allParticles.push_back({&p, &emitter->params()});
             }
         }
@@ -1345,15 +1686,33 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
         const float invDepth = 1.0f / depth;
         const float sx = halfW + view.x() * focal * invDepth;
         const float sy = halfH - view.y() * focal * invDepth;
-        const int px = static_cast<int>(std::round(sx));
-        const int py = static_cast<int>(std::round(sy));
+        if (!std::isfinite(sx) || !std::isfinite(sy)) {
+            continue;
+        }
+        constexpr double kPixelCastMargin = 1000001.0;
+        const double minPixel =
+            static_cast<double>(std::numeric_limits<int>::min()) + kPixelCastMargin;
+        const double maxPixel =
+            static_cast<double>(std::numeric_limits<int>::max()) - kPixelCastMargin;
+        const int px = static_cast<int>(std::clamp(
+            std::round(static_cast<double>(sx)), minPixel, maxPixel));
+        const int py = static_cast<int>(std::clamp(
+            std::round(static_cast<double>(sy)), minPixel, maxPixel));
 
-        const float projectedRadius = std::max(1.0f, p->scale * 12.0f * focal * invDepth);
+        const float safeScale = std::clamp(p->scale, 0.0f, 1000000.0f);
+        const float projectedRadius = std::clamp(
+            safeScale * 12.0f * focal * invDepth, 1.0f, 1000000.0f);
+        const float safeStretchFactor = std::isfinite(renderSettings_.stretchFactor)
+            ? std::clamp(renderSettings_.stretchFactor, 0.0f, 1000000.0f)
+            : 0.0f;
         const float stretch = renderSettings_.stretchEnabled
-            ? std::max(1.0f, particleStretchFactor(p->velocity) * std::max(0.0f, renderSettings_.stretchFactor))
+            ? std::clamp(
+                std::max(1.0f, particleStretchFactor(p->velocity) * safeStretchFactor),
+                1.0f, 1000000.0f)
             : 1.0f;
-        const float radiusX = std::max(1.0f, projectedRadius * 0.20f);
-        const float radiusY = std::max(radiusX, projectedRadius * stretch);
+        const float radiusX = std::clamp(projectedRadius * 0.20f, 1.0f, 1000000.0f);
+        const float radiusY = std::clamp(
+            std::max(radiusX, projectedRadius * stretch), radiusX, 1000000.0f);
         const int radius = static_cast<int>(std::ceil(std::max(radiusX, radiusY)));
         if (radius <= 0) continue;
 
@@ -1365,7 +1724,8 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
             continue;
         }
 
-        const float alpha = std::clamp(particleColor.alphaF() * p->opacity, 0.0f, 1.0f);
+        const float safeOpacity = std::clamp(p->opacity, 0.0f, 1.0f);
+        const float alpha = std::clamp(particleColor.alphaF() * safeOpacity, 0.0f, 1.0f);
         const int baseA = static_cast<int>(alpha * 255.0f);
         if (baseA <= 0) continue;
 
@@ -1384,8 +1744,8 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
             }
 
             if (!it->second.isNull()) {
-                const int rows = std::max(1, p->spriteRows);
-                const int cols = std::max(1, p->spriteCols);
+                const int rows = std::clamp(p->spriteRows, 1, 1024);
+                const int cols = std::clamp(p->spriteCols, 1, 1024);
                 const int frameWidth = it->second.width() / cols;
                 const int frameHeight = it->second.height() / rows;
                 if (frameWidth > 0 && frameHeight > 0) {
@@ -1405,8 +1765,9 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
             auto* row = scan + y * stride;
             for (int x = minX; x <= maxX; ++x) {
                 const int dx = x - px;
-                const float dist2 = (static_cast<float>(dx * dx) / radiusX2) +
-                                    (static_cast<float>(dy * dy) / radiusY2);
+                const float dist2 =
+                    ((static_cast<float>(dx) * static_cast<float>(dx)) / radiusX2) +
+                    ((static_cast<float>(dy) * static_cast<float>(dy)) / radiusY2);
                 if (dist2 > 1.0f) {
                     continue;
                 }
@@ -1417,8 +1778,11 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
                 int sourceA = 255;
                 float falloff = 1.0f - dist2;
                 if (renderSettings_.softParticles) {
+                    const float safeSoftParticleDistance = std::isfinite(renderSettings_.softParticleDistance)
+                        ? std::clamp(renderSettings_.softParticleDistance, 0.0f, 1000000.0f)
+                        : 0.0f;
                     const float softness = std::clamp(
-                        renderSettings_.softParticleDistance / std::max(1, radius),
+                        safeSoftParticleDistance / std::max(1, radius),
                         0.01f,
                         0.95f);
                     const float edge = 1.0f - softness;
@@ -1470,11 +1834,17 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
                     static_cast<int>(std::round(halfW + prevView.x() * focal * prevInvDepth)),
                     static_cast<int>(std::round(halfH - prevView.y() * focal * prevInvDepth)));
                 const QPoint currPoint(px, py);
-                const float trailAlpha = std::clamp(renderSettings_.trailFade, 0.0f, 1.0f) * alpha;
+                const float safeTrailFade = std::isfinite(renderSettings_.trailFade)
+                    ? std::clamp(renderSettings_.trailFade, 0.0f, 1.0f)
+                    : 0.0f;
+                const float trailAlpha = safeTrailFade * alpha;
                 if (trailAlpha > 0.0f) {
                     QPainter trailPainter(&target);
                     QPen pen(particleColor);
-                    pen.setWidthF(std::max(0.5f, renderSettings_.trailWidth));
+                    const float safeTrailWidth = std::isfinite(renderSettings_.trailWidth)
+                        ? std::clamp(renderSettings_.trailWidth, 0.5f, 1000000.0f)
+                        : 0.5f;
+                    pen.setWidthF(safeTrailWidth);
                     pen.setCapStyle(Qt::RoundCap);
                     pen.setJoinStyle(Qt::RoundJoin);
                     QColor trailColor = particleColor;
@@ -1492,7 +1862,15 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
 
 void ParticleSystem::setCameraPosition(const QVector3D& position)
 {
-    impl_->cameraPosition = position;
+    const auto safeComponent = [](float value) {
+        return std::isfinite(value)
+            ? std::clamp(value, -1000000.0f, 1000000.0f)
+            : 0.0f;
+    };
+    impl_->cameraPosition = QVector3D(
+        safeComponent(position.x()),
+        safeComponent(position.y()),
+        safeComponent(position.z()));
 }
 
 QVector3D ParticleSystem::cameraPosition() const
@@ -1503,28 +1881,52 @@ QVector3D ParticleSystem::cameraPosition() const
 void ParticleSystem::clear()
 {
     for (auto& emitter : emitters_) {
-        emitter->clear();
+        if (emitter) emitter->clear();
     }
     time_ = 0.0f;
 }
 
 void ParticleSystem::preWarm(float duration)
 {
+    if (!std::isfinite(duration) || duration <= 0.0f) return;
     for (auto& emitter : emitters_) {
-        emitter->preWarm(duration);
+        if (emitter) emitter->preWarm(duration);
     }
 }
 
 void ParticleSystem::render(QPainter& painter, const QTransform& transform)
 {
     painter.save();
-    painter.setTransform(transform, true);
+    const auto finite = [](double value) { return std::isfinite(value); };
+    const bool transformFinite =
+        finite(transform.m11()) && finite(transform.m12()) &&
+        finite(transform.m13()) && finite(transform.m21()) &&
+        finite(transform.m22()) && finite(transform.m23()) &&
+        finite(transform.m31()) && finite(transform.m32()) &&
+        finite(transform.m33()) && finite(transform.dx()) && finite(transform.dy());
+    painter.setTransform(transformFinite ? transform : QTransform(), true);
     
     // Collect all particles from all emitters
     std::vector<const Particle*> allParticles;
+    const auto finiteVector = [](const QVector3D& value) {
+        return std::isfinite(value.x()) &&
+               std::isfinite(value.y()) &&
+               std::isfinite(value.z());
+    };
+    const auto finiteParticle = [&](const Particle& particle) {
+        return particle.alive &&
+               finiteVector(particle.position) &&
+               finiteVector(particle.prevPosition) &&
+               finiteVector(particle.velocity) &&
+               std::isfinite(particle.scale) &&
+               std::isfinite(particle.opacity) &&
+               std::isfinite(particle.rotation) &&
+               std::isfinite(particle.age);
+    };
     for (const auto& emitter : emitters_) {
+        if (!emitter) continue;
         for (const auto& p : emitter->particles()) {
-            if (p.alive) {
+            if (finiteParticle(p)) {
                 allParticles.push_back(&p);
             }
         }
@@ -1570,11 +1972,16 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
     // Render particles
     for (const Particle* p : allParticles) {
         QColor color = p->color;
-        color.setAlphaF(color.alphaF() * p->opacity);
+        const float safeOpacity = std::clamp(p->opacity, 0.0f, 1.0f);
+        color.setAlphaF(color.alphaF() * safeOpacity);
 
         if (renderSettings_.trailEnabled) {
-            const float trailFade = std::clamp(renderSettings_.trailFade, 0.0f, 1.0f);
-            const float trailWidth = std::max(0.1f, renderSettings_.trailWidth);
+            const float trailFade = std::isfinite(renderSettings_.trailFade)
+                ? std::clamp(renderSettings_.trailFade, 0.0f, 1.0f)
+                : 0.0f;
+            const float trailWidth = std::isfinite(renderSettings_.trailWidth)
+                ? std::clamp(renderSettings_.trailWidth, 0.1f, 1000000.0f)
+                : 0.1f;
             const QPointF prevPos(p->prevPosition.x(), p->prevPosition.y());
             const QPointF currPos(p->position.x(), p->position.y());
             QPen trailPen(color);
@@ -1589,9 +1996,14 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
         }
         
         QPointF pos(p->position.x(), p->position.y());
-        float size = p->scale * 10.0f;  // Base size
+        const float size = std::clamp(p->scale, 0.0f, 100000.0f) * 10.0f;  // Base size
+        const float safeStretchFactor = std::isfinite(renderSettings_.stretchFactor)
+            ? std::clamp(renderSettings_.stretchFactor, 0.0f, 1000000.0f)
+            : 0.0f;
         const float stretch = renderSettings_.stretchEnabled
-            ? std::max(1.0f, particleStretchFactor(p->velocity) * std::max(0.0f, renderSettings_.stretchFactor))
+            ? std::clamp(
+                std::max(1.0f, particleStretchFactor(p->velocity) * safeStretchFactor),
+                1.0f, 1000000.0f)
             : 1.0f;
         
         painter.save();
@@ -1638,17 +2050,41 @@ void ParticleSystem::render(QImage& target, const QTransform& transform)
 void ParticleSystem::renderGPU(float* vertexBuffer, int maxVertices, int& vertexCount)
 {
     vertexCount = 0;
+    if (!vertexBuffer || maxVertices <= 0) return;
+    const int writableVertexCapacity = std::min(
+        maxVertices, std::numeric_limits<int>::max() / 8);
+    const auto finiteVector = [](const QVector3D& value) {
+        return std::isfinite(value.x()) &&
+               std::isfinite(value.y()) &&
+               std::isfinite(value.z());
+    };
+    const auto safePositionComponent = [](float value) {
+        return std::isfinite(value)
+            ? std::clamp(value, -10000000.0f, 10000000.0f)
+            : 0.0f;
+    };
+    const float safeStretchFactor = std::isfinite(renderSettings_.stretchFactor)
+        ? std::clamp(renderSettings_.stretchFactor, 0.0f, 1000000.0f)
+        : 0.0f;
     
     for (const auto& emitter : emitters_) {
+        if (!emitter) continue;
         for (const auto& p : emitter->particles()) {
-            if (!p.alive || vertexCount >= maxVertices) continue;
+            if (!p.alive || vertexCount > writableVertexCapacity - 4 ||
+                !finiteVector(p.position) || !finiteVector(p.velocity) ||
+                !std::isfinite(p.scale) || !std::isfinite(p.rotation) ||
+                !std::isfinite(p.opacity)) continue;
             
             // Each particle needs 4 vertices (quad)
             int idx = vertexCount * 8;  // 8 floats per vertex (pos + uv + color)
             
-        float halfSize = p.scale * 5.0f;
+        const float halfSize = std::clamp(p.scale, 0.0f, 100000.0f) * 5.0f;
+        const float safePositionX = safePositionComponent(p.position.x());
+        const float safePositionY = safePositionComponent(p.position.y());
         const float stretch = renderSettings_.stretchEnabled
-            ? std::max(1.0f, particleStretchFactor(p.velocity) * std::max(0.0f, renderSettings_.stretchFactor))
+            ? std::clamp(
+                std::max(1.0f, particleStretchFactor(p.velocity) * safeStretchFactor),
+                1.0f, 1000000.0f)
             : 1.0f;
         float cosR = std::cos(p.rotation * M_PI / 180.0f);
         float sinR = std::sin(p.rotation * M_PI / 180.0f);
@@ -1662,8 +2098,8 @@ void ParticleSystem::renderGPU(float* vertexBuffer, int maxVertices, int& vertex
             };
             
             for (int i = 0; i < 4; i++) {
-                float x = corners[i][0] * cosR - (corners[i][1] * stretch) * sinR + p.position.x();
-                float y = corners[i][0] * sinR + (corners[i][1] * stretch) * cosR + p.position.y();
+                float x = corners[i][0] * cosR - (corners[i][1] * stretch) * sinR + safePositionX;
+                float y = corners[i][0] * sinR + (corners[i][1] * stretch) * cosR + safePositionY;
                 
                 vertexBuffer[idx + i * 8 + 0] = x;
                 vertexBuffer[idx + i * 8 + 1] = y;
@@ -1672,7 +2108,8 @@ void ParticleSystem::renderGPU(float* vertexBuffer, int maxVertices, int& vertex
                 vertexBuffer[idx + i * 8 + 4] = p.color.redF();
                 vertexBuffer[idx + i * 8 + 5] = p.color.greenF();
                 vertexBuffer[idx + i * 8 + 6] = p.color.blueF();
-                vertexBuffer[idx + i * 8 + 7] = p.color.alphaF() * p.opacity;
+                vertexBuffer[idx + i * 8 + 7] =
+                    std::clamp(p.color.alphaF() * p.opacity, 0.0f, 1.0f);
             }
             
             vertexCount += 4;
@@ -2129,7 +2566,9 @@ ParticleSystem* ParticleManager::system(const QString& name) const
 
 void ParticleManager::removeSystem(const QString& name)
 {
-    impl_->systems.erase(name);
+    const auto found = impl_->systems.find(name);
+    if (found == impl_->systems.end()) return;
+    impl_->systems.erase(found);
     Q_EMIT systemRemoved(name);
 }
 

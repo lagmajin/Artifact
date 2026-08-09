@@ -54,6 +54,7 @@ import Artifact.Widgets.FrameResourceInspectorWidget;
 import Artifact.Widgets.FrameStateDiffWidget;
 import Artifact.Widgets.TraceTimelineWidget;
 import Artifact.Widgets.DebugRenderHarnessWidget;
+import Artifact.Widgets.Diagnostics.FallbackPanel;
 import Tracking.MotionTracker;
 import Thread.Helper;
 import Frame.Debug;
@@ -533,6 +534,7 @@ public:
     QWidget* diagnosticsPage_ = nullptr;
     QLabel* diagnosticsSummary_ = nullptr;
     QPlainTextEdit* diagnosticsText_ = nullptr;
+    FallbackDiagnosticsPanel* fallbackDiagnosticsPage_ = nullptr;
     QWidget* exportPage_ = nullptr;
     QLabel* exportSummary_ = nullptr;
     QPlainTextEdit* exportText_ = nullptr;
@@ -898,6 +900,8 @@ public:
         exportText_->setLineWrapMode(QPlainTextEdit::NoWrap);
         exportLayout->addWidget(exportText_);
 
+        fallbackDiagnosticsPage_ = new FallbackDiagnosticsPanel(tabs_);
+
         tabs_->addTab(capturePage_, QStringLiteral("Capture"));
         tabs_->addTab(statePage_, QStringLiteral("State"));
         tabs_->addTab(playbackPage_, QStringLiteral("Playback"));
@@ -909,6 +913,7 @@ public:
         tabs_->addTab(framePage_, QStringLiteral("Frame"));
         tabs_->addTab(harnessPage_, QStringLiteral("Harness"));
         tabs_->addTab(diagnosticsPage_, QStringLiteral("Diagnostics"));
+        tabs_->addTab(fallbackDiagnosticsPage_, QStringLiteral("Fallbacks"));
         tabs_->addTab(exportPage_, QStringLiteral("Export"));
 
         layout->addWidget(tabs_);
@@ -1337,6 +1342,115 @@ public:
         return QStringLiteral("density is readable");
     }
 
+    static QString frameDebugNextAction(const ArtifactCore::FrameDebugSnapshot& snapshot)
+    {
+        if (snapshot.failed) {
+            return snapshot.failureReason.trimmed().isEmpty()
+                       ? QStringLiteral("open the failed frame pass and inspect its inputs")
+                       : QStringLiteral("inspect the failed frame: %1")
+                             .arg(snapshot.failureReason.trimmed());
+        }
+
+        for (const auto& pass : snapshot.passes) {
+            if (pass.status == ArtifactCore::FrameDebugPassStatus::Failed) {
+                const QString passName = pass.name.trimmed().isEmpty()
+                                             ? QStringLiteral("unnamed pass")
+                                             : pass.name.trimmed();
+                return QStringLiteral("inspect failed pass: %1").arg(passName);
+            }
+        }
+
+        int staleResources = 0;
+        int cacheMisses = 0;
+        int sourceNeedsAttention = 0;
+        int invalidTextures = 0;
+        QString firstStaleLabel;
+        QString firstMissLabel;
+        QString firstSourceLabel;
+        QString firstInvalidLabel;
+        bool maskFallback = false;
+        for (const auto& resource : snapshot.resources) {
+            const QString label = resource.label.trimmed().isEmpty()
+                                      ? (resource.type.trimmed().isEmpty()
+                                             ? QStringLiteral("unnamed resource")
+                                             : resource.type.trimmed())
+                                      : resource.label.trimmed();
+            if (resource.stale) {
+                ++staleResources;
+                if (firstStaleLabel.isEmpty()) {
+                    firstStaleLabel = label;
+                }
+            }
+            const bool cacheLikeResource =
+                resource.relation.compare(QStringLiteral("cache"), Qt::CaseInsensitive) == 0 ||
+                resource.relation.compare(QStringLiteral("upload"), Qt::CaseInsensitive) == 0 ||
+                label.contains(QStringLiteral("cache"), Qt::CaseInsensitive) ||
+                resource.note.contains(QStringLiteral("miss"), Qt::CaseInsensitive);
+            if (cacheLikeResource && !resource.cacheHit) {
+                ++cacheMisses;
+                if (firstMissLabel.isEmpty()) {
+                    firstMissLabel = label;
+                }
+            }
+            if (resource.type.compare(QStringLiteral("image"),
+                                      Qt::CaseInsensitive) == 0 &&
+                resource.relation.compare(QStringLiteral("source"),
+                                           Qt::CaseInsensitive) == 0 &&
+                !resource.cacheHit) {
+                ++sourceNeedsAttention;
+                if (firstSourceLabel.isEmpty()) {
+                    firstSourceLabel = label;
+                }
+            }
+            const bool hasTextureEvidence =
+                resource.texture.valid || !resource.texture.name.trimmed().isEmpty() ||
+                resource.texture.width > 0 || resource.texture.height > 0;
+            const bool hasBufferEvidence =
+                resource.buffer.valid || !resource.buffer.name.trimmed().isEmpty() ||
+                resource.buffer.byteSize > 0;
+            if ((hasTextureEvidence || hasBufferEvidence) &&
+                !resource.texture.valid && !resource.buffer.valid) {
+                ++invalidTextures;
+                if (firstInvalidLabel.isEmpty()) {
+                    firstInvalidLabel = label;
+                }
+            }
+            const QString note = resource.note.trimmed();
+            if (note.contains(QStringLiteral("mask"), Qt::CaseInsensitive) &&
+                note.contains(QStringLiteral("fallback"), Qt::CaseInsensitive)) {
+                maskFallback = true;
+            }
+        }
+
+        if (invalidTextures > 0) {
+            return QStringLiteral("inspect invalid resource: %1").arg(firstInvalidLabel);
+        }
+        if (maskFallback) {
+            return QStringLiteral("inspect the mask fallback resource and its blend pass");
+        }
+        if (staleResources > 0) {
+            return QStringLiteral("inspect stale resource: %1 (%2 total)")
+                .arg(firstStaleLabel)
+                .arg(staleResources);
+        }
+        if (sourceNeedsAttention > 0) {
+            return QStringLiteral("inspect image source/buffer: %1")
+                .arg(firstSourceLabel);
+        }
+        if (cacheMisses > 0) {
+            return QStringLiteral("inspect cache miss: %1 (%2 total)")
+                .arg(firstMissLabel)
+                .arg(cacheMisses);
+        }
+        if (!snapshot.densityNextAction.trimmed().isEmpty()) {
+            return snapshot.densityNextAction.trimmed();
+        }
+        if (snapshot.compareMode != ArtifactCore::FrameDebugCompareMode::Disabled) {
+            return QStringLiteral("compare the current frame with the selected capture");
+        }
+        return QStringLiteral("frame looks stable; capture a comparison frame if needed");
+    }
+
     static QString captureEntryLabel(const ArtifactCore::FrameDebugCapture& capture, bool isCurrent)
     {
         const auto& snapshot = capture.snapshot;
@@ -1704,9 +1818,7 @@ public:
             const QString priorRecentActionText = debugMcpSessionSummary.value(QStringLiteral("priorRecentAction")).toString().trimmed();
             const QString breakHistorySummaryText = debugMcpSessionSummary.value(QStringLiteral("breakHistorySummary")).toString().trimmed();
             const QString densityWarning = densityWarningText(controllerSnapshot);
-            const QString nextText = controllerSnapshot.densityNextAction.isEmpty()
-                                         ? QStringLiteral("Capture a frame when behavior changes.")
-                                         : controllerSnapshot.densityNextAction;
+            const QString nextText = frameDebugNextAction(controllerSnapshot);
             stateSummary_->setText(QStringLiteral("NOW  %1 / %2 / Frame %3 / %4\nWARNING  %5    NEXT  %6")
                                        .arg(compositionText, layerText)
                                        .arg(controllerSnapshot.frame.framePosition())
@@ -1749,18 +1861,14 @@ public:
                                              .arg(breakHistorySummaryText)
                                              .arg(visualDensityMonitorText(controllerSnapshot))
                                              .arg(densityWarningText(controllerSnapshot))
-                                             .arg(controllerSnapshot.densityNextAction.isEmpty()
-                                                      ? QStringLiteral("<none>")
-                                                      : controllerSnapshot.densityNextAction)
+                                             .arg(frameDebugNextAction(controllerSnapshot))
                                              .arg(debugMcpStatus, debugMcpHit, recentActionText));
             } else if (!controllerSnapshot.densityLabel.isEmpty() ||
                        !controllerSnapshot.densityWarning.isEmpty()) {
                 stateSummary_->setToolTip(QStringLiteral("visualDensityMonitor=%1  warning=%2  next=%3  status=%4  lastHit=%5  act=%6")
                                              .arg(visualDensityMonitorText(controllerSnapshot))
                                              .arg(densityWarningText(controllerSnapshot))
-                                             .arg(controllerSnapshot.densityNextAction.isEmpty()
-                                                      ? QStringLiteral("<none>")
-                                                      : controllerSnapshot.densityNextAction)
+                                             .arg(frameDebugNextAction(controllerSnapshot))
                                              .arg(debugMcpStatus, debugMcpHit, recentActionText));
             } else {
                 stateSummary_->setToolTip(QStringLiteral("status=%1  lastHit=%2  act=%3")
@@ -1889,21 +1997,20 @@ public:
             } else if (!controllerSnapshot.densityLabel.isEmpty()) {
                 warningText = densityWarningText(controllerSnapshot);
             }
-            const QString nextText = warningText == QStringLiteral("none")
-                                         ? QStringLiteral("capture frame when behavior changes")
-                                         : QStringLiteral("open the relevant diagnostic tab");
+            const QString nextText = frameDebugNextAction(controllerSnapshot);
             overviewSummary_->setText(QStringLiteral("NOW  %1 / %2 / Frame %3 / %4 / %5\nWARNING  %6    NEXT  %7")
                                           .arg(compositionText, layerText)
                                           .arg(controllerSnapshot.frame.framePosition())
                                           .arg(playbackText, backendText)
                                           .arg(warningText == QStringLiteral("none") ? QStringLiteral("None") : warningText)
                                           .arg(nextText));
-            overviewSummary_->setToolTip(QStringLiteral("failedPasses=%1 totalPassUs=%2 queueJobs=%3 traceThreads=%4 bundle=%5")
+            overviewSummary_->setToolTip(QStringLiteral("failedPasses=%1 totalPassUs=%2 queueJobs=%3 traceThreads=%4 bundle=%5\nnext=%6")
                                              .arg(failedPasses)
                                              .arg(totalPassUs)
                                              .arg(queueSvc ? queueSvc->jobCount() : 0)
                                              .arg(static_cast<int>(trace.threads.size()))
-                                             .arg(hasCaptureBundle_ ? captureBundle_.bundleId : QStringLiteral("<none>")));
+                                             .arg(hasCaptureBundle_ ? captureBundle_.bundleId : QStringLiteral("<none>"))
+                                             .arg(frameDebugNextAction(controllerSnapshot)));
         }
 
         if (captureSummary_) {
@@ -2218,9 +2325,7 @@ public:
                                           .arg(hint)
                                           .arg(failedPasses)
                                           .arg(mediaHealthText(controllerSnapshot))
-                                          .arg(controllerSnapshot.densityNextAction.isEmpty()
-                                                   ? QStringLiteral("<none>")
-                                                   : controllerSnapshot.densityNextAction));
+                                          .arg(frameDebugNextAction(controllerSnapshot)));
         }
 
         if (harnessWidget_) {

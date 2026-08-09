@@ -2203,11 +2203,13 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
 
 void ArtifactVideoLayer::setProxyQuality(ProxyQuality quality)
 {
-    impl_->proxyQuality_ = quality;
+    const auto normalizedQuality = static_cast<ProxyQuality>(
+        std::clamp(static_cast<int>(quality), 0, 4));
+    impl_->proxyQuality_ = normalizedQuality;
     impl_->proxyController_.reset();
     impl_->frameCache_.clear();
     impl_->invalidatePendingDecode();
-    if (quality != ProxyQuality::None && quality != ProxyQuality::Full &&
+    if (normalizedQuality != ProxyQuality::None && normalizedQuality != ProxyQuality::Full &&
         !impl_->proxyPath_.isEmpty() && QFileInfo::exists(impl_->proxyPath_)) {
         auto candidate = ArtifactCore::makeShared<ArtifactCore::MediaPlaybackController>();
         candidate->setDecoderBackend(ArtifactCore::DecoderBackend::FFmpeg);
@@ -2450,7 +2452,7 @@ void ArtifactVideoLayer::setMotionTrackerId(int trackerId)
 // === Serialization ===
 QJsonObject ArtifactVideoLayer::toJson() const
 {
-    QJsonObject obj;
+    QJsonObject obj = ArtifactAbstractLayer::toJson();
     obj["type"] = static_cast<int>(LayerType::Video);
     obj["layerType"] = QStringLiteral("Video");
     obj["sourcePath"] = impl_->sourcePath_;

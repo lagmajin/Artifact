@@ -83,6 +83,7 @@ export namespace Artifact
   ITextureView* layerFloatSRV() const;
   ITextureView* layerFloatUAV() const;
   ITextureView* matteSourceSRV() const;
+  ITextureView* matteSourceSRV(int index) const;
   ITextureView* emissionSRV() const;
   ITextureView* emissionRTV() const;
   bool hasEmissionTarget() const;
@@ -117,6 +118,12 @@ export namespace Artifact
   Uint32 screenSpaceGlobalIlluminationWidth() const;
   Uint32 screenSpaceGlobalIlluminationHeight() const;
   bool updateMatteSourceFromData(IDeviceContext* ctx,
+                                  const void* data,
+                                  Uint32 width,
+                                  Uint32 height,
+                                  Uint32 rowStride);
+  bool updateMatteSourceFromData(IDeviceContext* ctx,
+                                  int index,
                                   const void* data,
                                   Uint32 width,
                                   Uint32 height,

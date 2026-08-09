@@ -56,6 +56,19 @@ using namespace ArtifactCore;
 
 namespace {
 
+MaskVertex normalizedMaskVertex(const MaskVertex& vertex)
+{
+    const auto finitePoint = [](const QPointF& point) {
+        return QPointF(std::isfinite(point.x()) ? point.x() : 0.0,
+                       std::isfinite(point.y()) ? point.y() : 0.0);
+    };
+    MaskVertex normalized = vertex;
+    normalized.position = finitePoint(vertex.position);
+    normalized.inTangent = finitePoint(vertex.inTangent);
+    normalized.outTangent = finitePoint(vertex.outTangent);
+    return normalized;
+}
+
 void applySnapshotToPath(MaskPath& path, const MaskPathKeyframeSnapshot& snapshot)
 {
     path.clearVertices();
@@ -201,11 +214,14 @@ MaskPath& MaskPath::operator=(const MaskPath& other) {
     return *this;
 }
 
-void MaskPath::addVertex(const MaskVertex& vertex) { impl_->vertices.push_back(vertex); }
+void MaskPath::addVertex(const MaskVertex& vertex) {
+    impl_->vertices.push_back(normalizedMaskVertex(vertex));
+}
 
 void MaskPath::insertVertex(int index, const MaskVertex& vertex) {
     if (index >= 0 && index <= static_cast<int>(impl_->vertices.size()))
-        impl_->vertices.insert(impl_->vertices.begin() + index, vertex);
+        impl_->vertices.insert(impl_->vertices.begin() + index,
+                               normalizedMaskVertex(vertex));
 }
 
 void MaskPath::removeVertex(int index) {
@@ -215,7 +231,7 @@ void MaskPath::removeVertex(int index) {
 
 void MaskPath::setVertex(int index, const MaskVertex& vertex) {
     if (index >= 0 && index < static_cast<int>(impl_->vertices.size()))
-        impl_->vertices[index] = vertex;
+        impl_->vertices[index] = normalizedMaskVertex(vertex);
 }
 
 MaskVertex MaskPath::vertex(int index) const {
@@ -232,27 +248,51 @@ bool MaskPath::isClosed() const { return impl_->closed; }
 void MaskPath::setClosed(bool closed) { impl_->closed = closed; }
 
 float MaskPath::opacity() const { return impl_->opacity; }
-void MaskPath::setOpacity(float opacity) { impl_->opacity = std::clamp(opacity, 0.0f, 1.0f); }
+void MaskPath::setOpacity(float opacity) {
+    if (!std::isfinite(opacity)) return;
+    impl_->opacity = std::clamp(opacity, 0.0f, 1.0f);
+}
 
 float MaskPath::feather() const { return impl_->feather; }
-void MaskPath::setFeather(float feather) { impl_->feather = std::max(0.0f, feather); }
+void MaskPath::setFeather(float feather) {
+    if (!std::isfinite(feather)) return;
+    impl_->feather = std::max(0.0f, feather);
+}
 float MaskPath::featherHorizontal() const { return impl_->featherHorizontal; }
-void MaskPath::setFeatherHorizontal(float feather) { impl_->featherHorizontal = std::max(0.0f, feather); }
+void MaskPath::setFeatherHorizontal(float feather) {
+    if (!std::isfinite(feather)) return;
+    impl_->featherHorizontal = std::max(0.0f, feather);
+}
 float MaskPath::featherVertical() const { return impl_->featherVertical; }
-void MaskPath::setFeatherVertical(float feather) { impl_->featherVertical = std::max(0.0f, feather); }
+void MaskPath::setFeatherVertical(float feather) {
+    if (!std::isfinite(feather)) return;
+    impl_->featherVertical = std::max(0.0f, feather);
+}
 float MaskPath::featherInner() const { return impl_->featherInner; }
-void MaskPath::setFeatherInner(float feather) { impl_->featherInner = std::max(0.0f, feather); }
+void MaskPath::setFeatherInner(float feather) {
+    if (!std::isfinite(feather)) return;
+    impl_->featherInner = std::max(0.0f, feather);
+}
 float MaskPath::featherOuter() const { return impl_->featherOuter; }
-void MaskPath::setFeatherOuter(float feather) { impl_->featherOuter = std::max(0.0f, feather); }
+void MaskPath::setFeatherOuter(float feather) {
+    if (!std::isfinite(feather)) return;
+    impl_->featherOuter = std::max(0.0f, feather);
+}
 
 float MaskPath::expansion() const { return impl_->expansion; }
-void MaskPath::setExpansion(float expansion) { impl_->expansion = expansion; }
+void MaskPath::setExpansion(float expansion) {
+    if (!std::isfinite(expansion)) return;
+    impl_->expansion = expansion;
+}
 
 bool MaskPath::isInverted() const { return impl_->inverted; }
 void MaskPath::setInverted(bool inverted) { impl_->inverted = inverted; }
 
 MaskMode MaskPath::mode() const { return impl_->mode; }
-void MaskPath::setMode(MaskMode mode) { impl_->mode = mode; }
+void MaskPath::setMode(MaskMode mode) {
+    impl_->mode = static_cast<MaskMode>(
+        std::clamp(static_cast<int>(mode), 0, 3));
+}
 
 UniString MaskPath::name() const { return impl_->name; }
 void MaskPath::setName(const UniString& name) { impl_->name = name; }
@@ -263,6 +303,39 @@ void MaskPath::setAnimationKeyframe(int64_t frame, const MaskPathKeyframeSnapsho
 {
     MaskPathKeyframeSnapshot stored = snapshot;
     stored.frame = frame;
+    const auto finiteOr = [](const float value, const float fallback) {
+        return std::isfinite(value) ? value : fallback;
+    };
+    stored.opacity = std::clamp(
+        finiteOr(stored.opacity, impl_->opacity), 0.0f, 1.0f);
+    stored.feather = std::max(
+        0.0f, finiteOr(stored.feather, impl_->feather));
+    stored.featherHorizontal = std::max(
+        0.0f, finiteOr(stored.featherHorizontal, impl_->featherHorizontal));
+    stored.featherVertical = std::max(
+        0.0f, finiteOr(stored.featherVertical, impl_->featherVertical));
+    stored.featherInner = std::max(
+        0.0f, finiteOr(stored.featherInner, impl_->featherInner));
+    stored.featherOuter = std::max(
+        0.0f, finiteOr(stored.featherOuter, impl_->featherOuter));
+    stored.expansion = finiteOr(stored.expansion, impl_->expansion);
+    const auto finitePointOr = [](const QPointF& value, const QPointF& fallback) {
+        return QPointF(std::isfinite(value.x()) ? value.x() : fallback.x(),
+                       std::isfinite(value.y()) ? value.y() : fallback.y());
+    };
+    for (size_t index = 0; index < stored.vertices.size(); ++index) {
+        const MaskVertex fallback = index < impl_->vertices.size()
+            ? impl_->vertices[index]
+            : MaskVertex{};
+        stored.vertices[index].position = finitePointOr(
+            stored.vertices[index].position, fallback.position);
+        stored.vertices[index].inTangent = finitePointOr(
+            stored.vertices[index].inTangent, fallback.inTangent);
+        stored.vertices[index].outTangent = finitePointOr(
+            stored.vertices[index].outTangent, fallback.outTangent);
+    }
+    stored.mode = static_cast<MaskMode>(
+        std::clamp(static_cast<int>(stored.mode), 0, 3));
     stored.name = stored.name.toQString().trimmed().isEmpty() ? impl_->name : stored.name;
     auto it = std::find_if(impl_->animationKeyframes.begin(), impl_->animationKeyframes.end(),
                            [frame](const MaskPathKeyframeSnapshot& existing) {
@@ -461,7 +534,18 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
                                 float offsetX, float offsetY,
                                 float scaleX, float scaleY) const
 {
+    if (!outMat) {
+        return;
+    }
     cv::Mat& dst = *static_cast<cv::Mat*>(outMat);
+    if (width <= 0 || height <= 0) {
+        dst.release();
+        return;
+    }
+    const float safeOffsetX = std::isfinite(offsetX) ? offsetX : 0.0f;
+    const float safeOffsetY = std::isfinite(offsetY) ? offsetY : 0.0f;
+    const float safeScaleX = std::isfinite(scaleX) ? scaleX : 1.0f;
+    const float safeScaleY = std::isfinite(scaleY) ? scaleY : 1.0f;
     dst = cv::Mat::zeros(height, width, CV_32FC1);
 
     QPolygonF poly = impl_->toPolygon(16);
@@ -480,8 +564,8 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
     std::vector<cv::Point> pts;
     pts.reserve(poly.size());
     for (const auto& p : poly) {
-        pts.emplace_back(static_cast<int>(std::round(p.x() * scaleX + offsetX)),
-                         static_cast<int>(std::round(p.y() * scaleY + offsetY)));
+        pts.emplace_back(static_cast<int>(std::round(p.x() * safeScaleX + safeOffsetX)),
+                         static_cast<int>(std::round(p.y() * safeScaleY + safeOffsetY)));
     }
 
     // fillPoly on 8-bit image, then convert to float
@@ -490,7 +574,7 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
     cv::fillPoly(mask8, contours, cv::Scalar(255));
 
     // Expansion: morphological dilate(+) or erode(-)
-    float exp = impl_->expansion * ((scaleX + scaleY) * 0.5f);
+    float exp = impl_->expansion * ((safeScaleX + safeScaleY) * 0.5f);
     if (std::abs(exp) > 0.5f) {
         int ksize = static_cast<int>(std::abs(exp) * 2.0f) | 1; // ensure odd
         cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(ksize, ksize));
@@ -503,8 +587,8 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
 
     auto blurMask = [&](const cv::Mat& srcMask, float featherPxX, float featherPxY) {
         cv::Mat blurred = srcMask.clone();
-        const float fx = featherPxX * scaleX;
-        const float fy = featherPxY * scaleY;
+        const float fx = featherPxX * safeScaleX;
+        const float fy = featherPxY * safeScaleY;
         const int kx = fx > 0.5f ? (static_cast<int>(fx * 2.0f) | 1) : 0;
         const int ky = fy > 0.5f ? (static_cast<int>(fy * 2.0f) | 1) : 0;
         if (kx > 0 || ky > 0) {
@@ -514,14 +598,14 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
     };
 
     cv::Mat featherMask = mask8;
-    const float uniformFeather = impl_->feather * ((scaleX + scaleY) * 0.5f);
+    const float uniformFeather = impl_->feather * ((safeScaleX + safeScaleY) * 0.5f);
     const float featherX = (impl_->featherHorizontal > 0.0f ? impl_->featherHorizontal : uniformFeather);
     const float featherY = (impl_->featherVertical > 0.0f ? impl_->featherVertical : uniformFeather);
     if (impl_->featherOuter > 0.0f || impl_->featherInner > 0.0f) {
         cv::Mat outerMask = mask8.clone();
         cv::Mat innerMask = mask8.clone();
-        const int outerK = static_cast<int>(std::max(0.0f, impl_->featherOuter * ((scaleX + scaleY) * 0.5f)) * 2.0f) | 1;
-        const int innerK = static_cast<int>(std::max(0.0f, impl_->featherInner * ((scaleX + scaleY) * 0.5f)) * 2.0f) | 1;
+        const int outerK = static_cast<int>(std::max(0.0f, impl_->featherOuter * ((safeScaleX + safeScaleY) * 0.5f)) * 2.0f) | 1;
+        const int innerK = static_cast<int>(std::max(0.0f, impl_->featherInner * ((safeScaleX + safeScaleY) * 0.5f)) * 2.0f) | 1;
         if (outerK > 1) {
             cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(outerK, outerK));
             cv::dilate(outerMask, outerMask, kernel);
@@ -696,7 +780,10 @@ std::vector<MaskPath> MaskPath::fromAlphaMask(
     std::vector<cv::Vec4i> hierarchy;
     cv::findContours(binary, contours, hierarchy, cv::RETR_CCOMP,
                      cv::CHAIN_APPROX_NONE);
-    const double tolerance = std::max(0.0f, params.simplificationTolerance);
+    const double tolerance = std::isfinite(params.simplificationTolerance)
+        ? std::max(0.0f, params.simplificationTolerance) : 0.0;
+    const float cornerThreshold = std::isfinite(params.cornerThreshold)
+        ? std::max(0.0f, params.cornerThreshold) : 0.0f;
     const int minimum = std::max(3, params.minPathVertices);
     for (std::size_t index = 0; index < contours.size(); ++index) {
         if (contours[index].size() < static_cast<std::size_t>(minimum)) continue;
@@ -727,7 +814,7 @@ std::vector<MaskPath> MaskPath::fromAlphaMask(
                              (inLength * outLength), -1.0, 1.0) : 1.0;
             constexpr double kRadiansToDegrees = 57.29577951308232;
             const double angle = std::acos(cosine) * kRadiansToDegrees;
-            const bool corner = angle >= std::max(0.0f, params.cornerThreshold);
+            const bool corner = angle >= cornerThreshold;
             const QPointF tangent = corner
                 ? QPointF(0.0, 0.0)
                 : QPointF((next.x - previous.x) * scaleX / 6.0,

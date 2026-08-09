@@ -1,6 +1,9 @@
 module;
+#include <algorithm>
+#include <cmath>
 #include <utility>
 #include <QJsonObject>
+#include <QJsonValue>
 
 export module Artifact.Layer.Matte;
 
@@ -62,20 +65,39 @@ export namespace Artifact {
         }
 
         void fromJson(const QJsonObject& obj) {
-            if (obj.contains("id")) {
-                id = ArtifactCore::Id(obj["id"].toString());
+            const QString idValue = obj["id"].toString().trimmed();
+            if (!idValue.isEmpty()) {
+                ArtifactCore::Id parsedId(idValue);
+                if (!parsedId.isNil()) {
+                    id = parsedId;
+                }
             }
-            if (obj.contains("sourceLayerId")) {
-                sourceLayerId = ArtifactCore::Id(obj["sourceLayerId"].toString());
+            const QString sourceLayerValue =
+                obj["sourceLayerId"].toString().trimmed();
+            if (!sourceLayerValue.isEmpty()) {
+                sourceLayerId = ArtifactCore::Id(sourceLayerValue);
             } else if (obj.contains("assetId")) {
                 // legacy: migrate old assetId to sourceLayerId
                 sourceLayerId = ArtifactCore::Id(obj["assetId"].toString());
+            } else {
+                sourceLayerId = ArtifactCore::Id();
             }
             enabled = obj["enabled"].toBool(true);
-            type = static_cast<MatteType>(obj["type"].toInt(static_cast<int>(MatteType::Alpha)));
-            blendMode = static_cast<MatteBlendMode>(obj["blendMode"].toInt(static_cast<int>(MatteBlendMode::Add)));
-            fitMode = static_cast<MatteFitMode>(obj["fitMode"].toInt(static_cast<int>(MatteFitMode::Stretch)));
-            opacity = static_cast<float>(obj["opacity"].toDouble(1.0));
+            const auto validEnumValue = [](const QJsonValue& value,
+                                           int count, int fallback) {
+                const int parsed = value.toInt(fallback);
+                return parsed >= 0 && parsed < count ? parsed : fallback;
+            };
+            type = static_cast<MatteType>(validEnumValue(
+                obj["type"], 4, static_cast<int>(MatteType::Alpha)));
+            blendMode = static_cast<MatteBlendMode>(validEnumValue(
+                obj["blendMode"], 4, static_cast<int>(MatteBlendMode::Add)));
+            fitMode = static_cast<MatteFitMode>(validEnumValue(
+                obj["fitMode"], 4, static_cast<int>(MatteFitMode::Stretch)));
+            const double parsedOpacity = obj["opacity"].toDouble(1.0);
+            opacity = std::isfinite(parsedOpacity)
+                ? static_cast<float>(std::clamp(parsedOpacity, 0.0, 1.0))
+                : 1.0f;
             invert = obj["invert"].toBool(false);
         }
 

@@ -6,6 +6,7 @@ module;
 #include <QRectF>
 #include <QString>
 #include <QVariant>
+#include <QJsonObject>
 #include <RefCntAutoPtr.hpp>
 #include <Texture.h>
 export module Artifact.Layer.EnvironmentMap;
@@ -32,6 +33,40 @@ public:
     bool isNullLayer() const override { return true; }
     bool shouldIncludeInFinalRender() const override { return false; }
     QRectF localBounds() const override { return QRectF(); }
+
+    QJsonObject toJson() const override {
+        QJsonObject obj = ArtifactAbstractLayer::toJson();
+        obj[QStringLiteral("type")] = static_cast<int>(LayerType::EnvironmentMap);
+        obj[QStringLiteral("environmentMap.hdriPath")] = hdriPath_;
+        obj[QStringLiteral("environmentMap.intensity")] = intensity_;
+        obj[QStringLiteral("environmentMap.rotation")] = rotation_;
+        obj[QStringLiteral("environmentMap.visibleAsBackground")] = visibleAsBackground_;
+        return obj;
+    }
+
+    void fromJsonProperties(const QJsonObject& obj) override {
+        ArtifactAbstractLayer::fromJsonProperties(obj);
+        if (obj.contains(QStringLiteral("environmentMap.hdriPath"))) {
+            setHdriPath(obj.value(QStringLiteral("environmentMap.hdriPath")).toString());
+        } else if (obj.contains(QStringLiteral("hdriPath"))) {
+            setHdriPath(obj.value(QStringLiteral("hdriPath")).toString());
+        }
+        if (obj.contains(QStringLiteral("environmentMap.intensity"))) {
+            setIntensity(static_cast<float>(obj.value(QStringLiteral("environmentMap.intensity")).toDouble()));
+        } else if (obj.contains(QStringLiteral("intensity"))) {
+            setIntensity(static_cast<float>(obj.value(QStringLiteral("intensity")).toDouble()));
+        }
+        if (obj.contains(QStringLiteral("environmentMap.rotation"))) {
+            setRotation(static_cast<float>(obj.value(QStringLiteral("environmentMap.rotation")).toDouble()));
+        } else if (obj.contains(QStringLiteral("rotation"))) {
+            setRotation(static_cast<float>(obj.value(QStringLiteral("rotation")).toDouble()));
+        }
+        if (obj.contains(QStringLiteral("environmentMap.visibleAsBackground"))) {
+            setVisibleAsBackground(obj.value(QStringLiteral("environmentMap.visibleAsBackground")).toBool());
+        } else if (obj.contains(QStringLiteral("visibleAsBackground"))) {
+            setVisibleAsBackground(obj.value(QStringLiteral("visibleAsBackground")).toBool());
+        }
+    }
 
     // Environment map properties
     QString hdriPath() const { return hdriPath_; }

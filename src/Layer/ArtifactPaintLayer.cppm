@@ -8,6 +8,7 @@ module;
 #include <QJsonObject>
 #include <QMatrix4x4>
 #include <QImage>
+#include <QObject>
 #include <QString>
 #include <QRectF>
 #include <QPainter>
@@ -106,6 +107,10 @@ ArtifactPaintLayer::ArtifactPaintLayer() : impl_(new Impl()) {
     setLayerName(QStringLiteral("Paint Layer"));
 }
 ArtifactPaintLayer::~ArtifactPaintLayer() { delete impl_; }
+
+void ArtifactPaintLayer::setComposition(QObject* comp) {
+    setComposition(static_cast<void*>(comp));
+}
 
 void ArtifactPaintLayer::setComposition(void* comp) {
     ArtifactAbstractLayer::setComposition(comp);
@@ -435,6 +440,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactPaintLayer::getLayerPropertyGro
 
 QJsonObject ArtifactPaintLayer::toJson() const {
     QJsonObject obj = ArtifactAbstract2DLayer::toJson();
+    obj["type"] = static_cast<int>(LayerType::Paint);
     QJsonArray framesArr;
     for (const auto& [frame, buf] : impl_->frames_) {
         framesArr.append(frameBufferToJson(buf, frame));

@@ -67,7 +67,9 @@ namespace Artifact {
 
   QJsonObject ArtifactNullLayer::toJson() const
   {
-    return ArtifactAbstractLayer::toJson();
+    QJsonObject obj = ArtifactAbstractLayer::toJson();
+    obj[QStringLiteral("type")] = static_cast<int>(LayerType::Null);
+    return obj;
   }
 
   SharedPtr<ArtifactNullLayer> ArtifactNullLayer::fromJson(const QJsonObject& obj)

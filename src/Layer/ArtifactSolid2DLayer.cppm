@@ -44,25 +44,60 @@ namespace Artifact
   Impl();
   ~Impl();
   FloatColor color() const { return color_; }
-  void setColor(const FloatColor& c) { color_ = c; }
+  void setColor(const FloatColor& c) {
+    const auto safe = [](float value, float fallback) {
+      return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+    };
+    color_ = FloatColor(safe(c.r(), 0.0f), safe(c.g(), 0.0f),
+                        safe(c.b(), 0.0f), safe(c.a(), 1.0f));
+  }
   ArtifactSolidFillType fillType() const { return fillType_; }
-  void setFillType(const ArtifactSolidFillType v) { fillType_ = v; }
+  void setFillType(const ArtifactSolidFillType v) {
+    fillType_ = static_cast<ArtifactSolidFillType>(std::clamp(
+        static_cast<int>(v), 0, 5));
+  }
   FloatColor gradientStartColor() const { return gradientStartColor_; }
-  void setGradientStartColor(const FloatColor& c) { gradientStartColor_ = c; }
+  void setGradientStartColor(const FloatColor& c) {
+    const auto safe = [](float value, float fallback) {
+      return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+    };
+    gradientStartColor_ = FloatColor(safe(c.r(), 0.0f), safe(c.g(), 0.0f),
+                                     safe(c.b(), 0.0f), safe(c.a(), 1.0f));
+  }
   FloatColor gradientEndColor() const { return gradientEndColor_; }
-  void setGradientEndColor(const FloatColor& c) { gradientEndColor_ = c; }
+  void setGradientEndColor(const FloatColor& c) {
+    const auto safe = [](float value, float fallback) {
+      return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+    };
+    gradientEndColor_ = FloatColor(safe(c.r(), 0.0f), safe(c.g(), 0.0f),
+                                   safe(c.b(), 0.0f), safe(c.a(), 1.0f));
+  }
   float gradientAngleDegrees() const { return gradientAngleDegrees_; }
-  void setGradientAngleDegrees(const float v) { gradientAngleDegrees_ = v; }
+  void setGradientAngleDegrees(const float v) {
+    gradientAngleDegrees_ = std::isfinite(v) ? v : 90.0f;
+  }
   bool gradientReverse() const { return gradientReverse_; }
   void setGradientReverse(const bool v) { gradientReverse_ = v; }
   float gradientCenterX() const { return gradientCenterX_; }
-  void setGradientCenterX(const float v) { gradientCenterX_ = v; }
+  void setGradientCenterX(const float v) {
+    gradientCenterX_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f;
+  }
   float gradientCenterY() const { return gradientCenterY_; }
-  void setGradientCenterY(const float v) { gradientCenterY_ = v; }
+  void setGradientCenterY(const float v) {
+    gradientCenterY_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f;
+  }
   float gradientScale() const { return gradientScale_; }
-  void setGradientScale(const float v) { gradientScale_ = v; }
+  void setGradientScale(const float v) {
+    gradientScale_ = std::isfinite(v)
+        ? std::clamp(v, 0.0001f, 1000000.0f)
+        : 1.0f;
+  }
   float gradientOffset() const { return gradientOffset_; }
-  void setGradientOffset(const float v) { gradientOffset_ = v; }
+  void setGradientOffset(const float v) {
+    gradientOffset_ = std::isfinite(v)
+        ? std::clamp(v, -1000000.0f, 1000000.0f)
+        : 0.0f;
+  }
  };
 
  ArtifactSolid2DLayer::Impl::Impl()
@@ -192,17 +227,19 @@ namespace Artifact
   impl_->setGradientOffset(value);
  }
 
- void ArtifactSolid2DLayer::setSize(int width, int height)
- {
-  setSourceSize(Size_2D(width, height));
- }
+void ArtifactSolid2DLayer::setSize(int width, int height)
+{
+  setSourceSize(Size_2D(std::clamp(width, 1, 16384),
+                        std::clamp(height, 1, 16384)));
+}
 
  QJsonObject ArtifactSolid2DLayer::toJson() const
  {
   QJsonObject obj = ArtifactAbstract2DLayer::toJson();
   obj["type"] = static_cast<int>(LayerType::Solid);
-  obj["solidWidth"] = sourceSize().width;
-  obj["solidHeight"] = sourceSize().height;
+  const auto safeSource = sourceSize();
+  obj["solidWidth"] = std::clamp(safeSource.width, 1, 16384);
+  obj["solidHeight"] = std::clamp(safeSource.height, 1, 16384);
   QJsonObject colorObj;
   const auto c = color();
   colorObj["r"] = c.r();
@@ -295,6 +332,7 @@ namespace Artifact
                                               ArtifactCore::PropertyType::Integer,
                                               static_cast<int>(fillType()),
                                               -119);
+  fillTypeProp->setHardRange(0.0, 5.0);
   fillTypeProp->setValue(static_cast<int>(fillType()));
   fillTypeProp->setDisplayLabel(QStringLiteral("Fill Mode"));
   fillTypeProp->setTooltip(QStringLiteral("Solid, linear, radial, conical, repeating, or mirrored gradient"));
@@ -341,6 +379,7 @@ namespace Artifact
                                              ArtifactCore::PropertyType::Float,
                                              gradientCenterX(),
                                              -114);
+  centerXProp->setHardRange(0.0, 1.0);
   centerXProp->setValue(gradientCenterX());
   centerXProp->setDisplayLabel(QStringLiteral("中心X"));
   solidGroup.addProperty(centerXProp);
@@ -349,6 +388,7 @@ namespace Artifact
                                              ArtifactCore::PropertyType::Float,
                                              gradientCenterY(),
                                              -113);
+  centerYProp->setHardRange(0.0, 1.0);
   centerYProp->setValue(gradientCenterY());
   centerYProp->setDisplayLabel(QStringLiteral("中心Y"));
   solidGroup.addProperty(centerYProp);
@@ -357,6 +397,7 @@ namespace Artifact
                                            ArtifactCore::PropertyType::Float,
                                            gradientScale(),
                                            -112);
+  scaleProp->setHardRange(0.0001, 1000000.0);
   scaleProp->setValue(gradientScale());
   scaleProp->setDisplayLabel(QStringLiteral("拡大率"));
   solidGroup.addProperty(scaleProp);
@@ -365,6 +406,7 @@ namespace Artifact
                                             ArtifactCore::PropertyType::Float,
                                             gradientOffset(),
                                             -111);
+  offsetProp->setHardRange(-1000000.0, 1000000.0);
   offsetProp->setValue(gradientOffset());
   offsetProp->setDisplayLabel(QStringLiteral("オフセット"));
   solidGroup.addProperty(offsetProp);
@@ -440,7 +482,9 @@ namespace Artifact
 void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
 {
  if (!renderer) return;
- auto size = this->sourceSize();
+ const auto sourceSize = this->sourceSize();
+ const Size_2D size(std::clamp(sourceSize.width, 1, 16384),
+                    std::clamp(sourceSize.height, 1, 16384));
  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
  drawWithClonerEffect(this, baseTransform, [renderer, size, this](const QMatrix4x4& transform, float weight) {
   if (impl_->fillType() != ArtifactSolidFillType::Solid) {

@@ -3,6 +3,7 @@
 #include <memory>
 #include <wobjectdefs.h>
 #include <QString>
+#include <QJsonObject>
 export module Artifact.Layer.Light;
 
 
@@ -40,6 +41,8 @@ export namespace Artifact {
   void draw(ArtifactIRenderer* renderer) override;
   UniString className() const override { return "ArtifactLightLayer"; }
   bool shouldIncludeInFinalRender() const override { return false; }
+  QJsonObject toJson() const override;
+  void fromJsonProperties(const QJsonObject& obj) override;
 
   // Light specific properties
   LightType lightType() const;

@@ -1,5 +1,6 @@
 module;
 
+#include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
 #include <memory>
 #include <QObject>
 #include <QString>
@@ -18,7 +19,7 @@ export namespace Artifact {
 
 /// OCIO Manager - bridges OCIOConfig (Core) with the Artifact color management layer.
 /// Manages config lifecycle, preset switching, and synchronizes with ColorScienceManager.
-class ArtifactOCIOManager : public QObject {
+class LIBRARY_DLL_API ArtifactOCIOManager : public QObject {
     W_OBJECT(ArtifactOCIOManager)
 
 public:

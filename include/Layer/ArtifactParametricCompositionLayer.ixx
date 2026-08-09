@@ -49,6 +49,7 @@ public:
     QRectF localBounds() const override;
     std::vector<PropertyGroup> getLayerPropertyGroups() const override;
     bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
+    void fromJsonProperties(const QJsonObject& obj) override;
     QJsonObject toJson() const override;
 
 private:

@@ -1,5 +1,6 @@
 module;
 #include <cstdint>
+#include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
 #include <unordered_map>
 #include <utility>
 
@@ -18,7 +19,7 @@ using namespace ArtifactCore;
 
 /// Stores rendered layer frames for temporal effect lookback.
 /// Simple ring of last N frames identified by composition frame number.
-class ArtifactEffectFrameSampler : public IEffectFrameSampler
+class LIBRARY_DLL_API ArtifactEffectFrameSampler : public IEffectFrameSampler
 {
 public:
     ArtifactEffectFrameSampler() = default;

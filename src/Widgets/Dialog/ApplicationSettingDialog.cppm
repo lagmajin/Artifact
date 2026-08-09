@@ -88,6 +88,7 @@ static const ThemePresetEntry kThemePresetEntries[] = {
     {ArtifactCore::DccStylePreset::MayaStyle},
     {ArtifactCore::DccStylePreset::ModoStyle},
     {ArtifactCore::DccStylePreset::StudioStyle},
+    {ArtifactCore::DccStylePreset::CalmStyle},
     {ArtifactCore::DccStylePreset::BlenderStyle},
     {ArtifactCore::DccStylePreset::DaVinciStyle},
     {ArtifactCore::DccStylePreset::_3dsMaxStyle},

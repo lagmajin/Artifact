@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <QString>
+#include <QObject>
 #include <QJsonObject>
 #include <wobjectdefs.h>
 #include <memory>
@@ -49,6 +50,7 @@ public:
     ArtifactPaintLayer(const ArtifactPaintLayer&) = delete;
     ArtifactPaintLayer& operator=(const ArtifactPaintLayer&) = delete;
 
+    void setComposition(QObject* comp) override;
     void setComposition(void* comp) override;
     void draw(ArtifactIRenderer* renderer) override;
     bool isPaintLayer() const { return true; }
@@ -84,7 +86,7 @@ public:
 
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
 
-    QJsonObject toJson() const;
+    QJsonObject toJson() const override;
     void fromJsonProperties(const QJsonObject& obj) override;
 };
 

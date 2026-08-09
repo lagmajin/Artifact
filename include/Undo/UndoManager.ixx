@@ -142,7 +142,7 @@ public:
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("AddLayerCommand"); }
-    bool canSerialize() const override { return !compositionId_.isEmpty() && !layerId_.isEmpty() && !comp_.expired() && static_cast<bool>(layer_); }
+    bool canSerialize() const override { return !compositionId_.isEmpty() && !layerId_.isEmpty() && !comp_.expired() && static_cast<bool>(layer_) && removedMatteReferences_.empty() && removedParentReferences_.empty(); }
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
 private:
@@ -152,6 +152,11 @@ private:
     QString layerId_;
     bool atTop_;
     int savedIndex_ = -1;
+    std::vector<std::pair<ArtifactAbstractLayerPtr,
+                          std::vector<LayerMatteReference>>>
+        removedMatteReferences_;
+    std::vector<std::pair<ArtifactAbstractLayerPtr, ArtifactCore::LayerID>>
+        removedParentReferences_;
 };
 
 class RemoveLayerCommand : public UndoCommand {
@@ -162,7 +167,7 @@ public:
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("RemoveLayerCommand"); }
-    bool canSerialize() const override { return !compositionId_.isEmpty() && !layerId_.isEmpty() && !comp_.expired() && static_cast<bool>(layer_); }
+    bool canSerialize() const override { return !compositionId_.isEmpty() && !layerId_.isEmpty() && !comp_.expired() && static_cast<bool>(layer_) && removedMatteReferences_.empty() && removedParentReferences_.empty(); }
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
 private:
@@ -171,6 +176,11 @@ private:
     QString compositionId_;
     QString layerId_;
     int originalIndex_ = -1;
+    std::vector<std::pair<ArtifactAbstractLayerPtr,
+                          std::vector<LayerMatteReference>>>
+        removedMatteReferences_;
+    std::vector<std::pair<ArtifactAbstractLayerPtr, ArtifactCore::LayerID>>
+        removedParentReferences_;
 };
 
 class MaskEditCommand : public UndoCommand {

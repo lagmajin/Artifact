@@ -151,7 +151,8 @@ void collectSmartSoloLayerIds(const ArtifactCompositionPtr& comp,
   }
 
   for (const auto& matteRef : layer->matteReferences()) {
-    if (!matteRef.enabled || matteRef.sourceLayerId.isNil()) {
+    if (!matteRef.enabled || matteRef.sourceLayerId.isNil() ||
+        matteRef.sourceLayerId == layerId) {
       continue;
     }
     auto matteSource = comp->layerById(matteRef.sourceLayerId);

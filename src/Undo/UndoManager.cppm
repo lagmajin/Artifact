@@ -454,13 +454,41 @@ AddLayerCommand::AddLayerCommand(ArtifactCompositionPtr comp, ArtifactAbstractLa
     : comp_(comp), layer_(layer),
       compositionId_(comp ? comp->id().toString() : QString()),
       layerId_(layer ? layer->id().toQString() : QString()),
-      atTop_(atTop), savedIndex_(-1) {}
+      atTop_(atTop), savedIndex_(-1) {
+    if (!comp || !layer) {
+        return;
+    }
+    for (const auto& candidate : comp->allLayer()) {
+        if (!candidate || candidate->id() == layer->id()) {
+            continue;
+        }
+        if (candidate->parentLayerId() == layer->id()) {
+            removedParentReferences_.emplace_back(candidate,
+                                                  candidate->parentLayerId());
+        }
+        const auto refs = candidate->matteReferences();
+        const auto hasReference = std::any_of(
+            refs.cbegin(), refs.cend(), [&layer](const LayerMatteReference& ref) {
+                return ref.sourceLayerId == layer->id();
+            });
+        if (hasReference) {
+            removedMatteReferences_.emplace_back(candidate, refs);
+        }
+    }
+}
 
 void AddLayerCommand::undo() {
     auto comp = comp_.lock();
     auto layer = layer_;
     if (comp && layer) {
         comp->removeLayer(layer->id());
+        for (const auto& [dependentLayer, refs] : removedMatteReferences_) {
+            if (!dependentLayer || !comp->containsLayerById(dependentLayer->id())) {
+                continue;
+            }
+            dependentLayer->setMatteReferences(refs);
+            dependentLayer->changed();
+        }
         if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
     }
 }
@@ -474,6 +502,25 @@ void AddLayerCommand::redo() {
         } else {
             comp->appendLayerBottom(layer);
         }
+        for (const auto& [dependentLayer, refs] : removedMatteReferences_) {
+            if (!dependentLayer ||
+                (!comp->containsLayerById(dependentLayer->id()) &&
+                 dependentLayer->compositionObject() != nullptr)) {
+                continue;
+            }
+            dependentLayer->setMatteReferences(refs);
+            if (comp->containsLayerById(dependentLayer->id())) {
+                dependentLayer->changed();
+            }
+        }
+        for (const auto& [dependentLayer, parentId] : removedParentReferences_) {
+            if (!dependentLayer ||
+                (!comp->containsLayerById(dependentLayer->id()) &&
+                 dependentLayer->compositionObject() != nullptr)) {
+                continue;
+            }
+            dependentLayer->setParentById(parentId);
+        }
         if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
     }
 }
@@ -486,7 +533,14 @@ QString AddLayerCommand::label() const {
 }
 
 size_t AddLayerCommand::estimatedMemoryBytes() const {
-    return sizeof(*this) + static_cast<size_t>(compositionId_.size() + layerId_.size()) * sizeof(QChar);
+    size_t bytes = sizeof(*this) +
+        static_cast<size_t>(compositionId_.size() + layerId_.size()) * sizeof(QChar);
+    for (const auto& [layer, refs] : removedMatteReferences_) {
+        Q_UNUSED(layer);
+        bytes += sizeof(LayerMatteReference) * refs.size();
+    }
+    bytes += sizeof(ArtifactCore::LayerID) * removedParentReferences_.size();
+    return bytes;
 }
 
 QJsonObject AddLayerCommand::serialize() const {
@@ -513,7 +567,28 @@ RemoveLayerCommand::RemoveLayerCommand(ArtifactCompositionPtr comp, ArtifactAbst
     : comp_(comp), layer_(layer),
       compositionId_(comp ? comp->id().toString() : QString()),
       layerId_(layer ? layer->id().toQString() : QString()),
-      originalIndex_(-1) {}
+      originalIndex_(-1) {
+    if (!comp || !layer) {
+        return;
+    }
+    for (const auto& candidate : comp->allLayer()) {
+        if (!candidate || candidate->id() == layer->id()) {
+            continue;
+        }
+        if (candidate->parentLayerId() == layer->id()) {
+            removedParentReferences_.emplace_back(candidate,
+                                                  candidate->parentLayerId());
+        }
+        const auto refs = candidate->matteReferences();
+        const auto hasReference = std::any_of(
+            refs.cbegin(), refs.cend(), [&layer](const LayerMatteReference& ref) {
+                return ref.sourceLayerId == layer->id();
+            });
+        if (hasReference) {
+            removedMatteReferences_.emplace_back(candidate, refs);
+        }
+    }
+}
 
 void RemoveLayerCommand::undo() {
     auto comp = comp_.lock();
@@ -523,6 +598,19 @@ void RemoveLayerCommand::undo() {
             comp->insertLayerAt(layer, originalIndex_);
         } else {
             comp->appendLayerTop(layer);
+        }
+        for (const auto& [dependentLayer, refs] : removedMatteReferences_) {
+            if (!dependentLayer || !comp->containsLayerById(dependentLayer->id())) {
+                continue;
+            }
+            dependentLayer->setMatteReferences(refs);
+            dependentLayer->changed();
+        }
+        for (const auto& [dependentLayer, parentId] : removedParentReferences_) {
+            if (!dependentLayer || !comp->containsLayerById(dependentLayer->id())) {
+                continue;
+            }
+            dependentLayer->setParentById(parentId);
         }
         if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
     }
@@ -553,7 +641,14 @@ QString RemoveLayerCommand::label() const {
 }
 
 size_t RemoveLayerCommand::estimatedMemoryBytes() const {
-    return sizeof(*this) + static_cast<size_t>(compositionId_.size() + layerId_.size()) * sizeof(QChar);
+    size_t bytes = sizeof(*this) +
+        static_cast<size_t>(compositionId_.size() + layerId_.size()) * sizeof(QChar);
+    for (const auto& [layer, refs] : removedMatteReferences_) {
+        Q_UNUSED(layer);
+        bytes += sizeof(LayerMatteReference) * refs.size();
+    }
+    bytes += sizeof(ArtifactCore::LayerID) * removedParentReferences_.size();
+    return bytes;
 }
 
 QJsonObject RemoveLayerCommand::serialize() const {
@@ -836,17 +931,25 @@ QJsonObject ChangeLayerMatteReferencesCommand::serialize() const {
 }
 
 bool ChangeLayerMatteReferencesCommand::deserialize(const QJsonObject& data) {
+    const auto beforeValue = data.value(QStringLiteral("before"));
+    const auto afterValue = data.value(QStringLiteral("after"));
+    if (!beforeValue.isArray() || !afterValue.isArray()) {
+        return false;
+    }
     layerId_ = data.value(QStringLiteral("layerId")).toString();
     const auto decode = [](const QJsonArray& values, auto& refs) {
         refs.clear();
         for (const auto& value : values) {
+            if (!value.isObject()) {
+                continue;
+            }
             LayerMatteReference ref;
             ref.fromJson(value.toObject());
             refs.push_back(std::move(ref));
         }
     };
-    decode(data.value(QStringLiteral("before")).toArray(), beforeRefs_);
-    decode(data.value(QStringLiteral("after")).toArray(), afterRefs_);
+    decode(beforeValue.toArray(), beforeRefs_);
+    decode(afterValue.toArray(), afterRefs_);
     auto* manager = UndoManager::instance();
     if (!manager) return false;
     layer_ = manager->resolveLayer(layerId_);

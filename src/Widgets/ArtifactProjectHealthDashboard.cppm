@@ -22,6 +22,12 @@ module;
 #include <QStyle>
 #include <QTimer>
 #include <QMessageBox>
+#include <QApplication>
+#include <QDesktopServices>
+#include <QEvent>
+#include <QFileInfo>
+#include <QMouseEvent>
+#include <QUrl>
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
 
@@ -35,6 +41,7 @@ import Artifact.Project;
 import Artifact.Project.Health;
 import Artifact.Widgets.ProjectHealthSummary;
 import Artifact.Service.Project;
+import Widgets.AssetBrowser;
 import Event.Bus;
 import Artifact.Event.Types;
 import Core.Diagnostics.ProjectDiagnostic;
@@ -256,7 +263,71 @@ public:
         refresh();
     }
 
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (watched == diagnosticsTree_ && event &&
+            event->type() == QEvent::MouseButtonDblClick) {
+            auto* mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent) {
+                inspectDiagnosticItem(
+                    diagnosticsTree_->itemAt(mouseEvent->position().toPoint()));
+            }
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
 private:
+    void inspectDiagnosticItem(QTreeWidgetItem* item) {
+        if (!item) {
+            return;
+        }
+
+        const QString compositionId =
+            item->data(0, Qt::UserRole + 1).toString().trimmed();
+        const QString layerId =
+            item->data(0, Qt::UserRole + 2).toString().trimmed();
+        const QString assetPath =
+            item->data(0, Qt::UserRole + 3).toString().trimmed();
+
+        auto* service = ArtifactProjectService::instance();
+
+        if (service && !compositionId.isEmpty()) {
+            const auto result = service->changeCurrentComposition(
+                CompositionID(compositionId));
+            if (result.success && !layerId.isEmpty()) {
+                service->selectLayer(LayerID(layerId));
+            }
+            if (result.success) {
+                return;
+            }
+        }
+
+        if (service && !layerId.isEmpty()) {
+            service->selectLayer(LayerID(layerId));
+            return;
+        }
+
+        if (assetPath.isEmpty()) {
+            return;
+        }
+
+        for (QWidget* widget : QApplication::allWidgets()) {
+            auto* assetBrowser = qobject_cast<ArtifactAssetBrowser*>(widget);
+            if (!assetBrowser) {
+                continue;
+            }
+            assetBrowser->selectAssetPaths({assetPath});
+            assetBrowser->setFocus(Qt::OtherFocusReason);
+            return;
+        }
+
+        const QFileInfo assetInfo(assetPath);
+        if (assetInfo.exists()) {
+            QDesktopServices::openUrl(
+                QUrl::fromLocalFile(assetInfo.absolutePath()));
+        }
+    }
+
     QIcon loadHealthSeverityIcon(HealthIssueSeverity severity) const {
         QString relativePath;
         QStyle::StandardPixmap fallback = QStyle::SP_MessageBoxInformation;
@@ -353,6 +424,7 @@ private:
 
         // Diagnostics Tree
         diagnosticsTree_ = new QTreeWidget();
+        diagnosticsTree_->installEventFilter(this);
         QStringList headers = {"", "Message", "Source", "Category"};
         diagnosticsTree_->setHeaderLabels(headers);
         diagnosticsTree_->setColumnWidth(0, 30);

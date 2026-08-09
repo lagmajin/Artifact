@@ -277,7 +277,7 @@ public:
     // === Serialization ===
     
     /// Export to JSON for project save
-    QJsonObject toJson() const;
+    QJsonObject toJson() const override;
     
     /// Import from JSON for project load
     static ArtifactCore::SharedPtr<ArtifactVideoLayer> fromJson(const QJsonObject& obj);

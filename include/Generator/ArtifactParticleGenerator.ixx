@@ -306,7 +306,7 @@ enum class EffectorType {
  */
 class ParticleEffector {
 public:
-    EffectorType type;
+    EffectorType type = EffectorType::Force;
     bool enabled = true;
     float strength = 1.0f;
     QVector3D position;
@@ -455,7 +455,123 @@ public:
     // Parameters
     EmitterParams& params() { return params_; }
     const EmitterParams& params() const { return params_; }
-    void setParams(const EmitterParams& p) { params_ = p; Q_EMIT changed(); }
+    void setParams(const EmitterParams& p) {
+        params_ = p;
+        params_.shape = static_cast<EmitterShape>(
+            std::clamp(static_cast<int>(params_.shape), 0, 7));
+        params_.mode = static_cast<EmissionMode>(
+            std::clamp(static_cast<int>(params_.mode), 0, 2));
+        params_.auxTrigger = static_cast<AuxTriggerMode>(
+            std::clamp(static_cast<int>(params_.auxTrigger), 0, 2));
+        const auto safeNonNegative = [](float value, float fallback = 0.0f) {
+            return std::isfinite(value)
+                ? std::clamp(value, 0.0f, 1000000.0f)
+                : fallback;
+        };
+        params_.radius = safeNonNegative(params_.radius);
+        params_.width = safeNonNegative(params_.width);
+        params_.height = safeNonNegative(params_.height);
+        params_.depth = safeNonNegative(params_.depth);
+        params_.lineLength = safeNonNegative(params_.lineLength);
+        const auto safeComponent = [](float value, float fallback = 0.0f) {
+            return std::isfinite(value)
+                ? std::clamp(value, -1000000.0f, 1000000.0f)
+                : fallback;
+        };
+        auto normalizeVector = [&](QVector3D& value) {
+            value.setX(safeComponent(value.x()));
+            value.setY(safeComponent(value.y()));
+            value.setZ(safeComponent(value.z()));
+        };
+        normalizeVector(params_.position);
+        normalizeVector(params_.rotation);
+        normalizeVector(params_.scale);
+        normalizeVector(params_.direction);
+        normalizeVector(params_.velocityRandom);
+        normalizeVector(params_.gravity);
+        normalizeVector(params_.windDirection);
+        const auto safeRange = [](float value, float fallback,
+                                  float minimum, float maximum) {
+            return std::isfinite(value)
+                ? std::clamp(value, minimum, maximum)
+                : fallback;
+        };
+        params_.rate = safeRange(params_.rate, 10.0f, 0.0f, 1000000.0f);
+        params_.burstInterval =
+            safeRange(params_.burstInterval, 1.0f, 0.0f, 1000000.0f);
+        params_.lifeMin = safeRange(params_.lifeMin, 1.0f, 0.001f, 1000000.0f);
+        params_.lifeMax = safeRange(params_.lifeMax, params_.lifeMin,
+                                    0.001f, 1000000.0f);
+        if (params_.lifeMax < params_.lifeMin) params_.lifeMax = params_.lifeMin;
+        params_.speedMin = safeRange(params_.speedMin, 0.0f, 0.0f, 1000000.0f);
+        params_.speedMax = safeRange(params_.speedMax, params_.speedMin,
+                                     0.0f, 1000000.0f);
+        if (params_.speedMax < params_.speedMin) params_.speedMax = params_.speedMin;
+        params_.rotationMin = safeRange(params_.rotationMin, 0.0f, -1000000.0f, 1000000.0f);
+        params_.rotationMax = safeRange(params_.rotationMax, params_.rotationMin, -1000000.0f, 1000000.0f);
+        if (params_.rotationMax < params_.rotationMin) params_.rotationMax = params_.rotationMin;
+        params_.rotationSpeedMin = safeRange(params_.rotationSpeedMin, 0.0f, -1000000.0f, 1000000.0f);
+        params_.rotationSpeedMax = safeRange(params_.rotationSpeedMax, params_.rotationSpeedMin, -1000000.0f, 1000000.0f);
+        if (params_.rotationSpeedMax < params_.rotationSpeedMin) params_.rotationSpeedMax = params_.rotationSpeedMin;
+        params_.scaleMin = safeRange(params_.scaleMin, 1.0f, 0.0f, 1000.0f);
+        params_.scaleMax = safeRange(params_.scaleMax, params_.scaleMin, 0.0f, 1000.0f);
+        if (params_.scaleMax < params_.scaleMin) params_.scaleMax = params_.scaleMin;
+        params_.scaleMidMin = safeRange(params_.scaleMidMin, 1.0f, 0.0f, 1000.0f);
+        params_.scaleMidMax = safeRange(params_.scaleMidMax, params_.scaleMidMin, 0.0f, 1000.0f);
+        if (params_.scaleMidMax < params_.scaleMidMin) params_.scaleMidMax = params_.scaleMidMin;
+        params_.scaleEndMin = safeRange(params_.scaleEndMin, 1.0f, 0.0f, 1000.0f);
+        params_.scaleEndMax = safeRange(params_.scaleEndMax, params_.scaleEndMin, 0.0f, 1000.0f);
+        if (params_.scaleEndMax < params_.scaleEndMin) params_.scaleEndMax = params_.scaleEndMin;
+        params_.opacityMin = safeRange(params_.opacityMin, 1.0f, 0.0f, 1.0f);
+        params_.opacityMax = safeRange(params_.opacityMax, params_.opacityMin, 0.0f, 1.0f);
+        if (params_.opacityMax < params_.opacityMin) params_.opacityMax = params_.opacityMin;
+        params_.opacityMidMin = safeRange(params_.opacityMidMin, 1.0f, 0.0f, 1.0f);
+        params_.opacityMidMax = safeRange(params_.opacityMidMax, params_.opacityMidMin, 0.0f, 1.0f);
+        if (params_.opacityMidMax < params_.opacityMidMin) params_.opacityMidMax = params_.opacityMidMin;
+        params_.opacityEndMin = safeRange(params_.opacityEndMin, 0.0f, 0.0f, 1.0f);
+        params_.opacityEndMax = safeRange(params_.opacityEndMax, params_.opacityEndMin, 0.0f, 1.0f);
+        if (params_.opacityEndMax < params_.opacityEndMin) params_.opacityEndMax = params_.opacityEndMin;
+        params_.directionSpread = safeRange(params_.directionSpread, 0.0f, 0.0f, 360.0f);
+        params_.mass = safeRange(params_.mass, 1.0f, 0.0f, 1000000.0f);
+        params_.drag = safeRange(params_.drag, 0.0f, 0.0f, 1000000.0f);
+        params_.windStrength = safeRange(params_.windStrength, 0.0f, 0.0f, 1000000.0f);
+        params_.turbulenceFrequency = safeRange(params_.turbulenceFrequency, 0.0f, 0.0f, 1000000.0f);
+        params_.turbulenceAmplitude = safeRange(params_.turbulenceAmplitude, 0.0f, 0.0f, 1000000.0f);
+        params_.turbulenceEvolution = safeRange(params_.turbulenceEvolution, 0.0f, -1000000.0f, 1000000.0f);
+        params_.scaleMidPosition = safeRange(params_.scaleMidPosition, 0.5f, 0.0f, 1.0f);
+        params_.colorMidPosition = safeRange(params_.colorMidPosition, 0.5f, 0.0f, 1.0f);
+        params_.colorVariation = safeRange(params_.colorVariation, 0.0f, 0.0f, 1.0f);
+        params_.auxInterval = safeRange(params_.auxInterval, 0.1f, 0.0f, 1000000.0f);
+        params_.auxLifeScale = safeRange(params_.auxLifeScale, 0.3f, 0.0f, 1000000.0f);
+        params_.auxSizeScale = safeRange(params_.auxSizeScale, 0.65f, 0.0f, 1000000.0f);
+        params_.auxOpacityScale = safeRange(params_.auxOpacityScale, 0.85f, 0.0f, 1.0f);
+        params_.auxVelocityScale = safeRange(params_.auxVelocityScale, 0.35f, 0.0f, 1000000.0f);
+        params_.maxParticles = std::clamp(params_.maxParticles, 1, 10000000);
+        params_.burstCount = std::clamp(params_.burstCount, 0, 10000000);
+        params_.auxCount = std::clamp(params_.auxCount, 0, 1000000);
+        params_.textureRows = std::clamp(params_.textureRows, 1, 1024);
+        params_.textureCols = std::clamp(params_.textureCols, 1, 1024);
+        params_.startFrame = std::clamp(params_.startFrame, 0, 1000000000);
+        params_.frameCount = std::clamp(params_.frameCount, 1, 1000000);
+        params_.frameRate = std::isfinite(params_.frameRate)
+            ? std::clamp(params_.frameRate, 0.001f, 1000.0f)
+            : 30.0f;
+        params_.fixedTimeStep = std::isfinite(params_.fixedTimeStep)
+            ? std::clamp(params_.fixedTimeStep, 0.000001f, 1.0f)
+            : (1.0f / 120.0f);
+        params_.maxSubSteps = std::clamp(params_.maxSubSteps, 1, 256);
+        params_.selfCollisionRadius = std::isfinite(params_.selfCollisionRadius)
+            ? std::clamp(params_.selfCollisionRadius, 0.001f, 1000000.0f)
+            : 4.0f;
+        params_.selfCollisionResponse = std::isfinite(params_.selfCollisionResponse)
+            ? std::clamp(params_.selfCollisionResponse, 0.0f, 1.0f)
+            : 0.35f;
+        const QColor fallbackColor(255, 255, 255);
+        if (!params_.colorStart.isValid()) params_.colorStart = fallbackColor;
+        if (!params_.colorMid.isValid()) params_.colorMid = fallbackColor;
+        if (!params_.colorEnd.isValid()) params_.colorEnd = fallbackColor;
+        Q_EMIT changed();
+    }
     
     // Active state
     bool active() const { return active_; }
@@ -579,7 +695,31 @@ public:
     // Render settings
     ParticleRenderSettings& renderSettings() { return renderSettings_; }
     const ParticleRenderSettings& renderSettings() const { return renderSettings_; }
-    void setRenderSettings(const ParticleRenderSettings& s) { renderSettings_ = s; }
+    void setRenderSettings(const ParticleRenderSettings& s) {
+        renderSettings_ = s;
+        renderSettings_.blendMode = static_cast<ParticleBlendMode>(
+            std::clamp(static_cast<int>(renderSettings_.blendMode), 0, 4));
+        renderSettings_.billboardMode = static_cast<ParticleRenderSettings::BillboardMode>(
+            std::clamp(static_cast<int>(renderSettings_.billboardMode), 0, 3));
+        renderSettings_.sortMode = static_cast<ParticleRenderSettings::SortMode>(
+            std::clamp(static_cast<int>(renderSettings_.sortMode), 0, 3));
+        const auto safeNonNegative = [](float value, float fallback = 0.0f) {
+            return std::isfinite(value)
+                ? std::clamp(value, 0.0f, 1000000.0f)
+                : fallback;
+        };
+        renderSettings_.softParticleDistance =
+            safeNonNegative(renderSettings_.softParticleDistance);
+        renderSettings_.stretchFactor = safeNonNegative(renderSettings_.stretchFactor, 1.0f);
+        renderSettings_.minLength = safeNonNegative(renderSettings_.minLength);
+        renderSettings_.trailLength = std::clamp(renderSettings_.trailLength, 1, 1024);
+        renderSettings_.trailWidth = std::isfinite(renderSettings_.trailWidth)
+            ? std::clamp(renderSettings_.trailWidth, 0.1f, 1000000.0f)
+            : 1.0f;
+        renderSettings_.trailFade = std::isfinite(renderSettings_.trailFade)
+            ? std::clamp(renderSettings_.trailFade, 0.0f, 1.0f)
+            : 0.5f;
+    }
     
     // Simulation / Snapshot
     void update(float deltaTime);
@@ -593,7 +733,9 @@ public:
     bool isPaused() const { return paused_; }
     
     void setTimeScale(float scale) {
-        timeScale_ = std::isfinite(scale) ? std::max(0.0f, scale) : 1.0f;
+        timeScale_ = std::isfinite(scale)
+            ? std::clamp(scale, 0.0f, 1000000.0f)
+            : 1.0f;
     }
     float timeScale() const { return timeScale_; }
     

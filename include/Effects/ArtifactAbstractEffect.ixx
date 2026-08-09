@@ -1,4 +1,5 @@
 module;
+#include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
 #include <iostream>
 #include <vector>
 #include <string>
@@ -50,7 +51,7 @@ export namespace Artifact {
 
 using namespace ArtifactCore;
 
-class EffectID {
+class LIBRARY_DLL_API EffectID {
 public:
     EffectID() = default;
     EffectID(const QString& value) : value_(value) {}
@@ -83,7 +84,7 @@ enum class EffectPipelineStage {
     LayerTransform
 };
 
-class ArtifactAbstractEffect {
+class LIBRARY_DLL_API ArtifactAbstractEffect {
 private:
     class Impl;
     Impl* impl_;

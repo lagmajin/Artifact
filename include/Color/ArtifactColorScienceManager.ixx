@@ -1,4 +1,5 @@
 ﻿module;
+#include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
 #include <utility>
 
 #include <memory>
@@ -54,7 +55,7 @@ struct CompositionColorSettings {
   bool useGlobalSettings = true; // If false, use composition-specific settings
 };
 
-class ArtifactColorScienceManager : public QObject {
+class LIBRARY_DLL_API ArtifactColorScienceManager : public QObject {
   W_OBJECT(ArtifactColorScienceManager)
 
 private:

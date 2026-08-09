@@ -239,6 +239,41 @@ foreach(file_path ${POTENTIAL_SOURCES})
     endif()
 endforeach()
 
+# Composition export modules are imported by the File menu and each writer.
+# Keep the complete public/implementation set explicit so an existing build
+# directory cannot omit newly-added export units when the recursive glob is
+# not re-evaluated until a later configure.
+set(_artifact_export_modules
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Export/ArtifactExportDialog.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Export/ArtifactExportGamefaceWriter.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Export/ArtifactExportLottieWriter.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Export/ArtifactExportNoesisXamlWriter.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Export/ArtifactExportPreRenderPipeline.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Export/ArtifactExportRmlUiWriter.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Export/ArtifactExportSession.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Export/ArtifactExportUnityUxmlWriter.ixx")
+set(_artifact_export_impls
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportDialog.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportGamefaceWriter.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportLottieWriter.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportNoesisXamlWriter.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportPreRenderPipeline.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportRmlUiWriter.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportSession.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportUnityUxmlWriter.cppm")
+foreach(_artifact_export_module IN LISTS _artifact_export_modules)
+    list(FIND APP_MODULES "${_artifact_export_module}" _artifact_export_module_idx)
+    if(_artifact_export_module_idx EQUAL -1)
+        list(APPEND APP_MODULES "${_artifact_export_module}")
+    endif()
+endforeach()
+foreach(_artifact_export_impl IN LISTS _artifact_export_impls)
+    list(FIND APP_IMPL "${_artifact_export_impl}" _artifact_export_impl_idx)
+    if(_artifact_export_impl_idx EQUAL -1)
+        list(APPEND APP_IMPL "${_artifact_export_impl}")
+    endif()
+endforeach()
+
 # Source-only .cppm interfaces and partitions must be registered explicitly.
 # New entries belong here rather than reintroducing content-based scanning.
 set(ARTIFACT_SOURCE_CPPM_MODULES
@@ -492,6 +527,18 @@ if(_viewport_color_impl_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportColorPipeline.cppm")
 endif()
 
+# ViewportMath is imported by the composition controller; pin both units so
+# the module mapper sees the coordinate conversion contract before scanning
+# ArtifactCompositionRenderController.cppm.
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportMath.ixx" _viewport_math_module_idx)
+if(_viewport_math_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportMath.ixx")
+endif()
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportMath.cppm" _viewport_math_impl_idx)
+if(_viewport_math_impl_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportMath.cppm")
+endif()
+
 set(ARTIFACT_RENDER_SUPPORT_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactHDRMonitor.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactRamPreviewController.ixx"
@@ -552,10 +599,14 @@ set(ARTIFACT_ASSET_IMPL
 list(REMOVE_ITEM APP_MODULES ${ARTIFACT_ASSET_MODULES})
 list(REMOVE_ITEM APP_IMPL ${ARTIFACT_ASSET_IMPL})
 
-add_library(ArtifactAsset STATIC)
+add_library(ArtifactAsset SHARED)
 set_target_properties(ArtifactAsset PROPERTIES
     CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     FOLDER "Artifact/Libraries"
 )
 target_sources(ArtifactAsset
@@ -601,10 +652,14 @@ set(ARTIFACT_COLOR_IMPL
 list(REMOVE_ITEM APP_MODULES ${ARTIFACT_COLOR_MODULES})
 list(REMOVE_ITEM APP_IMPL ${ARTIFACT_COLOR_IMPL})
 
-add_library(ArtifactColor STATIC)
+add_library(ArtifactColor SHARED)
 set_target_properties(ArtifactColor PROPERTIES
     CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     FOLDER "Artifact/Libraries"
 )
 target_sources(ArtifactColor
@@ -625,6 +680,7 @@ target_include_directories(ArtifactColor PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
 )
+target_compile_definitions(ArtifactColor PRIVATE LIBRARY_DLL_MODE=1)
 target_link_libraries(ArtifactColor PUBLIC ArtifactCore)
 
 set(ARTIFACT_RENDER_MODULES
@@ -737,10 +793,14 @@ set(ARTIFACT_EFFECT_CONTRACT_IMPL
 list(REMOVE_ITEM APP_MODULES ${ARTIFACT_EFFECT_CONTRACT_MODULES})
 list(REMOVE_ITEM APP_IMPL ${ARTIFACT_EFFECT_CONTRACT_IMPL})
 
-add_library(ArtifactEffectContract STATIC)
+add_library(ArtifactEffectContract SHARED)
 set_target_properties(ArtifactEffectContract PROPERTIES
     CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     FOLDER "Artifact/Libraries"
 )
 target_sources(ArtifactEffectContract
@@ -756,6 +816,7 @@ target_include_directories(ArtifactEffectContract PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
 )
+target_compile_definitions(ArtifactEffectContract PRIVATE LIBRARY_DLL_MODE=1)
 target_link_libraries(ArtifactEffectContract PUBLIC ArtifactCore ArtifactRender ArtifactRenderSupport)
 
 set(ARTIFACT_EFFECTS_MODULES
@@ -1075,6 +1136,14 @@ endif()
 # linker work to every ordinary incremental build. Keep it opt-in.
 option(ARTIFACT_ENABLE_LINK_LIBRARY_TRACE "Enable MSVC linker library-resolution diagnostics" OFF)
 option(ARTIFACT_ENABLE_LTCG "Enable link-time code generation for shipping builds" OFF)
+if(ARTIFACT_FRONTEND_MSVC)
+    # The monolithic Debug executable exceeds the MSVC linker PDB limit.
+    # The installed MSVC toolchain no longer supports FASTLINK, so omit the
+    # executable PDB while keeping embedded debug information in object files.
+    target_link_options(Artifact PRIVATE
+        "$<$<CONFIG:Debug>:/PDB:NONE>"
+    )
+endif()
 if(ARTIFACT_ENABLE_LINK_LIBRARY_TRACE)
     target_link_options(Artifact PRIVATE "$<$<BOOL:${ARTIFACT_FRONTEND_MSVC}>:/VERBOSE:LIB>")
 endif()

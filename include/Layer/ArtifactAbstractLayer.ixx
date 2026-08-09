@@ -109,6 +109,9 @@ inline bool HasFlag(VariantOverrideFlags flags, VariantOverrideFlags flag) {
 
 class ArtifactAbstractLayer;  // forward-declared within the same module – no tag mismatch
 using ArtifactAbstractLayerPtr = SharedPtr<ArtifactAbstractLayer>;
+using ArtifactLayerJsonFactory =
+    ArtifactAbstractLayerPtr (*)(const QJsonObject &);
+void setArtifactLayerJsonFactory(ArtifactLayerJsonFactory factory);
 class ArtifactLayerModifier;
 
 class LayerVariant {
@@ -324,6 +327,7 @@ public:
   bool isVisible() const;
   virtual void draw(ArtifactIRenderer *renderer) = 0;
   LayerID id() const;
+  void setId(const LayerID& id);
   void setVisible(bool visible = true);
   QString layerName() const;
   void setLayerName(const QString &name);
@@ -602,6 +606,7 @@ public:
   void setMask(int index, const LayerMask &mask);
   LayerMask mask(int index) const;
   int maskCount() const;
+  std::uint64_t maskRevision() const;
   void clearMasks();
   bool hasMasks() const;
   /*Masks*/

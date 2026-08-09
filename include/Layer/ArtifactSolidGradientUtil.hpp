@@ -16,10 +16,15 @@
 namespace ArtifactSolidGradientUtil {
 
 inline QColor toQColor(const QColor& color, const float alphaScale = 1.0f) {
-    return QColor::fromRgbF(std::clamp(color.redF(), 0.0f, 1.0f),
-                            std::clamp(color.greenF(), 0.0f, 1.0f),
-                            std::clamp(color.blueF(), 0.0f, 1.0f),
-                            std::clamp(color.alphaF() * alphaScale, 0.0f, 1.0f));
+    const auto safeChannel = [](const float value, const float fallback) {
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+    };
+    const float safeAlphaScale = std::isfinite(alphaScale)
+        ? std::clamp(alphaScale, 0.0f, 1.0f) : 1.0f;
+    return QColor::fromRgbF(safeChannel(color.redF(), 0.0f),
+                            safeChannel(color.greenF(), 0.0f),
+                            safeChannel(color.blueF(), 0.0f),
+                            safeChannel(color.alphaF() * safeAlphaScale, 1.0f));
 }
 
 inline QPointF gradientPointForAngle(
@@ -27,27 +32,34 @@ inline QPointF gradientPointForAngle(
     const bool reverse, const float centerX, const float centerY,
     const float scale, const float offset)
 {
-    const float radians = angleDegrees * 3.14159265358979323846f / 180.0f;
+    const float safeAngle = std::isfinite(angleDegrees) ? angleDegrees : 90.0f;
+    const float safeCenterX = std::isfinite(centerX) ? std::clamp(centerX, 0.0f, 1.0f) : 0.5f;
+    const float safeCenterY = std::isfinite(centerY) ? std::clamp(centerY, 0.0f, 1.0f) : 0.5f;
+    const float safeScale = std::isfinite(scale) ? std::clamp(scale, 0.01f, 1000000.0f) : 1.0f;
+    const float safeOffset = std::isfinite(offset) ? std::clamp(offset, -1000000.0f, 1000000.0f) : 0.0f;
+    const float radians = safeAngle * 3.14159265358979323846f / 180.0f;
     const QPointF center(
-        static_cast<qreal>(size.width()) * std::clamp(centerX, 0.0f, 1.0f),
-        static_cast<qreal>(size.height()) * std::clamp(centerY, 0.0f, 1.0f));
+        static_cast<qreal>(size.width()) * safeCenterX,
+        static_cast<qreal>(size.height()) * safeCenterY);
     const qreal dx = std::cos(radians);
     const qreal dy = -std::sin(radians);
     const qreal halfSpan =
         std::max(1.0, std::hypot(static_cast<double>(size.width()),
                                  static_cast<double>(size.height()))) * 0.5 *
-        std::max(0.01f, scale);
+        safeScale;
     const qreal direction = reverse ? -1.0 : 1.0;
     const qreal sign = startPoint ? -1.0 : 1.0;
     return QPointF(
-        center.x() + dx * halfSpan * direction * sign + dx * halfSpan * offset,
-        center.y() + dy * halfSpan * direction * sign + dy * halfSpan * offset);
+        center.x() + dx * halfSpan * direction * sign + dx * halfSpan * safeOffset,
+        center.y() + dy * halfSpan * direction * sign + dy * halfSpan * safeOffset);
 }
 
 inline QPointF gradientCenterPoint(const QSize& size, const float centerX, const float centerY) {
+    const float safeCenterX = std::isfinite(centerX) ? std::clamp(centerX, 0.0f, 1.0f) : 0.5f;
+    const float safeCenterY = std::isfinite(centerY) ? std::clamp(centerY, 0.0f, 1.0f) : 0.5f;
     return QPointF(
-        static_cast<qreal>(size.width()) * std::clamp(centerX, 0.0f, 1.0f),
-        static_cast<qreal>(size.height()) * std::clamp(centerY, 0.0f, 1.0f));
+        static_cast<qreal>(size.width()) * safeCenterX,
+        static_cast<qreal>(size.height()) * safeCenterY);
 }
 
 inline QImage makeSolidGradientImage(
@@ -62,16 +74,21 @@ inline QImage makeSolidGradientImage(
     const float scale,
     const float offset)
 {
-    QImage image(size, QImage::Format_ARGB32_Premultiplied);
+    const QSize safeSize(std::clamp(size.width(), 1, 16384),
+                         std::clamp(size.height(), 1, 16384));
+    const int safeFillType = std::clamp(fillType, 0, 5);
+    const float safeAngle = std::isfinite(angleDegrees) ? angleDegrees : 90.0f;
+    const float safeScale = std::isfinite(scale) ? std::clamp(scale, 0.01f, 1000000.0f) : 1.0f;
+    const float safeOffset = std::isfinite(offset) ? std::clamp(offset, -1000000.0f, 1000000.0f) : 0.0f;
+    QImage image(safeSize, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
     QPainter painter(&image);
-    const QPointF center = gradientCenterPoint(size, centerX, centerY);
+    const QPointF center = gradientCenterPoint(safeSize, centerX, centerY);
 
-    if (fillType == 2) { // Radial
+    if (safeFillType == 2) { // Radial
         const qreal radius = std::max<qreal>(1.0,
-            std::hypot(static_cast<double>(size.width()),
-                       static_cast<double>(size.height())) * 0.5 *
-            std::max(0.01f, scale));
+            std::hypot(static_cast<double>(safeSize.width()),
+                       static_cast<double>(safeSize.height())) * 0.5 * safeScale);
         QRadialGradient gradient(center, radius);
         gradient.setColorAt(0.0, reverse ? toQColor(endColor) : toQColor(startColor));
         gradient.setColorAt(1.0, reverse ? toQColor(startColor) : toQColor(endColor));
@@ -79,8 +96,8 @@ inline QImage makeSolidGradientImage(
         return image;
     }
 
-    if (fillType == 3) { // Conical
-        QConicalGradient gradient(center, angleDegrees);
+    if (safeFillType == 3) { // Conical
+        QConicalGradient gradient(center, safeAngle);
         gradient.setColorAt(0.0, reverse ? toQColor(endColor) : toQColor(startColor));
         gradient.setColorAt(1.0, reverse ? toQColor(startColor) : toQColor(endColor));
         painter.fillRect(image.rect(), gradient);
@@ -88,14 +105,14 @@ inline QImage makeSolidGradientImage(
     }
 
     // Default: Linear
-    const QPointF p1 = gradientPointForAngle(angleDegrees, size, true, reverse,
-                                              centerX, centerY, scale, offset);
-    const QPointF p2 = gradientPointForAngle(angleDegrees, size, false, reverse,
-                                              centerX, centerY, scale, offset);
+    const QPointF p1 = gradientPointForAngle(safeAngle, safeSize, true, reverse,
+                                              centerX, centerY, safeScale, safeOffset);
+    const QPointF p2 = gradientPointForAngle(safeAngle, safeSize, false, reverse,
+                                              centerX, centerY, safeScale, safeOffset);
     QLinearGradient gradient(p1, p2);
-    if (fillType == 4) { // Repeating
+    if (safeFillType == 4) { // Repeating
         gradient.setSpread(QGradient::RepeatSpread);
-    } else if (fillType == 5) { // Mirrored
+    } else if (safeFillType == 5) { // Mirrored
         gradient.setSpread(QGradient::ReflectSpread);
     }
     gradient.setColorAt(0.0, reverse ? toQColor(endColor) : toQColor(startColor));

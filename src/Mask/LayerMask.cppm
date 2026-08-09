@@ -96,7 +96,14 @@ void LayerMask::compositeAlphaMask(int width, int height, void* outMat,
                                    float offsetX, float offsetY,
                                    float scaleX, float scaleY) const
 {
+    if (!outMat) {
+        return;
+    }
     cv::Mat& dst = *static_cast<cv::Mat*>(outMat);
+    if (width <= 0 || height <= 0) {
+        dst.release();
+        return;
+    }
 
     if (!impl_->enabled || impl_->paths.empty()) {
         // no mask = fully opaque
@@ -166,8 +173,10 @@ void LayerMask::applyToImage(int width, int height, void* imageMat,
                              float offsetX, float offsetY,
                              float scaleX, float scaleY) const
 {
+    if (!imageMat || width <= 0 || height <= 0) return;
     cv::Mat& img = *static_cast<cv::Mat*>(imageMat);
     if (img.empty() || img.type() != CV_32FC4) return;
+    if (img.cols != width || img.rows != height) return;
     if (!impl_->enabled || impl_->paths.empty()) return;
 
     cv::Mat alphaMask;

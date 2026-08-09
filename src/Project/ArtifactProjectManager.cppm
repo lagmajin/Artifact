@@ -1128,7 +1128,11 @@ void ArtifactProjectManager::setCurrentProjectPath(const QString& path)
  if (!impl_) {
   return;
  }
- impl_->currentProjectPath_ = path;
+ const QString normalizedPath = path.trimmed();
+ impl_->currentProjectPath_ = normalizedPath;
+ impl_->projectRootPath_ = normalizedPath.isEmpty()
+     ? QString()
+     : QFileInfo(normalizedPath).absolutePath();
 }
 
 void ArtifactProjectManager::setCurrentProjectRootPath(const QString& path)
@@ -1136,7 +1140,10 @@ void ArtifactProjectManager::setCurrentProjectRootPath(const QString& path)
  if (!impl_) {
   return;
  }
- impl_->projectRootPath_ = path;
+ const QString normalizedPath = path.trimmed();
+ impl_->projectRootPath_ = normalizedPath.isEmpty()
+     ? QString()
+     : QDir::cleanPath(QFileInfo(normalizedPath).absoluteFilePath());
 }
 
  bool ArtifactProjectManager::isProjectCreated() const

@@ -257,7 +257,8 @@ void ArtifactCloneLayer::fromJsonProperties(const QJsonObject& obj) {
             stage.rotation = static_cast<float>(obj.value(prefix + QStringLiteral(".rotation")).toDouble(stage.rotation));
     };
     if (obj.contains("clone.mode")) {
-        settings.mode = static_cast<CloneMode>(obj.value("clone.mode").toInt(static_cast<int>(settings.mode)));
+        settings.mode = static_cast<CloneMode>(std::clamp(
+            obj.value("clone.mode").toInt(static_cast<int>(settings.mode)), 0, 6));
     }
     if (obj.contains("clone.cloneCount")) settings.cloneCount = std::max(1, obj.value("clone.cloneCount").toInt(settings.cloneCount));
     readVector(QStringLiteral("clone.offset"), settings.offset);
@@ -1016,7 +1017,8 @@ std::vector<AbstractProperty> ArtifactCloneLayer::getProperties() const {
 void ArtifactCloneLayer::setPropertyValue(const UniString& name, const QVariant& value) {
     const QString key = name.toQString();
     if (key == QStringLiteral("Mode")) {
-        impl_->settings_.mode = static_cast<CloneMode>(value.toInt());
+        impl_->settings_.mode = static_cast<CloneMode>(
+            std::clamp(value.toInt(), 0, 6));
     } else if (key == QStringLiteral("Use Effector")) {
         impl_->settings_.useEffector = value.toBool();
     } else if (!impl_->effectors_.empty() &&

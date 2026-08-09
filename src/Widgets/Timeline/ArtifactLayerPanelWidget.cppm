@@ -1332,7 +1332,14 @@ QString summarizeLayerState(const ArtifactAbstractLayerPtr& layer)
   return QStringLiteral("Shy");
  }
  const bool hasMasks = layer->hasMasks();
- const bool hasMattes = !layer->matteReferences().empty();
+ const auto layerId = layer->id();
+ bool hasMattes = false;
+ for (const auto& ref : layer->matteReferences()) {
+  if (ref.enabled && !ref.sourceLayerId.isNil() && ref.sourceLayerId != layerId) {
+   hasMattes = true;
+   break;
+  }
+ }
  if (hasMasks && hasMattes) {
   return QStringLiteral("Mask + Matte");
  }
@@ -1362,7 +1369,7 @@ LayerPresentationBadgeTone summarizeLayerStateTone(const ArtifactAbstractLayerPt
  if (layer->isSolo()) {
   return LayerPresentationBadgeTone::Motion;
  }
- if (layer->hasMasks() || !layer->matteReferences().empty()) {
+ if (layer->hasMasks() || hasMattes) {
   return LayerPresentationBadgeTone::Special;
  }
  if (layer->hasParent()) {
@@ -2223,6 +2230,7 @@ public:
   QIcon iconLayerConstruction;
   bool shyHidden = false;
   QString filterText;
+  QHash<QString, QStringList> propertyGroupSearchCache;
   SearchMatchMode searchMatchMode = SearchMatchMode::AllVisible;
   TimelineLayerDisplayMode displayMode = TimelineLayerDisplayMode::AllLayers;
   int rowHeight = kLayerRowHeight;
@@ -2490,15 +2498,25 @@ public:
        bool nameMatch = l->layerName().contains(needle, Qt::CaseInsensitive);
        bool propMatch = false;
        if (searchInProperties_ && !nameMatch) {
-         const auto groups = l->getLayerPropertyGroups();
-         for (const auto& group : groups) {
-           if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
-                   group.name())) {
-            continue;
+         const QString layerKey = l->id().toString();
+         QStringList groupNames;
+         if (propertyGroupSearchCache.contains(layerKey)) {
+           groupNames = propertyGroupSearchCache.value(layerKey);
+         } else {
+           const auto groups = l->getLayerPropertyGroups();
+           for (const auto& group : groups) {
+             if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
+                     group.name())) {
+               continue;
+             }
+             groupNames.push_back(group.name());
            }
-           if (group.name().contains(needle, Qt::CaseInsensitive)) {
-             propMatch = true;
-             break;
+           propertyGroupSearchCache.insert(layerKey, groupNames);
+         }
+         for (const QString& groupName : groupNames) {
+           if (groupName.contains(needle, Qt::CaseInsensitive)) {
+            propMatch = true;
+            break;
            }
          }
        }
@@ -2748,6 +2766,7 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
               return;
             }
 
+            impl_->propertyGroupSearchCache.remove(layerId.toString());
             updateLayout();
             if (changeType != LayerChangedEvent::ChangeType::Created ||
                 !allowInteractiveCreatedHandling) {
@@ -2811,6 +2830,7 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
   impl_->eventBusSubscriptions_.push_back(
     impl_->eventBus_.subscribe<ProjectChangedEvent>(
         [this](const ProjectChangedEvent&) {
+          impl_->propertyGroupSearchCache.clear();
           updateLayout();
         }));
  }
@@ -2823,6 +2843,7 @@ ArtifactLayerPanelWidget::~ArtifactLayerPanelWidget()
 void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
 {
   impl_->compositionId = id;
+  impl_->propertyGroupSearchCache.clear();
   impl_->selectedLayerId = LayerID();
   impl_->selectionAnchorLayerId = LayerID();
   impl_->currentPropertyPath.clear();
@@ -5038,6 +5059,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         if (selectedLayerId.isNil()) {
           return;
         }
+        if (!comp || matteDropWouldCreateCycle(comp, layer, selectedLayerId)) {
+          return;
+        }
         auto beforeRefs = matteRefs;
         auto afterRefs = beforeRefs;
         afterRefs.push_back(makeDefaultMatteReference(selectedLayerId));
@@ -6664,6 +6688,9 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      if (hasMatteRefs) {
       auto comp = safeCompositionLookup(impl_->compositionId);
       for (const auto& ref : matteRefs) {
+       if (!ref.enabled) {
+        continue;
+       }
        if (ref.sourceLayerId.isNil() || ref.sourceLayerId == l->id()) {
         matteBroken = true;
         break;

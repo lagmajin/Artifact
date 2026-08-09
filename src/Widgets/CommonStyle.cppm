@@ -535,6 +535,17 @@ QSize ArtifactCommonStyle::sizeFromContents(ContentsType type,
                                             const QSize& contentsSize,
                                             const QWidget* widget) const
 {
+  if (type == CT_PushButton && widget &&
+      qobject_cast<const QPushButton*>(widget) &&
+      qobject_cast<const QDialog*>(widget->window())) {
+    constexpr int kDialogButtonMinimumWidth = 104;
+    constexpr int kDialogButtonMinimumHeight = 36;
+    const QSize baseSize = QCommonStyle::sizeFromContents(
+        type, option, contentsSize, widget);
+    return baseSize.expandedTo(
+        QSize(kDialogButtonMinimumWidth, kDialogButtonMinimumHeight));
+  }
+
   if (type == CT_MenuItem) {
     if (const auto* menuItem = qstyleoption_cast<const QStyleOptionMenuItem*>(option)) {
       if (menuItem->menuItemType == QStyleOptionMenuItem::Separator) {
